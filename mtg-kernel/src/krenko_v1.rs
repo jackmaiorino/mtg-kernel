@@ -229,7 +229,10 @@ pub(crate) fn record_paid(
     if item.v4.ability_source_contract != Some(captured_source) {
         return Err("Krenko full publication changed the private prepayment source".into());
     }
-    let taps = state.engine.event_history[start..]
+    let taps = state
+        .engine
+        .event_history
+        .range_v2(start..)
         .iter()
         .enumerate()
         .filter_map(|(i, e)| {
@@ -468,7 +471,7 @@ pub(crate) fn resolve(state: &mut GameState, owner: OwnerV1, ctx: &ExecCtx) -> R
     if state.engine.halted.is_some() {
         return Err("Krenko entry batch halted".into());
     }
-    let token_history=state.engine.event_history[start..].iter().enumerate().filter_map(|(i,e)|
+    let token_history=state.engine.event_history.range_v2(start..).iter().enumerate().filter_map(|(i,e)|
         matches!(e,CommittedEvent::CreateToken {token_def,controller,..} if *token_def==token && *controller==owner.item.controller).then_some((start+i) as u64)).collect::<Vec<_>>();
     if token_history.len()
         != crate::doubling_season_v48::expected_tokens(

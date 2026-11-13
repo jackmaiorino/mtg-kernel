@@ -1,5 +1,6 @@
 use super::*;
 use crate::expanded_deck_training_v1::tests::replay_fixture;
+use crate::sideboard_play_policy_v1::FrozenPlayDecisionScoresV1;
 use std::sync::Barrier;
 
 const LR: f32 = 0.00003;
@@ -119,7 +120,15 @@ fn snapshot_bits(state: &NativePolicyValueTrainStateV1) -> (u64, u32, Vec<Vec<Ve
 fn phase1_preparation_real_updates_preserve_all_state_bits_and_group_order() {
     // These are real actor-visible decision tensors and real native updates.
     // The terminal/grouping fixture is synthetic, not a completed-game result.
-    for workers in [1, 4, 10] {
+    for (workers, row_cache) in [
+        (1, ReplayRowCacheV1::Off),
+        (4, ReplayRowCacheV1::Off),
+        (1, ReplayRowCacheV1::LearnerRows),
+        (4, ReplayRowCacheV1::LearnerRows),
+        (10, ReplayRowCacheV1::LearnerRows),
+        (1, ReplayRowCacheV1::AllRows),
+        (4, ReplayRowCacheV1::AllRows),
+    ] {
         let mut serial_policy = FrozenPlayPolicyV1::training_fixture_v3();
         let mut parallel_policy = serial_policy.fork_for_collection_v3().unwrap();
         let mut serial = state_for(&serial_policy);
@@ -167,6 +176,7 @@ fn phase1_preparation_real_updates_preserve_all_state_bits_and_group_order() {
                 &learner,
                 workers,
                 DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+                row_cache,
                 |source| {
                     loads += 1;
                     assert_eq!(source, &other.as_ref().unwrap().source);
@@ -251,6 +261,7 @@ fn phase1_preparation_recovers_episode_boundaries_matching_input_for_both_paths(
         &learner,
         4,
         DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        ReplayRowCacheV1::LearnerRows,
         |_| panic!("no opponent expected in this fixture"),
     )
     .unwrap();
@@ -284,12 +295,88 @@ fn phase1_preparation_current_model_reuse_avoids_disk_load_and_keeps_rng_outputs
         &learner,
         4,
         DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        ReplayRowCacheV1::LearnerRows,
         |_| panic!("current source should reuse the already validated learner"),
     )
     .unwrap();
     assert_eq!(prepared.telemetry.opponent_load_calls, 0);
     assert_eq!(prepared.telemetry.current_model_reuses, 1);
     assert_eq!(group_bytes(&expected), group_bytes(&prepared.groups));
+}
+
+/// A deferring preparation (the bounded verified update's) decodes the
+/// learner's rows without replaying them: the reference's groups, whatever a
+/// learner row's stored outputs, while every other row is replayed, counted
+/// and checked as before, with the reference's error.
+#[test]
+fn deferring_preparation_replays_and_counts_only_the_other_rows() {
+    let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+    let (mut t, learner, _) = replay_fixture(&mut policy, None, 0, &[0, 1, 0, 1, 1, 0]);
+    t.schema = POPULATION_TRAJECTORY_SCHEMA.into();
+    t.episode.opponent = Some(learner.source.clone());
+    t.seat_behaviors = Some([learner.clone(), learner.clone()]);
+    validate_trajectory(&t).unwrap();
+    assert_eq!(t.episode.learner_seat, 0);
+    let reference = |t: &ExpandedTrajectoryV1| {
+        prepare_with_loader_v1(
+            std::slice::from_ref(t),
+            &policy,
+            &learner,
+            2,
+            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            ReplayRowCacheV1::Off,
+            |_| panic!("the current source reuses the learner"),
+        )
+        .map(|prepared| (group_bytes(&prepared.groups), prepared.telemetry))
+    };
+    let deferred = |t: &ExpandedTrajectoryV1, workers| {
+        let other_forwards = AtomicU64::new(0);
+        let prepared = prepare_counting_v1(
+            std::slice::from_ref(t),
+            &policy,
+            &learner,
+            workers,
+            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            LearnerRowsV1::Defer {
+                other_forwards: &other_forwards,
+            },
+            |_| panic!("the current source reuses the learner"),
+        )
+        .map(|prepared| (group_bytes(&prepared.groups), prepared.telemetry));
+        (prepared, other_forwards.load(Ordering::Relaxed))
+    };
+    let (groups, telemetry) = reference(&t).unwrap();
+    assert_eq!(telemetry.deferred_learner_rows, None);
+    for workers in [1, 3] {
+        let (prepared, other_forwards) = deferred(&t, workers);
+        let (deferred_groups, telemetry) = prepared.unwrap();
+        assert_eq!(deferred_groups, groups);
+        assert_eq!(other_forwards, 3);
+        assert_eq!(telemetry.deferred_learner_rows, Some(3));
+        assert_eq!(telemetry.physical_group_jobs, 6);
+    }
+
+    // A learner row's stored value is the verified learner's to check.
+    let mut corrupt = t.clone();
+    corrupt.decisions[2].value ^= 1;
+    assert!(reference(&corrupt)
+        .unwrap_err()
+        .contains("stored tensor does not reproduce rollout outputs"));
+    let (prepared, other_forwards) = deferred(&corrupt, 2);
+    assert!(prepared.is_ok());
+    assert_eq!(other_forwards, 3);
+    // Another row's is still the preparation's.
+    let mut corrupt = t.clone();
+    corrupt.decisions[3].value ^= 1;
+    let error = reference(&corrupt).unwrap_err();
+    assert_eq!(
+        error,
+        "preparation group 3: stored tensor does not reproduce rollout outputs"
+    );
+    let (prepared, other_forwards) = deferred(&corrupt, 1);
+    assert_eq!(prepared.unwrap_err(), error);
+    // One worker replays in order and stops at the corrupt row.
+    assert_eq!(other_forwards, 2);
 }
 
 #[test]
@@ -299,11 +386,20 @@ fn phase1_preparation_rejects_stale_and_corrupted_opponent_before_learning() {
     let (original, learner, other) =
         replay_fixture(&mut policy, Some(&mut opponent), 0, &[0, 1, 0, 1]);
     let before = policy.actual_model_identity_v1();
-    for workers in [1, 4] {
+    for (workers, row_cache) in [
+        (1, ReplayRowCacheV1::Off),
+        (4, ReplayRowCacheV1::Off),
+        (1, ReplayRowCacheV1::LearnerRows),
+        (4, ReplayRowCacheV1::LearnerRows),
+        (1, ReplayRowCacheV1::AllRows),
+        (4, ReplayRowCacheV1::AllRows),
+    ] {
         for kind in [
             "stale_learner",
             "opponent_identity",
             "opponent_value",
+            "opponent_logit",
+            "learner_logit",
             "missing_opponent",
         ] {
             let mut changed = original.clone();
@@ -319,6 +415,12 @@ fn phase1_preparation_rejects_stale_and_corrupted_opponent_before_learning() {
             } else if kind == "opponent_value" {
                 changed.decisions[1].value =
                     (f32::from_bits(changed.decisions[1].value) + 0.125).to_bits();
+            } else if kind == "opponent_logit" {
+                // The lowest bit of one stored logit of the other seat.
+                changed.decisions[1].logits[0] ^= 1;
+            } else if kind == "learner_logit" {
+                // The lowest bit of one stored learner logit.
+                changed.decisions[0].logits[0] ^= 1;
             }
             let result = prepare_with_loader_v1(
                 std::slice::from_ref(&changed),
@@ -326,6 +428,7 @@ fn phase1_preparation_rejects_stale_and_corrupted_opponent_before_learning() {
                 &learner,
                 workers,
                 DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+                row_cache,
                 |_| {
                     if kind == "missing_opponent" {
                         return Err("deliberate missing frozen source".into());
@@ -340,7 +443,9 @@ fn phase1_preparation_rejects_stale_and_corrupted_opponent_before_learning() {
             let expected = match kind {
                 "stale_learner" => "stale trajectory",
                 "opponent_identity" => "actual opponent behavior identity",
-                "opponent_value" => "stored tensor does not reproduce",
+                "opponent_value" | "opponent_logit" | "learner_logit" => {
+                    "stored tensor does not reproduce"
+                }
                 _ => "deliberate missing frozen source",
             };
             assert!(error.contains(expected), "{kind}: {error}");
@@ -387,6 +492,226 @@ fn phase1_preparation_reports_earliest_group_error_and_joins_every_worker() {
 }
 
 #[test]
+fn phase1_preparation_worker_state_is_private_and_kept_across_a_workers_jobs() {
+    let made = AtomicUsize::new(0);
+    let (results, timings) = ordered_jobs_with_state_v1(
+        4,
+        200,
+        || {
+            made.fetch_add(1, Ordering::SeqCst);
+            (thread::current().id(), 0usize)
+        },
+        |state, ordinal| {
+            // Made on this worker's own thread and seen by no other.
+            assert_eq!(state.0, thread::current().id());
+            state.1 += 1;
+            Ok((ordinal, state.0, state.1))
+        },
+    )
+    .unwrap();
+    assert_eq!(made.load(Ordering::SeqCst), 4);
+    // A worker takes its jobs in ordinal order, so in ordinal order each
+    // worker's state has counted exactly its own earlier jobs.
+    let mut counted = std::collections::HashMap::new();
+    for (index, (ordinal, worker, count)) in results.into_iter().enumerate() {
+        assert_eq!(ordinal, index);
+        let earlier = counted.entry(worker).or_insert(0usize);
+        *earlier += 1;
+        assert_eq!(count, *earlier);
+    }
+    assert!(counted.len() <= 4);
+    assert_eq!(counted.values().sum::<usize>(), 200);
+    assert_eq!(
+        timings.iter().map(|t| t.completed_groups).sum::<usize>(),
+        200
+    );
+}
+
+/// The row-cached replay forward (`score_replay_tensor_ref_v1` with a
+/// worker's storage) against the reference replay
+/// (`score_replay_tensor_v1`): the same bits for every stored row, the same
+/// errors, and no row of another model or of replaced parameters.
+#[test]
+fn phase1_preparation_row_cached_replay_matches_the_reference_replay() {
+    const V3: FreshLineageGenerationV1 = FreshLineageGenerationV1::V3;
+    let mut learner = FrozenPlayPolicyV1::training_fixture_v3();
+    let mut opponent = FrozenPlayPolicyV1::training_fixture_v3();
+    let mut parameters = opponent.training_parameters_v3();
+    for name in ["object_encoder.0.bias", "action_encoder.2.bias"] {
+        parameters
+            .iter_mut()
+            .find(|p| p.name == name)
+            .unwrap()
+            .values[0] += 0.25;
+    }
+    opponent
+        .replace_training_parameters_v3(&parameters)
+        .unwrap();
+    let actors: Vec<u8> = [0, 1, 1, 0, 1, 0, 0, 1].repeat(4);
+    let (trajectory, _, _) = replay_fixture(&mut learner, Some(&mut opponent), 0, &actors);
+    let same = |a: &FrozenPlayDecisionScoresV1, b: &FrozenPlayDecisionScoresV1| {
+        bits(&a.logits) == bits(&b.logits) && a.value.to_bits() == b.value.to_bits()
+    };
+    let served = |rows: &ReplayForwardRowsV1| -> u64 {
+        rows.counts_v1().iter().map(|(served, _)| served).sum()
+    };
+    let computed = |rows: &ReplayForwardRowsV1| -> u64 {
+        rows.counts_v1().iter().map(|(_, computed)| computed).sum()
+    };
+
+    // Each seat's rows through that seat's own storage, twice over.
+    let mut storage = [
+        ReplayForwardRowsV1::default(),
+        ReplayForwardRowsV1::default(),
+    ];
+    for _ in 0..2 {
+        for row in &trajectory.decisions {
+            let acting = if row.actor == 0 { &learner } else { &opponent };
+            let common = row.tensor.tensor();
+            let reference = acting
+                .score_replay_tensor_v1(V3, common.clone(), &[])
+                .unwrap();
+            let cached = acting
+                .score_replay_tensor_ref_v1(
+                    V3,
+                    &common,
+                    &[],
+                    Some(&mut storage[row.actor as usize]),
+                )
+                .unwrap();
+            assert!(same(&cached, &reference));
+            assert_eq!(bits(&cached.logits), row.logits);
+            assert_eq!(cached.value.to_bits(), row.value);
+            // Without storage it is the reference forward.
+            let borrowed = acting
+                .score_replay_tensor_ref_v1(V3, &common, &[], None)
+                .unwrap();
+            assert!(same(&borrowed, &reference));
+        }
+    }
+    for rows in &storage {
+        assert!(served(rows) > 0 && computed(rows) > 0);
+    }
+
+    // One storage scored by two models in turn serves neither the other's
+    // rows: the models differ, and so do their outputs for a tensor.
+    let mut rows = ReplayForwardRowsV1::default();
+    for row in &trajectory.decisions {
+        let common = row.tensor.tensor();
+        let mut outputs = Vec::new();
+        for acting in [&learner, &opponent, &learner] {
+            let reference = acting
+                .score_replay_tensor_v1(V3, common.clone(), &[])
+                .unwrap();
+            let cached = acting
+                .score_replay_tensor_ref_v1(V3, &common, &[], Some(&mut rows))
+                .unwrap();
+            assert!(same(&cached, &reference));
+            outputs.push(cached);
+        }
+        assert!(!same(&outputs[0], &outputs[1]));
+        assert!(same(&outputs[0], &outputs[2]));
+    }
+
+    // Refused inputs are refused with the reference's error, and leave the
+    // storage exact.
+    let row = &trajectory.decisions[0];
+    let common = row.tensor.tensor();
+    let mut truncated = common.clone();
+    truncated.object_features.pop();
+    let mut nonfinite = common.clone();
+    nonfinite.state[0] = f32::NAN;
+    for bad in [&truncated, &nonfinite] {
+        assert_eq!(
+            learner
+                .score_replay_tensor_ref_v1(V3, bad, &[], Some(&mut rows))
+                .unwrap_err(),
+            learner
+                .score_replay_tensor_v1(V3, bad.clone(), &[])
+                .unwrap_err()
+        );
+    }
+    assert_eq!(
+        learner
+            .score_replay_tensor_ref_v1(V3, &common, &[0, 1], Some(&mut rows))
+            .unwrap_err(),
+        learner
+            .score_replay_tensor_v1(V3, common.clone(), &[0, 1])
+            .unwrap_err()
+    );
+    let before = learner
+        .score_replay_tensor_ref_v1(V3, &common, &[], Some(&mut rows))
+        .unwrap();
+    assert_eq!(bits(&before.logits), row.logits);
+    assert_eq!(before.value.to_bits(), row.value);
+    let again = learner
+        .score_replay_tensor_ref_v1(V3, &common, &[], Some(&mut rows))
+        .unwrap();
+    assert!(same(&again, &before));
+    assert!(served(&rows) > 0);
+
+    // Replaced parameters never meet rows of the old ones, although this
+    // storage still holds the old model.
+    let mut parameters = learner.training_parameters_v3();
+    parameters
+        .iter_mut()
+        .find(|p| p.name == "object_encoder.0.bias")
+        .unwrap()
+        .values[0] += 0.5;
+    learner.replace_training_parameters_v3(&parameters).unwrap();
+    let reference = learner
+        .score_replay_tensor_v1(V3, common.clone(), &[])
+        .unwrap();
+    let cached = learner
+        .score_replay_tensor_ref_v1(V3, &common, &[], Some(&mut rows))
+        .unwrap();
+    assert!(same(&cached, &reference));
+    assert!(!same(&cached, &before));
+    // The storage started over for the new parameters.
+    assert_eq!(served(&rows), 0);
+}
+
+/// Which rows take the row cache: none without a CPU learner step, the
+/// learner's with one, and the other seat's only when the setting asks.
+#[test]
+fn phase1_preparation_row_cached_rows_follow_the_learner_step_and_the_setting() {
+    use ReplayRowCacheV1::{AllRows, LearnerRows, Off};
+    assert_eq!(ReplayRowCacheV1::for_update_v1(false, false), Off);
+    assert_eq!(ReplayRowCacheV1::for_update_v1(false, true), Off);
+    assert_eq!(ReplayRowCacheV1::for_update_v1(true, false), LearnerRows);
+    assert_eq!(ReplayRowCacheV1::for_update_v1(true, true), AllRows);
+    // Per mode: whether the learner's rows and the other seat's are cached.
+    for (mode, learner, other) in [
+        (Off, false, false),
+        (LearnerRows, true, false),
+        (AllRows, true, true),
+    ] {
+        assert_eq!(mode.caches_v1(true), learner, "{mode:?}");
+        assert_eq!(mode.caches_v1(false), other, "{mode:?}");
+    }
+    // Only the exact value 1 asks for the other seat's rows.
+    assert!(replay_other_seat_setting_v1(Some("1")));
+    for value in [
+        None,
+        Some(""),
+        Some("0"),
+        Some("2"),
+        Some("01"),
+        Some(" 1"),
+        Some("1 "),
+        Some("true"),
+        Some("yes"),
+        Some("on"),
+    ] {
+        assert!(!replay_other_seat_setting_v1(value), "{value:?}");
+    }
+    assert_eq!(
+        REPLAY_OTHER_SEAT_SETTING_V1,
+        "MTG_KERNEL_ROW_CACHE_REPLAY_OTHER_SEAT"
+    );
+}
+
+#[test]
 fn phase1_preparation_limits_reject_before_dispatch_or_opponent_load() {
     for workers in [0, 33] {
         assert!(ordered_jobs_v1(workers, 1, |_| -> Result<(), String> {
@@ -422,6 +747,7 @@ fn phase1_preparation_limits_reject_before_dispatch_or_opponent_load() {
         &learner,
         4,
         DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        ReplayRowCacheV1::LearnerRows,
         |_| panic!("opponent bound must be checked before loading"),
     );
     assert!(result.err().unwrap().contains("32 distinct opponents"));
@@ -436,6 +762,7 @@ fn phase1_preparation_limits_reject_before_dispatch_or_opponent_load() {
         &learner,
         4,
         DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        ReplayRowCacheV1::LearnerRows,
         |_| panic!("tensor bound must be checked before loading"),
     );
     assert!(result.err().unwrap().contains("256 MiB decoded tensor"));
@@ -449,6 +776,7 @@ fn phase1_preparation_limits_reject_before_dispatch_or_opponent_load() {
         &learner,
         4,
         MIN_PREPARED_TENSOR_MEBIBYTES,
+        ReplayRowCacheV1::LearnerRows,
         |_| panic!("tensor bound must be checked before loading"),
     );
     assert!(result.err().unwrap().contains("64 MiB decoded tensor"));

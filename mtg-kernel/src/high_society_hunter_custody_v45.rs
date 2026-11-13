@@ -7,6 +7,7 @@ use crate::state::{
 };
 use crate::trigger::PendingTrigger;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum JournalV45 {
@@ -78,14 +79,36 @@ pub(crate) fn recipe(attack: bool) -> EffectOp {
         crate::high_society_hunter_v1::death_program()
     }
 }
+// Each capture's source and each attacking source's check of all its attacks
+// are remembered while a `borrow_memo_v1` scope holds the state, as are the
+// historical source contracts that death captures check. A validation looks a
+// capture up directly, from its root and from its operation, and each attack
+// checks every attack of its source, so without the memo a validation repeats
+// that work for every capture.
+struct SourceAtKeyV45;
 pub(crate) fn source_at(
     state: &GameState,
     capture: u64,
 ) -> Result<(AbilitySourceContractV4, bool), String> {
+    crate::borrow_memo_v1::cached::<SourceAtKeyV45, u64, _>(state, capture, || {
+        find_source(state, capture)
+    })
+}
+
+struct AttackerKeyV45;
+fn attacker(state: &GameState, source: AbilitySourceContractV4) -> Result<(), String> {
+    crate::borrow_memo_v1::cached::<AttackerKeyV45, AbilitySourceContractV4, _>(
+        state,
+        source,
+        || crate::high_society_hunter_v1::validate_source(state, source),
+    )
+}
+
+fn find_source(state: &GameState, capture: u64) -> Result<(AbilitySourceContractV4, bool), String> {
     let at = usize::try_from(capture).map_err(|_| "Hunter capture exceeds usize")?;
     let (source, attack) = match state.engine.event_history.get(at) {
         Some(CommittedEvent::HighSocietyHunterAttackCaptureV1 { source, .. }) => {
-            crate::high_society_hunter_v1::validate_source(state, *source)?;
+            attacker(state, *source)?;
             (*source, true)
         }
         Some(CommittedEvent::ControlledCreatureDeathCaptureV1 {
@@ -152,12 +175,10 @@ pub(crate) fn captures(state: &GameState) -> Vec<u64> {
     state
         .engine
         .event_history
-        .scan_for_v1(&[
+        .of_kinds_v2(&[
             EventKindV1::ControlledCreatureDeathCaptureV1,
             EventKindV1::HighSocietyHunterAttackCaptureV1,
         ])
-        .iter()
-        .enumerate()
         .filter_map(|(at, e)| match e {
             CommittedEvent::HighSocietyHunterAttackCaptureV1 { .. } => Some(at as u64),
             CommittedEvent::ControlledCreatureDeathCaptureV1 { source, .. }
@@ -173,12 +194,10 @@ fn collected(state: &GameState, capture: u64) -> Vec<usize> {
     state
         .engine
         .event_history
-        .scan_for_v1(&[
+        .of_kinds_v2(&[
             EventKindV1::ControlledCreatureDeathCaptureCollectedV1,
             EventKindV1::HighSocietyHunterAttackCollectedV1,
         ])
-        .iter()
-        .enumerate()
         .filter_map(|(at, e)| match e {
             CommittedEvent::HighSocietyHunterAttackCollectedV1 {
                 capture_history_index,
@@ -189,6 +208,186 @@ fn collected(state: &GameState, capture: u64) -> Vec<usize> {
             _ => None,
         })
         .collect()
+}
+
+/// What `validate_inner` looks up about the captures and the Hunter rows,
+/// gathered in one pass over each instead of a scan of the whole history per
+/// capture and per row. Every list keeps history order, so each lookup gives
+/// what the scan it replaces gave.
+#[derive(Default)]
+struct IndexV45<'a> {
+    captures: Vec<u64>,
+    /// Collection positions, by capture.
+    collected: HashMap<u64, Vec<usize>>,
+    /// Every Hunter row, with its position.
+    rows: Vec<(u64, &'a JournalV45)>,
+    /// `Published` rows, by capture.
+    published: HashMap<u64, Vec<(u64, &'a StackItem)>>,
+    /// `RemovalInput` rows, by publication.
+    removed: HashMap<u64, Vec<(u64, &'a StackItem, bool)>>,
+    /// `Closed` rows, by removal.
+    closed: HashMap<u64, Vec<(u64, u64, Option<u64>)>>,
+    /// `Menu` and `DrawInput` rows, by removal.
+    phases: HashMap<u64, usize>,
+    /// The last `SelectionInput` answering each stack item, and its position.
+    last_selection: HashMap<crate::ids::StackItemId, (u64, &'a EffectContinuation)>,
+    /// The last `Menu` of each removal, and its position.
+    last_menu: HashMap<u64, (u64, &'a EffectContinuation)>,
+    /// `Closed` rows naming each operation.
+    closing: HashMap<u64, usize>,
+    /// Rows naming each row as their input, by the consumer's kind: a
+    /// `SelectionInput` names a menu, a `CostInput` an answer, a
+    /// `CostOperation` a cost input and a `DrawOperation` a draw input.
+    consumers: HashMap<(ConsumerV45, u64), usize>,
+}
+
+/// The kind of row that consumes another.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum ConsumerV45 {
+    Selection,
+    Cost,
+    CostOperation,
+    DrawOperation,
+}
+
+impl<'a> IndexV45<'a> {
+    fn new(state: &'a GameState) -> Self {
+        let history = &state.engine.event_history;
+        let mut index = Self {
+            captures: captures(state),
+            ..Self::default()
+        };
+        for (at, event) in history.of_kinds_v2(&[
+            EventKindV1::ControlledCreatureDeathCaptureCollectedV1,
+            EventKindV1::HighSocietyHunterAttackCollectedV1,
+        ]) {
+            if let CommittedEvent::HighSocietyHunterAttackCollectedV1 {
+                capture_history_index,
+            }
+            | CommittedEvent::ControlledCreatureDeathCaptureCollectedV1 {
+                capture_history_index,
+            } = event
+            {
+                index
+                    .collected
+                    .entry(*capture_history_index)
+                    .or_default()
+                    .push(at);
+            }
+        }
+        for (at, event) in history.of_kinds_v2(&[EventKindV1::HighSocietyHunterJournalV45]) {
+            let CommittedEvent::HighSocietyHunterJournalV45 { journal } = event else {
+                continue;
+            };
+            let at = at as u64;
+            let journal = journal.as_ref();
+            index.rows.push((at, journal));
+            match journal {
+                JournalV45::Published { capture, item } => {
+                    index
+                        .published
+                        .entry(*capture)
+                        .or_default()
+                        .push((at, item.as_ref()));
+                }
+                JournalV45::RemovalInput {
+                    publication,
+                    item,
+                    countered,
+                } => {
+                    index.removed.entry(*publication).or_default().push((
+                        at,
+                        item.as_ref(),
+                        *countered,
+                    ));
+                }
+                JournalV45::Menu { removal, pending } => {
+                    *index.phases.entry(*removal).or_default() += 1;
+                    index.last_menu.insert(*removal, (at, pending.as_ref()));
+                }
+                JournalV45::DrawInput { removal, .. } => {
+                    *index.phases.entry(*removal).or_default() += 1;
+                }
+                JournalV45::SelectionInput { menu, after, .. } => {
+                    index
+                        .last_selection
+                        .insert(after.resolving_item.v4.stack_item_id, (at, after.as_ref()));
+                    index.consume(ConsumerV45::Selection, *menu);
+                }
+                JournalV45::CostInput { selection, .. } => {
+                    index.consume(ConsumerV45::Cost, *selection);
+                }
+                JournalV45::CostOperation { input, .. } => {
+                    index.consume(ConsumerV45::CostOperation, *input);
+                }
+                JournalV45::DrawOperation { input, .. } => {
+                    index.consume(ConsumerV45::DrawOperation, *input);
+                }
+                JournalV45::Closed { removal, operation } => {
+                    index
+                        .closed
+                        .entry(*removal)
+                        .or_default()
+                        .push((at, *removal, *operation));
+                    if let Some(reference) = operation {
+                        *index.closing.entry(*reference).or_default() += 1;
+                    }
+                }
+            }
+        }
+        index
+    }
+
+    fn consume(&mut self, consumer: ConsumerV45, input: u64) {
+        *self.consumers.entry((consumer, input)).or_default() += 1;
+    }
+
+    fn collected(&self, capture: u64) -> &[usize] {
+        self.collected.get(&capture).map_or(&[], Vec::as_slice)
+    }
+
+    fn published(&self, capture: u64) -> &[(u64, &'a StackItem)] {
+        self.published.get(&capture).map_or(&[], Vec::as_slice)
+    }
+
+    fn removed(&self, publication: u64) -> &[(u64, &'a StackItem, bool)] {
+        self.removed.get(&publication).map_or(&[], Vec::as_slice)
+    }
+
+    fn closed(&self, removal: u64) -> &[(u64, u64, Option<u64>)] {
+        self.closed.get(&removal).map_or(&[], Vec::as_slice)
+    }
+
+    /// The pending continuation of the last row that is either the answer
+    /// for `item` or the menu of `removal`.
+    fn expected(
+        &self,
+        item: crate::ids::StackItemId,
+        removal: u64,
+    ) -> Option<&'a EffectContinuation> {
+        match (self.last_selection.get(&item), self.last_menu.get(&removal)) {
+            (Some(&(answer, after)), Some(&(menu, pending))) => {
+                Some(if answer > menu { after } else { pending })
+            }
+            (Some(&(_, after)), None) => Some(after),
+            (None, Some(&(_, pending))) => Some(pending),
+            (None, None) => None,
+        }
+    }
+
+    /// How many rows of the kind that consumes `row` name the row at `at`:
+    /// answers of a menu, cost inputs of an answer, cost operations of a
+    /// cost input, draw operations of a draw input. No other row has one.
+    fn consumers(&self, at: u64, row: &JournalV45) -> usize {
+        let consumer = match row {
+            JournalV45::Menu { .. } => ConsumerV45::Selection,
+            JournalV45::SelectionInput { .. } => ConsumerV45::Cost,
+            JournalV45::CostInput { .. } => ConsumerV45::CostOperation,
+            JournalV45::DrawInput { .. } => ConsumerV45::DrawOperation,
+            _ => return 0,
+        };
+        self.consumers.get(&(consumer, at)).copied().unwrap_or(0)
+    }
 }
 pub(crate) fn selected(item: &StackItem) -> bool {
     item.kind == StackItemKind::TriggeredAbility
@@ -204,9 +403,7 @@ fn publication<'a>(state: &'a GameState, item: &StackItem) -> Result<(u64, &'a S
     let matches = state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::HighSocietyHunterJournalV45])
         .filter_map(|(at, e)| match e {
             CommittedEvent::HighSocietyHunterJournalV45 { journal } => match journal.as_ref() {
                 JournalV45::Published { item: original, .. }
@@ -398,9 +595,7 @@ pub(crate) fn linked_paid_incarnation(
     for (at, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::HighSocietyHunterJournalV45])
     {
         let CommittedEvent::HighSocietyHunterJournalV45 { journal } = event else {
             continue;
@@ -422,7 +617,7 @@ pub(crate) fn linked_paid_incarnation(
         let Some(chosen) = selected.first() else {
             return Ok(None);
         };
-        let interval = &state.engine.event_history[at + 1..];
+        let interval = state.engine.event_history.range_v2(at + 1..);
         let sacrificed = interval.iter().position(|event| {
             matches!(event,
             CommittedEvent::Sacrificed { object, controller_before, .. }
@@ -440,6 +635,7 @@ pub(crate) fn linked_paid_incarnation(
     Ok(None)
 }
 fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), String> {
+    let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
     if state
         .engine
         .event_log
@@ -467,9 +663,10 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
                 .flat_map(|p| p.deferred_triggers.iter()),
         )
         .collect::<Vec<&PendingTrigger>>();
-    for capture in captures(state) {
+    let index = IndexV45::new(state);
+    for &capture in &index.captures {
         let (source, attack) = source_at(state, capture)?;
-        let collections = collected(state, capture);
+        let collections = index.collected(capture);
         let fresh = state
             .engine
             .event_log
@@ -480,23 +677,7 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
             .iter()
             .filter(|p| p.effect == bound(capture, attack))
             .collect::<Vec<_>>();
-        let pubs = state
-            .engine
-            .event_history
-            .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
-            .iter()
-            .enumerate()
-            .filter_map(|(at, e)| match e {
-                CommittedEvent::HighSocietyHunterJournalV45 { journal } => match journal.as_ref() {
-                    JournalV45::Published {
-                        capture: original,
-                        item,
-                    } if *original == capture => Some((at as u64, item.as_ref())),
-                    _ => None,
-                },
-                _ => None,
-            })
-            .collect::<Vec<_>>();
+        let pubs = index.published(capture);
         if collections.is_empty() {
             if fresh != 1 || !held.is_empty() || !pubs.is_empty() {
                 return Err("Hunter fresh mandatory capture lost its collection owner".into());
@@ -522,7 +703,7 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
                 return Err("Hunter waiting owner changed original full source".into());
             }
         }
-        let [(pub_at, original)] = pubs.as_slice() else {
+        let [(pub_at, original)] = pubs else {
             if pubs.is_empty() && held.len() == 1 {
                 continue;
             }
@@ -543,42 +724,14 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
             .iter()
             .filter(|i| i.v4.stack_item_id == original.v4.stack_item_id)
             .collect::<Vec<_>>();
-        let removed = state
-            .engine
-            .event_history
-            .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
-            .iter()
-            .enumerate()
-            .filter_map(|(at, e)| match e {
-                CommittedEvent::HighSocietyHunterJournalV45 { journal } => match journal.as_ref() {
-                    JournalV45::RemovalInput {
-                        publication,
-                        item,
-                        countered,
-                    } if publication == pub_at => Some((at as u64, item.as_ref(), *countered)),
-                    _ => None,
-                },
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        let closed = state
-            .engine
-            .event_history
-            .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
-            .iter()
-            .enumerate()
-            .filter_map(|(at, e)| match e {
-                CommittedEvent::HighSocietyHunterJournalV45 { journal } => match journal.as_ref() {
-                    JournalV45::Closed { removal, operation }
-                        if removed.iter().any(|(i, _, _)| i == removal) =>
-                    {
-                        Some((at as u64, *removal, *operation))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            })
-            .collect::<Vec<_>>();
+        let removed = index.removed(*pub_at);
+        // The closures of the removals: with two removals this fails below
+        // whatever they are, so only a single removal's are needed.
+        let closed: &[(u64, u64, Option<u64>)] = match removed {
+            [] => &[],
+            [(input, ..)] => index.closed(*input),
+            _ => return Err("Hunter genuine removal/completion was duplicated".into()),
+        };
         if removed.len() > 1 || closed.len() > 1 {
             return Err("Hunter genuine removal/completion was duplicated".into());
         }
@@ -586,9 +739,7 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
             if *input <= *pub_at || unstarted(item) != **original {
                 return Err("Hunter actual removal input changed original publication".into());
             }
-            let phases = state.engine.event_history.scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45]).iter().filter(|event| matches!(event,
-                CommittedEvent::HighSocietyHunterJournalV45{journal} if matches!(journal.as_ref(),
-                    JournalV45::Menu{removal,..}|JournalV45::DrawInput{removal,..} if removal==input))).count();
+            let phases = index.phases.get(input).copied().unwrap_or(0);
             if phases != usize::from(!*countered) {
                 return Err(
                     "Hunter initial resolution lost or duplicated its genuine phase".into(),
@@ -627,28 +778,8 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
             if *countered {
                 return Err("Hunter actual counter removal lacks its closure".into());
             }
-            let expected = state
-                .engine
-                .event_history
-                .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
-                .iter()
-                .rev()
-                .find_map(|e| match e {
-                    CommittedEvent::HighSocietyHunterJournalV45 { journal } => match journal
-                        .as_ref()
-                    {
-                        JournalV45::SelectionInput { after, .. }
-                            if after.resolving_item.v4.stack_item_id == item.v4.stack_item_id =>
-                        {
-                            Some(after.as_ref())
-                        }
-                        JournalV45::Menu { removal, pending } if removal == input => {
-                            Some(pending.as_ref())
-                        }
-                        _ => None,
-                    },
-                    _ => None,
-                })
+            let expected = index
+                .expected(item.v4.stack_item_id, *input)
                 .ok_or("Hunter started row erased its mandatory menu/answer stage")?;
             if state.engine.pending_effect.as_ref() != Some(expected) {
                 return Err("Hunter pending continuation changed or disappeared".into());
@@ -684,25 +815,14 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
         }
     }
     for pending in waiting {
-        if binding(&pending.effect).is_some_and(|(capture, _)| !captures(state).contains(&capture))
-        {
+        if binding(&pending.effect).is_some_and(|(capture, _)| !index.captures.contains(&capture)) {
             return Err("Hunter waiting root has no original occurrence".into());
         }
     }
-    for (at, event) in state
-        .engine
-        .event_history
-        .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
-        .iter()
-        .enumerate()
-    {
-        let CommittedEvent::HighSocietyHunterJournalV45 { journal: j } = event else {
-            continue;
-        };
-        let at = at as u64;
-        let previous = match j.as_ref() {
+    for &(at, j) in &index.rows {
+        let previous = match j {
             JournalV45::Published { capture, .. } => {
-                if !captures(state).contains(capture) {
+                if !index.captures.contains(capture) {
                     return Err("Hunter publication names foreign capture".into());
                 }
                 None
@@ -748,7 +868,7 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
                 Some((*selection, 3))
             }
             JournalV45::CostOperation { input, .. } | JournalV45::DrawOperation { input, .. } => {
-                let uses=state.engine.event_history.scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45]).iter().filter(|e|matches!(e,CommittedEvent::HighSocietyHunterJournalV45{journal}if matches!(journal.as_ref(),JournalV45::Closed{operation:Some(reference),..}if *reference==at))).count();
+                let uses = index.closing.get(&at).copied().unwrap_or(0);
                 if uses != 1 {
                     return Err("Hunter actual operation was erased, replayed or unused".into());
                 }
@@ -794,33 +914,9 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
                 return Err("Hunter committed custody refers to foreign operation kind".into());
             }
         }
-        let uses = state
-            .engine
-            .event_history
-            .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
-            .iter()
-            .filter(|event| {
-                let CommittedEvent::HighSocietyHunterJournalV45 { journal: next } = event else {
-                    return false;
-                };
-                match (j.as_ref(), next.as_ref()) {
-                    (JournalV45::Menu { .. }, JournalV45::SelectionInput { menu, .. }) => {
-                        *menu == at
-                    }
-                    (
-                        JournalV45::SelectionInput { .. },
-                        JournalV45::CostInput { selection, .. },
-                    ) => *selection == at,
-                    (JournalV45::CostInput { .. }, JournalV45::CostOperation { input, .. })
-                    | (JournalV45::DrawInput { .. }, JournalV45::DrawOperation { input, .. }) => {
-                        *input == at
-                    }
-                    _ => false,
-                }
-            })
-            .count();
+        let uses = index.consumers(at, j);
         let owned_in_progress = if uses == 0 {
-            if let JournalV45::CostInput { pending, .. } = j.as_ref() {
+            if let JournalV45::CostInput { pending, .. } = j {
                 linked_cost_checkpoint(state, at, pending)?
             } else {
                 false
@@ -830,7 +926,7 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
         };
         if uses > 1
             || matches!(
-                j.as_ref(),
+                j,
                 JournalV45::CostInput { .. } | JournalV45::DrawInput { .. }
             ) && uses != 1
                 && !owned_in_progress
@@ -920,7 +1016,7 @@ fn validate_operation(
         {
             return Err("Hunter selected consequence changed printed root/cardinality".into());
         }
-        let source_moves = state.engine.event_history[capture as usize + 1..*input as usize]
+        let source_moves = state.engine.event_history.range_v2(capture as usize + 1..*input as usize)
             .iter()
             .filter(|e| matches!(e,CommittedEvent::ZoneChange{object,..}|CommittedEvent::Draw{object:Some(object),..}if *object==source.source))
             .count();
@@ -936,7 +1032,10 @@ fn validate_operation(
                 "Hunter live original source was rewritten as absent without a departure".into(),
             );
         }
-        let last_source_zone = state.engine.event_history[capture as usize + 1..*input as usize]
+        let last_source_zone = state
+            .engine
+            .event_history
+            .range_v2(capture as usize + 1..*input as usize)
             .iter()
             .rev()
             .find_map(|event| match event {
@@ -956,7 +1055,10 @@ fn validate_operation(
         let mut actual_sacrifices = Vec::new();
         let mut actual_departures = Vec::new();
         let mut actual_counters = Vec::new();
-        for (relative, event) in state.engine.event_history[*input as usize + 1..operation as usize]
+        for (relative, event) in state
+            .engine
+            .event_history
+            .range_v2(*input as usize + 1..operation as usize)
             .iter()
             .enumerate()
         {
@@ -1063,7 +1165,7 @@ fn validate_operation(
         {
             return Err("Hunter death draw changed original beneficiary/top/empty attempt".into());
         }
-        let draws=state.engine.event_history[*input as usize+1..operation as usize].iter().filter(|event|matches!(event,CommittedEvent::Draw{player,..}if *player==source.controller)).count();
+        let draws=state.engine.event_history.range_v2(*input as usize+1..operation as usize).iter().filter(|event|matches!(event,CommittedEvent::Draw{player,..}if *player==source.controller)).count();
         if draws != 1 {
             return Err("Hunter draw input was consumed more than once".into());
         }
@@ -1277,7 +1379,10 @@ pub(crate) fn begin_owned(
         state.stack.push(owner.expected.clone());
         crate::effect::execute(&recipe(false), ctx, state);
         remove_borrowed(state, owner)?;
-        let draws = state.engine.event_history[start..]
+        let draws = state
+            .engine
+            .event_history
+            .range_v2(start..)
             .iter()
             .enumerate()
             .filter_map(|(i, e)| {
@@ -1415,7 +1520,13 @@ pub(crate) fn resume_owned(
     let mut sacrifice = None;
     let mut departure = None;
     let mut counter = None;
-    for (relative, event) in state.engine.event_history[start..].iter().enumerate() {
+    for (relative, event) in state
+        .engine
+        .event_history
+        .range_v2(start..)
+        .iter()
+        .enumerate()
+    {
         let at = (start + relative) as u64;
         match event {
             CommittedEvent::Sacrificed { object, .. } if Some(*object) == selected_object => {

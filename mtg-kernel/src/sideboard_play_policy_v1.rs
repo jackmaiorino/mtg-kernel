@@ -180,6 +180,60 @@ pub struct FrozenPlayDecisionScoresV1 {
     pub value: f32,
 }
 
+/// Caller-owned storage for the row-cached form of
+/// [`FrozenPlayPolicyV1::score_replay_tensor_ref_v1`]: a forward scratch and
+/// the exact row cache of the model last scored with it. One per replay
+/// worker; nothing in it is shared between threads.
+#[derive(Default)]
+pub(crate) struct ReplayForwardRowsV1 {
+    scratch: NativePolicyValueForwardScratchV1,
+    /// The model `rows` was filled by. Holding it keeps its allocation alive,
+    /// so its address identifies its parameters for as long as the rows
+    /// exist: a policy whose parameters are replaced while this shares its
+    /// model moves to a new allocation (`Arc::make_mut`), never to rows
+    /// computed with the old values.
+    model: Option<std::sync::Arc<NativePolicyValueNetV1>>,
+    rows: crate::native_policy_value_net_v1::ForwardRowCacheV1,
+}
+
+/// The input contract a stored tensor replays under
+/// (`FrozenPlayPolicyV1::forward_replay_view_v1`).
+#[derive(Clone, Copy)]
+enum ReplayForwardPathV1 {
+    V3,
+    V4,
+    V8,
+}
+
+impl ReplayForwardRowsV1 {
+    /// The scratch and `model`'s row cache, emptied first when its rows were
+    /// filled by another model.
+    fn bind_v1(
+        &mut self,
+        model: &std::sync::Arc<NativePolicyValueNetV1>,
+    ) -> (
+        &mut NativePolicyValueForwardScratchV1,
+        &mut crate::native_policy_value_net_v1::ForwardRowCacheV1,
+    ) {
+        let held = self
+            .model
+            .as_ref()
+            .is_some_and(|held| std::sync::Arc::ptr_eq(held, model));
+        if !held {
+            self.rows = Default::default();
+            self.model = Some(std::sync::Arc::clone(model));
+        }
+        (&mut self.scratch, &mut self.rows)
+    }
+
+    /// Each row layer's rows served and rows computed since the rows were
+    /// last emptied (`ForwardRowCacheV1::counts_v1`).
+    #[cfg(test)]
+    pub(crate) fn counts_v1(&self) -> [(u64, u64); 5] {
+        self.rows.counts_v1()
+    }
+}
+
 /// The only input to the model is the existing actor-relative flat projection.
 /// This type exposes immutable copied embeddings, never mutable play weights.
 pub struct FrozenPlayPolicyV1 {
@@ -1855,6 +1909,26 @@ impl FrozenPlayPolicyV1 {
         common: NativeFlatDecisionTensorV2,
         pairing: &[i64],
     ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        self.score_replay_tensor_ref_v1(generation, &common, pairing, None)
+    }
+
+    /// [`Self::score_replay_tensor_v1`] of a borrowed tensor. With `rows`,
+    /// net-8's forward goes through that storage's exact row cache, as
+    /// collection's forward does (`cached_forward_v1`): the same checks in
+    /// the same order, the same errors and the same output, bit for bit.
+    /// Consecutive decisions of a game repeat most of their rows, which are
+    /// then copied instead of computed. The cached forward is the one that
+    /// produced the stored outputs, so it is for rows that another forward
+    /// checks as well; without `rows` this is the reference forward. Native S
+    /// has no row cache, and `MTG_KERNEL_ROW_CACHE=0` turns it off: both
+    /// take the reference forward.
+    pub(crate) fn score_replay_tensor_ref_v1(
+        &self,
+        generation: FreshLineageGenerationV1,
+        common: &NativeFlatDecisionTensorV2,
+        pairing: &[i64],
+        rows: Option<&mut ReplayForwardRowsV1>,
+    ) -> Result<FrozenPlayDecisionScoresV1, String> {
         // FlatV8 (`into_flat_v8_v1`): its own tensors and pairing relation,
         // scored by the V8 inclusion net; every other policy has no relation.
         if self
@@ -1866,32 +1940,17 @@ impl FrozenPlayPolicyV1 {
                 generation == FreshLineageGenerationV1::V4 && self.input_contract.is_none(),
                 "FlatV8 replays are of the V4 generation without input contract",
             )?;
-            let output = self
-                .model
-                .forward_feature_transfer_v8_mode(
-                    crate::native_flat_tensorizer_v8::encoded_decision_view_v8(&common, pairing),
-                    self.training_math.forward_activation_v1(),
-                )
-                .map_err(|e| e.to_string())?;
-            return Ok(FrozenPlayDecisionScoresV1 {
-                logits: output.logits,
-                value: output.value,
-            });
+            return self.forward_replay_view_v1(
+                ReplayForwardPathV1::V8,
+                crate::native_flat_tensorizer_v8::encoded_decision_view_v8(common, pairing),
+                rows,
+            );
         }
         require(
             pairing.is_empty(),
             "only a FlatV8 policy replays a pairing relation",
         )?;
-        let Some(contract) = &self.input_contract else {
-            return match generation {
-                FreshLineageGenerationV1::V3 => {
-                    self.score_training_tensor_v3(&NativeFlatDecisionTensorV3 { common })
-                }
-                FreshLineageGenerationV1::V4 => {
-                    self.score_training_tensor_v4(&NativeFlatDecisionTensorV4 { common })
-                }
-            };
-        };
+        // With no contract, exactly `score_training_tensor_v3` or `_v4`.
         match generation {
             FreshLineageGenerationV1::V3 => require(
                 self.successor.is_some(),
@@ -1902,23 +1961,71 @@ impl FrozenPlayPolicyV1 {
                 "training requires explicit V4 successor features",
             )?,
         }
-        crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1()
-            .map_err(|e| format!("no-state-digest contract: {e:?}"))?;
-        require(
-            common
-                .state
-                .get(contract.columns.clone())
-                .is_some_and(|digest| digest.iter().all(|value| value.to_bits() == 0)),
-            "no-state-digest contract: a stored state-digest input is not +0.0",
-        )?;
+        if let Some(contract) = &self.input_contract {
+            crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1()
+                .map_err(|e| format!("no-state-digest contract: {e:?}"))?;
+            require(
+                common
+                    .state
+                    .get(contract.columns.clone())
+                    .is_some_and(|digest| digest.iter().all(|value| value.to_bits() == 0)),
+                "no-state-digest contract: a stored state-digest input is not +0.0",
+            )?;
+        }
+        let view =
+            crate::expanded_deck_training_v1::encoded_decision_view_generic_v1(common, generation);
         match generation {
             FreshLineageGenerationV1::V3 => {
-                self.forward_training_tensor_v3(&NativeFlatDecisionTensorV3 { common })
+                self.forward_replay_view_v1(ReplayForwardPathV1::V3, view, rows)
             }
             FreshLineageGenerationV1::V4 => {
-                self.forward_training_tensor_v4(&NativeFlatDecisionTensorV4 { common })
+                // As `forward_training_tensor_v4`: native S scores V4 rows.
+                if let Some(s_model) = &self.s_model {
+                    let (logits, value) = s_model.score_tensor_v1(common)?;
+                    return Ok(FrozenPlayDecisionScoresV1 { logits, value });
+                }
+                self.forward_replay_view_v1(ReplayForwardPathV1::V4, view, rows)
             }
         }
+    }
+
+    /// Net-8's forward of one stored tensor's `view` under `path`'s input
+    /// contract: the reference forward (`forward_training_tensor_v3`, `_v4`
+    /// and the FlatV8 replay), or with `rows` the same forward through the
+    /// exact row cache.
+    fn forward_replay_view_v1(
+        &self,
+        path: ReplayForwardPathV1,
+        view: crate::native_policy_value_net_v1::NativeEncodedDecisionViewV1<'_>,
+        rows: Option<&mut ReplayForwardRowsV1>,
+    ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        let mode = self.training_math.forward_activation_v1();
+        if let Some(rows) = rows.filter(|_| row_cache_enabled_v1()) {
+            let config = match path {
+                ReplayForwardPathV1::V3 => self.model.feature_transfer_config_v3(),
+                ReplayForwardPathV1::V4 => self.model.feature_transfer_config_v4(),
+                ReplayForwardPathV1::V8 => self.model.feature_transfer_config_v8(),
+            };
+            let (scratch, rows) = rows.bind_v1(&self.model);
+            let output = self
+                .model
+                .forward_rows_cached_with_scratch_v1(view, config, scratch, rows, mode)
+                .map_err(|e| e.to_string())?;
+            return Ok(FrozenPlayDecisionScoresV1 {
+                logits: output.logits.to_vec(),
+                value: output.value,
+            });
+        }
+        let output = match path {
+            ReplayForwardPathV1::V3 => self.model.forward_feature_transfer_v3_mode(view, mode),
+            ReplayForwardPathV1::V4 => self.model.forward_feature_transfer_v4_mode(view, mode),
+            ReplayForwardPathV1::V8 => self.model.forward_feature_transfer_v8_mode(view, mode),
+        }
+        .map_err(|e| e.to_string())?;
+        Ok(FrozenPlayDecisionScoresV1 {
+            logits: output.logits,
+            value: output.value,
+        })
     }
 
     fn forward_training_tensor_v4(
@@ -2659,6 +2766,19 @@ impl FrozenPlayPolicyV1 {
     /// then S's, which reads no training math.
     pub(crate) fn s_model_v1(&self) -> Option<&crate::s_transformer_v1::SModelV1> {
         self.s_model.as_deref()
+    }
+
+    /// Native S's model when this policy's replay of a V4 row without a
+    /// pairing relation (`score_replay_tensor_ref_v1`) is exactly S's forward
+    /// of the stored tensor: S on a V4 policy that is not FlatV8, without the
+    /// no-state-digest contract.
+    pub(crate) fn s_plain_v4_replay_v1(&self) -> Option<&crate::s_transformer_v1::SModelV1> {
+        let plain = self
+            .fresh_successor
+            .as_ref()
+            .is_some_and(|fresh| !fresh.flat_v8)
+            && self.input_contract.is_none();
+        self.s_model.as_deref().filter(|_| plain)
     }
 
     /// Shares a worker's prediction cache with this policy (and its later

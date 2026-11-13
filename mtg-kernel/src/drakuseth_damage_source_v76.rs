@@ -136,15 +136,21 @@ fn publication(state: &GameState, id: StackItemId) -> Result<(u32, &StackItem), 
             "Drakuseth published source, positional targets or printed program changed".into(),
         );
     }
-    crate::engine::validate_historical_ability_source_contract(state, source)?;
+    crate::sampled_history_v1::validate_source(state, at as usize, source)?;
     // Consistency with a genuine declaration is not an occurrence join. The
     // publication itself is emitted by native placement, never reconstructed
     // from this descriptive history or its cardinality.
-    if !state.engine.event_history[..at as usize].iter().any(|e| {
-        matches!(e,
+    if !state
+        .engine
+        .event_history
+        .range_v2(..at as usize)
+        .iter()
+        .any(|e| {
+            matches!(e,
         E::DeclaredAttacker{source:s,source_zone_change_count:g,controller:c}
         if *s==source.source && *g==source.zone_change_count && *c==source.controller)
-    }) {
+        })
+    {
         return Err("Drakuseth publication lacks its original declaration".into());
     }
     Ok((at, item))
@@ -214,7 +220,7 @@ pub(crate) fn before_departure(state: &mut GameState, id: ObjectId) {
     // Freeze an entire simultaneous departure set before the first move.
     if rows(state).any(|(i,j)|matches!(j,JournalV76::Departure{facts,..}
         if facts.source.source==id && facts.source.zone_change_count==live.zone_change_count
-        && !state.engine.event_history[i+1..].iter().any(|e|matches!(e,E::ZoneChange{object,..}if *object==id))))
+        && !state.engine.event_history.range_v2(i+1..).iter().any(|e|matches!(e,E::ZoneChange{object,..}if *object==id))))
     {return}
     let snapshot = Box::new(live.clone());
     let facts = crate::source_power_activation_v1::capture_damage_source(state, id);
@@ -233,26 +239,32 @@ fn departure(
         || snapshot.owner != s.owner
         || snapshot.controller != s.controller
         || snapshot.zone_change_count != s.zone_change_count
-        || !state.engine.event_history[at + 1..].iter().any(|e| {
-            matches!(e,
+        || !state
+            .engine
+            .event_history
+            .range_v2(at + 1..)
+            .iter()
+            .any(|e| {
+                matches!(e,
             E::ZoneChange{object,from:Zone::Battlefield,to,controller_before}
             if *object==s.source && *to!=Zone::Battlefield && *controller_before==s.controller)
-        })
+            })
     {
         return Err("Drakuseth departure lost original incarnation or actual zone move".into());
     }
-    crate::engine::validate_historical_ability_source_contract(state, s)
+    crate::sampled_history_v1::validate_source(state, at, s)
 }
 pub(crate) fn source_facts(
     state: &GameState,
     source: AbilitySourceContractV4,
 ) -> Result<HistoricalDamageSourceV1, String> {
-    crate::engine::validate_historical_ability_source_contract(state, source)?;
+    let ordinary = crate::engine::validate_historical_ability_source_contract(state, source);
     if state.objects.try_get(source.source).is_some_and(|o| {
         o.zone == Zone::Battlefield
             && o.owner == source.owner
             && o.zone_change_count == source.zone_change_count
     }) {
+        ordinary?;
         return Ok(crate::source_power_activation_v1::capture_damage_source(
             state,
             source.source,
@@ -274,6 +286,15 @@ pub(crate) fn source_facts(
         return Err("Drakuseth exact departing source absent or duplicated".into());
     };
     departure(state, *at, snapshot, *facts)?;
+    // When the later hidden card has been sampled, the original printing
+    // must be the one authenticated by this exact native departure.
+    if ordinary.is_err()
+        && (source.card_def != facts.source.card_def
+            || source.zone != facts.source.zone
+            || !crate::sampled_history_v1::allows_rebound_source(state, *at, facts.source))
+    {
+        ordinary?;
+    }
     Ok(*facts)
 }
 pub(crate) fn damage_source(

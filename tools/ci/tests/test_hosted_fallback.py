@@ -43,7 +43,7 @@ class FallbackTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             summary = Path(directory) / "summary.md"
             env = {"GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "9", "FALLBACK_REF": "feature",
-                   "GITHUB_STEP_SUMMARY": str(summary), "GH_TOKEN": "t"}
+                   "GITHUB_STEP_SUMMARY": str(summary), "GH_TOKEN": "t", "SCOPE": "pr"}
             for jobs, dispatched in (([job(1, "failure", ["self-hosted"])], True),
                                      ([job(2, "failure", ["self-hosted"])], False)):
                 calls.clear()
@@ -52,10 +52,26 @@ class FallbackTests(unittest.TestCase):
                 posts = [c for c in calls if c[0] == "POST"]
                 if dispatched:
                     assert posts == [("POST", "/repos/o/r/actions/workflows/ci.yml/dispatches",
-                                      {"ref": "feature", "inputs": {"windows_runner": '"windows-2025"'}})]
+                                      {"ref": "feature", "inputs": {"windows_runner": '"windows-2025"',
+                                                                     "fallback_scope": "windows-pr"}})]
                 else:
                     assert posts == []
             assert "dispatched ci.yml" in summary.read_text()
+
+    def test_a_rerun_covers_only_the_windows_part_of_the_group_set(self):
+        assert fb.fallback_scope("pr") == "windows-pr"
+        assert fb.fallback_scope("windows-complement") == "windows-complement"
+        assert fb.fallback_scope("full") == "windows-full"
+        assert fb.fallback_scope(None) == "windows-full"
+        assert fb.fallback_scope("something-new") == "windows-full"
+        text = WORKFLOW.read_text(encoding="utf-8")
+        # the workflow accepts every value the script sends, and the fallback job hands it the set
+        step = text[text.index("      - name: Choose the group set"):text.index("      - name: Check out merge ref")]
+        for value in set(fb.FALLBACK_SCOPES.values()):
+            assert value in step
+        block = text[text.index("  hosted-fallback:"):]
+        assert "SCOPE: ${{ needs.detect-changes.outputs.scope }}" in block
+        assert "detect-changes" in block.split("steps:")[0]
 
     def test_the_workflow_routes_by_the_input_and_never_falls_back_twice(self):
         text = WORKFLOW.read_text(encoding="utf-8")
@@ -63,10 +79,15 @@ class FallbackTests(unittest.TestCase):
         # every place that chooses the self-hosted pool honors the dispatch input first
         choice = "vars.MTG_CI_WINDOWS_RUNNER || '\"windows-2025\"'"
         assert text.count(choice) == 3
-        assert text.count("inputs.windows_runner || " + choice) == 3
+        assert text.count("inputs.windows_runner || " + choice) == 2
+        # the Rust groups first take the pull request slice's runner
+        pr_slice = ("inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON("
+                    "vars.MTG_CI_PR_WINDOWS_GROUPS || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || " + choice)
+        assert text.count(pr_slice) == 1
         block = text[text.index("  hosted-fallback:"):]
         assert "inputs.windows_runner == ''" in block.split("steps:")[0]
         assert "contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted')" in block.split("steps:")[0]
+        assert "contains(vars.MTG_CI_PR_WINDOWS_RUNNER || '', 'self-hosted')" in block.split("steps:")[0]
         assert "actions: write" in block.split("steps:")[0]
         for needed in ("rust-test-groups", "rust-limited-groups", "python-tests"):
             assert needed in block.split("steps:")[0]

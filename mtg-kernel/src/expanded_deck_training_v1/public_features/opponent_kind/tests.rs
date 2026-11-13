@@ -228,11 +228,17 @@ fn public_runtime_rules_keep_delve_refusal_in_collection_and_opponent_replay() {
         )
         .err()
         .expect("Delve collection must be refused");
-        assert!(error.contains("graveyard order (Delve)"), "{error}");
+        assert_eq!(
+            error,
+            "resolution-boundary profile refused: a card in this game reads graveyard order"
+        );
         let record =
             OpponentRecordV1::new("public_checkpoint", 1, json!({"fixture":true}), Vec::new());
         let error = record.replay_menus(&episode, &[]).unwrap_err();
-        assert!(error.contains("graveyard order (Delve)"), "{error}");
+        assert_eq!(
+            error,
+            "resolution-boundary profile refused: a card in this game reads graveyard order"
+        );
     }
 }
 

@@ -310,8 +310,9 @@ fn live_ability_source(ctx: &ExecCtx, state: &GameState) -> Option<ObjectId> {
 }
 
 /// The resolving ability's source, if it is still the incarnation that
-/// created the ability, in its owner's graveyard.
-fn graveyard_ability_source(ctx: &ExecCtx, state: &GameState) -> Option<ObjectId> {
+/// created the ability, in its owner's graveyard. Wave S1l's Triumph of
+/// Saint Katherine uses it too.
+pub(crate) fn graveyard_ability_source(ctx: &ExecCtx, state: &GameState) -> Option<ObjectId> {
     let contract = ctx.ability_source_contract?;
     let live = state.objects.try_get(contract.source)?;
     // A graveyard ability is frozen with its graveyard incarnation; a dies
@@ -640,7 +641,7 @@ const YOUR_UPKEEP: TriggerCondition = TriggerCondition::BeginningOfUpkeep {
 };
 
 /// Ravenous Rats: "target opponent discards a card."
-fn rats_enters() -> EffectOp {
+pub(crate) fn rats_enters() -> EffectOp {
     EffectOp::DiscardCards {
         player: PlayerRef::Target(0),
         count: 1,

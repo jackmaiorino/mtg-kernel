@@ -92,11 +92,11 @@ fn capture_at(state: &GameState, index: usize) -> Result<AbilitySourceContractV4
     if declaration>=index || !owns_definition(source.card_def) || source.zone!=Zone::Battlefield
         || !matches!(state.engine.event_history.get(declaration),Some(CommittedEvent::DeclaredAttacker{source:id,source_zone_change_count,controller}) if *id==source.source && *source_zone_change_count==source.zone_change_count && *controller==source.controller)
         || source.controller!=*active_player
-        || state.engine.event_history[..index].iter().any(|e|matches!(e,CommittedEvent::HighSocietyHunterAttackCaptureV1{declaration_history_index:old,..} if old==declaration_history_index))
+        || state.engine.event_history.of_kinds_v2(&[EventKindV1::HighSocietyHunterAttackCaptureV1]).take_while(|(at, _)| *at < index).any(|(_, e)|matches!(e,CommittedEvent::HighSocietyHunterAttackCaptureV1{declaration_history_index:old,..} if old==declaration_history_index))
     {return Err("Hunter original attack authority changed".into())}
     crate::engine::validate_historical_ability_source_contract(state, *source)?;
     // Closed historical captures remain valid; only fresh collection needs the turn.
-    let collected=state.engine.event_history.scan_for_v1(&[EventKindV1::HighSocietyHunterAttackCollectedV1]).iter().any(|e|matches!(e,CommittedEvent::HighSocietyHunterAttackCollectedV1{capture_history_index} if *capture_history_index==index as u64));
+    let collected=state.engine.event_history.of_kinds_v2(&[EventKindV1::HighSocietyHunterAttackCollectedV1]).any(|(_, e)|matches!(e,CommittedEvent::HighSocietyHunterAttackCollectedV1{capture_history_index} if *capture_history_index==index as u64));
     if !collected && (*turn_key != state.turn_key_v1() || *active_player != state.active_player) {
         return Err("Hunter uncollected attack crossed its actual turn".into());
     }
@@ -109,10 +109,10 @@ pub(crate) fn collect_attacks(
     if !enabled() {
         return Ok(Vec::new());
     }
-    for event in state
+    for (_, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::HighSocietyHunterAttackCollectedV1])
+        .of_kinds_v2(&[EventKindV1::HighSocietyHunterAttackCollectedV1])
     {
         if let CommittedEvent::HighSocietyHunterAttackCollectedV1 {
             capture_history_index,
@@ -132,9 +132,7 @@ pub(crate) fn collect_attacks(
     let indices = state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::HighSocietyHunterAttackCaptureV1])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::HighSocietyHunterAttackCaptureV1])
         .filter_map(|(i, e)| {
             matches!(e, CommittedEvent::HighSocietyHunterAttackCaptureV1 { .. }).then_some(i)
         })
@@ -144,7 +142,7 @@ pub(crate) fn collect_attacks(
     for index in indices {
         let source = capture_at(state, index).map_err(|_| ObjectId(0))?;
         let capture = &state.engine.event_history[index];
-        let prior=state.engine.event_history.scan_for_v1(&[EventKindV1::HighSocietyHunterAttackCollectedV1]).iter().filter(|e|matches!(e,CommittedEvent::HighSocietyHunterAttackCollectedV1{capture_history_index} if *capture_history_index==index as u64)).count();
+        let prior=state.engine.event_history.of_kinds_v2(&[EventKindV1::HighSocietyHunterAttackCollectedV1]).filter(|(_, e)|matches!(e,CommittedEvent::HighSocietyHunterAttackCollectedV1{capture_history_index} if *capture_history_index==index as u64)).count();
         let current = events.iter().filter(|e| *e == capture).count();
         if prior > 1 || (prior == 0 && current != 1) || (prior == 1 && current != 0) {
             return Err(source.source);
@@ -189,9 +187,7 @@ pub(crate) fn validate_source(
     let captures = state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::HighSocietyHunterAttackCaptureV1])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::HighSocietyHunterAttackCaptureV1])
         .filter_map(|(i, e)| {
             matches!(e,CommittedEvent::HighSocietyHunterAttackCaptureV1{source:s,..} if *s==source)
                 .then_some(i)
@@ -313,12 +309,11 @@ pub(crate) fn require_legacy_supported(
     let history = state
         .engine
         .event_history
-        .scan_for_v1(&[
+        .of_kinds_v2(&[
             EventKindV1::ControlledCreatureDeathCaptureV1,
             EventKindV1::HighSocietyHunterAttackCaptureV1,
         ])
-        .iter()
-        .any(|e| match e {
+        .any(|(_, e)| match e {
             CommittedEvent::HighSocietyHunterAttackCaptureV1 { .. } => true,
             CommittedEvent::ControlledCreatureDeathCaptureV1 { source, .. } => {
                 owns_definition(source.card_def)

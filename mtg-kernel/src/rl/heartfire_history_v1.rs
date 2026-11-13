@@ -186,6 +186,7 @@ fn stack_item_public_history(
         mode_chosen: item.mode_chosen,
         madness_offer: item.madness_offer,
         kicked: item.kicked,
+        thornscape_kickers_v1: super::public_thornscape_kickers_v1(item),
         cast_method: item.v4.cast_method,
         face_index: item.v4.face_index,
         x_value: item.v4.x_value,
@@ -253,13 +254,23 @@ fn build_history_parts(
     let own_hand = state.players[acting_player.index()]
         .hand
         .iter()
-        .map(|&id| private_card(state, id, text_mode))
+        .map(|&id| private_card(state, id, text_mode, LimitedAppendixV1::Legacy))
         .collect::<Result<Vec<_>>>()?;
     Ok(HistoryParts {
         projection,
         own_hand,
-        known_library_cards: known_library_cards_v4(state, acting_player, text_mode)?,
-        known_hand_cards: known_hand_cards_v4(state, acting_player, text_mode)?,
+        known_library_cards: known_library_cards_v4(
+            state,
+            acting_player,
+            text_mode,
+            LimitedAppendixV1::Legacy,
+        )?,
+        known_hand_cards: known_hand_cards_v4(
+            state,
+            acting_player,
+            text_mode,
+            LimitedAppendixV1::Legacy,
+        )?,
         known_face_down_cards: known_face_down_cards_v1(state, acting_player, text_mode)?,
     })
 }
@@ -353,12 +364,17 @@ fn build(
             },
             creatures_attacked_this_turn: (state.creatures_attacked_this_turn_v1() != 0)
                 .then(|| state.creatures_attacked_this_turn_v1()),
-            restricted_mana: public_restricted_mana_v1(state, text_mode)?,
+            restricted_mana: public_restricted_mana_v1(
+                state,
+                text_mode,
+                LimitedAppendixV1::Legacy,
+            )?,
             surface: base.projection,
             policy_surface_context,
             foundations_combat: public_foundations_combat_v1(state)?,
             london_mulligans: public_london_mulligans_v1(state),
             public_shroud: None,
+            meddling_mage_names: None,
         },
         own_hand: base.own_hand,
         known_library_cards: base.known_library_cards,
@@ -612,7 +628,12 @@ pub(super) fn normalization_common(
                             ));
                         }
                         if seen.insert(id) {
-                            cards.push(private_card(state, id, text_mode)?);
+                            cards.push(private_card(
+                                state,
+                                id,
+                                text_mode,
+                                LimitedAppendixV1::Legacy,
+                            )?);
                         }
                     }
                     // Only observable card identity determines class order.

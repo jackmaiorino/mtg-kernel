@@ -29,9 +29,11 @@
 //!
 //! One repetition replays `execute_update_inner_v1` from `checkpoint_started`
 //! through its v2 item-for-item comparison, with the same calls in the same
-//! order: snapshot, state digest, `ParameterBitsV1` conversion and format
+//! order: the live state's tensors (`tensors_v1`, borrowed), the state digest,
+//! the checkpoint of those tensors (`ParameterBitsRefV1`) and format
 //! resolution, encode, seal, durable publication, the continuation loader's
-//! readback, the readback digest and (v2) the restored snapshot comparison.
+//! readback, the readback digest and (v2) the restored state's item-for-item
+//! comparison.
 //! The process digest memo is emptied before each repetition, so the first
 //! digest misses as it does after a real update; the readback then runs with
 //! whatever the publication left in the process caches, as in production.
@@ -48,7 +50,9 @@
 //! updates-per-hour or full-node claim: a faster codec stage does not by
 //! itself establish a complete-update or fleet gain (mtg-kernel#594).
 
-use super::checkpoint_container_v1::{self, CheckpointRecordFormatV1};
+use super::checkpoint_container_v1::{
+    self, same_tensors_v1, CheckpointRecordFormatV1, ParameterBitsRefV1,
+};
 use super::record_envelope_v1::{self, RecordEnvelopeV1};
 use super::s_learner_v1::S_LEARNER_STATE_FILE_V1;
 use super::{
@@ -56,11 +60,11 @@ use super::{
     read_checkpoint_v1, read_pinned_bytes, read_pinned_shared_v1, serialize_json_v1,
     verified_bytes_cache_v1, CollectionSamplerV1, ExpandedCheckpointV1, ExpandedDeckListV1,
     ExpandedEpisodeV1, ExpandedLossSelectionV1, ExpandedModelSourceV1, ExpandedTrainingCommandV1,
-    ExpandedUpdateBackendV1, ParameterBitsV1, PinnedFileV1, UpdateBackwardExecutionV1,
+    ExpandedUpdateBackendV1, PinnedFileV1, UpdateBackwardExecutionV1,
     DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, MAX_FILE_BYTES,
 };
 use crate::native_policy_train_step_v1::{
-    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
+    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1, TrainTensorsV1,
 };
 use crate::native_policy_value_net_v1::NativeNamedParameterV1;
 use crate::s_transformer_v1::tools::{groups_of_v1, synthetic_batch_v1, MEAN_SHAPE_V1};
@@ -340,7 +344,7 @@ pub fn peak_rss_bytes_v1() -> Option<u64> {
     }
     #[cfg(windows)]
     {
-        crate::kernel_native_search_calibration_runner_v1::peak_working_set_bytes_v1()
+        windows_v1::peak_rss_bytes_v1()
     }
     #[cfg(target_os = "macos")]
     {
@@ -432,6 +436,67 @@ mod macos_v1 {
         }
         // Darwin reports `ru_maxrss` in bytes (Linux in KiB).
         u64::try_from(usage.longs[0]).ok()
+    }
+}
+
+/// The process's peak working set on Windows. The crate's other reader lives
+/// in the calibration runner, which is compiled only for tests.
+#[cfg(windows)]
+mod windows_v1 {
+    use std::ffi::c_void;
+
+    /// `PROCESS_MEMORY_COUNTERS`. Only `cb` and the peak are read; the rest
+    /// give the struct its Win32 layout.
+    #[repr(C)]
+    struct ProcessMemoryCountersV1 {
+        cb: u32,
+        page_fault_count: u32,
+        peak_working_set_size: usize,
+        working_set_size: usize,
+        quota_peak_paged_pool_usage: usize,
+        quota_paged_pool_usage: usize,
+        quota_peak_non_paged_pool_usage: usize,
+        quota_non_paged_pool_usage: usize,
+        pagefile_usage: usize,
+        peak_pagefile_usage: usize,
+    }
+
+    #[link(name = "psapi")]
+    unsafe extern "system" {
+        fn GetProcessMemoryInfo(
+            process: *mut c_void,
+            counters: *mut ProcessMemoryCountersV1,
+            size: u32,
+        ) -> i32;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> *mut c_void;
+    }
+
+    pub(super) fn peak_rss_bytes_v1() -> Option<u64> {
+        let mut counters = ProcessMemoryCountersV1 {
+            cb: u32::try_from(std::mem::size_of::<ProcessMemoryCountersV1>()).ok()?,
+            page_fault_count: 0,
+            peak_working_set_size: 0,
+            working_set_size: 0,
+            quota_peak_paged_pool_usage: 0,
+            quota_paged_pool_usage: 0,
+            quota_peak_non_paged_pool_usage: 0,
+            quota_non_paged_pool_usage: 0,
+            pagefile_usage: 0,
+            peak_pagefile_usage: 0,
+        };
+        // SAFETY: `GetCurrentProcess` returns a pseudo-handle that needs no
+        // closing, and `counters` is a zeroed `PROCESS_MEMORY_COUNTERS` whose
+        // `cb` holds its size.
+        let succeeded =
+            unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) != 0 };
+        if !succeeded {
+            return None;
+        }
+        u64::try_from(counters.peak_working_set_size).ok()
     }
 }
 
@@ -1154,35 +1219,27 @@ const UPDATE_CELLS_V1: [CellV1; 5] = [
     },
 ];
 
-/// The checkpoint an update writes for `snapshot`: `metadata`'s members
-/// (everything but the state) with the snapshot's step, anchor, digest and
-/// tensor bits, exactly as `execute_update_inner_v1` assembles it.
-fn checkpoint_of_snapshot_v1(
+/// The checkpoint an update writes for `tensors`: `metadata`'s members
+/// (everything but the state) with the state's step, anchor, digest and
+/// tensors, borrowed, exactly as `execute_update_inner_v1` assembles it.
+fn checkpoint_of_tensors_v1<'a>(
     metadata: &ExpandedCheckpointV1,
-    snapshot: &NativePolicyValueTrainSnapshotV1,
+    tensors: &'a TrainTensorsV1<'_>,
     state_sha256: String,
-) -> ExpandedCheckpointV1 {
-    ExpandedCheckpointV1 {
-        state_sha256,
-        adam_step: snapshot.adam_step,
-        scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
-        parameters: snapshot
-            .parameters
-            .iter()
-            .map(ParameterBitsV1::from_native)
-            .collect(),
-        first_moments: snapshot
-            .first_moments
-            .iter()
-            .map(ParameterBitsV1::from_native)
-            .collect(),
-        second_moments: snapshot
-            .second_moments
-            .iter()
-            .map(ParameterBitsV1::from_native)
-            .collect(),
-        ..metadata.clone()
-    }
+) -> ExpandedCheckpointV1<ParameterBitsRefV1<'a>> {
+    let mut checkpoint = checkpoint_container_v1::with_tensors_v1(
+        metadata,
+        [
+            &tensors.parameters,
+            &tensors.first_moments,
+            &tensors.second_moments,
+        ]
+        .map(|section| section.iter().map(ParameterBitsRefV1::from).collect()),
+    );
+    checkpoint.state_sha256 = state_sha256;
+    checkpoint.adam_step = tensors.adam_step;
+    checkpoint.scorer_bias_anchor_bits = tensors.scorer_bias_anchor_bits;
+    checkpoint
 }
 
 /// Empties the process digest memo (`state_digest_memo_v1`) of every stream
@@ -1328,9 +1385,11 @@ fn load_ordinary_state_v1(
     metadata.parameters = Vec::new();
     metadata.first_moments = Vec::new();
     metadata.second_moments = Vec::new();
+    // Reassembled as the update assembles it, from the live state's tensors.
     let snapshot = state.snapshot_v1().map_err(err)?;
-    let digest = hex(&snapshot.state_sha256_v1().map_err(err)?);
-    let rebuilt = checkpoint_of_snapshot_v1(&metadata, &snapshot, digest);
+    let tensors = state.tensors_v1().map_err(err)?;
+    let digest = hex(&state.state_sha256_v1().map_err(err)?);
+    let rebuilt = checkpoint_of_tensors_v1(&metadata, &tensors, digest);
     ensure_v1(
         serde_json::to_vec(&rebuilt).map_err(err)? == expected_v1,
         format!("state {label}: the reassembled checkpoint differs from the fixture's"),
@@ -1363,14 +1422,6 @@ fn load_ordinary_state_v1(
     })
 }
 
-fn same_tensors_v1(got: &[NativeNamedParameterV1], saved: &[ParameterBitsV1]) -> bool {
-    got.len() == saved.len()
-        && got
-            .iter()
-            .zip(saved)
-            .all(|(g, s)| ParameterBitsV1::from_native(g) == *s)
-}
-
 /// One repetition of the ordinary sequence: its stages, its total, what it
 /// published and the state digest it published under.
 struct PublishedV1 {
@@ -1391,12 +1442,12 @@ fn ordinary_sequence_v1(
     let state = &measured.state;
     let training_math = measured.metadata.training_math;
     let mut sequence = SequenceV1::start_v1(meter);
-    let snapshot = sequence.step_v1("snapshot", || state.snapshot_v1().map_err(err))?;
+    let tensors = sequence.step_v1("snapshot", || state.tensors_v1().map_err(err))?;
     let after = sequence.step_v1("digest", || {
-        Ok(hex(&snapshot.state_sha256_v1().map_err(err)?))
+        Ok(hex(&state.state_sha256_v1().map_err(err)?))
     })?;
     let (checkpoint, format) = sequence.step_v1("bits", || {
-        let checkpoint = checkpoint_of_snapshot_v1(&measured.metadata, &snapshot, after.clone());
+        let checkpoint = checkpoint_of_tensors_v1(&measured.metadata, &tensors, after.clone());
         let format = cell.format.resolve_v1(&checkpoint)?;
         Ok((checkpoint, format))
     })?;
@@ -1431,7 +1482,7 @@ fn ordinary_sequence_v1(
     })?;
     if format == CheckpointRecordFormatV1::V2 {
         sequence.step_v1("readback_v2_equality", || {
-            let back = restored.snapshot_v1().map_err(err)?;
+            let back = restored.tensors_v1().map_err(err)?;
             ensure_v1(
                 back.adam_step == checkpoint.adam_step
                     && back.scorer_bias_anchor_bits == checkpoint.scorer_bias_anchor_bits
@@ -1443,7 +1494,9 @@ fn ordinary_sequence_v1(
         })?;
     }
     let (steps, total) = sequence.finish_v1();
-    drop((snapshot, checkpoint, sealed, restored));
+    // The checkpoint borrows the state's tensors, so it goes first.
+    drop(checkpoint);
+    drop((tensors, sealed, restored));
     Ok(PublishedV1 {
         steps,
         total,

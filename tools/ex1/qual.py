@@ -129,9 +129,16 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
     episode ids and deal seeds keyed by (namespace, run, update, slot), and EX1 when `coefficient` is given."""
     source = dose["source"]
     # An S source starting from its initial train state (W5's XS parent, S0) has no checkpoint; its pin is
-    # `s_learner.initial` (s_learner_v1.rs).
-    pinned = source["checkpoint"] if source.get("checkpoint") is not None else \
-        (source.get("s_learner") or {}).get("initial")
+    # `s_learner.initial` (s_learner_v1.rs). A fresh net-8 start (a dose record that says `"fresh": true`, e.g. a
+    # G(i) fresh-init lineage) has no checkpoint either: the trainer builds the model from the play import's
+    # fresh-initialization parameters with a fresh Adam, so the play import is the pin.
+    if source.get("checkpoint") is not None:
+        pinned = source["checkpoint"]
+    elif dose.get("fresh") is True:
+        assert not source.get("s_learner"), "a fresh net-8 parent has no S learner"
+        pinned = source.get("play_import")
+    else:
+        pinned = (source.get("s_learner") or {}).get("initial")
     assert pinned is not None, "the parent has neither a checkpoint nor an S initial state"
     assert sha(pinned["path"]) == pinned["sha256"], "parent differs from its dose pin"
     plan = base["iterations"]

@@ -404,6 +404,392 @@ New, each built once in the first wave that needs it:
   `E3ChoiceKindV1::E9aV1`. Tolaria's banding loss changes nothing: no card here has
   banding.
 
+- S1a, built in `src/eternal_sideboard_s1a_v1.rs` (with `statics` and `targets` submodules)
+  and `build_eternal_s1a_v1.rs`, linked late in the recipe chains (before S1b and E9b): Legacy
+  sideboard cards. Rest in Peace, Leyline of the Void and Containment Priest join the zone-change
+  replacement hook Dauthi Voidwalker uses (exile instead of a graveyard; exile a nontoken
+  creature entering from anywhere but the stack). Leyline's opening-hand permission is offered
+  as the first upkeep begins, as Chancellor of the Annex's reveal is. Disruptor Flute names a
+  card as Anointed Peacekeeper does: spells with the name cost {3} more (own-spell increase) and
+  its non-mana activated abilities are prohibited like Pithing Needle's. Choke is an untap-step
+  prohibition, Defense Grid a spell tax by the caster's turn, Dread of Night a power/toughness
+  modifier. Mass effects (Rough // Tumble, a split card through the Adventure form; Brotherhood's
+  End; Meltdown; Serenity; Massacre's -2/-2 on exact incarnations) are `S1aOpV1` leaves, and
+  Massacre adds `AltCostCondition::OpponentPlainsYouSwampV1`. Lavinia's cast restriction is a
+  cast prohibition (X judged as 0), and her counter reads the mana a cast spent
+  (`payment.commit`), recorded only while she is in play. Carpet of Flowers is queued by the
+  main-phase hook as a choice of color and amount, clamped to the Islands at resolution.
+  Surgical Extraction now offers a native optional subset of matching cards in the owner's
+  graveyard, hand and library, then shuffles even when zero cards were chosen. Its scoped
+  JSONL search look contains the chooser's full hand and library name multisets; surviving
+  hand knowledge uses the existing observer-only ledger. Native qualification is pending.
+  New target shapes: noncreature artifact or enchantment, black or red permanent,
+  creature with power or toughness 1 or less, up to two artifacts and/or enchantments, an
+  enchantment, instant or sorcery spell, and a non-basic-land card in a graveyard.
+
+  Partial: Surgical Extraction remains unqualified for ordinary Full-deck admission while
+  its native choice, restore, disclosure and transport checks are pending. Frozen infoset
+  and search consumers refuse its active search. Lavinia's source repair checks selected X and spell
+  characteristics in the shared payment quote, including casts made during resolution. Its paid
+  both-seat X, Bestow, split, overload, Room, cascade, Madness and graveyard-cast checks remain unqualified;
+  Lavinia stays Partial. Mana value ignores alternative payments and includes announced X, as stated
+  in the [Ravnica Remastered rulings](https://media.wizards.com/2023/downloads/RVR_Release_Notes_XrN0zlJaFn/EN_MTGRVR_ReleaseNotes_20231120.pdf).
+  The native opening profile puts Leyline of the Void's opening action before
+  the first turn under rule 103.6. Legacy starts retain their first-upkeep behavior.
+  [Comprehensive Rules](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
+
+  Left out of the wave: Damping Sphere (its land replacement spans the mana planner and
+  every mana yield path), Collective
+  Brutality (escalate), Stronghold Gambit, Alpine Moon, Ghost Vacuum, Drop of Honey, Triumph
+  of Saint Katherine (miracle is Terminus-only and its cost needs generic mana) and From the
+  Ashes.
+- S1b, built in `src/eternal_sideboard_s1b_v1.rs` (with a `targets` submodule) and
+  `build_eternal_s1b_v1.rs`, linked last in the recipe chains (after S1a, before E9b; E6a's
+  kicker cost after S1d; E7a's alternative and ward costs): 26 of the 37 remaining Legacy
+  sideboard cards, the ones whose programs fit the existing primitives. Storm gains Grapeshot and Empty the Warrens
+  (E3's list) and dredge gains Shenanigans (E7b's table). Toxic Deluge's "pay X life" is
+  announced like Sickening Dreams' discard count (X up to the caster's life) and the life is
+  paid as the cast completes. Stony Silence reuses Null Rod's activation prohibition, and
+  Metallic Rebuke joins Kappa Cannoneer's improvise. Deafening Silence counts noncreature
+  spells per player and turn in module state (spells cast before it entered count);
+  Gaddock Teeg (new Kithkin and Advisor subtypes, stable ids 320 and 321), Meddling Mage and
+  Deafening Silence add to the E7a cast prohibition hook. Meddling Mage names a nonland card as
+  its resolving creature spell enters (Anointed Peacekeeper's letter, then name choice), so a
+  Mage that enters any other way names nothing. Sailors' Bane's reduction joins the spell cost
+  reductions of E8b and P1a. Temporary Lockdown and Perilous Snare use the linked "until this
+  leaves" exile (Lockdown records one link per exiled permanent). Perilous Snare starts the
+  Standard speed designation and its counter ability is gated to speed 4 by the activation
+  restriction hook. Tourach, Dread Cantor sees opponents' discards through the E7b discard
+  hook, its kicker uses E6a's kicker table, and protection from white joins the printed
+  protection mask. Extirpate's split second joins Legolas's Quick Reflexes' check. Leyline of
+  Sanctity is offered from an opening hand as the first upkeep begins (Chancellor of the
+  Annex's shape) and gives its controller hexproof through the E3 player targeting check.
+  Engineered Explosives records the colors its cast spent (Prismatic Ending's hook) as its
+  sunburst charge counters and keeps the count for the sacrificed incarnation's ability.
+  Liquimetal Coating records permanents that are artifacts this turn; the effective type
+  check reads it. New target filters: four-point divided damage among creatures (Pyrokinesis)
+  and a creature or Vehicle you control (Perilous Snare); Stern Dismissal and Extirpate use
+  S1c's and S1a's filters. Meddling Mage, Extirpate and Leyline of Sanctity are Partial.
+  The Meddling Mage candidate asks for a name before committing the actual entry.
+  A resumed entry checks the original operation, confirmed catalog choice, controller,
+  and native entry occurrence. The named-spell restriction uses the same quote and
+  payment gates for ordinary casts and resolution casts. The revised native menu names
+  individual split halves and Room doors, alternate Adventure and Omen spells, and
+  nonland back faces in the executable registry. It checks the selected spell name,
+  including disturb. Existing authenticated numeric choices retain their original
+  menu, serialization and hash. A legacy combined split name remains its literal
+  combined string and matches neither cast half. Names outside the registry
+  and the frozen observation paths remain outside this change. A pre-entry-owner
+  save without authenticated choice evidence still requires its historical engine. Leyline has
+  the same native opening path as Leyline of the Void.
+  A paid physical Phyrexian Metamorph copying a visible Mage chooses its own name
+  before entry. The entry keeps Metamorph's physical cast receipt, commits the Mage
+  characteristics and artifact type, and restores Metamorph's printing on departure.
+  Paid Reanimate uses a native pre-entry copy choice across both battlefields,
+  then installs the supported face-up Mage or Wall of Blossoms form before the
+  Mage name choice or the Wall's draw trigger. An unsupported legal copy
+  refuses the entire prompt. The saved copy binds the actual Reanimate cast
+  and entry window. The native runner authenticates its original graveyard
+  target during execution. Under the public native Eternal opening profile,
+  Aether Vial with four charge counters uses the same prospective copy owner.
+  The native replay binds the actual paid tap, reads the original live or
+  last-known charge count at resolution, and authenticates the controller's
+  private hand choice. Its supported face-up donors are Mage, Wall of Blossoms, the
+  printed Aether Vial and an Opalescence-animated Standstill, which needs no
+  as-enters choice. A Vial copy enters with zero counters. Frozen viewers
+  refuse the native profile from setup, independently of the hand or its
+  choice. Dress Down suppresses the physical copy choice before entry. The
+  selected paid-cast, Reanimate and Vial cases passed at `4d8cd0bb9`.
+  The paid physical Show and Tell successor keeps both hand selections private
+  until both players have answered. Its pre-entry copy menu uses the existing
+  battlefield, excluding the other entrant, and supports Mage, Wall of Blossoms
+  and Containment Priest forms. Mage names are selected before the simultaneous
+  entry. Priest replacements use the common pre-entry battlefield, so a Priest
+  in the same batch cannot exile the other entrant. The private checkpoint
+  retains confirmed-answer integrity, and ordinary hand prompts retain their
+  existing observer metadata and redaction without a second executable owner.
+  Source review and formatting passed; native qualification is pending.
+  Other noncast copy-entry producers remain outside this path. Copied Show
+  still lacks the shared pre-entry Priest replacement and does not support
+  the new Metamorph copy path; it is not qualified by this physical-spell repair.
+  Extirpate uses the shared extraction continuation to require all
+  public graveyard matches, offer any subset of the hidden matches, and provide the caster
+  a private look at the full searched hand and library. Native qualification of this
+  repair is pending. Rule 701.23 allows fail-to-find in the hidden zones.
+  [Comprehensive Rules](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
+  Not in this wave: Mycosynth Lattice (mana of any color needs a payment-planner change),
+  Extinguisher Battleship (station), Cityscape Leveler (unearth, Powerstone), Invasion
+  Submersible (waterbend, exhaust), Summon: Bahamut, Keen-Eyed Curator, Outland Liberator
+  (day and night), Fiery Confluence (choose three with repeats and per-instance targets),
+  Kiora's Dismissal (strive), Eowyn (a target filter that reads the source's power) and
+  Unlicensed Hearse (a single-graveyard target filter).
+- S1c (issue #365, Vintage-only sideboard cards), built in `src/eternal_sideboard_s1c_v1.rs`
+  (with a `targets` submodule) and `build_eternal_s1c_v1.rs`, linked late in the recipe
+  chains (after E8a and S1d, before S1a, S1b and E9b). Bounce-all (Hurkyl's Recall, Rebuild with
+  its cycling), Virtue's Ruin's destroy-all, Feed the Swarm's life loss (the destroyed
+  permanent's mana value), Lithomantic Barrage's 5 damage to a white and/or blue target,
+  Dark Petition's spell mastery mana and Wurmcoil Engine's two tokens (deathtouch and
+  lifelink Wurms) are module leaves. Spell Snare is a mana value 2 spell target; Mystical
+  Dispute's {2} reduction is `DynamicCountDef::SpellTargetsBlueSpellV1`; Snapback reuses
+  the blue-card exile alternative cost; Ravenous Trap adds
+  `AltCostCondition::OpponentThreeCardsToGraveyardThisTurnV1`, which counts the
+  opponent's cards moved to a graveyard since the last upkeep began. New target shapes
+  (`StandardTargetV1`): a creature or planeswalker with mana value N or less (Long
+  Goodbye) and a creature or enchantment an opponent controls (Feed the Swarm). Light of
+  Day's attack and block ban are engine hooks, Urborg extends Yavimaya's extra land type
+  and mana ability to Swamps, and Sphinx of the Steel Wind adds protection from red and
+  green to the color protection mask. Hullbreacher replaces an opponent's draw (except
+  their first actual draw in their draw step, tracked by Bowmasters' draw ordinal) with a
+  Treasure for its controller in `propose_and_commit_inner`. Argentum Masticore's upkeep trigger is
+  two selections (`E3ChoiceKindV1::S1cV1`): the card to discard (or none, sacrificing
+  it), then the reflexive destroy target among the opponent's nonland permanents with
+  mana value at most the discarded card's; it shares Stonecoil Serpent's protection from
+  multicolored and uses the Masticore creature type (stable id 260 from P2b). Not in this wave:
+  Archon of Absolution and Overencumbered (attack costs and taxes have no engine path),
+  Azure Beastbinder, Unable to Scream and Suspend (timed or aura-based ability removal
+  with new characteristics), Apostle's Blessing (protection from artifacts), Sickening
+  Shoal (X tied to an exiled card), Darksteel Angel (cannot lose the game) and Portal to
+  Phyrexia (subtype grant on reanimation).
+  Partial: the drawing player can choose dredge or let Hullbreacher replace the draw (616.1) on
+  resumable draw programs, including the monarch's draw, both Baubles' delayed
+  upkeep draws, Coveted Jewel's entry and unblocked combat draws, Paradoxical
+  Outcome, Psychic Frog, Plunder the Trollshaws, Tamiyo's -7, Twinned Vision,
+  The Endstone's land-play draw, Kishla Skimmer's graveyard-departure draw,
+  Chandra, Chill of Compliance's emblem draw, Bonder's Ornament, and both
+  selected-discard draw paths. Flame of Anor uses its original selected player
+  and resolves any other mode after both draw attempts, subject to that mode's
+  original target legality. Its native start binds both target contracts for
+  restore. A Jace win skips the other mode. Sensei's Divining Top moves only the original
+  permanent to its owner's library after its draw attempt, including when a
+  replacement prevents the draw. The One Ring counts its live burden increment
+  or the departed incarnation's retained burden once before its first attempt.
+  Veil of Summer applies its protection after the conditional draw attempt, or
+  immediately when the draw condition is false. Phyrexian Dragon Engine
+  discards the hand once after its original optional choice, then checks for
+  replacements using the resulting graveyard. A terminal Jace win skips
+  Top's move, Veil's protection and remaining Ring or Dragon Engine attempts,
+  with or without a replacement choice. The Jewel
+  combat continuation binds draw progress to the original trigger and transfers
+  only its original battlefield incarnation after the third attempt. Outcome
+  returns its legal targets in one batch and derives draw progress from actual
+  original-incarnation arrivals into the spell controller's hand. Both progress
+  checks validate continuation consistency. Plunder and Twinned Vision retain
+  their cast-origin conditions. Tamiyo's count uses the library size when her
+  ability starts, and the hand-size effect follows the last draw attempt if
+  play continues. The owned draw instructions journal their start and
+  actual completed attempts when the replacement continuation runs. Restore
+  checks saved progress against that native evidence.
+  An affected player can also choose between Jace's empty-library win and
+  Hullbreacher on fixed-count draw instructions and the covered owned draws.
+  Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
+  Their damage-draw interaction has no native qualification.
+  Curie's combat trigger binds the original source and controller. It uses
+  current base power for the same battlefield incarnation, or the base
+  power recorded in the native departure scene if that incarnation left.
+  The draw count is fixed before the first replacement attempt. Historical
+  serialized `CurieDrawV1` triggers retain their old fallback behavior.
+  Minsc & Boo's bound reflexive trigger uses the sacrificed Hamster's
+  effective power. It resolves its actual target and damage before draw
+  replacement attempts begin. An illegal target stops the whole trigger.
+  Historical serialized Minsc triggers retain their existing behavior.
+  Circle of Protection: Blue can choose a departed blue Minsc while its
+  authenticated reflexive trigger waits on the stack. The shield binds the
+  original battlefield incarnation and uses the color captured at departure.
+  Echo of Eons finishes both native shuffles before drawing in turn order.
+  Interrupted draws retain both native shuffle commits and each player's
+  completed attempts. The kernel has no generic shuffle event, so Echo
+  records its successful shuffle commits only when it owns a draw choice.
+  Each player applies Riddler once at the start of their draws. The first
+  player's event-time adjustment remains bound when the second player draws.
+  The shuffles normally remove Dredge cards from both graveyards before any
+  draw can use them. The selected Echo native cases passed at `4d8cd0bb9`.
+  Forgotten Realms dungeons and Undercity retain their bottom room until no
+  triggered room ability from that dungeon remains. Another venture completes
+  the old dungeon before starting a new one, even while an old room waits.
+  Restored snapshots that already marked completion keep their recorded result.
+  Taking or keeping the initiative advances an active Forgotten Realms
+  dungeon. Acererak advances an active Undercity. Their next-dungeon menus
+  still follow the source's native venture instruction.
+  New Eternal room triggers use the dungeon's characteristics for targeting.
+  Painter's Servant can color the active dungeon. A room that outlasts its
+  dungeon uses the colors recorded at removal. Frozen observation profiles
+  show a bound Undercity room like a bound Forgotten Realms room, as its
+  venture source's trigger with the engine's legal targets. Infoset exports
+  still refuse bound Undercity rooms.
+  Serra's Emissary's existing type choices still omit Dungeon.
+  Temple of Dumathoin and Mad Wizard's Lair bind each draw attempt to the
+  native venture entry and published room ability. The Lair reveals and
+  offers only cards actually drawn, and an immediate Jace win ends the
+  ability before the reveal. The paid Bonder's Ornament successor binds the
+  actual activation and original source, including native Metamorph copies.
+  It captures eligible controllers at resolution, draws in APNAP order and
+  retains each player's adjusted attempts across replacement choices. A Jace
+  win ends the ability before the next player's draw. Ordinary completed
+  activations retain current observations; an active owned choice requires
+  a successor. At `4d8cd0bb9`, the existing Bonder/Dredge competition case passed,
+  but all seven new Bonder cases stopped at a shared setup assertion before
+  native advance finalized payment. The helper now advances to priority and
+  verifies the paid stack row before checking tap and mana; it does not resolve
+  the draws. All seven passed at `1330bc320` in the 63-pass, 8-fail packet;
+  the failures were confined to Portent and the copied Show and Tell fixture.
+  The physical paid Portent successor binds
+  its original cast, targeted-library look/order and optional shuffle before
+  scheduling the caster's draw at the next turn's upkeep. A native retarget
+  while it is on the stack (Misdirection) journals an authenticated rebinding
+  of the paid row, so the look follows the new target; a control change of the
+  paid spell (Commandeer) still fails closed. The delayed trigger
+  retains the original spell contract after source departure and the native
+  APNAP publication path. Each draw attempt uses the common Started/Completed
+  owner for Jace, Hullbreacher, Dredge and one Riddler adjustment, with terminal
+  stop and restored progress validation. Raw or borrowed-ID scheduling cannot
+  replace the completed native parent. Genuine native spell copies retain the
+  historical Portent schedule and ordinary draw; their replacement ownership
+  remains outside this successor. That delayed draw names the ceased copy,
+  which keeps its final Stack marker and generation; a live spell still cannot
+  source an ability. Arcane Denial's predecessor draw records use the same
+  capture; no copied Arcane Denial fixture exists yet. Ordinary
+  pending and published triggers retain their public meaning through
+  authenticated original source contracts; suspended
+  owned replacement choices require an observation successor. Native1330 exposed
+  start/resume guards and an unavailable copy fixture producer; both source fixes
+  are committed, with native requalification pending.
+  The physical Standstill successor binds the exact finalized cast identity
+  and SpellCast occurrence, original battlefield source, native trigger
+  publication, and successful sacrifice marker plus source departure. The
+  caster's opponent receives one owned three-card instruction, with one
+  Riddler adjustment, per-attempt replacements and terminal stop. A sacrifice
+  replaced by exile still qualifies; a source that departed, returned, or
+  changed controller cannot be sacrificed by the old trigger. Native copied
+  permanents retain the ordinary predecessor route. Every Metamorph spell
+  sacrifices Standstill first, so the control copy comes from a paid Vial under
+  the native Eternal opening. Generic copied triggered
+  abilities have no shipped producer in this slice and are not authorized by
+  a copied bound receipt. Ordinary pending and published triggers retain existing
+  observations; suspended owned replacement choices require an observation
+  successor. Source review verified the ordinary V5/Human compatibility repair
+  and authenticated historical source projection. Native qualification of this
+  successor remains pending.
+  Generated draws from the remaining Premodern leaves, Arcane Denial and
+  Accumulated Knowledge still need their Jace/Hullbreacher origins.
+  Quantum Riddler adjusts the whole count once for uninterrupted fixed and
+  dynamic draw instructions. Named draws and top-level fixed draw instructions
+  from physical spells or printed triggers retain the adjusted count across
+  replacement choices using native start and completion receipts.
+  Nested or dynamic suspended draws, copies, the Coveted Jewel and Paradoxical
+  Outcome owners, and turn-based draws with replacement choices still need
+  count ownership. The selected Flame, Curie and Riddler cases passed at
+  `4d8cd0bb9`; those passes do not cover the remaining draw owners.
+- S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
+  `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
+  S1c, S1a, S1b and E9b): the 31 Pauper sideboard cards of the metagame snapshot. Overload
+  (Vandalblast, Electrickery) is the Adventure form of the card that split cards
+  use to represent the paid overload cost from hand, a normal graveyard permission, or
+  Future Sight's paid library permission,
+  with no targets and the printed mana value on the stack (118.9c). Circle of
+  Protection: Blue offers a choice among the blue objects in the public zones and
+  records a shield (source incarnation, player, turn) that the damage replacement
+  pass uses up. Flagbearer (Standard Bearer, Coalition Honor Guard) constrains
+  target selection when an opponent announces a spell or activated ability.
+  Stonehorn Dignitary's skip is a pending flag the step machine reads as the
+  combat phase would begin.
+  Spreading Seas joins wave E8a's land-type setter (the enchanted land is an
+  Island and loses its other land types and abilities); Navigator's Compass adds
+  a land type and its mana ability until end of turn, the way Yavimaya does for
+  Forests. Waterbend is an option list (tap an artifact or creature, or pay the
+  rest with mana) that offers only completable branches. Martyr of Sands has one
+  native activation with a private selection of any number of white cards from
+  the payer's hand. Finishing reveals the selected cards, pays {1}, and
+  sacrifices the source. The paid reveal count sets the life gain on resolution.
+  Call Damage Control is one spell
+  with up to two target cards of different types from the graveyard (artifact,
+  creature, enchantment or land), each returned independently. New target shapes
+  are `StandardTargetV1::S1dV1`. Rhino and Flagbearer use new stable ids 361 and 362;
+  Nylea's Disciple uses Centaur's existing stable id 281 from P2c.
+  Partial: Martyr of Sands passed its native paid reveal and restore fixture;
+  event-history consumer qualification remains pending. Standard Bearer and Coalition Honor Guard now share bounded
+  complete-assignment checks for optional target counts, including early Finish,
+  restored selections and payable activations. All five optional-target native
+  cases passed. Goblin Welder uses the same check
+  for its two dependent slots. An artifact Flagbearer is required only if its
+  controller's graveyard contains a legal second target. Shatterskull Smashing
+  checks whether its announced allocation can include a Flagbearer at a payable
+  X. An empty allocation can still finish, and each selected target requires
+  at least one damage. Chandra, Flameshaper and the Flagbearers are in separate
+  shipped registries. Native qualification and broader targeting coverage are
+  pending. Vandalblast and Electrickery use the existing graveyard
+  permission for a paid overload and retain Retrace's land discard. A free-cast
+  permission offers the ordinary spell form with its original target requirement.
+  Omniscience can still cast the ordinary form for free or let its controller pay
+  for overload. Bolas's Citadel offers the ordinary form with its life payment.
+  If both Future Sight and Bolas's Citadel grant the library cast, the ordinary
+  form can still pay life and the overloaded form pays only its mana cost.
+  The paid overload retains its exact Future Sight permission in the finalized
+  cast publication. The current pending cast menu has no interleaved mana
+  activation action and these overload payments use the ordinary mana plan.
+  The affected overload fixtures and consumers still need qualification.
+  Circle of Protection: Blue now rechecks blue at damage time and matches genuine
+  historical damage to the chosen source incarnation. A native Stack-to-Battlefield
+  entry records the exact permanent that a chosen physical cast becomes, bound
+  to its published cast identity and first committed departure; later blinks do
+  not retarget its shield. Virtual permanent spell copies still need this binding.
+  Wave P3g records departed sources' last-known color and marks the card Full (see P3g).
+  The choice menu includes blue permanents, stack spells, face-up command
+  objects and supported public references from stack items and waiting effects.
+  Flickerwisp and Yorion's unchanged face-up exile links remain eligible
+  when their waiting return moves onto the stack. Parallax Wave and Petradon
+  contribute their exact live linked exiles only once the matching return
+  trigger is on the stack.
+  It uses the original incarnation and retained color for authenticated departed
+  damage sources. Eternal records the physical Mogg Fanatic's source immediately
+  before paying its sacrifice cost, even if Circle is absent. A later color or
+  zone change cannot affect that damage. Legacy unmarked Fanatic activations retain
+  the earlier execution path. Frozen observations show a paid physical Fanatic
+  as its ordinary activated ability. Goblin Bombardment's native activation sacrificing
+  another creature uses its live source while it remains on the battlefield.
+  If it leaves with that activation waiting, the actual departure captures its
+  last-known color and other damage characteristics, including when Circle enters
+  later. Newly paid activations carry a marker and refuse restore after departure
+  if the receipt is missing. Older unmarked rows retain their earlier behavior.
+  Eternal excludes the Crystal and Twinflame damage owners by catalog. When a
+  physical Goblin Bombardment or a Metamorph copying it is animated and
+  sacrificed as its own cost, the native payment captures the source before
+  sacrifice and binds it to the actual departure and published activation. For
+  Metamorph this records the copied activation separately from the physical
+  printing that pays the cost. Circle can offer the original source while the
+  activation waits, including after Painter leaves.
+  Unrelated graveyard and exile cards are excluded. Other
+  embedded effect references need explicit bindings, departed references need
+  last-known color and visibility evidence, and contextual hand and library
+  sources remain unsupported. An in-flight saved Circle menu with the old
+  broad roster refuses restore when it differs from the legal roster, preserving
+  the meaning of its original option indices. Selected paid Fanatic/Painter,
+  departed Minsc, Bombardment departure and self-sacrifice/copy/restore cases
+  passed at `4d8cd0bb9`. Policy observation v5 omits the shields.
+  [Comprehensive Rules, 609.7 and 702.96](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
+
+The Extirpate, Martyr and Lavinia repair batch is composed at `e8d06349e2956e3a386d10a77295ebcc928a991d`.
+The pinned Rust 1.94.1/MSVC standalone generator produced catalog hash
+`e19d5ece9b17ec1e` from that source; the prior capability-only hash was `a07edccb09460703`.
+Generator receipt SHA-256: `3fa633076153461982c151eaf6bc225d4dd73ef8feddd0b00a2784e3b7b97249`.
+The guarded native batch at `90bda0c0f` completed 24 passes and four fixture
+failures. Surgical, Extirpate, Martyr and the five optional Flagbearer cases
+passed. The Lavinia Bestow fixture accidentally provided an extra mana creature;
+the host is now summoning sick. Two Hullbreacher fixtures now use the available
+Opt, and the Niv/Hull combination is documented as absent from shipped catalogs.
+Those changed fixtures await rerun. The genuine `MartyrRevealPaidV1` sample is
+appended with its passing producer receipt in `data/event_history_v1/README.md`;
+the three event-history consumer checks remain pending.
+No capability labels or playable-deck counts are promoted by this source batch.
+
+The successor combines pre-entry Meddling Mage choices, the native Eternal
+opening window, paid overload permissions and Circle/Flagbearer source repairs.
+At generator source `2dfff92a7d76c620342bf7682e0e24d4a16d4217`, the pinned
+Rust 1.94.1/MSVC generator produced `0255dfef9c57f234` for the revised overload
+recipe. Receipt SHA-256:
+`a8df5a2a37bbfa58becd863e8e6efc8d7b562293517e8c0789957fca994f3f9c`.
+The following Circle menu change does not alter the registry or recipe inputs.
+Native qualification and genuine Mage/opening event samples remain pending.
+
 ## Card contract and verification
 
 Each card follows the existing contract: `engine_capability` Full only when every
@@ -475,6 +861,30 @@ mainboard cards before games two and three, from the registered configuration ea
 plays each against the next deck of its format in a seeded match with random actions, checking
 natural terminals, replay and that sided-in cards are cast.
 
+For the opt-in native opening window, register both decks with
+`EternalRegisteredDeckV1::new_with_native_opening_v1`, then call
+`EternalBestOfThreeMatchV1::start_game_with_native_opening_v1` for each game.
+Drive the returned `GameState` with `engine::advance_until_decision` and `engine::step`.
+It uses the ordinary shuffle and alternating deal, London mulligans, then kept-hand
+choices before untap. The prepared game's seat map still identifies the starting
+match player as native seat P0. Companion and outside-game setup retain their
+admitted configuration. This explicit registration admits the two executable
+Partial Leylines alongside Chancellor of the Annex and otherwise requires Full.
+Leyline of the Void and Leyline of Sanctity require this profile whenever either
+appears in a registered mainboard or sideboard. That registration rule applies
+even if a later catalog wave marks them Full. Ordinary declared game construction
+also refuses Full printings that require the opening owner. Catalog counts still
+follow the capability marks. Unenabled historical states retain the first-upkeep
+path, including the historical Chancellor route.
+
+The targeted rules fixtures board four Voids into the frozen Legacy Mardu Energy
+list against Izzet Delver, check a real pre-untap entry and cleanup discard to
+exile, then replay the native game-two actions to the same natural terminal.
+A separate registered game checks the first paid Lightning Bolt's legal player
+targets with and without Sanctity's opening action for both seats. These fixtures
+are pending native execution. The Leylines remain Partial and the tracked
+`PLAYABLE_75` census is unchanged.
+
 S3 is `src/eternal_outside_game_v1.rs`. Each player's cards outside the game (a best-of-three
 game's sideboard without a companion in use) are a sorted list in the eternal module state,
 set at reset from the custom-deck session's optional `outside_the_game` rows in the eternal
@@ -503,6 +913,635 @@ capability. Infoset exporters refuse this profile with one fixed R2 detail
 before projection: their canonical allocator does not yet represent hidden
 sideboards. This refusal depends on the public capability, not the remaining
 private cards. An empty, absent module extension contributes no hash bytes.
+
+Historical S1 census with the original capability labels. Each entry gives the
+full 75 share and the number of missing sideboard cards. The S1b row counted 82
+lists before the documented Partial cards were excluded.
+
+| Wave | Cards | Pauper | Legacy | Vintage |
+| --- | ---: | --- | --- | --- |
+| Baseline | | 45.5%, 32 | 5.9%, 69 | 0.7%, 36 |
+| S1d (Pauper) | 31 | 94.9%, 1 | 5.9%, 69 | 0.7%, 36 |
+| S1c (Vintage) | 17 | 94.9%, 1 | 5.9%, 69 | 5.9%, 19 |
+| S1a (Legacy) | 24 | 95.2%, 0 | 46.0%, 46 | 25.7%, 14 |
+| S1b (Legacy) | 26 | 95.2%, 0 | 52.7%, 20 | 44.3%, 10 |
+
+The corrected census classifies 13 S1 definitions as Partial and counts 49
+full-75 lists across Pauper, Legacy, and Vintage. Their mainboards and sideboards
+were measured against the original snapshots with only these capability labels
+changed. This is registry coverage. The combined candidate still needs its affected
+native checks before these match paths are qualified.
+
+| Format | Playable mainboard share | Full 75 share | Non-Full sideboard cards in mainboard-playable decks |
+| --- | ---: | ---: | ---: |
+| Pauper | 95.2% | 64.8% | 6 |
+| Legacy | 90.0% | 33.8% | 25 |
+| Vintage | 98.1% | 41.9% | 12 |
+| Premodern | 86.0% | 0.0% | 43 |
+
+The Legacy Bant Control mainboard leaves the playable inventory because it
+contains Lavinia. Across the three MTGGoldfish formats, 41 distinct
+sideboard cards remain outside Full.
+
+### S1e: Vintage sideboards
+
+After S1 the census lists 12 non-Full sideboard cards among Vintage's mainboard-playable
+lists. Seven of them are absent from the registry and are the only gap of eight lists (37.2%
+of the field). S1e adds the five whose engine paths exist or are local, completing five lists
+(24.7%): Azure Beastbinder (Jewel Shops, 16.2%), Suspend (Oath of Druids, 3.5%), Sickening
+Shoal (Dredge, 3.4%), Unable to Scream (Doomsday, 1.3%) and Portal to Phyrexia (Underworld
+Breach, 0.3%). The Vintage full 75 share goes from 41.9% to 66.6%, and the five lists join
+`PLAYABLE_75`. The other two, Mycosynth Lattice (Raker Shops 6.6%, Sphere Shops 1.6%) and
+Overencumbered (Lurrus Breach, 4.3%), need global layer effects (every permanent an artifact,
+everything colorless, mana spent as any color) and an Aura that enchants a player; they are
+the next wave, S1f. The remaining Vintage gaps wait on the Partial Leyline of the Void and
+Hullbreacher.
+
+S1e is built in `src/eternal_sideboard_s1e_v1.rs` (with a `targets` submodule) and
+`build_eternal_s1e_v1.rs`, the new tail of the recipe chains after P3f's. Behavior follows each
+card's current Oracle text and rulings, checked against its XMage source:
+
+- Azure Beastbinder: "Vigilance. This creature can't be blocked by creatures with power 2 or
+  greater. Whenever this creature attacks, up to one target artifact, creature, or
+  planeswalker an opponent controls loses all abilities until your next turn. If it's a
+  creature, it also has base power and toughness 2/2 until your next turn." The block
+  restriction is the blocker hook, read with the blocker's current power as blockers are
+  declared, so a later power increase doesn't remove a block (its 2024-07-26 ruling). The
+  trigger's target is a new filter with zero or one pick. On resolution a legal target's
+  battlefield incarnation is recorded with the trigger's controller and a new timestamp, and
+  whether it is a creature then. The record joins the ability removal chain at that
+  timestamp, so abilities gained later apply (its ruling), and a creature's record sets base
+  power and toughness 2/2 in layer 7b at the same timestamp, so a later setting overwrites it
+  and counters and modifications still apply (its rulings). A record ends as its controller's
+  next turn begins. A planeswalker that loses its abilities keeps its loyalty but can't
+  activate loyalty abilities; an artifact loses its mana and static abilities.
+- Suspend: "Exile target creature and put two time counters on it. If it doesn't have suspend,
+  it gains suspend." The exiled card (a token ceases to exist) gets two time counters and joins
+  wave E7a's suspended cards, so its owner removes a counter at each of their upkeeps and may
+  cast it without paying its mana cost when the last is removed (702.62a). No catalog creature
+  has printed suspend, so the card always gains it. E7a's suspend had no creature card, so it
+  lacked the haste of 702.62a ("If you cast a creature spell this way, it gains haste until you
+  lose control of the spell or the permanent it becomes"); S1e records the spell its owner casts
+  from that trigger and gives the permanent it becomes haste while that player controls it.
+  A control change through the engine's control helper ends the record.
+- Sickening Shoal: "You may exile a black card with mana value X from your hand rather than pay
+  this spell's mana cost. Target creature gets -X/-X until end of turn." The alternative cost
+  is the black-card exile of Contagion's without the life. Choosing the exiled card announces X
+  as its mana value (601.2b), so the cast asks for no X, and the spell's mana value on the stack
+  is X plus 2 (202.3e). Paid normally, X is announced and paid as usual. The -X/-X is the
+  engine's until-end-of-turn pump of the target. It is an Arcane instant, the first with X:
+  splice onto Arcane announces the number of spliced cards where X is announced (wave E8b), so
+  Desperate Ritual, the catalog's only splice card, can't be spliced onto it. No snapshot deck
+  plays both; Vintage Dredge is the only one with the Shoal.
+- Unable to Scream: "Enchant creature. Enchanted creature loses all abilities and is a Toy
+  artifact creature with base power and toughness 0/2 in addition to its other types. As long
+  as enchanted creature is face down, it can't be turned face up." An ordinary creature Aura
+  whose effects, while its abilities apply, are hooks on the exact host it is attached to: the
+  artifact and creature types are added in layer 4 and the Toy subtype with them, its other
+  types stay; the ability removal and the 0/2 setting use the Aura's timestamp. A face-down
+  host (a manifested card) can't be turned face up while it is enchanted.
+- Portal to Phyrexia: "When this artifact enters, each opponent sacrifices three creatures of
+  their choice. At the beginning of your upkeep, put target creature card from a graveyard onto
+  the battlefield under your control. It's a Phyrexian in addition to its other types." The
+  opponent chooses three creatures they control (all of them with three or fewer), which are
+  sacrificed at once through the E3 choice annihilator uses. The upkeep trigger targets a
+  creature card in any graveyard, as Reanimate does, and puts it onto the battlefield with the
+  Phyrexian subtype as part of the entry (611.2e), as Valkyrie's Call grants Angel.
+
+The records are pruned as each turn begins: Beastbinder's records of the player whose turn
+begins and of permanents that left the battlefield, and suspend casts whose permanents left.
+
+### S1f: Mycosynth Lattice and Overencumbered
+
+After S1e, two Vintage sideboard cards are the only gap of three lists (12.5% of the field):
+Mycosynth Lattice (Raker Shops 6.6%, Sphere Shops 1.6%) and Overencumbered (Lurrus Breach,
+4.3%). S1f adds both, with the Junk token Overencumbered creates. The Vintage full 75 share
+goes from 66.6% to 79.1%, and the three lists join `PLAYABLE_75`. Mycosynth Lattice also sits
+in five Legacy sideboards that have other gaps. The other Vintage gaps are Leyline of the Void,
+Archon of Absolution, Hullbreacher, Darksteel Angel and Apostle's Blessing.
+
+S1f is built in `src/eternal_sideboard_s1f_v1.rs` and `build_eternal_s1f_v1.rs`, the new tail
+of the recipe chains after S1e's. Behavior follows each card's current Oracle text and
+rulings, checked against its XMage source:
+
+- Mycosynth Lattice: "All permanents are artifacts in addition to their other types. All cards
+  that aren't on the battlefield, spells, and permanents are colorless. Players may spend mana
+  as though it were mana of any color." While a Lattice's abilities apply:
+  - Every battlefield object is an artifact in addition to its other types (layer 4), tokens
+    and face-down permanents included, through `engine::object_has_type`. Spells and cards in
+    other zones are not permanents, so they don't become artifacts (its 2004-12-01 ruling).
+    A type-setting effect with a later timestamp than the Lattice's removes the type again
+    (613.7): an Elk of Oko, Thief of Crowns, and a creature or land Aura's override (Witness
+    Protection, Imprisoned in the Moon). The check of whether a Lattice applies reads only
+    printed characteristics and ability removals, never an artifact type or a color. What reads
+    a permanent's types through the engine follows: Karn, the Great Creator's lock then covers
+    every permanent its controller's opponents control, mana abilities included; Null Rod,
+    Stony Silence and Collector Ouphe cover every permanent; affinity counts every permanent
+    its caster controls; artifact removal can target any permanent; Beseech the Mirror's
+    bargain can sacrifice any of its caster's permanents. A sacrifice's provenance keeps no
+    record of the types it left with, so in eternal builds the bargain check of a cast's
+    provenance accepts any permanent card.
+  - Every object in every zone is colorless (layer 5), through `engine::object_color_mask`, as
+    a color-setting effect at the Lattice's timestamp. Painter's Servant's color, added with a
+    later timestamp, still applies, and a later setting overwrites the Lattice's (613.7): Wild
+    Mongrel's chosen color, an Elk's green and a creature Aura's colors. Color-reading costs
+    follow: no card in hand is blue for Force of Will's alternative cost or black for
+    Sickening Shoal's and Contagion's.
+  - Each player may spend mana as though it were mana of any color, colorless mana included
+    (its ruling): the mana solver lets any mana pay a colored, hybrid or Phyrexian symbol, and
+    a Phyrexian symbol keeps its two-life alternative, while a printed colorless symbol still
+    requires colorless mana. The permission covers every payment the solver plans: spells,
+    activated abilities and mana paid while an effect resolves. It changes which mana may pay
+    a symbol, not the cost, so convoke and delve keep their rules: a creature tapped for
+    convoke pays for {1} or one mana of its color, and a Lattice leaves it none, and delve
+    pays only generic mana. Restrictions on the mana stay (its ruling): Mishra's Workshop's
+    mana still pays only for artifact spells.
+- Overencumbered: "Enchant opponent. When this Aura enters, enchanted opponent creates a Clue
+  token, a Food token, and a Junk token. At the beginning of combat on enchanted opponent's
+  turn, that player may pay {1} for each artifact they control. If they don't, creatures can't
+  attack this combat." The engine's attachments link permanents, so the enchanted player is a
+  module record of the Aura's battlefield incarnation. Cast, it targets an opponent; on
+  resolution, if that player is still a legal target, the Aura enters and is recorded with
+  them, and otherwise it doesn't resolve. Entering any other way, it enchants its
+  controller's opponent (303.4f), so Show and Tell and Replenish may put it onto the
+  battlefield although they leave other Auras. A state-based action puts it into its owner's graveyard when
+  the player it enchants is no longer an opponent of its controller (704.5m). The entry
+  trigger's tokens are created under the control of the player it entered enchanting. The
+  combat trigger is controlled by the Aura's controller and triggers as the beginning of
+  combat step of the enchanted player's turn begins. On resolution that player chooses
+  whether to pay {N}, N being the artifacts they then control, and is offered the payment only
+  when they can make it; {0} is paid. If they don't pay, creatures can't attack this turn (the
+  engine has one combat phase per turn). The ban is the module's own record, cleared as the
+  next turn begins, when the records of Auras that left the battlefield are dropped too.
+- Junk Token: "{T}, Sacrifice this artifact: Exile the top card of your library. You may play
+  that card this turn. Activate only as a sorcery." A new artifact token with the new Junk
+  subtype. Its ability is the engine's impulse draw (Questing Druid's adventure), whose
+  exiled card gets an until-end-of-turn play permission, so costs and timing still apply (its
+  ruling). Clue and Food tokens are the Standard registry's.
+
+### S1g: Legacy sideboards
+
+After S1f the census lists 24 non-Full sideboard cards among Legacy's mainboard-playable lists.
+Six are Partial S1 definitions, and 18 are absent from the registry. Four of the absent
+cards are the only gap of five lists (12.5% of the field): Damping Sphere (Lands 4.5%,
+Sewer-Cam 2.7%, Painter 0.8%, Mono-Black Midrange 0.5%), Drop of Honey (Lands), Alpine Moon and
+Ghost Vacuum (Sneak and Show, 4.0%). S1g adds the four. The Legacy full 75 share goes from 33.8%
+to 46.3%, and the five lists join `PLAYABLE_75`. Damping Sphere also sits in three Legacy
+sideboards that have other gaps.
+
+S1g is built in `src/eternal_sideboard_s1g_v1.rs` and `build_eternal_s1g_v1.rs`, the new tail
+of the recipe chains after S1f's. Behavior follows each card's current Oracle text and
+rulings, checked against its XMage source:
+
+- Damping Sphere: "If a land is tapped for two or more mana, it produces {C} instead of any
+  other type and amount. Each spell a player casts costs {1} more to cast for each other spell
+  that player has cast this turn." While a Sphere's abilities apply:
+  - A land's mana ability with {T} in its cost that would add two or more mana adds one {C}
+    instead. Its costs and other effects stay: Ancient Tomb still deals 2 damage to its
+    controller. The replacement sits where Contamination's does. The payment planner offers
+    such a land as one {C}: an assembled Urza land, and Eldrazi Temple for an Eldrazi spell.
+    A manual activation adds one {C}: Ancient Tomb, City of Traitors, Gaea's Cradle with two or
+    more creatures, Serra's Sanctum with two or more enchantments, and a bundle such as
+    "{T}: Add {W}{U}". A land tapped for one mana is unchanged. Restricted mana keeps its
+    restriction (106.6a).
+  - Each spell costs {1} more for each other spell its caster has cast this turn, counted
+    from the cast history whether or not the Sphere was on the battlefield (its ruling). The
+    increase joins the spell tax hook (Defense Grid's). Mana value is unchanged (its ruling).
+- Drop of Honey: "At the beginning of your upkeep, destroy the creature with the least power.
+  It can't be regenerated. If two or more creatures are tied for least power, you choose one
+  of them. When there are no creatures on the battlefield, sacrifice this enchantment."
+  - The upkeep trigger doesn't target (its ruling). On resolution it finds the creatures with
+    the least power. Those with indestructible are passed over while another of them can be
+    destroyed, and nothing is destroyed when all of them are indestructible (its rulings). One
+    is destroyed and can't be regenerated (wave P1a's record). With two or more, the trigger's
+    controller chooses through the E3 resolution choice, and no player acts in between.
+  - The sacrifice is a state trigger (603.8), as wave P2c's Phyrexian Devourer's is. It
+    triggers while no creature is on the battlefield and not again until it leaves the stack,
+    and the Drop is sacrificed on resolution even if a creature is back by then (its ruling).
+- Alpine Moon: "As this enchantment enters, choose a nonbasic land card name. Lands your
+  opponents control with the chosen name lose all land types and abilities, and they gain
+  '{T}: Add one mana of any color.'"
+  - The name is an entry choice like Pithing Needle's, recorded with the Alpine Moon's
+    battlefield incarnation. The options are every nonbasic land name in the executable
+    registry, front faces and land back faces, one per name in definition order. Unlike
+    Pithing Needle's visible names, a land not yet seen can be named.
+  - Each land an opponent of the Moon's controller controls with that name joins wave E8a's
+    land-type setter at the Moon's timestamp. Its abilities are removed at that timestamp,
+    and its land types are removed unless a later Blood Moon, Harbinger of the Seas or
+    Spreading Seas sets them again (613.7). It has "{T}: Add one mana of any color" whatever
+    the order, since that ability is gained in layer 6. Supertypes and other card types stay
+    (its ruling).
+- Ghost Vacuum: "{T}: Exile target card from a graveyard. {6}, {T}, Sacrifice this artifact:
+  Put each creature card exiled with this artifact onto the battlefield under your control
+  with a flying counter on it. Each of them is a 1/1 Spirit in addition to its other types.
+  Activate only as a sorcery."
+  - Each exile is recorded with the Vacuum's battlefield incarnation and the exiled card's
+    incarnation. The second ability reads the records of the sacrificed incarnation on
+    resolution (607.2a). Each recorded card still in exile that is a creature card enters at
+    once under the ability's controller.
+  - Each one that enters is recorded with a timestamp. It has base power and toughness 1/1
+    in layer 7b, so counters and modifications still apply. It gains the Spirit subtype in
+    layer 4 and has flying from its flying counter. The engine has no flying counter kind, so
+    the counter is a module record of that incarnation, as wave P3f's -2/-1 counters are.
+
+The records are pruned as each turn begins: Alpine Moon's names and Ghost Vacuum's exiles and
+Spirits whose incarnations left the battlefield or exile, and Drop of Honey's triggered state
+once its trigger left the stack.
+
+Known gaps (S1g): no effect removes counters from the Spirits, so their flying counter is not
+a counter other effects can count or remove. A land entering under Alpine Moon keeps an
+enters-tapped ability, as under Blood Moon. Drop of Honey's state trigger is checked as
+triggers are collected, so creatures that all leave and return within one event batch, such
+as a flicker of every creature, don't trigger it (its ruling says they do).
+
+### S1h: Overload and extraction qualification
+
+After S1g the largest Pauper and Legacy gaps are Partial S1 definitions. S1h qualifies four of
+them and marks them Full; their rules are unchanged.
+
+- Overload: Vandalblast is the only gap of 13 Pauper lists (18.6% of the field) and
+  Electrickery of Boros Moxite (1.3%); Boros Synthesizer (0.4%) lists both.
+- Extraction: Surgical Extraction is the only gap of four Legacy lists (Boros Energy 7.5%,
+  Omni-Tell 1.2%, Death and Taxes 60-card 0.3%, Temur Delver 0.2%), and Beseech Storm (0.6%)
+  lists it with Extirpate.
+
+The Pauper full 75 share goes from 64.8% to 85.1% and the Legacy share from 46.3% to 56.1%.
+The 20 lists join `PLAYABLE_75`, and 9 Partial S1 definitions remain.
+
+S1d built overload as the card's paid Adventure form, and the later repair added the paid
+graveyard and Future Sight permissions, Retrace's land discard, the Omniscience and Bolas's
+Citadel routes, and free casts that offer only the ordinary form (see S1d above). That repair
+left "the affected overload fixtures and consumers" to qualify. S1a and S1b built the
+extractions, and their repair added Surgical Extraction's optional subset of the matching cards
+in the owner's graveyard, hand and library, Extirpate's every public graveyard match with any
+subset of the hidden ones, the caster's private look at the searched hand and library in the
+JSONL reply (`surgical_search_look_v1`, `extirpate_search_look_v1`), and the refusal of an
+active search by frozen infoset and search consumers (see S1a and S1b above). Their native
+choice, restore, disclosure and transport checks were pending.
+
+- Fixtures: the overload fixtures in `tests/eternal/eternal_sideboard_s1d_v1.rs` cover each
+  card's overloaded effect, the paid graveyard permission with a restore, Retrace's land
+  discard, a free cascade, Omniscience, Future Sight's paid library permission with a restore
+  and as the only legal form, and Bolas's Citadel. The extraction fixtures in
+  `tests/eternal/eternal_sideboard_s1a_v1.rs` and `tests/eternal/eternal_sideboard_s1b_v1.rs`
+  cover the choice in both seats, finishing with no card or a private subset, restores, the
+  nonchooser's hidden roster and the Phyrexian payment; the extractions passed in the guarded
+  native batch at `90bda0c0f`. All of them run in the Eternal group, which runs every
+  `eternal_integration` module. They passed on Linux in each pull request run and on hosted
+  Windows in the Eternal jobs dispatched at #635's head `88262eb8` and #640's head `bd168234`.
+  For these pull requests the hosted Windows Eternal job replaces the local native packet (the
+  maintainer's decision), so that is their native execution.
+- Copies: Chandra, Hope's Beacon is the one registry card that copies a spell other than
+  itself. Its trigger copies the first instant or sorcery spell its controller casts each
+  turn; Storm, Replicate, Casualty and Chain of Vapor copy only their own spell. A copy of an
+  overloaded spell is overloaded too (702.96c). A new S1h test casts an overloaded Vandalblast
+  and an overloaded Electrickery under Chandra and checks that each copy, with no targets,
+  affects every object the overloaded text names.
+- Consumers: in Eternal builds a Full card reaches the registered best-of-three match, the
+  custom-deck session with its JSONL server and policy observation v5, and the census. The
+  best-of-three harness plays the 20 lists' matches through that server with seeded random
+  actions and random sideboarding, checking natural terminals and replay. There the four cards
+  are sideboard copies, drawn too rarely to reach each branch: its first run with the 20 lists
+  chose no overload form, reached Surgical Extraction's search look 7 times and Extirpate's
+  none. So, as for wave P2a's statics, a red deck with both overload cards and a white-black
+  deck with both extractions play each other through public sessions, in both seats with
+  ranked and with seeded random actions, checking natural terminals and replay. The test
+  requires an overload form chosen from the JSONL action list, an overloaded spell (cast with
+  the Omen method) on the public stack and both search looks in the replies. A cast whose only
+  legal form is the overload takes it with no choice, so the stack count includes those casts.
+  Policy encoders, training and Spellbench entries for eternal formats stay separate work, and
+  frozen encoders keep refusing unsupported state (see the card contract).
+
+As for every cast, the pending cast menu has no interleaved mana activation, so an overload cost
+is paid with the ordinary mana plan. Martyr of Sands' last pending check, the three event-history
+consumers of every event kind, now runs with its sample in the workspace library group on Linux
+and hosted Windows. It stays Partial for now: the one list that needs it, White Aggro, also needs
+Standard Bearer, whose broader targeting coverage is pending.
+
+### S1i: Leyline qualification
+
+After S1h the largest Legacy gap is Leyline of the Void, the only gap of five Legacy lists
+(Eldrazi 5.0%, Death and Taxes Yorion black-white 4.0%, Hogaak Moonshadow 1.8%, Mardu Energy
+0.9%, Saga Storm 0.6%) and of Vintage Blue Tempo (1.8%). S1i qualifies it and Leyline of
+Sanctity, which shares its native opening path, and marks both Full; their rules are unchanged.
+The Legacy full 75 share goes from 56.1% to 68.4% and the Vintage share from 79.1% to 80.9%.
+The six lists join `PLAYABLE_75`, and seven Partial S1 definitions remain. Leyline of the Void
+also sits in Mystic Forge Combo (with Extinguisher Battleship), Vintage Mono-White Initiative
+(12.2%, with Archon of Absolution), Scam (with Apostle's Blessing) and RUG Control (with
+Hullbreacher), and Leyline of Sanctity in LED Dredge (with Kiora's Dismissal).
+
+What S1a and S1b left pending, and what covers it now:
+
+- Fixtures: the native opening fixtures in `tests/eternal/eternal_opening_v1.rs` and
+  `tests/eternal/eternal_bo3_v1/eternal_bo3_leyline_v1.rs` (the Leyline and Chancellor order
+  with restores and the first spell in both seats, kept cards only and a tampered owner
+  refused, no nonactor menu, the snapshot Void 75 boarded into a native game two and replayed
+  to its terminal, Sanctity's first-spell player targets in both seats) and the best-of-three
+  module's real London keeps run in the Eternal group. They passed on Linux in each pull
+  request run and on hosted Windows in the Eternal jobs dispatched at #635's, #640's and
+  #644's heads, which take the place of the native packet for these pull requests, as in S1h.
+- Event sample: row 322 of `data/event_history_v1/every_kind_samples.json`, `EternalOpeningV1`,
+  is a genuine native sample, and the every-kind event-history checks run with it in the
+  workspace library group on Linux and hosted Windows.
+- Consumers: a Leyline deck registers with the native opening profile, and the JSONL
+  custom-deck session keeps refusing it (the registration rule above), so its consumers are the
+  registered best-of-three match through `start_game_with_native_opening_v1` and the census.
+  The best-of-three harness registers both decks of a match natively when either 75 needs the
+  profile and plays those games in process with the same seeded random policy. London
+  mulligans and every later decision take a random action among the policy surface's legal
+  actions (`PolicySurfaceV5` and `policy_legal_action_candidates_v5`, the menu the JSONL
+  session offers), and a random seat starts no new spell or ability while it controls two
+  stack items. Each kept-hand choice takes a random legal opening card or finishes, and a
+  trigger order too large for the action list takes the listed order. The session games'
+  Ward filters exist for policy observation v5, which these games don't build. Each game is
+  played twice and must reach the same natural terminal with the same action transcript and
+  state hash, and sided-in casts are counted as in the session games.
+- Opening window: sideboard Leylines reach an opening hand too rarely to exercise it, so, as in
+  S1h, two Legacy decks with four of each Leyline in their mainboards play native games in both
+  seats with seeded random actions, and the test requires each Leyline to be put onto the
+  battlefield from an opening hand.
+
+### S1j: Archon of Absolution
+
+After S1i, Archon of Absolution is the only gap of Vintage Mono-White Initiative (12.2% of the
+field), the largest single-card gain left in the three formats. S1j adds it as a Full card. The
+Vintage full 75 share goes from 80.9% to 93.1%, and the list joins `PLAYABLE_75`. Its sideboard
+Leyline of the Void makes its best-of-three matches native (S1i).
+
+S1j is built in `src/eternal_sideboard_s1j_v1.rs` and `build_eternal_s1j_v1.rs`, the new tail of
+the recipe chains after S1g's. Behavior follows the card's current Oracle text and rulings,
+checked against its XMage source (`CantAttackYouUnlessPayAllEffect` with {1} for the player and
+the planeswalkers they control):
+
+- Archon of Absolution, {3}{W}, Creature - Archon 3/2: "Flying. Protection from white.
+  Creatures can't attack you or planeswalkers you control unless their controller pays {1} for
+  each of those creatures."
+  - Flying is the printed keyword. Protection from white joins wave P1a's printed protection
+    table, which wave E6b's checks apply to targeting, blocking, damage and attachments.
+  - The last ability is a cost to attack (508.1g). In a two-player game every attacking
+    creature attacks the defending player or a planeswalker they control, so a declaration
+    costs {1} for each attacking creature and each Archon the defending player controls whose
+    abilities apply. The active player's own Archons cost them nothing. A Phyrexian Metamorph
+    copying an Archon taxes too, since a copy takes the copied definition.
+  - Legality: 508.1f taps the attacking creatures before the cost is paid (508.1h and 508.1i),
+    so a declaration is legal only if its cost can be paid with its attackers without
+    vigilance tapped. An attacking mana creature can't pay its own tax, and a vigilant one can.
+    `validate_declare_attackers` checks this with the effect-mana check (`can_pay_effect_mana`)
+    on a copy of the state with those attackers tapped, so no payment is ever partial.
+  - Every consumer offers only declarations that check accepts. The harness surface's attack
+    menus are the subsets it accepts. The policy surface's attacker scan, which the JSONL
+    session and the native best-of-three games use, offers an inclusion answer only if some
+    completion of the declaration passes it, probing the smallest and the largest completion.
+    A larger declaration costs more and leaves less mana, so under a cost the smallest
+    completion is legal whenever any is, and the probe stays exact. The scan's exactness note
+    names this shape, and a test checks the offered answers against every completion.
+  - Requirements: a player is never required to pay a cost to attack (508.1d), and the card's
+    2019-10-04 ruling lets a creature that attacks "if able" stay home. While the defending
+    player controls an Archon whose abilities apply every attack has a cost, so goad and
+    "attacks each combat if able" require nothing: `required_goaded_attackers` and
+    `required_attackers` name no creature, for the declaration check and the flat action
+    filter alike.
+  - Payment: once the declaration commits and its attackers are tapped, the cost is paid with
+    the effect-mana payment (`pay_effect_mana`, the ordinary mana plan with Treasures, as
+    Overencumbered's {N}), before attack triggers are collected. It is deterministic, like the
+    other automatic payments, and public through its mana events.
+- Consumers: a sideboard Archon rarely reaches the battlefield, so, as in S1h, a white deck
+  and a green-white deck with mana creatures, each with four Archons in its mainboard, play
+  each other through public sessions, in both seats with ranked and seeded random actions,
+  checking natural terminals and replay. The test requires an attack declared and paid for
+  against an Archon, and an attacker scan step that offers only to leave a creature out
+  because its player couldn't pay for it.
+  - Design note after the first run: with Archons only in the white deck, the eight games
+    had no taxed attack and two steps that offered only to leave a creature out. The green
+    deck's creatures were dead by the time an Archon arrived, and a random seat often taps its
+    lands for mana that empties before combat. With Archons in both decks, either player's
+    attacks are taxed once the other has one, and a ranked seat, which taps lands only to cast
+    spells, pays for attackers with the mana it has left.
+
+### S1k: Meddling Mage qualification
+
+After P3g, Meddling Mage is the only gap of Premodern Grow (2% of the field) and sits in the
+sideboards of Replenish (6%, with Alter Reality), Other Control (1%, with Decree of Pain and
+Overgrown Estate) and Legacy Azorius Control (0.3%, with Lavinia, Azorius Renegade). S1k
+qualifies it and marks it Full; its rules are unchanged. The Premodern full 75 share goes from
+78% to 80%, Grow joins `PLAYABLE_75`, and five Partial S1 definitions remain.
+
+What S1b left pending, and what covers it now:
+
+- Fixtures: the Mage fixtures in `tests/eternal/eternal_sideboard_s1b_v1.rs` (names in both
+  seats, cascade's and Bilbo's resolution casts, split halves, Room doors and Adventure names,
+  a Mage put onto the battlefield by Reanimate or Aether Vial, paid, reanimated, Aether Vial
+  and Show and Tell Metamorph copies, Exhume's simultaneous names in APNAP order, a token copy,
+  Dress Down and Containment Priest) run in the Eternal group. They pass on Linux in each pull
+  request run and on hosted Windows in the Eternal jobs dispatched at each wave's head, most
+  recently #660's `b11740d0`, which take the place of the native packet, as in S1h.
+- Event sample: row 321 of `data/event_history_v1/every_kind_samples.json`,
+  `MeddlingMageEntryV1`, is a genuine native sample, and the every-kind event-history checks
+  run with it in the workspace library group on Linux and hosted Windows.
+- Consumers: the custom-deck session stopped the card's games. Policy observation v5 refused
+  every state with a pending Mage entry, a recorded Mage name or a Mage entry in the event
+  history ("Meddling Mage named entry requires its consumer successor"), and the policy
+  surface's legal actions refused the name menu. S1k adds that successor to Limited schema 5,
+  the [public shroud contract](limited_public_shroud_v1.md) the Eternal custom-deck session
+  plays under:
+  - Actions: each option of the name menu, its first-letter groups and then the names in the
+    chosen group, is a `choose_meddling_mage_name_v1` action with its actor, entry ordinal,
+    group, option index and count, and the option's text (the letter or the printed name). It
+    answers the decision with `ChooseEffectOption`. The menu is the engine's: every nonland
+    name in the executable registry, with split halves, Room doors, Adventure and Omen spells
+    and nonland back faces, so it shows no hidden card. The native best-of-three games of S1i
+    take the same actions.
+  - Observation: schema 5's policy observation lists, in `projection.meddling_mage_names`,
+    each battlefield Meddling Mage whose chosen name applies (the names that stop casts), with
+    its public card reference and the name, seat 0's battlefield first in public battlefield
+    order. The list is absent when no name applies, so other observations keep their bytes and
+    hashes. A pending entry's saved world and answers stay private: the observation never
+    reads them, and a name appears once its Mage has entered. So a later chooser in a
+    simultaneous batch (Exhume's two Mages) doesn't see the earlier name, a known gap of the
+    observation rather than of the rules. A pending native Metamorph copy menu (Reanimate's,
+    Aether Vial's or a physical Show and Tell's) shares the Mage's pre-entry checkpoint and is
+    still refused: it is Phyrexian Metamorph's path, and no consumer represents it yet.
+  - Every other consumer of these games still refuses them, as for shroud: schema 4 and the
+    earlier observation versions, the flat policy encoders and action slices, the infoset
+    export and the Spellbench bridge.
+- Games: sideboard Mages are cast too rarely to reach the menu often, so, as in S1h, a
+  white-blue deck with four Mages in its mainboard and a black-red deck of instants and
+  creatures play each other through public sessions, in both seats with ranked and seeded
+  random actions, checking natural terminals and replay. A ranked seat names the first nonland
+  card of its opponent's list that the menu offers (its letter, then its name), and a random
+  seat takes a random option. The test requires names chosen from the action list and a
+  decision whose observation lists a name while the acting player holds that card and is
+  offered no cast of it. Every session game checks that no cast is offered of a card with a
+  single spell name that an observed Mage chose.
+
+### S1l: Lavinia qualification and Triumph of Saint Katherine
+
+After S1k, Lavinia, Azorius Renegade (Partial since S1) and Triumph of Saint Katherine (not in
+the registry) are the only gaps of four Legacy lists: Beanstalk Control without Yorion (3.4% of
+the field), the two Azorius Tempo lists (1.8% and 0.6%) and Jeskai Tempo (1.7%). Lavinia alone
+is the gap of Cephalid Breakfast (0.8%) and Azorius Control (0.3%). S1l qualifies Lavinia and
+marks her Full, and adds Triumph as a Full card. The Legacy full 75 share goes from 68.4% to
+77.0%, and the six lists join `PLAYABLE_75`. Bant Control's mainboard becomes playable; its
+sideboard still needs Doorkeeper Thrull. Four Partial S1 definitions remain.
+
+Lavinia:
+
+- Fixtures: `tests/eternal/eternal_sideboard_s1a_v1/lavinia.rs` covers, in both seats, the
+  branches S1 left unqualified: announced X and its restored actions, a Bestow cast against
+  the creature form, a selected split half and an overload's printed value, a Room door, free
+  resolution casts before their offer (Boarding Party), a madness cast refused before its
+  targets, Bilbo's paid graveyard casts, and the counter following its controller after a paid
+  exchange. The Bestow fixture's correction (its host is summoning sick) is in place. With S1's
+  prohibition and counter tests they run in the Eternal group, so they pass on Linux in each
+  pull request run and on hosted Windows in the Eternal jobs dispatched at each wave's head,
+  most recently #660's `b11740d0`, which take the place of the native packet, as in S1h.
+  Lavinia has no event kind of her own: her counter is a delayed trigger, and its state (spells
+  cast with no mana spent while she was in play) already serializes and hashes. No consumer
+  refuses her games.
+- A gap found in this review: miracle. Wave E5b pays a miracle cost as an effect payment while
+  the miracle trigger resolves, then casts the card under a resolution permission without
+  paying its mana cost, so the cast commits no mana and Lavinia would counter an opponent's
+  Terminus or Triumph cast for its miracle cost. Mana was spent to cast it: the miracle cost is
+  the spell's total cost (601.2f, 702.94a). The other casts made during a resolution (cascade,
+  rebound, suspend and Boarding Party's) are free and Amped Raptor's spends energy, so Lavinia
+  counters those, correctly. While an opponent's Lavinia is in play, S1l records the hand
+  incarnation whose miracle cost was paid, and the resolution cast from that incarnation counts
+  as having spent mana. A new fixture casts Terminus and Triumph for their miracle costs under
+  an opposing Lavinia, in both seats: neither is countered, and Terminus isn't offered while
+  its controller controls fewer than six lands.
+
+Triumph of Saint Katherine is built in `src/eternal_sideboard_s1l_v1.rs` and
+`build_eternal_s1l_v1.rs`, the new tail of the recipe chains after P3g's. Behavior follows the
+card's current Oracle text and rulings (2022-10-07 for miracle, 2024-01-12 for the pile), checked
+against its XMage source:
+
+- Triumph of Saint Katherine, {4}{W}, Creature - Human Warrior 5/5: "Lifelink. Praesidium
+  Protectiva - When this creature is put into your graveyard from the battlefield, exile it and
+  the top six cards of your library in a face-down pile. If you do, shuffle that pile and put it
+  back on top of your library. Miracle {1}{W}"
+  - Lifelink is the printed keyword.
+  - Miracle: E5b's miracle costs gain Triumph's {1}{W} beside Terminus's {W}. The reveal, the
+    trigger and the cast are E5b's (702.94a); the creature spell is cast while the trigger
+    resolves, so its timing is ignored, on either player's turn.
+  - Praesidium Protectiva is a leaves-the-battlefield trigger (603.10a) that works from the
+    graveyard, as Academy Rector's does, controlled by the player who controlled Triumph. A card
+    goes to its owner's graveyard, so "your graveyard" means the owner controlled it: trigger
+    collection skips the ability otherwise, and a stolen Triumph that dies doesn't trigger.
+  - Resolution: per the 2024-01-12 ruling, if Triumph isn't in its owner's graveyard as the
+    incarnation that died, or the library has fewer than six cards, nothing happens. Otherwise
+    Triumph is exiled from the graveyard and put on top of the library, and the top seven cards
+    are randomized by a new `randomize_library_top_v1`, the counterpart of
+    `randomize_library_bottom_v1`: every position fact in the pile is dropped, and each deeper
+    fact shifts one position with the insertion.
+  - The six library cards are face down in exile only during the resolution, seen by no one,
+    and return in random order with Triumph. They are randomized in place, keeping their
+    objects; no registry card reacts to a card being exiled from a library. Rest in Peace or a
+    Leyline of the Void exiles a dying Triumph instead, so the ability doesn't trigger.
+  - Known gap: in a real game, a player who knew cards in the pile (after Brainstorm, say)
+    knows they are among the top seven, in an unknown order. Library knowledge is per
+    position, so the observation drops those facts.
+- Consumers: Triumph's trigger on the stack, the miracle reveal and the paid cast already have
+  schema 5 representations (Terminus's), and the randomization is engine state, so no consumer
+  needs a successor.
+- Games: as in S1h and S1k, a white-blue deck with four Lavinias and four Triumphs in its
+  mainboard and a blue-black deck of free and expensive noncreature spells play each other
+  through public sessions, in both seats with ranked and seeded random actions, checking natural
+  terminals and replay. The test requires a Lavinia counter on the public stack, a Triumph cast
+  for its miracle cost from the action list and a resolved pile. Every session game checks that
+  no cast is offered of a noncreature spell whose printed mana value exceeds the acting
+  player's lands while an opposing Lavinia is on the battlefield.
+
+### S1m: Extinguisher Battleship and Fiery Confluence
+
+After S1l, Extinguisher Battleship is the only gap of Mystic Forge Combo (3.5% of the field),
+which wishes for it with Karn, the Great Creator, and Fiery Confluence is the only gap of Red
+Stompy (1.0%). Neither card is in the registry. S1m adds both as Full cards. The Legacy full 75
+share goes from 77.0% to 81.5%, and the two lists join `PLAYABLE_75`. Tron (1.7%) also needs
+the Battleship, with Cityscape Leveler, Invasion Submersible and Summon: Bahamut.
+
+Both cards are built in `src/eternal_sideboard_s1m_v1.rs` and `build_eternal_s1m_v1.rs`, the
+new tail of the recipe chains after S1l's. Behavior follows the current Oracle text, the
+comprehensive rules for station (702.184, 721) and the rulings (the Edge of Eternities release
+notes for station, 2015-11-04 for Fiery Confluence), checked against the XMage sources:
+
+- Extinguisher Battleship, {8}, Artifact - Spacecraft: "When this Spacecraft enters, destroy
+  target noncreature permanent. Then this Spacecraft deals 4 damage to each creature. Station
+  (Tap another creature you control: Put charge counters equal to its power on this Spacecraft.
+  Station only as a sorcery. It's an artifact creature at 5+.) STATION 5+ Flying, trample 10/10"
+  - Spacecraft is a new artifact type (stable id 420).
+  - The entry trigger targets a noncreature permanent, a new
+    `StandardTargetV1::NoncreaturePermanentV1`. The Battleship qualifies itself: it enters with
+    no counters. The trigger destroys the target, then the Battleship deals 4 damage to each
+    creature, from its last-known state if it has left. If the target is illegal as the trigger
+    resolves, it doesn't resolve and deals no damage (608.2b, the card's ruling).
+  - Station (702.184a) is an activated ability at sorcery speed. Its cost is a new
+    `CostComponent::TapOtherUntappedControlledCreatureV1`: another untapped creature the
+    activating player controls, whoever owns it, chosen as the existing tap-another-permanent
+    costs are (`CostKind::TapPermanents`). Summoning sickness doesn't matter, since the cost
+    isn't {T}. The tapped creature's paid-cost reference records its power, which the engine
+    already refreshes as last-known information if that creature leaves. On resolution the
+    Battleship, if it is still the incarnation that activated, gets charge counters equal to
+    the creature's power then, or as it last existed on the battlefield, and none if that power
+    is 0 or less (rulings). It can be activated at any number of counters (721.4).
+  - Station 5+ (721.2b): on the battlefield with five or more charge counters, the Battleship
+    is a creature in addition to its types, with base power and toughness 10/10, flying and
+    trample; off the battlefield it has no power or toughness (721.2c). The creature type comes
+    from the counters alone, so an effect that later removes its abilities in layer 6 leaves it
+    a creature (613.6), and flying and trample follow the removal timestamps as granted
+    keywords do: Dress Down, Azure Beastbinder and Unable to Scream remove them when their
+    effects are later than the Battleship, and Oko's Elk sets its types anyway. The 10/10 is the
+    lowest-priority base: every other effect in the registry that can set the Battleship's base
+    power and toughness (Karn, the Great Creator's +1, the Tezzeret, Cruel Captain emblem's
+    Robot, Oko, Beastbinder, Unable to Scream) starts after it entered, so that effect wins by
+    timestamp (613.7), as the rulings require for Karn and the Tezzeret emblem. A Phyrexian
+    Metamorph copy has the Battleship's abilities with its own counters.
+  - Dress Down's "Creatures lose all abilities" reads printed creature types, so that types and
+    abilities don't depend on each other. A stationed Battleship's creature type doesn't depend
+    on its abilities, so Dress Down now applies to it too.
+  - Found in the fixtures: wave S1e's trigger target specs answered "no target" for every
+    trigger in the tables chained after its own (S1g's, S1l's and the Battleship's). S1g's and
+    S1l's triggers have no target, so only the Battleship's was affected. S1e now answers only
+    for its own triggers, as S1a, S1g and S1l do, and the Battleship's trigger gets its target
+    from this wave.
+- Fiery Confluence, {2}{R}{R}, Sorcery: "Choose three. You may choose the same mode more than
+  once. - Fiery Confluence deals 1 damage to each creature. - Fiery Confluence deals 2 damage to
+  each opponent. - Destroy target artifact."
+  - As for Eldrazi Confluence (E5b), the ten multisets of modes are ten modes, each offered only
+    when its targets exist. Each "Destroy target artifact" chosen is one slot of a new
+    `StandardTargetV1::RepeatableArtifactsV1(n)`, and a slot may name an artifact another slot
+    named (700.2d).
+  - The chosen modes are performed in printed order, and each damage mode chosen twice or three
+    times is a separate damage event (rulings). An illegal artifact target is skipped; if every
+    target is illegal, the spell doesn't resolve (608.2b).
+- Consumers: the station activation, its creature choice, the entry trigger's target and
+  Fiery Confluence's modes use existing schema 5 representations (activated abilities,
+  `ChooseCostTargets`, triggered-ability targets, Eldrazi Confluence's modes). Charge counters
+  and the Battleship's types, power, toughness and keywords are in each public card's counters
+  and characteristics, so no consumer needs a successor.
+- Fixtures, in both seats: both cards' printed characteristics and Full capability; the entry
+  trigger (destroying a land or an artifact, 4 damage to each creature, no damage when the
+  target left in response, the Battleship targeting itself); station (counters from the tapped
+  creature's power on resolution, last-known power after it left, none for power 0, a summoning
+  sick creature tapped, no activation without another untapped creature or at instant speed,
+  nothing when the Battleship left); the 10/10 flying trample creature at five counters,
+  attacking only once controlled since the turn began; Karn's +1 and the Tezzeret emblem's
+  Robot keeping their base power and toughness; Dress Down removing flying and trample from a
+  stationed Battleship; Fiery Confluence's mode offers, the same artifact named twice, damage
+  events in printed order and the spell not resolving when every target is illegal.
+- Games: a colorless deck with twelve Battleships, fast mana and creatures to station with and
+  a red deck of Mountains and twelve Fiery Confluences (custom decks have no copy limit) play
+  each other through public sessions, in both seats, three games of each pairing with ranked
+  actions and six with seeded random actions, checking natural terminals and replay. The test
+  requires a Battleship entry trigger resolving, a station activation chosen from the action
+  list, a stationed Battleship that is a creature in the observation, and a Fiery Confluence
+  cast with a destroy mode.
+  - Found in the first deck games: with four copies of each card in longer lists, no game cast
+    either card. Ranked seats spent their mana on the other spells first, `rank` never
+    activates an ability and takes Fiery Confluence's first mode, which has no destroy, and
+    random seats often tap their mana outside their main phases, so they rarely pay for the
+    Battleship. As S1k's Mage names and S1l's miracle reveals do, the harness gives ranked
+    seats an S1m option: they station a Battleship while it has fewer than five charge
+    counters, and choose Fiery Confluence's first offered mode with a destroy.
 
 ## Execution
 
@@ -536,7 +1575,15 @@ reporting as E1 to E9:
 | P2a | The Rock, Mono-Black Control, BW Control, Stasis, Other Control | 31 | Premodern 70% to 79% by the census |
 | P2d | White Weenie, Mono-Red Control (Beloved Chaplain, Devoted Caretaker, Glowrider, Mother of Runes, Nova Cleric, Shared Triumph, Soltari Monk, Soltari Priest, Avalanche Riders, Earthquake, Firebolt, Ghitu Encampment, Pillage, Stone Rain, Veteran Brawlers) | 15 | two decks, 2% of the field |
 | P2b | Survival, Madness Threshold, and the cards Elves shares with them (17 of 19; Birchlore Rangers and Thornscape Battlemage stay out) | 17 | Survival and Madness Threshold playable (4%); Elves needs Birchlore Rangers, Thornscape Battlemage and wave P2a's Genesis and Wall of Blossoms |
-| P2c | Reanimator, Full English Breakfast (20 of 21 cards; Volrath's Shapeshifter stays out) | 20 | Reanimator playable; Full English Breakfast needs Volrath's Shapeshifter (see below) |
+| P2c | Reanimator, Full English Breakfast (20 Full cards and Partial Volrath's Shapeshifter) | 20 Full | Reanimator playable; Full English Breakfast needs owning gameplay qualification |
+| Elves follow-up | Birchlore Rangers and Thornscape Battlemage | 2 | Elves mainboard integrated in #613 with both-seat public-session terminal and replay qualification |
+| P3a | Sideboards of Stiflenought, Sligh, Goblins, Oath of Druids, RG Aggro, Stasis and White Weenie (Anarchy, Chill, Crimson Acolyte, Cursed Totem, Essence Flare, Overload, Pyrostatic Pillar, Sphere of Law, Tranquil Domain, True Believer, Warmth) | 11 | Premodern full 75 0% to 34% |
+| P3b | Sideboards of Terrageddon, Mono-Black Aggro, Survival, The Rock and Mono-Red Control (Dystopia, Engineered Plague, Gloom, Goblin Tinkerer, Haunting Echoes, Mogg Salvage, Plaguebearer, Ray of Revelation, Xantid Swarm, Zuran Orb) | 10 | Premodern full 75 34% to 53% |
+| P3c | Sideboards of Psychatog, Elves and Reanimator (Crumble, Dominate, Druid Lyrist, Ihsan's Shade, Iridescent Angel, Multani, Maro-Sorcerer, Spike Feeder, Uktabi Orangutan) | 8 | Premodern full 75 53% to 58% |
+| P3d | Sideboard of Enchantress (Abeyance, Karmic Justice, Sacred Ground) | 3 | Premodern full 75 58% to 66% |
+| P3e | Sideboard of Madness Threshold (Absolute Law, Kor Haven, Winter Orb) | 3 | Premodern full 75 66% to 68% |
+| P3f | Sideboard of Mono-Black Control (Contagion, Lurking Skirge, Phyrexian Processor) | 3 | Premodern full 75 68% to 70% |
+| P3g | Sideboards of Landstill and BW Control (Akroma's Vengeance, Arcane Laboratory, Circle of Protection: Red, Infest), and Circle of Protection: Blue's Full contract | 4 | Premodern full 75 70% to 78%; Pauper 85.1% to 91.0% |
 
 P1b is built in `src/eternal_premodern_p1b_v1.rs` (with `statics` and `targets` submodules)
 and `build_eternal_p1b_v1.rs`. Opalescence makes each other non-Aura enchantment a creature
@@ -634,12 +1681,11 @@ tables head the `eternal_cards_v1` chains (subtype ids from 280: Saproling, Cent
   P2a's shuffle; flashback {1}{G}. Karmic Guide: echo generalizes wave P2d's (`echo_cost`),
   flying, protection from black and the reanimation trigger.
 
-Known gaps (P2c): Volrath's Shapeshifter stays out. It has the full text of the top creature
-card of its controller's graveyard, which needs a permanent whose definition, abilities, triggers
-and activated abilities follow another card while the top card changes; the engine reads all of
-these from the object's own card definition and has no copiable-values layer for permanents
-(only token copies at creation), so Full English Breakfast is not playable. Reanimator is
-playable. Phantom Nishoba's life gain reads the creature when its trigger is collected, so a
+Known gaps (P2c): Volrath's Shapeshifter is Partial. Its native ordered-graveyard
+profile binds selected donated abilities to the original host and donor while
+leaving the physical printing in the copy layer. Full English Breakfast needs
+full consumer and gameplay qualification. Reanimator is playable. Phantom
+Nishoba's life gain reads the creature when its trigger is collected, so a
 Nishoba that has lost its abilities (Dress Down) and dies from the same damage it deals still
 gains that life.
 
@@ -828,12 +1874,403 @@ Snapper and Yavimaya Hollow, plus the Bear token. New primitives:
   shroud are P1a-chain hooks (`controlled_boost`, `granted_keywords`). Masticore is the first
   Masticore creature type (stable id 260).
 
-Known gaps: Birchlore Rangers is left out: "Tap two untapped Elves you control" is a mana
-ability with two object costs, but a mana-ability action carries one cost target
-(`Action::ActivateManaAbilityWithCostTarget`, read by the flat policy encodings), so it cannot be
-announced faithfully. Thornscape Battlemage is left out: it has two independent kickers ({R}
-and/or {W}), and a card has one kicker cost and one kicked flag. Elves therefore stays out of
-`PLAYABLE` (it also needs Genesis and Wall of Blossoms from wave P2a). Echo ignores a change of
-control between entering and the upkeep. Glory's protection applies to the creatures its
-controller controls as it resolves. Madness Threshold's Blastoderm and Vintara Snapper have
+The Elves follow-up adds both remaining mainboard printings. Birchlore Rangers' mana action
+carries a color and two distinct untapped Elves controlled by the player. The pair is paid
+together and can include Elves with summoning sickness. Its morph costs {G}, and its face-down
+casting route grants no ward. Thornscape Battlemage offers independent {R} and {W} kicker
+choices and preserves the two paid bits on the original spell. The red trigger deals 2 damage
+to any target, and the white trigger destroys an artifact. The mainboard also uses Genesis
+and Wall of Blossoms from wave P2a.
+
+Echo ignores a change of control between entering and the upkeep. Glory's protection applies
+to the creatures its controller controls as it resolves. Madness Threshold's Blastoderm and Vintara Snapper have
 shroud, so its games need the public shroud representation of Limited schema 5.
+
+### P3a: Premodern sideboards
+
+With S1 merged, every Premodern mainboard but Full English Breakfast's is Full (87.0% of the
+snapshot's 90.0%), and no full 75 is. The census lists 46 missing sideboard cards among the
+playable lists. P3a adds the eleven that complete seven 75s, the largest share per card:
+
+| Deck | Share | Missing sideboard cards |
+| --- | ---: | --- |
+| Stiflenought | 9% | Essence Flare |
+| Sligh | 8% | Anarchy, Overload, Pyrostatic Pillar |
+| Goblins | 7% | Anarchy, Overload |
+| Oath of Druids | 5% | Sphere of Law, Tranquil Domain, Warmth |
+| RG Aggro | 2% | Overload, Tranquil Domain |
+| Stasis | 2% | Chill, Cursed Totem |
+| White Weenie | 1% | Crimson Acolyte, True Believer |
+
+The full 75 share goes from 0% to 34% of the field. The seven decks join `PLAYABLE_75` and play
+the S2 best-of-three harness with random sideboarding.
+
+P3a is built in `src/eternal_premodern_p3a_v1.rs` (with a `statics` submodule) and
+`build_eternal_p3a_v1.rs`, the new tail of the recipe chain after wave P2b. Behavior follows
+each card's current Oracle text, checked against its XMage source:
+
+- Anarchy destroys all white permanents and Tranquil Domain all non-Aura enchantments, at once,
+  with P1a's batch: regeneration applies and indestructible permanents stay. Anarchy reads each
+  permanent's current colors (Painter's Servant, Wild Mongrel); Tranquil Domain reads current
+  types and subtypes, so Opalescence's animated enchantments and Urza's Saga are destroyed.
+- Overload uses the engine's single kicker decision. On resolution it destroys its target if the
+  artifact's current mana value is at most 2, or at most 5 when kicked. A token or face-down
+  artifact has mana value 0.
+- Pyrostatic Pillar and Warmth trigger from the cast event, after costs are paid, reading the
+  spell on the stack: a split half's own mana value and colors, announced X included. Copies are
+  not cast. The Pillar's trigger is controlled by the Pillar's controller and deals 2 damage to
+  the caster, from the Pillar, even if the spell was countered or the Pillar has left. Warmth
+  triggers only for spells its controller's opponent casts.
+- Chill adds {2} to the total cost of each red spell for each Chill, with the other increases:
+  also when the spell is cast without paying its mana cost, and before Trinisphere. The color is
+  the cast form's: a split half's or Adventure's own cost, colorless face down (Disguise and
+  morph), plus Painter's Servant's color.
+- Cursed Totem prohibits the activated abilities of creatures on the battlefield, mana abilities
+  and the automatic payment planner included, through the gate Null Rod and Clarion Conqueror
+  use. Abilities of creature cards in other zones (cycling, ninjutsu, Eternal Dragon) are
+  unaffected. Animated lands and Opalescence's enchantments are creatures while animated. Granted
+  abilities that skipped that gate (Katilda's mana, Rain of Filth's sacrifice) now check it.
+- Crimson Acolyte has printed protection from red, and its {W} ability gives any target creature
+  protection from red until end of turn, as one of wave E9a's protection records.
+- True Believer gives its controller shroud. Player shroud is now Solitary Confinement's or True
+  Believer's; only Solitary Confinement still prevents damage and skips the draw. Limited schema
+  5's public shroud reports the player, and schema 4 consumers refuse the game as before.
+- Sphere of Law prevents 2 of each damage event from a red source to its controller, for each
+  Sphere, unless damage can't be prevented. It applies first, before Twinflame Tyrant's and Ojer
+  Axonil's increases, redirection and every shield, so damage it absorbs spends no shield. The
+  source's color is the damage event's (a captured departure's color when one is recorded).
+- Essence Flare is an enchant creature Aura with +2/+0. As the enchanted creature's controller's
+  upkeep begins, the Aura's controller's trigger is queued with that creature bound, and it puts
+  a -0/-1 counter on the creature if it is still on the battlefield, through the counter
+  placement that applies Doubling Season.
+
+Known gaps:
+- The affected player does not choose the order of Sphere of Law and other replacement effects
+  (616.1). Sphere first is the best order except against Ojer Axonil's increase of damage above 2.
+- Sphere of Law reads an ordinary departed source's color in its current zone, as every
+  color-based prevention here does: a dead Wild Mongrel's chosen color is gone.
+
+### P3b: Premodern sideboards
+
+After P3a the census lists 35 missing sideboard cards among the playable lists. P3b adds ten
+that complete five more 75s:
+
+| Deck | Share | Missing sideboard cards |
+| --- | ---: | --- |
+| Terrageddon | 8% | Ray of Revelation, Zuran Orb |
+| Mono-Black Aggro | 6% | Dystopia, Engineered Plague, Gloom, Plaguebearer |
+| Survival | 2% | Goblin Tinkerer, Xantid Swarm, Zuran Orb |
+| The Rock | 2% | Engineered Plague, Haunting Echoes, Plaguebearer |
+| Mono-Red Control | 1% | Mogg Salvage, Zuran Orb |
+
+The full 75 share goes from 34% to 53% of the field, and the five decks join `PLAYABLE_75`.
+The other sideboards wait on harder cards: Enchantress and Landstill on Sacred Ground's and
+Karmic Justice's cause tracking, Circle of Protection: Red and Meddling Mage on the Full contract
+of their S1 siblings, Psychatog on Dominate's target bounded by the announced X.
+
+P3b is built in `src/eternal_premodern_p3b_v1.rs` (with `statics` and `targets` submodules)
+and `build_eternal_p3b_v1.rs`, the new tail of the recipe chains: P3a's tables fall through to
+it, and so do wave P2b's flashback, alternative cost, keyword and triggered ability tables.
+Behavior follows each card's current Oracle text, checked against its XMage source:
+
+- Zuran Orb's "Sacrifice a land: You gain 2 life." is an ordinary activated ability with the
+  controlled-permanent sacrifice cost (Ravenous Baloth's, with a land filter).
+- Ray of Revelation destroys target enchantment, with flashback {G}.
+- Mogg Salvage destroys target artifact. Its free cast is an alternative cost with a new
+  condition, an opponent controlling an Island and its caster a Mountain, by current subtypes as
+  for Massacre. Cost increases still apply to the free cast.
+- Goblin Tinkerer's "{R}, {T}: Destroy target artifact. That artifact deals damage equal to its
+  mana value to this creature." reads the mana value before the destruction. The artifact deals
+  the damage whether or not it was destroyed (indestructible, regenerated), from its last known
+  object, and only while the Tinkerer is still on the battlefield.
+- Xantid Swarm has flying. Its attack trigger bans the defending player's spells for the turn
+  through Orim's Chant's record (wave E9a).
+- Gloom's "White spells cost {3} more to cast" is Chill's tax with white and {3}. "Activated
+  abilities of white enchantments cost {3} more to activate" joins Anointed Peacekeeper's
+  activation tax, for battlefield enchantments that are white now (Painter's Servant counts).
+  An ability without a mana cost now pays the tax too (Seal of Cleansing's sacrifice); before,
+  the payment checked the tax but did not pay it, for Anointed Peacekeeper's tax as well.
+- Engineered Plague's as-enters choice offers every creature type of the closed subtype pool,
+  with case twins once, in a fixed order, so the choice reveals nothing hidden and can name the
+  opponent's types. All creatures of the chosen type get -1/-1, beside Shared Triumph's boost
+  (layer 7c).
+- Plaguebearer's "{X}{X}{B}" is one ability for each X from 0 to 8, as Pernicious Deed's X is,
+  each targeting a nonblack creature with mana value exactly X. The target is checked again on
+  resolution, so a morph turned face up in response makes the ability fizzle.
+- Dystopia's cumulative upkeep is an upkeep trigger of its controller: an age counter (kept in
+  module state by battlefield incarnation, like fade counters), then pay 1 life for each age
+  counter or sacrifice it. The choice is offered only when the life can be paid (119.4). Its
+  other trigger is a printed trigger at the beginning of each upkeep, controlled by Dystopia's
+  controller. "That player" is a branch on a new condition, whether it is the trigger
+  controller's turn: its controller on their own turn and the opponent otherwise. That player
+  sacrifices a permanent that is green or white now, through the engine's sacrifice choice with
+  a new color filter, which authenticates the choice against the trigger's printed program.
+- Haunting Echoes exiles target player's graveyard except basic land cards as one batch, then
+  every card in that player's library with the name of a card exiled this way, then that player
+  shuffles.
+
+The best-of-three run with the new decks found a fault from wave E5b: a replicated Consign to
+Memory halted at its copy's target choice. The interpreter offers that choice with the resolving
+replicate trigger off the stack, and the public boundary shows the trigger again, so the check of
+the pending choice saw the trigger as a new candidate. The check now recomputes the choice in the
+interpreter's view, so the copy is offered and checked against the same targets.
+
+Known gaps:
+- Haunting Echoes exiles every matching library card; the searching player can't choose to
+  find fewer (701.19b). Finding fewer never helps its caster in the snapshot decks.
+- Gloom does not tax mana abilities of white enchantments: no white enchantment in the catalog
+  has one.
+- Plaguebearer's X stops at 8, Pernicious Deed's bound (the largest mana value in the Premodern
+  pool).
+- Xantid Swarm's ban, like Orim's Chant's, is checked where casts are offered from hand and by
+  madness, not for casts granted while a spell resolves.
+
+### P3c: Premodern sideboards
+
+After P3b the census lists 25 missing sideboard cards among the playable lists. P3c adds eight
+that complete three more 75s:
+
+| Deck | Share | Missing sideboard cards |
+| --- | ---: | --- |
+| Psychatog | 3% | Dominate |
+| Elves | 1% | Druid Lyrist, Spike Feeder, Uktabi Orangutan |
+| Reanimator | 1% | Crumble, Ihsan's Shade, Iridescent Angel, Multani, Maro-Sorcerer |
+
+The full 75 share goes from 53% to 58% of the field, and the three decks join `PLAYABLE_75`.
+The other sideboards wait on harder cards: Enchantress, Landstill and BW Control on Sacred
+Ground's and Karmic Justice's cause tracking and on Circle of Protection: Red, Replenish on
+Alter Reality's text change, Grow and Other Control on Meddling Mage's Full contract, Madness
+Threshold on Winter Orb's untap choice, and Mono-Black Control on Contagion's -2/-1 counters,
+Lurking Skirge's type change and Phyrexian Processor's life payment.
+
+P3c is built in `src/eternal_premodern_p3c_v1.rs` (with a `statics` submodule) and
+`build_eternal_p3c_v1.rs`, the new tail of the recipe chains after P3b's. Spike Feeder brings
+the Spike creature type (stable id 380). Behavior follows each card's current Oracle text and
+rulings:
+
+- Dominate's "Gain control of target creature with mana value X or less." uses Blue Sun's
+  Twilight's targeting: the kernel announces X after targets, so a creature is a legal target
+  when some payable X reaches its mana value, and X is then at least that mana value. The pairs
+  of X and target are the ones 601.2b and 601.2c allow. The target is checked again on
+  resolution, and the control change has no duration.
+- Crumble destroys target artifact, which can't be regenerated, and that artifact's controller
+  gains life equal to its mana value, both read before the destruction. The life is gained also
+  when the artifact survives (indestructible), and not when the target is illegal.
+- Ihsan's Shade has printed protection from white, and Iridescent Angel flying and protection
+  from all colors (each of the five), through wave E6b's protection checks.
+- Multani, Maro-Sorcerer has shroud. Its power and toughness are each the number of cards in
+  all players' hands, a characteristic-defining ability in every zone, so a Multani cast with
+  no other card in either hand dies as a 0/0.
+- Druid Lyrist's "{G}, {T}, Sacrifice this creature: Destroy target enchantment." is an
+  ordinary activated ability.
+- Spike Feeder enters with two +1/+1 counters, as Triskelion does. "{2}, Remove a +1/+1
+  counter from Spike Feeder: Put a +1/+1 counter on target creature." and "Remove a +1/+1
+  counter from Spike Feeder: You gain 2 life." use the +1/+1 counter removal cost.
+- Uktabi Orangutan's "When Uktabi Orangutan enters, destroy target artifact." is an enters
+  trigger with a mandatory artifact target, its controller's own artifacts included.
+
+### P3d: Premodern sideboards
+
+After P3c the census lists 17 missing sideboard cards among the playable lists. P3d adds the
+three that complete Enchantress (8% of the field): Abeyance, Karmic Justice and Sacred Ground.
+The full 75 share goes from 58% to 66%, and Enchantress joins `PLAYABLE_75`. Landstill and BW
+Control also need Sacred Ground but still wait on Circle of Protection: Red.
+
+P3d is built in `src/eternal_premodern_p3d_v1.rs` and `build_eternal_p3d_v1.rs`, the new tail
+of the recipe chains after P3c's. Behavior follows each card's current Oracle text and rulings:
+
+- Abeyance: "Until end of turn, target player can't cast instant or sorcery spells, and that
+  player can't activate abilities that aren't mana abilities. Draw a card." records the player
+  for the turn. The cast check is the selected-form hook Lavinia and Meddling Mage use, so the
+  cast form's types decide (an Adventure's instant is barred, its creature is not), for
+  ordinary casts and for casts made while a spell resolves. The activation check is split
+  second's, so special actions stay legal, and mana abilities are never barred. Spells already
+  on the stack are unaffected.
+- Karmic Justice and Sacred Ground read which player's spell or ability made a permanent leave
+  the battlefield. While a spell or ability resolves, the engine keeps its controller in a
+  runtime scope that is never serialized or hashed, set where effects run (synchronous and
+  resumable); state-based actions, costs paid on activation and mana abilities run outside it.
+  The zone-change choke point (`event::materialize_event_v1`) hands each battlefield-to-graveyard
+  move inside the scope to this module, which reads the permanent before it moves and queues the
+  triggers in wave P1a's queue. The watching permanents are the Karmic Justices and Sacred
+  Grounds on the battlefield. A batch of simultaneous moves reads them and its departing
+  permanents as it begins, so one that leaves in the same batch still sees the others
+  (603.10a).
+- Sacred Ground: "Whenever a spell or ability an opponent controls causes a land to be put
+  into your graveyard from the battlefield, return that card to the battlefield." Destruction
+  and sacrifice both count, and so does a land its owner no longer controlled. The trigger
+  returns the exact card that went to the graveyard, so a token or a card that has since left
+  the graveyard stays where it is.
+- Karmic Justice: "Whenever a spell or ability an opponent controls destroys a noncreature
+  permanent you control, you may destroy target permanent that opponent controls." A move is a
+  destruction unless the engine's sacrifice marker precedes it, so sacrifices don't trigger it
+  (its 2023-09-01 ruling), and a Karmic Justice destroyed by an opponent's spell or ability
+  triggers for itself. The target is any permanent the opponent controls; whether to destroy
+  it is chosen on resolution.
+
+Known gaps (P3d): an effect that puts a permanent into a graveyard without destroying or
+sacrificing it counts as a destruction for Karmic Justice. Effect mana paid during a resolution
+(Treasures) is inside the scope, but those are sacrifices of nonland tokens, which neither card
+counts.
+
+### P3e: Premodern sideboards
+
+After P3d the census lists 14 missing sideboard cards among the playable lists. P3e adds the
+three that complete Madness Threshold (2% of the field): Absolute Law, Kor Haven and Winter Orb.
+The full 75 share goes from 66% to 68%, and Madness Threshold joins `PLAYABLE_75`.
+
+P3e is built in `src/eternal_premodern_p3e_v1.rs` and `build_eternal_p3e_v1.rs`, the new tail
+of the recipe chains after P3d's. Behavior follows each card's current Oracle text and rulings:
+
+- Absolute Law: "All creatures have protection from red." Every creature on the battlefield,
+  whoever controls it, has protection from red while an Absolute Law's abilities apply (its
+  2004-10-04 ruling), and a permanent has it only while it is a creature. The color joins the
+  protection mask that wave E6b's checks apply to targeting, blocking, damage and attachments.
+- Kor Haven is a legendary land with "{T}: Add {C}." and "{1}{W}, {T}: Prevent all combat
+  damage that would be dealt by target attacking creature this turn." The ability records the
+  creature's battlefield incarnation for the turn, and wave E6a's fog check prevents that
+  creature's combat damage. Unlike Maze of Ith's, the prevention is one way: damage dealt to
+  the creature is not prevented.
+- Winter Orb: "As long as Winter Orb is untapped, players can't untap more than one land
+  during their untap steps." The untap step reads whether an untapped Winter Orb applies before
+  anything untaps, so an Orb that is tapped as the step begins lets every land untap (its
+  2016-06-08 ruling). While one applies, the lands that would untap are held back and the
+  active player chooses one of them to untap, through the as-enters choice chain that the
+  engine answers before it leaves a step without priority (the draw-step dredge choice uses it
+  too). A single held land untaps without a choice. Untapping isn't optional, so there is no
+  option to untap none. Lands that wouldn't untap anyway (Stasis, a skip marker, an attachment)
+  are not options, a chosen land with a stun counter loses the counter instead, and other
+  permanents untap as usual.
+
+### P3f: Premodern sideboards
+
+After P3e the census lists 11 missing sideboard cards among the playable lists. P3f adds the
+three that complete Mono-Black Control (2% of the field): Contagion, Lurking Skirge and
+Phyrexian Processor. The full 75 share goes from 68% to 70%, and Mono-Black Control joins
+`PLAYABLE_75`. The remaining sideboards wait on the Full contracts of S1's Partial siblings,
+Circle of Protection: Red for Landstill and BW Control and Meddling Mage for Grow, Replenish
+and Other Control, and Replenish also on Alter Reality's text change.
+
+P3f is built in `src/eternal_premodern_p3f_v1.rs` (with a `targets` submodule) and
+`build_eternal_p3f_v1.rs`, the new tail of the recipe chains after P3e's. Behavior follows each
+card's current Oracle text and rulings, checked against its XMage source:
+
+- Contagion: "You may pay 1 life and exile a black card from your hand rather than pay this
+  spell's mana cost. Distribute two -2/-1 counters among one or two target creatures." The
+  alternative cost is Force of Will's, with black for blue. The counters are divided as the
+  spell is announced (601.2d), like Pyrokinesis's damage: a new target filter takes two picks
+  among creatures, and a creature picked twice is one target with both counters. On resolution
+  each target that is still legal gets its counters. -2/-1 counters are their own kind, so they
+  neither annihilate with +1/+1 counters (704.5q) nor count as -1/-1 counters for persist. They
+  live in module state per battlefield incarnation, as Dystopia's age counters do, and change
+  power and toughness in layer 7c through the controlled boost hook.
+- Lurking Skirge: "When a creature is put into an opponent's graveyard from the battlefield, if
+  this permanent is an enchantment, it becomes a 3/2 Phyrexian Imp creature with flying." The
+  trigger reads each battlefield-to-graveyard move of a permanent that left as a creature,
+  tokens included, as Goblin Sharpshooter's does. For each such move it queues one trigger in
+  wave P1a's queue for every Lurking Skirge whose abilities apply, that is an enchantment, and
+  whose controller is an opponent of the creature's owner (whose graveyard it went to). On
+  resolution the Skirge must be the same battlefield incarnation and still an enchantment
+  (603.4). The change has no duration. The Skirge becomes a creature and stops being an
+  enchantment (205.1a; XMage retains no type), a Phyrexian Imp with base power and toughness
+  3/2 in layer 7b at the effect's timestamp, with flying, and stays black. The type change
+  joins the Oko's Elk overrides, so Opalescence stops animating it, and an ability removal with
+  a later timestamp (an Elk, Dress Down) takes the flying away. A Skirge that becomes a
+  creature can attack only if its controller has controlled it continuously since their most
+  recent turn began (its 2008-08-01 ruling), which the engine's summoning sickness already
+  tracks for every permanent.
+- Phyrexian Processor: "As this artifact enters, pay any amount of life. {4}, {T}: Create an
+  X/X black Phyrexian Minion creature token, where X is the life paid as this artifact
+  entered." The payment is an as-enters choice in Engineered Plague's shape. The controller of
+  a Processor that has just entered, by any route, chooses an amount from 0 to their life total
+  (119.4; paying 0 is allowed, its 2004-10-04 ruling) and pays it as life loss. The amount is
+  recorded for that battlefield incarnation. The ability reads the record of the incarnation
+  that activated it, so it still knows X if the Processor leaves in response. The token is a
+  new registry token, Phyrexian Minion Token (a black Phyrexian Minion creature), whose power
+  and toughness are the recorded X, as for Skyclave Apparition's Illusions. Minion is a new
+  creature type, appended with stable id 381 in Eternal builds only.
+
+The records are pruned as each turn begins, when the stack is empty: the counters, changes and
+Minion sizes of permanents that left the battlefield, and the payments of Processors that left it.
+
+Known gaps (P3f): a Lurking Skirge that leaves the battlefield with the creature (603.10a) has
+no trigger; it would resolve with no effect. Cards outside the eternal decks that count every
+counter kind (Innkeeper's Talent, Warden of the Inner Sky) read only the core counters, as for
+Dystopia's age counters.
+
+### P3g: Circles of Protection
+
+After P3f the census lists 8 missing sideboard cards among the playable Premodern lists. P3g adds
+the four that complete Landstill (6% of the field) and BW Control (2%): Akroma's Vengeance,
+Arcane Laboratory, Circle of Protection: Red and Infest. Circle of Protection: Red is wave S1d's
+Circle of Protection: Blue with red, and Blue's Partial gap is Red's too, so P3g closes it for
+both and marks Circle of Protection: Blue Full. Blue is the only gap of Pauper Tron (5.9% of the
+Pauper field). The Premodern full 75 share goes from 70% to 78% and the Pauper share from 85.1%
+to 91.0%. Landstill, BW Control and Pauper Tron join `PLAYABLE_75`, and four Premodern sideboard
+cards stay missing: Meddling Mage, Alter Reality, Decree of Pain and Overgrown Estate.
+
+P3g is built in `src/eternal_premodern_p3g_v1.rs` and `build_eternal_p3g_v1.rs`, the new tail
+of the recipe chains after S1j's. The Circle changes live in S1d's module. Behavior follows each
+card's current Oracle text, checked against its XMage source, and rules 113.7a, 400.7b, 609.7
+and 616.1:
+
+- Circle of Protection: Red, {1}{W}, Enchantment: "{1}: The next time a red source of your
+  choice would deal damage to you this turn, prevent that damage." S1d's source menu, shield and
+  damage-time color check (609.7b) take the color as a parameter. Blue keeps its serialized
+  leaves and shields. Red's leaves carry their color, and a shield records its color only when
+  it isn't blue, so existing states keep their hashes.
+- Departed sources, for both Circles. A player may choose an object an ability on the stack
+  refers to even after it has left its zone (609.7a), and an ability whose source has left uses
+  the source's last-known information (113.7a). S1d offers such a source only with an
+  authenticated capture (Mogg Fanatic's and Goblin Bombardment's paid sacrifices, a waiting
+  Minsc), and the shield compares damage with the live object. So a Seal of Fire or Siege-Gang
+  Commander sacrificed to its own ability, a channeled Twinshot Sniper, or a Grim Lavamancer
+  killed in response can't be chosen while its ability waits, and its damage, dealt from its new
+  incarnation, escapes a shield chosen while it was on the battlefield. P3g closes this:
+  - Record: while a Circle of Protection is on the battlefield or a shield exists, a permanent
+    that leaves the battlefield, and a card that leaves a hand for a graveyard or exile, records
+    its incarnation and color as they are just before the move, in S1d's state, if it is blue or
+    red, since no Circle can choose a source of neither color. The records are dropped as each
+    turn begins, when no ability can still wait on one and every shield has expired, and an
+    empty list adds nothing to a state's JSON or hash.
+  - Menu: the source of an activated or triggered ability on the stack whose source has left
+    the battlefield or hand its contract names is offered, by that incarnation, when a record
+    gives it the Circle's color and its card is now in a public zone (a graveyard, exile face up,
+    the battlefield, the stack or the command zone).
+  - Prevention: wave P3d's runtime scope of the resolving spell or ability, never serialized or
+    hashed, now also keeps the resolving ability's source contract. While it resolves, damage
+    from that source after the source has left is damage from the contract's incarnation, with
+    the recorded color, so a shield chosen before or after the source left prevents it.
+  - The authenticated captures of Mogg Fanatic, Goblin Bombardment and Minsc take precedence.
+  - Not offered, with no effect on what can be prevented: other objects that stack objects or
+    waiting effects refer to beyond S1d's list, cards in hands and libraries, and a departed
+    source whose card went to a hand or library. Such an object can deal damage this turn only
+    as a new object, after it is cast or enters the battlefield (400.7), which no shield
+    follows, or as the source of its own ability, which the menu offers. A shield chosen while a
+    bounced source was on the battlefield still prevents its waiting ability's damage. No
+    registry card copies a permanent spell (S1h's copy audit), so the 400.7b binding needs only
+    cast spells.
+- Arcane Laboratory, {2}{U}, Enchantment: "Each player can't cast more than one spell each
+  turn." It joins Archon of Emeria's limit (`eternal_vintage_v1::cast_prohibited`): a player who
+  has cast a spell this turn, before the Laboratory entered or not, can't cast another while one
+  applies. Copies aren't cast, so they don't count. The limit gates casts from priority (every
+  cast method, flashback included) and madness offers. No Premodern card casts a spell while
+  another resolves, so that route, which Archon's limit doesn't gate, isn't reachable from a
+  Laboratory.
+- Infest, {1}{B}{B}, Sorcery: "All creatures get -2/-2 until end of turn." Drown in Sorrow's
+  boost without its scry.
+- Akroma's Vengeance, {4}{W}{W}, Sorcery: "Destroy all artifacts, creatures, and enchantments.
+  Cycling {3}". Its destruction is Nevinyrral's Disk's (wave P2a): one simultaneous destruction
+  of every artifact, creature and enchantment on the battlefield, to which regeneration shields
+  apply and which indestructible permanents survive. Cycling is wave E6a's cycling ability.
+- Consumers: a sideboard Circle rarely reaches the battlefield with a red source to choose, so,
+  as in S1j, a white deck with Circles of Protection: Red in its mainboard and a red deck with
+  Seal of Fire play each other through public sessions, in both seats with ranked and seeded
+  random actions, checking natural terminals and replay, and the test requires a Circle shield
+  chosen through the public action list.
+
+Known gaps (P3g): a Circle that arrives while a departed source's ability waits, with no Circle
+or shield present when that source left, can't choose it; only an enchantment put onto the
+battlefield during that window (Academy Rector's dies trigger) could. When two shields would
+prevent the same damage, the protected player doesn't choose which is used up (616.1); that
+matters only if the source's colors change later in the turn.

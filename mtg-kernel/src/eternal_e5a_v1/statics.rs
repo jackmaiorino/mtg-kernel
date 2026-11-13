@@ -173,6 +173,26 @@ pub(crate) fn object_protected_from(state: &GameState, object: ObjectId, source:
         && protected_from(state, live.controller, source)
 }
 
+/// Serra's Emissary protection against an original departed source.
+pub(crate) fn protects_from_departed_types(
+    state: &GameState,
+    target: Target,
+    types: crate::source_type_hexproof_v1::SourceTypesV1,
+) -> bool {
+    let player = match target {
+        Target::Player(player) => player,
+        Target::Object(object)
+            if crate::engine::object_has_type(state, object, CardType::Creature) =>
+        {
+            state.objects.get(object).controller
+        }
+        _ => return false,
+    };
+    protection_types(state, player)
+        .into_iter()
+        .any(|kind| types.contains(kind))
+}
+
 /// Damage protection prevents (702.16e).
 pub(crate) fn damage_prevented(state: &GameState, source: ObjectId, target: Target) -> bool {
     match target {
@@ -190,7 +210,9 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
 
 // ---- Oko's Elks and The Fantasticar ------------------------------------------------
 
-fn elk_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
+/// The timestamp at which an Oko's +1 made `object`'s battlefield
+/// incarnation an Elk, a layer 4, 5 and 6 setting.
+pub(crate) fn elk_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
     let live = state.objects.try_get(object)?;
     if live.zone != Zone::Battlefield {
         return None;

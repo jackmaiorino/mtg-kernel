@@ -741,6 +741,11 @@ pub(super) fn selected_spell_mana_costs_v1(
         selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
             crate::eternal_pauper_e8b_v1::spell_cost_reduction(state, definition, player),
         );
+        // Sailors' Bane costs {1} less per instant, sorcery and Adventure
+        // card in its owner's graveyard and exile (wave S1b).
+        selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
+            crate::eternal_sideboard_s1b_v1::spell_cost_reduction(state, definition, player),
+        );
         // Goblin Warchief: Goblin spells cost {1} less (wave P1a).
         selected.own_generic_reduction = selected.own_generic_reduction.saturating_add(
             crate::eternal_premodern_p1a_v1::statics::spell_cost_reduction(
@@ -861,6 +866,12 @@ fn selected_spell_mana_costs_for_source_grant_v1(
     grant: Option<u64>,
 ) -> Option<SelectedSpellManaCostsV1> {
     let (method, kicked, mode) = form;
+    if method == CastMethodV4::Omen
+        && crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name)
+        && !super::resolution_cast_v1::form_allowed_for(state, source, method, player)
+    {
+        return None;
+    }
     let granted = method == CastMethodV4::Flashback && grant.is_some();
     if let Some(index) = grant {
         if state
@@ -899,11 +910,26 @@ fn selected_spell_mana_costs_for_source_grant_v1(
             crate::eternal_cards_v1::outside_hand_cast_reduction(state, source, player),
         );
         // Anointed Peacekeeper: spells with the chosen name cost {2} more.
+        // Disruptor Flute: spells with the chosen name cost {3} more. Chill:
+        // red spells, by the cast form's color, cost {2} more. Gloom: white
+        // spells cost {3} more.
         selected.own_generic_increase =
-            crate::eternal_vintage_v1::spell_tax(state, definition.object_name, player);
+            crate::eternal_vintage_v1::spell_tax(state, definition.object_name, player)
+                .saturating_add(crate::eternal_sideboard_s1a_v1::statics::flute_spell_tax(
+                    state,
+                    definition.object_name,
+                ))
+                .saturating_add(crate::eternal_premodern_p3a_v1::statics::chill_tax(
+                    state, definition, method,
+                ))
+                .saturating_add(crate::eternal_premodern_p3b_v1::statics::gloom_spell_tax(
+                    state, definition, method,
+                ));
         // Retrace (Wrenn and Six's emblem): discard a land card in addition
         // to the other costs.
-        if matches!(method, CastMethodV4::Normal | CastMethodV4::Alternative)
+        if (matches!(method, CastMethodV4::Normal | CastMethodV4::Alternative)
+            || (method == CastMethodV4::Omen
+                && crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name)))
             && crate::eternal_vintage_e7b_v1::retrace_quote(state, source, player)
         {
             selected.components(RETRACE_COST);
@@ -932,6 +958,15 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         // Citadel: "pay life equal to its mana value rather than pay its
         // mana cost", paid as the cast completes.
         selected.costs.remove(0);
+    }
+    if crate::eternal_premodern_p2b_v1::is_thornscape(definition)
+        && state.engine.pending_cast.as_ref().is_some_and(|pending| {
+            pending.spell == source && pending.thornscape_white_kicker_v1 == Some(true)
+        })
+    {
+        selected
+            .costs
+            .push(crate::eternal_premodern_p2b_v1::THORNSCAPE_WHITE_KICKER);
     }
     Some(selected)
 }
@@ -1151,6 +1186,18 @@ fn selected_spell_quote_branch_grant_v1(
     forced_branch: Option<bool>,
     grant: Option<u64>,
 ) -> Option<SpellManaPaymentV1> {
+    // Every route, including resolution-time permissions and X menus, uses
+    // this quote. Evaluate cast restrictions with the selected form and X.
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1a_v1::statics::cast_prohibited(state, player, source, method, x) {
+        return None;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if definition.target_spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC
+        && x < u16::from(crate::eternal_legacy_e9a_v1::targets::shatterskull_minimum_x(targets))
+    {
+        return None;
+    }
     // A free cast's X is zero, except Sickening Dreams' X, which counts an
     // additional cost's discards (Premodern wave P1b).
     if x != 0
@@ -1488,6 +1535,7 @@ pub(super) struct PreparedSpellPaymentV1 {
     optional_objects: Vec<ObjectId>,
     pub(super) ordered_objects: Vec<ObjectId>,
     pub(super) chosen_power_lki: Option<i32>,
+    pub(super) storm_targets: Option<crate::effect::thousand_year_storm_v1::targets::CastTargetsV1>,
 }
 
 impl SpellManaPaymentV1 {
@@ -1512,6 +1560,10 @@ impl SpellManaPaymentV1 {
 }
 
 impl PreparedSpellPaymentV1 {
+    pub(super) fn planned_mana_count_v1(&self, state: &GameState, player: PlayerId) -> Option<u32> {
+        super::checked_spell_mana_plan_v59(state, player, &self.mana.mana)
+    }
+
     /// The graveyard cards Delve will exile, in exile order.
     #[cfg(feature = "eternal-fixtures")]
     pub(super) fn delve_exiled(&self) -> &[ObjectId] {
@@ -1598,7 +1650,7 @@ impl PreparedSpellPaymentV1 {
         self.additional.apply(state, player, source);
         self.commit_optional(state);
         if let Some(plan) = self.greatwurm {
-            plan.apply(state);
+            plan.apply_committed(state);
         }
         spent
     }
@@ -1619,6 +1671,16 @@ pub(super) fn prepare_final_spell_payment_v1(
     let definition = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
     let player = pending.controller;
     let source = pending.spell;
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_sideboard_s1a_v1::statics::cast_prohibited(
+        state,
+        player,
+        source,
+        method,
+        pending.selected_x_v59().unwrap_or(0),
+    ) {
+        return None;
+    }
     let selected = selected_spell_mana_costs_for_source_v1(
         source,
         definition,
@@ -1740,6 +1802,10 @@ pub(super) fn prepare_final_spell_payment_v1(
         optional_objects,
         ordered_objects: choices.ordered_objects,
         chosen_power_lki: None,
+        storm_targets: crate::effect::thousand_year_storm_v1::freeze_cast_targets(
+            state, pending, method,
+        )
+        .ok()?,
     };
     if selected.convoke || selected.teamwork.is_some() {
         if !pending.convoke_finished {

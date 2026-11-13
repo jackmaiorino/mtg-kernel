@@ -54,6 +54,15 @@ Insert that line where the variant sits in `CommittedEvent`. When no test
 commits the kind, build the event by hand from its fields, reusing a harvested
 sibling's payload where the types match.
 
+`NivMizzetVisionaryDrawEndedV1` was harvested from the passing paid Niv
+native-index/privacy/restore fixture at `8ff554f6`: resolved stack item 3
+actually drew three cards. The retained test executable SHA-256 is
+`405bef3fcd4a06e955f3b950d72d34fe2790bf35360eea965f96bcb29eed71b4`;
+the original 120-byte event sample SHA-256 is
+`4d75cfd341cf61e9fb067c23fd66bffaa579976a9f15436541131dda35ad8a2a`.
+The separate declared-deck Niv fixture exhausted its decision bound, so
+this event does not establish whole-profile acceptance.
+
 ## Appended FDN event samples (October 21, 2026)
 
 The original 237 rows retain their exact byte prefix. The next 76 rows follow `EventKindV1` order and were harvested from native tests that completed successfully. These are serialization fixtures, not complete replay worlds or gameplay/profile acceptance. Labelled native setup and counter primitives retain that limited provenance. Snapshot-bearing events retain the actual emitted payload, including private synthetic fixture state.
@@ -159,3 +168,128 @@ under `fdn110-ward-20261025/ci40272003668`; the E: root is
 kind order. This standalone event fragment tests serialization; it does not
 make the artificial mixed fixture a valid native replay or qualify a gameplay
 profile or Drakuseth consumers.
+
+## Appended ordered-graveyard event samples (November 10, 2026)
+
+The four samples below came from successful native producers at `442e15adcad577f40ead2f35e5abef1746d9a429`.
+The original payloads and producer results are recorded in
+`E:/codex-eternal-feb-442e-evidence/manifest.json`,
+SHA-256 `09f6b145c9ce2436bf63b218dd48cc145b0a57ade360985aac3a2cc3ee287360`.
+The trigger payload came from the dedicated trigger producer. The preceding
+315 event payloads retain their bytes and order. This append records sample
+provenance for the serialization corpus.
+
+| Event kind | Native producer | Original payload SHA-256 |
+| --- | --- | --- |
+| `FullTextTriggerCapturedV1` | `full_text_v1::tests::registered::volrath_native_cast_captures_and_pays_for_palinchron_text_both_seats` | `65a43e5302575fafe8031f927a6eb3222e4cc2a3c3ec01f6283e46e0f9d3e9d9` |
+| `FullTextBatchEntryV1` | `full_text_v1::tests::registered::volrath_native_mixed_batch_records_real_entry_and_order_both_seats` | `394a93b7526863ac5701a2d2ff0ec2b5b6214e4c9baf7066a78f6fc1cbf9b37b` |
+| `FullTextRestrictedUseV1` | `full_text_v1::tests::registered::volrath_native_wall_mana_records_the_exact_restricted_use_both_seats` | `0bd55de5fe06b428512681fe48b103250bfa4c1f166e4490d983130440f45844` |
+| `OrderedGraveyardControlGainedV1` | `full_text_v1::tests::registered::volrath_native_paid_control_transfer_records_the_new_controller_both_seats` | `3abcb5e812c0516f90ccdee856e29df8db7067a738d8f7d7147754286ddcce4f` |
+
+## Appended Martyr event sample (November 9, 2026)
+
+Row 320, `MartyrRevealPaidV1`, is the first actual event harvested from
+`eternal_sideboard_s1d_v1::martyr_of_sands_pays_zero_exact_subset_and_more_than_ten_both_seats`
+at source `90bda0c0fee4136f2e30a25182b8068720553e63`. The complete paid producer
+passed under the guarded Rust 1.94.1/MSVC native integration run. Its selected
+scope has two revealed white cards; no sample payload was synthesized. The
+preceding 319 JSON values and their order remain unchanged.
+
+The original 161-byte payload has SHA-256
+`59b5702344a2157c9fcc3de0e08566c58ae9b3c43e732e434fdd32bb0652bbd0` and remains at
+`D:/codex-mixed21-52f25-20261108/verify-limited-fullpool-s1-90bd-retry2/event-samples/martyr/MartyrRevealPaidV1.json`.
+The run manifest SHA-256 is
+`7c44a409954c5fec97536e4356a3f0ed1532eba487808273c18dd1029b1381c0`;
+the integration binary SHA-256 is
+`b2db3475a3de74058c6a7a70fe4fe021125f5f7b298b8e5f6e996a6f0fb079cd`.
+The full 28-case run had 24 passes and four fixture failures; its evidence is
+retained. This passing producer does not imply that the whole batch or the
+event-history consumers passed. Consumer checks remain pending.
+
+## Appended Mage and opening samples (November 10, 2026)
+
+Rows 321 and 322 append the first native `MeddlingMageEntryV1` and
+`EternalOpeningV1` events from source
+`db7764a1caf15b63083ad2ef25d6384024ffd524`. Their producers were
+`eternal_sideboard_s1b_v1::meddling_mage_names_a_card_that_then_cannot_be_cast`
+and `eternal_opening_v1::native_leyline_and_chancellor_order_restore_and_first_spell_both_seats`.
+Both passed in the guarded Rust 1.94.1/MSVC integration batch. The preceding
+320-event prefix is unchanged; these rows are the actual emitted payloads.
+
+The original payload SHA-256 values are
+`0f3c4d3d80341b2836e9e43f0bc2fe70288fedd873adfbd8796f72fc00578d77`
+and `3b25b7a9f3e9f02dbbd3c2a662944c355c2d5f766e3bc935b6f05d8269154e7e`.
+They remain under
+`D:/codex-mixed21-52f25-20261108/verify-limited-fullpool-s1-db77/event-samples/`
+in `mage-producer/MeddlingMageEntryV1.json` and
+`opening-producer/EternalOpeningV1.json`. The manifest SHA-256 is
+`2443309bc6f5430868ffccc7fc1dc8528d215d8ec0aef812709e7b580781c11e`.
+The batch had 49 passes and four failures. Passing producers do not establish
+the still-pending every-kind consumer checks or complete card admission.
+
+## Appended owned-draw sample (November 10, 2026)
+
+Row 323, `EternalOwnedDrawV1`, is the first actual event emitted by
+`eternal_vintage_e4_v1::paid_tamiyo_ultimate_keeps_its_starting_draw_count_and_tail_both_seats`
+at source `f90a56fd929b457a87dc9be1ac5102085b4844a4`. The complete paid producer
+passed in 2.317818 seconds; the guarded Rust 1.94.1/MSVC integration batch
+passed all 86 cases with no timeout. The previous 322-event prefix is unchanged.
+
+The original 248-byte payload has SHA-256
+`44b4152a57a971fe2da5a6a7f11fab882fc5e923f2e84a5b082d4fe916c712d5`
+and remains at
+`D:/codex-mixed21-52f25-20261108/verify-limited-fullpool-s1-f90a/event-samples/owned-draw-producer/EternalOwnedDrawV1.json`.
+The run manifest SHA-256 is
+`32ccef354fbd383671b1cf1cb1e742646032ab24c360e3420f6606724d46b8c2`;
+the archived integration binary SHA-256 is
+`1f561d384ee34e399f681a5d9ce9f13e86a2d78ab832f7c1bd2cd188933e68f6`.
+Only this passing producer supplied the appended sample. The earlier failed
+Tamiyo attempt is retained separately and was not imported. Every-kind
+consumer checks and complete card admission remain pending.
+
+## Merged S1 order (November 10, 2026)
+
+The four S1 rows above merged after the ordered-graveyard rows, so they moved
+from rows 316-319 to rows 320-323. Volrath's Shapeshifter's registry entry also
+precedes the S1 cards and moves each S1 card id up by one. The Martyr row's
+source `card_def` is therefore 1216 rather than the harvested 1215; no other
+payload changed.
+
+## Appended FullPool event samples (November 9, 2026)
+
+The final seven rows were emitted by the passing native producers below at source
+1eee5416d3d3f9c395bcdb6cc5ec2da1e2b4e8b1. The payloads before them retain
+their bytes and order. The archived Windows MSVC test binary has SHA-256
+b315034c3589cbd6854a2d7e59703996d26eab3230a91ef98f8d0bc242c9eca4.
+It used pinned Rust 1.94.1, LTO disabled and 16 codegen units for correctness.
+
+Merging main on November 11, 2026 placed main's four ordered-graveyard rows
+(rows 316 to 319) and its four S1 rows (rows 320 to 323, above) before this
+branch's `NivMizzetVisionaryDrawEndedV1` row and these seven rows, which are
+now rows 324 to 331. No payload changed: main changed only the eternal card
+registry, so these rows' Limited card ids are the same.
+
+The original 47-case run had 36 passes, ten failures and one timed-out case.
+Its receipt SHA-256 is 4832239d0f8630f786a4731394ab14d7379dc25e51daf44bab902c7718514df8.
+The original Lathril and Curator producers failed and are preserved. Two distinct
+native producer cases passed afterward; their receipt SHA-256 is
+82ed2ffcc57af0153c3ade84635970d9819f5847cf4d3e17c313c0e748365ab2.
+These rows test event serialization and guarded scans. They do not qualify the
+remaining failed cases, full-pool gameplay, training, or playing strength.
+
+Against fixture-only commit `28a6f3f81966ddfecbaa19c79661212b51419f6f`, the
+archived binary passed both event-history consumers: all 323 kinds in order,
+and record/digest/compare/print parity with the plain event vector. The guarded-scan
+consumer failed on the original Fiend Artisan refusal under a forced-open scan;
+the production repair still requires a fresh binary. This consumer receipt has
+SHA-256 `25dd7a46c36a01c5dc92eaccddbc58479a4e7d4753aa4becf010c2ddc233f8e5`.
+
+| Kind | Passing producer | Payload SHA-256 |
+| --- | --- | --- |
+| LathrilReceiptV1 | lathril_consumer_v1::tests::declared_forty_card_v3_reset_pays_lathril_and_real_combat_creates_two_elves_both_seats | 0aa8be2c8d1f7e016091001edde94f9d2c89e82e6b6b0fde1e38f489724e771c |
+| BlasphemousEdictReceiptV1 | edict_consumer_v1::tests::paid_alternate_apnap_hidden_pairs_original_indices_and_restore_both_seats | 558f868d8c492e1ff19c6347788ad3d1cceaa115b340c2878cc10cdae8aa645d |
+| CuratorReceiptV1 | curator_consumer_v1::tests::chosen_concealed_hand_cards_stay_unidentified_and_countered_entry_never_looks | 6a606daee03c2398b587c3bcafbb77769f5734b00962c8187d8ccc3298b8bfb2 |
+| GreatwurmCommitReceiptV1 | greatwurm_consumer_v1::tests::genuine_graveyard_cast_keeps_private_units_original_indices_and_full_width_debits_both_seats | 625780cbea0cb0d1b16a6b57627628567c68b386168beba6309df415233bc69b |
+| HarvesterCommitReceiptV1 | harvester_consumer_v1::tests::paid_activation_targets_other_graveyard_and_preserves_hidden_pairs_indices_and_actual_cleanup | c9eb52a9984c76f5801518551aea511cc175755c8489f415e8f951a83ac60184 |
+| FiendArtisanConsumerReceiptV1 | fiend_artisan_consumer_v1::tests::real_paid_x_sacrifice_search_private_worlds_index_and_source_departure_both_seats | a7252dd6efa0966bbf3ba9ef762dc3210c0477c8c5cc595b932481caceaaef40 |
+| EtaliPrimalStormReceiptV1 | etali_primal_storm_consumer_v1::tests::paid_attack_repeated_free_casts_source_departure_hidden_pair_and_index_parity_both_seats | 9129727aebc9208355f74f26daa17c46a7e35a5d613e2c4e1da1e2405681ac3d |

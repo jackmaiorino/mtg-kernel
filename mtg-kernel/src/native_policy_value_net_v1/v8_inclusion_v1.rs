@@ -310,6 +310,7 @@ impl NativePolicyValueNetV1 {
             weight,
             bias: old.bias.clone(),
             weight_t: Vec::new(),
+            weight_finite: false,
         }
         .with_transposed_weight_v1();
         model.pairing = Some(PairingEncoderV1 {
@@ -319,6 +320,7 @@ impl NativePolicyValueNetV1 {
                 weight: pairing_first_weight,
                 bias: vec![0.0; HIDDEN_DIM_V1],
                 weight_t: Vec::new(),
+                weight_finite: false,
             }
             .with_transposed_weight_v1(),
             second: LinearV1 {
@@ -327,6 +329,7 @@ impl NativePolicyValueNetV1 {
                 weight: vec![0.0; HIDDEN_DIM_V1 * HIDDEN_DIM_V1],
                 bias: vec![0.0; HIDDEN_DIM_V1],
                 weight_t: Vec::new(),
+                weight_finite: false,
             }
             .with_transposed_weight_v1(),
         });

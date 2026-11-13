@@ -14,7 +14,11 @@ fn upkeep() -> CommittedEvent {
 }
 
 fn counted(history: &EventHistoryV1) -> bool {
-    !history.stale && history.counts == EventHistoryV1::from(history.events.clone()).counts
+    let mut counts = [0; EVENT_KIND_COUNT_V1];
+    for event in history.iter() {
+        counts[event.kind_v1() as usize] += 1;
+    }
+    !history.stale && history.counts == counts
 }
 
 #[test]
@@ -49,6 +53,77 @@ fn counts_follow_every_mutation() {
     assert!(counted(&history) && !history.has_any(&[EventKindV1::Tap]));
 }
 
+/// A kind scan reads only its kinds, with their positions. With every guard
+/// forced open it is given every event, so a check that acts on a kind it
+/// does not list gives a different result, which the guarded-versus-forced
+/// parity tests detect.
+#[test]
+fn kind_scans_read_their_kinds_and_every_event_when_forced() {
+    let mut history = EventHistoryV1::from((0..70).map(tap).collect::<Vec<_>>());
+    history.push(upkeep());
+    history.extend((70..140).map(tap));
+    history.push(upkeep());
+    let read = |history: &EventHistoryV1| {
+        history
+            .of_kinds_v2(&[EventKindV1::UpkeepBegan])
+            .map(|(at, event)| (at, event.kind_v1()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        read(&history),
+        [
+            (70, EventKindV1::UpkeepBegan),
+            (141, EventKindV1::UpkeepBegan)
+        ]
+    );
+    let forced = guard_tests_v1::with_scans_forced(|| read(&history));
+    let every: Vec<_> = history
+        .iter()
+        .enumerate()
+        .map(|(at, event)| (at, event.kind_v1()))
+        .collect();
+    assert_eq!(forced, every);
+    // A check that acts on taps but lists only upkeeps sees no tap with its
+    // guard and every tap with the guard forced open.
+    let taps = |history: &EventHistoryV1| {
+        history
+            .of_kinds_v2(&[EventKindV1::UpkeepBegan])
+            .filter(|(_, event)| matches!(event, CommittedEvent::Tap { .. }))
+            .count()
+    };
+    assert_eq!(taps(&history), 0);
+    assert_eq!(guard_tests_v1::with_scans_forced(|| taps(&history)), 140);
+}
+
+/// A kind scan of a history that counts none of its kinds yields nothing
+/// without reading the events. Stale counts cannot say so: the scan then
+/// reads the events themselves.
+#[test]
+fn kind_scans_of_absent_kinds_yield_nothing_unless_the_counts_are_stale() {
+    let mut history = EventHistoryV1::from((0..200).map(tap).collect::<Vec<_>>());
+    let upkeeps = |history: &EventHistoryV1| {
+        history
+            .of_kinds_v2(&[EventKindV1::UpkeepBegan])
+            .map(|(at, _)| at)
+            .collect::<Vec<_>>()
+    };
+    assert!(upkeeps(&history).is_empty());
+    assert_eq!(
+        guard_tests_v1::with_scans_forced(|| upkeeps(&history)),
+        (0..200).collect::<Vec<_>>()
+    );
+    // A change through `DerefMut` leaves the counts stale.
+    history[130] = upkeep();
+    assert!(history.stale && !history.counts.contains(&1));
+    assert_eq!(upkeeps(&history), [130]);
+    history.push(upkeep());
+    assert!(counted(&history));
+    assert_eq!(upkeeps(&history), [130, 200]);
+    history.retain(|event| *event != upkeep());
+    assert!(counted(&history));
+    assert!(upkeeps(&history).is_empty());
+}
+
 #[test]
 fn records_and_digests_equal_the_plain_vec() {
     use std::collections::hash_map::DefaultHasher;
@@ -69,6 +144,69 @@ fn records_and_digests_equal_the_plain_vec() {
         serde_json::from_str(&serde_json::to_string(&events).unwrap()).unwrap();
     assert_eq!(back, history);
     assert!(counted(&back) && back.counts[EventKindV1::Tap as usize] == 2);
+}
+
+#[test]
+fn logical_ranges_and_shared_prefixes_preserve_vec_observations() {
+    let events: Vec<_> = (0..4165).map(tap).collect();
+    let mut history = EventHistoryV1::from(events.clone());
+    let snapshot = history.clone();
+    for (start, end) in [(0, 0), (0, 64), (63, 65), (2047, 2050), (4096, 4165)] {
+        let range = history.range_v2(start..end);
+        assert_eq!(range.len(), end - start);
+        assert_eq!(range.is_empty(), start == end);
+        assert!(range.iter().eq(events[start..end].iter()));
+        assert!(range.iter().rev().eq(events[start..end].iter().rev()));
+        assert_eq!(
+            serde_json::to_vec(&range).unwrap(),
+            serde_json::to_vec(&events[start..end]).unwrap()
+        );
+        let prefix = history.prefix_v1(end);
+        assert_eq!(prefix, events[..end]);
+        assert!(counted(&prefix));
+        assert_eq!(hash_bytes(&prefix), hash_bytes(&events[..end].to_vec()));
+    }
+    assert_eq!(history.range_v2(63..=64).to_vec(), events[63..65]);
+    assert_eq!(
+        history
+            .range_v2((Bound::Excluded(62), Bound::Included(64)))
+            .to_vec(),
+        events[63..65]
+    );
+    assert!(history.get_range_v2(0..4166).is_none());
+    assert!(history
+        .get_range_v2((Bound::Included(2), Bound::Excluded(1)))
+        .is_none());
+    assert!(history.get_range_v2(..=usize::MAX).is_none());
+    let prefix = history.prefix_v1(2049);
+    history.push(upkeep());
+    history[64] = upkeep();
+    history.push(tap(9999));
+    assert_eq!(snapshot, events);
+    assert_eq!(prefix, events[..2049]);
+    assert!(counted(&history));
+    assert_eq!(history.get(64), Some(&upkeep()));
+    assert_eq!(history.get(63..65), Some(&[tap(63), upkeep()][..]));
+}
+
+#[test]
+fn history_common_prefix_and_equality_follow_exact_events_after_cold_edits() {
+    let original = EventHistoryV1::from((0..4165).map(tap).collect::<Vec<_>>());
+    let mut fork = original.prefix_v1(2049);
+    assert_eq!(original.common_prefix_len_v2(&fork), 2049);
+    assert_eq!(fork.common_prefix_len_v2(&original), 2049);
+    assert_ne!(original, fork);
+    fork.push(upkeep());
+    assert_eq!(original.common_prefix_len_v2(&fork), 2049);
+    let mut copy = original.clone();
+    assert_eq!(original, copy);
+    copy[64] = upkeep();
+    assert_eq!(original.common_prefix_len_v2(&copy), 64);
+    assert_ne!(original, copy);
+    copy[64] = tap(64);
+    assert_eq!(original, copy);
+    copy.push(upkeep());
+    assert_eq!(copy.common_prefix_len_v2(&original), original.len());
 }
 
 /// Every byte a value feeds a hasher, so two values can be compared on the
@@ -956,16 +1094,24 @@ fn a_prefix_copy_resumes_its_chain_and_digests_like_a_plain_copy() {
         }
     }
     history.chain_digest_v2();
-    assert_eq!(history.chain.get().len(), CHAIN_V2_PREFIXES);
+    let cache = history.chain.get();
+    assert_eq!(cache.strides.len() + cache.recent.len(), CHAIN_V2_PREFIXES);
     for len in [0, 1, 4, 10, 37, 59, 60, 61] {
         let prefix = history.prefix_v1(len);
-        let plain = EventHistoryV1::from(history.events[..len.min(60)].to_vec());
+        let plain = EventHistoryV1::from(
+            history
+                .iter()
+                .take(len.min(60))
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
         assert_eq!(*prefix, *plain);
         assert!(counted(&prefix));
-        assert!(prefix
-            .chain
-            .get()
+        let cache = prefix.chain.get();
+        assert!(cache
+            .strides
             .iter()
+            .chain(cache.recent.iter())
             .all(|(covered, _)| *covered <= len));
         assert_eq!(prefix.chain_digest_v2(), plain.chain_digest_v2());
     }
@@ -996,7 +1142,7 @@ fn a_long_digest_keeps_stride_prefixes_for_any_earlier_copy() {
             len - covered < CHAIN_V2_STRIDE,
             "{len} resumes at {covered}"
         );
-        let plain = EventHistoryV1::from(history.events[..len].to_vec());
+        let plain = EventHistoryV1::from(history.iter().take(len).cloned().collect::<Vec<_>>());
         assert_eq!(prefix.chain_digest_v2(), plain.chain_digest_v2());
     }
 }
@@ -1023,7 +1169,7 @@ fn a_prefix_memo_lasts_exactly_while_its_events_are_unchanged() {
     assert_eq!(memo(&history.prefix_v1(5)), None);
 
     // Never part of what the history is.
-    let plain = EventHistoryV1::from(history.events.clone());
+    let plain = EventHistoryV1::from(history.iter().cloned().collect::<Vec<_>>());
     assert_eq!(history, plain);
     assert_eq!(
         serde_json::to_vec(&history).unwrap(),
@@ -1059,4 +1205,149 @@ fn a_prefix_memo_lasts_exactly_while_its_events_are_unchanged() {
     assert_eq!(memo(&short), Some(6));
     short.pop();
     assert_eq!(memo(&short), None);
+}
+
+#[test]
+fn proofs_last_exactly_while_their_events_are_unchanged() {
+    let proof = |history: &EventHistoryV1| history.proof_v1(ProvedV1::ArahboObservations);
+    let mut history = EventHistoryV1::from((0..10).map(tap).collect::<Vec<_>>());
+    assert_eq!(proof(&history), None);
+    history.set_proof_v1(ProvedV1::ArahboObservations, 11, 0);
+    assert_eq!(proof(&history), None, "a proof past the end is never kept");
+    history.set_proof_v1(ProvedV1::ArahboObservations, 6, 3);
+    assert_eq!(proof(&history), Some((6, 3)));
+    history.set_proof_v1(ProvedV1::ArahboObservations, 6, 4);
+    history.set_proof_v1(ProvedV1::ArahboObservations, 5, 4);
+    assert_eq!(
+        proof(&history),
+        Some((6, 3)),
+        "a shorter proof never replaces one"
+    );
+    // Each validator has its own, beside the Drake memo.
+    history.set_prefix_memo_v1(4, Arc::new(()));
+    history.set_proof_v1(ProvedV1::ColorDepartures, 8, 9);
+    assert_eq!(history.proof_v1(ProvedV1::GarrukObservations), None);
+    assert_eq!(history.proof_v1(ProvedV1::ColorDepartures), Some((8, 9)));
+    assert_eq!(
+        history.prefix_memo_v1().map(|(covered, _)| covered),
+        Some(4)
+    );
+
+    // Appending and changing only later events keep them; clones carry them.
+    history.push(tap(10));
+    history.insert(8, tap(11));
+    history.remove(8);
+    history.truncate(9);
+    history.pop();
+    assert_eq!(proof(&history), Some((6, 3)));
+    assert_eq!(history.proof_v1(ProvedV1::ColorDepartures), Some((8, 9)));
+    assert_eq!(proof(&history.clone()), Some((6, 3)));
+    let prefix = history.prefix_v1(7);
+    assert_eq!(proof(&prefix), Some((6, 3)));
+    assert_eq!(prefix.proof_v1(ProvedV1::ColorDepartures), None);
+    assert_eq!(proof(&history.prefix_v1(5)), None);
+    // A copy records without changing the original's.
+    let copy = history.clone();
+    copy.set_proof_v1(ProvedV1::ArahboObservations, 7, 5);
+    assert_eq!(proof(&copy), Some((7, 5)));
+    assert_eq!(proof(&history), Some((6, 3)));
+
+    // Never part of what the history is.
+    let plain = EventHistoryV1::from(history.iter().cloned().collect::<Vec<_>>());
+    assert_eq!(history, plain);
+    assert_eq!(
+        serde_json::to_vec(&history).unwrap(),
+        serde_json::to_vec(&plain).unwrap()
+    );
+    let restored: EventHistoryV1 =
+        serde_json::from_slice(&serde_json::to_vec(&history).unwrap()).unwrap();
+    assert_eq!(proof(&restored), None);
+
+    // Any change to the covered events drops them.
+    type Change = fn(&mut EventHistoryV1);
+    let changes: [Change; 7] = [
+        |h| h.insert(5, tap(20)),
+        |h| {
+            h.remove(5);
+        },
+        |h| h.truncate(5),
+        |h| h.retain(|_| true),
+        |h| h.clear(),
+        |h| h[0] = tap(21),
+        |h| {
+            for _ in h.iter_mut() {}
+        },
+    ];
+    for change in changes {
+        let mut changed = history.clone();
+        change(&mut changed);
+        assert_eq!(proof(&changed), None);
+        assert_eq!(changed.proof_v1(ProvedV1::ColorDepartures), None);
+        assert_eq!(proof(&history), Some((6, 3)));
+    }
+    let mut short = history.clone();
+    short.truncate(6);
+    assert_eq!(proof(&short), Some((6, 3)));
+    short.pop();
+    assert_eq!(proof(&short), None);
+
+    // The test switch uses and records none.
+    let off = proof_tests_v1::without_proofs(|| {
+        history.set_proof_v1(ProvedV1::GarrukObservations, 9, 0);
+        proof(&history)
+    });
+    assert_eq!(off, None);
+    assert_eq!(history.proof_v1(ProvedV1::GarrukObservations), None);
+}
+
+#[test]
+fn each_validator_keeps_its_recent_proofs_and_one_per_block() {
+    let history = EventHistoryV1::from((0..1000).map(tap).collect::<Vec<_>>());
+    let mut recorded = Vec::new();
+    for covered in (3..1000).step_by(7) {
+        history.set_proof_v1(ProvedV1::GarrukObservations, covered, covered as u64);
+        recorded.push(covered);
+    }
+    let kept = |history: &EventHistoryV1| {
+        let mut kept = Vec::new();
+        let mut len = history.len();
+        while let Some((covered, data)) = history
+            .prefix_v1(len)
+            .proof_v1(ProvedV1::GarrukObservations)
+        {
+            assert_eq!(data, covered as u64);
+            kept.push(covered);
+            match covered.checked_sub(1) {
+                Some(shorter) => len = shorter,
+                None => break,
+            }
+        }
+        kept.reverse();
+        kept
+    };
+    let mut expected: Vec<usize> = recorded[..recorded.len() - PROOFS_RECENT_V1]
+        .iter()
+        .copied()
+        .filter({
+            let mut block = None;
+            move |covered| {
+                let first = block != Some(covered / PROOFS_STRIDE_V1);
+                block = Some(covered / PROOFS_STRIDE_V1);
+                first
+            }
+        })
+        .collect();
+    expected.extend(&recorded[recorded.len() - PROOFS_RECENT_V1..]);
+    assert_eq!(kept(&history), expected);
+    // So a copy of any prefix keeps a proof less than two blocks short of it.
+    for len in [10, 64, 65, 300, 640, 999] {
+        let covered = history
+            .prefix_v1(len)
+            .proof_v1(ProvedV1::GarrukObservations)
+            .map_or(0, |(covered, _)| covered);
+        assert!(
+            len - covered < 2 * PROOFS_STRIDE_V1,
+            "{len} keeps {covered}"
+        );
+    }
 }

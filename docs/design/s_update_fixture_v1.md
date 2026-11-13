@@ -84,6 +84,84 @@ All four subcommands refuse unknown, repeated and out-of-range arguments.
 `s_transformer_v1 gae-bench` is unchanged: it times synthetic learner work and
 ignores unknown keys, so it is not a fixture reader.
 
+## Verified serial replay
+
+Add `verified_replay_tape_bytes` to `command` or `bench` with
+`path=serial workers=1`. The cap is required for reuse and accepts 1 through
+67,108,864 bytes. For example, use the representative fixture above.
+
+```bash
+target/release/s_update_fixture_v1 bench fixture=$F-s batch=warmed path=serial workers=1 out=$T/A1
+target/release/s_update_fixture_v1 bench fixture=$F-s batch=warmed path=serial workers=1 verified_replay_tape_bytes=67108864 out=$T/B1
+target/release/s_update_fixture_v1 command fixture=$F-s batch=warmed path=serial workers=1 verified_replay_tape_bytes=67108864 out=$T/B2 > $T/B2.json
+target/release/expanded_deck_training_v1 $T/B2.json
+```
+
+The opt-in emits `mode=update_s_verified_serial` with a required
+`tape_cap_bytes`. It accepts ordinary S GAE with zero entropy, one worker
+and the fixture's default training math. The strict command rejects
+prepared, multiworker, EX1 and W5 options; the prepared opt-in below covers
+two or more workers. Omitting the opt-in produces the original serial or
+prepared command. The native run driver still selects those reference paths.
+
+The opt-in receipt's `verified_replay.used` identifies a completed reused
+update. On fallback the receipt gives the reason and the reference update
+runs from the original state. The `attempt` fields report the candidate's
+learner and opponent replay forwards, completed backwards and peak retained
+tape capacity before forward. The cap includes one tape slot, retained
+layer headers and tape buffers. Inputs, gradients, backward scratch,
+transient allocations and allocator overhead are outside that cap.
+
+Compare `verified_replay.combined_replay_learner_seconds` with the serial
+reference's `behavior_replay_seconds + learner_update_seconds`. On reuse,
+the replay timer includes gradient computation. On fallback, the combined
+time includes both the discarded attempt and the reference replay and
+learner. Compare the complete-update elapsed time separately and verify the
+published checkpoint and continuation through `bench` or `verify`.
+
+## Verified prepared replay
+
+With `path=prepared` and two to 32 workers, `verified_replay_tape_bytes`
+selects the prepared opt-in, `mode=update_s_verified_prepared`. It has the
+prepared command's `preparation_workers` and `max_prepared_tensor_mebibytes`.
+Like the serial opt-in, it accepts ordinary S GAE with zero entropy and the
+default training math, and rejects EX1 and W5 options. One worker is the
+serial opt-in's. The cap is each learner worker's.
+
+```bash
+target/release/s_update_fixture_v1 bench fixture=$F-s batch=warmed path=prepared workers=4 out=$T/A1
+target/release/s_update_fixture_v1 bench fixture=$F-s batch=warmed path=prepared workers=4 verified_replay_tape_bytes=67108864 out=$T/B1
+```
+
+The ordered preparation replays and checks every other row as before,
+always through the reference forward: unlike the prepared reference, it does
+not take them through the row memo when `MTG_KERNEL_ROW_CACHE_REPLAY_OTHER_SEAT=1`
+asks. It decodes each learner row without replaying it, and the GAE targets
+come from the recorded first values, as in the reference. The parallel learner
+(`s_transformer_v1::parallel`) records the same tasks in the same order. Each
+task reserves its worker's tape within the cap, replays the learner row and
+compares the logit and value bits with the stored row before its backward.
+The gradient and Adam step are the reference's for the same worker count, bit
+for bit. All worker tapes together retain at most `workers * cap` bytes.
+Those tapes sit outside the learner's 64 MiB gradient-term budget, which is
+unchanged. `attempt.tape_slots` gives the worker count, and
+`attempt.peak_retained_tape_bytes` is the sum of each tape's peak, an upper
+bound on what they retained at once. `update_preparation` reports the
+deferred learner rows (`deferred_learner_rows`), and its timers cover the
+other rows' replay only.
+
+The candidate runs only when the caller's MXCSR is pinned, the learner is
+plain V4 native S, and no learner row carries a pairing relation. Otherwise
+it falls back before preparing. Because preparation no longer checks the
+learner rows, its errors and their order are not the reference's. Any
+failure of the candidate therefore runs the prepared reference from the
+original state, which reports its own error and writes nothing. A failure
+the reference does not repeat, such as a tape allocation failure, is
+reported as `fallback=attempt_error` with `verified_replay.attempt_error`.
+A tape over the cap is `tape_capacity`. A fallback's reference preparation
+may find the attempt's opponents in the process cache, so its
+`opponent_cache_hits` can be higher than in a fresh process.
+
 ## Verification
 
 An update matches its batch's reference when every field of the batch
@@ -118,8 +196,8 @@ per calling thread and handed to the preparation and learner worker pools,
 so concurrent updates never mix counts. Default builds compile them to
 nothing; take uninstrumented timings from a default build.
 
-`counts_match_census` checks that every row was replayed once and every
-learner row forwarded and backpropagated once. When
+For the reference paths, `counts_match_census` checks that every row was
+replayed once and every learner row forwarded and backpropagated once. When
 `learner_forwards_repeat_replayed_rows` is true, the learner's forward calls
 and output digest equal the learner-row replay's. The learner then
 recomputed the outputs the replay had already authenticated, with one
@@ -127,6 +205,13 @@ recomputed the outputs the replay had already authenticated, with one
 mismatch leaves the duplicate metrics unavailable and fails the benchmark.
 The thread-time shares exclude hashing the outputs. Count one removed forward once; a shift
 between the preparation and learner timers is not a saving.
+
+Opt-in benches report `counts_match_execution` and
+`removed_learner_forwards`. Reuse must authenticate every replay row and
+backpropagate every learner row, with zero learner forwards. A fallback
+retains all discarded replay and backward calls in the stage totals and
+reports zero removed learner forwards. Compare the replay output digests of
+the reused update and the serial reference on the same batch.
 
 ## Timing procedure
 
@@ -140,5 +225,9 @@ same preflight and timing boundary on both arms. Record both SHAs, the
 Rust and linker versions, the release profile and the machine. A
 cloud container or CI-profile timing is not a qualified speedup; final
 acceptance goes through [T6 / #600](https://github.com/jackmaiorino/mtg-kernel/issues/600).
+Compare verified serial reuse with the one-worker serial reference, and
+verified prepared reuse with the prepared reference at the same worker count.
+Record fallbacks separately and retain their complete timing and forward
+counts.
 
 The fixture uses synthetic weights and makes no playing-strength claim.

@@ -335,8 +335,15 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
     }
 }
 
-/// Solitary Confinement: "You have shroud." Whether `player` has shroud.
+/// Whether `player` has shroud: Solitary Confinement's or True Believer's
+/// (Premodern sideboard wave P3a) "You have shroud."
 pub(crate) fn player_has_shroud(state: &GameState, player: PlayerId) -> bool {
+    solitary_confinement(state, player)
+        || crate::eternal_premodern_p3a_v1::statics::player_has_shroud(state, player)
+}
+
+/// Whether `player` controls a Solitary Confinement whose abilities apply.
+fn solitary_confinement(state: &GameState, player: PlayerId) -> bool {
     active_with_id(
         state,
         static_ids().solitary_confinement,
@@ -350,14 +357,14 @@ pub(crate) fn player_has_shroud(state: &GameState, player: PlayerId) -> bool {
 /// Solitary Confinement: "Prevent all damage that would be dealt to you."
 pub(crate) fn prevents_damage(state: &GameState, damage: &DamageProposed) -> bool {
     match damage.target {
-        Target::Player(player) => player_has_shroud(state, player),
+        Target::Player(player) => solitary_confinement(state, player),
         _ => false,
     }
 }
 
 /// Solitary Confinement: "Skip your draw step."
 pub(crate) fn skips_draw_step(state: &GameState, player: PlayerId) -> bool {
-    player_has_shroud(state, player)
+    solitary_confinement(state, player)
 }
 
 /// Tsabo's Web: "Each land with an activated ability that isn't a mana
@@ -396,7 +403,8 @@ pub(crate) fn spell_tax(state: &GameState, types: &[CardType], caster: PlayerId)
 /// Sickening Dreams: "As an additional cost to cast this spell, discard X
 /// cards." Its X is announced like a mana X.
 pub(crate) fn announces_discard_x(def: &CardDef) -> bool {
-    cfg!(feature = "eternal-fixtures") && def.name == SICKENING_DREAMS
+    cfg!(feature = "eternal-fixtures")
+        && (def.name == SICKENING_DREAMS || crate::eternal_sideboard_s1b_v1::pays_life_for_x(def))
 }
 
 /// The most X Sickening Dreams may announce: the cards in its caster's hand.
@@ -406,7 +414,7 @@ pub(crate) fn discard_x_cap(
     player: PlayerId,
     state: &GameState,
 ) -> Option<u8> {
-    if !announces_discard_x(def) {
+    if !announces_discard_x(def) || crate::eternal_sideboard_s1b_v1::pays_life_for_x(def) {
         return None;
     }
     let cards = state.players[player.index()]
@@ -420,8 +428,10 @@ pub(crate) fn discard_x_cap(
 /// Sickening Dreams' additional discard: X cards, none for X = 0. `None`
 /// for every other card.
 pub(crate) fn additional_discard_count(def: &CardDef, x: Option<u16>) -> Option<Option<u8>> {
-    announces_discard_x(def).then(|| {
-        x.filter(|&x| x > 0)
-            .map(|x| u8::try_from(x).unwrap_or(u8::MAX))
-    })
+    (announces_discard_x(def) && !crate::eternal_sideboard_s1b_v1::pays_life_for_x(def)).then(
+        || {
+            x.filter(|&x| x > 0)
+                .map(|x| u8::try_from(x).unwrap_or(u8::MAX))
+        },
+    )
 }

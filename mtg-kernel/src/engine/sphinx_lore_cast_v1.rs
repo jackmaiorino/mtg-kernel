@@ -25,7 +25,7 @@ pub struct ChoiceV1 {
     pub options_history_index: u64,
     pub selected: Option<u16>,
 }
-fn options_record(state: &GameState, index: u64) -> Result<&OptionsV1, String> {
+pub(crate) fn options_record(state: &GameState, index: u64) -> Result<&OptionsV1, String> {
     match state
         .engine
         .event_history
@@ -40,7 +40,8 @@ fn options_record(state: &GameState, index: u64) -> Result<&OptionsV1, String> {
                 .get(options.card_def as usize)
                 .ok_or("Sphinx cast-choice definition absent")?;
             if card.owner != options.controller
-                || card.card_def != options.card_def
+                || (card.zone_change_count == options.graveyard_generation
+                    && card.card_def != options.card_def)
                 || card.zone_change_count < options.graveyard_generation
                 || !d.is_castable()
                 || !d.is_executable()
@@ -456,4 +457,40 @@ pub(super) fn validate_finalized(
         return Err("Sphinx finalized route/source changed".into());
     }
     Ok(())
+}
+
+/// Expose the original paid selection, without treating a cast placeholder or
+/// a virtual copy as a new graveyard permission.
+pub(crate) fn published_choice(
+    state: &GameState,
+    item: &StackItem,
+) -> Result<Option<ChoiceV1>, String> {
+    if item.is_copy
+        || state.engine.pending_cast.as_ref().is_some_and(|p| {
+            p.spell == item.source
+                && state
+                    .stack
+                    .last()
+                    .is_some_and(|last| last.v4.stack_item_id == item.v4.stack_item_id)
+        })
+    {
+        return Ok(None);
+    }
+    validate_finalized(state, item, false)?;
+    let Some(index) = item
+        .v4
+        .source_contract
+        .and_then(|s| s.finalized_cast_binding)
+        .and_then(|binding| binding.sphinx_lore_cast_v1)
+    else {
+        return Ok(None);
+    };
+    match state
+        .engine
+        .event_history
+        .get(usize::try_from(index).map_err(|_| "Sphinx paid receipt width")?)
+    {
+        Some(CommittedEvent::SphinxLoreCastSelectedV1 { choice, .. }) => Ok(Some(*choice)),
+        _ => Err("Sphinx paid receipt absent".into()),
+    }
 }

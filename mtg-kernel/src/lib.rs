@@ -181,6 +181,7 @@ pub mod banner_of_kinship_v1;
 pub mod bloodthirsty_conqueror_v49;
 pub mod bo3_match;
 pub mod bo3_session;
+pub(crate) mod borrow_memo_v1;
 pub mod bounded_staleness_async_harness_v1;
 pub mod bounded_staleness_async_production_v1;
 pub mod bounded_staleness_async_v1;
@@ -193,6 +194,7 @@ mod creature_stats_lki_v1;
 pub mod creature_types_v60;
 pub mod elenda_observation_v52;
 pub mod elenda_public_v52;
+pub mod embercleave_consumer_v1;
 pub mod embercleave_public_v65;
 pub mod fake_your_own_death_v50;
 pub mod fiendish_panda_v1;
@@ -295,6 +297,7 @@ pub mod eternal_legacy_e9a_v1;
 /// Vintage Lurrus card programs and companions of the eternal catalog (wave
 /// E4b).
 pub mod eternal_lurrus_v1;
+pub mod eternal_opening_v1;
 /// The eternal catalog's outside-the-game zone: each player's sideboard cards,
 /// private to their owner, and the wish and learn effects that read them.
 pub mod eternal_outside_game_v1;
@@ -324,6 +327,41 @@ pub mod eternal_premodern_p2c_v1;
 /// Premodern White Weenie and Mono-Red Control card programs of the eternal
 /// catalog (wave P2d).
 pub mod eternal_premodern_p2d_v1;
+/// Premodern sideboard card programs of the eternal catalog (wave P3a).
+pub mod eternal_premodern_p3a_v1;
+/// Premodern sideboard card programs of the eternal catalog (wave P3b).
+pub mod eternal_premodern_p3b_v1;
+/// Premodern sideboard card programs of the eternal catalog (wave P3c).
+pub mod eternal_premodern_p3c_v1;
+/// Premodern sideboard card programs of the eternal catalog (wave P3d).
+pub mod eternal_premodern_p3d_v1;
+/// Premodern sideboard card programs of the eternal catalog (wave P3e).
+pub mod eternal_premodern_p3e_v1;
+/// Premodern sideboard card programs of the eternal catalog (wave P3f).
+pub mod eternal_premodern_p3f_v1;
+/// Premodern sideboard card programs of the eternal catalog (wave P3g).
+pub mod eternal_premodern_p3g_v1;
+/// Legacy sideboard card programs of the eternal catalog (wave S1a).
+pub mod eternal_sideboard_s1a_v1;
+/// Legacy sideboard card programs of the eternal catalog, part 2 (wave S1b).
+pub mod eternal_sideboard_s1b_v1;
+/// Vintage-only sideboard card programs of the eternal catalog (wave S1c).
+pub mod eternal_sideboard_s1c_v1;
+/// Pauper sideboard card programs of the eternal catalog (wave S1d).
+pub mod eternal_sideboard_s1d_v1;
+/// Vintage sideboard card programs of the eternal catalog (wave S1e).
+pub mod eternal_sideboard_s1e_v1;
+/// Vintage sideboard card programs of the eternal catalog (wave S1f).
+pub mod eternal_sideboard_s1f_v1;
+/// Legacy sideboard card programs of the eternal catalog, part 3 (wave S1g).
+pub mod eternal_sideboard_s1g_v1;
+/// Vintage sideboard card hooks of the eternal catalog (wave S1j): Archon
+/// of Absolution's cost to attack.
+pub mod eternal_sideboard_s1j_v1;
+/// Legacy sideboard card programs of the eternal catalog (wave S1l):
+/// Triumph of Saint Katherine.
+pub mod eternal_sideboard_s1l_v1;
+pub mod eternal_sideboard_s1m_v1;
 /// Vintage graveyard and tempo card programs of the eternal catalog (wave
 /// E7b).
 pub mod eternal_vintage_e7b_v1;
@@ -338,10 +376,16 @@ pub mod extra_turn_v1;
 mod fdn_raid_v1;
 mod fixed_source_damage_v3;
 pub mod frenzied_public_v1;
+// Unregistered layer-3 source preparation; no card or schema admission.
+pub mod full_text_v1;
 pub mod garruk_public_v1;
 mod gorehorn_damage_v1;
+mod graveyard_order_v1;
+/// Public ordered-graveyard and full-text facts for the opt-in Premodern profile.
+pub mod premodern_ordered_public_v1;
 pub mod rules_meaning_divine_v44;
 pub mod rules_meaning_zul_ashur_v1;
+mod sampled_history_v1;
 pub mod zul_ashur_observation_v1;
 pub mod zul_ashur_public_v1;
 mod zul_ashur_v1;
@@ -783,22 +827,61 @@ pub mod sideboard_search_campaign_v1;
 // the real read-only `validate_native_training_store_v2` genesis-to-latest
 // walk against an externally supplied Store copy. Test-only, ignored by
 // default, never built into the product binary.
+pub mod aberration_consumer_v1;
+pub mod aberration_public_v1;
 mod authority_of_the_consuls_v1;
 pub(crate) mod cerberus_capture_v1;
 pub mod cerberus_public_v1;
 pub(crate) mod combat_static_rules_v1;
 mod counter_target_effects_v1;
+pub mod curator_consumer_v1;
+pub mod curator_public_v1;
+pub(crate) mod curator_receipts_v1;
+pub mod edict_consumer_v1;
+pub mod edict_public_v1;
+pub(crate) mod edict_receipts_v1;
+pub mod electroduplicate_consumer_v1;
+pub mod electroduplicate_public_v1;
+pub mod etali_primal_storm_consumer_v1;
+pub mod etali_primal_storm_public_v1;
+pub(crate) mod etali_primal_storm_receipts_v1;
 pub mod ex1_v1;
 mod extravagant_replication_v1;
+pub mod fiend_artisan_consumer_v1;
+pub mod fiend_artisan_public_v1;
+pub(crate) mod fiend_artisan_receipts_v1;
+pub mod greatwurm_consumer_v1;
+pub mod greatwurm_public_v1;
+pub(crate) mod greatwurm_receipts_v1;
+pub mod harvester_consumer_v1;
+pub mod harvester_public_v1;
+pub(crate) mod harvester_receipts_v1;
 pub mod juggernaut_public_v1;
+pub mod kykar_consumer_v1;
+pub mod kykar_public_v1;
+pub mod lathril_consumer_v1;
+pub mod lathril_public_v1;
+pub(crate) mod lathril_receipts_v1;
+pub mod leyline_axe_consumer_v1;
+pub mod leyline_axe_public_v1;
 pub(crate) mod life_gain_turn_v1;
 pub(crate) mod life_loss_turn_v1;
+pub mod limited_full_pool_consumer_v1;
+pub mod limited_mixed_consumer_v1;
+pub mod loot_consumer_v1;
+pub mod loot_public_v1;
+pub mod moon_consumer_v1;
+pub mod moon_public_v1;
+pub mod omniscience_consumer_v1;
+pub mod omniscience_public_v1;
 pub mod own_registration_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;
 pub(crate) mod private_physical_trajectory_core;
 pub(crate) mod private_physical_trajectory_v1;
 pub(crate) mod private_physical_trajectory_v2;
+pub mod progenitus_consumer_v1;
+pub mod progenitus_public_v1;
 pub mod regret_census_v1;
 pub mod rl;
 pub mod rl_session;
@@ -813,6 +896,8 @@ pub mod snapshot;
 pub mod soul_shackled_zombie_public_v1;
 pub mod spellbench_qualify_v1;
 pub mod spellbench_scorer_v1;
+pub mod sphinx_lore_consumer_v1;
+pub mod sphinx_lore_public_v1;
 pub mod standard_legends_v1;
 pub mod state;
 #[cfg(test)]
@@ -825,14 +910,20 @@ pub(crate) mod stromkirk_dispatch_v1;
 pub mod stromkirk_public_v1;
 pub mod surface;
 pub mod surface_v2;
+pub mod thousand_year_storm_consumer_v1;
+pub mod thousand_year_storm_public_v1;
 pub mod trace;
 pub mod trigger;
+pub mod tutelage_consumer_v1;
+pub mod tutelage_public_v1;
 pub mod w5_xact_v1;
 mod wildwood_capture_v1;
 mod wildwood_scourge_v1;
 pub mod win_search_v1;
 pub mod xmage_observed_inference_v1;
+pub mod zimone_consumer_v1;
 mod zimone_paradox_sculptor_v1;
+pub mod zimone_public_v1;
 
 pub const KERNEL_VERSION: &str = "0.0.4-spike";
 
@@ -888,6 +979,7 @@ pub mod rules_meaning_raid_entry_v1;
 
 pub mod arahbo_v1;
 pub mod banishing_public_v1;
+pub(crate) mod entry_observations_v1;
 pub mod garruks_uprising_v1;
 
 pub mod rules_meaning_arahbo_v1;
@@ -946,7 +1038,14 @@ pub mod season_observation_v48;
 
 pub mod season_token_attachment_v48;
 
+#[cfg(test)]
+mod current_actor_probe_v1;
 pub mod current_mixed_policy_v1;
+pub mod current_tree_learner_v1;
+pub mod eternal_actor_choice_v1;
+pub mod eternal_actor_printed_v1;
+pub mod eternal_actor_public_v1;
+pub mod eternal_actor_stack_v1;
 pub mod fake_observation_v50;
 
 #[cfg(all(
@@ -970,10 +1069,12 @@ pub mod quandary_public_v55;
 pub mod rules_meaning_drake_hatcher_v53;
 pub mod rules_meaning_quandary_v55;
 pub mod rules_meaning_spinner_v54;
+pub mod scrawling_crawler_public_v1;
 pub mod spinner_public_v54;
 
 pub mod alesha_v1;
 pub mod artist_public_v64;
+pub mod chosen_type_consumer_v1;
 pub mod chosen_type_public_v66;
 pub mod giada_v1;
 pub mod graveyard_return_candidates_v61;
@@ -1079,4 +1180,10 @@ pub mod limited_liliana_session_v14;
 
 pub mod limited_chandra_session_v15;
 
+pub mod artist_consumer_v1;
+pub mod drakuseth_consumer_v1;
+mod limited_consumer_wire_v1;
 pub mod limited_kaito_session_v16;
+pub mod limited_return_consumer_v1;
+pub mod limited_v68_v75_consumer_v1;
+pub mod niv_consumer_v1;

@@ -85,6 +85,12 @@ mod seeds;
 mod serve;
 #[cfg(test)]
 pub(crate) use serve::worker_answer_v4 as qualify_worker_request_v4;
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+mod blunder_census;
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+mod blunder_price;
+#[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+mod search_probe;
 mod serve_ac2;
 mod sharing;
 mod tensor_dump;
@@ -142,6 +148,30 @@ pub(super) fn run_w4(cfg: &super::CensusConfigV1) -> Result<(), String> {
     }
 }
 
+/// `s4a-blunder-census` loads the candidate from its model source, so
+/// `run_v1` calls it before loading a policy (needs the evaluator's loader).
+pub(super) fn run_blunder_census(cfg: &super::CensusConfigV1) -> Result<(), String> {
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    return blunder_census::run(cfg);
+    #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+    {
+        let _ = cfg;
+        Err("s4a-blunder-census requires the experimental-burn-net8-packed-cuda-v1 feature".into())
+    }
+}
+
+/// `s4a-blunder-price` loads its own policies, so `run_v1` calls it before
+/// loading a policy (needs the evaluator's loader).
+pub(super) fn run_blunder_price(cfg: &super::CensusConfigV1) -> Result<(), String> {
+    #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+    return blunder_price::run(cfg);
+    #[cfg(not(feature = "experimental-burn-net8-packed-cuda-v1"))]
+    {
+        let _ = cfg;
+        Err("s4a-blunder-price requires the experimental-burn-net8-packed-cuda-v1 feature".into())
+    }
+}
+
 pub(super) fn is_mode(mode: &str) -> bool {
     matches!(
         mode,
@@ -156,6 +186,8 @@ pub(super) fn is_mode(mode: &str) -> bool {
             | "s4a-label-replay"
             | "s4a-win-check"
             | "s4a-w4"
+            | "s4a-blunder-census"
+            | "s4a-blunder-price"
             | "s4a-bank-trace"
             | "s4a-refresh"
             | "s4a-branch"
@@ -630,7 +662,29 @@ fn drive(
         } else {
             act(opp, &s, &d, &mut c)
         }
-        .map_err(|e| format!("{e:?}"))?;
+        .map_err(|e| {
+            #[cfg(test)]
+            {
+                let state = s.game_state();
+                let actions = s.diagnostic_current_action_semantics().unwrap_or_default();
+                let projected_attacks = s
+                    .flat_policy_observation_v4(d)
+                    .map(|observation| observation.projection.creatures_attacked_this_turn);
+                eprintln!(
+                    "stage4a fixture game={} decks={:?} seed={} turn={} phase={:?} step={} attacked={} projected_attacks={:?} actions={:?}",
+                    setup.game,
+                    setup.decks,
+                    setup.seed,
+                    state.turn,
+                    state.step,
+                    d.step,
+                    state.creatures_attacked_this_turn_v1(),
+                    projected_attacks,
+                    &actions[..actions.len().min(4)],
+                );
+            }
+            format!("{e:?}")
+        })?;
         if visit(&s, &d, a)? {
             return Ok((s, false));
         }
