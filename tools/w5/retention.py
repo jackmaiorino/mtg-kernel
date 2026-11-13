@@ -105,8 +105,9 @@ def sha(path):
 
 
 def state_pin(update_doc):
-    """The S container an update published (`update.json`'s `s_learner.state`), or None for net-8."""
-    return (update_doc.get('s_learner') or {}).get('state')
+    """The S or wide container an update published (`update.json`'s `s_learner.state` or `w_learner.state`, the
+    wide net-8w128 learner's, which retention treats exactly as S's), or None for net-8."""
+    return (update_doc.get('s_learner') or update_doc.get('w_learner') or {}).get('state')
 
 
 def checkpoint_parts(pin, state=None):

@@ -251,6 +251,10 @@ pub fn materialize_weights_snapshot_v1(
     if template.s_learner.is_some() {
         return s_materialize_v1(template, snapshot, &bytes, output);
     }
+    ensure(
+        template.w_learner.is_none(),
+        "weights snapshots of a wide (net-8w128) learner are not available",
+    )?;
     let mut saved = decode_v1(&bytes)?;
     let schema = saved
         .schema
@@ -355,6 +359,7 @@ mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let decks = [list("Affinity"), list("Terror")];
         let episode = ExpandedEpisodeV1 {

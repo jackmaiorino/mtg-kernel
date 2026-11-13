@@ -594,5 +594,23 @@ class FreshStart(unittest.TestCase):
                                      'w5', 0, 1, 1)
 
 
+    def test_a_wide_learner_parent_starts_from_its_pinned_initial_state(self):
+        """A wide (net-8w128) parent has no checkpoint: `w_learner.initial` is its pin, as S's `s_learner.initial`."""
+        base = json.loads(self.base.read_text())
+        doc = json.loads(self.fresh.read_text())
+        doc.pop('fresh')
+        state = self.node.t / 'w128-initial.bin'
+        state.write_bytes(b'MTGW128\0')
+        doc['source']['w_learner'] = {'schema': 'w128-learner/v1',
+                                      'initial': {'path': state.as_posix(), 'sha256': chains.qual.sha(state)}}
+        cfg = chains.qual.build_config(base, doc, self.node.t / 'out', 'pg/c1', 'w5', 0, 1, 1)
+        self.assertEqual(cfg['initial_source'], doc['source'])
+        state.write_bytes(b'changed')
+        with self.assertRaisesRegex(AssertionError, 'differs from its dose pin'):
+            chains.qual.build_config(base, doc, self.node.t / 'out', 'pg/c1', 'w5', 0, 1, 1)
+        doc['fresh'] = True
+        with self.assertRaisesRegex(AssertionError, 'no S or wide learner'):
+            chains.qual.build_config(base, doc, self.node.t / 'out', 'pg/c1', 'w5', 0, 1, 1)
+
 if __name__ == '__main__':
     unittest.main()

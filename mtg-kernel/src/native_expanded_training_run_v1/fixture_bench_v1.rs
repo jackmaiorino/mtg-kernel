@@ -237,6 +237,7 @@ pub(super) fn write_fixture_v1(options: &FixtureOptionsV1) -> Result<Value, Stri
         },
         checkpoint: None,
         s_learner: None,
+        w_learner: None,
     };
     let work = |name: &str| root.join("work").join(name).join("run");
     let mut cases = vec![write_case_v1(

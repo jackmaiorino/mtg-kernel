@@ -159,6 +159,10 @@ fn s_member_v1(source: &ExpandedModelSourceV1) -> Result<&SLearnerSourceV1, Stri
         member.schema == S_LEARNER_SOURCE_SCHEMA_V1,
         "unknown S learner source schema",
     )?;
+    ensure(
+        source.w_learner.is_none(),
+        "a source has at most one of the S and wide learners",
+    )?;
     Ok(member)
 }
 

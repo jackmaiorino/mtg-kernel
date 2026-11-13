@@ -194,6 +194,12 @@ pub(super) fn collect_parallel_v1(
     )?;
     let (policy, learner, state_hash) = if source.s_learner.is_some() {
         super::s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
+    } else if source.w_learner.is_some() {
+        ensure(
+            ex1.is_none(),
+            "a wide learner refuses EX1 and W5 search collection",
+        )?;
+        super::w_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
     } else {
         let (mut policy, mut state, transfer) = super::loaded_source_profile_v1::scoped_v1(
             super::loaded_source_profile_v1::LoadRoleV1::CollectLearner,
@@ -528,6 +534,7 @@ mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let deck = |id: &str| {
             let registration =
@@ -683,6 +690,7 @@ mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let deck = |id: &str| {
             let registration =
@@ -791,6 +799,7 @@ mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let mut model =
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
@@ -882,6 +891,7 @@ mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let mut model =
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
@@ -1017,6 +1027,7 @@ mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let registered =
             crate::sideboard::checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
@@ -1136,6 +1147,7 @@ mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let deck = |id: &str| {
             let registration =
