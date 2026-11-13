@@ -368,23 +368,21 @@ struct FlatResolvedActionObjectV4 {
     object: FlatActionObjectV2,
 }
 
-/// V4 producer (plan item 14): rewrites a candidate's `ActionSemanticV1` so
-/// a hidden same-controller pending trigger's source is named by its
-/// frozen `PendingTrigger::source_contract` identity instead of the raw
-/// live `card_ref` -- for every position in `Decision::OrderTriggers`'s
-/// `pending_sources`, and for the single (always-0) position
-/// `Decision::ChooseTargets` for a pending trigger can ever name
-/// (`ChooseTarget`/`FinishTargetSelection`'s own `source` field, per
-/// `trigger::pending_trigger_choose_targets_gate_v1`'s proven "only
-/// `pending_triggers[0]`" invariant). A position is substituted only when
-/// [`crate::trigger::pending_trigger_hidden_source_v1`] confirms it is
-/// genuinely hidden and the live `arena_id` still matches that position's
-/// own pending trigger; otherwise the reference is left as the ordinary
-/// live `card_ref`, resolving through the normal (non-frozen) path exactly
-/// as it would for V3. Every other `ActionSemanticV1` variant passes
-/// through unchanged: none of them can ever name a pending trigger's own
-/// source (they arise from engine stages -- casting, cost payment, effect
-/// resolution -- mutually exclusive with `EngineDecisionStageV2::PendingTriggers`).
+/// V4 producer (plan item 14, #671/#673/#674): rewrites a candidate's
+/// `ActionSemanticV1` so a hidden or ceased same-controller pending trigger's
+/// source is named by its frozen `PendingTrigger::source_contract` identity
+/// instead of the raw live `card_ref`: for every position in
+/// `Decision::OrderTriggers`'s `pending_sources`, for `Decision::ChooseTargets`
+/// (`ChooseTarget`/`FinishTargetSelection`) at position 0, and for
+/// `Decision::ChooseTriggerMode` (`ChooseSpellMode` gated by
+/// [`crate::engine::pending_trigger_choose_mode_active_v1`]) at position 0.
+/// A position is substituted only when
+/// [`crate::trigger::pending_trigger_frozen_source_v4`] confirms it is
+/// genuinely hidden or ceased and the live `arena_id` still matches that
+/// position's own pending trigger; otherwise the reference is left as the
+/// ordinary live `card_ref`, resolving through the normal (non-frozen) path
+/// exactly as it would for V3. Every other `ActionSemanticV1` variant (and
+/// `ChooseSpellMode` during `pending_cast`) passes through unchanged.
 pub(super) fn frozen_pending_trigger_semantic_v4(
     state: &crate::state::GameState,
     semantic: ActionSemanticV1,
@@ -454,6 +452,20 @@ pub(super) fn frozen_pending_trigger_semantic_v4(
                 actor,
                 source,
                 selected_count,
+            }
+        }
+        ActionSemanticV1::ChooseSpellMode {
+            actor,
+            source,
+            mode_index,
+            mode_count,
+        } if crate::engine::pending_trigger_choose_mode_active_v1(state) => {
+            let source = frozen_at(0, &source, actor);
+            ActionSemanticV1::ChooseSpellMode {
+                actor,
+                source,
+                mode_index,
+                mode_count,
             }
         }
         other => other,
@@ -1646,6 +1658,89 @@ pub(crate) fn ceased_token_order_triggers_shared_source_state_v1(
     (state, object)
 }
 
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+fn choose_trigger_mode_fixture_card_name_v1() -> &'static str {
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    {
+        "Apothecary Stomper"
+    }
+    #[cfg(all(
+        feature = "standard-magezero-fixtures",
+        not(feature = "eternal-fixtures")
+    ))]
+    {
+        "Ertai Resurrected"
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        "Dawnbringer Cleric"
+    }
+}
+
+/// Modal triggered-ability fixture (#674) across Limited (`Apothecary Stomper`),
+/// Standard (`Ertai Resurrected`), and Eternal (`Dawnbringer Cleric`) card
+/// registries. Enters the battlefield with two legal mode choices so callers
+/// can either move the source to the graveyard and call `cease_to_exist`
+/// (ceased source) or call `shuffle_trigger_source_into_library_v1` (hidden
+/// source).
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+pub(crate) fn choose_trigger_mode_fixture_state_v1() -> (crate::state::GameState, ObjectId) {
+    use crate::engine::{self, Action, Decision};
+    use crate::mana::ManaColor;
+    use crate::policy_observation_v6::tests::{put, ready_state_with_turn_authority};
+
+    let mut state = ready_state_with_turn_authority(PlayerId::P0);
+    put(&mut state, PlayerId::P0, "Myr Enforcer", Zone::Battlefield);
+    put(&mut state, PlayerId::P1, "Forest", Zone::Graveyard);
+    let source_card = put(
+        &mut state,
+        PlayerId::P0,
+        choose_trigger_mode_fixture_card_name_v1(),
+        Zone::Hand,
+    );
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    {
+        state.players[PlayerId::P0.index()].mana_pool[ManaColor::G.pool_index()] = 6;
+    }
+    #[cfg(all(
+        feature = "standard-magezero-fixtures",
+        not(feature = "eternal-fixtures")
+    ))]
+    {
+        state.players[PlayerId::P0.index()].mana_pool[ManaColor::U.pool_index()] = 3;
+        state.players[PlayerId::P0.index()].mana_pool[ManaColor::B.pool_index()] = 1;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        state.players[PlayerId::P0.index()].mana_pool[ManaColor::W.pool_index()] = 2;
+    }
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    engine::step(&mut state, Action::CastSpell(source_card)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    engine::step(&mut state, Action::Pass).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    engine::step(&mut state, Action::Pass).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::ChooseTriggerMode {
+            player: PlayerId::P0,
+            source,
+            ref legal_modes,
+            ..
+        } if source == source_card && legal_modes.len() == 2
+    ));
+    (state, source_card)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2221,5 +2316,191 @@ mod tests {
             });
 
         let _ = chrysalis;
+    }
+
+    /// Issue #674 regression: `Decision::ChooseTriggerMode` from either a
+    /// ceased source (`cease_to_exist`) or a hidden library source
+    /// (`shuffle_trigger_source_into_library_v1`) resolves through the frozen
+    /// `source_contract` at `PendingTrigger { position: 0 }` in V4, while the
+    /// frozen V3 path preserves its permanent fail-closed residuals
+    /// (`InvalidActionReference` for ceased, `HiddenActionReference` for
+    /// hidden).
+    #[cfg(feature = "limited-fdn-fixtures")]
+    #[test]
+    fn v4_choose_trigger_mode_from_ceased_or_hidden_source_resolves_by_frozen_contract() {
+        for (ceased, expected_v3_err) in [
+            (true, FlatActionDecisionSliceErrorV1::InvalidActionReference),
+            (false, FlatActionDecisionSliceErrorV1::HiddenActionReference),
+        ] {
+            let (mut state, stomper) = choose_trigger_mode_fixture_state_v1();
+            if ceased {
+                state.players[PlayerId::P0.index()]
+                    .battlefield
+                    .retain(|&id| id != stomper);
+                {
+                    let live = state.objects.get_mut(stomper);
+                    live.zone = Zone::Graveyard;
+                    live.zone_change_count += 1;
+                }
+                state.players[PlayerId::P0.index()].graveyard.push(stomper);
+                assert!(crate::event::cease_to_exist(&mut state, stomper));
+            } else {
+                shuffle_trigger_source_into_library_v1(&mut state, stomper, PlayerId::P0);
+            }
+            assert!(crate::engine::pending_trigger_choose_mode_active_v1(&state));
+
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            assert!(matches!(
+                session.current.as_ref().unwrap().origin_decision,
+                PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+                    Decision::ChooseTriggerMode {
+                        ref legal_modes,
+                        ..
+                    }
+                )) if legal_modes.len() == 2
+            ));
+
+            let mut v3_actions = vec![FlatActionCoreV1::default(); 128];
+            let mut v3_refs = vec![FlatActionRefV2::default(); 256];
+            let mut v3_objects = vec![FlatActionObjectV2::default(); 128];
+            assert_eq!(
+                session
+                    .encode_current_flat_action_slice_v3(
+                        expected(&session),
+                        &mut FlatActionDecisionSliceBuffersV2 {
+                            actions: &mut v3_actions,
+                            refs: &mut v3_refs,
+                            objects: &mut v3_objects,
+                        },
+                    )
+                    .unwrap_err(),
+                expected_v3_err,
+                "frozen V3 must preserve its fail-closed residual (ceased={ceased})"
+            );
+
+            let (result, objects) = encoded_v4(&session);
+            assert_eq!(result.active_action_count, 2);
+            let pending_rows: Vec<_> = objects
+                .iter()
+                .filter(|row| row.group == FlatActionObjectGroupV1::HistoricalPublicSource)
+                .collect();
+            assert_eq!(pending_rows.len(), 1);
+            assert_eq!(pending_source_ordinals(&objects), vec![1]);
+            assert_eq!(pending_rows[0].zone, flat_zone_v1(Zone::Battlefield));
+            assert_eq!(
+                objects.len(),
+                1,
+                "both mode choices share position 0's frozen row"
+            );
+        }
+    }
+
+    /// Issue #674 negative guard: `ActionSemanticV1::ChooseSpellMode` emitted
+    /// during `pending_cast` (`Decision::ChooseSpellMode`) must never be
+    /// rewritten by `frozen_pending_trigger_semantic_v4`, even if a hidden or
+    /// ceased `pending_triggers[0]` is present in `state.engine`.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    #[test]
+    fn v4_choose_spell_mode_during_pending_cast_does_not_substitute_pending_trigger_source() {
+        use crate::engine::{self, Action};
+        use crate::mana::ManaColor;
+        use crate::policy_observation_v6::tests::{put, ready_state_with_turn_authority};
+
+        let (fixture_state, _source) = choose_trigger_mode_fixture_state_v1();
+        let modal_trigger = fixture_state.engine.pending_triggers[0].clone();
+
+        let mut state = ready_state_with_turn_authority(PlayerId::P0);
+        put(&mut state, PlayerId::P0, "Myr Enforcer", Zone::Battlefield);
+        put(&mut state, PlayerId::P1, "Myr Enforcer", Zone::Battlefield);
+        put(&mut state, PlayerId::P0, "Forest", Zone::Library);
+        let charm = put(&mut state, PlayerId::P0, "Piracy Charm", Zone::Hand);
+        state.players[PlayerId::P0.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+        engine::step(&mut state, Action::CastSpell(charm)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseSpellMode {
+                player: PlayerId::P0,
+                spell,
+                mode_count: 3,
+                ..
+            } if spell == charm
+        ));
+        assert!(state.engine.pending_cast.is_some());
+
+        let hidden_extra = put(
+            &mut state,
+            PlayerId::P0,
+            choose_trigger_mode_fixture_card_name_v1(),
+            Zone::Battlefield,
+        );
+        let contract = crate::state::AbilitySourceContractV4::capture(&state, hidden_extra);
+        shuffle_trigger_source_into_library_v1(&mut state, hidden_extra, PlayerId::P0);
+        let mut synthetic = modal_trigger;
+        synthetic.source = hidden_extra;
+        synthetic.source_contract = Some(contract);
+        synthetic.placement_ordered = true;
+        state.engine.pending_triggers.push(synthetic);
+        assert!(
+            crate::trigger::pending_trigger_frozen_source_v4(
+                &state,
+                &state.engine.pending_triggers[0]
+            ),
+            "synthetic pending trigger must qualify as a hidden/ceased frozen source"
+        );
+
+        assert!(
+            !crate::engine::pending_trigger_choose_mode_active_v1(&state),
+            "pending_cast owns the active ChooseSpellMode decision"
+        );
+        let live_ref = crate::rl::card_ref(&state, charm).unwrap();
+        let spell_candidate = ActionSemanticV1::ChooseSpellMode {
+            actor: PlayerSeatV1::P0,
+            source: live_ref,
+            mode_index: 0,
+            mode_count: 3,
+        };
+        assert_eq!(
+            frozen_pending_trigger_semantic_v4(&state, spell_candidate.clone()),
+            spell_candidate
+        );
+
+        let hidden_ref = crate::rl::card_ref(&state, hidden_extra).unwrap();
+        assert_eq!(hidden_ref.zone, Zone::Library);
+        let hidden_candidate = ActionSemanticV1::ChooseSpellMode {
+            actor: PlayerSeatV1::P0,
+            source: hidden_ref,
+            mode_index: 0,
+            mode_count: 3,
+        };
+        assert_eq!(
+            frozen_pending_trigger_semantic_v4(&state, hidden_candidate.clone()),
+            hidden_candidate,
+            "while pending_cast is active, even a ChooseSpellMode matching pending_triggers[0].source must not be rewritten"
+        );
+
+        state.engine.pending_cast = None;
+        state.engine.pending_triggers[0].placement_ordered = false;
+        assert!(
+            !crate::engine::pending_trigger_choose_mode_active_v1(&state),
+            "unordered pending_triggers[0] is not yet at Decision::ChooseTriggerMode"
+        );
+        state.engine.pending_triggers[0].placement_ordered = true;
+        assert!(
+            crate::engine::pending_trigger_choose_mode_active_v1(&state),
+            "once pending_cast is cleared and pending_triggers[0] is ordered, ChooseTriggerMode is active"
+        );
+        let ActionSemanticV1::ChooseSpellMode { source, .. } =
+            frozen_pending_trigger_semantic_v4(&state, hidden_candidate)
+        else {
+            panic!("expected ChooseSpellMode");
+        };
+        assert_eq!(source.zone, Zone::Battlefield);
+        assert_eq!(source.arena_id, hidden_extra.0);
+        assert_eq!(source.card_db_id, contract.card_def);
+        assert_eq!(source.zone_change_count, contract.zone_change_count);
     }
 }
