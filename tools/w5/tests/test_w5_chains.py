@@ -304,14 +304,43 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(chains.recipe_identity(arm)['record_envelope'], 'zstd1')
         self.assertEqual(chains.arm_config(arm, 'w5/q1', 0, 4, self.node.t / 'e')['record_envelope'], 'zstd1')
         self.assertIn('record_envelope', chains.PAIR_ONLY_KEYS)  # it changes bytes on disk, never a game
-        for arm_name, value in (('C', 'zstd'), ('X8', 'zstd1')):
+        for arm_name, value in (('C', 'zstd'), ('X8', 'zstd'), ('XS', 'none')):
             bad = json.loads(json.dumps(inputs))
             bad['label'] = 'bad'
             bad['arms'][arm_name]['record_envelope'] = value
             bad['chains'] = {'cb1': {'arm': 'C', 'slot': 0, 'seed_root': 'w5/q1'},
-                             'xb1': {'arm': 'X8', 'slot': 1, 'seed_root': 'w5/q1'}}
+                             'xb1': {'arm': 'X8', 'slot': 1, 'seed_root': 'w5/q1'},
+                             'xs1': {'arm': 'XS', 'slot': 2, 'seed_root': 'w5/q1'}}
             with self.assertRaisesRegex(chains.Stop, 'record_envelope'):
                 chains.make_plan(jwrite(self.node.t / f'bad-{arm_name}.json', bad))
+        both = json.loads(json.dumps(inputs))
+        both['label'] = 'env-x'
+        both['arms']['X8']['record_envelope'] = 'zstd1'
+        both['arms']['X8']['preparation_workers'] = 4
+        both['arms']['XS']['record_envelope'] = 'zstd1'
+        both['arms']['XS']['preparation_workers'] = 4
+        both['chains'] = {'cx1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/q1'},
+                          'xx1': {'arm': 'X8', 'slot': 1, 'pair': 1, 'seed_root': 'w5/q1'},
+                          'cx2': {'arm': 'C', 'slot': 2, 'pair': 2, 'seed_root': 'w5/q2'},
+                          'xs2': {'arm': 'XS', 'slot': 3, 'pair': 2, 'seed_root': 'w5/q2'}}
+        _, x_plan = chains.make_plan(jwrite(self.node.t / 'env-x.json', both))
+        x8_arm = json.loads(Path(x_plan['arms']['X8']['file']['path']).read_text())
+        xs_arm = json.loads(Path(x_plan['arms']['XS']['file']['path']).read_text())
+        self.assertEqual(x8_arm['record_envelope'], 'zstd1')
+        self.assertEqual(x8_arm['preparation_workers'], 4)
+        self.assertEqual(chains.recipe_identity(x8_arm)['preparation_workers'], 4)
+        x8_cfg = chains.arm_config(x8_arm, 'w5/q1', 0, 4, self.node.t / 'ex8')
+        xs_cfg = chains.arm_config(xs_arm, 'w5/q1', 0, 4, self.node.t / 'exs')
+        self.assertEqual(x8_cfg['record_envelope'], 'zstd1')
+        self.assertEqual(x8_cfg['preparation_workers'], 4)
+        self.assertEqual(xs_cfg['record_envelope'], 'zstd1')
+        self.assertEqual(xs_cfg['preparation_workers'], 4)
+        for bad_arm, bad_prep in (('C', 2), ('X8', 0), ('X8', 33), ('XS', True)):
+            bad = json.loads(json.dumps(both))
+            bad['label'] = 'bad-prep'
+            bad['arms'][bad_arm]['preparation_workers'] = bad_prep
+            with self.assertRaisesRegex(chains.Stop, 'preparation_workers'):
+                chains.make_plan(jwrite(self.node.t / f'bad-prep-{bad_arm}-{bad_prep}.json', bad))
 
     def test_verified_reads_is_an_optional_c_recipe_arm_key(self):
         _, plain = self.node.stage0()
@@ -329,14 +358,27 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(chains.recipe_identity(arm)['verified_reads'], 'resident')
         self.assertEqual(chains.arm_config(arm, 'w5/q1', 0, 4, self.node.t / 'r')['verified_reads'], 'resident')
         self.assertIn('verified_reads', chains.PAIR_ONLY_KEYS)  # it changes memory traffic, never a game
-        for arm_name, value in (('C', 'reread'), ('C', 'Resident'), ('X8', 'resident')):
+        for arm_name, value in (('C', 'reread'), ('C', 'Resident'), ('X8', 'reread'), ('XS', 'Resident')):
             bad = json.loads(json.dumps(inputs))
             bad['label'] = 'bad'
             bad['arms'][arm_name]['verified_reads'] = value
             bad['chains'] = {'cb1': {'arm': 'C', 'slot': 0, 'seed_root': 'w5/q1'},
-                             'xb1': {'arm': 'X8', 'slot': 1, 'seed_root': 'w5/q1'}}
+                             'xb1': {'arm': 'X8', 'slot': 1, 'seed_root': 'w5/q1'},
+                             'xs1': {'arm': 'XS', 'slot': 2, 'seed_root': 'w5/q1'}}
             with self.assertRaisesRegex(chains.Stop, 'verified_reads'):
                 chains.make_plan(jwrite(self.node.t / f'bad-{arm_name}-{value}.json', bad))
+        ok = json.loads(json.dumps(inputs))
+        ok['label'] = 'res-x'
+        ok['arms']['X8']['verified_reads'] = 'resident'
+        ok['arms']['XS']['verified_reads'] = 'resident'
+        ok['chains'] = {'cx1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/q1'},
+                        'xx1': {'arm': 'X8', 'slot': 1, 'pair': 1, 'seed_root': 'w5/q1'},
+                        'cx2': {'arm': 'C', 'slot': 2, 'pair': 2, 'seed_root': 'w5/q2'},
+                        'xs2': {'arm': 'XS', 'slot': 3, 'pair': 2, 'seed_root': 'w5/q2'}}
+        _, x_plan = chains.make_plan(jwrite(self.node.t / 'res-x.json', ok))
+        x8_arm = json.loads(Path(x_plan['arms']['X8']['file']['path']).read_text())
+        self.assertEqual(x8_arm['verified_reads'], 'resident')
+        self.assertEqual(chains.arm_config(x8_arm, 'w5/q1', 0, 4, self.node.t / 'rx8')['verified_reads'], 'resident')
 
     def test_r_nom_is_frozen_in_the_manifests(self):
         self.node.stage0(r_nom_usec=100)

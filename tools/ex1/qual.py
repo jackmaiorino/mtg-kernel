@@ -124,7 +124,8 @@ def seed(parts):
     return int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "little") & MASK
 
 
-def build_config(base, dose, root, run, namespace, offset, updates, workers, coefficient=None, kappa=None):
+def build_config(base, dose, root, run, namespace, offset, updates, workers, coefficient=None, kappa=None,
+                 prep_workers=None):
     """An RT1 run config from an OH1/OH2 base and a dose record: the base's schedule from global update `offset`,
     episode ids and deal seeds keyed by (namespace, run, update, slot), and EX1 when `coefficient` is given."""
     source = dose["source"]
@@ -158,7 +159,7 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
     cfg["record_process_cpu"] = True
     cfg["output_directory"] = Path(root).as_posix()
     if coefficient is not None:
-        cfg["preparation_workers"] = 1
+        cfg["preparation_workers"] = 1 if prep_workers is None else int(prep_workers)
         cfg["ex1"] = {"run": run, "update_offset": offset, "coefficient": coefficient,
                       "cap": {"mode": "off"} if kappa is None else {"mode": "ratio", "kappa": kappa}}
     return cfg
@@ -166,7 +167,8 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
 
 def config(args):
     cfg = build_config(read(args.base), read(args.parent), args.root, args.run, args.namespace, args.offset,
-                       args.updates, args.workers, args.coefficient if args.ex1 else None, args.kappa)
+                       args.updates, args.workers, args.coefficient if args.ex1 else None, args.kappa,
+                       args.prep_workers)
     Path(args.out).write_text(json.dumps(cfg, indent=1) + "\n", encoding="utf-8")
 
 
@@ -348,6 +350,7 @@ def main(argv=None):
     c.add_argument("--offset", type=int, required=True)
     c.add_argument("--updates", type=int, required=True)
     c.add_argument("--workers", type=int, default=10)
+    c.add_argument("--prep-workers", type=int, default=None)
     c.add_argument("--namespace", default="ex1-qual-20261029")
     c.add_argument("--ex1", action="store_true")
     c.add_argument("--coefficient", type=float, default=1.0)

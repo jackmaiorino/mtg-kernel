@@ -993,6 +993,9 @@ fn s_search_digest_skip_v1() {
             value_coefficient: 0.5,
             loss_selection: gae(),
             ex1,
+            preparation_workers: None,
+            max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            record_envelope: RecordEnvelopeV1::None,
             output_directory: root.join(format!("update-{label}")),
         })
         .unwrap();
@@ -1498,5 +1501,116 @@ fn s_scorer_v1() {
             "{name}"
         );
     }
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn s_learner_prepared_and_sealed_w5_matches_serial_and_snapshots() {
+    on_large_stack(s_learner_prepared_and_sealed_w5_v1);
+}
+
+fn s_learner_prepared_and_sealed_w5_v1() {
+    let root = temp_root("w5-prepared-sealed");
+    let net8 = net8_source(&root);
+    let s = s_source(&root, &net8);
+    let chain = early_w5_chain_v1();
+
+    let mut serial = run_config(&s, &net8, 1, root.join("serial"));
+    serial.ex1 = Some(w5_options_v1(&chain));
+    serial.validate_v1().unwrap();
+    let serial_result = run_native_expanded_training_v1(&serial, None).unwrap();
+
+    let mut parallel = run_config(&s, &net8, 2, root.join("parallel-sealed"));
+    parallel.ex1 = Some(w5_options_v1(&chain));
+    parallel.record_envelope = RecordEnvelopeV1::Zstd1;
+    parallel.validate_v1().unwrap();
+    let partial = run_native_expanded_training_v1(&parallel, Some(1)).unwrap();
+    assert_eq!(partial["completed_iterations"], 1);
+    let parallel_result = run_native_expanded_training_v1(&parallel, None).unwrap();
+    assert_eq!(parallel_result["complete"], true);
+
+    for field in ["state_sha256", "model", "adam_step"] {
+        assert_eq!(
+            parallel_result["actual_identity"][field], serial_result["actual_identity"][field],
+            "mismatch on {field}"
+        );
+    }
+
+    for i in 0..2 {
+        let s_pin: PinnedFileV1 =
+            serde_json::from_value(serial_result["iterations"][i].clone()).unwrap();
+        let p_pin: PinnedFileV1 =
+            serde_json::from_value(parallel_result["iterations"][i].clone()).unwrap();
+        let s_receipt: Value = read_pinned(&s_pin).unwrap();
+        let p_receipt: Value = read_pinned(&p_pin).unwrap();
+        let s_up_pin: PinnedFileV1 = serde_json::from_value(s_receipt["update"].clone()).unwrap();
+        let p_up_pin: PinnedFileV1 = serde_json::from_value(p_receipt["update"].clone()).unwrap();
+        let s_up: Value = read_pinned(&s_up_pin).unwrap();
+        let p_up: Value = read_pinned(&p_up_pin).unwrap();
+        assert_eq!(p_up["after_state_sha256"], s_up["after_state_sha256"]);
+        assert_eq!(p_up["numerical_backend"], S_PARALLEL_UPDATE_BACKEND_V1);
+        assert_eq!(p_up["s_learner_workers_requested"], 2);
+        assert!(p_up.get("update_preparation").is_some());
+
+        let p_col_pin: PinnedFileV1 =
+            serde_json::from_value(p_receipt["collection"].clone()).unwrap();
+        let p_col: Value = read_pinned(&p_col_pin).unwrap();
+        for sidecar_val in p_col["ex1"]["episodes"].as_array().unwrap() {
+            let sidecar_pin: PinnedFileV1 = serde_json::from_value(sidecar_val.clone()).unwrap();
+            let raw = fs::read(&sidecar_pin.path).unwrap();
+            assert!(
+                crate::expanded_deck_training_v1::record_envelope_v1::is_sealed_v1(&raw),
+                "EX1 sidecar was not sealed"
+            );
+        }
+
+        let ckpt_pin: PinnedFileV1 = serde_json::from_value(p_up["checkpoint"].clone()).unwrap();
+        let state_pin: PinnedFileV1 =
+            serde_json::from_value(p_up["s_learner"]["state"].clone()).unwrap();
+        assert!(
+            crate::expanded_deck_training_v1::record_envelope_v1::is_sealed_v1(
+                &fs::read(&ckpt_pin.path).unwrap()
+            ),
+            "S checkpoint record was not sealed"
+        );
+        assert!(
+            crate::expanded_deck_training_v1::record_envelope_v1::is_sealed_v1(
+                &fs::read(&state_pin.path).unwrap()
+            ),
+            "S state container was not sealed"
+        );
+
+        if i == 1 {
+            let doc =
+                crate::expanded_deck_training_v1::weights_snapshot_v1::s_container_document_v1(
+                    &state_pin,
+                )
+                .unwrap();
+            assert_eq!(doc["state_sha256"], p_up["after_state_sha256"]);
+            let snap_path = root.join("snap.weights");
+            let snap_receipt =
+                crate::expanded_deck_training_v1::weights_snapshot_v1::weights_snapshot_v1(
+                    &ckpt_pin, &snap_path,
+                )
+                .unwrap();
+            assert_eq!(
+                snap_receipt["cut_from_state_sha256"],
+                p_up["after_state_sha256"]
+            );
+            let snap_pin: PinnedFileV1 =
+                serde_json::from_value(snap_receipt["output"].clone()).unwrap();
+            let mat_path = root.join("materialized.json");
+            let mat_receipt =
+                crate::expanded_deck_training_v1::weights_snapshot_v1::materialize_weights_snapshot_v1(
+                    &s, &snap_pin, &mat_path,
+                )
+                .unwrap();
+            assert_eq!(
+                mat_receipt["parameters_sha256"],
+                p_up["s_learner"]["parameter_sha256"]
+            );
+        }
+    }
+
     let _ = fs::remove_dir_all(&root);
 }
