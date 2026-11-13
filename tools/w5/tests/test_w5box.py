@@ -1,5 +1,6 @@
 """Unit tests of the W5 launcher's pure parts (any OS). The cgroup sequence runs in cgroup_acceptance.py."""
 from contextlib import nullcontext
+import errno
 import json
 import sys
 import tempfile
@@ -143,6 +144,25 @@ class GuardTests(unittest.TestCase):
         with self.assertRaises(w5box.Refusal):
             w5box.require_throughput(serial_only, self.binding)
 
+    def test_box_subset_full_phase_is_the_plans_boxes(self):
+        binding = dict(self.binding, box_slots=[3, 4, 5])
+        record = throughput_record(dict(binding, boxes=3))
+        record["binding"] = binding
+        for k, box in enumerate(record["phases"][-1]["boxes"]):
+            box["slot"] = 3 + k
+        result = w5box.require_throughput(record, binding)
+        self.assertEqual(len(result["in_box_cpu_per_wall"]), 3)
+        elsewhere = json.loads(json.dumps(record))
+        elsewhere["phases"][-1]["boxes"][0]["slot"] = 0
+        with self.assertRaisesRegex(w5box.Refusal, "box_slots"):  # measured on other boxes than it runs
+            w5box.require_throughput(elsewhere, binding)
+        with self.assertRaises(w5box.Refusal):  # a whole-layout record does not qualify the subset plan
+            whole = throughput_record(self.binding)
+            whole["binding"] = binding
+            w5box.require_throughput(whole, binding)
+        with self.assertRaises(w5box.Refusal):  # nor a subset record the whole-layout plan
+            w5box.require_throughput(record, self.binding)
+
     def test_pins(self):
         with tempfile.TemporaryDirectory() as tmp:
             binary, config = Path(tmp) / "bin", Path(tmp) / "cfg.json"
@@ -176,6 +196,20 @@ class GuardTests(unittest.TestCase):
             self.assertEqual(w5box.throughput_binding(plan, spec), w5box.throughput_binding(plan, same_arm))
             self.assertNotEqual(w5box.throughput_binding(plan, spec),
                                 w5box.throughput_binding(plan, dict(spec, argv=spec["argv"] + ["--fast"])))
+            # box_slots: the binding names them (absent otherwise) and a chain outside them is refused
+            self.assertNotIn("box_slots", w5box.throughput_binding(plan, spec))
+            subset = dict(plan, box_slots=[3, 4, 5], isolation="none")
+            self.assertEqual(w5box.throughput_binding(subset, spec)["box_slots"], [3, 4, 5])
+            w5box.check_pins(subset, "c1", dict(spec, box_slot=4), layout, "linux-zen5-9950x")
+            with self.assertRaisesRegex(w5box.Refusal, "box_slots"):
+                w5box.check_pins(subset, "c1", spec, layout, "linux-zen5-9950x")
+            for bad in ([], [4, 3], [3, 3], [6], [-1], "3"):
+                with self.assertRaisesRegex(w5box.Refusal, "box_slots"):
+                    w5box.check_pins(dict(subset, box_slots=bad), "c1", dict(spec, box_slot=4), layout,
+                                     "linux-zen5-9950x")
+            with self.assertRaisesRegex(w5box.Refusal, "isolation none"):  # never a second partition root
+                w5box.check_pins(dict(subset, isolation="partition-root"), "c1", dict(spec, box_slot=4), layout,
+                                 "linux-zen5-9950x")
             binary.write_bytes(b"y")
             with self.assertRaises(w5box.Refusal):
                 w5box.check_pins(plan, "c1", spec, layout, "linux-zen5-9950x")
@@ -194,6 +228,98 @@ class GuardTests(unittest.TestCase):
 
 
 class NodeStateTests(unittest.TestCase):
+    def test_enforcement_skips_cgroup_removed_during_kernfs_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_root, cgroup_root = root / "state", root / "cgroups"
+            chain = cgroup_root / "box0" / "chain"
+            chain.mkdir(parents=True)
+            (chain / "cgroup.procs").touch()
+            node = w5box.NodeLog(state_root)
+            node.append({"event": "node-freeze", "reason": "operator hold"})
+            plan = {"state_root": state_root, "cgroup_root": cgroup_root}
+
+            # The path was found, but Linux invalidated the open kernfs node.
+            with patch.object(node, "locked", nullcontext), patch.object(
+                    w5box.Cgroup, "read", side_effect=OSError(errno.ENODEV, "No such device")):
+                state = w5box.enforce_node(plan, node, "test")
+
+            self.assertTrue(state["frozen"])
+            records, _ = node.read()
+            self.assertEqual(records[-1]["event"], "enforced")
+            self.assertTrue(records[-1]["frozen"])
+            self.assertEqual(records[-1]["changed"], [])
+
+    def test_box_subset_plan_enforces_only_its_own_boxes(self):
+        """A plan with box_slots never freezes a chain in a box it does not own (another plan's)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_root, cgroup_root = root / "state", root / "cgroups"
+            for k in (0, 3):
+                chain = cgroup_root / f"box{k}" / "chain"
+                chain.mkdir(parents=True)
+                (chain / "cgroup.procs").touch()
+                (chain / "cgroup.events").write_text("populated 1\nfrozen 0\n")
+            node = w5box.NodeLog(state_root)
+            node.append({"event": "node-freeze", "reason": "operator hold"})
+            layout = {"boxes": [{"slot": k, "cpus": [k]} for k in range(6)]}
+            frozen = []
+
+            def freeze(cg, on, timeout=None):
+                frozen.append((cg.path.parent.name, on))
+            with patch.object(node, "locked", nullcontext), patch.object(w5box.Cgroup, "freeze", freeze):
+                w5box.enforce_node({"state_root": state_root, "cgroup_root": cgroup_root, "layout": layout,
+                                    "box_slots": [3, 4, 5], "isolation": "none"}, node, "test")
+                self.assertEqual(frozen, [("box3", True)])
+                frozen.clear()
+                w5box.enforce_node({"state_root": state_root, "cgroup_root": cgroup_root, "layout": layout},
+                                   node, "test")  # without box_slots: every box, as before
+                self.assertEqual(frozen, [("box0", True), ("box3", True)])
+
+    def test_a_nested_plan_root_is_outside_the_parent_plans_enforcement(self):
+        """The running plan (root w5, no box_slots) never sees chains of a plan rooted at w5/forks."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_root, cgroup_root = root / "state", root / "w5"
+            chain = cgroup_root / "forks" / "box3" / "chain"
+            chain.mkdir(parents=True)
+            (chain / "cgroup.procs").write_text("123\n")
+            (chain / "cgroup.events").write_text("populated 1\nfrozen 0\n")
+            node = w5box.NodeLog(state_root)
+            node.append({"event": "node-freeze", "reason": "operator hold"})
+            frozen = []
+            with patch.object(node, "locked", nullcontext), \
+                    patch.object(w5box.Cgroup, "freeze", lambda cg, on, timeout=None: frozen.append(cg.path)):
+                w5box.enforce_node({"state_root": state_root, "cgroup_root": cgroup_root}, node, "test")
+            self.assertEqual(frozen, [])
+
+    def test_a_box_used_by_another_plan_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            w5 = Path(tmp) / "w5"
+            for path, procs, cpus in (("box3/chain", "123\n", "10-11,26-27"), ("box4/chain", "", "12-13,28-29"),
+                                      ("box0/chain", "9\n", "2-3,18-19"), ("forks/box3/chain", "77\n", "10-11,26-27")):
+                (w5 / path).mkdir(parents=True)
+                (w5 / path / "cgroup.procs").write_text(procs)
+                (w5 / path / "cpuset.cpus.effective").write_text(cpus + "\n")
+            root = w5box.Cgroup(w5 / "forks")
+            self.assertEqual(w5box.foreign_cpu_users(root, [10, 11, 26, 27]), [str(w5 / "box3" / "chain")])
+            self.assertEqual(w5box.foreign_cpu_users(root, [12, 13, 28, 29]), [])  # an empty old box is free
+            plan = {"layout": {"boxes": [{"slot": k} for k in range(6)]}, "box_slots": [3, 4], "isolation": "none"}
+            with self.assertRaisesRegex(w5box.Refusal, "in use outside this plan"):
+                w5box.require_box_free(plan, root, {"slot": 3, "cpus": [10, 11, 26, 27]})
+            w5box.require_box_free(plan, root, {"slot": 4, "cpus": [12, 13, 28, 29]})
+            w5box.require_box_free({}, root, {"slot": 3, "cpus": [10, 11, 26, 27]})  # whole-layout plans: unchanged
+
+    def test_populated_propagates_other_io_errors(self):
+        cgroup = w5box.Cgroup("unused-cgroup")
+        for code in (errno.EACCES, errno.EIO):
+            with self.subTest(errno=code):
+                failure = OSError(code, "read failed")
+                with patch.object(cgroup, "read", side_effect=failure):
+                    with self.assertRaises(OSError) as raised:
+                        cgroup.populated()
+                self.assertIs(raised.exception, failure)
+
     def test_enforcement_skips_chain_that_vanishes_after_exists(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

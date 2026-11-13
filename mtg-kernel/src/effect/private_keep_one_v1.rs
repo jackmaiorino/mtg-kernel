@@ -348,7 +348,7 @@ pub(super) fn validate_closed(
             || !matches!(state.engine.event_history.get(*index), Some(event::CommittedEvent::ZoneChange {
                 object, from: Zone::Library, to: Zone::Graveyard, ..
             }) if *object == card.object)
-            || state.engine.event_history[*capture_index + 1..*index].iter().any(|event|
+            || state.engine.event_history.range_v2(*capture_index + 1..*index).iter().any(|event|
                 matches!(event, event::CommittedEvent::ZoneChange { object, .. } if *object == card.object))
         { return Err("keep-one closure lacks each exact committed selected graveyard move".into()); }
     }

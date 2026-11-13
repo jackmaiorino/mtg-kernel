@@ -14,10 +14,20 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     cell::{Cell, RefCell},
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     hash::{Hash, Hasher},
     sync::{Arc, Mutex, Weak},
 };
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+use std::collections::BTreeMap;
+
+mod world_serde_v1;
+pub(crate) use world_serde_v1::serialize_history;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LedgerV1 {
@@ -40,6 +50,7 @@ impl Hash for LedgerV1 {
 #[serde(deny_unknown_fields)]
 pub struct RecordV1 {
     pub index: u64,
+    #[serde(serialize_with = "world_serde_v1::serialize_full_journal")]
     pub value: JournalV1,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -129,9 +140,10 @@ thread_local! {
 }
 
 // Across requests, retain data only for a round-trip-eligible typed prefix.
-// Equality is checked against every current event before reusing its SHA state
-// or key. These cloned event values may contain saved worlds, but provide no
-// executable authority and never replace custody/world/replay validation.
+// Exact typed equality is established before reusing SHA states or keys;
+// immutable shared subtrees prove their entire prefix without rewalking it.
+// Retained events may contain saved worlds, but provide no executable
+// authority and never replace custody/world/replay validation.
 // Limits bound event count and canonical JSON volume, not resident heap bytes:
 // typed allocations, spare capacity, and SHA bookkeeping have different sizes.
 // A retained row shares its saved worlds with the history (they are behind
@@ -142,26 +154,66 @@ thread_local! {
 pub(super) const REPLAY_PREFIX_EVENTS: usize = 1 << 16;
 pub(super) const REPLAY_PREFIX_CANONICAL_BYTES: usize = 1 << 31;
 struct ReplayPrefixRow {
-    event: CommittedEvent,
-    canonical_bytes: usize,
+    cumulative_bytes: usize,
     after: Sha256,
-    key: Option<ReplayKey>,
+}
+
+/// Keys are generated in increasing event order. Persistent ordered storage
+/// makes observation-frame clones and a growing prefix independent of the
+/// number of earlier enclosing operations.
+#[derive(Clone)]
+struct ReplayKeys {
+    entries: crate::event_history_v1::SharedSequence<(u64, ReplayKey), 0>,
+}
+impl Default for ReplayKeys {
+    fn default() -> Self {
+        Self {
+            entries: crate::event_history_v1::SharedSequence::new(|_| 0),
+        }
+    }
+}
+impl ReplayKeys {
+    fn get(&self, position: &u64) -> Option<&ReplayKey> {
+        let at = self.entries.partition_point(|(index, _)| index < position);
+        self.entries
+            .get(at)
+            .filter(|(index, _)| index == position)
+            .map(|(_, key)| key)
+    }
+    fn insert(&mut self, position: u64, key: ReplayKey) {
+        debug_assert!(self
+            .entries
+            .iter()
+            .next_back()
+            .is_none_or(|(last, _)| *last < position));
+        self.entries.push((position, key));
+    }
+    fn prefix(&self, covered: usize) -> Self {
+        let covered = u64::try_from(covered).expect("bounded replay prefix length");
+        let count = self
+            .entries
+            .partition_point(|(position, _)| *position < covered);
+        Self {
+            entries: self.entries.prefix(count),
+        }
+    }
 }
 #[derive(Default)]
 struct ReplayPrefix {
     rows: Vec<ReplayPrefixRow>,
     canonical_bytes: usize,
+    history: Option<crate::event_history_v1::EventHistoryV1>,
+    keys: ReplayKeys,
 }
 impl ReplayPrefix {
     fn truncate(&mut self, length: usize) {
         self.rows.truncate(length);
-        self.canonical_bytes = self.rows.iter().map(|row| row.canonical_bytes).sum();
+        self.canonical_bytes = self.rows.last().map_or(0, |row| row.cumulative_bytes);
+        self.keys = self.keys.prefix(length);
     }
 }
 thread_local! {
-    static REPLAY_PREFIX: RefCell<ReplayPrefix> = const {
-        RefCell::new(ReplayPrefix { rows: Vec::new(), canonical_bytes: 0 })
-    };
+    static REPLAY_PREFIX: RefCell<ReplayPrefix> = RefCell::new(ReplayPrefix::default());
 }
 
 #[cfg(all(
@@ -176,9 +228,9 @@ thread_local! {
 // Only the pure history-to-key computation is reused, within one immutable
 // observation borrow. Full custody validation and replay remain independent.
 struct ObservationReplayKeys {
-    history: *const CommittedEvent,
+    history: *const crate::event_history_v1::EventHistoryV1,
     length: usize,
-    keys: Option<BTreeMap<u64, ReplayKey>>,
+    keys: Option<ReplayKeys>,
     // The frame's own borrowed state, and whether `world` already succeeded
     // on it. The borrow keeps that whole state immutable for the frame, so a
     // repeated `world` check on the same address has the same outcome.
@@ -186,8 +238,8 @@ struct ObservationReplayKeys {
     world_checked: bool,
 }
 impl ObservationReplayKeys {
-    fn matches(&self, history: &[CommittedEvent]) -> bool {
-        self.history == history.as_ptr() && self.length == history.len()
+    fn matches(&self, history: &crate::event_history_v1::EventHistoryV1) -> bool {
+        self.history == std::ptr::from_ref(history) && self.length == history.len()
     }
 }
 thread_local! {
@@ -199,7 +251,7 @@ impl Drop for ObservationReplayKeysGuard {
         OBSERVATION_REPLAY_KEYS.with(|frame| *frame.borrow_mut() = self.0.take());
     }
 }
-/// The shared borrow keeps the actual history allocation and all typed fields
+/// The shared borrow keeps this exact history value and all typed fields
 /// immutable until the frame is removed, including on unwind. No pointer is
 /// dereferenced, and neither the frame nor its contents escape this call.
 pub(crate) fn with_observation_replay_keys<T>(
@@ -209,7 +261,7 @@ pub(crate) fn with_observation_replay_keys<T>(
     let history = &state.engine.event_history;
     let previous = OBSERVATION_REPLAY_KEYS.with(|frame| {
         frame.replace(Some(ObservationReplayKeys {
-            history: history.as_ptr(),
+            history: std::ptr::from_ref(history),
             length: history.len(),
             keys: None,
             state: std::ptr::from_ref(state),
@@ -293,7 +345,7 @@ pub(crate) fn replay_key_frame_stats_for_test() -> (u64, u64) {
 /// are committed. Round-trip equality makes serde injective on eligible typed
 /// inputs, including every nested serde-skipped runtime field. Ineligibility
 /// affects performance only and must never become a validation rejection.
-fn replay_keys(history: &[CommittedEvent]) -> BTreeMap<u64, ReplayKey> {
+fn replay_keys(history: &crate::event_history_v1::EventHistoryV1) -> ReplayKeys {
     #[cfg(test)]
     let _timing = crate::rl_session::test_timing_v1::span(
         crate::rl_session::test_timing_v1::Phase::DrakeReplayKeys,
@@ -330,11 +382,10 @@ fn replay_keys(history: &[CommittedEvent]) -> BTreeMap<u64, ReplayKey> {
     // A reentrant request sees an empty cache; panic merely loses acceleration.
     let mut retained = REPLAY_PREFIX.with(|cache| cache.take());
     let matching = retained
-        .rows
-        .iter()
-        .zip(history)
-        .take_while(|(row, current)| row.event == **current)
-        .count();
+        .history
+        .as_ref()
+        .map_or(0, |previous| previous.common_prefix_len_v2(history))
+        .min(retained.rows.len());
     // A shorter input or the first typed mismatch invalidates every later row.
     retained.truncate(matching);
     #[cfg(all(
@@ -343,15 +394,7 @@ fn replay_keys(history: &[CommittedEvent]) -> BTreeMap<u64, ReplayKey> {
         not(feature = "standard-magezero-fixtures")
     ))]
     REPLAY_PREFIX_REUSED.with(|reused| reused.set(matching));
-    let mut keys = BTreeMap::new();
-    for (position, row) in retained.rows.iter().enumerate() {
-        if let Some(key) = row.key {
-            keys.insert(
-                u64::try_from(position).expect("bounded prefix position"),
-                key,
-            );
-        }
-    }
+    let mut keys = retained.keys.clone();
     let mut prefix = retained.rows.last().map_or_else(
         || {
             let mut prefix = Sha256::new();
@@ -376,20 +419,16 @@ fn replay_keys(history: &[CommittedEvent]) -> BTreeMap<u64, ReplayKey> {
         if !serde_json::from_slice::<CommittedEvent>(&bytes).is_ok_and(|typed| typed == *event) {
             break;
         }
-        let key =
-            if journal(event).is_some_and(|row| matches!(row.value, JournalV1::Enclosing { .. })) {
-                let mut key = Sha256::new();
-                key.update(b"drake-enclosing-replay-predicate/v1");
-                key.update(prefix.clone().finalize());
-                key.update(position.to_le_bytes());
-                key.update(length.to_le_bytes());
-                key.update(&bytes);
-                let key = key.finalize().into();
-                keys.insert(position, key);
-                Some(key)
-            } else {
-                None
-            };
+        if journal(event).is_some_and(|row| matches!(row.value, JournalV1::Enclosing { .. })) {
+            let mut key = Sha256::new();
+            key.update(b"drake-enclosing-replay-predicate/v1");
+            key.update(prefix.clone().finalize());
+            key.update(position.to_le_bytes());
+            key.update(length.to_le_bytes());
+            key.update(&bytes);
+            let key = key.finalize().into();
+            keys.insert(position, key);
+        }
         prefix.update(position.to_le_bytes());
         prefix.update(length.to_le_bytes());
         prefix.update(&bytes);
@@ -399,10 +438,8 @@ fn replay_keys(history: &[CommittedEvent]) -> BTreeMap<u64, ReplayKey> {
                 && volume.is_some_and(|volume| volume <= REPLAY_PREFIX_CANONICAL_BYTES)
             {
                 retained.rows.push(ReplayPrefixRow {
-                    event: event.clone(),
-                    canonical_bytes: bytes.len(),
+                    cumulative_bytes: volume.expect("checked canonical volume"),
                     after: prefix.clone(),
-                    key,
                 });
                 retained.canonical_bytes = volume.expect("checked canonical volume");
             } else {
@@ -410,6 +447,8 @@ fn replay_keys(history: &[CommittedEvent]) -> BTreeMap<u64, ReplayKey> {
             }
         }
     }
+    retained.history = Some(history.prefix_v1(retained.rows.len()));
+    retained.keys = keys.prefix(retained.rows.len());
     // Drop a reentrant request's replacement outside the TLS borrow as well.
     let replaced = REPLAY_PREFIX.with(|cache| cache.replace(retained));
     drop(replaced);
@@ -473,13 +512,20 @@ pub(super) fn original_replay_keys_for_test(
 pub(super) fn replay_prefix_probe_for_test(
     history: &[CommittedEvent],
 ) -> (BTreeMap<u64, ReplayKey>, usize, usize, usize) {
-    let keys = replay_keys(history);
+    let keys = replay_keys(&crate::event_history_v1::EventHistoryV1::from(
+        history.to_vec(),
+    ));
     let (events, bytes) = REPLAY_PREFIX.with(|cache| {
         let cache = cache.borrow();
         (cache.rows.len(), cache.canonical_bytes)
     });
     let reused = REPLAY_PREFIX_REUSED.with(Cell::get);
-    (keys, events, bytes, reused)
+    (
+        keys.entries.iter().copied().collect(),
+        events,
+        bytes,
+        reused,
+    )
 }
 
 #[cfg(all(
@@ -584,6 +630,359 @@ fn verification<T>(run: impl FnOnce() -> Result<T, String>) -> Result<T, String>
     let _guard = VerifyGuard(old);
     run()
 }
+pub(crate) fn enclosing_replay_active_v1() -> bool {
+    VERIFYING.with(Cell::get)
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn compare_owned_pending_replay_for_test(state: &GameState) {
+    let pending = state
+        .engine
+        .linked_aura_operation_v1
+        .pending_general_v36
+        .as_ref()
+        .unwrap();
+    let restored = Cell::new(0);
+    verification(|| {
+        crate::linked_aura_operation_v1::as_recorded(|| {
+            let factory = || {
+                restored.set(restored.get() + 1);
+                Ok((*pending.original).clone())
+            };
+            let borrowed = crate::linked_aura_operation_v1::replay_drake_enclosing_v1(
+                &pending.original,
+                &pending.operation,
+                &pending.answers,
+                true,
+            )?;
+            let owned = crate::linked_aura_operation_v1::replay_drake_enclosing_owned_v1(
+                (*pending.original).clone(),
+                &pending.operation,
+                &pending.answers,
+                true,
+                &factory,
+            )?;
+            assert_eq!(borrowed, owned);
+            assert_eq!(
+                serde_json::to_vec(&borrowed).unwrap(),
+                serde_json::to_vec(&owned).unwrap()
+            );
+            let retained = owned
+                .engine
+                .linked_aura_operation_v1
+                .pending_general_v36
+                .as_ref()
+                .unwrap();
+            assert_eq!(retained.original, pending.original);
+            assert_eq!(
+                serde_json::to_vec(&retained.original).unwrap(),
+                serde_json::to_vec(&pending.original).unwrap()
+            );
+            Ok(())
+        })
+    })
+    .unwrap();
+    assert_eq!(
+        restored.get(),
+        1,
+        "suspended replay must reconstruct its original exactly once"
+    );
+}
+
+/// Exercise actual world compression and restoration at a suspended Banner
+/// checkpoint. Arc ownership detects a new whole-history compatibility copy
+/// without exposing or trusting cache internals in production validation.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn check_logical_world_prefix_for_test(state: &GameState) {
+    // Cloning a persistent history deliberately does not carry its cold flat
+    // cache, even if earlier fixture validation had materialized that cache.
+    let state = state.clone();
+    let history = &state.engine.event_history;
+    let counts = || {
+        history
+            .iter()
+            .filter_map(|event| match event {
+                CommittedEvent::DrakeJournalV1 { record } => {
+                    Some((record.index, Arc::strong_count(record)))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let before = counts();
+    assert!(!before.is_empty());
+    let saved = world(&state).unwrap();
+    assert_eq!(
+        counts(),
+        before,
+        "world must not clone the outer journal into a flat compatibility cache"
+    );
+    assert!(saved.engine.event_history.is_empty());
+    let nested = &state
+        .engine
+        .linked_aura_operation_v1
+        .pending_general_v36
+        .as_ref()
+        .unwrap()
+        .original
+        .engine
+        .event_history;
+    let compressed = &saved
+        .engine
+        .linked_aura_operation_v1
+        .pending_general_v36
+        .as_ref()
+        .unwrap()
+        .original
+        .engine
+        .event_history;
+    let expected = nested
+        .iter()
+        .map(|event| match event {
+            CommittedEvent::DrakeJournalV1 { record } => CommittedEvent::DrakeHistoryRefV1 {
+                index: record.index,
+            },
+            other => other.clone(),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(compressed, &expected);
+    assert_eq!(
+        serde_json::to_vec(compressed).unwrap(),
+        serde_json::to_vec(&expected).unwrap()
+    );
+    let before_restore = counts();
+    let restored = restore_world(&saved, history, history.len()).unwrap();
+    assert_eq!(
+        counts(),
+        before_restore,
+        "restoration must not clone the outer journal into a flat compatibility cache"
+    );
+    assert_eq!(restored, state);
+    assert_eq!(
+        serde_json::to_vec(&restored).unwrap(),
+        serde_json::to_vec(&state).unwrap()
+    );
+    let first_ref = compressed
+        .iter()
+        .find_map(|event| match event {
+            CommittedEvent::DrakeHistoryRefV1 { index } => Some(*index as usize),
+            _ => None,
+        })
+        .expect("genuine checkpoint contains a nested Drake reference");
+    check_checkpoint_serde_for_test(&state, first_ref);
+    // A real, correctly indexed record exists in the enclosing history, but
+    // lies outside the supplied original prefix. Its presence is not authority.
+    assert_eq!(
+        restore_world(&saved, history, first_ref).unwrap_err(),
+        "Drake nested original prefix absent"
+    );
+    assert_eq!(
+        restore_world(&saved, history, history.len() + 1).unwrap_err(),
+        "Drake operation original prefix absent"
+    );
+    assert_eq!(counts(), before_restore);
+    // A later suffix must neither enter the restored original nor prevent a
+    // valid bounded restore. Exact bytes cover all other retained checkpoints.
+    let mut extended = history.clone();
+    extended.push(
+        history
+            .iter()
+            .find(|e| journal(e).is_none())
+            .unwrap()
+            .clone(),
+    );
+    let bounded = restore_world(&saved, &extended, history.len()).unwrap();
+    assert_eq!(bounded, state);
+    assert_eq!(
+        serde_json::to_vec(&bounded).unwrap(),
+        serde_json::to_vec(&state).unwrap()
+    );
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn check_checkpoint_serde_for_test(state: &GameState, first: usize) {
+    fn write_without_compaction(state: &GameState) -> Result<serde_json::Value, String> {
+        let history = &state.engine.event_history;
+        let mut value = history
+            .omitted_v2(|| serde_json::to_value(state))
+            .map_err(|err| err.to_string())?;
+        strip_nested_receipts(&mut value, history)?;
+        Ok(value)
+    }
+
+    fn inner_history(state: &mut GameState) -> &mut crate::event_history_v1::EventHistoryV1 {
+        &mut state
+            .engine
+            .linked_aura_operation_v1
+            .pending_general_v36
+            .as_mut()
+            .unwrap()
+            .original
+            .engine
+            .event_history
+    }
+
+    fn inner_event(value: &serde_json::Value, at: usize) -> &serde_json::Value {
+        &value
+            .pointer("/engine/linked_aura_operation_v1/pending_general_v36/original/engine/event_history")
+            .unwrap()[at]
+    }
+
+    // The real suspended Banner world shares the Drake prefix. The old writer
+    // proves the full rows and the next writer actually skips their expansion.
+    let expected = write_without_compaction(state).unwrap();
+    let compacted = world_serde_v1::checkpoint_value(state).unwrap();
+    assert!(inner_event(&compacted, first)
+        .get("DrakeHistoryRefV1")
+        .is_some());
+    assert_eq!(
+        serde_json::to_value(world(state).unwrap()).unwrap(),
+        expected
+    );
+
+    let mut different = state.clone();
+    let CommittedEvent::DrakeJournalV1 { record } = &mut inner_history(&mut different)[first]
+    else {
+        unreachable!();
+    };
+    *record = Arc::new((**record).clone());
+    // A value-equal but separately allocated row is still checked in full.
+    let compacted = world_serde_v1::checkpoint_value(&different).unwrap();
+    assert!(inner_event(&compacted, first)
+        .get("DrakeJournalV1")
+        .is_some());
+    assert_eq!(
+        serde_json::to_value(world(&different).unwrap()).unwrap(),
+        expected
+    );
+
+    let CommittedEvent::DrakeJournalV1 { record } = &mut inner_history(&mut different)[first]
+    else {
+        unreachable!();
+    };
+    Arc::make_mut(record).value = JournalV1::CombatFinished { input: u64::MAX };
+    let error = world(&different).unwrap_err();
+    assert_eq!(
+        error,
+        "Drake nested original differs from whole actual indexed record"
+    );
+    assert_eq!(error, write_without_compaction(&different).unwrap_err());
+
+    let mut shifted = state.clone();
+    assert!(first > 0);
+    inner_history(&mut shifted).swap(first - 1, first);
+    let error = world(&shifted).unwrap_err();
+    assert_eq!(
+        error,
+        "Drake nested original record shifted from its bound input position"
+    );
+    assert_eq!(error, write_without_compaction(&shifted).unwrap_err());
+
+    // A fresh full record is opaque even when its contents share certified
+    // rows. Its saved world must serialize exactly as it does outside the scope.
+    let mut unproved = state.clone();
+    let index = unproved.engine.event_history.len();
+    let row = CommittedEvent::DrakeJournalV1 {
+        record: Arc::new(RecordV1 {
+            index: index.try_into().unwrap(),
+            value: JournalV1::CombatInput {
+                world: Arc::new(state.clone()),
+                proposals: Vec::new(),
+            },
+        }),
+    };
+    unproved.engine.event_history.push(row.clone());
+    let shared_history = unproved.engine.event_history.clone();
+    *inner_history(&mut unproved) = shared_history;
+    let compacted = world_serde_v1::checkpoint_value(&unproved).unwrap();
+    assert_eq!(
+        *inner_event(&compacted, index),
+        serde_json::to_value(&row).unwrap()
+    );
+    let expected = write_without_compaction(&unproved).unwrap();
+    assert_eq!(
+        serde_json::to_value(world(&unproved).unwrap()).unwrap(),
+        expected
+    );
+
+    // A full Drake row in the transient log still fails the positional check.
+    unproved.engine.event_log.push(row);
+    let error = world(&unproved).unwrap_err();
+    assert_eq!(
+        error,
+        "Drake nested original record shifted from its bound input position"
+    );
+    assert_eq!(error, write_without_compaction(&unproved).unwrap_err());
+}
+
+/// Compare the actual owned replay with the retained borrowing path on all
+/// enclosing records of a recorded game, independently of the replay cache.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(super) fn compare_owned_enclosing_replays_for_test(state: &GameState) -> usize {
+    let mut compared = 0;
+    for record in state.engine.event_history.iter().filter_map(journal) {
+        let JournalV1::Enclosing {
+            start,
+            original,
+            operation,
+            answers,
+            used_banner,
+            ..
+        } = &record.value
+        else {
+            continue;
+        };
+        verification(|| {
+            crate::linked_aura_operation_v1::as_recorded(|| {
+                let restore =
+                    || restore_world(original, &state.engine.event_history, *start as usize);
+                let input = restore()?;
+                let borrowed = crate::linked_aura_operation_v1::replay_drake_enclosing_v1(
+                    &input,
+                    operation,
+                    answers,
+                    *used_banner,
+                )?;
+                let owned = crate::linked_aura_operation_v1::replay_drake_enclosing_owned_v1(
+                    input,
+                    operation,
+                    answers,
+                    *used_banner,
+                    &restore,
+                )?;
+                if borrowed != owned
+                    || serde_json::to_vec(&borrowed).map_err(|error| error.to_string())?
+                        != serde_json::to_vec(&owned).map_err(|error| error.to_string())?
+                {
+                    return Err(format!(
+                        "owned replay differs at Drake record {}",
+                        record.index
+                    ));
+                }
+                Ok(())
+            })
+        })
+        .unwrap();
+        compared += 1;
+    }
+    compared
+}
 pub(crate) fn journal(event: &CommittedEvent) -> Option<&RecordV1> {
     if let CommittedEvent::DrakeJournalV1 { record } = event {
         Some(record)
@@ -623,6 +1022,18 @@ fn emit(state: &mut GameState, value: JournalV1) -> Result<u64, String> {
     state.engine.drake_ledger_v1.issued = next;
     Ok(index)
 }
+// Caller and serde spans are diagnostic children of the existing inclusive
+// spans. A release build evaluates only the original expression.
+macro_rules! time_serde_phase {
+    ($phase:ident, $expression:expr) => {{
+        #[cfg(test)]
+        let _timing = crate::rl_session::test_timing_v1::span(
+            crate::rl_session::test_timing_v1::Phase::$phase,
+        );
+        $expression
+    }};
+}
+
 /// Strip only the outer history; replay reattaches its actual immutable prefix.
 /// Pending logs, complete stack, hidden world and family checkpoints are retained.
 fn world(state: &GameState) -> Result<GameState, String> {
@@ -632,23 +1043,47 @@ fn world(state: &GameState) -> Result<GameState, String> {
     );
     // Written as if cleared, without cloning the state and its history.
     let history = &state.engine.event_history;
-    let mut value = history
-        .omitted_v2(|| serde_json::to_value(state))
-        .map_err(|e| e.to_string())?;
-    strip_nested_receipts(&mut value, &state.engine.event_history)?;
-    serde_json::from_value(value).map_err(|e| e.to_string())
+    let mut value = time_serde_phase!(
+        DrakeWorldSerialize,
+        state
+            .objects
+            .omitted_v1(|| world_serde_v1::checkpoint_value(state))
+    )
+    .map_err(|e| e.to_string())?;
+    time_serde_phase!(DrakeWorldStrip, strip_nested_receipts(&mut value, history))?;
+    let mut world: GameState =
+        time_serde_phase!(DrakeWorldDeserialize, serde_json::from_value(value))
+            .map_err(|e| e.to_string())?;
+    world.objects = shared_arena(&state.objects)?;
+    Ok(world)
+}
+/// The object arena holds no history to strip or restore, and its JSON round
+/// trip is the identity, so a world shares the arena's copy-on-write vector
+/// instead of writing and reading it back. Test builds check the round trip on
+/// every call.
+fn shared_arena(
+    objects: &crate::ids::Arena<crate::state::GameObject>,
+) -> Result<crate::ids::Arena<crate::state::GameObject>, String> {
+    #[cfg(test)]
+    {
+        let written = serde_json::to_value(objects).map_err(|e| e.to_string())?;
+        let read: crate::ids::Arena<crate::state::GameObject> =
+            serde_json::from_value(written).map_err(|e| e.to_string())?;
+        assert!(read == *objects, "object arena JSON round trip changed it");
+    }
+    Ok(objects.clone())
 }
 // A sibling checkpoint retains its exact original history length and positions.
 // Only existing Drake records in that original are represented by their actual
 // immutable outer index. Every non-Drake field/event remains byte-equivalent.
 fn strip_nested_receipts(
     value: &mut serde_json::Value,
-    prefix: &[CommittedEvent],
+    prefix: &crate::event_history_v1::EventHistoryV1,
 ) -> Result<(), String> {
     fn strip(
         value: &mut serde_json::Value,
         position: Option<usize>,
-        prefix: &[CommittedEvent],
+        prefix: &crate::event_history_v1::EventHistoryV1,
     ) -> Result<(), String> {
         if let Some(record) = value.get("DrakeJournalV1").and_then(|v| v.get("record")) {
             let index = record
@@ -664,13 +1099,19 @@ fn strip_nested_receipts(
                 .ok()
                 .and_then(|at| prefix.get(at))
                 .ok_or("Drake nested original lies outside actual enclosing prefix")?;
-            if journal(actual).is_none_or(|row| row.index != index)
+            let CommittedEvent::DrakeJournalV1 { record } = actual else {
+                return Err(
+                    "Drake nested original differs from whole actual indexed record".into(),
+                );
+            };
+            if record.index != index
                 || serde_json::to_value(actual).map_err(|e| e.to_string())? != *value
             {
                 return Err(
                     "Drake nested original differs from whole actual indexed record".into(),
                 );
             }
+            world_serde_v1::remember_serializable(record);
             *value = serde_json::json!({ "DrakeHistoryRefV1": { "index": index } });
             return Ok(());
         }
@@ -707,9 +1148,14 @@ fn restore_world(
     history: &crate::event_history_v1::EventHistoryV1,
     start: usize,
 ) -> Result<GameState, String> {
+    #[cfg(test)]
+    let _timing = crate::rl_session::test_timing_v1::span(
+        crate::rl_session::test_timing_v1::Phase::DrakeRestoreWorld,
+    );
     fn restore(
         value: &mut serde_json::Value,
-        prefix: &[CommittedEvent],
+        history: &crate::event_history_v1::EventHistoryV1,
+        prefix_len: usize,
         position: Option<usize>,
     ) -> Result<(), String> {
         if let Some(index) = value
@@ -724,7 +1170,8 @@ fn restore_world(
             }
             let actual = usize::try_from(index)
                 .ok()
-                .and_then(|i| prefix.get(i))
+                .filter(|&i| i < prefix_len)
+                .and_then(|i| history.get(i))
                 .ok_or("Drake nested original prefix absent")?;
             if journal(actual).is_none_or(|r| r.index != index) {
                 return Err("Drake nested original index shifted/ambiguous".into());
@@ -737,7 +1184,7 @@ fn restore_world(
         match value {
             serde_json::Value::Array(values) => {
                 for child in values {
-                    restore(child, prefix, None)?;
+                    restore(child, history, prefix_len, None)?;
                 }
             }
             serde_json::Value::Object(values) => {
@@ -747,10 +1194,10 @@ fn restore_world(
                             .as_array_mut()
                             .ok_or("Drake nested history changed type")?;
                         for (at, event) in events.iter_mut().enumerate() {
-                            restore(event, prefix, Some(at))?;
+                            restore(event, history, prefix_len, Some(at))?;
                         }
                     } else {
-                        restore(child, prefix, None)?;
+                        restore(child, history, prefix_len, None)?;
                     }
                 }
             }
@@ -758,12 +1205,26 @@ fn restore_world(
         }
         Ok(())
     }
-    let prefix = history
-        .get(..start)
-        .ok_or("Drake operation original prefix absent")?;
-    let mut value = serde_json::to_value(saved).map_err(|e| e.to_string())?;
-    restore(&mut value, prefix, None)?;
-    let mut input: GameState = serde_json::from_value(value).map_err(|e| e.to_string())?;
+    // A slice lookup used to enforce this bound and also materialized the
+    // entire actual history. Keep the bound explicit while borrowing only
+    // referenced logical indices. In particular a valid later record cannot
+    // repair a reference outside this operation's original prefix.
+    if start > history.len() {
+        return Err("Drake operation original prefix absent".into());
+    }
+    let mut value = time_serde_phase!(
+        DrakeRestoreSerialize,
+        saved.objects.omitted_v1(|| serde_json::to_value(saved))
+    )
+    .map_err(|e| e.to_string())?;
+    time_serde_phase!(
+        DrakeRestoreHydrate,
+        restore(&mut value, history, start, None)
+    )?;
+    let mut input: GameState =
+        time_serde_phase!(DrakeRestoreDeserialize, serde_json::from_value(value))
+            .map_err(|e| e.to_string())?;
+    input.objects = shared_arena(&saved.objects)?;
     // The prefix keeps the actual history's chained prefixes, so the replay's
     // origin digest resumes at `start` instead of rehashing every event.
     input.engine.event_history = history.prefix_v1(start);
@@ -897,7 +1358,7 @@ pub(crate) fn begin_combat(
     if open_combat(state)?.is_some() {
         return Err("Drake combat input replayed before completion".into());
     }
-    let original = Arc::new(world(state)?);
+    let original = Arc::new(time_serde_phase!(DrakeWorldCombat, world(state))?);
     emit(
         state,
         JournalV1::CombatInput {
@@ -949,7 +1410,10 @@ pub(crate) fn finish_combat(state: &mut GameState) -> Result<(), String> {
     };
     let original = original.clone();
     let start = usize::try_from(input).map_err(|_| "Drake batch index overflow")? + 1;
-    let damages = state.engine.event_history[start..]
+    let damages = state
+        .engine
+        .event_history
+        .range_v2(start..)
         .iter()
         .enumerate()
         .filter_map(|(offset, e)| {
@@ -965,7 +1429,10 @@ pub(crate) fn finish_combat(state: &mut GameState) -> Result<(), String> {
             }
         })
         .collect::<Vec<_>>();
-    let markers = state.engine.event_history[start..]
+    let markers = state
+        .engine
+        .event_history
+        .range_v2(start..)
         .iter()
         .enumerate()
         .filter_map(|(offset, e)| {
@@ -1025,39 +1492,60 @@ pub(crate) fn finish_combat(state: &mut GameState) -> Result<(), String> {
     emit(state, JournalV1::CombatFinished { input })?;
     Ok(())
 }
-pub(crate) fn collect(
-    state: &mut GameState,
+pub(super) fn captures_for_collection(
+    state: &GameState,
     events: &[CommittedEvent],
-) -> Result<Vec<PendingTrigger>, String> {
+) -> Result<Vec<u64>, String> {
+    let history = &state.engine.event_history;
+    // A checked prefix was accepted outside an operation, so every capture
+    // in it already has its collection. A prefix collection can only name
+    // an earlier capture. Only the unvalidated tail can supply new work.
+    let covered = own_checked_prefix(history).map_or(0, |prefix| prefix.covered);
+    // Preserve full-scan behavior if a malformed appended capture claims a
+    // prefix index. Its suppressing collection may be outside the tail.
+    let covered = if covered != 0
+        && history
+            .range_v2(covered..)
+            .iter()
+            .filter_map(journal)
+            .any(|row| {
+                row.index < covered as u64 && matches!(row.value, JournalV1::Captured { .. })
+            }) {
+        0
+    } else {
+        covered
+    };
+    let tail = history.range_v2(covered..);
     let mut ready = Vec::new();
     // One pass for the collected captures, not one per capture.
-    let collected = state
-        .engine
-        .event_history
+    let collected = tail
         .iter()
         .filter_map(|e| match journal(e).map(|r| &r.value) {
             Some(JournalV1::Collected { capture, .. }) => Some(*capture),
             _ => None,
         })
         .collect::<std::collections::BTreeSet<_>>();
-    for e in &state.engine.event_history {
+    for e in tail {
         let Some(row) = journal(e) else { continue };
         if let JournalV1::Captured { marker, .. } = &row.value {
             if collected.contains(&row.index) {
                 continue;
             }
-            let committed = state
-                .engine
-                .event_history
-                .get(*marker as usize)
-                .ok_or("Drake marker erased")?;
+            let committed = history.get(*marker as usize).ok_or("Drake marker erased")?;
             if events.contains(committed) {
                 ready.push(row.index);
             }
         }
     }
+    Ok(ready)
+}
+
+pub(crate) fn collect(
+    state: &mut GameState,
+    events: &[CommittedEvent],
+) -> Result<Vec<PendingTrigger>, String> {
     let mut result = Vec::new();
-    for capture in ready {
+    for capture in captures_for_collection(state, events)? {
         let (original, _) = source(state, capture)?;
         let p = pending(original, capture);
         emit(
@@ -1126,7 +1614,7 @@ pub(crate) fn capture_payment(
         return Err("Drake payment changed exact printed source/cost/input".into());
     }
     Ok(Some(PaymentOwnerV1 {
-        original: Box::new(world(state)?),
+        original: Box::new(time_serde_phase!(DrakeWorldPayment, world(state))?),
         pending: p.clone(),
         start: state.engine.event_history.len(),
         source: AbilitySourceContractV4::capture(state, p.source),
@@ -1178,7 +1666,10 @@ pub(crate) fn record_paid(
     if item != activation_item(owner.source, id) {
         return Err("Drake paid row changed controller/source/entire program".into());
     }
-    let debits = state.engine.event_history[owner.start..]
+    let debits = state
+        .engine
+        .event_history
+        .range_v2(owner.start..)
         .iter()
         .filter_map(journal)
         .filter(|r| matches!(r.value, JournalV1::Debit { .. }))
@@ -1269,7 +1760,7 @@ pub(crate) fn acquire(state: &GameState, item: &StackItem) -> Result<Option<Owne
     Ok(Some(OwnerV1 {
         publication: publication(state, item)?,
         item: item.clone(),
-        original: Box::new(world(state)?),
+        original: Box::new(time_serde_phase!(DrakeWorldAcquireRemoval, world(state))?),
         start: state.engine.event_history.len(),
     }))
 }
@@ -1302,7 +1793,8 @@ fn after_remove(
 fn removed(state: &mut GameState, owner: &OwnerV1, kind: RemovalV1) -> Result<u64, String> {
     validate_item(state, &owner.item)?;
     if state.engine.event_history.len() != owner.start
-        || world(state)? != after_remove(&owner.original, &owner.item, kind)?
+        || time_serde_phase!(DrakeWorldCheckRemoval, world(state))?
+            != after_remove(&owner.original, &owner.item, kind)?
     {
         return Err("Drake removal changed its borrowed entire input world".into());
     }
@@ -1317,7 +1809,7 @@ fn removed(state: &mut GameState, owner: &OwnerV1, kind: RemovalV1) -> Result<u6
     )
 }
 fn complete(state: &mut GameState, removed: u64) -> Result<(), String> {
-    let output = Arc::new(world(state)?);
+    let output = Arc::new(time_serde_phase!(DrakeWorldCompletion, world(state))?);
     emit(state, JournalV1::Completed { removed, output })?;
     Ok(())
 }
@@ -1386,11 +1878,11 @@ pub(crate) fn enclose(
         index,
         value: JournalV1::Enclosing {
             start,
-            original: Arc::new(world(original)?),
+            original: Arc::new(time_serde_phase!(DrakeWorldEncloseInput, world(original))?),
             operation: operation.clone(),
             answers: answers.to_vec(),
             used_banner,
-            output: Arc::new(world(output)?),
+            output: Arc::new(time_serde_phase!(DrakeWorldEncloseOutput, world(output))?),
         },
     };
     output
@@ -1497,44 +1989,103 @@ fn locate(rows: &mut [RowV1], from: usize) {
     }
 }
 
-/// For each row, how many rows name it by each kind and the first of them,
-/// and the coverage change of the enclosing operations at it.
-struct RelationsV1 {
+/// Revisit checked non-enclosing rows and every unchecked row in journal order.
+/// Without a checked prefix this is the full journal.
+fn relation_positions(
+    non_enclosing: Option<&[usize]>,
+    unchecked: usize,
+    len: usize,
+) -> impl Iterator<Item = usize> + '_ {
+    let start = if non_enclosing.is_some() {
+        unchecked
+    } else {
+        0
+    };
+    non_enclosing
+        .unwrap_or_default()
+        .iter()
+        .copied()
+        .take_while(move |&position| position < start)
+        .chain(start..len)
+}
+
+/// For each row subject to relation checks, how many rows name it by each
+/// kind, the first of them, and how many enclosing operations cover it.
+struct RelationsV1<'a> {
+    non_enclosing: Option<&'a [usize]>,
     named: Vec<[(u32, u64); ROW_REFERENCE_KINDS_V1]>,
     covering: Vec<i64>,
 }
-impl RelationsV1 {
-    fn of(rows: &[RowV1]) -> Self {
-        let mut named = vec![[(0, 0); ROW_REFERENCE_KINDS_V1]; rows.len()];
-        let mut covering = vec![0_i64; rows.len() + 1];
-        for (position, row) in rows.iter().enumerate() {
-            if let Some((kind, _, Some(target))) = row.reference {
-                let slot = &mut named[target][kind as usize];
+impl<'a> RelationsV1<'a> {
+    fn of(rows: &[RowV1], unchecked: usize, non_enclosing: Option<&'a [usize]>) -> Self {
+        let len = non_enclosing.map_or(rows.len(), <[usize]>::len);
+        let mut relations = Self {
+            non_enclosing,
+            named: vec![[(0, 0); ROW_REFERENCE_KINDS_V1]; len],
+            covering: vec![0; len + 1],
+        };
+        if non_enclosing.is_some() {
+            // The accepted public prefix covered each of its non-enclosing
+            // rows exactly once. Old operations cannot cover new rows.
+            // Unchecked operations can reach backward and overlap that cover.
+            let boundary = relations.boundary(unchecked);
+            relations.covering[0] += 1;
+            relations.covering[boundary] -= 1;
+        }
+        for position in relation_positions(non_enclosing, unchecked, rows.len()) {
+            let row = &rows[position];
+            if let Some((_, from)) = row.enclosing {
+                let start = relations.boundary(from.min(position));
+                let end = relations.boundary(position);
+                relations.covering[start] += 1;
+                relations.covering[end] -= 1;
+            } else if let Some((kind, _, Some(target))) = row.reference {
+                let Some(target) = relations.slot(target) else {
+                    continue;
+                };
+                let slot = &mut relations.named[target][kind as usize];
                 if slot.0 == 0 {
                     slot.1 = row.index;
                 }
                 slot.0 += 1;
             }
-            if let Some((_, from)) = row.enclosing {
-                covering[from.min(position)] += 1;
-                covering[position] -= 1;
-            }
         }
-        Self { named, covering }
+        let mut coverage = 0;
+        for change in &mut relations.covering {
+            coverage += *change;
+            *change = coverage;
+        }
+        relations
     }
+
+    fn boundary(&self, position: usize) -> usize {
+        self.non_enclosing
+            .map_or(position, |rows| rows.partition_point(|&row| row < position))
+    }
+
+    fn slot(&self, position: usize) -> Option<usize> {
+        self.non_enclosing
+            .map_or(Some(position), |rows| rows.binary_search(&position).ok())
+    }
+
+    fn coverage(&self, position: usize) -> i64 {
+        self.covering[self.boundary(position)]
+    }
+
     /// How many rows name the row at `position` by `kind`, and the first.
     fn named(&self, position: Option<usize>, kind: RowReferenceV1) -> (u32, u64) {
-        position.map_or((0, 0), |position| self.named[position][kind as usize])
+        position
+            .and_then(|position| self.slot(position))
+            .map_or((0, 0), |slot| self.named[slot][kind as usize])
     }
 }
 
 /// What a complete validation established about the first `covered` events
 /// of a history: every journal row among them passed the checks that read
 /// only those events (each enclosing replay included), and no reference
-/// escaped into them. A validation of the same events, or of a longer
-/// history that starts with them, checks only the later rows that way; the
-/// checks that read later rows or the rest of the state run in full each
-/// time. Only an acceleration: the verdicts are the same without it.
+/// escaped into them. Each non-enclosing row had exactly one enclosure.
+/// A later validation checks that coverage against any new intervals and
+/// reruns the other checks that read later rows or the rest of the state.
 ///
 /// A longer prefix owns the events it added past the shorter one it extends,
 /// and the shorter one holds the longer one only weakly. So every prefix a
@@ -1545,6 +2096,8 @@ impl RelationsV1 {
 struct CheckedPrefixV1 {
     covered: usize,
     rows: Arc<Vec<RowV1>>,
+    /// Positions in `rows` that need relation or live-state checks.
+    non_enclosing: Arc<Vec<usize>>,
     /// The events past the prefix this one extends, when one was extended.
     added: Vec<CommittedEvent>,
     /// The latest longer prefix a validation of another copy of these
@@ -1561,6 +2114,7 @@ struct CheckedPrefixV1 {
 thread_local! {
     static PREFIX_MEMO_OFF: Cell<bool> = const { Cell::new(false) };
     static LOCAL_ROW_CHECKS: Cell<u64> = const { Cell::new(0) };
+    static RELATION_ROW_VISITS: Cell<usize> = const { Cell::new(0) };
 }
 /// Runs `run` with every validation checking every row, as it did before
 /// the checked-prefix memo.
@@ -1589,6 +2143,15 @@ pub(crate) fn local_row_checks_for_test() -> u64 {
     LOCAL_ROW_CHECKS.with(Cell::get)
 }
 
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(super) fn relation_row_visits_for_test() -> usize {
+    RELATION_ROW_VISITS.with(Cell::get)
+}
+
 /// The memo applies to validations whose enclosing replays run as the memo's
 /// own did: never while operations recorded before origin digest v2 replay.
 fn prefix_memo_applies() -> bool {
@@ -1603,20 +2166,25 @@ fn prefix_memo_applies() -> bool {
     !crate::linked_aura_operation_v1::origin_v1_active()
 }
 
+/// The checked prefix already attached to these unchanged events.
+fn own_checked_prefix(
+    history: &crate::event_history_v1::EventHistoryV1,
+) -> Option<Arc<CheckedPrefixV1>> {
+    if !prefix_memo_applies() {
+        return None;
+    }
+    let (covered, memo) = history.prefix_memo_v1()?;
+    let memo = memo.downcast::<CheckedPrefixV1>().ok()?;
+    (memo.covered == covered).then_some(memo)
+}
+
 /// The checked prefix of `history`, extended by any longer prefix another
 /// copy accepted that `history` also starts with, and whether it was so
 /// extended.
 fn checked_prefix(
     history: &crate::event_history_v1::EventHistoryV1,
 ) -> Option<(Arc<CheckedPrefixV1>, bool)> {
-    if !prefix_memo_applies() {
-        return None;
-    }
-    let (covered, memo) = history.prefix_memo_v1()?;
-    let mut memo = memo.downcast::<CheckedPrefixV1>().ok()?;
-    if memo.covered != covered {
-        return None;
-    }
+    let mut memo = own_checked_prefix(history)?;
     let mut extended = false;
     loop {
         let longer = memo
@@ -1626,7 +2194,9 @@ fn checked_prefix(
             .and_then(|next| next.upgrade())
             .filter(|longer| {
                 longer.covered == memo.covered + longer.added.len()
-                    && history.get(memo.covered..longer.covered) == Some(longer.added.as_slice())
+                    && history
+                        .get_range_v2(memo.covered..longer.covered)
+                        .is_some_and(|range| range.iter().eq(longer.added.iter()))
             });
         match longer {
             Some(longer) => {
@@ -1735,6 +2305,9 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
     let mut rows = memo
         .as_ref()
         .map_or_else(Arc::default, |(memo, _)| Arc::clone(&memo.rows));
+    let mut non_enclosing = memo
+        .as_ref()
+        .map_or_else(Arc::default, |(memo, _)| Arc::clone(&memo.non_enclosing));
     let unchecked = rows.len();
     // Kind-guarded scans: a history with no event of the kind gives no rows
     // either way, and otherwise every event past the checked prefix
@@ -1743,11 +2316,13 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
         history: &crate::event_history_v1::EventHistoryV1,
         checked: usize,
         kind: crate::event_history_v1::EventKindV1,
-    ) -> &[CommittedEvent] {
+    ) -> crate::event_history_v1::EventHistoryRangeV2<'_> {
         if history.has_any(&[kind]) {
-            history.get(checked..).unwrap_or_default()
+            history
+                .get_range_v2(checked..)
+                .unwrap_or_else(|| history.range_v2(..0))
         } else {
-            &[]
+            history.range_v2(..0)
         }
     }
     for (offset, event) in events_after(
@@ -1766,7 +2341,11 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
             if u64::try_from(position).ok() != Some(record.index) {
                 return Err("Drake record index differs from actual history position".to_string());
             }
-            Arc::make_mut(&mut rows).push(RowV1::of(record));
+            let row = RowV1::of(record);
+            if row.enclosing.is_none() {
+                Arc::make_mut(&mut non_enclosing).push(rows.len());
+            }
+            Arc::make_mut(&mut rows).push(row);
         }
     }
     if rows.len() > unchecked {
@@ -1779,7 +2358,7 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
         // Compression must prove every discarded nested original equals the
         // whole actual indexed record before any caller can normalize it.
         // Only a success on the frame's own immutable state is remembered.
-        world(state)?;
+        time_serde_phase!(DrakeWorldValidate, world(state))?;
         remember_world_checked_in_frame(state);
     }
     if events_after(
@@ -1806,23 +2385,31 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
     // checked prefix replays them without the replay memo: keys are computed
     // (and the replay memo fed) only when nothing is checked yet.
     let keys = if verifying || checked > 0 || !rows.iter().any(|row| row.enclosing.is_some()) {
-        BTreeMap::new()
+        ReplayKeys::default()
     } else {
         replay_keys(history)
     };
     let mut verified_keys = Vec::new();
-    // Indexed once: scanning every row again for each row made validation
-    // quadratic in the rows. Rows are in history order, so each enclosing
-    // operation covers one contiguous run of them.
-    let relations = RelationsV1::of(&rows);
-    let mut coverage = 0;
+    // A checked enclosing row has no live-state checks and names no other
+    // row. Reuse its proved coverage while rechecking every private row.
+    let sparse = memo
+        .as_ref()
+        .filter(|_| !history.is_editable_v2())
+        .map(|_| non_enclosing.as_slice());
+    let relations = RelationsV1::of(&rows, unchecked, sparse);
     let last_closed = rows
         .iter()
         .rev()
         .find(|row| row.enclosing.is_some())
         .map(|row| row.index);
-    for (position, compact) in rows.iter().enumerate() {
-        coverage += relations.covering[position];
+    for position in relation_positions(sparse, unchecked, rows.len()) {
+        #[cfg(all(
+            test,
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        RELATION_ROW_VISITS.with(|visits| visits.set(visits.get() + 1));
+        let compact = &rows[position];
         let Some(row) = history
             .get(compact.index as usize)
             .and_then(journal)
@@ -1831,7 +2418,7 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
             return Err("Drake record index moved".into());
         };
         if !matches!(row.value, JournalV1::Enclosing { .. })
-            && coverage != 1
+            && relations.coverage(position) != 1
             && !(local && last_closed.is_none_or(|last| row.index > last))
         {
             return Err("Drake record lost its unique original enclosing operation".into());
@@ -1886,7 +2473,7 @@ fn validate_checked(state: &GameState) -> Result<(), String> {
                     history.set_prefix_memo_v1(covered, memo);
                 }
             }
-            memo => leave_prefix(history, memo.map(|(memo, _)| memo), rows),
+            memo => leave_prefix(history, memo.map(|(memo, _)| memo), rows, non_enclosing),
         }
     }
     Ok(())
@@ -1898,15 +2485,17 @@ fn leave_prefix(
     history: &crate::event_history_v1::EventHistoryV1,
     shorter: Option<Arc<CheckedPrefixV1>>,
     rows: Arc<Vec<RowV1>>,
+    non_enclosing: Arc<Vec<usize>>,
 ) {
     let covered = history.len();
     let shorter = shorter.filter(|shorter| shorter.covered < covered);
     let longer = Arc::new(CheckedPrefixV1 {
         covered,
         rows,
-        added: shorter
-            .as_ref()
-            .map_or_else(Vec::new, |shorter| history[shorter.covered..].to_vec()),
+        non_enclosing,
+        added: shorter.as_ref().map_or_else(Vec::new, |shorter| {
+            history.range_v2(shorter.covered..).to_vec()
+        }),
         next: Mutex::new(Weak::new()),
     });
     if let Some(shorter) = shorter {
@@ -1918,7 +2507,8 @@ fn leave_prefix(
 }
 
 /// Extends the checked prefix `history` carries to all its events, as a
-/// validation of it would, without validating them.
+/// validation of it would, without validating them. This is only for
+/// drop-semantics tests; it leaves a prefix that no validation established.
 #[cfg(all(
     test,
     feature = "limited-fdn-fixtures",
@@ -1926,7 +2516,12 @@ fn leave_prefix(
 ))]
 pub(crate) fn extend_prefix_for_test(history: &crate::event_history_v1::EventHistoryV1) {
     let (memo, _) = checked_prefix(history).expect("a checked prefix");
-    leave_prefix(history, Some(Arc::clone(&memo)), Arc::clone(&memo.rows));
+    leave_prefix(
+        history,
+        Some(Arc::clone(&memo)),
+        Arc::clone(&memo.rows),
+        Arc::clone(&memo.non_enclosing),
+    );
 }
 
 /// The checks of one row that read only the history before the end of the
@@ -1938,7 +2533,7 @@ fn check_row(
     row: &RecordV1,
     compact: &RowV1,
     verifying: bool,
-    keys: &BTreeMap<u64, ReplayKey>,
+    keys: &ReplayKeys,
     verified_keys: &mut Vec<ReplayKey>,
 ) -> Result<(), String> {
     #[cfg(all(
@@ -2116,7 +2711,12 @@ fn check_row(
             {
                 return Err("Drake whole operation input/output prefix changed".into());
             }
-            if state.engine.event_history.get(..*start as usize).is_none() {
+            if state
+                .engine
+                .event_history
+                .get_range_v2(..*start as usize)
+                .is_none()
+            {
                 return Err("Drake operation original prefix absent".into());
             }
             // The rows are every journal event in history order, so the
@@ -2137,27 +2737,38 @@ fn check_row(
                 count_replay(hit, key.is_some());
                 if !hit {
                     verification(|| {
-                        let input =
-                            restore_world(original, &state.engine.event_history, *start as usize)?;
                         crate::linked_aura_operation_v1::as_recorded(|| {
+                            // Each version attempt gets its own owned input.
+                            // A suspended replay may call the same factory to
+                            // retain the original in its pending checkpoint.
+                            let restore = || {
+                                restore_world(
+                                    original,
+                                    &state.engine.event_history,
+                                    *start as usize,
+                                )
+                            };
+                            let input = restore()?;
                             let replay = {
                                 #[cfg(test)]
                                 let _timing = crate::rl_session::test_timing_v1::span(
                                     crate::rl_session::test_timing_v1::Phase::DrakeActualEnclosingReplay,
                                 );
-                                crate::linked_aura_operation_v1::replay_drake_enclosing_v1(
-                                    &input,
+                                crate::linked_aura_operation_v1::replay_drake_enclosing_owned_v1(
+                                    input,
                                     operation,
                                     answers,
                                     *used_banner,
+                                    &restore,
                                 )?
                             };
-                            if replay.engine.event_history.get(*start as usize..)
+                            if replay.engine.event_history.get_range_v2(*start as usize..)
                                 != state
                                     .engine
                                     .event_history
-                                    .get(*start as usize..row.index as usize)
-                                || world(&replay)? != **output
+                                    .get_range_v2(*start as usize..row.index as usize)
+                                || time_serde_phase!(DrakeWorldReplayOutput, world(&replay))?
+                                    != **output
                             {
                                 return Err("Drake complete enclosing original operation/history replay differs".into());
                             }
@@ -2181,7 +2792,7 @@ fn relate_row(
     row: &RecordV1,
     compact: &RowV1,
     position: usize,
-    relations: &RelationsV1,
+    relations: &RelationsV1<'_>,
     local: bool,
 ) -> Result<(), String> {
     // The checks above proved every row this one names is a journal row.
@@ -2231,22 +2842,20 @@ fn validate_listed_item(
     state: &GameState,
     item: &StackItem,
     rows: &[RowV1],
-    relations: &RelationsV1,
+    relations: &RelationsV1<'_>,
 ) -> Result<(), String> {
     if !tracked(item) {
         return Ok(());
     }
-    let mut listed = rows
-        .iter()
-        .enumerate()
-        .filter(|(_, row)| row.publication == Some(item.v4.stack_item_id));
-    let (Some((position, row)), None) = (listed.next(), listed.next()) else {
+    let mut listed = relation_positions(relations.non_enclosing, rows.len(), rows.len())
+        .filter(|&position| rows[position].publication == Some(item.v4.stack_item_id));
+    let (Some(position), None) = (listed.next(), listed.next()) else {
         return Err("Drake row lost unique actual publication/payment".into());
     };
     match state
         .engine
         .event_history
-        .get(row.index as usize)
+        .get(rows[position].index as usize)
         .and_then(journal)
         .map(|row| &row.value)
     {

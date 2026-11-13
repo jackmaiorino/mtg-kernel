@@ -118,6 +118,7 @@ impl Config {
             evaluate,
             options: SearchOptions {
                 allocation,
+                root_prior: None,
                 sharing: arm == "B",
                 cpu_seconds,
                 work_limit,

@@ -143,10 +143,12 @@ fn read_deck(dir: &Path, name: &str) -> Result<DeckFileV1, String> {
 
 /// `-session prepared` (default: Full cards, every consumer contract),
 /// `rules-only` (Full plus admitted Partial cards, no consumer contract) or
-/// `rules-only-all` (every executable card; diagnostics only).
+/// `rules-only-all` (every executable card; diagnostics only) or the sealed
+/// Foundations `full-pool` owner.
 fn session_kind(flags: &Flags) -> Result<SessionKindV1, String> {
     match flags.opt("session").unwrap_or("prepared") {
         "prepared" => Ok(SessionKindV1::PreparedV57),
+        "full-pool" => Ok(SessionKindV1::FullPoolV1),
         "rules-only" => Ok(SessionKindV1::RulesOnly(RulesAdmissionV1::Admitted)),
         "rules-only-all" => Ok(SessionKindV1::RulesOnly(RulesAdmissionV1::AllExecutable)),
         other => Err(format!("unknown -session {other:?}")),
@@ -259,6 +261,25 @@ fn play(flags: &Flags) -> Result<(), String> {
         full_validation: flags.switches.contains("full-validation"),
         session: session_kind(flags)?,
     };
+    for policy in &policies {
+        policy.validate_full_pool_session_v1(limits.session)?;
+    }
+    let uses_closed_list = policies
+        .iter()
+        .any(PolicySpecV1::uses_versioned_closed_list);
+    let uses_closed_list_v3 = policies.iter().any(PolicySpecV1::uses_closed_list_v3);
+    if uses_closed_list && !matches!(limits.session, SessionKindV1::RulesOnly(_)) {
+        let version = if uses_closed_list_v3 {
+            "closedlist-v3"
+        } else {
+            "closedlist-v2"
+        };
+        return Err(format!(
+            "{version} requires -session rules-only or rules-only-all"
+        ));
+    }
+    let uses_conditioned_belief = uses_closed_list || limits.session == SessionKindV1::FullPoolV1;
+    let records_search = policies.iter().any(PolicySpecV1::records_search_v1);
     let out = PathBuf::from(flags.get("out")?);
     let legs: u64 = if spec_a == spec_b || flags.switches.contains("single") {
         1
@@ -268,6 +289,7 @@ fn play(flags: &Flags) -> Result<(), String> {
 
     let decks = playable(&dir, &pool, Some(&split), limits.session)?;
     let mut belief_overlap = 0usize;
+    let mut belief_deck_contents_sha256 = None;
     let belief = if policies.iter().any(PolicySpecV1::needs_belief) {
         let belief_split = flags.opt("belief-split").unwrap_or("train");
         if belief_split == split && split != "train" {
@@ -286,17 +308,30 @@ fn play(flags: &Flags) -> Result<(), String> {
         if corpus.is_empty() {
             return Err("the belief corpus has no playable deck".into());
         }
-        // Belief decks that are also game decks (by name). Gorge allows this for
-        // the train split only; anywhere else the belief would hold real decks.
+        // A held-out deck stays held out when its file is renamed or reordered.
         let names: BTreeSet<&str> = decks.iter().map(|(name, _)| name.as_str()).collect();
+        let game_multisets: BTreeSet<_> = if uses_conditioned_belief {
+            decks
+                .iter()
+                .map(|(_, cards)| deck_multiset(cards))
+                .collect()
+        } else {
+            BTreeSet::new()
+        };
         belief_overlap = corpus
             .iter()
-            .filter(|(name, _)| names.contains(name.as_str()))
+            .filter(|(name, cards)| {
+                names.contains(name.as_str())
+                    || (uses_conditioned_belief && game_multisets.contains(&deck_multiset(cards)))
+            })
             .count();
         if belief_overlap > 0 && split != "train" {
             return Err(format!(
                 "{belief_overlap} belief decks are games' {split:?} decks: the belief would hold the opponents' real decks"
             ));
+        }
+        if uses_conditioned_belief {
+            belief_deck_contents_sha256 = Some(deck_contents_sha256(&corpus));
         }
         Some(LimitedBeliefV1::new(
             corpus.into_iter().map(|(_, cards)| cards),
@@ -366,7 +401,7 @@ fn play(flags: &Flags) -> Result<(), String> {
         hash.update(b"\n");
     }
     let playable_sha256 = format!("{:x}", hash.finalize());
-    let summary = json!({
+    let mut summary = json!({
         "schema": LIMITED_MATCH_SCHEMA_V1,
         "engine": "mtg-kernel",
         "card_db_hash": format!("{KERNEL_CARDDB_HASH:016x}"),
@@ -386,6 +421,26 @@ fn play(flags: &Flags) -> Result<(), String> {
         "full_validation": limits.full_validation,
         "session": format!("{:?}", limits.session),
     });
+    if records_search {
+        summary["world_contract"] = if policies
+            .iter()
+            .any(PolicySpecV1::uses_full_pool_closed_list_v1)
+        {
+            json!("limited-closedlist-full-pool/v1")
+        } else if uses_closed_list_v3 {
+            if policies.iter().any(PolicySpecV1::uses_closed_list_v2) {
+                json!(["limited-closedlist/v2", "limited-closedlist/v3"])
+            } else {
+                json!("limited-closedlist/v3")
+            }
+        } else {
+            json!("limited-closedlist/v2")
+        };
+        summary["game_deck_contents_sha256"] = json!(deck_contents_sha256(&decks));
+        summary["belief_deck_contents_sha256"] = json!(belief_deck_contents_sha256);
+        summary["max_turns"] = json!(limits.max_turns);
+        summary["max_decisions"] = json!(limits.max_decisions);
+    }
     let summary_path = format!("{}.summary.json", out.display());
     fs::write(
         &summary_path,
@@ -393,6 +448,28 @@ fn play(flags: &Flags) -> Result<(), String> {
     )
     .map_err(|e| format!("{summary_path}: {e}"))?;
     Ok(())
+}
+
+fn deck_multiset(cards: &[u16]) -> Vec<u16> {
+    let mut sorted = cards.to_vec();
+    sorted.sort_unstable();
+    sorted
+}
+
+/// Deck order and within-deck order both matter for exact replay.
+fn deck_contents_sha256(decks: &[(String, Vec<u16>)]) -> String {
+    let mut hash = Sha256::new();
+    hash.update(b"mtg-kernel/limited-match-deck-contents/v2\0");
+    hash.update(KERNEL_CARDDB_HASH.to_le_bytes());
+    for (name, cards) in decks {
+        hash.update((name.len() as u64).to_le_bytes());
+        hash.update(name.as_bytes());
+        hash.update((cards.len() as u64).to_le_bytes());
+        for id in cards {
+            hash.update(id.to_le_bytes());
+        }
+    }
+    format!("{:x}", hash.finalize())
 }
 
 /// One games.jsonl line. DraftZero renumbers rows by rewriting a leading
@@ -473,6 +550,15 @@ fn play_one(
     }
     if let Some(error) = &result.first_rollout_error {
         row["first_rollout_error"] = json!(error);
+    }
+    if seat_policies
+        .iter()
+        .any(|policy| policy.records_search_v1())
+    {
+        row["env_seed"] = json!(env_seed);
+        row["searched_decisions"] = json!(result.searched_decisions);
+        row["search_fallbacks"] = json!(result.search_fallbacks);
+        row["search_rejection_reasons"] = json!(result.rejection_reasons);
     }
     row
 }

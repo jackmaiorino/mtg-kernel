@@ -13,6 +13,7 @@ pub(crate) enum RevealV3 {
     Present,
     PublicTransfer(Zone),
     SearchReveal,
+    CuratorPileArrival,
     Omit,
 }
 
@@ -21,6 +22,7 @@ impl RevealV3 {
         match self {
             Self::Present => knowledge.present(owner, name),
             Self::SearchReveal
+            | Self::CuratorPileArrival
             | Self::PublicTransfer(
                 Zone::Battlefield | Zone::Graveyard | Zone::Stack | Zone::Exile | Zone::Command,
             ) => knowledge.arrive(owner, name),
@@ -111,7 +113,7 @@ impl RevealJournalV3 {
         let owner = seat(owner);
         let evidence = match meaning {
             RevealV3::Omit => return,
-            RevealV3::Present => None,
+            RevealV3::Present | RevealV3::CuratorPileArrival => None,
             RevealV3::SearchReveal => Some(json!({"kind": "search_reveal"})),
             RevealV3::PublicTransfer(source) => {
                 let from_zone = match source {

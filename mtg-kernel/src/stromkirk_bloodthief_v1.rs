@@ -98,17 +98,16 @@ pub(crate) fn validate_source(
     let original = state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::StromkirkEndStepObserversV1])
-        .iter()
-        .rev()
-        .find_map(|event| match event {
+        .of_kinds_v2(&[EventKindV1::StromkirkEndStepObserversV1])
+        .filter_map(|(_, event)| match event {
             CommittedEvent::StromkirkEndStepObserversV1 { observers, .. } => {
                 observers.iter().find(|s| {
                     s.source == source.source && s.zone_change_count == source.zone_change_count
                 })
             }
             _ => None,
-        });
+        })
+        .last();
     if original != Some(&source) {
         return Err("Stromkirk changed its captured end-step controller/source".into());
     }
@@ -129,9 +128,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     for (at, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::StromkirkEndStepObserversV1])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::StromkirkEndStepObserversV1])
     {
         let CommittedEvent::StromkirkEndStepObserversV1 {
             beginning_index,
@@ -151,7 +148,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         if begin >= at || observers.is_empty() {
             return Err("Stromkirk observer occurrence is empty or out of order".into());
         }
-        let anchor = state.engine.event_history[..begin]
+        let anchor = state
+            .engine
+            .event_history
+            .range_v2(..begin)
             .iter()
             .rfind(|e| matches!(e, CommittedEvent::LifeLossTurnBeganV1 { .. }));
         if anchor
@@ -162,11 +162,17 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         {
             return Err("Stromkirk observer lost its original turn anchor".into());
         }
-        let anchor_at = state.engine.event_history[..begin]
+        let anchor_at = state
+            .engine
+            .event_history
+            .range_v2(..begin)
             .iter()
             .rposition(|e| matches!(e, CommittedEvent::LifeLossTurnBeganV1 { .. }))
             .unwrap();
-        if !state.engine.event_history[anchor_at + 1..begin]
+        if !state
+            .engine
+            .event_history
+            .range_v2(anchor_at + 1..begin)
             .iter()
             .any(|e| {
                 crate::life_loss_turn_v1::committed_loss_player(e) == Some(active_player.opponent())
@@ -179,7 +185,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         for (i, source) in observers.iter().enumerate() {
             if source.controller != *active_player || source.zone != Zone::Battlefield
                 || !owns_definition(source.card_def) || observers[..i].iter().any(|s| s.source == source.source)
-                || state.engine.event_history[..at].iter().any(|e| matches!(e,
+                || state.engine.event_history.of_kinds_v2(&[EventKindV1::StromkirkEndStepObserversV1]).take_while(|(earlier, _)| *earlier < at).any(|(_, e)| matches!(e,
                     CommittedEvent::StromkirkEndStepObserversV1 { beginning_index: old, .. } if old == beginning_index)) {
                 return Err("Stromkirk observer changed source/controller or repeated its occurrence".into());
             }

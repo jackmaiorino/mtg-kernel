@@ -622,6 +622,14 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         Subtype::Masticore => Some(CreatureTypeV60::Masticore),
         Subtype::Saproling => Some(CreatureTypeV60::Saproling),
         Subtype::Centaur => Some(CreatureTypeV60::Centaur),
+        Subtype::Kithkin => Some(CreatureTypeV60::Kithkin),
+        Subtype::Advisor => Some(CreatureTypeV60::Advisor),
+        Subtype::Rhino => Some(CreatureTypeV60::Rhino),
+        Subtype::Flagbearer => Some(CreatureTypeV60::Flagbearer),
+        Subtype::Spike => Some(CreatureTypeV60::Spike),
+        Subtype::Minion => Some(CreatureTypeV60::Minion),
+        Subtype::Junk => None,
+        Subtype::Spacecraft => None,
     }
 }
 

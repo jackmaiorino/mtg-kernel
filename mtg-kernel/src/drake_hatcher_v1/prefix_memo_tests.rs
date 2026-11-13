@@ -126,20 +126,42 @@ fn rows(state: &GameState) -> u64 {
 }
 
 /// Every validation the engine runs while playing `deal`, inside enclosing
-/// replays and operations included, matches the reference.
+/// replays and operations included, matches the reference. Many of them use
+/// a proof kept with the history, and each of those also runs the full
+/// check and asserts the same verdict.
 fn engine_validations_match_reference(deal: &DealV1) {
+    use crate::event_history_v1::proof_tests_v1;
     let mut last = 0;
+    let uses = proof_tests_v1::uses();
     let ((), compared, differences) = custody::comparing_with_v0_for_test(|| {
         play(deal, &mut |state| last = rows(state));
     });
+    let proved = proof_tests_v1::uses() - uses;
     assert!(last > 100, "{} journal rows", last);
     assert!(compared > 1000, "{compared} validations compared");
+    assert!(proved > 1000, "{proved} validations used a proof");
     assert_eq!(differences, Vec::<String>::new());
 }
 
 #[test]
 fn every_engine_validation_of_recorded_drake_pair_29_matches_the_reference() {
     engine_validations_match_reference(&PAIR_29);
+}
+
+#[test]
+fn owned_enclosing_replays_match_borrowed_states_and_serialized_receipts() {
+    let mut final_state = None;
+    let mut decision = 0;
+    play(&PAIR_29, &mut |state| {
+        // The observer is called once at reset and after every decision.
+        // Copy only the final state; the helper bypasses the replay cache.
+        if decision == PAIR_29.decisions {
+            final_state = Some(state.clone());
+        }
+        decision += 1;
+    });
+    let compared = custody::compare_owned_enclosing_replays_for_test(&final_state.unwrap());
+    assert!(compared > 10, "{compared} enclosing records compared");
 }
 
 /// The four slow deals take minutes with the reference beside every
@@ -151,6 +173,109 @@ fn every_engine_validation_of_the_four_slow_drake_deals_matches_the_reference() 
     for deal in &SLOW {
         engine_validations_match_reference(deal);
     }
+}
+
+/// Bounded performance diagnostics for #474. Each invocation plays the exact
+/// deal twice with cold thread-local replay caches, once per staging path.
+/// It compares every byte of the final state, including the entire event
+/// history, and reports decision windows without observer or printing time.
+/// Timing is evidence to inspect, not a platform-dependent unit-test gate.
+fn compare_slow_deal_staging(deal: &DealV1, borrowed_first: bool) {
+    use sha2::{Digest, Sha256};
+    use std::time::{Duration, Instant};
+
+    let mut outputs = Vec::new();
+    let mut reports = Vec::new();
+    for borrowed in [borrowed_first, !borrowed_first] {
+        custody::reset_replay_memo_for_test();
+        custody::clear_replay_prefix_for_test();
+        let mut run = || {
+            let mut previous = None::<Instant>;
+            let mut elapsed = Duration::ZERO;
+            let mut decision = 0;
+            let mut window_start = 0;
+            let mut windows = Vec::new();
+            let mut final_bytes = None;
+            play(deal, &mut |state| {
+                if let Some(started) = previous {
+                    elapsed += started.elapsed();
+                }
+                if decision > 0 && (decision % 100 == 0 || decision == deal.decisions) {
+                    windows.push(serde_json::json!({
+                        "first_decision": window_start + 1,
+                        "last_decision": decision,
+                        "elapsed_ns": u64::try_from(elapsed.as_nanos()).unwrap(),
+                        "history_len": state.engine.event_history.len(),
+                        "drake_rows": rows(state),
+                    }));
+                    window_start = decision;
+                    elapsed = Duration::ZERO;
+                }
+                if decision == deal.decisions {
+                    final_bytes = Some(serde_json::to_vec(state).unwrap());
+                }
+                decision += 1;
+                previous = Some(Instant::now());
+            });
+            assert_eq!(decision, deal.decisions + 1);
+            let bytes = final_bytes.unwrap();
+            let replays = custody::replay_memo_stats_for_test();
+            assert!(replays.executions > 0, "the staging path must actually run");
+            reports.push(serde_json::json!({
+                "schema": "drake-staging-timing/v1",
+                "split": deal.split,
+                "pair": deal.pair,
+                "seed": 1,
+                "leg": 0,
+                "decks": deal.decks,
+                "winner": format!("{:?}", deal.winner),
+                "staging": if borrowed { "borrowed" } else { "owned" },
+                "decisions": deal.decisions,
+                "final_state_sha256": format!("{:x}", Sha256::digest(&bytes)),
+                "replay_executions": replays.executions,
+                "windows": windows,
+            }));
+            outputs.push(bytes);
+        };
+        if borrowed {
+            crate::linked_aura_operation_v1::with_borrowed_drake_replays_for_test(run);
+        } else {
+            run();
+        }
+    }
+    assert!(
+        outputs[0] == outputs[1],
+        "complete final state and receipts differ ({} versus {} bytes)",
+        outputs[0].len(),
+        outputs[1].len()
+    );
+    for report in reports {
+        println!("drake_staging_timing_v1 {report}");
+    }
+}
+
+#[test]
+#[ignore = "paired recorded-game timing and full receipt comparison"]
+fn slow_drake_staging_train_241() {
+    compare_slow_deal_staging(&SLOW[0], true);
+}
+
+#[test]
+#[ignore = "paired recorded-game timing and full receipt comparison"]
+fn slow_drake_staging_train_436() {
+    compare_slow_deal_staging(&SLOW[1], false);
+}
+
+#[test]
+#[ignore = "paired recorded-game timing and full receipt comparison"]
+fn slow_drake_staging_train_597() {
+    compare_slow_deal_staging(&SLOW[2], true);
+}
+
+#[test]
+#[ignore = "paired recorded-game timing and full receipt comparison"]
+fn slow_drake_staging_eval_458() {
+    compare_slow_deal_staging(&SLOW[3], false);
 }
 
 fn kind_name(value: &JournalV1) -> &'static str {
@@ -319,11 +444,15 @@ fn rows_checked_per_step_stay_bounded_after_drake_hatcher_is_cast() {
         let mut marks = Vec::<WorkV1>::new();
         let mut first = None;
         let mut decision = 0_u64;
+        let mut final_bytes = None;
         let mut run = || {
             custody::reset_replay_memo_for_test();
             let start = custody::local_row_checks_for_test();
             play(&PAIR_29, &mut |state| {
                 decision += 1;
+                if decision == PAIR_29.decisions + 1 {
+                    final_bytes = Some(serde_json::to_vec(state).unwrap());
+                }
                 let rows = rows(state);
                 if rows == 0 {
                     return;
@@ -343,7 +472,7 @@ fn rows_checked_per_step_stay_bounded_after_drake_hatcher_is_cast() {
         } else {
             custody::without_prefix_memo_for_test(run);
         }
-        marks
+        let windows = marks
             .windows(2)
             .map(|pair| {
                 let rows = (pair[1].rows - pair[0].rows).max(1) as f64;
@@ -352,10 +481,15 @@ fn rows_checked_per_step_stay_bounded_after_drake_hatcher_is_cast() {
                     (pair[1].replays - pair[0].replays) as f64 / rows,
                 )
             })
-            .collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        (windows, final_bytes.unwrap())
     };
-    let checked = work(true);
-    let every = work(false);
+    let (checked, with_memo) = work(true);
+    let (every, full_scan) = work(false);
+    assert!(
+        with_memo == full_scan,
+        "collection changed native final state"
+    );
     assert!(checked.len() >= 3, "{checked:?}");
     // With the memo each new row is checked a bounded number of times however
     // long the game, while checking every row grows with the game.
@@ -367,6 +501,196 @@ fn rows_checked_per_step_stay_bounded_after_drake_hatcher_is_cast() {
     let (every_early, every_late) = (every[0].0, every[every.len() - 1].0);
     assert!(every_late > every_early * 2.0, "{every:?}");
     assert!(every_late > late * 10.0, "{every:?} against {checked:?}");
+}
+
+#[test]
+fn collection_tail_matches_full_scan_on_append_divergence_and_tamper() {
+    use super::tests::{cast, damage_three, finish};
+    use std::sync::Arc;
+
+    let actor = PlayerId::P0;
+    let (mut base, drake) = cast(actor);
+    damage_three(&mut base, drake, actor);
+    finish(&mut base);
+    custody::validate(&base).unwrap();
+    let history = &base.engine.event_history;
+    let covered = history.len();
+    assert_eq!(history.prefix_memo_v1().unwrap().0, covered);
+    let (collected, capture_index) = history
+        .iter()
+        .filter_map(custody::journal)
+        .find_map(|row| match &row.value {
+            JournalV1::Collected { capture, .. } => Some((row, *capture)),
+            _ => None,
+        })
+        .expect("native combat trigger was collected");
+    let capture = history
+        .get(capture_index as usize)
+        .and_then(custody::journal)
+        .expect("collected capture record")
+        .clone();
+    let JournalV1::Captured { marker, .. } = &capture.value else {
+        panic!("collected record must point to a capture");
+    };
+    let events = [history.get(*marker as usize).unwrap().clone()];
+    let compare = |state: &GameState, expected: Result<&[u64], &str>| {
+        let result = custody::captures_for_collection(state, &events);
+        let reference = custody::without_prefix_memo_for_test(|| {
+            custody::captures_for_collection(state, &events)
+        });
+        assert_eq!(result, reference);
+        assert_eq!(result.as_deref().map_err(String::as_str), expected);
+    };
+    let append = |record| {
+        let mut branch = base.clone();
+        branch
+            .engine
+            .event_history
+            .push(CommittedEvent::DrakeJournalV1 {
+                record: Arc::new(record),
+            });
+        branch.engine.drake_ledger_v1.issued += 1;
+        assert_eq!(
+            branch.engine.event_history.prefix_memo_v1().unwrap().0,
+            covered
+        );
+        branch
+    };
+
+    compare(&base, Ok(&[]));
+    let mut new_capture = capture.clone();
+    new_capture.index = covered as u64;
+    let mut branch = append(new_capture.clone());
+    compare(&branch, Ok(&[new_capture.index]));
+    let mut collection = collected.clone();
+    collection.index = (covered + 1) as u64;
+    let JournalV1::Collected { capture: index, .. } = &mut collection.value else {
+        unreachable!()
+    };
+    *index = new_capture.index;
+    branch
+        .engine
+        .event_history
+        .push(CommittedEvent::DrakeJournalV1 {
+            record: Arc::new(collection),
+        });
+    branch.engine.drake_ledger_v1.issued += 1;
+    compare(&branch, Ok(&[]));
+
+    let JournalV1::Captured { marker, .. } = &mut new_capture.value else {
+        unreachable!()
+    };
+    *marker = u64::MAX;
+    compare(&append(new_capture), Err("Drake marker erased"));
+    // A duplicate using its old index must still see the old collection.
+    compare(&append(capture.clone()), Ok(&[]));
+
+    let collected = collected.index as usize;
+    let mut tampered = base;
+    *tampered.engine.event_history.get_mut(collected).unwrap() = events[0].clone();
+    assert!(tampered.engine.event_history.prefix_memo_v1().is_none());
+    compare(&tampered, Ok(&[capture.index]));
+}
+
+#[test]
+fn checked_relations_skip_enclosing_rows_and_reject_backward_tamper() {
+    use super::tests::{cast, damage_three, finish};
+    use std::sync::Arc;
+
+    let actor = PlayerId::P0;
+    let (mut base, drake) = cast(actor);
+    damage_three(&mut base, drake, actor);
+    finish(&mut base);
+    custody::validate(&base).unwrap();
+    let history = &base.engine.event_history;
+    let covered = history.len();
+    assert_eq!(history.prefix_memo_v1().unwrap().0, covered);
+    let records = || history.iter().filter_map(custody::journal);
+    let total = records().count();
+    let non_enclosing = records()
+        .filter(|row| !matches!(row.value, JournalV1::Enclosing { .. }))
+        .count();
+    assert!(non_enclosing > 0 && non_enclosing < total);
+
+    let visits = custody::relation_row_visits_for_test;
+    let before = visits();
+    assert_eq!(custody::validate(&base), Ok(()));
+    assert_eq!(visits() - before, non_enclosing);
+    let before = visits();
+    assert_eq!(
+        custody::without_prefix_memo_for_test(|| custody::validate(&base)),
+        Ok(())
+    );
+    assert!(visits() - before >= total);
+
+    let mut editable = base.clone();
+    let _ = editable.engine.event_history.get_mut(0).unwrap();
+    custody::validate(&editable).unwrap();
+    assert!(editable.engine.event_history.prefix_memo_v1().is_some());
+    let before = visits();
+    assert_eq!(custody::validate(&editable), Ok(()));
+    assert_eq!(visits() - before, total);
+
+    let compare = |state: &GameState, error| {
+        assert_eq!(
+            state.engine.event_history.prefix_memo_v1().unwrap().0,
+            covered
+        );
+        let sparse = custody::validate(state);
+        let full = custody::without_prefix_memo_for_test(|| custody::validate(state));
+        assert_eq!(sparse, full);
+        assert_eq!(sparse.as_ref().map_err(String::as_str), Err(error));
+    };
+    let append = |mut row: custody::RecordV1| {
+        let mut branch = base.clone();
+        row.index = covered as u64;
+        branch
+            .engine
+            .event_history
+            .push(CommittedEvent::DrakeJournalV1 {
+                record: Arc::new(row),
+            });
+        branch.engine.drake_ledger_v1.issued += 1;
+        branch
+    };
+
+    let (publication, item) = records()
+        .find_map(|row| match &row.value {
+            JournalV1::Published { item, .. } => Some((row, item.as_ref())),
+            _ => None,
+        })
+        .expect("native trigger publication");
+    let enclosure = records()
+        .find(|row| {
+            matches!(row.value, JournalV1::Enclosing { start, .. }
+                if start <= publication.index && publication.index < row.index)
+        })
+        .expect("enclosing operation for publication");
+    compare(
+        &append(enclosure.clone()),
+        "Drake record lost its unique original enclosing operation",
+    );
+    compare(
+        &append(publication.clone()),
+        "Drake APNAP occurrence disappeared/replayed",
+    );
+
+    let mut live_again = base.clone();
+    live_again.stack.push(item.clone());
+    compare(
+        &live_again,
+        "Drake issued stack row lost/duplicated/replayed",
+    );
+
+    let pending = records()
+        .find_map(|row| match &row.value {
+            JournalV1::Collected { pending, .. } => Some(pending.as_ref()),
+            _ => None,
+        })
+        .expect("native trigger collection");
+    let mut held_again = base.clone();
+    held_again.engine.pending_triggers.push(pending.clone());
+    compare(&held_again, "Drake APNAP occurrence disappeared/replayed");
 }
 
 #[test]

@@ -218,6 +218,18 @@ fn root(s: &GameState, c: AbilitySourceContractV4, v: PlayerId) -> Result<public
     };
     Ok(r)
 }
+fn discard_observer(
+    state: &GameState,
+    at: usize,
+    source: AbilitySourceContractV4,
+    viewer: PlayerId,
+) -> Result<public::RootV1, String> {
+    let mut root = public::archived_root(state, at, source, Some(viewer))?;
+    root.original_source.identity = public::IdentityV1::Known {
+        card_id: source.card_def,
+    };
+    Ok(root)
+}
 pub(crate) fn counters(s: &GameState, id: ObjectId) -> Result<CountersV72, String> {
     let o = s.objects.get(id);
     let crate::state::Counters {
@@ -368,7 +380,7 @@ pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV72, String> {
                     observers: d
                         .observers
                         .iter()
-                        .map(|c| root(s, *c, v))
+                        .map(|c| discard_observer(s, at, *c, v))
                         .collect::<Result<_, _>>()?,
                 });
             }
@@ -393,7 +405,7 @@ pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV72, String> {
                         out.triggers.push(TriggerV72 {
                             discard: discard_map[&(at as u64)],
                             observer: ord(observer)?,
-                            source: root(s, *c, v)?,
+                            source: discard_observer(s, at, *c, v)?,
                             stage: StageV72::Held,
                             native_position: Some(ord(position)?),
                             stashed: None,
@@ -463,8 +475,9 @@ pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV72, String> {
                 out.triggers.push(TriggerV72 {
                     discard: discard_map[discard],
                     observer: *observer,
-                    source: root(
+                    source: discard_observer(
                         s,
+                        usize::try_from(*discard).map_err(|_| "V72 discard index width")?,
                         item.v4
                             .ability_source_contract
                             .ok_or("V72 source missing")?,

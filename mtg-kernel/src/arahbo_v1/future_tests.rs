@@ -428,3 +428,40 @@ fn genuine_garruk_and_arahbo_rows_publish_independently_of_authority_leaf() {
         assert_eq!(state.players[actor.index()].hand.len(), hand + 1);
     }
 }
+
+#[test]
+fn observation_proofs_give_the_full_checks_errors_for_later_violations() {
+    use crate::event_history_v1::{proof_tests_v1, ProvedV1};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        cast(&mut state, actor);
+        let cat = put(&mut state, actor, "Savannah Lions", Zone::Hand);
+        crate::event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(cat, Zone::Battlefield),
+        );
+        crate::entry_observations_v1::tests_v1::violations_after_proof(
+            &state,
+            ProvedV1::ArahboObservations,
+            validate_state,
+            &catalog(),
+            |event, at| {
+                if let CommittedEvent::ArahboEntryObservationV1 { entry, .. } = event {
+                    entry.entry_history_index = at;
+                }
+            },
+        );
+        // The game goes on from the proof, and the test build checks each
+        // validation that uses one against the full check.
+        let uses = proof_tests_v1::uses();
+        settle(&mut state);
+        let other = put(&mut state, actor, "Savannah Lions", Zone::Hand);
+        crate::event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(other, Zone::Battlefield),
+        );
+        settle(&mut state);
+        assert!(proof_tests_v1::uses() > uses);
+        validate_state(&state).unwrap();
+    }
+}

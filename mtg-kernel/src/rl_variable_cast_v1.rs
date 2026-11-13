@@ -1,5 +1,5 @@
 //! Wide variable-cast semantics. Executable actions remain crate private.
-use crate::engine::{self, Action, Decision};
+use crate::engine::{Action, Decision};
 use crate::policy_observation_variable_cast_v1::{variable_cast_context, VariableCastContextV1};
 use crate::policy_surface_v5::{PolicyActionV5, PolicyDecisionV5, PolicySurfaceV5};
 use crate::rl::{ActionSemanticV1, CardStableRefV1, PlayerSeatV1, RlContractError};
@@ -276,7 +276,8 @@ pub(crate) fn candidates_kaito_v75(
     surface: &PolicySurfaceV5,
     decision: &PolicyDecisionV5,
 ) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
-    crate::kaito_observation_v75::validate_state(state).map_err(RlContractError)?;
+    crate::kaito_observation_v75::validate_state_scoped(state, surface.limited_appendix_v1())
+        .map_err(RlContractError)?;
     candidates_current_scope_kaito_v75(
         state,
         surface,
@@ -594,45 +595,16 @@ fn candidates_current_scope_inner_v68(
                     );
                 }
                 for &id in mana_abilities {
-                    let choices = engine::available_mana_ability_choices(*player, id, state);
-                    for &choice in &choices {
-                        let cost_targets = engine::mana_ability_cost_targets_for_choice(
-                            *player, id, choice, state,
-                        );
-                        if cost_targets.is_empty() {
-                            predecessor(
-                                &mut raw,
-                                ActionSemanticV1::ActivateManaAbility {
-                                    actor,
-                                    source: crate::rl::card_ref(state, id)?,
-                                    mana_choice: Some(choice),
-                                    cost_target: None,
-                                },
-                                if choices.len() == 1 {
-                                    Action::ActivateManaAbility(id)
-                                } else {
-                                    Action::ActivateManaAbilityChoice(id, choice)
-                                },
-                            );
-                        } else {
-                            for &cost_target in &cost_targets {
-                                predecessor(
-                                    &mut raw,
-                                    ActionSemanticV1::ActivateManaAbility {
-                                        actor,
-                                        source: crate::rl::card_ref(state, id)?,
-                                        mana_choice: Some(choice),
-                                        cost_target: Some(crate::rl::card_ref(state, cost_target)?),
-                                    },
-                                    Action::ActivateManaAbilityWithCostTarget(
-                                        id,
-                                        choice,
-                                        cost_target,
-                                    ),
-                                );
-                            }
-                        }
-                    }
+                    crate::rl::for_each_mana_action(
+                        state,
+                        *player,
+                        actor,
+                        id,
+                        |semantic, action| {
+                            predecessor(&mut raw, semantic, action);
+                            Ok(())
+                        },
+                    )?;
                 }
                 for &id in land_drops {
                     predecessor(
@@ -684,7 +656,11 @@ fn candidates_current_scope_inner_v68(
                 predecessor(&mut raw, ActionSemanticV1::Pass { actor }, Action::Pass);
             } else {
                 let old = if selected_scope == Some(crate::rl::CommonProjectionScopeV42::KaitoV75) {
-                    crate::rl::core_policy_action_candidates_kaito_v75(decision, state)?
+                    crate::rl::core_policy_action_candidates_kaito_scoped_v75(
+                        decision,
+                        state,
+                        surface.limited_appendix_v1(),
+                    )?
                 } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::ChandraV74) {
                     crate::rl::core_policy_action_candidates_chandra_v74(decision, state)?
                 } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::LilianaV73) {

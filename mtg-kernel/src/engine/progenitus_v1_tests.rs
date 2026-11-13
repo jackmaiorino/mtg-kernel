@@ -6,7 +6,7 @@ const NAME: &str = "Progenitus";
 fn id(name: &str) -> u16 {
     card_def::card_id_by_name(name).unwrap()
 }
-fn ready(p: PlayerId, hidden: &str) -> GameState {
+pub(crate) fn ready(p: PlayerId, hidden: &str) -> GameState {
     let library = [id("Forest"); 80];
     let other = [id(hidden); 80];
     let (a, b) = if p == PlayerId::P0 {
@@ -44,7 +44,7 @@ fn next(s: &mut GameState) -> Decision {
     assert!(!matches!(d, Decision::Halted { .. }), "{d:?}");
     d
 }
-fn pass(s: &mut GameState, d: Decision) {
+pub(crate) fn pass(s: &mut GameState, d: Decision) {
     let action = match d {
         Decision::CastSpellOrPass { .. } => Action::Pass,
         Decision::DeclareAttackers { .. } => Action::DeclareAttackers(vec![]),
@@ -101,7 +101,7 @@ fn priority(s: &mut GameState, p: PlayerId) {
     }
     panic!("actor priority absent");
 }
-fn finish(s: &mut GameState) {
+pub(crate) fn finish(s: &mut GameState) {
     for _ in 0..64 {
         let d = next(s);
         if matches!(d, Decision::CastSpellOrPass { .. })
@@ -115,7 +115,7 @@ fn finish(s: &mut GameState) {
     }
     panic!("native stack unfinished");
 }
-fn tapped(s: &GameState, p: PlayerId) -> usize {
+pub(crate) fn tapped(s: &GameState, p: PlayerId) -> usize {
     s.players[p.index()]
         .battlefield
         .iter()
@@ -205,7 +205,7 @@ fn pay(
     }
     panic!("selected cast not paid");
 }
-fn cast(
+pub(crate) fn cast(
     s: &mut GameState,
     p: PlayerId,
     name: &str,
@@ -230,7 +230,7 @@ fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
     assert_eq!((effective_power(s, c), effective_toughness(s, c)), (10, 10));
     c
 }
-fn primitive_top(s: &mut GameState, p: PlayerId, names: &[&str]) -> Vec<ObjectId> {
+pub(crate) fn primitive_top(s: &mut GameState, p: PlayerId, names: &[&str]) -> Vec<ObjectId> {
     // Explicit native initial-library ordering operand, never a legal rearrange claim.
     let added = names
         .iter()
@@ -440,16 +440,30 @@ fn genuinely_paid_tutelage_draw_mixed_progenitus_pair_stops_after_actual_public_
             finish(&mut r);
             assert_eq!(s, r);
             assert!(s.engine.halted.is_none());
+            let batches = s
+                .engine
+                .event_history
+                .iter()
+                .enumerate()
+                .skip(start)
+                .filter(|(_, e)| {
+                    matches!(e, event::CommittedEvent::SphinxsTutelageMillBatchV1 { .. })
+                })
+                .map(|(index, _)| index)
+                .collect::<Vec<_>>();
+            assert_eq!(batches.len(), 1);
+            let outcome = event::tutelage_public_outcome_v1(&s, batches[0], p.opponent())
+                .unwrap()
+                .unwrap();
+            assert!(!outcome.repeat);
             assert_eq!(
-                s.engine.event_history[start..]
-                    .iter()
-                    .filter(|e| matches!(
-                        e,
-                        event::CommittedEvent::SphinxsTutelageMillBatchV1 { .. }
-                    ))
-                    .count(),
-                1
+                outcome.members.len(),
+                names.iter().filter(|name| **name != NAME).count()
             );
+            assert!(outcome
+                .members
+                .iter()
+                .all(|member| member.zone == Zone::Graveyard && member.card_def != id(NAME)));
             for (i, name) in names.iter().enumerate() {
                 assert_eq!(
                     s.objects.get(top[i]).zone,

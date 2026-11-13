@@ -598,9 +598,10 @@ fn discard(state: &GameState, index: u64) -> Result<&DiscardV72, String> {
     if live.owner != d.card.owner || live.zone_change_count < d.outcome.expected_zone_change_count {
         return Err("Tinybones discarded physical owner/generation changed".into());
     }
-    validate_historical_ability_source_contract(state, d.card)?;
+    let at = usize::try_from(index).map_err(|_| "Tinybones discard history index width")?;
+    crate::sampled_history_v1::validate_source(state, at, d.card)?;
     for &source in &d.observers {
-        validate_historical_ability_source_contract(state, source)?;
+        crate::sampled_history_v1::validate_source(state, at, source)?;
     }
     Ok(d)
 }

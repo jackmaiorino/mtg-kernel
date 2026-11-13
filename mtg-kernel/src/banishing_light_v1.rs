@@ -351,7 +351,7 @@ pub(crate) fn record_install(state: &mut GameState, record: LinkedExileRecordV4,
     if !owns_definition(record.source.card_def) {
         return;
     }
-    let actual=state.engine.event_history[start..].iter().position(|event|
+    let actual=state.engine.event_history.range_v2(start..).iter().position(|event|
         matches!(event,CommittedEvent::ZoneChange {object,from:Zone::Battlefield,to:Zone::Exile,..}
             if *object==record.exiled)).map(|offset|start+offset);
     if let Some(actual) = actual {
@@ -376,11 +376,11 @@ pub(crate) fn record_expiry(
         return;
     }
     let departure=validate_source(state,record.source).ok().and_then(|entry| {
-        state.engine.event_history[entry+1..start].iter().position(|event|
+        state.engine.event_history.range_v2(entry+1..start).iter().position(|event|
             matches!(event,CommittedEvent::ZoneChange {object,from:Zone::Battlefield,..} if *object==record.source.source))
             .map(|offset|entry+1+offset)
     });
-    let returned=state.engine.event_history[start..].iter().position(|event|
+    let returned=state.engine.event_history.range_v2(start..).iter().position(|event|
         matches!(event,CommittedEvent::ZoneChange {object,from:Zone::Exile,to:Zone::Battlefield,..}
             if *object==record.exiled)).map(|offset|start+offset);
     if let Some(departure) = departure {
@@ -553,7 +553,7 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
                         if finished_at<=*removed_at {return Err("Banishing completion preceded actual removal".into())}
                         if let RemovalV1::Resolving {source_present:true,target_legal:true}=outcome {
                             let crate::state::Target::Object(target)=item.targets[0] else {return Err("Banishing target is not a permanent".into())};
-                            for (offset,event) in state.engine.event_history[removed_at+1..finished_at].iter().enumerate() {
+                            for (offset,event) in state.engine.event_history.range_v2(removed_at+1..finished_at).iter().enumerate() {
                                 if matches!(event,CommittedEvent::ZoneChange {object,from:Zone::Battlefield,to:Zone::Exile,..} if *object==target) {
                                     let actual=removed_at+1+offset;
                                     let installs=state.engine.event_history.scan_for_v1(&[EventKindV1::BanishingLinkInstalledV1]).iter().filter(|event|matches!(event,
@@ -578,7 +578,7 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
                     object,from:Zone::Battlefield,to:Zone::Exile,..}) if *object==record.exiled) {
                     return Err("Banishing link lost its actual successful exile".into());
                 }
-                let original = state.engine.event_history[..exile].iter().rev().find_map(|event| {
+                let original = state.engine.event_history.range_v2(..exile).iter().rev().find_map(|event| {
                     let CommittedEvent::BanishingRemovedV1 {item,outcome:RemovalV1::Resolving {source_present:true,target_legal:true}}=event else {return None};
                     (item.v4.ability_source_contract==Some(record.source) && item.targets.first()==Some(&crate::state::Target::Object(record.exiled)))
                         .then_some(item.as_ref())
@@ -603,7 +603,7 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
                     [(expired_at,departure,returned,reason)] if *expired_at>at && active==0 && ceased==0=> {
                         let departure=usize::try_from(*departure).map_err(|_|"departure index exceeds usize")?;
                         let original_entry=validate_source(state,record.source)?;
-                        let first_departure=state.engine.event_history[original_entry+1..*expired_at].iter().position(|event|
+                        let first_departure=state.engine.event_history.range_v2(original_entry+1..*expired_at).iter().position(|event|
                             matches!(event,CommittedEvent::ZoneChange {object,from:Zone::Battlefield,..} if *object==record.source.source))
                             .map(|offset|original_entry+1+offset);
                         if first_departure!=Some(departure) || departure>=*expired_at || !matches!(state.engine.event_history.get(departure),
@@ -633,7 +633,7 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
                                         return Err("Banishing no-host expiry changed independent original owner choice".into())
                                     }
                                 },
-                                Some(NoReturnV1::RecipientDeparted) if state.engine.event_history[exile+1..departure].iter().any(|event|matches!(event,
+                                Some(NoReturnV1::RecipientDeparted) if state.engine.event_history.range_v2(exile+1..departure).iter().any(|event|matches!(event,
                                     CommittedEvent::ZoneChange {object,from:Zone::Exile,..} if *object==record.exiled))=>{},
                                 _=>return Err("Banishing expiry skipped a live exact exile recipient".into()),
                             }
@@ -645,13 +645,13 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
             CommittedEvent::BanishingAuraHostsCapturedV1 {choice} => {
                 validate_source(state, choice.link.source)?;
                 if choice.original_candidates.is_empty() {
-                    if state.engine.event_history[at+1..].iter().filter(|event| matches!(event,
+                    if state.engine.event_history.range_v2(at+1..).iter().filter(|event| matches!(event,
                         CommittedEvent::BanishingLinkExpiredV1 {
                             record, no_return_reason: Some(NoReturnV1::AuraNoLegalHost {capture_history_index}), ..
                         } if *record==choice.link && usize::try_from(*capture_history_index).ok()==Some(at))).count()!=1 {
                         return Err("Banishing original no-host capture lost its unique terminal expiry".into())
                     }
-                } else if state.engine.event_history[at+1..].iter().filter(|event| matches!(event,
+                } else if state.engine.event_history.range_v2(at+1..).iter().filter(|event| matches!(event,
                     CommittedEvent::BanishingAuraHostChosenV1 {capture_history_index,..}
                         if usize::try_from(*capture_history_index).ok()==Some(at))).count()!=1 {
                     return Err("Banishing original Aura capture lost its unique owner answer".into())
@@ -666,7 +666,7 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
                 if capture>=returned || returned>=at || !choice.original_candidates.contains(host)
                     || !matches!(state.engine.event_history.get(returned),Some(CommittedEvent::ZoneChange {
                         object,from:Zone::Exile,to:Zone::Battlefield,..}) if *object==choice.aura.object)
-                    || state.engine.event_history[at+1..].iter().filter(|event|matches!(event,
+                    || state.engine.event_history.range_v2(at+1..).iter().filter(|event|matches!(event,
                         CommittedEvent::BanishingLinkExpiredV1 {record,return_history_index:Some(original),no_return_reason:None,..}
                             if *record==choice.link && *original==*return_history_index)).count()!=1 {
                     return Err("Banishing Aura answer lost actual unique immediate return/expiry".into())
@@ -679,13 +679,13 @@ pub fn validate_state(state: &GameState) -> Result<(), String> {
             CommittedEvent::BanishingRemovedV1 {..} | CommittedEvent::BanishingFinishedV1 {..} => {
                 let id=match event {CommittedEvent::BanishingRemovedV1 {item,..}=>item.v4.stack_item_id,
                     CommittedEvent::BanishingFinishedV1 {stack_item_id}=>*stack_item_id,_=>unreachable!()};
-                if state.engine.event_history[..at].iter().filter(|event|matches!(event,
+                if state.engine.event_history.range_v2(..at).iter().filter(|event|matches!(event,
                     CommittedEvent::BanishingPublishedV1 {item} if item.v4.stack_item_id==id)).count()!=1 {
                     return Err("Banishing removal/closure has no original publication".into())
                 }
             },
             CommittedEvent::BanishingLinkExpiredV1 {record,..} | CommittedEvent::BanishingRecipientCeasedV1 {record} => {
-                if state.engine.event_history[..at].iter().filter(|event|matches!(event,
+                if state.engine.event_history.range_v2(..at).iter().filter(|event|matches!(event,
                     CommittedEvent::BanishingLinkInstalledV1 {record:original,..} if original==record)).count()!=1 {
                     return Err("Banishing expiry/cease has no original installation".into())
                 }

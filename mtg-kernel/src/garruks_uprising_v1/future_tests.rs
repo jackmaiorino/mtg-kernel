@@ -533,3 +533,35 @@ fn actual_simultaneous_dwynen_entries_retain_mandatory_draws_through_legend_choi
         );
     }
 }
+
+#[test]
+fn observation_proofs_give_the_full_checks_errors_for_later_violations() {
+    use crate::event_history_v1::{proof_tests_v1, ProvedV1};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        cast(&mut state, actor, "Garruk's Uprising", 1, 2);
+        let large = put(&mut state, actor, "Myr Enforcer", Zone::Hand);
+        crate::event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(large, Zone::Battlefield),
+        );
+        crate::entry_observations_v1::tests_v1::violations_after_proof(
+            &state,
+            ProvedV1::GarrukObservations,
+            validate_state,
+            &catalog(),
+            |event, at| {
+                if let CommittedEvent::GarrukEntryObservationV1 { entry, .. } = event {
+                    entry.entry_history_index = at;
+                }
+            },
+        );
+        // The game goes on from the proof, and the test build checks each
+        // validation that uses one against the full check.
+        let uses = proof_tests_v1::uses();
+        settle(&mut state);
+        cast(&mut state, actor, "Myr Enforcer", 0, 7);
+        assert!(proof_tests_v1::uses() > uses);
+        validate_state(&state).unwrap();
+    }
+}

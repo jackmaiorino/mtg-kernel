@@ -49,6 +49,10 @@ pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
         Some(GOBLIN_PILEDRIVER) => ManaColor::U,
         Some(KNIGHT_OF_STROMGALD) => ManaColor::W,
         Some(MYSTIC_ENFORCER) => ManaColor::B,
+        // Tourach, Dread Cantor: "Protection from white" (wave S1b).
+        Some("Tourach, Dread Cantor") => ManaColor::W,
+        // Archon of Absolution: "Protection from white" (wave S1j).
+        Some(crate::eternal_sideboard_s1j_v1::ARCHON_OF_ABSOLUTION) => ManaColor::W,
         _ => return 0,
     };
     let name = definition_name(state, host).unwrap_or_default();
@@ -71,8 +75,13 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
         return Keywords::NONE;
     }
     let controller = live.controller;
-    // Vintara Snapper's conditional shroud (wave P2b).
-    let mut keywords = crate::eternal_premodern_p2b_v1::statics::granted_keywords(state, object);
+    // Vintara Snapper's conditional shroud (wave P2b), Lurking Skirge's
+    // flying (wave P3f), a suspend cast's haste (wave S1e) and a Ghost
+    // Vacuum Spirit's flying counter (wave S1g).
+    let mut keywords = crate::eternal_premodern_p2b_v1::statics::granted_keywords(state, object)
+        | crate::eternal_premodern_p3f_v1::granted_keywords(state, object)
+        | crate::eternal_sideboard_s1e_v1::granted_keywords(state, object)
+        | crate::eternal_sideboard_s1g_v1::granted_keywords(state, object);
     if crate::engine::has_effective_subtype(state, object, Subtype::Goblin)
         && active_permanents(state, GOBLIN_WARCHIEF, Some(controller))
             .next()
@@ -425,7 +434,12 @@ pub(crate) fn land_type_setter(
 /// Split cards (708): Fire // Ice. The second half is cast as the card's
 /// Adventure form, and goes to the graveyard as it resolves.
 pub(crate) fn split_card(name: &str) -> bool {
-    name == FIRE_ICE || name == crate::eternal_premodern_p2c_v1::LIFE_DEATH
+    // Wave S1d's overload cards share the second-form machinery; Rough //
+    // Tumble (sideboard wave S1a) is split the same way.
+    name == FIRE_ICE
+        || name == crate::eternal_premodern_p2c_v1::LIFE_DEATH
+        || crate::eternal_sideboard_s1d_v1::statics::is_overload(name)
+        || name == crate::eternal_sideboard_s1a_v1::ROUGH_TUMBLE
 }
 
 /// The split card spell `item`'s half: `true` for the second.
@@ -449,6 +463,10 @@ pub(crate) fn split_spell_mana_value(state: &GameState, item: &StackItem) -> Opt
     let def = definition(state, item.source)?;
     if !split_card(def.name) || item.kind != StackItemKind::Spell {
         return None;
+    }
+    // Overload (702.96) changes the cost, not the mana value (118.9c).
+    if crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name) {
+        return Some(def.mana_value);
     }
     let cost = if second_half(state, item)? {
         def.adventure.as_ref()?.cost

@@ -6,10 +6,10 @@
 //!            [seed=] [collection_workers=] [max_batch_mebibytes=]
 //!            [max_prepared_tensor_mebibytes=]
 //!        s_update_fixture_v1 command fixture=<dir> batch=initial|warmed
-//!            path=serial|prepared [workers=] out=<new dir>
+//!            path=serial|prepared [workers=] [verified_replay_tape_bytes=] out=<new dir>
 //!        s_update_fixture_v1 verify fixture=<dir> batch=initial|warmed result=<update.json>
 //!        s_update_fixture_v1 bench fixture=<dir> batch=initial|warmed
-//!            path=serial|prepared [workers=] [reps=] out=<new dir>
+//!            path=serial|prepared [workers=] [verified_replay_tape_bytes=] [reps=] out=<new dir>
 
 mtg_kernel::fast_global_allocator!();
 

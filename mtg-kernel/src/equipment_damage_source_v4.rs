@@ -395,7 +395,7 @@ fn before_departure_with_waiting(
     if state.engine.event_history.scan_for_v1(&[EventKindV1::EquipmentDamageDepartureV4]).iter().enumerate().any(|(index,event)|matches!(event,
         CommittedEvent::EquipmentDamageDepartureV4 {departure} if departure.facts.source.source==id
             && departure.snapshot.zone_change_count==live.zone_change_count
-            && !state.engine.event_history[index+1..].iter().any(|e|matches!(e,CommittedEvent::ZoneChange {object,..} if *object==id))))
+            && !state.engine.event_history.range_v2(index+1..).iter().any(|e|matches!(e,CommittedEvent::ZoneChange {object,..} if *object==id))))
     {return;}
     let index = u32::try_from(state.engine.event_history.len())
         .expect("bounded equipment departure history");
@@ -449,7 +449,10 @@ fn departure(state: &GameState, index: u32) -> Result<&DepartureV4, String> {
         || d.snapshot.owner != s.owner
         || d.snapshot.controller != s.controller
         || d.snapshot.zone_change_count != s.zone_change_count
-        || !state.engine.event_history[index as usize + 1..]
+        || !state
+            .engine
+            .event_history
+            .range_v2(index as usize + 1..)
             .iter()
             .any(|e| {
                 matches!(e,
@@ -571,7 +574,7 @@ fn prepared(state: &GameState, id: StackItemId) -> Result<&PreparationV4, String
     match (r.departure, r.snapshot.as_ref()) {
         (Some(index), None) => {
             let d = departure(state, index)?;
-            if index>=r.index || d.facts!=r.facts || !state.engine.event_history[index as usize+1..r.index as usize]
+            if index>=r.index || d.facts!=r.facts || !state.engine.event_history.range_v2(index as usize+1..r.index as usize)
                 .iter().any(|e|matches!(e,CommittedEvent::ZoneChange {object,from:Zone::Battlefield,..} if *object==source.source)) {
                 return Err("equipment preparation preceded source departure".into());
             }

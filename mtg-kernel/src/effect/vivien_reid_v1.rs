@@ -292,6 +292,15 @@ fn at(state: &GameState, index: u64) -> Result<&JournalV1, String> {
         _ => Err("Vivien original journal absent".into()),
     }
 }
+pub(crate) fn archived_sources_v1(event: &E) -> Vec<AbilitySourceContractV4> {
+    match event {
+        E::VivienReidV1 { journal } => match journal.as_ref() {
+            JournalV1::Payment { input } => vec![input.source],
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
 pub(crate) fn record_input(
     state: &mut GameState,
     p: &crate::engine::PendingActivation,
@@ -464,7 +473,8 @@ fn validate_payment(state: &GameState, p: &PaymentV1) -> Result<(), String> {
     {
         return Err("Vivien original paid source/choice changed".into());
     }
-    crate::engine::validate_historical_ability_source_contract(state, p.source)?;
+    let at = usize::try_from(p.index).map_err(|_| "Vivien payment history index width")?;
+    crate::sampled_history_v1::validate_source(state, at, p.source)?;
     let delta = [1, -3, -8][p.pending.ability_index as usize];
     if delta < 0 && p.before.checked_sub((-delta) as u32) != Some(p.after)
         || delta > 0 && p.after <= p.before
@@ -909,7 +919,12 @@ fn public_facts_counter_scope_v72(
         }
         activations.push(ActivationV70 {
             occurrence,
-            source: public::root(state, input.source, Some(viewer))?,
+            source: public::archived_root(
+                state,
+                usize::try_from(input.index).map_err(|_| "Vivien payment history index width")?,
+                input.source,
+                Some(viewer),
+            )?,
             ability_index: input.pending.ability_index,
             loyalty_before: input.before,
             loyalty_after: input.after,

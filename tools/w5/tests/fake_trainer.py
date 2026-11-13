@@ -82,7 +82,8 @@ def main():
             (a / 'collect').mkdir(parents=True, exist_ok=True)  # a partial attempt, as a crash leaves one
             return 1
         # An S source at its initial train state has no checkpoint; `s_learner.initial` pins it (s_learner_v1.rs).
-        pinned = source['checkpoint'] or source['s_learner']['initial']
+        # A fresh net-8 start has neither: the play import (the fresh-initialization parameters) is the pin.
+        pinned = source['checkpoint'] or (source.get('s_learner') or {}).get('initial') or source['play_import']
         assert h(pinned['path']) == pinned['sha256'], 'source differs'
         # A named opponent with a checkpoint (a CG ladder member): its pin is checked, as the native collection
         # boundary does, and its hash enters the output checkpoint, so a chain's states depend on its roster.

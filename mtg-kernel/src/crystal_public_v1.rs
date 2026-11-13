@@ -665,7 +665,8 @@ pub(crate) fn parts_for_common_scope_with_common(
     );
 
     validate_state(state).map_err(RlContractError)?;
-    let project_menu = !menu_owned_by_chandra_scope(state, Some(scope))
+    let project_menu = !crate::drakuseth_consumer_v1::owns_damage_menu(state, surface)
+        && !menu_owned_by_chandra_scope(state, Some(scope))
         && !crate::twinflame_observation_v1::owns_family_menu(state);
     let optional_discard_menu = if project_menu {
         discard_menu_fake_scoped_v50(state, actor, true, accept_fake)?

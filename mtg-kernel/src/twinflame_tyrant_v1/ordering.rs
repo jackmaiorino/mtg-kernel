@@ -382,7 +382,10 @@ pub(crate) fn preparation_at<'a>(
     until: usize,
 ) -> Result<Option<&'a PreparationV38>, String> {
     use crate::event::CommittedEvent as E;
-    let mut preparations = state.engine.event_history[..until]
+    let mut preparations = state
+        .engine
+        .event_history
+        .range_v2(..until)
         .iter()
         .filter_map(|e| match e {
             E::TwinflameDamagePreparationV38 { preparation }

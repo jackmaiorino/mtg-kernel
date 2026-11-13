@@ -448,6 +448,10 @@ fn noncombat_action_count(decision: &Decision) -> Result<usize, String> {
         Decision::ChooseEntryColorV36 { .. } => {
             Err("Banner entry color is outside the frozen H2 benchmark surface".into())
         }
+        Decision::ChooseEternalOpeningV1 { .. } | Decision::ChooseMeddlingMageNameV1 { .. } => Err(
+            "Eternal opening and Meddling Mage naming are outside the frozen H2 benchmark surface"
+                .into(),
+        ),
         Decision::ChooseVariableCastTargets { .. } | Decision::ChooseVariableCastKicker { .. } => {
             Err("variable cast selection is outside the frozen H2 benchmark surface".into())
         }
@@ -544,6 +548,12 @@ fn noncombat_action_by_index(decision: &Decision, index: usize) -> Result<Action
         }
         Decision::ChooseEntryColorV36 { .. } => {
             return Err("Banner entry color is outside the frozen H2 benchmark surface".into());
+        }
+        Decision::ChooseEternalOpeningV1 { .. } | Decision::ChooseMeddlingMageNameV1 { .. } => {
+            return Err(
+                "Eternal opening and Meddling Mage naming are outside the frozen H2 benchmark surface"
+                    .into(),
+            );
         }
         Decision::ChooseVariableCastTargets { .. } | Decision::ChooseVariableCastKicker { .. } => {
             return Err(

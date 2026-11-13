@@ -294,6 +294,12 @@ pub(crate) fn extra_land_candidates(state: &GameState, player: PlayerId) -> Vec<
 /// Stonecoil Serpent's "protection from multicolored".
 pub(crate) fn has_protection_from_multicolored(state: &GameState, object: ObjectId) -> bool {
     active_named(state, object, STONECOIL_SERPENT)
+        // Argentum Masticore (wave S1c).
+        || active_named(
+            state,
+            object,
+            crate::eternal_sideboard_s1c_v1::ARGENTUM_MASTICORE,
+        )
 }
 
 /// Whether `source` is multicolored.

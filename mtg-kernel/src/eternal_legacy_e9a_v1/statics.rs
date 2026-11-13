@@ -247,7 +247,7 @@ pub(crate) fn split_second_active(state: &GameState) -> bool {
                 .objects
                 .try_get(item.source)
                 .is_some_and(|live| live.zone == Zone::Stack && live.card_def == legolas)
-    })
+    }) || crate::eternal_sideboard_s1b_v1::extirpate_on_stack(state)
 }
 
 /// Orim's Chant: "Target player can't cast spells this turn." and split
@@ -269,10 +269,17 @@ fn performed_without_stack(state: &GameState, source: ObjectId, index: u8) -> bo
         || crate::eternal_legacy_e7a_v1::is_special_activation(state, source, index)
 }
 
-/// Split second: whether it keeps `source`'s ability `index` from being
-/// activated now.
-pub(crate) fn split_second_blocks(state: &GameState, source: ObjectId, index: u8) -> bool {
-    split_second_active(state) && !performed_without_stack(state, source, index)
+/// Split second, and Abeyance (Premodern wave P3d): whether they keep
+/// `player` from activating `source`'s ability `index` now. Both allow mana
+/// abilities and special actions.
+pub(crate) fn activation_blocked(
+    state: &GameState,
+    player: PlayerId,
+    source: ObjectId,
+    index: u8,
+) -> bool {
+    (split_second_active(state) || crate::eternal_premodern_p3d_v1::abeyance_active(state, player))
+        && !performed_without_stack(state, source, index)
 }
 
 /// Activation restrictions: Cephalid Coliseum's threshold ("Activate only if
@@ -286,6 +293,8 @@ pub(crate) fn activation_allowed(
     ability_index: usize,
 ) -> bool {
     match (name, ability_index) {
+        // Perilous Snare's "Max speed" ability (wave S1b).
+        ("Perilous Snare", 0) => crate::eternal_sideboard_s1b_v1::max_speed(state, source),
         (CEPHALID_COLISEUM, 0) => {
             let controller = state.objects.get(source).controller;
             crate::effect::controller_graveyard_card_count(state, controller) >= 7
@@ -420,6 +429,12 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
     // Putrid Imp's threshold (wave P2c).
     let imp = crate::eternal_premodern_p2c_v1::statics::controlled_boost(state, object);
     boost = (boost.0 + imp.0, boost.1 + imp.1);
+    // Engineered Plague's chosen type (wave P3b).
+    let plague = crate::eternal_premodern_p3b_v1::statics::plague_boost(state, object);
+    boost = (boost.0 + plague.0, boost.1 + plague.1);
+    // Contagion's -2/-1 counters (wave P3f).
+    let counters = crate::eternal_premodern_p3f_v1::counter_boost(state, object);
+    boost = (boost.0 + counters.0, boost.1 + counters.1);
     if active_named(state, object, KNIGHT_OF_THE_RELIQUARY) {
         let lands = graveyard_lands(state, controller);
         boost.0 += lands;
@@ -440,8 +455,13 @@ pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
     // Printed protection from a color (wave P1a).
     let printed = crate::eternal_premodern_p1a_v1::statics::protection_mask(state, host)
         | crate::eternal_premodern_p2d_v1::statics::protection_mask(state, host)
-        | crate::eternal_premodern_p2c_v1::statics::protection_mask(state, host);
-    printed | granted_protection_mask(state, host)
+        | crate::eternal_premodern_p2c_v1::statics::protection_mask(state, host)
+        | crate::eternal_sideboard_s1c_v1::statics::protection_mask(state, host)
+        | crate::eternal_premodern_p3a_v1::statics::protection_mask(state, host)
+        | crate::eternal_premodern_p3c_v1::statics::protection_mask(state, host);
+    // Absolute Law's protection for all creatures (Premodern wave P3e).
+    let law = crate::eternal_premodern_p3e_v1::protection_mask(state, host);
+    printed | law | granted_protection_mask(state, host)
 }
 
 /// Sejiri Steppe's protection until end of turn, as a mask.
@@ -711,8 +731,7 @@ pub(crate) fn has_land_back_face(name: &str) -> bool {
     name == super::SHATTERSKULL_SMASHING || name == super::SUNDERING_ERUPTION
 }
 
-/// Shatterskull Smashing: X may not be so small that its second target
-/// would be dealt no damage.
+/// Shatterskull Smashing: every selected target needs positive damage.
 pub(crate) fn minimum_x(name: &str, targets: &[Target]) -> Option<u8> {
     (name == super::SHATTERSKULL_SMASHING).then(|| super::targets::shatterskull_minimum_x(targets))
 }

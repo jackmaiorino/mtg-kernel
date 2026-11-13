@@ -339,4 +339,4 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "loot_v1_tests.rs"]
-mod tests;
+pub(crate) mod tests;

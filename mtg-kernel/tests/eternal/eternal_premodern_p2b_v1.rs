@@ -1,6 +1,5 @@
 //! Eternal wave P2b: native rules tests for the Premodern cards that
-//! complete Survival and Madness Threshold (and the cards Elves shares with
-//! them).
+//! complete Survival, Madness Threshold and the Elves mainboard.
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
@@ -11,7 +10,10 @@ use mtg_kernel::eternal_premodern_p2b_v1 as p2b;
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
+use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
+use mtg_kernel::rl::{legal_action_candidates_v1, observe_policy_v5, ActionSemanticV1};
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use mtg_kernel::surface::{SurfaceAction, SurfaceDecision};
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
@@ -821,6 +823,301 @@ fn nantuko_vigilante_is_turned_face_up_to_destroy_an_artifact_or_enchantment() {
     assert_eq!(power_toughness(&state, vigilante), (3, 2));
     settle_picking(&mut state, 0, Some(bauble));
     assert_eq!(zone(&state, bauble), Zone::Graveyard);
+}
+
+#[test]
+fn birchlore_projects_each_pair_and_pays_only_with_two_distinct_untapped_elves() {
+    let mut state = islands();
+    let ranger = put(&mut state, P0, "Birchlore Rangers", Zone::Battlefield);
+    let elf = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let other_elf = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let birds = put(&mut state, P0, "Birds of Paradise", Zone::Battlefield);
+    let theirs = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    for object in [ranger, elf, other_elf] {
+        state.objects.get_mut(object).summoning_sick = true;
+    }
+
+    let decision = SurfaceDecision::Decision(next(&mut state));
+    let rows = legal_action_candidates_v1(&decision, &state).unwrap();
+    let pairs = rows
+        .iter()
+        .filter_map(|row| match &row.record.semantic {
+            ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 {
+                source,
+                mana_choice: ManaColor::B,
+                cost_targets,
+                ..
+            } if source.arena_id == ranger.0 => Some(
+                cost_targets
+                    .clone()
+                    .map(|reference| ObjectId(reference.arena_id)),
+            ),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pairs,
+        [[ranger, elf], [ranger, other_elf], [elf, other_elf]]
+    );
+
+    let before = state.state_hash();
+    for pair in [[elf, elf], [ranger, birds], [ranger, theirs]] {
+        let action = Action::ActivateManaAbilityWithTwoCostTargetsV1(ranger, ManaColor::B, pair);
+        assert!(engine::step(&mut state, action).is_err());
+        assert_eq!(state.state_hash(), before);
+    }
+
+    let selected =
+        Action::ActivateManaAbilityWithTwoCostTargetsV1(ranger, ManaColor::B, [ranger, elf]);
+    assert!(rows
+        .iter()
+        .any(|row| row.surface_action == SurfaceAction::Action(selected.clone())));
+    act(&mut state, selected);
+    assert_eq!(mana(&state, P0, ManaColor::B), 1);
+    assert!(state.stack.is_empty());
+    assert!(state.objects.get(ranger).tapped && state.objects.get(elf).tapped);
+    assert!(!state.objects.get(other_elf).tapped);
+    assert!(!state.objects.get(birds).tapped && !state.objects.get(theirs).tapped);
+    let Decision::CastSpellOrPass { mana_abilities, .. } = next(&mut state) else {
+        panic!("expected priority");
+    };
+    assert!(!mana_abilities.contains(&ranger));
+}
+
+#[test]
+fn birchlore_casts_face_down_and_turns_up_for_one_green() {
+    let mut state = islands();
+    let ranger = put(&mut state, P0, "Birchlore Rangers", Zone::Hand);
+    pool(&mut state, P0, &[], 3);
+    act(&mut state, Action::CastSpell(ranger));
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseCastMode { .. } => Action::ChooseCastMode(CastMode::Alternative),
+        other => first_answer(other),
+    });
+    assert!(state.objects.get(ranger).v4.face_down_v1.is_some());
+    assert_eq!(power_toughness(&state, ranger), (2, 2));
+    assert!(!activatable(&mut state, ranger, 255));
+
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    assert!(activatable(&mut state, ranger, 255));
+    act(&mut state, Action::ActivateAbility(ranger, 255));
+    assert!(state.objects.get(ranger).v4.face_down_v1.is_none());
+    assert_eq!(power_toughness(&state, ranger), (1, 1));
+    assert_eq!(mana(&state, P0, ManaColor::G), 0);
+    assert!(state.stack.is_empty());
+}
+
+#[test]
+fn thornscape_pays_each_kicker_separately_and_only_triggers_what_it_paid() {
+    let surface = PolicySurfaceV5::new();
+    for free in [false, true] {
+        for (red, white) in [(false, false), (true, false), (false, true), (true, true)] {
+            let mut state = islands();
+            let battlemage = put(&mut state, P0, "Thornscape Battlemage", Zone::Hand);
+            let artifact = put(&mut state, P1, "Mishra's Bauble", Zone::Battlefield);
+            if free {
+                put(&mut state, P0, "Aluren", Zone::Battlefield);
+                pool(&mut state, P0, &[ManaColor::R, ManaColor::W], 0);
+            } else {
+                pool(
+                    &mut state,
+                    P0,
+                    &[ManaColor::G, ManaColor::R, ManaColor::W],
+                    2,
+                );
+            }
+            act(&mut state, Action::CastSpell(battlemage));
+            assert!(matches!(
+                next(&mut state), Decision::ChooseKicker { spell, .. } if spell == battlemage
+            ));
+            act(&mut state, Action::ChooseKicker(red));
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseEffectOption { source, option_count: 2, .. } if source == battlemage
+            ));
+            let observation = observe_policy_v5(&state, &surface, P0, 0, 0, 0, 1).unwrap();
+            let visible = observation
+                .projection
+                .surface
+                .engine_context
+                .pending_cast
+                .unwrap();
+            assert_eq!(visible.kicked, Some(red));
+            assert_eq!(visible.thornscape_white_kicker_v1, None);
+            act(&mut state, Action::ChooseEffectOption(u16::from(white)));
+            if matches!(next(&mut state), Decision::ChooseEffectOption { source, .. } if source == battlemage)
+            {
+                assert!(free);
+                let observation = observe_policy_v5(&state, &surface, P0, 0, 0, 0, 1).unwrap();
+                let visible = observation
+                    .projection
+                    .surface
+                    .engine_context
+                    .pending_cast
+                    .unwrap();
+                assert_eq!(visible.thornscape_white_kicker_v1, Some(white));
+                act(&mut state, Action::ChooseEffectOption(1));
+            }
+            let Decision::CastSpellOrPass { player, .. } = next(&mut state) else {
+                panic!("expected priority after Thornscape Battlemage was published");
+            };
+            let observation = observe_policy_v5(&state, &surface, player, 0, 0, 0, 1).unwrap();
+            let visible = observation
+                .projection
+                .surface
+                .stack
+                .iter()
+                .find(|row| row.source.arena_id == battlemage.0)
+                .unwrap();
+            let kickers = u8::from(red) | (u8::from(white) << 1);
+            assert_eq!(
+                visible.thornscape_kickers_v1,
+                (kickers != 0).then_some(kickers)
+            );
+
+            settle_with(&mut state, |_, decision| match decision {
+                Decision::ChooseTargets { legal_targets, .. } => {
+                    let target = if legal_targets.contains(&Target::Player(P1)) {
+                        Target::Player(P1)
+                    } else {
+                        assert!(legal_targets.contains(&Target::Object(artifact)));
+                        Target::Object(artifact)
+                    };
+                    Action::ChooseTarget(target)
+                }
+                other => first_answer(other),
+            });
+            assert_eq!(zone(&state, battlemage), Zone::Battlefield);
+            assert_eq!(state.players[P1.index()].life, if red { 18 } else { 20 });
+            assert_eq!(
+                zone(&state, artifact),
+                if white {
+                    Zone::Graveyard
+                } else {
+                    Zone::Battlefield
+                }
+            );
+            assert_eq!(mana(&state, P0, ManaColor::R), u8::from(!red));
+            assert_eq!(mana(&state, P0, ManaColor::W), u8::from(!white));
+        }
+    }
+}
+
+#[test]
+fn birchlore_funds_both_thornscape_kickers_through_original_bindings() {
+    let surface = PolicySurfaceV5::new();
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let ranger = put(&mut state, actor, "Birchlore Rangers", Zone::Battlefield);
+        let elves = [
+            ranger,
+            put(&mut state, actor, "Llanowar Elves", Zone::Battlefield),
+            put(&mut state, actor, "Fyndhorn Elves", Zone::Battlefield),
+            put(&mut state, actor, "Priest of Titania", Zone::Battlefield),
+        ];
+        for elf in elves {
+            state.objects.get_mut(elf).summoning_sick = true;
+        }
+        let forests = [0; 3].map(|_| put(&mut state, actor, "Forest", Zone::Battlefield));
+        let spell = put(&mut state, actor, "Thornscape Battlemage", Zone::Hand);
+        let opponent = actor.opponent();
+        let artifact = put(&mut state, opponent, "Mishra's Bauble", Zone::Battlefield);
+        for (color, pair) in [
+            (ManaColor::R, [elves[0], elves[1]]),
+            (ManaColor::W, [elves[2], elves[3]]),
+        ] {
+            let decision = SurfaceDecision::Decision(next(&mut state));
+            let rows = legal_action_candidates_v1(&decision, &state).unwrap();
+            let row = rows
+                .iter()
+                .find(|row| {
+                    matches!(&row.record.semantic,
+                        ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 {
+                            actor: seat, source, mana_choice, cost_targets
+                        } if *seat == actor.into() && source.arena_id == ranger.0
+                            && *mana_choice == color
+                            && cost_targets.iter().map(|card| card.arena_id).eq(pair.map(|id| id.0))
+                    )
+                })
+                .expect("actual pair and mana color in the public action menu");
+            assert_eq!(
+                row.surface_action,
+                SurfaceAction::Action(Action::ActivateManaAbilityWithTwoCostTargetsV1(
+                    ranger, color, pair,
+                ))
+            );
+            let SurfaceAction::Action(action) = row.surface_action.clone() else {
+                unreachable!();
+            };
+            act(&mut state, action);
+            assert_eq!(mana(&state, actor, color), 1);
+        }
+        assert!(elves.iter().all(|id| state.objects.get(*id).tapped));
+
+        act(&mut state, Action::CastSpell(spell));
+        assert!(
+            matches!(next(&mut state), Decision::ChooseKicker { player, spell: source }
+            if player == actor && source == spell)
+        );
+        act(&mut state, Action::ChooseKicker(true));
+        let white = next(&mut state);
+        assert!(
+            matches!(white, Decision::ChooseEffectOption {player, source, option_count: 2}
+            if player == actor && source == spell)
+        );
+        let checkpoint = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&checkpoint).unwrap();
+        assert_eq!(next(&mut restored), white);
+        for branch in [&mut state, &mut restored] {
+            act(branch, Action::ChooseEffectOption(1));
+            assert!(matches!(next(branch), Decision::CastSpellOrPass { .. }));
+            let observation = observe_policy_v5(branch, &surface, opponent, 0, 0, 0, 1).unwrap();
+            let visible = observation
+                .projection
+                .surface
+                .stack
+                .iter()
+                .find(|row| row.source.arena_id == spell.0)
+                .unwrap();
+            assert_eq!(visible.thornscape_kickers_v1, Some(3));
+            assert!(forests.iter().all(|id| branch.objects.get(*id).tapped));
+            assert_eq!(mana(branch, actor, ManaColor::R), 0);
+            assert_eq!(mana(branch, actor, ManaColor::W), 0);
+            settle_with(branch, |_, decision| match decision {
+                Decision::ChooseTargets { legal_targets, .. }
+                    if legal_targets.contains(&Target::Player(opponent)) =>
+                {
+                    Action::ChooseTarget(Target::Player(opponent))
+                }
+                Decision::ChooseTargets { legal_targets, .. } => {
+                    assert!(legal_targets.contains(&Target::Object(artifact)));
+                    Action::ChooseTarget(Target::Object(artifact))
+                }
+                other => first_answer(other),
+            });
+            assert_eq!(zone(branch, spell), Zone::Battlefield);
+            assert_eq!(zone(branch, artifact), Zone::Graveyard);
+            assert_eq!(branch.players[opponent.index()].life, 18);
+        }
+        assert_eq!(
+            serde_json::to_vec(&state).unwrap(),
+            serde_json::to_vec(&restored).unwrap()
+        );
+    }
+}
+
+#[test]
+fn thornscape_can_enter_from_a_noncast_effect_without_either_kicker() {
+    let mut state = islands();
+    let artifact = put(&mut state, P1, "Mishra's Bauble", Zone::Battlefield);
+    let battlemage = put(&mut state, P0, "Thornscape Battlemage", Zone::Graveyard);
+    enter(&mut state, battlemage);
+    settled(&mut state);
+    assert_eq!(zone(&state, battlemage), Zone::Battlefield);
+    assert_eq!(zone(&state, artifact), Zone::Battlefield);
+    assert_eq!(state.players[P1.index()].life, 20);
 }
 
 #[test]

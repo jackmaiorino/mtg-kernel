@@ -505,7 +505,8 @@ const ROW_CACHE_ROWS_V1: usize = 2048;
 ///
 /// The owner must keep one cache per model and clear it whenever that
 /// model's parameters change; the activation mode is recorded and a change
-/// clears the cache. Only `FrozenPlayPolicyV1` uses it.
+/// clears the cache. Only `FrozenPlayPolicyV1` and its replay storage
+/// (`ReplayForwardRowsV1`) use it.
 #[derive(Default)]
 pub(crate) struct ForwardRowCacheV1 {
     /// The activation mode and arithmetic environment the stored rows were

@@ -4,6 +4,8 @@
 
 This repository is an independent extraction of kernel work formerly developed inside the Mage/XMage tree. Building and running the standalone kernel does not require Java, Maven, or a parent Mage checkout; see the [extraction provenance](docs/archive/EXTRACTION_PROVENANCE.md) for the exact cutover mapping. Running the optional XMage comparison bridge requires its separate Java runtime.
 
+Agents trained here are rated on [Spellbench](https://jackmaiorino.github.io/spellbench/) ([source](https://github.com/jackmaiorino/spellbench)), a cross-engine Magic: The Gathering bot benchmark, and their recorded decisions can be explored in the [Decision Studio](https://jackmaiorino.github.io/mtg-kernel/).
+
 ## Getting started
 
 Run commands from the repository root. Install Rust through `rustup`, the platform's native C/C++ build tools and linker, and **uv 0.11.29**. The repository pins **Rust 1.94.1** in [`rust-toolchain.toml`](rust-toolchain.toml) and **Python 3.13.14** in [`.python-version`](.python-version); `uv` can provision the pinned Python. On Windows, use the Visual Studio C++ build tools; the Bash verification script requires Git Bash.

@@ -106,6 +106,29 @@ impl Hash for StackItemPublicV2 {
             "StackItemPublicV2/granted_ability/v1".hash(state);
             value.hash(state);
         }
+        if let Some(kickers) = self.thornscape_kickers_v1 {
+            "StackItemPublicV2/thornscape_kickers/v1".hash(state);
+            kickers.hash(state);
+        }
+    }
+}
+
+impl Hash for PendingCastSemanticV2 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.source.hash(state);
+        self.controller.hash(state);
+        self.chosen_targets.hash(state);
+        self.is_flashback.hash(state);
+        self.cast_mode.hash(state);
+        self.additional_cost_discarded.hash(state);
+        self.mode_chosen.hash(state);
+        self.origin_zone.hash(state);
+        self.sacrifice_chosen.hash(state);
+        self.kicked.hash(state);
+        if let Some(paid) = self.thornscape_white_kicker_v1 {
+            "PendingCastSemanticV2/thornscape_white_kicker/v1".hash(state);
+            paid.hash(state);
+        }
     }
 }
 
@@ -334,6 +357,7 @@ mod tests {
             counter_distribution: None,
             counter_transfer: None,
             granted_ability: None,
+            thornscape_kickers_v1: None,
         };
         preserves_legacy::<LegacyStackItemPublicV2>(&stack);
         let old_stack_hash = bytes(&stack);

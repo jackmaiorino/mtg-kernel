@@ -1396,6 +1396,10 @@ fn run(
             SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { .. }) => {
                 return Err("unsupported-banner-entry-color-protocol".to_string());
             }
+            SurfaceDecision::Decision(Decision::ChooseEternalOpeningV1 { .. })
+            | SurfaceDecision::Decision(Decision::ChooseMeddlingMageNameV1 { .. }) => {
+                return Err("unsupported-eternal-opening-or-mage-name-protocol".to_string());
+            }
             SurfaceDecision::Decision(Decision::ChooseVariableCastTargets { .. })
             | SurfaceDecision::Decision(Decision::ChooseVariableCastKicker { .. }) => {
                 return Err("unsupported-variable-cast-protocol".to_string());
@@ -1797,6 +1801,8 @@ fn decision_player(d: &SurfaceDecision, state: &GameState) -> Option<PlayerId> {
         | SurfaceDecision::Decision(Decision::ChooseEntryColorV36 { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseEntryCreatureTypeV1 { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseFullRangeCastXValueV59 { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseMeddlingMageNameV1 { player, .. })
+        | SurfaceDecision::Decision(Decision::ChooseEternalOpeningV1 { player, .. })
         | SurfaceDecision::Decision(Decision::ChooseCostTargets { player, .. })
         | SurfaceDecision::Decision(Decision::DeclareAttackers { player, .. })
         | SurfaceDecision::Decision(Decision::DeclareBlockers { player, .. })
@@ -4206,6 +4212,7 @@ mod tests {
             convoke_finished: false,
             escape_exile_finished_v1: false,
             hand_free_cast_v1: None,
+            thornscape_white_kicker_v1: None,
             mandatory_additional_cost: None,
         });
 

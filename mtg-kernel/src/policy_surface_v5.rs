@@ -91,6 +91,8 @@ impl PolicyDecisionV5 {
                     | Decision::ChooseVariableCastKicker { player, .. }
                     | Decision::ChooseEntryColorV36 { player, .. }
                     | Decision::ChooseEntryCreatureTypeV1 { player, .. }
+                    | Decision::ChooseMeddlingMageNameV1 { player, .. }
+                    | Decision::ChooseEternalOpeningV1 { player, .. }
                     | Decision::ChooseOptionalCost { player, .. }
                     | Decision::ChooseSpellCopyPayment { player, .. }
                     | Decision::ChooseSpellCopyRetarget { player, .. }
@@ -330,13 +332,17 @@ impl CombatScanV5 {
     /// met.
     ///
     /// Probing the smallest and the largest completion is exact for the
-    /// current requirements. Attacker legality is monotone in the declared
-    /// set (only omitting a goaded attacker is refused), so the largest
-    /// completion is legal whenever any is. A blocker declaration is legal
-    /// when an attacker's count is zero or reaches its minimum, and every
-    /// count between the two probes is reachable. A future requirement of
-    /// another shape needs `scan_accepts_exactly_the_answers_that_keep_a_
-    /// legal_completion` extended with it.
+    /// current requirements. Without a cost to attack, attacker legality is
+    /// monotone in the declared set (only omitting a required attacker is
+    /// refused), so the largest completion is legal whenever any is. Under
+    /// Archon of Absolution's cost (eternal builds, wave S1j) no attacker is
+    /// required, and a larger declaration costs more and leaves less mana,
+    /// so the smallest completion is legal whenever any is. A blocker
+    /// declaration is legal when an attacker's count is zero or reaches its
+    /// minimum, and every count between the two probes is reachable. A
+    /// future requirement of another shape needs `scan_accepts_exactly_the_
+    /// answers_that_keep_a_legal_completion` (or, for the cost, the S1j
+    /// eternal tests) extended with it.
     fn answer_keeps_a_legal_completion(
         &self,
         state: &GameState,
@@ -376,12 +382,91 @@ impl CombatScanV5 {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum LimitedAppendixV1 {
+    #[default]
+    Legacy,
+    Artist,
+    Niv,
+    ChosenType,
+    Drakuseth,
+    Embercleave,
+    Zimone,
+    Omniscience,
+    Tutelage,
+    Mixed,
+    Moon,
+    LeylineAxe,
+    Progenitus,
+    Aberration,
+    Lathril,
+    Electroduplicate,
+    Edict,
+    Loot,
+    Curator,
+    Kykar,
+    SphinxLore,
+    Greatwurm,
+    Harvester,
+    FiendArtisan,
+    Etali,
+    ThousandYearStorm,
+    FullPool,
+}
+
+impl LimitedAppendixV1 {
+    pub(crate) fn includes(self, family: Self) -> bool {
+        self == family
+            || (self == Self::FullPool
+                && matches!(
+                    family,
+                    Self::Artist
+                        | Self::Niv
+                        | Self::ChosenType
+                        | Self::Drakuseth
+                        | Self::Embercleave
+                        | Self::Zimone
+                        | Self::Omniscience
+                        | Self::Tutelage
+                        | Self::Moon
+                        | Self::LeylineAxe
+                        | Self::Progenitus
+                        | Self::Aberration
+                        | Self::Lathril
+                        | Self::Electroduplicate
+                        | Self::Edict
+                        | Self::Loot
+                        | Self::Curator
+                        | Self::Kykar
+                        | Self::SphinxLore
+                        | Self::Greatwurm
+                        | Self::Harvester
+                        | Self::FiendArtisan
+                        | Self::Etali
+                        | Self::ThousandYearStorm
+                ))
+            || (self == Self::Mixed
+                && matches!(
+                    family,
+                    Self::Artist
+                        | Self::Niv
+                        | Self::ChosenType
+                        | Self::Drakuseth
+                        | Self::Embercleave
+                        | Self::Zimone
+                        | Self::Omniscience
+                        | Self::Tutelage
+                ))
+    }
+}
+
 #[derive(Clone)]
 pub struct PolicySurfaceV5 {
     inner: HarnessSurfaceV2,
     scan: Option<CombatScanV5>,
     hunter_order_enabled_v45: bool,
     hunter_order_v45: Option<hunter_order_v45::TriggerOrderV45>,
+    limited_appendix_v1: LimitedAppendixV1,
     /// W1 producer (lead ruling 7 (a)): where each presented decision fell
     /// in the committed stream, as (seat, event-history length, observation
     /// journal length), oldest first. A seat's marks bound the batches its
@@ -1017,6 +1102,7 @@ impl PolicySurfaceV5 {
             scan: None,
             hunter_order_enabled_v45: false,
             hunter_order_v45: None,
+            limited_appendix_v1: LimitedAppendixV1::Legacy,
             infoset_marks_v1: Default::default(),
         }
     }
@@ -1030,8 +1116,17 @@ impl PolicySurfaceV5 {
             scan: None,
             hunter_order_enabled_v45: false,
             hunter_order_v45: None,
+            limited_appendix_v1: LimitedAppendixV1::Legacy,
             infoset_marks_v1: Default::default(),
         }
+    }
+
+    pub(crate) fn set_limited_appendix_v1(&mut self, appendix: LimitedAppendixV1) {
+        self.limited_appendix_v1 = appendix;
+    }
+
+    pub(crate) fn limited_appendix_v1(&self) -> LimitedAppendixV1 {
+        self.limited_appendix_v1
     }
 
     pub fn harness_surface(&self) -> &HarnessSurfaceV2 {

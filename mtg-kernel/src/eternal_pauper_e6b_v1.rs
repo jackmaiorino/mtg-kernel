@@ -1523,7 +1523,7 @@ pub(crate) fn protected_from_source(state: &GameState, object: ObjectId, source:
     )
 }
 
-fn protected_from_colors(state: &GameState, object: ObjectId, colors: u8) -> bool {
+pub(crate) fn protected_from_colors(state: &GameState, object: ObjectId, colors: u8) -> bool {
     colors & 0x1f != 0 && protection_mask(state, object) & colors != 0
 }
 

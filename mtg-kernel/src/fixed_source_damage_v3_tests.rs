@@ -17,7 +17,7 @@ fn absent_crystal_catalog_does_not_select_firebrand_history() {
     {
         return;
     }
-    assert!(!enabled());
+    assert!(!firebrand_enabled());
 }
 
 #[test]
@@ -31,7 +31,10 @@ fn future_real_firebrand_counter_primitive_owns_removal_and_refuses_erasure_both
     use crate::policy_observation_v6::tests::{put, ready_state_for};
     for caster in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state_for(caster);
-        assert!(enabled(), "actual future Crystal registration required");
+        assert!(
+            firebrand_enabled(),
+            "actual future Crystal registration required"
+        );
         put(&mut state, caster, "Lightning Bolt", Zone::Hand);
         put(&mut state, caster.opponent(), "Lightning Bolt", Zone::Hand);
         for player in [PlayerId::P0, PlayerId::P1] {

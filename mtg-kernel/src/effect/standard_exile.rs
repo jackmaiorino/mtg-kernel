@@ -471,8 +471,9 @@ fn top_batch_definition(id: u16) -> bool {
             .is_some_and(|d| d.name == "Etali, Primal Storm")
 }
 
-pub(super) fn refuse_top_batch_legacy(state: &GameState) -> Result<(), String> {
-    if crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, top_batch_definition)
+pub(crate) fn refuse_top_batch_legacy(state: &GameState) -> Result<(), String> {
+    if crate::etali_primal_storm_receipts_v1::has_receipts(state)
+        || crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, top_batch_definition)
         || state.objects.iter().any(|(_, o)| {
             matches!(
                 o.zone,
@@ -496,7 +497,7 @@ pub(super) fn top_batch_item(item: &StackItem) -> bool {
     item.inline_effect == Some(EffectOp::ExileTopEachPlayerThenCastV1)
 }
 
-pub(super) fn top_batch_pending(pending: &EffectContinuation) -> bool {
+pub(crate) fn top_batch_pending(pending: &EffectContinuation) -> bool {
     top_batch_item(&pending.resolving_item)
 }
 
@@ -584,7 +585,32 @@ pub(super) fn start_batch(
             .filter_map(|scan| scan.original_library.first().copied())
             .collect::<Vec<_>>();
         // One native batch, not a succession of player-specific transitions.
-        commit_zone_change_batch(&mut staged, &tops, Zone::Exile, false)?;
+        if staged.etali_commit_receipts_v1 {
+            let id = pending.resolving_item.v4.stack_item_id;
+            crate::etali_primal_storm_receipts_v1::record_batch_started(
+                &mut staged,
+                id,
+                tops.len(),
+            )?;
+            for &top in &tops {
+                validate_effect_object_binding(&staged, top)?;
+            }
+            event::propose_and_commit_batch(
+                &mut staged,
+                tops.iter()
+                    .map(|top| {
+                        crate::etali_primal_storm_receipts_v1::exile_proposal(top.object, id)
+                    })
+                    .collect(),
+            );
+            crate::etali_primal_storm_receipts_v1::record_batch_committed(
+                &mut staged,
+                id,
+                history_start,
+            )?;
+        } else {
+            commit_zone_change_batch(&mut staged, &tops, Zone::Exile, false)?;
+        }
         let history_end = staged.engine.event_history.len();
         if staged.engine.halted.is_some() {
             return Err("top-card exile batch halted".into());
@@ -756,7 +782,7 @@ pub(super) fn validate_batch(
     }
     Ok(())
 }
-pub(super) fn batch_candidates(
+pub(crate) fn batch_candidates(
     state: &GameState,
     pending: &EffectContinuation,
     choice: &ExileBatchChoice,
@@ -785,6 +811,11 @@ pub(super) fn offer_batch(
     let candidates = batch_candidates(state, pending, &choice);
     if candidates.is_empty() {
         finish_batch(state, &choice)?;
+        crate::etali_primal_storm_receipts_v1::record_finished(
+            state,
+            &pending.resolving_item,
+            false,
+        );
         return Ok(false);
     }
     pending.choice = Some(PendingEffectChoice::SelectTargets {
@@ -834,6 +865,11 @@ pub(super) fn finish_batch_selection(
         });
     } else {
         finish_batch(state, &choice)?;
+        crate::etali_primal_storm_receipts_v1::record_finished(
+            state,
+            &pending.resolving_item,
+            true,
+        );
     }
     Ok(())
 }
@@ -861,4 +897,4 @@ fn finish_batch(state: &mut GameState, choice: &ExileBatchChoice) -> Result<(), 
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "etali_primal_storm_v1_tests.rs"]
-mod etali_primal_storm_tests;
+pub(crate) mod etali_primal_storm_tests;

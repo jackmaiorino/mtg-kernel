@@ -1,7 +1,7 @@
 //! Limited schema 5: the public shroud contract. Its policy observation
 //! reports a permanent's shroud (Argothian Enchantress) and a player's
-//! (Solitary Confinement), where schema 4 refuses the game and keeps its
-//! historical bytes.
+//! (Solitary Confinement, True Believer), where schema 4 refuses the game
+//! and keeps its historical bytes.
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::CARD_DEFS;
@@ -149,25 +149,30 @@ fn schema_5_reports_a_permanents_shroud_that_schema_4_refuses() {
 
 #[test]
 fn schema_5_reports_a_players_shroud_that_schema_4_refuses() {
-    let public = play(5, "Plains", "Solitary Confinement");
-    let decision = public.decision.expect("schema 5 admits player shroud");
-    let controller =
-        &battlefield_named(&decision, "Solitary Confinement")[0]["stable"]["controller"];
-    let seat = usize::from(controller == "p1");
-    let mut expected = [false, false];
-    expected[seat] = true;
-    let shroud = &decision["observation"]["projection"]["public_shroud"];
-    assert_eq!(shroud["players"], json!(expected));
-    assert_eq!(shroud["permanents"], json!([]));
+    // Solitary Confinement and True Believer: "You have shroud."
+    for card in ["Solitary Confinement", "True Believer"] {
+        let public = play(5, "Plains", card);
+        let decision = public.decision.expect("schema 5 admits player shroud");
+        let controller = &battlefield_named(&decision, card)[0]["stable"]["controller"];
+        let seat = usize::from(controller == "p1");
+        let mut expected = [false, false];
+        expected[seat] = true;
+        let shroud = &decision["observation"]["projection"]["public_shroud"];
+        assert_eq!(shroud["players"], json!(expected), "{card}");
+        assert_eq!(shroud["permanents"], json!([]), "{card}");
 
-    let legacy = play(4, "Plains", "Solitary Confinement");
-    assert_eq!(
-        legacy.terminal_reason.as_deref(),
-        Some("fail_closed:observation:player shroud requires an explicit public representation")
-    );
-    let (_terminal, decisions) = legacy.replies.split_last().unwrap();
-    for reply in decisions {
-        assert!(!reply.contains("shroud"), "{reply}");
+        let legacy = play(4, "Plains", card);
+        assert_eq!(
+            legacy.terminal_reason.as_deref(),
+            Some(
+                "fail_closed:observation:player shroud requires an explicit public representation"
+            ),
+            "{card}"
+        );
+        let (_terminal, decisions) = legacy.replies.split_last().unwrap();
+        for reply in decisions {
+            assert!(!reply.contains("shroud"), "{reply}");
+        }
+        assert_eq!(public.replies.len(), legacy.replies.len(), "{card}");
     }
-    assert_eq!(public.replies.len(), legacy.replies.len());
 }

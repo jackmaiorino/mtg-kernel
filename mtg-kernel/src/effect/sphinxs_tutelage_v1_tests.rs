@@ -13,7 +13,7 @@ fn id(name: &str) -> u16 {
     card_def::card_id_by_name(name).unwrap()
 }
 
-fn ready(actor: PlayerId, opponent_library: &[&str]) -> GameState {
+pub(crate) fn ready(actor: PlayerId, opponent_library: &[&str]) -> GameState {
     let own = [id("Island"); 48];
     let other = opponent_library
         .iter()
@@ -46,7 +46,7 @@ fn ready(actor: PlayerId, opponent_library: &[&str]) -> GameState {
     state
 }
 
-fn respond(state: &mut GameState, decision: Decision, reverse: bool) {
+pub(crate) fn respond(state: &mut GameState, decision: Decision, reverse: bool) {
     let action = match decision {
         Decision::CastSpellOrPass { .. } => Action::Pass,
         Decision::OrderTriggers { pending, .. } => {
@@ -101,7 +101,7 @@ fn finish(state: &mut GameState, reverse: bool) {
     panic!("finite original library did not finish Tutelage");
 }
 
-fn taps(state: &GameState, actor: PlayerId) -> usize {
+pub(crate) fn taps(state: &GameState, actor: PlayerId) -> usize {
     state.players[actor.index()]
         .battlefield
         .iter()
@@ -112,7 +112,7 @@ fn taps(state: &GameState, actor: PlayerId) -> usize {
         .count()
 }
 
-fn paid_tutelage(state: &mut GameState, actor: PlayerId) -> ObjectId {
+pub(crate) fn paid_tutelage(state: &mut GameState, actor: PlayerId) -> ObjectId {
     assert!(
         matches!(engine::advance_until_decision(state), Decision::CastSpellOrPass { player, .. } if player == actor)
     );
@@ -136,7 +136,7 @@ fn paid_tutelage(state: &mut GameState, actor: PlayerId) -> ObjectId {
     source
 }
 
-fn activate_to_discard(state: &mut GameState, actor: PlayerId, source: ObjectId) {
+pub(crate) fn activate_to_discard(state: &mut GameState, actor: PlayerId, source: ObjectId) {
     let decision = engine::advance_until_decision(state);
     if matches!(decision, Decision::CastSpellOrPass { player, .. } if player != actor) {
         engine::step(state, Action::Pass).unwrap();
@@ -182,7 +182,7 @@ fn activate_to_discard(state: &mut GameState, actor: PlayerId, source: ObjectId)
     panic!("paid 5U draw did not reach its genuine discard");
 }
 
-fn to_mill_order(state: &mut GameState) {
+pub(crate) fn to_mill_order(state: &mut GameState) {
     for _ in 0..24 {
         let decision = engine::advance_until_decision(state);
         if matches!(decision, Decision::ChooseEffectTargets { .. }) {
@@ -206,6 +206,25 @@ fn restore(state: &GameState) -> GameState {
     assert_eq!(&restored, state);
     assert_eq!(restored.state_hash(), state.state_hash());
     restored
+}
+
+#[test]
+fn final_matching_pair_records_native_repeat_even_when_next_iteration_is_empty_both_seats() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor, &["Elvish Mystic", "Llanowar Elves"]);
+        let source = paid_tutelage(&mut state, actor);
+        activate_to_discard(&mut state, actor, source);
+        let discard = engine::advance_until_decision(&mut state);
+        respond(&mut state, discard, false);
+        finish(&mut state, true);
+        let facts = crate::tutelage_public_v1::capture(&state, actor).unwrap();
+        let trigger = &facts.draws[0].observers[0];
+        assert_eq!(trigger.stage, crate::tutelage_public_v1::StageV1::MillEnded);
+        assert_eq!(trigger.batches.len(), 1);
+        assert!(trigger.batches[0].repeated);
+        assert_eq!(trigger.batches[0].visible_milled_in_move_order.len(), 2);
+        assert!(state.players[actor.opponent().index()].library.is_empty());
+    }
 }
 
 #[test]

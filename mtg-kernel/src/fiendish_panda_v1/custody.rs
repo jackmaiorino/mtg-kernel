@@ -87,7 +87,7 @@ impl WorldV1 {
         if !original.engine.event_history.is_empty() {
             return Err("Panda private world contains recursive history".into());
         }
-        original.engine.event_history = state.engine.event_history[..count].to_vec().into();
+        original.engine.event_history = state.engine.event_history.prefix_v1(count);
         Ok(original)
     }
 }
@@ -557,7 +557,10 @@ fn validate_operation(state: &GameState, operation: u64) -> Result<(), String> {
     if *input <= *removal || operation <= *input || context.as_ref() != &canonical_context(item) {
         return Err("Panda actual operation changed its context or history order".into());
     }
-    let events = &state.engine.event_history[*input as usize + 1..operation as usize];
+    let events = state
+        .engine
+        .event_history
+        .range_v2(*input as usize + 1..operation as usize);
     if world.history_count != *input {
         return Err("Panda operation input lost its exact world/history boundary".into());
     }
@@ -596,7 +599,7 @@ fn validate_operation(state: &GameState, operation: u64) -> Result<(), String> {
     )?;
     if replay.engine.halted.is_some()
         || replay.objects.try_get(object) != after.as_deref()
-        || &replay.engine.event_history[*input as usize + 1..] != events
+        || replay.engine.event_history.range_v2(*input as usize + 1..) != events
     {
         return Err(
             "Panda complete operation output differs from its genuine original-input replay".into(),

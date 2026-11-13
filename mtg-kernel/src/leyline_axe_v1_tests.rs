@@ -62,7 +62,7 @@ fn ready(p: PlayerId) -> GameState {
     s.step = Step::Main1;
     s
 }
-fn deal(p: PlayerId, own_axes: usize, other_axes: usize) -> GameState {
+pub(super) fn deal(p: PlayerId, own_axes: usize, other_axes: usize) -> GameState {
     let deck = |count| {
         let mut d = vec![id("Forest"); 40];
         for x in d.iter_mut().take(count) {

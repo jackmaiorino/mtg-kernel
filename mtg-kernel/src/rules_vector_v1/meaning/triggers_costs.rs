@@ -869,6 +869,13 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             let _ = subtype;
             out.cost(CostAtom::TapOthers);
         }
+        CostComponent::TapOtherUntappedControlledCreatureV1 => {
+            // Station: taps one other untapped creature the payer controls,
+            // whose power the ability reads. Vocabulary gap: `TapOthers`
+            // carries no object class, and the power read has no facet.
+            out.cost(CostAtom::TapOthers);
+            out.atoms.push(Atom::Opaque);
+        }
         CostComponent::TapUntappedControlledPermanent(filter) => {
             // Taps one untapped permanent the payer controls matching the
             // filter. Vocabulary gap: `TapOthers` carries no object class.

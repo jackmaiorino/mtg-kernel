@@ -207,8 +207,8 @@ impl ObserverInputV59 {
         if !original.engine.event_history.is_empty() || !observed.engine.event_history.is_empty() {
             return Err("Conqueror recursive original input history".into());
         }
-        original.engine.event_history = state.engine.event_history[..start].to_vec().into();
-        observed.engine.event_history = state.engine.event_history[..end].to_vec().into();
+        original.engine.event_history = state.engine.event_history.prefix_v1(start);
+        observed.engine.event_history = state.engine.event_history.prefix_v1(end);
         if original.turn_key_v1() != observed.turn_key_v1()
             || original.active_player != observed.active_player
             || original.step != observed.step
@@ -216,7 +216,7 @@ impl ObserverInputV59 {
             return Err("Conqueror observer input crossed an engine step".into());
         }
         let mut life = [original.players[0].life, original.players[1].life];
-        for event in &state.engine.event_history[start..end] {
+        for event in state.engine.event_history.range_v2(start..end) {
             match event {
                 CommittedEvent::LifeLossWideV59 { player, amount } => {
                     life[player.index()] = checked_life(life[player.index()], *amount, false)?;
@@ -511,7 +511,20 @@ pub(crate) fn has_wide_history(state: &GameState) -> bool {
                 | CommittedEvent::FiendishPandaWideGainCaptureV59 { .. }
         )
     };
-    state.engine.event_history.iter().any(selected)
+    state
+        .engine
+        .event_history
+        .of_kinds_v2(&[
+            crate::event_history_v1::EventKindV1::LifeLossWideV59,
+            crate::event_history_v1::EventKindV1::LifeGainWideV59,
+            crate::event_history_v1::EventKindV1::ConquerorObserverInputV59,
+            crate::event_history_v1::EventKindV1::ConquerorLossBatchV59,
+            crate::event_history_v1::EventKindV1::ConquerorCapturedV59,
+            crate::event_history_v1::EventKindV1::ConquerorCollectedV59,
+            crate::event_history_v1::EventKindV1::ConquerorJournalV59,
+            crate::event_history_v1::EventKindV1::FiendishPandaWideGainCaptureV59,
+        ])
+        .any(|(_, event)| selected(event))
         || state.engine.event_log.iter().any(selected)
         || state.stack.iter().any(|item| {
             item.inline_effect

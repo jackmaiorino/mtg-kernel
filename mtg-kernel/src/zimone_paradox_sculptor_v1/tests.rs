@@ -119,7 +119,7 @@ fn next_own_main(state: &mut GameState, actor: PlayerId) {
     panic!("next genuine own main phase missing");
 }
 
-fn paid_ready(actor: PlayerId) -> (GameState, ObjectId) {
+pub(crate) fn paid_ready(actor: PlayerId) -> (GameState, ObjectId) {
     let mut state = ready(actor);
     let source = paid(&mut state, actor, "Zimone, Paradox Sculptor");
     priority(&mut state, actor);
@@ -265,6 +265,141 @@ fn current(state: &GameState, target: ObjectId) -> CounterTransferV1 {
             time: live.v4.time_counters_v1,
             finality: live.v4.creature_upgrade.as_ref().map_or(0, |v| v.finality),
         },
+    }
+}
+
+#[test]
+fn public_appendix_follows_paid_activation_order_full_widths_and_visibility_both_seats() {
+    use crate::zimone_public_v1::{self as public, AbilityKindV1, StageV1};
+
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source) = paid_ready(actor);
+        let first = put(&mut state, actor, "Viridian Longbow", Zone::Battlefield);
+        let second = put(&mut state, actor, "Fishing Pole", Zone::Battlefield);
+        crate::standard_creatures_v1::place_counters_checked_v1(
+            &mut state,
+            first,
+            actor,
+            CounterTransferV1 {
+                counters: Counters {
+                    charge: 120_000,
+                    stash: 300,
+                    ..Default::default()
+                },
+                extras: CounterExtrasV1 {
+                    loyalty: 1_100_000_000,
+                    finality: 300,
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+        let hidden = put(
+            &mut state,
+            actor.opponent(),
+            "Zimone, Paradox Sculptor",
+            Zone::Hand,
+        );
+        priority(&mut state, actor);
+        let before = tapped_lands(&state, actor);
+        engine::step(&mut state, Action::ActivateAbility(source, 0)).unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseEffectTargets {
+                can_finish: true,
+                ..
+            }
+        ));
+        engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(second)),
+        )
+        .unwrap();
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::ChooseEffectTargets {
+                selected_count: 1,
+                can_finish: true,
+                ..
+            }
+        ));
+        let partial = public::capture(&state, actor).unwrap();
+        let pending = partial.abilities.last().unwrap();
+        assert_eq!(pending.kind, AbilityKindV1::ActivateDoubleEveryKind);
+        assert_eq!(pending.stage, StageV1::PendingActivation);
+        assert_eq!(pending.original_targets[0].original.object, second.0);
+        assert!(!partial
+            .visible_printings
+            .iter()
+            .any(|card| card.object == hidden.0));
+        assert!(public::capture(&state, actor.opponent())
+            .unwrap()
+            .visible_printings
+            .iter()
+            .any(|card| card.object == hidden.0));
+        let mut hidden_pair = state.clone();
+        hidden_pair.objects.get_mut(hidden).card_def = card_def::card_id_by_name("Island").unwrap();
+        assert_eq!(public::capture(&hidden_pair, actor).unwrap(), partial);
+
+        let saved = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+        public::validate(&restored, actor, &partial).unwrap();
+        let next = Action::ChooseEffectTarget(Target::Object(first));
+        engine::step(&mut state, next.clone()).unwrap();
+        engine::step(&mut restored, next).unwrap();
+        assert_activation_published(&mut state, actor, source, &[second, first]);
+        assert_activation_published(&mut restored, actor, source, &[second, first]);
+        assert_eq!(state, restored);
+        assert!(state.objects.get(source).tapped);
+        assert_eq!(tapped_lands(&state, actor) - before, 2);
+
+        for viewer in [actor, actor.opponent()] {
+            let facts = public::capture(&state, viewer).unwrap();
+            let row = facts.abilities.last().unwrap();
+            assert_eq!(row.stage, StageV1::Published);
+            assert_eq!(row.source.captured_controller, actor.into());
+            assert_eq!(row.original_targets[0].original.object, second.0);
+            assert_eq!(row.original_targets[1].original.object, first.0);
+            assert!(row
+                .original_targets
+                .iter()
+                .all(|target| target.currently_legal));
+            let widths = &facts.battlefield[actor.index()]
+                .iter()
+                .find(|permanent| permanent.card.object == first.0)
+                .unwrap()
+                .counters;
+            assert_eq!(
+                (widths.charge, widths.stash, widths.finality),
+                (120_000, 300, 300)
+            );
+            assert_eq!(widths.loyalty, 1_100_000_000);
+        }
+
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(second, Zone::Exile));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(second, Zone::Battlefield),
+        );
+        let moved = public::capture(&state, actor).unwrap();
+        let targets = &moved.abilities.last().unwrap().original_targets;
+        assert_eq!(targets[0].original.object, second.0);
+        assert!(targets[0].current_original.is_none());
+        assert!(!targets[0].currently_legal);
+        assert!(targets[1].currently_legal);
+        settle(&mut state);
+        let resolved = public::capture(&state, actor).unwrap();
+        assert!(resolved.abilities.is_empty());
+        let widths = &resolved.battlefield[actor.index()]
+            .iter()
+            .find(|permanent| permanent.card.object == first.0)
+            .unwrap()
+            .counters;
+        assert_eq!(
+            (widths.charge, widths.stash, widths.finality),
+            (240_000, 600, 600)
+        );
+        assert_eq!(widths.loyalty, 2_200_000_000);
     }
 }
 

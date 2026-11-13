@@ -506,7 +506,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     // The capture proves this exact incarnation was on the
                     // battlefield. Its first later committed departure makes
                     // that incarnation permanently unavailable, even on return.
-                    if !state.engine.event_history[capture + 1..*start].iter().any(|event| {
+                    if !state.engine.event_history.range_v2(capture + 1..*start).iter().any(|event| {
                         matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, .. }
                             if *object == source.source)
                     }) {

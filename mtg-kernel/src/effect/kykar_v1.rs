@@ -484,12 +484,12 @@ pub(crate) fn validate_schedule(
         return Err("Kykar exile receipt lost source, owner or physical departure".into());
     }
     if state.engine.event_history.iter().filter(|e| matches!(e,event::CommittedEvent::KykarExiledV1{departure_history_index:at,..}if at==departure_history_index)).count()!=1
-        || state.engine.event_history[departure+1..i].iter().any(|e| matches!(e,event::CommittedEvent::BeginningEndStep{..}) || matches!(e,event::CommittedEvent::ZoneChange{object,..}|event::CommittedEvent::Draw{object:Some(object),..}if *object==exiled.object)) {
+        || state.engine.event_history.range_v2(departure+1..i).iter().any(|e| matches!(e,event::CommittedEvent::BeginningEndStep{..}) || matches!(e,event::CommittedEvent::ZoneChange{object,..}|event::CommittedEvent::Draw{object:Some(object),..}if *object==exiled.object)) {
         return Err("Kykar original exile receipt duplicated or reordered".into())
     }
     // Count only actual later moves of this physical object. A newer incarnation
     // cannot retroactively authenticate a different captured exile generation.
-    let later = state.engine.event_history[departure + 1..]
+    let later = state.engine.event_history.range_v2(departure + 1..)
         .iter()
         .filter(
             |e| matches!(e,event::CommittedEvent::ZoneChange{object,..} if *object==exiled.object) || matches!(e,event::CommittedEvent::Draw{object:Some(object),..}if *object==exiled.object),
@@ -602,7 +602,10 @@ pub(crate) fn collect(
             // Native step entry immediately collects its begin event. A missing
             // one-shot marker cannot be repaired by a later equal-valued step:
             // BeginningEndStep values do not carry an occurrence identifier.
-            if state.engine.event_history[end + 1..]
+            if state
+                .engine
+                .event_history
+                .range_v2(end + 1..)
                 .iter()
                 .any(|e| matches!(e, event::CommittedEvent::BeginningEndStep { .. }))
             {
@@ -773,7 +776,7 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "kykar_v1_tests.rs"]
-mod tests;
+pub(crate) mod tests;
 
 pub(crate) struct TokenPermitV1<'a, 'b> {
     proof: &'a NativeExecutionProofV1<'b>,

@@ -192,7 +192,10 @@ pub(crate) fn capture(s: &GameState, v: PlayerId) -> Result<FactsV73, String> {
                         _ => None,
                     }) {
                         activation.stage = ActivationStageV73::NativeCompleted;
-                        activation.created_zombies = s.engine.event_history[start + 1..end]
+                        activation.created_zombies = s
+                            .engine
+                            .event_history
+                            .range_v2(start + 1..end)
                             .iter()
                             .filter_map(|e| match e {
                                 E::CreateToken {

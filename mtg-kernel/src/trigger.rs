@@ -4455,7 +4455,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
         return true;
     }
     if crate::eternal_vintage_v1::initiative_granter(card.name)
-        && matches!(effect, EffectOp::ResolveInitiativeTrigger { .. })
+        && (matches!(effect, EffectOp::ResolveInitiativeTrigger { .. })
+            || (cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cards_v1::e3::dungeons::occurrences::is_bound(effect)))
     {
         return true;
     }
@@ -4690,6 +4692,12 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
             TargetSpec::TargetOpponent
         } else if card.name == "Journey to Nowhere" && *effect == journey_to_nowhere_etb_effect() {
             TargetSpec::CreatureOtherThanSource
+        } else if cfg!(feature = "eternal-fixtures")
+            && (crate::eternal_vintage_v1::initiative_granter(card.name)
+                || card.name == crate::eternal_cards_v1::e3::dungeons::ACERERAK)
+            && crate::eternal_cards_v1::e3::dungeons::occurrences::is_bound(effect)
+        {
+            crate::eternal_cards_v1::e3::dungeons::trigger_target_spec(effect)
         } else if let Some(spec) = crate::standard_cards_v1::trigger_target_spec(card.name, effect)
         {
             spec
@@ -4705,6 +4713,7 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
                     }
                     _ => TargetSpec::None,
                 },
+
                 _ => trigger_target_spec(card_def),
             }
         } else {
@@ -4784,6 +4793,10 @@ pub(crate) fn creature_dies_to_state_based_actions(
 /// Runs state-based actions to a fixed point: repeat the full SBA sweep
 /// until one pass makes no change (704.3).
 pub fn sba_fixed_point(state: &mut GameState) {
+    if crate::graveyard_order_v1::owns_operation(state) {
+        crate::graveyard_order_v1::state_based_actions(state);
+        return;
+    }
     sba_fixed_point_with_protected_triggers(state, &[]);
 }
 
@@ -4843,6 +4856,74 @@ fn token_card_defs() -> &'static [bool] {
     })
 }
 
+/// 704.5m moves an unattached or illegally attached Aura to its owner's
+/// graveyard. Both directions of the attachment must name the same incarnation.
+pub(crate) fn invalid_sba_aura(
+    state: &GameState,
+    id: ObjectId,
+    aura: &crate::state::GameObject,
+) -> bool {
+    if aura.zone != Zone::Battlefield {
+        return false;
+    }
+    // Overencumbered enchants a player (eternal wave S1f).
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(invalid) = crate::eternal_sideboard_s1f_v1::invalid_player_aura(state, id) {
+        return invalid;
+    }
+    let definition = &crate::card_def::CARD_DEFS[aura.card_def as usize];
+    if aura.v4.attached_to.is_some_and(|link| {
+        crate::progenitus_v1::attachment_forbidden(state, id, link.object)
+            || crate::controlled_creature_grants_v1::protects_from_colors(
+                state,
+                link.object,
+                crate::engine::object_color_mask(state, id),
+            )
+    }) && (definition.attachment.is_some() || crate::standard_cards_v1::is_aura(definition))
+    {
+        return true;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if aura.v4.attached_to.is_some_and(|link| {
+        crate::eternal_pauper_e6b_v1::protection_removes_attachment(state, id, link.object)
+    }) && (definition.attachment.is_some() || crate::standard_cards_v1::is_aura(definition))
+    {
+        return true;
+    }
+    // Animate Dead enchants a creature card in a graveyard until
+    // its entry trigger returns the card.
+    if cfg!(feature = "eternal-fixtures") && crate::eternal_legacy_e7a_v1::aura_waiting(state, id) {
+        return false;
+    }
+    if crate::standard_cards_v1::is_aura(definition) {
+        // This module's Auras: the enchant restriction includes
+        // control ("enchant creature you control").
+        let valid = aura.v4.attached_to.is_some_and(|link| {
+            state.objects.try_get(link.object).is_some_and(|host| {
+                host.zone_change_count == link.zone_change_count && host.attachments.contains(&id)
+            }) && crate::standard_cards_v1::aura_host_legal(
+                definition,
+                aura.controller,
+                link.object,
+                state,
+            ) == Some(true)
+        });
+        return !valid;
+    }
+    let Some(attachment) = definition.attachment else {
+        return false;
+    };
+    let valid = aura.v4.attached_to.is_some_and(|link| {
+        state.objects.try_get(link.object).is_some_and(|host| {
+            host.zone == Zone::Battlefield
+                && host.zone_change_count == link.zone_change_count
+                && attachment.host_matches(state, link.object)
+                && host.attachments.contains(&id)
+        })
+    });
+    !valid
+}
+
 fn sba_fixed_point_with_protected_triggers(
     state: &mut GameState,
     protected_triggers: &[PendingTrigger],
@@ -4875,6 +4956,10 @@ fn sba_fixed_point_with_protected_triggers(
             crate::standard_keywords_v1::sync_day_night(state);
         }
         let mut changed = protected_draws_consumed;
+        changed |= crate::eternal_cards_v1::e3::dungeons::occurrences::complete_ready(
+            state,
+            protected_triggers,
+        );
 
         // 704.5g: a creature with toughness 0 or less is put into its
         // owner's graveyard. 704.5h: a creature with lethal damage marked
@@ -4928,6 +5013,19 @@ fn sba_fixed_point_with_protected_triggers(
             });
             changed |= regenerated;
         }
+        let ordered_graveyard = crate::graveyard_order_v1::enabled(state);
+        if ordered_graveyard {
+            // All moves already required by this pass are simultaneous.
+            // An Aura made illegal by these deaths belongs to a later pass.
+            dying.extend(
+                state
+                    .objects
+                    .iter()
+                    .filter_map(|(id, aura)| invalid_sba_aura(state, id, aura).then_some(id)),
+            );
+            dying.sort_unstable();
+            dying.dedup();
+        }
         if !dying.is_empty() {
             crate::equipment_damage_source_v4::before_protected_departures(
                 state,
@@ -4935,6 +5033,12 @@ fn sba_fixed_point_with_protected_triggers(
                 protected_triggers,
             );
             crate::event::commit_sba_death_batch_v1(state, dying);
+            if crate::graveyard_order_v1::enabled(state) && state.engine.halted.is_some() {
+                return any_changed;
+            }
+            if crate::graveyard_order_v1::paused(state) {
+                return true;
+            }
             changed = true;
         }
 
@@ -4943,83 +5047,19 @@ fn sba_fixed_point_with_protected_triggers(
         {
             changed |= crate::eternal_pauper_e6b_v1::unattach_protected_equipment(state);
         }
-        // 704.5m: an Aura attached to an illegal object or player, or not
-        // attached at all, is put into its owner's graveyard. The current
-        // attachment grammar supports creature Auras only and requires both
-        // exact-incarnation directions of the relation to agree.
-        let invalid_auras = state
-            .objects
-            .iter()
-            .filter_map(|(id, aura)| {
-                if aura.zone != Zone::Battlefield {
-                    return None;
-                }
-                let definition = &crate::card_def::CARD_DEFS[aura.card_def as usize];
-                if aura.v4.attached_to.is_some_and(|link| {
-                    crate::progenitus_v1::attachment_forbidden(state, id, link.object)
-                        || crate::controlled_creature_grants_v1::protects_from_colors(
-                            state,
-                            link.object,
-                            crate::engine::object_color_mask(state, id),
-                        )
-                }) && (definition.attachment.is_some()
-                    || crate::standard_cards_v1::is_aura(definition))
-                {
-                    return Some(id);
-                }
-                #[cfg(feature = "eternal-fixtures")]
-                if aura.v4.attached_to.is_some_and(|link| {
-                    crate::eternal_pauper_e6b_v1::protection_removes_attachment(
-                        state,
-                        id,
-                        link.object,
-                    )
-                }) && (definition.attachment.is_some()
-                    || crate::standard_cards_v1::is_aura(definition))
-                {
-                    return Some(id);
-                }
-                // Animate Dead enchants a creature card in a graveyard until
-                // its entry trigger returns the card.
-                if cfg!(feature = "eternal-fixtures")
-                    && crate::eternal_legacy_e7a_v1::aura_waiting(state, id)
-                {
-                    return None;
-                }
-                if crate::standard_cards_v1::is_aura(definition) {
-                    // This module's Auras: the enchant restriction includes
-                    // control ("enchant creature you control").
-                    let valid = aura.v4.attached_to.is_some_and(|link| {
-                        state.objects.try_get(link.object).is_some_and(|host| {
-                            host.zone_change_count == link.zone_change_count
-                                && host.attachments.contains(&id)
-                        }) && crate::standard_cards_v1::aura_host_legal(
-                            definition,
-                            aura.controller,
-                            link.object,
-                            state,
-                        ) == Some(true)
-                    });
-                    return (!valid).then_some(id);
-                }
-                let attachment = definition.attachment?;
-                let valid = aura.v4.attached_to.is_some_and(|link| {
-                    state.objects.try_get(link.object).is_some_and(|host| {
-                        host.zone == Zone::Battlefield
-                            && host.zone_change_count == link.zone_change_count
-                            && attachment.host_matches(state, link.object)
-                            && host.attachments.contains(&id)
-                    })
-                });
-                (!valid).then_some(id)
-            })
-            .collect::<Vec<_>>();
-        for id in invalid_auras {
-            crate::event::commit(
-                state,
-                crate::event::ProposedEvent::zone_change(id, Zone::Graveyard),
-            );
-            changed = true;
+        if !ordered_graveyard {
+            let invalid_auras = state
+                .objects
+                .iter()
+                .filter_map(|(id, aura)| invalid_sba_aura(state, id, aura).then_some(id))
+                .collect::<Vec<_>>();
+            for id in invalid_auras {
+                crate::event::commit(
+                    state,
+                    crate::event::ProposedEvent::zone_change(id, Zone::Graveyard),
+                );
+                changed = true;
+            }
         }
 
         // 704.5: one Role per controller may enchant a permanent. Keep the
@@ -5209,6 +5249,7 @@ pub(crate) fn collect_and_process_with_sba_result_v1(
     waiting.extend(capture_triggers_without_sba(state));
     // This checkpoint ends the resolving item's ownership of its kick marker.
     state.engine.pending_kicked_source = None;
+    state.engine.battlemage_entry_v1.0 = None;
     if state.engine.halted.is_some() {
         return (Vec::new(), false, false);
     }
@@ -5595,6 +5636,14 @@ fn triggers_from_events(
         new_triggers.extend(crate::eternal_premodern_p2a_v1::delayed_triggers(
             state, events,
         ));
+        // A resolving Acererak trigger can venture after its source left the
+        // battlefield, without returning anything to hand in this batch.
+        #[cfg(feature = "eternal-fixtures")]
+        new_triggers.extend(crate::eternal_cards_v1::e3::dungeons::room_triggers(state));
+        // Coveted Jewel also queues its unblocked-attack trigger when
+        // blockers are declared, without adding a committed event.
+        #[cfg(feature = "eternal-fixtures")]
+        new_triggers.extend(crate::eternal_vintage_v1::delayed_triggers(state, events));
         uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
         state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
         return new_triggers;
@@ -6028,6 +6077,26 @@ fn triggers_from_events(
                         if def.intervening_if_kicked && !kicked {
                             continue;
                         }
+                        // Triumph of Saint Katherine (eternal wave S1l): "put
+                        // into your graveyard" -- a card goes to its owner's
+                        // graveyard, so its owner controlled it as it left.
+                        if event_controller != obj.owner
+                            && crate::eternal_sideboard_s1l_v1::requires_owner_controller(
+                                card.name,
+                                &(def.effect)(),
+                            )
+                        {
+                            continue;
+                        }
+                        if crate::eternal_premodern_p2b_v1::is_thornscape(card)
+                            && !crate::eternal_premodern_p2b_v1::thornscape_etb_is_enabled(
+                                state.engine.battlemage_entry_v1,
+                                id,
+                                &(def.effect)(),
+                            )
+                        {
+                            continue;
+                        }
                         if def.intervening_if_controls_another_source_card {
                             let source_def = obj.card_def;
                             let controls_another = state.players[event_controller.index()]
@@ -6093,13 +6162,7 @@ fn triggers_from_events(
                             };
                         let target_spec = target_spec_for_trigger(obj.card_def, &effect)
                             .unwrap_or(TargetSpec::None);
-                        let limit =
-                            per_turn_trigger_cap(def.condition).or_else(|| match def.condition {
-                                TriggerCondition::StandardV1(condition) => {
-                                    crate::standard_cards_v1::trigger_limit_per_turn(condition)
-                                }
-                                _ => None,
-                            });
+                        let limit = per_turn_trigger_cap(def.condition);
                         if let Some(maximum) = limit {
                             let ability_index =
                                 u16::try_from(ability_index).expect("bounded definition abilities");
@@ -6605,11 +6668,14 @@ fn draws_this_turn_snapshot(events: &[CommittedEvent], state: &GameState) -> Vec
 /// pairing.
 /// How many times per turn a triggered ability may trigger, tracked in
 /// `GameState::trigger_uses_v1`. `None` means unlimited.
-fn per_turn_trigger_cap(condition: TriggerCondition) -> Option<u16> {
+pub(crate) fn per_turn_trigger_cap(condition: TriggerCondition) -> Option<u16> {
     match condition {
         TriggerCondition::ControllerAddedPlusOneCountersToSelf { max_per_turn } => max_per_turn,
         TriggerCondition::BecomesTargetOfControllerSpellOrAbilityFirstTimeEachTurn => Some(1),
         TriggerCondition::OtherControlledCreatureWithPowerAtMostEntersOncePerTurn(_) => Some(1),
+        TriggerCondition::StandardV1(condition) => {
+            crate::standard_cards_v1::trigger_limit_per_turn(condition)
+        }
         _ => None,
     }
 }

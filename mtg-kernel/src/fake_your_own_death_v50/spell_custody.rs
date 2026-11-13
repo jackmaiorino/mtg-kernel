@@ -229,6 +229,17 @@ pub(super) fn journal(event: &CommittedEvent) -> Option<&JournalV50> {
         _ => None,
     }
 }
+/// The Fake rows of the history with their positions, reading only the stored
+/// chunks that hold one. A scan acting only on `journal(event)` sees the same.
+pub(super) fn rows(state: &GameState) -> impl Iterator<Item = (usize, &CommittedEvent)> {
+    state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::FakeJournalV50])
+}
+pub(super) fn row_events(state: &GameState) -> impl Iterator<Item = &CommittedEvent> {
+    rows(state).map(|(_, event)| event)
+}
 pub(crate) fn emit(state: &mut GameState, value: JournalV50) -> u64 {
     let index = state.engine.event_history.len() as u64;
     state
@@ -292,11 +303,7 @@ pub(super) fn validate_spell(item: &StackItem) -> Result<EffectObjectBinding, St
     })
 }
 pub(super) fn publication_for(state: &GameState, item: &StackItem) -> Result<Option<u64>, String> {
-    let matches = state
-        .engine
-        .event_history
-        .iter()
-        .enumerate()
+    let matches = rows(state)
         .filter_map(|(i, e)| match journal(e) {
             Some(JournalV50::Published { item: original })
                 if original.v4.stack_item_id == item.v4.stack_item_id =>
@@ -414,7 +421,7 @@ pub(crate) fn publish_copy_created(state: &mut GameState, id: StackItemId) -> Re
     }
     validate_spell(&item)?;
     if !item.is_copy || item.v4.source_contract.is_none_or(|s|s.spell_copy_origin.is_none())
-        || state.engine.event_history.iter().any(|e|matches!(journal(e),Some(JournalV50::CopyCreated {item:old}) if old.v4.stack_item_id == id))
+        || row_events(state).any(|e|matches!(journal(e),Some(JournalV50::CopyCreated {item:old}) if old.v4.stack_item_id == id))
     { return Err("Fake copy creation changed original ancestry or duplicated its row".into()); }
     emit(
         state,
@@ -442,7 +449,7 @@ pub(crate) fn record_copy_target_input(
     }
     let (creation, original) = copy_creation(state, id)?;
     if original != &item || publication_for(state,&item)?.is_some()
-        || state.engine.event_history.iter().any(|e|matches!(journal(e),Some(JournalV50::CopyTargetInput {creation:c,..}) if *c == creation))
+        || row_events(state).any(|e|matches!(journal(e),Some(JournalV50::CopyTargetInput {creation:c,..}) if *c == creation))
     { return Err("Fake copy targeting did not borrow its unresolved original creation".into()); }
     // The engine has independently checked a replacement's actual legality.
     let target = target.map(|t| (t, StackTargetContractV4::capture(state, t)));
@@ -468,7 +475,7 @@ pub(crate) fn acquire(
     let publication = publication_for(state, item)?.ok_or("Fake removal lacks publication")?;
     if state.stack.iter().filter(|i| i.v4.stack_item_id == item.v4.stack_item_id).count() != 1
         || !state.stack.iter().any(|i| i == item)
-        || state.engine.event_history.iter().any(|e| matches!(journal(e),Some(JournalV50::RemovalInput {publication:p,..}) if *p == publication))
+        || row_events(state).any(|e| matches!(journal(e),Some(JournalV50::RemovalInput {publication:p,..}) if *p == publication))
     { return Err("Fake removal did not borrow an unresolved original live row".into()); }
     Ok(Some(RemovalOwnerV50 {
         publication,
@@ -495,7 +502,7 @@ pub(crate) fn resolve(
 ) -> Result<(), String> {
     if state.stack.iter().any(|i| i.v4.stack_item_id == owner.item.v4.stack_item_id)
         || publication_for(state, &owner.item)? != Some(owner.publication)
-        || state.engine.event_history.iter().any(|e| matches!(journal(e),Some(JournalV50::RemovalInput {publication,..}) if *publication == owner.publication))
+        || row_events(state).any(|e| matches!(journal(e),Some(JournalV50::RemovalInput {publication,..}) if *publication == owner.publication))
     { return Err("Fake removal changed its original loan or left a live row".into()); }
     let recipient = validate_spell(&owner.item)?;
     let timestamp = state.engine.next_effect_timestamp;
@@ -550,7 +557,7 @@ pub(crate) fn resolve(
 /// Original installation inventory, before future cleanup/death filtering.
 /// This is not consumer admission or permission to publish a death trigger.
 pub fn installed_grants(state: &GameState) -> Result<Vec<PrimitiveGrantV50>, String> {
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in rows(state) {
         let Some(JournalV50::RemovalInput {
             publication,
             item,
@@ -564,11 +571,7 @@ pub fn installed_grants(state: &GameState) -> Result<Vec<PrimitiveGrantV50>, Str
         if *publication >= index as u64 || publication_for(state, item)? != Some(*publication) {
             return Err("Fake removal lost preceding original publication".into());
         }
-        let completions = state
-            .engine
-            .event_history
-            .iter()
-            .enumerate()
+        let completions = rows(state)
             .filter_map(|(i, e)| match journal(e) {
                 Some(JournalV50::Installed { input, .. }) if *input == index as u64 => {
                     Some((i, true))
@@ -590,7 +593,7 @@ pub fn installed_grants(state: &GameState) -> Result<Vec<PrimitiveGrantV50>, Str
     }
     let mut result = Vec::new();
     let mut timestamps = std::collections::BTreeSet::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in rows(state) {
         if let Some(JournalV50::Installed {
             input,
             recipient,
@@ -622,8 +625,8 @@ pub fn installed_grants(state: &GameState) -> Result<Vec<PrimitiveGrantV50>, Str
                 || result.contains(grant)
                 || timestamp != input_timestamp || !timestamps.insert(*timestamp)
                 || turn != input_turn || active_player != input_active_player
-                || state.engine.event_history.iter().filter(|e| matches!(journal(e), Some(JournalV50::Installed {input:i,..} | JournalV50::WithoutGrant {input:i}) if i == input)).count() != 1
-                || state.engine.event_history.iter().filter(|e| matches!(journal(e), Some(JournalV50::RemovalInput {publication:p,..}) if p == publication)).count() != 1
+                || row_events(state).filter(|e| matches!(journal(e), Some(JournalV50::Installed {input:i,..} | JournalV50::WithoutGrant {input:i}) if i == input)).count() != 1
+                || row_events(state).filter(|e| matches!(journal(e), Some(JournalV50::RemovalInput {publication:p,..}) if p == publication)).count() != 1
             { return Err("Fake installation changed unique original grant provenance".into()); }
             result.push(*grant);
         }
@@ -635,12 +638,8 @@ fn installations_before(
     state: &GameState,
     end: usize,
 ) -> Vec<(u64, PrimitiveGrantV50, u32, PlayerId)> {
-    state
-        .engine
-        .event_history
-        .iter()
-        .take(end)
-        .enumerate()
+    rows(state)
+        .take_while(|(index, _)| *index < end)
         .filter_map(|(index, event)| match journal(event) {
             Some(JournalV50::Installed {
                 grant,
@@ -653,7 +652,7 @@ fn installations_before(
         .collect()
 }
 fn expired_before(state: &GameState, installation: u64, end: usize) -> bool {
-    state.engine.event_history.iter().take(end).any(|event| match journal(event) {
+    rows(state).take_while(|(index, _)| *index < end).any(|(_, event)| match journal(event) {
         Some(JournalV50::CleanupCompleted {occurrence}) => usize::try_from(*occurrence).ok()
             .and_then(|i|state.engine.event_history.get(i)).and_then(journal)
             .is_some_and(|entry|matches!(entry,JournalV50::CleanupEntered {installations,..} if installations.contains(&installation))),
@@ -664,12 +663,7 @@ fn expired_before(state: &GameState, installation: u64, end: usize) -> bool {
 /// Engine ingress checks these prepared grant/death facts before automatic
 /// work or an actor action. This is not a whole printing/consumer validator.
 pub(crate) fn validate_retained_grant_history(state: &GameState) -> Result<(), String> {
-    if state
-        .engine
-        .event_history
-        .iter()
-        .any(|event| journal(event).is_some())
-    {
+    if row_events(state).any(|event| journal(event).is_some()) {
         validate_grant_lifetime(state)?;
         super::death_custody::validate_retained_owners(state)?;
     } else if super::death_custody::has_unowned_roots(state) {
@@ -683,7 +677,7 @@ pub(crate) fn validate_retained_grant_history(state: &GameState) -> Result<(), S
 pub fn validate_grant_lifetime(state: &GameState) -> Result<(), String> {
     validate_death_captures(state)?;
     super::death_custody::validate_collection(state)?;
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in rows(state) {
         match journal(event) {
             Some(JournalV50::CleanupEntered {
                 turn,
@@ -965,7 +959,7 @@ fn validate_death_installation(
 /// contiguous capture roster. Later source movement never supplies a new LKI.
 pub fn validate_death_captures(state: &GameState) -> Result<(), String> {
     installed_grants(state)?;
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in rows(state) {
         match journal(event) {
             Some(JournalV50::DeathInput {
                 lookbacks,
@@ -977,7 +971,7 @@ pub fn validate_death_captures(state: &GameState) -> Result<(), String> {
                         "Fake death input lacks earlier actual death or original roster".into(),
                     );
                 }
-                if state.engine.event_history.iter().filter(|e|matches!(journal(e),Some(JournalV50::DeathInput {departure:d,..}) if d==departure)).count()!=1 {
+                if row_events(state).filter(|e|matches!(journal(e),Some(JournalV50::DeathInput {departure:d,..}) if d==departure)).count()!=1 {
                     return Err("Fake actual death has duplicate original input rosters".into());
                 }
                 for (ordinal, (installation, lookback)) in lookbacks.iter().enumerate() {
@@ -1050,9 +1044,10 @@ pub fn validate_death_captures(state: &GameState) -> Result<(), String> {
     Ok(())
 }
 pub(crate) fn departure_candidate(state: &GameState, source: ObjectId) -> Option<(u64, StackItem)> {
-    state.engine.event_history.iter().enumerate().rev().find_map(|(i,e)| match journal(e) {
+    let rows = rows(state).collect::<Vec<_>>();
+    rows.iter().rev().find_map(|&(i,e)| match journal(e) {
         Some(JournalV50::Published {item}) if item.source == source
-            && !state.engine.event_history.iter().any(|e| matches!(journal(e), Some(JournalV50::SpellDeparted {publication,..}) if *publication == i as u64)) => Some((i as u64,item.as_ref().clone())),
+            && !rows.iter().any(|(_, e)| matches!(journal(e), Some(JournalV50::SpellDeparted {publication,..}) if *publication == i as u64)) => Some((i as u64,item.as_ref().clone())),
         _ => None,
     })
 }

@@ -228,7 +228,7 @@ pub(crate) fn effect_cond(cond: &EffectCond, env: &Env, out: &mut Collector) {
                 at_least(i64::from(*minimum)),
             );
         }
-        EffectCond::OpponentLostLifeThisTurn => {
+        EffectCond::OpponentLostLifeThisTurn | EffectCond::ControllersTurnV1 => {
             out.atoms.push(Atom::Opaque);
         }
         EffectCond::ControllerAttackedThisTurn => {
@@ -538,6 +538,16 @@ pub(crate) fn dynamic_count(count: DynamicCountDef, out: &mut Collector) -> AmtF
                 RelF::ObjectController,
                 Some(ZoneF::Battlefield),
                 Some(ObjF::Permanent),
+                AggF::Characteristic,
+            );
+            AmtF::Dynamic
+        }
+        DynamicCountDef::SpellTargetsBlueSpellV1 => {
+            // One iff a chosen target is a blue spell (Mystical Dispute).
+            out.read(
+                RelF::ObjectController,
+                Some(ZoneF::Stack),
+                Some(ObjF::Spell),
                 AggF::Characteristic,
             );
             AmtF::Dynamic

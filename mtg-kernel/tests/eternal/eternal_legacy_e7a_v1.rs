@@ -1143,6 +1143,237 @@ fn curie_becomes_a_copy_and_draws_its_base_power_on_combat_damage() {
 }
 
 #[test]
+fn curie_draw_uses_departure_base_power_and_replacement_attempts_both_seats() {
+    use mtg_kernel::event::CommittedEvent;
+    use mtg_kernel::state::StackItemKind;
+
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let jace = put(&mut state, actor, "Jace, Wielder of Mysteries", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U; 3], 1);
+        cast(&mut state, jace, &[]);
+        settled(&mut state);
+        assert_eq!(zone(&state, jace), Zone::Battlefield);
+        assert_eq!(mtg_kernel::planeswalker_v1::loyalty(&state, jace), Some(4));
+        let curie = put(
+            &mut state,
+            actor,
+            "Curie, Emergent Intelligence",
+            Zone::Battlefield,
+        );
+        let donor = put(
+            &mut state,
+            actor,
+            "Phyrexian Dreadnought",
+            Zone::Battlefield,
+        );
+        let other = put(
+            &mut state,
+            opponent,
+            "Phyrexian Dreadnought",
+            Zone::Battlefield,
+        );
+        let bounce = put(&mut state, actor, "Echoing Truth", Zone::Hand);
+        pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+        act(&mut state, Action::DeclareAttackers(vec![curie]));
+        pass_until(&mut state, |state| {
+            state.stack.last().is_some_and(|row| {
+                row.source == curie && row.kind == StackItemKind::TriggeredAbility
+            })
+        });
+        assert_eq!(state.players[opponent.index()].life, 19);
+        let combat_at = state
+            .engine
+            .event_history
+            .iter()
+            .position(|event| {
+                matches!(event,
+            CommittedEvent::CombatDamageToPlayer { source, player, amount: 1, .. }
+            if *source == curie && *player == opponent)
+            })
+            .unwrap();
+        let trigger = state.stack.last().unwrap().v4.stack_item_id;
+
+        pool(&mut state, actor, &[ManaColor::U], 1);
+        activate(&mut state, curie, 0, &[]);
+        // The only controlled legal material is selected and exiled by the
+        // native cost owner without asking for a redundant choice.
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass {
+            player, .. } if player == actor));
+        assert_eq!(zone(&state, donor), Zone::Exile);
+        pass_until(&mut state, |state| {
+            state.stack.len() == 1
+                && state.objects.get(curie).card_def == id("Phyrexian Dreadnought")
+        });
+        assert_eq!(zone(&state, donor), Zone::Exile);
+        assert_eq!(state.stack[0].v4.stack_item_id, trigger);
+        state.objects.get_mut(curie).counters.plus1_plus1 = 1;
+        assert_eq!(power_toughness(&state, curie), (13, 13));
+        assert_eq!(engine::effective_base_power(&state, curie), Some(12));
+
+        pool(&mut state, actor, &[ManaColor::U], 1);
+        cast(&mut state, bounce, &[Target::Object(other)]);
+        pass_until(&mut state, |state| {
+            zone(state, curie) == Zone::Hand && zone(state, other) == Zone::Hand
+        });
+        assert_eq!(
+            state.objects.get(curie).card_def,
+            id("Curie, Emergent Intelligence")
+        );
+        assert_eq!(state.stack.last().unwrap().v4.stack_item_id, trigger);
+        let departures = state
+            .engine
+            .event_history
+            .iter()
+            .skip(combat_at + 1)
+            .filter_map(|event| match event {
+                CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Battlefield,
+                    to: Zone::Hand,
+                    ..
+                } if [other, curie].contains(object) => Some(*object),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(departures, [other, curie]);
+
+        let before = hand_len(&state, actor);
+        let mut ordinary: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        settled(&mut ordinary);
+        assert_eq!(hand_len(&ordinary, actor), before + 12);
+
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        let thug = put(&mut state, actor, "Golgari Thug", Zone::Graveyard);
+        let library = state.players[actor.index()].library.clone();
+        let before_replacements = serde_json::to_vec(&state).unwrap();
+        let choice = settle(&mut state).expect("Curie's first actual draw replacement");
+        assert!(matches!(&choice, Decision::ChooseEffectTargets {
+            player, source, legal_targets, can_finish: true, .. }
+            if *player == actor && *source == curie && legal_targets.as_slice() == [Target::Object(thug)]));
+        let saved = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(next(&mut restored), choice);
+
+        let mut wrong_count = serde_json::to_value(&state).unwrap();
+        let count = wrong_count["engine"]["event_history"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find_map(|event| {
+                event
+                    .get_mut("EternalOwnedDrawV1")?
+                    .get_mut("journal")?
+                    .get_mut("Started")?
+                    .get_mut("total")
+            })
+            .unwrap();
+        assert_eq!(count.as_u64(), Some(12));
+        *count = serde_json::json!(13);
+        let wrong_count: GameState = serde_json::from_value(wrong_count).unwrap();
+        assert!(mtg_kernel::effect::validate_pending_effect_choice(&wrong_count).is_err());
+
+        let mut wrong_lki = serde_json::to_value(&state).unwrap();
+        let power = wrong_lki["engine"]["event_history"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find_map(|event| {
+                event
+                    .get_mut("EternalOwnedDrawV1")?
+                    .get_mut("journal")?
+                    .get_mut("CurieDeparture")?
+                    .get_mut("power")
+            })
+            .unwrap();
+        assert_eq!(power.as_u64(), Some(12));
+        *power = serde_json::json!(13);
+        let wrong_lki: GameState = serde_json::from_value(wrong_lki).unwrap();
+        assert!(mtg_kernel::effect::validate_pending_effect_choice(&wrong_lki).is_err());
+
+        // The genuine count capture remains after removing the active draw
+        // start. Restoring the original root cannot start Curie's draws again.
+        let mut rewind = serde_json::to_value(&state).unwrap();
+        rewind
+            .as_object_mut()
+            .unwrap()
+            .remove("eternal_owned_draw_progress_v1")
+            .unwrap();
+        let history = rewind["engine"]["event_history"].as_array_mut().unwrap();
+        let started_at = history
+            .iter()
+            .position(|event| {
+                event["EternalOwnedDrawV1"]["journal"]
+                    .get("Started")
+                    .is_some()
+            })
+            .unwrap();
+        history.remove(started_at);
+        let pending = &mut rewind["engine"]["pending_effect"];
+        let root = pending["resolving_item"]["inline_effect"].clone();
+        pending["frames"] = serde_json::json!([{"Program":{"op":root,"path":[]}}]);
+        pending["choice"] = serde_json::Value::Null;
+        pending["answered_choice_guard"] = serde_json::Value::Null;
+        let rewind: GameState = serde_json::from_value(rewind).unwrap();
+        assert!(mtg_kernel::effect::validate_pending_effect_choice(&rewind).is_err());
+
+        act(
+            &mut restored,
+            Action::ChooseEffectTarget(Target::Object(thug)),
+        );
+        settled(&mut restored);
+        assert_eq!(zone(&restored, thug), Zone::Hand);
+        assert_eq!(restored.players[actor.index()].library, library[4..]);
+        assert_eq!(named(&restored, opponent, "Treasure Token").len(), 11);
+
+        let mut declined: GameState = serde_json::from_slice(&saved).unwrap();
+        settle_with(&mut declined, |_, decision| {
+            assert!(matches!(decision, Decision::ChooseEffectTargets {
+                player, source, can_finish: true, .. } if player == actor && source == curie));
+            Action::FinishEffectSelection
+        });
+        assert_eq!(zone(&declined, thug), Zone::Graveyard);
+        assert_eq!(declined.players[actor.index()].library, library);
+        assert_eq!(named(&declined, opponent, "Treasure Token").len(), 12);
+
+        // Reuse the paid combat and departure, with an empty library at
+        // resolution and both continuous draw replacements active.
+        let mut terminal: GameState = serde_json::from_slice(&before_replacements).unwrap();
+        let library = terminal.players[actor.index()].library.clone();
+        mtg_kernel::event::propose_and_commit_batch(
+            &mut terminal,
+            library
+                .into_iter()
+                .map(|card| mtg_kernel::event::ProposedEvent::zone_change(card, Zone::Exile))
+                .collect(),
+        );
+        assert_eq!(zone(&terminal, jace), Zone::Battlefield);
+        assert_eq!(
+            mtg_kernel::planeswalker_v1::loyalty(&terminal, jace),
+            Some(4)
+        );
+        let prompt = settle(&mut terminal).expect("Curie chooses Jace or Hullbreacher");
+        assert!(matches!(&prompt, Decision::ChooseEffectTargets {
+            player, source, legal_targets, can_finish: true, .. }
+            if *player == actor && *source == curie && legal_targets.as_slice() == [Target::Object(jace)]));
+        terminal = serde_json::from_slice(&serde_json::to_vec(&terminal).unwrap()).unwrap();
+        assert_eq!(next(&mut terminal), prompt);
+        act(
+            &mut terminal,
+            Action::ChooseEffectTarget(Target::Object(jace)),
+        );
+        assert!(
+            matches!(next(&mut terminal), Decision::GameOver { winner: Some(player) } if player == actor)
+        );
+        assert!(named(&terminal, opponent, "Treasure Token").is_empty());
+    }
+}
+
+#[test]
 fn phyrexian_dreadnought_is_sacrificed_unless_twelve_power_is() {
     let mut state = islands();
     let dreadnought = put(&mut state, P0, "Phyrexian Dreadnought", Zone::Hand);
@@ -1384,6 +1615,87 @@ fn cabal_therapy_discards_every_copy_of_the_named_card_and_flashes_back() {
 }
 
 #[test]
+fn cabal_therapy_orders_all_matching_discards_by_their_owner() {
+    for caster in [P0, P1] {
+        let library = [id("Island"); 20];
+        let mut state = GameState::new_from_libraries_with_graveyard_order_v1(
+            &library,
+            &library,
+            |id| CARD_DEFS[id as usize].object_name.into(),
+            0x5031_4121_0002,
+            caster,
+        );
+        state.step = Step::Main1;
+        let owner = caster.opponent();
+        let old = put(&mut state, owner, "Swamp", Zone::Graveyard);
+        let first = put(&mut state, owner, "Lightning Bolt", Zone::Hand);
+        let other = put(&mut state, owner, "Island", Zone::Hand);
+        let second = put(&mut state, owner, "Lightning Bolt", Zone::Hand);
+        let therapy = put(&mut state, caster, "Cabal Therapy", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::B], 0);
+        cast(&mut state, therapy, &[Target::Player(owner)]);
+        let (group, within) = therapy_name_options("Lightning Bolt");
+        for choice in [group, within] {
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectOption { player, .. }) if player == caster
+            ));
+            act(&mut state, Action::ChooseEffectOption(choice));
+        }
+        let Some(Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            can_finish,
+            ..
+        }) = settle(&mut state)
+        else {
+            panic!("matching discards must open the owner's ordering prompt");
+        };
+        assert_eq!(player, owner);
+        assert_eq!(
+            legal_targets,
+            [Target::Object(first), Target::Object(second)]
+        );
+        assert!(!can_finish);
+        assert_eq!(state.players[owner.index()].hand, [other]);
+        assert!(state
+            .known_hand_cards(caster, owner)
+            .iter()
+            .any(|entry| entry.object == other));
+        assert_eq!(zone(&state, therapy), Zone::Stack);
+        let bytes = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(state.state_hash(), restored.state_hash());
+        act(
+            &mut restored,
+            Action::ChooseEffectTarget(Target::Object(second)),
+        );
+        settled(&mut restored);
+        assert_eq!(
+            restored.players[owner.index()].graveyard,
+            [old, second, first]
+        );
+        assert_eq!(restored.players[owner.index()].hand, [other]);
+        assert_eq!(zone(&restored, therapy), Zone::Graveyard);
+        let moved = restored
+            .engine
+            .event_history
+            .iter()
+            .filter_map(|event| match event {
+                event::CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Hand,
+                    to: Zone::Graveyard,
+                    ..
+                } if [first, second].contains(object) => Some(*object),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(moved, [first, second]);
+    }
+}
+
+#[test]
 fn unmask_exiles_a_black_card_instead_of_mana_and_takes_a_nonland_card() {
     let mut state = islands();
     let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
@@ -1426,6 +1738,251 @@ fn echo_of_eons_refills_both_hands_and_flashes_back() {
     cast(&mut state, echo, &[]);
     settled(&mut state);
     assert_eq!(zone(&state, echo), Zone::Exile);
+}
+
+#[test]
+fn paid_echo_draws_for_the_active_player_first_and_applies_riddler_per_player() {
+    use mtg_kernel::event::CommittedEvent;
+
+    for caster in [P0, P1] {
+        let active = caster.opponent();
+        let mut state = islands();
+        state.active_player = caster;
+        state.priority_player = caster;
+        let teferi = put(&mut state, caster, "Teferi, Time Raveler", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::W, ManaColor::U], 1);
+        cast(&mut state, teferi, &[]);
+        settled(&mut state);
+        activate(&mut state, teferi, 0, &[]);
+        settled(&mut state);
+        pass_until(&mut state, |s| {
+            s.active_player == active && s.step == Step::Main1
+        });
+        let thug = put(&mut state, active, "Golgari Thug", Zone::Graveyard);
+        for player in [caster, active] {
+            put(&mut state, player, "Quantum Riddler", Zone::Battlefield);
+            put(&mut state, player, "Lightning Bolt", Zone::Hand);
+            put(&mut state, player, "Island", Zone::Hand);
+        }
+        act(&mut state, Action::Pass);
+        assert_eq!(state.priority_player, caster);
+        let echo = put(&mut state, caster, "Echo of Eons", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::U; 2], 4);
+        let start = state.engine.event_history.len();
+        cast(&mut state, echo, &[]);
+        settled(&mut state);
+        assert_eq!(zone(&state, echo), Zone::Graveyard);
+        assert_eq!(state.players[caster.index()].mana_pool, [0; 6]);
+        assert_ne!(zone(&state, thug), Zone::Graveyard);
+        let mut draws =
+            state.engine.event_history[start..]
+                .iter()
+                .filter_map(|event| match event {
+                    CommittedEvent::Draw {
+                        player,
+                        object: Some(_),
+                    } => Some(*player),
+                    _ => None,
+                });
+        assert!(draws.by_ref().take(8).eq([active; 8]));
+        assert!(draws.eq([caster; 8]));
+        assert_eq!(hand_len(&state, caster), 8);
+        assert_eq!(hand_len(&state, active), 8);
+        assert!(!state.engine.event_history[start..]
+            .iter()
+            .any(|event| matches!(event, CommittedEvent::EternalOwnedDrawV1 { .. })));
+    }
+}
+
+#[test]
+fn paid_echo_restores_each_draw_leg_without_replaying_either_shuffle() {
+    use mtg_kernel::effect::EffectFrame;
+    use mtg_kernel::event::CommittedEvent;
+
+    for caster in [P0, P1] {
+        for drawer in [caster, caster.opponent()] {
+            let other = drawer.opponent();
+            let mut state = GameState::new_from_libraries_environment_v2_with_starting_player_v1(
+                &[],
+                &[],
+                |id| CARD_DEFS[id as usize].object_name.into(),
+                0x4537_4121_0002,
+                caster,
+            );
+            state.step = Step::Main1;
+            for _ in 0..12 {
+                put(&mut state, other, "Island", Zone::Library);
+            }
+            let jace = put(&mut state, drawer, "Jace, Wielder of Mysteries", Zone::Hand);
+            // Seed either seat's replacement through native entry so the
+            // planeswalker has its printed loyalty before Echo resolves.
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(jace, Zone::Battlefield),
+            );
+            assert_eq!(mtg_kernel::planeswalker_v1::loyalty(&state, jace), Some(4));
+            put(&mut state, drawer, "Quantum Riddler", Zone::Battlefield);
+            put(&mut state, other, "Hullbreacher", Zone::Battlefield);
+            if other == caster {
+                put(&mut state, other, "Quantum Riddler", Zone::Battlefield);
+            }
+            let other_draws = if other == caster { 8 } else { 7 };
+            let thug = put(&mut state, other, "Golgari Thug", Zone::Graveyard);
+            let returned = put(&mut state, other, "Lightning Bolt", Zone::Hand);
+            let echo = put(&mut state, caster, "Echo of Eons", Zone::Graveyard);
+            pool(&mut state, caster, &[ManaColor::U], 2);
+            cast(&mut state, echo, &[]);
+            let first = settle(&mut state).expect("Jace competes with Hullbreacher");
+            assert!(matches!(&first, Decision::ChooseEffectTargets {
+                player, source, legal_targets, can_finish: true, ..
+            } if *player == drawer && *source == echo
+                && legal_targets.as_slice() == [Target::Object(jace)]));
+            assert_eq!(state.players[caster.index()].mana_pool, [0; 6]);
+            assert_eq!(zone(&state, echo), Zone::Stack);
+            assert_ne!(zone(&state, thug), Zone::Graveyard);
+            assert_eq!(
+                hand_len(&state, other),
+                if drawer == caster { 0 } else { other_draws }
+            );
+            assert!(state.engine.event_history.iter().any(|event|
+                matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Hand, to: Zone::Library, .. }
+                    if *object == returned)));
+            let saved = serde_json::to_value(&state).unwrap();
+            let shuffle_ordinals = |saved: &serde_json::Value| {
+                saved["environment_randomization_v2"]["next_live_shuffle_ordinal"].clone()
+            };
+            assert_eq!(shuffle_ordinals(&saved), serde_json::json!([1, 1]));
+            let (marker_at, marker) = saved["engine"]["event_history"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .enumerate()
+                .find_map(|(at, row)| {
+                    row.get("EternalOwnedDrawV1")?
+                        .get("journal")?
+                        .get("EchoShuffledV1")
+                        .map(|marker| (at, marker))
+                })
+                .expect("Echo's native shuffle marker");
+            let shuffles = [
+                marker["shuffles"][0].as_u64().unwrap() as usize,
+                marker["shuffles"][1].as_u64().unwrap() as usize,
+            ];
+            for [missing, substitute] in [shuffles, [shuffles[1], shuffles[0]]] {
+                let mut replaced = saved.clone();
+                let events = replaced["engine"]["event_history"].as_array_mut().unwrap();
+                events[missing] = events[substitute].clone();
+                let replaced: GameState = serde_json::from_value(replaced).unwrap();
+                assert!(mtg_kernel::effect::validate_pending_effect_choice(&replaced).is_err());
+            }
+
+            let mut rewound = state.clone();
+            let pending = rewound.engine.pending_effect.as_mut().unwrap();
+            pending.choice = None;
+            pending.frames = vec![EffectFrame::Program {
+                op: mtg_kernel::eternal_legacy_e7a_v1::echo_of_eons(),
+                path: Vec::new(),
+            }];
+            let mut rewound = serde_json::to_value(&rewound).unwrap();
+            rewound
+                .as_object_mut()
+                .unwrap()
+                .remove("eternal_owned_draw_progress_v1");
+            rewound["engine"]["event_history"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|event| {
+                    let journal = &event["EternalOwnedDrawV1"]["journal"];
+                    journal.get("Started").is_none()
+                        && journal.get("StartedWithRiddlerV1").is_none()
+                        && journal.get("EchoShuffledV1").is_none()
+                });
+            assert_eq!(
+                rewound["engine"]["event_history"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|event| event["EternalOwnedDrawV1"]["journal"]
+                        .get("EchoShuffleCommittedV1")
+                        .is_some())
+                    .count(),
+                2
+            );
+            let rewound: GameState = serde_json::from_value(rewound).unwrap();
+            assert!(mtg_kernel::effect::validate_pending_effect_choice(&rewound)
+                .unwrap_err()
+                .contains("already started"));
+
+            if drawer != caster {
+                let mut changed_count = saved.clone();
+                let extra = &mut changed_count["engine"]["event_history"][marker_at]
+                    ["EternalOwnedDrawV1"]["journal"]["EchoShuffledV1"]["first_extra"];
+                assert_eq!(*extra, serde_json::json!(1));
+                *extra = serde_json::json!(0);
+                let changed_count: GameState = serde_json::from_value(changed_count).unwrap();
+                assert!(
+                    mtg_kernel::effect::validate_pending_effect_choice(&changed_count).is_err()
+                );
+
+                let mut skipped = saved.clone();
+                let completed = skipped["engine"]["event_history"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find_map(|event| {
+                        event
+                            .get_mut("EternalOwnedDrawV1")?
+                            .get_mut("journal")?
+                            .get_mut("Completed")?
+                            .get_mut("ordinal")
+                    })
+                    .expect("the active player's actual completed attempts");
+                *completed = serde_json::json!(1);
+                let skipped: GameState = serde_json::from_value(skipped).unwrap();
+                assert!(mtg_kernel::effect::validate_pending_effect_choice(&skipped).is_err());
+            }
+
+            let mut restored: GameState = serde_json::from_value(saved).unwrap();
+            assert_eq!(next(&mut restored), first);
+            act(&mut restored, Action::FinishEffectSelection);
+            let mut answered: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
+            for branch in [&mut restored, &mut answered] {
+                assert_eq!(next(branch), first);
+                assert_eq!(named(branch, other, "Treasure Token").len(), 1);
+                act(branch, Action::ChooseEffectTarget(Target::Object(jace)));
+                assert!(
+                    matches!(next(branch), Decision::GameOver { winner: Some(p) } if p == drawer)
+                );
+                assert_eq!(named(branch, other, "Treasure Token").len(), 1);
+                assert_eq!(
+                    shuffle_ordinals(&serde_json::to_value(&*branch).unwrap()),
+                    serde_json::json!([1, 1])
+                );
+                assert_eq!(
+                    hand_len(branch, other),
+                    if drawer == caster { 0 } else { other_draws }
+                );
+            }
+            assert_eq!(restored.state_hash(), answered.state_hash());
+
+            for completed in 1..=8 {
+                act(&mut state, Action::FinishEffectSelection);
+                assert_eq!(
+                    settle(&mut state).as_ref(),
+                    (completed < 8).then_some(&first)
+                );
+                assert_eq!(named(&state, other, "Treasure Token").len(), completed);
+            }
+            assert_eq!(zone(&state, echo), Zone::Exile);
+            assert_eq!(hand_len(&state, drawer), 0);
+            assert_eq!(hand_len(&state, other), other_draws);
+            assert_eq!(
+                shuffle_ordinals(&serde_json::to_value(&state).unwrap()),
+                serde_json::json!([1, 1])
+            );
+        }
+    }
 }
 
 #[test]

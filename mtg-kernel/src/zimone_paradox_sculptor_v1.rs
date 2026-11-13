@@ -31,4 +31,4 @@ pub(crate) const TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     feature = "limited-fdn-fixtures",
     not(feature = "standard-magezero-fixtures")
 ))]
-mod tests;
+pub(crate) mod tests;

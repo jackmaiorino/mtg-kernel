@@ -3,7 +3,7 @@
 //! This module grants no session, action execution, model or transport admission.
 use crate::{
     ids::PlayerId,
-    policy_surface_v5::{PolicyDecisionV5, PolicySurfaceV5},
+    policy_surface_v5::{LimitedAppendixV1, PolicyDecisionV5, PolicySurfaceV5},
     rl::{CardStableRefV1, RlContractError},
     state::GameState,
 };
@@ -51,6 +51,78 @@ pub struct KaitoObservationV75 {
     pub chandra: crate::chandra_public_v74::FactsV74,
     #[serde(deserialize_with = "strict_value")]
     pub kaito: crate::kaito_public_v75::FactsV75,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "strict_value"
+    )]
+    pub artist: Option<crate::artist_public_v64::FactsV64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "strict_value"
+    )]
+    pub chosen_type: Option<crate::chosen_type_consumer_v1::FactsV1>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "strict_value"
+    )]
+    pub niv: Option<crate::niv_mizzet_public_v63::ConsumerFactsV1>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "strict_value"
+    )]
+    pub drakuseth: Option<crate::drakuseth_consumer_v1::FactsV1>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "strict_value"
+    )]
+    pub embercleave: Option<crate::embercleave_public_v65::FactsV65>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zimone: Option<crate::zimone_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub omniscience: Option<crate::omniscience_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tutelage: Option<crate::tutelage_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moon: Option<crate::moon_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leyline_axe: Option<crate::leyline_axe_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progenitus: Option<crate::progenitus_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aberration: Option<crate::aberration_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lathril: Option<crate::lathril_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub electroduplicate: Option<crate::electroduplicate_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edict: Option<crate::edict_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loot: Option<crate::loot_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub curator: Option<crate::curator_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kykar: Option<crate::kykar_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sphinx_lore: Option<crate::sphinx_lore_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub greatwurm: Option<crate::greatwurm_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harvester: Option<crate::harvester_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fiend_artisan: Option<crate::fiend_artisan_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub etali: Option<crate::etali_primal_storm_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thousand_year_storm: Option<crate::thousand_year_storm_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scrawling_crawler: Option<crate::scrawling_crawler_public_v1::FactsV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_programs: Option<crate::limited_full_pool_consumer_v1::trigger_programs::FactsV1>,
     pub complete_ordinary_observation: bool,
     pub owning_consumer_admitted: bool,
     pub projection_sha256: String,
@@ -96,6 +168,44 @@ pub fn producer_sha256() -> String {
             ELENDA_COMPAT_SCHEMA,
             include_str!("tinybones_observation_v72.rs"),
             include_str!("kaito_observation_v75.rs"),
+            include_str!("limited_mixed_consumer_v1.rs"),
+            include_str!("limited_full_pool_consumer_v1.rs"),
+            include_str!("scrawling_crawler_public_v1.rs"),
+            include_str!("limited_full_pool_consumer_v1/trigger_programs.rs"),
+            include_str!("limited_full_pool_consumer_v1/modal_programs.rs"),
+            include_str!("life_gain_turn_v1.rs"),
+            crate::limited_full_pool_consumer_v1::FROZEN_POOL_JSON_V1,
+            include_str!("leyline_axe_public_v1.rs"),
+            include_str!("leyline_axe_v1.rs"),
+            include_str!("lathril_public_v1.rs"),
+            include_str!("lathril_receipts_v1.rs"),
+            include_str!("edict_public_v1.rs"),
+            include_str!("sphinx_lore_public_v1.rs"),
+            include_str!("sphinx_lore_consumer_v1.rs"),
+            include_str!("human_bo3_v1/sphinx_lore_consumer_v1.rs"),
+            include_str!("kykar_public_v1.rs"),
+            include_str!("kykar_consumer_v1.rs"),
+            include_str!("human_bo3_v1/kykar_consumer_v1.rs"),
+            include_str!("loot_public_v1.rs"),
+            include_str!("loot_consumer_v1.rs"),
+            include_str!("human_bo3_v1/loot_consumer_v1.rs"),
+            include_str!("edict_receipts_v1.rs"),
+            include_str!("curator_public_v1.rs"),
+            include_str!("curator_receipts_v1.rs"),
+            include_str!("harvester_public_v1.rs"),
+            include_str!("thousand_year_storm_public_v1.rs"),
+            include_str!("harvester_receipts_v1.rs"),
+            include_str!("etali_primal_storm_public_v1.rs"),
+            include_str!("etali_primal_storm_receipts_v1.rs"),
+            include_str!("greatwurm_public_v1.rs"),
+            include_str!("greatwurm_receipts_v1.rs"),
+            include_str!("fiend_artisan_public_v1.rs"),
+            include_str!("fiend_artisan_receipts_v1.rs"),
+            include_str!("drakuseth_consumer_v1.rs"),
+            include_str!("drakuseth_consumer_v1/damage.rs"),
+            include_str!("human_bo3_v1/drakuseth_consumer_v1.rs"),
+            include_str!("fdn_family_source_v76.rs"),
+            include_str!("drakuseth_damage_source_v76.rs"),
             include_str!("kaito_candidates_v75.rs"),
             include_str!("rl_session/kaito_v75.rs"),
             include_str!("current_mixed_policy_v1/kaito.rs"),
@@ -126,6 +236,8 @@ pub fn producer_sha256() -> String {
             include_str!("valkyries_call_v1.rs"),
             include_str!("rules_meaning_valkyries_call_v62.rs"),
             include_str!("effect/thousand_year_storm_v1.rs"),
+            include_str!("effect/thousand_year_storm_v1/casts.rs"),
+            include_str!("effect/thousand_year_storm_v1/targets.rs"),
             include_str!("effect/standard_copy.rs"),
             include_str!("standard_spell_copy.rs"),
             include_str!("event_history_v1.rs"),
@@ -188,6 +300,15 @@ pub fn commitment(value: &KaitoObservationV75) -> Result<String, RlContractError
         .collect())
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    validate_state_scoped(state, LimitedAppendixV1::Legacy)
+}
+pub(crate) fn validate_state_scoped(
+    state: &GameState,
+    appendix: LimitedAppendixV1,
+) -> Result<(), String> {
+    if appendix == LimitedAppendixV1::FullPool {
+        crate::limited_full_pool_consumer_v1::require_native_modes(state)?;
+    }
     crate::effect::kaito_cunning_v75::validate_state(state)?;
     crate::effect::kaito_cunning_v75::validate_pending(state)?;
     crate::effect::chandra_flameshaper_v1::validate_state(state)?;
@@ -202,20 +323,72 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::engine::ordinary_cleanup_v1::validate(state)?;
     crate::engine::validate_battlefield_pt(state)
         .map_err(|id| format!("native PT envelope exceeded for {id:?}"))?;
-    require_supported(state, None)?;
+    require_supported(state, None, appendix)?;
+    if appendix.includes(LimitedAppendixV1::ChosenType) {
+        crate::banner_of_kinship_v1::entry::validate_state(state)?;
+    }
+    if appendix.includes(LimitedAppendixV1::Drakuseth) {
+        crate::drakuseth_damage_source_v76::validate_state(state)?;
+    }
+    if appendix.includes(LimitedAppendixV1::Tutelage) {
+        crate::tutelage_public_v1::require_receipts(state)?;
+    }
+    if appendix.includes(LimitedAppendixV1::Moon) {
+        crate::moon_public_v1::validate_state(state)?;
+    }
+    if appendix.includes(LimitedAppendixV1::LeylineAxe) {
+        crate::leyline_axe_v1::validate(state)?;
+    }
+    if appendix.includes(LimitedAppendixV1::Lathril) {
+        crate::lathril_public_v1::validate_native_receipts(state)?;
+    }
+    if appendix.includes(LimitedAppendixV1::Edict) {
+        crate::edict_public_v1::validate_native(state)?;
+    }
+    if appendix.includes(LimitedAppendixV1::Curator) {
+        crate::curator_public_v1::validate_native(state)?;
+    } else if state.curator_unordered_reveal_v1 {
+        return Err("Curator unordered reveal requires its distinct owning profile".into());
+    }
+    if appendix.includes(LimitedAppendixV1::Greatwurm) {
+        crate::greatwurm_public_v1::validate_native(state)?;
+    } else if state.greatwurm_commit_receipts_v1 {
+        return Err("Greatwurm native receipts require its distinct owning profile".into());
+    }
+    if appendix.includes(LimitedAppendixV1::Harvester) {
+        crate::harvester_public_v1::validate_native(state)?;
+    } else if state.harvester_commit_receipts_v1 {
+        return Err("Harvester native receipts require its distinct owning profile".into());
+    }
+    if appendix.includes(LimitedAppendixV1::FiendArtisan) {
+        crate::fiend_artisan_receipts_v1::activations(state)?;
+    } else {
+        crate::fiend_artisan_receipts_v1::refuse_legacy(state)?;
+    }
+    if appendix.includes(LimitedAppendixV1::Etali) {
+        let rows = crate::etali_primal_storm_receipts_v1::occurrences(state)?;
+        crate::etali_primal_storm_receipts_v1::validate_current(state, &rows)?;
+    } else if crate::etali_primal_storm_receipts_v1::has_receipts(state) {
+        return Err("Etali native receipts require its distinct complete consumer".into());
+    }
+    if appendix.includes(LimitedAppendixV1::ThousandYearStorm) {
+        crate::thousand_year_storm_public_v1::validate_native(state)?;
+    } else if state.thousand_year_storm_consumer_v1 {
+        return Err("Storm native mode requires its distinct owning profile".into());
+    }
     crate::ravenous_observation_v51::validate_state_complete_recipient_scope(
         state,
         crate::planeswalker_v1::RecipientScopeV1::KaitoV75,
     )?;
     crate::elenda_public_v52::capture(state).map_err(|e| e.0)?;
-    crate::drake_public_v53::capture_kaito_compat_v75(state).map_err(|e| e.0)?;
-    crate::spinner_public_v54::capture_kaito_compat_v75(state)?;
+    crate::drake_public_v53::capture_kaito_compat_v75(state, appendix).map_err(|e| e.0)?;
+    crate::spinner_public_v54::capture_kaito_compat_v75(state, appendix)?;
     crate::phoenix_public_v56::capture(state).map_err(|e| e.0)?;
     for viewer in [PlayerId::P0, PlayerId::P1] {
-        crate::quandary_public_v55::capture_kaito_compat_v75(state, viewer)?;
-        crate::next_five_public_v59::capture_kaito_compat_v75(state, viewer)?;
-        crate::graveyard_return_public_v61::capture_kaito_compat_v75(state, viewer)?;
-        crate::valkyries_call_public_v62::capture_kaito_compat_v75(state, viewer)?;
+        crate::quandary_public_v55::capture_kaito_compat_v75(state, viewer, appendix)?;
+        crate::next_five_public_v59::capture_kaito_compat_v75(state, viewer, appendix)?;
+        crate::graveyard_return_public_v61::capture_kaito_compat_v75(state, viewer, appendix)?;
+        crate::valkyries_call_public_v62::capture_kaito_compat_v75(state, viewer, appendix)?;
     }
     Ok(())
 }
@@ -225,10 +398,60 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
 /// this closed Call scope, including a supported return of such a printing.
 /// Later-family receipt variants select only originally public mechanics; their
 /// private payloads are never scanned or published.
-pub(crate) fn require_supported(state: &GameState, viewer: Option<PlayerId>) -> Result<(), String> {
+fn require_supported(
+    state: &GameState,
+    viewer: Option<PlayerId>,
+    appendix: LimitedAppendixV1,
+) -> Result<(), String> {
     use crate::{event::CommittedEvent as E, optional_trigger_public_v1 as public};
+    let selected = match appendix {
+        LimitedAppendixV1::Legacy
+        | LimitedAppendixV1::ChosenType
+        | LimitedAppendixV1::Mixed
+        | LimitedAppendixV1::FullPool => None,
+        LimitedAppendixV1::Artist => Some(crate::rules_meaning_artist_v64::selected_id()?),
+        LimitedAppendixV1::Niv => Some(crate::rules_meaning_niv_mizzet_v63::selected_id()?),
+        LimitedAppendixV1::Drakuseth => Some(crate::rules_meaning_drakuseth_v67::selected_id()?),
+        LimitedAppendixV1::Embercleave => {
+            Some(crate::rules_meaning_embercleave_v65::selected_id()?)
+        }
+        LimitedAppendixV1::Zimone => Some(crate::zimone_public_v1::selected_id()?),
+        LimitedAppendixV1::Omniscience => Some(crate::omniscience_public_v1::selected_id()?),
+        LimitedAppendixV1::Tutelage => Some(crate::tutelage_public_v1::selected_id()?),
+        LimitedAppendixV1::Moon => Some(crate::moon_public_v1::selected_id()?),
+        LimitedAppendixV1::LeylineAxe => Some(crate::leyline_axe_public_v1::selected_id()?),
+        LimitedAppendixV1::Progenitus => Some(crate::progenitus_public_v1::selected_id()?),
+        LimitedAppendixV1::Aberration => Some(crate::aberration_public_v1::selected_id()?),
+        LimitedAppendixV1::Lathril => Some(crate::lathril_public_v1::selected_id()?),
+        LimitedAppendixV1::Electroduplicate => {
+            Some(crate::electroduplicate_public_v1::selected_id()?)
+        }
+        LimitedAppendixV1::Edict => Some(crate::edict_public_v1::selected_id()?),
+        LimitedAppendixV1::Loot => Some(crate::loot_public_v1::selected_id()?),
+        LimitedAppendixV1::Curator => Some(crate::curator_public_v1::selected_id()?),
+        LimitedAppendixV1::Kykar => Some(crate::kykar_public_v1::selected_id()?),
+        LimitedAppendixV1::SphinxLore => Some(crate::sphinx_lore_public_v1::selected_id()?),
+        LimitedAppendixV1::Greatwurm => Some(crate::greatwurm_public_v1::selected_id()?),
+        LimitedAppendixV1::Harvester => Some(crate::harvester_public_v1::selected_id()?),
+        LimitedAppendixV1::FiendArtisan => Some(crate::fiend_artisan_public_v1::selected_id()?),
+        LimitedAppendixV1::Etali => Some(crate::etali_primal_storm_public_v1::selected_id()?),
+        LimitedAppendixV1::ThousandYearStorm => {
+            Some(crate::thousand_year_storm_public_v1::selected_id()?)
+        }
+    };
+    let full_pool = (appendix == LimitedAppendixV1::FullPool)
+        .then(crate::limited_full_pool_consumer_v1::declared_printings_v1)
+        .transpose()?;
     let unsupported = |id: u16| {
         id >= 460
+            && !full_pool.is_some_and(|printings| printings.contains(&id))
+            && !(appendix == LimitedAppendixV1::Mixed
+                && crate::limited_mixed_consumer_v1::PARTIAL_PRINTINGS_V1.contains(&id))
+            && selected != Some(id)
+            && !(appendix.includes(LimitedAppendixV1::Kykar)
+                && crate::effect::kykar_v1::token_definition(id))
+            && !(appendix.includes(LimitedAppendixV1::ChosenType)
+                && crate::banner_of_kinship_v1::entry::owns_entry_definition(id))
             && !crate::engine::time_stop_v1::definition(id)
             && !crate::effect::genesis_wave_v1::definition(id)
             && !crate::effect::vivien_reid_v1::definition(id)
@@ -300,25 +523,69 @@ pub(crate) fn require_supported(state: &GameState, viewer: Option<PlayerId>) -> 
             E::NivMizzetVisionaryDamageSourceDepartureV1 { source, .. } => {
                 unsupported(source.card_def)
             }
-            E::KinshipEntryV1 { .. }
-            | E::SphinxsTutelageDrawV1 { .. }
+            E::NivMizzetVisionaryDrawEndedV1 { .. } => !appendix.includes(LimitedAppendixV1::Niv),
+            E::KinshipEntryV1 { .. } => !appendix.includes(LimitedAppendixV1::ChosenType),
+            E::SphinxsTutelageDrawV1 { .. }
             | E::SphinxsTutelageCollectedV1 { .. }
             | E::SphinxsTutelagePublishedV1 { .. }
             | E::SphinxsTutelageMillStartedV1 { .. }
-            | E::SphinxsTutelageMillBatchV1 { .. }
-            | E::LathrilCombatDamageV1 { .. }
+            | E::SphinxsTutelageMillBatchV1 { .. } => {
+                !appendix.includes(LimitedAppendixV1::Tutelage)
+            }
+            E::LathrilCombatDamageV1 { .. }
             | E::LathrilCombatCollectedV1 { .. }
             | E::LathrilCombatPublishedV1 { .. }
             | E::LathrilCombatResolvedV1 { .. }
             | E::LathrilCombatCounteredV1 { .. }
             | E::LathrilCombatObservedV1 { .. }
-            | E::CuratorEnteredV1 { .. }
+            | E::LathrilReceiptV1 { .. } => !appendix.includes(LimitedAppendixV1::Lathril),
+            E::BlasphemousEdictReceiptV1 { .. } => !appendix.includes(LimitedAppendixV1::Edict),
+            E::FiendArtisanInputV1 { .. }
+            | E::FiendArtisanPaidV1 { .. }
+            | E::FiendArtisanSearchStartedV1 { .. }
+            | E::FiendArtisanSearchFinishedV1 { .. }
+            | E::FiendArtisanConsumerReceiptV1 { .. } => {
+                !appendix.includes(LimitedAppendixV1::FiendArtisan)
+            }
+            E::EtaliPrimalStormReceiptV1 { .. } => !appendix.includes(LimitedAppendixV1::Etali),
+            E::CuratorEnteredV1 { .. }
             | E::CuratorCollectedV1 { .. }
             | E::CuratorPublishedV1 { .. }
             | E::CuratorFinishedV1 { .. }
             | E::CuratorProgressV1 { .. }
-            | E::KykarExiledV1 { .. }
-            | E::KykarDelayedCollectedV1 { .. } => true,
+            | E::CuratorReceiptV1 { .. } => !appendix.includes(LimitedAppendixV1::Curator),
+            E::SphinxLoreV1 { .. }
+            | E::SphinxLoreCastOptionsV1 { .. }
+            | E::SphinxLoreCastSelectedV1 { .. } => {
+                !appendix.includes(LimitedAppendixV1::SphinxLore)
+            }
+            E::GreatwurmCounterInputV1 { .. }
+            | E::GreatwurmCounterPaymentV1 { .. }
+            | E::GreatwurmCombatCaptureV1 { .. }
+            | E::GreatwurmCombatBoundV1 { .. }
+            | E::GreatwurmCollectedV1 { .. }
+            | E::GreatwurmPublishedV1 { .. }
+            | E::GreatwurmFinishedV1 { .. }
+            | E::GreatwurmCommitReceiptV1 { .. } => {
+                !appendix.includes(LimitedAppendixV1::Greatwurm)
+            }
+            E::HarvesterCommitReceiptV1 { .. }
+            | E::HarvesterResolvedV1 { .. }
+            | E::NightmareCopyEnteredV1 { .. }
+            | E::NightmareCopyLayerV1 { .. } => !appendix.includes(LimitedAppendixV1::Harvester),
+            E::ThousandYearStormV1 {
+                journal: crate::effect::thousand_year_storm_v1::JournalV1::Cast { observers, .. },
+            } => !observers.is_empty() && !appendix.includes(LimitedAppendixV1::ThousandYearStorm),
+            E::ThousandYearStormV1 {
+                journal:
+                    crate::effect::thousand_year_storm_v1::JournalV1::Published { .. }
+                    | crate::effect::thousand_year_storm_v1::JournalV1::Copy { .. }
+                    | crate::effect::thousand_year_storm_v1::JournalV1::CastForm { .. }
+                    | crate::effect::thousand_year_storm_v1::JournalV1::TargetFaces { .. },
+            } => !appendix.includes(LimitedAppendixV1::ThousandYearStorm),
+            E::KykarExiledV1 { .. } | E::KykarDelayedCollectedV1 { .. } => {
+                !appendix.includes(LimitedAppendixV1::Kykar)
+            }
 
             _ => false,
         });
@@ -367,6 +634,19 @@ fn captured_reference(
         card_db_id: if crate::effect::liliana_dreadhorde_v1::definition(source.card_def)
             || crate::effect::chandra_flameshaper_v1::definition(source.card_def)
             || crate::effect::kaito_cunning_v75::definition(source.card_def)
+            || source.card_def == crate::drakuseth_consumer_v1::PRINTING_V1
+            || state.fiend_artisan_receipts_v1
+                && source.card_def == crate::fiend_artisan_public_v1::PRINTING
+            || state.etali_commit_receipts_v1
+                && source.card_def == crate::etali_primal_storm_public_v1::PRINTING
+            || state.curator_unordered_reveal_v1
+                && source.card_def == crate::curator_public_v1::PRINTING
+            || state.greatwurm_commit_receipts_v1
+                && source.card_def == crate::greatwurm_public_v1::PRINTING
+            || state.harvester_commit_receipts_v1
+                && source.card_def == crate::harvester_public_v1::PRINTING
+            || state.thousand_year_storm_consumer_v1
+                && source.card_def == crate::thousand_year_storm_public_v1::PRINTING
         {
             source.card_def
         } else {
@@ -403,7 +683,102 @@ pub(crate) fn stack_source_reference(
     } else {
         return Ok(None);
     };
-    if !selected_source(source) {
+    let artist_trigger = item.kind == crate::state::StackItemKind::TriggeredAbility
+        && source.card_def == crate::artist_consumer_v1::PRINTING_V1
+        && item.inline_effect.as_ref() == Some(&crate::effect::perforating_artist_v1::raid());
+    let niv_trigger = item.kind == crate::state::StackItemKind::TriggeredAbility
+        && source.card_def == crate::niv_consumer_v1::PRINTING_V1
+        && matches!(
+            item.inline_effect,
+            Some(crate::effect::EffectOp::NivMizzetVisionaryDrawV1 { .. })
+        );
+    let drakuseth_trigger = source.card_def == crate::drakuseth_consumer_v1::PRINTING_V1
+        && item.kind == crate::state::StackItemKind::TriggeredAbility
+        && item.inline_effect.as_ref() == Some(&crate::standard_cards_v1::drakuseth_attack_v1());
+    let embercleave_attachment = source.card_def == crate::embercleave_consumer_v1::PRINTING_V1
+        && item.v4.granted_by.is_none()
+        && matches!(
+            item.kind,
+            crate::state::StackItemKind::ActivatedAbility
+                | crate::state::StackItemKind::TriggeredAbility
+        )
+        && item
+            .inline_effect
+            .as_ref()
+            .is_some_and(crate::embercleave_consumer_v1::is_attachment_program);
+    let zimone_counters = source.card_def == crate::zimone_public_v1::PRINTING
+        && item.v4.granted_by.is_none()
+        && match item.kind {
+            crate::state::StackItemKind::TriggeredAbility => {
+                item.inline_effect.as_ref()
+                    == Some(&crate::zimone_public_v1::AbilityKindV1::CombatPutPlusOne.program())
+            }
+            crate::state::StackItemKind::ActivatedAbility => {
+                item.v4.activated_ability_index == Some(0)
+                    && item.inline_effect.as_ref()
+                        == Some(
+                            &crate::zimone_public_v1::AbilityKindV1::ActivateDoubleEveryKind
+                                .program(),
+                        )
+            }
+            _ => false,
+        };
+    let tutelage = source.card_def == crate::tutelage_public_v1::PRINTING
+        && match item.kind {
+            crate::state::StackItemKind::TriggeredAbility => matches!(
+                item.inline_effect,
+                Some(crate::effect::EffectOp::SphinxsTutelageMillV1 { .. })
+            ),
+            crate::state::StackItemKind::ActivatedAbility => {
+                item.v4.activated_ability_index == Some(0)
+                    && item
+                        .inline_effect
+                        .as_ref()
+                        .is_some_and(crate::tutelage_public_v1::activation_program)
+            }
+            _ => false,
+        };
+    let curator = state.curator_unordered_reveal_v1
+        && source.card_def == crate::curator_public_v1::PRINTING
+        && matches!(
+            item.inline_effect,
+            Some(crate::effect::EffectOp::CuratorDestiniesV1 { .. })
+        );
+    let greatwurm = state.greatwurm_commit_receipts_v1
+        && source.card_def == crate::greatwurm_public_v1::PRINTING
+        && matches!(
+            item.inline_effect,
+            Some(crate::effect::EffectOp::GreatwurmCountersV1 { .. })
+        );
+    let harvester = state.harvester_commit_receipts_v1
+        && source.card_def == crate::harvester_public_v1::PRINTING
+        && crate::harvester_receipts_v1::selected(item);
+    let fiend_artisan = state.fiend_artisan_receipts_v1
+        && source.card_def == crate::fiend_artisan_public_v1::PRINTING
+        && crate::effect::fiend_artisan_v1::selected(state, item);
+    let etali = state.etali_commit_receipts_v1
+        && source.card_def == crate::etali_primal_storm_public_v1::PRINTING
+        && crate::etali_primal_storm_receipts_v1::selected(item);
+    let kykar = crate::effect::kykar_v1::item_selected(state, item);
+    let thousand_year_storm = state.thousand_year_storm_consumer_v1
+        && crate::effect::thousand_year_storm_v1::selected(state, item);
+    let sphinx_lore = crate::effect::sphinx_lore_v1::selected(state, item);
+    if !selected_source(source)
+        && !kykar
+        && !sphinx_lore
+        && !thousand_year_storm
+        && !greatwurm
+        && !harvester
+        && !fiend_artisan
+        && !etali
+        && !artist_trigger
+        && !drakuseth_trigger
+        && !niv_trigger
+        && !embercleave_attachment
+        && !zimone_counters
+        && !tutelage
+        && !curator
+    {
         return Ok(None);
     }
     crate::engine::time_stop_v1::validate(state).map_err(RlContractError)?;
@@ -435,11 +810,85 @@ pub(crate) fn stack_source_reference(
 pub(crate) fn pending_source_reference(
     state: &GameState,
     pending: &crate::trigger::PendingTrigger,
+    appendix: LimitedAppendixV1,
 ) -> Result<Option<CardStableRefV1>, RlContractError> {
     let Some(source) = pending.source_contract else {
         return Ok(None);
     };
-    if !selected_source(source) {
+    let artist_trigger = source.card_def == crate::artist_consumer_v1::PRINTING_V1
+        && pending.effect == crate::effect::perforating_artist_v1::raid();
+    let niv_trigger = source.card_def == crate::niv_consumer_v1::PRINTING_V1
+        && matches!(
+            pending.effect,
+            crate::effect::EffectOp::NivMizzetVisionaryDrawV1 { .. }
+        );
+    let drakuseth_trigger = source.card_def == crate::drakuseth_consumer_v1::PRINTING_V1
+        && pending.granted_by.is_none()
+        && pending.effect == crate::standard_cards_v1::drakuseth_attack_v1();
+    let embercleave_attachment = source.card_def == crate::embercleave_consumer_v1::PRINTING_V1
+        && pending.granted_by.is_none()
+        && crate::embercleave_consumer_v1::is_attachment_program(&pending.effect);
+    let zimone_trigger = source.card_def == crate::zimone_public_v1::PRINTING
+        && pending.granted_by.is_none()
+        && pending.effect == crate::zimone_public_v1::AbilityKindV1::CombatPutPlusOne.program();
+    let tutelage = source.card_def == crate::tutelage_public_v1::PRINTING
+        && matches!(
+            pending.effect,
+            crate::effect::EffectOp::SphinxsTutelageMillV1 { .. }
+        );
+    let curator = state.curator_unordered_reveal_v1
+        && source.card_def == crate::curator_public_v1::PRINTING
+        && matches!(
+            pending.effect,
+            crate::effect::EffectOp::CuratorDestiniesV1 { .. }
+        );
+    let thousand_year_storm = state.thousand_year_storm_consumer_v1
+        && crate::effect::thousand_year_storm_v1::definition(source.card_def)
+        && crate::effect::thousand_year_storm_v1::recipe(&pending.effect);
+    let sphinx_lore = crate::effect::sphinx_lore_v1::definition(source.card_def)
+        && crate::effect::sphinx_lore_v1::recipe(&pending.effect);
+    let greatwurm = state.greatwurm_commit_receipts_v1
+        && source.card_def == crate::greatwurm_public_v1::PRINTING
+        && matches!(
+            pending.effect,
+            crate::effect::EffectOp::GreatwurmCountersV1 { .. }
+        );
+    let etali = state.etali_commit_receipts_v1
+        && source.card_def == crate::etali_primal_storm_public_v1::PRINTING
+        && pending.effect == crate::effect::EffectOp::ExileTopEachPlayerThenCastV1;
+    let kykar = crate::effect::kykar_v1::definition(source.card_def)
+        && crate::effect::kykar_v1::recipe(&pending.effect);
+    let printed_full_pool_trigger = appendix == LimitedAppendixV1::FullPool
+        && !pending.is_madness_offer
+        && pending.granted_by.is_none()
+        && crate::limited_full_pool_consumer_v1::trigger_programs::printed_program(
+            source,
+            &pending.effect,
+        )
+        .is_some();
+    let crawler_trigger = appendix == LimitedAppendixV1::FullPool
+        && !pending.is_madness_offer
+        && source.zone == crate::state::Zone::Battlefield
+        && crate::scrawling_crawler_public_v1::pending_printing(source.card_def)
+        && (pending.granted_by.is_some()
+            || crate::scrawling_crawler_public_v1::TriggerV1::from_program(&pending.effect)
+                .is_some());
+    if !selected_source(source)
+        && !kykar
+        && !sphinx_lore
+        && !thousand_year_storm
+        && !greatwurm
+        && !etali
+        && !artist_trigger
+        && !drakuseth_trigger
+        && !niv_trigger
+        && !embercleave_attachment
+        && !zimone_trigger
+        && !tutelage
+        && !curator
+        && !crawler_trigger
+        && !printed_full_pool_trigger
+    {
         return Ok(None);
     }
     crate::engine::time_stop_v1::validate(state).map_err(RlContractError)?;
@@ -460,7 +909,11 @@ pub(crate) fn pending_source_reference(
             "V75 source requires unique genuine held trigger".into(),
         ));
     }
-    Ok(Some(captured_reference(state, source)))
+    let mut reference = captured_reference(state, source);
+    if printed_full_pool_trigger || crawler_trigger {
+        reference.card_db_id = source.card_def;
+    }
+    Ok(Some(reference))
 }
 
 pub fn observe_v75(
@@ -471,6 +924,11 @@ pub fn observe_v75(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<KaitoObservationV75, RlContractError> {
+    if surface.limited_appendix_v1() != crate::policy_surface_v5::LimitedAppendixV1::Legacy {
+        return Err(RlContractError(
+            "Appendix decisions require their owning profile".into(),
+        ));
+    }
     observe_parts_v75(state, surface, actor_and_origin, step, physical, substep)
         .map(|(value, _)| value)
 }
@@ -482,8 +940,14 @@ pub(crate) fn observe_parts_v75(
     physical: u64,
     substep: (u32, u32),
 ) -> Result<KaitoPublicPartsV75, RlContractError> {
-    validate_state(state).map_err(RlContractError)?;
-    require_supported(state, Some(actor_and_origin.0)).map_err(RlContractError)?;
+    let appendix = surface.limited_appendix_v1();
+    validate_state_scoped(state, appendix).map_err(RlContractError)?;
+    require_supported(state, Some(actor_and_origin.0), appendix).map_err(RlContractError)?;
+    use crate::optional_trigger_public_v1::ConsumerV1;
+    let appendix_consumer = match appendix {
+        LimitedAppendixV1::Mixed | LimitedAppendixV1::FullPool => ConsumerV1::for_kaito(appendix),
+        _ => ConsumerV1::Legacy,
+    };
     let (inherited, families) = crate::ravenous_observation_v51::observe_parts_complete_kaito_v75(
         state,
         surface,
@@ -500,25 +964,89 @@ pub(crate) fn observe_parts_v75(
         projection_sha256: String::new(),
     };
     common.projection_sha256 = crate::elenda_observation_v52::commitment(&common)?;
+    let scrawling_crawler = (appendix == LimitedAppendixV1::FullPool)
+        .then(|| {
+            crate::scrawling_crawler_public_v1::FactsV1::capture(
+                state,
+                &common.common.projection.surface,
+            )
+        })
+        .transpose()
+        .map_err(RlContractError)?;
+    let trigger_programs = (appendix == LimitedAppendixV1::FullPool)
+        .then(|| {
+            crate::limited_full_pool_consumer_v1::trigger_programs::capture(
+                state,
+                &common.common.projection.surface,
+            )
+        })
+        .transpose()
+        .map_err(RlContractError)?;
     let mut value = KaitoObservationV75 {
-        schema: SCHEMA.into(),
+        schema: match appendix {
+            LimitedAppendixV1::Legacy => SCHEMA,
+            LimitedAppendixV1::Artist => crate::artist_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Niv => crate::niv_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::ChosenType => crate::chosen_type_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Drakuseth => crate::drakuseth_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Embercleave => crate::embercleave_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Zimone => crate::zimone_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Omniscience => crate::omniscience_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Tutelage => crate::tutelage_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Mixed => crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::FullPool => crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Moon => crate::moon_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::LeylineAxe => crate::leyline_axe_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Progenitus => crate::progenitus_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Aberration => crate::aberration_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Lathril => crate::lathril_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Electroduplicate => {
+                crate::electroduplicate_consumer_v1::OBSERVATION_SCHEMA
+            }
+            LimitedAppendixV1::Edict => crate::edict_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Loot => crate::loot_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Curator => crate::curator_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Kykar => crate::kykar_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::SphinxLore => crate::sphinx_lore_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Greatwurm => crate::greatwurm_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Harvester => crate::harvester_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::FiendArtisan => crate::fiend_artisan_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::Etali => crate::etali_primal_storm_consumer_v1::OBSERVATION_SCHEMA,
+            LimitedAppendixV1::ThousandYearStorm => {
+                crate::thousand_year_storm_consumer_v1::OBSERVATION_SCHEMA
+            }
+        }
+        .into(),
         producer_sha256: producer_sha256(),
         common,
-        drake: crate::drake_public_v53::capture_kaito_compat_v75(state)?,
-        spinner: crate::spinner_public_v54::capture_kaito_compat_v75(state)
+        drake: crate::drake_public_v53::capture_kaito_compat_v75(state, appendix)?,
+        spinner: crate::spinner_public_v54::capture_kaito_compat_v75(state, appendix)
             .map_err(RlContractError)?,
-        quandary: crate::quandary_public_v55::capture_kaito_compat_v75(state, actor_and_origin.0)
-            .map_err(RlContractError)?,
+        quandary: crate::quandary_public_v55::capture_kaito_compat_v75(
+            state,
+            actor_and_origin.0,
+            appendix,
+        )
+        .map_err(RlContractError)?,
         phoenix: crate::phoenix_public_v56::capture(state)?,
-        next_five: crate::next_five_public_v59::capture_kaito_compat_v75(state, actor_and_origin.0)
-            .map_err(RlContractError)?,
+        next_five: crate::next_five_public_v59::capture_kaito_compat_v75(
+            state,
+            actor_and_origin.0,
+            appendix,
+        )
+        .map_err(RlContractError)?,
         graveyard_return: crate::graveyard_return_public_v61::capture_kaito_compat_v75(
             state,
             actor_and_origin.0,
+            appendix,
         )
         .map_err(RlContractError)?,
-        call: crate::valkyries_call_public_v62::capture_kaito_compat_v75(state, actor_and_origin.0)
-            .map_err(RlContractError)?,
+        call: crate::valkyries_call_public_v62::capture_kaito_compat_v75(
+            state,
+            actor_and_origin.0,
+            appendix,
+        )
+        .map_err(RlContractError)?,
         end_turn: crate::time_stop_public_v68::capture_tinybones_v72(state, actor_and_origin.0)
             .map_err(RlContractError)?,
         genesis_wave: crate::genesis_wave_public_v69::capture(state, actor_and_origin.0)
@@ -526,13 +1054,13 @@ pub(crate) fn observe_parts_v75(
         vivien: crate::vivien_public_v70::capture_tinybones_for_consumer_v72(
             state,
             actor_and_origin.0,
-            crate::optional_trigger_public_v1::ConsumerV1::KaitoV75,
+            crate::optional_trigger_public_v1::ConsumerV1::for_kaito(appendix),
         )
         .map_err(RlContractError)?,
         muldrotha: crate::muldrotha_public_v71::capture_tinybones_for_consumer_v72(
             state,
             actor_and_origin.0,
-            crate::optional_trigger_public_v1::ConsumerV1::KaitoV75,
+            crate::optional_trigger_public_v1::ConsumerV1::for_kaito(appendix),
         )
         .map_err(RlContractError)?,
         tinybones: crate::tinybones_public_v72::capture(state, actor_and_origin.0)
@@ -543,6 +1071,158 @@ pub(crate) fn observe_parts_v75(
             .map_err(RlContractError)?,
         kaito: crate::kaito_public_v75::capture(state, actor_and_origin.0)
             .map_err(RlContractError)?,
+        artist: (appendix.includes(LimitedAppendixV1::Artist))
+            .then(|| {
+                crate::artist_consumer_v1::capture_scoped(
+                    state,
+                    actor_and_origin.0,
+                    appendix_consumer,
+                )
+            })
+            .transpose()
+            .map_err(RlContractError)?,
+        niv: (appendix.includes(LimitedAppendixV1::Niv))
+            .then(|| {
+                crate::niv_mizzet_public_v63::capture_consumer_scoped(
+                    state,
+                    actor_and_origin.0,
+                    appendix_consumer,
+                )
+            })
+            .transpose()
+            .map_err(RlContractError)?,
+        chosen_type: (appendix.includes(LimitedAppendixV1::ChosenType))
+            .then(|| {
+                crate::chosen_type_consumer_v1::capture_scoped(
+                    state,
+                    actor_and_origin.0,
+                    appendix_consumer,
+                )
+            })
+            .transpose()
+            .map_err(RlContractError)?,
+        drakuseth: (appendix.includes(LimitedAppendixV1::Drakuseth))
+            .then(|| {
+                crate::drakuseth_consumer_v1::capture_scoped(
+                    state,
+                    actor_and_origin.0,
+                    appendix_consumer,
+                )
+            })
+            .transpose()
+            .map_err(RlContractError)?,
+        embercleave: (appendix.includes(LimitedAppendixV1::Embercleave))
+            .then(|| {
+                crate::embercleave_consumer_v1::capture_scoped(
+                    state,
+                    actor_and_origin.0,
+                    appendix_consumer,
+                )
+            })
+            .transpose()
+            .map_err(RlContractError)?,
+        zimone: (appendix.includes(LimitedAppendixV1::Zimone))
+            .then(|| {
+                crate::zimone_public_v1::capture_scoped(
+                    state,
+                    actor_and_origin.0,
+                    appendix_consumer,
+                )
+            })
+            .transpose()
+            .map_err(RlContractError)?,
+        omniscience: (appendix.includes(LimitedAppendixV1::Omniscience))
+            .then(|| {
+                crate::omniscience_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1)
+            })
+            .transpose()
+            .map_err(RlContractError)?,
+        tutelage: (appendix.includes(LimitedAppendixV1::Tutelage))
+            .then(|| crate::tutelage_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
+        moon: (appendix.includes(LimitedAppendixV1::Moon))
+            .then(|| crate::moon_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
+        leyline_axe: (appendix.includes(LimitedAppendixV1::LeylineAxe))
+            .then(|| crate::leyline_axe_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
+        progenitus: (appendix.includes(LimitedAppendixV1::Progenitus))
+            .then(|| crate::progenitus_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
+        aberration: (appendix.includes(LimitedAppendixV1::Aberration))
+            .then(|| crate::aberration_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
+        lathril: (appendix.includes(LimitedAppendixV1::Lathril))
+            .then(|| crate::lathril_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
+        electroduplicate: (appendix.includes(LimitedAppendixV1::Electroduplicate))
+            .then(|| crate::electroduplicate_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
+        edict: (appendix.includes(LimitedAppendixV1::Edict))
+            .then(|| crate::edict_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1))
+            .transpose()
+            .map_err(RlContractError)?,
+        loot: (appendix.includes(LimitedAppendixV1::Loot))
+            .then(|| crate::loot_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
+        curator: (appendix.includes(LimitedAppendixV1::Curator))
+            .then(|| crate::curator_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
+        kykar: (appendix.includes(LimitedAppendixV1::Kykar))
+            .then(|| crate::kykar_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
+        sphinx_lore: (appendix.includes(LimitedAppendixV1::SphinxLore))
+            .then(|| crate::sphinx_lore_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
+        greatwurm: (appendix.includes(LimitedAppendixV1::Greatwurm))
+            .then(|| {
+                crate::greatwurm_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1)
+            })
+            .transpose()
+            .map_err(RlContractError)?,
+        harvester: (appendix.includes(LimitedAppendixV1::Harvester))
+            .then(|| {
+                crate::harvester_public_v1::capture(state, actor_and_origin.0, actor_and_origin.1)
+            })
+            .transpose()
+            .map_err(RlContractError)?,
+        fiend_artisan: (appendix.includes(LimitedAppendixV1::FiendArtisan))
+            .then(|| {
+                crate::fiend_artisan_public_v1::capture(
+                    state,
+                    actor_and_origin.0,
+                    actor_and_origin.1,
+                )
+            })
+            .transpose()
+            .map_err(RlContractError)?,
+        etali: (appendix.includes(LimitedAppendixV1::Etali))
+            .then(|| {
+                crate::etali_primal_storm_public_v1::capture(
+                    state,
+                    actor_and_origin.0,
+                    actor_and_origin.1,
+                )
+            })
+            .transpose()
+            .map_err(RlContractError)?,
+        thousand_year_storm: (appendix.includes(LimitedAppendixV1::ThousandYearStorm))
+            .then(|| crate::thousand_year_storm_public_v1::capture(state, actor_and_origin.0))
+            .transpose()
+            .map_err(RlContractError)?,
+        scrawling_crawler,
+        trigger_programs,
         complete_ordinary_observation: true,
         owning_consumer_admitted: false,
         projection_sha256: String::new(),
@@ -564,6 +1244,910 @@ pub(crate) fn observe_parts_v75(
 /// Standalone checks do not prove that an untrusted sender supplied every
 /// historical row or terminal. Neither function grants action or restore authority.
 pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractError> {
+    match (
+        &value.trigger_programs,
+        value.schema == crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA,
+    ) {
+        (Some(facts), true) => {
+            crate::limited_full_pool_consumer_v1::trigger_programs::validate(
+                facts,
+                &value.common.common.projection.surface,
+            )
+            .map_err(RlContractError)?;
+        }
+        (None, false) => {}
+        _ => {
+            return Err(RlContractError(
+                "life trigger facts do not match their owning schema".into(),
+            ))
+        }
+    }
+    let actor = value.common.common.acting_player;
+    match (
+        value.schema == crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA,
+        &value.scrawling_crawler,
+    ) {
+        (true, Some(facts)) => facts
+            .validate(&value.common.common.projection.surface)
+            .map_err(RlContractError)?,
+        (false, None) => {}
+        _ => {
+            return Err(RlContractError(
+                "Crawler facts require the FullPool observation schema".into(),
+            ))
+        }
+    }
+    let schema = match (
+        &value.artist,
+        &value.niv,
+        &value.chosen_type,
+        &value.drakuseth,
+        &value.embercleave,
+        &value.zimone,
+        &value.omniscience,
+        &value.tutelage,
+        &value.moon,
+        &value.leyline_axe,
+        &value.progenitus,
+        &value.aberration,
+        &value.lathril,
+        &value.electroduplicate,
+        &value.edict,
+        &value.loot,
+        &value.curator,
+        &value.kykar,
+        &value.sphinx_lore,
+        &value.greatwurm,
+        &value.harvester,
+        &value.fiend_artisan,
+        &value.etali,
+        &value.thousand_year_storm,
+    ) {
+        (
+            Some(artist),
+            Some(niv),
+            Some(chosen_type),
+            Some(drakuseth),
+            Some(embercleave),
+            Some(zimone),
+            Some(omniscience),
+            Some(tutelage),
+            Some(moon),
+            Some(leyline_axe),
+            Some(progenitus),
+            Some(aberration),
+            Some(lathril),
+            Some(electroduplicate),
+            Some(edict),
+            Some(loot),
+            Some(curator),
+            Some(kykar),
+            Some(sphinx_lore),
+            Some(greatwurm),
+            Some(harvester),
+            Some(fiend_artisan),
+            Some(etali),
+            Some(thousand_year_storm),
+        ) if value.schema == crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA => {
+            crate::artist_consumer_v1::validate_facts(artist, actor).map_err(RlContractError)?;
+            crate::niv_consumer_v1::validate_facts(niv, actor).map_err(RlContractError)?;
+            crate::chosen_type_consumer_v1::validate_facts(chosen_type, actor)
+                .map_err(RlContractError)?;
+            crate::drakuseth_consumer_v1::validate_facts(drakuseth, actor)
+                .map_err(RlContractError)?;
+            crate::embercleave_consumer_v1::validate_facts(embercleave, actor)
+                .map_err(RlContractError)?;
+            crate::zimone_consumer_v1::validate_facts(zimone, actor).map_err(RlContractError)?;
+            crate::omniscience_consumer_v1::validate_facts(omniscience, actor)
+                .map_err(RlContractError)?;
+            crate::tutelage_consumer_v1::validate_facts(tutelage, actor)
+                .map_err(RlContractError)?;
+            crate::moon_consumer_v1::validate_facts(moon, actor).map_err(RlContractError)?;
+            crate::leyline_axe_consumer_v1::validate_facts(leyline_axe, actor)
+                .map_err(RlContractError)?;
+            crate::progenitus_consumer_v1::validate_facts(progenitus, actor)
+                .map_err(RlContractError)?;
+            crate::aberration_consumer_v1::validate_facts(aberration, actor)
+                .map_err(RlContractError)?;
+            crate::lathril_consumer_v1::validate_facts(lathril, actor).map_err(RlContractError)?;
+            crate::electroduplicate_consumer_v1::validate_facts(electroduplicate, actor)
+                .map_err(RlContractError)?;
+            crate::edict_consumer_v1::validate_facts(edict, actor).map_err(RlContractError)?;
+            crate::loot_consumer_v1::validate_facts(loot, actor).map_err(RlContractError)?;
+            crate::curator_consumer_v1::validate_facts(curator, actor).map_err(RlContractError)?;
+            crate::kykar_consumer_v1::validate_facts(kykar, actor).map_err(RlContractError)?;
+            crate::sphinx_lore_consumer_v1::validate_facts(sphinx_lore, actor)
+                .map_err(RlContractError)?;
+            crate::greatwurm_consumer_v1::validate_facts(greatwurm, actor)
+                .map_err(RlContractError)?;
+            crate::harvester_consumer_v1::validate_facts(harvester, actor)
+                .map_err(RlContractError)?;
+            crate::fiend_artisan_consumer_v1::validate_facts(fiend_artisan, actor)
+                .map_err(RlContractError)?;
+            crate::etali_primal_storm_consumer_v1::validate_facts(etali, actor)
+                .map_err(RlContractError)?;
+            crate::thousand_year_storm_consumer_v1::validate_facts(thousand_year_storm, actor)
+                .map_err(RlContractError)?;
+            crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            Some(artist),
+            Some(niv),
+            Some(chosen),
+            Some(drakuseth),
+            Some(embercleave),
+            Some(zimone),
+            Some(omniscience),
+            Some(tutelage),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) if value.schema == crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA => {
+            crate::artist_consumer_v1::validate_facts(artist, actor).map_err(RlContractError)?;
+            crate::niv_consumer_v1::validate_facts(niv, actor).map_err(RlContractError)?;
+            crate::chosen_type_consumer_v1::validate_facts(chosen, actor)
+                .map_err(RlContractError)?;
+            crate::drakuseth_consumer_v1::validate_facts(drakuseth, actor)
+                .map_err(RlContractError)?;
+            crate::embercleave_consumer_v1::validate_facts(embercleave, actor)
+                .map_err(RlContractError)?;
+            crate::zimone_consumer_v1::validate_facts(zimone, actor).map_err(RlContractError)?;
+            crate::omniscience_consumer_v1::validate_facts(omniscience, actor)
+                .map_err(RlContractError)?;
+            crate::tutelage_consumer_v1::validate_facts(tutelage, actor)
+                .map_err(RlContractError)?;
+            crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            Some(artist),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::artist_consumer_v1::validate_facts(artist, actor).map_err(RlContractError)?;
+            crate::artist_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            Some(niv),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::niv_consumer_v1::validate_facts(niv, actor).map_err(RlContractError)?;
+            crate::niv_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            Some(chosen_type),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::chosen_type_consumer_v1::validate_facts(chosen_type, actor)
+                .map_err(RlContractError)?;
+            crate::chosen_type_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::drakuseth_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::drakuseth_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::embercleave_consumer_v1::validate_facts(facts, actor)
+                .map_err(RlContractError)?;
+            crate::embercleave_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::zimone_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::zimone_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::omniscience_consumer_v1::validate_facts(facts, actor)
+                .map_err(RlContractError)?;
+            crate::omniscience_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::tutelage_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::tutelage_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::moon_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::moon_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::leyline_axe_consumer_v1::validate_facts(facts, actor)
+                .map_err(RlContractError)?;
+            crate::leyline_axe_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => SCHEMA,
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::progenitus_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::progenitus_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::aberration_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::aberration_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::lathril_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::lathril_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::electroduplicate_consumer_v1::validate_facts(facts, actor)
+                .map_err(RlContractError)?;
+            crate::electroduplicate_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::edict_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::edict_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::loot_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::loot_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::curator_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::curator_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::kykar_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::kykar_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::sphinx_lore_consumer_v1::validate_facts(facts, actor)
+                .map_err(RlContractError)?;
+            crate::sphinx_lore_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+            None,
+        ) => {
+            crate::greatwurm_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::greatwurm_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+            None,
+        ) => {
+            crate::harvester_consumer_v1::validate_facts(facts, actor).map_err(RlContractError)?;
+            crate::harvester_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+            None,
+        ) => {
+            crate::fiend_artisan_consumer_v1::validate_facts(facts, actor)
+                .map_err(RlContractError)?;
+            crate::fiend_artisan_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+            None,
+        ) => {
+            crate::etali_primal_storm_consumer_v1::validate_facts(facts, actor)
+                .map_err(RlContractError)?;
+            crate::etali_primal_storm_consumer_v1::OBSERVATION_SCHEMA
+        }
+        (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(facts),
+        ) => {
+            crate::thousand_year_storm_consumer_v1::validate_facts(facts, actor)
+                .map_err(RlContractError)?;
+            crate::thousand_year_storm_consumer_v1::OBSERVATION_SCHEMA
+        }
+        _ => return Err(RlContractError("mixed appendix profiles".into())),
+    };
+    if let Some(facts) = &value.electroduplicate {
+        crate::electroduplicate_consumer_v1::validate_inherited(facts, value)
+            .map_err(RlContractError)?;
+    }
     crate::muldrotha_public_v71::validate_tinybones_compat_v72(&value.muldrotha)
         .map_err(RlContractError)?;
     crate::vivien_public_v70::validate_tinybones_compat_v72(&value.vivien)
@@ -651,7 +2235,7 @@ pub fn validate_artifact(value: &KaitoObservationV75) -> Result<(), RlContractEr
             "V75 inherited family artifact identity/root order changed".into(),
         ));
     }
-    if value.schema != SCHEMA
+    if value.schema != schema
         || value.producer_sha256 != producer_sha256()
         || value.projection_sha256 != commitment(value)?
         || value.common.schema != ELENDA_COMPAT_SCHEMA

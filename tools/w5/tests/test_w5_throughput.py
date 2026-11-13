@@ -176,6 +176,20 @@ class ThroughputTests(unittest.TestCase):
         with self.assertRaises(w5box.Refusal):
             w5box.require_throughput(record, w5box.throughput_binding(xbox, xbox['chains']['x8-1']))
 
+    def test_a_box_subset_plan_is_measured_on_its_own_boxes(self):
+        path, plan = self.node.plan('0', {'c1': {'arm': 'C', 'slot': 2, 'seed_root': 'oc/c1'},
+                                          'c2': {'arm': 'C', 'slot': 3, 'seed_root': 'oc/c2'}},
+                                    label='sub', independent=True, box_slots=[2, 3])
+        passed, record, out = self.run_throughput(path, 'C', 'tq', 8)
+        self.assertTrue(passed, record.get('why'))
+        self.assertEqual(record['qualification']['counts'], [1, 2])
+        self.assertEqual([[b['slot'] for b in p['boxes']] for p in record['phases']], [[2], [2, 3]])
+        self.assertEqual({p['neighbours']['cgroups'] == [] for p in record['phases']}, {True})
+        box = json.loads(Path(plan['arms']['C']['w5box_plan']['path']).read_text())
+        guard = w5box.require_throughput(json.loads(out.read_text()), w5box.throughput_binding(
+            box, box['chains']['c1']))
+        self.assertEqual(len(guard['in_box_cpu_per_wall']), 2)
+
     def test_node_frozen_time_is_not_in_box_wall(self):
         path, _ = self.target()
         # A node freeze recorded by w5box's enforcement over the whole window is subtracted from the wall.

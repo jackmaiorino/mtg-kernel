@@ -3,6 +3,7 @@
 use crate::card_def::{CardType, TargetSpec, CARD_DEFS};
 use crate::effect::EffectOp;
 use crate::event::{CommittedEvent, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, StackItemId};
 use crate::state::{GameState, StackItem, StackItemKind, StackSourceContractV4, Target, Zone};
 use crate::trigger::PendingTrigger;
@@ -788,8 +789,17 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
         }
     }
-    for (index, event) in state.engine.event_history.iter().enumerate() {
-        let Some(j) = journal(event) else { continue };
+    for (index, event) in state
+        .engine
+        .event_history
+        .scan_for_v1(&[EventKindV1::FaebloomJournalV43])
+        .iter()
+        .enumerate()
+    {
+        let CommittedEvent::FaebloomJournalV43 { journal } = event else {
+            continue;
+        };
+        let j = journal.as_ref();
         let index = index as u64;
         match j {
             JournalV43::Published { item } | JournalV43::TriggerPublished { item, .. } => {
@@ -986,7 +996,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     .engine
                     .event_log
                     .iter()
-                    .filter(|e| journal(e) == Some(j))
+                    .filter(|e| self::journal(e) == Some(j))
                     .count();
                 let pending = waiting(state)
                     .filter(|p| capture_of(&p.effect) == Some(index))

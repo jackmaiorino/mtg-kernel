@@ -465,6 +465,7 @@ pub(crate) mod limited_chandra_v15;
 pub(crate) use limited_chandra_v15::project_limited_chandra_v15;
 pub use limited_chandra_v15::LimitedChandraDecisionV15;
 
+pub mod chosen_type_v1;
 pub mod kaito_v75;
 pub use kaito_v75::{
     HumanDecisionKaitoV75, HumanKaitoProjectorV75, HumanKaitoSessionV75, HumanKaitoSnapshotV75,
@@ -474,3 +475,28 @@ pub use kaito_v75::{
 pub(crate) mod limited_kaito_v16;
 pub(crate) use limited_kaito_v16::project_limited_kaito_v16;
 pub use limited_kaito_v16::LimitedKaitoDecisionV16;
+
+mod aberration_consumer_v1;
+mod curator_consumer_v1;
+mod drakuseth_consumer_v1;
+mod edict_consumer_v1;
+mod electroduplicate_consumer_v1;
+mod embercleave_consumer_v1;
+mod etali_primal_storm_consumer_v1;
+mod fiend_artisan_consumer_v1;
+mod greatwurm_consumer_v1;
+mod harvester_consumer_v1;
+mod kykar_consumer_v1;
+mod lathril_consumer_v1;
+mod leyline_axe_consumer_v1;
+mod loot_consumer_v1;
+mod moon_consumer_v1;
+mod omniscience_consumer_v1;
+mod progenitus_consumer_v1;
+mod sphinx_lore_consumer_v1;
+mod thousand_year_storm_consumer_v1;
+mod tutelage_consumer_v1;
+mod zimone_consumer_v1;
+
+#[cfg(all(test, feature = "eternal-fixtures"))]
+mod owned_draws_tests;

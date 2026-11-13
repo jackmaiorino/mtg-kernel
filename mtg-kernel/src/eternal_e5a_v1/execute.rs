@@ -59,6 +59,15 @@ fn live_ability_source(ctx: &ExecCtx, state: &GameState) -> Option<ObjectId> {
         .then_some(contract.source)
 }
 
+pub(crate) fn put_draw_source_on_top(ctx: &ExecCtx, state: &mut GameState) {
+    if let Some(source) = live_ability_source(ctx, state) {
+        event::propose_and_commit(
+            state,
+            ProposedEvent::public_library_insert(source, LibraryPlacement::Top),
+        );
+    }
+}
+
 /// Sacrifices `object` if `player` still controls it on the battlefield.
 /// Returns whether it left the battlefield.
 pub(super) fn sacrifice(state: &mut GameState, object: ObjectId, player: PlayerId) -> bool {
@@ -78,12 +87,9 @@ fn draw(ctx: &ExecCtx, state: &mut GameState, player: PlayerRef, count: u32) {
 pub(crate) fn execute(op: &E5aOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         E5aOpV1::DrawThenSourceOnTopV1 => {
-            draw(ctx, state, PlayerRef::Controller, 1);
-            if let Some(source) = live_ability_source(ctx, state) {
-                event::propose_and_commit(
-                    state,
-                    ProposedEvent::public_library_insert(source, LibraryPlacement::Top),
-                );
+            if crate::eternal_cards_v1::owned_draws_v1::draw_uninterrupted(state, ctx.controller, 1)
+            {
+                put_draw_source_on_top(ctx, state);
             }
         }
         E5aOpV1::ExileTopOfLibraryV1 => {

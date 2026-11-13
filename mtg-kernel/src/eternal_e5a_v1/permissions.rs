@@ -4,11 +4,18 @@
 //! (Yawgmoth's Will), and the exile replacements of Yawgmoth's Will and
 //! Suplex.
 
-use super::{controls_active, e5a_state, read_state, LibraryCastV1, BOLAS_CITADEL, MYSTIC_FORGE};
+use super::{
+    controls_active, e5a_state, read_state, FutureSightOverloadV1, LibraryCastV1, BOLAS_CITADEL,
+    MYSTIC_FORGE,
+};
 use crate::card_def::{CardType, CARD_DEFS};
-use crate::event::{self, ProposedEvent};
+use crate::event::{self, CommittedEvent, ProposedEvent};
+use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId};
-use crate::state::{GameState, ObjectLinkV4, Zone};
+use crate::state::{
+    AbilitySourceContractV4, CastMethodV4, GameState, ObjectLinkV4, SpellCastRouteV4,
+    StackItemKind, Zone,
+};
 
 /// Whether `card` is the top card of `player`'s own library.
 fn is_library_top(state: &GameState, player: PlayerId, card: ObjectId) -> bool {
@@ -111,6 +118,12 @@ pub(crate) fn note_library_cast(state: &mut GameState, player: PlayerId, card: O
         card: super::live_link(state, card),
         holder: player,
         pay_life,
+        future_sight_overload: library_overload_source(state, player, card).map(|source| {
+            FutureSightOverloadV1 {
+                source: AbilitySourceContractV4::capture(state, source),
+                announced_at: state.engine.event_history.len(),
+            }
+        }),
     };
     let casts = &mut e5a_state(state).library_casts;
     casts.retain(|recorded| recorded.card.object != card);
@@ -125,9 +138,216 @@ fn recorded_cast(state: &GameState, card: ObjectLinkV4) -> Option<LibraryCastV1>
         .find(|cast| cast.card == card)
 }
 
+fn library_overload_source(
+    state: &GameState,
+    player: PlayerId,
+    card: ObjectId,
+) -> Option<ObjectId> {
+    if !is_library_top(state, player, card)
+        || !crate::eternal_sideboard_s1d_v1::statics::is_overload(
+            CARD_DEFS
+                .get(usize::from(state.objects.get(card).card_def))?
+                .name,
+        )
+    {
+        return None;
+    }
+    crate::eternal_premodern_p2a_v1::statics::future_sight_source(state, player)
+}
+
+/// Future Sight grants a normally paid cast. Overload replaces that mana
+/// cost even when the ordinary form can instead use Bolas's Citadel.
+pub(crate) fn library_overload_allowed(
+    state: &GameState,
+    player: PlayerId,
+    card: ObjectId,
+) -> bool {
+    let Some(live) = state.objects.try_get(card) else {
+        return false;
+    };
+    if live.zone == Zone::Library {
+        return library_overload_source(state, player, card).is_some();
+    }
+    let Some(origin) = live.v4.spell_cast_origin else {
+        return false;
+    };
+    if live.zone != Zone::Stack
+        || origin.origin_zone != Zone::Library
+        || live.owner != player
+        || (origin.finalized_method.is_none() && live.controller != player)
+        || origin.origin_zone_change_count.checked_add(1) != Some(live.zone_change_count)
+        || !matches!(origin.route, SpellCastRouteV4::LibraryPermissionV1 {
+            holder, permission_zone_change_count
+        } if holder == player && permission_zone_change_count == origin.origin_zone_change_count)
+    {
+        return false;
+    }
+    recorded_cast(
+        state,
+        ObjectLinkV4 {
+            object: card,
+            zone_change_count: origin.origin_zone_change_count,
+        },
+    )
+    .filter(|cast| cast.holder == player)
+    .and_then(|cast| cast.future_sight_overload)
+    .is_some_and(|permit| {
+        let source = permit.source;
+        source.zone == Zone::Battlefield
+            && source.controller == player
+            && permit.announced_at <= state.engine.event_history.len()
+            && crate::card_def::card_id_by_name(crate::eternal_premodern_p2a_v1::FUTURE_SIGHT)
+                == Some(source.card_def)
+            && state.objects.try_get(source.source).is_some_and(|live| {
+                live.owner == source.owner
+                    && if origin.finalized_method.is_none() {
+                        AbilitySourceContractV4::capture(state, source.source) == source
+                            && state.players[player.index()]
+                                .battlefield
+                                .contains(&source.source)
+                            && crate::eternal_premodern_p2a_v1::active_named(
+                                state,
+                                source.source,
+                                crate::eternal_premodern_p2a_v1::FUTURE_SIGHT,
+                            )
+                    } else if live.zone_change_count == source.zone_change_count {
+                        live.zone == Zone::Battlefield && live.card_def == source.card_def
+                    } else {
+                        origin.finalized_method == Some(CastMethodV4::Omen)
+                            && live.zone_change_count > source.zone_change_count
+                            && state
+                                .engine
+                                .event_history
+                                .iter()
+                                .skip(permit.announced_at)
+                                .any(|event| {
+                                    matches!(event, CommittedEvent::ZoneChange {
+                                    object, from: Zone::Battlefield, to, ..
+                                } if *object == source.source && *to != Zone::Battlefield)
+                                })
+                    }
+            })
+    })
+}
+
+/// Freeze the exact original paid permission before committing costs. Other
+/// library spells keep the original cast-identity receipt shape.
+pub(crate) fn prepare_library_overload_publication(
+    state: &GameState,
+    card: ObjectId,
+    player: PlayerId,
+    method: CastMethodV4,
+) -> Result<Option<FutureSightOverloadV1>, String> {
+    let live = state.objects.get(card);
+    let Some(origin) = live.v4.spell_cast_origin else {
+        return Ok(None);
+    };
+    if method != CastMethodV4::Omen
+        || origin.origin_zone != Zone::Library
+        || !crate::eternal_sideboard_s1d_v1::statics::is_overload(
+            CARD_DEFS[usize::from(live.card_def)].name,
+        )
+    {
+        return Ok(None);
+    }
+    if !library_overload_allowed(state, player, card) {
+        return Err("missing original paid Future Sight permission".into());
+    }
+    recorded_cast(
+        state,
+        ObjectLinkV4 {
+            object: card,
+            zone_change_count: origin.origin_zone_change_count,
+        },
+    )
+    .and_then(|cast| cast.future_sight_overload)
+    .map(Some)
+    .ok_or_else(|| "missing Future Sight announcement binding".into())
+}
+
+/// The serialized announcement may still be read by ordinary target checks
+/// before publication. At native entry points every completed overload on
+/// the stack must also match its independently published paid cast.
+pub(crate) fn validate_published_library_overloads(state: &GameState) -> Result<(), String> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return Ok(());
+    }
+    let history = &state.engine.event_history;
+    for item in &state.stack {
+        if item.kind != StackItemKind::Spell
+            || item.is_copy
+            || item.v4.cast_method != Some(CastMethodV4::Omen)
+        {
+            continue;
+        }
+        let live = state
+            .objects
+            .try_get(item.source)
+            .ok_or("library spell source is missing")?;
+        let Some(origin) = live.v4.spell_cast_origin else {
+            continue;
+        };
+        let definition = CARD_DEFS
+            .get(usize::from(live.card_def))
+            .ok_or("library spell printing is missing")?;
+        if origin.origin_zone != Zone::Library
+            || !crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name)
+        {
+            continue;
+        }
+        let caster =
+            crate::eternal_vintage_e7b_v1::spell_caster(state, item).unwrap_or(item.controller);
+        let Some(permit) =
+            prepare_library_overload_publication(state, item.source, caster, CastMethodV4::Omen)?
+        else {
+            return Err("library overload lost its paid permission".into());
+        };
+        let mut publications = history
+            .scan_for_v1(&[EventKindV1::PublishedCastIdentityV1])
+            .iter()
+            .enumerate()
+            .filter_map(|(at, event)| match event {
+                CommittedEvent::PublishedCastIdentityV1 { receipt }
+                    if receipt.stack_item_id == item.v4.stack_item_id =>
+                {
+                    Some((at, receipt))
+                }
+                _ => None,
+            });
+        let Some((at, receipt)) = publications.next() else {
+            return Err("library overload lost its finalized cast publication".into());
+        };
+        let identity = crate::cast_identity_v1::PublicIdentityV1::Known {
+            card_def: live.card_def,
+        };
+        if publications.next().is_some()
+            || origin.finalized_method != Some(CastMethodV4::Omen)
+            || item.v4.stack_item_id.0 == 0
+            || receipt.future_sight_overload != Some(permit)
+            || permit.announced_at > at
+            || receipt.spell != item.source
+            || receipt.owner != live.owner
+            || receipt.controller != caster
+            || receipt.origin_zone != Zone::Library
+            || receipt.origin_zone_change_count != origin.origin_zone_change_count
+            || receipt.stack_zone_change_count != live.zone_change_count
+            || receipt.public_identity != identity
+            || receipt.spell_cast_history_index != (at + 1) as u64
+            || history.get(at + 1)
+                != Some(&CommittedEvent::SpellCast {
+                    spell: item.source,
+                    controller: caster,
+                })
+        {
+            return Err("library overload publication disagrees with its paid permission".into());
+        }
+    }
+    Ok(())
+}
+
 /// `SpellCastRouteV4::LibraryPermissionV1`'s authority: the library
 /// incarnation (`object`, `zone_change_count`) was announced by `holder`
-/// through Mystic Forge or Bolas's Citadel.
+/// through Mystic Forge, Bolas's Citadel or Future Sight.
 pub(crate) fn library_permission(
     state: &GameState,
     object: ObjectId,

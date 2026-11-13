@@ -9,6 +9,27 @@ pub struct CopyTargetChoice {
     pub path: Vec<u16>,
     pub remaining: Vec<EffectFrame>,
 }
+/// The state in which the interpreter stages and finishes a copy's target
+/// choice: the resolving ability is off the stack (pop-before-effects) and
+/// its continuation is taken. A public boundary shows both again, so the
+/// pending choice is checked in this view. Otherwise a copy that may target
+/// a triggered ability (Consign to Memory's replicate copy) would see the
+/// resolving copy trigger as a new candidate.
+pub(super) fn staging_view(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<GameState, String> {
+    let index = crate::engine::resolution_cast_v1::resolving_index(
+        state,
+        pending.resolving_item.v4.stack_item_id,
+    )
+    .filter(|&index| state.stack.get(index) == Some(&pending.resolving_item))
+    .ok_or("copy target choice lost its resolving row")?;
+    let mut view = state.clone();
+    view.stack.remove(index);
+    view.engine.pending_effect = None;
+    Ok(view)
+}
 pub(super) fn validate(
     state: &GameState,
     pending: &EffectContinuation,
@@ -91,14 +112,27 @@ pub(super) fn stage(
             // New progress validation and child publication commit together.
             let mut staged = state.clone();
             let before = staged.stack.len();
-            crate::engine::materialize_copy_snapshot(
-                &mut staged,
-                &choice.spell,
-                pending.ctx.controller,
-                choice.targets,
-                choice.contracts,
-            )?;
-            thousand_year_storm_v1::note_copy(&mut staged, pending, &choice.path, before)?;
+            if staged.thousand_year_storm_consumer_v1 {
+                let owner =
+                    thousand_year_storm_v1::targets::copy_owner(&staged, pending, &choice.path)?;
+                crate::engine::materialize_storm_copy_snapshot(
+                    &mut staged,
+                    &choice.spell,
+                    pending.ctx.controller,
+                    choice.targets,
+                    choice.contracts,
+                    owner,
+                )?;
+            } else {
+                crate::engine::materialize_copy_snapshot(
+                    &mut staged,
+                    &choice.spell,
+                    pending.ctx.controller,
+                    choice.targets,
+                    choice.contracts,
+                )?;
+                thousand_year_storm_v1::note_copy(&mut staged, pending, &choice.path, before)?;
+            }
             *state = staged;
         } else {
             crate::engine::materialize_copy_snapshot(

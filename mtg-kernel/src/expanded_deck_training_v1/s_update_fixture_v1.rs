@@ -12,9 +12,9 @@
 //!   (step 1, nonzero moments) against itself and the initial S (and net-8
 //!   from the third episode on).
 //!
-//! [`update_command_v1`] gives a batch's update command for any build's
-//! `expanded_deck_training_v1` binary, baselines that predate this module
-//! included; [`verify_v1`] checks a finished update against the batch's
+//! [`update_command_v1`] gives a batch's update command. The reference paths
+//! are readable by older `expanded_deck_training_v1` binaries.
+//! [`verify_v1`] checks a finished update against the batch's
 //! reference; [`bench_v1`] runs and verifies updates in this process and
 //! reports elapsed and CPU time, peak RSS and, in `s-update-profile-v1`
 //! builds, the forward counts of `s_transformer_v1::update_profile_v1`.
@@ -305,6 +305,8 @@ pub enum UpdatePathV1 {
     /// `Update`: the serial replay and the one-worker learner (the
     /// reference path).
     Serial,
+    /// The opt-in serial reuse path, with a required retained tape cap.
+    VerifiedSerial { tape_cap_bytes: usize },
     /// `UpdatePrepared`: ordered preparation and the learner, both with
     /// `workers` workers (the run driver's path for more than one).
     Prepared,
@@ -436,8 +438,8 @@ pub fn episode_v1(
 }
 
 /// The ordinary update command of `batch` on `path`, publishing into
-/// `output_directory` (which must not exist). Defaults stay off the wire,
-/// so any build's `expanded_deck_training_v1` binary reads it.
+/// `output_directory` (which must not exist). Defaults stay off the wire
+/// for the reference paths, which older binaries can read.
 pub fn update_command_v1(
     manifest: &FixtureManifestV1,
     batch: &FixtureBatchV1,
@@ -446,23 +448,35 @@ pub fn update_command_v1(
     output_directory: PathBuf,
 ) -> Result<ExpandedTrainingCommandV1, String> {
     let learning = &manifest.learning;
+    if path != UpdatePathV1::Prepared {
+        ensure(
+            workers == 1,
+            "path=serial runs one worker; use path=prepared for more",
+        )?;
+    }
     Ok(match path {
-        UpdatePathV1::Serial => {
-            ensure(
-                workers == 1,
-                "path=serial runs one worker; use path=prepared for more",
-            )?;
-            ExpandedTrainingCommandV1::Update {
+        UpdatePathV1::Serial => ExpandedTrainingCommandV1::Update {
+            source: batch.source.clone(),
+            trajectories: batch.trajectories.clone(),
+            learning_rate: learning.learning_rate,
+            value_coefficient: learning.value_coefficient,
+            update_backend: ExpandedUpdateBackendV1::Cpu,
+            update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+            loss_selection: learning.loss_selection,
+            line_b: None,
+            training_math: TrainingMathV1::PlatformLibm,
+            record_format: CheckpointRecordFormatV1::default(),
+            output_directory,
+        },
+        UpdatePathV1::VerifiedSerial { tape_cap_bytes } => {
+            s_learner_v1::VerifiedReplayOptionsV1::new(tape_cap_bytes)?;
+            ExpandedTrainingCommandV1::UpdateSVerifiedSerial {
                 source: batch.source.clone(),
                 trajectories: batch.trajectories.clone(),
                 learning_rate: learning.learning_rate,
                 value_coefficient: learning.value_coefficient,
-                update_backend: ExpandedUpdateBackendV1::Cpu,
-                update_backward_execution: UpdateBackwardExecutionV1::Sequential,
                 loss_selection: learning.loss_selection,
-                line_b: None,
-                training_math: TrainingMathV1::PlatformLibm,
-                record_format: CheckpointRecordFormatV1::default(),
+                tape_cap_bytes,
                 output_directory,
             }
         }
@@ -982,10 +996,34 @@ pub fn bench_v1(fixture: &Path, options: &BenchOptionsV1, out: &Path) -> Result<
         });
         let peak_rss = peak_rss_bytes_v1();
         let verification = verify_v1(&manifest, batch, &result)?;
-        let profile = forward_profile_v1(totals, &batch.census);
+        let execution = if let UpdatePathV1::VerifiedSerial { tape_cap_bytes } = options.path {
+            let receipt = &result["verified_replay"];
+            let used = receipt["used"]
+                .as_bool()
+                .ok_or("the opt-in update did not report its replay path")?;
+            let attempt: s_learner_v1::VerifiedReplayAttemptV1 =
+                serde_json::from_value(receipt["attempt"].clone()).map_err(err)?;
+            ensure(
+                receipt["tape_cap_bytes"] == json!(tape_cap_bytes)
+                    && attempt.peak_retained_tape_bytes <= tape_cap_bytes,
+                "the opt-in update did not respect the tape cap",
+            )?;
+            Some((used, attempt))
+        } else {
+            None
+        };
+        let profile = forward_profile_v1(
+            totals,
+            &batch.census,
+            execution.as_ref().map(|(used, attempt)| (*used, attempt)),
+        );
         let attribution_verified = (profile["enabled"] == json!(true)).then(|| {
-            profile["counts_match_census"] == json!(true)
-                && profile["learner_forwards_repeat_replayed_rows"] == json!(true)
+            if execution.is_some() {
+                profile["counts_match_execution"] == json!(true)
+            } else {
+                profile["counts_match_census"] == json!(true)
+                    && profile["learner_forwards_repeat_replayed_rows"] == json!(true)
+            }
         });
         failed = verification["verified"] != json!(true) || attribution_verified == Some(false);
         let mut sample = json!({"rep":rep, "elapsed_seconds":elapsed,
@@ -1010,6 +1048,9 @@ pub fn bench_v1(fixture: &Path, options: &BenchOptionsV1, out: &Path) -> Result<
                 "preparation_elapsed_seconds":preparation["preparation_elapsed_seconds"],
                 "started_workers":preparation["started_workers"],
                 "decoded_tensor_payload_bytes":preparation["decoded_tensor_payload_bytes"]});
+        }
+        if execution.is_some() {
+            sample["verified_replay"] = result["verified_replay"].clone();
         }
         samples.push(sample);
         if failed {
@@ -1042,11 +1083,12 @@ pub fn bench_v1(fixture: &Path, options: &BenchOptionsV1, out: &Path) -> Result<
 }
 
 /// The forward counts of one update next to the batch's census: whether
-/// every row was replayed once and every learner row forwarded once more,
-/// and whether those learner forwards reproduced the replayed outputs.
+/// every row was replayed and learned on as expected for the selected path.
+/// A fallback retains the discarded attempt in the stage totals.
 fn forward_profile_v1(
     totals: Option<[s_update_profile::StageTotalsV1; s_update_profile::STAGES_V1]>,
     census: &BatchCensusV1,
+    execution: Option<(bool, &s_learner_v1::VerifiedReplayAttemptV1)>,
 ) -> Value {
     let Some(totals) = totals else {
         return json!({"enabled":false,
@@ -1070,12 +1112,16 @@ fn forward_profile_v1(
     let forward_nanos =
         replay_learner.thread_nanos + replay_other.thread_nanos + learner_forward.thread_nanos;
     let learner_rows = census.learner_rows as u64;
+    let other_rows = census.other_rows as u64;
+    let reused = execution.is_some_and(|(used, _)| used);
+    let expected_learner_forwards = if reused { 0 } else { learner_rows };
     let counts_match = replay_learner.calls == learner_rows
-        && replay_other.calls == census.other_rows as u64
-        && learner_forward.calls == learner_rows
+        && replay_other.calls == other_rows
+        && learner_forward.calls == expected_learner_forwards
         && learner_backward.calls == learner_rows;
-    let repeat = counts_match && learner_forward.output_digest == replay_learner.output_digest;
-    json!({"enabled":true, "stages":stages,
+    let repeat =
+        !reused && counts_match && learner_forward.output_digest == replay_learner.output_digest;
+    let mut profile = json!({"enabled":true, "stages":stages,
         "counts_match_census":counts_match,
         "learner_forwards_repeat_replayed_rows":repeat,
         "duplicate_forwards":repeat.then_some(learner_forward.calls),
@@ -1087,7 +1133,29 @@ fn forward_profile_v1(
         "scope":"thread time of each call (wall time on the thread that ran it; parallel \
                  workers add up). learner_backward is backward_v1 on one worker and \
                  backward_into_v1 (term recording) on more; the ordered weight-gradient \
-                 accumulation of the parallel learner is outside every stage"})
+                 accumulation of the parallel learner is outside every stage"});
+    if let Some((used, attempt)) = execution {
+        let counts_match_execution = if used {
+            counts_match
+                && attempt.learner_replay_forwards == learner_rows
+                && attempt.other_replay_forwards == other_rows
+                && attempt.learner_backwards == learner_rows
+        } else {
+            attempt.learner_replay_forwards <= learner_rows
+                && attempt.other_replay_forwards <= other_rows
+                && attempt.learner_backwards <= attempt.learner_replay_forwards
+                && replay_learner.calls == learner_rows + attempt.learner_replay_forwards
+                && replay_other.calls == other_rows + attempt.other_replay_forwards
+                && learner_forward.calls == learner_rows
+                && learner_backward.calls == learner_rows + attempt.learner_backwards
+        };
+        profile["counts_match_execution"] = json!(counts_match_execution);
+        profile["removed_learner_forwards"] =
+            json!(counts_match_execution.then_some(if used { learner_rows } else { 0 }));
+        profile["scope"] =
+            json!("thread time of each call, including discarded attempt work on fallback");
+    }
+    profile
 }
 
 fn build_v1() -> Value {
@@ -1287,10 +1355,11 @@ const USAGE_V1: &str = "usage:
       [seed=<u64>] [collection_workers=1..64] [max_batch_mebibytes=1..512]
       [max_prepared_tensor_mebibytes=64..4096]
   s_update_fixture_v1 command fixture=<dir> batch=initial|warmed path=serial|prepared
-      [workers=1..32] out=<new dir>
+      [workers=1..32] [verified_replay_tape_bytes=1..67108864] out=<new dir>
   s_update_fixture_v1 verify fixture=<dir> batch=initial|warmed result=<update.json>
   s_update_fixture_v1 bench fixture=<dir> batch=initial|warmed path=serial|prepared
-      [workers=1..32] [reps=1..100] out=<new dir>
+      [workers=1..32] [verified_replay_tape_bytes=1..67108864] [reps=1..100] out=<new dir>
+verified_replay_tape_bytes requires path=serial and workers=1.
 Unknown, repeated or out-of-range arguments are refused.";
 
 /// Strict `key=value` arguments: each key at most once, every key known.
@@ -1330,6 +1399,21 @@ impl ArgumentsV1 {
                 .parse()
                 .map_err(|_| format!("{key}={value} is not a valid number"))
         })
+    }
+
+    fn update_path_v1(&self) -> Result<(UpdatePathV1, usize), String> {
+        let path = UpdatePathV1::parse_v1(self.text_v1("path")?)?;
+        let workers = self.number_v1("workers", 1)?;
+        if !self.values.contains_key("verified_replay_tape_bytes") {
+            return Ok((path, workers));
+        }
+        ensure(
+            path == UpdatePathV1::Serial && workers == 1,
+            "verified_replay_tape_bytes requires path=serial and workers=1",
+        )?;
+        let tape_cap_bytes = self.number_v1("verified_replay_tape_bytes", 0)?;
+        s_learner_v1::VerifiedReplayOptionsV1::new(tape_cap_bytes)?;
+        Ok((UpdatePathV1::VerifiedSerial { tape_cap_bytes }, workers))
     }
 }
 
@@ -1374,11 +1458,19 @@ pub fn main_v1(args: &[String]) -> Result<Value, String> {
             serde_json::to_value(generate_v1(&options, &out)?).map_err(err)
         }
         "command" => {
-            let arguments =
-                ArgumentsV1::parse_v1(rest, &["fixture", "batch", "path", "workers", "out"])?;
+            let arguments = ArgumentsV1::parse_v1(
+                rest,
+                &[
+                    "fixture",
+                    "batch",
+                    "path",
+                    "workers",
+                    "verified_replay_tape_bytes",
+                    "out",
+                ],
+            )?;
             let (fixture, name) = (arguments.text_v1("fixture")?, arguments.text_v1("batch")?);
-            let path = UpdatePathV1::parse_v1(arguments.text_v1("path")?)?;
-            let workers = arguments.number_v1("workers", 1)?;
+            let (path, workers) = arguments.update_path_v1()?;
             let out = PathBuf::from(arguments.text_v1("out")?);
             let manifest = load_manifest_v1(Path::new(fixture))?;
             let batch = manifest.batch_v1(name)?;
@@ -1420,13 +1512,23 @@ pub fn main_v1(args: &[String]) -> Result<Value, String> {
         "bench" => {
             let arguments = ArgumentsV1::parse_v1(
                 rest,
-                &["fixture", "batch", "path", "workers", "reps", "out"],
+                &[
+                    "fixture",
+                    "batch",
+                    "path",
+                    "workers",
+                    "verified_replay_tape_bytes",
+                    "reps",
+                    "out",
+                ],
             )?;
             let (fixture, out) = (arguments.text_v1("fixture")?, arguments.text_v1("out")?);
+            let batch = arguments.text_v1("batch")?.to_owned();
+            let (path, workers) = arguments.update_path_v1()?;
             let options = BenchOptionsV1 {
-                batch: arguments.text_v1("batch")?.to_owned(),
-                path: UpdatePathV1::parse_v1(arguments.text_v1("path")?)?,
-                workers: arguments.number_v1("workers", 1)?,
+                batch,
+                path,
+                workers,
                 reps: arguments.number_v1("reps", 1)?,
             };
             bench_v1(Path::new(fixture), &options, Path::new(out))

@@ -95,6 +95,7 @@ fn transfer(state: &mut GameState, object: ObjectId, controller: PlayerId) {
     live.controller = controller;
     // 302.6: the new controller has not controlled it since their turn began.
     live.summoning_sick = true;
+    crate::full_text_v1::record_control_gained(state, object);
 }
 
 pub(super) fn gain_control(ctx: &ExecCtx, index: usize, state: &mut GameState) {

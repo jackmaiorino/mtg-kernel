@@ -91,6 +91,7 @@ pub(crate) fn sample_genesis_checkpoint_v69(
         &pending.answers,
         true,
         Some(&input),
+        None,
     )?;
     if next.engine.event_history != state.engine.event_history
         || next.engine.event_log != state.engine.event_log

@@ -7,8 +7,8 @@
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
-    card_id_by_name, preflight_fully_supported_deck, CardCapability, TargetSpec, CARD_DEFS,
-    KERNEL_CARDDB_HASH,
+    card_id_by_name, preflight_fully_supported_deck, CardCapability, DeckPreflightError,
+    TargetSpec, CARD_DEFS, KERNEL_CARDDB_HASH,
 };
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1, LimitedJsonlServerV1};
 use serde_json::{json, Value};
@@ -19,7 +19,7 @@ use std::path::Path;
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
 /// deck's companion is part of the deck the session plays.
-const PLAYABLE: [(&str, &str); 135] = [
+const PLAYABLE: [(&str, &str); 137] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -175,12 +175,14 @@ const PLAYABLE: [(&str, &str); 135] = [
     ("legacy", "legacy-naya-initiative"),
     ("legacy", "legacy-mono-black-midrange"),
     ("legacy", "legacy-death-and-taxes-60-card"),
+    ("legacy", "legacy-bant-control"),
     ("premodern", "premodern-replenish"),
     ("premodern", "premodern-sligh-rdw"),
     ("premodern", "premodern-terrageddon"),
     ("premodern", "premodern-goblins"),
     ("premodern", "premodern-mono-black-aggro"),
     ("premodern", "premodern-rg-aggro"),
+    ("premodern", "premodern-elves"),
     ("premodern", "premodern-stiflenought"),
     ("premodern", "premodern-oath-of-druids"),
     ("premodern", "premodern-landstill-uw-control"),
@@ -241,6 +243,24 @@ const SNAPSHOTS: [&str; 2] = [
     "data/eternal_v1/meta_snapshot_mtgtop8_premodern_20261101.json",
 ];
 
+/// Executable S1 implementations with known missing reachable branches.
+const PARTIAL_S1: [&str; 4] = [
+    "Coalition Honor Guard",
+    "Hullbreacher",
+    "Martyr of Sands",
+    "Standard Bearer",
+];
+
+/// Volrath's Shapeshifter and the S1 cards above are the registry's only
+/// Partial definitions.
+pub(crate) fn expected_capability(name: &str) -> CardCapability {
+    if name == "Volrath's Shapeshifter" || PARTIAL_S1.contains(&name) {
+        CardCapability::Partial
+    } else {
+        CardCapability::Full
+    }
+}
+
 /// One zone's decklist rows.
 fn snapshot_rows(rows: &Value) -> Vec<CustomCardCountV1> {
     rows.as_array()
@@ -284,10 +304,25 @@ fn eternal_registry_follows_the_pauper_and_standard_ids() {
     assert_eq!(CARD_DEFS.len(), expected.len());
     for (id, name) in expected.into_iter().enumerate() {
         assert_eq!(CARD_DEFS[id].name, name, "id {id}");
+        assert_eq!(
+            CARD_DEFS[id].capability,
+            expected_capability(name),
+            "{name}"
+        );
     }
-    assert!(CARD_DEFS
-        .iter()
-        .all(|def| def.capability == CardCapability::Full));
+    for name in PARTIAL_S1 {
+        let id = card_id_by_name(name).unwrap();
+        assert!(CARD_DEFS[usize::from(id)].is_executable());
+        assert!(matches!(
+            preflight_fully_supported_deck(&[id]),
+            Err(DeckPreflightError::NotFullySupported {
+                index: 0,
+                card_def,
+                name: rejected,
+                capability: CardCapability::Partial,
+            }) if card_def == id && rejected == name
+        ));
+    }
     println!("eternal catalog hash {KERNEL_CARDDB_HASH:#018x}");
 }
 
@@ -340,6 +375,61 @@ fn controls_named(decision: &Value, seat: &Value, name: &str) -> bool {
                     .as_u64()
                     .is_some_and(|id| CARD_DEFS[id as usize].name == name)
         })
+}
+
+/// The number of lands `seat` controls in the decision's public
+/// projection.
+fn lands_controlled(decision: &Value, seat: &Value) -> usize {
+    decision["observation"]["projection"]["battlefield"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|cards| cards.as_array().into_iter().flatten())
+        .filter(|card| {
+            &card["stable"]["controller"] == seat
+                && card["stable"]["card_db_id"].as_u64().is_some_and(|id| {
+                    CARD_DEFS[id as usize]
+                        .types
+                        .contains(&mtg_kernel::card_def::CardType::Land)
+                })
+        })
+        .count()
+}
+
+/// Whether `action` casts a noncreature spell whose printed mana value
+/// exceeds the lands its caster controls while an opponent controls
+/// Lavinia, Azorius Renegade (wave S1l). A printed mana value counts X as 0,
+/// so an announced X only raises it. Split, Adventure, Omen and
+/// double-faced cards have other spell forms and are left out.
+fn lavinia_prohibits(decision: &Value, action: &Value) -> bool {
+    let semantic = &action["semantic"];
+    if semantic["action_kind"] != "cast_spell" {
+        return false;
+    }
+    let Some(id) = semantic["source"]["card_db_id"].as_u64() else {
+        return false;
+    };
+    let def = &CARD_DEFS[id as usize];
+    let single_form = def.name == def.object_name
+        && !def.name.contains(" // ")
+        && def.adventure.is_none()
+        && def.omen.is_none()
+        && def.transform_face.is_none();
+    if !single_form
+        || def
+            .types
+            .contains(&mtg_kernel::card_def::CardType::Creature)
+    {
+        return false;
+    }
+    let actor = &semantic["actor"];
+    let opponent = match actor.as_str() {
+        Some("p0") => json!("p1"),
+        Some("p1") => json!("p0"),
+        _ => return false,
+    };
+    controls_named(decision, &opponent, "Lavinia, Azorius Renegade")
+        && usize::from(def.mana_value) > lands_controlled(decision, actor)
 }
 
 /// Whether the opponent of `seat` controls a Hexing Squelcher, whose own
@@ -506,16 +596,195 @@ fn stack_items_controlled(value: &Value, seat: &Value) -> usize {
     }
 }
 
+/// Whether `action` answers an attacker scan step with `include`.
+fn is_attacker_inclusion(action: &Value, include: bool) -> bool {
+    action["semantic"]["action_kind"] == "choose_attacker_inclusion"
+        && action["semantic"]["include"] == include
+}
+
+/// Whether the player `actor` attacks controls an Archon of Absolution on
+/// the public battlefield (wave S1j).
+fn archon_taxes(decision: &Value, actor: &Value) -> bool {
+    let defender = match actor.as_str() {
+        Some("p0") => 1,
+        Some("p1") => 0,
+        _ => return false,
+    };
+    decision["observation"]["projection"]["battlefield"][defender]
+        .as_array()
+        .is_some_and(|cards| {
+            cards
+                .iter()
+                .any(|card| card["card_name"] == "Archon of Absolution")
+        })
+}
+
+/// Adds each overloaded spell on the decision's public stack, by its
+/// source's arena id and zone change count. An overload card's overload form
+/// is cast with the Omen method, the paid alternative form of the card.
+fn collect_overloaded_spells(decision: &Value, spells: &mut BTreeSet<(u64, u64)>) {
+    let stack = decision["observation"]["projection"]["stack"].as_array();
+    for item in stack.into_iter().flatten() {
+        let source = &item["source"];
+        let overload = source["card_db_id"].as_u64().is_some_and(|id| {
+            matches!(CARD_DEFS[id as usize].name, "Vandalblast" | "Electrickery")
+        });
+        if let (true, Some("omen"), Some(arena), Some(changes)) = (
+            overload,
+            item["cast_method"].as_str(),
+            source["arena_id"].as_u64(),
+            source["zone_change_count"].as_u64(),
+        ) {
+            spells.insert((arena, changes));
+        }
+    }
+}
+
+/// The names the decision's schema 5 observation lists for battlefield
+/// Meddling Mages (wave S1k).
+fn observed_mage_names(decision: &Value) -> BTreeSet<&str> {
+    decision["observation"]["projection"]["meddling_mage_names"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|row| row["name"].as_str().unwrap())
+        .collect()
+}
+
+/// The card's only spell name: none for split, Adventure, Omen and
+/// double-faced cards and cards with an alternative cost (a face-down
+/// morph or disguise spell has no name), which have other spell forms.
+fn single_spell_name(card_db_id: u64) -> Option<&'static str> {
+    let def = &CARD_DEFS[card_db_id as usize];
+    (def.name == def.object_name
+        && !def.name.contains(" // ")
+        && def.adventure.is_none()
+        && def.omen.is_none()
+        && def.transform_face.is_none()
+        && def.alt_cost.is_none())
+    .then_some(def.name)
+}
+
+/// A ranked seat's Meddling Mage name option (wave S1k): the first nonland
+/// card of its opponent's list with a single spell name, its letter and then
+/// its name. `None` when the decision isn't a Mage name menu or the menu
+/// doesn't offer that option.
+fn informed_mage_option<'a>(actions: &[&'a Value], decks: &[CustomDeckV1; 2]) -> Option<&'a Value> {
+    let semantic = &actions.first()?["semantic"];
+    if semantic["action_kind"] != "choose_meddling_mage_name_v1" {
+        return None;
+    }
+    let opponent = usize::from(semantic["actor"] == "p0");
+    let target = decks[opponent].cards.iter().find_map(|row| {
+        let id = card_id_by_name(&row.name)?;
+        if CARD_DEFS[usize::from(id)]
+            .types
+            .contains(&mtg_kernel::card_def::CardType::Land)
+        {
+            return None;
+        }
+        single_spell_name(u64::from(id))
+    })?;
+    let text = if semantic["group"].is_null() {
+        target.chars().next()?.to_ascii_uppercase().to_string()
+    } else {
+        target.to_owned()
+    };
+    actions
+        .iter()
+        .copied()
+        .find(|action| action["semantic"]["option_text"] == text.as_str())
+}
+
+/// A ranked seat's answer to a Triumph of Saint Katherine miracle choice
+/// (wave S1l): it reveals the drawn Triumph, then casts it as the miracle
+/// trigger resolves. Both are two-option choices whose source is the card in
+/// its hand, so the first one for a hand incarnation reveals it (option 1)
+/// and the next one casts it (option 0). `None` for any other decision, so
+/// other miracle cards stay hidden, as `rank` keeps them.
+fn informed_miracle_option<'a>(
+    actions: &[&'a Value],
+    revealed: &mut BTreeSet<(u64, u64)>,
+) -> Option<&'a Value> {
+    let semantic = &actions.first()?["semantic"];
+    let source = &semantic["source"];
+    let triumph = source["card_db_id"]
+        .as_u64()
+        .is_some_and(|id| CARD_DEFS[id as usize].name == "Triumph of Saint Katherine");
+    if semantic["action_kind"] != "choose_effect_option"
+        || semantic["option_count"] != 2
+        || source["zone"] != "Hand"
+        || !triumph
+    {
+        return None;
+    }
+    let incarnation = (
+        source["arena_id"].as_u64()?,
+        source["zone_change_count"].as_u64()?,
+    );
+    let option = u64::from(revealed.insert(incarnation));
+    actions
+        .iter()
+        .copied()
+        .find(|action| action["semantic"]["option_index"] == option)
+}
+
+/// Fiery Confluence's mode indices with a "Destroy target artifact": the
+/// multisets of its three modes that hold the third one.
+pub(crate) const FIERY_CONFLUENCE_DESTROY_MODES: [u64; 6] = [2, 4, 5, 7, 8, 9];
+
+/// The charge counters on the battlefield card that `source` names in the
+/// decision's public projection.
+fn public_charge_counters(decision: &Value, source: &Value) -> i64 {
+    decision["observation"]["projection"]["battlefield"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|cards| cards.as_array().into_iter().flatten())
+        .find(|card| card["stable"]["arena_id"] == source["arena_id"])
+        .and_then(|card| card["counters"]["charge"].as_i64())
+        .unwrap_or(0)
+}
+
+/// A ranked seat's use of the wave S1m cards, which `rank` never reaches: it
+/// stations an Extinguisher Battleship while it has fewer than five charge
+/// counters (`rank` never activates an ability), and it chooses Fiery
+/// Confluence's first offered mode with a "Destroy target artifact" (`rank`
+/// takes the first mode, 1 damage to each creature three times). `None` for
+/// any other decision.
+fn informed_s1m_option<'a>(actions: &[&'a Value], decision: &Value) -> Option<&'a Value> {
+    actions.iter().copied().find(|action| {
+        let semantic = &action["semantic"];
+        let source = semantic["source"]["card_db_id"]
+            .as_u64()
+            .map(|id| CARD_DEFS[id as usize].name);
+        match semantic["action_kind"].as_str() {
+            Some("activate_ability") => {
+                source == Some("Extinguisher Battleship")
+                    && public_charge_counters(decision, &semantic["source"]) < 5
+            }
+            Some("choose_spell_mode") => {
+                source == Some("Fiery Confluence")
+                    && semantic["mode_index"]
+                        .as_u64()
+                        .is_some_and(|mode| FIERY_CONFLUENCE_DESTROY_MODES.contains(&mode))
+            }
+            _ => false,
+        }
+    })
+}
+
 /// How a test game picks among legal actions. `Ranked` casts and attacks
-/// but never activates an ability; `Random` reaches activations, so lands,
-/// mana rocks and activated abilities run too.
+/// but activates no ability other than an Extinguisher Battleship's station;
+/// `Random` reaches activations, so lands, mana rocks and activated abilities
+/// run too.
 #[derive(Clone, Copy)]
 pub(crate) enum Policy {
     Ranked,
     Random(u64),
 }
 
-fn splitmix64(state: &mut u64) -> u64 {
+pub(crate) fn splitmix64(state: &mut u64) -> u64 {
     *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
     let mut z = *state;
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
@@ -532,6 +801,30 @@ pub(crate) struct Game {
     pub(crate) winner: Option<usize>,
     /// Spells cast per seat, by card definition id.
     pub(crate) cast_cards: [BTreeMap<u16, usize>; 2],
+    /// Spell mode choices, by card definition id and chosen mode index.
+    pub(crate) spell_modes: BTreeMap<(u16, u64), usize>,
+    /// Replies carrying the chooser's Surgical Extraction and Extirpate
+    /// search looks.
+    pub(crate) search_looks: [usize; 2],
+    /// Overloaded spells seen on the public stack, each counted once.
+    pub(crate) overloaded_spells: usize,
+    /// Attacker scan answers that include a creature while the defending
+    /// player controls an Archon of Absolution (wave S1j), each part of a
+    /// declaration whose cost is paid.
+    pub(crate) taxed_inclusions: usize,
+    /// Attacker scan steps that offer only to leave the creature out while
+    /// an Archon of Absolution taxes its attack.
+    pub(crate) unpaid_exclusions: usize,
+    /// Circle of Protection source choices answered from the action list
+    /// (waves S1d and P3g).
+    pub(crate) circle_choices: usize,
+    /// Meddling Mage name options chosen from the action list (wave S1k):
+    /// first-letter groups, then names.
+    pub(crate) mage_choices: [usize; 2],
+    /// Decisions whose observation lists a Meddling Mage name while the
+    /// acting player holds a card with that single spell name, which no
+    /// action casts.
+    pub(crate) mage_held_names: usize,
 }
 
 /// Plays one game to a natural terminal and returns its transcript hash,
@@ -547,6 +840,18 @@ pub(crate) fn play_with_outside(
     seed: u64,
     policy: Policy,
 ) -> Game {
+    play_observed(decks, outside_the_game, seed, policy, &mut |_, _| {})
+}
+
+/// `play_with_outside` that shows `observe` each decision and the action
+/// chosen for it, so a wave's test can count its own events.
+pub(crate) fn play_observed(
+    decks: [CustomDeckV1; 2],
+    outside_the_game: Option<[Vec<CustomCardCountV1>; 2]>,
+    seed: u64,
+    policy: Policy,
+    observe: &mut dyn FnMut(&Value, &Value),
+) -> Game {
     const MAX_STEPS: usize = 131_072;
     let mut server = LimitedJsonlServerV1::new_with_public_shroud_v1();
     let mut reset = json!({"schema_version":5,"request_type":"reset","request_id":"reset",
@@ -560,6 +865,13 @@ pub(crate) fn play_with_outside(
     let mut action_counts = BTreeMap::new();
     let mut casts_by_seat = [0; 2];
     let mut cast_cards: [BTreeMap<u16, usize>; 2] = Default::default();
+    let mut spell_modes = BTreeMap::new();
+    let mut search_looks = [0; 2];
+    let mut overloaded_spells = BTreeSet::new();
+    let (mut taxed_inclusions, mut unpaid_exclusions) = (0, 0);
+    let mut circle_choices = 0;
+    let (mut mage_choices, mut mage_held_names) = ([0; 2], 0);
+    let mut miracle_reveals = BTreeSet::new();
     let mut companion_actions = 0;
     // The last chosen actions, reported if a game fails closed.
     let mut recent: Vec<String> = Vec::new();
@@ -587,6 +899,12 @@ pub(crate) fn play_with_outside(
             reply["response_type"], "error",
             "seed={seed} step={index}: {reply}"
         );
+        for (count, look) in search_looks
+            .iter_mut()
+            .zip(["surgical_search_look_v1", "extirpate_search_look_v1"])
+        {
+            *count += usize::from(!reply[look].is_null());
+        }
         if reply["response_type"] == "terminal" {
             assert_eq!(
                 reply["terminal"]["terminal_code"],
@@ -612,15 +930,63 @@ last actions:
                 companion_actions,
                 winner,
                 cast_cards,
+                spell_modes,
+                search_looks,
+                overloaded_spells: overloaded_spells.len(),
+                taxed_inclusions,
+                unpaid_exclusions,
+                circle_choices,
+                mage_choices,
+                mage_held_names,
             };
         }
         let decision = &reply["decision"];
+        collect_overloaded_spells(decision, &mut overloaded_spells);
+        // No noncreature spell over the caster's lands is offered while an
+        // opponent controls Lavinia, Azorius Renegade (wave S1l).
+        for action in decision["legal_actions"].as_array().unwrap() {
+            assert!(
+                !lavinia_prohibits(decision, action),
+                "seed={seed} step={index}: Lavinia prohibits the cast {action}"
+            );
+        }
+        // A spell whose only name a Mage chose is never offered (wave S1k).
+        let mage_names = observed_mage_names(decision);
+        if !mage_names.is_empty() {
+            for action in decision["legal_actions"].as_array().unwrap() {
+                let named = action["semantic"]["action_kind"] == "cast_spell"
+                    && action["semantic"]["source"]["card_db_id"]
+                        .as_u64()
+                        .and_then(single_spell_name)
+                        .is_some_and(|name| mage_names.contains(name));
+                assert!(
+                    !named,
+                    "seed={seed} step={index}: a Mage named the cast {action}"
+                );
+            }
+            mage_held_names += usize::from(
+                decision["observation"]["own_hand"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|card| card["stable"]["card_db_id"].as_u64())
+                    .filter_map(single_spell_name)
+                    .any(|name| mage_names.contains(name)),
+            );
+        }
         let actions: Vec<&Value> = decision["legal_actions"]
             .as_array()
             .unwrap()
             .iter()
             .filter(|action| session_can_follow(action, decision))
             .collect();
+        if let [only] = actions[..] {
+            if is_attacker_inclusion(only, false)
+                && archon_taxes(decision, &only["semantic"]["actor"])
+            {
+                unpaid_exclusions += 1;
+            }
+        }
         // Policy observation v5 fails closed while two stack items target
         // one Ward permanent, so these games avoid targeting a Ward
         // permanent whenever another action is available, and start no new
@@ -663,7 +1029,10 @@ last actions:
                 .find(|a| a["semantic"]["action_kind"] == "pass")
             {
                 Some(pass) if controls_stack_item(decision, &pass["semantic"]["actor"]) => *pass,
-                _ => *actions.iter().min_by_key(|a| rank(a)).unwrap(),
+                _ => informed_mage_option(&actions, &decks)
+                    .or_else(|| informed_miracle_option(&actions, &mut miracle_reveals))
+                    .or_else(|| informed_s1m_option(&actions, decision))
+                    .unwrap_or_else(|| *actions.iter().min_by_key(|a| rank(a)).unwrap()),
             },
             // A random seat starts no new spell or ability while it controls
             // two stack items, so a free ability (Nomads en-Kor's) cannot
@@ -683,8 +1052,14 @@ last actions:
                 actions[(splitmix64(&mut random_state) % actions.len() as u64) as usize]
             }
         };
+        observe(decision, action);
         if is_companion_action(action) {
             companion_actions += 1;
+        }
+        if is_attacker_inclusion(action, true)
+            && archon_taxes(decision, &action["semantic"]["actor"])
+        {
+            taxed_inclusions += 1;
         }
         recent.push(action["semantic"].to_string());
         if recent.len() > 8 {
@@ -697,6 +1072,28 @@ last actions:
             casts_by_seat[seat] += 1;
             if let Some(id) = action["semantic"]["source"]["card_db_id"].as_u64() {
                 *cast_cards[seat].entry(id as u16).or_default() += 1;
+            }
+        }
+        if action["semantic"]["action_kind"] == "choose_effect_option"
+            && action["semantic"]["source"]["card_db_id"]
+                .as_u64()
+                .is_some_and(|id| {
+                    CARD_DEFS[id as usize]
+                        .name
+                        .starts_with("Circle of Protection")
+                })
+        {
+            circle_choices += 1;
+        }
+        if action["semantic"]["action_kind"] == "choose_meddling_mage_name_v1" {
+            mage_choices[usize::from(!action["semantic"]["group"].is_null())] += 1;
+        }
+        if action["semantic"]["action_kind"] == "choose_spell_mode" {
+            if let (Some(source), Some(mode)) = (
+                action["semantic"]["source"]["card_db_id"].as_u64(),
+                action["semantic"]["mode_index"].as_u64(),
+            ) {
+                *spell_modes.entry((source as u16, mode)).or_default() += 1;
             }
         }
         *action_counts
@@ -714,6 +1111,45 @@ last actions:
             .to_string();
     }
     panic!("seed {seed} did not reach a natural terminal");
+}
+
+#[test]
+fn premodern_elves_snapshot_finishes_and_replays_in_both_seats() {
+    let decks = snapshot_decks();
+    let lookup = |archetype| {
+        decks
+            .iter()
+            .find(|deck| deck.format == "premodern" && deck.archetype == archetype)
+            .unwrap_or_else(|| panic!("missing Premodern snapshot {archetype}"))
+            .deck
+            .clone()
+    };
+    let elves = lookup("premodern-elves");
+    let goblins = lookup("premodern-goblins");
+    let (ids, companion) = elves.resolve_with_companion().unwrap();
+    assert_eq!(ids.len(), 60);
+    assert!(companion.is_none());
+    preflight_fully_supported_deck(&ids).unwrap();
+    for printing in ["Birchlore Rangers", "Thornscape Battlemage"] {
+        let id = card_id_by_name(printing).unwrap();
+        assert_eq!(ids.iter().filter(|&&card| card == id).count(), 1);
+    }
+
+    for elves_seat in [0, 1] {
+        let decks = if elves_seat == 0 {
+            [elves.clone(), goblins.clone()]
+        } else {
+            [goblins.clone(), elves.clone()]
+        };
+        let seed = 0x454c_5645_5300 + elves_seat as u64;
+        let game = play(decks.clone(), seed, Policy::Ranked);
+        let replay = play(decks, seed, Policy::Ranked);
+        assert!(
+            game.casts_by_seat[elves_seat] > 0,
+            "Elves must cast a spell"
+        );
+        assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+    }
 }
 
 #[test]
@@ -808,7 +1244,7 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
 }
 
 /// A deck of `lands` and four copies of each of nine spells.
-fn stress_deck(lands: &[(&str, u32)], spells: [&str; 9]) -> CustomDeckV1 {
+pub(crate) fn stress_deck(lands: &[(&str, u32)], spells: [&str; 9]) -> CustomDeckV1 {
     let count = |name: &str, count: u32| CustomCardCountV1 {
         name: name.to_owned(),
         count: count as _,
@@ -872,4 +1308,276 @@ fn p2a_statics_decks_finish_and_replay_through_public_sessions() {
             assert_eq!(game.transcript_sha256, replay.transcript_sha256);
         }
     }
+}
+
+/// Wave S1h's overload and extraction cards are sideboard cards, which the
+/// best-of-three harness draws too rarely to reach each branch, so a red
+/// deck with both overload cards and a white-black deck with both
+/// extractions play each other through public sessions, both seats with
+/// ranked and with seeded random actions. The games choose an overload form
+/// from the JSONL action list, show overloaded spells on the public stack
+/// and reach both search looks in the replies.
+#[test]
+fn s1h_overload_and_extraction_decks_finish_and_replay_through_public_sessions() {
+    let red = stress_deck(
+        &[("Mountain", 24)],
+        [
+            "Vandalblast",
+            "Electrickery",
+            "Sol Ring",
+            "Skred",
+            "Mogg Fanatic",
+            "Grim Lavamancer",
+            "Galvanic Relay",
+            "Chromatic Star",
+            "Mishra's Bauble",
+        ],
+    );
+    let white_black = stress_deck(
+        &[("Swamp", 12), ("Plains", 12)],
+        [
+            "Surgical Extraction",
+            "Extirpate",
+            "Thraben Inspector",
+            "Kor Skyfisher",
+            "Prophetic Prism",
+            "Tithing Blade",
+            "Swords to Plowshares",
+            "Thoughtseize",
+            "Battle Screech",
+        ],
+    );
+    let overload_cards = ["Vandalblast", "Electrickery"].map(|name| card_id_by_name(name).unwrap());
+    let (mut chosen, mut overloaded, mut looks) = (0, 0, [0; 2]);
+    for (pair, seed) in [
+        ([red.clone(), white_black.clone()], 0x5331_4800_u64),
+        ([white_black, red], 0x5331_4801),
+    ] {
+        for policy in [
+            Policy::Ranked,
+            Policy::Random(seed),
+            Policy::Random(seed + 16),
+            Policy::Random(seed + 32),
+        ] {
+            let game = play(pair.clone(), seed, policy);
+            let replay = play(pair.clone(), seed, policy);
+            assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+            // An overload card's second spell mode is its overload form.
+            chosen += overload_cards
+                .iter()
+                .filter_map(|&card| game.spell_modes.get(&(card, 1)))
+                .sum::<usize>();
+            overloaded += game.overloaded_spells;
+            for (total, count) in looks.iter_mut().zip(game.search_looks) {
+                *total += count;
+            }
+        }
+    }
+    println!(
+        "overload forms chosen: {chosen}, overloaded spells: {overloaded}, search looks: {looks:?}"
+    );
+    assert!(chosen > 0, "no overload form was chosen");
+    assert!(
+        overloaded > 0,
+        "no overloaded spell reached the public stack"
+    );
+    assert!(
+        looks.iter().all(|&count| count > 0),
+        "search looks {looks:?}"
+    );
+}
+
+/// Wave S1j's Archon of Absolution is a sideboard card, which the
+/// best-of-three harness draws too rarely to tax many attacks, so a white
+/// deck and a green-white deck with mana creatures, each with four Archons
+/// in its mainboard, play each other through public sessions, both seats
+/// with ranked and with seeded random actions. Either player's attacks are
+/// taxed once the other has an Archon. The games include attackers whose
+/// cost is paid, and reach attacker scan steps that offer only to leave a
+/// creature out because its attack couldn't be paid for.
+#[test]
+fn s1j_archon_decks_finish_and_replay_through_public_sessions() {
+    let white = stress_deck(
+        &[("Plains", 24)],
+        [
+            "Archon of Absolution",
+            "Thraben Inspector",
+            "Kor Skyfisher",
+            "Thalia, Guardian of Thraben",
+            "Ocelot Pride",
+            "Containment Priest",
+            "Swords to Plowshares",
+            "Battle Screech",
+            "Sol Ring",
+        ],
+    );
+    let green_white = stress_deck(
+        &[("Forest", 14), ("Plains", 10)],
+        [
+            "Archon of Absolution",
+            "Llanowar Elves",
+            "Elvish Mystic",
+            "Quirion Ranger",
+            "Basking Rootwalla",
+            "Wild Mongrel",
+            "Rancor",
+            "Sol Ring",
+            "Mishra's Bauble",
+        ],
+    );
+    let (mut taxed, mut unpaid) = (0, 0);
+    for (pair, seed) in [
+        ([white.clone(), green_white.clone()], 0x5331_4a00_u64),
+        ([green_white, white], 0x5331_4a01),
+    ] {
+        for policy in [
+            Policy::Ranked,
+            Policy::Random(seed),
+            Policy::Random(seed + 16),
+            Policy::Random(seed + 32),
+        ] {
+            let game = play(pair.clone(), seed, policy);
+            let replay = play(pair.clone(), seed, policy);
+            assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+            taxed += game.taxed_inclusions;
+            unpaid += game.unpaid_exclusions;
+        }
+    }
+    println!("taxed inclusions: {taxed}, unpaid exclusions: {unpaid}");
+    assert!(taxed > 0, "no attack was paid for against an Archon");
+    assert!(
+        unpaid > 0,
+        "no attacker scan step left out a creature it couldn't pay for"
+    );
+}
+
+/// Wave P3g's Circle of Protection: Red is a sideboard card, which the
+/// best-of-three harness rarely draws with a red source to choose, so a
+/// white-blue deck with four Circles, Arcane Laboratories and Akroma's
+/// Vengeances in its mainboard and a black-red deck with Seal of Fire,
+/// Infest and other red sources play each other through public sessions,
+/// both seats with ranked and with seeded random actions. The games answer
+/// a Circle's source choice from the JSONL action list.
+#[test]
+fn p3g_circle_decks_finish_and_replay_through_public_sessions() {
+    let white_blue = stress_deck(
+        &[("Plains", 14), ("Island", 10)],
+        [
+            "Circle of Protection: Red",
+            "Arcane Laboratory",
+            "Akroma's Vengeance",
+            "Thraben Inspector",
+            "Kor Skyfisher",
+            "Swords to Plowshares",
+            "Exalted Angel",
+            "Opt",
+            "Counterspell",
+        ],
+    );
+    let black_red = stress_deck(
+        &[("Mountain", 14), ("Swamp", 10)],
+        [
+            "Seal of Fire",
+            "Infest",
+            "Mogg Fanatic",
+            "Grim Lavamancer",
+            "Jackal Pup",
+            "Lightning Bolt",
+            "Siege-Gang Commander",
+            "Twinshot Sniper",
+            "Dark Ritual",
+        ],
+    );
+    let mut choices = 0;
+    for (pair, seed) in [
+        ([white_blue.clone(), black_red.clone()], 0x5033_4700_u64),
+        ([black_red, white_blue], 0x5033_4701),
+    ] {
+        for policy in [
+            Policy::Ranked,
+            Policy::Random(seed),
+            Policy::Random(seed + 16),
+            Policy::Random(seed + 32),
+        ] {
+            let game = play(pair.clone(), seed, policy);
+            let replay = play(pair.clone(), seed, policy);
+            assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+            choices += game.circle_choices;
+        }
+    }
+    println!("Circle source choices: {choices}");
+    assert!(
+        choices > 0,
+        "no Circle source was chosen from the action list"
+    );
+}
+
+/// Wave S1k's Meddling Mage is a sideboard card, which the best-of-three
+/// harness rarely casts, so a white-blue deck with four Mages in its
+/// mainboard and a black-red deck play each other through public sessions,
+/// both seats with ranked and with seeded random actions. A ranked seat
+/// names its opponent's first single-name spell, Siege-Gang Commander,
+/// which a black-red seat holds until its fifth land, and a random seat
+/// takes any option. The games choose letters and names from the
+/// JSONL action list, and reach a decision whose observation lists a name
+/// the acting player holds and is offered no cast of. Every session game
+/// checks that no named spell is offered.
+#[test]
+fn s1k_meddling_mage_decks_finish_and_replay_through_public_sessions() {
+    let white_blue = stress_deck(
+        &[("Plains", 12), ("Island", 12)],
+        [
+            "Meddling Mage",
+            "Thraben Inspector",
+            "Mother of Runes",
+            "Kor Skyfisher",
+            "Swords to Plowshares",
+            "Exalted Angel",
+            "Counterspell",
+            "Brainstorm",
+            "Impulse",
+        ],
+    );
+    let black_red = stress_deck(
+        &[("Mountain", 12), ("Swamp", 12)],
+        [
+            "Siege-Gang Commander",
+            "Lightning Bolt",
+            "Chain Lightning",
+            "Dark Ritual",
+            "Jackal Pup",
+            "Hypnotic Specter",
+            "Duress",
+            "Ravenous Rats",
+            "Nantuko Shade",
+        ],
+    );
+    let (mut choices, mut held) = ([0; 2], 0);
+    for (pair, seed) in [
+        ([white_blue.clone(), black_red.clone()], 0x5331_4b00_u64),
+        ([black_red, white_blue], 0x5331_4b01),
+    ] {
+        for (seed, policy) in [
+            (seed, Policy::Ranked),
+            (seed + 2, Policy::Ranked),
+            (seed + 4, Policy::Ranked),
+            (seed + 6, Policy::Ranked),
+            (seed, Policy::Random(seed)),
+            (seed, Policy::Random(seed + 16)),
+        ] {
+            let game = play(pair.clone(), seed, policy);
+            let replay = play(pair.clone(), seed, policy);
+            assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+            for (total, count) in choices.iter_mut().zip(game.mage_choices) {
+                *total += count;
+            }
+            held += game.mage_held_names;
+        }
+    }
+    println!("Mage letters and names chosen: {choices:?}, named cards held: {held}");
+    assert!(
+        choices.iter().all(|count| *count > 0),
+        "no Mage letter or name was chosen from the action list: {choices:?}"
+    );
+    assert!(held > 0, "no decision listed a Mage name its actor held");
 }

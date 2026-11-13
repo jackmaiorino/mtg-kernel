@@ -301,8 +301,16 @@ fn trigger(
     })
 }
 pub fn capture(state: &GameState, viewer: PlayerId) -> Result<FactsV64, String> {
+    capture_scoped(state, viewer, public::ConsumerV1::Legacy)
+}
+
+pub(crate) fn capture_scoped(
+    state: &GameState,
+    viewer: PlayerId,
+    consumer: public::ConsumerV1,
+) -> Result<FactsV64, String> {
     let id = meaning::selected_id()?;
-    public::validate_state_checked(state)?;
+    public::validate_state_for_consumer(state, true, consumer)?;
     if let Some(pending) = &state.engine.pending_cast {
         crate::engine::validate_pending_cast(state, pending)?;
     }

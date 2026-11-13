@@ -106,6 +106,7 @@ fn proposed(choice: &ChoiceV1) -> DamageProposed {
         is_combat: true,
         historical_source: None,
         niv_damage_origin_v1: None,
+        eternal_damage_lki_v1: None,
     }
 }
 fn publication(state: &GameState, index: u32) -> Result<&PublicationV38, String> {
@@ -337,6 +338,7 @@ fn survivors(outcomes: &[BatchOutcomeV2]) -> Result<Vec<ProposedEvent>, String> 
                 is_combat: true,
                 historical_source: None,
                 niv_damage_origin_v1: None,
+                eternal_damage_lki_v1: None,
             }))),
         })
         .collect()
@@ -550,7 +552,10 @@ fn perform(state: &mut GameState, kind: InputKindV38, chosen: bool) -> Result<()
     after.latest = index;
     let saved = (!complete).then_some(after);
     let indices = |kind: u8| {
-        state.engine.event_history[start..]
+        state
+            .engine
+            .event_history
+            .range_v2(start..)
             .iter()
             .enumerate()
             .filter_map(|(offset, event)| {
@@ -700,7 +705,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             if let InputKindV38::Replacement(option) = input.kind {
                 let packet = &expected.packets[expected.selected.unwrap()];
                 if let PreventionV1::Replacement(r) = &packet.options[option as usize] {
-                    if matches!(r.kind,ReplacementEffectKind::PreventNextDamage {..}) && state.engine.event_history[input_at+1..op_at].iter().filter(|event|
+                    if matches!(r.kind,ReplacementEffectKind::PreventNextDamage {..}) && state.engine.event_history.range_v2(input_at+1..op_at).iter().filter(|event|
                         matches!(event,E::CrystalShieldOperationV1 {operation} if operation.before==*r && operation.damage_amount==packet.remaining_amount)).count()!=1 {
                         return Err("combat answer lost actual shared shield consumption".into());
                     }

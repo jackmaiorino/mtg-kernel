@@ -10,10 +10,10 @@ const NAME: &str = "Kykar, Zephyr Awakener";
 fn id(n: &str) -> u16 {
     card_def::card_id_by_name(n).unwrap()
 }
-fn ready(p: PlayerId) -> GameState {
+pub(crate) fn ready(p: PlayerId) -> GameState {
     ready_hidden(p, "Forest")
 }
-fn ready_hidden(p: PlayerId, hidden: &str) -> GameState {
+pub(crate) fn ready_hidden(p: PlayerId, hidden: &str) -> GameState {
     let library = [id("Forest"); 80];
     let other = [id(hidden); 80];
     let (a, b) = if p == PlayerId::P0 {
@@ -44,13 +44,13 @@ fn restore(s: &GameState) -> GameState {
     assert_eq!(s.state_hash(), r.state_hash());
     r
 }
-fn next(s: &mut GameState) -> Decision {
+pub(crate) fn next(s: &mut GameState) -> Decision {
     let d = engine::advance_until_decision(s);
     assert!(s.engine.halted.is_none(), "{:?}", s.engine.halted);
     assert!(!matches!(d, Decision::Halted { .. }), "{d:?}");
     d
 }
-fn pass(s: &mut GameState, d: Decision) {
+pub(crate) fn pass(s: &mut GameState, d: Decision) {
     let a = match d {
         Decision::CastSpellOrPass { .. } => Action::Pass,
         Decision::DeclareAttackers { .. } => Action::DeclareAttackers(vec![]),
@@ -79,7 +79,13 @@ fn tapped(s: &GameState, p: PlayerId) -> usize {
         .filter(|o| s.objects.get(**o).tapped)
         .count()
 }
-fn cast(s: &mut GameState, p: PlayerId, n: &str, targets: &[Target], cost: usize) -> ObjectId {
+pub(crate) fn cast(
+    s: &mut GameState,
+    p: PlayerId,
+    n: &str,
+    targets: &[Target],
+    cost: usize,
+) -> ObjectId {
     priority(s, p);
     let card = put(s, p, n, Zone::Hand);
     let before = tapped(s, p);
@@ -117,7 +123,7 @@ fn cast(s: &mut GameState, p: PlayerId, n: &str, targets: &[Target], cost: usize
     }
     panic!("paid cast absent")
 }
-fn finish(s: &mut GameState) {
+pub(crate) fn finish(s: &mut GameState) {
     for _ in 0..48 {
         let d = next(s);
         if s.stack.is_empty() && s.engine.pending_effect.is_none() {
@@ -127,7 +133,7 @@ fn finish(s: &mut GameState) {
     }
     panic!("stack unfinished")
 }
-fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
+pub(crate) fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
     let k = cast(s, p, NAME, &[], 4);
     finish(s);
     assert_eq!(s.objects.get(k).zone, Zone::Battlefield);
@@ -141,7 +147,13 @@ fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
     assert!(engine::has_effective_keyword(s, k, Keywords::FLYING));
     k
 }
-fn start_named(s: &mut GameState, p: PlayerId, k: ObjectId, name: &str, cost: usize) -> ObjectId {
+pub(crate) fn start_named(
+    s: &mut GameState,
+    p: PlayerId,
+    k: ObjectId,
+    name: &str,
+    cost: usize,
+) -> ObjectId {
     priority(s, p);
     let spell = put(s, p, name, Zone::Hand);
     let before = tapped(s, p);
@@ -169,11 +181,16 @@ fn start_named(s: &mut GameState, p: PlayerId, k: ObjectId, name: &str, cost: us
     };
     spell
 }
-fn start(s: &mut GameState, p: PlayerId, k: ObjectId) -> ObjectId {
+pub(crate) fn start(s: &mut GameState, p: PlayerId, k: ObjectId) -> ObjectId {
     start_named(s, p, k, "Ravenous Amulet", 2)
 }
 
-fn choose(s: &mut GameState, p: PlayerId, mode: u8, target: Option<ObjectId>) -> StackItem {
+pub(crate) fn choose(
+    s: &mut GameState,
+    p: PlayerId,
+    mode: u8,
+    target: Option<ObjectId>,
+) -> StackItem {
     engine::step(s, Action::ChooseTriggerMode(mode)).unwrap();
     if let Some(t) = target {
         match next(s) {
@@ -205,7 +222,7 @@ fn choose(s: &mut GameState, p: PlayerId, mode: u8, target: Option<ObjectId>) ->
     engine::validated_stack_item_target_spec(&row, s).unwrap();
     row
 }
-fn schedule(s: &GameState) -> (u64, crate::state::ObjectLinkV4) {
+pub(crate) fn schedule(s: &GameState) -> (u64, crate::state::ObjectLinkV4) {
     s.engine
         .event_history
         .iter()
@@ -216,7 +233,7 @@ fn schedule(s: &GameState) -> (u64, crate::state::ObjectLinkV4) {
         })
         .unwrap()
 }
-fn return_row(s: &mut GameState, index: u64) -> StackItem {
+pub(crate) fn return_row(s: &mut GameState, index: u64) -> StackItem {
     for _ in 0..180 {
         let d = next(s);
         if let Some(row) = s.stack.iter().find(|r| {

@@ -65,6 +65,10 @@ pub(crate) fn validate_v0(state: &GameState) -> Result<(), String> {
         BTreeMap::new()
     } else {
         replay_keys(&state.engine.event_history)
+            .entries
+            .iter()
+            .copied()
+            .collect()
     };
     let mut verified_keys = Vec::new();
     // Indexed once: scanning every row again for each row made validation

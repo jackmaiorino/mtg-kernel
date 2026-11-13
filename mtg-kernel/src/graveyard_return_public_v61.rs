@@ -481,7 +481,7 @@ fn death_bindings(state: &GameState, nine: u16) -> Result<Vec<DeathBinding>, Str
         {
             return Err("V61 changed or duplicate Nine-Lives departure capture".into());
         }
-        crate::engine::validate_historical_ability_source_contract(state, *source)?;
+        crate::sampled_history_v1::validate_source(state, index, *source)?;
         let prior = Some(crate::creature_death_capture_v1::validated_capture_death(
             state, index,
         )?);
@@ -710,12 +710,13 @@ pub(crate) fn capture_tinybones_compat_v72(
 pub(crate) fn capture_kaito_compat_v75(
     state: &GameState,
     viewer: PlayerId,
+    appendix: crate::policy_surface_v5::LimitedAppendixV1,
 ) -> Result<FactsV61, String> {
     capture_for_consumer(
         state,
         viewer,
         public::CounterScopeV61::TinybonesV72,
-        crate::optional_trigger_public_v1::ConsumerV1::KaitoV75,
+        crate::optional_trigger_public_v1::ConsumerV1::for_kaito(appendix),
     )
 }
 pub(crate) fn capture_chandra_compat_v74(
@@ -845,7 +846,7 @@ fn capture_for_consumer(
         .map(|(i, row)| {
             Ok(DeathV61 {
                 occurrence: ordinal(i)?,
-                source: public::root(state, row.source, Some(viewer))?,
+                source: public::archived_root(state, row.capture_index, row.source, Some(viewer))?,
                 departure_revival: row.count,
                 return_base_before_replacements: row.count - 1,
                 collection_completed: row.collected,
@@ -866,7 +867,7 @@ fn capture_for_consumer(
         }
         nine_lives_schedules.push(ScheduleV61 {
             occurrence: ordinal(nine_lives_schedules.len())?,
-            source: public::root(state, row.source, Some(viewer))?,
+            source: public::archived_root(state, death.capture_index, row.source, Some(viewer))?,
             departure_revival: death.count,
             return_base_before_replacements: row.revival_counters,
             next_future_any_player_end_step: true,

@@ -8,6 +8,107 @@ use crate::ids::ObjectId;
 use crate::state::{AbilitySourceContractV4, GameState, Zone};
 use crate::trigger::{PendingTrigger, TriggerCondition};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+/// The committed events of `kinds`, reading only the stored history chunks
+/// that hold one: each Cerberus scan acts on its own journal kinds alone.
+fn events_of<'a>(
+    state: &'a GameState,
+    kinds: &[EventKindV1],
+) -> impl Iterator<Item = &'a CommittedEvent> + 'a {
+    state
+        .engine
+        .event_history
+        .of_kinds_v2(kinds)
+        .map(|(_, event)| event)
+}
+
+/// The positions of Cerberus journal rows by what the checks below look them
+/// up by. While a `borrow_memo_v1` scope holds the state, one pass builds this
+/// and the lookups read it; without a scope each lookup scans its kind.
+#[derive(Default)]
+struct RowsV1 {
+    /// Captures by observer authority row and source object.
+    captures: HashMap<(u64, ObjectId), Vec<usize>>,
+    /// Collections, publications and completions by capture.
+    collected: HashMap<u64, Vec<usize>>,
+    published: HashMap<u64, Vec<usize>>,
+    completed: HashMap<u64, Vec<usize>>,
+}
+struct RowsKeyV1;
+fn rows(state: &GameState) -> Option<std::rc::Rc<RowsV1>> {
+    if !crate::borrow_memo_v1::active(state) {
+        return None;
+    }
+    Some(crate::borrow_memo_v1::cached::<RowsKeyV1, (), _>(
+        state,
+        (),
+        || {
+            let mut rows = RowsV1::default();
+            for (at, event) in state.engine.event_history.of_kinds_v2(&[
+                EventKindV1::CerberusCaptureV1,
+                EventKindV1::CerberusCollectedV1,
+                EventKindV1::CerberusPublishedV1,
+                EventKindV1::CerberusCompletedV1,
+            ]) {
+                match event {
+                    CommittedEvent::CerberusCaptureV1 { capture } => rows
+                        .captures
+                        .entry((capture.observer_authority_index, capture.source.source))
+                        .or_default()
+                        .push(at),
+                    CommittedEvent::CerberusCollectedV1 {
+                        capture_history_index,
+                    } => rows
+                        .collected
+                        .entry(*capture_history_index)
+                        .or_default()
+                        .push(at),
+                    CommittedEvent::CerberusPublishedV1 {
+                        capture_history_index,
+                        ..
+                    } => rows
+                        .published
+                        .entry(*capture_history_index)
+                        .or_default()
+                        .push(at),
+                    CommittedEvent::CerberusCompletedV1 {
+                        capture_history_index,
+                        ..
+                    } => rows
+                        .completed
+                        .entry(*capture_history_index)
+                        .or_default()
+                        .push(at),
+                    _ => {}
+                }
+            }
+            std::rc::Rc::new(rows)
+        },
+    ))
+}
+/// The rows of `kind` that `pick` accepts, with their positions: from the
+/// index entry `indexed` when a scope is active, else from a kind scan.
+fn rows_of<'a, T>(
+    state: &'a GameState,
+    indexed: impl FnOnce(&RowsV1) -> Option<&Vec<usize>>,
+    kind: EventKindV1,
+    pick: impl FnMut(usize, &'a CommittedEvent) -> Option<T>,
+) -> Vec<T> {
+    crate::borrow_memo_v1::rows_v1(state, rows(state), indexed, &[kind], pick)
+}
+/// The positions of the collections of capture `index`.
+fn collections_of(state: &GameState, index: u64) -> Vec<usize> {
+    rows_of(
+        state,
+        |rows| rows.collected.get(&index),
+        EventKindV1::CerberusCollectedV1,
+        |at, event| {
+            matches!(event, CommittedEvent::CerberusCollectedV1 { capture_history_index } if *capture_history_index == index)
+                .then_some(at)
+        },
+    )
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -175,9 +276,7 @@ fn validate_observed_end_steps(state: &GameState) -> Result<(), ObjectId> {
     for (index, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::CerberusObserversV1])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::CerberusObserversV1])
     {
         let CommittedEvent::CerberusObserversV1 {
             begin_history_index,
@@ -203,12 +302,11 @@ fn validate_observed_end_steps(state: &GameState) -> Result<(), ObjectId> {
             return Err(sources.first().map_or(ObjectId(0), |source| source.source));
         }
         for (ordinal, source) in sources.iter().enumerate() {
-            let captures: Vec<_> = state
-                .engine
-                .event_history
-                .scan_for_v1(&[EventKindV1::CerberusCaptureV1])
-                .iter()
-                .filter_map(|event| match event {
+            let captures: Vec<_> = rows_of(
+                state,
+                |rows| rows.captures.get(&(index as u64, source.source)),
+                EventKindV1::CerberusCaptureV1,
+                |_, event| match event {
                     CommittedEvent::CerberusCaptureV1 { capture }
                         if capture.observer_authority_index as usize == index
                             && capture.source.source == source.source =>
@@ -216,8 +314,8 @@ fn validate_observed_end_steps(state: &GameState) -> Result<(), ObjectId> {
                         Some(capture)
                     }
                     _ => None,
-                })
-                .collect();
+                },
+            );
             if !owns_definition(source.card_def)
                 || source.zone != Zone::Battlefield
                 || sources[..ordinal]
@@ -255,19 +353,11 @@ pub(crate) fn collect(
     let mut used = std::collections::BTreeSet::new();
     // A mutable collection log cannot silently omit an outstanding committed
     // capture. Collection receipts authenticate each completed dispatch once.
-    for event in state
-        .engine
-        .event_history
-        .scan_for_v1(&[EventKindV1::CerberusCaptureV1])
-    {
+    for event in events_of(state, &[EventKindV1::CerberusCaptureV1]) {
         let CommittedEvent::CerberusCaptureV1 { capture } = event else {
             continue;
         };
-        let collected = state
-            .engine
-            .event_history
-            .scan_for_v1(&[EventKindV1::CerberusCollectedV1])
-            .iter()
+        let collected = events_of(state, &[EventKindV1::CerberusCollectedV1])
             .filter(|event| {
                 matches!(event, CommittedEvent::CerberusCollectedV1 { capture_history_index }
                 if *capture_history_index == capture.history_index)
@@ -285,15 +375,10 @@ pub(crate) fn collect(
         let authority = capture_at(state, capture.history_index).map_err(|_| invalid())?;
         if authority != capture
             || !used.insert(capture.history_index)
-            || state
-                .engine
-                .event_history
-                .scan_for_v1(&[EventKindV1::CerberusCollectedV1])
-                .iter()
-                .any(|event| {
-                    matches!(event, CommittedEvent::CerberusCollectedV1 { capture_history_index }
+            || events_of(state, &[EventKindV1::CerberusCollectedV1]).any(|event| {
+                matches!(event, CommittedEvent::CerberusCollectedV1 { capture_history_index }
                     if *capture_history_index == capture.history_index)
-                })
+            })
         {
             return Err(invalid());
         }
@@ -343,11 +428,15 @@ pub(crate) fn validate_source(
         _ => return Ok(()),
     };
     let capture = capture_at(state, index)?;
-    if source != Some(capture.source) || state.engine.event_history.scan_for_v1(&[EventKindV1::CerberusCollectedV1]).iter().filter(|event| {
-        matches!(event, CommittedEvent::CerberusCollectedV1 { capture_history_index } if *capture_history_index == index)
-    }).count() != 1 { return Err("Cerberus end-step trigger changed its captured source or collection".into()); }
-    if state.engine.event_history.scan_for_v1(&[EventKindV1::CerberusCompletedV1]).iter().any(|event| matches!(event,
-        CommittedEvent::CerberusCompletedV1 { capture_history_index, .. } if *capture_history_index == index)) {
+    if source != Some(capture.source) || collections_of(state, index).len() != 1 {
+        return Err("Cerberus end-step trigger changed its captured source or collection".into());
+    }
+    let completed = match rows(state) {
+        Some(rows) => rows.completed.contains_key(&index),
+        None => events_of(state, &[EventKindV1::CerberusCompletedV1]).any(|event| matches!(event,
+        CommittedEvent::CerberusCompletedV1 { capture_history_index, .. } if *capture_history_index == index)),
+    };
+    if completed {
         return Err("completed Cerberus end-step trigger was replayed".into());
     }
     Ok(())
@@ -357,20 +446,18 @@ fn publication(
     state: &GameState,
     capture_index: u64,
 ) -> Result<(usize, &crate::state::StackItem), String> {
-    let publications: Vec<_> = state
-        .engine
-        .event_history
-        .scan_for_v1(&[EventKindV1::CerberusPublishedV1])
-        .iter()
-        .enumerate()
-        .filter_map(|(index, event)| match event {
+    let publications: Vec<_> = rows_of(
+        state,
+        |rows| rows.published.get(&capture_index),
+        EventKindV1::CerberusPublishedV1,
+        |index, event| match event {
             CommittedEvent::CerberusPublishedV1 {
                 capture_history_index,
                 item,
             } if *capture_history_index == capture_index => Some((index, item.as_ref())),
             _ => None,
-        })
-        .collect();
+        },
+    );
     let [published] = publications.as_slice() else {
         return Err("Cerberus end-step trigger lost its exact publication".into());
     };
@@ -407,7 +494,7 @@ pub(crate) fn publish(state: &mut GameState, item: &crate::state::StackItem) -> 
         return Ok(());
     };
     validate_source(state, effect, item.v4.ability_source_contract)?;
-    if state.engine.event_history.scan_for_v1(&[EventKindV1::CerberusPublishedV1]).iter().any(|event| matches!(event,
+    if events_of(state, &[EventKindV1::CerberusPublishedV1]).any(|event| matches!(event,
         CommittedEvent::CerberusPublishedV1 { capture_history_index: index, .. } if index == capture_history_index)) {
         return Err("Cerberus end-step trigger was published twice".into());
     }
@@ -447,9 +534,7 @@ pub(crate) fn finish(state: &mut GameState, item: &crate::state::StackItem) {
     let operations: Vec<_> = state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::CerberusOperationV1])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::CerberusOperationV1])
         .filter_map(|(index, event)| {
             matches!(event, CommittedEvent::CerberusOperationV1 {
             capture_history_index: capture, stack_item_id, source, ..
@@ -591,18 +676,7 @@ fn validate_operation(state: &GameState, index: usize) -> Result<(), String> {
     };
     let capture = capture_at(state, *capture_history_index)?;
     let (published_index, published) = publication(state, *capture_history_index)?;
-    let collections: Vec<_> = state
-        .engine
-        .event_history
-        .scan_for_v1(&[EventKindV1::CerberusCollectedV1])
-        .iter()
-        .enumerate()
-        .filter_map(|(index, event)| {
-            matches!(event, CommittedEvent::CerberusCollectedV1 { capture_history_index: capture }
-            if capture == capture_history_index)
-            .then_some(index)
-        })
-        .collect();
+    let collections = collections_of(state, *capture_history_index);
     let [collection] = collections.as_slice() else {
         return Err("operation lost its exact collection".into());
     };
@@ -627,9 +701,13 @@ fn validate_operation(state: &GameState, index: usize) -> Result<(), String> {
         // on the battlefield. Its first subsequent battlefield departure is
         // therefore the independent occurrence that can make it unavailable;
         // a later return cannot restore that captured incarnation.
-        let departed = state.engine.event_history[usize::try_from(*capture_history_index)
-            .map_err(|_| "capture index overflow")?
-            + 1..index]
+        let departed = state
+            .engine
+            .event_history
+            .range_v2(
+                usize::try_from(*capture_history_index).map_err(|_| "capture index overflow")? + 1
+                    ..index,
+            )
             .iter()
             .any(|event| {
                 matches!(event,
@@ -678,11 +756,7 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
             .event_log
             .iter()
             .any(|event| matches!(event, CommittedEvent::CerberusCaptureV1 { .. }))
-        || state
-            .engine
-            .event_history
-            .scan_for_v1(&[EventKindV1::CerberusCaptureV1])
-            .iter()
+        || events_of(state, &[EventKindV1::CerberusCaptureV1])
             .any(|event| matches!(event, CommittedEvent::CerberusCaptureV1 { .. }))
 }
 
@@ -690,26 +764,32 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
 /// must retain the independently committed original observer capture.
 fn validate_selected_catalog(state: &GameState, selected: bool) -> Result<(), String> {
     if !selected
-        && (state
-            .engine
-            .event_history
+        && (events_of(
+            state,
+            &[
+                EventKindV1::CerberusObserversV1,
+                EventKindV1::CerberusCaptureV1,
+                EventKindV1::CerberusCollectedV1,
+                EventKindV1::CerberusPublishedV1,
+                EventKindV1::CerberusOperationV1,
+                EventKindV1::CerberusCompletedV1,
+            ],
+        )
+        .chain(&state.engine.event_log)
+        .any(|event| {
+            matches!(
+                event,
+                CommittedEvent::CerberusObserversV1 { .. }
+                    | CommittedEvent::CerberusCaptureV1 { .. }
+                    | CommittedEvent::CerberusCollectedV1 { .. }
+                    | CommittedEvent::CerberusPublishedV1 { .. }
+                    | CommittedEvent::CerberusOperationV1 { .. }
+                    | CommittedEvent::CerberusCompletedV1 { .. }
+            )
+        }) || state
+            .stack
             .iter()
-            .chain(&state.engine.event_log)
-            .any(|event| {
-                matches!(
-                    event,
-                    CommittedEvent::CerberusObserversV1 { .. }
-                        | CommittedEvent::CerberusCaptureV1 { .. }
-                        | CommittedEvent::CerberusCollectedV1 { .. }
-                        | CommittedEvent::CerberusPublishedV1 { .. }
-                        | CommittedEvent::CerberusOperationV1 { .. }
-                        | CommittedEvent::CerberusCompletedV1 { .. }
-                )
-            })
-            || state
-                .stack
-                .iter()
-                .any(|item| matches!(item.inline_effect, Some(EffectOp::CerberusUntapV1 { .. })))
+            .any(|item| matches!(item.inline_effect, Some(EffectOp::CerberusUntapV1 { .. })))
             || pending_owners(state)
                 .any(|pending| matches!(pending.effect, EffectOp::CerberusUntapV1 { .. })))
     {
@@ -721,34 +801,59 @@ fn validate_selected_catalog(state: &GameState, selected: bool) -> Result<(), St
 }
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
     validate_selected_catalog(state, enabled())?;
     if !enabled() {
         return Ok(());
     }
     validate_observed_end_steps(state)
         .map_err(|_| "Cerberus end-step observer authority is incomplete")?;
-    for event in state
-        .engine
-        .event_history
-        .scan_for_v1(&[EventKindV1::CerberusCaptureV1])
-    {
+    // Each capture's collections, completions, operations and publications
+    // (in history order), from one pass instead of a scan per capture.
+    let mut collected_by = HashMap::<u64, usize>::new();
+    let mut completed_by = HashMap::<u64, usize>::new();
+    let mut operations_by = HashMap::<u64, usize>::new();
+    let mut published_by = HashMap::<u64, Vec<&crate::state::StackItem>>::new();
+    for event in events_of(
+        state,
+        &[
+            EventKindV1::CerberusCollectedV1,
+            EventKindV1::CerberusCompletedV1,
+            EventKindV1::CerberusOperationV1,
+            EventKindV1::CerberusPublishedV1,
+        ],
+    ) {
+        match event {
+            CommittedEvent::CerberusCollectedV1 {
+                capture_history_index,
+            } => *collected_by.entry(*capture_history_index).or_default() += 1,
+            CommittedEvent::CerberusCompletedV1 {
+                capture_history_index,
+                ..
+            } => *completed_by.entry(*capture_history_index).or_default() += 1,
+            CommittedEvent::CerberusOperationV1 {
+                capture_history_index,
+                ..
+            } => *operations_by.entry(*capture_history_index).or_default() += 1,
+            CommittedEvent::CerberusPublishedV1 {
+                capture_history_index,
+                item,
+            } => published_by
+                .entry(*capture_history_index)
+                .or_default()
+                .push(item),
+            _ => {}
+        }
+    }
+    let count = |by: &HashMap<u64, usize>, capture: u64| by.get(&capture).copied().unwrap_or(0);
+    for event in events_of(state, &[EventKindV1::CerberusCaptureV1]) {
         let CommittedEvent::CerberusCaptureV1 { capture } = event else {
             continue;
         };
         if capture_at(state, capture.history_index)? != capture {
             return Err("Cerberus end-step capture changed".into());
         }
-        let collected = state
-            .engine
-            .event_history
-            .scan_for_v1(&[EventKindV1::CerberusCollectedV1])
-            .iter()
-            .filter(|event| {
-                matches!(event,
-            CommittedEvent::CerberusCollectedV1 { capture_history_index }
-                if *capture_history_index == capture.history_index)
-            })
-            .count();
+        let collected = count(&collected_by, capture.history_index);
         if collected > 1
             || (collected == 1 && state.engine.event_log.iter().any(|logged| logged == event))
             || (collected == 0
@@ -762,28 +867,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         {
             return Err("Cerberus end-step capture collection is missing or repeated".into());
         }
-        let completed = state
-            .engine
-            .event_history
-            .scan_for_v1(&[EventKindV1::CerberusCompletedV1])
-            .iter()
-            .filter(|event| {
-                matches!(event,
-            CommittedEvent::CerberusCompletedV1 { capture_history_index, .. }
-            if *capture_history_index == capture.history_index)
-            })
-            .count();
-        let operations = state
-            .engine
-            .event_history
-            .scan_for_v1(&[EventKindV1::CerberusOperationV1])
-            .iter()
-            .filter(|event| {
-                matches!(event,
-            CommittedEvent::CerberusOperationV1 { capture_history_index, .. }
-            if *capture_history_index == capture.history_index)
-            })
-            .count();
+        let completed = count(&completed_by, capture.history_index);
+        let operations = count(&operations_by, capture.history_index);
         let pending = pending_owners(state)
             .filter(|pending| {
                 matches!(pending.effect,
@@ -800,38 +885,19 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             if capture_history_index == capture.history_index)
             })
             .count();
-        let publications = state
-            .engine
-            .event_history
-            .scan_for_v1(&[EventKindV1::CerberusPublishedV1])
-            .iter()
-            .filter(|event| {
-                matches!(event,
-            CommittedEvent::CerberusPublishedV1 { capture_history_index, .. }
-            if *capture_history_index == capture.history_index)
-            })
-            .count();
+        let published = published_by
+            .get(&capture.history_index)
+            .map_or(&[][..], Vec::as_slice);
+        let publications = published.len();
         let mut disposed = 0usize;
         if state
             .engine
             .event_history
             .has_any(&[EventKindV1::TimeStopJournalV1])
         {
-            for event in state
-                .engine
-                .event_history
-                .scan_for_v1(&[EventKindV1::CerberusPublishedV1])
-            {
-                if let CommittedEvent::CerberusPublishedV1 {
-                    capture_history_index,
-                    item,
-                } = event
-                {
-                    if *capture_history_index == capture.history_index
-                        && crate::engine::time_stop_v1::disposed(state, item)?
-                    {
-                        disposed += 1;
-                    }
+            for item in published {
+                if crate::engine::time_stop_v1::disposed(state, item)? {
+                    disposed += 1;
                 }
             }
         }
@@ -844,7 +910,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             return Err("Cerberus end-step trigger lost or replayed its dispatch ownership".into());
         }
     }
-    for (completion_index, event) in state.engine.event_history.iter().enumerate() {
+    for (completion_index, event) in state.engine.event_history.of_kinds_v2(&[
+        EventKindV1::CerberusCompletedV1,
+        EventKindV1::CerberusOperationV1,
+        EventKindV1::CerberusPublishedV1,
+    ]) {
         if let CommittedEvent::CerberusCompletedV1 {
             capture_history_index,
             stack_item_id,
@@ -872,9 +942,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         } = event
         {
             let (index, _) = publication(state, *capture_history_index)?;
-            if index != completion_index || state.engine.event_history[..index].iter().filter(|event|
-                matches!(event, CommittedEvent::CerberusCollectedV1 { capture_history_index: capture }
-                    if capture == capture_history_index)).count() != 1 {
+            if index != completion_index
+                || collections_of(state, *capture_history_index)
+                    .iter()
+                    .filter(|at| **at < index)
+                    .count()
+                    != 1
+            {
                 return Err("Cerberus end-step publication lost its prior collection".into());
             }
         }

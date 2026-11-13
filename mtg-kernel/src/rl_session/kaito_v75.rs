@@ -3,7 +3,7 @@ use super::*;
 use crate::{
     kaito_candidates_v75 as candidates, kaito_candidates_v75::KaitoCandidatesV75,
     kaito_observation_v75 as observation, kaito_observation_v75::KaitoObservationV75,
-    state::GameState,
+    policy_surface_v5::LimitedAppendixV1, state::GameState,
 };
 
 /// A fresh borrow of the genuine private issued origin. No constructor outside
@@ -71,7 +71,7 @@ pub(super) fn normalized_origin(
     {
         return Err(FlatActionDecisionSliceErrorV1::InvalidDecisionRelation);
     }
-    observation::validate_state(&session.state)
+    observation::validate_state_scoped(&session.state, session.surface.limited_appendix_v1())
         .map_err(|_| FlatActionDecisionSliceErrorV1::CorruptCurrentBinding)?;
     let actual =
         super::kaito_candidates_v75(&current.origin_decision, &session.state, &session.surface)
@@ -120,6 +120,10 @@ pub(super) fn prepare_current(
     Ok(())
 }
 impl FastActorSessionV1 {
+    pub(super) fn validate_kaito_state_v75(&self) -> Result<(), String> {
+        observation::validate_state_scoped(&self.state, self.surface.limited_appendix_v1())
+    }
+
     pub(crate) fn reset_kaito_v75(
         episode_id: u64,
         env_seed: u64,
@@ -153,18 +157,48 @@ impl FastActorSessionV1 {
             crate::rl::CommonProjectionScopeV42::KaitoV75,
             [&mainboards[0], &mainboards[1]],
         )?;
-        let mut state = crate::rl::build_deck_pair_state_environment_v2_with_starting_player_v1(
+        let state = crate::rl::build_deck_pair_state_environment_v2_with_starting_player_v1(
             env_seed,
             &mainboards[0],
             &mainboards[1],
             starting_player,
         )
         .map_err(map_deck_pair_build_error_v2)?;
+        Self::initialize_kaito_v75(episode_id, limits, deck_ids, &mainboards, state)
+    }
+
+    /// Only explicit preflighted factories may create the initial V75 owner.
+    /// This runs before the first decision and never promotes rules-only menus.
+    pub(super) fn initialize_kaito_v75(
+        episode_id: u64,
+        limits: (u64, u64),
+        deck_ids: SessionDeckIdsV1,
+        mainboards: &[Vec<u16>; 2],
+        state: GameState,
+    ) -> Result<Self, RlSessionError> {
+        Self::initialize_kaito_consumer_v1(
+            episode_id,
+            limits,
+            deck_ids,
+            mainboards,
+            state,
+            LimitedAppendixV1::Legacy,
+        )
+    }
+
+    pub(super) fn initialize_kaito_consumer_v1(
+        episode_id: u64,
+        limits: (u64, u64),
+        deck_ids: SessionDeckIdsV1,
+        mainboards: &[Vec<u16>; 2],
+        mut state: GameState,
+        appendix: LimitedAppendixV1,
+    ) -> Result<Self, RlSessionError> {
         crate::combat_damage_v1::enable_foundations_combat_v1(&mut state)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
         crate::london_mulligan_v1::enable_london_mulligans_v1(&mut state)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
-        crate::kaito_observation_v75::validate_state(&state)
+        crate::kaito_observation_v75::validate_state_scoped(&state, appendix)
             .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
         let mut session = Self {
             deck_ids,
@@ -193,6 +227,7 @@ impl FastActorSessionV1 {
             terminal: None,
         };
         session.surface.enable_hunter_order_v45();
+        session.surface.set_limited_appendix_v1(appendix);
         session.advance_to_decision_or_terminal();
         Ok(session)
     }
@@ -205,10 +240,15 @@ impl FastActorSessionV1 {
         if !restored.is_common_v40()
             || restored.flat_action_contract_mode != self.flat_action_contract_mode
             || restored.episode_id != self.episode_id
+            || restored.surface.limited_appendix_v1() != self.surface.limited_appendix_v1()
         {
             return Err(RlContractError("wrong Kaito snapshot owner".into()));
         }
-        crate::kaito_observation_v75::validate_state(&restored.state).map_err(RlContractError)?;
+        crate::kaito_observation_v75::validate_state_scoped(
+            &restored.state,
+            restored.surface.limited_appendix_v1(),
+        )
+        .map_err(RlContractError)?;
         let next_revision = self
             .environment_revision
             .max(restored.environment_revision)
@@ -256,7 +296,11 @@ impl FastActorSessionV1 {
     /// It consumes the session; predecessor adapters keep their old mode.
     pub(crate) fn into_kaito_v75(mut self) -> Result<Self, RlContractError> {
         // Validate before any advancement can expire a malformed active marker.
-        crate::kaito_observation_v75::validate_state(&self.state).map_err(RlContractError)?;
+        crate::kaito_observation_v75::validate_state_scoped(
+            &self.state,
+            self.surface.limited_appendix_v1(),
+        )
+        .map_err(RlContractError)?;
         self.flat_action_contract_mode = FlatActionContractModeV1::KaitoV75;
         self.flat_action_cache_spare = None;
         self.flat_action_cache_spare_v2 = None;
@@ -290,6 +334,18 @@ impl FastActorSessionV1 {
         not(feature = "standard-magezero-fixtures")
     ))]
     pub(crate) fn from_kaito_v75_fixture_state(state: GameState) -> Self {
+        Self::from_kaito_v75_fixture_state_scoped(state, LimitedAppendixV1::Legacy)
+    }
+
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(crate) fn from_kaito_v75_fixture_state_scoped(
+        state: GameState,
+        appendix: LimitedAppendixV1,
+    ) -> Self {
         let mut session = Self::reset_with_limits(23, 91, 10_000, 10_000);
         session.state = state;
         session.surface = PolicySurfaceV5::new_with_priority_mode_v1(
@@ -297,6 +353,7 @@ impl FastActorSessionV1 {
             SuppressionAuditMode::Off,
         );
         session.surface.enable_hunter_order_v45();
+        session.surface.set_limited_appendix_v1(appendix);
         session.environment_revision = 0;
         session.policy_step_count = 0;
         session.physical_decision_count = 0;
@@ -305,7 +362,7 @@ impl FastActorSessionV1 {
         session.flat_action_contract_mode = FlatActionContractModeV1::KaitoV75;
         session.flat_action_cache_spare = None;
         session.flat_action_cache_spare_v2 = None;
-        if let Err(error) = crate::kaito_observation_v75::validate_state(&session.state) {
+        if let Err(error) = observation::validate_state_scoped(&session.state, appendix) {
             session.terminal = Some(halted_terminal(
                 &session.deck_ids,
                 session.deck_hashes,
@@ -421,6 +478,29 @@ impl KaitoSessionV75 {
     pub fn response(&self) -> FastActorResponseV1 {
         self.inner.current_response()
     }
+    pub(crate) fn enable_hand_knowledge_by_name_v2(&mut self) -> Result<(), String> {
+        self.inner.enable_hand_knowledge_by_name_v2()
+    }
+    pub(crate) fn uses_hand_knowledge_by_name_v2(&self) -> bool {
+        self.inner.state.hand_knowledge_by_name_v2
+    }
+    pub(crate) fn reveal_hand_minima_v3(&self) -> Option<[Vec<(u16, usize)>; 2]> {
+        let viewer = self.inner.current.as_ref()?.actor;
+        let knowledge = self.inner.state.reveal_knowledge_v4.as_ref()?;
+        let mut minima = [Vec::new(), Vec::new()];
+        minima[viewer.opponent().index()] =
+            knowledge[viewer.index()].hand(viewer.opponent()).collect();
+        Some(minima)
+    }
+    pub(crate) fn revealed_discard_hand_v1(&self) -> Result<Option<(PlayerId, Vec<u16>)>, String> {
+        if self.inner.surface.limited_appendix_v1() != LimitedAppendixV1::FullPool {
+            return Ok(None);
+        }
+        let Some(current) = &self.inner.current else {
+            return Ok(None);
+        };
+        crate::effect::revealed_discard_names_v1(&self.inner.state, current.actor)
+    }
     pub fn snapshot_v75(&self) -> KaitoSnapshotV75 {
         KaitoSnapshotV75 {
             inner: self.inner.snapshot_v1(),
@@ -467,7 +547,7 @@ impl KaitoSessionV75 {
             session: &self.inner,
             current,
         };
-        let (projection, native) = candidates::project_issued_parts_v75(
+        let (projection, binding) = candidates::project_issued_parts_v75(
             &proof,
             &self.inner.state,
             &self.inner.surface,
@@ -476,17 +556,10 @@ impl KaitoSessionV75 {
             current.physical_decision_id,
             (current.substep_index, current.substep_count),
         )?;
-        if native.original != current.candidates {
+        if binding.original != current.candidates {
             return Err(RlContractError("V75 original pair binding changed".into()));
         }
-        let (_, mut families) = observation::observe_parts_v75(
-            &self.inner.state,
-            &self.inner.surface,
-            (current.actor, &current.origin_decision),
-            self.inner.policy_step_count,
-            current.physical_decision_id,
-            (current.substep_index, current.substep_count),
-        )?;
+        let mut families = binding.families;
         let classified = projection
             .candidates
             .iter()
@@ -500,8 +573,8 @@ impl KaitoSessionV75 {
         }
         Ok(BindingV75 {
             expected,
-            original: native.original,
-            public_to_original: native.public_to_original,
+            original: binding.original,
+            public_to_original: binding.public_to_original,
             projection,
             families,
         })
@@ -552,6 +625,11 @@ impl KaitoSessionV75 {
         decision: &KaitoDecisionV75,
         seed: u64,
     ) -> Result<Self, RlContractError> {
+        if self.inner.surface.limited_appendix_v1() != LimitedAppendixV1::Legacy {
+            return Err(RlContractError(
+                "Appendix profile has no current-slot sampler".into(),
+            ));
+        }
         let before = self.validated_current(decision)?;
         let actor = self
             .inner
@@ -582,6 +660,77 @@ impl KaitoSessionV75 {
         }
         Ok(sampled)
     }
+    /// Closed-list sampling for the explicitly composed full-pool owner.
+    /// The private native index map is rebound before any sampled action.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn sampled_full_pool_closed_list_v1(
+        &self,
+        decision: &KaitoDecisionV75,
+        seed: u64,
+        belief: &crate::limited_match_v1::LimitedBeliefV1,
+    ) -> Result<Self, RlContractError> {
+        if self.inner.surface.limited_appendix_v1() != LimitedAppendixV1::FullPool {
+            return Err(RlContractError(
+                "closed-list owner is not the full pool".into(),
+            ));
+        }
+        let before = self.validated_current(decision)?;
+        let hand_minima = self.reveal_hand_minima_v3().ok_or_else(|| {
+            RlContractError("full-pool sampling requires reveal hand minima".into())
+        })?;
+        let belief =
+            crate::limited_match_v1::full_pool_belief_v1(belief).map_err(RlContractError)?;
+        let root = self
+            .inner
+            .limited_closed_list_root_v3()
+            .map_err(RlContractError)?;
+        let inner = self
+            .inner
+            .limited_closed_list_clone_v3(&root, seed, belief)
+            .map_err(RlContractError)?;
+        let sampled = Self {
+            inner,
+            owner: std::sync::Arc::new(()),
+            generation: self.generation,
+        };
+        if sampled.reveal_hand_minima_v3().as_ref() != Some(&hand_minima) {
+            return Err(RlContractError(
+                "sampled full-pool reveal hand minima changed".into(),
+            ));
+        }
+        let after = sampled.fresh_binding()?;
+        if after.expected != before.expected {
+            return Err(RlContractError(
+                "sampled full-pool decision header changed".into(),
+            ));
+        }
+        use crate::akroma_family_public_v40::FamilyProjectionV40;
+        let families_match = if root.rebinds_revealed_discard() {
+            FamilyProjectionV40::sampled_revealed_discard_families_match(
+                before.families,
+                after.families,
+                &before.projection.candidates,
+                &after.projection.candidates,
+                before.expected.acting_player,
+            )
+        } else {
+            if after.original != before.original
+                || after.public_to_original != before.public_to_original
+            {
+                return Err(RlContractError(
+                    "sampled full-pool native binding changed".into(),
+                ));
+            }
+            FamilyProjectionV40::sampled_families_match(before.families, after.families)
+        };
+        if !families_match {
+            return Err(RlContractError(
+                "sampled full-pool family binding changed".into(),
+            ));
+        }
+        Ok(sampled)
+    }
+
     pub fn validate_decision_v75(
         &self,
         decision: &KaitoDecisionV75,

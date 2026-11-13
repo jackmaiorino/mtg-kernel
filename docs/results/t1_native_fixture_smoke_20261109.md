@@ -102,8 +102,9 @@ A role's scoped time includes the file reread and hash check as well as the
 copy, and this run does not separate them. The scoped total was 0.45 s of the
 2.55 s fresh wall time (warm: 445 ms).
 
-## Still needed
+## Checked-in profile
 
 The checked-in profile (thin LTO, `codegen-units = 1`) needs a machine with
-at least 32 GB of RAM. That comparison is planned on the requester's machine,
-covering both cases, an A/A run and the cold resume.
+at least 32 GB of RAM. That comparison ran on the requester's 32 GB Windows PC
+on 2026-11-11, covering both cases, an A/A run and the cold resumes. See
+[t1_native_fixture_haleyspc_20261111.md](t1_native_fixture_haleyspc_20261111.md).

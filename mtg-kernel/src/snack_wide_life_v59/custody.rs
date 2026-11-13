@@ -336,7 +336,7 @@ pub(crate) fn resolve_owned(
         state,
         crate::event::ProposedEvent::life_gain_wide_v59(source.controller, amount),
     );
-    let gains = state.engine.event_history[start..].iter().enumerate().filter_map(|(offset, event)|
+    let gains = state.engine.event_history.range_v2(start..).iter().enumerate().filter_map(|(offset, event)|
         matches!(event, CommittedEvent::LifeGainWideV59 { player, amount: actual } if *player == source.controller && *actual == amount).then_some((start + offset) as u64)).collect::<Vec<_>>();
     let [gain_history_index] = gains.as_slice() else {
         return Err("Conqueror actual saved-amount gain did not commit exactly once".into());
@@ -440,7 +440,9 @@ fn validate_gain(state: &GameState, at: u64) -> Result<u64, String> {
             Ok(())
         },
     )?;
-    if replay.engine.event_history[start..] != state.engine.event_history[start..at as usize] {
+    if replay.engine.event_history.range_v2(start..)
+        != state.engine.event_history.range_v2(start..at as usize)
+    {
         return Err("Conqueror gain and its actual downstream captures changed".into());
     }
     Ok(*removal)
@@ -476,20 +478,26 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     let captures = state
         .engine
         .event_history
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::ConquerorCapturedV59])
         .filter_map(|(at, event)| {
             matches!(event, CommittedEvent::ConquerorCapturedV59 { .. }).then_some(at as u64)
         })
         .collect::<Vec<_>>();
     if captures.is_empty()
-        && !state.engine.event_history.iter().any(|event| {
-            matches!(
-                event,
-                CommittedEvent::ConquerorJournalV59 { .. }
-                    | CommittedEvent::ConquerorCollectedV59 { .. }
-            )
-        })
+        && !state
+            .engine
+            .event_history
+            .of_kinds_v2(&[
+                crate::event_history_v1::EventKindV1::ConquerorJournalV59,
+                crate::event_history_v1::EventKindV1::ConquerorCollectedV59,
+            ])
+            .any(|(_, event)| {
+                matches!(
+                    event,
+                    CommittedEvent::ConquerorJournalV59 { .. }
+                        | CommittedEvent::ConquerorCollectedV59 { .. }
+                )
+            })
         && !waiting
             .clone()
             .any(|pending| binding(&pending.effect).is_some())
@@ -506,12 +514,12 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             .iter()
             .filter(|event| **event == state.engine.event_history[*capture as usize])
             .count();
-        let collected = state.engine.event_history.iter().enumerate().filter_map(|(at, event)| matches!(event, CommittedEvent::ConquerorCollectedV59 { capture_history_index } if capture_history_index == capture).then_some(at as u64)).collect::<Vec<_>>();
+        let collected = state.engine.event_history.of_kinds_v2(&[crate::event_history_v1::EventKindV1::ConquerorCollectedV59]).filter_map(|(at, event)| matches!(event, CommittedEvent::ConquerorCollectedV59 { capture_history_index } if capture_history_index == capture).then_some(at as u64)).collect::<Vec<_>>();
         let held = waiting
             .iter()
             .filter(|pending| binding(&pending.effect) == Some(*capture))
             .collect::<Vec<_>>();
-        let publications = state.engine.event_history.iter().enumerate().filter_map(|(at, event)| match event {
+        let publications = state.engine.event_history.of_kinds_v2(&[crate::event_history_v1::EventKindV1::ConquerorJournalV59]).filter_map(|(at, event)| match event {
             CommittedEvent::ConquerorJournalV59 { journal } if matches!(journal.as_ref(), JournalV59::Published { capture: original, .. } if original == capture) => Some(at as u64), _ => None,
         }).collect::<Vec<_>>();
         if collected.is_empty() {
@@ -541,7 +549,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             .iter()
             .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
             .collect::<Vec<_>>();
-        let removals = state.engine.event_history.iter().enumerate().filter_map(|(at, event)| match event {
+        let removals = state.engine.event_history.of_kinds_v2(&[crate::event_history_v1::EventKindV1::ConquerorJournalV59]).filter_map(|(at, event)| match event {
             CommittedEvent::ConquerorJournalV59 { journal } if matches!(journal.as_ref(), JournalV59::Removed { publication, .. } if publication == published) => Some(at as u64), _ => None,
         }).collect::<Vec<_>>();
         if removals.is_empty() {
@@ -561,8 +569,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         let closures = state
             .engine
             .event_history
-            .iter()
-            .enumerate()
+            .of_kinds_v2(&[crate::event_history_v1::EventKindV1::ConquerorJournalV59])
             .filter_map(|(at, event)| match event {
                 CommittedEvent::ConquerorJournalV59 { journal } => match journal.as_ref() {
                     JournalV59::Closed {
@@ -590,7 +597,10 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     }
     // Every private input/outcome is consumed exactly once. Mutable closure
     // records alone cannot manufacture countering, missing-target or gain.
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state.engine.event_history.of_kinds_v2(&[
+        crate::event_history_v1::EventKindV1::ConquerorCollectedV59,
+        crate::event_history_v1::EventKindV1::ConquerorJournalV59,
+    ]) {
         if let CommittedEvent::ConquerorCollectedV59 {
             capture_history_index,
         } = event
@@ -614,7 +624,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             }
             _ => {}
         }
-        let uses = state.engine.event_history.iter().filter(|event| matches!(event, CommittedEvent::ConquerorJournalV59 { journal } if match (entry.as_ref(), journal.as_ref()) {
+        let uses = state.engine.event_history.of_kinds_v2(&[crate::event_history_v1::EventKindV1::ConquerorJournalV59]).filter(|(_, event)| matches!(event, CommittedEvent::ConquerorJournalV59 { journal } if match (entry.as_ref(), journal.as_ref()) {
             (JournalV59::RemovalInput { .. }, JournalV59::Removed { input, .. }) => *input == at as u64,
             (JournalV59::GainInput { .. }, JournalV59::Gain { input, .. }) => *input == at as u64,
             (JournalV59::Gain { .. }, JournalV59::Closed { gain: Some(original), .. }) => *original == at as u64,

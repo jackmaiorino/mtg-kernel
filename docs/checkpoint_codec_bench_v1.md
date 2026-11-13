@@ -4,7 +4,11 @@ An opt-in benchmark of what an update spends publishing its checkpoint and
 reading it back, stage by stage, for the ordinary (net-8) learner and the S
 learner. It is measurement only: it changes no codec, wire format, default,
 validation or cache. It is the baseline later T2 milestones (borrowed views,
-streamed validation) are measured against.
+streamed validation) are measured against. Milestones 2 (borrowed views) and
+3 (validated decode and restore) changed what some stages do, not their
+names, so receipts of builds before and after them compare row for row; see
+[After milestone 2](#after-milestone-2-borrowed-views) and
+[After milestone 3](#after-milestone-3-validated-decode-and-restore).
 
 - Code: `mtg-kernel/src/expanded_deck_training_v1/checkpoint_codec_bench_v1.rs`
   and the binary `mtg-kernel/examples/checkpoint_codec_bench_v1.rs`, built only
@@ -105,15 +109,15 @@ rotate between repetitions.
 
 | Stage | What runs |
 |---|---|
-| `snapshot` | `state.snapshot_v1()` |
-| `digest` | `snapshot.state_sha256_v1()`, a memo miss as after a real update |
-| `bits` | the checkpoint's three `ParameterBitsV1` sections and `record_format.resolve_v1` |
+| `snapshot` | `state.snapshot_v1()`; since milestone 2 `state.tensors_v1()`, the same validation and tensors borrowed from the live state instead of copied |
+| `digest` | `snapshot.state_sha256_v1()`, a memo miss as after a real update; since milestone 2 the live state's `state.state_sha256_v1()`, the same digest of the same stream |
+| `bits` | the checkpoint's three tensor sections and `record_format.resolve_v1`; since milestone 2 the sections borrow the state's tensors (`ParameterBitsRefV1`) instead of copying them into `ParameterBitsV1`s |
 | `encode` | `serialize_json_v1` (v1) or `checkpoint_container_v1::encode_v1` (v2) |
 | `seal` | `RecordEnvelopeV1::seal_owned_v1` (zstd1 compresses and reopens to verify) |
 | `publish` | the output directory and `publish_json_shared_v1` (durable publication; the verified-bytes cache keeps the sealed allocation) |
 | `readback_load` | `initialize_any_math_v1` on the new pin: the continuation loader |
 | `readback_digest` | `restored.state_sha256_v1()` and the math check |
-| `readback_v2_equality` | v2 only: `restored.snapshot_v1()` and the item-for-item comparison |
+| `readback_v2_equality` | v2 only: `restored.snapshot_v1()` and the item-for-item comparison; since milestone 2 `restored.tensors_v1()` compared in place (`same_tensors_v1`), with no restored snapshot and no copy of each tensor's bits |
 | `total` | the whole sequence |
 
 The total's time and allocation counts include sample bookkeeping and work
@@ -134,9 +138,17 @@ call timed alone and outside `total`: `probe_read_pinned` (the read
 (envelope), `probe_decode` (`decode_v1` or the JSON parse), and for v2
 `probe_decode_structure` (`document_v1`, the structure check alone),
 `probe_decode_reencode` (`encode_v1` of the decoded checkpoint) and
-`probe_decode_compare` (the canonical byte comparison). `decode_v1` is the
-structure check, the section copy, the re-encode and the comparison, so the
-section copy is about `probe_decode` minus the other three. Cell `any` holds
+`probe_decode_compare` (the canonical byte comparison). At the baseline
+`decode_v1` is the structure check, the section copy, the re-encode and the
+comparison, so the section copy is about `probe_decode` minus the other
+three. Since milestone 2, `decode_v1` compares the re-encoding with the bytes
+as it is produced, without a re-encoded copy, and the section copy is about
+`probe_decode` minus `probe_decode_structure` and one streamed pass. Since
+milestone 3, `decode_v1` is the structure check and the section copy alone,
+so the section copy is about `probe_decode` minus `probe_decode_structure`.
+The re-encode and comparison probes still time a copy and a comparison as
+separate calls, so builds before and after report the same probes. Cell `any`
+holds
 `probe_digest_miss` (a stream the memo does not hold) and `probe_digest_hit`
 (the same stream again: a full comparison against the held copy).
 
@@ -231,6 +243,99 @@ is never memoized:
 5. `readback_model_clone`: a full model clone for the shell policy.
 
 A net-8 codec change does not by itself change any S stage.
+
+### After milestone 2 (borrowed views)
+
+Milestone 2 removes the codec's own copies from the ordinary sequence, and
+the two snapshots taken only for it, without changing either format's bytes,
+the readers or what they refuse:
+
+- `snapshot` (item 1): the update reads the live state's tensors through
+  `tensors_v1()` (T1's accepted view on #595), which validates the state as
+  `snapshot_v1()` does and borrows the snapshot's tensors in the snapshot's
+  order instead of copying them. The digest is the live state's own
+  `state_sha256_v1()`, which hashes the same stream.
+- `bits` (item 3): the published checkpoint is an
+  `ExpandedCheckpointV1<ParameterBitsRefV1>`, whose tensors borrow the
+  state's. The v1 JSON serializes through the same derived serialization
+  (each value's `to_bits`, as `ParameterBitsV1` holds it) and the container
+  encoder (`encode`, item 4) writes each value's little-endian bits straight
+  from the state, so neither format copies the 3N values first.
+- The parse (item 8): `decode_v1`'s second guard streams the re-encoding into
+  a comparison with the bytes (`encodes_to_v1`), so it no longer holds a
+  container-sized re-encoded copy. It compares the same bytes and refuses
+  exactly the same files.
+- `readback_v2_equality` (item 11): the restored state's tensors
+  (`tensors_v1()`, no second snapshot) are compared with the published ones
+  in place (`same_tensors_v1`), without a temporary `u32` copy of each
+  tensor. The v1-to-v2 converter compares its two restored snapshots in
+  place the same way.
+
+What remains: the decode's `u32` section copy and the restore's `f32` copy
+(items 8 and 9) need a train state built from borrowed tensors, which T1
+accepted on #595 for milestone 3 together with its rework of `decode_v1`'s
+validation. The digest memo's held copy (item 2) is milestone 4's, and the
+restore's copies into the policy and the loaded-source cache (item 9) are
+T1's. S is unchanged: its encoder already writes from the borrowed state and
+its decoder reads straight into `f32`; its decode's re-encode (two hashes per
+decode) is milestone 3's.
+
+### After milestone 3 (validated decode and restore)
+
+Milestone 3's first part replaces each decoder's re-encoding with the check
+it stood for, made in place, without changing either format's bytes, what
+any decoder accepts or what it refuses, or any refusal's message:
+
+- The parse (ordinary item 8): `decode_v1` no longer re-encodes what it
+  decoded to compare with the bytes. Its structure check
+  (`check_structure_v1`) already binds every byte the encoder writes: the
+  header, the canonical document and table, which name every tensor and the
+  offset and length the encoder gives it, the zero padding and the end of the
+  file, while the values are the bytes they were read from. So the
+  comparison could refuse nothing the structure check accepts. The tests
+  decode every single-byte change, truncation and trailing tail of several
+  containers, and a set of multi-byte rewrites (reformatted or reordered
+  JSON, moved or reordered sections, extra padding, unknown members and
+  sections), both with `decode_v1` and with the re-encoding it replaced, and
+  get the same outcome for each. The decode still makes its `u32` section
+  copy.
+- S `readback_initial` and `readback_decode` (S item 3), and the weights
+  snapshot decode: each decoder already hashes the state it decoded and
+  refuses a hash that differs from its document's. It then re-encoded the
+  state, hashing it a second time, and compared the copy with the bytes. Now
+  it checks the frame the encoder would write around the values it read
+  (`is_frame_of_v1`): the same header, document (built from the hash it
+  just computed) and table bytes, zero padding and nothing after the last
+  tensor. So each decode hashes the state once and holds no container-sized
+  copy. The tests decode every single-byte change of the frame, each
+  tensor's first and last value bytes, every truncation, trailing tails and
+  reformatted documents and tables both ways, with the same outcome.
+
+Its second part removes the restore's snapshot copies, again without
+changing what the restore accepts, what it refuses or the state and policy
+it builds:
+
+- The restore (ordinary item 9) no longer copies the decoded checkpoint into a
+  train snapshot (3N `f32`, `restore_parameters`), or the model into the
+  template snapshots it checked them against. It borrows the decoded sections
+  as a `TrainTensorsV1`, each `u32` section read as `f32` in place under the
+  model's names and shapes, refused with `restore_parameters`' messages in its
+  order. It checks their digest against the checkpoint's
+  (`TrainTensorsV1::state_sha256_v1`, the same validation and the same memo
+  hit) and builds the state with `from_tensors_v1`, the constructor T1
+  accepted on #595: `from_snapshot_v1`'s checks in its order, with each
+  parameter written once into the model the restore owns, without a clone, and
+  each moment once into the state. The model's replacement checks read its
+  tensors in place instead of an expected snapshot, and the policy installs
+  one parameter snapshot of the built state. The tests restore a checkpoint
+  and 44 changed ones, and build states from a trained snapshot and 32 changed
+  ones, both ways, with the same refusal every time and otherwise the same
+  state and policy.
+
+What remains: the decode's `u32` section copy (item 8), which the restore
+now reads in place, the digest memo's held copy (item 2), which is milestone
+4's, and the restore's copies into the policy and the loaded-source cache
+(item 9), which are T1's.
 
 ## A-B-B-A
 

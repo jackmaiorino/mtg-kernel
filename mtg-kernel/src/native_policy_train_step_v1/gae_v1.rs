@@ -1039,10 +1039,12 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 backward
             }
             (None, BackwardExecutionV1::Sequential) => {
-                let mut gradients = parameters
-                    .iter()
-                    .map(|parameter| vec![0.0; parameter.values.len()])
-                    .collect::<Vec<_>>();
+                // Hidden-width weights accumulate transposed, with the exact
+                // parallel backward's kernels and the reference's bits.
+                let mut gradients =
+                    accumulate_transposed_v1::sequential_gradients_dims_v1::<D>(&parameters);
+                let mut sink =
+                    accumulate_transposed_v1::AccumulateTransposedV1::new_v1(&mut gradients);
                 let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::for_math_v1(math);
                 let mut reverse_workspace = ReverseWorkspaceV1::default();
                 // Same reverse group/substep/action order as
@@ -1110,9 +1112,9 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                             selected.selected_action_index,
                             d_joint_log_probability,
                         )?;
-                        reverse_decision_dims_v1::<D>(
+                        reverse_decision_into_dims_v1::<D>(
                             &parameters,
-                            &mut gradients,
+                            &mut sink,
                             &selected.tape,
                             &reverse_workspace.d_logits,
                             if substep_index == 0 { d_value } else { 0.0 },
@@ -1120,7 +1122,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                         )?;
                     }
                 }
-                (gradients, gauge_accumulator)
+                (gradients.into_gradients_v1(), gauge_accumulator)
             }
             (None, BackwardExecutionV1::FixedPartitions { worker_limit }) => {
                 let coefficients: Vec<(f32, f32)> = group_tapes

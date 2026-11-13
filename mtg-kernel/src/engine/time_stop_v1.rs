@@ -163,7 +163,9 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     if !state
         .engine
         .event_history
-        .has_any(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1])
+        .scan_for_v1(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1])
+        .iter()
+        .any(|event| matches!(event, CommittedEvent::TimeStopJournalV1 { .. }))
     {
         return if state.engine.time_stop_v1.is_empty() {
             Ok(())
@@ -382,7 +384,10 @@ pub struct CleanupBoundaryV1 {
 }
 
 fn boundary_before(state: &GameState, before: usize) -> Result<Option<CleanupBoundaryV1>, String> {
-    for (at, event) in state.engine.event_history[..before]
+    for (at, event) in state
+        .engine
+        .event_history
+        .range_v2(..before)
         .iter()
         .enumerate()
         .rev()

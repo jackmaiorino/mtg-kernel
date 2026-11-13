@@ -10,6 +10,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PublicIdentityV1 {
@@ -17,7 +18,7 @@ pub enum PublicIdentityV1 {
     Concealed { disguised: bool },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReceiptV1 {
     pub spell_cast_history_index: u64,
     pub spell: ObjectId,
@@ -28,6 +29,26 @@ pub struct ReceiptV1 {
     pub stack_zone_change_count: u32,
     pub stack_item_id: StackItemId,
     pub public_identity: PublicIdentityV1,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) future_sight_overload: Option<crate::eternal_e5a_v1::FutureSightOverloadV1>,
+}
+
+impl Hash for ReceiptV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.spell_cast_history_index.hash(state);
+        self.spell.hash(state);
+        self.owner.hash(state);
+        self.controller.hash(state);
+        self.origin_zone.hash(state);
+        self.origin_zone_change_count.hash(state);
+        self.stack_zone_change_count.hash(state);
+        self.stack_item_id.hash(state);
+        self.public_identity.hash(state);
+        if let Some(permission) = self.future_sight_overload {
+            "future-sight-overload/v1".hash(state);
+            permission.hash(state);
+        }
+    }
 }
 
 /// Called only after successful 601.2 finalization, directly before the
@@ -36,6 +57,7 @@ pub(crate) fn publish(
     state: &mut GameState,
     source: StackSourceContractV4,
     stack_item_id: StackItemId,
+    future_sight_overload: Option<crate::eternal_e5a_v1::FutureSightOverloadV1>,
 ) {
     let origin = source
         .spell_cast_origin
@@ -64,6 +86,7 @@ pub(crate) fn publish(
         stack_zone_change_count: source.zone_change_count,
         stack_item_id,
         public_identity,
+        future_sight_overload,
     };
     state
         .engine

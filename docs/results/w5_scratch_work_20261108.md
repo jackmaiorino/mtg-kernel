@@ -123,7 +123,10 @@ the paired runs measure this host's spread. Every verdict is inconclusive, so th
 - Receipts (verbatim): `w5_scratch_work_20261108/main_ab.json` (64 and 256, both trees, counts and settle),
   `scale_1024.json` and `cplain_256.json`. `w5_scratch_work_20261108.json` is the manifest.
 
-## Maintainer handoff (pending)
+## Maintainer handoff
+
+Done on Nov 10, on node1 and node2: about 0.18 ms per fsync
+([`w5_scratch_node_fsync_20261110.md`](w5_scratch_node_fsync_20261110.md)).
 
 Milestone 3's decision needs one bounded run on a node, on the same volume as its W5 root, by a maintainer and at a
 time when no chain on that volume is persisting:

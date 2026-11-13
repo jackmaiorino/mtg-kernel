@@ -16,13 +16,13 @@ mod tests;
 fn error(message: impl Into<String>) -> String {
     message.into()
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum IdentityV1 {
     Known { card_id: u16 },
     FaceDown { disguised: bool },
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReferenceV1 {
     pub object: u32,
@@ -107,10 +107,11 @@ pub(crate) fn reference(
     let visible = match o.zone {
         Zone::Hand => viewer.is_some_and(|v| {
             v == o.owner
-                || state
-                    .known_hand_cards(v, o.owner)
-                    .iter()
-                    .any(|k| k.object == id && k.zone_change_count == o.zone_change_count)
+                || state.reveal_knowledge_v4.is_none()
+                    && state
+                        .known_hand_cards(v, o.owner)
+                        .iter()
+                        .any(|k| k.object == id && k.zone_change_count == o.zone_change_count)
         }),
         Zone::Library => viewer.is_some_and(|v| {
             state
@@ -168,10 +169,28 @@ pub(crate) fn root(
     s: AbilitySourceContractV4,
     viewer: Option<PlayerId>,
 ) -> Result<RootV1, String> {
+    crate::engine::validate_historical_ability_source_contract(state, s)?;
+    root_after_validation(state, s, viewer)
+}
+
+pub(crate) fn archived_root(
+    state: &GameState,
+    at: usize,
+    s: AbilitySourceContractV4,
+    viewer: Option<PlayerId>,
+) -> Result<RootV1, String> {
+    crate::sampled_history_v1::validate_source(state, at, s)?;
+    root_after_validation(state, s, viewer)
+}
+
+fn root_after_validation(
+    state: &GameState,
+    s: AbilitySourceContractV4,
+    viewer: Option<PlayerId>,
+) -> Result<RootV1, String> {
     if s.zone != Zone::Battlefield {
         return Err("optional root original source is not battlefield".into());
     }
-    crate::engine::validate_historical_ability_source_contract(state, s)?;
     // This definition-owned trigger was public when captured. Current hidden zones
     // and a later incarnation do not become a new identity or generation oracle.
     let original_source = ReferenceV1 {
@@ -308,13 +327,89 @@ pub(crate) enum ConsumerV1 {
     Legacy,
     ChandraV74,
     KaitoV75,
+    KaitoOmniscienceV1,
+    KaitoTutelageV1,
+    KaitoMixedV1,
+    KaitoFullPoolV1,
+    KaitoLeylineAxeV1,
+    KaitoProgenitusV1,
+    KaitoAberrationV1,
+    KaitoLathrilV1,
+    KaitoLootV1,
+    KaitoCuratorV1,
+    KaitoKykarV1,
+    KaitoSphinxLoreV1,
+    KaitoGreatwurmV1,
+    KaitoHarvesterV1,
+    KaitoFiendArtisanV1,
+    KaitoEtaliV1,
+    KaitoThousandYearStormV1,
 }
 impl ConsumerV1 {
+    pub(crate) fn for_kaito(appendix: crate::policy_surface_v5::LimitedAppendixV1) -> Self {
+        use crate::policy_surface_v5::LimitedAppendixV1;
+        match appendix {
+            LimitedAppendixV1::Omniscience => Self::KaitoOmniscienceV1,
+            LimitedAppendixV1::Tutelage => Self::KaitoTutelageV1,
+            LimitedAppendixV1::Mixed => Self::KaitoMixedV1,
+            LimitedAppendixV1::FullPool => Self::KaitoFullPoolV1,
+            LimitedAppendixV1::LeylineAxe => Self::KaitoLeylineAxeV1,
+            LimitedAppendixV1::Progenitus => Self::KaitoProgenitusV1,
+            LimitedAppendixV1::Aberration => Self::KaitoAberrationV1,
+            LimitedAppendixV1::Lathril => Self::KaitoLathrilV1,
+            LimitedAppendixV1::Loot => Self::KaitoLootV1,
+            LimitedAppendixV1::Curator => Self::KaitoCuratorV1,
+            LimitedAppendixV1::Kykar => Self::KaitoKykarV1,
+            LimitedAppendixV1::SphinxLore => Self::KaitoSphinxLoreV1,
+            LimitedAppendixV1::Greatwurm => Self::KaitoGreatwurmV1,
+            LimitedAppendixV1::Harvester => Self::KaitoHarvesterV1,
+            LimitedAppendixV1::FiendArtisan => Self::KaitoFiendArtisanV1,
+            LimitedAppendixV1::Etali => Self::KaitoEtaliV1,
+            LimitedAppendixV1::ThousandYearStorm => Self::KaitoThousandYearStormV1,
+            _ => Self::KaitoV75,
+        }
+    }
+
     pub(crate) fn validate_copy_prefix(self, state: &GameState) -> Result<(), String> {
+        use crate::effect::KaitoCopyScopeV1 as Scope;
+        if matches!(self, Self::KaitoFiendArtisanV1 | Self::KaitoFullPoolV1) {
+            if !state.fiend_artisan_receipts_v1 {
+                return Err("Fiend Artisan owning copy scope lacks its native receipt mode".into());
+            }
+        } else {
+            crate::fiend_artisan_receipts_v1::refuse_legacy(state)?;
+        }
         match self {
             Self::Legacy => crate::effect::require_no_copied_token_abilities_v1(state),
             Self::ChandraV74 => crate::effect::require_no_copied_token_abilities_chandra_v74(state),
-            Self::KaitoV75 => crate::effect::require_no_copied_token_abilities_kaito_v75(state),
+            Self::KaitoV75
+            | Self::KaitoOmniscienceV1
+            | Self::KaitoTutelageV1
+            | Self::KaitoMixedV1
+            | Self::KaitoProgenitusV1
+            | Self::KaitoAberrationV1
+            | Self::KaitoLathrilV1
+            | Self::KaitoLootV1
+            | Self::KaitoCuratorV1
+            | Self::KaitoKykarV1
+            | Self::KaitoSphinxLoreV1
+            | Self::KaitoThousandYearStormV1
+            | Self::KaitoGreatwurmV1
+            | Self::KaitoFiendArtisanV1 => {
+                crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::Base)
+            }
+            Self::KaitoFullPoolV1 => {
+                crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::FullPool)
+            }
+            Self::KaitoEtaliV1 => {
+                crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::Etali)
+            }
+            Self::KaitoHarvesterV1 => {
+                crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::Harvester)
+            }
+            Self::KaitoLeylineAxeV1 => {
+                crate::effect::require_no_copied_token_abilities_kaito_v75(state, Scope::LeylineAxe)
+            }
         }
     }
 }
@@ -326,16 +421,61 @@ pub(crate) fn validate_state_for_consumer(
     checked: bool,
     consumer: ConsumerV1,
 ) -> Result<(), String> {
-    crate::effect::thousand_year_storm_v1::refuse_legacy(state)?;
-    crate::effect::curator_v1::refuse_legacy(state)?;
-    crate::effect::sphinx_lore_v1::refuse_legacy(state)?;
-    crate::engine::omniscience_cast_v1::refuse_legacy(state)?;
-    crate::progenitus_v1::refuse_legacy(state)?;
-    crate::effect::greatwurm_v1::refuse_legacy(state)?;
-    crate::effect::kykar_v1::refuse_legacy(state)?;
-    crate::effect::loot_v1::refuse_legacy(state)?;
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoThousandYearStormV1 | ConsumerV1::KaitoFullPoolV1
+    ) {
+        crate::effect::thousand_year_storm_v1::refuse_legacy(state)?;
+    }
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoCuratorV1 | ConsumerV1::KaitoFullPoolV1
+    ) {
+        crate::effect::curator_v1::refuse_legacy(state)?;
+    }
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoSphinxLoreV1 | ConsumerV1::KaitoFullPoolV1
+    ) {
+        crate::effect::sphinx_lore_v1::refuse_legacy(state)?;
+    }
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoOmniscienceV1 | ConsumerV1::KaitoMixedV1 | ConsumerV1::KaitoFullPoolV1
+    ) {
+        crate::engine::omniscience_cast_v1::refuse_legacy(state)?;
+    }
+    if matches!(
+        consumer,
+        ConsumerV1::KaitoProgenitusV1 | ConsumerV1::KaitoFullPoolV1
+    ) {
+        crate::progenitus_v1::validate(state)?;
+    } else {
+        crate::progenitus_v1::refuse_legacy(state)?;
+    }
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoGreatwurmV1 | ConsumerV1::KaitoFullPoolV1
+    ) {
+        crate::effect::greatwurm_v1::refuse_legacy(state)?;
+    }
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoKykarV1 | ConsumerV1::KaitoFullPoolV1
+    ) {
+        crate::effect::kykar_v1::refuse_legacy(state)?;
+    }
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoLootV1 | ConsumerV1::KaitoFullPoolV1
+    ) {
+        crate::effect::loot_v1::refuse_legacy(state)?;
+    }
     consumer.validate_copy_prefix(state)?;
-    if state.objects.iter().any(|(_, o)| {
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoLathrilV1 | ConsumerV1::KaitoFullPoolV1
+    ) && (state.objects.iter().any(|(_, o)| {
         matches!(o.zone, Zone::Battlefield | Zone::Stack)
             && o.v4.face_down_v1.is_none()
             && crate::event::is_lathril_v1(o.card_def)
@@ -343,6 +483,7 @@ pub(crate) fn validate_state_for_consumer(
         matches!(
             entry,
             crate::event::CommittedEvent::LathrilCombatDamageV1 { .. }
+                | crate::event::CommittedEvent::LathrilReceiptV1 { .. }
         )
     }) || state.stack.iter().any(|row| {
         row.v4
@@ -355,7 +496,7 @@ pub(crate) fn validate_state_for_consumer(
         p.ctx
             .ability_source_contract
             .is_some_and(|s| crate::event::is_lathril_v1(s.card_def))
-    }) {
+    })) {
         return Err(
             "Lathril native combat/cost history requires a distinct complete consumer".into(),
         );
@@ -366,7 +507,10 @@ pub(crate) fn validate_state_for_consumer(
             .get(usize::from(definition))
             .is_some_and(|d| d.name == "Consuming Aberration")
     };
-    if state.objects.iter().any(|(_, o)| {
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoAberrationV1 | ConsumerV1::KaitoFullPoolV1
+    ) && (state.objects.iter().any(|(_, o)| {
         matches!(o.zone, Zone::Battlefield | Zone::Stack)
             && o.v4.face_down_v1.is_none()
             && aberration(o.card_def)
@@ -381,12 +525,15 @@ pub(crate) fn validate_state_for_consumer(
             p.ctx
                 .ability_source_contract
                 .is_some_and(|s| aberration(s.card_def))
-        })
+        }))
     {
         return Err("Aberration CDA and mill require a distinct complete consumer".into());
     }
 
-    if state.objects.iter().any(|(_, object)| {
+    if !matches!(
+        consumer,
+        ConsumerV1::KaitoTutelageV1 | ConsumerV1::KaitoMixedV1 | ConsumerV1::KaitoFullPoolV1
+    ) && (state.objects.iter().any(|(_, object)| {
         matches!(object.zone, Zone::Battlefield | Zone::Stack)
             && object.v4.face_down_v1.is_none()
             && crate::event::is_sphinxs_tutelage_v1(object.card_def)
@@ -395,7 +542,7 @@ pub(crate) fn validate_state_for_consumer(
             event,
             crate::event::CommittedEvent::SphinxsTutelageDrawV1 { .. }
         )
-    }) {
+    })) {
         return Err("Tutelage native history requires a distinct complete consumer".into());
     }
 

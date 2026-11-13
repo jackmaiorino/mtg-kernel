@@ -1067,7 +1067,7 @@ fn validate_publications_with_owner(
         }
         published_at(state, publication.history_index)?;
         let id = publication.item.v4.stack_item_id;
-        if state.engine.event_history[..index].iter().any(|event|matches!(event,
+        if state.engine.event_history.range_v2(..index).iter().any(|event|matches!(event,
             CommittedEvent::FrenziedGoblinPublishedV1 {publication:previous} if previous.item.v4.stack_item_id==id)) {
             return Err("Frenzied duplicate publication".into());
         }

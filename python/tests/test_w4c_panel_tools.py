@@ -17,7 +17,7 @@ KEYS = [(o, t, k) for o in range(pilot.DECKS) for t in range(pilot.DECKS) for k 
 class W4CNamespaces(unittest.TestCase):
     def test_the_three_namespaces_are_admitted_and_their_seeds_are_fresh(self):
         self.assertEqual(W4C, ("w4c-panel-20261031a", "w4c-panel-20261031b", "w4c-h2h-20261031"))
-        self.assertEqual(pilot.PANEL_NAMESPACES[-3:], W4C)
+        self.assertEqual(pilot.PANEL_NAMESPACES[15:18], W4C)
         for ns in W4C:
             fresh = {pilot.panel_seed(*key, ns) for key in KEYS}
             self.assertEqual(len(fresh), len(KEYS))

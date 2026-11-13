@@ -270,6 +270,7 @@ pub(crate) fn damage(
         touched_by: Vec::new(),
         is_combat: false,
         historical_source: None,
+        eternal_damage_lki_v1: None,
         niv_damage_origin_v1: ctx.niv_damage_origin_v1,
     })
 }

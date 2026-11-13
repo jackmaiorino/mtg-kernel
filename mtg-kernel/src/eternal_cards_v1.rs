@@ -30,6 +30,7 @@ use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
 pub mod e3;
+pub(crate) mod owned_draws_v1;
 pub use e3::{
     dark_ritual, doomsday, edge_of_autumn, flusterstorm, jace_minus_eight, jace_plus_one,
     misdirection, personal_tutor, show_and_tell, sink_into_stupor, sneak_attack, the_one_ring_draw,
@@ -52,7 +53,7 @@ pub struct EternalStateV1 {
     /// Delve exiled, keyed by the spell's stack incarnation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub delve_instants_and_sorceries: Vec<(ObjectLinkV4, u32)>,
-    /// The active player's turn-based draw this turn (Orcish Bowmasters'
+    /// The active player's first actual draw in their draw step (Orcish Bowmasters'
     /// "except the first one they draw in each of their draw steps").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draw_step_draw: Option<DrawStepDrawV1>,
@@ -141,6 +142,18 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_e9b_v1::E9bStateV1::is_empty"
     )]
     pub e9b: crate::eternal_e9b_v1::E9bStateV1,
+    /// Wave S1d's state (`eternal_sideboard_s1d_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_sideboard_s1d_v1::S1dStateV1::is_empty"
+    )]
+    pub s1d: crate::eternal_sideboard_s1d_v1::S1dStateV1,
+    /// Wave S1b's state (`eternal_sideboard_s1b_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_sideboard_s1b_v1::S1bStateV1::is_empty"
+    )]
+    pub s1b: crate::eternal_sideboard_s1b_v1::S1bStateV1,
     /// Wave E9a's state (`eternal_legacy_e9a_v1`).
     #[serde(
         default,
@@ -171,6 +184,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_premodern_p2d_v1::P2dStateV1::is_empty"
     )]
     pub p2d: crate::eternal_premodern_p2d_v1::P2dStateV1,
+    /// Sideboard wave S1a's state (`eternal_sideboard_s1a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_sideboard_s1a_v1::S1aStateV1::is_empty"
+    )]
+    pub s1a: crate::eternal_sideboard_s1a_v1::S1aStateV1,
     /// Premodern wave P1a's state (`eternal_premodern_p1a_v1`).
     #[serde(
         default,
@@ -189,6 +208,48 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_outside_game_v1::OutsideGameStateV1::is_empty"
     )]
     pub outside_game: crate::eternal_outside_game_v1::OutsideGameStateV1,
+    /// Premodern sideboard wave P3b's state (`eternal_premodern_p3b_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_premodern_p3b_v1::P3bStateV1::is_empty"
+    )]
+    pub p3b: crate::eternal_premodern_p3b_v1::P3bStateV1,
+    /// Premodern sideboard wave P3d's state (`eternal_premodern_p3d_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_premodern_p3d_v1::P3dStateV1::is_empty"
+    )]
+    pub p3d: crate::eternal_premodern_p3d_v1::P3dStateV1,
+    /// Premodern sideboard wave P3e's state (`eternal_premodern_p3e_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_premodern_p3e_v1::P3eStateV1::is_empty"
+    )]
+    pub p3e: crate::eternal_premodern_p3e_v1::P3eStateV1,
+    /// Premodern sideboard wave P3f's state (`eternal_premodern_p3f_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_premodern_p3f_v1::P3fStateV1::is_empty"
+    )]
+    pub p3f: crate::eternal_premodern_p3f_v1::P3fStateV1,
+    /// Vintage sideboard wave S1e's state (`eternal_sideboard_s1e_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_sideboard_s1e_v1::S1eStateV1::is_empty"
+    )]
+    pub s1e: crate::eternal_sideboard_s1e_v1::S1eStateV1,
+    /// Vintage sideboard wave S1f's state (`eternal_sideboard_s1f_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_sideboard_s1f_v1::S1fStateV1::is_empty"
+    )]
+    pub s1f: crate::eternal_sideboard_s1f_v1::S1fStateV1,
+    /// Legacy sideboard wave S1g's state (`eternal_sideboard_s1g_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_sideboard_s1g_v1::S1gStateV1::is_empty"
+    )]
+    pub s1g: crate::eternal_sideboard_s1g_v1::S1gStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -413,6 +474,55 @@ pub enum EternalOpV1 {
     P2cV1(crate::eternal_premodern_p2c_v1::P2cOpV1),
     /// A leaf owned by the outside-the-game zone's module (wishes, learn).
     OutsideGameV1(crate::eternal_outside_game_v1::OutsideGameOpV1),
+    /// A leaf owned by sideboard wave S1a's module.
+    S1aV1(crate::eternal_sideboard_s1a_v1::S1aOpV1),
+    /// A leaf owned by wave S1b's module.
+    S1bV1(crate::eternal_sideboard_s1b_v1::S1bOpV1),
+    /// A leaf owned by wave S1c's module.
+    S1cV1(crate::eternal_sideboard_s1c_v1::S1cOpV1),
+    /// A leaf owned by wave S1d's module.
+    S1dV1(crate::eternal_sideboard_s1d_v1::S1dOpV1),
+    /// Internal completion of one native draw attempt in an owned instruction.
+    OwnedDrawCompletedV1 { ordinal: u32 },
+    /// Room trigger bound to the exact native venture occurrence.
+    RoomBoundV1 {
+        entered_at: usize,
+        dungeon: u16,
+        room: u16,
+    },
+    /// A leaf owned by Premodern sideboard wave P3a's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    P3aV1(crate::eternal_premodern_p3a_v1::P3aOpV1),
+    /// A leaf owned by Premodern sideboard wave P3b's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    P3bV1(crate::eternal_premodern_p3b_v1::P3bOpV1),
+    /// A leaf owned by Premodern sideboard wave P3c's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    P3cV1(crate::eternal_premodern_p3c_v1::P3cOpV1),
+    /// A leaf owned by Premodern sideboard wave P3d's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    P3dV1(crate::eternal_premodern_p3d_v1::P3dOpV1),
+    /// A leaf owned by Premodern sideboard wave P3e's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    P3eV1(crate::eternal_premodern_p3e_v1::P3eOpV1),
+    /// A leaf owned by Premodern sideboard wave P3f's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    P3fV1(crate::eternal_premodern_p3f_v1::P3fOpV1),
+    /// A leaf owned by Vintage sideboard wave S1e's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    S1eV1(crate::eternal_sideboard_s1e_v1::S1eOpV1),
+    /// A leaf owned by Vintage sideboard wave S1f's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    S1fV1(crate::eternal_sideboard_s1f_v1::S1fOpV1),
+    /// A leaf owned by Legacy sideboard wave S1g's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    S1gV1(crate::eternal_sideboard_s1g_v1::S1gOpV1),
+    /// A leaf owned by Legacy sideboard wave S1l's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    S1lV1(crate::eternal_sideboard_s1l_v1::S1lOpV1),
+    /// A leaf owned by Legacy sideboard wave S1m's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    S1mV1(crate::eternal_sideboard_s1m_v1::S1mOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -465,6 +575,8 @@ impl EternalOpV1 {
             EternalOpV1::E8bV1(op) => op.contains_player_choice(),
             EternalOpV1::E8aV1(op) => op.contains_player_choice(),
             EternalOpV1::E9bV1(op) => op.contains_player_choice(),
+            EternalOpV1::S1dV1(op) => op.contains_player_choice(),
+            EternalOpV1::S1bV1(op) => op.contains_player_choice(),
             EternalOpV1::E9aV1(op) => op.contains_player_choice(),
             EternalOpV1::P1bV1(op) => op.contains_player_choice(),
             EternalOpV1::P2aV1(op) => op.contains_player_choice(),
@@ -473,16 +585,39 @@ impl EternalOpV1 {
             EternalOpV1::P1aV1(op) => op.contains_player_choice(),
             EternalOpV1::P2bV1(op) => op.contains_player_choice(),
             EternalOpV1::OutsideGameV1(op) => op.contains_player_choice(),
+            EternalOpV1::S1cV1(op) => op.contains_player_choice(),
+            EternalOpV1::S1aV1(op) => op.contains_player_choice(),
+            EternalOpV1::P3aV1(op) => op.contains_player_choice(),
+            EternalOpV1::P3bV1(op) => op.contains_player_choice(),
+            EternalOpV1::P3cV1(op) => op.contains_player_choice(),
+            EternalOpV1::P3dV1(op) => op.contains_player_choice(),
+            EternalOpV1::P3eV1(op) => op.contains_player_choice(),
+            EternalOpV1::P3fV1(op) => op.contains_player_choice(),
+            EternalOpV1::S1eV1(op) => op.contains_player_choice(),
+            EternalOpV1::S1fV1(op) => op.contains_player_choice(),
+            EternalOpV1::S1gV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
 
     /// Whether the resumable interpreter runs this leaf through its own
-    /// driver: a leaf with a player decision, or a wave P1a leaf whose draws
-    /// are staged as frames so dredge can replace them (the program is only
-    /// moved there while a dredge choice exists).
+    /// driver: a leaf with a player decision or a draw with a replacement
+    /// choice.
     pub(crate) fn drives_in_resumable(&self) -> bool {
-        self.contains_player_choice() || matches!(self, EternalOpV1::P1aV1(op) if op.draws())
+        self.contains_player_choice()
+            || owned_draws_v1::recognizes(self)
+            || matches!(self, EternalOpV1::OwnedDrawCompletedV1 { .. } | EternalOpV1::EnterRoomV1 { .. })
+            || matches!(self, EternalOpV1::DelayedUpkeepDrawV1)
+            || matches!(self, EternalOpV1::E7aV1(crate::eternal_legacy_e7a_v1::E7aOpV1::EchoOfEonsV1))
+            || matches!(
+                self,
+                EternalOpV1::VintageV1(
+                    crate::eternal_vintage_v1::VintageOpV1::CovetedJewelChangesHandsV1
+                    | crate::eternal_vintage_v1::VintageOpV1::ParadoxicalOutcomeV1
+                    | crate::eternal_vintage_v1::VintageOpV1::ParadoxicalOutcomeDrawCompletedV1 { .. }
+                )
+            )
+            || matches!(self, EternalOpV1::P1aV1(op) if op.draws())
     }
 }
 
@@ -606,7 +741,7 @@ fn bowmasters_ping_then_amass() -> EffectOp {
     ])
 }
 
-fn delayed_upkeep_draw() -> EffectOp {
+pub(crate) fn delayed_upkeep_draw() -> EffectOp {
     eternal(EternalOpV1::DelayedUpkeepDrawV1)
 }
 
@@ -785,6 +920,52 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
 
 /// Target specs of this module's triggered abilities, per ability.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    // Sideboard wave S1a's cards fall through the other waves' trigger
+    // tables, which would answer for them, so they answer first.
+    if let Some(spec) = crate::eternal_sideboard_s1a_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Vintage sideboard wave S1e's printed triggers, the tail of those tables,
+    // answer as early, as does suspend's trigger on any card Suspend exiled.
+    if let Some(spec) = crate::eternal_sideboard_s1e_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Vintage sideboard wave S1f's queued triggers.
+    if let Some(spec) = crate::eternal_sideboard_s1f_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Legacy sideboard wave S1g's printed and queued triggers.
+    if let Some(spec) = crate::eternal_sideboard_s1g_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Legacy sideboard wave S1l's printed trigger.
+    if let Some(spec) = crate::eternal_sideboard_s1l_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Legacy sideboard wave S1m's printed trigger.
+    if let Some(spec) = crate::eternal_sideboard_s1m_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Premodern sideboard wave P3a's queued triggers.
+    if let Some(spec) = crate::eternal_premodern_p3a_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Premodern sideboard wave P3b's printed triggers.
+    if let Some(spec) = crate::eternal_premodern_p3b_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Premodern sideboard wave P3c's printed triggers.
+    if let Some(spec) = crate::eternal_premodern_p3c_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Premodern sideboard wave P3d's queued triggers.
+    if let Some(spec) = crate::eternal_premodern_p3d_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Premodern sideboard wave P3f's queued triggers.
+    if let Some(spec) = crate::eternal_premodern_p3f_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     // Premodern wave P2c.
     if let Some(spec) = crate::eternal_premodern_p2c_v1::trigger_target_spec(name, effect) {
         return Some(spec);
@@ -987,6 +1168,8 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::E8bV1(op) => crate::eternal_pauper_e8b_v1::execute(op, ctx, state),
         EternalOpV1::E8aV1(op) => crate::eternal_legacy_e8a_v1::execute(op, ctx, state),
         EternalOpV1::E9bV1(op) => crate::eternal_e9b_v1::execute(op, ctx, state),
+        EternalOpV1::S1dV1(op) => crate::eternal_sideboard_s1d_v1::execute(op, ctx, state),
+        EternalOpV1::S1bV1(op) => crate::eternal_sideboard_s1b_v1::execute(op, ctx, state),
         EternalOpV1::E9aV1(op) => crate::eternal_legacy_e9a_v1::execute(op, ctx, state),
         EternalOpV1::P1bV1(op) => crate::eternal_premodern_p1b_v1::execute(op, ctx, state),
         EternalOpV1::P2aV1(op) => crate::eternal_premodern_p2a_v1::execute(op, ctx, state),
@@ -995,6 +1178,19 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::P1aV1(op) => crate::eternal_premodern_p1a_v1::execute(op, ctx, state),
         EternalOpV1::P2bV1(op) => crate::eternal_premodern_p2b_v1::execute(op, ctx, state),
         EternalOpV1::OutsideGameV1(op) => crate::eternal_outside_game_v1::execute(op, ctx, state),
+        EternalOpV1::S1cV1(op) => crate::eternal_sideboard_s1c_v1::execute(op, ctx, state),
+        EternalOpV1::S1aV1(op) => crate::eternal_sideboard_s1a_v1::execute(op, ctx, state),
+        EternalOpV1::P3aV1(op) => crate::eternal_premodern_p3a_v1::execute(op, ctx, state),
+        EternalOpV1::P3bV1(op) => crate::eternal_premodern_p3b_v1::execute(op, ctx, state),
+        EternalOpV1::P3cV1(op) => crate::eternal_premodern_p3c_v1::execute(op, ctx, state),
+        EternalOpV1::P3dV1(op) => crate::eternal_premodern_p3d_v1::execute(op, ctx, state),
+        EternalOpV1::P3eV1(op) => crate::eternal_premodern_p3e_v1::execute(op, ctx, state),
+        EternalOpV1::P3fV1(op) => crate::eternal_premodern_p3f_v1::execute(op, ctx, state),
+        EternalOpV1::S1eV1(op) => crate::eternal_sideboard_s1e_v1::execute(op, ctx, state),
+        EternalOpV1::S1fV1(op) => crate::eternal_sideboard_s1f_v1::execute(op, ctx, state),
+        EternalOpV1::S1gV1(op) => crate::eternal_sideboard_s1g_v1::execute(op, ctx, state),
+        EternalOpV1::S1lV1(op) => crate::eternal_sideboard_s1l_v1::execute(op, ctx, state),
+        EternalOpV1::S1mV1(op) => crate::eternal_sideboard_s1m_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1040,21 +1236,15 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
             normal,
             from_graveyard,
         } => {
-            let cast_from_graveyard = state.objects.try_get(ctx.source).is_some_and(|source| {
-                source.zone == Zone::Stack
-                    && source
-                        .v4
-                        .spell_cast_origin
-                        .is_some_and(|origin| origin.origin_zone == Zone::Graveyard)
-            });
             crate::effect::execute(
                 &EffectOp::DrawCards {
                     player: PlayerRef::Controller,
-                    count: u32::from(if cast_from_graveyard {
-                        *from_graveyard
-                    } else {
-                        *normal
-                    }),
+                    count: owned_draws_v1::graveyard_cast_count(
+                        state,
+                        ctx.source,
+                        *normal,
+                        *from_graveyard,
+                    ),
                 },
                 ctx,
                 state,
@@ -1287,8 +1477,9 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         EternalOpV1::DrawHalfLibraryThenNoMaximumHandSizeV1 => {
-            let library = state.players[ctx.controller.index()].library.len();
-            let count = u32::try_from(library.div_ceil(2)).unwrap_or(u32::MAX);
+            let count = owned_draws_v1::half_library_count(
+                state.players[ctx.controller.index()].library.len(),
+            );
             crate::effect::execute(
                 &EffectOp::DrawCards {
                     player: PlayerRef::Controller,
@@ -1297,10 +1488,13 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 ctx,
                 state,
             );
-            state
-                .eternal_v1
-                .get_or_insert_with(Default::default)
-                .no_maximum_hand_size[ctx.controller.index()] = true;
+            owned_draws_v1::remove_maximum_hand_size(state, ctx.controller);
+        }
+        EternalOpV1::OwnedDrawCompletedV1 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EternalOpV1::ProtectionFromEverythingUntilYourNextTurnV1
         | EternalOpV1::LoseLifePerBurdenCounterV1
@@ -1320,6 +1514,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | EternalOpV1::RevealUntilCreatureAttackingV1
         | EternalOpV1::EnterRoomV1 { .. }
         | EternalOpV1::RoomAbilityV1 { .. }
+        | EternalOpV1::RoomBoundV1 { .. }
         | EternalOpV1::AcererakEntersV1
         | EternalOpV1::AcererakAttacksV1 => e3::execute(op, ctx, state),
         EternalOpV1::RemoveMinusOneCounterFromSourceV1 => {
@@ -1488,6 +1683,8 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
         && crate::eternal_premodern_p2d_v1::statics::blocker_allowed(state, blocker)
         && crate::eternal_premodern_p2c_v1::statics::blocker_allowed(state, attacker, blocker)
         && crate::eternal_premodern_p1a_v1::statics::blocker_allowed(state, attacker, blocker)
+        && crate::eternal_sideboard_s1c_v1::statics::blocker_allowed(state, blocker)
+        && crate::eternal_sideboard_s1e_v1::blocker_allowed(state, attacker, blocker)
 }
 
 /// Nethergoyf: "Nethergoyf's power is equal to the number of card types
@@ -1498,6 +1695,16 @@ pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> 
     if let Some(value) =
         crate::eternal_premodern_p1a_v1::statics::characteristic_defining_power(state, id)
     {
+        return Some(value);
+    }
+    // Multani, Maro-Sorcerer sets both stats (wave P3c).
+    if let Some(value) =
+        crate::eternal_premodern_p3c_v1::statics::characteristic_defining_power(state, id)
+    {
+        return Some(value);
+    }
+    // Phyrexian Processor's Minion tokens set both stats (wave P3f).
+    if let Some(value) = crate::eternal_premodern_p3f_v1::characteristic_defining_power(state, id) {
         return Some(value);
     }
     if let Some(value) = crate::eternal_e9b_v1::characteristic_defining_power(state, id) {
@@ -1524,6 +1731,14 @@ pub(crate) fn characteristic_defining_toughness(state: &GameState, id: ObjectId)
     if let Some(value) =
         crate::eternal_premodern_p1a_v1::statics::characteristic_defining_power(state, id)
     {
+        return Some(value);
+    }
+    if let Some(value) =
+        crate::eternal_premodern_p3c_v1::statics::characteristic_defining_power(state, id)
+    {
+        return Some(value);
+    }
+    if let Some(value) = crate::eternal_premodern_p3f_v1::characteristic_defining_power(state, id) {
         return Some(value);
     }
     // Barrowgoyf's toughness is its power plus 1.
@@ -1649,17 +1864,30 @@ pub(crate) fn note_delve_exile(state: &mut GameState, spell: ObjectId, exiled: &
         .push((link, u32::try_from(count).unwrap_or(u32::MAX)));
 }
 
-/// Marks the active player's turn-based draw, which Orcish Bowmasters
-/// ignores. Recorded only in games with an Orcish Bowmasters.
+pub(crate) fn is_first_draw_in_draw_step(state: &GameState, player: PlayerId) -> bool {
+    state.step == crate::state::Step::Draw
+        && state.active_player == player
+        && !state
+            .eternal_v1
+            .as_ref()
+            .and_then(|eternal| eternal.draw_step_draw)
+            .is_some_and(|marker| marker.turn == state.turn_key_v1() && marker.player == player)
+}
+
+/// Records the ordinal of the first actual draw in the active player's draw
+/// step. A replacement such as dredge does not consume this exemption.
 pub(crate) fn note_draw_step_draw(state: &mut GameState, player: PlayerId) {
-    let Some(bowmasters) = card_id_by_name(ORCISH_BOWMASTERS) else {
+    if !is_first_draw_in_draw_step(state, player) {
         return;
-    };
-    if !state
-        .objects
-        .iter()
-        .any(|(_, object)| object.card_def == bowmasters)
-    {
+    }
+    let has_bowmasters = card_id_by_name(ORCISH_BOWMASTERS).is_some_and(|bowmasters| {
+        state
+            .objects
+            .iter()
+            .any(|(_, object)| object.card_def == bowmasters)
+    });
+    // Hullbreacher (wave S1c) ignores the same draw.
+    if !has_bowmasters && !crate::eternal_sideboard_s1c_v1::statics::needs_draw_step_marker(state) {
         return;
     }
     let marker = DrawStepDrawV1 {
@@ -1727,6 +1955,9 @@ pub(crate) fn delayed_triggers(
         state, events,
     ));
     triggers.extend(crate::eternal_e9b_v1::delayed_triggers(state, events));
+    triggers.extend(crate::eternal_sideboard_s1b_v1::delayed_triggers(
+        state, events,
+    ));
     triggers.extend(crate::eternal_legacy_e9a_v1::delayed_triggers(
         state, events,
     ));
@@ -1741,10 +1972,33 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_premodern_p2d_v1::delayed_triggers(
         state, events,
     ));
+    // Queues into wave P1a's queue, which is drained below.
+    triggers.extend(crate::eternal_premodern_p3a_v1::delayed_triggers(
+        state, events,
+    ));
+    // Lurking Skirge's trigger, queued the same way (Premodern wave P3f).
+    triggers.extend(crate::eternal_premodern_p3f_v1::delayed_triggers(
+        state, events,
+    ));
+    // Follows suspend casts for their haste (Vintage wave S1e).
+    triggers.extend(crate::eternal_sideboard_s1e_v1::delayed_triggers(
+        state, events,
+    ));
+    // Overencumbered's triggers, queued the same way (Vintage wave S1f).
+    triggers.extend(crate::eternal_sideboard_s1f_v1::delayed_triggers(
+        state, events,
+    ));
+    // Drop of Honey's state trigger, queued the same way (Legacy wave S1g).
+    triggers.extend(crate::eternal_sideboard_s1g_v1::delayed_triggers(
+        state, events,
+    ));
     triggers.extend(crate::eternal_premodern_p1a_v1::delayed_triggers(
         state, events,
     ));
     triggers.extend(crate::eternal_premodern_p2b_v1::delayed_triggers(
+        state, events,
+    ));
+    triggers.extend(crate::eternal_sideboard_s1a_v1::delayed_triggers(
         state, events,
     ));
     triggers
@@ -1799,6 +2053,14 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
     if crate::eternal_premodern_p2c_v1::delayed_effect_matches(name, effect)
         || e3::delayed_effect_matches(name, effect)
         || crate::eternal_e9b_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_sideboard_s1a_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_sideboard_s1b_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_premodern_p3a_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_premodern_p3d_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_premodern_p3f_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_sideboard_s1e_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_sideboard_s1f_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_sideboard_s1g_v1::delayed_effect_matches(name, effect)
     {
         return true;
     }
@@ -1856,6 +2118,14 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_premodern_p2d_v1::begin_turn(state, player);
     crate::eternal_premodern_p1a_v1::begin_turn(state, player);
     crate::eternal_premodern_p2b_v1::begin_turn(state, player);
+    crate::eternal_premodern_p3b_v1::begin_turn(state, player);
+    crate::eternal_premodern_p3d_v1::begin_turn(state, player);
+    crate::eternal_premodern_p3e_v1::begin_turn(state, player);
+    crate::eternal_premodern_p3f_v1::begin_turn(state, player);
+    crate::eternal_sideboard_s1e_v1::begin_turn(state, player);
+    crate::eternal_sideboard_s1f_v1::begin_turn(state, player);
+    crate::eternal_sideboard_s1g_v1::begin_turn(state, player);
+    crate::eternal_sideboard_s1d_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks

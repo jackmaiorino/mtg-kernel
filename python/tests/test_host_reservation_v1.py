@@ -40,6 +40,17 @@ PRELUDE = (
     "import host_reservation_v1 as hr\n"
 )
 SLEEP = "import time; time.sleep({})"
+
+
+def publish(path, text):
+    """Child code that writes the str expression text to path through a temp
+    file and a rename, so a test that waits for path to exist reads all of it.
+    A plain open(path, 'w').write(text) creates the file before the text lands,
+    and a Windows reader has seen it empty."""
+    tmp = f"{path}.tmp"
+    return f"import os, pathlib; pathlib.Path({tmp!r}).write_text({text}); os.replace({tmp!r}, {str(path)!r})"
+
+
 # WMI cannot start an app-execution alias (the Microsoft Store Python).
 WMI_STARTABLE = "windowsapps" not in os.path.normcase(sys.executable)
 NO_WMI = "WMI cannot start this interpreter (an app-execution alias)"
@@ -301,7 +312,7 @@ class HostReservationTests(unittest.TestCase):
         B are gone while C lives. C waits for time or an explicit release."""
         pid_file, done_file = Path(self.root) / "c.pid", Path(self.root) / "c.done"
         c = ("import os, time\n"
-             f"open({str(pid_file)!r}, 'w').write(str(os.getpid()))\n")
+             f"{publish(pid_file, 'str(os.getpid())')}\n")
         if release_file is None:
             c += f"time.sleep({seconds})\n"
         else:
@@ -367,7 +378,8 @@ class HostReservationTests(unittest.TestCase):
         supervisor has adopted (so no handoff ever names it)."""
         token_file, done_file = Path(self.root) / "nested.token", Path(self.root) / "nested.done"
         result_file = Path(self.root) / "nested.result"
-        nested_work = (f"import os, time; open({str(token_file)!r}, 'w').write(os.environ.get({hr.TOKEN_ENV!r}, '')); "
+        token_text = f"os.environ.get({hr.TOKEN_ENV!r}, '')"
+        nested_work = (f"import os, time; {publish(token_file, token_text)}; "
                        f"time.sleep(5); open({str(done_file)!r}, 'w').write('done')")
         outer = PRELUDE + (
             "def lossy(line, cwd):\n"
@@ -375,7 +387,7 @@ class HostReservationTests(unittest.TestCase):
             "    raise TimeoutError('creation response lost')\n"
             f"r = hr.dispatch('test', 'nested', 'held by the outer supervisor', [sys.executable, '-c', {nested_work!r}], "
             f"cwd={self.root!r}, create={'lossy' if lossy else 'None'})\n"
-            f"open({str(result_file)!r}, 'w').write(json.dumps(r))\n"
+            f"{publish(result_file, 'json.dumps(r)')}\n"
             "if r['state'] == 'spawn-unconfirmed':\n"
             "    token = os.environ[hr.TOKEN_ENV]\n"
             "    while not any(e['kind'] == 'adopt' and e.get('nested') for e in hr.read_events(token)[0]):\n"

@@ -724,6 +724,9 @@ fn avx2_v1() -> bool {
 /// Bounded synthetic learner timing diagnostic. Every repetition starts from
 /// the same warmed full Adam state; game collection and record I/O are outside
 /// this measurement and must be qualified separately on real training inputs.
+/// A build with the measurement-only `s-learner-profile-v1` feature also
+/// reports each repetition's attribution (`profile`), whose spans add
+/// overhead to its `seconds`.
 pub fn gae_bench_v1(seed: u64, count: usize, reps: usize, workers: usize) -> Result<Value, String> {
     if !(1..=2048).contains(&count) || !(1..=32).contains(&reps) || !(1..=32).contains(&workers) {
         return Err("gae-bench requires groups=1..2048 reps=1..32 workers=1..32".into());
@@ -742,7 +745,10 @@ pub fn gae_bench_v1(seed: u64, count: usize, reps: usize, workers: usize) -> Res
         &mut warm_work,
     )?;
     let before = initial.state_sha256_v1();
+    // The warm step's attribution is not a repetition's.
+    let _ = super::profile::take_v1();
     let mut seconds = Vec::new();
+    let mut profiles = Vec::new();
     let mut after: Option<String> = None;
     for _ in 0..reps {
         let mut state = initial.clone();
@@ -756,6 +762,7 @@ pub fn gae_bench_v1(seed: u64, count: usize, reps: usize, workers: usize) -> Res
             workers,
         )?;
         seconds.push(start.elapsed().as_secs_f64());
+        profiles.extend(super::profile::take_v1());
         if after
             .as_ref()
             .is_some_and(|hash| hash != &result.after_state_sha256)
@@ -764,7 +771,7 @@ pub fn gae_bench_v1(seed: u64, count: usize, reps: usize, workers: usize) -> Res
         }
         after = Some(result.after_state_sha256);
     }
-    Ok(json!({
+    let mut receipt = json!({
         "schema": "s-gae-bench-v1",
         "scope": "synthetic learner diagnostic, not end-to-end training qualification",
         "seed": seed,
@@ -776,7 +783,11 @@ pub fn gae_bench_v1(seed: u64, count: usize, reps: usize, workers: usize) -> Res
         "after_state_sha256": after,
         "os": std::env::consts::OS,
         "avx2": cfg!(target_arch = "x86_64") && avx2_v1(),
-    }))
+    });
+    if !profiles.is_empty() {
+        receipt["profile"] = Value::Array(profiles);
+    }
+    Ok(receipt)
 }
 
 fn run_steps_v1(

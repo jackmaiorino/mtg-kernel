@@ -18,7 +18,12 @@ use crate::{
 };
 use std::sync::Arc;
 type Error = HumanDecisionErrorV1;
-macro_rules! record { ($name:ident { $($field:ident:$ty:ty),* $(,)? })=>{#[derive(Debug,Clone,PartialEq,Eq,Serialize)] pub struct $name { $(pub $field:$ty),* }}; }
+macro_rules! record {
+    ($name:ident { $($(#[$meta:meta])* $field:ident:$ty:ty),* $(,)? }) => {
+        #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+        pub struct $name { $($(#[$meta])* pub $field:$ty),* }
+    };
+}
 record!(HumanVisibleStateKaitoV75 {
     common: super::elenda_v52::HumanVisibleStateElendaV52,
     prepared: super::prepared_v57::HumanPreparedFactsV57,
@@ -32,7 +37,59 @@ record!(HumanVisibleStateKaitoV75 {
     tinybones: super::tinybones_v72::HumanTinybonesFactsV72,
     liliana: HumanLilianaFactsV73,
     chandra: HumanChandraFactsV74,
-    kaito: HumanKaitoFactsV75
+    kaito: HumanKaitoFactsV75,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artist: Option<HumanArtistFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chosen_type: Option<super::chosen_type_v1::HumanChosenTypeFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    niv: Option<HumanNivFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    drakuseth: Option<super::drakuseth_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    embercleave: Option<super::embercleave_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    zimone: Option<super::zimone_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    omniscience: Option<super::omniscience_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tutelage: Option<super::tutelage_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    moon: Option<super::moon_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    leyline_axe: Option<super::leyline_axe_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    progenitus: Option<super::progenitus_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aberration: Option<super::aberration_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lathril: Option<super::lathril_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    electroduplicate: Option<super::electroduplicate_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    edict: Option<super::edict_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    loot: Option<super::loot_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    curator: Option<super::curator_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kykar: Option<super::kykar_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sphinx_lore: Option<super::sphinx_lore_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    greatwurm: Option<super::greatwurm_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    harvester: Option<super::harvester_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fiend_artisan: Option<super::fiend_artisan_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    etali: Option<super::etali_primal_storm_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thousand_year_storm: Option<super::thousand_year_storm_consumer_v1::HumanFactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trigger_programs: Option<crate::limited_full_pool_consumer_v1::trigger_programs::FactsV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scrawling_crawler: Option<crate::scrawling_crawler_public_v1::FactsV1>
 });
 record!(HumanDecisionKaitoV75 {
     schema: String, human_seat: PlayerSeatV1, prompt_seq: u64,
@@ -56,14 +113,471 @@ record!(HumanKaitoCandidateV75 {
     compatibility_terminals: Vec<crate::time_stop_public_v68::CompatibilityTerminalV68>,
     genesis_waves: Vec<HumanWaveContextV71>,
     vivien_choices:Vec<crate::vivien_public_v70::ChoiceContextV70>,
-    vivien_activation:Option<HumanLoyaltyCostV71>
+    vivien_activation:Option<HumanLoyaltyCostV71>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    artist_payment: Option<crate::artist_consumer_v1::PaymentActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chosen_type_answer: Option<crate::chosen_type_consumer_v1::AnswerV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    drakuseth_target: Option<crate::drakuseth_consumer_v1::TargetActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    embercleave_action: Option<crate::embercleave_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    zimone_action: Option<crate::zimone_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    omniscience_action: Option<crate::omniscience_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tutelage_action: Option<crate::tutelage_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    moon_action: Option<crate::moon_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    leyline_axe_action: Option<crate::leyline_axe_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    progenitus_action: Option<crate::progenitus_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aberration_action: Option<crate::aberration_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lathril_action: Option<crate::lathril_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    electroduplicate_action: Option<crate::electroduplicate_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    edict_action: Option<crate::edict_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    loot_action: Option<crate::loot_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    curator_action: Option<crate::curator_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kykar_action: Option<crate::kykar_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sphinx_lore_action: Option<crate::sphinx_lore_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    greatwurm_action: Option<crate::greatwurm_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    harvester_action: Option<crate::harvester_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fiend_artisan_action: Option<crate::fiend_artisan_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    etali_action: Option<crate::etali_primal_storm_consumer_v1::ActionV1>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thousand_year_storm_action: Option<crate::thousand_year_storm_consumer_v1::ActionV1>
 });
+record!(HumanArtistFactsV1 {
+    meaning: crate::rules_meaning_artist_v64::MeaningV64,
+    authorized_printings: Vec<HumanCardRefV1>,
+    casts: Vec<HumanArtistCastV1>,
+    triggers: Vec<HumanArtistTriggerV1>
+});
+record!(HumanArtistCastV1 {
+    position: u32,
+    source: HumanCardRefV1,
+    original_controller: PlayerSeatV1,
+    is_uncast_copy: bool,
+    payment_pending: bool,
+    genuine_cast_finalized: bool,
+    current_form: crate::optional_trigger_public_v1::FormV1
+});
+record!(HumanArtistTriggerV1 {
+    stage: crate::artist_public_v64::StageV64,
+    position: u32,
+    source: HumanCallRootV62,
+    affected_opponent: PlayerSeatV1,
+    captured_controller_attacked_this_turn: bool,
+    payment: Option<HumanArtistPaymentV1>
+});
+record!(HumanArtistPaymentV1 {
+    kind: crate::artist_public_v64::PaymentKindV64,
+    status: crate::artist_public_v64::PaymentStatusV64,
+    payer: PlayerSeatV1,
+    is_target: bool,
+    may_decline: bool,
+    candidates: Option<Vec<HumanCardRefV1>>,
+    selected: Option<Vec<HumanCardRefV1>>
+});
+record!(HumanNivFactsV1 {
+    meaning: crate::rules_meaning_niv_mizzet_v63::MeaningV63,
+    authorized: Vec<HumanCardRefV1>,
+    current: Vec<HumanNivCurrentV1>,
+    casts: Vec<HumanNivCastV1>,
+    damage_draws: Vec<HumanNivDrawV1>,
+    results: Vec<crate::niv_mizzet_public_v63::DrawResultV1>,
+    no_maximum_hand_size: [bool; 2]
+});
+record!(HumanNivCurrentV1 {
+    card: HumanCardRefV1,
+    is_token: bool,
+    tapped: bool,
+    summoning_sick: bool,
+    marked_damage: u32,
+    form: crate::optional_trigger_public_v1::FormV1
+});
+record!(HumanNivCastV1 {
+    position: u32,
+    source: HumanCardRefV1,
+    original_controller: PlayerSeatV1,
+    is_uncast_copy: bool,
+    payment_pending: bool,
+    genuine_cast_finalized: bool
+});
+record!(HumanNivDrawV1 {
+    occurrence: u32,
+    observer: HumanCallRootV62,
+    damage_source: HumanTinybonesRelationV72,
+    damage_source_controller_basis: crate::niv_mizzet_public_v63::ControllerBasisV63,
+    current_original_damage_source: Option<HumanCardRefV1>,
+    recipient: PlayerSeatV1,
+    committed_damage: i32,
+    commanded_draw_count: i32,
+    stage: crate::niv_mizzet_public_v63::StageV63,
+    native_position: Option<u32>
+});
+
+fn niv_facts(
+    value: &crate::niv_mizzet_public_v63::ConsumerFactsV1,
+    handles: &mut Handles,
+    roles: &mut Incarnations,
+) -> Result<HumanNivFactsV1, Error> {
+    let appendix = &value.appendix;
+    Ok(HumanNivFactsV1 {
+        meaning: appendix.meaning.clone(),
+        authorized: appendix
+            .authorized
+            .iter()
+            .map(|r| href(r, handles))
+            .collect::<Result<_, _>>()?,
+        current: appendix
+            .current
+            .iter()
+            .map(|row| {
+                Ok(HumanNivCurrentV1 {
+                    card: href(&row.card, handles)?,
+                    is_token: row.is_token,
+                    tapped: row.tapped,
+                    summoning_sick: row.summoning_sick,
+                    marked_damage: row.marked_damage,
+                    form: row.form.clone(),
+                })
+            })
+            .collect::<Result<_, Error>>()?,
+        casts: appendix
+            .casts
+            .iter()
+            .map(|row| {
+                Ok(HumanNivCastV1 {
+                    position: row.position,
+                    source: href(&row.source, handles)?,
+                    original_controller: row.original_controller,
+                    is_uncast_copy: row.is_uncast_copy,
+                    payment_pending: row.payment_pending,
+                    genuine_cast_finalized: row.genuine_cast_finalized,
+                })
+            })
+            .collect::<Result<_, Error>>()?,
+        damage_draws: appendix
+            .damage_draws
+            .iter()
+            .map(|row| {
+                let damage = &row.damage_source;
+                Ok(HumanNivDrawV1 {
+                    occurrence: row.occurrence,
+                    observer: root(&row.observer, handles)?,
+                    damage_source: roles.relation(
+                        &crate::tinybones_public_v72::IncarnationV72 {
+                            object: damage.object,
+                            generation: damage.generation,
+                            owner: damage.owner,
+                            controller: damage.damage_controller,
+                            zone: damage.original_zone,
+                        },
+                    )?,
+                    damage_source_controller_basis: damage.controller_basis.clone(),
+                    current_original_damage_source: damage
+                        .current_original_source
+                        .as_ref()
+                        .map(|r| href(r, handles))
+                        .transpose()?,
+                    recipient: row.recipient,
+                    committed_damage: row.committed_damage,
+                    commanded_draw_count: row.draw_count,
+                    stage: row.stage,
+                    native_position: row.native_position,
+                })
+            })
+            .collect::<Result<_, Error>>()?,
+        results: value.results.clone(),
+        no_maximum_hand_size: appendix.no_maximum_hand_size,
+    })
+}
+
+fn artist_facts(
+    value: &crate::artist_public_v64::FactsV64,
+    handles: &mut Handles,
+) -> Result<HumanArtistFactsV1, Error> {
+    let refs = |rows: &[crate::optional_trigger_public_v1::ReferenceV1], h: &mut Handles| {
+        rows.iter()
+            .map(|r| href(r, h))
+            .collect::<Result<Vec<_>, Error>>()
+    };
+    Ok(HumanArtistFactsV1 {
+        meaning: value.meaning.clone(),
+        authorized_printings: refs(&value.authorized_printings, handles)?,
+        casts: value
+            .casts
+            .iter()
+            .map(|cast| {
+                Ok(HumanArtistCastV1 {
+                    position: cast.position,
+                    source: href(&cast.source, handles)?,
+                    original_controller: cast.original_controller,
+                    is_uncast_copy: cast.is_uncast_copy,
+                    payment_pending: cast.payment_pending,
+                    genuine_cast_finalized: cast.genuine_cast_finalized,
+                    current_form: cast.current_form.clone(),
+                })
+            })
+            .collect::<Result<_, Error>>()?,
+        triggers: value
+            .triggers
+            .iter()
+            .map(|trigger| {
+                Ok(HumanArtistTriggerV1 {
+                    stage: trigger.stage,
+                    position: trigger.position,
+                    source: root(&trigger.source, handles)?,
+                    affected_opponent: trigger.affected_opponent,
+                    captured_controller_attacked_this_turn: trigger
+                        .captured_controller_attacked_this_turn,
+                    payment: trigger
+                        .payment
+                        .as_ref()
+                        .map(|payment| {
+                            Ok::<_, Error>(HumanArtistPaymentV1 {
+                                kind: payment.kind,
+                                status: payment.status,
+                                payer: payment.payer,
+                                is_target: payment.is_target,
+                                may_decline: payment.may_decline,
+                                candidates: payment
+                                    .candidates
+                                    .as_deref()
+                                    .map(|rows| refs(rows, handles))
+                                    .transpose()?,
+                                selected: payment
+                                    .selected
+                                    .as_deref()
+                                    .map(|rows| refs(rows, handles))
+                                    .transpose()?,
+                            })
+                        })
+                        .transpose()?,
+                })
+            })
+            .collect::<Result<_, Error>>()?,
+    })
+}
+
 pub(super) fn choice_label(
     obs: &observation::KaitoObservationV75,
     a: &ActionSemanticV1,
     h: &Handles,
 ) -> Result<Option<String>, Error> {
     use crate::rl::TargetRefV1;
+    if let Some(label) =
+        super::thousand_year_storm_consumer_v1::label(obs.thousand_year_storm.as_ref(), a, h)?
+    {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::etali_primal_storm_consumer_v1::label(obs.etali.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::harvester_consumer_v1::label(obs.harvester.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::greatwurm_consumer_v1::label(obs.greatwurm.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::sphinx_lore_consumer_v1::label(obs.sphinx_lore.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::fiend_artisan_consumer_v1::label(obs.fiend_artisan.as_ref(), a, h)?
+    {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::kykar_consumer_v1::label(obs.kykar.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::loot_consumer_v1::label(obs.loot.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::edict_consumer_v1::label(obs.edict.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::curator_consumer_v1::label(obs.curator.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::lathril_consumer_v1::label(obs.lathril.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::leyline_axe_consumer_v1::label(obs.leyline_axe.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::moon_consumer_v1::label(obs.moon.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::progenitus_consumer_v1::label(obs.progenitus.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::aberration_consumer_v1::label(obs.aberration.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) =
+        super::electroduplicate_consumer_v1::label(obs.electroduplicate.as_ref(), a, h)?
+    {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::tutelage_consumer_v1::label(obs.tutelage.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::omniscience_consumer_v1::label(obs.omniscience.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(label) = super::zimone_consumer_v1::label(obs.zimone.as_ref(), a, h)? {
+        return Ok(Some(label));
+    }
+    if let Some(embercleave) = crate::embercleave_consumer_v1::action(obs.embercleave.as_ref(), a)
+        .map_err(|_| Error::InvalidVisibleReference)?
+    {
+        use crate::embercleave_consumer_v1::ActionV1;
+        use crate::embercleave_public_v65::AbilityKindV65;
+        return Ok(Some(match embercleave {
+            ActionV1::CastQuote {
+                generic_due_now,
+                retained_red_pips,
+                ..
+            } => {
+                format!("Cast Embercleave (current printed quote {generic_due_now} generic, {retained_red_pips} red)")
+            }
+            ActionV1::ActivateEquip {
+                printed_generic_cost,
+            } => {
+                format!("Activate Embercleave equip {printed_generic_cost}")
+            }
+            ActionV1::AttachTarget { kind, .. } => {
+                let ActionSemanticV1::ChooseTarget {
+                    target: TargetRefV1::Object { object },
+                    ..
+                } = a
+                else {
+                    return Err(Error::InvalidVisibleReference);
+                };
+                let route = match kind {
+                    AbilityKindV65::EntryAttach => "entry attachment",
+                    AbilityKindV65::Equip => "equip",
+                };
+                format!("Choose {} for Embercleave {route}", h.name(object)?)
+            }
+        }));
+    }
+    if let Some(answer) = crate::chosen_type_consumer_v1::answer(obs.chosen_type.as_ref(), a)
+        .map_err(|_| Error::InvalidVisibleReference)?
+    {
+        let printing = crate::card_def::CARD_DEFS[usize::from(answer.printing.card_id())].name;
+        return Ok(Some(format!(
+            "{printing}: choose {}",
+            answer.creature_type.canonical_name()
+        )));
+    }
+    if let Some(answer) = crate::drakuseth_consumer_v1::target_action(obs.drakuseth.as_ref(), a)
+        .map_err(|_| Error::InvalidVisibleReference)?
+    {
+        return Ok(Some(match answer {
+            crate::drakuseth_consumer_v1::TargetActionV1::Finish { chosen_slots } => {
+                format!("Finish Drakuseth targets with {chosen_slots} original slots")
+            }
+            crate::drakuseth_consumer_v1::TargetActionV1::Choose {
+                original_slot,
+                printed_damage,
+            } => {
+                let ActionSemanticV1::ChooseTarget { target, .. } = a else {
+                    return Err(Error::InvalidVisibleReference);
+                };
+                let label = match target {
+                    TargetRefV1::Player { player } => format!("player {player:?}"),
+                    TargetRefV1::Object { object } => h.name(object)?,
+                    _ => return Err(Error::InvalidVisibleReference),
+                };
+                format!(
+                    "Drakuseth target slot {}: {printed_damage} damage to {label}",
+                    original_slot + 1
+                )
+            }
+        }));
+    }
+    if let (
+        Some(menu),
+        ActionSemanticV1::ChooseEffectOption {
+            source,
+            option_index,
+            ..
+        },
+    ) = (
+        obs.drakuseth
+            .as_ref()
+            .and_then(|f| f.pending_damage.as_ref()),
+        a,
+    ) {
+        if source.card_db_id == crate::drakuseth_consumer_v1::PRINTING_V1 {
+            let option = menu
+                .options
+                .get(usize::from(*option_index))
+                .ok_or(Error::InvalidVisibleReference)?;
+            return Ok(Some(format!(
+                "Apply {:?} to Drakuseth target slot {} ({} damage remaining)",
+                option.kind,
+                menu.active_original_slot + 1,
+                menu.remaining_amount
+            )));
+        }
+    }
+    if let Some(payment) = crate::artist_consumer_v1::payment_action(obs.artist.as_ref(), a)
+        .map_err(|_| Error::InvalidVisibleReference)?
+    {
+        use crate::artist_consumer_v1::AnswerV1;
+        use crate::artist_public_v64::PaymentKindV64;
+        let label = match (payment.kind, payment.answer, a) {
+            (
+                PaymentKindV64::SacrificeControlledNonlandPermanent,
+                AnswerV1::SelectPayment,
+                ActionSemanticV1::ChooseEffectTarget {
+                    target: TargetRefV1::Object { object },
+                    ..
+                },
+            ) => {
+                format!("Select {} to sacrifice", h.name(object)?)
+            }
+            (
+                PaymentKindV64::DiscardCard,
+                AnswerV1::SelectPayment,
+                ActionSemanticV1::ChooseEffectTarget {
+                    target: TargetRefV1::Object { object },
+                    ..
+                },
+            ) => {
+                format!("Select {} to discard", h.name(object)?)
+            }
+            (PaymentKindV64::SacrificeControlledNonlandPermanent, AnswerV1::ConfirmPayment, _) => {
+                "Confirm sacrifice".into()
+            }
+            (PaymentKindV64::DiscardCard, AnswerV1::ConfirmPayment, _) => "Confirm discard".into(),
+            (PaymentKindV64::SacrificeControlledNonlandPermanent, AnswerV1::DeclinePayment, _) => {
+                "Decline sacrifice".into()
+            }
+            (PaymentKindV64::DiscardCard, AnswerV1::DeclinePayment, _) => {
+                "Decline discard and lose 3 life".into()
+            }
+            _ => return Err(Error::InvalidVisibleReference),
+        };
+        return Ok(Some(label));
+    }
     if let Some(c) = crate::kaito_public_v75::activation_cost(&obs.kaito, a)
         .map_err(|_| Error::InvalidVisibleReference)?
     {
@@ -341,6 +855,126 @@ pub(super) fn project_with_handles(
         &mut roles,
     )?;
     let kaito = kaito_facts(&obs.kaito, &tinybones.battlefield, &mut handles, &mut roles)?;
+    let artist = obs
+        .artist
+        .as_ref()
+        .map(|v| artist_facts(v, &mut handles))
+        .transpose()?;
+    let chosen_type = obs
+        .chosen_type
+        .as_ref()
+        .map(|facts| super::chosen_type_v1::project(facts, &mut handles))
+        .transpose()?;
+    let niv = obs
+        .niv
+        .as_ref()
+        .map(|v| niv_facts(v, &mut handles, &mut roles))
+        .transpose()?;
+    let drakuseth = obs
+        .drakuseth
+        .as_ref()
+        .map(|facts| super::drakuseth_consumer_v1::capture(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let embercleave = obs
+        .embercleave
+        .as_ref()
+        .map(|facts| super::embercleave_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let zimone = obs
+        .zimone
+        .as_ref()
+        .map(|facts| super::zimone_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let omniscience = obs
+        .omniscience
+        .as_ref()
+        .map(|facts| super::omniscience_consumer_v1::project(facts, &mut handles))
+        .transpose()?;
+    let tutelage = obs
+        .tutelage
+        .as_ref()
+        .map(|facts| super::tutelage_consumer_v1::project(facts, &mut handles))
+        .transpose()?;
+    let lathril = obs
+        .lathril
+        .as_ref()
+        .map(|facts| super::lathril_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let greatwurm = obs
+        .greatwurm
+        .as_ref()
+        .map(|facts| super::greatwurm_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let sphinx_lore = obs
+        .sphinx_lore
+        .as_ref()
+        .map(|facts| super::sphinx_lore_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let kykar = obs
+        .kykar
+        .as_ref()
+        .map(|facts| super::kykar_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let loot = obs
+        .loot
+        .as_ref()
+        .map(|facts| super::loot_consumer_v1::project(facts, &mut handles))
+        .transpose()?;
+    let edict = obs
+        .edict
+        .as_ref()
+        .map(|facts| super::edict_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let leyline_axe = obs
+        .leyline_axe
+        .as_ref()
+        .map(|facts| super::leyline_axe_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let moon = obs
+        .moon
+        .as_ref()
+        .map(|facts| super::moon_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let progenitus = obs
+        .progenitus
+        .as_ref()
+        .map(|facts| super::progenitus_consumer_v1::project(facts, &mut handles))
+        .transpose()?;
+    let aberration = obs
+        .aberration
+        .as_ref()
+        .map(|facts| super::aberration_consumer_v1::project(facts, &mut handles))
+        .transpose()?;
+    let electroduplicate = obs
+        .electroduplicate
+        .as_ref()
+        .map(|facts| super::electroduplicate_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let curator = obs
+        .curator
+        .as_ref()
+        .map(|facts| super::curator_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let harvester = obs
+        .harvester
+        .as_ref()
+        .map(|facts| super::harvester_consumer_v1::project(facts, &mut handles, &mut roles))
+        .transpose()?;
+    let fiend_artisan = obs
+        .fiend_artisan
+        .as_ref()
+        .map(|facts| super::fiend_artisan_consumer_v1::project(facts, &mut handles))
+        .transpose()?;
+    let etali = obs
+        .etali
+        .as_ref()
+        .map(|facts| super::etali_primal_storm_consumer_v1::project(facts, &mut handles))
+        .transpose()?;
+    let thousand_year_storm = obs
+        .thousand_year_storm
+        .as_ref()
+        .map(|f| super::thousand_year_storm_consumer_v1::project(f, &mut handles, &mut roles))
+        .transpose()?;
     let action_meanings = indexes
         .iter()
         .map(|i| {
@@ -350,6 +984,29 @@ pub(super) fn project_with_handles(
                 .get(*i as usize)
                 .ok_or(Error::InvalidAction)?;
             Ok(HumanKaitoCandidateV75 {
+                artist_payment: r.artist_payment,
+                chosen_type_answer: r.chosen_type_answer,
+                drakuseth_target: r.drakuseth_target,
+                embercleave_action: r.embercleave_action,
+                zimone_action: r.zimone_action,
+                omniscience_action: r.omniscience_action,
+                tutelage_action: r.tutelage_action,
+                moon_action: r.moon_action,
+                leyline_axe_action: r.leyline_axe_action,
+                progenitus_action: r.progenitus_action,
+                aberration_action: r.aberration_action,
+                lathril_action: r.lathril_action,
+                electroduplicate_action: r.electroduplicate_action,
+                edict_action: r.edict_action,
+                loot_action: r.loot_action,
+                curator_action: r.curator_action,
+                kykar_action: r.kykar_action,
+                sphinx_lore_action: r.sphinx_lore_action,
+                greatwurm_action: r.greatwurm_action,
+                harvester_action: r.harvester_action,
+                fiend_artisan_action: r.fiend_artisan_action,
+                etali_action: r.etali_action,
+                thousand_year_storm_action: r.thousand_year_storm_action,
                 tinybones: super::tinybones_v72::HumanTinybonesActionV72 {
                     triggers: tinybones.triggers.clone(),
                     plays: tinybones.plays.clone(),
@@ -592,7 +1249,62 @@ pub(super) fn project_with_handles(
         .collect::<Result<_, Error>>()?;
     Ok((
         HumanDecisionKaitoV75 {
-            schema: "mtg-kernel-human-kaito-decision/v75".into(),
+            schema: if obs.schema == crate::limited_full_pool_consumer_v1::OBSERVATION_SCHEMA {
+                crate::limited_full_pool_consumer_v1::HUMAN_DECISION_SCHEMA
+            } else if obs.schema == crate::limited_mixed_consumer_v1::OBSERVATION_SCHEMA {
+                "mtg-kernel-human-mixed-fdn-decision/v1"
+            } else if chosen_type.is_some() {
+                "mtg-kernel-human-chosen-type-decision/v1"
+            } else if drakuseth.is_some() {
+                "mtg-kernel-human-drakuseth-decision/v1"
+            } else if artist.is_some() {
+                "mtg-kernel-human-artist-decision/v1"
+            } else if niv.is_some() {
+                "mtg-kernel-human-niv-decision/v1"
+            } else if embercleave.is_some() {
+                "mtg-kernel-human-embercleave-decision/v1"
+            } else if zimone.is_some() {
+                "mtg-kernel-human-zimone-decision/v1"
+            } else if omniscience.is_some() {
+                "mtg-kernel-human-omniscience-decision/v1"
+            } else if tutelage.is_some() {
+                "mtg-kernel-human-tutelage-decision/v1"
+            } else if moon.is_some() {
+                "mtg-kernel-human-moon-decision/v1"
+            } else if leyline_axe.is_some() {
+                "mtg-kernel-human-leyline-axe-decision/v1"
+            } else if progenitus.is_some() {
+                "mtg-kernel-human-progenitus-decision/v1"
+            } else if aberration.is_some() {
+                "mtg-kernel-human-aberration-decision/v1"
+            } else if lathril.is_some() {
+                "mtg-kernel-human-lathril-decision/v1"
+            } else if electroduplicate.is_some() {
+                "mtg-kernel-human-electroduplicate-decision/v1"
+            } else if thousand_year_storm.is_some() {
+                "mtg-kernel-human-thousand-year-storm-decision/v1"
+            } else if harvester.is_some() {
+                "mtg-kernel-human-harvester-decision/v1"
+            } else if etali.is_some() {
+                "mtg-kernel-human-etali-primal-storm-decision/v1"
+            } else if greatwurm.is_some() {
+                "mtg-kernel-human-greatwurm-decision/v1"
+            } else if sphinx_lore.is_some() {
+                "mtg-kernel-human-sphinx-lore-decision/v1"
+            } else if kykar.is_some() {
+                "mtg-kernel-human-kykar-decision/v1"
+            } else if loot.is_some() {
+                "mtg-kernel-human-loot-decision/v1"
+            } else if edict.is_some() {
+                "mtg-kernel-human-edict-decision/v1"
+            } else if curator.is_some() {
+                "mtg-kernel-human-curator-decision/v1"
+            } else if fiend_artisan.is_some() {
+                "mtg-kernel-human-fiend-artisan-decision/v1"
+            } else {
+                "mtg-kernel-human-kaito-decision/v75"
+            }
+            .into(),
             human_seat: human,
             prompt_seq,
             state: HumanVisibleStateKaitoV75 {
@@ -609,6 +1321,32 @@ pub(super) fn project_with_handles(
                 liliana,
                 chandra,
                 kaito,
+                artist,
+                chosen_type,
+                niv,
+                drakuseth,
+                embercleave,
+                zimone,
+                omniscience,
+                tutelage,
+                moon,
+                leyline_axe,
+                progenitus,
+                aberration,
+                lathril,
+                electroduplicate,
+                edict,
+                loot,
+                curator,
+                kykar,
+                sphinx_lore,
+                greatwurm,
+                harvester,
+                fiend_artisan,
+                etali,
+                thousand_year_storm,
+                trigger_programs: obs.trigger_programs.clone(),
+                scrawling_crawler: obs.scrawling_crawler.clone(),
             },
             actions,
             action_meanings,

@@ -75,6 +75,9 @@ mod future_printed {
                 state.players[actor.index()].mana_pool[crate::mana::ManaColor::C.pool_index()] = 3;
                 engine::step(&mut state, Action::CastSpell(banner)).unwrap();
                 assert_eq!(reach_color(&mut state), actor);
+                if index == 0 {
+                    crate::drake_hatcher_v1::custody::compare_owned_pending_replay_for_test(&state);
+                }
                 assert_eq!(state.objects.get(banner).zone, Zone::Stack);
                 let bytes = serde_json::to_vec(&state).unwrap();
                 let mut restored: GameState = serde_json::from_slice(&bytes).unwrap();

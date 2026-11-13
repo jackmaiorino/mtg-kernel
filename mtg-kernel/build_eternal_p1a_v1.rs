@@ -417,7 +417,7 @@ pub(super) fn mode2_for(name: &str) -> &'static str {
     match name {
         "Funeral Charm" => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: crate::eternal_premodern_p1a_v1::funeral_charm_pump })",
         "Vision Charm" => "Some(ModeDef { target_spec: TargetSpec::None, effect: crate::eternal_premodern_p1a_v1::vision_charm_lands })",
-        _ => "None",
+        _ => super::build_eternal_s1m_v1::mode2_for(name),
     }
 }
 
@@ -427,7 +427,7 @@ pub(super) fn mode3_for(name: &str) -> &'static str {
     match name {
         "Funeral Charm" => "Some(ModeDef { target_spec: TargetSpec::Creature, effect: crate::eternal_premodern_p1a_v1::funeral_charm_swampwalk })",
         "Vision Charm" => "Some(ModeDef { target_spec: TargetSpec::ArtifactPermanent, effect: crate::eternal_premodern_p1a_v1::vision_charm_phase })",
-        _ => "None",
+        _ => super::build_eternal_s1m_v1::mode3_for(name),
     }
 }
 

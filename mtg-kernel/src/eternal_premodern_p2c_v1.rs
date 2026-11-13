@@ -157,6 +157,8 @@ pub enum P2cOpV1 {
     ReturnSourceV1,
     /// Phantom Nishoba: gain `amount` life.
     NishobaLifeV1 { amount: i32 },
+    /// Carries the native host and donated text capture across collection and stack.
+    DonatedTriggerV1 { capture: u64 },
 }
 
 impl P2cOpV1 {
@@ -314,7 +316,7 @@ const fn trigger(condition: TriggerCondition, effect: fn() -> EffectOp) -> Trigg
 }
 
 /// Palinchron: "When this creature enters, untap up to seven lands."
-fn palinchron_enters() -> EffectOp {
+pub(crate) fn palinchron_enters() -> EffectOp {
     EffectOp::UntapUpToLands {
         chooser: PlayerRef::Controller,
         max_targets: 7,
@@ -342,7 +344,7 @@ fn force_upkeep() -> EffectOp {
 
 /// Karmic Guide: "When this creature enters, return target creature card
 /// from your graveyard to the battlefield."
-fn guide_enters() -> EffectOp {
+pub(crate) fn guide_enters() -> EffectOp {
     EffectOp::MoveObject {
         object: ObjectRef::Target(0),
         to_zone: Zone::Battlefield,
@@ -362,7 +364,7 @@ fn petradon_leaves() -> EffectOp {
 
 /// Phyrexian Devourer's state trigger: "When this creature's power is 7 or
 /// greater, sacrifice it."
-fn devourer_sacrifice() -> EffectOp {
+pub(crate) fn devourer_sacrifice() -> EffectOp {
     p2c(P2cOpV1::SacrificeSourceV1)
 }
 
@@ -538,7 +540,7 @@ pub(crate) fn execute(op: &P2cOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         // Choices run in `drive`.
-        P2cOpV1::ExhumeV1 => halt(state, ctx.source),
+        P2cOpV1::ExhumeV1 | P2cOpV1::DonatedTriggerV1 { .. } => halt(state, ctx.source),
     }
 }
 
@@ -870,11 +872,15 @@ fn note_devourer_power(state: &mut GameState) {
     let candidates = [PlayerId::P0, PlayerId::P1]
         .into_iter()
         .flat_map(|player| state.players[player.index()].battlefield.iter().copied())
-        .filter(|&object| {
+        .filter_map(|object| {
             let live = state.objects.get(object);
-            live.zone == Zone::Battlefield
+            let ordinary = live.zone == Zone::Battlefield
                 && live.card_def == devourer
-                && crate::eternal_legacy_e9a_v1::active_named(state, object, PHYREXIAN_DEVOURER)
+                && crate::eternal_legacy_e9a_v1::active_named(state, object, PHYREXIAN_DEVOURER);
+            let donated = crate::full_text_v1::active_definition(state, object)
+                .is_some_and(|def| def.name == PHYREXIAN_DEVOURER)
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, object);
+            (ordinary || donated).then_some((object, donated))
         })
         .collect::<Vec<_>>();
     if candidates.is_empty()
@@ -882,9 +888,9 @@ fn note_devourer_power(state: &mut GameState) {
     {
         return;
     }
-    for object in candidates {
+    for (object, donated) in candidates {
         let link = live_link(state, object);
-        let big = crate::engine::effective_power(state, object) >= 7;
+        let power = crate::engine::effective_power(state, object);
         let known = read_state(state).is_some_and(|p2c| p2c.devourer_triggered.contains(&link));
         let outstanding = known && devourer_trigger_outstanding(state, object);
         if known && !outstanding {
@@ -894,11 +900,18 @@ fn note_devourer_power(state: &mut GameState) {
                 .devourer_triggered
                 .retain(|entry| *entry != link);
         }
-        if big && !outstanding {
+        if power >= 7 && !outstanding {
+            if donated {
+                if crate::full_text_v1::queue_devourer_trigger(state, object, power).is_err() {
+                    halt(state, object);
+                    return;
+                }
+            } else {
+                let controller = state.objects.get(object).controller;
+                let contract = AbilitySourceContractV4::capture(state, object);
+                queue_trigger(state, contract, controller, devourer_sacrifice(), None);
+            }
             p2c_state(state).devourer_triggered.push(link);
-            let controller = state.objects.get(object).controller;
-            let contract = AbilitySourceContractV4::capture(state, object);
-            queue_trigger(state, contract, controller, devourer_sacrifice(), None);
         }
     }
     // Forget incarnations that left the battlefield.
@@ -917,21 +930,24 @@ fn note_devourer_power(state: &mut GameState) {
 /// queued, waiting to be put on the stack, or on the stack.
 fn devourer_trigger_outstanding(state: &GameState, object: ObjectId) -> bool {
     let effect = devourer_sacrifice();
+    let matches = |candidate: &EffectOp| {
+        *candidate == effect || crate::full_text_v1::is_devourer_trigger(state, object, candidate)
+    };
     state.stack.iter().any(|item| {
         item.kind == crate::state::StackItemKind::TriggeredAbility
             && item.source == object
-            && item.inline_effect.as_ref() == Some(&effect)
+            && item.inline_effect.as_ref().is_some_and(matches)
     }) || state
         .engine
         .pending_triggers
         .iter()
-        .any(|pending| pending.source == object && pending.effect == effect)
+        .any(|pending| pending.source == object && matches(&pending.effect))
         || state.eternal_v1.as_ref().is_some_and(|eternal| {
             eternal
                 .p1a
                 .queued_triggers
                 .iter()
-                .any(|queued| queued.source.source == object && queued.effect == effect)
+                .any(|queued| queued.source.source == object && matches(&queued.effect))
         })
 }
 

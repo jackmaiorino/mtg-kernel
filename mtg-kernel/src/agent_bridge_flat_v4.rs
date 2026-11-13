@@ -239,13 +239,20 @@ impl FlatV4LockstepV1 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rl::{PlayerSeatV1, TargetRefV1};
+    use crate::rl::{PlayerSeatV1, TargetRefV1, TerminalClassificationV1};
     use crate::rl_session::RlSessionResponseV1;
     use crate::state::{SplitMix64, Zone};
 
     const DECKS: [&str; 8] = [
         "Wildfire", "Rally", "Affinity", "Elves", "Spy", "Burn", "CawGates", "Faeries",
     ];
+
+    /// In the pure Foundations build, Black Mage's Rod's damage trigger keeps
+    /// its equipment source facts and resolves through Crystal prevention.
+    /// The raw session's legacy observation cannot show them, so it halts the
+    /// game at the next decision (#653).
+    const FOUNDATIONS_CRYSTAL_OBSERVATION_HALT: &str =
+        "fail_closed:observation:Crystal requires its selected public/Human successor";
 
     fn card(arena_id: u32, zone: Zone, zone_change_count: u32) -> CardStableRefV1 {
         CardStableRefV1 {
@@ -324,8 +331,41 @@ mod tests {
                     FlatV4LockstepV1::reset(episode_id, seed, 2_000, 200_000, decks).unwrap();
                 let mut rng = SplitMix64::seed(seed ^ 0x5EED);
                 let mut steps = 0_u64;
+                let mut observation_halt = false;
                 loop {
                     let response = raw.current_response();
+                    if let RlSessionResponseV1::Terminal(terminal) = &response {
+                        if terminal.terminal_classification == TerminalClassificationV1::Halted
+                            && terminal
+                                .terminal_reason
+                                .starts_with("fail_closed:observation:")
+                        {
+                            // The bridge ends the game here with the raw
+                            // reason and neither steps nor checks the copy,
+                            // which has no counterpart for an observation
+                            // halt (`agent_bridge_v1::flat_v4_extension_v1`).
+                            assert!(
+                                cfg!(all(
+                                    feature = "limited-fdn-fixtures",
+                                    not(feature = "standard-magezero-fixtures")
+                                )) && terminal.terminal_reason
+                                    == FOUNDATIONS_CRYSTAL_OBSERVATION_HALT,
+                                "{deck} seed {seed}: {}",
+                                terminal.terminal_reason
+                            );
+                            // The copy has still reached the same game.
+                            let fast = lockstep.fast_session();
+                            assert!(
+                                raw.game_state() == fast.game_state()
+                                    && raw.policy_step_count() == fast.policy_step_count()
+                                    && raw.physical_decision_count()
+                                        == fast.physical_decision_count(),
+                                "{deck} seed {seed}: the copy left the raw game before its halt"
+                            );
+                            observation_halt = true;
+                            break;
+                        }
+                    }
                     lockstep.verify(&raw, &response).unwrap();
                     let RlSessionResponseV1::Decision(decision) = response else {
                         break;
@@ -338,7 +378,10 @@ mod tests {
                     lockstep.mirror_step(&rows, decision.step, pick).unwrap();
                     steps += 1;
                 }
-                assert!(steps > 20, "{deck} seed {seed}: only {steps} steps");
+                assert!(
+                    observation_halt || steps > 20,
+                    "{deck} seed {seed}: only {steps} steps"
+                );
             }
         }
     }

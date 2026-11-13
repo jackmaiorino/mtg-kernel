@@ -86,6 +86,109 @@ fn paid(state: &mut GameState, actor: PlayerId, name: &str) -> ObjectId {
     assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
     source
 }
+
+#[test]
+fn full_pool_archives_paid_banner_entry_and_season_after_both_bounce() {
+    use crate::{
+        current_mixed_policy_v1::KaitoSession,
+        limited_match_v1::LimitedBeliefV1,
+        policy_surface_v5::LimitedAppendixV1,
+        rl_session::{FastActorResponseV1, FastActorSessionV1},
+    };
+
+    let card = |name| crate::card_def::card_id_by_name(name).unwrap();
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let viewer = actor.opponent();
+        let mut state = ready(actor);
+        FastActorSessionV1::enable_limited_native_modes_v1(&mut state, LimitedAppendixV1::FullPool);
+        state.reveal_knowledge_v4 = Some(Default::default());
+        for _ in 0..3 {
+            put(&mut state, actor, "Plains", Zone::Battlefield);
+            put(&mut state, actor, "Forest", Zone::Hand);
+        }
+        paid(&mut state, actor, "Llanowar Elves");
+        let season = paid(&mut state, actor, "Doubling Season");
+        let banner = announce(&mut state, actor, "Banner of Kinship");
+        reach_type(&mut state, actor);
+        choose(&mut state, CreatureTypeV60::Elf);
+        assert_eq!(state.objects.get(banner).counters.fellowship, 2);
+        for target in [banner, season] {
+            let pup = announce(&mut state, actor, "Mischievous Pup");
+            let mut answered = false;
+            for _ in 0..16 {
+                let decision = engine::advance_until_decision(&mut state);
+                if let Decision::ChooseTargets {
+                    spell,
+                    legal_targets,
+                    ..
+                } = &decision
+                {
+                    assert_eq!(*spell, pup);
+                    assert!(legal_targets.contains(&Target::Object(target)));
+                    engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+                    answered = true;
+                    break;
+                }
+                quiet(&mut state, decision);
+            }
+            assert!(answered);
+            settle(&mut state);
+            assert_eq!(state.objects.get(target).zone, Zone::Hand);
+        }
+        priority(&mut state, viewer);
+        let session = FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
+            state,
+            LimitedAppendixV1::FullPool,
+        );
+        let owner = KaitoSession::from_session(session).unwrap();
+        let FastActorResponseV1::Decision(expected) = owner.current_response() else {
+            panic!("missing original priority after both public returns");
+        };
+        assert_eq!(expected.acting_player, viewer.into());
+        let decision = owner.encode(expected).unwrap();
+        let before = decision
+            .fixture_backend_v75()
+            .observation()
+            .chosen_type
+            .as_ref()
+            .unwrap();
+        let entry = before
+            .native
+            .completed_entries
+            .iter()
+            .find(|entry| entry.source.original_source.object == banner.0)
+            .unwrap();
+        assert_eq!(
+            entry.fellowship.as_ref().unwrap().captured_seasons[0]
+                .original_source
+                .object,
+            season.0
+        );
+        let mut deck = vec![card("Forest"); 80];
+        deck.extend([card("Plains"); 3]);
+        deck.extend([
+            card("Llanowar Elves"),
+            card("Mischievous Pup"),
+            card("Mischievous Pup"),
+            card("Banner of Kinship"),
+            card("Doubling Season"),
+        ]);
+        let belief = LimitedBeliefV1::new([deck]);
+        let mut detached = [false; 2];
+        for seed in 552_601..552_609 {
+            let world = owner
+                .sampled_full_pool_closed_list_v1(&decision, seed, &belief)
+                .unwrap();
+            assert_eq!(world.encode(expected).unwrap().packet(), decision.packet());
+            for (index, source) in [banner, season].into_iter().enumerate() {
+                detached[index] |= world.fixture_state().objects.get(source).card_def
+                    != owner.fixture_state().objects.get(source).card_def;
+            }
+        }
+        assert_eq!(detached, [true, true]);
+    }
+}
+
 fn reach_type(state: &mut GameState, actor: PlayerId) {
     for _ in 0..32 {
         let decision = engine::advance_until_decision(state);

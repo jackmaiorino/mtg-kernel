@@ -431,9 +431,14 @@ pub fn can_pay_spell(
         false,
         false,
     );
-    let mut plan = solve(cost, x_value, pool, &sources).filter(|plan| {
-        life_payment_affordable(plan.life_paid, state.players[player.index()].life)
-    })?;
+    let mut plan = solve_with_policy(
+        cost,
+        x_value,
+        pool,
+        &sources,
+        PipManaPolicyV72::for_state(state),
+    )
+    .filter(|plan| life_payment_affordable(plan.life_paid, state.players[player.index()].life))?;
     separate_restricted_spending(
         &mut plan,
         state,
@@ -475,15 +480,20 @@ pub(crate) fn can_pay_owned_from_sources(
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
     let mut used = vec![false; sources.len()];
-    if !solve_pips(pips, 0, sources, &mut used, &mut pool_remaining, &mut plan)
-        || !pay_generic(
-            u32::from(generic),
-            sources,
-            &mut used,
-            &mut pool_remaining,
-            &mut plan,
-        )
-    {
+    if !solve_pips(
+        pips,
+        sources,
+        &mut used,
+        &mut pool_remaining,
+        &mut plan,
+        PipManaPolicyV72::for_state(state),
+    ) || !pay_generic(
+        u32::from(generic),
+        sources,
+        &mut used,
+        &mut pool_remaining,
+        &mut plan,
+    ) {
         return None;
     }
     separate_restricted_spending(
@@ -706,7 +716,7 @@ pub(crate) fn plan_spell_mana_total_with_restrictions_with_grant_v72(
         mana_life_budget,
         Some(generic),
         None,
-        PipManaPolicyV72::from_grant(grant),
+        PipManaPolicyV72::for_spell(state, grant),
     ) {
         return None;
     }
@@ -950,7 +960,7 @@ pub(crate) fn plan_spell_mana_total_with_convoke_subtypes_with_grant_v72(
         (life - i64::from(additional_life)).max(0),
         Some(generic),
         Some(&source_choices),
-        PipManaPolicyV72::from_grant(grant),
+        PipManaPolicyV72::for_spell(state, grant),
     ) {
         return None;
     }
@@ -1159,7 +1169,8 @@ fn gather_sources_for_spell_restrictions_v1(
         {
             continue;
         }
-        let def = &crate::card_def::CARD_DEFS[obj.card_def as usize];
+        let def = crate::full_text_v1::mana_definition(state, id)
+            .expect("battlefield mana source has a catalog definition");
         // `produces_mana` also covers one-shot production such as
         // Burning-Tree Emissary's ETB trigger. The generated
         // primary mana-choice contract is the narrower repeatable tap-source
@@ -1255,6 +1266,17 @@ fn gather_sources_for_spell_restrictions_v1(
             });
         }
     }
+    // Damping Sphere: a land tapped for two or more mana produces one {C}
+    // instead (Legacy wave S1g). The planner's sources that yield more than
+    // one are an assembled Urza land, Serra's Sanctum, Tolarian Academy and
+    // Eldrazi Temple paying for a colorless Eldrazi spell.
+    #[cfg(feature = "eternal-fixtures")]
+    for source in &mut sources {
+        if source.yield_per_tap >= 2 && crate::eternal_sideboard_s1g_v1::damps(state, source.id) {
+            source.choices = vec![ManaColor::C];
+            source.yield_per_tap = 1;
+        }
+    }
     // Contamination: a land tapped for mana produces one {B} instead
     // (Premodern wave P2a).
     #[cfg(feature = "eternal-fixtures")]
@@ -1281,11 +1303,12 @@ pub fn can_pay_excluding_sources(
         .into_iter()
         .filter(|source| !excluded.contains(&source.id))
         .collect::<Vec<_>>();
-    let mut plan = solve(
+    let mut plan = solve_with_policy(
         cost,
         x_value,
         spell_floating_pool(state, player, false, false, &[], false, false, false, false),
         &sources,
+        PipManaPolicyV72::for_state(state),
     )
     .filter(|plan| life_payment_affordable(plan.life_paid, state.players[player.index()].life))?;
     separate_restricted_spending(
@@ -1328,17 +1351,28 @@ pub fn solve(
     pool: [u8; 6],
     sources: &[ManaSource],
 ) -> Option<PaymentPlan> {
+    solve_with_policy(cost, x_value, pool, sources, PipManaPolicyV72::Ordinary)
+}
+
+/// `solve` with the spending permission `policy` grants the pips.
+fn solve_with_policy(
+    cost: &Cost,
+    x_value: u8,
+    pool: [u8; 6],
+    sources: &[ManaSource],
+    policy: PipManaPolicyV72,
+) -> Option<PaymentPlan> {
     let mut plan = PaymentPlan::default();
     let mut pool_remaining = pool;
     let mut used = vec![false; sources.len()];
 
     if !solve_pips(
         cost.pips,
-        0,
         sources,
         &mut used,
         &mut pool_remaining,
         &mut plan,
+        policy,
     ) {
         return None;
     }
@@ -1357,17 +1391,19 @@ pub fn solve(
     Some(plan)
 }
 
+/// Pays every pip of `pips`, with no life limit and no generic total, under
+/// the spending permission `policy`.
 fn solve_pips(
     pips: &[Pip],
-    idx: usize,
     sources: &[ManaSource],
     used: &mut [bool],
     pool_remaining: &mut [u8; 6],
     plan: &mut PaymentPlan,
+    policy: PipManaPolicyV72,
 ) -> bool {
-    solve_pips_with_life_budget_v1(
+    solve_pips_with_mana_policy_v72(
         pips,
-        idx,
+        0,
         sources,
         used,
         pool_remaining,
@@ -1375,11 +1411,13 @@ fn solve_pips(
         i64::MAX,
         None,
         None,
+        policy,
     )
 }
 
 /// A selected spell's remaining life budget participates in pip backtracking,
 /// so rejecting a Phyrexian life branch can still find a legal mana allocation.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn solve_pips_with_life_budget_v1(
     pips: &[Pip],
@@ -1410,13 +1448,32 @@ fn solve_pips_with_life_budget_v1(
 enum PipManaPolicyV72 {
     Ordinary,
     AnyType,
+    /// Mana may be spent as though it were mana of any color, so any mana
+    /// pays a colored, hybrid or Phyrexian symbol; a {C} symbol still asks
+    /// for colorless mana (Mycosynth Lattice, eternal wave S1f).
+    AnyColor,
 }
 impl PipManaPolicyV72 {
-    fn from_grant(grant: Option<&crate::engine::tinybones_v72::ManaGrantV72>) -> Self {
+    /// The permission every payment has in `state`: a Mycosynth Lattice
+    /// lets players spend mana as though it were mana of any color.
+    fn for_state(state: &GameState) -> Self {
+        if crate::eternal_sideboard_s1f_v1::any_color_spending(state) {
+            Self::AnyColor
+        } else {
+            Self::Ordinary
+        }
+    }
+
+    /// A spell's permission: Tinybones's grant spends mana as though it were
+    /// mana of any type, which includes any color.
+    fn for_spell(
+        state: &GameState,
+        grant: Option<&crate::engine::tinybones_v72::ManaGrantV72>,
+    ) -> Self {
         if grant.is_some() {
             Self::AnyType
         } else {
-            Self::Ordinary
+            Self::for_state(state)
         }
     }
 }
@@ -1485,10 +1542,12 @@ fn solve_pips_with_mana_policy_v72(
         Pip::PhyrexianAnyColor(_) => GENERIC_POOL_PAYMENT_ORDER.to_vec(),
     };
 
-    let mana_colors = if policy == PipManaPolicyV72::AnyType {
-        &GENERIC_POOL_PAYMENT_ORDER[..]
-    } else {
-        &candidate_colors[..]
+    let mana_colors = match policy {
+        PipManaPolicyV72::AnyType => &GENERIC_POOL_PAYMENT_ORDER[..],
+        PipManaPolicyV72::AnyColor if *pip != Pip::Colored(ManaColor::C) => {
+            &GENERIC_POOL_PAYMENT_ORDER[..]
+        }
+        PipManaPolicyV72::Ordinary | PipManaPolicyV72::AnyColor => &candidate_colors[..],
     };
 
     // Prefer floating mana, but backtrack if Phyrexian life payment must
@@ -1815,7 +1874,7 @@ pub(crate) fn plan_activation_mana_v1(
             }
         }
     }
-    let mut plan = solve(
+    let mut plan = solve_with_policy(
         cost,
         x,
         spell_floating_pool(
@@ -1830,6 +1889,7 @@ pub(crate) fn plan_activation_mana_v1(
             false,
         ),
         &sources,
+        PipManaPolicyV72::for_state(&projected),
     )
     .filter(|p| life_payment_affordable(p.life_paid, projected.players[player.index()].life))?;
     separate_restricted_spending(

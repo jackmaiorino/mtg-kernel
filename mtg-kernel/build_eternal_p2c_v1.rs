@@ -54,6 +54,14 @@ const fn program(path: &'static str) -> AbilityEffectRecipe {
     AbilityEffectRecipe::StandardProgram(path)
 }
 
+/// Volrath's Shapeshifter retains this ability with or without a text donor.
+const VOLRATH: [ActivatedAbilityRecipe; 1] = [ability(
+    &[ManaCost("{2}")],
+    program("crate::full_text_v1::retained_discard"),
+    "Battlefield",
+    "None",
+)];
+
 /// Avatar of Woe: "{T}: Destroy target creature. It can't be regenerated."
 const AVATAR_OF_WOE: [ActivatedAbilityRecipe; 1] = [ability(
     &[AbilityCostRecipe::Tap],
@@ -127,6 +135,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Palinchron" => &PALINCHRON,
         "Triskelion" => &TRISKELION,
         "Unearth" => &UNEARTH,
+        "Volrath's Shapeshifter" => &VOLRATH,
         _ => super::build_eternal_v1::activated_ability_recipes_for(name),
     }
 }
@@ -213,6 +222,9 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         }
         "Putrid Imp" => "activated:discard:flying_until_end_of_turn;threshold:plus_1_1_cant_block",
         "Reflecting Pool" => "mana:any_type_another_land_could_produce",
+        "Volrath's Shapeshifter" => {
+            "layer3:top_creature_card_of_controller_graveyard_full_text;activated:2:discard"
+        }
         "Undiscovered Paradise" => "mana:any_color;return_to_hand_next_untap_step",
         "Triskelion" => {
             "enters_with_3_plus_one_counters;activated:remove_counter:damage_1_any_target"

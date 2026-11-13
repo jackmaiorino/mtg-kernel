@@ -11,6 +11,8 @@ mod attack_trigger_printing;
 mod counter_return_creature_printing;
 #[path = "discard_cost_spell_printing.rs"]
 mod discard_cost_spell_printing;
+#[path = "full_pool_burn_draw_printing.rs"]
+mod full_pool_burn_draw_printing;
 #[path = "utility_activation_printing.rs"]
 mod utility_activation_printing;
 #[path = "ward_discount_creature_printing.rs"]
@@ -32,6 +34,8 @@ pub(super) mod divine_printing;
 pub(super) mod early_activation_printing;
 #[path = "eaten_printing.rs"]
 pub(super) mod eaten_printing;
+#[path = "elf_lord_printing.rs"]
+pub(super) mod elf_lord_printing;
 #[path = "enchantment_hunter_printing.rs"]
 pub(super) mod enchantment_hunter_printing;
 #[path = "entry_branch_printing.rs"]
@@ -46,6 +50,10 @@ mod evolving_printing;
 pub(super) mod faebloom_printing;
 #[path = "fiery_printing.rs"]
 pub(super) mod fiery_printing;
+#[path = "full_pool_life_printing.rs"]
+mod full_pool_life_printing;
+#[path = "full_pool_modal_printing.rs"]
+mod full_pool_modal_printing;
 #[path = "gnarlid_printing.rs"]
 mod gnarlid_printing;
 #[path = "graveyard_batch_spell_printing.rs"]
@@ -437,6 +445,10 @@ pub(super) fn baseline(id: u16) -> Result<Value> {
     baseline_recipe(id, d)
 }
 
+pub(super) fn full_pool_burn_draw_printing(id: u16) -> Result<Option<Value>> {
+    full_pool_burn_draw_printing::printing(id)
+}
+
 pub(super) fn is_simple_trigger_permanent(id: u16) -> bool {
     CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
         simple_trigger_printing::handles(d.name)
@@ -469,9 +481,9 @@ pub(super) fn is_ordinary_aura(id: u16) -> bool {
         .is_some_and(|d| ordinary_aura_printing::handles(d.name))
 }
 pub(super) fn is_team_static_permanent(id: u16) -> bool {
-    CARD_DEFS
-        .get(usize::from(id))
-        .is_some_and(|d| team_static_printing::handles(d.name))
+    CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
+        team_static_printing::handles(d.name) || elf_lord_printing::handles(d.name)
+    })
 }
 pub(super) fn is_shivan_permanent(id: u16) -> bool {
     CARD_DEFS
@@ -510,6 +522,34 @@ pub(super) fn is_paladin_permanent(id: u16) -> bool {
 }
 
 pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
+    baseline_recipe_with_full_pool_printing(id, d, None)
+}
+
+pub(super) fn full_pool_life_printing(id: u16) -> Result<Option<Value>> {
+    let d = CARD_DEFS
+        .get(usize::from(id))
+        .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    let Some(printing) = full_pool_life_printing::printing(id, d)? else {
+        return Ok(None);
+    };
+    baseline_recipe_with_full_pool_printing(id, d, Some(printing)).map(Some)
+}
+
+pub(super) fn full_pool_modal_printing(id: u16) -> Result<Option<Value>> {
+    let d = CARD_DEFS
+        .get(usize::from(id))
+        .ok_or(Error::UnsupportedPrintedRoot(id))?;
+    let Some(printing) = full_pool_modal_printing::printing(id, d)? else {
+        return Ok(None);
+    };
+    baseline_recipe_with_full_pool_printing(id, d, Some(printing)).map(Some)
+}
+
+fn baseline_recipe_with_full_pool_printing(
+    id: u16,
+    d: &CardDef,
+    full_pool_printing: Option<Value>,
+) -> Result<Value> {
     if d.name == "Divine Resilience" {
         return divine_printing::baseline(id, d);
     }
@@ -561,6 +601,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
     let creature_power_spell = creature_power_spell_printing::printing(id, d)?;
     let luminous = luminous_printing::printing(id, d)?;
     let team_static = team_static_printing::printing(id, d)?;
+    let elf_lord = elf_lord_printing::printing(id, d)?;
     let triggered_enchantment = triggered_enchantment_printing::printing(id, d)?;
     let shivan = shivan_printing::printing(id, d)?;
     let sacrifice = sacrifice_printing::printing(id, d)?;
@@ -789,6 +830,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || dragon_token
             || koma_coil
             || anonymous_token
+            || (full_pool_printing.is_some() && id == full_pool_modal_printing::SCION)
             || (observer_trigger.is_some()
                 && d.name == "Homunculus Horde Token"
                 && d.object_name == "Homunculus Horde"))
@@ -820,6 +862,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || (targeted_spell.is_some() && matches!(d.name, "Bulk Up" | "Self-Reflection"))
             || (ordinary_batch_spell.is_some() && d.name == "Revenge of the Rats"))
         && (d.kicker_cost.is_none()
+            || (simple_trigger.is_some() && id == simple_trigger_printing::BUSHWHACKER_ID)
             || gnarlid.is_some()
             || (targeted_spell.is_some() && d.name == "Burst Lightning")
             || (targeted_entry.is_some() && d.name == "Sun-Blessed Healer")
@@ -847,7 +890,7 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         && d.kicked_target_spec.is_none()
         && d.escape.is_none()
         && (!d.enters_battlefield_tapped || diregraf || gain_land.is_some())
-        && (d.mana_ability_def.is_none() || treasure)
+        && (d.mana_ability_def.is_none() || treasure || elf_lord.is_some())
         && d.minimum_blockers == 1
         && d.omen.is_none()
         && !d.mana_ability_includes_chosen_color
@@ -891,6 +934,9 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
             || surveil_many.is_some()
             || threshold_loot.is_some()
             || attack_trigger.is_some()
+            || elf_lord.is_some()
+            || ordinary_equipment.is_some()
+            || full_pool_printing.is_some()
             || ward_discount_creature.is_some()
             || observer_trigger.is_some()))
     {
@@ -965,6 +1011,12 @@ pub(super) fn baseline_recipe(id: u16, d: &CardDef) -> Result<Value> {
         return Ok(printing);
     }
     if let Some(printing) = team_static {
+        return Ok(printing);
+    }
+    if let Some(printing) = elf_lord {
+        return Ok(printing);
+    }
+    if let Some(printing) = full_pool_printing {
         return Ok(printing);
     }
     if let Some(printing) = triggered_enchantment {

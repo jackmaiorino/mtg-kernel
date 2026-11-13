@@ -152,7 +152,8 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                 CreatureSacrificeFilter::Any
                 | CreatureSacrificeFilter::Token
                 | CreatureSacrificeFilter::Nontoken
-                | CreatureSacrificeFilter::PermanentType(_) => {}
+                | CreatureSacrificeFilter::PermanentType(_)
+                | CreatureSacrificeFilter::PermanentColorsV1(_) => {}
                 CreatureSacrificeFilter::GreatestPower => {
                     out.read(
                         player,
@@ -170,6 +171,7 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                         CreatureSacrificeFilter::PermanentType(card_type) => {
                             ObjF::Typed((*card_type).into())
                         }
+                        CreatureSacrificeFilter::PermanentColorsV1(_) => ObjF::Permanent,
                         _ => ObjF::Typed(CardTypeF::Creature),
                     })
                     .amount(AmtF::fixed(1)),

@@ -3,6 +3,10 @@
 //! root independence, and strict arguments.
 
 use super::*;
+use crate::expanded_deck_training_v1::s_learner_v1::{
+    execute_s_update_v1, SUnsupportedOptionsV1, SUpdateInputsV1, VerifiedReplayAttemptV1,
+    VerifiedReplayOptionsV1,
+};
 
 fn on_large_stack(body: fn()) {
     let run = std::thread::Builder::new()
@@ -29,6 +33,386 @@ fn temp_root(label: &str) -> PathBuf {
 
 fn args(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
+}
+
+fn fixture_serial_inputs_v1(
+    manifest: &FixtureManifestV1,
+    batch: &FixtureBatchV1,
+    output_directory: PathBuf,
+    verified_tape_cap: Option<usize>,
+) -> SUpdateInputsV1 {
+    SUpdateInputsV1 {
+        source: batch.source.clone(),
+        trajectories: batch.trajectories.clone(),
+        learning_rate: manifest.learning.learning_rate,
+        value_coefficient: manifest.learning.value_coefficient,
+        update_backend: ExpandedUpdateBackendV1::Cpu,
+        backward_execution: UpdateBackwardExecutionV1::Sequential,
+        loss_selection: manifest.learning.loss_selection,
+        output_directory,
+        preparation_workers: None,
+        max_prepared_tensor_mebibytes: manifest.options.max_prepared_tensor_mebibytes,
+        verified_replay: verified_tape_cap.map(|cap| VerifiedReplayOptionsV1::new(cap).unwrap()),
+        unsupported: SUnsupportedOptionsV1 {
+            line_b: false,
+            e_supported: false,
+            soft_q: false,
+            search_targets: false,
+        },
+        ex1: None,
+        training_math: TrainingMathV1::PlatformLibm,
+        record_format: CheckpointRecordFormatV1::default(),
+        started: Instant::now(),
+    }
+}
+
+fn fixture_verified_cap_v1(batch: &FixtureBatchV1) -> usize {
+    // The census counts live payload. Include the slot's headers and leave
+    // headroom for ragged retained capacities.
+    usize::try_from(batch.census.learner_row_tape_bytes.max)
+        .expect("fixture tape bytes fit usize")
+        .checked_mul(2)
+        .and_then(|bytes| bytes.checked_add(4096))
+        .expect("fixture tape cap fits usize")
+}
+
+fn assert_verified_replay_bench_v1(
+    root: &Path,
+    fixture: &Path,
+    batch: &FixtureBatchV1,
+    reference_profile: &Value,
+) {
+    let cap = fixture_verified_cap_v1(batch);
+    let receipt = main_v1(&args(&[
+        "bench",
+        &format!("fixture={}", fixture.display()),
+        &format!("batch={}", batch.name),
+        "path=serial",
+        &format!("verified_replay_tape_bytes={cap}"),
+        &format!(
+            "out={}",
+            root.join(format!("verified-{}", batch.name)).display()
+        ),
+    ]))
+    .unwrap();
+    let sample = &receipt["samples"][0];
+    assert_eq!(sample["verified"], true, "{sample}");
+    let replay = &sample["verified_replay"];
+    assert_eq!(replay["used"], true, "{replay}");
+    let peak = replay["attempt"]["peak_retained_tape_bytes"]
+        .as_u64()
+        .unwrap();
+    assert!(peak > batch.census.learner_row_tape_bytes.max);
+    assert!(peak <= u64::try_from(cap).unwrap());
+    assert_eq!(
+        replay["attempt"]["learner_replay_forwards"],
+        batch.census.learner_rows
+    );
+    assert_eq!(
+        replay["attempt"]["other_replay_forwards"],
+        batch.census.other_rows
+    );
+    assert_eq!(
+        replay["attempt"]["learner_backwards"],
+        batch.census.learner_rows
+    );
+    assert_combined_seconds_v1(sample, false);
+    if s_update_profile::ENABLED_V1 {
+        let profile = &sample["forward_profile"];
+        assert_eq!(sample["attribution_verified"], true);
+        assert_eq!(profile["counts_match_execution"], true);
+        assert_eq!(profile["forward_calls"], batch.census.rows);
+        assert_eq!(
+            profile["removed_learner_forwards"],
+            batch.census.learner_rows
+        );
+        assert_eq!(profile["stages"]["learner_forward"]["calls"], 0);
+        for stage in ["replay_learner_rows", "replay_other_rows"] {
+            assert_eq!(
+                profile["stages"][stage]["output_digest"],
+                reference_profile["stages"][stage]["output_digest"]
+            );
+        }
+    } else {
+        assert!(sample["attribution_verified"].is_null());
+    }
+}
+
+fn assert_combined_seconds_v1(result: &Value, fallback: bool) {
+    let replay = &result["verified_replay"];
+    let attempt = replay["replay_and_gradient_seconds"].as_f64().unwrap();
+    let reference_replay = result["behavior_replay_seconds"].as_f64().unwrap();
+    let learner = result["learner_update_seconds"].as_f64().unwrap();
+    assert_eq!(
+        replay["combined_replay_learner_seconds"].as_f64().unwrap(),
+        reference_replay + learner + if fallback { attempt } else { 0.0 }
+    );
+}
+
+fn assert_verified_replay_refusals_v1(
+    root: &Path,
+    manifest: &FixtureManifestV1,
+    batch: &FixtureBatchV1,
+) {
+    let fallback = execute_v1(
+        update_command_v1(
+            manifest,
+            batch,
+            UpdatePathV1::VerifiedSerial { tape_cap_bytes: 1 },
+            1,
+            root.join("verified-fallback"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(fallback["verified_replay"]["used"], false);
+    assert_eq!(fallback["verified_replay"]["fallback"], "tape_capacity");
+    assert_combined_seconds_v1(&fallback, true);
+    assert_eq!(
+        verify_v1(manifest, batch, &fallback).unwrap()["verified"],
+        true
+    );
+
+    let cap = fixture_verified_cap_v1(batch);
+    let out = root.join("refused-backward");
+    let mut inputs = fixture_serial_inputs_v1(manifest, batch, out.clone(), Some(cap));
+    inputs
+        .verified_replay
+        .as_mut()
+        .unwrap()
+        .short_first_gradient = true;
+    assert_eq!(
+        execute_s_update_v1(inputs).unwrap_err(),
+        "S gradient buffer has the wrong length"
+    );
+    assert!(!out.exists());
+
+    for (pairing, message) in [
+        (false, "stored tensor does not reproduce rollout outputs"),
+        (true, "only a FlatV8 policy replays a pairing relation"),
+    ] {
+        let mut trajectory: ExpandedTrajectoryV1 = read_pinned(&batch.trajectories[1]).unwrap();
+        let seat = trajectory.episode.learner_seat;
+        let row = trajectory
+            .decisions
+            .iter_mut()
+            .rev()
+            .find(|row| (row.actor == seat) == pairing)
+            .unwrap();
+        if pairing {
+            row.tensor.pairing_node_indices.extend([0, 1]);
+        } else {
+            // A stored value mismatch leaves the action-sampler check intact.
+            row.value ^= 1;
+        }
+        let path = root.join(format!("corrupt-{pairing}.json"));
+        fs::write(&path, serde_json::to_vec(&trajectory).unwrap()).unwrap();
+        let pin = pin_file_v1(&path).unwrap();
+        let mut corrupt = batch.clone();
+        corrupt.trajectories[1] = pin.clone();
+        for path in [
+            UpdatePathV1::Serial,
+            UpdatePathV1::VerifiedSerial {
+                tape_cap_bytes: cap,
+            },
+        ] {
+            let out = root.join(format!("refused-command-{pairing}-{path:?}"));
+            let command = update_command_v1(manifest, &corrupt, path, 1, out.clone()).unwrap();
+            assert_eq!(execute_v1(command).unwrap_err(), message);
+            assert!(!out.exists());
+        }
+        for opt_in in [None, Some(cap)] {
+            let out = root.join(format!("refused-{pairing}-{opt_in:?}"));
+            let mut inputs = fixture_serial_inputs_v1(manifest, batch, out.clone(), opt_in);
+            inputs.trajectories[1] = pin.clone();
+            // Invalid targets must not mask a later replay error.
+            inputs.loss_selection = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: -0.25,
+                lambda: 1.0,
+                entropy_coefficient: 0.0,
+            };
+            assert_eq!(execute_s_update_v1(inputs).unwrap_err(), message);
+            assert!(!out.exists());
+        }
+        if !pairing {
+            let out = root.join("refused-backward-then-opponent");
+            let mut inputs = fixture_serial_inputs_v1(manifest, batch, out.clone(), Some(cap));
+            inputs.trajectories[1] = pin;
+            inputs
+                .verified_replay
+                .as_mut()
+                .unwrap()
+                .short_first_gradient = true;
+            assert_eq!(execute_s_update_v1(inputs).unwrap_err(), message);
+            assert!(!out.exists());
+        }
+    }
+}
+
+fn assert_late_capacity_fallback_v1(
+    root: &Path,
+    manifest: &FixtureManifestV1,
+    batch: &FixtureBatchV1,
+) {
+    use crate::s_transformer_v1::OBJECT_FEATURE_DIM_V1;
+
+    let cap = fixture_verified_cap_v1(batch);
+    let first: ExpandedTrajectoryV1 = read_pinned(&batch.trajectories[0]).unwrap();
+    let mut trajectory: ExpandedTrajectoryV1 = read_pinned(&batch.trajectories[1]).unwrap();
+    let seat = trajectory.episode.learner_seat;
+    let index = trajectory
+        .decisions
+        .iter()
+        .rposition(|row| row.actor == seat)
+        .unwrap();
+    // This fixture uses the legacy sampler, one independent RNG draw per
+    // actor row. Preserve the draw while changing only the late row's shape.
+    assert!(trajectory.learner_sampler.is_none());
+    let seat_rows = trajectory.decisions[..=index]
+        .iter()
+        .filter(|row| row.actor == seat)
+        .count();
+    let candidate_backwards = first
+        .decisions
+        .iter()
+        .filter(|row| row.actor == first.episode.learner_seat)
+        .count()
+        + seat_rows
+        - 1;
+    assert!(candidate_backwards > 0);
+    let mut rng = SplitMix64::seed(paired_policy_seeds_v1(trajectory.episode.seed)[seat as usize]);
+    let draw = (0..seat_rows).map(|_| rng.next_u64()).last().unwrap();
+    let row = &mut trajectory.decisions[index];
+    let config = manifest.config;
+    // Attention buffers alone exceed the cap after this enlargement.
+    let objects =
+        (cap / (std::mem::size_of::<f32>() * config.heads * (1 + config.layers))).isqrt() + 1;
+    assert!(objects > row.tensor.object_card_ids.len());
+    row.tensor
+        .object_features
+        .resize(objects * OBJECT_FEATURE_DIM_V1, 0);
+    row.tensor.object_card_ids.resize(objects, 0);
+    row.tensor.object_groups.resize(objects, 0);
+    row.tensor.object_node_ids.resize(objects, 0);
+    let input = row.tensor.tensor();
+    let counts = SInputV1::of_tensor_v1(&input).validate_v1(&config).unwrap();
+    assert!(STapeV1::bytes_for_counts_v1(&config, counts) > cap);
+    let (policy, _) = load_expanded_inference_any_math_v1(&batch.source).unwrap();
+    let (logits, value) = policy
+        .s_model_v1()
+        .unwrap()
+        .score_tensor_v1(&input)
+        .unwrap();
+    assert_eq!(logits.len(), row.logits.len());
+    row.selected = WideCategoricalScratchV1::default()
+        .sample(&logits, draw)
+        .unwrap() as u32;
+    row.logits = bits(&logits);
+    row.value = value.to_bits();
+
+    let mut ragged = batch.clone();
+    let path = root.join("late-oversized-trajectory.json");
+    fs::write(&path, serde_json::to_vec(&trajectory).unwrap()).unwrap();
+    ragged.trajectories[1] = pin_file_v1(&path).unwrap();
+    let (census, games_sha256) = census_v1(
+        &ragged.trajectories,
+        &[first.episode, trajectory.episode],
+        &ragged.opponents,
+        &config,
+        &manifest.options,
+    )
+    .unwrap();
+    ragged.census = census;
+    let reference_dir = root.join("late-oversized-reference");
+    let reference = execute_s_update_v1(fixture_serial_inputs_v1(
+        manifest,
+        &ragged,
+        reference_dir.clone(),
+        None,
+    ))
+    .unwrap();
+    ragged.reference = pin_file_v1(&reference_dir.join("update.json")).unwrap();
+    ragged.identity = identity_of_update_v1(&reference, games_sha256).unwrap();
+
+    let profile = s_update_profile::arm_v1();
+    let fallback = execute_v1(
+        update_command_v1(
+            manifest,
+            &ragged,
+            UpdatePathV1::VerifiedSerial {
+                tape_cap_bytes: cap,
+            },
+            1,
+            root.join("late-oversized-fallback"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(fallback["verified_replay"]["used"], false);
+    assert_eq!(fallback["verified_replay"]["fallback"], "tape_capacity");
+    assert_combined_seconds_v1(&fallback, true);
+    assert_eq!(
+        verify_v1(manifest, &ragged, &fallback).unwrap()["verified"],
+        true
+    );
+    let attempt: VerifiedReplayAttemptV1 =
+        serde_json::from_value(fallback["verified_replay"]["attempt"].clone()).unwrap();
+    assert_eq!(attempt.learner_replay_forwards, candidate_backwards as u64);
+    assert_eq!(attempt.learner_backwards, candidate_backwards as u64);
+    assert_eq!(
+        attempt.other_replay_forwards,
+        (first.decisions.len() + index - candidate_backwards) as u64
+    );
+    assert!((1..=cap).contains(&attempt.peak_retained_tape_bytes));
+    let forward = forward_profile_v1(profile.totals_v1(), &ragged.census, Some((false, &attempt)));
+    if s_update_profile::ENABLED_V1 {
+        assert_eq!(forward["counts_match_execution"], true, "{forward}");
+        assert_eq!(forward["removed_learner_forwards"], 0);
+        assert_eq!(
+            forward["forward_calls"],
+            ragged.census.rows as u64
+                + ragged.census.learner_rows as u64
+                + attempt.learner_replay_forwards
+                + attempt.other_replay_forwards
+        );
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+fn assert_dirty_mxcsr_fallback_v1(
+    root: &Path,
+    manifest: &FixtureManifestV1,
+    batch: &FixtureBatchV1,
+) {
+    use crate::deterministic_math_v1::{
+        read_mxcsr_v1, verify_pinned_mxcsr_state_v1, write_mxcsr_v1,
+    };
+
+    let inputs = fixture_serial_inputs_v1(
+        manifest,
+        batch,
+        root.join("dirty-mxcsr-fallback"),
+        Some(fixture_verified_cap_v1(batch)),
+    );
+    // Use a fresh thread so the reference's first S forward may normalize
+    // its MXCSR, as it would at the entry point of a standalone update.
+    let fallback = std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(move || {
+            const FTZ: u32 = 1 << 15;
+            write_mxcsr_v1(read_mxcsr_v1() | FTZ);
+            assert!(verify_pinned_mxcsr_state_v1().is_err());
+            execute_s_update_v1(inputs).unwrap()
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(fallback["verified_replay"]["used"], false);
+    assert_eq!(fallback["verified_replay"]["fallback"], "caller_math_state");
+    assert_eq!(
+        verify_v1(manifest, batch, &fallback).unwrap()["verified"],
+        true
+    );
 }
 
 #[test]
@@ -135,6 +519,7 @@ fn fixture_end_to_end_v1() {
             assert_eq!(receipt["executable_sha256"], executable_sha256);
             let sample = &receipt["samples"][0];
             assert_eq!(sample["verified"], true, "{sample}");
+            assert!(sample.get("verified_replay").is_none());
             assert!(sample["elapsed_seconds"].as_f64().unwrap() > 0.0);
             let profile = &sample["forward_profile"];
             if s_update_profile::ENABLED_V1 {
@@ -153,8 +538,15 @@ fn fixture_end_to_end_v1() {
                 assert_eq!(profile["enabled"], false);
                 assert!(sample["attribution_verified"].is_null());
             }
+            if path == UpdatePathV1::Serial {
+                assert_verified_replay_bench_v1(&root, &fixture, batch, profile);
+            }
         }
     }
+    assert_verified_replay_refusals_v1(&root, &manifest, initial);
+    assert_late_capacity_fallback_v1(&root, &manifest, warmed);
+    #[cfg(target_arch = "x86_64")]
+    assert_dirty_mxcsr_fallback_v1(&root, &manifest, initial);
     // A bench refuses an existing directory and a serial path with workers.
     let existing = BenchOptionsV1 {
         batch: "warmed".into(),
@@ -177,6 +569,7 @@ fn fixture_end_to_end_v1() {
             .contains("path=serial runs one worker")
     );
     assert!(!root.join("never").exists());
+    assert_verified_command_v1(&root, &fixture, &manifest, warmed);
 
     // The command for any build's binary carries only fields an older build
     // knows, reads back to the same values, and reproduces the reference.
@@ -318,6 +711,89 @@ fn fixture_end_to_end_v1() {
     let _ = fs::remove_dir_all(&root);
 }
 
+fn assert_verified_command_v1(
+    root: &Path,
+    fixture: &Path,
+    manifest: &FixtureManifestV1,
+    batch: &FixtureBatchV1,
+) {
+    let out = root.join("verified-command");
+    let arguments = args(&[
+        "command",
+        &format!("fixture={}", fixture.display()),
+        &format!("batch={}", batch.name),
+        "path=serial",
+        &format!("out={}", out.display()),
+    ]);
+    let default = main_v1(&arguments).unwrap();
+    assert_eq!(default["mode"], "update");
+    assert!(default.get("tape_cap_bytes").is_none());
+    let cap = fixture_verified_cap_v1(batch);
+    let mut arguments = arguments;
+    arguments.push(format!("verified_replay_tape_bytes={cap}"));
+    let command = main_v1(&arguments).unwrap();
+    assert_eq!(command["mode"], "update_s_verified_serial");
+    assert_eq!(command["tape_cap_bytes"], cap);
+    let mut expected = default;
+    expected["mode"] = command["mode"].clone();
+    expected["tape_cap_bytes"] = json!(cap);
+    assert_eq!(command, expected);
+
+    for (field, value) in [
+        ("preparation_workers", json!(1)),
+        ("workers", json!(2)),
+        ("ex1", json!({"w5":{}})),
+        ("training_math", json!("portable-math-v1")),
+    ] {
+        let mut incompatible = command.clone();
+        incompatible[field] = value;
+        let error = serde_json::from_value::<ExpandedTrainingCommandV1>(incompatible).unwrap_err();
+        assert!(error.to_string().contains("unknown field"), "{error}");
+    }
+    let mut missing_cap = command.clone();
+    missing_cap
+        .as_object_mut()
+        .unwrap()
+        .remove("tape_cap_bytes");
+    let error = serde_json::from_value::<ExpandedTrainingCommandV1>(missing_cap).unwrap_err();
+    assert!(error.to_string().contains("missing field `tape_cap_bytes`"));
+    for (field, value, refusal) in [
+        (
+            "tape_cap_bytes",
+            json!(0),
+            "verified replay tape cap must be in",
+        ),
+        (
+            "tape_cap_bytes",
+            json!(67_108_865),
+            "verified replay tape cap must be in",
+        ),
+        (
+            "source",
+            json!(manifest.net8),
+            "requires an S learner source",
+        ),
+        (
+            "loss_selection",
+            json!(ExpandedLossSelectionV1::TerminalReinforceValueV3),
+            "an S learner trains only the GAE loss",
+        ),
+    ] {
+        let mut incompatible = command.clone();
+        incompatible[field] = value;
+        let error = execute_v1(serde_json::from_value(incompatible).unwrap()).unwrap_err();
+        assert!(error.contains(refusal), "{field}: {error}");
+        assert!(!out.exists());
+    }
+
+    let result = execute_v1(serde_json::from_value(command).unwrap()).unwrap();
+    assert_eq!(result["verified_replay"]["used"], true);
+    assert_eq!(
+        verify_v1(manifest, batch, &result).unwrap()["verified"],
+        true
+    );
+}
+
 #[test]
 fn forward_attribution_requires_both_census_and_output_agreement() {
     use s_update_profile::{StageTotalsV1, StageV1};
@@ -333,18 +809,18 @@ fn forward_attribution_requires_both_census_and_output_agreement() {
     totals[StageV1::LearnerForward as usize].calls = 2;
     totals[StageV1::LearnerForward as usize].output_digest = 10;
     totals[StageV1::LearnerBackward as usize].calls = 2;
-    let mismatched = forward_profile_v1(Some(totals), &census);
+    let mismatched = forward_profile_v1(Some(totals), &census, None);
     assert_eq!(mismatched["counts_match_census"], true);
     assert_eq!(mismatched["learner_forwards_repeat_replayed_rows"], false);
     assert!(mismatched["duplicate_forwards"].is_null());
     assert!(mismatched["duplicate_share_of_forward_calls"].is_null());
 
     totals[StageV1::LearnerForward as usize].output_digest = 9;
-    let matched = forward_profile_v1(Some(totals), &census);
+    let matched = forward_profile_v1(Some(totals), &census, None);
     assert_eq!(matched["duplicate_forwards"], 2);
 
     totals[StageV1::ReplayOtherRow as usize].calls = 0;
-    let incomplete = forward_profile_v1(Some(totals), &census);
+    let incomplete = forward_profile_v1(Some(totals), &census, None);
     assert_eq!(incomplete["counts_match_census"], false);
     assert!(incomplete["duplicate_forwards"].is_null());
 }
@@ -384,6 +860,51 @@ fn s_update_fixture_cli_refuses_unknown_repeated_and_out_of_range_arguments() {
         (
             vec!["bench", "fixture=x", "batch=initial", "path=fast", "out=y"],
             "path must be serial or prepared",
+        ),
+        (
+            vec![
+                "bench",
+                "fixture=x",
+                "batch=initial",
+                "path=prepared",
+                "verified_replay_tape_bytes=1048576",
+                "out=y",
+            ],
+            "verified_replay_tape_bytes requires path=serial and workers=1",
+        ),
+        (
+            vec![
+                "command",
+                "fixture=x",
+                "batch=initial",
+                "path=serial",
+                "workers=2",
+                "verified_replay_tape_bytes=1048576",
+                "out=y",
+            ],
+            "verified_replay_tape_bytes requires path=serial and workers=1",
+        ),
+        (
+            vec![
+                "bench",
+                "fixture=x",
+                "batch=initial",
+                "path=serial",
+                "verified_replay_tape_bytes=0",
+                "out=y",
+            ],
+            "verified replay tape cap must be in",
+        ),
+        (
+            vec![
+                "command",
+                "fixture=x",
+                "batch=initial",
+                "path=serial",
+                "verified_replay_tape_bytes=67108865",
+                "out=y",
+            ],
+            "verified replay tape cap must be in",
         ),
         (
             vec![

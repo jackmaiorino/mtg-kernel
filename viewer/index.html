@@ -6,6 +6,8 @@
     <meta name="theme-color" content="#0d1116" />
     <meta name="description" content="Watch a Magic-playing agent choose. Explore recorded policy preferences, search, and the consequences on the battlefield." />
     <title>MTG Kernel | Decision Studio</title>
+    <link rel="canonical" href="https://jackmaiorino.github.io/mtg-kernel/" />
+    <style>:root{background:#0d1116;color-scheme:dark}</style>
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="MTG Kernel" />
     <meta property="og:title" content="MTG Kernel | Decision Studio" />
@@ -16,5 +18,12 @@
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
   </head>
-  <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
+  <body><div id="root">
+      <!-- Static text for readers and crawlers without JavaScript; the app replaces it when it starts. -->
+      <main style="max-width:44rem;margin:4rem auto;padding:0 16px;font-family:system-ui,sans-serif;color:#d7dde4">
+        <h1>MTG Kernel Decision Studio</h1>
+        <p>Watch a Magic: The Gathering agent choose. Decision Studio replays recorded games from the mtg-kernel reinforcement-learning stack and shows the policy's preferences, its search, and the consequences on the battlefield.</p>
+        <p>The agents are rated on <a href="https://jackmaiorino.github.io/spellbench/" style="color:#8ab4f8">Spellbench</a>, a cross-engine Magic bot benchmark. Source: <a href="https://github.com/jackmaiorino/mtg-kernel" style="color:#8ab4f8">github.com/jackmaiorino/mtg-kernel</a>.</p>
+      </main>
+    </div><script type="module" src="/src/main.tsx"></script></body>
 </html>

@@ -78,7 +78,15 @@ pub(crate) fn capture_committed_loss_at(state: &mut GameState, at: usize) {
     )))]
     let _ = (state, at);
 }
+struct FlagsKeyV1;
+/// Each player's life loss this turn, checked against the history since the
+/// turn's anchor. Remembered while a `borrow_memo_v1` scope holds the state.
 pub(crate) fn flags(state: &GameState) -> Result<[bool; 2], String> {
+    crate::borrow_memo_v1::cached::<FlagsKeyV1, (), Result<[bool; 2], String>>(state, (), || {
+        flags_uncached(state)
+    })
+}
+fn flags_uncached(state: &GameState) -> Result<[bool; 2], String> {
     let ledger = state
         .life_loss_turn_v1
         .ok_or("missing selected life-loss ledger")?;
@@ -100,7 +108,7 @@ pub(crate) fn flags(state: &GameState) -> Result<[bool; 2], String> {
         return Err("life-loss anchor belongs to another turn".into());
     }
     let mut flags = [false; 2];
-    for event in &state.engine.event_history[boundary + 1..] {
+    for event in state.engine.event_history.range_v2(boundary + 1..) {
         if let Some(player) = committed_loss_player(event) {
             flags[player.index()] = true;
         }

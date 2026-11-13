@@ -1679,7 +1679,10 @@ fn private_v2_support_with_history(game: &mut SpellbenchBridgeGameV1) -> Value {
     }
     let state = game.session.game_state();
     let (events_from, notes_from, objects_from) = game.history_cursor;
-    let events = &state.engine.event_history[events_from.min(state.engine.event_history.len())..];
+    let events = state
+        .engine
+        .event_history
+        .range_v2(events_from.min(state.engine.event_history.len())..);
     let notes = state.observation_journal.notes();
     let notes = &notes[notes_from.min(notes.len())..];
     let objects: Vec<Value> = state
@@ -2419,16 +2422,19 @@ fn neutral_semantic_v1(
         // targets) and non-Pauper catalogs. The Pauper bridge never enables
         // them, so reaching one is an engine fault, never a guessed kind.
         ActionSemanticV1::ChooseAttackTarget { .. }
+        | ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 { .. }
         | ActionSemanticV1::ChooseCombatDamageRange { .. }
         | ActionSemanticV1::ChooseDivineKickerV44 { .. }
         | ActionSemanticV1::ChooseDivineTargetV44 { .. }
         | ActionSemanticV1::ChooseEntryColorV36 { .. }
+        | ActionSemanticV1::ChooseEntryCreatureTypeV60 { .. }
         | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
         | ActionSemanticV1::ChooseLegendPermanent { .. }
         | ActionSemanticV1::ChooseLondonBottom { .. }
         | ActionSemanticV1::ChooseLondonMulligan { .. }
         | ActionSemanticV1::FinishDivineTargetsV44 { .. }
-        | ActionSemanticV1::TurnFaceUp { .. } => {
+        | ActionSemanticV1::TurnFaceUp { .. }
+        | ActionSemanticV1::ChooseMeddlingMageNameV1 { .. } => {
             Err("engine_contract_failure:semantic outside the Pauper neutral contract".to_string())
         }
         #[cfg(feature = "limited-fdn-fixtures")]

@@ -80,6 +80,103 @@ fn ordinary_departure_retains_color_proof_without_requiring_grant_transport_both
     not(feature = "standard-magezero-fixtures")
 ))]
 #[test]
+fn departure_proofs_keep_the_live_checks_and_check_every_later_row() {
+    use crate::event::{CommittedEvent, ProposedEvent};
+    use crate::event_history_v1::{proof_tests_v1, ProvedV1};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let elf = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        crate::event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(elf, Zone::Graveyard),
+        );
+        validate_color_history(&state).unwrap();
+        let history = &state.engine.event_history;
+        let len = history.len();
+        let (covered, arena) = history.proof_v1(ProvedV1::ColorDepartures).unwrap();
+        assert_eq!(covered, len);
+        assert!(arena <= state.objects.len() as u64);
+        let snapshot = history
+            .iter()
+            .find(|event| {
+                matches!(
+                    event,
+                    CommittedEvent::ProtectionSourceColorDepartureV1 { .. }
+                )
+            })
+            .unwrap()
+            .clone();
+        let departure = history
+            .iter()
+            .find(|event| {
+                matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Battlefield, .. }
+                    if *object == elf)
+            })
+            .unwrap()
+            .clone();
+        let checked = |bad: &GameState| {
+            let uses = proof_tests_v1::uses();
+            let result = validate_color_history(bad);
+            assert_eq!(proof_tests_v1::uses(), uses + 1, "the proof was used");
+            result.unwrap_err()
+        };
+        // A later snapshot whose departure is not the next event.
+        let mut bad = state.clone();
+        bad.engine.event_history.push(snapshot.clone());
+        assert_eq!(
+            checked(&bad),
+            "color snapshot lacks exact committed battlefield departure"
+        );
+        // A later departure without its snapshot.
+        let mut bad = state.clone();
+        bad.engine.event_history.push(departure);
+        assert_eq!(
+            checked(&bad),
+            "battlefield departure lost its independent source color snapshot"
+        );
+        // The live checks of a proved snapshot still run.
+        let mut bad = state.clone();
+        bad.objects.get_mut(elf).owner = actor.opponent();
+        assert_eq!(
+            checked(&bad),
+            "color departure changed original definition/owner/incarnation"
+        );
+        // A proof is not used within a smaller arena than its snapshots had.
+        let fresh: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        fresh.engine.event_history.set_proof_v1(
+            ProvedV1::ColorDepartures,
+            len,
+            state.objects.len() as u64 + 1,
+        );
+        let uses = proof_tests_v1::uses();
+        validate_color_history(&fresh).unwrap();
+        assert_eq!(proof_tests_v1::uses(), uses);
+        // The game goes on from the proof.
+        let other = put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        crate::event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(other, Zone::Graveyard),
+        );
+        let uses = proof_tests_v1::uses();
+        validate_color_history(&state).unwrap();
+        assert_eq!(proof_tests_v1::uses(), uses + 1);
+        assert_eq!(
+            state
+                .engine
+                .event_history
+                .proof_v1(ProvedV1::ColorDepartures)
+                .map(|(covered, _)| covered),
+            Some(state.engine.event_history.len())
+        );
+    }
+}
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+#[test]
 fn actual_grant_source_still_requires_successor_after_departure_and_restore_both_seats() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         let mut state = ready_state_for(actor);

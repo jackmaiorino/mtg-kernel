@@ -17,6 +17,10 @@ pub fn limbs(value: u64) -> [u16; 4] {
 }
 
 impl NumericTree {
+    #[cfg(test)]
+    pub(crate) fn probe_fixture_v1(value: &Value) -> Result<Self> {
+        Self::encode(value)
+    }
     pub fn rows(&self) -> &[[u16; NODE_WIDTH]] {
         &self.rows
     }

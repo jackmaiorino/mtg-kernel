@@ -191,6 +191,19 @@ pub(crate) fn validate_snapshot_types(
     Ok(())
 }
 
+/// The arena length `validate_snapshot_types` compares with its bound (0
+/// without source-type inputs): a snapshot that passed once passes again
+/// under any bound at least this.
+pub(crate) fn snapshot_arena_len(
+    snapshot: &crate::controlled_creature_grants_v1::DepartureColorV1,
+) -> u64 {
+    snapshot
+        .source_type_input_v1
+        .0
+        .as_ref()
+        .map_or(0, |input| u64::from(input.arena_len))
+}
+
 fn validate_snapshot_types_full(
     snapshot: &crate::controlled_creature_grants_v1::DepartureColorV1,
     arena_bound: usize,
@@ -399,19 +412,23 @@ pub(crate) fn source_types(
         return current_types(state, object);
     }
     crate::controlled_creature_grants_v1::validate_color_history(state)?;
-    let mut found = state.engine.event_history.iter().filter_map(|e| {
-        let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = e
-        else {
-            return None;
-        };
-        (snapshot.source.source == object
-            && snapshot.source.zone == zone
-            && snapshot.source.zone_change_count == generation
-            && (snapshot.source.card_def == card_def
-                || crate::standard_cards_v1::had_card_def(state, object, generation, card_def)))
-        .then_some(snapshot.source_types_v1.0)
-        .flatten()
-    });
+    let mut found = state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::ProtectionSourceColorDepartureV1])
+        .filter_map(|(_, e)| {
+            let crate::event::CommittedEvent::ProtectionSourceColorDepartureV1 { snapshot, .. } = e
+            else {
+                return None;
+            };
+            (snapshot.source.source == object
+                && snapshot.source.zone == zone
+                && snapshot.source.zone_change_count == generation
+                && (snapshot.source.card_def == card_def
+                    || crate::standard_cards_v1::had_card_def(state, object, generation, card_def)))
+            .then_some(snapshot.source_types_v1.0)
+            .flatten()
+        });
     let types = found
         .next()
         .ok_or("historical targeting source lost exact effective types")?;
