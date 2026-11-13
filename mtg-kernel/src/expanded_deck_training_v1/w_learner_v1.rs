@@ -724,3 +724,166 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
     publish_json(&output_directory, "update.json", &result)?;
     Ok(result)
 }
+
+/// How a widening treats the optimizer (collab LANES/w128-20261113/DESIGN.md
+/// section 2.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WideningOptimizerV1 {
+    /// Old coordinates keep both moments; new coordinates start at +0; the
+    /// Adam step and the gauge anchor are kept (the PR 4a construction).
+    #[serde(rename = "keep")]
+    Keep,
+    /// Every moment +0 and the Adam step 0 (a fresh optimizer); the gauge
+    /// anchor is kept.
+    #[serde(rename = "fresh")]
+    Fresh,
+}
+
+/// The widening seed of `label`: the first 8 bytes, little-endian, of
+/// SHA-256 of its UTF-8 bytes (the width pre-screen's rule).
+pub fn widening_seed_v1(label: &str) -> u64 {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(label.as_bytes());
+    u64::from_le_bytes(digest[..8].try_into().unwrap())
+}
+
+/// The fork's starting train state: a net-8 checkpoint source (`parent`, a
+/// plain FlatV4 fresh-lineage source with its checkpoint) widened by the
+/// function-preserving construction
+/// (`native_policy_train_step_v1::widening_v1`), with `optimizer`'s
+/// treatment and the seed of `seed_label`. Writes, into the fresh directory
+/// `output`, the container `w128-initial.bin` and the receipt
+/// `widening.json`: the parent pins, the construction's provenance, the wide
+/// source that starts from it, and the equality check: on every learner row
+/// of the parent checkpoint's own update trajectories, the widened net's
+/// logits and value equal the parent's under IEEE `==`. Refuses unless they
+/// do.
+pub fn widen_source_v1(
+    parent: &ExpandedModelSourceV1,
+    seed_label: &str,
+    optimizer: WideningOptimizerV1,
+    output: &std::path::Path,
+) -> Result<Value, String> {
+    use crate::native_policy_train_step_v1::widening_v1::{
+        widen_net8_snapshot_v1, TORCH_DEFAULT_UNIFORM_V1,
+    };
+    ensure(
+        parent.s_learner.is_none() && parent.w_learner.is_none(),
+        "the widening parent is a net-8 source",
+    )?;
+    let checkpoint = parent
+        .checkpoint
+        .as_ref()
+        .ok_or("the widening parent needs its checkpoint")?;
+    ensure(!seed_label.is_empty(), "the widening seed label is empty")?;
+    ensure(!output.exists(), "output directory already exists")?;
+    let (narrow, state) = super::initialize(parent)?;
+    ensure(
+        narrow.feature_identity_v1() == FRESH_FEATURE_IDENTITY_V4
+            && narrow.input_contract_v1().is_none()
+            && narrow.training_math_v1().is_platform_libm(),
+        "the widening parent must be a plain FlatV4 source under the platform libm",
+    )?;
+    let parent_snapshot = state.snapshot_v1().map_err(err)?;
+    let seed = widening_seed_v1(seed_label);
+    let widened = widen_net8_snapshot_v1(
+        &parent_snapshot,
+        W_MODEL_ARCHITECTURE_VERSION_V1,
+        TORCH_DEFAULT_UNIFORM_V1,
+        seed,
+    )
+    .map_err(err)?;
+    let provenance = serde_json::to_value(&widened.provenance).map_err(err)?;
+    let wide_state = match optimizer {
+        WideningOptimizerV1::Keep => widened.state,
+        WideningOptimizerV1::Fresh => {
+            let mut snapshot = widened.state.snapshot_v1().map_err(err)?;
+            for tensor in snapshot
+                .first_moments
+                .iter_mut()
+                .chain(snapshot.second_moments.iter_mut())
+            {
+                tensor.values.fill(0.0);
+            }
+            snapshot.adam_step = 0;
+            NativePolicyValueTrainStateWideV1::from_snapshot_wide_v1(
+                widened.state.model_v1().clone(),
+                &snapshot,
+            )
+            .map_err(err)?
+        }
+    };
+    // The equality check, on the shell with the widened net installed.
+    let (mut wide, _) = super::initialize(parent)?;
+    wide.install_wide_model_v1(Arc::new(wide_state.model_v1().clone()))?;
+    let metadata: TrajectoryPinsV1 = super::read_checkpoint_metadata_v1(checkpoint)?;
+    let episodes = read_trajectory_batch_v1(&metadata.trajectories, 1)?;
+    let mut rows = 0usize;
+    let mut logits = 0usize;
+    for episode in &episodes {
+        validate_trajectory(episode)?;
+        for row in &episode.decisions {
+            if row.actor != episode.episode.learner_seat {
+                continue;
+            }
+            let a = narrow.score_replay_tensor_v1(
+                FreshLineageGenerationV1::V4,
+                row.tensor.tensor(),
+                &[],
+            )?;
+            let b = wide.score_replay_tensor_v1(
+                FreshLineageGenerationV1::V4,
+                row.tensor.tensor(),
+                &[],
+            )?;
+            ensure(
+                a.logits.len() == b.logits.len()
+                    && a.logits.iter().zip(&b.logits).all(|(x, y)| x == y)
+                    && a.value == b.value,
+                "the widened net's outputs differ from the parent's",
+            )?;
+            rows += 1;
+            logits += a.logits.len();
+        }
+    }
+    ensure(
+        rows > 0,
+        "the parent checkpoint's trajectories have no learner rows",
+    )?;
+    fs::create_dir(output).map_err(err)?;
+    let container =
+        publish_json_bytes_v1(output, "w128-initial.bin", &encode_w_state_v1(&wide_state)?)?;
+    let source = ExpandedModelSourceV1 {
+        checkpoint: None,
+        s_learner: None,
+        w_learner: Some(Box::new(WLearnerSourceV1 {
+            schema: W_LEARNER_SOURCE_SCHEMA_V1.into(),
+            initial: container.clone(),
+        })),
+        ..parent.clone()
+    };
+    let receipt = json!({
+        "schema": "w128-widening/v1",
+        "parent": parent,
+        "parent_checkpoint_sha256": checkpoint.sha256,
+        "parent_state_sha256": hex_v1(&state.state_sha256_v1().map_err(err)?),
+        "construction": provenance,
+        "seed_label": seed_label,
+        "seed": seed,
+        "optimizer": optimizer,
+        "initial": container,
+        "initial_state_sha256": w_state_sha256_v1(&wide_state)?,
+        "initial_adam_step": wide_state.adam_step_v1(),
+        "source": source,
+        "equality": {"trajectories": metadata.trajectories.len(), "learner_rows": rows,
+            "logits": logits, "comparison": "ieee-eq", "equal": true},
+    });
+    publish_json(output, "widening.json", &receipt)?;
+    Ok(receipt)
+}
+
+/// The update inputs a checkpoint records.
+#[derive(Deserialize)]
+struct TrajectoryPinsV1 {
+    trajectories: Vec<PinnedFileV1>,
+}
