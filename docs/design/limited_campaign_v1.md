@@ -23,7 +23,7 @@ This document is Deliverable 1 of `#657`: the pre-compute design specification c
 The target card pool is the frozen 286-printing Foundations Play Booster manifest in `data/limited/fdn_v1/booster_pool_v1.json` (276 main-set printings plus 10 Special Guests; zero Missing printings). While the shared catalog (`data/cards_v1.json` and `data/limited/fdn_v1/cards_v1.json`) retains `250 Full / 36 Partial` so `KERNEL_CARDDB_HASH` and historical sessions stay unchanged, `-session full-pool` (`SessionKindV1::FullPoolV1`, profile `fdn-full-pool-consumer/v1`, merged in `#586` and recorded in `#658` at `b24a5075e`) provides the complete authenticated consumer stack (owning session, Human projection, JSONL wire, fair closed-list search, and sealed numeric learner input) for all 286 printings. Under `FullPoolV1`, all 286 Foundations printings count and execute as `Full`.
 
 For `Drake Hatcher` per-step history scaling (`#550` / `#627`, following `#474`):
-- Merged PRs `#633` (`7d1a13ef6`, shared `Arc<Vec<GameObject>>` checkpoint arena and `borrow_memo_v1` per-validation indexes), `#654` (`6da0bdff0`, leaf event-kind tags for `EventHistoryV1::of_kinds_v2`), and `#659` (`cc2c994fb`, history-attached validator proofs in `entry_observations_v1`) reduced total decision time on the four fixed `Drake Hatcher` stress cases by 69% to 76% with identical winners, decision counts, and final-state hashes.
+- Merged PRs `#633` (`7d1a13ef6`, shared `Arc<Vec<GameObject>>` checkpoint arena and `borrow_memo_v1` per-validation indexes, reducing decision time on the four fixed `Drake Hatcher` stress cases by 69% to 76% vs `0d9f23cf4`), `#654` (`6da0bdff0`, leaf event-kind tags for `EventHistoryV1::of_kinds_v2`), and `#659` (`cc2c994fb`, history-attached validator proofs in `entry_observations_v1`, cutting those stress cases further to ~75% to 82% cumulative reduction) all preserved identical winners, decision counts, and final-state hashes.
 - Across the 80 DraftZero decks, exactly 6 decks include `Drake Hatcher`:
   - `train` (4 decks): `FDN_top_01766_UR`, `FDN_top_02819_WU`, `FDN_top_10624_UB`, `FDN_top_18039_WUpR`.
   - `eval` (2 decks): `FDN_top_03718_UR`, `FDN_top_13096_WU`.
@@ -58,7 +58,7 @@ Four authentic 17Lands PremierDraft human lists in `draftzero_sample_v1` registe
 
 **Design decision**: **Admit all four lists at their exact original rules-legal card counts (`41`, `41`, `41`, `49`); forbid 40-card trimming, widening, or exclusion.**
 1. **Magic rules legality**: Under Comprehensive Rules CR 100.2b, Constructed Limited (Draft / Sealed) minimum mainboard size is 40 cards with no upper limit. Human 41-card and occasional 45-to-49-card registrations are real features of the DraftZero corpus.
-2. **Engine and model support**: `DeckFileV1::resolve_for(SessionKindV1::FullPoolV1)` (`limited_match_v1.rs:132`) enforces `ids.len() >= 40`, `limited_full_pool_consumer_v1::preflight` (`limited_full_pool_consumer_v1.rs:133`) admits `40..=MAX_CUSTOM_DECK_CARDS_V1` (`10_000`), `current_tree_learner_v1` scores variable-length `NumericTree` packets without fixed deck-size arrays, and `FullPoolClosedListV1` conditions opponent belief sampling on `total = observed + unknown_slots + face_down` with deterministic `NearestDeck` fallback (`limited_match_v1.rs:368-411`).
+2. **Engine and model support**: `DeckFileV1::resolve_for(SessionKindV1::FullPoolV1)` (`limited_match_v1.rs:132`) enforces `ids.len() >= 40`, `limited_full_pool_consumer_v1::preflight` (`limited_full_pool_consumer_v1.rs:133`) admits `40..=MAX_CUSTOM_DECK_CARDS_V1` (`10_000`), `current_tree_learner_v1` scores variable-length `NumericTree` packets without fixed deck-size arrays, and `FullPoolClosedListV1` routes through `curator_sampling_v1::rewrite` -> `closed_list_v2::rewrite_names_with_library` (`closed_list_v2.rs:94-116`) into `belief_remainder` (`limited_match_v1.rs:381-421`), conditioning opponent belief sampling on `total = observed + unknown_slots + face_down` with deterministic `NearestDeck` fallback.
 3. **Harness change**: Only `#586`'s bounded smoke binary (`kernel_limited_training_v1.rs:298`) rejected `cards.len() != 40` because its four compile-bound fixtures were 40-card decks. The campaign runner validates `cards.len() == expected_pool_tsv_cards && (40..=MAX_CUSTOM_DECK_CARDS_V1).contains(&cards.len())` and pins every deck's exact `cards` count and `source_sha256` from `pool.tsv` so `sample_sha256_in_pool_order` stays immutable (`docs/reports/limited_training_readiness_20261108.md`).
 
 ---
@@ -77,11 +77,12 @@ Every training and evaluation game executes through `limited_full_pool_consumer_
 
 Deck-pair favorability and play/draw asymmetry are major variance sources in 40-deck Limited pools. Every collection batch and every evaluation match is organized into **2-game pairs** indexed by `global_pair_index: u64`:
 
-1. **Deal derivation**: Pair `p` calls `deal_pair_v1(schedule_seed, p, 40)` (`limited_match_v1.rs:1158`) over the split's 40 decks in canonical `pool.tsv` order, deterministically drawing:
+1. **Deal derivation**: Pair `p` calls `deal_pair_v1(schedule_seed, p, 40)` (`limited_match_v1.rs:1158`) over the split's 40 decks in canonical `pool.tsv` order (with nominal training `schedule_seed = 657_000`, distinct from Gate 2 qualification `657_001`, dev monitoring `657_050`, and held-out evaluation `657_101..657_104`), deterministically drawing:
    - Two distinct deck indices `[d_0, d_1]` (`d_0 != d_1`, uniform over all `40 * 39 = 1,560` ordered pairs),
    - A shared `env_seed: u64` (governing opening library shuffles and environment RNG), and
    - A `starting_player: PlayerId` (`P0` or `P1`).
 2. **Asymmetric policy pairs (league training pairs and all fixed-opponent evaluations)**:
+   - For historical league training pairs (`p mod 16 in 12..16`), the historical snapshot index in `{step_0} U {step_10, step_20, ..., step_(10 * floor((u-1)/10))}` is drawn deterministically from `derive_seed(b"mtg-kernel/limited-campaign-league-opp/v1\0", &[schedule_seed, u, p])` (using `step_0` when `u == 0`).
    - **Leg 0**: Seat 0 plays Policy A with `d_0`; Seat 1 plays Policy B with `d_1`; `env_seed` and `starting_player` as dealt.
    - **Leg 1**: Seat 0 plays Policy B with `d_0`; Seat 1 plays Policy A with `d_1`; **identical** `env_seed` and `starting_player` (matching `kernel_limited_match_v1::play_one` lines 512-528).
    - Across the two legs, Policy A plays both decks (`d_0` and `d_1`) and both turn orders (on the play once, on the draw once) against the identical opening deal.
@@ -116,14 +117,15 @@ The campaign trainer removes the 32-decision retention cap:
 Assigning an unbaselined terminal `+/-1` REINFORCE weight equally across 250 to 400 multi-action decisions per seat produces high credit-assignment variance. The campaign defines a versioned `v2` actor-critic contract while keeping `CONTRACT_V1` untouched for `#552` replay compatibility:
 
 - **Primary Campaign Learner (`current_tree_learner_v2`, contract `"current-tree-learner/v2/f64/input20/hidden32/flags6/value1/gae-adam"`)**:
-  - **Architecture**: Shared recursive `NumericTree` encoder with hidden width `H = 32` (`INPUT = 20`, `RECURRENT = 32 * 32`, `BIAS = 32`, bilinear policy head `3 * 32 + 6 + 1 = 103`) plus a scalar state-value head `V_theta(s) = tanh(w_v . state.pooled + b_v) in (-1, 1)` (`32 + 1 = 33` parameters), totaling **`1,828` `f64` parameters** (4x the representation capacity of `H = 16` at negligible `<2%` forward/backward CPU share relative to engine `apply` + `encode`). An `H = 16` (`664`-parameter) configuration is retained as a compile-checked profile flag for exact width ablation if Gate 2 timing shows `model_forward + update` exceeding 15% of iteration wall time.
+  - **Architecture**: Shared recursive `NumericTree` encoder with hidden width `H = 32` (`INPUT = 20 * 32 = 640`, `RECURRENT = 32 * 32 = 1,024`, `BIAS = 32`, bilinear policy head `3 * 32 + 6 + 1 = 103`) plus a scalar state-value head `V_theta(s) = tanh(w_v . state.pooled + b_v) in (-1, 1)` (`32 + 1 = 33` parameters), totaling **`1,832` `f64` parameters** (~2.83x the parameter count of `H = 16` at negligible `<2%` forward/backward CPU share relative to engine `apply` + `encode`). An `H = 16` (`664`-parameter) configuration is retained as a compile-checked profile flag for exact width ablation if Gate 2 timing shows `model_forward + update` exceeding 15% of iteration wall time.
   - **Initialization**: Deterministic finite initialization seeded from a fixed contract tag (`step = 0`, zero Adam moments, `w_v = 0`, `b_v = 0` so initial value predictions start at `0.0`).
   - **Per-seat GAE credit assignment**: For each natural game and learner-controlled seat with `T` retained non-forced decisions `(s_0, a_0), ..., (s_{T-1}, a_{T-1})` and natural terminal return `R in {-1.0, 0.0, +1.0}`:
     - Define `V_t = V_theta(s_t)` under pre-update parameters `theta` for `0 <= t < T`, and bootstrap terminal value at `T`:
       $$\delta_t = \begin{cases} \gamma V_{t+1} - V_t & \text{if } t < T - 1 \\ R - V_{T-1} & \text{if } t = T - 1 \end{cases}$$
     - Generalized Advantage Estimation with $\gamma = 0.997$, $\lambda = 0.95$:
       $$A_t = \sum_{k=0}^{T - 1 - t} (\gamma \lambda)^k \delta_{t+k}, \qquad \hat{V}_t^{\text{target}} = A_t + V_t$$
-    - Advantages $A_t$ across all retained learner decisions in the synchronous batch are standardized by batch standard deviation ($\tilde{A}_t = A_t / (\sigma_A + 10^{-8})$, without subtracting batch mean when league pairs are asymmetric so net win-rate drift stays unbiased, or mean-centered within symmetric self-play pairs).
+    - Across all $N$ retained learner decisions in the synchronous mixed batch (self-play + league), advantages $A_n$ use pure scale-only standardization without mean subtraction so net win-rate drift against historical league opponents stays unbiased:
+      $$\tilde{A}_n = \frac{A_n}{\sigma_A + 10^{-8}}, \qquad \sigma_A = \sqrt{\frac{1}{N}\sum_{m=1}^{N}\left(A_m - \bar{A}\right)^2}, \qquad \bar{A} = \frac{1}{N}\sum_{m=1}^{N} A_m$$
   - **Composite synchronous loss** (reduced in canonical `(pair_index, leg_index, seat, decision_index)` order for bit-exact multi-worker determinism):
     $$\mathcal{L}(\theta) = \frac{1}{N} \sum_{n=1}^{N} \left[ -\tilde{A}_n \log \pi_\theta(a_n \mid s_n) + c_v \cdot \frac{1}{2}\left(V_\theta(s_n) - \hat{V}_n^{\text{target}}\right)^2 - c_{\text{ent}} \mathcal{H}(\pi_\theta(\cdot \mid s_n)) \right]$$
     with $c_v = 0.5$ and $c_{\text{ent}} = 0.01$.
@@ -133,22 +135,22 @@ Assigning an unbaselined terminal `+/-1` REINFORCE weight equally across 250 to 
 
 | Parameter | Specification | Rationale |
 | :--- | :--- | :--- |
-| **Batch size per update** | **16 pairs = 32 games** (~8,000-11,000 non-forced learner decisions) | Covers 32 deck seats per step while keeping update cadence responsive |
+| **Batch size per update** | **16 pairs = 32 games (`56` learner seat-trajectories)** (~14,000-22,400 non-forced learner decisions at 250-400 per seat) | 12 self-play pairs (`48` learner seats) + 4 league pairs (`8` learner seats; `pi_hist` trajectories are not trained on) |
 | **Training opponent mix** | **12 pairs (75%) self-play** (`[pi_u, pi_u]`) + **4 pairs (25%) historical league** (`[pi_u, pi_hist]`, uniform over `{step_0} U {step_10, step_20, ...}`) | Prevents cyclic forgetting and anchors policy improvement against initial/past snapshots |
 | **Optimizer & precision** | Synchronous `f64` Adam (`beta1 = 0.9`, `beta2 = 0.999`, `epsilon = 1e-8`), global L2 grad-norm clip `1.0` | Exact IEEE-754 `f64` bit reproducibility matching `LearnerV1` |
 | **Learning rate schedule** | Cosine decay `lr_0 = 3e-4 -> lr_end = 1e-4` over `U_max` updates | Smooth late-campaign convergence on noisy Limited outcomes |
 | **Campaign horizon `U_max`** | **Nominal `200` updates (`3,200` pairs = `6,400` games)**; minimum admissible horizon `100` updates (`3,200` games) if bounded by Gate 2 cost | Locked in `campaign_manifest.json` after Deliverable 2 quiet-host timing before update 1 runs |
-| **Dev-split progress check** | Every **20 updates**: `32` pairs (`64` games) vs `step_0` on **`train`-split decks only** (`dev_seed = 657_050`, disjoint pair range) | Tracks learning and detects collapse without ever touching the 40-deck `eval` split |
+| **Dev-split progress check** | Every **20 updates**: fixed `32`-pair panel (`64` games, `dev_seed = 657_050`, `pairs 0..32`) vs `step_0` on **`train`-split decks only** | Compares every milestone checkpoint on identical `train` deals (disjoint from training via `dev_seed`) without touching `eval` |
 
 **Stopping rules**:
-1. **Nominal completion**: Update `u == U_max` completes and publishes `complete.json`.
-2. **Dev-split plateau stop**: After update `80`, if the dev-split paired score (`train` decks, `dev_seed = 657_050`) against `step_0` fails to improve upon the running best dev score by at least `+0.02` across **3 consecutive** 20-update checks (60 updates), stop cleanly at that milestone checkpoint with `stop_reason = "dev_plateau"`.
+1. **Nominal completion**: The campaign runs the full locked `U_max` horizon (`100..=200` updates) so cosine LR decay completes without high-false-positive plateau halts on noisy `K = 32` dev checks (`SE ~ 0.055`), publishing `complete.json` at `u == U_max`.
+2. **Dev-split collapse / regression stop**: After update `40`, if the fixed-panel dev paired score (`train` decks, `dev_seed = 657_050, pairs 0..32`) against `step_0` falls below `0.40` (`> ~1.8 SE` below parity) on **2 consecutive** 20-update checks, stop cleanly with `stop_reason = "dev_collapse"`.
 3. **Hard abort / safety stop**: Immediate fail-closed halt on any `Halted` game error, non-finite logit/loss/gradient, checkpoint reload mismatch, or `truncated_games > 2` on two consecutive updates.
 
 ### 3.4 Checkpoint Cadence, Provenance Retention, and Cold-Resume Contract
 
 To satisfy `#657` Deliverable 3 (*"with every checkpoint and its source identity retained"*):
-- **100% checkpoint retention**: Every update `u in 0..=U_final` writes `checkpoints/step_UUUU.json` (plus `iterations/iter_UUUU/receipt.json` and `iterations/iter_UUUU/complete.json`). At `1,828` `f64` parameters + `2 * 1,828` Adam moments (`~44 KB` raw IEEE-754 `u64` bits per snapshot), retaining all `201` checkpoints uses `< 25 MB` on disk; zero checkpoint pruning is permitted.
+- **100% checkpoint retention**: Every update `u in 0..=U_final` writes `checkpoints/step_UUUU.json` (plus `iterations/iter_UUUU/receipt.json` and `iterations/iter_UUUU/complete.json`). At `1,832` `f64` parameters + `2 * 1,832` Adam moments (`43,968` raw bytes / `~114 KB` JSON decimal `u64` arrays per snapshot), retaining all `201` checkpoints uses `< 25 MB` on disk; zero checkpoint pruning is permitted.
 - **Bound source identity per checkpoint**: Every `step_UUUU.json` embeds:
   - `schema`: `"limited-campaign-checkpoint/v1"`
   - `git_head`, `binary_sha256`, `binary_source_sha256`
@@ -174,14 +176,14 @@ To satisfy `#657` Deliverable 3 (*"with every checkpoint and its source identity
 
 ### 4.2 Fixed-Opponent Pool and Match Budget
 
-All opponents act through the identical `-session full-pool` (`KaitoSession`) and `public-reveal-minima/v3` information boundary, using seat-swapped paired deals (`deal_pair_v1(opponent_eval_seed, p, 40)`) over all 40 `eval` decks (including the two 41-card lists and one 49-card list):
+All opponents act through the identical `-session full-pool` (`KaitoSession`) and `public-reveal-minima/v3` information boundary with `max_turns = 100` and `max_decisions = 4_000` (matching Section 3.1 rather than `kernel_limited_match_v1`'s legacy `20_000` CLI default), using seat-swapped paired deals (`deal_pair_v1(opponent_eval_seed, p, 40)`) over all 40 `eval` decks (including the two 41-card lists and one 49-card list). Step 1 (`Section 5.3`) adds crate-internal `sampled_world_state_eval_v1` on `KaitoSession` (evaluating `kernel_native_search_opponent_v1::evaluate_state_v1` strictly inside a `sampled_full_pool_closed_list_v1` clone so hidden opponent hand/library cards are never read) plus three versioned `PolicySpecV1` variants (`learner-checkpoint:<path>`, `sampled-public-heuristic/v1`, and `pimc:sims=S:depth=D:closedlist-full-pool-heuristic-v1`), leaving existing terminal-only `closedlist-full-pool-v1` (`full_pool_match_v1.rs:43-78`, which returns `0.0` at depth cutoffs and breaks ties to ordinal `0`) untouched for its existing tests:
 
 | Opponent ID | Implementation & Information Boundary | Pairs `K` (Games `2K`) | Seed | Purpose |
 | :--- | :--- | ---: | ---: | :--- |
-| **`initial-weights/step-0`** | `checkpoints/step_0000.json` under identical `f64-exp-icdf-u53/v1` sampling | `200` (`400` games) | `657_101` | Direct controlled test of out-of-deck generalization from gradient updates |
+| **`initial-weights/step-0`** | `checkpoints/step_0000.json` (`learner-checkpoint`) under identical `f64-exp-icdf-u53/v1` sampling | `200` (`400` games) | `657_101` | Direct controlled test of out-of-deck generalization from gradient updates |
 | **`uniform-legal/v1`** | Uniform choice over the sealed `KaitoDecision` legal menu (`PolicySpecV1::Random`) | `200` (`400` games) | `657_102` | Action-menu sanity floor |
-| **`sampled-public-heuristic/v1`** | 1-ply greedy scorer evaluating candidate root actions via `kernel_native_search_opponent_v1::evaluate_state_v1` inside one `sampled_full_pool_closed_list_v1` world (`-belief-split train`, `belief_overlap == 0`) so hidden opponent hand/library cards are never read | `200` (`400` games) | `657_103` | Fast non-random domain heuristic baseline (`life`, `hand.len()`, `library.len()`, mana, battlefield P/T + keywords) |
-| **`pimc:sims=16:depth=24:closedlist-full-pool-v1`** | Checked-in fair root-level determinized UCB1 rollout search (`limited_match_v1/full_pool_match_v1.rs`) conditioned on the disjoint 40-deck `train` belief corpus (`world_contract = "limited-closedlist-full-pool/v1"`, `belief_overlap == 0` verified by name and multiset) | `100` (`200` games)* | `657_104` | Stronger fair-search anchor (*`sims in {8, 16}` finalized from Gate 2 per-decision search cost so total search-eval wall time stays `<= 25%` of campaign budget) |
+| **`sampled-public-heuristic/v1`** | New `PolicySpecV1` 1-ply greedy scorer evaluating candidate root actions via `evaluate_state_v1` inside one `sampled_full_pool_closed_list_v1` world (`-belief-split train`, `belief_overlap == 0`) with seeded tie-breaking | `200` (`400` games) | `657_103` | Fast non-random domain heuristic baseline (`life`, `hand.len()`, `library.len()`, mana, battlefield P/T + keywords) |
+| **`pimc:sims=16:depth=24:closedlist-full-pool-heuristic-v1`** | New heuristic-leaf root-level determinized UCB1 rollout search conditioned on the disjoint 40-deck `train` belief corpus (`world_contract = "limited-closedlist-full-pool/v1"`, `belief_overlap == 0`), scoring depth-cutoff leaves inside the sampled world via `PIMC_HEURISTIC_SCALE_V1 * evaluate_state_v1 / 10_000.0` (matching `limited_match_v1.rs:691-694`) with seeded final tie-breaking | `100` (`200` games)* | `657_104` | Stronger fair-search anchor (*`sims in {8, 16}` finalized from Gate 2 per-decision search cost so total search-eval wall time stays `<= 25%` of campaign budget) |
 
 ### 4.3 Scoring, Confidence Intervals, and Pass / Claim Rules
 
@@ -191,13 +193,13 @@ $$y_p = \frac{s_{p,0} + s_{p,1}}{2} \in \{0.00, 0.25, 0.50, 0.75, 1.00\}, \qquad
 Every evaluation report publishes:
 1. **Primary inference (cluster-correct)**: Mean pair score $\bar{y}$, empirical pair SD $\hat{\sigma}_y$, **95% paired percentile/BCa bootstrap confidence interval** over $y_0, \dots, y_{K-1}$ (`10,000` resamples seeded deterministically with `SplitMix64(657_999)`), and exact two-sided paired sign / Wilcoxon p-value on discordant pairs ($y_p > 0.5$ vs $y_p < 0.5$).
 2. **Secondary descriptive interval**: Per-game W/D/L/Stall counts and **95% Wilson score interval** over decisive games and over $2K$ total games (labeled descriptive, since paired legs are negatively correlated on deck bias).
-3. **Subgroup audit**: Separate W/D/L breakdown on (a) the 20 catalog-`Full`-only vs 20 catalog-`Partial`-containing `eval` decks, (b) pairs involving the three `>40`-card `eval` decks (`41`, `41`, `49`), and (c) pairs involving the two `Drake Hatcher` `eval` decks.
+3. **Subgroup audit**: Separate W/D/L breakdown on (a) the **19** catalog-`Full`-only vs **21** catalog-`Partial`-containing `eval` decks (reported both per-leg by the candidate seat's assigned deck and per-pair across `Full-vs-Full`, `Mixed`, and `Partial-vs-Partial` strata), (b) pairs involving the three `>40`-card `eval` decks (`41`, `41`, `49`), and (c) pairs involving the two `Drake Hatcher` `eval` decks.
 
 **Pre-registered integrity and claim gates** (reviewed before any strength claim per `#657` Deliverable 4):
 - **Gate E0 - Evaluation Integrity (Hard Prerequisite)**: `errors == 0`, `rollout_errors == 0`, `belief_overlap == 0` (by deck name and card multiset), `stalls / total_games <= 0.02`, and byte-identical replay of pairs `0..4` across two worker counts. Any `E0` failure blocks all strength claims.
 - **Gate E1 - Generalizing Learning Claim**: Requires `E0` pass, 95% paired bootstrap CI lower bound **`> 0.52`** vs `initial-weights/step-0` (`K = 200` pairs; at typical $\hat{\sigma}_y \approx 0.35$, $\text{SE} \approx 0.025$, requiring $\bar{y} \ge 0.57$), **and** 95% paired bootstrap CI lower bound **`> 0.60`** vs `uniform-legal/v1` (`K = 200` pairs).
 - **Gate E2 - Heuristic-Beating Strength Claim**: Requires `E1` pass **and** 95% paired bootstrap CI lower bound **`> 0.50`** vs `sampled-public-heuristic/v1` (`K = 200` pairs).
-- **Gate E3 - Fair-Search Parity / Advantage Claim**: Requires `E2` pass **and** 95% paired bootstrap CI lower bound **`> 0.50`** vs `pimc:sims=16:depth=24:closedlist-full-pool-v1` (`K = 100` pairs). If `E1`/`E2` pass while `E3 <= 0.50`, report the exact paired score and Elo differential against fair search without claiming search superiority.
+- **Gate E3 - Fair-Search Parity / Advantage Claim**: Requires `E2` pass **and** 95% paired bootstrap CI lower bound **`> 0.50`** vs `pimc:sims=16:depth=24:closedlist-full-pool-heuristic-v1` (`K = 100` pairs). If `E1`/`E2` pass while `E3 <= 0.50`, report the exact paired score and Elo differential against fair search without claiming search superiority.
 
 ---
 
@@ -207,7 +209,7 @@ Under `COMPUTE-POLICY.md` and `AGENTS.md`, no multi-iteration campaign run may b
 
 ### 5.1 Gate 1: Pre-Compute Design and Campaign Governance Review
 
-1. **Single-lead campaign coordination (`AGENTS.md` lines 27-33)**: One Claude `ResearchLead` coordinates `mtg-kernel` experimental campaigns and compute allocation across hosts (aligned with the `2026-11-13` compute-allocation Council). Implementation of the campaign runner and the two-site `DrakeJournalV1` absence guard is routine engineering in an isolated worktree, whereas dispatching multi-hour campaign compute requires `ResearchLead` scheduling and reviewed design sign-off.
+1. **Single-lead campaign coordination (`AGENTS.md` line 13 and standing workspace `AGENTS.md` campaign rules)**: One Claude `ResearchLead` coordinates `mtg-kernel` experimental campaigns and compute allocation across hosts (aligned with the `2026-11-13` compute-allocation Council). Implementation of the campaign runner and the two-site `DrakeJournalV1` absence guard is routine engineering in an isolated worktree, whereas dispatching multi-hour campaign compute requires `ResearchLead` scheduling and reviewed design sign-off.
 2. **Independent design review (`#657` Deliverable 1)**: Record substantive review of this document (verifying deck/seed hygiene, GAE/truncation semantics, statistical gates, and placement budget) on the `#657` design PR before running campaign compute.
 
 ### 5.2 Gate 2: Quiet-Host Completed-Work Scaling Qualification (`#657` Deliverable 2)
@@ -222,7 +224,7 @@ Deliverable 2 executes a representative quiet-host scaling qualification under `
 4. **Required qualification checks**:
    - **Determinism parity**: `step_0001.json` and `evaluation.json` must match **byte-for-byte** across `W = 1, 2, 4, 8` and between `--stage-diagnostics` on vs off.
    - **Completed-work metrics**: Record `completed_natural_games_per_sec`, `decisions_per_sec`, speedup `S(W) = T(1) / T(W)`, parallel efficiency `E(W) = S(W) / W`, peak RSS per worker, and `--stage-diagnostics` breakdown (`apply`, `authenticated_input`, `encode`, `model_forward`, `sample`, `update`, `io`).
-   - **Cost projection**: Compute projected wall-clock time `T_campaign(W) = (6,400 + 1,400 eval games) / games_per_hour(W)` (plus dev checks and fair-search eval cost measured on 4 pairs of `closedlist-full-pool-v1`) and lock `W*` and `U_max` in `qualification_manifest.json`.
+   - **Cost projection**: Compute projected wall-clock time `T_campaign(W)` from `6,400` training games + `640` fixed-panel dev games (`10 * 64`) + held-out evaluation (`800` policy/random games + `400` `sampled-public-heuristic/v1` games, measured separately because 1-ply root lookahead executes `legal` `apply` steps per non-forced decision, + `200` `closedlist-full-pool-heuristic-v1` search games measured on 4 pairs; doubled to `2,800` total eval games in the worst case where `u_best_dev` also qualifies under Section 4.1) and lock `W*` and `U_max` in `qualification_manifest.json`.
 5. **Guarded launcher enforcement (`COMPUTE-POLICY.md` Rule 5)**: The campaign CLI subcommand refuses to start `U_max > 1` without `-qualification-manifest <path>` whose `binary_source_sha256`, `feature_sha256`, `card_db_hash`, and host class match the running binary and verify `W >= 2` parallel collection (unless `W = 1` was empirically faster, which cannot hold for independent episode pairs).
 
 ### 5.3 Gate 3: Host Inventory and Placement Comparison (`COMPUTE-POLICY.md` Rules 1, 4, 7)
