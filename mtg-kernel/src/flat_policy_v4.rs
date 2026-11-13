@@ -1796,6 +1796,38 @@ mod tests {
             .expect("both layers must be mutually consistent for the shared-physical-source case");
     }
 
+    /// fg-b regression, full pipeline: two pending triggers whose shared
+    /// source token ceased to exist before they were ordered. The observation
+    /// already projects their source as unknown (`visible_card_ref` requires
+    /// zone-list membership); the registry must add one `PendingTrigger` row
+    /// per position so the action slice's frozen-contract references link,
+    /// and the tensorizer must accept the result.
+    #[test]
+    fn v4_order_triggers_from_a_ceased_token_get_pending_trigger_rows_end_to_end() {
+        let (state, _token) =
+            crate::rl_session::ceased_token_order_triggers_shared_source_state_v1();
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let mut owned = OwnedScoringV4::default();
+        let decision = owned
+            .encode(&session)
+            .expect("V4 scoring must encode OrderTriggers from a ceased token");
+        let hist = &decision.extensions.historical_public_sources;
+        let mut positions: Vec<u32> = hist
+            .iter()
+            .map(|row| match row.context {
+                HistoricalSourceContextV7::PendingTrigger { position } => position,
+                other => panic!("expected PendingTrigger, found {other:?}"),
+            })
+            .collect();
+        positions.sort_unstable();
+        assert_eq!(positions, vec![0, 1]);
+        let view = owned.view(&decision);
+        let mut tensor = NativeFlatDecisionTensorV4::default();
+        NativeFlatTensorizerV4::default()
+            .fill(view, &mut tensor)
+            .expect("both layers must agree for the ceased-token case");
+    }
+
     /// Dimension-stability check (plan section 3, step 7): encoding a
     /// common, non-hidden fixture through V3 and V4 must produce numerically
     /// identical object/edge feature widths -- proving mechanically, not
