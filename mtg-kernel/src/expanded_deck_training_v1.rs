@@ -6473,15 +6473,7 @@ pub(crate) mod tests {
 
     #[test]
     fn collection_cache_boundary_rejects_same_path_mutation_of_all_pins() {
-        let root = std::env::temp_dir().join(format!(
-            "collection-cache-pins-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-        ));
-        fs::create_dir(&root).unwrap();
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("collection-cache-pins");
         let write_pin = |name: &str, bytes: &[u8]| {
             let path = root.join(name);
             fs::write(&path, bytes).unwrap();
@@ -6527,7 +6519,6 @@ pub(crate) mod tests {
             verify_collection_opponent_sources_v1(&episodes).unwrap(),
             vec![behavior.source]
         );
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -9793,18 +9784,9 @@ pub(crate) mod tests {
         }
     }
 
-    fn write_ledger(label: &str, ledger: &NonNaturalLedgerV1) -> PinnedFileV1 {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let directory = std::env::temp_dir().join(format!(
-            "ledger-overrides-{label}-{}-{nonce}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&directory).unwrap();
+    fn write_ledger(root: &Path, label: &str, ledger: &NonNaturalLedgerV1) -> PinnedFileV1 {
         let bytes = serde_json::to_vec(ledger).unwrap();
-        let path = directory.join("non-natural.json");
+        let path = root.join(format!("{label}-non-natural.json"));
         fs::write(&path, &bytes).unwrap();
         PinnedFileV1 {
             path,
@@ -9814,8 +9796,10 @@ pub(crate) mod tests {
 
     #[test]
     fn ledgered_retry_seed_overrides_follow_the_derived_seed_chain_in_any_entry_order() {
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("ledger-overrides-follow");
         let episodes = ledger_fixture_episodes();
         let empty = write_ledger(
+            &root,
             "empty",
             &NonNaturalLedgerV1 {
                 schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
@@ -9838,7 +9822,7 @@ pub(crate) mod tests {
                 ledger_entry(&episodes[0], 0, 1, episodes[0].seed),
             ],
         };
-        let pin = write_ledger("chain", &ledger);
+        let pin = write_ledger(&root, "chain", &ledger);
         assert_eq!(
             ledgered_retry_seed_overrides_v1(&pin, &episodes).unwrap(),
             vec![
@@ -9850,9 +9834,11 @@ pub(crate) mod tests {
 
     #[test]
     fn ledgered_retry_seed_overrides_reject_ledgers_that_do_not_re_derive_from_the_schedule() {
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("ledger-overrides-reject");
         let episodes = ledger_fixture_episodes();
         let write = |label: &str, entries: Vec<NonNaturalLedgerEntryV1>| {
             write_ledger(
+                &root,
                 label,
                 &NonNaturalLedgerV1 {
                     schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
@@ -9927,6 +9913,7 @@ pub(crate) mod tests {
         reject("seat", vec![seat], "does not match the scheduled episode");
 
         let wrong_schema = write_ledger(
+            &root,
             "schema",
             &NonNaturalLedgerV1 {
                 schema: "something-else/v9".into(),
@@ -9937,6 +9924,7 @@ pub(crate) mod tests {
             .unwrap_err()
             .contains("schema differs"));
         let mut tampered = write_ledger(
+            &root,
             "sha",
             &NonNaturalLedgerV1 {
                 schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
@@ -9990,8 +9978,7 @@ pub(crate) mod tests {
     #[test]
     fn execute_v1_collect_writes_ledger_records_its_hash_and_enforces_the_fraction_cap() {
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3;
-        let root =
-            std::env::temp_dir().join(format!("expanded-collect-tolerant-{}", std::process::id()));
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("expanded-collect-tolerant");
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -10848,9 +10835,8 @@ pub(crate) mod tests {
         training_math: TrainingMathV1,
     ) -> Result<(String, String, String), String> {
         let opening = declared.is_some_and(|(_, opening)| opening);
-        let root = std::env::temp_dir().join(format!(
-            "ordinary-two-iteration-{label}-{}",
-            std::process::id()
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1(&format!(
+            "ordinary-two-iteration-{label}"
         ));
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
@@ -11230,8 +11216,7 @@ pub(crate) mod tests {
     fn portable_math_binds_trajectories_and_checkpoints_to_their_math() {
         use TrainingMathV1::{PlatformLibm, PortableV1};
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-        let root =
-            std::env::temp_dir().join(format!("portable-math-binding-{}", std::process::id()));
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("portable-math-binding");
         let descriptor =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -11654,9 +11639,8 @@ pub(crate) mod tests {
     fn assert_line_b_mask_fixture_v1(backend_label: &str, update_backend: ExpandedUpdateBackendV1) {
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
         let run = |label: &str, line_b: Option<LineBUpdateOptionsV1>, updates: u64| {
-            let root = std::env::temp_dir().join(format!(
-                "line-b-mask-{backend_label}-{label}-{}",
-                std::process::id()
+            let root = crate::test_temp_dir_v1::TempTestDir::new_v1(&format!(
+                "line-b-mask-{backend_label}-{label}"
             ));
             let source_struct =
                 fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
@@ -11736,7 +11720,7 @@ pub(crate) mod tests {
                 source.checkpoint = Some(pin);
                 outputs.push((checkpoint, receipt));
             }
-            (initial_source, source, outputs)
+            (root, initial_source, source, outputs)
         };
         let bits_of = |tensors: &[NativeNamedParameterV1]| -> Vec<Vec<u32>> {
             tensors.iter().map(|t| bits(&t.values)).collect()
@@ -11748,7 +11732,7 @@ pub(crate) mod tests {
             optimizer_mask: OptimizerMaskV1::LineBHeadOnlyV1,
             teacher: None,
         };
-        let (initial_source, final_source, masked) = run("masked", Some(options), 4);
+        let (_masked_root, initial_source, final_source, masked) = run("masked", Some(options), 4);
         let (initial_policy, initial_state) = initialize(&initial_source).unwrap();
         let initial = initial_state.snapshot_v1().unwrap();
         let mask = HeadOnlyMaskV1::for_snapshot_v1(&initial).unwrap();
@@ -11804,7 +11788,7 @@ pub(crate) mod tests {
                 .actual_model_identity_v1()
                 .embedding_table_sha256
         );
-        let (_, _, unmasked) = run("unmasked", None, 2);
+        let (_unmasked_root, _, _, unmasked) = run("unmasked", None, 2);
         assert!(unmasked
             .iter()
             .all(|(_, receipt)| receipt.get("line_b").is_none()));
@@ -12401,10 +12385,8 @@ pub(crate) mod tests {
     fn assert_line_b_teacher_update_v1(label: &str, update_backend: ExpandedUpdateBackendV1) {
         use crate::line_b_teacher_target_v1::LineBDivergenceV1;
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-        let root = std::env::temp_dir().join(format!(
-            "line-b-teacher-update-{label}-{}",
-            std::process::id()
-        ));
+        let root =
+            crate::test_temp_dir_v1::TempTestDir::new_v1(&format!("line-b-teacher-update-{label}"));
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -12879,7 +12861,7 @@ pub(crate) mod tests {
     fn e_supported_real_update_binds_packet_replays_and_preserves_zero_treatment() {
         use e_supported_teacher_v1::{ESupportedSlotV1, ESupportedTeacherOptionsV1};
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-        let root = std::env::temp_dir().join(format!("e-supported-update-{}", std::process::id()));
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("e-supported-update");
         let descriptor =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -13026,9 +13008,7 @@ pub(crate) mod tests {
     fn e_teacher_diagnostic_replays_binds_teacher_root_and_couples_identical_choices() {
         let started = std::time::Instant::now();
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-        let root =
-            std::env::temp_dir().join(format!("e-teacher-diagnostic-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("e-teacher-diagnostic");
         let descriptor =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -13154,7 +13134,6 @@ pub(crate) mod tests {
             first["totals"],
             started.elapsed().as_secs_f64()
         );
-        let _ = fs::remove_dir_all(&root);
     }
 
     /// Issue #433: the named profiles carrying the loss-terminal rule, and

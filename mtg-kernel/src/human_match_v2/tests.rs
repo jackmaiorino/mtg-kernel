@@ -8,21 +8,9 @@ use crate::learned_sideboard_v1::{
 };
 use crate::phase1_agent_v1::ActorVisibleDecisionV1;
 use crate::phase1_bo3_collection_v1::{collect_loaded_inner, Bo3CollectionConfigV1};
-use std::sync::atomic::{AtomicU64, Ordering};
 
-static NEXT: AtomicU64 = AtomicU64::new(0);
-fn directory() -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "human-v2-fixture-{}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir(&path).unwrap();
-    path
+fn directory() -> crate::test_temp_dir_v1::TempTestDir {
+    crate::test_temp_dir_v1::TempTestDir::new_v1("human-v2-fixture")
 }
 
 fn fixture(
@@ -32,6 +20,7 @@ fn fixture(
     HumanMatchServiceV2,
     Bo3CollectionConfigV1,
     [CompleteAgentPackageV1; 2],
+    crate::test_temp_dir_v1::TempTestDir,
 ) {
     fixture_generation(human, fitted, false)
 }
@@ -44,6 +33,7 @@ fn fixture_generation(
     HumanMatchServiceV2,
     Bo3CollectionConfigV1,
     [CompleteAgentPackageV1; 2],
+    crate::test_temp_dir_v1::TempTestDir,
 ) {
     let directory = directory();
     let mut cfg = crate::phase1_bo3_collection_v1::tests::config("human-v2-fixed-engine-fixture");
@@ -143,7 +133,7 @@ fn fixture_generation(
         json!({"test_only_actual_engine_fixture":true,"runtime_verified":false}),
     )
     .unwrap();
-    (service, cfg, packages)
+    (service, cfg, packages, directory)
 }
 
 fn current(service: &mut HumanMatchServiceV2) -> Value {
@@ -194,7 +184,7 @@ fn journal(service: &HumanMatchServiceV2) -> Vec<Value> {
 fn human_v4_service_selects_live_binding_from_policy_and_accepts_shared_source_target() {
     use crate::state::Target;
     for target_label in ["Writhing Chrysalis", "Counterspell"] {
-        let (mut service, _, _) = fixture_generation(0, false, true);
+        let (mut service, _, _, _dir) = fixture_generation(0, false, true);
         assert_eq!(
             service.policy.feature_generation_v1(),
             PlayPolicyGenerationV1::V4
@@ -254,7 +244,7 @@ fn human_v4_complete_bo3_both_seats_match_automated_package_gameplay_and_sideboa
 
 fn check_human_gameplay_parity(v4: bool) {
     for human in 0..2 {
-        let (mut service, cfg, packages) = fixture_generation(human, human == 1, v4);
+        let (mut service, cfg, packages, _dir) = fixture_generation(human, human == 1, v4);
         let fixtures = if v4 {
             crate::phase1_bo3_collection_v1::tests::fixtures_v4
         } else {
@@ -455,7 +445,7 @@ fn check_human_gameplay_parity(v4: bool) {
 fn human_v2_concessions_keep_real_opening_and_gameplay_provenance() {
     for human in 0..2 {
         for bottom in [false, true] {
-            let (mut service, _, _) = fixture(human, false);
+            let (mut service, _, _, _dir) = fixture(human, false);
             begin(&mut service);
             let revision = service.opening_revision;
             send(
@@ -504,7 +494,7 @@ fn human_v2_concessions_keep_real_opening_and_gameplay_provenance() {
             assert_eq!(result.history.committed_policy_steps, 0);
             assert!(result.summary.resource_curve.lands_by_turn.is_empty());
         }
-        let (mut service, _, _) = fixture(human, false);
+        let (mut service, _, _, _dir) = fixture(human, false);
         begin(&mut service);
         keep(&mut service, "kept");
         let steps = service.session.as_ref().unwrap().policy_step_count();
@@ -535,7 +525,7 @@ fn human_v2_concessions_keep_real_opening_and_gameplay_provenance() {
 
 #[test]
 fn human_v2_retries_invalid_requests_and_legal_exchange_preserve_model_choice() {
-    let (mut service, _, _) = fixture(0, true);
+    let (mut service, _, _, _dir) = fixture(0, true);
     begin(&mut service);
     let old = HumanMatchCommandV1::Mulligan {
         request_id: "old-mulligan".into(),
@@ -643,7 +633,7 @@ fn human_v2_retries_invalid_requests_and_legal_exchange_preserve_model_choice() 
 
 #[test]
 fn human_v2_caps_failures_and_package_rejection_do_not_fabricate_results() {
-    let (mut capped, _, _) = fixture(0, false);
+    let (mut capped, _, _, _capped_dir) = fixture(0, false);
     capped.config.max_physical_games = 1;
     begin(&mut capped);
     send(
@@ -659,7 +649,7 @@ fn human_v2_caps_failures_and_package_rejection_do_not_fabricate_results() {
         capped.match_state.match_state().phase(),
         MatchPhaseV1::Complete { .. }
     ));
-    let (mut failed, _, _) = fixture(0, false);
+    let (mut failed, _, _, _failed_dir) = fixture(0, false);
     begin(&mut failed);
     // A mismatched loaded auxiliary models a stopped continuation failure only.
     let other = FrozenPlayPolicyV1::training_fixture_v3();
@@ -685,7 +675,8 @@ fn human_v2_caps_failures_and_package_rejection_do_not_fabricate_results() {
     assert_eq!(current(&mut failed)["phase"], "stopped");
     assert!(journal(&failed).iter().any(|r| r["event"] == "game_result"));
     let mut config = failed.config.clone();
-    config.journal_path = directory().join("must-not-exist.jsonl");
+    let extra_dir = directory();
+    config.journal_path = extra_dir.join("must-not-exist.jsonl");
     std::fs::write(&config.package.path, b"{}").unwrap();
     assert!(HumanMatchServiceV2::new(config.clone()).is_err());
     assert!(!config.journal_path.exists());

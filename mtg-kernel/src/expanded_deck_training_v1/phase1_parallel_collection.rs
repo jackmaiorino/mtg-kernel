@@ -502,11 +502,12 @@ mod tests {
 
     /// A five-game parallel collection on two workers under a fresh temporary
     /// root, returning the root and the published trajectory pins.
-    fn collect_parallel_for_parse_ahead_test_v1(label: &str) -> (PathBuf, Vec<PinnedFileV1>) {
+    fn collect_parallel_for_parse_ahead_test_v1(
+        label: &str,
+    ) -> (crate::test_temp_dir_v1::TempTestDir, Vec<PinnedFileV1>) {
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3;
-        let root = std::env::temp_dir().join(format!(
-            "expanded-collect-parallel-{label}-{}",
-            std::process::id()
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1(&format!(
+            "expanded-collect-parallel-{label}"
         ));
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
@@ -582,7 +583,7 @@ mod tests {
     /// parse of the file.
     #[test]
     fn parallel_collection_parses_its_trajectories_ahead_for_both_readers() {
-        let (root, pins) = collect_parallel_for_parse_ahead_test_v1("parse-ahead");
+        let (_root, pins) = collect_parallel_for_parse_ahead_test_v1("parse-ahead");
         for pin in &pins {
             trajectory_parse_ahead_v1::wait_until_parsed_for_test_v1(&pin.sha256);
         }
@@ -604,7 +605,6 @@ mod tests {
                 [true, true]
             );
         }
-        fs::remove_dir_all(root).unwrap();
     }
 
     /// Stage 1's failure-order check for parse-ahead (collab actor-learner
@@ -615,7 +615,7 @@ mod tests {
     /// published bytes are back, it is served to them.
     #[test]
     fn a_trajectory_changed_after_its_parse_ahead_fails_its_readers_as_before() {
-        let (root, pins) = collect_parallel_for_parse_ahead_test_v1("parse-ahead-changed");
+        let (_root, pins) = collect_parallel_for_parse_ahead_test_v1("parse-ahead-changed");
         for pin in &pins {
             trajectory_parse_ahead_v1::wait_until_parsed_for_test_v1(&pin.sha256);
         }
@@ -647,7 +647,6 @@ mod tests {
             trajectory_parse_ahead_v1::served_for_test_v1(&pins[1].sha256),
             [false, true]
         );
-        fs::remove_dir_all(root).unwrap();
     }
 
     /// Mirrors `expanded_deck_training_v1::tests::
@@ -659,10 +658,8 @@ mod tests {
     #[test]
     fn phase1_parallel_tolerant_collection_ledgers_and_enforces_the_fraction_cap() {
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3;
-        let root = std::env::temp_dir().join(format!(
-            "expanded-collect-parallel-tolerant-{}",
-            std::process::id()
-        ));
+        let root =
+            crate::test_temp_dir_v1::TempTestDir::new_v1("expanded-collect-parallel-tolerant");
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -993,10 +990,7 @@ mod tests {
             .parse()
             .unwrap();
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-        let root = std::env::temp_dir().join(format!(
-            "expanded-collect-gpu-serial-{}",
-            std::process::id()
-        ));
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("expanded-collect-gpu-serial");
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -1101,7 +1095,6 @@ mod tests {
             assert_eq!(serial, cpu, "serial Collect on the GPU against the CPU");
         }
         assert_eq!(run("parallel", 2), serial);
-        let _ = fs::remove_dir_all(&root);
     }
 
     /// Line (b) collection sampler end to end through the real commands:
@@ -1114,8 +1107,7 @@ mod tests {
     #[test]
     fn unclamped_learner_collection_is_serial_parallel_identical_and_keeps_opponents_legacy() {
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-        let root =
-            std::env::temp_dir().join(format!("expanded-collect-unclamped-{}", std::process::id()));
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("expanded-collect-unclamped");
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
