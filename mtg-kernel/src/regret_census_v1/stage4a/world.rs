@@ -25,7 +25,8 @@
 use crate::card_def::CARD_DEFS;
 use crate::ids::{ObjectId, PlayerId};
 use crate::rl_session::{
-    FastActorSessionV1, V4BoundaryEncodingFailureV1, V4SearchSampleMode, V4SearchStateErrorV1,
+    FastActorSessionV1, PreparedV4SearchRootV1, V4BoundaryEncodingFailureV1, V4BoundaryScratchV1,
+    V4SearchSampleMode, V4SearchStateErrorV1,
 };
 use crate::runtime_decks::RUNTIME_DECKS;
 use crate::state::{GameState, ObjectStateV4, SplitMix64, Zone};
@@ -226,27 +227,45 @@ fn contract_pinned(state: &GameState) -> HashSet<ObjectId> {
 /// The opponent's unknown slots from `actor`'s view, in the V4 sampler's
 /// canonical order (hand indices, then library indices).
 fn unknown_slots(state: &GameState, actor: PlayerId, owner: PlayerId) -> Vec<ObjectId> {
-    let p = &state.players[owner.index()];
     let mut slots = Vec::new();
+    unknown_slots_filtered_into(state, actor, owner, None, &mut slots);
+    slots
+}
+
+fn unknown_slots_filtered_into(
+    state: &GameState,
+    actor: PlayerId,
+    owner: PlayerId,
+    pinned: Option<&HashSet<ObjectId>>,
+    slots: &mut Vec<ObjectId>,
+) {
+    slots.clear();
+    let p = &state.players[owner.index()];
+    let known_hand = state.known_hand_cards(actor, owner);
     for &id in &p.hand {
+        if pinned.is_some_and(|set| set.contains(&id)) {
+            continue;
+        }
         let generation = state.objects.get(id).zone_change_count;
-        if !state
-            .known_hand_cards(actor, owner)
+        if !known_hand
             .iter()
             .any(|k| k.object == id && k.zone_change_count == generation)
         {
             slots.push(id);
         }
     }
+    let known_lib = state.known_library_cards(actor, owner);
     for (i, &id) in p.library.iter().enumerate() {
+        if pinned.is_some_and(|set| set.contains(&id)) {
+            continue;
+        }
         let generation = state.objects.get(id).zone_change_count;
-        if !state.known_library_cards(actor, owner).iter().any(|k| {
+        if !known_lib.iter().any(|k| {
             k.position as usize == i && k.object == id && k.zone_change_count == generation
         }) {
             slots.push(id);
         }
     }
-    slots
 }
 
 /// Opponent-owned physical cards outside the unknown slots: public zones and
@@ -379,6 +398,152 @@ pub(crate) fn sample_recorded(
         world,
         prior_deck: chosen.ok_or("deck prior hook did not run")?,
     })
+}
+
+/// Reusable root preparation and scratch buffers for sampling many lawful
+/// worlds from one immutable root `FastActorSessionV1`.
+pub(crate) struct PreparedRootSampler {
+    v4_root: PreparedV4SearchRootV1,
+    boundary_scratch: V4BoundaryScratchV1,
+    prior: Result<PreparedRootPriorOk, String>,
+    slots_scratch: Vec<ObjectId>,
+    remaining_scratch: Vec<u16>,
+}
+
+struct PreparedRootPriorOk {
+    pinned: HashSet<ObjectId>,
+    slot_count: usize,
+    consistent: Vec<(usize, Vec<u16>)>,
+}
+
+impl PreparedRootSampler {
+    pub(crate) fn new(session: &FastActorSessionV1, prior: &DeckPrior) -> Self {
+        let v4_root = session.prepare_v4_search_root_v1(V4SearchSampleMode::FutureChanceV3);
+        let prepared_prior = (|| -> Result<PreparedRootPriorOk, String> {
+            let Some(d) = super::play::decision(session) else {
+                return Err("no live decision".into());
+            };
+            let actor = super::play::acting(&d);
+            let opp = actor.opponent();
+            let state = session.game_state();
+            let pinned = contract_pinned(state);
+            let mut slots = Vec::new();
+            unknown_slots_filtered_into(state, actor, opp, Some(&pinned), &mut slots);
+            let unknown: HashSet<ObjectId> = slots.iter().copied().collect();
+            if unknown.len() != slots.len() {
+                return Err("duplicate unknown slot".into());
+            }
+            let observed = observed_cards(state, opp, &unknown);
+            let total = observed.len() + slots.len();
+            let indices = prior.consistent(&observed, total);
+            if indices.is_empty() {
+                return Err(format!(
+                    "no registered deck is consistent with {} observed of {total} cards",
+                    observed.len()
+                ));
+            }
+            let consistent = indices
+                .into_iter()
+                .map(|idx| (idx, difference(&prior.decks[idx], &observed)))
+                .collect();
+            Ok(PreparedRootPriorOk {
+                pinned,
+                slot_count: slots.len(),
+                consistent,
+            })
+        })();
+        Self {
+            v4_root,
+            boundary_scratch: V4BoundaryScratchV1::default(),
+            prior: prepared_prior,
+            slots_scratch: Vec::new(),
+            remaining_scratch: Vec::new(),
+        }
+    }
+
+    pub(crate) fn sample_recorded(
+        &mut self,
+        session: &FastActorSessionV1,
+        seed: u64,
+        prior: &DeckPrior,
+        encoding_failure: &mut Option<V4BoundaryEncodingFailureV1>,
+    ) -> Result<Sample, String> {
+        let mut chosen = None;
+        let mut hook_error = None;
+        let PreparedRootSampler {
+            v4_root,
+            boundary_scratch,
+            prior: prepared_prior,
+            slots_scratch,
+            remaining_scratch,
+        } = self;
+        let world = session
+            .kernel_search_redeterminized_clone_prepared_hooked_v4(
+                v4_root,
+                boundary_scratch,
+                seed,
+                |state, actor| {
+                    let result = match prepared_prior {
+                        Err(msg) => Err(msg.clone()),
+                        Ok(prep) => {
+                            unknown_slots_filtered_into(
+                                state,
+                                actor,
+                                actor.opponent(),
+                                Some(&prep.pinned),
+                                slots_scratch,
+                            );
+                            if slots_scratch.len() != prep.slot_count {
+                                apply_deck_prior(state, actor, prior, seed)
+                            } else {
+                                let mut rng = SplitMix64::seed(prior_seed(seed));
+                                let pos = draw(&mut rng, prep.consistent.len() as u64);
+                                let (deck_idx, ref base_rem) = prep.consistent[pos];
+                                if base_rem.len() != slots_scratch.len() {
+                                    Err("prior remainder differs from the unknown slot count"
+                                        .into())
+                                } else {
+                                    remaining_scratch.clear();
+                                    remaining_scratch.extend_from_slice(base_rem);
+                                    for i in (1..remaining_scratch.len()).rev() {
+                                        let j = draw(&mut rng, (i + 1) as u64);
+                                        remaining_scratch.swap(i, j);
+                                    }
+                                    for (&id, &def) in slots_scratch.iter().zip(&*remaining_scratch)
+                                    {
+                                        let obj = state.objects.get_mut(id);
+                                        obj.card_def = def;
+                                        obj.name = CARD_DEFS[def as usize].name.to_string();
+                                        obj.v4 = ObjectStateV4::from_card_def(def);
+                                    }
+                                    Ok(deck_idx)
+                                }
+                            }
+                        }
+                    };
+                    match result {
+                        Ok(d) => {
+                            chosen = Some(d);
+                            Ok(())
+                        }
+                        Err(e) => {
+                            hook_error = Some(e);
+                            Err(V4SearchStateErrorV1::SampleHookRejected)
+                        }
+                    }
+                },
+                encoding_failure,
+                None,
+            )
+            .map_err(|e| match &hook_error {
+                Some(h) => format!("{e:?}: {h}"),
+                None => format!("{e:?}"),
+            })?;
+        Ok(Sample {
+            world,
+            prior_deck: chosen.ok_or("deck prior hook did not run")?,
+        })
+    }
 }
 
 /// SD1's opt-in world lifecycle for E's selection simulations (collab
@@ -591,6 +756,60 @@ mod tests {
             assert!(prior.consistent(&[], total).contains(&d));
             // A deck's own full list is consistent with itself.
             assert!(prior.consistent(&prior.decks[d], total).contains(&d));
+        }
+    }
+
+    #[test]
+    fn prepared_root_sampler_matches_unprepared_world_for_world() {
+        use crate::rl_session::FastActorResponseV1;
+        let prior = DeckPrior::new(&(0..9).collect::<Vec<_>>());
+        let mut session = FastActorSessionV1::reset_with_decks_and_limits_flat_action_v3(
+            9991,
+            20_261_113,
+            400,
+            40_000,
+            ["Rally".to_string(), "Burn".to_string()],
+        )
+        .unwrap();
+        let mut roots = Vec::new();
+        for _ in 0..24 {
+            let FastActorResponseV1::Decision(d) = session.current_response() else {
+                break;
+            };
+            if d.legal_action_count >= 2 {
+                roots.push(session.clone());
+                if roots.len() >= 4 {
+                    break;
+                }
+            }
+            session.step(d.episode_id, d.step, 0).unwrap();
+        }
+        assert!(!roots.is_empty());
+        for root in &roots {
+            let mut prepared = PreparedRootSampler::new(root, &prior);
+            for seed in 1..=32 {
+                let mut f_a = None;
+                let mut f_b = None;
+                let a = sample_recorded(root, seed, &prior, &mut f_a);
+                let b = prepared.sample_recorded(root, seed, &prior, &mut f_b);
+                assert_eq!(f_a, f_b, "seed {seed}");
+                match (a, b) {
+                    (Ok(sa), Ok(sb)) => {
+                        assert_eq!(sa.prior_deck, sb.prior_deck, "seed {seed}");
+                        assert_eq!(
+                            serde_json::to_vec(sa.world.game_state()).unwrap(),
+                            serde_json::to_vec(sb.world.game_state()).unwrap(),
+                            "seed {seed}"
+                        );
+                    }
+                    (Err(ea), Err(eb)) => assert_eq!(ea, eb, "seed {seed}"),
+                    (ra, rb) => panic!(
+                        "prepared sampler mismatch at seed {seed}: {:?} vs {:?}",
+                        ra.err(),
+                        rb.err()
+                    ),
+                }
+            }
         }
     }
 }

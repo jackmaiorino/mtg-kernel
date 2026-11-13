@@ -913,6 +913,34 @@ class ChainTests(unittest.TestCase):
         chain = retention.load_chain(plan['chains']['x1']['manifest'])
         self.assertEqual([s['updates'] for s in chain['segments']], [3, 3])
 
+    def test_run_trainer_provides_vector_tanh_dir_under_clean_env(self):
+        _, plan = self.node.stage0()
+        arm = chains.load_arm(plan['arms']['C']['file']['path'])
+        cfg = self.node.t / 'noop-seg.json'
+        jwrite(cfg, {'output_directory': (self.node.t / 'noop-out').as_posix(),
+                     'initial_source': {'checkpoint': None, 'play_import': {'path': str(self.node.b512),
+                                                                            'sha256': chains.sha(self.node.b512)}},
+                     'iterations': []})
+        captured = {}
+
+        class DummyProc:
+            pid = 12345
+
+            def wait(self, timeout=None):
+                return 0
+
+        def fake_popen(cmd, **kwargs):
+            captured['env'] = kwargs.get('env')
+            return DummyProc()
+
+        with mock.patch.dict(os.environ, {'PATH': os.environ.get('PATH', ''), 'LANG': 'C.UTF-8'}, clear=True), \
+                mock.patch.object(chains.subprocess, 'Popen', side_effect=fake_popen):
+            code, killed = chains.run_trainer(arm, cfg)
+        self.assertEqual((code, killed), (0, False))
+        expected = chains.vector_tanh_dir(arm['root'])
+        self.assertEqual(captured['env']['MTG_KERNEL_VECTOR_TANH_DIR'], str(expected))
+        self.assertTrue(expected.is_dir())
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -5342,7 +5342,7 @@ fn execute_update_inner_v1(
                         policy_mask,
                     );
                     let (result, auxiliary) = state
-                        .train_step_gae_external_auxiliary_v1(
+                        .train_step_gae_external_auxiliary_workers_v1(
                             generation,
                             &groups,
                             &gae.value_targets,
@@ -5350,6 +5350,7 @@ fn execute_update_inner_v1(
                             value_coefficient,
                             learning_rate,
                             None,
+                            preparation_workers.unwrap_or(1),
                             &input,
                         )
                         .map_err(err)?;
@@ -5393,7 +5394,7 @@ fn execute_update_inner_v1(
                     let options = search_targets.as_ref().expect("teacher implies options");
                     let input = search_targets_v1::auxiliary_input_v1(rows, options, generation);
                     let (result, auxiliary) = state
-                        .train_step_gae_external_auxiliary_v1(
+                        .train_step_gae_external_auxiliary_workers_v1(
                             generation,
                             &groups,
                             &gae.value_targets,
@@ -5401,6 +5402,7 @@ fn execute_update_inner_v1(
                             value_coefficient,
                             learning_rate,
                             None,
+                            preparation_workers.unwrap_or(1),
                             &input,
                         )
                         .map_err(err)?;
@@ -5426,7 +5428,7 @@ fn execute_update_inner_v1(
                 (ExpandedUpdateBackendV1::Cpu, _) if sq_teacher.is_some() => {
                     let (_, input) = sq_teacher.as_ref().expect("guarded");
                     let (result, auxiliary) = state
-                        .train_step_gae_soft_targets_v1(
+                        .train_step_gae_soft_targets_workers_v1(
                             generation,
                             &groups,
                             &gae.value_targets,
@@ -5434,6 +5436,7 @@ fn execute_update_inner_v1(
                             value_coefficient,
                             learning_rate,
                             None,
+                            preparation_workers.unwrap_or(1),
                             input,
                         )
                         .map_err(err)?;
@@ -5443,7 +5446,7 @@ fn execute_update_inner_v1(
                 (ExpandedUpdateBackendV1::Cpu, _) if e_teacher.is_some() => {
                     let (_, input) = e_teacher.as_ref().expect("guarded");
                     let (result, auxiliary) = state
-                        .train_step_gae_e_supported_v1(
+                        .train_step_gae_e_supported_workers_v1(
                             generation,
                             &groups,
                             &gae.value_targets,
@@ -5451,6 +5454,7 @@ fn execute_update_inner_v1(
                             value_coefficient,
                             learning_rate,
                             None,
+                            preparation_workers.unwrap_or(1),
                             input,
                         )
                         .map_err(err)?;
@@ -5465,7 +5469,7 @@ fn execute_update_inner_v1(
                         unreachable!("guarded by the arm")
                     };
                     let (result, auxiliary) = state
-                        .train_step_gae_feature_transfer_line_b_v1(
+                        .train_step_gae_feature_transfer_line_b_workers_v1(
                             generation,
                             &groups,
                             &gae.value_targets,
@@ -5478,6 +5482,7 @@ fn execute_update_inner_v1(
                                     Some(fixed_partition_backward_worker_limit_v1())
                                 }
                             },
+                            preparation_workers.unwrap_or(1),
                             input,
                         )
                         .map_err(err)?;

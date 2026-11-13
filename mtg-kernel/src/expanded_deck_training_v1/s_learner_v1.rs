@@ -63,7 +63,7 @@ use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4};
 use crate::s_transformer_v1::{
     decode_checkpoint_v1, encode_checkpoint_v1, SGroupV1, SInputV1, SModelV1, SStepV1, SSubstepV1,
-    STapeV1, STrainStateV1, SWorkV1, S_ARCHITECTURE_V1,
+    STrainStateV1, SWorkV1, S_ARCHITECTURE_V1,
 };
 use crate::sideboard_play_policy_v1::{
     FrozenPlayPolicyV1, PlayPolicyOriginV1, FRESH_FEATURE_IDENTITY_V4,
@@ -751,11 +751,8 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
             .as_ref()
             .map(|options| {
                 let model = state.model_v1();
-                let mut tape = STapeV1::default();
                 ex1_update_v1::ex1_teach_with_v1(options, &trajectories, &episodes, &mut |tensor| {
-                    model
-                        .forward_v1(SInputV1::of_tensor_v1(tensor), &mut tape)
-                        .map(|output| output.logits)
+                    model.score_tensor_v1(tensor).map(|(logits, _)| logits)
                 })
             })
             .transpose()?;
@@ -797,21 +794,18 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
             groups.len()
         );
         let learner_started = std::time::Instant::now();
-        let learner_workers = if ex1.is_none() {
-            preparation_workers.unwrap_or(1)
-        } else {
-            1
-        };
+        let learner_workers = preparation_workers.unwrap_or(1);
         let (step, ex1_exposure) = match (&ex1_teacher, &ex1) {
             (Some((_, rows)), Some(options)) => {
                 let masked_rows = policy_mask.len();
                 let input = ex1_update_v1::ex1_s_auxiliary_input_v1(rows, options, policy_mask);
-                let (step, auxiliary) = state.train_step_gae_auxiliary_v1(
+                let (step, auxiliary) = state.train_step_gae_auxiliary_with_workers_v1(
                     &groups,
                     value_coefficient,
                     learning_rate,
                     &input,
                     &mut SWorkV1::default(),
+                    learner_workers,
                 )?;
                 let movement =
                     s_movement_v1(rows, state.model_v1(), auxiliary.ordinary_only.as_ref())?;
@@ -1011,9 +1005,7 @@ fn s_movement_v1(
     alone: Option<&SModelV1>,
 ) -> Result<Value, String> {
     let forward = |model: &SModelV1, tensor: &NativeFlatDecisionTensorV2| {
-        model
-            .forward_v1(SInputV1::of_tensor_v1(tensor), &mut STapeV1::default())
-            .map(|output| output.logits)
+        model.score_tensor_v1(tensor).map(|(logits, _)| logits)
     };
     let mut alone =
         alone.map(|model| move |tensor: &NativeFlatDecisionTensorV2| forward(model, tensor));

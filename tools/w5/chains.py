@@ -464,19 +464,49 @@ def chain_ladder(arm, man, cdir, offset):
         raise Stop(str(exc)) from exc
 
 
+def vector_tanh_dir(root):
+    """Persistent host witness folder for `vector_tanh_v1`, shared across segments outside the box environment."""
+    return Path(root) / 'state' / 'vector-tanh'
+
+
+def settle_vector_tanh(trainer, root):
+    """Settles the trainer's vector-tanh witness on the host before a stage enters w5box's metered cgroups."""
+    if not sys.platform.startswith('linux'):
+        return
+    path = Path(trainer['path'])
+    if not path.is_file() or path.suffix.lower() in ('.py', '.sh', '.ps1'):
+        return
+    try:
+        with open(path, 'rb') as f:
+            if f.read(4) != b'\x7fELF':
+                return
+    except OSError:
+        return
+    target = vector_tanh_dir(root)
+    target.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ, MTG_KERNEL_VECTOR_TANH_DIR=str(target))
+    subprocess.run([str(path), '--settle-vector-tanh'], env=env, stdin=subprocess.DEVNULL,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
 def run_trainer(arm, config_path, deadline=None, logs=None):
     """Runs one native segment in its own process group; at `deadline` (C's wall) the group is killed. With
     `logs` (a directory) the segment's stdout replaces `trainer.out` and stderr is appended to `trainer.err`."""
     check_pin(arm['trainer'], 'the trainer')
     kwargs = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else \
         {'start_new_session': True}
+    env = dict(os.environ)
+    if arm.get('root') and not env.get('MTG_KERNEL_VECTOR_TANH_DIR'):
+        target = vector_tanh_dir(arm['root'])
+        target.mkdir(parents=True, exist_ok=True)
+        env['MTG_KERNEL_VECTOR_TANH_DIR'] = str(target)
     if logs:
         Path(logs).mkdir(parents=True, exist_ok=True)
     out = open(Path(logs) / 'trainer.out', 'wb') if logs else None
     err = open(Path(logs) / 'trainer.err', 'ab') if logs else None
     try:
         proc = subprocess.Popen(exe(arm['trainer']['path']) + [str(config_path)], stdout=out, stderr=err,
-                                stdin=subprocess.DEVNULL, **kwargs)
+                                stdin=subprocess.DEVNULL, env=env, **kwargs)
         if deadline is None:
             return proc.wait(), False
         while True:
@@ -1982,7 +2012,7 @@ def replay_cmd(a):
     require(held is not None, 'a replay is already running here')
     try:
         quarantine(rdir / 'native', rdir)
-        arm = {'trainer': plan['trainer']}
+        arm = {'trainer': plan['trainer'], 'root': plan['root']}
         code, _ = run_trainer(arm, rdir / 'config.json', None, rdir)
         write(rdir / 'EXIT.json', {'exit': code, 'unix': time.time()})
         return code
@@ -2319,6 +2349,7 @@ def launch(a):
     box is occupied: a chain's start restores its own box, a verified filler a filler box."""
     plan = load_plan(a.plan)
     root = Path(plan['root'])
+    settle_vector_tanh(plan['trainer'], root)
     node = w5box.NodeLog(root / 'state')
     opened = []
     with node.locked():

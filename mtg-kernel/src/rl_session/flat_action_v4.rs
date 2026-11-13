@@ -307,8 +307,10 @@ pub(super) fn redeterminize_end_turn_v68(
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
 pub(crate) use search_state::future_chance_seed_v3;
+pub(crate) use search_state::PreparedV4SearchRootV1;
 pub(crate) use search_state::SlotFilterV1;
 pub(crate) use search_state::V4BoundaryEncodingFailureV1;
+pub(crate) use search_state::V4BoundaryScratchV1;
 pub(crate) use search_state::V4SearchActionTokenV1;
 pub(crate) use search_state::V4SearchSampleMode;
 pub(crate) use search_state::V4SearchStateErrorV1;

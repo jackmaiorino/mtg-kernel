@@ -37,7 +37,8 @@ use crate::ex1_v1::{
 };
 use crate::line_b_teacher_target_v1::{line_b_softmax_v1, LineBSoftmaxV1};
 use crate::native_policy_train_step_v1::{
-    training_forward_v1, ExternalAuxiliaryInputV1, ExternalAuxiliaryRowV1,
+    input_major_weights_v1, training_forward_input_major_v1, ExternalAuxiliaryInputV1,
+    ExternalAuxiliaryRowV1,
 };
 use crate::native_policy_value_net_v1::NativeNamedParameterV1;
 use crate::w5_xact_v1::{
@@ -219,10 +220,17 @@ pub(super) fn ex1_teach_v1(
 ) -> Result<(Value, Vec<Ex1TaughtRowV1>), String> {
     let model = state.model_v1();
     let parameters = model.parameter_snapshot_v1();
+    let input_major = input_major_weights_v1(&parameters);
     ex1_teach_with_v1(options, trajectories, episodes, &mut |tensor| {
-        training_forward_v1(model, generation, &parameters, view_v1(tensor, generation))
-            .map(|(logits, _)| logits)
-            .map_err(|e| format!("ex1 training forward: {e:?}"))
+        training_forward_input_major_v1(
+            model,
+            generation,
+            &parameters,
+            Some(&input_major),
+            view_v1(tensor, generation),
+        )
+        .map(|(logits, _)| logits)
+        .map_err(|e| format!("ex1 training forward: {e:?}"))
     })
 }
 
@@ -541,15 +549,29 @@ pub(super) fn ex1_movement_v1(
     combined: &[NativeNamedParameterV1],
     ordinary: Option<&[NativeNamedParameterV1]>,
 ) -> Result<Value, String> {
-    let forward = |parameters: &[NativeNamedParameterV1], tensor: &NativeFlatDecisionTensorV2| {
-        training_forward_v1(model, generation, parameters, view_v1(tensor, generation))
+    if rows.is_empty() {
+        return ex1_movement_with_v1(rows, &mut |_| unreachable!("no rows"), None);
+    }
+    let combined_im = input_major_weights_v1(combined);
+    let ordinary_im = ordinary.map(input_major_weights_v1);
+    let forward =
+        |parameters: &[NativeNamedParameterV1], im, tensor: &NativeFlatDecisionTensorV2| {
+            training_forward_input_major_v1(
+                model,
+                generation,
+                parameters,
+                Some(im),
+                view_v1(tensor, generation),
+            )
             .map(|(logits, _)| logits)
             .map_err(|e| format!("ex1 movement forward: {e:?}"))
-    };
-    let mut alone = ordinary.map(|p| move |tensor: &NativeFlatDecisionTensorV2| forward(p, tensor));
+        };
+    let mut alone = ordinary
+        .zip(ordinary_im.as_ref())
+        .map(|(p, im)| move |tensor: &NativeFlatDecisionTensorV2| forward(p, im, tensor));
     ex1_movement_with_v1(
         rows,
-        &mut |tensor| forward(combined, tensor),
+        &mut |tensor| forward(combined, &combined_im, tensor),
         alone.as_mut().map(|f| f as Ex1ForwardV1<'_>),
     )
 }

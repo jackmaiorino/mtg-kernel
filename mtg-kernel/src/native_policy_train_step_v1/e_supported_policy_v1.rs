@@ -28,6 +28,33 @@ impl NativePolicyValueTrainStateV1 {
         input: &ESupportedPolicyInputV1,
     ) -> Result<(NativePolicyTrainStepResultV1, Option<serde_json::Value>), NativePolicyTrainErrorV1>
     {
+        self.train_step_gae_e_supported_workers_v1(
+            generation,
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_worker_limit,
+            1,
+            input,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn train_step_gae_e_supported_workers_v1(
+        &mut self,
+        generation: crate::sideboard_play_policy_v1::FreshLineageGenerationV1,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: Option<usize>,
+        forward_workers: usize,
+        input: &ESupportedPolicyInputV1,
+    ) -> Result<(NativePolicyTrainStepResultV1, Option<serde_json::Value>), NativePolicyTrainErrorV1>
+    {
         self.require_platform_math_v1("E-supported")?;
         self.require_no_input_contract_v1("E-supported")?;
         let invalid = |code| NativePolicyTrainErrorV1::LineBAuxiliary { code };
@@ -68,22 +95,16 @@ impl NativePolicyValueTrainStateV1 {
         // Reuse the verified forward-KL reverse pass, never line-b's collection
         // sampler or post-update mask. Normalize by every scheduled slot.
         if roots.is_empty() || !input.treatment {
-            let config = match generation {
-                crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3 => {
-                    self.model.feature_transfer_config_v3()
-                }
-                crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V4 => {
-                    self.model.feature_transfer_config_v4()
-                }
-            };
-            let result = self.train_step_gae_with_e_config_v1(
+            let result = self.train_step_gae_feature_transfer_profiled_v1(
+                generation,
                 groups,
                 value_targets,
                 advantages,
                 value_coefficient,
                 learning_rate,
                 backward_worker_limit,
-                config,
+                forward_workers.max(1),
+                &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
             )?;
             return Ok((result, None));
         }
@@ -93,7 +114,7 @@ impl NativePolicyValueTrainStateV1 {
             coefficient: 0.1,
             roots,
         };
-        let (result, dose) = self.train_step_gae_feature_transfer_line_b_v1(
+        let (result, dose) = self.train_step_gae_feature_transfer_line_b_workers_v1(
             generation,
             groups,
             value_targets,
@@ -101,6 +122,7 @@ impl NativePolicyValueTrainStateV1 {
             value_coefficient,
             learning_rate,
             backward_worker_limit,
+            forward_workers.max(1),
             &auxiliary,
         )?;
         // Existing loss is preserved in policy_sum/value_sum; total reports CE.
@@ -151,6 +173,33 @@ impl NativePolicyValueTrainStateV1 {
         input: &SoftTargetPolicyInputV1,
     ) -> Result<(NativePolicyTrainStepResultV1, Option<serde_json::Value>), NativePolicyTrainErrorV1>
     {
+        self.train_step_gae_soft_targets_workers_v1(
+            generation,
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_worker_limit,
+            1,
+            input,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn train_step_gae_soft_targets_workers_v1(
+        &mut self,
+        generation: crate::sideboard_play_policy_v1::FreshLineageGenerationV1,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: Option<usize>,
+        forward_workers: usize,
+        input: &SoftTargetPolicyInputV1,
+    ) -> Result<(NativePolicyTrainStepResultV1, Option<serde_json::Value>), NativePolicyTrainErrorV1>
+    {
         self.require_platform_math_v1("SQ1 soft targets")?;
         self.require_no_input_contract_v1("SQ1 soft targets")?;
         let invalid = |code| NativePolicyTrainErrorV1::LineBAuxiliary { code };
@@ -196,22 +245,16 @@ impl NativePolicyValueTrainStateV1 {
             })
             .collect::<Result<Vec<_>, _>>()?;
         if roots.is_empty() {
-            let config = match generation {
-                crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3 => {
-                    self.model.feature_transfer_config_v3()
-                }
-                crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V4 => {
-                    self.model.feature_transfer_config_v4()
-                }
-            };
-            let result = self.train_step_gae_with_e_config_v1(
+            let result = self.train_step_gae_feature_transfer_profiled_v1(
+                generation,
                 groups,
                 value_targets,
                 advantages,
                 value_coefficient,
                 learning_rate,
                 backward_worker_limit,
-                config,
+                forward_workers.max(1),
+                &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
             )?;
             return Ok((result, None));
         }
@@ -221,7 +264,7 @@ impl NativePolicyValueTrainStateV1 {
             coefficient: input.coefficient,
             roots,
         };
-        let (result, dose) = self.train_step_gae_feature_transfer_line_b_v1(
+        let (result, dose) = self.train_step_gae_feature_transfer_line_b_workers_v1(
             generation,
             groups,
             value_targets,
@@ -229,6 +272,7 @@ impl NativePolicyValueTrainStateV1 {
             value_coefficient,
             learning_rate,
             backward_worker_limit,
+            forward_workers.max(1),
             &auxiliary,
         )?;
         let total_loss = f64::from(result.loss) + dose.auxiliary_loss;

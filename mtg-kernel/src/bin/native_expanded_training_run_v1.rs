@@ -14,6 +14,7 @@ fn main() {
     // SAFETY: first statement of main; no other thread exists yet.
     unsafe { mtg_kernel::retain_freed_memory_v1() };
     mtg_kernel::opt_out_of_power_throttling_v1();
+    mtg_kernel::set_default_digest_memo_mib_v1(16);
     if let Err(error) = run() {
         eprintln!("native expanded training: {error}");
         std::process::exit(1);
@@ -25,6 +26,10 @@ fn run() -> Result<(), String> {
         .as_deref()
         .and_then(std::ffi::OsStr::to_str)
     {
+        Some("--settle-vector-tanh") => {
+            mtg_kernel::settle_vector_tanh_v1();
+            return Ok(());
+        }
         Some("--write-portable-chain") => return write_portable_chain(),
         Some("--inspect-portable-chain") => return inspect_portable_chain(),
         Some("--validate-config") => {
@@ -130,7 +135,7 @@ fn run() -> Result<(), String> {
         #[cfg(feature = "gpu-exact-v1")]
         mtg_kernel::gpu_exact_v1::configure_v1(
             gpu_kernels.as_deref().unwrap_or("v2"),
-            gpu_wait.as_deref().unwrap_or("spin"),
+            gpu_wait.as_deref().unwrap_or("block"),
         )?;
     }
     // Exact GPU inference changes timing only: replies equal the CPU

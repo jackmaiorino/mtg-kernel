@@ -234,7 +234,7 @@ impl TapeSlotV1 {
             self.reserve_v1(&config, counts)?
         };
         let forward = update_profile_v1::span_v1(update_profile_v1::StageV1::ReplayLearnerRow);
-        model.forward_validated_into_v1(step.input, &mut self.tape, counts)?;
+        model.forward_validated_into_v1(step.input, &mut self.tape, counts, true)?;
         forward.finish_v1(self.tape.logits_v1(), self.tape.value_v1());
         reproduces_v1(
             &self.tape,
@@ -571,7 +571,7 @@ impl<'a> VerifiedJobsV1<'a> {
                 })?;
         *peak = (*peak).max(bytes);
         let forward = update_profile_v1::span_v1(update_profile_v1::StageV1::ReplayLearnerRow);
-        model.forward_validated_into_v1(input, tape, counts)?;
+        model.forward_validated_into_v1(input, tape, counts, true)?;
         forward.finish_v1(tape.logits_v1(), tape.value_v1());
         self.forwards.fetch_add(1, Ordering::Relaxed);
         reproduces_v1(tape, *stored)

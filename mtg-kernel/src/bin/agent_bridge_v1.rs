@@ -20,6 +20,9 @@ use mtg_kernel::agent_bridge_v1::{
 use std::io::{self, Write};
 
 fn main() {
+    // SAFETY: first statement of main; no other thread exists yet.
+    unsafe { mtg_kernel::retain_freed_memory_v1() };
+    mtg_kernel::opt_out_of_power_throttling_v1();
     let mut options = SpellbenchBridgeOptionsV1::default();
     let mut reveal_search_v4 = false;
     for argument in std::env::args_os().skip(1) {

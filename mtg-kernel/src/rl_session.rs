@@ -882,8 +882,10 @@ pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3}
 pub(crate) use flat_action_v4::future_chance_seed_v3;
 #[cfg(test)]
 pub(crate) use flat_action_v4::search_library_fixture_v3;
+pub(crate) use flat_action_v4::PreparedV4SearchRootV1;
 pub(crate) use flat_action_v4::SlotFilterV1;
 pub(crate) use flat_action_v4::V4BoundaryEncodingFailureV1;
+pub(crate) use flat_action_v4::V4BoundaryScratchV1;
 pub(crate) use flat_action_v4::V4SearchActionTokenV1;
 pub(crate) use flat_action_v4::V4SearchSampleMode;
 pub(crate) use flat_action_v4::V4SearchStateErrorV1;

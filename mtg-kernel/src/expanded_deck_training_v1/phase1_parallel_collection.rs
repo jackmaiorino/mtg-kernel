@@ -48,6 +48,23 @@ where
     F: Fn(&mut W, usize) -> Result<T, String> + Sync,
     I: Fn() + Sync,
 {
+    let schedule: Vec<usize> = (0..job_count).collect();
+    ordered_parallel_jobs_scheduled_v1(contexts, &schedule, work, on_idle)
+}
+
+pub(super) fn ordered_parallel_jobs_scheduled_v1<W, T, F, I>(
+    contexts: Vec<W>,
+    schedule: &[usize],
+    work: F,
+    on_idle: I,
+) -> Result<(Vec<T>, Vec<WorkerTimingV1>), String>
+where
+    W: Send,
+    T: Send,
+    F: Fn(&mut W, usize) -> Result<T, String> + Sync,
+    I: Fn() + Sync,
+{
+    let job_count = schedule.len();
     ensure(
         !contexts.is_empty() && contexts.len() <= job_count,
         "invalid parallel job dimensions",
@@ -74,13 +91,14 @@ where
                     let mut busy_seconds = 0.0;
                     let mut episode_seconds = Vec::new();
                     while !cancelled.load(Ordering::Acquire) {
-                        let index = next.fetch_add(1, Ordering::Relaxed);
-                        if index >= job_count || cancelled.load(Ordering::Acquire) {
-                            if index >= job_count {
+                        let slot = next.fetch_add(1, Ordering::Relaxed);
+                        if slot >= job_count || cancelled.load(Ordering::Acquire) {
+                            if slot >= job_count {
                                 on_idle();
                             }
                             break;
                         }
+                        let index = schedule[slot];
                         let started = Instant::now();
                         let result = catch_unwind(AssertUnwindSafe(|| work(&mut context, index)));
                         let seconds = started.elapsed().as_secs_f64();
@@ -250,10 +268,28 @@ pub(super) fn collect_parallel_v1(
     // (a slot exhausting `NON_NATURAL_RETRY_LIMIT`, which
     // `ordered_parallel_jobs_v1` turns into a fatal `Err` that discards
     // every worker's normal `T` return value).
+    let mut schedule: Vec<usize> = (0..episodes.len()).collect();
+    if let Some(options) = ex1.as_ref().filter(|e| e.w5.is_some()) {
+        // W5 placement draws are pure hashes of `(run, update, seed, slot)`:
+        // slots with small placement indices almost always run a heavy MCTS
+        // search, while large indices usually finish before reaching the
+        // placed decision. Starting small placements first avoids tail
+        // stragglers while keeping outputs in exact `0..episodes.len()` order.
+        schedule.sort_by_key(|&index| {
+            let placement =
+                crate::w5_xact_v1::w5_placement_index_v1(crate::w5_xact_v1::w5_placement_hash_v1(
+                    &options.run,
+                    options.update,
+                    episodes[index].seed,
+                    index as u64,
+                ));
+            (placement, index)
+        });
+    }
     let ledger: Mutex<Vec<NonNaturalLedgerEntryV1>> = Mutex::new(Vec::new());
-    let collection_result = ordered_parallel_jobs_v1(
+    let collection_result = ordered_parallel_jobs_scheduled_v1(
         contexts,
-        episodes.len(),
+        &schedule,
         |collector, index| {
             let episode = &episodes[index];
             eprintln!(
