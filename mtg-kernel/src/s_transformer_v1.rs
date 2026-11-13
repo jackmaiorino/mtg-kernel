@@ -622,6 +622,11 @@ impl SModelV1 {
         &self.values
     }
 
+    #[cfg(feature = "gpu-exact-v1")]
+    pub(crate) fn wt_v1(&self) -> &[f32] {
+        &self.wt
+    }
+
     /// SHA-256 of the parameters (layout order, f32 bits little-endian).
     pub fn parameter_sha256_v1(&self) -> String {
         let mut hasher = Sha256::new();
@@ -2155,7 +2160,7 @@ pub struct SLossV1 {
     pub loss: f32,
 }
 
-fn gae_policy_row_into_v1(
+pub(crate) fn gae_policy_row_into_v1(
     logits: &[f32],
     selected_action: usize,
     d_joint: f32,
@@ -2229,6 +2234,145 @@ impl SModelV1 {
         self.gae_loss_gradient_masked_v1(groups, value_coefficient, None, grad, work)
     }
 
+    #[cfg(feature = "gpu-exact-v1")]
+    pub(crate) fn try_gpu_gae_loss_gradient_masked_v1(
+        &self,
+        groups: &[SGroupV1<'_>],
+        value_coefficient: f32,
+        mask: Option<&auxiliary::SPolicyMaskV1>,
+        grad: &mut [f32],
+    ) -> Result<Option<SLossV1>, String> {
+        if !crate::gpu_exact_v1::learner_installed_v1() {
+            return Ok(None);
+        }
+        ensure_mxcsr_v1()?;
+        if grad.len() != self.layout.total {
+            return Err("S gradient buffer has the wrong length".into());
+        }
+        if let Some(mask) = mask {
+            if mask.masked.len() != groups.len()
+                || mask
+                    .masked
+                    .iter()
+                    .zip(groups)
+                    .any(|(m, g)| m.len() != g.substeps.len())
+            {
+                return Err("S policy mask does not match the batch".into());
+            }
+        }
+        if groups.is_empty() {
+            return Err("S update has no groups".into());
+        }
+        if !value_coefficient.is_finite() || value_coefficient <= 0.0 {
+            return Err("S value coefficient must be positive".into());
+        }
+        let substeps_cap: usize = groups.iter().map(|g| g.substeps.len()).sum();
+        let mut inputs = Vec::with_capacity(substeps_cap);
+        for (index, group) in groups.iter().enumerate() {
+            if group.substeps.is_empty() {
+                return Err(format!("S group {index} has no substeps"));
+            }
+            if !group.advantage.is_finite() || !group.value_target.is_finite() {
+                return Err(format!("S group {index} has a non-finite target"));
+            }
+            for substep in &group.substeps {
+                substep.input.validate_v1(&self.layout.config)?;
+                inputs.push(substep.input);
+            }
+        }
+        let group_count = groups.len() as f32;
+        let Some(((policy_sum, value_sum), gpu_grad)) = crate::gpu_exact_v1::s_learner_gradient_v1(
+            self,
+            &inputs,
+            |outputs, d_logits_all, d_dz_all| {
+                let mut policy_sum = 0.0f32;
+                let mut value_sum = 0.0f32;
+                let mut row_dlogits = Vec::new();
+                let mut cursor = 0usize;
+                for (index, group) in groups.iter().enumerate() {
+                    let masked = mask.map(|m| &m.masked[index]);
+                    let d_unmasked = match mask {
+                        None => -group.advantage / group_count,
+                        Some(m) => -group.advantage / m.policy_count,
+                    };
+                    let mut joint = 0.0f32;
+                    let mut policy_joint: Option<f32> = None;
+                    let mut value_error = 0.0f32;
+                    for (sub, substep) in group.substeps.iter().enumerate() {
+                        let out = &outputs[cursor];
+                        cursor += 1;
+                        let update_forward =
+                            update_profile_v1::span_v1(update_profile_v1::StageV1::LearnerForward);
+                        update_forward.finish_v1(&out.logits, out.value);
+                        let is_masked = masked.is_some_and(|m| m[sub]);
+                        let d_joint = if is_masked { 0.0 } else { d_unmasked };
+                        let selected = gae_policy_row_into_v1(
+                            &out.logits,
+                            substep.selected,
+                            d_joint,
+                            index,
+                            sub,
+                            &mut row_dlogits,
+                        )?;
+                        d_logits_all.extend_from_slice(&row_dlogits);
+                        joint = if sub == 0 { selected } else { joint + selected };
+                        if !is_masked {
+                            policy_joint = Some(policy_joint.map_or(selected, |j| j + selected));
+                        }
+                        let dvalue = if sub == 0 {
+                            value_error = out.value - group.value_target;
+                            (value_coefficient / group_count) * (2.0 * value_error)
+                        } else {
+                            0.0
+                        };
+                        d_dz_all.push(dvalue * 0.5 * (1.0 - out.value * out.value));
+                        let update_backward =
+                            update_profile_v1::span_v1(update_profile_v1::StageV1::LearnerBackward);
+                        update_backward.finish_plain_v1();
+                    }
+                    policy_sum += match masked {
+                        None => -joint * group.advantage,
+                        Some(_) => -policy_joint.unwrap_or(0.0) * group.advantage,
+                    };
+                    value_sum += value_error * value_error;
+                }
+                Ok((policy_sum, value_sum))
+            },
+        )?
+        else {
+            return Ok(None);
+        };
+
+        for (dst, &src) in grad.iter_mut().zip(&gpu_grad) {
+            *dst += src;
+        }
+        for range in self.layout.gauge_ranges_v1() {
+            grad[range].fill(0.0);
+        }
+        let (loss, policy_term) = match mask {
+            None => (
+                (policy_sum + value_coefficient * value_sum) / group_count,
+                policy_sum / group_count,
+            ),
+            Some(m) => (
+                policy_sum / m.policy_count + value_coefficient * value_sum / group_count,
+                policy_sum / m.policy_count,
+            ),
+        };
+        let terms = SLossV1 {
+            group_count: groups.len(),
+            policy_sum,
+            value_sum,
+            policy_term,
+            value_term: value_sum / group_count,
+            loss,
+        };
+        if !loss.is_finite() || grad.iter().any(|g| !g.is_finite()) {
+            return Err("S loss or gradient is not finite".into());
+        }
+        Ok(Some(terms))
+    }
+
     /// [`Self::gae_loss_gradient_v1`] with W5's policy-gradient mask
     /// (`auxiliary::SPolicyMaskV1`): a masked substep's selected
     /// log-probability leaves the policy term (its logit gradient is
@@ -2243,6 +2387,12 @@ impl SModelV1 {
         grad: &mut [f32],
         work: &mut SWorkV1,
     ) -> Result<SLossV1, String> {
+        #[cfg(feature = "gpu-exact-v1")]
+        if let Some(loss) =
+            self.try_gpu_gae_loss_gradient_masked_v1(groups, value_coefficient, mask, grad)?
+        {
+            return Ok(loss);
+        }
         ensure_mxcsr_v1()?;
         if let Some(mask) = mask {
             if mask.masked.len() != groups.len()
@@ -2710,7 +2860,7 @@ fn hash_f32_le_slice_v1(hasher: &mut Sha256, values: &[f32]) {
 /// Pins the calling thread's MXCSR (round to nearest, no FTZ or DAZ) on
 /// first use and verifies it on every call: S's arithmetic entry points run
 /// only in that state.
-fn ensure_mxcsr_v1() -> Result<(), String> {
+pub(crate) fn ensure_mxcsr_v1() -> Result<(), String> {
     crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1()
         .map_err(|e| format!("S arithmetic: MXCSR not pinned: {e:?}"))
 }
