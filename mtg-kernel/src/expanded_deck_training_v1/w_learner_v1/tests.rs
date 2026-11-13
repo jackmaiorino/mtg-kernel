@@ -348,3 +348,38 @@ fn a_source_with_both_s_and_wide_learners_is_refused_by_every_loader() {
         assert!(refused.contains("at most one"), "{refused}");
     }
 }
+
+/// A state whose scorer bias (and so its gauge anchor) is not the runner's
+/// fixed value, as every trained or widened production state: the container
+/// round trip keeps it (Sol round 2).
+#[test]
+fn wide_state_container_keeps_a_non_runner_gauge_anchor() {
+    let mut model = NativePolicyValueNetWideV1::runner_fixed_wide_v1(
+        NativePolicyValueModelConfigV1::contract_wide_v1(),
+    )
+    .unwrap();
+    let mut parameters = model.parameter_snapshot_wide_v1();
+    let bias = parameters
+        .iter_mut()
+        .find(|tensor| tensor.name == "scorer.2.bias")
+        .unwrap();
+    bias.values[0] = 0.003_125;
+    model
+        .replace_parameter_snapshot_wide_v1(&parameters)
+        .unwrap();
+    let state = NativePolicyValueTrainStateWideV1::new_wide_v1(model).unwrap();
+    assert_eq!(
+        state.scorer_bias_anchor_f32_bits_v1(),
+        0.003_125f32.to_bits()
+    );
+    let bytes = encode_w_state_v1(&state).unwrap();
+    let decoded = decode_w_state_v1(&bytes).unwrap();
+    assert_eq!(
+        decoded.scorer_bias_anchor_f32_bits_v1(),
+        0.003_125f32.to_bits()
+    );
+    assert_eq!(
+        w_state_sha256_v1(&decoded).unwrap(),
+        w_state_sha256_v1(&state).unwrap()
+    );
+}

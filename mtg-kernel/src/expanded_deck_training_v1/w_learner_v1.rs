@@ -125,10 +125,15 @@ pub(crate) fn decode_w_state_v1(bytes: &[u8]) -> Result<NativePolicyValueTrainSt
         anchor,
     )
     .map_err(err)?;
-    let template = NativePolicyValueNetWideV1::runner_fixed_wide_v1(
+    // The state's gauge anchor is its template's scorer bias, so the template
+    // carries the decoded parameters (as the widening construction does).
+    let mut template = NativePolicyValueNetWideV1::runner_fixed_wide_v1(
         NativePolicyValueModelConfigV1::contract_wide_v1(),
     )
     .map_err(err)?;
+    template
+        .replace_parameter_snapshot_wide_v1(&decoded.snapshot.parameters)
+        .map_err(err)?;
     let state =
         NativePolicyValueTrainStateWideV1::from_snapshot_wide_v1(template, &decoded.snapshot)
             .map_err(err)?;
