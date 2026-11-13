@@ -58,6 +58,14 @@ class FallbackTests(unittest.TestCase):
                     assert posts == []
             assert "dispatched ci.yml" in summary.read_text()
 
+    def test_the_token_is_not_forwarded_to_the_log_redirect(self):
+        # Job logs redirect to signed blob storage, which answers 401 to a request carrying the token,
+        # so a forwarded token hid every admission timeout from the fallback.
+        with patch.dict(os.environ, {"GH_TOKEN": "t"}):
+            req = fb._build_request("GET", "/repos/o/r/actions/jobs/1/logs")
+        assert req.unredirected_hdrs == {"Authorization": "Bearer t"}
+        assert not any(k.lower() == "authorization" for k in req.headers)
+
     def test_a_rerun_covers_only_the_windows_part_of_the_group_set(self):
         assert fb.fallback_scope("pr") == "windows-pr"
         assert fb.fallback_scope("windows-complement") == "windows-complement"

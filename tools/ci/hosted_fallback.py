@@ -45,13 +45,19 @@ def admission_timeouts(jobs: list[dict], logs) -> list[dict]:
     return out
 
 
-def _request(method: str, path: str, body: dict | None = None) -> bytes:
+def _build_request(method: str, path: str, body: dict | None = None) -> urllib.request.Request:
     api = os.environ.get("GITHUB_API_URL", "https://api.github.com")
     data = None if body is None else json.dumps(body).encode("utf-8")
     req = urllib.request.Request(api + path, data=data, method=method, headers={
-        "Authorization": "Bearer " + os.environ["GH_TOKEN"], "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28"})
-    with urllib.request.urlopen(req, timeout=60) as response:
+        "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"})
+    # The job log endpoint redirects to signed blob storage, which refuses a request that also
+    # carries the token (401). urllib drops unredirected headers when it follows a redirect.
+    req.add_unredirected_header("Authorization", "Bearer " + os.environ["GH_TOKEN"])
+    return req
+
+
+def _request(method: str, path: str, body: dict | None = None) -> bytes:
+    with urllib.request.urlopen(_build_request(method, path, body), timeout=60) as response:
         return response.read()
 
 
