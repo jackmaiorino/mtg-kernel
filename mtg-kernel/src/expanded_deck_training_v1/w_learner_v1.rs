@@ -905,5 +905,67 @@ struct TrajectoryPinsV1 {
     trajectories: Vec<PinnedFileV1>,
 }
 
+/// Descriptive only (collab LANES/w128-20261113/READING.md section 5): how
+/// far the parameters moved between two wide train states of one lineage, per
+/// widening coordinate class (`widening_v1::WideCoordinateClassV1`): the
+/// coordinate count, how many changed, the RMS and the maximum absolute
+/// change, and the RMS of the earlier values. Reads states only.
+pub fn w_movement_v1(from: &PinnedFileV1, to: &PinnedFileV1) -> Result<Value, String> {
+    use crate::native_policy_train_step_v1::widening_v1::wide_coordinate_classes_v1;
+    let read = |pin: &PinnedFileV1| -> Result<NativePolicyValueTrainStateWideV1, String> {
+        decode_w_state_v1(&open_v1(&read_pinned_bytes(pin)?, MAX_FILE_BYTES)?)
+    };
+    let (a, b) = (read(from)?, read(to)?);
+    let (a, b) = (a.snapshot_v1().map_err(err)?, b.snapshot_v1().map_err(err)?);
+    #[derive(Default)]
+    struct Sums {
+        count: u64,
+        changed: u64,
+        square: f64,
+        before_square: f64,
+        max: f64,
+    }
+    let mut sums: std::collections::BTreeMap<&'static str, Sums> = Default::default();
+    for (tensor, (x, y)) in a.parameters.iter().zip(&b.parameters).enumerate() {
+        ensure(
+            x.name == y.name && x.values.len() == y.values.len(),
+            "the two states' layouts differ",
+        )?;
+        let classes = wide_coordinate_classes_v1(tensor);
+        ensure(
+            classes.len() == x.values.len(),
+            "class map and tensor differ",
+        )?;
+        for ((before, after), class) in x.values.iter().zip(&y.values).zip(&classes) {
+            let entry = sums.entry(class.name_v1()).or_default();
+            let change = f64::from(*after) - f64::from(*before);
+            entry.count += 1;
+            entry.changed += u64::from(before.to_bits() != after.to_bits());
+            entry.square += change * change;
+            entry.before_square += f64::from(*before) * f64::from(*before);
+            entry.max = entry.max.max(change.abs());
+        }
+    }
+    let classes: serde_json::Map<String, Value> = sums
+        .into_iter()
+        .map(|(name, s)| {
+            let n = s.count.max(1) as f64;
+            (
+                name.to_owned(),
+                json!({"coordinates": s.count, "changed": s.changed,
+                    "rms_change": (s.square / n).sqrt(), "max_abs_change": s.max,
+                    "rms_before": (s.before_square / n).sqrt()}),
+            )
+        })
+        .collect();
+    Ok(json!({
+        "schema": "w128-movement/v1",
+        "from": from, "to": to,
+        "adam_step_from": a.adam_step, "adam_step_to": b.adam_step,
+        "classes": classes,
+        "claim": "descriptive only; no gate and no tuning input",
+    }))
+}
+
 #[cfg(test)]
 mod tests;

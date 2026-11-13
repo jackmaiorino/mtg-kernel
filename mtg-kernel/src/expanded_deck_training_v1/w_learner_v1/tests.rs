@@ -383,3 +383,55 @@ fn wide_state_container_keeps_a_non_runner_gauge_anchor() {
         w_state_sha256_v1(&state).unwrap()
     );
 }
+
+#[test]
+fn movement_counts_changes_per_widening_class() {
+    use sha2::{Digest, Sha256};
+    let root = temp_root("movement");
+    let model = NativePolicyValueNetWideV1::runner_fixed_wide_v1(
+        NativePolicyValueModelConfigV1::contract_wide_v1(),
+    )
+    .unwrap();
+    let before = NativePolicyValueTrainStateWideV1::new_wide_v1(model.clone()).unwrap();
+    let mut parameters = model.parameter_snapshot_wide_v1();
+    // value_head.0.weight is [128, 128]: (0, 0) is old, (0, 127) a new
+    // unit's fan-out, (127, 0) a new unit's fan-in.
+    let weight = parameters
+        .iter_mut()
+        .find(|tensor| tensor.name == "value_head.0.weight")
+        .unwrap();
+    weight.values[0] += 0.5;
+    weight.values[127] += 0.25;
+    weight.values[127 * 128] -= 0.125;
+    let mut moved = model;
+    moved
+        .replace_parameter_snapshot_wide_v1(&parameters)
+        .unwrap();
+    let after = NativePolicyValueTrainStateWideV1::new_wide_v1(moved).unwrap();
+    let pin = |name: &str, state: &NativePolicyValueTrainStateWideV1| {
+        let bytes = encode_w_state_v1(state).unwrap();
+        let path = root.join(name);
+        fs::write(&path, &bytes).unwrap();
+        PinnedFileV1 {
+            path,
+            sha256: format!("{:x}", Sha256::digest(&bytes)),
+        }
+    };
+    let report = w_movement_v1(&pin("a.bin", &before), &pin("b.bin", &after)).unwrap();
+    let classes = &report["classes"];
+    assert_eq!(classes["old"]["changed"], 1);
+    assert!((classes["old"]["max_abs_change"].as_f64().unwrap() - 0.5).abs() < 1e-6);
+    assert_eq!(classes["new_fan_out"]["changed"], 1);
+    assert!((classes["new_fan_out"]["max_abs_change"].as_f64().unwrap() - 0.25).abs() < 1e-6);
+    assert_eq!(classes["new_fan_in"]["changed"], 1);
+    assert!((classes["new_fan_in"]["max_abs_change"].as_f64().unwrap() - 0.125).abs() < 1e-6);
+    assert_eq!(classes["new_embedding_column"]["changed"], 0);
+    let total: u64 = classes
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|c| c["coordinates"].as_u64().unwrap())
+        .sum();
+    assert_eq!(total, 2_750_754);
+    let _ = fs::remove_dir_all(&root);
+}
