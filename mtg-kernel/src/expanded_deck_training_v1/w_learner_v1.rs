@@ -36,6 +36,7 @@
 //! registry-transfer and registry-evolution shells, the line (b) collection
 //! sampler, and every net-8-only command.
 
+use super::record_envelope_v1::open_v1;
 use super::{
     compute_gae_targets_of_values_v1, ensure, err, inference_schema_v1, ordered_update_preparation,
     publish_json, publish_json_bytes_v1, read_pinned_bytes, read_trajectory_batch_v1,
@@ -43,7 +44,8 @@ use super::{
     CheckpointInputExpectationV1, CheckpointRecordFormatV1, CollectionSamplerV1,
     ExpandedInferenceIdentityV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
     ExpandedSeatBehaviorV1, ExpandedUpdateBackendV1, OpponentCacheV1, PinnedFileV1,
-    UpdateBackwardExecutionV1, GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1, MAX_BATCH_BYTES,
+    RecordEnvelopeV1, UpdateBackwardExecutionV1, GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1,
+    MAX_BATCH_BYTES, MAX_FILE_BYTES,
 };
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4};
@@ -236,7 +238,10 @@ pub(super) fn load_w_v1(
             && policy.input_contract_v1().is_none(),
         "a wide learner's shell must load with the plain FlatV4 identity",
     )?;
-    let initial = decode_w_state_v1(&read_pinned_bytes(&member.initial)?)?;
+    let initial = decode_w_state_v1(&open_v1(
+        &read_pinned_bytes(&member.initial)?,
+        MAX_FILE_BYTES,
+    )?)?;
     let (state, checkpoint) = match &source.checkpoint {
         None => {
             ensure(inputs.is_none(), "update requires checkpoint")?;
@@ -264,7 +269,10 @@ pub(super) fn load_w_v1(
                     record.value_coefficient_bits,
                 )?;
             }
-            let state = decode_w_state_v1(&read_pinned_bytes(&record.state)?)?;
+            let state = decode_w_state_v1(&open_v1(
+                &read_pinned_bytes(&record.state)?,
+                MAX_FILE_BYTES,
+            )?)?;
             ensure(
                 w_state_sha256_v1(&state)? == record.state_sha256
                     && state.adam_step_v1() == record.adam_step,
@@ -411,6 +419,9 @@ pub(super) struct WUpdateInputsV1 {
     pub(super) unsupported: WUnsupportedOptionsV1,
     pub(super) training_math: TrainingMathV1,
     pub(super) record_format: CheckpointRecordFormatV1,
+    /// Seals the update's container (`record_envelope_v1`); the record and
+    /// receipt stay plain, as net-8's receipts do.
+    pub(super) record_envelope: RecordEnvelopeV1,
     pub(super) started: std::time::Instant,
 }
 
@@ -477,6 +488,7 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
         preparation_workers,
         max_prepared_tensor_mebibytes,
         training_math,
+        record_envelope,
         started,
         ..
     } = inputs;
@@ -655,7 +667,7 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
     let container = publish_json_bytes_v1(
         &output_directory,
         W_LEARNER_STATE_FILE_V1,
-        &encode_w_state_v1(&state)?,
+        &record_envelope.seal_owned_v1(encode_w_state_v1(&state)?)?,
     )?;
     let feature_identity = policy.feature_identity_v1();
     let record = WLearnerCheckpointV1 {

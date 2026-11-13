@@ -674,7 +674,6 @@ impl NativeExpandedTrainingRunV1 {
             check(
                 self.initial_source.s_learner.is_none()
                     && self.training_math.is_platform_libm()
-                    && self.record_envelope.is_none()
                     && self.ex1.is_none()
                     && self.update_backend.is_cpu()
                     && self.update_backward_execution.is_sequential()
@@ -688,7 +687,7 @@ impl NativeExpandedTrainingRunV1 {
                         self.loss_selection,
                         ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
                     ),
-                "a wide learner run requires the ordinary CPU GAE update under the platform libm,                  record format v1 and the legacy sampler, without a record envelope, EX1, net-8                  backward modes, line (b), E, SQ1, search targets or an S learner",
+                "a wide learner run requires the ordinary CPU GAE update under the platform libm, record format v1 and the legacy sampler, without EX1, net-8 backward modes, line (b), E, SQ1, search targets or an S learner",
             )?;
         }
         if self.initial_source.s_learner.is_some() {

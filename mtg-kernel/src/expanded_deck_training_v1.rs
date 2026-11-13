@@ -4684,11 +4684,8 @@ fn execute_update_inner_v1(
         "output directory already exists",
     )?;
     if source.w_learner.is_some() {
-        // The wide update writes its own records; it takes no envelope.
-        ensure(
-            record_envelope.is_none(),
-            "a record envelope is not available with a wide learner update",
-        )?;
+        // The wide update writes its own record and container; an envelope
+        // seals the container, as it seals net-8's checkpoint.
         return w_learner_v1::execute_w_update_v1(w_learner_v1::WUpdateInputsV1 {
             source,
             trajectories,
@@ -4710,6 +4707,7 @@ fn execute_update_inner_v1(
             },
             training_math,
             record_format,
+            record_envelope,
             started: update_started,
         });
     }
