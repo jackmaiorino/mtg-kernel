@@ -775,6 +775,23 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::ArtifactOrLandV1 | S::ControlledPermanentV1 => ObjF::Permanent,
         S::PlayerThenUpToTwoOfTheirGraveyardCardsV1 => ObjF::AnyCard,
         S::TwoLandsV1 => typed(CardType::Land),
+        S::S1dV1(_) => ObjF::AnyCard,
+        S::CreatureOrPlaneswalkerManaValueAtMostV1(_) | S::OpponentCreatureOrEnchantmentV1 => {
+            ObjF::Permanent
+        }
+        S::NoncreatureArtifactOrEnchantmentV1
+        | S::BlackOrRedPermanentV1
+        | S::UpToTwoArtifactsOrEnchantmentsV1 => ObjF::Permanent,
+        S::CreaturePowerOrToughnessAtMostOneV1 => creature(),
+        S::EnchantmentInstantOrSorcerySpellV1 => ObjF::Spell,
+        S::NonbasicLandCardInAGraveyardV1 => ObjF::AnyCard,
+        S::DividedFourDamageCreaturesV1 => creature(),
+        S::ControlledCreatureOrVehicleV1 => ObjF::Permanent,
+        S::NonblackCreatureManaValueV1(_) => creature(),
+        S::DividedTwoCountersCreaturesV1 => creature(),
+        S::UpToOneOpponentArtifactCreatureOrPlaneswalkerV1 => ObjF::Permanent,
+        S::NoncreaturePermanentV1 => ObjF::Permanent,
+        S::RepeatableArtifactsV1(_) => typed(CardType::Artifact),
     }
 }
 
@@ -816,10 +833,15 @@ pub(super) fn standard_target_origin(
         | S::OpponentThenUpToOneTheirCreatureV1
         | S::UpToOneOpponentCreatureOrPlaneswalkerV1
         | S::UpToOneOpponentNoncreatureNonlandPermanentManaValueAtMostV1(_)
-        | S::OpponentArtifactV1 => (Some(ZoneF::Battlefield), Some(RelF::Opponent)),
-        S::LandCardInAGraveyardV1 | S::InstantOrSorceryCardInAGraveyardV1 => {
-            (Some(ZoneF::Graveyard), None)
+        | S::OpponentArtifactV1
+        | S::OpponentCreatureOrEnchantmentV1
+        | S::UpToOneOpponentArtifactCreatureOrPlaneswalkerV1 => {
+            (Some(ZoneF::Battlefield), Some(RelF::Opponent))
         }
+        S::LandCardInAGraveyardV1
+        | S::InstantOrSorceryCardInAGraveyardV1
+        | S::NonbasicLandCardInAGraveyardV1 => (Some(ZoneF::Graveyard), None),
+        S::ControlledCreatureOrVehicleV1 => (Some(ZoneF::Battlefield), Some(RelF::You)),
         S::UpToOneLandCardInOwnGraveyardV1 | S::LandCardInOwnGraveyardV1 => {
             (Some(ZoneF::Graveyard), Some(RelF::You))
         }
@@ -828,18 +850,28 @@ pub(super) fn standard_target_origin(
         }
         S::InstantOrSorcerySpellV1
         | S::SpellWithSingleTargetV1
+        | S::EnchantmentInstantOrSorcerySpellV1
         | S::TriggeredAbilityOrColorlessSpellV1 => (Some(ZoneF::Stack), None),
         S::AnotherNonlandPermanent
         | S::UpToEightCreaturesOrPlaneswalkersV74
         | S::DividedFourDamageCreaturesOrPlaneswalkersV1
+        | S::DividedFourDamageCreaturesV1
         | S::DividedXDamageUpToTwoV1
         | S::UpToOnePlayerV1
         | S::CreaturePowerAtMostTreasureCountersV1
         | S::AssemblyWorkerCreatureV1
         | S::ArtifactOrLandV1
         | S::TwoLandsV1
+        | S::NoncreatureArtifactOrEnchantmentV1
+        | S::BlackOrRedPermanentV1
+        | S::CreaturePowerOrToughnessAtMostOneV1
+        | S::UpToTwoArtifactsOrEnchantmentsV1
         | S::DividedTwoDamageAnyTargetsV1
         | S::CreatureManaValueAtMostV1(_)
+        | S::NonblackCreatureManaValueV1(_)
+        | S::DividedTwoCountersCreaturesV1
+        | S::S1dV1(_)
+        | S::CreatureOrPlaneswalkerManaValueAtMostV1(_)
         | S::CreatureLandOrPlaneswalkerV1
         | S::ArtifactEnchantmentOrFlyingCreatureV1
         | S::UpToTwoAnyTargets
@@ -871,6 +903,8 @@ pub(super) fn standard_target_origin(
         | S::UpToOneNonbasicLandV1
         | S::ControlledCreatureThenUpToOneOpponentCreatureV1
         | S::TwoDistinctCreaturesV1
+        | S::NoncreaturePermanentV1
+        | S::RepeatableArtifactsV1(_)
         | S::CrewedSourceThisTurn => {
             // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
@@ -890,9 +924,12 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             out.atoms.push(Atom::Opaque);
         }
         S::DividedFourDamageCreaturesOrPlaneswalkersV1
+        | S::DividedFourDamageCreaturesV1
         | S::DividedXDamageUpToTwoV1
-        | S::DividedTwoDamageAnyTargetsV1 => {
-            // Vocabulary gap: divided damage and repeated picks have no facet.
+        | S::DividedTwoDamageAnyTargetsV1
+        | S::DividedTwoCountersCreaturesV1 => {
+            // Vocabulary gap: divided damage and counters and repeated picks
+            // have no facet.
             out.atoms.push(Atom::Opaque);
         }
         S::CreatureManaValueAtMostV1(maximum) => {
@@ -917,6 +954,32 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, standard_target_obj(filter), relation, zone);
             out.target(TargetAtom::MultipleTargets);
             // Two distinct lands: the count has no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::S1dV1(_) => {
+            // Wave S1d's filters (a power bound, flying, a land you control,
+            // a distinct-type graveyard pair) have no facet.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::CreatureOrPlaneswalkerManaValueAtMostV1(maximum) => {
+            out.target(TargetAtom::Object {
+                obj: ObjF::Permanent,
+                controller: relation,
+                zone,
+                color: None,
+                mana_value_at_most: Some(mana_value_bucket(u16::from(maximum))),
+                excludes: None,
+            });
+        }
+        S::NoncreatureArtifactOrEnchantmentV1
+        | S::BlackOrRedPermanentV1
+        | S::CreaturePowerOrToughnessAtMostOneV1
+        | S::UpToTwoArtifactsOrEnchantmentsV1
+        | S::NonbasicLandCardInAGraveyardV1
+        | S::EnchantmentInstantOrSorcerySpellV1 => {
+            object(out, standard_target_obj(filter), relation, zone);
+            // Vocabulary gap: the exact refinement (color, type union or
+            // size bound) has no facet.
             out.atoms.push(Atom::Opaque);
         }
         S::UpToOnePlayerV1 => {
@@ -1185,6 +1248,19 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
                 excludes: None,
             });
         }
+        S::OpponentCreatureOrEnchantmentV1 => {
+            object(out, creature(), relation, zone);
+            object(out, typed(CardType::Enchantment), relation, zone);
+        }
+        S::ControlledCreatureOrVehicleV1 => {
+            object(out, creature(), relation, zone);
+            object(out, typed(CardType::Artifact), relation, zone);
+        }
+        // The nonblack and exact mana value refinements have no facet, as
+        // for `TargetSpec::NonblackCreature`.
+        S::NonblackCreatureManaValueV1(_) => {
+            object(out, creature(), relation, zone);
+        }
         S::OpponentPermanentV1 | S::LandCardInAGraveyardV1 | S::LandCardInOwnGraveyardV1 => {
             object(out, standard_target_obj(filter), relation, zone);
         }
@@ -1264,6 +1340,29 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, creature(), relation, zone);
             object(out, typed(CardType::Planeswalker), relation, zone);
             out.target(TargetAtom::UpTo);
+        }
+        S::UpToOneOpponentArtifactCreatureOrPlaneswalkerV1 => {
+            object(out, typed(CardType::Artifact), relation, zone);
+            object(out, creature(), relation, zone);
+            object(out, typed(CardType::Planeswalker), relation, zone);
+            out.target(TargetAtom::UpTo);
+        }
+        S::NoncreaturePermanentV1 => out.target(TargetAtom::Object {
+            obj: ObjF::Permanent,
+            controller: relation,
+            zone,
+            color: None,
+            mana_value_at_most: None,
+            excludes: Some(CardTypeF::Creature),
+        }),
+        S::RepeatableArtifactsV1(slots) => {
+            object(out, typed(CardType::Artifact), relation, zone);
+            if slots > 1 {
+                out.target(TargetAtom::MultipleTargets);
+            }
+            // Vocabulary gap: the slot count and repeated picks have no
+            // facet.
+            out.atoms.push(Atom::Opaque);
         }
         S::ControlledCreatureThenUpToOneOpponentCreatureV1 => {
             object(out, creature(), relation, zone);

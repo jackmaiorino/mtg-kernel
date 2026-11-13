@@ -287,7 +287,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
     match name {
         "Orim's Chant" => Some("{W}"),
-        _ => None,
+        _ => super::build_eternal_p3a_v1::kicker_cost_for(name),
     }
 }
 

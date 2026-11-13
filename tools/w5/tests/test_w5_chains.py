@@ -180,6 +180,58 @@ class ChainTests(unittest.TestCase):
         with self.assertRaises(chains.Stop):
             chains.make_plan(jwrite(self.node.t / 'extra2.json', dict(inputs, label='extra2')))
 
+    def test_fork_arms_on_a_box_subset(self):
+        """FBA and FBB (two bases) in an independent plan that owns boxes 2 and 3 of the layout (box_slots)."""
+        arm = {'parent': str(self.node.b512), 'workers': 1, 'memory_max_bytes': 1 << 30, 'bytes_per_update': 1000,
+               'segment_updates': 4}
+        specs = {'fa': {'arm': 'FBA', 'slot': 2, 'seed_root': 'forks/fb'},
+                 'fb': {'arm': 'FBB', 'slot': 3, 'seed_root': 'forks/fb'}}
+        inputs = json.loads(Path(self.node.inputs('0', specs, label='forks', c_wall_seconds=1.5, independent=True,
+                                                  box_slots=[2, 3])).read_text())
+        other = jwrite(self.node.t / 'base-b.json', dict(base_doc(), learning_rate=0.0006))
+        inputs['arms']['FBA'] = arm
+        inputs['arms']['FBB'] = dict(arm, base=str(other))
+        path, plan = chains.make_plan(jwrite(self.node.t / 'forks.json', inputs))
+        self.assertEqual(sorted(plan['arms']), ['F', 'FBA', 'FBB'])
+        self.assertEqual(plan['box_slots'], [2, 3])
+        for a in ('FBA', 'FBB'):
+            doc = json.loads(Path(plan['arms'][a]['file']['path']).read_text())
+            self.assertEqual((doc['recipe'], doc['retention_arm']), ('C', 'C'))
+            box = json.loads(Path(plan['arms'][a]['w5box_plan']['path']).read_text())
+            self.assertEqual(box['box_slots'], [2, 3])
+            self.assertEqual(w5box.throughput_binding(box, next(iter(box['chains'].values())))['box_slots'], [2, 3])
+        self.assertNotEqual(plan['arms']['FBA']['file']['sha256'], plan['arms']['FBB']['file']['sha256'])
+        # the throughput phases run on the plan's own boxes: one, then both
+        _, binding, phases = chains.throughput_plans(path, 'FBA', 'tq', [1, 2])
+        self.assertEqual([sorted(c['slot'] for c in p['chains'].values()) for _, p in phases], [[2], [2, 3]])
+        with self.assertRaisesRegex(chains.Stop, 'rise from 1'):
+            chains.throughput_plans(path, 'FBA', 'tr', [1, 4])
+        for bad, why in (({'box_slots': [3, 2]}, 'box_slots'), ({'box_slots': [2, 9]}, 'box_slots'),
+                         ({'box_slots': [3]}, 'not one of the plan box_slots'),
+                         ({'box_slots': [2, 3], 'independent': False}, 'box_slots')):
+            with self.assertRaisesRegex(chains.Stop, why):
+                chains.make_plan(jwrite(self.node.t / 'bad.json', dict(inputs, label='bad', **bad)))
+        # a plan without box_slots keeps its launch plans' bytes (no key)
+        _, whole = self.node.plan('0', {'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'oc/c1'}}, label='whole',
+                                  independent=True)
+        self.assertNotIn('box_slots', whole)
+        self.assertNotIn('box_slots', json.loads(Path(whole['arms']['C']['w5box_plan']['path']).read_text()))
+
+    def test_scratch_segment_lengths(self):
+        """A scratch segment length is a multiple of 32 that divides 4,096."""
+        specs = {'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'oc/c1'}}
+        for length, ok in ((32, True), (64, True), (4096, True), (16, False), (96, False)):
+            inputs = json.loads(Path(self.node.inputs('0', specs, label=f'scr{length}', c_wall_seconds=1.5,
+                                                      independent=True)).read_text())
+            inputs['scratch_root'] = (self.node.t / 'shm').as_posix()
+            inputs['arms']['C'] = dict(inputs['arms']['C'], segment_updates=length, scratch=True)
+            path = jwrite(self.node.t / f'scr{length}.json', inputs)
+            if ok:
+                chains.make_plan(path)
+            else:
+                with self.assertRaisesRegex(chains.Stop, 'multiple of 32'):
+                    chains.make_plan(path)
+
     @unittest.skipUnless(sys.platform.startswith('linux'), 'the w5box node log is Linux only')
     def test_independent_plan_thaws_after_an_oom_end(self):
         path, plan = self.node.plan('0', {'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'oc/c1'},
@@ -353,12 +405,27 @@ class ChainTests(unittest.TestCase):
     def test_c_chain_runs_segments_to_its_wall_and_matches_one_run(self):
         _, plan = self.node.stage0(c_wall=1.5)
         self.node.guard()
-        self.assertEqual(self.node.drive(plan, 'c1'), 0)
+        # Advance the driver's wall after each real stand-in segment. Host
+        # startup and filesystem latency must not decide whether two segments
+        # fit, while publication and state continuation still run in children.
+        wall = [time.time()]
+        run_trainer = chains.run_trainer
+
+        def run_segment(*args, **kwargs):
+            result = run_trainer(*args, **kwargs)
+            wall[0] += 1.0
+            return result
+
+        with mock.patch.object(chains, 'time', wraps=time) as clock, \
+                mock.patch.object(chains, 'run_trainer', side_effect=run_segment) as trainer:
+            clock.time.side_effect = lambda: wall[0]
+            self.assertEqual(self.node.drive(plan, 'c1'), 0)
+        self.assertEqual(trainer.call_count, 2)
         root = self.node.root
         end = json.loads((root / 'chains' / 'c1' / 'END.json').read_text())
         chain, records = retention.index(plan['chains']['c1']['manifest'])
         self.assertEqual(end['reason'], 'c-wall')
-        self.assertGreaterEqual(len(records), 8)
+        self.assertEqual(len(records), 8)
         self.assertEqual(end['last_valid_boundary'], records[-1]['boundary'])
         self.assertEqual(end['ledger_usec'], records[-1]['ledger_usec'])
         self.assertEqual([r['ledger_usec'] for r in records], [STEP_C * (i + 1) for i in range(len(records))])

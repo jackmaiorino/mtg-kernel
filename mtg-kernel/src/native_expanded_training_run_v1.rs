@@ -2,6 +2,7 @@
 //! This successor owns its checkpoints; it does not reinterpret legacy Stores.
 
 use crate::durable_publication_v1::{capture_existing_publication_parent_v1, publish_new_bytes_v1};
+use crate::expanded_deck_training_v1::cache_diagnostics_v1;
 use crate::expanded_deck_training_v1::e_supported_teacher_v1::{
     continuation_identity as e_supported_continuation_identity_v1, ESupportedSlotV1,
     ESupportedTeacherOptionsV1,
@@ -12,6 +13,7 @@ use crate::expanded_deck_training_v1::ex1_collect_v1::{
 use crate::expanded_deck_training_v1::ex1_update_v1::{
     continuation_identity as ex1_continuation_identity_v1, Ex1UpdateOptionsV1, W5UpdateOptionsV1,
 };
+use crate::expanded_deck_training_v1::loaded_source_profile_v1::{scoped_v1, LoadRoleV1};
 use crate::expanded_deck_training_v1::no_state_digest_v1::{
     is_converted_source_v1, policy_contract_record_v1,
 };
@@ -1423,8 +1425,9 @@ fn validate_update(
         checkpoint: Some(checkpoint.clone()),
         ..source.clone()
     };
-    let after =
-        load_expanded_update_inference_v1(&next, trajectories, learning_rate, value_coefficient)?;
+    let after = scoped_v1(LoadRoleV1::UpdateValidation, || {
+        load_expanded_update_inference_v1(&next, trajectories, learning_rate, value_coefficient)
+    })?;
     // An S checkpoint also binds the run's GAE settings (`s_learner_v1`).
     crate::expanded_deck_training_v1::s_learner_v1::validate_update_loss_v1(&next, loss_selection)?;
     check(
@@ -1695,8 +1698,9 @@ struct ConvertedInitialV1 {
 fn load_converted_initial_v1(
     config: &NativeExpandedTrainingRunV1,
 ) -> Result<ConvertedInitialV1, String> {
-    let (policy, identity) =
-        load_expanded_inference_bound_v1(&config.initial_source, config.training_math)?;
+    let (policy, identity) = scoped_v1(LoadRoleV1::RunInitial, || {
+        load_expanded_inference_bound_v1(&config.initial_source, config.training_math)
+    })?;
     let record = policy_contract_record_v1(&policy)?
         .ok_or("a converted initial source loaded without its contract")?;
     Ok(ConvertedInitialV1 {
@@ -1716,7 +1720,9 @@ fn load_opponent_contract_v1(
     source: &ExpandedModelSourceV1,
     training_math: TrainingMathV1,
 ) -> Result<Option<String>, String> {
-    let (policy, _) = load_expanded_inference_bound_v1(source, training_math)?;
+    let (policy, _) = scoped_v1(LoadRoleV1::RunFixedOpponent, || {
+        load_expanded_inference_bound_v1(source, training_math)
+    })?;
     Ok(policy.input_contract_v1().map(str::to_owned))
 }
 
@@ -1824,8 +1830,9 @@ pub fn run_native_expanded_training_v1(
     let (mut current_identity, initial_contract) = match converted_initial {
         Some(initial) => (initial.identity, Some(initial.contract_digest)),
         None => {
-            let (_, identity) =
-                load_expanded_inference_bound_v1(&config.initial_source, config.training_math)?;
+            let (_, identity) = scoped_v1(LoadRoleV1::RunInitial, || {
+                load_expanded_inference_bound_v1(&config.initial_source, config.training_math)
+            })?;
             (identity, None)
         }
     };
@@ -1936,6 +1943,7 @@ pub fn run_native_expanded_training_v1(
             current_identity = after;
             history.push(current.clone());
             receipts.push(pin(&complete_path)?);
+            cache_diagnostics_v1::append_iteration_v1(index, false)?;
             continue;
         }
         if stopped_at_ledger || max_new_iterations.is_some_and(|limit| newly_completed >= limit) {
@@ -2197,6 +2205,7 @@ pub fn run_native_expanded_training_v1(
         current_identity = after;
         history.push(current.clone());
         newly_completed += 1;
+        cache_diagnostics_v1::append_iteration_v1(index, true)?;
         // W5 resume to R_i: stop after the first boundary at or past it.
         if ledger
             .as_ref()
@@ -2245,6 +2254,9 @@ pub fn run_native_expanded_training_v1(
     drop(lock);
     Ok(result)
 }
+
+#[cfg(test)]
+mod fixture_bench_v1;
 
 #[cfg(test)]
 mod verified_pin_tests;

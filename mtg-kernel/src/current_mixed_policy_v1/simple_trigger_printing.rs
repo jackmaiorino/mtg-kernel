@@ -2,12 +2,14 @@
 use super::{Error, Result};
 use crate::{
     card_def::{CardDef, CardType, Keywords, Subtype, TargetSpec},
-    effect::{EffectOp, ObjectRef, PlayerRef},
+    effect::{CreatureFilter, EffectCond, EffectOp, ObjectRef, PlayerRef},
     mana::{Cost, ManaColor, Pip},
     state::Zone,
     trigger::TriggerCondition,
 };
 use serde_json::{json, Value};
+
+pub(super) const BUSHWHACKER_ID: u16 = 44;
 
 pub(super) fn handles(name: &str) -> bool {
     matches!(
@@ -22,6 +24,7 @@ pub(super) fn handles(name: &str) -> bool {
             | "Prideful Parent"
             | "Guarded Heir"
             | "Hare Apparent"
+            | "Goblin Bushwhacker"
     )
 }
 
@@ -29,6 +32,15 @@ pub(super) fn handles(name: &str) -> bool {
 /// cast, static, activation or replacement field remains forbidden there.
 pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     let (generic, pips, colors, subtypes, power, toughness, keywords) = match d.name {
+        "Goblin Bushwhacker" => (
+            0,
+            &[Pip::Colored(ManaColor::R)][..],
+            &[ManaColor::R][..],
+            &[Subtype::Goblin, Subtype::Warrior][..],
+            1,
+            1,
+            Keywords::NONE,
+        ),
         "Hare Apparent" => (
             1,
             &[Pip::Colored(ManaColor::W)][..],
@@ -131,7 +143,9 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     } else {
         &[CardType::Creature][..]
     };
+    let bushwhacker = d.name == "Goblin Bushwhacker";
     if crate::card_def::card_id_by_name(d.name) != Some(id)
+        || (bushwhacker && (id != BUSHWHACKER_ID || d.kicker_cost != Some(cost)))
         || d.types != types
         || d.subtypes != subtypes
         || !d.supertypes.is_empty()
@@ -158,6 +172,27 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
     }
     let dies = matches!(d.name, "Infestation Sage" | "Gleaming Barrier");
     let (program, ordered) = match d.name {
+        "Goblin Bushwhacker" => (
+            EffectOp::Conditional {
+                cond: EffectCond::WasKicked,
+                then: Box::new(EffectOp::PumpControlled {
+                    filter: CreatureFilter::AnyControlled,
+                    power: 1,
+                    toughness: 0,
+                    grant_haste: true,
+                }),
+                else_: Box::new(EffectOp::Sequence(vec![])),
+            },
+            vec![json!({
+                "operation":"PumpControlled",
+                "controller":"CapturedTriggerController",
+                "affected_set":"CurrentEffectiveCreaturesControlledAtResolution",
+                "includes_source_if_it_still_qualifies":true,
+                "later_creatures_do_not_join_the_affected_set":true,
+                "power":1,"toughness":0,"grant_keyword":"Haste",
+                "duration":"UntilEndOfTurn","does_not_target":true
+            })],
+        ),
         "Hare Apparent" => {
             let token_def = crate::card_def::card_id_by_name("Rabbit Token")
                 .ok_or(Error::UnsupportedPrintedRoot(id))?;
@@ -273,7 +308,7 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             } else {
                 Zone::Battlefield
             }
-        || *intervening_if_kicked
+        || *intervening_if_kicked != bushwhacker
         || *intervening_if_controls_another_source_card
         || *face_index != 0
         || effect() != program
@@ -299,6 +334,33 @@ pub(super) fn printing(id: u16, d: &CardDef) -> Result<Option<Value>> {
             "source_incarnation":if dies {"DepartingBattlefieldIncarnation"}else{"EnteringBattlefieldIncarnation"},
             "survives_source_departure_and_later_control_change":true,"ordered_resolution":ordered}]
     }});
+    if bushwhacker {
+        let printed = meaning["simple_trigger_printing"].as_object_mut().unwrap();
+        let ordinary_cast = printed.remove("ordinary_cast").unwrap();
+        let kicked_cost = Cost {
+            generic: 0,
+            pips: &[Pip::Colored(ManaColor::R); 2],
+            x_count: 0,
+        };
+        let casts = [false, true].map(|kicked| {
+            let mut cast = ordinary_cast.clone();
+            cast["optional_additional_cost"] =
+                json!({"kind":"Kicker","selected":kicked,"repeatable":false,"cost":cost});
+            cast["ordered_costs"] = json!([{"operation":"PayTotalManaCost",
+                "printed_mana_component":cost,"chosen_kicker_additional_component":kicked.then_some(cost),
+                "base_total_before_increases_and_reductions":if kicked { kicked_cost } else { cost },
+                "one_native_payment_plan":true,"normal_cost_increases_and_reductions_apply_to_total_cost":true}]);
+            cast["capture_paid_kicker_on_original_spell"] = json!(true);
+            cast["printed_mana_value_is_unchanged"] = json!(true);
+            cast
+        });
+        printed.insert("schema".into(), json!("printed-kicker-entry-team-pump/v1"));
+        printed.insert("ordered_cast_roots".into(), json!(casts));
+        printed.get_mut("ordered_triggers").unwrap()[0]["intervening_if"] = json!({
+            "operation":"EnteringSpellWasKicked","check_at_entry_and_resolution":true,
+            "noncast_entries_are_not_kicked":true,"captures_original_entry_cast_fact":true
+        });
+    }
     if d.name == "Hare Apparent" {
         meaning["simple_trigger_printing"]["deck_construction"] = json!({"any_number_of_cards_named_hare_apparent":true,"other_limited_deck_size_and_pool_rules_still_apply":true});
     }

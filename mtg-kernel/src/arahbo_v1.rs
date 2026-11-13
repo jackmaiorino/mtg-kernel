@@ -3,7 +3,7 @@
 use crate::card_def::{TargetSpec, CARD_DEFS};
 use crate::effect::{EffectOp, ExecCtx};
 use crate::event::{CommittedEvent, ProposedEvent};
-use crate::event_history_v1::EventKindV1;
+use crate::event_history_v1::{EventKindV1, ProvedV1};
 use crate::ids::ObjectId;
 use crate::state::{AbilitySourceContractV4, GameObject, GameState, StackItem, Zone};
 use crate::trigger::PendingTrigger;
@@ -288,9 +288,8 @@ pub(crate) fn validate_source(
         return Ok(());
     };
     let capture = capture_at(state, index)?;
-    if source!=Some(capture.source) || state.engine.event_history.scan_for_v1(&[EventKindV1::ArahboTokenCollectedV1]).iter().filter(|event|matches!(event,
-        CommittedEvent::ArahboTokenCollectedV1 {capture_history_index} if *capture_history_index==index)).count()!=1 {
-        return Err("Arahbo source changed its capture or collection".into())
+    if source != Some(capture.source) || collections(state, index).len() != 1 {
+        return Err("Arahbo source changed its capture or collection".into());
     }
     Ok(())
 }
@@ -306,7 +305,7 @@ pub(crate) fn collect(
         };
         let index = capture.history_index;
         if capture_at(state,index).ok()!=Some(capture) || !used.insert(index)
-            || state.engine.event_history.scan_for_v1(&[EventKindV1::ArahboTokenCollectedV1]).iter().any(|event|matches!(event,
+            || state.engine.event_history.of_kinds_v2(&[EventKindV1::ArahboTokenCollectedV1]).any(|(_, event)|matches!(event,
                 CommittedEvent::ArahboTokenCollectedV1 {capture_history_index} if *capture_history_index==index)) {
             return Err(capture.source.source)
         }
@@ -328,13 +327,13 @@ pub(crate) fn collect(
             paid_cost_refs: Vec::new(),
         });
     }
-    for event in state
+    for (_, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::ArahboTokenCaptureV1])
+        .of_kinds_v2(&[EventKindV1::ArahboTokenCaptureV1])
     {
         if let CommittedEvent::ArahboTokenCaptureV1 { capture } = event {
-            let collected=state.engine.event_history.scan_for_v1(&[EventKindV1::ArahboTokenCollectedV1]).iter().any(|event|matches!(event,
+            let collected=state.engine.event_history.of_kinds_v2(&[EventKindV1::ArahboTokenCollectedV1]).any(|(_, event)|matches!(event,
                 CommittedEvent::ArahboTokenCollectedV1 {capture_history_index} if *capture_history_index==capture.history_index));
             if !collected && !used.contains(&capture.history_index) {
                 return Err(capture.source.source);
@@ -352,21 +351,110 @@ pub(crate) fn collect(
     Ok(pending)
 }
 
+/// The positions of Arahbo journal rows by the capture they name, and the
+/// captures of each observation's (source, root). While a `borrow_memo_v1`
+/// scope holds the state, one pass builds this and the lookups below read
+/// it; without a scope each lookup scans the rows of its kind.
+#[derive(Default)]
+struct RowsV1 {
+    captures: std::collections::HashMap<(u64, AbilitySourceContractV4, RootV1), usize>,
+    collected: std::collections::HashMap<u64, Vec<usize>>,
+    published: std::collections::HashMap<u64, Vec<usize>>,
+    completed: std::collections::HashMap<u64, Vec<usize>>,
+    removed: std::collections::HashMap<u64, Vec<usize>>,
+    counter_inputs: std::collections::HashMap<u64, Vec<usize>>,
+}
+struct RowsKeyV1;
+fn rows(state: &GameState) -> Option<std::rc::Rc<RowsV1>> {
+    if !crate::borrow_memo_v1::active(state) {
+        return None;
+    }
+    Some(crate::borrow_memo_v1::cached::<RowsKeyV1, (), _>(
+        state,
+        (),
+        || {
+            let mut rows = RowsV1::default();
+            for (at, event) in state.engine.event_history.of_kinds_v2(&[
+                EventKindV1::ArahboTokenCaptureV1,
+                EventKindV1::ArahboTokenCollectedV1,
+                EventKindV1::ArahboTokenPublishedV1,
+                EventKindV1::ArahboTokenCompletedV1,
+                EventKindV1::ArahboTokenRemovedV1,
+                EventKindV1::ArahboCounterInputV1,
+            ]) {
+                let (map, capture) = match event {
+                    CommittedEvent::ArahboTokenCaptureV1 { capture } => {
+                        *rows
+                            .captures
+                            .entry((
+                                capture.observation_history_index,
+                                capture.source,
+                                capture.root,
+                            ))
+                            .or_default() += 1;
+                        continue;
+                    }
+                    CommittedEvent::ArahboTokenCollectedV1 {
+                        capture_history_index,
+                    } => (&mut rows.collected, capture_history_index),
+                    CommittedEvent::ArahboTokenPublishedV1 {
+                        capture_history_index,
+                        ..
+                    } => (&mut rows.published, capture_history_index),
+                    CommittedEvent::ArahboTokenCompletedV1 {
+                        capture_history_index,
+                        ..
+                    } => (&mut rows.completed, capture_history_index),
+                    CommittedEvent::ArahboTokenRemovedV1 {
+                        capture_history_index,
+                        ..
+                    } => (&mut rows.removed, capture_history_index),
+                    CommittedEvent::ArahboCounterInputV1 {
+                        capture_history_index,
+                        ..
+                    } => (&mut rows.counter_inputs, capture_history_index),
+                    _ => continue,
+                };
+                map.entry(*capture).or_default().push(at);
+            }
+            std::rc::Rc::new(rows)
+        },
+    ))
+}
+/// The rows of `kind` that `pick` accepts, with their positions: from the
+/// index entry `indexed` when a scope is active, else from a kind scan.
+fn rows_of<'a, T>(
+    state: &'a GameState,
+    indexed: impl FnOnce(&RowsV1) -> Option<&Vec<usize>>,
+    kind: EventKindV1,
+    pick: impl FnMut(usize, &'a CommittedEvent) -> Option<T>,
+) -> Vec<T> {
+    crate::borrow_memo_v1::rows_v1(state, rows(state), indexed, &[kind], pick)
+}
+/// The collection rows naming capture `index`.
+fn collections(state: &GameState, index: u64) -> Vec<usize> {
+    rows_of(
+        state,
+        |rows| rows.collected.get(&index),
+        EventKindV1::ArahboTokenCollectedV1,
+        |at, event| {
+            matches!(event,CommittedEvent::ArahboTokenCollectedV1 {capture_history_index} if *capture_history_index==index).then_some(at)
+        },
+    )
+}
 fn publications(state: &GameState, index: u64) -> Vec<(usize, &StackItem)> {
-    state
-        .engine
-        .event_history
-        .scan_for_v1(&[EventKindV1::ArahboTokenPublishedV1])
-        .iter()
-        .enumerate()
-        .filter_map(|(at, event)| match event {
+    rows_of(
+        state,
+        |rows| rows.published.get(&index),
+        EventKindV1::ArahboTokenPublishedV1,
+        |at, event| match event {
             CommittedEvent::ArahboTokenPublishedV1 {
                 capture_history_index,
                 item,
             } if *capture_history_index == index => Some((at, item.as_ref())),
             _ => None,
-        })
-        .collect()
+        },
+    )
 }
 fn validate_item(state: &GameState, item: &StackItem, index: u64) -> Result<(), String> {
     let capture = capture_at(state, index)?;
@@ -466,7 +554,7 @@ fn record_removal(
     kind: RemovalKindV1,
 ) -> Result<usize, String> {
     if state.stack.iter().any(|item|item.v4.stack_item_id==owner.item.v4.stack_item_id)
-        || state.engine.event_history.scan_for_v1(&[EventKindV1::ArahboTokenRemovedV1]).iter().any(|event|matches!(event,
+        || state.engine.event_history.of_kinds_v2(&[EventKindV1::ArahboTokenRemovedV1]).any(|(_, event)|matches!(event,
             CommittedEvent::ArahboTokenRemovedV1 {capture_history_index,..} if *capture_history_index==owner.index)) {
         return Err("Arahbo private removed owner still exists or was consumed".into())
     }
@@ -542,11 +630,11 @@ pub(crate) fn resolve_removed(
         ctx.controller,
         1,
     )?;
-    let actual = state.engine.event_history[start..].iter().filter(|event|matches!(event,CommittedEvent::CreateToken {controller,token_def:created,..} if *controller==ctx.controller && *created==token_def)).count();
+    let actual = state.engine.event_history.range_v2(start..).iter().filter(|event|matches!(event,CommittedEvent::CreateToken {controller,token_def:created,..} if *controller==ctx.controller && *created==token_def)).count();
     if actual != expected {
         return Err("Arahbo did not create its full replacement-expanded roster".into());
     }
-    let token = Some(state.engine.event_history[start..].iter().position(|event|
+    let token = Some(state.engine.event_history.range_v2(start..).iter().position(|event|
         matches!(event, CommittedEvent::CreateToken { controller, token_def: created_def, .. } if *controller == ctx.controller && *created_def == token_def)
     ).map(|offset| start+offset).ok_or("Arahbo token produced no actual creation occurrence")? as u64);
     state
@@ -572,53 +660,29 @@ pub(crate) fn is_history(event: &CommittedEvent) -> bool {
     )
 }
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
     if state.engine.event_log.iter().any(is_history) {
         return Err("Arahbo private journal entered mutable collection log".into());
     }
-    if enabled() {
-        for (index, event) in state.engine.event_history.iter().enumerate() {
-            if crate::trigger::battlefield_entry_object(event).is_some()
-                && state.engine.event_history.iter().filter(|event|matches!(event,
-                    CommittedEvent::ArahboEntryObservationV1 {entry,..} if entry.entry_history_index==index as u64)).count()!=1 {
-                return Err("Arahbo catalog entry lost its independent original observation".into())
-            }
+    let history = &state.engine.event_history;
+    let proof = history.proof_v1(ProvedV1::ArahboObservations);
+    match proof {
+        Some((from, _)) => {
+            let since = crate::entry_observations_v1::check_since(history, from, &catalog());
+            #[cfg(test)]
+            crate::event_history_v1::proof_tests_v1::assert_same(
+                ProvedV1::ArahboObservations,
+                &since,
+                &validate_observations(state),
+            );
+            since?;
         }
-    }
-    for (observation, event) in state
-        .engine
-        .event_history
-        .scan_for_v1(&[EventKindV1::ArahboEntryObservationV1])
-        .iter()
-        .enumerate()
-    {
-        if let CommittedEvent::ArahboEntryObservationV1 { entry, sources, .. } = event {
-            let original = usize::try_from(entry.entry_history_index)
-                .map_err(|_| "Arahbo entry index overflow")?;
-            if original >= observation
-                || state
-                    .engine
-                    .event_history
-                    .get(original)
-                    .and_then(crate::trigger::battlefield_entry_object)
-                    != Some(entry.object)
-            {
-                return Err("Arahbo observation lost its actual entry".into());
-            }
-            for (source, root) in sources {
-                if state.engine.event_history.scan_for_v1(&[EventKindV1::ArahboTokenCaptureV1]).iter().filter(|event|matches!(event,
-                    CommittedEvent::ArahboTokenCaptureV1 {capture} if capture.observation_history_index==observation as u64
-                        && capture.source==*source && capture.root==*root)).count()!=1 {
-                    return Err("Arahbo original observer lost its mandatory token capture".into())
-                }
-            }
-        }
+        None => validate_observations(state)?,
     }
     for (at, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::ArahboTokenCaptureV1])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::ArahboTokenCaptureV1])
     {
         let CommittedEvent::ArahboTokenCaptureV1 { capture } = event else {
             continue;
@@ -628,8 +692,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             return Err("Arahbo capture moved in its original journal".into());
         }
         let index = capture.history_index;
-        let collections: Vec<_> = state.engine.event_history.scan_for_v1(&[EventKindV1::ArahboTokenCollectedV1]).iter().enumerate().filter_map(|(at,event)|
-            matches!(event,CommittedEvent::ArahboTokenCollectedV1 {capture_history_index} if *capture_history_index==index).then_some(at)).collect();
+        let collections = collections(state, index);
         let collected = collections.len();
         if collections.iter().any(|collection| *collection <= at) {
             return Err("Arahbo collection preceded its original capture".into());
@@ -704,13 +767,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             .iter()
             .filter(|row| row.v4.stack_item_id == item.v4.stack_item_id)
             .collect();
-        let completions: Vec<_> = state
-            .engine
-            .event_history
-            .scan_for_v1(&[EventKindV1::ArahboTokenCompletedV1])
-            .iter()
-            .enumerate()
-            .filter_map(|(at, event)| match event {
+        let completions: Vec<_> = rows_of(
+            state,
+            |rows| rows.completed.get(&index),
+            EventKindV1::ArahboTokenCompletedV1,
+            |at, event| match event {
                 CommittedEvent::ArahboTokenCompletedV1 {
                     capture_history_index,
                     removal_history_index,
@@ -719,23 +780,21 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     Some((at, *removal_history_index, *token_history_index))
                 }
                 _ => None,
-            })
-            .collect();
-        let removals: Vec<_> = state
-            .engine
-            .event_history
-            .scan_for_v1(&[EventKindV1::ArahboTokenRemovedV1])
-            .iter()
-            .enumerate()
-            .filter_map(|(at, event)| match event {
+            },
+        );
+        let removals: Vec<_> = rows_of(
+            state,
+            |rows| rows.removed.get(&index),
+            EventKindV1::ArahboTokenRemovedV1,
+            |at, event| match event {
                 CommittedEvent::ArahboTokenRemovedV1 {
                     capture_history_index,
                     item,
                     kind,
                 } if *capture_history_index == index => Some((at, item.as_ref(), kind)),
                 _ => None,
-            })
-            .collect();
+            },
+        );
         if completions.is_empty() {
             let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
             if !removals.is_empty()
@@ -759,20 +818,18 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             {
                 return Err("Arahbo completion changed original removal/publication".into());
             }
-            let counter_inputs = state
-                .engine
-                .event_history
-                .scan_for_v1(&[EventKindV1::ArahboCounterInputV1])
-                .iter()
-                .enumerate()
-                .filter_map(|(at, event)| match event {
+            let counter_inputs = rows_of(
+                state,
+                |rows| rows.counter_inputs.get(&index),
+                EventKindV1::ArahboCounterInputV1,
+                |at, event| match event {
                     CommittedEvent::ArahboCounterInputV1 {
                         capture_history_index,
                         item: original,
                     } if *capture_history_index == index => Some((at, original.as_ref())),
                     _ => None,
-                })
-                .collect::<Vec<_>>();
+                },
+            );
             match kind {
                 RemovalKindV1::Countered if matches!(counter_inputs.as_slice(), [(at, original)] if published_at < *at && *at < *removed && *original == item) =>
                     {}
@@ -797,7 +854,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             } else {
                 0
             };
-            let actual=state.engine.event_history[*removed+1..*completed].iter().filter(|event|matches!(event,CommittedEvent::CreateToken {controller,token_def,..} if *controller==capture.source.controller && *token_def==definition)).count();
+            let actual=state.engine.event_history.range_v2(*removed+1..*completed).iter().filter(|event|matches!(event,CommittedEvent::CreateToken {controller,token_def,..} if *controller==capture.source.controller && *token_def==definition)).count();
             if actual != expected {
                 return Err("Arahbo closure lost complete actual expanded token roster".into());
             }
@@ -820,7 +877,114 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
         }
     }
+    let from = proof.map_or(0, |(from, _)| from);
+    if crate::entry_observations_v1::recordable(history, from, &catalog()) {
+        history.set_proof_v1(ProvedV1::ArahboObservations, history.len(), 0);
+    }
     Ok(())
+}
+
+/// The checks a proof of `ProvedV1::ArahboObservations` covers, over the
+/// whole history: every battlefield entry has exactly one observation, and
+/// every observation names its actual earlier entry and has exactly one
+/// capture for each (source, root) it lists.
+fn validate_observations(state: &GameState) -> Result<(), String> {
+    if enabled() {
+        // Every battlefield entry needs exactly one observation naming its
+        // position. Count the observations of each position in one pass,
+        // then check the entries, instead of rescanning the whole history
+        // for each entry: the same verdict, linear rather than quadratic.
+        // Both passes read only the events of their kinds.
+        let history = &state.engine.event_history;
+        let mut observations = std::collections::HashMap::<u64, usize>::new();
+        for (_, event) in history.of_kinds_v2(&[EventKindV1::ArahboEntryObservationV1]) {
+            if let CommittedEvent::ArahboEntryObservationV1 { entry, .. } = event {
+                *observations.entry(entry.entry_history_index).or_default() += 1;
+            }
+        }
+        for (index, event) in
+            history.of_kinds_v2(&[EventKindV1::ZoneChange, EventKindV1::CreateToken])
+        {
+            if crate::trigger::battlefield_entry_object(event).is_some()
+                && observations.get(&(index as u64)).copied().unwrap_or(0) != 1
+            {
+                return Err(
+                    "Arahbo catalog entry lost its independent original observation".into(),
+                );
+            }
+        }
+    }
+    for (observation, event) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[EventKindV1::ArahboEntryObservationV1])
+    {
+        if let CommittedEvent::ArahboEntryObservationV1 { entry, sources, .. } = event {
+            let original = usize::try_from(entry.entry_history_index)
+                .map_err(|_| "Arahbo entry index overflow")?;
+            if original >= observation
+                || state
+                    .engine
+                    .event_history
+                    .get(original)
+                    .and_then(crate::trigger::battlefield_entry_object)
+                    != Some(entry.object)
+            {
+                return Err("Arahbo observation lost its actual entry".into());
+            }
+            let indexed = rows(state);
+            for (source, root) in sources {
+                let captured = match &indexed {
+                    Some(rows) => rows
+                        .captures
+                        .get(&(observation as u64, *source, *root))
+                        .copied()
+                        .unwrap_or(0),
+                    None => state.engine.event_history.of_kinds_v2(&[EventKindV1::ArahboTokenCaptureV1]).filter(|(_, event)|matches!(event,
+                    CommittedEvent::ArahboTokenCaptureV1 {capture} if capture.observation_history_index==observation as u64
+                        && capture.source==*source && capture.root==*root)).count(),
+                };
+                if captured != 1 {
+                    return Err("Arahbo original observer lost its mandatory token capture".into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Arahbo's rows for `entry_observations_v1`.
+fn catalog() -> crate::entry_observations_v1::CatalogV1<RootV1> {
+    crate::entry_observations_v1::CatalogV1 {
+        entries: enabled(),
+        capture_kind: EventKindV1::ArahboTokenCaptureV1,
+        observed,
+        captured,
+        lost_entry: "Arahbo catalog entry lost its independent original observation",
+        overflow: "Arahbo entry index overflow",
+        lost_actual: "Arahbo observation lost its actual entry",
+        lost_capture: "Arahbo original observer lost its mandatory token capture",
+    }
+}
+fn observed(
+    event: &CommittedEvent,
+) -> Option<crate::entry_observations_v1::ObservationV1<'_, RootV1>> {
+    match event {
+        CommittedEvent::ArahboEntryObservationV1 { entry, sources, .. } => {
+            Some((entry.entry_history_index, entry.object, sources.as_slice()))
+        }
+        _ => None,
+    }
+}
+fn captured(event: &CommittedEvent) -> Option<(u64, AbilitySourceContractV4, RootV1)> {
+    match event {
+        CommittedEvent::ArahboTokenCaptureV1 { capture } => Some((
+            capture.observation_history_index,
+            capture.source,
+            capture.root,
+        )),
+        _ => None,
+    }
 }
 
 pub(crate) fn requires_successor(state: &GameState) -> bool {
@@ -828,12 +992,27 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         .objects
         .iter()
         .any(|(source, _)| active(state, source))
-        || state.engine.event_history.iter().any(|event| match event {
-            // Every entry gets an observation, including entries without an
-            // Arahbo observer. Only actual captured roots need its transport.
-            CommittedEvent::ArahboEntryObservationV1 { sources, .. } => !sources.is_empty(),
-            _ => is_history(event) || matches!(event, CommittedEvent::ArahboTokenCaptureV1 { .. }),
-        })
+        || state
+            .engine
+            .event_history
+            .of_kinds_v2(&[
+                EventKindV1::ArahboEntryObservationV1,
+                EventKindV1::ArahboTokenCollectedV1,
+                EventKindV1::ArahboTokenPublishedV1,
+                EventKindV1::ArahboTokenRemovedV1,
+                EventKindV1::ArahboTokenCompletedV1,
+                EventKindV1::ArahboCounterInputV1,
+                EventKindV1::ArahboTokenCaptureV1,
+            ])
+            .any(|(_, event)| match event {
+                // Every entry gets an observation, including entries without an
+                // Arahbo observer. Only actual captured roots need its transport.
+                CommittedEvent::ArahboEntryObservationV1 { sources, .. } => !sources.is_empty(),
+                _ => {
+                    is_history(event)
+                        || matches!(event, CommittedEvent::ArahboTokenCaptureV1 { .. })
+                }
+            })
 }
 
 #[cfg(all(

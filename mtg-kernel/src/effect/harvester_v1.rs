@@ -62,7 +62,15 @@ pub(crate) fn historical_nightmare(
 ) -> Result<bool, String> {
     let mut current = false;
     let mut entry_seen = false;
-    for (at, event) in state.engine.event_history.iter().enumerate().take(before) {
+    for (at, event) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[
+            crate::event_history_v1::EventKindV1::NightmareCopyEnteredV1,
+            crate::event_history_v1::EventKindV1::NightmareCopyLayerV1,
+        ])
+        .take_while(|(at, _)| *at < before)
+    {
         match event {
             event::CommittedEvent::NightmareCopyEnteredV1 { entry }
                 if entry.source.source == source.source
@@ -122,7 +130,8 @@ pub(crate) fn copiable_nightmare(state: &GameState, object: ObjectId) -> Result<
 }
 
 pub(crate) fn require_legacy_absence(state: &GameState) -> Result<(), String> {
-    if crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, definition)
+    if state.harvester_commit_receipts_v1
+        || crate::standard_cards_v1::has_battlefield_copy_origin_v1(state, definition)
         || state.objects.iter().any(|(_, o)| {
             matches!(o.zone, Zone::Battlefield | Zone::Stack | Zone::Graveyard)
                 && o.v4.face_down_v1.is_none()
@@ -136,8 +145,13 @@ pub(crate) fn require_legacy_absence(state: &GameState) -> Result<(), String> {
         || state
             .engine
             .event_history
-            .iter()
-            .any(|e| matches!(e, event::CommittedEvent::HarvesterResolvedV1 { .. })
+            .of_kinds_v2(&[
+                crate::event_history_v1::EventKindV1::HarvesterResolvedV1,
+                crate::event_history_v1::EventKindV1::HarvesterCommitReceiptV1,
+                crate::event_history_v1::EventKindV1::HarvesterCastAnnouncedV1,
+            ])
+            .any(|(_, e)| matches!(e, event::CommittedEvent::HarvesterResolvedV1 { .. }
+                | event::CommittedEvent::HarvesterCommitReceiptV1 { .. })
                 || matches!(e, event::CommittedEvent::HarvesterCastAnnouncedV1 { cast } if definition(cast.card_def)))
     {
         return Err("Abyssal Harvester requires a distinct complete consumer".into());
@@ -147,13 +161,20 @@ pub(crate) fn require_legacy_absence(state: &GameState) -> Result<(), String> {
         .objects
         .iter()
         .any(|(_, o)| o.zone == Zone::Battlefield && o.v4.copied_nightmare_v1)
-        || state.engine.event_history.iter().any(|e| {
-            matches!(
-                e,
-                event::CommittedEvent::NightmareCopyEnteredV1 { .. }
-                    | event::CommittedEvent::NightmareCopyLayerV1 { .. }
-            )
-        })
+        || state
+            .engine
+            .event_history
+            .of_kinds_v2(&[
+                crate::event_history_v1::EventKindV1::NightmareCopyEnteredV1,
+                crate::event_history_v1::EventKindV1::NightmareCopyLayerV1,
+            ])
+            .any(|(_, e)| {
+                matches!(
+                    e,
+                    event::CommittedEvent::NightmareCopyEnteredV1 { .. }
+                        | event::CommittedEvent::NightmareCopyLayerV1 { .. }
+                )
+            })
     {
         return Err("copiable Nightmare exception requires a distinct complete consumer".into());
     }
@@ -276,24 +297,68 @@ pub(crate) fn record_cast(state: &mut GameState, source: crate::state::StackSour
         .push(event::CommittedEvent::HarvesterCastAnnouncedV1 { cast });
 }
 
-fn generation_after(state: &GameState, object: ObjectId, index: usize) -> Result<u32, String> {
-    let later = state
-        .engine
-        .event_history
-        .iter()
-        .skip(index + 1)
-        .filter(|event| match event {
-            event::CommittedEvent::ZoneChange { object: id, .. }
-            | event::CommittedEvent::Draw {
-                object: Some(id), ..
-            } => *id == object,
-            event::CommittedEvent::HarvesterCastAnnouncedV1 { cast } => cast.source == object,
-            event::CommittedEvent::HarvesterCastReversedV1 { restored, .. } => {
-                restored.object == object
+/// The positions of the rows that `generation_after` counts, by the card each
+/// one moves. While a `borrow_memo_v1` scope holds the state, one pass builds
+/// this; without a scope `generation_after` scans the later history.
+struct MovesV1(std::collections::HashMap<ObjectId, Vec<usize>>);
+struct MovesKeyV1;
+fn moves(state: &GameState) -> Option<std::rc::Rc<MovesV1>> {
+    if !crate::borrow_memo_v1::active(state) {
+        return None;
+    }
+    Some(crate::borrow_memo_v1::cached::<MovesKeyV1, (), _>(
+        state,
+        (),
+        || {
+            let mut moves = std::collections::HashMap::<ObjectId, Vec<usize>>::new();
+            for (at, event) in state.engine.event_history.of_kinds_v2(&[
+                crate::event_history_v1::EventKindV1::ZoneChange,
+                crate::event_history_v1::EventKindV1::Draw,
+                crate::event_history_v1::EventKindV1::HarvesterCastAnnouncedV1,
+                crate::event_history_v1::EventKindV1::HarvesterCastReversedV1,
+            ]) {
+                let object = match event {
+                    event::CommittedEvent::ZoneChange { object, .. }
+                    | event::CommittedEvent::Draw {
+                        object: Some(object),
+                        ..
+                    } => *object,
+                    event::CommittedEvent::HarvesterCastAnnouncedV1 { cast } => cast.source,
+                    event::CommittedEvent::HarvesterCastReversedV1 { restored, .. } => {
+                        restored.object
+                    }
+                    _ => continue,
+                };
+                moves.entry(object).or_default().push(at);
             }
-            _ => false,
-        })
-        .count();
+            std::rc::Rc::new(MovesV1(moves))
+        },
+    ))
+}
+fn generation_after(state: &GameState, object: ObjectId, index: usize) -> Result<u32, String> {
+    let later = match moves(state) {
+        Some(moves) => moves
+            .0
+            .get(&object)
+            .map_or(0, |at| at.len() - at.partition_point(|at| *at <= index)),
+        None => state
+            .engine
+            .event_history
+            .iter()
+            .skip(index + 1)
+            .filter(|event| match event {
+                event::CommittedEvent::ZoneChange { object: id, .. }
+                | event::CommittedEvent::Draw {
+                    object: Some(id), ..
+                } => *id == object,
+                event::CommittedEvent::HarvesterCastAnnouncedV1 { cast } => cast.source == object,
+                event::CommittedEvent::HarvesterCastReversedV1 { restored, .. } => {
+                    restored.object == object
+                }
+                _ => false,
+            })
+            .count(),
+    };
     state
         .objects
         .try_get(object)
@@ -359,12 +424,12 @@ fn reversal_at(
         || restored.expected_zone != if cast.madness { Zone::Graveyard } else { cast.origin.origin_zone }
         || cast.stack_generation.checked_add(1) != Some(restored.expected_zone_change_count)
         || generation_after(state, cast.source, at)? != restored.expected_zone_change_count
-        || state.engine.event_history.iter().filter(|event| matches!(event,
+        || state.engine.event_history.of_kinds_v2(&[crate::event_history_v1::EventKindV1::HarvesterCastReversedV1]).filter(|(_, event)| matches!(event,
             event::CommittedEvent::HarvesterCastReversedV1 { announcement: other, .. } if other == announcement)).count() != 1
     { return Err("Harvester native cast reversal changed".into()); }
     Ok((*announcement, cast, *restored))
 }
-pub(super) fn graveyard_entry(state: &GameState, at: usize) -> Result<GraveyardEntryV1, String> {
+pub(crate) fn graveyard_entry(state: &GameState, at: usize) -> Result<GraveyardEntryV1, String> {
     let Some(event::CommittedEvent::HarvesterGraveyardEntryV1 { entry }) =
         state.engine.event_history.get(at)
     else {
@@ -563,8 +628,7 @@ pub(crate) fn eligible(state: &GameState, object: ObjectId) -> bool {
     let mut matches = state
         .engine
         .event_history
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::HarvesterGraveyardEntryV1])
         .filter_map(|(at, event)| match event {
             event::CommittedEvent::HarvesterGraveyardEntryV1 { entry }
                 if entry.card.object == object
@@ -584,10 +648,17 @@ pub(crate) fn eligible(state: &GameState, object: ObjectId) -> bool {
 }
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
     let mut copied = std::collections::BTreeSet::new();
     let mut entries = std::collections::BTreeSet::new();
     let mut casts = std::collections::BTreeSet::new();
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state.engine.event_history.of_kinds_v2(&[
+        crate::event_history_v1::EventKindV1::NightmareCopyEnteredV1,
+        crate::event_history_v1::EventKindV1::NightmareCopyLayerV1,
+        crate::event_history_v1::EventKindV1::HarvesterGraveyardEntryV1,
+        crate::event_history_v1::EventKindV1::HarvesterCastAnnouncedV1,
+        crate::event_history_v1::EventKindV1::HarvesterCastReversedV1,
+    ]) {
         match event {
             event::CommittedEvent::NightmareCopyEnteredV1 { entry } => {
                 copied.insert(entry.source.source);
@@ -739,10 +810,15 @@ pub(super) fn execute(
         return Err("Harvester changed its actual native activation/context".into());
     }
     crate::engine::validate_historical_ability_source_contract(state, source)?;
-    if state.engine.event_history.iter().any(|e| {
-        matches!(e,event::CommittedEvent::HarvesterResolvedV1 { resolution }
-        if resolution.item.v4.stack_item_id == item.v4.stack_item_id)
-    }) {
+    if state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::HarvesterResolvedV1])
+        .any(|(_, e)| {
+            matches!(e,event::CommittedEvent::HarvesterResolvedV1 { resolution }
+            if resolution.item.v4.stack_item_id == item.v4.stack_item_id)
+        })
+    {
         return Err("Harvester activation replayed".into());
     }
     let mut created = Vec::new();
@@ -752,20 +828,31 @@ pub(super) fn execute(
     };
     // One target: if it left/reentered or is otherwise illegal, the whole
     // ability fizzles. No token or other-Nightmare cleanup occurs.
-    if crate::engine::target_contract_matches_live(state, ctx.targets[0], ctx.target_contracts[0])
-        && crate::engine::effect_target_is_legal_from_ability_source(
-            state,
-            source,
-            ctx.controller,
-            target_spec(),
-            &ctx.targets,
-            0,
-        )
-        && eligible(state, target)
-    {
+    let legal =
+        crate::engine::target_contract_matches_live(state, ctx.targets[0], ctx.target_contracts[0])
+            && crate::engine::effect_target_is_legal_from_ability_source(
+                state,
+                source,
+                ctx.controller,
+                target_spec(),
+                &ctx.targets,
+                0,
+            )
+            && eligible(state, target);
+    let outcome = if legal {
+        crate::harvester_receipts_v1::OutcomeV1::Resolved
+    } else {
+        crate::harvester_receipts_v1::OutcomeV1::NoLegalTarget
+    };
+    crate::harvester_receipts_v1::record_dispatch(state, item, outcome);
+    let receipt_owner = state
+        .harvester_commit_receipts_v1
+        .then_some(item.v4.stack_item_id);
+    if legal {
         let definition = state.objects.get(target).card_def;
         let mut proposal = event::ProposedEvent::create_token(definition, ctx.controller);
         if let event::ProposedEvent::CreateToken(token) = &mut proposal {
+            token.harvester_owner = receipt_owner;
             token.initialization_v48 = Some(crate::doubling_season_v48::TokenEntryV48 {
                 copied: true,
                 copied_nightmare_v1: true,
@@ -781,7 +868,7 @@ pub(super) fn execute(
         crate::doubling_season_v48::preflight_entry_roster(state, std::slice::from_ref(&proposal))?;
         event::propose_and_commit(
             state,
-            event::ProposedEvent::zone_change(target, Zone::Exile),
+            crate::harvester_receipts_v1::move_proposal(target, receipt_owner),
         );
         if state.engine.halted.is_some() {
             return Err("Harvester exile halted".into());
@@ -793,7 +880,7 @@ pub(super) fn execute(
         if state.engine.halted.is_some() {
             return Err("Harvester token entry halted".into());
         }
-        for event in &state.engine.event_history[start..] {
+        for event in state.engine.event_history.range_v2(start..) {
             if let event::CommittedEvent::CreateToken {
                 object,
                 token_def,
@@ -833,7 +920,22 @@ pub(super) fn execute(
                 })
             })
             .collect();
-        super::commit_zone_change_batch(state, &exiled_others, Zone::Exile, false)?;
+        if receipt_owner.is_some() {
+            for &binding in &exiled_others {
+                validate_effect_object_binding(state, binding)?;
+            }
+            event::propose_and_commit_batch(
+                state,
+                exiled_others
+                    .iter()
+                    .map(|binding| {
+                        crate::harvester_receipts_v1::move_proposal(binding.object, receipt_owner)
+                    })
+                    .collect(),
+            );
+        } else {
+            super::commit_zone_change_batch(state, &exiled_others, Zone::Exile, false)?;
+        }
         if state.engine.halted.is_some() {
             return Err("Harvester other Nightmare exile halted".into());
         }
@@ -848,6 +950,7 @@ pub(super) fn execute(
                 exiled_others,
             },
         });
+    crate::harvester_receipts_v1::record_finished(state, item, outcome);
     Ok(())
 }
 

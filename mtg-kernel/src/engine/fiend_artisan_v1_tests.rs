@@ -6,7 +6,7 @@ const NAME: &str = "Fiend Artisan";
 fn id(name: &str) -> u16 {
     card_def::card_id_by_name(name).unwrap()
 }
-fn ready(p: PlayerId, hidden: &str) -> GameState {
+pub(crate) fn ready(p: PlayerId, hidden: &str) -> GameState {
     let library = [id("Forest"); 80];
     let other = [id(hidden); 80];
     let (a, b) = if p == PlayerId::P0 {
@@ -91,7 +91,7 @@ fn pass(s: &mut GameState, d: Decision) {
     };
     step(s, action).unwrap();
 }
-fn priority(s: &mut GameState, p: PlayerId) {
+pub(crate) fn priority(s: &mut GameState, p: PlayerId) {
     for _ in 0..32 {
         let d = next(s);
         if matches!(d,Decision::CastSpellOrPass{player,..}if player==p) {
@@ -101,7 +101,7 @@ fn priority(s: &mut GameState, p: PlayerId) {
     }
     panic!("actor priority absent");
 }
-fn finish(s: &mut GameState) {
+pub(crate) fn finish(s: &mut GameState) {
     for _ in 0..64 {
         let d = next(s);
         if matches!(d, Decision::CastSpellOrPass { .. })
@@ -115,7 +115,7 @@ fn finish(s: &mut GameState) {
     }
     panic!("native stack unfinished");
 }
-fn tapped(s: &GameState, p: PlayerId) -> usize {
+pub(crate) fn tapped(s: &GameState, p: PlayerId) -> usize {
     s.players[p.index()]
         .battlefield
         .iter()
@@ -218,7 +218,7 @@ fn pay(
     }
     panic!("selected cast not paid");
 }
-fn cast(
+pub(crate) fn cast(
     s: &mut GameState,
     p: PlayerId,
     name: &str,
@@ -236,14 +236,14 @@ fn cast(
     card
 }
 
-fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
+pub(crate) fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
     let c = cast(s, p, NAME, (false, 0, false), &[], None, 2);
     finish(s);
     assert_eq!(s.objects.get(c).zone, Zone::Battlefield);
     assert_eq!(checked_effective_pt(s, c).unwrap(), (1, 1));
     c
 }
-fn mature(s: &mut GameState, p: PlayerId, source: ObjectId) {
+pub(crate) fn mature(s: &mut GameState, p: PlayerId, source: ObjectId) {
     for _ in 0..128 {
         let d = next(s);
         if matches!(d,Decision::CastSpellOrPass{player,..}if player==p)
@@ -322,7 +322,7 @@ fn activate(
     }
     panic!("native activation not published");
 }
-fn search(s: &mut GameState, p: PlayerId) -> Decision {
+pub(crate) fn search(s: &mut GameState, p: PlayerId) -> Decision {
     for _ in 0..16 {
         let d = next(s);
         if matches!(d,Decision::ChooseEffectTargets{player,..}if player==p) {
@@ -332,7 +332,7 @@ fn search(s: &mut GameState, p: PlayerId) -> Decision {
     }
     panic!("native original search missing");
 }
-fn answer(s: &mut GameState, target: Option<ObjectId>) {
+pub(crate) fn answer(s: &mut GameState, target: Option<ObjectId>) {
     let a = target.map_or(Action::FinishEffectSelection, |c| {
         Action::ChooseEffectTarget(Target::Object(c))
     });

@@ -195,7 +195,10 @@ pub(super) fn collect_parallel_v1(
     let (policy, learner, state_hash) = if source.s_learner.is_some() {
         super::s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
     } else {
-        let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+        let (mut policy, mut state, transfer) = super::loaded_source_profile_v1::scoped_v1(
+            super::loaded_source_profile_v1::LoadRoleV1::CollectLearner,
+            || initialize_with_transfer_context(&source),
+        )?;
         bind_training_math_v1(
             &source,
             transfer.as_ref(),

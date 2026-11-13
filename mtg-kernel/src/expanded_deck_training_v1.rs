@@ -4,6 +4,7 @@
 
 pub mod archive_distillation_v1;
 pub mod b_width_prescreen_v1;
+pub(crate) mod cache_diagnostics_v1;
 pub mod e_supported_teacher_v1;
 pub mod ex1_collect_v1;
 pub mod ex1_update_v1;
@@ -16,6 +17,7 @@ pub mod s_update_fixture_v1;
 pub mod search_targets_v1;
 pub mod soft_q_teacher_v1;
 use e_supported_teacher_v1::ESupportedTeacherOptionsV1;
+use loaded_source_profile_v1::LoadRoleV1;
 use search_targets_v1::SearchTargetsOptionsV1;
 use soft_q_teacher_v1::{SoftQDiagnosticCaseV1, SoftQTeacherOptionsV1};
 
@@ -37,10 +39,11 @@ use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCOD
 use crate::native_policy_train_step_v1::{HeadOnlyMaskV1, HEAD_ONLY_MASK_VERSION_V1};
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
-    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
+    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1, TrainTensorsV1,
 };
 use crate::native_policy_value_net_v1::{
-    NativeNamedParameterV1, NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
+    NativeNamedParameterV1, NativeNamedTensorRefV1, NativePolicyValueModelConfigV1,
+    NativePolicyValueNetV1,
 };
 use crate::native_training_phase_diagnostic_v1::{
     NativeTrainingPhaseProfileV1, NativeTrainingPhaseRecorderV1,
@@ -122,6 +125,7 @@ mod line_b_root_selection_v1;
 mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
 mod loaded_source_cache_v1;
+pub(crate) mod loaded_source_profile_v1;
 pub mod portable_chain_v1;
 pub mod record_envelope_v1;
 mod trajectory_parse_ahead_v1;
@@ -129,6 +133,7 @@ pub mod v8_inclusion_conversion_v1;
 pub(crate) mod verified_bytes_cache_v1;
 pub mod weights_snapshot_v1;
 pub use checkpoint_container_v1::CheckpointRecordFormatV1;
+use checkpoint_container_v1::ParameterBitsRefV1;
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 pub use record_envelope_v1::RecordEnvelopeV1;
 pub(crate) use trajectory_parse_ahead_v1::{
@@ -792,7 +797,10 @@ impl OpponentCacheV1 {
             } else {
                 // Unrecognized import schemas retain their original complete
                 // loader validation rather than trusting a process cache hit.
-                let (policy, identity) = load_expanded_inference_any_math_v1(source)?;
+                let (policy, identity) =
+                    loaded_source_profile_v1::scoped_v1(LoadRoleV1::Opponent, || {
+                        load_expanded_inference_any_math_v1(source)
+                    })?;
                 LoadedOpponentV1 {
                     policy,
                     behavior: ExpandedSeatBehaviorV1 {
@@ -1514,9 +1522,13 @@ struct SearchPlayedRowV1 {
     policy_selected: u32,
 }
 
+/// One checkpoint tensor's name, shape and values' `f32` bit patterns, owned:
+/// what a checkpoint decodes to. A published checkpoint borrows its tensors
+/// from the snapshot instead (`checkpoint_container_v1::ParameterBitsRefV1`),
+/// with the same serialization.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ParameterBitsV1 {
+pub(crate) struct ParameterBitsV1 {
     name: String,
     shape: Vec<usize>,
     values: Vec<u32>,
@@ -1530,6 +1542,63 @@ impl ParameterBitsV1 {
             values: bits(&p.values),
         }
     }
+
+    /// The values as the `f32`s whose bits they hold, read in place: element
+    /// for element what `floats` copies out.
+    fn values_f32_v1(&self) -> &[f32] {
+        const _: () = assert!(
+            std::mem::size_of::<u32>() == std::mem::size_of::<f32>()
+                && std::mem::align_of::<u32>() == std::mem::align_of::<f32>()
+        );
+        // SAFETY: `u32` and `f32` have the same size and alignment (asserted
+        // above) and every bit pattern is a valid `f32`, so the values'
+        // memory reads as as many `f32`s, each `f32::from_bits` of its `u32`.
+        // The borrow is shared and ends with `self`'s.
+        unsafe { std::slice::from_raw_parts(self.values.as_ptr().cast::<f32>(), self.values.len()) }
+    }
+}
+
+/// The checkpoint's three sections as a train state's tensors, borrowed:
+/// each section must hold `model`'s tensors, in order, under their names and
+/// shapes, refused as [`restore_parameters`] refuses them and in its order,
+/// and each tensor reads its values from the checkpoint in place under the
+/// model's name. Nothing else is checked here.
+fn checkpoint_tensors_v1<'a>(
+    saved: &'a ExpandedCheckpointV1,
+    model: &NativePolicyValueNetV1,
+) -> Result<TrainTensorsV1<'a>, String> {
+    let mut template = Vec::new();
+    model.visit_parameters_v1(|name, shape, values| {
+        template.push((name, shape.to_vec(), values.len()));
+    });
+    let section = |tensors: &'a [ParameterBitsV1]| {
+        ensure(
+            tensors.len() == template.len(),
+            "checkpoint parameter count differs",
+        )?;
+        tensors
+            .iter()
+            .zip(&template)
+            .map(|(s, &(name, ref shape, length))| {
+                ensure(
+                    s.name == name && s.shape == *shape && s.values.len() == length,
+                    "checkpoint parameter layout differs",
+                )?;
+                Ok(NativeNamedTensorRefV1 {
+                    name,
+                    shape: shape.clone(),
+                    values: s.values_f32_v1(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()
+    };
+    Ok(TrainTensorsV1 {
+        adam_step: saved.adam_step,
+        scorer_bias_anchor_bits: saved.scorer_bias_anchor_bits,
+        parameters: section(&saved.parameters)?,
+        first_moments: section(&saved.first_moments)?,
+        second_moments: section(&saved.second_moments)?,
+    })
 }
 
 fn restore_parameters(
@@ -1557,9 +1626,13 @@ fn restore_parameters(
         .collect()
 }
 
+/// A checkpoint record. `T` is how it holds its tensors
+/// (`checkpoint_container_v1::TensorBitsV1`): owned bits for every checkpoint
+/// read back, and borrowed snapshot tensors for the one an update publishes.
+/// Both serialize, and encode, to the same bytes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ExpandedCheckpointV1 {
+pub(crate) struct ExpandedCheckpointV1<T = ParameterBitsV1> {
     schema: String,
     feature_contract_digest: String,
     feature_encoding_digest: String,
@@ -1579,9 +1652,9 @@ pub(crate) struct ExpandedCheckpointV1 {
     ex1: Option<Value>,
     adam_step: u64,
     scorer_bias_anchor_bits: u32,
-    parameters: Vec<ParameterBitsV1>,
-    first_moments: Vec<ParameterBitsV1>,
-    second_moments: Vec<ParameterBitsV1>,
+    parameters: Vec<T>,
+    first_moments: Vec<T>,
+    second_moments: Vec<T>,
     trajectories: Vec<PinnedFileV1>,
     loss_identity: String,
     /// `Some` exactly when `loss_identity == "gae_advantage_value/v1"`,
@@ -2151,6 +2224,31 @@ fn restore_checkpoint_fields_v1(
     policy: &mut FrozenPlayPolicyV1,
     model: NativePolicyValueNetV1,
 ) -> Result<NativePolicyValueTrainStateV1, String> {
+    check_checkpoint_fields_v1(saved, policy)?;
+    // The checkpoint's tensors, borrowed in place of a restored snapshot:
+    // the snapshot's refusals, then its validation and digest of the same
+    // stream, before the state is built from them (milestone 3 of #596).
+    let tensors = checkpoint_tensors_v1(saved, &model)?;
+    ensure(
+        hex(&tensors.state_sha256_v1().map_err(err)?) == saved.state_sha256,
+        "checkpoint state hash differs",
+    )?;
+    // Validate the model's gauge anchor and full optimizer state before the
+    // live policy or copied sideboard embeddings are replaced.
+    let mut state = NativePolicyValueTrainStateV1::from_tensors_v1(model, &tensors).map_err(err)?;
+    policy.replace_training_parameters_v3(&state.model_v1().parameter_snapshot_v1())?;
+    // Inference and probes run a checkpoint under the math it trained with.
+    state.set_training_math_v1(saved.training_math);
+    policy.set_training_math_v1(saved.training_math);
+    Ok(state)
+}
+
+/// What the restore checks before it reads the checkpoint's tensors: its
+/// input contract, provenance, loss and the scalars that loss requires.
+fn check_checkpoint_fields_v1(
+    saved: &ExpandedCheckpointV1,
+    policy: &FrozenPlayPolicyV1,
+) -> Result<(), String> {
     // An ordinary source refuses a converted checkpoint, and a converted
     // source an unconverted one or another conversion's.
     no_state_digest_v1::resolve_contract_v1(
@@ -2190,28 +2288,7 @@ fn restore_checkpoint_fields_v1(
                 && saved.gae_lambda_bits.is_some()
                 && saved.entropy_coefficient_bits.is_some()),
         "checkpoint gae scalar presence does not match its loss_identity",
-    )?;
-    let template = model.parameter_snapshot_v1();
-    let snapshot = NativePolicyValueTrainSnapshotV1 {
-        adam_step: saved.adam_step,
-        scorer_bias_anchor_bits: saved.scorer_bias_anchor_bits,
-        parameters: restore_parameters(&saved.parameters, &template)?,
-        first_moments: restore_parameters(&saved.first_moments, &template)?,
-        second_moments: restore_parameters(&saved.second_moments, &template)?,
-    };
-    ensure(
-        hex(&snapshot.state_sha256_v1().map_err(err)?) == saved.state_sha256,
-        "checkpoint state hash differs",
-    )?;
-    // Validate the model's gauge anchor and full optimizer state before the
-    // live policy or copied sideboard embeddings are replaced.
-    let mut state =
-        NativePolicyValueTrainStateV1::from_snapshot_v1(model, &snapshot).map_err(err)?;
-    policy.replace_training_parameters_v3(&snapshot.parameters)?;
-    // Inference and probes run a checkpoint under the math it trained with.
-    state.set_training_math_v1(saved.training_math);
-    policy.set_training_math_v1(saved.training_math);
-    Ok(state)
+    )
 }
 
 /// Binds a training command's math to its learner. A checkpoint must have
@@ -3371,6 +3448,43 @@ fn replay_learner_groups_v1<'a>(
     learner: &FrozenPlayPolicyV1,
     opponent: Option<&FrozenPlayPolicyV1>,
 ) -> Result<Vec<LearnerTensorGroupV1<'a>>, String> {
+    let mut groups = Vec::new();
+    let mut group = Vec::new();
+    visit_serial_replay_rows_v1(t, learner, opponent, |generation, acting, row| {
+        let common = row.tensor.tensor();
+        let stage = if row.actor == t.episode.learner_seat {
+            S_UPDATE_REPLAY_LEARNER_ROW_V1
+        } else {
+            S_UPDATE_REPLAY_OTHER_ROW_V1
+        };
+        authenticate_serial_replay_row_v1(generation, acting, row, common.clone(), stage)?;
+        if row.actor == t.episode.learner_seat {
+            group.push((row, common));
+            if row.substep_index + 1 == row.substep_count {
+                groups.push((
+                    t.terminal.terminal_reward[row.actor as usize] as i8,
+                    episode_ordinal,
+                    std::mem::take(&mut group),
+                ));
+            }
+        }
+        Ok::<_, String>(())
+    })?;
+    Ok(groups)
+}
+
+/// Shared serial replay validation and ordered actor dispatch. An optional
+/// fused learner consumes the same rows without retaining their decoded tensors.
+fn visit_serial_replay_rows_v1<'a, E: From<String>>(
+    t: &'a ExpandedTrajectoryV1,
+    learner: &FrozenPlayPolicyV1,
+    opponent: Option<&FrozenPlayPolicyV1>,
+    mut visit: impl FnMut(
+        FreshLineageGenerationV1,
+        &FrozenPlayPolicyV1,
+        &'a DecisionRecordV1,
+    ) -> Result<(), E>,
+) -> Result<(), E> {
     validate_trajectory(t)?;
     ensure(
         t.episode.opponent.is_some() == opponent.is_some(),
@@ -3385,45 +3499,32 @@ fn replay_learner_groups_v1<'a>(
         )?;
     }
     let generation = contract.generation;
-    let mut groups = Vec::new();
-    let mut index = 0;
-    while index < t.decisions.len() {
-        let first = &t.decisions[index];
-        let count = first.substep_count as usize;
-        let mut group = Vec::new();
-        for row in &t.decisions[index..index + count] {
-            let common = row.tensor.tensor();
-            let (acting, stage) = if row.actor == t.episode.learner_seat {
-                (learner, S_UPDATE_REPLAY_LEARNER_ROW_V1)
-            } else {
-                (opponent.unwrap_or(learner), S_UPDATE_REPLAY_OTHER_ROW_V1)
-            };
-            let input = common.clone();
-            let span = crate::s_transformer_v1::update_profile_v1::span_v1(stage);
-            let output = acting.score_replay_tensor_v1(
-                generation,
-                input,
-                &row.tensor.pairing_node_indices,
-            )?;
-            span.finish_v1(&output.logits, output.value);
-            ensure(
-                bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
-                "stored tensor does not reproduce rollout outputs",
-            )?;
-            if row.actor == t.episode.learner_seat {
-                group.push((row, common));
-            }
-        }
-        if !group.is_empty() {
-            groups.push((
-                t.terminal.terminal_reward[first.actor as usize] as i8,
-                episode_ordinal,
-                group,
-            ));
-        }
-        index += count;
+    for row in &t.decisions {
+        let acting = if row.actor == t.episode.learner_seat {
+            learner
+        } else {
+            opponent.unwrap_or(learner)
+        };
+        visit(generation, acting, row)?;
     }
-    Ok(groups)
+    Ok(())
+}
+
+fn authenticate_serial_replay_row_v1(
+    generation: FreshLineageGenerationV1,
+    acting: &FrozenPlayPolicyV1,
+    row: &DecisionRecordV1,
+    input: NativeFlatDecisionTensorV2,
+    stage: crate::s_transformer_v1::update_profile_v1::StageV1,
+) -> Result<(), String> {
+    let span = crate::s_transformer_v1::update_profile_v1::span_v1(stage);
+    let output =
+        acting.score_replay_tensor_v1(generation, input, &row.tensor.pairing_node_indices)?;
+    span.finish_v1(&output.logits, output.value);
+    ensure(
+        bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
+        "stored tensor does not reproduce rollout outputs",
+    )
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -3518,6 +3619,17 @@ pub enum ExpandedTrainingCommandV1 {
         /// written before the default switch keeps its bytes.
         #[serde(default, skip_serializing_if = "CheckpointRecordFormatV1::is_auto")]
         record_format: CheckpointRecordFormatV1,
+        output_directory: PathBuf,
+    },
+    /// Opt-in execution of ordinary one-worker CPU S GAE with a bounded
+    /// authenticated replay tape. The run driver does not select this mode.
+    UpdateSVerifiedSerial {
+        source: ExpandedModelSourceV1,
+        trajectories: Vec<PinnedFileV1>,
+        learning_rate: f32,
+        value_coefficient: f32,
+        loss_selection: ExpandedLossSelectionV1,
+        tape_cap_bytes: usize,
         output_directory: PathBuf,
     },
     /// Explicit execution-only preparation. The old Update wire shape and
@@ -3801,6 +3913,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::Ex1Update {
             source,
@@ -3829,6 +3942,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            None,
         ),
         ExpandedTrainingCommandV1::SoftQDiagnostic {
             parent,
@@ -3980,7 +4094,10 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             let (mut policy, learner, state_hash) = if source.s_learner.is_some() {
                 s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
             } else {
-                let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+                let (mut policy, mut state, transfer) =
+                    loaded_source_profile_v1::scoped_v1(LoadRoleV1::CollectLearner, || {
+                        initialize_with_transfer_context(&source)
+                    })?;
                 if let Some(context) = &transfer {
                     context.validate_batch(&episodes)?;
                 }
@@ -4163,6 +4280,35 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 record_envelope,
             )
         }
+        ExpandedTrainingCommandV1::UpdateSVerifiedSerial {
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            loss_selection,
+            tape_cap_bytes,
+            output_directory,
+        } => execute_update_inner_v1(
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            ExpandedUpdateBackendV1::Cpu,
+            UpdateBackwardExecutionV1::Sequential,
+            loss_selection,
+            output_directory,
+            None,
+            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            None,
+            None,
+            None,
+            None,
+            None,
+            TrainingMathV1::PlatformLibm,
+            CheckpointRecordFormatV1::default(),
+            RecordEnvelopeV1::None,
+            Some(s_learner_v1::VerifiedReplayOptionsV1::new(tape_cap_bytes)?),
+        ),
     }
 }
 
@@ -4350,12 +4496,13 @@ fn execute_update_v1(
         training_math,
         record_format,
         record_envelope,
+        None,
     )
 }
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "the versioned update contract plus TP1 Stage B's search targets"
+    reason = "keeps the existing explicit update input contract"
 )]
 fn execute_update_inner_v1(
     source: ExpandedModelSourceV1,
@@ -4376,8 +4523,13 @@ fn execute_update_inner_v1(
     training_math: TrainingMathV1,
     record_format: CheckpointRecordFormatV1,
     record_envelope: RecordEnvelopeV1,
+    verified_replay: Option<s_learner_v1::VerifiedReplayOptionsV1>,
 ) -> Result<Value, String> {
     let update_started = std::time::Instant::now();
+    ensure(
+        verified_replay.is_none() || source.s_learner.is_some(),
+        "verified replay requires an S learner source",
+    )?;
     update_backend.require_compiled_v1()?;
     loss_selection.validate_v1()?;
     validate_update_training_math_v1(
@@ -4464,6 +4616,7 @@ fn execute_update_inner_v1(
             output_directory,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            verified_replay,
             unsupported: s_learner_v1::SUnsupportedOptionsV1 {
                 line_b: line_b.is_some(),
                 e_supported: e_supported.is_some(),
@@ -4512,7 +4665,10 @@ fn execute_update_inner_v1(
             read_pinned_bytes(&packet)?;
         }
     }
-    let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+    let (mut policy, mut state, transfer) =
+        loaded_source_profile_v1::scoped_v1(LoadRoleV1::UpdateLearner, || {
+            initialize_with_transfer_context(&source)
+        })?;
     bind_training_math_v1(
         &source,
         transfer.as_ref(),
@@ -4661,13 +4817,24 @@ fn execute_update_inner_v1(
     // Recompute all actor-visible rows, including opponent decisions,
     // before constructing learner groups. No private state is decoded.
     let (tensor_groups, preparation_telemetry) = if let Some(workers) = preparation_workers {
-        let prepared = ordered_update_preparation::prepare_v1(
+        // Every CPU learner step below derives each learner row's outputs
+        // again with its tape forward and refuses a bit that differs from
+        // the stored row, so those rows may replay through the row cache.
+        // The CUDA steps compare within a tolerance and keep the reference.
+        // The other seat's rows keep it too, unless this process was asked
+        // to replay them through the row cache as well.
+        let row_cache = ordered_update_preparation::ReplayRowCacheV1::for_update_v1(
+            update_backend.is_cpu(),
+            ordered_update_preparation::replay_other_seat_rows_cached_v1(),
+        );
+        let prepared = ordered_update_preparation::prepare_with_row_cache_v1(
             &episodes,
             &policy,
             &learner,
             workers,
             max_prepared_tensor_mebibytes,
             training_math,
+            row_cache,
         )?;
         (prepared.groups, Some(prepared.telemetry))
     } else {
@@ -5404,8 +5571,10 @@ fn execute_update_inner_v1(
         None => None,
     };
     let checkpoint_started = std::time::Instant::now();
-    let snapshot = state.snapshot_v1().map_err(err)?;
-    let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
+    // The checkpoint records the live state's tensors where the state holds
+    // them, after the snapshot's validation, under the state's own digest.
+    let tensors = state.tensors_v1().map_err(err)?;
+    let after = hex(&state.state_sha256_v1().map_err(err)?);
     fs::create_dir(&output_directory).map_err(err)?;
     let e_packet_pin = e_teacher
         .as_ref()
@@ -5469,22 +5638,25 @@ fn execute_update_inner_v1(
             }
             saved
         }),
-        adam_step: snapshot.adam_step,
-        scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
-        parameters: snapshot
+        adam_step: tensors.adam_step,
+        scorer_bias_anchor_bits: tensors.scorer_bias_anchor_bits,
+        // Borrowed from the state: both formats write each value's bits
+        // straight from it, the bytes an owned copy (`ParameterBitsV1`) would
+        // write.
+        parameters: tensors
             .parameters
             .iter()
-            .map(ParameterBitsV1::from_native)
+            .map(ParameterBitsRefV1::from)
             .collect(),
-        first_moments: snapshot
+        first_moments: tensors
             .first_moments
             .iter()
-            .map(ParameterBitsV1::from_native)
+            .map(ParameterBitsRefV1::from)
             .collect(),
-        second_moments: snapshot
+        second_moments: tensors
             .second_moments
             .iter()
-            .map(ParameterBitsV1::from_native)
+            .map(ParameterBitsRefV1::from)
             .collect(),
         trajectories: trajectories.clone(),
         loss_identity: loss_selection.loss_identity_v1().into(),
@@ -5522,7 +5694,7 @@ fn execute_update_inner_v1(
         value_coefficient_bits: value_coefficient.to_bits(),
         registry_transfer: transfer
             .as_ref()
-            .map(|context| context.after_update(snapshot.adam_step))
+            .map(|context| context.after_update(tensors.adam_step))
             .transpose()?,
         archive_distillation: None,
         training_math,
@@ -5550,7 +5722,9 @@ fn execute_update_inner_v1(
         checkpoint: Some(checkpoint_pin.clone()),
         ..source.clone()
     };
-    let (_, restored) = initialize_any_math_v1(&resumed_source)?;
+    let (_, restored) = loaded_source_profile_v1::scoped_v1(LoadRoleV1::UpdateReadback, || {
+        initialize_any_math_v1(&resumed_source)
+    })?;
     ensure(
         hex(&restored.state_sha256_v1().map_err(err)?) == after
             && restored.training_math_v1() == training_math,
@@ -5559,15 +5733,9 @@ fn execute_update_inner_v1(
     if record_format == CheckpointRecordFormatV1::V2 {
         // Design section 3: the restored state equals the published one item
         // for item (Adam step, anchor, every tensor's name, shape and bits),
-        // beyond the state digest.
-        let back = restored.snapshot_v1().map_err(err)?;
-        let same = |got: &[NativeNamedParameterV1], saved: &[ParameterBitsV1]| {
-            got.len() == saved.len()
-                && got
-                    .iter()
-                    .zip(saved)
-                    .all(|(g, s)| ParameterBitsV1::from_native(g) == *s)
-        };
+        // beyond the state digest. Compared in place, without copies.
+        let back = restored.tensors_v1().map_err(err)?;
+        let same = checkpoint_container_v1::same_tensors_v1;
         ensure(
             back.adam_step == checkpoint.adam_step
                 && back.scorer_bias_anchor_bits == checkpoint.scorer_bias_anchor_bits
@@ -5931,16 +6099,20 @@ pub fn convert_checkpoint_v1_to_v2(
     let (_, after) = initialize_any_math_v1(&converted)?;
     let before_snapshot = before.snapshot_v1().map_err(err)?;
     let after_snapshot = after.snapshot_v1().map_err(err)?;
-    let bits = |rows: &[NativeNamedParameterV1]| -> Vec<ParameterBitsV1> {
-        rows.iter().map(ParameterBitsV1::from_native).collect()
-    };
+    let same = checkpoint_container_v1::same_tensors_v1;
     let state_sha256 = hex(&before_snapshot.state_sha256_v1().map_err(err)?);
     ensure(
         before_snapshot.adam_step == after_snapshot.adam_step
             && before_snapshot.scorer_bias_anchor_bits == after_snapshot.scorer_bias_anchor_bits
-            && bits(&before_snapshot.parameters) == bits(&after_snapshot.parameters)
-            && bits(&before_snapshot.first_moments) == bits(&after_snapshot.first_moments)
-            && bits(&before_snapshot.second_moments) == bits(&after_snapshot.second_moments)
+            && same(&before_snapshot.parameters, &after_snapshot.parameters)
+            && same(
+                &before_snapshot.first_moments,
+                &after_snapshot.first_moments,
+            )
+            && same(
+                &before_snapshot.second_moments,
+                &after_snapshot.second_moments,
+            )
             && hex(&after_snapshot.state_sha256_v1().map_err(err)?) == state_sha256
             && before.training_math_v1() == after.training_math_v1(),
         "converted checkpoint restores a different state",
@@ -6382,6 +6554,243 @@ pub(crate) mod tests {
                     .collect::<Vec<_>>()
             )
             .unwrap(),
+        );
+    }
+
+    /// The restore as it was before milestone 3 of #596: the same field
+    /// checks, then the checkpoint's tensors copied into a snapshot under the
+    /// template's names, its digest checked, the state built from the
+    /// snapshot and the policy given the snapshot's parameters.
+    fn restore_with_snapshot_copy_v1(
+        saved: &ExpandedCheckpointV1,
+        policy: &mut FrozenPlayPolicyV1,
+        model: NativePolicyValueNetV1,
+    ) -> Result<NativePolicyValueTrainStateV1, String> {
+        check_checkpoint_fields_v1(saved, policy)?;
+        let snapshot = snapshot_copy_v1(saved, &model)?;
+        ensure(
+            hex(&snapshot.state_sha256_v1().map_err(err)?) == saved.state_sha256,
+            "checkpoint state hash differs",
+        )?;
+        let mut state =
+            NativePolicyValueTrainStateV1::from_snapshot_v1(model, &snapshot).map_err(err)?;
+        policy.replace_training_parameters_v3(&snapshot.parameters)?;
+        state.set_training_math_v1(saved.training_math);
+        policy.set_training_math_v1(saved.training_math);
+        Ok(state)
+    }
+
+    /// The snapshot the restore copied the checkpoint's tensors into.
+    fn snapshot_copy_v1(
+        saved: &ExpandedCheckpointV1,
+        model: &NativePolicyValueNetV1,
+    ) -> Result<NativePolicyValueTrainSnapshotV1, String> {
+        let template = model.parameter_snapshot_v1();
+        Ok(NativePolicyValueTrainSnapshotV1 {
+            adam_step: saved.adam_step,
+            scorer_bias_anchor_bits: saved.scorer_bias_anchor_bits,
+            parameters: restore_parameters(&saved.parameters, &template)?,
+            first_moments: restore_parameters(&saved.first_moments, &template)?,
+            second_moments: restore_parameters(&saved.second_moments, &template)?,
+        })
+    }
+
+    /// Restores `saved` both ways, from forks of `policy` and clones of
+    /// `model`, and asserts the same outcome: states with the same digest and
+    /// every field the same, or the same refusal, and policies with the same
+    /// parameter bits and math either way. Returns whether it was restored.
+    fn same_restore_v1(
+        policy: &FrozenPlayPolicyV1,
+        model: &NativePolicyValueNetV1,
+        saved: &ExpandedCheckpointV1,
+        what: &str,
+    ) -> bool {
+        let mut restored_policy = policy.fork_for_collection_v3().unwrap();
+        let mut reference_policy = policy.fork_for_collection_v3().unwrap();
+        let restored = restore_checkpoint_fields_v1(saved, &mut restored_policy, model.clone());
+        let reference = restore_with_snapshot_copy_v1(saved, &mut reference_policy, model.clone());
+        let policy_bits = |policy: &FrozenPlayPolicyV1| {
+            policy
+                .training_parameters_v3()
+                .iter()
+                .map(ParameterBitsV1::from_native)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            policy_bits(&restored_policy),
+            policy_bits(&reference_policy),
+            "{what}"
+        );
+        assert_eq!(
+            restored_policy.training_math_v1(),
+            reference_policy.training_math_v1(),
+            "{what}"
+        );
+        match (restored, reference) {
+            (Ok(restored), Ok(reference)) => {
+                assert_eq!(
+                    restored.state_sha256_v1().unwrap(),
+                    reference.state_sha256_v1().unwrap(),
+                    "{what}"
+                );
+                assert_eq!(format!("{restored:?}"), format!("{reference:?}"), "{what}");
+                true
+            }
+            (restored, reference) => {
+                assert_eq!(restored.err(), reference.err(), "{what}");
+                false
+            }
+        }
+    }
+
+    /// `saved` with `change` made to a copy of it.
+    fn changed_v1(
+        saved: &ExpandedCheckpointV1,
+        change: impl FnOnce(&mut ExpandedCheckpointV1),
+    ) -> ExpandedCheckpointV1 {
+        let mut changed = saved.clone();
+        change(&mut changed);
+        changed
+    }
+
+    /// A named change to one section's tensors.
+    type TensorChangeV1 = (&'static str, fn(&mut Vec<ParameterBitsV1>));
+
+    /// A named change to a checkpoint.
+    type CheckpointChangeV1 = (&'static str, fn(&mut ExpandedCheckpointV1));
+
+    /// The checkpoint's parameters (0), first moments (1) or second moments.
+    fn section_v1(saved: &mut ExpandedCheckpointV1, index: usize) -> &mut Vec<ParameterBitsV1> {
+        match index {
+            0 => &mut saved.parameters,
+            1 => &mut saved.first_moments,
+            _ => &mut saved.second_moments,
+        }
+    }
+
+    #[test]
+    fn a_restore_from_borrowed_tensors_restores_and_refuses_as_the_snapshot_copy_did() {
+        let (policy, imported_model, saved) = checkpoint_fixture_v1();
+        let default_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        for model in [&imported_model, &default_model] {
+            assert!(same_restore_v1(
+                &policy,
+                model,
+                &saved,
+                "the checkpoint itself"
+            ));
+        }
+        // With the digest the snapshot copy has, so that a change gets past
+        // the hash check.
+        let rehashed = |mut saved: ExpandedCheckpointV1| {
+            let snapshot = snapshot_copy_v1(&saved, &imported_model).unwrap();
+            saved.state_sha256 = hex(&snapshot.state_sha256_v1().unwrap());
+            saved
+        };
+        let tensor_changes: [TensorChangeV1; 11] = [
+            ("a tensor fewer", |tensors| {
+                tensors.pop();
+            }),
+            ("a tensor more", |tensors| tensors.push(tensors[0].clone())),
+            ("two tensors swapped", |tensors| tensors.swap(1, 2)),
+            ("a tensor renamed", |tensors| {
+                tensors[1].name = "wrong.weight".into()
+            }),
+            ("a tensor reshaped", |tensors| tensors[1].shape[0] += 1),
+            ("a value fewer", |tensors| {
+                tensors[1].values.pop();
+            }),
+            ("a NaN", |tensors| tensors[1].values[0] = f32::NAN.to_bits()),
+            ("an infinity", |tensors| {
+                tensors[1].values[0] = f32::INFINITY.to_bits()
+            }),
+            ("a padding-row -0.0", |tensors| {
+                tensors[0].values[0] = (-0.0f32).to_bits()
+            }),
+            ("a negative value", |tensors| {
+                tensors[1].values[0] = (-f32::EPSILON).to_bits()
+            }),
+            ("one value bit flipped", |tensors| tensors[1].values[0] ^= 1),
+        ];
+        let mut cases = Vec::new();
+        for (index, name) in ["parameters", "first moments", "second moments"]
+            .into_iter()
+            .enumerate()
+        {
+            for (what, change) in tensor_changes {
+                cases.push((
+                    format!("{name}: {what}"),
+                    changed_v1(&saved, |saved| change(section_v1(saved, index))),
+                ));
+            }
+            cases.push((
+                format!("{name}: one value changed and the digest to match"),
+                rehashed(changed_v1(&saved, |saved| {
+                    section_v1(saved, index)[1].values[0] = 0.25f32.to_bits();
+                })),
+            ));
+        }
+        let changes: [CheckpointChangeV1; 7] = [
+            ("the anchor bits changed", |saved| {
+                saved.scorer_bias_anchor_bits ^= 1
+            }),
+            ("an Adam step past i32", |saved| {
+                saved.adam_step = i32::MAX as u64 + 1
+            }),
+            ("an Adam step past i32 and a NaN", |saved| {
+                saved.adam_step = i32::MAX as u64 + 1;
+                saved.parameters[1].values[0] = f32::NAN.to_bits();
+            }),
+            ("another digest", |saved| {
+                saved.state_sha256 = "00".repeat(32)
+            }),
+            ("a parameter reshaped and a first moment fewer", |saved| {
+                saved.parameters[1].shape[0] += 1;
+                saved.first_moments.pop();
+            }),
+            (
+                "a first moment reshaped and a second moment fewer",
+                |saved| {
+                    saved.first_moments[1].shape[0] += 1;
+                    saved.second_moments.pop();
+                },
+            ),
+            ("a NaN parameter and a negative second moment", |saved| {
+                saved.parameters[1].values[0] = f32::NAN.to_bits();
+                saved.second_moments[1].values[0] = (-f32::EPSILON).to_bits();
+            }),
+        ];
+        for (what, change) in changes {
+            cases.push((what.to_owned(), changed_v1(&saved, change)));
+        }
+        // The parameters' anchor moved, with the anchor bits and the digest
+        // to match: only the template's anchor refuses it.
+        cases.push((
+            "the anchor moved off the template's".to_owned(),
+            rehashed(changed_v1(&saved, |saved| {
+                let anchor = saved
+                    .parameters
+                    .iter_mut()
+                    .find(|tensor| tensor.name == "scorer.2.bias")
+                    .unwrap();
+                anchor.values[0] = (f32::from_bits(anchor.values[0]) + 0.25).to_bits();
+                saved.scorer_bias_anchor_bits = anchor.values[0];
+            })),
+        ));
+        let accepted: Vec<&str> = cases
+            .iter()
+            .filter(|(what, changed)| same_restore_v1(&policy, &imported_model, changed, what))
+            .map(|(what, _)| what.as_str())
+            .collect();
+        assert_eq!(
+            accepted,
+            [
+                "parameters: one value changed and the digest to match",
+                "first moments: one value changed and the digest to match",
+                "second moments: one value changed and the digest to match",
+            ]
         );
     }
 

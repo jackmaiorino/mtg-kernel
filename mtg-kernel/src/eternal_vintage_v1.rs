@@ -9,7 +9,7 @@
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::card_def::{CardType, Supertype, TargetSpec, CARD_DEFS};
-use crate::effect::{EffectOp, ExecCtx, PlayerRef};
+use crate::effect::{EffectContinuation, EffectFrame, EffectOp, ExecCtx, PlayerRef};
 use crate::event::{self, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
@@ -19,6 +19,8 @@ use crate::standard_cards_v1::{
 use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Target, Zone};
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
+
+pub(crate) mod paradoxical_outcome_v1;
 
 /// Per-game state for this module's cards, kept inside
 /// `eternal_cards_v1::EternalStateV1`. Default (and absent from snapshots)
@@ -212,6 +214,19 @@ pub enum VintageOpV1 {
     /// The spell's controller pays {1} if able; otherwise the spell is
     /// countered.
     PayOneOrCounterV1 { spell: StackItemId },
+    /// Completes one attempted draw in the original combat trigger. The
+    /// third completion transfers and untaps that original source.
+    CovetedJewelDrawCompletedV1 { ordinal: u16 },
+    /// Completes one draw attempt in a suspended Paradoxical Outcome.
+    ParadoxicalOutcomeDrawCompletedV1 { ordinal: u16 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct JewelDrawProgressV1 {
+    item: StackItemId,
+    source: AbilitySourceContractV4,
+    completed: u16,
 }
 
 fn vintage(op: VintageOpV1) -> EffectOp {
@@ -313,8 +328,93 @@ fn draw_three() -> EffectOp {
     }
 }
 
-fn coveted_jewel_changes_hands() -> EffectOp {
+pub(crate) fn coveted_jewel_changes_hands() -> EffectOp {
     vintage(VintageOpV1::CovetedJewelChangesHandsV1)
+}
+
+fn coveted_jewel_draw_frames() -> [EffectFrame; 6] {
+    let draw = |ordinal| EffectFrame::Program {
+        op: EffectOp::DrawCards {
+            player: PlayerRef::Opponent,
+            count: 1,
+        },
+        path: vec![ordinal],
+    };
+    let completed = |ordinal| EffectFrame::Program {
+        op: vintage(VintageOpV1::CovetedJewelDrawCompletedV1 { ordinal }),
+        path: vec![ordinal + 3],
+    };
+    [
+        completed(2),
+        draw(2),
+        completed(1),
+        draw(1),
+        completed(0),
+        draw(0),
+    ]
+}
+
+pub(crate) fn begin_coveted_jewel_draws(
+    state: &mut GameState,
+    continuation: &mut EffectContinuation,
+    path: &[u16],
+) -> Result<(), String> {
+    if !path.is_empty()
+        || !continuation.frames.is_empty()
+        || state.coveted_jewel_draw_progress_v1.is_some()
+    {
+        return Err("Coveted Jewel lost its original combat trigger path".into());
+    }
+    let item = continuation
+        .ctx
+        .stack_item_id
+        .ok_or("Coveted Jewel lost its stack item")?;
+    let source = continuation
+        .ctx
+        .ability_source_contract
+        .ok_or("Coveted Jewel lost its original source")?;
+    state.coveted_jewel_draw_progress_v1 = Some(JewelDrawProgressV1 {
+        item,
+        source,
+        completed: 0,
+    });
+    continuation.frames.extend(coveted_jewel_draw_frames());
+    Ok(())
+}
+
+fn coveted_jewel_progress_matches(state: &GameState, ctx: &ExecCtx, ordinal: u16) -> bool {
+    state
+        .coveted_jewel_draw_progress_v1
+        .is_some_and(|progress| {
+            Some(progress.item) == ctx.stack_item_id
+                && Some(progress.source) == ctx.ability_source_contract
+                && progress.completed == ordinal
+        })
+}
+
+pub(crate) fn abandon_coveted_jewel_draws(state: &mut GameState, ctx: &ExecCtx) {
+    if state
+        .coveted_jewel_draw_progress_v1
+        .is_some_and(|progress| {
+            Some(progress.item) == ctx.stack_item_id
+                && Some(progress.source) == ctx.ability_source_contract
+        })
+    {
+        state.coveted_jewel_draw_progress_v1 = None;
+    }
+}
+
+pub(crate) fn coveted_jewel_draw_stage_matches(
+    state: &GameState,
+    ctx: &ExecCtx,
+    path: &[u16],
+    remaining: &[EffectFrame],
+) -> bool {
+    let [ordinal @ 0..=2] = path else {
+        return false;
+    };
+    coveted_jewel_progress_matches(state, ctx, *ordinal)
+        && remaining == &coveted_jewel_draw_frames()[..5 - 2 * usize::from(*ordinal)]
 }
 
 fn counter_cast_spell() -> EffectOp {
@@ -591,6 +691,13 @@ fn vintage_state(state: &mut GameState) -> &mut VintageStateV1 {
         .vintage
 }
 
+fn finish_coveted_jewel_transfer(ctx: &ExecCtx, state: &mut GameState) {
+    if let Some(jewel) = live_ability_source(ctx, state) {
+        crate::standard_cards_v1::gain_control(state, jewel, ctx.controller.opponent());
+        crate::engine::attempt_untap(state, jewel);
+    }
+}
+
 pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         VintageOpV1::FlipCoinLoseSourceDamagesControllerV1 { damage } => {
@@ -608,7 +715,6 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         VintageOpV1::CovetedJewelChangesHandsV1 => {
-            let player = ctx.controller.opponent();
             crate::effect::execute(
                 &EffectOp::DrawCards {
                     player: PlayerRef::Opponent,
@@ -617,9 +723,20 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 ctx,
                 state,
             );
-            if let Some(jewel) = live_ability_source(ctx, state) {
-                crate::standard_cards_v1::gain_control(state, jewel, player);
-                crate::engine::attempt_untap(state, jewel);
+            finish_coveted_jewel_transfer(ctx, state);
+        }
+        VintageOpV1::CovetedJewelDrawCompletedV1 { ordinal } => {
+            if *ordinal > 2 || !coveted_jewel_progress_matches(state, ctx, *ordinal) {
+                halt(state, ctx.source);
+            } else if *ordinal == 2 {
+                state.coveted_jewel_draw_progress_v1 = None;
+                finish_coveted_jewel_transfer(ctx, state);
+            } else {
+                state
+                    .coveted_jewel_draw_progress_v1
+                    .as_mut()
+                    .unwrap()
+                    .completed += 1;
             }
         }
         VintageOpV1::BindCounterCastSpellV1 => halt(state, ctx.source),
@@ -716,50 +833,9 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         VintageOpV1::ParadoxicalOutcomeV1 => {
-            let Some(spec) = state
-                .objects
-                .try_get(ctx.source)
-                .and_then(|source| CARD_DEFS.get(source.card_def as usize))
-                .map(|def| def.target_spec)
-            else {
-                return;
-            };
-            let returned = (0..ctx.targets.len())
-                .filter(|&index| {
-                    ctx.target_incarnation_matches(index, state)
-                        && crate::engine::effect_target_is_legal(
-                            state,
-                            ctx.source,
-                            ctx.controller,
-                            spec,
-                            &ctx.targets,
-                            index,
-                        )
-                })
-                .filter_map(|index| match ctx.targets[index] {
-                    Target::Object(object) => Some(object),
-                    Target::Player(_) | Target::StackItem(_) => None,
-                })
-                .collect::<Vec<_>>();
-            if returned.is_empty() {
-                return;
-            }
-            event::propose_and_commit_batch(
-                state,
-                returned
-                    .iter()
-                    .map(|&object| ProposedEvent::zone_change(object, Zone::Hand))
-                    .collect(),
-            );
-            let count = returned
-                .iter()
-                .filter(|&&object| {
-                    state
-                        .objects
-                        .try_get(object)
-                        .is_some_and(|card| card.zone == Zone::Hand && card.owner == ctx.controller)
-                })
-                .count();
+            let count = paradoxical_outcome_v1::return_targets(state, ctx)
+                .arrivals
+                .len();
             if count > 0 {
                 crate::effect::execute(
                     &EffectOp::DrawCards {
@@ -771,6 +847,7 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 );
             }
         }
+        VintageOpV1::ParadoxicalOutcomeDrawCompletedV1 { .. } => halt(state, ctx.source),
         VintageOpV1::KarnAnimateTargetV1 => {
             let Some(object) = legal_object_target(ctx, state) else {
                 return;
@@ -870,17 +947,9 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
             if !in_hand {
                 return;
             }
-            // spellbench-public-reveal: hand card revealed by the card rules.
-            for observer in [PlayerId::P0, PlayerId::P1] {
-                if state
-                    .reveal_distinct_hand_card(observer, contract.owner, contract.source)
-                    .is_err()
-                {
-                    halt(state, ctx.source);
-                    return;
-                }
+            if reveal_chancellor_from_opening(state, contract).is_err() {
+                halt(state, ctx.source);
             }
-            vintage_state(state).chancellor_reveals.push(contract);
         }
         VintageOpV1::BindCounterUnlessPaysOneV1 => halt(state, ctx.source),
         VintageOpV1::PayOneOrCounterV1 { spell } => {
@@ -965,6 +1034,22 @@ pub(crate) fn enter_as_copy(
         return;
     }
     let copied_def = original.card_def;
+    use crate::eternal_sideboard_s1b_v1::meddling_mage_entry::MetamorphCopyV1;
+    match MetamorphCopyV1::capture(state, ctx, copied) {
+        Ok(Some(copy)) => {
+            if crate::linked_aura_operation_v1::stage_metamorph_mage_copy(state, copy).is_err() {
+                halt(state, ctx.source);
+                return;
+            }
+            enter_battlefield(ctx, state);
+            return;
+        }
+        Ok(None) => {}
+        Err(_) => {
+            halt(state, ctx.source);
+            return;
+        }
+    }
     enter_battlefield(ctx, state);
     let host = ctx.source;
     if state.objects.get(host).zone != Zone::Battlefield {
@@ -996,6 +1081,49 @@ pub(crate) fn enter_as_copy(
     if CARD_DEFS[copied_def as usize].enters_battlefield_tapped {
         state.objects.get_mut(host).tapped = true;
     }
+}
+
+pub(crate) fn paid_metamorph_copy_is_suppressed(state: &GameState, ctx: &ExecCtx) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && ctx.stack_item_id.is_some()
+        && state.objects.try_get(ctx.source).is_some_and(|source| {
+            source.zone == Zone::Stack
+                && source.controller == ctx.controller
+                && source.spell_copy_origin.is_none()
+                && source.v4.face_down_v1.is_none()
+                && source
+                    .v4
+                    .spell_cast_origin
+                    .is_some_and(|origin| origin.finalized_method.is_some())
+                && CARD_DEFS[usize::from(source.card_def)].name == "Phyrexian Metamorph"
+        })
+        && crate::eternal_legacy_e7a_v1::active_dress_down_timestamp(state, Some(ctx.source))
+            .is_some()
+}
+
+/// Retain Metamorph's physical printing before any entry observer sees the
+/// copied Mage. The existing copy marker also supplies the artifact type.
+pub(crate) fn retain_mage_copy_on_entry(
+    state: &mut GameState,
+    copy: crate::eternal_sideboard_s1b_v1::meddling_mage_entry::MetamorphCopyV1,
+) {
+    let object = copy.physical.source;
+    let host = live_link(state, object);
+    let card_def = copy.physical.card_def;
+    let physical = crate::state::ObjectStateV4::from_card_def(card_def);
+    vintage_state(state).copies.push(CopyV1 {
+        host,
+        card_def,
+        name: CARD_DEFS[usize::from(card_def)].object_name.into(),
+        color_mask: physical.effective_color_mask,
+        subtype_ids: physical.effective_subtype_ids,
+    });
+    crate::standard_cards_v1::note_copied_definitions(
+        state,
+        object,
+        host.zone_change_count,
+        &[card_def, copy.copied.card_def],
+    );
 }
 
 fn active_copy_index(state: &GameState, object: ObjectId) -> Option<usize> {
@@ -1054,6 +1182,13 @@ pub(crate) fn has_type_override(
     // Opalescence's enchantment creatures (Premodern wave P1b).
     if let Some(answer) =
         crate::eternal_premodern_p1b_v1::statics::has_type_override(state, object, card_type)
+    {
+        return Some(answer);
+    }
+    // Lurking Skirge's Phyrexian Imp, no longer an enchantment (Premodern
+    // wave P3f).
+    if let Some(answer) =
+        crate::eternal_premodern_p3f_v1::has_type_override(state, object, card_type)
     {
         return Some(answer);
     }
@@ -1187,6 +1322,7 @@ pub(crate) fn activation_allowed(
             name,
             ability_index,
         )
+        && crate::eternal_sideboard_s1a_v1::statics::activation_allowed(state, source)
 }
 
 /// Anointed Peacekeeper: definitions named by a Peacekeeper whose printed
@@ -1293,18 +1429,22 @@ pub fn anointed_peacekeeper() -> EffectOp {
 pub fn phyrexian_metamorph() -> EffectOp {
     EffectOp::Sequence(vec![
         EffectOp::SelectObjectsV1 {
-            rule: crate::effect::ObjectSelectionRuleV1 {
-                player: PlayerRef::Controller,
-                zone: Zone::Battlefield,
-                any_player: true,
-                filter: crate::effect::ObjectSelectionFilterV1::ArtifactOrCreatureV1,
-                min: 0,
-                max: 1,
-                action: crate::effect::ObjectSelectionActionV1::EnterAsCopyV1,
-            },
+            rule: metamorph_copy_rule(),
         },
         vintage(VintageOpV1::EnterIfStillOnStackV1),
     ])
+}
+
+pub(crate) fn metamorph_copy_rule() -> crate::effect::ObjectSelectionRuleV1 {
+    crate::effect::ObjectSelectionRuleV1 {
+        player: PlayerRef::Controller,
+        zone: Zone::Battlefield,
+        any_player: true,
+        filter: crate::effect::ObjectSelectionFilterV1::ArtifactOrCreatureV1,
+        min: 0,
+        max: 1,
+        action: crate::effect::ObjectSelectionActionV1::EnterAsCopyV1,
+    }
 }
 
 /// Karn, the Great Creator's +1.
@@ -1561,6 +1701,20 @@ pub(crate) fn delayed_triggers(
 /// "You may reveal this card from your opening hand": offered for each
 /// Chancellor of the Annex in a hand as the game's first upkeep begins,
 /// before anyone could have cast a spell.
+pub(crate) fn reveal_chancellor_from_opening(
+    state: &mut GameState,
+    source: AbilitySourceContractV4,
+) -> Result<(), String> {
+    // spellbench-public-reveal: hand card revealed by the card rules.
+    for observer in [PlayerId::P0, PlayerId::P1] {
+        state.reveal_distinct_hand_card(observer, source.owner, source.source)?;
+    }
+    let vintage = vintage_state(state);
+    vintage.opening_hand_offered = true;
+    vintage.chancellor_reveals.push(source);
+    Ok(())
+}
+
 fn opening_hand_triggers(state: &mut GameState, events: &[CommittedEvent]) -> Vec<PendingTrigger> {
     let first_upkeep = state.turn == 1
         && state.active_player == state.starting_player
@@ -1569,6 +1723,7 @@ fn opening_hand_triggers(state: &mut GameState, events: &[CommittedEvent]) -> Ve
             .iter()
             .any(|event| matches!(event, CommittedEvent::UpkeepBegan { .. }));
     if !first_upkeep
+        || crate::eternal_opening_v1::enabled(state)
         || state
             .eternal_v1
             .as_ref()
@@ -1619,10 +1774,14 @@ fn first_spell_triggers(state: &mut GameState, events: &[CommittedEvent]) -> Vec
         };
         let caster = *controller;
         let stack_item = cast_stack_item(state, *spell);
-        let vintage = vintage_state(state);
-        if vintage.cast_a_spell[caster.index()] {
+        if vintage_state(state).cast_a_spell[caster.index()] {
             continue;
         }
+        if crate::eternal_opening_v1::record_first_spell_processed(state, caster, *spell).is_err() {
+            halt(state, *spell);
+            return Vec::new();
+        }
+        let vintage = vintage_state(state);
         vintage.cast_a_spell[caster.index()] = true;
         let (fired, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut vintage.chancellor_reveals)
             .into_iter()
@@ -1681,6 +1840,7 @@ pub(crate) fn prevents_untap_step(state: &GameState, object: ObjectId) -> bool {
         || crate::eternal_premodern_p1b_v1::statics::prevents_untap_step(state, object)
         || crate::eternal_premodern_p2a_v1::statics::prevents_untap_step(state, object)
         || crate::eternal_premodern_p1a_v1::statics::prevents_untap_step(state, object)
+        || crate::eternal_sideboard_s1a_v1::statics::prevents_untap_step(state, object)
 }
 
 /// Applies a Time Vault skip to the turn about to begin for the now-active
@@ -1731,12 +1891,16 @@ pub(crate) fn trinisphere_increase(state: &GameState, pips: usize, generic: u32)
     3_u32.saturating_sub(total)
 }
 
-/// Archon of Emeria: "Each player can't cast more than one spell each turn."
+/// Archon of Emeria and Arcane Laboratory (Premodern wave P3g): "Each
+/// player can't cast more than one spell each turn."
 pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId) -> bool {
     (state.players[player.index()].spells_cast_this_turn >= 1
-        && active_permanents(state, ARCHON_OF_EMERIA, None)
-            .next()
-            .is_some())
+        && [
+            ARCHON_OF_EMERIA,
+            crate::eternal_premodern_p3g_v1::ARCANE_LABORATORY,
+        ]
+        .into_iter()
+        .any(|name| active_permanents(state, name, None).next().is_some()))
         || crate::eternal_legacy_e5b_v1::cast_prohibited(state, player)
         || crate::eternal_legacy_e9a_v1::statics::cast_prohibited(state, player)
 }
@@ -1765,6 +1929,7 @@ pub(crate) fn enters_tapped(state: &GameState, object: ObjectId, controller: Pla
 /// Clarion Conqueror: "Activated abilities of artifacts, creatures, and
 /// planeswalkers can't be activated." Karn, the Great Creator: "Activated
 /// abilities of artifacts your opponents control can't be activated."
+/// Cursed Totem: "Activated abilities of creatures can't be activated."
 pub(crate) fn activations_prohibited(state: &GameState, object: ObjectId) -> bool {
     // Collector Ouphe and Phyrexian Revoker (wave E7b).
     if crate::eternal_vintage_e7b_v1::statics::activations_prohibited(state, object) {
@@ -1783,6 +1948,10 @@ pub(crate) fn activations_prohibited(state: &GameState, object: ObjectId) -> boo
             .next()
             .is_some()
     {
+        return true;
+    }
+    // Cursed Totem (Premodern sideboard wave P3a).
+    if crate::eternal_premodern_p3a_v1::statics::activations_prohibited(state, object) {
         return true;
     }
     (artifact
@@ -1868,8 +2037,15 @@ pub(crate) fn restrict_produced_mana(
         },
         source_card_def: live.card_def,
     };
+    // "{T}: Add {C}{C}{C}", or one {C} under a Damping Sphere (wave S1g);
+    // the restriction stays on what the ability produced.
+    let added = if crate::eternal_sideboard_s1g_v1::damps(state, source) {
+        1
+    } else {
+        3
+    };
     let seat = &mut state.players[player.index()];
-    let produced = seat.mana_pool[color.pool_index()].min(3);
+    let produced = seat.mana_pool[color.pool_index()].min(added);
     seat.mana_pool[color.pool_index()] -= produced;
     for _ in 0..produced {
         seat.restricted_mana_pool.0.push(unit.clone());

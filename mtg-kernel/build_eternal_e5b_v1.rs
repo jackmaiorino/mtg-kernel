@@ -204,7 +204,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
 pub(super) fn mode2_for(name: &str) -> &'static str {
     match name {
         "Eldrazi Confluence" => "Some(ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::CreaturesThenNonlandPermanentsV1 { creatures: 2, permanents: 1 }), effect: crate::eternal_legacy_e5b_v1::eldrazi_confluence_1 })",
-        _ => super::build_eternal_e9b_v1::mode2_for(name),
+        _ => super::build_eternal_s1d_v1::mode2_for(name),
     }
 }
 
@@ -212,7 +212,7 @@ pub(super) fn mode2_for(name: &str) -> &'static str {
 pub(super) fn mode3_for(name: &str) -> &'static str {
     match name {
         "Eldrazi Confluence" => "Some(ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::CreaturesThenNonlandPermanentsV1 { creatures: 2, permanents: 0 }), effect: crate::eternal_legacy_e5b_v1::eldrazi_confluence_2 })",
-        _ => super::build_eternal_e9b_v1::mode3_for(name),
+        _ => super::build_eternal_s1d_v1::mode3_for(name),
     }
 }
 
@@ -221,7 +221,7 @@ pub(super) fn mode3_for(name: &str) -> &'static str {
 pub(super) fn additional_modes_for(name: &str) -> &'static str {
     match name {
         "Eldrazi Confluence" => "&[ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::CreaturesThenNonlandPermanentsV1 { creatures: 1, permanents: 2 }), effect: crate::eternal_legacy_e5b_v1::eldrazi_confluence_3 }, ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::CreaturesThenNonlandPermanentsV1 { creatures: 1, permanents: 1 }), effect: crate::eternal_legacy_e5b_v1::eldrazi_confluence_4 }, ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::CreaturesThenNonlandPermanentsV1 { creatures: 1, permanents: 0 }), effect: crate::eternal_legacy_e5b_v1::eldrazi_confluence_5 }, ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::CreaturesThenNonlandPermanentsV1 { creatures: 0, permanents: 3 }), effect: crate::eternal_legacy_e5b_v1::eldrazi_confluence_6 }, ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::CreaturesThenNonlandPermanentsV1 { creatures: 0, permanents: 2 }), effect: crate::eternal_legacy_e5b_v1::eldrazi_confluence_7 }, ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::CreaturesThenNonlandPermanentsV1 { creatures: 0, permanents: 1 }), effect: crate::eternal_legacy_e5b_v1::eldrazi_confluence_8 }, ModeDef { target_spec: TargetSpec::None, effect: crate::eternal_legacy_e5b_v1::eldrazi_confluence_9 }]",
-        _ => "&[]",
+        _ => super::build_eternal_s1m_v1::additional_modes_for(name),
     }
 }
 

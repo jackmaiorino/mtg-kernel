@@ -451,7 +451,8 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         MULTANIS_ACOLYTE => &ACOLYTE_TRIGGERS,
         THORNSCAPE_BATTLEMAGE => &THORNSCAPE_TRIGGERS,
         YAVIMAYA_GRANGER => &GRANGER_TRIGGERS,
-        _ => &[],
+        // Premodern sideboard wave P3b's printed triggers.
+        _ => crate::eternal_premodern_p3b_v1::triggers_for(name),
     }
 }
 

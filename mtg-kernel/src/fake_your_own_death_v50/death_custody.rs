@@ -1,7 +1,7 @@
 //! Original gained-ability collection and publication for the Partial candidate.
 //! These records are not permission to execute the private root.
 
-use super::spell_custody::{emit, journal, JournalV50};
+use super::spell_custody::{emit, journal, row_events, rows, JournalV50};
 use crate::effect::{EffectOp, ExecCtx};
 use crate::event::CommittedEvent;
 use crate::ids::ObjectId;
@@ -132,7 +132,7 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
     if item.v4.stack_item_id == Default::default()
         || state.stack.last() != Some(item)
         || state.stack.iter().filter(|row| row.v4.stack_item_id == item.v4.stack_item_id).count() != 1
-        || state.engine.event_history.iter().any(|event|
+        || row_events(state).any(|event|
             matches!(journal(event), Some(JournalV50::DeathPublished { capture: original, item: row, .. })
                 if *original == capture || row.v4.stack_item_id == item.v4.stack_item_id))
     {
@@ -170,7 +170,7 @@ pub(crate) fn acquire_counter(
     };
     super::spell_custody::validate_retained_grant_history(state)?;
     validate_trigger_identity(state, item)?;
-    let publications = state.engine.event_history.iter().enumerate().filter_map(|(index, event)| {
+    let publications = rows(state).filter_map(|(index, event)| {
         matches!(journal(event), Some(JournalV50::DeathPublished { capture: original, item: row, .. })
             if *original == capture && row.as_ref() == item).then_some(index as u64)
     }).collect::<Vec<_>>();
@@ -254,7 +254,7 @@ pub(crate) fn finish_counter(
 }
 
 fn counter_inputs(state: &GameState, publication: u64) -> Vec<u64> {
-    state.engine.event_history.iter().enumerate().filter_map(|(index, event)|
+    rows(state).filter_map(|(index, event)|
         matches!(journal(event), Some(JournalV50::DeathCounterInput { publication: original, .. })
             if *original == publication).then_some(index as u64)).collect()
 }
@@ -432,7 +432,7 @@ pub(crate) fn resolve_owned(
 }
 
 fn resolution_inputs(state: &GameState, publication: u64) -> Vec<u64> {
-    state.engine.event_history.iter().enumerate().filter_map(|(index, event)|
+    rows(state).filter_map(|(index, event)|
         matches!(journal(event), Some(JournalV50::DeathResolutionInput { publication: original, .. })
             if *original == publication).then_some(index as u64)).collect()
 }
@@ -520,23 +520,19 @@ pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> 
         let Some(capture) = binding(item) else {
             continue;
         };
-        if state.engine.event_history.iter().filter(|event|
+        if row_events(state).filter(|event|
             matches!(journal(event), Some(JournalV50::DeathPublished { capture: original, item: row, .. })
                 if *original == capture && row.as_ref() == item)).count() != 1
         {
             return Err("Fake live gained trigger lost its complete original publication".into());
         }
     }
-    for event in &state.engine.event_history {
+    for event in row_events(state) {
         if let Some(JournalV50::DeathCollected { capture, .. }) = journal(event) {
             let pending = held_triggers(state)
                 .filter(|pending| effect_capture(&pending.effect) == Some(*capture))
                 .collect::<Vec<_>>();
-            let published = state
-                .engine
-                .event_history
-                .iter()
-                .enumerate()
+            let published = rows(state)
                 .filter_map(|(index, event)| match journal(event) {
                     Some(JournalV50::DeathPublished {
                         capture: original,
@@ -623,20 +619,34 @@ pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> 
     Ok(())
 }
 
+/// The captures before `end` that no collection before `end` consumed, in
+/// history order.
 fn captures_before(state: &GameState, end: usize) -> Vec<u64> {
-    state.engine.event_history.iter().take(end).enumerate().filter_map(|(index, event)| {
-        (matches!(journal(event), Some(JournalV50::DeathCaptured { .. }))
-            && !state.engine.event_history.iter().take(end).any(|event|
-                matches!(journal(event), Some(JournalV50::DeathCollected {capture,..}) if *capture==index as u64)))
-        .then_some(index as u64)
-    }).collect()
+    let before = rows(state)
+        .take_while(|(index, _)| *index < end)
+        .collect::<Vec<_>>();
+    let collected = before
+        .iter()
+        .filter_map(|(_, event)| match journal(event) {
+            Some(JournalV50::DeathCollected { capture, .. }) => Some(*capture),
+            _ => None,
+        })
+        .collect::<std::collections::HashSet<u64>>();
+    before
+        .iter()
+        .filter_map(|&(index, event)| {
+            (matches!(journal(event), Some(JournalV50::DeathCaptured { .. }))
+                && !collected.contains(&(index as u64)))
+            .then_some(index as u64)
+        })
+        .collect()
 }
 
 /// Every original collection input consumes its complete earlier uncollected
 /// capture roster, contiguously and once. No erased mutable receipt can make an
 /// already collected gained ability available again.
 pub(crate) fn validate_collection(state: &GameState) -> Result<(), String> {
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in rows(state) {
         match journal(event) {
             Some(JournalV50::CollectionInput { captures }) => {
                 if captures.is_empty() || *captures != captures_before(state, index) {
@@ -710,10 +720,10 @@ pub(crate) fn validate_collection(state: &GameState) -> Result<(), String> {
                     || collection_at(state, *capture)? != *collection
                     || item.v4.stack_item_id == Default::default()
                     || **item != canonical_item(item, source, *capture)
-                    || state.engine.event_history.iter().filter(|event|
+                    || row_events(state).filter(|event|
                         matches!(journal(event), Some(JournalV50::DeathPublished { capture: original, .. })
                             if original == capture)).count() != 1
-                    || state.engine.event_history.iter().filter(|event|
+                    || row_events(state).filter(|event|
                         matches!(journal(event), Some(JournalV50::DeathPublished { item: row, .. })
                             if row.v4.stack_item_id == item.v4.stack_item_id)).count() != 1
                 {
@@ -784,11 +794,7 @@ pub(crate) fn validate_collection(state: &GameState) -> Result<(), String> {
 }
 
 fn resolution_completions(state: &GameState, input: u64) -> Vec<(usize, &JournalV50)> {
-    state
-        .engine
-        .event_history
-        .iter()
-        .enumerate()
+    rows(state)
         .filter_map(|(index, event)| match journal(event) {
             Some(
                 entry @ JournalV50::DeathResolutionClosed {
@@ -803,7 +809,7 @@ fn resolution_completions(state: &GameState, input: u64) -> Vec<(usize, &Journal
 /// Metadata validation permits a synchronous in-flight input. Only the stable
 /// ingress validator above can admit a completed or replay-owned state.
 fn validate_resolution_history(state: &GameState) -> Result<(), String> {
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in rows(state) {
         match journal(event) {
             Some(JournalV50::DeathResolutionInput {
                 publication,
@@ -868,7 +874,7 @@ fn validate_resolution_history(state: &GameState) -> Result<(), String> {
                     else {
                         return Err("Fake completion lost its independent Treasure input".into());
                     };
-                    let treasury = state.engine.event_history.iter().filter(|event|
+                    let treasury = row_events(state).filter(|event|
                         matches!(journal(event), Some(JournalV50::DeathTreasureInput { resolution, .. }) if *resolution == index as u64)).count();
                     let returns = state.engine.event_history.iter().enumerate().take(treasure_at).skip(index+1).filter_map(|(at, event)|
                         matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Graveyard, to: Zone::Battlefield, .. }
@@ -957,11 +963,7 @@ pub(crate) fn collect(
     state: &mut GameState,
     events: &[CommittedEvent],
 ) -> Result<Vec<PendingTrigger>, ObjectId> {
-    if !state
-        .engine
-        .event_history
-        .iter()
-        .any(|e| journal(e).is_some())
+    if !row_events(state).any(|e| journal(e).is_some())
         && !events.iter().any(|e| journal(e).is_some())
     {
         return Ok(Vec::new());
@@ -1023,7 +1025,7 @@ fn validate_mutable_capture_roster(
 ) -> Result<Vec<u64>, String> {
     let captures = captures_before(state, state.engine.event_history.len());
     u32::try_from(captures.len()).map_err(|_| "Fake capture roster exceeds u32")?;
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in rows(state) {
         let needed = match journal(event) {
             Some(JournalV50::DeathCaptured { .. }) => captures.contains(&(index as u64)),
             Some(JournalV50::DeathInput { .. }) => captures.iter().any(|capture| {
@@ -1040,13 +1042,7 @@ fn validate_mutable_capture_roster(
         if !matches!(
             journal(event),
             Some(JournalV50::DeathInput { .. } | JournalV50::DeathCaptured { .. })
-        ) || state
-            .engine
-            .event_history
-            .iter()
-            .filter(|e| *e == event)
-            .count()
-            != 1
+        ) || row_events(state).filter(|e| *e == event).count() != 1
         {
             return Err("Fake mutable log contains a forged or non-capture journal".into());
         }

@@ -11,7 +11,7 @@ use crate::{
 fn id(name: &str) -> u16 {
     card_def::card_id_by_name(name).unwrap()
 }
-fn ready(actor: PlayerId, library: &[&str]) -> GameState {
+pub(crate) fn ready(actor: PlayerId, library: &[&str]) -> GameState {
     let own = [id("Island"); 40];
     let other = library.iter().map(|name| id(name)).collect::<Vec<_>>();
     let decks = if actor == PlayerId::P0 {
@@ -73,7 +73,7 @@ fn respond(state: &mut GameState, decision: Decision, reverse: bool) {
     engine::step(state, action).unwrap();
     assert!(state.engine.halted.is_none(), "{:?}", state.engine.halted);
 }
-fn finish(state: &mut GameState, reverse: bool) {
+pub(crate) fn finish(state: &mut GameState, reverse: bool) {
     for _ in 0..256 {
         let decision = engine::advance_until_decision(state);
         assert!(state.engine.halted.is_none(), "{:?}", state.engine.halted);
@@ -88,7 +88,7 @@ fn finish(state: &mut GameState, reverse: bool) {
     }
     panic!("finite Aberration native resolution did not finish");
 }
-fn cast(
+pub(crate) fn cast(
     state: &mut GameState,
     actor: PlayerId,
     name: &str,
@@ -131,7 +131,7 @@ fn cast(
     assert_eq!(state.objects.get(source).zone, Zone::Stack);
     source
 }
-fn paid_aberration(state: &mut GameState, actor: PlayerId) -> ObjectId {
+pub(crate) fn paid_aberration(state: &mut GameState, actor: PlayerId) -> ObjectId {
     let source = cast(state, actor, "Consuming Aberration", None, 5);
     assert_eq!(
         state.stack.len(),
@@ -149,7 +149,7 @@ fn restore(state: &GameState) -> GameState {
     assert_eq!(&restored, state);
     restored
 }
-fn to_order(state: &mut GameState) {
+pub(crate) fn to_order(state: &mut GameState) {
     for _ in 0..32 {
         let decision = engine::advance_until_decision(state);
         if matches!(decision, Decision::ChooseEffectTargets { .. }) {
@@ -1084,6 +1084,7 @@ fn paid_suppressed_survivor_exposure_and_mixed_prevention_refuse_before_mutation
                             touched_by: vec![],
                             historical_source: None,
                             niv_damage_origin_v1: None,
+                            eternal_damage_lki_v1: None,
                         }),
                         zone,
                     ],

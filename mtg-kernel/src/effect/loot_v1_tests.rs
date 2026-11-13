@@ -10,7 +10,7 @@ const NAME: &str = "Loot, Exuberant Explorer";
 fn id(name: &str) -> u16 {
     card_def::card_id_by_name(name).unwrap()
 }
-fn ready(actor: PlayerId, prefix: &[&str]) -> GameState {
+pub(crate) fn ready(actor: PlayerId, prefix: &[&str]) -> GameState {
     // A real intervening draw consumes this first card before the next main.
     let mut cards = vec![id("Forest")];
     cards.extend(prefix.iter().map(|n| id(n)));
@@ -62,7 +62,7 @@ fn pass(s: &mut GameState, d: Decision) {
     };
     engine::step(s, a).unwrap();
 }
-fn priority(s: &mut GameState, p: PlayerId) {
+pub(crate) fn priority(s: &mut GameState, p: PlayerId) {
     for _ in 0..24 {
         let d = next(s);
         if matches!(d,Decision::CastSpellOrPass{player,..}if player==p) {
@@ -82,7 +82,7 @@ fn finish_stack(s: &mut GameState) {
     }
     panic!("stack not completed")
 }
-fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
+pub(crate) fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
     let source = cast(s, p, NAME, &[], 3);
     finish_stack(s);
     assert_eq!(s.objects.get(source).zone, Zone::Battlefield);
@@ -95,7 +95,7 @@ fn paid(s: &mut GameState, p: PlayerId) -> ObjectId {
     );
     source
 }
-fn next_own_main(s: &mut GameState, p: PlayerId, source: ObjectId) {
+pub(crate) fn next_own_main(s: &mut GameState, p: PlayerId, source: ObjectId) {
     for _ in 0..160 {
         let d = next(s);
         if s.active_player == p
@@ -109,7 +109,7 @@ fn next_own_main(s: &mut GameState, p: PlayerId, source: ObjectId) {
     }
     panic!("next genuine main absent")
 }
-fn activate(s: &mut GameState, p: PlayerId, source: ObjectId) -> StackItem {
+pub(crate) fn activate(s: &mut GameState, p: PlayerId, source: ObjectId) -> StackItem {
     priority(s, p);
     let before = tapped(s, p);
     let d = next(s);
@@ -129,7 +129,7 @@ fn activate(s: &mut GameState, p: PlayerId, source: ObjectId) -> StackItem {
     assert_eq!(row.controller, p);
     row
 }
-fn prompt(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
+pub(crate) fn prompt(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
     for _ in 0..24 {
         let d = next(s);
         if let Decision::ChooseEffectTargets {
@@ -161,7 +161,7 @@ fn prompt(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
     }
     panic!("Loot prompt absent")
 }
-fn select(s: &mut GameState, card: Option<ObjectId>) {
+pub(crate) fn select(s: &mut GameState, card: Option<ObjectId>) {
     if let Some(c) = card {
         engine::step(s, Action::ChooseEffectTarget(Target::Object(c))).unwrap();
     }
@@ -174,14 +174,14 @@ fn select(s: &mut GameState, card: Option<ObjectId>) {
     }
     finish_stack(s);
 }
-fn land_menu(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
+pub(crate) fn land_menu(s: &mut GameState, p: PlayerId) -> Vec<ObjectId> {
     priority(s, p);
     match next(s) {
         Decision::CastSpellOrPass { land_drops, .. } => land_drops,
         _ => panic!(),
     }
 }
-fn tapped(s: &GameState, p: PlayerId) -> usize {
+pub(crate) fn tapped(s: &GameState, p: PlayerId) -> usize {
     s.players[p.index()]
         .battlefield
         .iter()

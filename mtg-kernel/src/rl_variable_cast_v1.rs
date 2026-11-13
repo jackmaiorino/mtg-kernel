@@ -276,7 +276,8 @@ pub(crate) fn candidates_kaito_v75(
     surface: &PolicySurfaceV5,
     decision: &PolicyDecisionV5,
 ) -> Result<Vec<CandidateVariableCastV1>, RlContractError> {
-    crate::kaito_observation_v75::validate_state(state).map_err(RlContractError)?;
+    crate::kaito_observation_v75::validate_state_scoped(state, surface.limited_appendix_v1())
+        .map_err(RlContractError)?;
     candidates_current_scope_kaito_v75(
         state,
         surface,
@@ -655,7 +656,11 @@ fn candidates_current_scope_inner_v68(
                 predecessor(&mut raw, ActionSemanticV1::Pass { actor }, Action::Pass);
             } else {
                 let old = if selected_scope == Some(crate::rl::CommonProjectionScopeV42::KaitoV75) {
-                    crate::rl::core_policy_action_candidates_kaito_v75(decision, state)?
+                    crate::rl::core_policy_action_candidates_kaito_scoped_v75(
+                        decision,
+                        state,
+                        surface.limited_appendix_v1(),
+                    )?
                 } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::ChandraV74) {
                     crate::rl::core_policy_action_candidates_chandra_v74(decision, state)?
                 } else if selected_scope == Some(crate::rl::CommonProjectionScopeV42::LilianaV73) {

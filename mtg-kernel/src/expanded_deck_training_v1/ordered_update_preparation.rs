@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::s_transformer_v1::update_profile_v1 as s_update_profile;
+use crate::sideboard_play_policy_v1::ReplayForwardRowsV1;
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -186,6 +187,27 @@ fn ordered_jobs_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
     job_count: usize,
     work: F,
 ) -> Result<(Vec<T>, Vec<WorkerTimingV1>), String> {
+    ordered_jobs_with_state_v1(workers, job_count, || (), |_, ordinal| work(ordinal))
+}
+
+/// [`ordered_jobs_v1`] whose jobs also get their worker's own state: made by
+/// `state` on that worker's thread, handed to each of its jobs in turn and
+/// dropped there. A job's result must not depend on which worker ran it or on
+/// what that worker ran before, so state may only hold storage and exact
+/// caches. A worker takes no job after one of its own fails or panics (every
+/// later ordinal is past the first error), so no job sees state such a job
+/// left behind.
+fn ordered_jobs_with_state_v1<S, T, M, F>(
+    workers: usize,
+    job_count: usize,
+    state: M,
+    work: F,
+) -> Result<(Vec<T>, Vec<WorkerTimingV1>), String>
+where
+    T: Send,
+    M: Fn() -> S + Sync,
+    F: Fn(&mut S, usize) -> Result<T, String> + Sync,
+{
     validate_preparation_workers_v1(workers)?;
     ensure(
         job_count > 0 && job_count <= MAX_GROUPS,
@@ -200,6 +222,7 @@ fn ordered_jobs_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
         for worker in 0..workers.min(job_count) {
             let next = &next;
             let first_error = &first_error;
+            let state = &state;
             let work = &work;
             let profile = &profile;
             match thread::Builder::new()
@@ -207,6 +230,7 @@ fn ordered_jobs_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
                 .stack_size(WORKER_STACK_BYTES)
                 .spawn_scoped(scope, move || {
                     s_update_profile::adopt_v1(profile);
+                    let mut state = state();
                     let mut values = Vec::new();
                     let mut busy = 0.0;
                     loop {
@@ -215,7 +239,7 @@ fn ordered_jobs_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
                             break;
                         }
                         let started = Instant::now();
-                        let result = catch_unwind(AssertUnwindSafe(|| work(ordinal)))
+                        let result = catch_unwind(AssertUnwindSafe(|| work(&mut state, ordinal)))
                             .unwrap_or_else(|_| Err("preparation worker panicked".into()));
                         busy += started.elapsed().as_secs_f64();
                         if result.is_err() {
@@ -434,7 +458,10 @@ pub(super) fn load_opponent_cached_v1(
             true,
         ));
     }
-    let (policy, identity) = load_expanded_inference_any_math_v1(source)?;
+    let (policy, identity) = super::loaded_source_profile_v1::scoped_v1(
+        super::loaded_source_profile_v1::LoadRoleV1::Opponent,
+        || load_expanded_inference_any_math_v1(source),
+    )?;
     // The tag is the check model the loaded policy actually holds, never a
     // setting sampled apart from its load.
     let no_state_digest_check = policy
@@ -498,6 +525,85 @@ pub(super) fn load_opponent_cached_v1(
     }
 }
 
+/// Which replayed rows may take a worker's exact row cache
+/// (`FrozenPlayPolicyV1::score_replay_tensor_ref_v1`) in place of the
+/// reference forward. The row-cached forward is the one collection ran, so a
+/// row replayed through it needs another forward to check it as well.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ReplayRowCacheV1 {
+    /// No row: every row takes the reference forward.
+    Off,
+    /// The learner's rows, for a caller whose learner step derives every
+    /// learner row's outputs again with its own forward and refuses any bit
+    /// that differs from the stored row (the native CPU steps:
+    /// `validate_forward_output_bits_v1`). The other seat's rows have no
+    /// second check and keep the reference forward.
+    LearnerRows,
+    /// Every row: the learner's as in `LearnerRows`, and the other seat's
+    /// too. The other seat's rows are still compared with the stored rollout
+    /// bits, but only by the forward that produced them, so an error that
+    /// the row cache makes in collection and again in replay would pass.
+    /// Those rows never enter the learner step. Only for a run whose
+    /// operator asked for it (`replay_other_seat_rows_cached_v1`).
+    AllRows,
+}
+
+impl ReplayRowCacheV1 {
+    /// The rows an update's prepared replay takes through the row cache.
+    /// `cpu_learner`: the update runs a CPU learner step, which checks every
+    /// learner row again bit for bit; without one no row is cached, whatever
+    /// was asked. `other_seat`: the operator asked for the other seat's rows
+    /// as well.
+    pub(super) fn for_update_v1(cpu_learner: bool, other_seat: bool) -> Self {
+        match (cpu_learner, other_seat) {
+            (false, _) => Self::Off,
+            (true, false) => Self::LearnerRows,
+            (true, true) => Self::AllRows,
+        }
+    }
+
+    /// Whether a group of the learner's rows (`learner_rows`) or of the
+    /// other seat's takes the row cache.
+    fn caches_v1(self, learner_rows: bool) -> bool {
+        match self {
+            Self::Off => false,
+            Self::LearnerRows => learner_rows,
+            Self::AllRows => true,
+        }
+    }
+}
+
+/// The setting that asks for `ReplayRowCacheV1::AllRows`.
+const REPLAY_OTHER_SEAT_SETTING_V1: &str = "MTG_KERNEL_ROW_CACHE_REPLAY_OTHER_SEAT";
+
+/// Whether this process was asked to replay the other seat's rows through
+/// the row cache as well: `MTG_KERNEL_ROW_CACHE_REPLAY_OTHER_SEAT=1`. Off by
+/// default, and read once.
+pub(super) fn replay_other_seat_rows_cached_v1() -> bool {
+    static ASKED: OnceLock<bool> = OnceLock::new();
+    *ASKED.get_or_init(|| {
+        replay_other_seat_setting_v1(std::env::var(REPLAY_OTHER_SEAT_SETTING_V1).ok().as_deref())
+    })
+}
+
+/// Only the exact value `1` asks. Anything else, or no value, keeps the
+/// reference forward for the other seat's rows.
+fn replay_other_seat_setting_v1(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+/// A replay worker's row caches, one for each seat's rows. A group is one
+/// seat's rows, the seats are scored by different models whenever the
+/// opponent is not the current learner, and a `ReplayForwardRowsV1` keeps
+/// one model's rows at a time: with one storage, alternating seats would
+/// empty it at every group. Storage that is never used holds nothing.
+#[derive(Default)]
+struct SeatRowCachesV1 {
+    learner: ReplayForwardRowsV1,
+    other: ReplayForwardRowsV1,
+}
+
+/// The prepared replay with every row through the reference forward.
 pub(super) fn prepare_v1<'a>(
     episodes: &'a [ExpandedTrajectoryV1],
     policy: &FrozenPlayPolicyV1,
@@ -506,6 +612,28 @@ pub(super) fn prepare_v1<'a>(
     max_prepared_tensor_mebibytes: usize,
     training_math: TrainingMathV1,
 ) -> Result<PreparedGroupsV1<'a>, String> {
+    prepare_with_row_cache_v1(
+        episodes,
+        policy,
+        learner,
+        workers,
+        max_prepared_tensor_mebibytes,
+        training_math,
+        ReplayRowCacheV1::Off,
+    )
+}
+
+/// [`prepare_v1`] with `row_cache`'s rows replayed through each worker's
+/// exact row cache: the same groups, telemetry and errors.
+pub(super) fn prepare_with_row_cache_v1<'a>(
+    episodes: &'a [ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    workers: usize,
+    max_prepared_tensor_mebibytes: usize,
+    training_math: TrainingMathV1,
+    row_cache: ReplayRowCacheV1,
+) -> Result<PreparedGroupsV1<'a>, String> {
     let mut hits = 0;
     let mut prepared = prepare_with_loader_v1(
         episodes,
@@ -513,6 +641,7 @@ pub(super) fn prepare_v1<'a>(
         learner,
         workers,
         max_prepared_tensor_mebibytes,
+        row_cache,
         |source| {
             let (mut loaded, hit) = load_opponent_cached_v1(source, true)?;
             hits += usize::from(hit);
@@ -530,6 +659,7 @@ fn prepare_with_loader_v1<'a, F>(
     learner: &ExpandedSeatBehaviorV1,
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    row_cache: ReplayRowCacheV1,
     mut load: F,
 ) -> Result<PreparedGroupsV1<'a>, String>
 where
@@ -590,7 +720,10 @@ where
         .collect();
     let binding = binding_started.elapsed().as_secs_f64();
     let replay_started = Instant::now();
-    let (ordered, worker_timings) = ordered_jobs_v1(workers, jobs.len(), |ordinal| {
+    // A worker replays the rows `row_cache` names through its own exact row
+    // caches, one for each seat's rows: the same outputs, bit for bit, for a
+    // fraction of the work.
+    let replay_group = |caches: &mut SeatRowCachesV1, ordinal: usize| -> Result<_, String> {
         let job = jobs[ordinal];
         bindings[job.episode].as_ref().map_err(Clone::clone)?;
         let trajectory = &episodes[job.episode];
@@ -599,7 +732,8 @@ where
             .opponent
             .map(|index| opponents[index].as_ref().map_err(Clone::clone))
             .transpose()?;
-        let acting = if first.actor == trajectory.episode.learner_seat {
+        let learner_rows = first.actor == trajectory.episode.learner_seat;
+        let acting = if learner_rows {
             policy
         } else {
             opponent.map_or(policy, |other| &other.policy)
@@ -607,27 +741,34 @@ where
         let contract = trajectory_contract_v1(trajectory)?;
         contract.require_policy_contract_v1(policy)?;
         let generation = contract.generation;
-        let stage = if first.actor == trajectory.episode.learner_seat {
+        let stage = if learner_rows {
             s_update_profile::StageV1::ReplayLearnerRow
         } else {
             s_update_profile::StageV1::ReplayOtherRow
         };
+        let mut cache = row_cache
+            .caches_v1(learner_rows)
+            .then_some(if learner_rows {
+                &mut caches.learner
+            } else {
+                &mut caches.other
+            });
         let mut rows = Vec::new();
         for row in &trajectory.decisions[job.start..job.end] {
             let common = row.tensor.tensor();
-            let input = common.clone();
             let span = s_update_profile::span_v1(stage);
-            let output = acting.score_replay_tensor_v1(
+            let output = acting.score_replay_tensor_ref_v1(
                 generation,
-                input,
+                &common,
                 &row.tensor.pairing_node_indices,
+                cache.as_deref_mut(),
             )?;
             span.finish_v1(&output.logits, output.value);
             ensure(
                 bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
                 "stored tensor does not reproduce rollout outputs",
             )?;
-            if first.actor == trajectory.episode.learner_seat {
+            if learner_rows {
                 rows.push((row, common));
             }
         }
@@ -640,7 +781,9 @@ where
                 rows,
             ))
         })
-    })?;
+    };
+    let (ordered, worker_timings) =
+        ordered_jobs_with_state_v1(workers, jobs.len(), SeatRowCachesV1::default, replay_group)?;
     let replay = replay_started.elapsed().as_secs_f64();
     drop(opponents);
     let groups = ordered.into_iter().flatten().collect();

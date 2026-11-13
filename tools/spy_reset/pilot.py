@@ -76,9 +76,20 @@ G_CROSS_NS = "g-references-v1/panel/cross"
 W4C_PANEL_NS_A = "w4c-panel-20261031a"
 W4C_PANEL_NS_B = "w4c-panel-20261031b"
 W4C_H2H_NS = "w4c-h2h-20261031"
+# Blunder census (collab LANES/census-20261110, DEFINITIONS.md section 1): one panel namespace shared by every
+# checkpoint, and a disjoint one for cost checks only.
+CENSUS_PANEL_NS = "census-20261110/a"
+CENSUS_SMOKE_NS = "census-20261110/smoke"
+# Chain A against its training opponents (collab LANES/opponents-20261111, DEFINITIONS.md): one namespace for all
+# eight panels.
+OPPONENTS_PANEL_NS = "opponents-20261111/a"
+# Chain A and the old lineage against the fresh-init lineages G1 and G2 (collab LANES/freshinit-20261111,
+# DEFINITIONS.md): one namespace for every panel at every dose.
+FRESHINIT_PANEL_NS = "freshinit-20261111/a"
 PANEL_NAMESPACES = (PANEL_NS, SD1_PANEL_NS, SQ1_PANEL_NS, TP1B_PANEL_NS, TP1B2_PANEL_NS, NSD5_PANEL_NS,
                     OH1_PANEL_NS, OH2_PANEL_NS_A, OH2_PANEL_NS_B, OH2_SCREEN_NS, D1_PANEL_NS_A, D1_PANEL_NS_B,
-                    D1_H2H_NS, G_MIRROR_NS, G_CROSS_NS, W4C_PANEL_NS_A, W4C_PANEL_NS_B, W4C_H2H_NS)
+                    D1_H2H_NS, G_MIRROR_NS, G_CROSS_NS, W4C_PANEL_NS_A, W4C_PANEL_NS_B, W4C_H2H_NS,
+                    CENSUS_PANEL_NS, CENSUS_SMOKE_NS, OPPONENTS_PANEL_NS, FRESHINIT_PANEL_NS)
 
 
 def key(parts: list) -> bytes:

@@ -536,7 +536,10 @@ pub(crate) fn resolve(
         return Err("Amulet atomic program halted or suspended".into());
     }
     let operation = if owner.item.v4.activated_ability_index == Some(0) {
-        let draws = state.engine.event_history[start..]
+        let draws = state
+            .engine
+            .event_history
+            .range_v2(start..)
             .iter()
             .enumerate()
             .filter_map(|(offset, event)| {
@@ -547,7 +550,10 @@ pub(crate) fn resolve(
         let [draw] = draws.as_slice() else {
             return Err("Amulet did not commit its one draw attempt".into());
         };
-        let souls = state.engine.event_history[start..]
+        let souls = state
+            .engine
+            .event_history
+            .range_v2(start..)
             .iter()
             .enumerate()
             .filter_map(|(offset, event)| match event {
@@ -568,7 +574,7 @@ pub(crate) fn resolve(
         };
         OperationV1::Draw { draw: *draw, soul }
     } else {
-        let losses = state.engine.event_history[start..].iter().enumerate().filter_map(|(offset,event)| matches!(event, CommittedEvent::LifeLoss { player, .. } if *player == ctx.controller.opponent()).then_some((start+offset) as u64)).collect::<Vec<_>>();
+        let losses = state.engine.event_history.range_v2(start..).iter().enumerate().filter_map(|(offset,event)| matches!(event, CommittedEvent::LifeLoss { player, .. } if *player == ctx.controller.opponent()).then_some((start+offset) as u64)).collect::<Vec<_>>();
         let [event] = losses.as_slice() else {
             return Err("Amulet did not commit one untargeted loss".into());
         };
@@ -1036,7 +1042,10 @@ pub(crate) fn record_paid(
     let mut taps = Vec::new();
     let mut markers = Vec::new();
     let mut sacrifices = Vec::new();
-    for (offset, event) in state.engine.event_history[owner.history_start..]
+    for (offset, event) in state
+        .engine
+        .event_history
+        .range_v2(owner.history_start..)
         .iter()
         .enumerate()
     {

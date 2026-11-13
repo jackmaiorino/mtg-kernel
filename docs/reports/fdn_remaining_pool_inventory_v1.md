@@ -10,19 +10,28 @@ not missing target decisions. Goblin Bushwhacker is the tenth Special Guest
 and was already supported. The older sizing snapshot below is preserved;
 its request to freeze the manifest is now satisfied.
 
-## Current coverage (2026-10-29, main `024026b16`)
+## Current coverage (2026-11-12, main `ed818ce85`)
 
-Every target name is registered: **250 Full, 36 Partial, 0 Missing** of 286
-(`python python/tools/fdn_booster_pool_v1.py`). The 41 names still missing at
-v88 were registered by #308 with executing rules. The sections below are the
-historical sizing and batch record and no longer list open work.
+Every target name is registered. The card registry records **250 Full, 36
+Partial, 0 Missing** of 286 (`python python/tools/fdn_booster_pool_v1.py`).
+The 41 names still missing at v88 were registered by #308 with executing
+rules. The sections below are the historical sizing and batch record and no
+longer list open work.
 
-Partial now means the card's rules execute but it has no consumer stack
-(owning session, Human facts, transport and numeric model), so Prepared and
-Full-only sessions refuse its decks. The rules-only tier
-(`docs/design/limited_rules_only_v1.md`) plays admitted Partial printings in
-self-play, search and DraftZero evaluation. Taking Partial printings to Full
-waits until Limited training or fair search is scheduled.
+**All 286 are Full under the FullPool session.** `-session full-pool`, merged
+in #586, is one consumer stack (owning session, Human facts, transport and
+numeric model) for every frozen printing, the 36 registry Partial printings
+included. Its hosted CI passed at `6adee6579`, including the all-286 reset and
+sealed-learner cases in `limited_full_pool_consumer_v1::tests` and the
+fair-search check over all 286 opening roots; the cases are described in
+`docs/design/fdn_partial550_consumer_inventory.md`. The bounded training run
+and fixed-opponent evaluation for #552 ran in this session. The registry rows
+are unchanged, so the card database hash and older checkpoints are unaffected.
+
+In the registry, Partial means that the card's rules execute but no older
+session has a consumer stack for it, so Prepared and Full-only sessions refuse
+its decks. The rules-only tier (`docs/design/limited_rules_only_v1.md`) plays
+admitted Partial printings in self-play, search and DraftZero evaluation.
 
 The 36 Partial names: Abyssal Harvester; Alesha, Who Laughs at Fate; Banner of
 Kinship; Blasphemous Edict; Chandra, Flameshaper; Consuming Aberration; Curator

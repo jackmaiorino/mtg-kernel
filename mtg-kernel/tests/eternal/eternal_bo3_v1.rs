@@ -15,10 +15,15 @@ use mtg_kernel::ids::PlayerId;
 use mtg_kernel::limited_session_v1::CustomCardCountV1;
 use std::collections::{BTreeMap, BTreeSet};
 
+#[path = "eternal_bo3_v1/eternal_bo3_leyline_v1.rs"]
+mod leyline;
+#[path = "eternal_bo3_v1/eternal_bo3_native_v1.rs"]
+mod native;
+
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 15] = [
+const PLAYABLE_75: [(&str, &str); 119] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -29,20 +34,154 @@ const PLAYABLE_75: [(&str, &str); 15] = [
         "pauper",
         "pauper-dimir-faeries-625747e4-1ba6-4401-af7b-5c8033a12c6c",
     ),
+    ("pauper", "bogles-df219f8f-1b57-437c-b4d8-dd4a5c7bdd7c"),
     ("pauper", "pauper-mono-red-rally"),
     ("pauper", "pauper-esper-affinity"),
+    ("pauper", "pauper-ruby-storm"),
     ("pauper", "pauper-golgari-gardens"),
     (
         "pauper",
         "pauper-dimir-control-1e2279c1-d135-4609-8b99-83f2ab98c424",
     ),
+    ("pauper", "pauper-familiars"),
+    ("pauper", "pauper-esper-ephemerate"),
+    (
+        "pauper",
+        "pauper-turbo-fog-fe589501-15e6-4511-b259-e066f9f36c51",
+    ),
+    (
+        "pauper",
+        "pauper-mono-blue-faeries-f7d232c7-2c3c-4459-b219-f3e8d9abbec6",
+    ),
+    ("pauper", "pauper-dimir-affinity"),
+    ("pauper", "pauper-gruul-ponza"),
     ("pauper", "pauper-rakdos-madness"),
+    ("pauper", "pauper-mardu-synthesizer"),
+    ("pauper", "pauper-food-gardens"),
+    ("pauper", "pauper-glintblade"),
     ("pauper", "burn-3854fe58-5ff9-4046-bac9-ae9617c3caf5"),
+    ("pauper", "pauper-dimir-terror"),
     ("pauper", "pauper-azorius-gates"),
     ("pauper", "pauper-esper-faeries"),
+    ("pauper", "pauper-grixis-affinity"),
+    ("pauper", "pauper-spy-combo"),
+    (
+        "pauper",
+        "pauper-grixis-control-334e14c5-6fe9-46da-9c9b-799ef8bd1f0f",
+    ),
+    ("pauper", "pauper-jund-wildfire"),
+    ("pauper", "pauper-jeskai-ephemerate"),
+    ("pauper", "pauper-boros-moxite"),
+    ("pauper", "pauper-gruul-ramp"),
+    ("pauper", "pauper-4c-affinity"),
+    ("pauper", "pauper-izzet-terror"),
+    ("pauper", "pauper-boros-synthesizer"),
+    ("pauper", "pauper-grixis-faeries"),
+    ("pauper", "pauper-4c-pestilence"),
+    (
+        "pauper",
+        "pauper-4c-synthesizer-f5246896-123e-417c-9560-63c3c542a0da",
+    ),
+    ("pauper", "pauper-izzet-faeries"),
+    ("pauper", "pauper-4c-ephemerate"),
+    ("pauper", "tron-c244ab01-c9e3-400d-8db1-6d717616b7e2"),
+    ("legacy", "legacy-dimir-tempo"),
+    ("legacy", "legacy-izzet-delver"),
     ("legacy", "legacy-doomsday"),
+    ("legacy", "legacy-aluren"),
+    ("legacy", "legacy-the-epic-storm"),
+    ("legacy", "legacy-stiflenought"),
+    ("legacy", "legacy-affinity-stompy"),
+    ("legacy", "legacy-esper-control"),
+    (
+        "legacy",
+        "legacy-death-and-taxes-yorion-mono-white-d867cd0f-702e-45a2-a765-734174ae83d3",
+    ),
     ("legacy", "legacy-reanimator"),
+    ("legacy", "legacy-8-cast"),
+    ("legacy", "legacy-lands"),
+    ("legacy", "legacy-sneak-and-show"),
+    ("legacy", "legacy-sewer-cam-combo"),
+    ("legacy", "legacy-painter"),
+    ("legacy", "legacy-mono-black-midrange"),
+    ("legacy", "legacy-boros-energy"),
+    ("legacy", "legacy-omni-tell"),
+    ("legacy", "legacy-beseech-storm"),
+    ("legacy", "legacy-death-and-taxes-60-card"),
+    ("legacy", "legacy-temur-delver"),
+    ("legacy", "legacy-eldrazi"),
+    (
+        "legacy",
+        "legacy-death-and-taxes-yorion-black-white-468d6491-e6a9-46c8-b9fb-da35bfca78fa",
+    ),
+    ("legacy", "legacy-hogaak-moonshadow"),
+    ("legacy", "legacy-mardu-energy"),
+    (
+        "legacy",
+        "legacy-saga-storm-8f40fd61-e011-4e94-8cd2-4e63013604ce",
+    ),
+    ("legacy", "legacy-beanstalk-control-non-yorion"),
+    (
+        "legacy",
+        "legacy-azorius-tempo-9bd90024-e52f-4284-821d-f037ed910a44",
+    ),
+    (
+        "legacy",
+        "legacy-jeskai-tempo-7f301e99-6af3-4ead-a85a-5ebb92d56c0f",
+    ),
+    ("legacy", "legacy-cephalid-breakfast"),
+    ("legacy", "legacy-azorius-tempo"),
+    ("legacy", "legacy-azorius-control"),
+    ("legacy", "legacy-mystic-forge-combo"),
+    ("legacy", "legacy-red-stompy"),
+    ("vintage", "vintage-esper-lurrus-control"),
+    ("vintage", "vintage-dimir-lurrus-control"),
+    ("vintage", "vintage-lurrus-po"),
+    ("vintage", "vintage-counter-vine"),
+    ("vintage", "vintage-jeskai-lurrus"),
+    ("vintage", "vintage-blue-tinker"),
+    ("vintage", "vintage-stiflenought"),
+    ("vintage", "vintage-beseech-storm"),
+    ("vintage", "vintage-lurrus-drs"),
     ("vintage", "vintage-red-prison"),
+    ("vintage", "vintage-sultai-psychic-frog"),
+    ("vintage", "vintage-4c-psychic-frog"),
+    ("vintage", "vintage-eldrazi"),
+    ("vintage", "vintage-grixis-lurrus-control"),
+    ("vintage", "vintage-jewel-shops"),
+    ("vintage", "vintage-oath-of-druids"),
+    ("vintage", "vintage-dredge"),
+    ("vintage", "vintage-doomsday"),
+    ("vintage", "vintage-underworld-breach"),
+    ("vintage", "vintage-raker-shops"),
+    (
+        "vintage",
+        "vintage-lurrus-breach-9d1cc5d1-52c8-436c-8711-ee292b96e9d4",
+    ),
+    ("vintage", "vintage-sphere-shops"),
+    ("vintage", "vintage-blue-tempo"),
+    ("vintage", "vintage-mono-white-initiative"),
+    ("premodern", "premodern-sligh-rdw"),
+    ("premodern", "premodern-goblins"),
+    ("premodern", "premodern-rg-aggro"),
+    ("premodern", "premodern-stiflenought"),
+    ("premodern", "premodern-oath-of-druids"),
+    ("premodern", "premodern-white-weenie"),
+    ("premodern", "premodern-stasis"),
+    ("premodern", "premodern-terrageddon"),
+    ("premodern", "premodern-mono-black-aggro"),
+    ("premodern", "premodern-survival"),
+    ("premodern", "premodern-the-rock"),
+    ("premodern", "premodern-mono-red-control"),
+    ("premodern", "premodern-psychatog"),
+    ("premodern", "premodern-elves"),
+    ("premodern", "premodern-reanimator"),
+    ("premodern", "premodern-enchantress"),
+    ("premodern", "premodern-madness-threshold"),
+    ("premodern", "premodern-mono-black-control"),
+    ("premodern", "premodern-landstill-uw-control"),
+    ("premodern", "premodern-bw-control"),
+    ("premodern", "premodern-grow"),
 ];
 
 fn id(name: &str) -> u16 {
@@ -65,24 +204,71 @@ fn rows(cards: &[(&str, u32)]) -> Vec<CustomCardCountV1> {
         .collect()
 }
 
-/// Every snapshot deck's registration, with its format.
+/// Every snapshot deck's registration, with its format. A deck whose 75
+/// holds a Leyline registers with the native opening profile.
 fn registered_snapshot_decks() -> Vec<(String, EternalRegisteredDeckV1)> {
     snapshot_decks()
         .into_iter()
         .filter(|deck| PLAYABLE_75.contains(&(deck.format.as_str(), deck.archetype.as_str())))
         .map(|deck| {
             let format = EternalFormatV1::from_snapshot_key(&deck.format).unwrap();
-            let registered = EternalRegisteredDeckV1::from_rows_v1(
+            let registered = match EternalRegisteredDeckV1::from_rows_v1(
                 format,
                 deck.archetype.clone(),
                 &deck.deck.cards,
                 &deck.sideboard,
                 deck.deck.companion.as_deref(),
-            )
+            ) {
+                Err(EternalBo3ErrorV1::NativeOpeningSetup { .. }) => {
+                    let expand = |rows: &[CustomCardCountV1]| {
+                        rows.iter()
+                            .flat_map(|row| std::iter::repeat_n(id(&row.name), row.count as usize))
+                            .collect()
+                    };
+                    EternalRegisteredDeckV1::new_with_native_opening_v1(
+                        format,
+                        deck.archetype.clone(),
+                        expand(&deck.deck.cards),
+                        expand(&deck.sideboard),
+                        deck.deck.companion.as_deref().map(id),
+                    )
+                }
+                registered => registered,
+            }
             .unwrap_or_else(|error| panic!("{}: {error}", deck.archetype));
             (deck.format, registered)
         })
         .collect()
+}
+
+/// Whether `deck` needs the native opening profile: its ordinary
+/// registration is refused for a Leyline.
+fn needs_native_opening(deck: &EternalRegisteredDeckV1) -> bool {
+    let configuration = deck.registered_configuration();
+    matches!(
+        EternalRegisteredDeckV1::new_v1(
+            deck.format(),
+            deck.deck_id(),
+            configuration.mainboard().to_vec(),
+            configuration.sideboard().to_vec(),
+            deck.companion(),
+        ),
+        Err(EternalBo3ErrorV1::NativeOpeningSetup { .. })
+    )
+}
+
+/// `deck` registered with the native opening profile, as both decks of a
+/// native match must be.
+fn natively(deck: &EternalRegisteredDeckV1) -> EternalRegisteredDeckV1 {
+    let configuration = deck.registered_configuration();
+    EternalRegisteredDeckV1::new_with_native_opening_v1(
+        deck.format(),
+        deck.deck_id(),
+        configuration.mainboard().to_vec(),
+        configuration.sideboard().to_vec(),
+        deck.companion(),
+    )
+    .unwrap_or_else(|error| panic!("{}: {error}", deck.deck_id()))
 }
 
 #[test]
@@ -481,6 +667,240 @@ fn match_seats_the_starting_player_first_and_refuses_bad_configurations() {
 }
 
 #[test]
+fn native_opening_match_uses_real_london_keeps_and_preserves_the_profile_both_seats() {
+    use mtg_kernel::engine::{self, Action, Decision};
+    use mtg_kernel::eternal_opening_v1::RecordV1;
+    use mtg_kernel::eternal_outside_game_v1::outside_the_game;
+    use mtg_kernel::event::CommittedEvent;
+    use mtg_kernel::state::{GameState, Step, Target, Zone};
+
+    let [p0, p1] = [PlayerId::P0, PlayerId::P1];
+    let void = id("Leyline of the Void");
+    let sanctity = id("Leyline of Sanctity");
+    let chancellor = id("Chancellor of the Annex");
+    let companion = id("Yorion, Sky Nomad");
+    let bolt = id("Lightning Bolt");
+    let dart = id("Lava Dart");
+    let make_main = |basic| {
+        [
+            vec![basic; 68],
+            vec![void; 4],
+            vec![sanctity; 4],
+            vec![chancellor; 4],
+        ]
+        .concat()
+    };
+    let format = EternalFormatV1::Legacy;
+    let main = make_main(id("Island"));
+    assert!(matches!(
+        EternalRegisteredDeckV1::new_v1(format, "legacy", main.clone(), vec![], None),
+        Err(EternalBo3ErrorV1::NativeOpeningSetup { .. })
+    ));
+    let mut unrelated = main.clone();
+    unrelated[0] = id("Coalition Honor Guard");
+    assert!(matches!(
+        EternalRegisteredDeckV1::new_with_native_opening_v1(
+            format,
+            "unrelated",
+            unrelated,
+            vec![],
+            None
+        ),
+        Err(EternalBo3ErrorV1::UnsupportedCard { .. })
+    ));
+    let zero = EternalRegisteredDeckV1::new_with_native_opening_v1(
+        format,
+        "zero",
+        main,
+        vec![companion, bolt],
+        Some(companion),
+    )
+    .unwrap();
+    let one = EternalRegisteredDeckV1::new_with_native_opening_v1(
+        format,
+        "one",
+        make_main(id("Swamp")),
+        vec![dart],
+        None,
+    )
+    .unwrap();
+    let legacy =
+        EternalRegisteredDeckV1::new_v1(format, "legacy", vec![id("Island"); 60], vec![], None)
+            .unwrap();
+    assert!(matches!(
+        EternalBestOfThreeMatchV1::new_v1([legacy.clone(), one.clone()], p0),
+        Err(EternalBo3ErrorV1::OpeningProfileMismatch)
+    ));
+    let mut ordinary =
+        EternalBestOfThreeMatchV1::new_v1([legacy.clone(), legacy.clone()], p0).unwrap();
+    assert!(matches!(
+        ordinary.start_game_with_native_opening_v1(
+            p0,
+            PlayDrawChoiceV1::Play,
+            [
+                legacy.registered_configuration().clone(),
+                legacy.registered_configuration().clone()
+            ],
+            12,
+        ),
+        Err(EternalBo3ErrorV1::OpeningProfileMismatch)
+    ));
+
+    for starting_match_player in [p0, p1] {
+        let mut bo3 =
+            EternalBestOfThreeMatchV1::new_v1([zero.clone(), one.clone()], starting_match_player)
+                .unwrap();
+        let configurations = [
+            zero.registered_configuration().clone(),
+            one.registered_configuration().clone(),
+        ];
+        let before = bo3.match_state().clone();
+        assert!(matches!(
+            bo3.start_game_v1(
+                starting_match_player,
+                PlayDrawChoiceV1::Play,
+                configurations.clone()
+            ),
+            Err(EternalBo3ErrorV1::OpeningProfileMismatch)
+        ));
+        assert_eq!(bo3.match_state(), &before);
+
+        // This shuffle gives native seat 0 Void and Sanctity after one
+        // mulligan, and seat 1 Sanctity and Chancellor in its original seven.
+        let (game, mut state) = bo3
+            .start_game_with_native_opening_v1(
+                starting_match_player,
+                PlayDrawChoiceV1::Play,
+                configurations.clone(),
+                12,
+            )
+            .unwrap();
+        assert_eq!(game.player_in_seat(0), starting_match_player);
+        assert_eq!(state.starting_player, p0);
+        for seat in [p0, p1] {
+            let match_player = game.player_in_seat(seat.index());
+            assert_eq!(state.players[seat.index()].hand.len(), 7);
+            let outside = [if match_player == p0 { bolt } else { dart }];
+            assert_eq!(outside_the_game(&state, seat), &outside);
+        }
+        assert_eq!(state.exile.len(), 1);
+        let companion_object = state.objects.get(state.exile[0]);
+        assert_eq!(companion_object.card_def, companion);
+        assert_eq!(game.player_in_seat(companion_object.owner.index()), p0);
+
+        for (seat, mulligan) in [(p0, true), (p1, false)] {
+            assert!(matches!(engine::advance_until_decision(&mut state),
+                Decision::ChooseLondonMulligan { player, mulligan_count: 0 } if player == seat));
+            engine::step(&mut state, Action::ChooseLondonMulligan { mulligan }).unwrap();
+        }
+        let Decision::ChooseLondonBottom {
+            player,
+            remaining: 1,
+            candidates,
+        } = engine::advance_until_decision(&mut state)
+        else {
+            panic!("expected the real London bottom after the redraw");
+        };
+        assert_eq!(player, p0);
+        let bottom = candidates
+            .into_iter()
+            .find(|&card| state.objects.get(card).card_def == sanctity)
+            .unwrap();
+        engine::step(&mut state, Action::ChooseLondonBottom(bottom)).unwrap();
+        assert_eq!(state.players[0].library.last(), Some(&bottom));
+        assert!(matches!(engine::advance_until_decision(&mut state),
+            Decision::ChooseLondonMulligan { player, mulligan_count: 1 } if player == p0));
+        engine::step(&mut state, Action::ChooseLondonMulligan { mulligan: false }).unwrap();
+        assert_eq!(state.players[0].hand.len(), 6);
+
+        let mut state: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        for (seat, card) in [(p0, void), (p1, sanctity)] {
+            let Decision::ChooseEternalOpeningV1 {
+                player,
+                legal_cards,
+            } = engine::advance_until_decision(&mut state)
+            else {
+                panic!("expected a native kept-hand opening choice");
+            };
+            assert_eq!(player, seat);
+            assert_eq!(state.step, Step::Untap);
+            assert!(state.stack.is_empty());
+            assert!(!legal_cards.contains(&bottom));
+            assert!(legal_cards
+                .iter()
+                .all(|&id| state.objects.get(id).owner == seat));
+            let chosen = legal_cards
+                .iter()
+                .copied()
+                .find(|&id| state.objects.get(id).card_def == card)
+                .unwrap();
+            engine::step(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(chosen)),
+            )
+            .unwrap();
+            assert_eq!(state.objects.get(chosen).zone, Zone::Battlefield);
+            if seat == p1 {
+                let reveal = legal_cards
+                    .into_iter()
+                    .find(|&id| state.objects.get(id).card_def == chancellor)
+                    .unwrap();
+                assert!(matches!(engine::advance_until_decision(&mut state),
+                    Decision::ChooseEternalOpeningV1 { player, legal_cards } if player == p1 && legal_cards.contains(&reveal)));
+                engine::step(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(reveal)),
+                )
+                .unwrap();
+                assert_eq!(state.objects.get(reveal).zone, Zone::Hand);
+                assert!(state
+                    .engine
+                    .event_history
+                    .iter()
+                    .any(|event| matches!(event,
+                    CommittedEvent::EternalOpeningV1 { record: RecordV1::Revealed(source) }
+                        if source.source == reveal)));
+            }
+            assert!(
+                matches!(engine::advance_until_decision(&mut state), Decision::ChooseEternalOpeningV1 { player, .. } if player == seat)
+            );
+            engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+        }
+        assert!(matches!(
+            engine::advance_until_decision(&mut state),
+            Decision::CastSpellOrPass { .. }
+        ));
+
+        bo3.record_game_result_v1(GameOutcomeV1::Win {
+            winner: starting_match_player,
+        })
+        .unwrap();
+        let mut sideboarded = configurations;
+        let mut new_main = sideboarded[1].mainboard().to_vec();
+        let basic = new_main[0];
+        new_main[0] = dart;
+        sideboarded[1] = EternalConfigurationV1::new_v1(new_main, vec![basic]);
+        let next_starter = starting_match_player.opponent();
+        let (next, mut state) = bo3
+            .start_game_with_native_opening_v1(
+                next_starter,
+                PlayDrawChoiceV1::Play,
+                sideboarded,
+                12,
+            )
+            .unwrap();
+        assert_eq!(next.start().game_index, 2);
+        assert_eq!(next.player_in_seat(0), next_starter);
+        let one_seat = if next.player_in_seat(0) == p1 { p0 } else { p1 };
+        assert_eq!(outside_the_game(&state, one_seat), &[basic]);
+        assert!(
+            matches!(engine::advance_until_decision(&mut state), Decision::ChooseLondonMulligan { player, mulligan_count: 0 } if player == p0)
+        );
+    }
+}
+
+#[test]
 fn random_sideboarding_is_seeded_and_conserves_the_registered_75() {
     let (main, side) = lurrus_deck();
     let lurrus = id("Lurrus of the Dream-Den");
@@ -528,13 +948,18 @@ struct MatchRecord {
     sideboarded_games: usize,
     sided_in_casts: usize,
     companion_games: usize,
+    /// Cards put onto the battlefield from an opening hand in native games,
+    /// by definition id.
+    opening_entries: BTreeMap<u16, usize>,
     winner: Option<PlayerId>,
 }
 
 /// Plays a match with seeded random actions and the seeded random
 /// sideboarding policy. Each game's play/draw chooser (the game one
-/// chooser, then the loser of the previous game) chooses to play.
-fn play_match(decks: [EternalRegisteredDeckV1; 2], seed: u64) -> MatchRecord {
+/// chooser, then the loser of the previous game) chooses to play. A match
+/// of natively registered decks plays its games in process; any other match
+/// plays through the JSONL custom-deck session.
+fn play_match(decks: [EternalRegisteredDeckV1; 2], seed: u64, native: bool) -> MatchRecord {
     let policy = RandomSideboardPolicyV1 {
         seed,
         max_exchanges: 5,
@@ -546,6 +971,7 @@ fn play_match(decks: [EternalRegisteredDeckV1; 2], seed: u64) -> MatchRecord {
         sideboarded_games: 0,
         sided_in_casts: 0,
         companion_games: 0,
+        opening_entries: BTreeMap::new(),
         winner: None,
     };
     loop {
@@ -566,29 +992,53 @@ fn play_match(decks: [EternalRegisteredDeckV1; 2], seed: u64) -> MatchRecord {
         assert!(game_index <= 5, "seed={seed}: too many drawn games");
         let configurations = [PlayerId::P0, PlayerId::P1]
             .map(|player| policy.configure_v1(bo3.deck(player), player, game_index));
-        let game = bo3
-            .start_game_v1(chooser, PlayDrawChoiceV1::Play, configurations)
-            .unwrap();
         let game_seed = seed.wrapping_mul(8).wrapping_add(u64::from(game_index));
-        // The game's sideboard (without a companion in use) is outside the
-        // game, where wish and learn effects find it.
-        let played = play_with_outside(
-            game.session_decks(),
-            Some(game.session_outside_the_game()),
-            game_seed,
-            Policy::Random(game_seed),
-        );
+        let (game, played) = if native {
+            let (game, state) = bo3
+                .start_game_with_native_opening_v1(
+                    chooser,
+                    PlayDrawChoiceV1::Play,
+                    configurations,
+                    game_seed,
+                )
+                .unwrap();
+            let played = native::play(state, game_seed);
+            for (card, entries) in played.opening_entries {
+                *record.opening_entries.entry(card).or_default() += entries;
+            }
+            (
+                game,
+                (played.transcript_sha256, played.winner, played.cast_cards),
+            )
+        } else {
+            let game = bo3
+                .start_game_v1(chooser, PlayDrawChoiceV1::Play, configurations)
+                .unwrap();
+            // The game's sideboard (without a companion in use) is outside
+            // the game, where wish and learn effects find it.
+            let played = play_with_outside(
+                game.session_decks(),
+                Some(game.session_outside_the_game()),
+                game_seed,
+                Policy::Random(game_seed),
+            );
+            (
+                game,
+                (played.transcript_sha256, played.winner, played.cast_cards),
+            )
+        };
+        let (transcript, winner, cast_cards) = played;
         record.games += 1;
-        record.transcripts.push(played.transcript_sha256);
+        record.transcripts.push(transcript);
         let mut exchanges = 0;
-        for seat in 0..2 {
+        for (seat, casts) in cast_cards.iter().enumerate() {
             let player = game.player_in_seat(seat);
             let (came_in, _) = game
                 .configuration(player)
                 .exchanges_from(bo3.deck(player).registered_configuration());
             exchanges += came_in.len();
             let came_in: BTreeSet<u16> = came_in.into_iter().collect();
-            record.sided_in_casts += played.cast_cards[seat]
+            record.sided_in_casts += casts
                 .iter()
                 .filter(|(card, _)| came_in.contains(card))
                 .map(|(_, casts)| casts)
@@ -596,13 +1046,64 @@ fn play_match(decks: [EternalRegisteredDeckV1; 2], seed: u64) -> MatchRecord {
             record.companion_games += usize::from(game.game_deck(player).deck.companion.is_some());
         }
         record.sideboarded_games += usize::from(exchanges > 0);
-        let outcome = match played.winner {
+        let outcome = match winner {
             Some(seat) => GameOutcomeV1::Win {
                 winner: game.player_in_seat(seat),
             },
             None => GameOutcomeV1::Draw,
         };
         bo3.record_game_result_v1(outcome).unwrap();
+    }
+}
+
+/// Sideboard Leylines reach an opening hand too rarely to exercise the
+/// native opening window (wave S1i), so two Legacy decks with four of each
+/// Leyline in their mainboards play native matches, with both game one
+/// choosers and seeded random actions. Each match finishes and replays, and
+/// both Leylines are put onto the battlefield from an opening hand.
+#[test]
+fn leyline_mainboards_open_with_both_leylines_and_replay_in_native_matches() {
+    let deck = |name: &str| {
+        EternalRegisteredDeckV1::new_with_native_opening_v1(
+            EternalFormatV1::Legacy,
+            name,
+            ids(&[
+                ("Swamp", 12),
+                ("Plains", 12),
+                ("Leyline of the Void", 4),
+                ("Leyline of Sanctity", 4),
+                ("Thraben Inspector", 4),
+                ("Kor Skyfisher", 4),
+                ("Swords to Plowshares", 4),
+                ("Thoughtseize", 4),
+                ("Dark Ritual", 4),
+                ("Unearth", 4),
+                ("Battle Screech", 4),
+            ]),
+            Vec::new(),
+            None,
+        )
+        .unwrap()
+    };
+    let pair = [deck("white-black"), deck("black-white")];
+    let mut openings: BTreeMap<u16, usize> = BTreeMap::new();
+    for seed in 0x5331_4900..0x5331_4906_u64 {
+        let record = play_match(pair.clone(), seed, true);
+        let replay = play_match(pair.clone(), seed, true);
+        assert_eq!(record.transcripts, replay.transcripts);
+        assert_eq!(record.winner, replay.winner);
+        for (card, entries) in record.opening_entries {
+            *openings.entry(card).or_default() += entries;
+        }
+    }
+    println!("opening entries: {openings:?}");
+    for leyline in ["Leyline of the Void", "Leyline of Sanctity"] {
+        assert!(
+            openings
+                .get(&id(leyline))
+                .is_some_and(|&entries| entries > 0),
+            "no {leyline} entered from an opening hand: {openings:?}"
+        );
     }
 }
 
@@ -617,17 +1118,25 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
     let mut failures = Vec::new();
     let (mut games, mut sideboarded, mut sided_in_casts, mut companion_games) = (0, 0, 0, 0);
     let mut index = 0u64;
+    let mut native_matches = 0;
     for (format, decks) in &by_format {
         // Each deck plays the next deck of its format, or a mirror when the
-        // format has one deck.
+        // format has one deck. A match with a deck that needs the native
+        // opening profile registers both decks with it.
         for (position, first) in decks.iter().enumerate() {
             let second = decks[(position + 1) % decks.len()];
-            let pair = [(*first).clone(), second.clone()];
+            let native = needs_native_opening(first) || needs_native_opening(second);
+            let pair = if native {
+                native_matches += 1;
+                [natively(first), natively(second)]
+            } else {
+                [(*first).clone(), second.clone()]
+            };
             let seed = 0x424f_3300_0000 + index;
             index += 1;
             let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let record = play_match(pair.clone(), seed);
-                let replay = play_match(pair.clone(), seed);
+                let record = play_match(pair.clone(), seed, native);
+                let replay = play_match(pair.clone(), seed, native);
                 assert_eq!(record.transcripts, replay.transcripts);
                 assert_eq!(record.winner, replay.winner);
                 record
@@ -641,7 +1150,7 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
                 continue;
             };
             println!(
-                "{} / {} seed={seed} games={} sideboarded={} sided_in_casts={} winner={:?} transcripts={:?}",
+                "{} / {} seed={seed} native={native} games={} sideboarded={} sided_in_casts={} winner={:?} transcripts={:?}",
                 first.deck_id(),
                 second.deck_id(),
                 record.games,
@@ -664,6 +1173,10 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
     assert!(games >= 2 * decks.len(), "{games} games");
     assert!(sideboarded > 0, "no game was sideboarded");
     assert!(sided_in_casts > 0, "no sideboard card was cast");
+    assert!(
+        native_matches > 0,
+        "no match used the native opening profile"
+    );
     let companions = decks.iter().any(|(_, deck)| deck.companion().is_some());
     assert!(
         !companions || companion_games > 0,

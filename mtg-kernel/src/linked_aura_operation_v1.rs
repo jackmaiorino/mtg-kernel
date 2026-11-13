@@ -4,6 +4,7 @@
 //! speculative tails are never installed in the game or its committed journal.
 use crate::effect::EffectObjectBinding;
 use crate::engine::{Action, Decision};
+use crate::eternal_sideboard_s1b_v1::meddling_mage_entry::{self as mage_entry, show_and_tell};
 use crate::event::{CommittedEvent, ProposedEvent};
 use crate::linked_aura_return_v1::HostChoiceV1;
 use crate::state::{GameState, Target, Zone};
@@ -81,6 +82,23 @@ pub enum GeneralAnswerV36 {
         choice: Box<crate::banner_of_kinship_v1::entry::ChoiceV1>,
         chosen: crate::creature_types_v60::CreatureTypeV60,
     },
+    MeddlingMageV1 {
+        choice: Box<mage_entry::ChoiceV1>,
+        group: Option<u16>,
+        index: u16,
+    },
+    ReanimateMetamorphV1 {
+        choice: Box<mage_entry::NoncastCopyChoiceV1>,
+        copied: Option<crate::state::AbilitySourceContractV4>,
+    },
+    VialMetamorphV1 {
+        choice: Box<mage_entry::NoncastCopyChoiceV1>,
+        copied: Option<crate::state::AbilitySourceContractV4>,
+    },
+    ShowAndTellV1 {
+        choice: Box<show_and_tell::ChoiceV1>,
+        selected: Option<crate::state::AbilitySourceContractV4>,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GeneralChoiceV36 {
@@ -103,6 +121,22 @@ pub enum GeneralChoiceV36 {
     KinshipV1 {
         choice: Box<crate::banner_of_kinship_v1::entry::ChoiceV1>,
         capture: u32,
+    },
+    MeddlingMageV1 {
+        choice: Box<mage_entry::ChoiceV1>,
+        group: Option<u16>,
+    },
+    ReanimateMetamorphV1 {
+        choice: Box<mage_entry::NoncastCopyChoiceV1>,
+        original_sha256: String,
+    },
+    VialMetamorphV1 {
+        choice: Box<mage_entry::NoncastCopyChoiceV1>,
+        original_sha256: String,
+    },
+    ShowAndTellV1 {
+        choice: Box<show_and_tell::ChoiceV1>,
+        original_sha256: String,
     },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +170,13 @@ struct KinshipPlanV1 {
     committed: Option<u32>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct MagePlanV1 {
+    choice: mage_entry::ChoiceV1,
+    named: Option<(u32, mage_entry::NameV1)>,
+    committed: bool,
+}
+
 /// GameState never restores runtime ownership, and other modules cannot
 /// construct it. Opaque input borrowing is confined to local family verification.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,6 +205,34 @@ struct RunnerV1 {
     original_world_v50: Option<Box<GameState>>,
     #[serde(skip)]
     active_fake_aura_entry_v50: Option<crate::fake_your_own_death_v50::return_aura::EntryLoanV50>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mage_start: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    mage_plans: Vec<MagePlanV1>,
+    // Panda and end-turn replay borrows serialize this runner, so these
+    // fields round-trip. Their defaults write no bytes, which keeps every
+    // earlier borrow's bytes and hash unchanged.
+    #[serde(
+        default = "printed_mage_names_v2",
+        skip_serializing_if = "is_printed_mage_names_v2"
+    )]
+    mage_names_v2: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    metamorph_mage_copies: Vec<mage_entry::MetamorphCopyV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    show_and_tell_entries: Vec<(
+        crate::state::AbilitySourceContractV4,
+        crate::event::ZoneChangeProposed,
+    )>,
+}
+
+/// New runners name printed faces unless an answer keeps the legacy list.
+fn printed_mage_names_v2() -> bool {
+    true
+}
+
+fn is_printed_mage_names_v2(names_v2: &bool) -> bool {
+    *names_v2
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,6 +248,8 @@ pub struct StateV1 {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_fake_aura_v50:
         Option<Box<crate::fake_your_own_death_v50::return_aura::CheckpointV50>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) pending_meddling_mage_v1: Option<Box<mage_entry::CheckpointV1>>,
     #[serde(skip)]
     runtime: Option<Box<RunnerV1>>,
 }
@@ -189,6 +260,7 @@ impl StateV1 {
             && self.pending_general_v36.is_none()
             && self.pending_token_attachment_v48.is_none()
             && self.pending_fake_aura_v50.is_none()
+            && self.pending_meddling_mage_v1.is_none()
     }
 }
 impl Hash for StateV1 {
@@ -223,6 +295,12 @@ impl Hash for StateV1 {
                 .expect("owned Kinship checkpoint serializes")
                 .hash(hasher);
         }
+        if let Some(pending) = &self.pending_meddling_mage_v1 {
+            "meddling-mage-entry/v1".hash(hasher);
+            serde_json::to_vec(pending)
+                .expect("owned Mage checkpoint serializes")
+                .hash(hasher);
+        }
     }
 }
 
@@ -236,6 +314,13 @@ pub(crate) fn clear_runtime_for_graveyard_checkpoint(state: &mut GameState) {
 
 /// Borrow the existing enclosing operation of a published entry checkpoint.
 pub(crate) fn pending_original_operation(state: &GameState) -> Option<(&GameState, &OperationV1)> {
+    if let Some(pending) = &state
+        .engine
+        .linked_aura_operation_v1
+        .pending_meddling_mage_v1
+    {
+        return Some((&pending.original, &pending.operation));
+    }
     if let Some(p) = &state.engine.linked_aura_operation_v1.pending_kinship_v1 {
         return Some((&p.original, &p.operation));
     }
@@ -456,6 +541,11 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
     replay.engine.linked_aura_operation_v1.runtime = Some(Box::new(RunnerV1 {
         kinship_start: None,
         kinship_plans: Vec::new(),
+        mage_start: None,
+        mage_plans: Vec::new(),
+        mage_names_v2: true,
+        metamorph_mage_copies: Vec::new(),
+        show_and_tell_entries: Vec::new(),
         original_stack: enclosing.original_stack.clone(),
         original_history_len: enclosing.original_history_len,
         batch_depth: 0,
@@ -487,6 +577,10 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
         || !runner.deferred_departures.is_empty()
         || runner.kinship_start.is_some()
         || !runner.kinship_plans.is_empty()
+        || runner.mage_start.is_some()
+        || !runner.mage_plans.is_empty()
+        || !runner.metamorph_mage_copies.is_empty()
+        || !runner.show_and_tell_entries.is_empty()
         || runner.banner_start.is_some()
         || !runner.color_plans.is_empty()
         || runner.attachment_input_v48.is_some()
@@ -554,7 +648,93 @@ pub fn has_pending(state: &GameState) -> bool {
         || has_banner_pending(state)
         || crate::season_token_attachment_v48::pending(state).is_some()
         || crate::fake_your_own_death_v50::return_aura::pending(state).is_some()
+        || state
+            .engine
+            .linked_aura_operation_v1
+            .pending_meddling_mage_v1
+            .is_some()
 }
+/// A closed-list world can replay this exact land play from its sampled
+/// pre-operation state. Other suspended operations still require their own
+/// sampling proof before their original worlds can be replaced.
+#[cfg(feature = "limited-fdn-fixtures")]
+pub(crate) struct CourtyardSampleV1<'a>(&'a crate::banner_of_kinship_v1::entry::CheckpointV1);
+
+#[cfg(feature = "limited-fdn-fixtures")]
+impl<'a> CourtyardSampleV1<'a> {
+    pub(crate) fn from_live(
+        state: &'a GameState,
+        actor: crate::ids::PlayerId,
+    ) -> Result<Option<Self>, String> {
+        if !has_pending(state) {
+            return Ok(None);
+        }
+        const REFUSAL: &str = "linked operation checkpoint requires sampled replay";
+        let pending = state
+            .engine
+            .linked_aura_operation_v1
+            .pending_kinship_v1
+            .as_deref()
+            .ok_or(REFUSAL)?;
+        let (
+            OperationV1::Step(Action::PlayLand(object)),
+            GeneralChoiceV36::KinshipV1 { choice, .. },
+        ) = (&pending.operation, &pending.choice)
+        else {
+            return Err(REFUSAL.into());
+        };
+        if !pending.answers.is_empty()
+            || pending.used_banner
+            || choice.controller != actor
+            || !crate::banner_of_kinship_v1::entry::owns_courtyard(choice.card_def)
+            || !matches!(&choice.proposal, ProposedEvent::ZoneChange(change)
+                if change.object == *object && change.to_zone == Zone::Battlefield)
+            || !pending
+                .original
+                .objects
+                .try_get(*object)
+                .is_some_and(|source| {
+                    source.zone == Zone::Hand
+                        && source.owner == actor
+                        && source.card_def == choice.card_def
+                })
+        {
+            return Err(REFUSAL.into());
+        }
+        validate(state)?;
+        Ok(Some(Self(pending)))
+    }
+
+    pub(crate) fn original(&self, live: &GameState) -> Result<&'a GameState, String> {
+        if !live
+            .engine
+            .linked_aura_operation_v1
+            .pending_kinship_v1
+            .as_deref()
+            .is_some_and(|pending| std::ptr::eq(pending, self.0))
+        {
+            return Err("sampled Courtyard checkpoint is not the live root".into());
+        }
+        Ok(self.0.original.as_ref())
+    }
+
+    pub(crate) fn replay(&self, sampled: &GameState) -> Result<GameState, String> {
+        let (next, _) = replay_general(sampled, &self.0.operation, &[], false)?;
+        let pending = next
+            .engine
+            .linked_aura_operation_v1
+            .pending_kinship_v1
+            .as_deref()
+            .ok_or("sampled Courtyard did not reach its native checkpoint")?;
+        if pending.choice != self.0.choice
+            || pending.operation_history_index != self.0.operation_history_index
+        {
+            return Err("sampled Courtyard checkpoint binding changed".into());
+        }
+        Ok(next)
+    }
+}
+
 pub(crate) fn has_banner_pending(state: &GameState) -> bool {
     state
         .engine
@@ -721,7 +901,13 @@ fn potential_operation(state: &GameState) -> bool {
     {
         return true;
     }
-    crate::effect::needs_electroduplicate_entry_owner_v1(state)
+    mage_entry::vial::waiting(state)
+        || crate::effect::needs_electroduplicate_entry_owner_v1(state)
+        || state.stack.last().is_some_and(|item| {
+            show_and_tell::printed(item) || mage_entry::reanimate_metamorph_waiting(state, item)
+        })
+        || ((!state.stack.is_empty() || state.engine.pending_effect.is_some())
+            && mage_entry::potentially_enters(state))
         || crate::drake_hatcher_v1::custody::relevant(state)
         || potentially_returns_aura(state)
         || crate::fake_your_own_death_v50::death_custody::has_unowned_roots(state)
@@ -739,6 +925,7 @@ fn operation_has_color_entry(state: &GameState, operation: &OperationV1) -> bool
         crate::heraldic_banner_v1::choice(state, event, 0).is_ok_and(|choice| choice.is_some())
             || crate::banner_of_kinship_v1::entry::choice(state, event, 0)
                 .is_ok_and(|choice| choice.is_some())
+            || mage_entry::choice(state, event, 0, true).is_some()
     };
     match operation {
         OperationV1::Event(event) | OperationV1::Commit(event) => selected(event),
@@ -824,7 +1011,7 @@ pub(crate) fn origin_digest_well_formed(digest: &str) -> bool {
 
 /// Whether `state` is the original world of a recorded digest, checked in
 /// the recorded digest's own version.
-fn origin_digest_matches(recorded: &str, state: &GameState) -> bool {
+pub(crate) fn origin_digest_matches(recorded: &str, state: &GameState) -> bool {
     if recorded.starts_with("v2:") {
         recorded == origin_digest_v2(state)
     } else {
@@ -895,7 +1082,7 @@ fn replay_general(
     answers: &[GeneralAnswerV36],
     used_banner: bool,
 ) -> Result<(GameState, Option<Decision>), String> {
-    replay_general_current_slots_v69(original, operation, answers, used_banner, None)
+    replay_general_current_slots_v69(original, operation, answers, used_banner, None, None)
 }
 fn replay_general_current_slots_v69(
     original: &GameState,
@@ -903,18 +1090,45 @@ fn replay_general_current_slots_v69(
     answers: &[GeneralAnswerV36],
     used_banner: bool,
     current_slots: Option<&genesis_current_slots_v69::InputV69>,
+    mage_names_v2: Option<bool>,
 ) -> Result<(GameState, Option<Decision>), String> {
+    replay_general_input_v1(
+        ReplayInputV1::Borrowed(original),
+        operation,
+        answers,
+        used_banner,
+        current_slots,
+        None,
+        mage_names_v2,
+    )
+}
+
+enum ReplayInputV1<'a> {
+    Borrowed(&'a GameState),
+    DrakeValidation(Box<GameState>),
+}
+
+fn replay_general_input_v1(
+    input: ReplayInputV1<'_>,
+    operation: &OperationV1,
+    answers: &[GeneralAnswerV36],
+    used_banner: bool,
+    current_slots: Option<&genesis_current_slots_v69::InputV69>,
+    restore_original: Option<&dyn Fn() -> Result<GameState, String>>,
+    mage_names_v2: Option<bool>,
+) -> Result<(GameState, Option<Decision>), String> {
+    let original: &GameState = match &input {
+        ReplayInputV1::Borrowed(original) => original,
+        ReplayInputV1::DrakeValidation(original) => original,
+    };
     if has_pending(original) || locally_owned(original) {
         return Err("entry operation cannot recursively own another public checkpoint".into());
     }
     crate::effect::validate_pending_effect_choice(original)?;
-    // Before any clone, so the staged world inherits the history's chain.
+    // Before staging, so the staged world inherits the history's chain.
     let origin = original_sha256(original);
-    let mut staged = match current_slots {
-        Some(input) => genesis_current_slots_v69::materialize(original, operation, input)?,
-        None => original.clone(),
-    };
-    staged.engine.linked_aura_operation_v1.runtime = Some(Box::new(RunnerV1 {
+    let returns_aura = potentially_returns_aura(original);
+    let runner = RunnerV1 {
         kinship_start: None,
         kinship_plans: Vec::new(),
         original_stack: original.stack.clone(),
@@ -937,8 +1151,38 @@ fn replay_general_current_slots_v69(
         )
         .then(|| Box::new(original.clone())),
         active_fake_aura_entry_v50: None,
-    }));
-    if potentially_returns_aura(original) {
+        mage_start: None,
+        mage_plans: Vec::new(),
+        metamorph_mage_copies: Vec::new(),
+        show_and_tell_entries: Vec::new(),
+        mage_names_v2: mage_names_v2
+            .or_else(|| {
+                answers.iter().find_map(|answer| match answer {
+                    GeneralAnswerV36::MeddlingMageV1 { choice, .. } => Some(choice.names_v2),
+                    _ => None,
+                })
+            })
+            .unwrap_or(true),
+    };
+    let (mut staged, original) = match input {
+        ReplayInputV1::Borrowed(original) => {
+            let staged = match current_slots {
+                Some(input) => genesis_current_slots_v69::materialize(original, operation, input)?,
+                None => original.clone(),
+            };
+            (staged, Some(original))
+        }
+        ReplayInputV1::DrakeValidation(original) => {
+            if current_slots.is_some()
+                || !crate::drake_hatcher_v1::custody::enclosing_replay_active_v1()
+            {
+                return Err("owned Drake replay requires its validation scope".into());
+            }
+            (*original, None)
+        }
+    };
+    staged.engine.linked_aura_operation_v1.runtime = Some(Box::new(runner));
+    if returns_aura {
         staged
             .engine
             .event_history
@@ -958,6 +1202,16 @@ fn replay_general_current_slots_v69(
         return Err("entry replay did not consume every confirmed answer".into());
     }
     if let Some((mut checkpoint, choice)) = runner.checkpoint {
+        // A suspended operation must retain its exact original world. Only
+        // this uncommon path reconstructs the owned validation input again;
+        // a completed Drake replay consumes its input without a second copy.
+        let restored = if original.is_none() {
+            let restore = restore_original.ok_or("owned Drake replay lost its original factory")?;
+            Some(restore()?)
+        } else {
+            None
+        };
+        let original = original.or(restored.as_ref()).expect("replay original");
         if current_slots.is_some()
             && (!runner.used_banner
                 || !matches!(choice, GeneralChoiceV36::Color { .. })
@@ -1007,6 +1261,35 @@ fn replay_general_current_slots_v69(
                     operation_history_index,
                     used_banner: runner.used_banner,
                 }));
+        } else if runner.mage_start.is_some()
+            || matches!(
+                choice,
+                GeneralChoiceV36::ReanimateMetamorphV1 { .. }
+                    | GeneralChoiceV36::VialMetamorphV1 { .. }
+                    | GeneralChoiceV36::ShowAndTellV1 { .. }
+            )
+        {
+            let confirmed_show_answers_sha256 = (!answers.is_empty()
+                && matches!(&choice, GeneralChoiceV36::ShowAndTellV1 { choice, .. } if choice.physical.is_none()))
+                .then(|| {
+                    let mut digest = Sha256::new();
+                    digest.update(b"mtg-kernel/show-and-tell-private-answers/v1");
+                    digest.update(runner.original_sha256.as_bytes());
+                    stream_json(&mut digest, &answers);
+                    hex(&digest.finalize())
+                });
+            checkpoint
+                .engine
+                .linked_aura_operation_v1
+                .pending_meddling_mage_v1 = Some(Box::new(mage_entry::CheckpointV1 {
+                original: Box::new(original.clone()),
+                operation: operation.clone(),
+                answers: answers.to_vec(),
+                confirmed_show_answers_sha256,
+                choice,
+                operation_history_index: runner.mage_start,
+                used_banner: runner.used_banner,
+            }));
         } else if runner.used_banner {
             checkpoint
                 .engine
@@ -1050,6 +1333,12 @@ fn replay_general_current_slots_v69(
         return Ok((*checkpoint, None));
     }
     let result = result?;
+    if runner.mage_plans.iter().any(|plan| !plan.committed) {
+        return Err("Meddling Mage operation ended before its actual entry".into());
+    }
+    if let Some(operation) = runner.mage_start {
+        mage_entry::record(&mut staged, mage_entry::JournalV1::Completed { operation });
+    }
     if let Some(operation) = runner.kinship_start {
         if runner.kinship_plans.is_empty()
             || runner.kinship_plans.iter().any(|p| p.committed.is_none())
@@ -1092,13 +1381,15 @@ fn replay_general_current_slots_v69(
             .event_history
             .push(CommittedEvent::BannerEntryOperationCompletedV1 { operation, entries });
     }
-    crate::drake_hatcher_v1::custody::enclose(
-        original,
-        operation,
-        answers,
-        runner.used_banner,
-        &mut staged,
-    )?;
+    if let Some(original) = original {
+        crate::drake_hatcher_v1::custody::enclose(
+            original,
+            operation,
+            answers,
+            runner.used_banner,
+            &mut staged,
+        )?;
+    }
     Ok((staged, result))
 }
 
@@ -1122,7 +1413,10 @@ fn record_answer(
     host: EffectObjectBinding,
     start: usize,
 ) -> Result<(), String> {
-    let returned = state.engine.event_history[start..]
+    let returned = state
+        .engine
+        .event_history
+        .range_v2(start..)
         .iter()
         .position(|event| {
             matches!(event,
@@ -1193,7 +1487,7 @@ fn choose(
                 .stack
                 .iter()
                 .any(|item| item.v4.stack_item_id == original.v4.stack_item_id);
-            let departed=snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|
+            let departed=snapshot.engine.event_history.range_v2(runner.original_history_len..).iter().any(|event|
                 matches!(event,CommittedEvent::ZoneChange {object,from:crate::state::Zone::Stack,..} if *object==original.source));
             if absent && !departed {
                 snapshot.stack.insert(
@@ -1334,9 +1628,76 @@ pub fn validate(state: &GameState) -> Result<(), String> {
                 .is_some(),
         )
         + usize::from(crate::season_token_attachment_v48::pending(state).is_some())
-        + usize::from(crate::fake_your_own_death_v50::return_aura::pending(state).is_some());
+        + usize::from(crate::fake_your_own_death_v50::return_aura::pending(state).is_some())
+        + usize::from(
+            state
+                .engine
+                .linked_aura_operation_v1
+                .pending_meddling_mage_v1
+                .is_some(),
+        );
     if owners > 1 || (owners != 0 && locally_owned(state)) {
         return Err("entry checkpoint has multiple or synchronous owners".into());
+    }
+    if let Some(pending) = &state
+        .engine
+        .linked_aura_operation_v1
+        .pending_meddling_mage_v1
+    {
+        let names_v2 = if let GeneralChoiceV36::ReanimateMetamorphV1 {
+            original_sha256, ..
+        }
+        | GeneralChoiceV36::VialMetamorphV1 {
+            original_sha256, ..
+        }
+        | GeneralChoiceV36::ShowAndTellV1 {
+            original_sha256, ..
+        } = &pending.choice
+        {
+            if pending.operation_history_index.is_some()
+                || !origin_digest_matches(original_sha256, &pending.original)
+            {
+                return Err("Metamorph copy checkpoint changed its original operation".into());
+            }
+            true
+        } else {
+            let started = pending
+                .operation_history_index
+                .and_then(|at| mage_entry::journal(state, at));
+            let names_v2 = matches!(
+                started,
+                Some(mage_entry::JournalV1::StartedWithNamesV2 { .. })
+            );
+            match started {
+                Some(
+                    mage_entry::JournalV1::Started {
+                        operation,
+                        original_sha256,
+                    }
+                    | mage_entry::JournalV1::StartedWithNamesV2 {
+                        operation,
+                        original_sha256,
+                    },
+                ) if **operation == pending.operation
+                    && origin_digest_matches(original_sha256, &pending.original) => {}
+                _ => return Err("Meddling Mage checkpoint lost its original operation".into()),
+            }
+            names_v2
+        };
+        return as_recorded(|| {
+            let (expected, _) = replay_general_current_slots_v69(
+                &pending.original,
+                &pending.operation,
+                &pending.answers,
+                pending.used_banner,
+                None,
+                Some(names_v2),
+            )?;
+            if expected != *state {
+                return Err("Meddling Mage checkpoint, entrant or original choice changed".into());
+            }
+            Ok(())
+        });
     }
     if let Some(p) = &state.engine.linked_aura_operation_v1.pending_kinship_v1 {
         if !matches!(crate::banner_of_kinship_v1::entry::journal(state,p.operation_history_index),Some(crate::banner_of_kinship_v1::entry::JournalV1::Started{operation,original_sha256:digest}) if **operation==p.operation && origin_digest_matches(digest, &p.original))
@@ -1443,6 +1804,7 @@ pub fn validate(state: &GameState) -> Result<(), String> {
                 &pending.answers,
                 true,
                 pending.genesis_current_slots_v69.as_ref(),
+                None,
             )?;
             if expected != *state || !has_banner_pending(&expected) {
                 return Err("Banner checkpoint/original operation changed".into());
@@ -1474,6 +1836,13 @@ pub fn validate(state: &GameState) -> Result<(), String> {
 }
 fn decision(state: &GameState) -> Result<Decision, String> {
     validate(state)?;
+    if let Some(pending) = &state
+        .engine
+        .linked_aura_operation_v1
+        .pending_meddling_mage_v1
+    {
+        return equipment_decision_v48(&pending.choice);
+    }
     if let Some(p) = &state.engine.linked_aura_operation_v1.pending_kinship_v1 {
         return equipment_decision_v48(&p.choice);
     }
@@ -1507,7 +1876,11 @@ fn decision(state: &GameState) -> Result<Decision, String> {
         return Ok(match &pending.choice {
             GeneralChoiceV36::TokenEquipmentV48 { .. }
             | GeneralChoiceV36::FakeAuraV50 { .. }
-            | GeneralChoiceV36::KinshipV1 { .. } => {
+            | GeneralChoiceV36::KinshipV1 { .. }
+            | GeneralChoiceV36::MeddlingMageV1 { .. }
+            | GeneralChoiceV36::ReanimateMetamorphV1 { .. }
+            | GeneralChoiceV36::VialMetamorphV1 { .. }
+            | GeneralChoiceV36::ShowAndTellV1 { .. } => {
                 return Err("successor choice cannot use frozen Banner checkpoint".into())
             }
             GeneralChoiceV36::Color { choice, .. } => Decision::ChooseEntryColorV36 {
@@ -1554,6 +1927,25 @@ fn decision(state: &GameState) -> Result<Decision, String> {
 }
 pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> {
     crate::event::validate_copied_token_abilities_v1(state)?;
+    mage_entry::validate_retained(state)?;
+    if let Some(pending) = &state
+        .engine
+        .linked_aura_operation_v1
+        .pending_meddling_mage_v1
+    {
+        validate(state)?;
+        let answer = answer_equipment_checkpoint_v48(&pending.choice, action)?;
+        let mut answers = pending.answers.clone();
+        answers.push(answer);
+        let (next, _) = replay_general(
+            &pending.original,
+            &pending.operation,
+            &answers,
+            pending.used_banner,
+        )?;
+        *state = next;
+        return Ok(());
+    }
     if let Some(p) = &state.engine.linked_aura_operation_v1.pending_kinship_v1 {
         validate(state)?;
         let answer = answer_equipment_checkpoint_v48(&p.choice, action)?;
@@ -1632,6 +2024,7 @@ pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> 
             &answers,
             true,
             pending.genesis_current_slots_v69.as_ref(),
+            None,
         )?;
         *state = next;
         return Ok(());
@@ -1667,7 +2060,9 @@ pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> 
     Ok(())
 }
 pub(crate) fn advance(state: &mut GameState) -> Decision {
-    if crate::event::validate_copied_token_abilities_v1(state).is_err() {
+    if crate::event::validate_copied_token_abilities_v1(state).is_err()
+        || mage_entry::validate_retained(state).is_err()
+    {
         return Decision::Halted {
             mechanic: crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             source: crate::ids::ObjectId(0),
@@ -1721,6 +2116,7 @@ pub(crate) fn needs_event_owner(state: &GameState) -> bool {
                 .any(|(id, _)| {
                     crate::heraldic_banner_v1::owns_definition(id as u16)
                         || crate::banner_of_kinship_v1::entry::owns_entry_definition(id as u16)
+                        || mage_entry::owns_definition(id as u16)
                 }))
 }
 
@@ -1924,7 +2320,7 @@ fn answer_color_plan(state: &mut GameState, index: usize) -> Result<bool, String
                 .stack
                 .iter()
                 .any(|i| i.v4.stack_item_id == original.v4.stack_item_id);
-            let departed = snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|
+            let departed = snapshot.engine.event_history.range_v2(runner.original_history_len..).iter().any(|event|
                 matches!(event, CommittedEvent::ZoneChange { object, from: crate::state::Zone::Stack, .. } if *object == original.source));
             if absent && !departed {
                 snapshot.stack.insert(
@@ -1956,8 +2352,546 @@ fn answer_color_plan(state: &mut GameState, index: usize) -> Result<bool, String
     Ok(true)
 }
 
-/// Capture the complete simultaneous roster before asking any owner. Choices
-/// from both Banner families share APNAP ordering; no entry commits mid-menu.
+fn capture_mage_plans(
+    state: &mut GameState,
+    events: &[ProposedEvent],
+) -> Result<Vec<usize>, String> {
+    let names_v2 = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .is_none_or(|runner| runner.mage_names_v2);
+    let mut plans = Vec::new();
+    for (ordinal, event) in events.iter().enumerate() {
+        let ordinal = u32::try_from(ordinal).map_err(|_| "entry ordinal overflow")?;
+        if let Some(choice) = mage_entry::choice(state, event, ordinal, names_v2) {
+            plans.push(MagePlanV1 {
+                choice,
+                named: None,
+                committed: false,
+            });
+        }
+    }
+    if plans.is_empty() {
+        return Ok(Vec::new());
+    }
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .ok_or("Meddling Mage entry lost its actual operation owner")?;
+    let start = if runner.mage_start.is_none() && plans.iter().any(|plan| !plan.choice.suppressed) {
+        let at = u32::try_from(state.engine.event_history.len())
+            .map_err(|_| "Meddling Mage operation index overflow")?;
+        runner.mage_start = Some(at);
+        let operation = Box::new(runner.operation.clone());
+        let original_sha256 = runner.original_sha256.clone();
+        Some(if names_v2 {
+            mage_entry::JournalV1::StartedWithNamesV2 {
+                operation,
+                original_sha256,
+            }
+        } else {
+            mage_entry::JournalV1::Started {
+                operation,
+                original_sha256,
+            }
+        })
+    } else {
+        None
+    };
+    let first = runner.mage_plans.len();
+    runner.mage_plans.extend(plans);
+    let range = first..runner.mage_plans.len();
+    if let Some(start) = start {
+        mage_entry::record(state, start);
+    }
+    Ok(range.collect())
+}
+
+pub(crate) fn stage_metamorph_mage_copy(
+    state: &mut GameState,
+    copy: mage_entry::MetamorphCopyV1,
+) -> Result<(), String> {
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .ok_or("Metamorph copy has no native entry replay owner")?;
+    if runner
+        .metamorph_mage_copies
+        .iter()
+        .any(|owned| owned.physical.source == copy.physical.source)
+    {
+        return Err("Metamorph copy already owns a prospective entry".into());
+    }
+    runner.metamorph_mage_copies.push(copy);
+    Ok(())
+}
+
+pub(crate) fn metamorph_mage_copy(
+    state: &GameState,
+    object: crate::ids::ObjectId,
+) -> Option<mage_entry::MetamorphCopyV1> {
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()?
+        .metamorph_mage_copies
+        .iter()
+        .copied()
+        .find(|copy| {
+            copy.physical.source == object
+                && copy.physical == crate::state::AbilitySourceContractV4::capture(state, object)
+        })
+}
+
+fn mage_checkpoint_world(state: &GameState, runner: &RunnerV1) -> GameState {
+    let mut snapshot = state.clone();
+    if let Some(original) = runner.original_stack.last() {
+        let absent = !snapshot
+            .stack
+            .iter()
+            .any(|item| item.v4.stack_item_id == original.v4.stack_item_id);
+        let departed = snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|
+            matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Stack, .. } if *object == original.source));
+        if absent && !departed {
+            snapshot.stack.insert(
+                runner
+                    .original_stack
+                    .len()
+                    .saturating_sub(1)
+                    .min(snapshot.stack.len()),
+                original.clone(),
+            );
+        }
+    }
+    snapshot.engine.linked_aura_operation_v1 = StateV1::default();
+    snapshot
+}
+
+pub(crate) fn resolve_show_and_tell(
+    state: &mut GameState,
+    pending: &crate::effect::EffectContinuation,
+) -> Result<bool, String> {
+    use crate::state::AbilitySourceContractV4;
+
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("Show and Tell has no native resolution owner")?;
+    if !matches!(
+        runner.operation,
+        OperationV1::Advance | OperationV1::Step(_)
+    ) {
+        return Err("Show and Tell requires an actual resolution operation".into());
+    }
+    let original = runner
+        .original_stack
+        .last()
+        .ok_or("Show and Tell lost its original stack row")?;
+    let (producer, cast_at) = show_and_tell::capture_paid(state, pending, original)?;
+    let item = pending.resolving_item.v4.stack_item_id;
+    let mut entrants = Vec::new();
+    for player in [state.active_player, state.active_player.opponent()] {
+        let candidates = crate::eternal_cards_v1::e3::show_and_tell_cards(state, player)
+            .iter()
+            .map(|binding| AbilitySourceContractV4::capture(state, binding.object))
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            continue;
+        }
+        let Some(answer) = show_and_tell_answer(
+            state,
+            show_and_tell::ChoiceV1 {
+                producer,
+                player,
+                physical: None,
+                candidates,
+            },
+        )?
+        else {
+            return Ok(true);
+        };
+        entrants.extend(answer);
+    }
+    for entrant in &entrants {
+        // spellbench-public-reveal: reveal selected cards only after both hand answers.
+        state.reveal_hand_card(entrant.owner.opponent(), entrant.owner, entrant.source)?;
+    }
+    let mut proposals = Vec::new();
+    for physical in entrants {
+        let copy = if mage_entry::vial::is_physical_metamorph_in_hand(state, physical.source) {
+            if let Some(choice) = show_and_tell::copy_choice(state, producer, physical)? {
+                let Some(answer) = show_and_tell_answer(state, choice)? else {
+                    return Ok(true);
+                };
+                answer.map(|copied| {
+                    show_and_tell::prospective_copy(
+                        state, producer, cast_at, item, physical, copied,
+                    )
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(copy) = copy {
+            stage_metamorph_mage_copy(state, copy)?;
+        }
+        let ProposedEvent::ZoneChange(mut proposal) =
+            ProposedEvent::zone_change(physical.source, Zone::Battlefield)
+        else {
+            unreachable!("Show and Tell moves selected hand cards");
+        };
+        crate::eternal_sideboard_s1a_v1::statics::replace_zone_change(state, &mut proposal);
+        if let Some(copy) = copy.filter(|_| proposal.to_zone == Zone::Battlefield) {
+            mage_entry::record(
+                state,
+                mage_entry::JournalV1::ShowAndTellMetamorphChosen { copy },
+            );
+        }
+        proposals.push((physical, proposal));
+    }
+    if !proposals.is_empty() {
+        let events = proposals
+            .iter()
+            .map(|(_, proposal)| ProposedEvent::ZoneChange(proposal.clone()))
+            .collect();
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .show_and_tell_entries = proposals;
+        crate::event::propose_and_commit_batch(state, events);
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .show_and_tell_entries
+            .clear();
+    }
+    Ok(entry_checkpoint_in_flight_v1(state))
+}
+
+/// A Priest in the same batch cannot change the destination already
+/// determined from the common pre-entry battlefield.
+pub(crate) fn show_and_tell_entry_prepared(
+    state: &GameState,
+    change: &crate::event::ZoneChangeProposed,
+) -> bool {
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .is_some_and(|runner| {
+            runner
+                .show_and_tell_entries
+                .iter()
+                .any(|(physical, prepared)| {
+                    prepared == change
+                        && *physical
+                            == crate::state::AbilitySourceContractV4::capture(state, change.object)
+                })
+        })
+}
+
+fn show_and_tell_answer(
+    state: &mut GameState,
+    choice: show_and_tell::ChoiceV1,
+) -> Result<Option<Option<crate::state::AbilitySourceContractV4>>, String> {
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("Show and Tell answer lost its native owner")?;
+    if let Some(answer) = runner.answers.get(runner.cursor) {
+        let GeneralAnswerV36::ShowAndTellV1 {
+            choice: captured,
+            selected,
+        } = answer
+        else {
+            return Err("Show and Tell replay changed its answer kind".into());
+        };
+        if **captured != choice
+            || selected.is_some_and(|source| !choice.candidates.contains(&source))
+        {
+            return Err("Show and Tell replay changed its actual answer".into());
+        }
+        let selected = *selected;
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .cursor += 1;
+        return Ok(Some(selected));
+    }
+    let snapshot = mage_checkpoint_world(state, runner);
+    let original_sha256 = runner.original_sha256.clone();
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .checkpoint = Some((
+        Box::new(snapshot),
+        GeneralChoiceV36::ShowAndTellV1 {
+            choice: Box::new(choice),
+            original_sha256,
+        },
+    ));
+    Ok(None)
+}
+
+pub(crate) fn prepare_reanimated_metamorph(
+    state: &mut GameState,
+    ctx: &crate::effect::ExecCtx,
+    object: crate::ids::ObjectId,
+) -> Result<bool, String> {
+    if !mage_entry::physical_graveyard_metamorph(state, object) || ctx.stack_item_id.is_none() {
+        return Ok(true);
+    }
+    let ProposedEvent::ZoneChange(proposal) =
+        ProposedEvent::zone_change_to_battlefield_under_controller(object, ctx.controller)
+    else {
+        unreachable!("Reanimate proposes a zone change");
+    };
+    if crate::eternal_legacy_e7a_v1::prevents_zone_change(state, &proposal) {
+        return Ok(true);
+    }
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("noncast Metamorph has no actual Reanimate replay owner")?;
+    if !matches!(
+        runner.operation,
+        OperationV1::Advance | OperationV1::Step(_)
+    ) || state
+        .stack
+        .iter()
+        .any(|row| Some(row.v4.stack_item_id) == ctx.stack_item_id)
+    {
+        return Err("noncast Metamorph requires the actual resolving Reanimate".into());
+    }
+    let parent = runner
+        .original_stack
+        .last()
+        .ok_or("noncast Metamorph lost its original Reanimate stack row")?;
+    let Some(choice) = mage_entry::NoncastCopyChoiceV1::capture(state, ctx, object, parent)? else {
+        return Ok(true);
+    };
+    prepare_noncast_metamorph(state, choice, false)
+}
+
+pub(crate) fn prepare_vial_metamorph(
+    state: &mut GameState,
+    pending: &crate::effect::EffectContinuation,
+    paid_at: usize,
+    object: crate::ids::ObjectId,
+) -> Result<bool, String> {
+    if !mage_entry::vial::is_physical_metamorph_in_hand(state, object) {
+        return Ok(true);
+    }
+    let Some(choice) = mage_entry::vial::capture(state, pending, paid_at, object)? else {
+        return Ok(true);
+    };
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("Vial Metamorph has no native hand-answer owner")?;
+    // The hand answer advances through a native answered-choice frame.
+    if !matches!(&runner.operation, OperationV1::Advance) {
+        return Err("Vial Metamorph lost its actual private hand answer".into());
+    }
+    prepare_noncast_metamorph(state, choice, true)
+}
+
+fn prepare_noncast_metamorph(
+    state: &mut GameState,
+    choice: mage_entry::NoncastCopyChoiceV1,
+    vial: bool,
+) -> Result<bool, String> {
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("noncast Metamorph has no entry owner")?;
+    if let Some(answer) = runner.answers.get(runner.cursor) {
+        let (expected, copied) = match (vial, answer) {
+            (false, GeneralAnswerV36::ReanimateMetamorphV1 { choice, copied })
+            | (true, GeneralAnswerV36::VialMetamorphV1 { choice, copied }) => (choice, copied),
+            _ => return Err("Metamorph replay changed its confirmed copy choice kind".into()),
+        };
+        if **expected != choice || copied.is_some_and(|source| !choice.candidates.contains(&source))
+        {
+            return Err("Metamorph replay changed its confirmed copy candidate".into());
+        }
+        let copy = copied.map(|copied| choice.copy(copied));
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .cursor += 1;
+        if let Some(copy) = copy {
+            if vial {
+                mage_entry::vial::record_hand_answer(state, copy)?;
+            }
+            stage_metamorph_mage_copy(state, copy)?;
+        }
+        return Ok(true);
+    }
+    let snapshot = mage_checkpoint_world(state, runner);
+    let original_sha256 = runner.original_sha256.clone();
+    let choice = Box::new(choice);
+    let checkpoint = if vial {
+        GeneralChoiceV36::VialMetamorphV1 {
+            choice,
+            original_sha256,
+        }
+    } else {
+        GeneralChoiceV36::ReanimateMetamorphV1 {
+            choice,
+            original_sha256,
+        }
+    };
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .checkpoint = Some((Box::new(snapshot), checkpoint));
+    Ok(false)
+}
+
+fn mage_answer(
+    state: &mut GameState,
+    choice: &mage_entry::ChoiceV1,
+    group: Option<u16>,
+) -> Result<Option<u16>, String> {
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("Meddling Mage answer lost its actual operation owner")?;
+    if let Some(answer) = runner.answers.get(runner.cursor) {
+        let GeneralAnswerV36::MeddlingMageV1 {
+            choice: captured,
+            group: prior_group,
+            index,
+        } = answer
+        else {
+            return Err("Meddling Mage replay changed its confirmed choice kind".into());
+        };
+        if captured.as_ref() != choice
+            || *prior_group != group
+            || !mage_entry::valid_index(choice, group, *index)
+        {
+            return Err("Meddling Mage replay changed its confirmed name choice".into());
+        }
+        let index = *index;
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .cursor += 1;
+        return Ok(Some(index));
+    }
+    let snapshot = mage_checkpoint_world(state, runner);
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .checkpoint = Some((
+        Box::new(snapshot),
+        GeneralChoiceV36::MeddlingMageV1 {
+            choice: Box::new(choice.clone()),
+            group,
+        },
+    ));
+    Ok(None)
+}
+
+fn answer_mage_plan(state: &mut GameState, index: usize) -> Result<bool, String> {
+    let choice = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .unwrap()
+        .mage_plans[index]
+        .choice
+        .clone();
+    if choice.suppressed {
+        return Ok(true);
+    }
+    let Some(group) = mage_answer(state, &choice, None)? else {
+        return Ok(false);
+    };
+    let Some(name_index) = mage_answer(state, &choice, Some(group))? else {
+        return Ok(false);
+    };
+    let named =
+        mage_entry::name(&choice, group, name_index).ok_or("Meddling Mage name index absent")?;
+    let operation = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .and_then(|runner| runner.mage_start)
+        .ok_or("Meddling Mage choice operation absent")?;
+    let chosen = u32::try_from(state.engine.event_history.len())
+        .map_err(|_| "Meddling Mage choice index overflow")?;
+    mage_entry::record(
+        state,
+        mage_entry::JournalV1::Chosen {
+            operation,
+            choice: Box::new(choice),
+            group,
+            index: name_index,
+        },
+    );
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .mage_plans[index]
+        .named = Some((chosen, named));
+    Ok(true)
+}
+
+/// Capture the complete simultaneous roster before asking any owner.
+/// All choices share APNAP ordering and no entry commits mid-menu.
 pub(crate) fn prepare_entry_colors(
     state: &mut GameState,
     events: &[ProposedEvent],
@@ -1973,6 +2907,11 @@ pub(crate) fn prepare_entry_colors(
                 || r.kinship_plans.iter().any(|p| {
                     p.committed.is_none() && p.chosen.is_some() && p.choice.proposal == *event
                 })
+                || r.mage_plans.iter().any(|p| {
+                    !p.committed
+                        && (p.choice.suppressed || p.named.is_some())
+                        && p.choice.proposal == *event
+                })
             {
                 return Ok(true);
             }
@@ -1980,7 +2919,8 @@ pub(crate) fn prepare_entry_colors(
     }
     let colors = capture_color_plans(state, events)?;
     let kinship = capture_kinship_plans(state, events)?;
-    if colors.is_empty() && kinship.is_empty() {
+    let mages = capture_mage_plans(state, events)?;
+    if colors.is_empty() && kinship.is_empty() && mages.is_empty() {
         return Ok(true);
     }
     let r = state
@@ -1998,7 +2938,7 @@ pub(crate) fn prepare_entry_colors(
                 order.push((
                     r.color_plans[index].choice.controller != state.active_player,
                     ordinal,
-                    false,
+                    0,
                     index,
                 ));
                 color_cursor += 1;
@@ -2010,28 +2950,88 @@ pub(crate) fn prepare_entry_colors(
                 order.push((
                     r.kinship_plans[index].choice.controller != state.active_player,
                     ordinal,
-                    true,
+                    1,
                     index,
                 ));
                 kinship_cursor += 1;
+                continue;
             }
         }
+    }
+    for index in mages {
+        let choice = &r.mage_plans[index].choice;
+        order.push((
+            choice.controller != state.active_player,
+            choice.ordinal as usize,
+            2,
+            index,
+        ));
     }
     if color_cursor != colors.len() || kinship_cursor != kinship.len() {
         return Err("entry roster lost original proposal ordering".into());
     }
     order.sort_unstable();
-    for (_, _, is_kinship, index) in order {
-        let complete = if is_kinship {
-            answer_kinship_plan(state, index)?
-        } else {
-            answer_color_plan(state, index)?
+    for (_, _, kind, index) in order {
+        let complete = match kind {
+            0 => answer_color_plan(state, index)?,
+            1 => answer_kinship_plan(state, index)?,
+            _ => answer_mage_plan(state, index)?,
         };
         if !complete {
             return Ok(false);
         }
     }
     Ok(true)
+}
+
+pub(crate) fn commit_mage_entry(
+    state: &mut GameState,
+    proposal: &ProposedEvent,
+    object: crate::ids::ObjectId,
+    entry: usize,
+) -> Result<(), String> {
+    let live = state.objects.get(object);
+    if !mage_entry::owns_definition(live.card_def)
+        || live.v4.face_down_v1.is_some()
+        || live.v4.face_index != 0
+    {
+        return Ok(());
+    }
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("Meddling Mage entry has no genuine replay owner")?;
+    let index = runner
+        .mage_plans
+        .iter()
+        .position(|p| !p.committed && p.choice.proposal == *proposal)
+        .ok_or("Meddling Mage committed before capturing its actual entry")?;
+    let plan = runner.mage_plans[index].clone();
+    if !plan.choice.suppressed {
+        let (chosen, named) = plan.named.ok_or("Meddling Mage entry was not named")?;
+        mage_entry::commit(
+            state,
+            &plan.choice,
+            runner
+                .mage_start
+                .ok_or("Meddling Mage operation marker absent")?,
+            chosen,
+            entry,
+            object,
+            named,
+        )?;
+    }
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .mage_plans[index]
+        .committed = true;
+    Ok(())
 }
 
 fn capture_kinship_plans(
@@ -2178,7 +3178,7 @@ fn answer_kinship_plan(state: &mut GameState, index: usize) -> Result<bool, Stri
                 .stack
                 .iter()
                 .any(|i| i.v4.stack_item_id == original.v4.stack_item_id);
-            let departed=snapshot.engine.event_history[r.original_history_len..].iter().any(|e|matches!(e,CommittedEvent::ZoneChange{object,from:Zone::Stack,..}if *object==original.source));
+            let departed=snapshot.engine.event_history.range_v2(r.original_history_len..).iter().any(|e|matches!(e,CommittedEvent::ZoneChange{object,from:Zone::Stack,..}if *object==original.source));
             if absent && !departed {
                 snapshot.stack.insert(
                     r.original_stack
@@ -2397,6 +3397,34 @@ pub(crate) fn commit_entry_color(
 
 fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String> {
     match choice {
+        GeneralChoiceV36::MeddlingMageV1 { choice, group } => mage_entry::decision(choice, *group),
+        GeneralChoiceV36::ShowAndTellV1 { choice, .. } => Ok(Decision::ChooseEffectTargets {
+            player: choice.player,
+            source: choice.physical.unwrap_or(choice.producer).source,
+            selected_count: 0,
+            min_targets: 0,
+            max_targets: 1,
+            can_finish: true,
+            legal_targets: choice
+                .candidates
+                .iter()
+                .map(|source| Target::Object(source.source))
+                .collect(),
+        }),
+        GeneralChoiceV36::ReanimateMetamorphV1 { choice, .. }
+        | GeneralChoiceV36::VialMetamorphV1 { choice, .. } => Ok(Decision::ChooseEffectTargets {
+            player: choice.producer.controller,
+            source: choice.decision_source(),
+            selected_count: 0,
+            min_targets: 0,
+            max_targets: 1,
+            can_finish: true,
+            legal_targets: choice
+                .candidates
+                .iter()
+                .map(|source| Target::Object(source.source))
+                .collect(),
+        }),
         GeneralChoiceV36::KinshipV1 { choice, .. } => Ok(Decision::ChooseEntryCreatureTypeV1 {
             player: choice.controller,
             entry_ordinal: choice.ordinal,
@@ -2453,6 +3481,63 @@ fn answer_equipment_checkpoint_v48(
     action: Action,
 ) -> Result<GeneralAnswerV36, String> {
     match (choice, action) {
+        (GeneralChoiceV36::ShowAndTellV1 { choice, .. }, action) => {
+            let selected = match action {
+                Action::FinishEffectSelection => None,
+                Action::ChooseEffectTarget(Target::Object(object)) => Some(
+                    choice
+                        .candidates
+                        .iter()
+                        .find(|source| source.source == object)
+                        .copied()
+                        .ok_or("Show and Tell answer is outside its actual menu")?,
+                ),
+                _ => return Err("Show and Tell needs its actual choice answer".into()),
+            };
+            Ok(GeneralAnswerV36::ShowAndTellV1 {
+                choice: choice.clone(),
+                selected,
+            })
+        }
+        (
+            GeneralChoiceV36::ReanimateMetamorphV1 { choice: copy, .. }
+            | GeneralChoiceV36::VialMetamorphV1 { choice: copy, .. },
+            action,
+        ) => {
+            let copied = match action {
+                Action::FinishEffectSelection => None,
+                Action::ChooseEffectTarget(Target::Object(object)) => Some(
+                    copy.candidates
+                        .iter()
+                        .find(|source| source.source == object)
+                        .copied()
+                        .ok_or("Metamorph copy answer is outside its original menu")?,
+                ),
+                _ => return Err("Metamorph copy needs a native choice answer".into()),
+            };
+            Ok(
+                if matches!(choice, GeneralChoiceV36::VialMetamorphV1 { .. }) {
+                    GeneralAnswerV36::VialMetamorphV1 {
+                        choice: copy.clone(),
+                        copied,
+                    }
+                } else {
+                    GeneralAnswerV36::ReanimateMetamorphV1 {
+                        choice: copy.clone(),
+                        copied,
+                    }
+                },
+            )
+        }
+        (GeneralChoiceV36::MeddlingMageV1 { choice, group }, Action::ChooseEffectOption(index))
+            if mage_entry::valid_index(choice, *group, index) =>
+        {
+            Ok(GeneralAnswerV36::MeddlingMageV1 {
+                choice: choice.clone(),
+                group: *group,
+                index,
+            })
+        }
         (GeneralChoiceV36::KinshipV1 { choice, .. }, Action::ChooseEffectOption(index)) => {
             Ok(GeneralAnswerV36::KinshipV1 {
                 choice: choice.clone(),
@@ -2572,7 +3657,7 @@ pub(crate) fn choose_created_token_v48(
                     .stack
                     .iter()
                     .any(|row| row.v4.stack_item_id == original.v4.stack_item_id);
-                let departed = snapshot.engine.event_history[runner.original_history_len..].iter().any(|event|matches!(event,CommittedEvent::ZoneChange {object,from:Zone::Stack,..} if *object==original.source));
+                let departed = snapshot.engine.event_history.range_v2(runner.original_history_len..).iter().any(|event|matches!(event,CommittedEvent::ZoneChange {object,from:Zone::Stack,..} if *object==original.source));
                 if absent && !departed {
                     snapshot.stack.insert(
                         runner
@@ -2758,6 +3843,11 @@ pub(crate) fn run_drake_operation_v1(
     *state = next;
     Ok(())
 }
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
 pub(crate) fn replay_drake_enclosing_v1(
     original: &GameState,
     operation: &OperationV1,
@@ -2765,6 +3855,64 @@ pub(crate) fn replay_drake_enclosing_v1(
     used_banner: bool,
 ) -> Result<GameState, String> {
     replay_general(original, operation, answers, used_banner).map(|(world, _)| world)
+}
+
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+thread_local! {
+    static BORROWED_DRAKE_REPLAY_FOR_TEST: std::cell::Cell<bool> = const {
+        std::cell::Cell::new(false)
+    };
+}
+
+/// Run an entire recorded game with the former staging path, including
+/// reentrant validation, for receipt and timing comparisons in one binary.
+#[cfg(all(
+    test,
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+pub(crate) fn with_borrowed_drake_replays_for_test<T>(run: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            BORROWED_DRAKE_REPLAY_FOR_TEST.with(|mode| mode.set(self.0));
+        }
+    }
+    let _restore = Restore(BORROWED_DRAKE_REPLAY_FOR_TEST.with(|mode| mode.replace(true)));
+    run()
+}
+
+/// Consume the restored input of a custody validation. The original is
+/// reconstructed only if the operation must retain a suspended checkpoint.
+pub(crate) fn replay_drake_enclosing_owned_v1(
+    original: GameState,
+    operation: &OperationV1,
+    answers: &[GeneralAnswerV36],
+    used_banner: bool,
+    restore_original: &dyn Fn() -> Result<GameState, String>,
+) -> Result<GameState, String> {
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    if BORROWED_DRAKE_REPLAY_FOR_TEST.with(std::cell::Cell::get) {
+        return replay_drake_enclosing_v1(&original, operation, answers, used_banner);
+    }
+    replay_general_input_v1(
+        ReplayInputV1::DrakeValidation(Box::new(original)),
+        operation,
+        answers,
+        used_banner,
+        None,
+        Some(restore_original),
+        None,
+    )
+    .map(|(world, _)| world)
 }
 
 /// Deliberately invalid saved-output mutation for the Drake memoization test.
@@ -2780,6 +3928,9 @@ pub(crate) fn tamper_drake_saved_output_runtime_for_test(state: &mut GameState) 
     let runner = RunnerV1 {
         kinship_start: None,
         kinship_plans: Vec::new(),
+        mage_start: None,
+        mage_plans: Vec::new(),
+        mage_names_v2: true,
         original_stack: state.stack.clone(),
         original_history_len: state.engine.event_history.len(),
         batch_depth: 0,
@@ -2796,9 +3947,72 @@ pub(crate) fn tamper_drake_saved_output_runtime_for_test(state: &mut GameState) 
         attachment_input_v48: None,
         original_world_v50: None,
         active_fake_aura_entry_v50: None,
+        metamorph_mage_copies: Vec::new(),
+        show_and_tell_entries: Vec::new(),
     };
     state.engine.linked_aura_operation_v1.runtime = Some(Box::new(runner));
 }
 
 mod genesis_current_slots_v69;
 pub(crate) use genesis_current_slots_v69::sample_genesis_checkpoint_v69;
+
+#[cfg(test)]
+mod runner_serde_tests {
+    use super::*;
+
+    fn runner(mage_names_v2: bool) -> RunnerV1 {
+        RunnerV1 {
+            kinship_start: None,
+            kinship_plans: Vec::new(),
+            original_stack: Vec::new(),
+            original_history_len: 0,
+            batch_depth: 0,
+            deferred_departures: Vec::new(),
+            answers: Vec::new(),
+            cursor: 0,
+            checkpoint: None,
+            operation: OperationV1::Advance,
+            original_sha256: String::new(),
+            banner_start: None,
+            color_plans: Vec::new(),
+            used_banner: false,
+            original_world_v48: None,
+            attachment_input_v48: None,
+            original_world_v50: None,
+            active_fake_aura_entry_v50: None,
+            mage_start: None,
+            mage_plans: Vec::new(),
+            mage_names_v2,
+            metamorph_mage_copies: Vec::new(),
+            show_and_tell_entries: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn replay_borrow_runner_keeps_mage_name_profile_and_default_bytes() {
+        for mage_names_v2 in [true, false] {
+            let borrow = EndTurnReplayBorrowV1 {
+                runner: Some(Box::new(runner(mage_names_v2))),
+            };
+            let bytes = serde_json::to_string(&borrow).unwrap();
+            for key in [
+                "mage_names_v2",
+                "metamorph_mage_copies",
+                "show_and_tell_entries",
+            ] {
+                assert_eq!(
+                    bytes.contains(key),
+                    key == "mage_names_v2" && !mage_names_v2
+                );
+            }
+            let restored: EndTurnReplayBorrowV1 = serde_json::from_str(&bytes).unwrap();
+            assert_eq!(restored, borrow);
+            let panda = PandaReplayBorrowV1 {
+                runner: borrow.runner,
+            };
+            let restored: PandaReplayBorrowV1 =
+                serde_json::from_slice(&serde_json::to_vec(&panda).unwrap()).unwrap();
+            assert_eq!(restored, panda);
+        }
+    }
+}

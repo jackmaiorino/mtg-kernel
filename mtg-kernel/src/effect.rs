@@ -21,6 +21,8 @@ pub(crate) mod greatwurm_v1;
 pub(crate) mod harvester_v1;
 pub(crate) mod kykar_v1;
 pub(crate) mod loot_v1;
+#[cfg(feature = "limited-fdn-fixtures")]
+pub(crate) mod revealed_discard_sampling_v1;
 pub(crate) mod source_token_copy_v1;
 pub(crate) mod sphinx_lore_v1;
 mod standard_ward;
@@ -64,7 +66,7 @@ mod nonland_sacrifice_payment_v1 {
             .collect()
     }
 
-    fn remaining(root: &EffectOp, path: &[u16]) -> Result<Vec<EffectFrame>, String> {
+    pub(super) fn remaining(root: &EffectOp, path: &[u16]) -> Result<Vec<EffectFrame>, String> {
         let mut op = root;
         let mut prefix = Vec::new();
         let mut frames = Vec::new();
@@ -666,7 +668,7 @@ pub(crate) mod perforating_artist_v1 {
         feature = "limited-fdn-fixtures",
         not(feature = "standard-magezero-fixtures")
     ))]
-    mod tests {
+    pub(crate) mod tests {
         include!("effect/perforating_artist_v1_tests.rs");
     }
 }
@@ -931,7 +933,7 @@ pub(crate) mod nonland_copy_v1;
 mod standard_discard;
 use standard_discard::DiscardDrawChoice;
 mod scavenging_ooze_v1;
-mod standard_exile;
+pub(crate) mod standard_exile;
 pub(crate) mod temporary_control_v1;
 use standard_exile::{ExileBatchChoice, ExilePlayChoice, HideawayChoice};
 
@@ -993,6 +995,7 @@ pub use inspiration_resolution_v1::{
     InspirationDepartureV1, InspirationInputKindV1, InspirationInputV1, InspirationOperationV1,
     InspirationResolutionReceiptV1,
 };
+pub(crate) use standard_selection_v1::metamorph_copy_candidates;
 pub use standard_selection_v1::{
     ObjectSelectionActionV1, ObjectSelectionFilterV1, ObjectSelectionRuleV1,
 };
@@ -1056,6 +1059,9 @@ pub enum CreatureSacrificeFilter {
     Token,
     Nontoken,
     PermanentType(CardType),
+    /// A permanent with any of these colors, as a mask (Dystopia: "a green
+    /// or white permanent"). Appended for the eternal catalog's wave P3b.
+    PermanentColorsV1(u8),
 }
 
 /// Typed predicate for a private library search. The first consumer is
@@ -1363,6 +1369,10 @@ pub enum EffectCond {
     ControllerAttackedThisTurn,
     /// Intervening recheck using the captured original controller.
     OpponentLostLifeThisTurn,
+    /// It is the resolving ability's controller's turn: "that player" of a
+    /// trigger at the beginning of each upkeep is its controller on their
+    /// own turn and the opponent otherwise (Dystopia).
+    ControllersTurnV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -7903,7 +7913,7 @@ fn validate_counter_target_unless_pays_frame(
     Ok(())
 }
 
-fn validated_definition_owned_root_effect(
+pub(crate) fn validated_definition_owned_root_effect(
     state: &GameState,
     pending: &EffectContinuation,
 ) -> Result<Box<EffectOp>, String> {
@@ -8067,6 +8077,101 @@ pub(crate) fn effect_op_at_structural_path<'a>(
         }
         _ => None,
     }
+}
+
+pub(crate) fn jace_draw_replacement_origin(
+    state: &GameState,
+    pending: &EffectContinuation,
+    drawer: PlayerId,
+    path: &[u16],
+    remaining: &[EffectFrame],
+) -> bool {
+    if state.eternal_owned_draw_progress_v1.is_some() {
+        return crate::eternal_cards_v1::owned_draws_v1::draw_stage_matches(
+            state, pending, drawer, path, remaining,
+        );
+    }
+    let root = match pending.resolving_item.inline_effect.as_ref() {
+        Some(EffectOp::ResolveMonarchTrigger { binding }) => {
+            return path.is_empty()
+                && remaining.is_empty()
+                && drawer == binding.player
+                && validate_monarch_trigger_binding(state, *binding).is_ok();
+        }
+        Some(op) if *op == crate::eternal_cards_v1::delayed_upkeep_draw() => {
+            // The ordinary stack provenance check authenticates the exact
+            // Bauble trigger before an answer can use this single draw.
+            return path.is_empty() && remaining.is_empty() && drawer == pending.ctx.controller;
+        }
+        Some(op) if *op == crate::eternal_vintage_v1::coveted_jewel_changes_hands() => {
+            return drawer == pending.ctx.controller.opponent()
+                && crate::eternal_vintage_v1::coveted_jewel_draw_stage_matches(
+                    state,
+                    &pending.ctx,
+                    path,
+                    remaining,
+                );
+        }
+        Some(EffectOp::NivMizzetVisionaryDrawV1 {
+            damage_history_index,
+        }) => {
+            return path.is_empty()
+                && drawer == pending.ctx.controller
+                && event::resolve_niv_mizzet_visionary_draw_count_v1(
+                    state,
+                    &pending.ctx,
+                    *damage_history_index,
+                )
+                .is_ok_and(|count| {
+                    count > 0
+                        && draw_remainder_matches(
+                            remaining,
+                            &[],
+                            path,
+                            PlayerRef::Controller,
+                            count as u32,
+                        )
+                });
+        }
+        _ => match validated_definition_owned_root_effect(state, pending) {
+            Ok(root) => root,
+            Err(_) => return false,
+        },
+    };
+    if *root == crate::eternal_vintage_v1::paradoxical_outcome() {
+        return drawer == pending.ctx.controller
+            && crate::eternal_vintage_v1::paradoxical_outcome_v1::draw_stage_matches(
+                state, pending, path, remaining,
+            );
+    }
+    let Some(EffectOp::DrawCards { player, count }) =
+        path.iter().try_fold(root.as_ref(), |op, ordinal| match op {
+            EffectOp::Sequence(steps) => steps.get(usize::from(*ordinal)),
+            _ => None,
+        })
+    else {
+        return false;
+    };
+    if *count == 0 || pending.ctx.resolve_player(*player, state) != drawer {
+        return false;
+    }
+    nonland_sacrifice_payment_v1::remaining(&root, path)
+        .is_ok_and(|siblings| draw_remainder_matches(remaining, &siblings, path, *player, *count))
+}
+
+fn draw_remainder_matches(
+    remaining: &[EffectFrame],
+    siblings: &[EffectFrame],
+    path: &[u16],
+    player: PlayerRef,
+    total: u32,
+) -> bool {
+    remaining == siblings
+        || matches!(
+            remaining.split_last(),
+            Some((EffectFrame::Program { op: EffectOp::DrawCards { player: found, count }, path: tail_path }, prefix))
+                if *found == player && *count > 0 && *count < total && tail_path.as_slice() == path && prefix == siblings
+        )
 }
 
 fn validate_exile_chosen_graveyard_frame(
@@ -8790,6 +8895,44 @@ fn revealed_discard_excludes_creatures(
     }
 }
 
+/// Exact names shown together in the current reveal-and-discard operation.
+/// This disclosure lasts only while the chooser owns the native prompt.
+pub(crate) fn revealed_discard_names_v1(
+    state: &GameState,
+    viewer: PlayerId,
+) -> Result<Option<(PlayerId, Vec<u16>)>, String> {
+    if state.reveal_knowledge_v4.is_none() {
+        return Ok(None);
+    }
+    let Some(PendingEffectChoice::SelectTargets {
+        player,
+        purpose:
+            EffectTargetSelectionPurpose::DuressDiscard {
+                player: owner,
+                original_hand,
+                ..
+            },
+        ..
+    }) = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .and_then(|pending| pending.choice.as_ref())
+    else {
+        return Ok(None);
+    };
+    if *player != viewer || *owner != viewer.opponent() {
+        return Ok(None);
+    }
+    validate_pending_effect_choice(state)?;
+    let mut names = original_hand
+        .iter()
+        .map(|binding| state.objects.get(binding.object).card_def)
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    Ok(Some((*owner, names)))
+}
+
 fn validate_begin_search_library_to_battlefield_frame(
     state: &GameState,
     pending: &EffectContinuation,
@@ -8831,12 +8974,31 @@ pub(crate) fn validate_initiative_trigger_binding(
     let definition = crate::card_def::CARD_DEFS
         .get(binding.source.card_def as usize)
         .ok_or("Initiative trigger source definition is missing")?;
+    let initiative_granter = crate::eternal_vintage_v1::initiative_granter(definition.name);
+    let native_room = matches!(
+        binding.kind,
+        InitiativeTriggerKindV1::UndercityRoomBoundV1 { .. }
+    );
+    let allowed = if native_room {
+        (initiative_granter || definition.name == crate::eternal_cards_v1::e3::dungeons::ACERERAK)
+            && crate::eternal_cards_v1::e3::dungeons::occurrences::bound_undercity_entry(
+                state, binding,
+            )
+            .is_some()
+    } else {
+        initiative_granter
+    };
+    let source_definition_matches = if native_room {
+        crate::engine::source_card_def_matches(state, binding.source, source.card_def)
+    } else {
+        source.card_def == binding.source.card_def
+    };
     if binding.source.controller != binding.player
         || binding.source.zone != Zone::Battlefield
         || binding.source.attached_to.is_some()
-        || !crate::eternal_vintage_v1::initiative_granter(definition.name)
+        || !allowed
         || !definition.is_executable()
-        || source.card_def != binding.source.card_def
+        || !source_definition_matches
         || source.owner != binding.source.owner
         || source.zone_change_count < binding.source.zone_change_count
         || (source.zone_change_count == binding.source.zone_change_count
@@ -8890,10 +9052,15 @@ pub(crate) fn validate_monarch_trigger_binding(
     Ok(())
 }
 
-/// Draws one card for the monarch trigger's binding player -- 306.3's "the
-/// monarch draws a card." Synchronous: unlike the Initiative Undercity route,
-/// this trigger never needs a player choice, so it resolves through ordinary
-/// `execute` rather than the resumable interpreter.
+fn controls_definition(state: &GameState, player: PlayerId, card_def: u16) -> bool {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .any(|&id| state.objects.get(id).card_def == card_def)
+}
+
+/// Draws one card for the monarch trigger's binding player (726.2). The
+/// resumable interpreter owns this draw when that player has a dredge choice.
 fn resolve_monarch_trigger(
     state: &mut GameState,
     binding: MonarchTriggerBindingV1,
@@ -8903,7 +9070,7 @@ fn resolve_monarch_trigger(
     Ok(())
 }
 
-fn validate_initiative_continuation_root(
+pub(crate) fn validate_initiative_continuation_root(
     state: &GameState,
     pending: &EffectContinuation,
     binding: InitiativeTriggerBindingV1,
@@ -8921,7 +9088,7 @@ fn validate_initiative_continuation_root(
     Ok(())
 }
 
-fn undercity_next_rooms(
+pub(crate) fn undercity_next_rooms(
     state: &GameState,
     player: PlayerId,
 ) -> Result<(Option<UndercityRoomV1>, Vec<UndercityRoomV1>), String> {
@@ -9007,8 +9174,7 @@ fn validate_undercity_throne_metadata(
     chosen: Option<EffectObjectBinding>,
 ) -> Result<(), String> {
     validate_initiative_continuation_root(state, pending, binding)?;
-    if binding.kind != InitiativeTriggerKindV1::UndercityRoom(UndercityRoomV1::ThroneOfTheDeadThree)
-    {
+    if binding.kind.undercity_room() != Some(UndercityRoomV1::ThroneOfTheDeadThree) {
         return Err("Throne continuation is not owned by the Throne room".to_string());
     }
     let current = bind_library_exact(state, binding.player);
@@ -9098,30 +9264,12 @@ fn enter_undercity_room(
     if from_room != expected_from || !legal_rooms.contains(&room) {
         return Err("Undercity entry no longer follows the exact room graph".to_string());
     }
-    let dungeon = &mut state.players[binding.player.index()].dungeon;
-    if room == UndercityRoomV1::ThroneOfTheDeadThree {
-        match dungeon
-            .completed_dungeons
-            .binary_search(&crate::state::UNDERCITY_DUNGEON_ID_V1)
-        {
-            Ok(_) => {}
-            Err(index) => dungeon
-                .completed_dungeons
-                .insert(index, crate::state::UNDERCITY_DUNGEON_ID_V1),
-        }
-        dungeon.dungeon_id = None;
-        dungeon.room_id = None;
-    } else {
-        dungeon.dungeon_id = Some(crate::state::UNDERCITY_DUNGEON_ID_V1);
-        dungeon.room_id = Some(room.stable_id());
-    }
-    event::log_initiative_trigger(
+    crate::eternal_cards_v1::e3::dungeons::occurrences::enter_undercity(
         state,
         binding.player,
         binding.source,
-        InitiativeTriggerKindV1::UndercityRoom(room),
-    )?;
-    Ok(())
+        room,
+    )
 }
 
 fn until_players_next_turn_expiry(state: &GameState, player: PlayerId) -> Result<u32, String> {
@@ -9230,13 +9378,19 @@ fn take_initiative(
 }
 
 fn stage_undercity_venture(
-    state: &GameState,
+    state: &mut GameState,
     continuation: &mut EffectContinuation,
     binding: InitiativeTriggerBindingV1,
     path: Vec<u16>,
 ) -> Result<bool, String> {
     if !path.is_empty() || !continuation.frames.is_empty() {
         return Err("venture trigger is not a root-only effect".to_string());
+    }
+    use crate::eternal_cards_v1::e3::dungeons;
+    dungeons::occurrences::complete_bottommost(state, binding.player);
+    if cfg!(feature = "eternal-fixtures") && dungeons::in_forgotten_realms(state, binding.player) {
+        dungeons::venture(state, continuation, path)?;
+        return Ok(false);
     }
     let (from_room, legal_rooms) = undercity_next_rooms(state, binding.player)?;
     match legal_rooms.as_slice() {
@@ -9415,6 +9569,19 @@ fn validate_answered_choice_guard(
                     Some(EffectAnsweredChoiceGuard::AttachReturningAura { .. })
                 ) {
                     return Err("bound Aura attachment has no answered choice guard".to_string());
+                }
+            } else if let EffectOp::StandardV1(crate::standard_cards_v1::StandardOpV1::EternalV1(
+                crate::eternal_cards_v1::EternalOpV1::OwnedDrawCompletedV1 { ordinal },
+            )) = op
+            {
+                // This continuation belongs to a committed draw attempt and can
+                // sit below either an open prompt or its authenticated answer.
+                if !cfg!(feature = "eternal-fixtures")
+                    || !crate::eternal_cards_v1::owned_draws_v1::completion_matches(
+                        state, pending, *ordinal, path,
+                    )
+                {
+                    return Err("bound Eternal draw completion lost its native attempt".into());
                 }
             } else if matches!(op, EffectOp::StandardV1(inner) if inner.is_bound_continuation()) {
                 if !matches!(
@@ -10359,7 +10526,7 @@ fn validate_aberration_ward_continuation_v1(
         _ => Err("Aberration Ward lost its exact native payment stage".into()),
     }
 }
-fn aberration_item_v1(item: &StackItem) -> bool {
+pub(crate) fn aberration_item_v1(item: &StackItem) -> bool {
     aberration_family_item_v1(item)
         && item.inline_effect
             == Some(EffectOp::RevealUntilCardTypeAndMill {
@@ -10475,6 +10642,7 @@ fn validate_aberration_continuation_v1(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
     kaito_cunning_v75::validate_state(state)?;
     kaito_cunning_v75::validate_pending(state)?;
     chandra_flameshaper_v1::validate_state(state)?;
@@ -10571,6 +10739,15 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     crystal_prevention_v1::validate(state)?;
     inspiration_resolution_v1::validate(state)?;
     let Some(pending) = state.engine.pending_effect.as_ref() else {
+        if state.coveted_jewel_draw_progress_v1.is_some() {
+            return Err("Coveted Jewel draw progress lost its continuation".into());
+        }
+        if state.paradoxical_outcome_draw_progress_v1.is_some() {
+            return Err("Paradoxical Outcome draw progress lost its continuation".into());
+        }
+        if state.eternal_owned_draw_progress_v1.is_some() {
+            return Err("Eternal draw progress lost its continuation".into());
+        }
         return Ok(());
     };
     if matches!(
@@ -10620,6 +10797,30 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
     }
     crate::engine::validated_stack_item_target_spec(&pending.resolving_item, state)
         .map_err(|error| format!("effect continuation has invalid stack provenance: {error}"))?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1d_v1::validate_circle_choice(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::dungeons::occurrences::validate_resolving(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::e3::dungeons::validate_initiative_venture_choice(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1a_v1::surgical::validate_continuation(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_e7b_v1::dredge::validate_jace_or_hullbreacher(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_e7b_v1::dredge::validate_bauble_draw(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_e7b_v1::dredge::validate_coveted_jewel_draw(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_vintage_v1::paradoxical_outcome_v1::validate(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cards_v1::owned_draws_v1::validate(state, pending)?;
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(EffectOp::ResolveMonarchTrigger { binding }) =
+        pending.resolving_item.inline_effect.as_ref()
+    {
+        crate::eternal_vintage_e7b_v1::dredge::validate_monarch_draw(state, pending, *binding)?;
+    }
     thousand_year_storm_v1::validate_continuation(state, pending)?;
     blasphemous_edict_v1::validate(state, pending)?;
     liliana_dreadhorde_v1::validate_continuation(state, pending)?;
@@ -11038,17 +11239,18 @@ pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
                     }
                 }
                 EffectTargetSelectionPurpose::CopyTarget { choice } => {
-                    standard_copy::validate(state, pending, choice)?;
+                    let view = standard_copy::staging_view(state, pending)?;
+                    standard_copy::validate(&view, pending, choice)?;
                     let mut all = selected.clone();
                     all.extend(legal.iter().cloned());
-                    let expected = standard_copy::candidates(state, pending, choice)?;
+                    let expected = standard_copy::candidates(&view, pending, choice)?;
                     if all.len() != expected.len()
                         || !all.iter().all(|x| expected.contains(x))
                         || *chooser != pending.ctx.controller
                         || *path != choice.path
                         || *ordered
                         || *min_targets
-                            != u16::from(!standard_copy::can_keep(state, pending, choice)?)
+                            != u16::from(!standard_copy::can_keep(&view, pending, choice)?)
                         || *max_targets != 1
                     {
                         return Err("copy target candidates changed".into());
@@ -12743,7 +12945,10 @@ pub(crate) fn resumable_program_supported(op: &EffectOp) -> bool {
 
 /// Regeneration (wave E7b): the objects of a destroy that regenerate
 /// instead are left out of it.
-fn without_regenerated_v1(state: &mut GameState, objects: Vec<ObjectId>) -> Vec<ObjectId> {
+pub(crate) fn without_regenerated_v1(
+    state: &mut GameState,
+    objects: Vec<ObjectId>,
+) -> Vec<ObjectId> {
     if !cfg!(feature = "eternal-fixtures") {
         return objects;
     }
@@ -12815,6 +13020,12 @@ pub(crate) fn validate_resolution_play_authorization(
     permission: crate::engine::resolution_cast_v1::ResolutionPermissionV1,
 ) -> Result<(), String> {
     if let EffectFrame::EternalSelectionV1 { choice, selected } = answer {
+        crate::eternal_cards_v1::owned_draws_v1::rooms::validate_child(
+            state,
+            suspended,
+            choice,
+            permission.card,
+        )?;
         return crate::eternal_cards_v1::e3::dungeons::validate_resolution_cast(
             suspended, choice, selected, permission,
         );
@@ -12867,7 +13078,13 @@ pub(crate) fn validate_resolution_play_authorization(
 }
 
 fn drive_resumable(state: &mut GameState) -> Result<ResumableProgress, String> {
-    inspiration_resolution_v1::drive(state)
+    let result = inspiration_resolution_v1::drive(state);
+    if result.is_err() || state.engine.halted.is_some() {
+        state.coveted_jewel_draw_progress_v1 = None;
+        state.paradoxical_outcome_draw_progress_v1 = None;
+        state.eternal_owned_draw_progress_v1 = None;
+    }
+    result
 }
 
 fn drive_resumable_inner(state: &mut GameState) -> Result<ResumableProgress, String> {
@@ -12904,7 +13121,22 @@ fn drive_with_native_row_v1(
     result
 }
 
+/// Drives the pending continuation in the departure scope of the spell or
+/// ability it resolves (Premodern wave P3d's Karmic Justice and Sacred
+/// Ground).
 fn drive_resumable_inner_with_native_row_v1(
+    state: &mut GameState,
+    supplied_owner: Option<&NativeExecutionOwnerV1>,
+) -> Result<ResumableProgress, String> {
+    #[cfg(feature = "eternal-fixtures")]
+    let enclosing = crate::eternal_premodern_p3d_v1::enter_pending_resolution(state);
+    let result = drive_resumable_in_departure_scope_v1(state, supplied_owner);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_premodern_p3d_v1::leave_resolution(state, enclosing);
+    result
+}
+
+fn drive_resumable_in_departure_scope_v1(
     state: &mut GameState,
     supplied_owner: Option<&NativeExecutionOwnerV1>,
 ) -> Result<ResumableProgress, String> {
@@ -12983,6 +13215,17 @@ fn drive_resumable_inner_with_native_row_v1(
         let EffectFrame::Program { op, path } = frame else {
             match frame {
                 EffectFrame::EternalSelectionV1 { choice, selected } => {
+                    if matches!(
+                        &choice.kind,
+                        crate::eternal_cards_v1::e3::E3ChoiceKindV1::MadWizardV1 { .. }
+                    ) {
+                        crate::eternal_cards_v1::owned_draws_v1::rooms::record_answer(
+                            state,
+                            &continuation,
+                            &choice,
+                            &selected,
+                        )?;
+                    }
                     // Mad Wizard's Lair: a chosen card is cast during this
                     // resolution (608.2g).
                     if let Some(card) = crate::eternal_cards_v1::e3::dungeons::resolution_cast_card(
@@ -13069,7 +13312,7 @@ fn drive_resumable_inner_with_native_row_v1(
                     discard_payment_v1::finish(state, &mut continuation, &choice, &selected)?;
                 }
                 EffectFrame::DiscardDraw { choice, selected } => {
-                    standard_discard::finish(state, &continuation, &choice, &selected)?
+                    standard_discard::finish(state, &mut continuation, &choice, &selected)?
                 }
                 EffectFrame::ExileBatchSelect { choice, selected } => {
                     standard_exile::finish_batch_selection(
@@ -14296,13 +14539,16 @@ fn drive_resumable_inner_with_native_row_v1(
                                 .map_err(|error| error.to_string())?;
                         }
                         LibrarySearchDestinationV1::Battlefield { tapped } => {
+                            let fiend_owner = (state.fiend_artisan_receipts_v1
+                                && fiend_artisan_v1::selected(state, &continuation.resolving_item))
+                            .then_some(continuation.resolving_item.v4.stack_item_id);
                             for &binding in &selected {
                                 validate_effect_object_binding(state, binding)?;
                             }
                             let events = selected
                                 .iter()
                                 .map(|binding| {
-                                    if tapped {
+                                    let proposal = if tapped {
                                         event::ProposedEvent::zone_change_to_battlefield_tapped(
                                             binding.object,
                                         )
@@ -14311,7 +14557,11 @@ fn drive_resumable_inner_with_native_row_v1(
                                             binding.object,
                                             Zone::Battlefield,
                                         )
-                                    }
+                                    };
+                                    crate::fiend_artisan_receipts_v1::owned_move(
+                                        proposal,
+                                        fiend_owner,
+                                    )
                                 })
                                 .collect();
                             event::propose_and_commit_batch(state, events);
@@ -14957,7 +15207,20 @@ fn drive_resumable_inner_with_native_row_v1(
                     return Err("discard choice changed".to_string());
                 }
                 continuation.answered_choice_guard = None;
-                crate::standard_cards_v1::discard_chosen_then_draw(state, player, &cards);
+                let count = crate::standard_cards_v1::discard_chosen(state, player, &cards);
+                if count != 0 {
+                    continuation.frames.push(EffectFrame::Program {
+                        op: EffectOp::DrawCards {
+                            player: if player == continuation.ctx.controller {
+                                PlayerRef::Controller
+                            } else {
+                                PlayerRef::Opponent
+                            },
+                            count,
+                        },
+                        path,
+                    });
+                }
             }
             EffectOp::StandardV1(
                 crate::standard_cards_v1::StandardOpV1::PutCreatureOrPlaneswalkerFromEachGraveyard,
@@ -15451,7 +15714,8 @@ fn drive_resumable_inner_with_native_row_v1(
                             return Ok(ResumableProgress::Suspended);
                         }
                     }
-                    InitiativeTriggerKindV1::UndercityRoom(room) => {
+                    InitiativeTriggerKindV1::UndercityRoom(room)
+                    | InitiativeTriggerKindV1::UndercityRoomBoundV1 { room, .. } => {
                         if !path.is_empty() || !continuation.frames.is_empty() {
                             return Err(
                                 "Undercity room ability is not a root-only effect".to_string()
@@ -16232,6 +16496,12 @@ fn drive_resumable_inner_with_native_row_v1(
                 }
             }
             EffectOp::SelectObjectsV1 { rule } => {
+                if matches!(rule.action, ObjectSelectionActionV1::EnterAsCopyV1)
+                    && crate::eternal_vintage_v1::paid_metamorph_copy_is_suppressed(state, &continuation.ctx)
+                {
+                    // The remaining frame enters Metamorph with its own 0/0 characteristics.
+                    continue;
+                }
                 standard_selection_v1::begin(state, &mut continuation, rule, path)?;
                 state.engine.pending_effect = Some(continuation);
                 return Ok(ResumableProgress::Suspended);
@@ -16932,14 +17202,77 @@ fn drive_resumable_inner_with_native_row_v1(
                 }
             }
             // Dredge (wave E7b): each card drawn may be dredged instead.
+            EffectOp::ResolveMonarchTrigger { binding }
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
+                        state,
+                        &continuation,
+                        PlayerRef::Controller,
+                    ) =>
+            {
+                validate_monarch_trigger_binding(state, binding)?;
+                if crate::eternal_vintage_e7b_v1::dredge::drive_draws(
+                    state,
+                    &mut continuation,
+                    PlayerRef::Controller,
+                    1,
+                    path,
+                )? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::NivMizzetVisionaryDrawV1 { damage_history_index }
+                if cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
+                        state,
+                        &continuation,
+                        PlayerRef::Controller,
+                    ) =>
+            {
+                let count = event::resolve_niv_mizzet_visionary_draw_count_v1(
+                    state,
+                    &continuation.ctx,
+                    damage_history_index,
+                )?;
+                continuation.frames.push(EffectFrame::Program {
+                    op: EffectOp::DrawCards {
+                        player: PlayerRef::Controller,
+                        count: u32::try_from(count.max(0)).unwrap_or(0),
+                    },
+                    path,
+                });
+            }
+            EffectOp::EachPlayerControllingDefinitionDrawsCard { card_def }
+                if cfg!(feature = "eternal-fixtures") =>
+            {
+                crate::eternal_cards_v1::owned_draws_v1::bonder::begin(
+                    state, &mut continuation, card_def, &path,
+                )?;
+            }
             EffectOp::DrawCards { player, count }
                 if cfg!(feature = "eternal-fixtures")
-                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_dredge(
+                    && (crate::eternal_cards_v1::owned_draws_v1::draw_stage_matches(
+                        state,
+                        &continuation,
+                        continuation.ctx.resolve_player(player, state),
+                        &path,
+                        &continuation.frames,
+                    ) || crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
                         state,
                         &continuation,
                         player,
-                    ) =>
+                    )) =>
             {
+                if crate::eternal_cards_v1::owned_draws_v1::fixed::begin(
+                    state,
+                    &mut continuation,
+                    player,
+                    count,
+                    &path,
+                )? {
+                    continue;
+                }
                 if crate::eternal_vintage_e7b_v1::dredge::drive_draws(
                     state,
                     &mut continuation,
@@ -16953,7 +17286,7 @@ fn drive_resumable_inner_with_native_row_v1(
             }
             EffectOp::DrawCardsDynamic { player, count }
                 if cfg!(feature = "eternal-fixtures")
-                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_dredge(
+                    && crate::eternal_vintage_e7b_v1::dredge::draw_may_need_choice(
                         state,
                         &continuation,
                         player,
@@ -18430,6 +18763,8 @@ pub(crate) fn battlefield_exile_until_source_leaves(card_def: u16) -> bool {
             | "Portable Hole"
             | "Leyline Binding"
             | "Static Prison"
+            | "Temporary Lockdown"
+            | "Perilous Snare"
     )
 }
 
@@ -18727,6 +19062,9 @@ fn creature_sacrifice_bindings(
         let matches = match filter {
             CreatureSacrificeFilter::PermanentType(card_type) => {
                 crate::engine::object_has_type(state, object_id, card_type)
+            }
+            CreatureSacrificeFilter::PermanentColorsV1(mask) => {
+                crate::engine::object_color_mask(state, object_id) & mask != 0
             }
             _ => {
                 crate::engine::object_has_type(state, object_id, CardType::Creature)
@@ -20097,7 +20435,22 @@ pub(crate) fn execute_without_linked_aura_v1(op: &EffectOp, ctx: &ExecCtx, state
     execute_with_native_row_v1(op, ctx, state, None);
 }
 
+/// Runs `op` in the departure scope of the spell or ability `ctx` resolves
+/// (Premodern wave P3d's Karmic Justice and Sacred Ground).
 fn execute_with_native_row_v1(
+    op: &EffectOp,
+    ctx: &ExecCtx,
+    state: &mut GameState,
+    native_proof: Option<&NativeExecutionProofV1<'_>>,
+) {
+    #[cfg(feature = "eternal-fixtures")]
+    let enclosing = crate::eternal_premodern_p3d_v1::enter_resolution(state, ctx);
+    execute_in_departure_scope_v1(op, ctx, state, native_proof);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_premodern_p3d_v1::leave_resolution(state, enclosing);
+}
+
+fn execute_in_departure_scope_v1(
     op: &EffectOp,
     ctx: &ExecCtx,
     state: &mut GameState,
@@ -20519,6 +20872,50 @@ fn execute_with_native_row_v1(
             }
             let target = ctx.resolve_target(*target);
             let mut proposal = event::damage_from_exec_ctx_v1(ctx, target, *amount);
+            if let Some(proof) = native_proof.filter(|proof| proof.ctx == ctx) {
+                let origin = if crate::source_power_activation_v1::bombardment::selected(
+                    state,
+                    &proof.owner.item,
+                ) {
+                    match crate::source_power_activation_v1::bombardment::departed_source(
+                        state,
+                        &proof.owner.item,
+                    ) {
+                        Ok(facts) => facts.map(|facts| {
+                            EternalDamageLkiV1(EternalDamageOriginV1::Historical(facts))
+                        }),
+                        Err(_) => {
+                            state.engine.halted = Some((
+                                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                                ctx.source,
+                            ));
+                            return;
+                        }
+                    }
+                } else {
+                    None
+                };
+                if let event::ProposedEvent::Damage(damage) = &mut proposal {
+                    damage.eternal_damage_lki_v1 = origin.or_else(|| {
+                        crate::fixed_source_damage_v3::waiting_bombardment_source(state, ctx.source)
+                            .then_some(EternalDamageLkiV1(EternalDamageOriginV1::Live(ctx.source)))
+                    });
+                }
+            }
+            match crate::fixed_source_damage_v3::native_fanatic_damage(state, ctx, op) {
+                Ok(id) => {
+                    if let event::ProposedEvent::Damage(damage) = &mut proposal {
+                        damage.historical_source = id;
+                    }
+                }
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ctx.source,
+                    ));
+                    return;
+                }
+            }
             if let Some(origin) = ctx.niv_damage_origin_v1 {
                 if !crate::event::niv_damage_origin_matches_context_v1(
                     origin,
@@ -20871,7 +21268,14 @@ fn execute_with_native_row_v1(
         }
         EffectOp::GainLife { player, amount } => {
             let player = ctx.resolve_player(*player, state);
-            event::propose_and_commit(state, event::ProposedEvent::life_gain(player, *amount));
+            let owner = crate::lathril_receipts_v1::life_owner(state, ctx);
+            event::propose_and_commit(
+                state,
+                crate::lathril_receipts_v1::owned_proposal(
+                    event::ProposedEvent::life_gain(player, *amount),
+                    owner,
+                ),
+            );
         }
         EffectOp::GainLifeDynamic { player, amount } => {
             let player = ctx.resolve_player(*player, state);
@@ -20905,7 +21309,10 @@ fn execute_with_native_row_v1(
                 state,
                 event::ProposedEvent::life_loss(opponent, i32::from(ctx.x_value)),
             );
-            let lost = state.engine.event_history[start..]
+            let lost = state
+                .engine
+                .event_history
+                .range_v2(start..)
                 .iter()
                 .filter_map(|event| match event {
                     event::CommittedEvent::LifeLoss { player, amount } if *player == opponent => {
@@ -20918,20 +21325,23 @@ fn execute_with_native_row_v1(
         }
         EffectOp::LoseLife { player, amount } => {
             let player = ctx.resolve_player(*player, state);
-            event::propose_and_commit(state, event::ProposedEvent::life_loss(player, *amount));
+            let owner = crate::lathril_receipts_v1::life_owner(state, ctx);
+            event::propose_and_commit(
+                state,
+                crate::lathril_receipts_v1::owned_proposal(
+                    event::ProposedEvent::life_loss(player, *amount),
+                    owner,
+                ),
+            );
         }
         EffectOp::DrawCards { player, count } => {
             let player = ctx.resolve_player(*player, state);
-            for _ in 0..*count {
-                event::propose_and_commit(state, event::ProposedEvent::draw(player));
-            }
+            event::draw_instruction(state, player, *count);
         }
         EffectOp::DrawCardsDynamic { player, count } => {
             let player = ctx.resolve_player(*player, state);
             let count = crate::engine::evaluate_dynamic_value(state, *count, ctx.controller);
-            for _ in 0..count.max(0) {
-                event::propose_and_commit(state, event::ProposedEvent::draw(player));
-            }
+            event::draw_instruction(state, player, count.max(0) as u32);
         }
         EffectOp::BindLathrilCombatTokensV1 | EffectOp::LathrilCombatTokensV1 { .. } => {
             state.engine.halted = Some((
@@ -20945,38 +21355,17 @@ fn execute_with_native_row_v1(
                 ctx.source,
             ));
         }
-        EffectOp::NivMizzetVisionaryDrawV1 {
-            damage_history_index,
-        } => {
-            let count = match event::resolve_niv_mizzet_visionary_draw_count_v1(
-                state,
-                ctx,
-                *damage_history_index,
-            ) {
-                Ok(count) => count,
-                Err(_) => {
-                    state.engine.halted = Some((
-                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                        ctx.source,
-                    ));
-                    return;
-                }
-            };
-            for _ in 0..count.max(0) {
-                event::propose_and_commit(state, event::ProposedEvent::draw(ctx.controller));
-            }
+        EffectOp::NivMizzetVisionaryDrawV1 { .. } => {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                ctx.source,
+            ));
         }
         EffectOp::EachPlayerControllingDefinitionDrawsCard { card_def } => {
-            // APNAP-stable order: P0 then P1. Bonder's Ornament's own
-            // "getPlayersInRange" iteration order never affects the
-            // deterministic outcome here (each player's draw depends only on
-            // their own battlefield), so a fixed iteration order is safe.
+            // Historical atomic behavior for catalogs without Eternal draw
+            // replacements. The Eternal interpreter owns ordered continuations.
             for player in [PlayerId::P0, PlayerId::P1] {
-                let controls_named = state.players[player.index()]
-                    .battlefield
-                    .iter()
-                    .any(|&id| state.objects.get(id).card_def == *card_def);
-                if controls_named {
+                if controls_definition(state, player, *card_def) {
                     event::propose_and_commit(state, event::ProposedEvent::draw(player));
                 }
             }
@@ -22694,7 +23083,10 @@ fn execute_with_native_row_v1(
                 if !source_live {
                     return;
                 }
-                let creations = state.engine.event_history[start..]
+                let creations = state
+                    .engine
+                    .event_history
+                    .range_v2(start..)
                     .iter()
                     .enumerate()
                     .filter_map(|(offset, event)| match event {
@@ -22802,7 +23194,7 @@ fn execute_with_native_row_v1(
                     ));
                     return;
                 }
-                let attachment=state.engine.event_history[attachment_start..].iter().enumerate().find_map(|(offset,event)| match event {
+                let attachment=state.engine.event_history.range_v2(attachment_start..).iter().enumerate().find_map(|(offset,event)| match event {
                     event::CommittedEvent::TokenAttachmentJournalV48 {journal} if matches!(journal.as_ref(),crate::season_token_attachment_v48::JournalV48::AttachmentCommitted {source:actual,host} if actual.object==source.source && actual.zone_change_count==source.zone_change_count && host.object==selected.object && host.zone_change_count==selected.expected_zone_change_count) => Some((attachment_start+offset) as u64), _=>None,
                 }).expect("actual attachment helper emits independent occurrence");
                 crate::season_token_attachment_v48::record(
@@ -24768,6 +25160,7 @@ fn eval_cond(cond: &EffectCond, ctx: &ExecCtx, state: &GameState) -> bool {
             .hand
             .is_empty(),
         EffectCond::CreatureDiedThisTurn => state.creature_died_this_turn_v1(),
+        EffectCond::ControllersTurnV1 => state.active_player == ctx.controller,
         EffectCond::OpponentLostLifeThisTurn => {
             crate::life_loss_turn_v1::opponent_lost_life(state, ctx.controller).unwrap_or(false)
         }
@@ -25054,7 +25447,10 @@ mod tests {
                 assert_eq!(branch.objects.get(opponent_card).zone, Zone::Graveyard);
                 assert_eq!(branch.objects.get(retained_hand.unwrap()).zone, Zone::Hand);
                 assert_eq!(
-                    branch.engine.event_history[start..]
+                    branch
+                        .engine
+                        .event_history
+                        .range_v2(start..)
                         .iter()
                         .filter(|event| matches!(
                             event,
@@ -25189,7 +25585,10 @@ mod tests {
                     assert_eq!(branch.objects.get(id).zone, Zone::Graveyard);
                 }
                 assert_eq!(
-                    branch.engine.event_history[start..]
+                    branch
+                        .engine
+                        .event_history
+                        .range_v2(start..)
                         .iter()
                         .filter(|event| matches!(
                             event,
@@ -25338,7 +25737,10 @@ mod tests {
                 assert_eq!(branch.objects.get(second).damage, 4);
                 assert!(branch.objects.get(first).v4.deathtouch_damage);
                 assert_eq!(branch.players[player.index()].life, 24);
-                let damage = branch.engine.event_history[start..]
+                let damage = branch
+                    .engine
+                    .event_history
+                    .range_v2(start..)
                     .iter()
                     .filter_map(|event| match event {
                         CommittedEvent::Damage {
@@ -25527,7 +25929,10 @@ mod tests {
                             &mut state,
                         );
                         assert!(state.engine.halted.is_none());
-                        let created = state.engine.event_history[start..]
+                        let created = state
+                            .engine
+                            .event_history
+                            .range_v2(start..)
                             .iter()
                             .enumerate()
                             .filter_map(|(i, event)| match event {
@@ -25543,7 +25948,10 @@ mod tests {
                             })
                             .collect::<Vec<_>>();
                         assert_eq!(created.len(), count as usize);
-                        let observed = state.engine.event_history[start..]
+                        let observed = state
+                            .engine
+                            .event_history
+                            .range_v2(start..)
                             .iter()
                             .enumerate()
                             .filter_map(|(i, event)| match event {
@@ -26960,11 +27368,7 @@ fn tutelage_pair_repeats_v1(state: &GameState, pair: &[EffectObjectBinding]) -> 
     }
     let a = &crate::card_def::CARD_DEFS[usize::from(state.objects.get(pair[0].object).card_def)];
     let b = &crate::card_def::CARD_DEFS[usize::from(state.objects.get(pair[1].object).card_def)];
-    !a.has_type(CardType::Land)
-        && !b.has_type(CardType::Land)
-        && a.colors
-            .iter()
-            .any(|color| *color != ManaColor::C && b.colors.contains(color))
+    event::tutelage_card_pair_repeats_v1(a, b)
 }
 
 /// Reconstruct every completed pair from the original library and the actual
@@ -27016,7 +27420,10 @@ fn tutelage_remaining_v1(
     let mut linked = None;
     let mut cursor = start_index + 1;
     while cursor < state.engine.event_history.len() {
-        let batch_index = state.engine.event_history[cursor..]
+        let batch_index = state
+            .engine
+            .event_history
+            .range_v2(cursor..)
             .iter()
             .position(|entry| {
                 matches!(
@@ -27031,6 +27438,7 @@ fn tutelage_remaining_v1(
             previous_batch,
             ordered,
             move_start,
+            ..
         } = &state.engine.event_history[batch_index]
         else {
             unreachable!()
@@ -27091,6 +27499,25 @@ fn tutelage_remaining_v1(
         // another suspended iteration. A one-card final mill always stops.
         if !tutelage_pair_repeats_v1(state, pair) {
             return Err("Tutelage continuation repeated after its stopping pair".into());
+        }
+        if let Some(outcome) = event::tutelage_public_outcome_v1(state, batch_index, player)? {
+            if !outcome.repeat
+                || outcome.members.len() != ordered.len()
+                || outcome
+                    .members
+                    .iter()
+                    .zip(ordered)
+                    .any(|(member, binding)| {
+                        let live = state.objects.get(binding.object);
+                        member.object != binding.object
+                            || member.card_def != live.card_def
+                            || member.controller != live.controller
+                            || member.zone != live.zone
+                            || member.generation != live.zone_change_count
+                    })
+            {
+                return Err("Tutelage public outcome changed before native continuation".into());
+            }
         }
         offset += pair.len();
         linked = Some(batch_index as u64);
@@ -27287,14 +27714,21 @@ fn run_tutelage_batch_v1(
     // CR701.17c follows an actual milled card into any public destination.
     // A reveal followed by a shuffle leaves Library hidden, so it supplies no
     // characteristic operand to this condition.
-    let visible = pair.iter().copied().filter(|binding| {
+    let members = ordered.iter().filter_map(|binding| {
         let live=state.objects.get(binding.object);
-        live.v4.face_down_v1.is_none()
+        (live.v4.face_down_v1.is_none()
             && binding.expected_zone_change_count.checked_add(1)==Some(live.zone_change_count)
             && matches!(live.zone,Zone::Graveyard|Zone::Exile|Zone::Battlefield|Zone::Stack)
-            && state.engine.event_history[move_start as usize..].iter().any(|e|matches!(e,event::CommittedEvent::ZoneChange{object,from:Zone::Library,to,..}if *object==binding.object && *to==live.zone))
+            && state.engine.event_history.range_v2(move_start as usize..).iter().any(|e|matches!(e,event::CommittedEvent::ZoneChange{object,from:Zone::Library,to,..}if *object==binding.object && *to==live.zone)))
+            .then_some(event::TutelagePublicMillMemberV1 {
+                object: binding.object,
+                generation: live.zone_change_count,
+                card_def: live.card_def,
+                zone: live.zone,
+                controller: live.controller,
+            })
     }).collect::<Vec<_>>();
-    let repeat = tutelage_pair_repeats_v1(state, &visible);
+    let repeat = event::tutelage_public_pair_repeats_v1(&members);
     let batch_index = state.engine.event_history.len() as u64;
     state
         .engine
@@ -27304,6 +27738,10 @@ fn run_tutelage_batch_v1(
             previous_batch: previous,
             ordered,
             move_start,
+            outcome: event::TutelageBatchOutcomeV1(Some(event::TutelagePublicMillOutcomeV1 {
+                members,
+                repeat,
+            })),
         });
     if repeat {
         pending.frames.push(EffectFrame::SphinxsTutelageMillV1 {
@@ -27507,7 +27945,7 @@ pub(crate) fn begin_owned_tutelage_v1(
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "effect/sphinxs_tutelage_v1_tests.rs"]
-mod sphinxs_tutelage_v1_tests;
+pub(crate) mod sphinxs_tutelage_v1_tests;
 
 #[cfg(all(
     test,
@@ -27515,7 +27953,7 @@ mod sphinxs_tutelage_v1_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "effect/consuming_aberration_v1_tests.rs"]
-mod consuming_aberration_v1_tests;
+pub(crate) mod consuming_aberration_v1_tests;
 
 fn lathril_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
     state.stack.iter().any(|item| {
@@ -27534,6 +27972,15 @@ pub(crate) mod kaito_cunning_v75;
 pub(crate) mod liliana_dreadhorde_v1;
 pub(crate) mod vivien_reid_v1;
 fn native_waiting_source_v1(state: &GameState, ctx: &ExecCtx) -> bool {
+    if state.stack.iter().any(|item| {
+        (ctx.stack_item_id == Some(item.v4.stack_item_id)
+            || (item.source == ctx.source
+                && crate::fixed_source_damage_v3::paid_bombardment_self(item)))
+            && crate::source_power_activation_v1::bombardment::selected(state, item)
+            && crate::source_power_activation_v1::bombardment::needs_lki(state, item)
+    }) {
+        return true;
+    }
     if ctx.stack_item_id.is_some_and(|id| {
         state.stack.iter().any(|item| {
             item.v4.stack_item_id == id && crate::full_text_v1::is_donated_trigger(item)
@@ -27629,6 +28076,47 @@ pub(crate) struct NativeExecutionOwnerV1 {
 struct NativeExecutionProofV1<'a> {
     owner: &'a NativeExecutionOwnerV1,
     ctx: &'a ExecCtx,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct EternalDamageLkiV1(EternalDamageOriginV1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EternalDamageOriginV1 {
+    Historical(crate::event::HistoricalDamageSourceV1),
+    Live(ObjectId),
+}
+
+impl std::hash::Hash for EternalDamageLkiV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self.0 {
+            EternalDamageOriginV1::Historical(facts) => std::hash::Hash::hash(&facts, state),
+            EternalDamageOriginV1::Live(source) => {
+                std::hash::Hash::hash(b"native-live-damage/v1", state);
+                std::hash::Hash::hash(&source, state);
+            }
+        }
+    }
+}
+
+impl EternalDamageLkiV1 {
+    pub(crate) fn for_minsc(proof: crate::eternal_vintage_e7b_v1::minsc::DamageLoanV1) -> Self {
+        Self(EternalDamageOriginV1::Historical(proof.facts()))
+    }
+
+    pub(crate) fn source(self) -> ObjectId {
+        match self.0 {
+            EternalDamageOriginV1::Historical(facts) => facts.source.source,
+            EternalDamageOriginV1::Live(source) => source,
+        }
+    }
+
+    pub(crate) fn facts(self) -> Option<crate::event::HistoricalDamageSourceV1> {
+        match self.0 {
+            EternalDamageOriginV1::Historical(facts) => Some(facts),
+            EternalDamageOriginV1::Live(_) => None,
+        }
+    }
 }
 
 fn validated_native_execution_root_v1(
@@ -27974,16 +28462,24 @@ pub(crate) fn begin_owned_lathril_v1(
     events
         .try_reserve_exact(original)
         .map_err(|_| "Lathril original token roster allocation failed")?;
-    events.extend(
-        (0..original).map(|_| event::ProposedEvent::create_token(token_def, source.controller)),
-    );
+    let operation_owner = crate::lathril_receipts_v1::OperationOwnerV1::Tokens {
+        capture: owner.capture,
+    };
+    events.extend((0..original).map(|_| {
+        crate::lathril_receipts_v1::owned_proposal(
+            event::ProposedEvent::create_token(token_def, source.controller),
+            Some(operation_owner),
+        )
+    }));
     // One complete original simultaneous entry batch. Commit only a successful
     // staged world, preserving the public row on any checked replacement error.
     let mut staged = state.clone();
+    crate::lathril_receipts_v1::record_token_begin(&mut staged, owner.capture);
     event::propose_and_commit_batch(&mut staged, events);
     if staged.engine.halted.is_some() || staged.engine.pending_effect.is_some() {
         return Err("Lathril token batch did not complete".into());
     }
+    crate::lathril_receipts_v1::record_tokens(&mut staged, owner.capture)?;
     staged
         .engine
         .event_history
@@ -27999,7 +28495,7 @@ pub(crate) fn begin_owned_lathril_v1(
 pub(crate) mod blasphemous_edict_v1 {
     use super::*;
 
-    fn definition(id: u16) -> bool {
+    pub(crate) fn definition(id: u16) -> bool {
         card_def::CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
             d.is_executable()
                 && d.name == "Blasphemous Edict"
@@ -28060,6 +28556,24 @@ pub(crate) mod blasphemous_edict_v1 {
         chosen: [Vec<EffectObjectBinding>; 2],
         graveyard: [Vec<EffectObjectBinding>; 2],
         graveyard_order: [Vec<EffectObjectBinding>; 2],
+    }
+
+    impl ChoiceV1 {
+        pub(crate) fn stage_for_consumer(&self) -> (PlayerId, bool) {
+            (self.active, self.phase >= 2)
+        }
+
+        pub(crate) fn completed_sacrifices_for_consumer(
+            &self,
+            player: PlayerId,
+        ) -> Vec<EffectObjectBinding> {
+            let chosen = &self.chosen[player.index()];
+            self.candidates[player.index()]
+                .iter()
+                .copied()
+                .filter(|binding| chosen.contains(binding))
+                .collect()
+        }
     }
     fn candidates(state: &GameState, player: PlayerId) -> Result<Vec<EffectObjectBinding>, String> {
         let mut found = Vec::new();
@@ -28365,19 +28879,45 @@ pub(crate) mod blasphemous_edict_v1 {
         // Both controllers choose before any sacrifice. The physical owners
         // then order their actual graveyard destinations, including stolen cards.
         // Replacements and all departure observers remain one native batch.
+        let edict_owner = pending
+            .resolving_item
+            .v4
+            .source_contract
+            .is_some_and(|source| crate::edict_receipts_v1::is_printing(source.card_def))
+            .then_some(pending.resolving_item.v4.stack_item_id);
         let mut committed = state.clone();
+        if edict_owner.is_some() {
+            crate::edict_receipts_v1::record_batch_begin(
+                &mut committed,
+                &pending.resolving_item,
+                choice.active,
+            );
+        }
         for b in &sacrificed {
-            event::log_sacrifice(&mut committed, b.object);
+            if let Some(owner) = edict_owner {
+                crate::edict_receipts_v1::record_sacrifice(&mut committed, owner, *b)?;
+            } else {
+                event::log_sacrifice(&mut committed, b.object);
+            }
         }
         event::propose_and_commit_batch(
             &mut committed,
             destinations
                 .into_iter()
-                .map(|b| event::ProposedEvent::zone_change(b.object, Zone::Graveyard))
+                .map(|b| {
+                    let mut proposal = event::ProposedEvent::zone_change(b.object, Zone::Graveyard);
+                    if let event::ProposedEvent::ZoneChange(change) = &mut proposal {
+                        change.edict_move_owner = edict_owner;
+                    }
+                    proposal
+                })
                 .collect(),
         );
         if committed.engine.halted.is_some() {
             return Err("Edict native sacrifice batch halted".into());
+        }
+        if edict_owner.is_some() {
+            crate::edict_receipts_v1::record_batch_ended(&mut committed, &pending.resolving_item)?;
         }
         *state = committed;
         Ok(false)
@@ -28553,7 +29093,7 @@ pub(crate) mod blasphemous_edict_v1 {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "effect/lathril_v1_tests.rs"]
-mod lathril_v1_tests;
+pub(crate) mod lathril_v1_tests;
 
 #[cfg(all(
     test,
@@ -28561,11 +29101,11 @@ mod lathril_v1_tests;
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "effect/blasphemous_edict_v1_tests.rs"]
-mod blasphemous_edict_v1_tests;
+pub(crate) mod blasphemous_edict_v1_tests;
 
 // Kept inline so the existing effect-source identities cover the complete
 // native exception/count/target/program validator and reducer.
-fn electroduplicate_definition_v1(id: u16) -> bool {
+pub(crate) fn electroduplicate_definition_v1(id: u16) -> bool {
     cfg!(all(feature="limited-fdn-fixtures",not(feature="standard-magezero-fixtures")))
         && id==471 && card_def::CARD_DEFS.get(usize::from(id)).is_some_and(|d| {
             let card_def::CardDef {
@@ -28720,7 +29260,7 @@ fn electroduplicate_definition_v1(id: u16) -> bool {
         })
 }
 
-fn validate_electroduplicate_live_stack_v1(state: &GameState) -> Result<(), String> {
+pub(crate) fn validate_electroduplicate_live_stack_v1(state: &GameState) -> Result<(), String> {
     for item in &state.stack {
         // Mutable row kind/flags cannot hide a definition-owned spell.
         if state
@@ -28880,12 +29420,24 @@ pub(crate) fn require_no_copied_token_abilities_v1(state: &GameState) -> Result<
 
 /// Only the complete V75 envelope supplies both planeswalker appendices.
 /// Native validation remains mandatory before projecting its inherited prefix.
-pub(crate) fn require_no_copied_token_abilities_kaito_v75(state: &GameState) -> Result<(), String> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum KaitoCopyScopeV1 {
+    Base,
+    LeylineAxe,
+    Harvester,
+    Etali,
+    FullPool,
+}
+
+pub(crate) fn require_no_copied_token_abilities_kaito_v75(
+    state: &GameState,
+    scope: KaitoCopyScopeV1,
+) -> Result<(), String> {
     chandra_flameshaper_v1::validate_state(state)?;
     chandra_flameshaper_v1::validate_pending(state)?;
     kaito_cunning_v75::validate_state(state)?;
     kaito_cunning_v75::validate_pending(state)?;
-    validate_complete_copied_token_prefix_v74(state)
+    validate_complete_copied_token_prefix_v74(state, scope)
 }
 
 /// V74 carries Chandra but still refuses Kaito's later mechanics.
@@ -28895,26 +29447,52 @@ pub(crate) fn require_no_copied_token_abilities_chandra_v74(
     chandra_flameshaper_v1::validate_state(state)?;
     chandra_flameshaper_v1::validate_pending(state)?;
     kaito_cunning_v75::require_legacy(state, None)?;
-    validate_complete_copied_token_prefix_v74(state)
+    validate_complete_copied_token_prefix_v74(state, KaitoCopyScopeV1::Base)
 }
 
-fn require_unrepresented_copy_sources_v1(state: &GameState) -> Result<(), String> {
-    standard_exile::refuse_top_batch_legacy(state)?;
-    crate::leyline_axe_v1::require_legacy_absence(state)?;
-    harvester_v1::require_legacy_absence(state)?;
+fn require_unrepresented_copy_sources_v1(
+    state: &GameState,
+    scope: KaitoCopyScopeV1,
+) -> Result<(), String> {
+    if matches!(scope, KaitoCopyScopeV1::Etali | KaitoCopyScopeV1::FullPool) {
+        if !state.etali_commit_receipts_v1 {
+            return Err("Etali owning copy scope lacks its native receipt mode".into());
+        }
+    } else {
+        standard_exile::refuse_top_batch_legacy(state)?;
+    }
+    if matches!(
+        scope,
+        KaitoCopyScopeV1::LeylineAxe | KaitoCopyScopeV1::FullPool
+    ) {
+        crate::leyline_axe_v1::validate(state)?;
+    } else {
+        crate::leyline_axe_v1::require_legacy_absence(state)?;
+    }
+    if matches!(
+        scope,
+        KaitoCopyScopeV1::Harvester | KaitoCopyScopeV1::FullPool
+    ) {
+        harvester_v1::validate_state(state)?;
+    } else {
+        harvester_v1::require_legacy_absence(state)?;
+    }
     Ok(())
 }
 
 /// The enclosing V74 appendix publishes every copied-token entry and end-step
 /// occurrence, including copies of copies. Authenticate their native history;
 /// predecessor projections retain the original absence requirement below.
-fn validate_complete_copied_token_prefix_v74(state: &GameState) -> Result<(), String> {
-    require_unrepresented_copy_sources_v1(state)?;
+fn validate_complete_copied_token_prefix_v74(
+    state: &GameState,
+    scope: KaitoCopyScopeV1,
+) -> Result<(), String> {
+    require_unrepresented_copy_sources_v1(state, scope)?;
     event::validate_copied_token_abilities_v1(state)
 }
 
 fn require_no_copied_token_added_abilities_v1(state: &GameState) -> Result<(), String> {
-    require_unrepresented_copy_sources_v1(state)?;
+    require_unrepresented_copy_sources_v1(state, KaitoCopyScopeV1::Base)?;
     if state
         .objects
         .iter()
@@ -28952,7 +29530,7 @@ pub(crate) fn needs_electroduplicate_entry_owner_v1(state: &GameState) -> bool {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "effect/electroduplicate_v1_tests.rs"]
-mod electroduplicate_v1_tests;
+pub(crate) mod electroduplicate_v1_tests;
 
 // This copy permit never confers Kykar's separate printed token-creation mode.
 // Its original removed cast, native spell copy, or Replication row is borrowed for one batch.
@@ -29469,6 +30047,19 @@ pub(crate) mod fiend_artisan_v1 {
         })
     }
     pub(crate) fn paid_x(state: &GameState, item: &StackItem) -> Result<u8, String> {
+        if state.engine.event_history.iter().any(|event| {
+            matches!(
+            event,
+            event::CommittedEvent::FiendArtisanSearchFinishedV1 { stack_item_id }
+                if *stack_item_id == item.v4.stack_item_id
+            )
+        }) {
+            return Err("Fiend original activation was already finished".into());
+        }
+        authenticated_paid_x(state, item)
+    }
+
+    pub(crate) fn authenticated_paid_x(state: &GameState, item: &StackItem) -> Result<u8, String> {
         let mut paid =
             state
                 .engine
@@ -29528,7 +30119,10 @@ pub(crate) mod fiend_artisan_v1 {
             return Err("Fiend original selected activation changed".into());
         }
         let sacrificed = p.object_cost_chosen[0];
-        let segment = &state.engine.event_history[input_index as usize + 1..at];
+        let segment = state
+            .engine
+            .event_history
+            .range_v2(input_index as usize + 1..at);
         if sacrificed.object == item.source
             || sacrificed.expected_zone != Zone::Battlefield
             || !segment
@@ -29554,10 +30148,7 @@ pub(crate) mod fiend_artisan_v1 {
         {
             return Err("Fiend original tap/sacrifice payment absent".into());
         }
-        if state.engine.event_history.iter().any(|e|matches!(e,
-            event::CommittedEvent::FiendArtisanSearchFinishedV1{stack_item_id} if *stack_item_id==item.v4.stack_item_id)) {
-            return Err("Fiend original activation was already finished".into());
-        }
+
         Ok(x)
     }
     fn original_library<'a>(
@@ -29740,4 +30331,4 @@ pub(crate) mod fiend_artisan_v1 {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "effect/thousand_year_storm_v1_tests.rs"]
-mod thousand_year_storm_v1_tests;
+pub(crate) mod thousand_year_storm_v1_tests;

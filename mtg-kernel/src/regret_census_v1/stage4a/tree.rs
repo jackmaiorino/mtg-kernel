@@ -985,6 +985,12 @@ impl Node {
         }
     }
 
+    /// An edge's value as selection reads it (best-line, value-leaf or plain
+    /// mean); the edge must have a backup.
+    pub(crate) fn mean(&self, a: usize) -> f64 {
+        self.value(a)
+    }
+
     /// A value-leaf edge mean (`s4a-vl-v1`): the edge's value units over
     /// `n` full units.
     fn value_mean(&self, a: usize, n: f64) -> f64 {

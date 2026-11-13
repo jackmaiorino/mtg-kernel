@@ -116,12 +116,8 @@ pub(crate) fn sources(state: &GameState, damage: &DamageProposed) -> Result<Vec<
     if damage.amount <= 0 {
         return Ok(Vec::new());
     }
-    let source_controller = match damage.historical_source {
-        Some(id) => {
-            crate::source_power_activation_v1::damage_source(state, damage.source, id)?
-                .source
-                .controller
-        }
+    let source_controller = match damage.historical_facts(state)? {
+        Some(facts) => facts.source.controller,
         None => {
             let Some(source) = state.objects.try_get(damage.source) else {
                 return Ok(Vec::new());

@@ -95,9 +95,28 @@ impl PlayerId {
 /// across snapshot/restore without a generation counter.
 /// Clones share the backing vector until a mutation detaches it. Serialization
 /// and hashing retain the original vector's values and order.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Deserialize)]
 pub struct Arena<T> {
     items: Arc<Vec<T>>,
+}
+
+thread_local! {
+    /// The address of the one arena that [`Arena::omitted_v1`] writes as empty.
+    static OMITTED_ARENA_V1: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The derived form: a struct `Arena` with its one field `items`.
+impl<T: Serialize> Serialize for Arena<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut arena = serializer.serialize_struct("Arena", 1)?;
+        if OMITTED_ARENA_V1.with(std::cell::Cell::get) == self as *const Self as usize {
+            arena.serialize_field("items", &[] as &[T])?;
+        } else {
+            arena.serialize_field("items", &self.items)?;
+        }
+        arena.end()
+    }
 }
 
 impl<T> Arena<T> {
@@ -144,6 +163,20 @@ impl<T> Arena<T> {
 
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
+    }
+
+    /// Runs `write` with this arena, and no other, serializing as empty, for a
+    /// checkpoint writer that attaches the shared vector itself.
+    pub(crate) fn omitted_v1<R>(&self, write: impl FnOnce() -> R) -> R {
+        struct Restore(usize);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                OMITTED_ARENA_V1.with(|omitted| omitted.set(self.0));
+            }
+        }
+        let _restore =
+            Restore(OMITTED_ARENA_V1.with(|omitted| omitted.replace(self as *const Self as usize)));
+        write()
     }
 
     /// Ordered iteration by ascending id: deterministic, never a hash-map walk.

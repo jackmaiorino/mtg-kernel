@@ -550,9 +550,11 @@ fn actor(action: &A) -> Option<PlayerSeatV1> {
         | A::ChooseAttackTarget { actor, .. }
         | A::ChooseLegendPermanent { actor, .. }
         | A::ChooseEntryColorV36 { actor, .. }
+        | A::ChooseEntryCreatureTypeV60 { actor, .. }
         | A::ChooseDivineKickerV44 { actor, .. }
         | A::ChooseDivineTargetV44 { actor, .. }
-        | A::FinishDivineTargetsV44 { actor, .. } => Some(*actor),
+        | A::FinishDivineTargetsV44 { actor, .. }
+        | A::ChooseMeddlingMageNameV1 { actor, .. } => Some(*actor),
         #[cfg(feature = "limited-fdn-fixtures")]
         A::ChooseTriggerOrderNext { actor, .. } => Some(*actor),
         A::Ambiguous { .. } => None,
@@ -2385,10 +2387,12 @@ fn label_common(
         | A::ChooseAttackTarget { .. }
         | A::Ambiguous { .. }
         | A::ChooseEntryColorV36 { .. }
+        | A::ChooseEntryCreatureTypeV60 { .. }
         | A::ChooseDivineKickerV44 { .. }
         | A::ChooseDivineTargetV44 { .. }
         | A::ChooseFullRangeCastXValueV59 { .. }
-        | A::FinishDivineTargetsV44 { .. } => return Err(Error::UnsupportedPrompt),
+        | A::FinishDivineTargetsV44 { .. }
+        | A::ChooseMeddlingMageNameV1 { .. } => return Err(Error::UnsupportedPrompt),
     })
 }
 

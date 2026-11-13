@@ -854,10 +854,21 @@ struct RevealEvidenceV4 {
     possible_eventless_moves: Vec<u16>,
 }
 
+fn require_curator_legacy_absence(state: &GameState) -> Result<(), ExportErrorV1> {
+    if state.curator_unordered_reveal_v1 {
+        return Err(refuse(
+            RefusalCodeV1::R3,
+            "Curator's unordered piles require their owning projection",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn export_reveal_v4_from_journal(
     input: &ExportInputV1<'_>,
     journal: &crate::reveal_meaning_v3::RevealJournalV3,
 ) -> Result<InfosetV1, ExportErrorV1> {
+    require_curator_legacy_absence(input.state)?;
     let transcript = journal
         .transcript(input.viewer)
         .ok_or_else(|| refuse(RefusalCodeV1::R8, "visible reveal transcript unavailable"))?;
@@ -912,10 +923,31 @@ fn export_versioned(
     reveal_evidence_v4: Option<RevealEvidenceV4>,
 ) -> Result<InfosetV1, ExportErrorV1> {
     let state = input.state;
+    require_curator_legacy_absence(state)?;
     let v = input.viewer;
     let opp = v.opponent();
     let mutant = options.mutant;
     let is = |m: MutantV1| mutant == Some(m);
+    if cfg!(feature = "eternal-fixtures")
+        && crate::eternal_cards_v1::e3::dungeons::occurrences::undercity_requires_successor(state)
+    {
+        return Err(refuse(
+            RefusalCodeV1::R3,
+            "Bound Undercity rooms are unavailable in this infoset export",
+        ));
+    }
+    if crate::eternal_opening_v1::requires_successor(state) {
+        return Err(refuse(
+            RefusalCodeV1::R3,
+            "Eternal opening actions are unavailable in this infoset export",
+        ));
+    }
+    if crate::eternal_sideboard_s1b_v1::meddling_mage_entry::requires_successor(state) {
+        return Err(refuse(
+            RefusalCodeV1::R3,
+            "Meddling Mage named entry is unavailable in this infoset export",
+        ));
+    }
 
     crate::graveyard_order_v1::refuse_legacy(state)
         .map_err(|error| refuse(RefusalCodeV1::R2, error))?;
@@ -927,6 +959,19 @@ fn export_versioned(
         return Err(refuse(
             RefusalCodeV1::R2,
             "outside-game profile is not representable in infoset export",
+        ));
+    }
+    if crate::eternal_sideboard_s1a_v1::surgical::search_active(state) {
+        return Err(refuse(
+            RefusalCodeV1::R3,
+            "Surgical Extraction's private search is unavailable",
+        ));
+    }
+
+    if crate::engine::pending_martyr_reveal_v1(state) {
+        return Err(refuse(
+            RefusalCodeV1::R3,
+            "Martyr of Sands's private reveal payment is unavailable",
         ));
     }
 

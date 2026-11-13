@@ -446,6 +446,56 @@ pub(crate) struct NativeNamedParameterV1 {
     pub(crate) values: Vec<f32>,
 }
 
+/// One named tensor borrowed where it is held: what a
+/// [`NativeNamedParameterV1`] copies, with the values left in place. The
+/// shape is a small owned copy, because the visitors pass some shapes as
+/// temporaries. Compare tensors by their bits (`same_tensors_v1` in the
+/// checkpoint codec), not with `==` on floats, which is why this has no
+/// `PartialEq`.
+#[derive(Clone, Debug)]
+pub(crate) struct NativeNamedTensorRefV1<'a> {
+    pub(crate) name: &'static str,
+    pub(crate) shape: Vec<usize>,
+    pub(crate) values: &'a [f32],
+}
+
+/// A named tensor's name, shape and values, however it is held: owned
+/// ([`NativeNamedParameterV1`]) or borrowed ([`NativeNamedTensorRefV1`]).
+/// What replaces parameters and validates train-state tensors reads it.
+pub(crate) trait NamedTensorV1 {
+    fn tensor_name_v1(&self) -> &'static str;
+    fn tensor_shape_v1(&self) -> &[usize];
+    fn tensor_values_v1(&self) -> &[f32];
+}
+
+impl NamedTensorV1 for NativeNamedParameterV1 {
+    fn tensor_name_v1(&self) -> &'static str {
+        self.name
+    }
+
+    fn tensor_shape_v1(&self) -> &[usize] {
+        &self.shape
+    }
+
+    fn tensor_values_v1(&self) -> &[f32] {
+        &self.values
+    }
+}
+
+impl NamedTensorV1 for NativeNamedTensorRefV1<'_> {
+    fn tensor_name_v1(&self) -> &'static str {
+        self.name
+    }
+
+    fn tensor_shape_v1(&self) -> &[usize] {
+        &self.shape
+    }
+
+    fn tensor_values_v1(&self) -> &[f32] {
+        self.values
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum NativePolicyValueErrorV1 {
     ModelConfigMismatch(&'static str),
@@ -505,6 +555,10 @@ struct LinearV1 {
     /// `weight`. Inference reads it so each output keeps its own sequential
     /// accumulator while the outputs advance together in SIMD lanes.
     weight_t: Vec<f32>,
+    /// Whether every weight is finite, derived with `weight_t`. Only then is
+    /// a zero input's product with each weight a zero, which lets the row
+    /// kernel pass over zero inputs (`zero_inputs_add_nothing_v1`).
+    weight_finite: bool,
 }
 
 impl LinearV1 {
@@ -515,6 +569,7 @@ impl LinearV1 {
             weight: runner_fixed_rank2_v1(input_dim * output_dim),
             bias: runner_fixed_rank1_v1(output_dim),
             weight_t: Vec::new(),
+            weight_finite: false,
         }
         .with_transposed_weight_v1()
     }
@@ -531,6 +586,7 @@ impl LinearV1 {
             weight: runner_fixed_rank2_v1(input_dim * output_dim),
             bias: runner_fixed_rank1_wide_v1(output_dim),
             weight_t: Vec::new(),
+            weight_finite: false,
         }
         .with_transposed_weight_v1()
     }
@@ -550,6 +606,7 @@ impl LinearV1 {
                     self.weight[output_index * input_dim + input_index];
             }
         }
+        self.weight_finite = self.weight.iter().all(|weight| weight.is_finite());
     }
 
     fn validate(&self, name: &'static str) -> Result<(), NativePolicyValueErrorV1> {
@@ -558,12 +615,7 @@ impl LinearV1 {
         {
             return Err(NativePolicyValueErrorV1::ParameterInvariant(name));
         }
-        if !self
-            .weight
-            .iter()
-            .chain(&self.bias)
-            .all(|value| value.is_finite())
-        {
+        if !(all_finite_v1(&self.weight) && all_finite_v1(&self.bias)) {
             return Err(NativePolicyValueErrorV1::ParameterInvariant(name));
         }
         Ok(())
@@ -1186,6 +1238,28 @@ impl NativePolicyValueNetV1 {
         Ok(())
     }
 
+    /// The `f32` values a clone of this net copies: every parameter and each
+    /// linear layer's derived transposed weight (`loaded_source_profile_v1`).
+    pub(crate) fn owned_f32_len_v1(&self) -> usize {
+        let linear =
+            |layer: &LinearV1| layer.weight.len() + layer.bias.len() + layer.weight_t.len();
+        let two = |layers: &TwoLayerTanhV1| linear(&layers.first) + linear(&layers.second);
+        self.card_embedding.len()
+            + two(&self.object_encoder)
+            + two(&self.edge_encoder)
+            + two(&self.node_update)
+            + two(&self.state_encoder)
+            + two(&self.action_ref_encoder)
+            + two(&self.action_encoder)
+            + linear(&self.scorer_first)
+            + linear(&self.scorer_second)
+            + linear(&self.value_first)
+            + linear(&self.value_second)
+            + self.pairing.as_ref().map_or(0, |pairing| {
+                linear(&pairing.first) + linear(&pairing.second)
+            })
+    }
+
     pub(crate) fn parameter_count_v1(&self) -> usize {
         let mut count = 0usize;
         self.visit_parameters_v1(|_, _, values| count += values.len());
@@ -1234,37 +1308,70 @@ impl NativePolicyValueNetV1 {
         &mut self,
         replacement: &[NativeNamedParameterV1],
     ) -> Result<(), NativePolicyValueErrorV1> {
-        let expected = self.parameter_snapshot_v1();
-        if replacement.len() != expected.len()
-            || replacement.iter().zip(&expected).any(|(actual, expected)| {
-                actual.name != expected.name
-                    || actual.shape != expected.shape
-                    || actual.values.len() != expected.values.len()
-                    || actual.values.iter().any(|value| !value.is_finite())
-            })
-        {
+        self.check_replacement_manifest_v1(replacement)?;
+        *self = self.clone().filled_v1(replacement)?;
+        Ok(())
+    }
+
+    /// [`Self::replace_parameter_snapshot_v1`] of a model its caller gives
+    /// up, from tensors held anywhere: the same checks in the same order,
+    /// with the values written into this model's own storage instead of a
+    /// private clone's, since a refusal drops it.
+    pub(crate) fn with_parameters_v1<T: NamedTensorV1>(
+        self,
+        replacement: &[T],
+    ) -> Result<Self, NativePolicyValueErrorV1> {
+        self.check_replacement_manifest_v1(replacement)?;
+        self.filled_v1(replacement)
+    }
+
+    /// Refuses a replacement unless it has this model's tensors, in order,
+    /// under their names and shapes, each value finite. Reads the model's
+    /// tensors in place.
+    fn check_replacement_manifest_v1<T: NamedTensorV1>(
+        &self,
+        replacement: &[T],
+    ) -> Result<(), NativePolicyValueErrorV1> {
+        let mut count = 0usize;
+        let mut differs = false;
+        self.visit_parameters_v1(|name, shape, values| {
+            differs |= replacement.get(count).is_none_or(|actual| {
+                actual.tensor_name_v1() != name
+                    || actual.tensor_shape_v1() != shape
+                    || actual.tensor_values_v1().len() != values.len()
+                    || !all_finite_v1(actual.tensor_values_v1())
+            });
+            count += 1;
+        });
+        if differs || count != replacement.len() {
             return Err(NativePolicyValueErrorV1::ParameterInvariant(
                 "replacement_manifest",
             ));
         }
+        Ok(())
+    }
 
-        let mut candidate = self.clone();
+    /// This model with `replacement`'s values (checked by
+    /// [`Self::check_replacement_manifest_v1`]), validated whole.
+    fn filled_v1<T: NamedTensorV1>(
+        mut self,
+        replacement: &[T],
+    ) -> Result<Self, NativePolicyValueErrorV1> {
         let mut position = 0usize;
-        candidate.visit_parameters_mut_v1(|name, shape, values| {
+        self.visit_parameters_mut_v1(|name, shape, values| {
             let source = &replacement[position];
-            debug_assert_eq!(source.name, name);
-            debug_assert_eq!(source.shape, shape);
-            values.copy_from_slice(&source.values);
+            debug_assert_eq!(source.tensor_name_v1(), name);
+            debug_assert_eq!(source.tensor_shape_v1(), shape);
+            values.copy_from_slice(source.tensor_values_v1());
             position += 1;
         });
-        candidate.validate_parameters_v1()?;
-        if candidate.parameter_count_v1() != candidate.expected_parameter_count_v1() {
+        self.validate_parameters_v1()?;
+        if self.parameter_count_v1() != self.expected_parameter_count_v1() {
             return Err(NativePolicyValueErrorV1::ParameterInvariant(
                 "parameter_count",
             ));
         }
-        *self = candidate;
-        Ok(())
+        Ok(self)
     }
 
     /// Net-8's parameter count, or the V8 inclusion net's.
@@ -1283,7 +1390,7 @@ impl NativePolicyValueNetV1 {
             "card_embedding",
         )?;
         if self.card_embedding.len() != expected_embedding
-            || !self.card_embedding.iter().all(|value| value.is_finite())
+            || !all_finite_v1(&self.card_embedding)
             || self.card_embedding[..self.config.card_embedding_dim]
                 .iter()
                 .any(|value| value.to_bits() != 0)
@@ -1320,9 +1427,12 @@ impl NativePolicyValueNetV1 {
         Ok(())
     }
 
-    pub(crate) fn visit_parameters_v1(
-        &self,
-        mut visitor: impl FnMut(&'static str, &[usize], &[f32]),
+    /// Visits every named parameter in `named_parameters()` order. The
+    /// values are the model's own stored tensors, borrowed for as long as the
+    /// model is.
+    pub(crate) fn visit_parameters_v1<'a>(
+        &'a self,
+        mut visitor: impl FnMut(&'static str, &[usize], &'a [f32]),
     ) {
         visitor(
             "card_embedding.weight",
@@ -1450,6 +1560,34 @@ pub(crate) fn sha256_update_f32_le_v1(hasher: &mut Sha256, values: &[f32]) {
     }
 }
 
+/// How many values one step of the validity scans below covers. A step has no
+/// branch per value, and a step that finds a failing value ends the scan.
+const VALIDITY_SCAN_BLOCK_V1: usize = 4096;
+
+/// Whether every value is finite: the answer of
+/// `values.iter().all(|value| value.is_finite())`. That loop leaves at the
+/// first failure, which keeps it scalar, and a train state's checks run it
+/// over every parameter and both moments each time the state is hashed, copied
+/// or loaded. This one compiles to vector compares.
+pub(crate) fn all_finite_v1(values: &[f32]) -> bool {
+    values.chunks(VALIDITY_SCAN_BLOCK_V1).all(|block| {
+        block
+            .iter()
+            .fold(true, |finite, value| finite & value.is_finite())
+    })
+}
+
+/// Whether every value is finite and not below zero: the opposite answer of
+/// `values.iter().any(|value| !value.is_finite() || *value < 0.0)`, as
+/// [`all_finite_v1`] computes it. A negative zero passes, as it does there.
+pub(crate) fn all_finite_and_not_negative_v1(values: &[f32]) -> bool {
+    values.chunks(VALIDITY_SCAN_BLOCK_V1).all(|block| {
+        block.iter().fold(true, |valid, value| {
+            valid & value.is_finite() & (*value >= 0.0)
+        })
+    })
+}
+
 /// The parameters as `gpu_exact_v1::net8` reads them: one buffer, and the
 /// offset of each tensor in `net8_forward.cu`'s `MtgLayout` order (input-major
 /// weights, as `LinearV1::weight_t`).
@@ -1504,10 +1642,10 @@ impl NativePolicyValueNetV1 {
     }
 }
 
-fn visit_linear_v1(
-    visitor: &mut impl FnMut(&'static str, &[usize], &[f32]),
+fn visit_linear_v1<'a>(
+    visitor: &mut impl FnMut(&'static str, &[usize], &'a [f32]),
     prefix: &'static str,
-    linear: &LinearV1,
+    linear: &'a LinearV1,
 ) {
     let (weight_name, bias_name) = match prefix {
         "object_encoder.0" => ("object_encoder.0.weight", "object_encoder.0.bias"),
@@ -1644,12 +1782,18 @@ fn accumulate_linear_row_body_v1(
     debug_assert!(first_input + input_row.len() <= linear.input_dim);
     let weights = &linear.weight_t[first_input * output_dim..];
     match output_dim {
-        HIDDEN_DIM_V1 => {
-            accumulate_fixed_width_v1::<HIDDEN_DIM_V1>(weights, input_row, accumulator)
-        }
-        W_HIDDEN_DIM_V1 => {
-            accumulate_fixed_width_v1::<W_HIDDEN_DIM_V1>(weights, input_row, accumulator)
-        }
+        HIDDEN_DIM_V1 => accumulate_fixed_width_v1::<HIDDEN_DIM_V1>(
+            weights,
+            linear.weight_finite,
+            input_row,
+            accumulator,
+        ),
+        W_HIDDEN_DIM_V1 => accumulate_fixed_width_v1::<W_HIDDEN_DIM_V1>(
+            weights,
+            linear.weight_finite,
+            input_row,
+            accumulator,
+        ),
         _ => {
             for (&value, weight_row) in input_row.iter().zip(weights.chunks_exact(output_dim)) {
                 for (sum, &weight) in accumulator.iter_mut().zip(weight_row) {
@@ -1663,8 +1807,28 @@ fn accumulate_linear_row_body_v1(
 /// The same loop for a width known at compile time, so the partial sums stay
 /// in vector registers across inputs instead of round-tripping memory. Each
 /// output's arithmetic and order are unchanged.
+///
+/// A row with enough zero inputs passes over them when that changes no bit
+/// (`zero_inputs_add_nothing_v1`). The encoders' first layers read one-hot
+/// features, padding and pooled sums of nothing, so most of their inputs are
+/// zero. `weights_finite` says whether every weight is finite.
 #[inline(always)]
 fn accumulate_fixed_width_v1<const N: usize>(
+    weights: &[f32],
+    weights_finite: bool,
+    input_row: &[f32],
+    accumulator: &mut [f32],
+) {
+    if zero_inputs_add_nothing_v1(weights_finite, input_row, accumulator) {
+        accumulate_nonzero_inputs_v1::<N>(weights, input_row, accumulator);
+    } else {
+        accumulate_every_input_v1::<N>(weights, input_row, accumulator);
+    }
+}
+
+/// Every input's term for every output, in input order.
+#[inline(always)]
+fn accumulate_every_input_v1<const N: usize>(
     weights: &[f32],
     input_row: &[f32],
     accumulator: &mut [f32],
@@ -1679,12 +1843,112 @@ fn accumulate_fixed_width_v1<const N: usize>(
     accumulator.copy_from_slice(&sums);
 }
 
+/// `accumulate_every_input_v1` without the terms of the inputs that are
+/// zero. Only for a row `zero_inputs_add_nothing_v1` accepts.
+#[inline(always)]
+fn accumulate_nonzero_inputs_v1<const N: usize>(
+    weights: &[f32],
+    input_row: &[f32],
+    accumulator: &mut [f32],
+) {
+    let mut sums: [f32; N] = accumulator.try_into().expect("accumulator width");
+    for (&value, weight_row) in input_row.iter().zip(weights.chunks_exact(N)) {
+        if value == 0.0 {
+            continue;
+        }
+        let weight_row: &[f32; N] = weight_row.try_into().expect("weight row width");
+        for output in 0..N {
+            sums[output] += value * weight_row[output];
+        }
+    }
+    accumulator.copy_from_slice(&sums);
+}
+
+/// A row passes over its zero inputs only when at least this fraction of
+/// them is zero. The test per input costs a dense row a few percent, and
+/// the count that decides is one vector pass over the row.
+const ZERO_INPUT_SHARE_DIVISOR_V1: usize = 8;
+
+/// Whether the terms of this row's zero inputs can be left out without
+/// changing a bit of any sum, and whether enough inputs are zero to pay.
+///
+/// The condition: every weight and every input is finite, no sum starts as
+/// a negative zero or a NaN, and the thread rounds to nearest. Then:
+///
+/// - A zero input's product with a finite weight is a zero of either sign.
+/// - Adding a zero changes a sum only if the sum is a negative zero (a
+///   positive zero added to it gives a positive zero) or a signaling NaN
+///   (the add quiets it).
+/// - A sum that is not a negative zero never becomes one: two numbers sum
+///   to a negative zero only when both are. Arithmetic never yields a
+///   signaling NaN either.
+/// - No product is a NaN, so no add ever meets two NaNs, the one case in
+///   which the result depends on the order of an instruction's operands.
+///
+/// So the remaining terms give every sum the bits of the full loop,
+/// overflow to an infinity and the NaN of two opposite infinities
+/// included. Everything else keeps the full loop: a weight or an input that
+/// is not finite, a sum that starts as a negative zero or a NaN, a thread
+/// whose MXCSR is not in the pinned state (rounding toward negative
+/// infinity makes positive zero plus negative zero negative), and a target
+/// without that register.
+#[inline(always)]
+fn zero_inputs_add_nothing_v1(
+    weights_finite: bool,
+    input_row: &[f32],
+    accumulator: &[f32],
+) -> bool {
+    if !weights_finite {
+        return false;
+    }
+    // Neither loop leaves early, so both vectorize.
+    let (zeros, not_finite) = input_row
+        .iter()
+        .fold((0u32, 0u32), |(zeros, not_finite), value| {
+            (
+                zeros + u32::from(*value == 0.0),
+                not_finite + u32::from(!value.is_finite()),
+            )
+        });
+    if not_finite != 0 || (zeros as usize) * ZERO_INPUT_SHARE_DIVISOR_V1 < input_row.len() {
+        return false;
+    }
+    no_negative_zero_or_nan_v1(accumulator) && rounds_to_nearest_v1()
+}
+
+/// Whether no value is a negative zero or a NaN: the sums that adding a
+/// zero can change, and the signaling NaNs among the rest.
+#[inline(always)]
+pub(crate) fn no_negative_zero_or_nan_v1(values: &[f32]) -> bool {
+    // No early exit, so the pass vectorizes.
+    !values.iter().fold(false, |found, value| {
+        found | (value.to_bits() == (-0.0f32).to_bits()) | value.is_nan()
+    })
+}
+
+/// Whether this thread's floating-point state is the pinned one: round to
+/// nearest, with denormals neither read nor flushed as zero.
+#[inline(always)]
+pub(crate) fn rounds_to_nearest_v1() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    {
+        deterministic_math_v1::verify_pinned_mxcsr_state_v1().is_ok()
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
 /// `accumulate_linear_row_v1` for an input-major weight held outside a
 /// `LinearV1`: adds `input_row[k] * weight_t[k * accumulator.len() + o]` to
 /// `accumulator[o]` for every k in ascending order, so each output is the
-/// same sequential f32 sum as the [output, input] loop.
+/// same sequential f32 sum as the [output, input] loop. `weights_finite`
+/// says whether every weight of the matrix `weight_t` belongs to is finite
+/// (`accumulate_fixed_width_v1`); `false` is always correct.
 pub(crate) fn accumulate_input_major_row_v1(
     weight_t: &[f32],
+    weights_finite: bool,
     input_row: &[f32],
     accumulator: &mut [f32],
 ) {
@@ -1692,35 +1956,45 @@ pub(crate) fn accumulate_input_major_row_v1(
     #[cfg(target_arch = "x86_64")]
     if std::arch::is_x86_feature_detected!("avx2") {
         // SAFETY: AVX2 support was detected at run time just above.
-        unsafe { accumulate_input_major_row_avx2_v1(weight_t, input_row, accumulator) };
+        unsafe {
+            accumulate_input_major_row_avx2_v1(weight_t, weights_finite, input_row, accumulator)
+        };
         return;
     }
-    accumulate_input_major_row_body_v1(weight_t, input_row, accumulator);
+    accumulate_input_major_row_body_v1(weight_t, weights_finite, input_row, accumulator);
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2")]
 unsafe fn accumulate_input_major_row_avx2_v1(
     weight_t: &[f32],
+    weights_finite: bool,
     input_row: &[f32],
     accumulator: &mut [f32],
 ) {
-    accumulate_input_major_row_body_v1(weight_t, input_row, accumulator);
+    accumulate_input_major_row_body_v1(weight_t, weights_finite, input_row, accumulator);
 }
 
 #[inline(always)]
 fn accumulate_input_major_row_body_v1(
     weight_t: &[f32],
+    weights_finite: bool,
     input_row: &[f32],
     accumulator: &mut [f32],
 ) {
     match accumulator.len() {
-        HIDDEN_DIM_V1 => {
-            accumulate_fixed_width_v1::<HIDDEN_DIM_V1>(weight_t, input_row, accumulator)
-        }
-        W_HIDDEN_DIM_V1 => {
-            accumulate_fixed_width_v1::<W_HIDDEN_DIM_V1>(weight_t, input_row, accumulator)
-        }
+        HIDDEN_DIM_V1 => accumulate_fixed_width_v1::<HIDDEN_DIM_V1>(
+            weight_t,
+            weights_finite,
+            input_row,
+            accumulator,
+        ),
+        W_HIDDEN_DIM_V1 => accumulate_fixed_width_v1::<W_HIDDEN_DIM_V1>(
+            weight_t,
+            weights_finite,
+            input_row,
+            accumulator,
+        ),
         output_dim => {
             for (&value, weight_row) in input_row.iter().zip(weight_t.chunks_exact(output_dim)) {
                 for (sum, &weight) in accumulator.iter_mut().zip(weight_row) {
@@ -2447,7 +2721,7 @@ impl NativePolicyValueNetWideV1 {
                 actual.name != expected.name
                     || actual.shape != expected.shape
                     || actual.values.len() != expected.values.len()
-                    || actual.values.iter().any(|value| !value.is_finite())
+                    || !all_finite_v1(&actual.values)
             })
         {
             return Err(NativePolicyValueErrorV1::ParameterInvariant(
@@ -2481,7 +2755,7 @@ impl NativePolicyValueNetWideV1 {
             "card_embedding",
         )?;
         if self.card_embedding.len() != expected_embedding
-            || !self.card_embedding.iter().all(|value| value.is_finite())
+            || !all_finite_v1(&self.card_embedding)
             || self.card_embedding[..self.config.card_embedding_dim]
                 .iter()
                 .any(|value| value.to_bits() != 0)
@@ -2513,9 +2787,9 @@ impl NativePolicyValueNetWideV1 {
         Ok(())
     }
 
-    pub(crate) fn visit_parameters_wide_v1(
-        &self,
-        mut visitor: impl FnMut(&'static str, &[usize], &[f32]),
+    pub(crate) fn visit_parameters_wide_v1<'a>(
+        &'a self,
+        mut visitor: impl FnMut(&'static str, &[usize], &'a [f32]),
     ) {
         visitor(
             "card_embedding.weight",
@@ -3902,6 +4176,7 @@ mod linear_rows_bit_exact_tests {
             weight: values(rng, input_dim * output_dim),
             bias: values(rng, output_dim),
             weight_t: Vec::new(),
+            weight_finite: false,
         }
         .with_transposed_weight_v1()
     }
@@ -4013,21 +4288,320 @@ mod linear_rows_bit_exact_tests {
                     *sum += value * weight;
                 }
             }
-            let mut portable = bias.clone();
-            accumulate_input_major_row_body_v1(&weight_t, &input, &mut portable);
-            assert_eq!(
-                bits(&portable),
-                bits(&reference),
-                "{input_dim}x{output_dim}"
-            );
-            let mut dispatched = bias.clone();
-            accumulate_input_major_row_v1(&weight_t, &input, &mut dispatched);
-            assert_eq!(
-                bits(&dispatched),
-                bits(&reference),
-                "dispatched {input_dim}x{output_dim}"
-            );
+            for weights_finite in [false, true] {
+                let mut portable = bias.clone();
+                accumulate_input_major_row_body_v1(
+                    &weight_t,
+                    weights_finite,
+                    &input,
+                    &mut portable,
+                );
+                assert_eq!(
+                    bits(&portable),
+                    bits(&reference),
+                    "{input_dim}x{output_dim}"
+                );
+                let mut dispatched = bias.clone();
+                accumulate_input_major_row_v1(&weight_t, weights_finite, &input, &mut dispatched);
+                assert_eq!(
+                    bits(&dispatched),
+                    bits(&reference),
+                    "dispatched {input_dim}x{output_dim}"
+                );
+            }
         }
+    }
+
+    /// Every input's term for every output, in input order: the sums the
+    /// kernels must give.
+    fn every_term(weight_t: &[f32], input: &[f32], bias: &[f32]) -> Vec<f32> {
+        let mut sums = bias.to_vec();
+        for (&value, weight_row) in input.iter().zip(weight_t.chunks_exact(bias.len())) {
+            for (sum, &weight) in sums.iter_mut().zip(weight_row) {
+                *sum += value * weight;
+            }
+        }
+        sums
+    }
+
+    /// Finite values with no zero among them.
+    fn nonzero_values(rng: &mut SplitMix64, len: usize) -> Vec<f32> {
+        (0..len)
+            .map(|_| ((rng.next_u64() >> 40) as f32 / (1u64 << 23) as f32 - 1.0) * 3.0 + 4.0)
+            .collect()
+    }
+
+    /// A first-layer row as the encoders see it: mostly zeros of either
+    /// sign, some denormals, the rest ordinary.
+    fn sparse_values(rng: &mut SplitMix64, len: usize) -> Vec<f32> {
+        (0..len)
+            .map(|_| match rng.next_u64() % 16 {
+                0..=5 => 0.0,
+                6..=9 => -0.0,
+                10 => f32::from_bits(1 + (rng.next_u64() % (1 << 20)) as u32),
+                11 => -f32::from_bits(1 + (rng.next_u64() % (1 << 20)) as u32),
+                _ => ((rng.next_u64() >> 40) as f32 / (1u64 << 23) as f32 - 1.0) * 3.0,
+            })
+            .collect()
+    }
+
+    /// The row kernel passes over zero inputs when every weight and input is
+    /// finite and no sum starts as a negative zero or a NaN, and then gives
+    /// the bits of the loop over every input: at both hidden widths, on the
+    /// portable body and through the dispatcher.
+    #[test]
+    fn zero_inputs_are_passed_over_and_every_sum_keeps_its_bits() {
+        let mut rng = SplitMix64::seed(0x2E20_1A9E);
+        for (input_dim, output_dim) in [
+            (114, 64),
+            (169, 64),
+            (1499, 64),
+            (89, 64),
+            (130, 128),
+            (2779, 128),
+        ] {
+            for _ in 0..24 {
+                let weight_t = values(&mut rng, input_dim * output_dim);
+                let input = sparse_values(&mut rng, input_dim);
+                // Positive zeros among the biases are fine; negative are not.
+                let mut bias = nonzero_values(&mut rng, output_dim);
+                bias[0] = 0.0;
+                let reference = every_term(&weight_t, &input, &bias);
+                #[cfg(target_arch = "x86_64")]
+                assert!(zero_inputs_add_nothing_v1(true, &input, &bias));
+                let mut passed = bias.clone();
+                match output_dim {
+                    HIDDEN_DIM_V1 => accumulate_nonzero_inputs_v1::<HIDDEN_DIM_V1>(
+                        &weight_t,
+                        &input,
+                        &mut passed,
+                    ),
+                    _ => accumulate_nonzero_inputs_v1::<W_HIDDEN_DIM_V1>(
+                        &weight_t,
+                        &input,
+                        &mut passed,
+                    ),
+                }
+                assert_eq!(bits(&passed), bits(&reference), "{input_dim}x{output_dim}");
+                let mut portable = bias.clone();
+                accumulate_input_major_row_body_v1(&weight_t, true, &input, &mut portable);
+                assert_eq!(
+                    bits(&portable),
+                    bits(&reference),
+                    "{input_dim}x{output_dim}"
+                );
+                let mut dispatched = bias.clone();
+                accumulate_input_major_row_v1(&weight_t, true, &input, &mut dispatched);
+                assert_eq!(
+                    bits(&dispatched),
+                    bits(&reference),
+                    "{input_dim}x{output_dim}"
+                );
+            }
+        }
+    }
+
+    /// The same through a `LinearV1`, whose flag for finite weights is
+    /// derived with its transposed weight.
+    #[test]
+    fn linear_rows_with_sparse_inputs_match_the_reference_bit_for_bit() {
+        let mut rng = SplitMix64::seed(0x11AE_2E20);
+        for (input_dim, output_dim) in [(114, 64), (219, 64), (130, 128)] {
+            for rows in [1, 7, 33] {
+                let mut linear = random_linear(&mut rng, input_dim, output_dim);
+                linear.bias = nonzero_values(&mut rng, output_dim);
+                assert!(linear.weight_finite);
+                let input = sparse_values(&mut rng, rows * input_dim);
+                #[cfg(target_arch = "x86_64")]
+                assert!(zero_inputs_add_nothing_v1(
+                    linear.weight_finite,
+                    &input[..input_dim],
+                    &linear.bias
+                ));
+                assert_eq!(
+                    bits(&linear_rows_v1(&linear, &input, rows)),
+                    bits(&linear_rows_reference_v1(&linear, &input, rows)),
+                    "{input_dim}x{output_dim} rows={rows}"
+                );
+                // A weight that is not finite clears the flag when the
+                // transposed weight is derived again.
+                linear.weight[3] = f32::INFINITY;
+                linear.refresh_transposed_weight_v1();
+                assert!(!linear.weight_finite);
+                assert!(!zero_inputs_add_nothing_v1(
+                    linear.weight_finite,
+                    &input[..input_dim],
+                    &linear.bias
+                ));
+            }
+        }
+    }
+
+    /// Each condition alone keeps the loop over every input, and each is
+    /// needed: without it, passing over the zero inputs changes a bit.
+    #[test]
+    fn each_condition_for_passing_over_zero_inputs_is_needed() {
+        const N: usize = HIDDEN_DIM_V1;
+        let input_dim = 24;
+        // One ordinary input among zeros of both signs.
+        let mut input = vec![0.0f32; input_dim];
+        input[5] = 1.5;
+        input[7] = -0.0;
+        let weight_t = vec![0.25f32; input_dim * N];
+        let bias = vec![1.0f32; N];
+        #[cfg(target_arch = "x86_64")]
+        assert!(zero_inputs_add_nothing_v1(true, &input, &bias));
+        // Whether passing over the zero inputs changes a bit. The kernel
+        // itself, told truthfully whether the weights are finite, always
+        // gives the bits of every term.
+        let differs = |weight_t: &[f32], input: &[f32], bias: &[f32]| {
+            let mut every = bias.to_vec();
+            accumulate_every_input_v1::<N>(weight_t, input, &mut every);
+            assert_eq!(bits(&every), bits(&every_term(weight_t, input, bias)));
+            let mut passed = bias.to_vec();
+            accumulate_nonzero_inputs_v1::<N>(weight_t, input, &mut passed);
+            let weights_finite = weight_t.iter().all(|weight| weight.is_finite());
+            let mut guarded = bias.to_vec();
+            accumulate_input_major_row_v1(weight_t, weights_finite, input, &mut guarded);
+            assert_eq!(bits(&guarded), bits(&every));
+            bits(&passed) != bits(&every)
+        };
+        assert!(!differs(&weight_t, &input, &bias));
+
+        // A sum that starts as a negative zero: adding a positive zero makes
+        // it positive.
+        let all_zero = vec![0.0f32; input_dim];
+        let mut negative_zero_bias = bias.clone();
+        negative_zero_bias[9] = -0.0;
+        assert!(!zero_inputs_add_nothing_v1(
+            true,
+            &all_zero,
+            &negative_zero_bias
+        ));
+        assert!(differs(&weight_t, &all_zero, &negative_zero_bias));
+
+        // A sum that starts as a signaling NaN: any add quiets it.
+        let mut signaling_bias = bias.clone();
+        signaling_bias[9] = f32::from_bits(0x7fa0_0000);
+        assert!(!zero_inputs_add_nothing_v1(
+            true,
+            &all_zero,
+            &signaling_bias
+        ));
+        assert!(differs(&weight_t, &all_zero, &signaling_bias));
+
+        // A weight that is not finite: zero times it is a NaN.
+        let mut infinite_weight = weight_t.clone();
+        infinite_weight[2 * N + 4] = f32::INFINITY;
+        assert!(!zero_inputs_add_nothing_v1(false, &input, &bias));
+        assert!(differs(&infinite_weight, &input, &bias));
+        assert!(every_term(&infinite_weight, &input, &bias)[4].is_nan());
+
+        // An input that is not finite keeps every term, so no add meets two
+        // NaNs in an order that depends on the loop.
+        for not_finite in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+            let mut input = input.clone();
+            input[11] = not_finite;
+            assert!(!zero_inputs_add_nothing_v1(true, &input, &bias));
+            assert!(!differs(&weight_t, &input, &bias));
+        }
+
+        // Too few zeros to pay: the loop over every input, same bits.
+        let mut dense = nonzero_values(&mut SplitMix64::seed(7), input_dim);
+        dense[0] = 0.0;
+        dense[1] = -0.0;
+        assert!(!zero_inputs_add_nothing_v1(true, &dense, &bias));
+        assert!(!differs(&weight_t, &dense, &bias));
+        dense[2] = 0.0;
+        #[cfg(target_arch = "x86_64")]
+        assert!(zero_inputs_add_nothing_v1(true, &dense, &bias));
+    }
+
+    /// Sums that overflow to an infinity, and the NaN two opposite
+    /// infinities sum to, keep their bits when zero inputs are passed over.
+    #[test]
+    fn passing_over_zero_inputs_keeps_overflow_and_its_nan() {
+        const N: usize = HIDDEN_DIM_V1;
+        let mut rng = SplitMix64::seed(0x0F10_2E20);
+        let (mut infinities, mut nans) = (0, 0);
+        for _ in 0..64 {
+            let input_dim = 40;
+            let weight_t = (0..input_dim * N)
+                .map(|_| {
+                    let unit = (rng.next_u64() >> 40) as f32 / (1u64 << 23) as f32 - 1.0;
+                    unit * 3.0e38
+                })
+                .collect::<Vec<_>>();
+            let input = (0..input_dim)
+                .map(|_| match rng.next_u64() % 4 {
+                    0 => 0.0,
+                    1 => -0.0,
+                    _ => ((rng.next_u64() >> 40) as f32 / (1u64 << 23) as f32 - 1.0) * 4.0,
+                })
+                .collect::<Vec<_>>();
+            let bias = nonzero_values(&mut rng, N);
+            let reference = every_term(&weight_t, &input, &bias);
+            infinities += reference.iter().filter(|sum| sum.is_infinite()).count();
+            nans += reference.iter().filter(|sum| sum.is_nan()).count();
+            #[cfg(target_arch = "x86_64")]
+            assert!(zero_inputs_add_nothing_v1(true, &input, &bias));
+            let mut passed = bias.clone();
+            accumulate_nonzero_inputs_v1::<N>(&weight_t, &input, &mut passed);
+            assert_eq!(bits(&passed), bits(&reference));
+            let mut dispatched = bias.clone();
+            accumulate_input_major_row_v1(&weight_t, true, &input, &mut dispatched);
+            assert_eq!(bits(&dispatched), bits(&reference));
+        }
+        assert!(infinities > 100 && nans > 100, "{infinities} {nans}");
+    }
+
+    /// A thread outside the pinned MXCSR state keeps the loop over every
+    /// input: rounding toward negative infinity makes positive zero plus
+    /// negative zero negative, so there the zero terms change bits.
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn a_thread_outside_the_pinned_mxcsr_state_adds_every_term() {
+        use crate::deterministic_math_v1::{read_mxcsr_v1, write_mxcsr_v1};
+        const N: usize = HIDDEN_DIM_V1;
+        struct Restore(u32);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                write_mxcsr_v1(self.0);
+            }
+        }
+        let restore = Restore(read_mxcsr_v1());
+        let input_dim = 24;
+        let mut input = vec![0.0f32; input_dim];
+        input[3] = -0.0;
+        input[5] = 1.5;
+        // The first output's weights are positive, so its zero terms are
+        // zeros of both signs, and its one other term is a zero as well.
+        let mut weight_t = vec![0.25f32; input_dim * N];
+        weight_t[5 * N] = 0.0;
+        let mut bias = vec![1.0f32; N];
+        bias[0] = 0.0;
+        assert!(zero_inputs_add_nothing_v1(true, &input, &bias));
+        // Round down, round up, toward zero, flush to zero, denormals as zero.
+        let mut round_down_differs = false;
+        for dirty in [1 << 13, 2 << 13, 3 << 13, 1 << 15, 1 << 6] {
+            write_mxcsr_v1(restore.0 | dirty);
+            let accepted = zero_inputs_add_nothing_v1(true, &input, &bias);
+            let reference = every_term(&weight_t, &input, &bias);
+            let mut dispatched = bias.clone();
+            accumulate_input_major_row_v1(&weight_t, true, &input, &mut dispatched);
+            let mut passed = bias.clone();
+            accumulate_nonzero_inputs_v1::<N>(&weight_t, &input, &mut passed);
+            write_mxcsr_v1(restore.0);
+            assert!(!accepted, "{dirty:#x}");
+            assert_eq!(bits(&dispatched), bits(&reference), "{dirty:#x}");
+            if dirty == 1 << 13 {
+                round_down_differs = bits(&passed) != bits(&reference);
+            }
+        }
+        // Rounding down, the first sum is a negative zero only with every
+        // term: positive zero plus a negative zero term.
+        assert!(round_down_differs);
+        assert!(zero_inputs_add_nothing_v1(true, &input, &bias));
     }
 
     /// The search-only tanh stays within 5e-7 of the true tanh (libm's own
@@ -4090,5 +4664,138 @@ mod linear_rows_bit_exact_tests {
             bits(&linear_rows_v1(linear, &input, 3)),
             bits(&linear_rows_reference_v1(linear, &input, 3)),
         );
+    }
+}
+
+#[cfg(test)]
+mod validity_scan_tests {
+    use super::*;
+    use crate::state::SplitMix64;
+
+    /// The loop [`all_finite_v1`] replaced.
+    fn all_finite_reference(values: &[f32]) -> bool {
+        values.iter().all(|value| value.is_finite())
+    }
+
+    /// The loop [`all_finite_and_not_negative_v1`] replaced.
+    fn all_finite_and_not_negative_reference(values: &[f32]) -> bool {
+        !values
+            .iter()
+            .any(|value| !value.is_finite() || *value < 0.0)
+    }
+
+    /// Finite values that are not below zero, with zeros of both signs, the
+    /// smallest subnormal and the largest finite value among them.
+    fn passing_values(rng: &mut SplitMix64, len: usize) -> Vec<f32> {
+        (0..len)
+            .map(|_| match rng.next_u64() % 8 {
+                0 => 0.0,
+                1 => -0.0,
+                2 => f32::from_bits(1),
+                3 => f32::MAX,
+                _ => (rng.next_u64() >> 40) as f32 / (1u64 << 24) as f32,
+            })
+            .collect()
+    }
+
+    /// Lengths around the vector width, the unrolled step and the block.
+    fn lengths() -> Vec<usize> {
+        let block = VALIDITY_SCAN_BLOCK_V1;
+        let mut lengths: Vec<usize> = (0..=40).collect();
+        lengths.extend([63, 64, 65, 127, 129]);
+        lengths.extend([block - 1, block, block + 1, block + 7, block + 8, block + 9]);
+        lengths.extend([2 * block - 1, 2 * block, 2 * block + 17]);
+        lengths
+    }
+
+    /// Positions at both ends of a slice of `len` values and around each
+    /// block boundary inside it.
+    fn positions(len: usize) -> Vec<usize> {
+        let block = VALIDITY_SCAN_BLOCK_V1;
+        let mut positions = vec![0, 1, 3, 4, 7, 8, len / 2];
+        positions.extend([block - 1, block, block + 1, 2 * block - 1, 2 * block]);
+        positions.extend((1..=9).filter_map(|back| len.checked_sub(back)));
+        positions.retain(|position| *position < len);
+        positions.sort_unstable();
+        positions.dedup();
+        positions
+    }
+
+    #[test]
+    fn the_scans_answer_as_the_loops_they_replaced() {
+        let failing_or_edge = [
+            f32::NAN,
+            -f32::NAN,
+            // A signaling NaN and a NaN with only its lowest payload bit.
+            f32::from_bits(0x7FA0_0000),
+            f32::from_bits(0xFF80_0001),
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            // Below zero: the smallest and the largest magnitudes.
+            f32::from_bits(0x8000_0001),
+            -f32::MIN_POSITIVE,
+            -1.0,
+            f32::MIN,
+            // Passing values at the edges.
+            -0.0,
+            0.0,
+            f32::from_bits(1),
+            f32::MIN_POSITIVE,
+            f32::MAX,
+        ];
+        let mut rng = SplitMix64::seed(0x5CA2_F121);
+        for len in lengths() {
+            let passing = passing_values(&mut rng, len);
+            assert!(all_finite_v1(&passing), "len={len}");
+            assert!(all_finite_and_not_negative_v1(&passing), "len={len}");
+            for position in positions(len) {
+                for value in failing_or_edge {
+                    let mut values = passing.clone();
+                    values[position] = value;
+                    assert_eq!(
+                        all_finite_v1(&values),
+                        all_finite_reference(&values),
+                        "len={len} position={position} bits={:#010x}",
+                        value.to_bits()
+                    );
+                    assert_eq!(
+                        all_finite_and_not_negative_v1(&values),
+                        all_finite_and_not_negative_reference(&values),
+                        "len={len} position={position} bits={:#010x}",
+                        value.to_bits()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn one_failing_value_anywhere_fails_the_scan() {
+        let len = 2 * VALIDITY_SCAN_BLOCK_V1 + 17;
+        let mut rng = SplitMix64::seed(0x0BAD_F10A);
+        let passing = passing_values(&mut rng, len);
+        for position in positions(len) {
+            for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+                let mut values = passing.clone();
+                values[position] = value;
+                assert!(!all_finite_v1(&values), "position={position}");
+                assert!(
+                    !all_finite_and_not_negative_v1(&values),
+                    "position={position}"
+                );
+            }
+            let mut values = passing.clone();
+            values[position] = f32::from_bits(0x8000_0001);
+            assert!(all_finite_v1(&values), "position={position}");
+            assert!(
+                !all_finite_and_not_negative_v1(&values),
+                "position={position}"
+            );
+            values[position] = -0.0;
+            assert!(
+                all_finite_and_not_negative_v1(&values),
+                "position={position}"
+            );
+        }
     }
 }

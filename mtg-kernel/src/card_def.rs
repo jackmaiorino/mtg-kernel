@@ -453,6 +453,27 @@ pub enum Subtype {
     Saproling = 280,
     /// Appended for Premodern wave P2c (Battlefield Scrounger).
     Centaur = 281,
+    /// Appended for the eternal catalog's wave S1b (Gaddock Teeg), with
+    /// stable ids 320 to 339 reserved for that wave.
+    Kithkin = 320,
+    Advisor = 321,
+    /// Appended for the eternal catalog's wave S1d.
+    Rhino = 361,
+    Flagbearer = 362,
+    /// Appended for the eternal catalog's Premodern wave P3c (Spike
+    /// Feeder), with stable ids from 380 reserved for that wave.
+    Spike = 380,
+    /// Appended for the eternal catalog's Premodern wave P3f (Phyrexian
+    /// Processor's Minion tokens).
+    Minion = 381,
+    /// Appended for the eternal catalog's Vintage sideboard wave S1f (the
+    /// Junk token Overencumbered creates), with stable ids from 400 reserved
+    /// for that wave. An artifact type, not a creature type.
+    Junk = 400,
+    /// Appended for the eternal catalog's Legacy sideboard wave S1m
+    /// (Extinguisher Battleship), with stable ids from 420 reserved for that
+    /// wave. An artifact type, not a creature type.
+    Spacecraft = 420,
 }
 
 impl Subtype {
@@ -835,6 +856,18 @@ impl Subtype {
         Subtype::Saproling,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Centaur,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Kithkin,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Advisor,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Rhino,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Flagbearer,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Spike,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Minion,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1078,6 +1111,14 @@ impl Subtype {
             260 => Subtype::Masticore,
             280 => Subtype::Saproling,
             281 => Subtype::Centaur,
+            320 => Subtype::Kithkin,
+            321 => Subtype::Advisor,
+            361 => Subtype::Rhino,
+            362 => Subtype::Flagbearer,
+            380 => Subtype::Spike,
+            381 => Subtype::Minion,
+            400 => Subtype::Junk,
+            420 => Subtype::Spacecraft,
             _ => return None,
         })
     }
@@ -1300,6 +1341,14 @@ impl Subtype {
             Subtype::Masticore => true,
             Subtype::Saproling => true,
             Subtype::Centaur => true,
+            Subtype::Kithkin => true,
+            Subtype::Advisor => true,
+            Subtype::Rhino => true,
+            Subtype::Flagbearer => true,
+            Subtype::Spike => true,
+            Subtype::Minion => true,
+            Subtype::Junk => false,
+            Subtype::Spacecraft => false,
         }
     }
 
@@ -1407,6 +1456,12 @@ impl Subtype {
                     | Subtype::Masticore
                     | Subtype::Saproling
                     | Subtype::Centaur
+                    | Subtype::Kithkin
+                    | Subtype::Advisor
+                    | Subtype::Rhino
+                    | Subtype::Flagbearer
+                    | Subtype::Spike
+                    | Subtype::Minion
             )
         {
             return true;
@@ -2226,6 +2281,15 @@ pub enum CostComponent {
     /// `ExileOtherCardsFromOwnGraveyard`'s, moved to the library bottom
     /// instead. Appended for the eternal catalog (Premodern wave P2c).
     PutOtherCardsFromOwnGraveyardOnLibraryBottomV1(u8),
+    /// "Tap another untapped creature you control" (station, 702.184a):
+    /// one untapped creature the payer controls, whoever owns it, other
+    /// than the source, chosen through `Decision::ChooseCostTargets` like
+    /// `TapOtherUntappedControlledPermanentWithSubtype`. Creatures tap
+    /// regardless of summoning sickness, since this is not {T}. The tapped
+    /// creature's paid-cost reference records its power, refreshed as
+    /// last-known information if it leaves. Activations only. Appended for
+    /// the eternal catalog (Legacy sideboard wave S1m).
+    TapOtherUntappedControlledCreatureV1,
 }
 
 impl CostComponent {
@@ -2394,6 +2458,17 @@ pub enum AltCostCondition {
     /// "If this spell is the first spell you've cast this game" (Once Upon a
     /// Time, `eternal_legacy_e8a_v1`). Appended for the eternal catalog.
     FirstSpellThisGameV1,
+    /// "If an opponent controls a Plains and you control a Swamp" (Massacre,
+    /// `eternal_sideboard_s1a_v1`). Appended for the eternal catalog.
+    OpponentPlainsYouSwampV1,
+    /// Ravenous Trap: "If an opponent had three or more cards put into their
+    /// graveyard from anywhere this turn". Appended for the eternal catalog's
+    /// wave S1c.
+    OpponentThreeCardsToGraveyardThisTurnV1,
+    /// "If an opponent controls an Island and you control a Mountain" (Mogg
+    /// Salvage, `eternal_premodern_p3b_v1`). Appended for the eternal
+    /// catalog's wave P3b.
+    OpponentIslandYouMountainV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback
@@ -2818,6 +2893,9 @@ pub enum DynamicCountDef {
     /// One iff there are ten or more creature cards in all graveyards
     /// together (Avatar of Woe). Appended for the eternal catalog.
     TenCreatureCardsInAllGraveyardsV1,
+    /// One iff a chosen spell target is a blue spell on the stack (Mystical
+    /// Dispute). Appended for the eternal catalog's wave S1c.
+    SpellTargetsBlueSpellV1,
 }
 
 /// Reduces only the generic portion of a spell's mana cost, flooring at
@@ -3545,6 +3623,11 @@ pub enum DeckPreflightError {
         name: &'static str,
         capability: CardCapability,
     },
+    RequiresNativeOpening {
+        index: usize,
+        card_def: u16,
+        name: &'static str,
+    },
 }
 
 impl fmt::Display for DeckPreflightError {
@@ -3570,15 +3653,22 @@ impl fmt::Display for DeckPreflightError {
                 f,
                 "deck card {index} ({name}, definition {card_def}) is not fully supported: {capability:?}"
             ),
+            DeckPreflightError::RequiresNativeOpening {
+                index,
+                card_def,
+                name,
+            } => write!(
+                f,
+                "deck card {index} ({name}, definition {card_def}) requires the native opening profile"
+            ),
         }
     }
 }
 
 impl std::error::Error for DeckPreflightError {}
 
-/// Rejects a deck at environment construction time unless every definition
-/// is explicitly `Full`. Missing records and newly added records whose
-/// capability was omitted both fail closed.
+/// Admits explicitly `Full` printings to ordinary environment construction.
+/// Printings requiring the native opening owner use its separate registration.
 pub fn preflight_fully_supported_deck(card_defs: &[u16]) -> Result<(), DeckPreflightError> {
     for (index, &card_def) in card_defs.iter().enumerate() {
         let Some(def) = CARD_DEFS.get(card_def as usize) else {
@@ -3597,6 +3687,13 @@ pub fn preflight_fully_supported_deck(card_defs: &[u16]) -> Result<(), DeckPrefl
                 card_def,
                 name: def.name,
                 capability: def.capability,
+            });
+        }
+        if crate::eternal_opening_v1::requires_native_opening(def) {
+            return Err(DeckPreflightError::RequiresNativeOpening {
+                index,
+                card_def,
+                name: def.name,
             });
         }
     }
@@ -3911,7 +4008,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x945f_a0ce_fae3_9583;
+        const EXPECTED_ETERNAL: u64 = 0x8203_5013_49a0_1983;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

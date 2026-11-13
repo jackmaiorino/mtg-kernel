@@ -15,8 +15,8 @@ use crate::ids::{ObjectId, PlayerId};
 use crate::mana::ManaColor;
 use crate::phase_profile::{measure_optional, RlPhaseProfileV1, RlPhaseV1};
 use crate::policy_surface_v5::{
-    FastActorInPlaceApplyErrorV1, PolicyActionV5, PolicyDecisionV5, PolicySurfaceContextIdsV5,
-    PolicySurfaceV5, POLICY_ENVIRONMENT_HASH_ALGORITHM,
+    FastActorInPlaceApplyErrorV1, LimitedAppendixV1, PolicyActionV5, PolicyDecisionV5,
+    PolicySurfaceContextIdsV5, PolicySurfaceV5, POLICY_ENVIRONMENT_HASH_ALGORITHM,
     POLICY_ENVIRONMENT_HASH_ALGORITHM_ENVIRONMENT_V2, POLICY_SURFACE_VERSION,
 };
 use crate::rl::{
@@ -51,6 +51,22 @@ pub(crate) mod test_timing_v1 {
         NativeSurfaceAdvance,
         PreparedObservePartsInclusive,
         DrakeWorld,
+        DrakeWorldCombat,
+        DrakeWorldPayment,
+        DrakeWorldAcquireRemoval,
+        DrakeWorldCheckRemoval,
+        DrakeWorldCompletion,
+        DrakeWorldEncloseInput,
+        DrakeWorldEncloseOutput,
+        DrakeWorldValidate,
+        DrakeWorldReplayOutput,
+        DrakeWorldSerialize,
+        DrakeWorldStrip,
+        DrakeWorldDeserialize,
+        DrakeRestoreWorld,
+        DrakeRestoreSerialize,
+        DrakeRestoreHydrate,
+        DrakeRestoreDeserialize,
         DrakeReplayKeys,
         DrakeActualEnclosingReplay,
         FaebloomValidateState,
@@ -96,6 +112,22 @@ pub(crate) mod test_timing_v1 {
                 Self::NativeSurfaceAdvance => "native.surface_advance",
                 Self::PreparedObservePartsInclusive => "prepared.observe_parts_inclusive",
                 Self::DrakeWorld => "drake.world",
+                Self::DrakeWorldCombat => "drake.world.caller.combat",
+                Self::DrakeWorldPayment => "drake.world.caller.payment",
+                Self::DrakeWorldAcquireRemoval => "drake.world.caller.acquire_removal",
+                Self::DrakeWorldCheckRemoval => "drake.world.caller.check_removal",
+                Self::DrakeWorldCompletion => "drake.world.caller.completion",
+                Self::DrakeWorldEncloseInput => "drake.world.caller.enclose_input",
+                Self::DrakeWorldEncloseOutput => "drake.world.caller.enclose_output",
+                Self::DrakeWorldValidate => "drake.world.caller.validate",
+                Self::DrakeWorldReplayOutput => "drake.world.caller.replay_output",
+                Self::DrakeWorldSerialize => "drake.world.serialize",
+                Self::DrakeWorldStrip => "drake.world.strip_refs",
+                Self::DrakeWorldDeserialize => "drake.world.deserialize",
+                Self::DrakeRestoreWorld => "drake.restore_world",
+                Self::DrakeRestoreSerialize => "drake.restore_world.serialize",
+                Self::DrakeRestoreHydrate => "drake.restore_world.hydrate_refs",
+                Self::DrakeRestoreDeserialize => "drake.restore_world.deserialize",
                 Self::DrakeReplayKeys => "drake.replay_keys",
                 Self::DrakeActualEnclosingReplay => "drake.actual_enclosing_replay",
                 Self::FaebloomValidateState => "faebloom.validate_state",
@@ -537,7 +569,13 @@ pub(crate) fn kaito_candidates_v75(
     state: &crate::state::GameState,
     surface: &PolicySurfaceV5,
 ) -> Result<Vec<CorePolicyActionCandidateV1>, RlContractError> {
-    crate::kaito_observation_v75::validate_state(state).map_err(RlContractError)?;
+    let scope = surface.limited_appendix_v1();
+    crate::kaito_observation_v75::validate_state_scoped(state, scope).map_err(RlContractError)?;
+    if scope.includes(LimitedAppendixV1::ChosenType) {
+        if let Some(candidates) = crate::chosen_type_consumer_v1::entry_candidates(state, origin)? {
+            return Ok(candidates);
+        }
+    }
     #[cfg(feature = "limited-fdn-fixtures")]
     if let Some((player, pending, prefix)) = surface
         .hunter_order_parts_v45(state)
@@ -560,7 +598,7 @@ pub(crate) fn kaito_candidates_v75(
     } else if inspiration_v37::is_mill(state) {
         inspiration_v37::actual_candidates(origin, state)
     } else {
-        crate::rl::core_policy_action_candidates_kaito_v75(origin, state)
+        crate::rl::core_policy_action_candidates_kaito_scoped_v75(origin, state, scope)
     }
 }
 
@@ -1157,6 +1195,26 @@ struct FastActorCurrentDecisionV1 {
     liliana_projection_v73: Option<std::sync::Arc<liliana_v73::PreparedProjectionV73>>,
 }
 
+#[cfg(feature = "limited-fdn-fixtures")]
+pub(crate) struct LimitedClosedListRootV3<'a> {
+    actor: PlayerId,
+    courtyard: Option<crate::linked_aura_operation_v1::CourtyardSampleV1<'a>>,
+    revealed_discard: Option<crate::effect::revealed_discard_sampling_v1::PreparedV1<'a>>,
+    slots: [Vec<ObjectId>; 2],
+    knowledge: crate::reveal_meaning_v3::RevealKnowledgeV3,
+    known_names: Vec<u16>,
+    library_minima: Vec<u16>,
+    typed_full_pool: bool,
+    sampled_history: crate::sampled_history_v1::CustodyV1,
+}
+
+#[cfg(feature = "limited-fdn-fixtures")]
+impl LimitedClosedListRootV3<'_> {
+    pub(crate) fn rebinds_revealed_discard(&self) -> bool {
+        self.revealed_discard.is_some()
+    }
+}
+
 fn flat_player_id_v1(seat: PlayerSeatV1) -> PlayerId {
     match seat {
         PlayerSeatV1::P0 => PlayerId::P0,
@@ -1699,11 +1757,13 @@ where
         | ActionSemanticV1::ChooseLondonBottom { .. }
         | ActionSemanticV1::ChooseAttackTarget { .. }
         | ActionSemanticV1::ChooseEntryColorV36 { .. }
+        | ActionSemanticV1::ChooseEntryCreatureTypeV60 { .. }
         | ActionSemanticV1::ChooseDivineKickerV44 { .. }
         | ActionSemanticV1::ChooseDivineTargetV44 { .. }
         | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
         | ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 { .. }
-        | ActionSemanticV1::FinishDivineTargetsV44 { .. } => {
+        | ActionSemanticV1::FinishDivineTargetsV44 { .. }
+        | ActionSemanticV1::ChooseMeddlingMageNameV1 { .. } => {
             return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic);
         }
         #[cfg(feature = "limited-fdn-fixtures")]
@@ -3375,6 +3435,8 @@ fn flat_validate_origin_decision_common_scoped_v42(
         | Decision::ChooseVariableCastKicker { .. }
         | Decision::ChooseEntryColorV36 { .. }
         | Decision::ChooseEntryCreatureTypeV1 { .. }
+        | Decision::ChooseMeddlingMageNameV1 { .. }
+        | Decision::ChooseEternalOpeningV1 { .. }
         | Decision::ChooseCombatDamageRange { .. }
         | Decision::ChooseLegendPermanent { .. }
         | Decision::ChooseLondonMulligan { .. }
@@ -3526,11 +3588,13 @@ fn flat_validate_semantic_policy_pair_v1(
             | ActionSemanticV1::ChooseLondonBottom { .. }
             | ActionSemanticV1::ChooseAttackTarget { .. }
             | ActionSemanticV1::ChooseEntryColorV36 { .. }
+            | ActionSemanticV1::ChooseEntryCreatureTypeV60 { .. }
             | ActionSemanticV1::ChooseDivineKickerV44 { .. }
             | ActionSemanticV1::ChooseDivineTargetV44 { .. }
             | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
             | ActionSemanticV1::ActivateManaAbilityWithTwoCostTargetsV1 { .. }
-            | ActionSemanticV1::FinishDivineTargetsV44 { .. },
+            | ActionSemanticV1::FinishDivineTargetsV44 { .. }
+            | ActionSemanticV1::ChooseMeddlingMageNameV1 { .. },
             _,
         ) => return Err(FlatActionDecisionSliceErrorV1::UnsupportedActionSemantic),
         (
@@ -5229,7 +5293,9 @@ fn flat_validate_expected_decision_numeric_domain(
         i16::try_from(object.counters.plus1_plus1).is_err()
             || u16::try_from(object.damage).is_err()
     })) || (session.state.planeswalkers_v1.is_some() && !session.is_common_v40())
-        || session.state.trigger_uses_v1.is_some()
+        || (session.state.trigger_uses_v1.is_some()
+            && !(session.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75
+                && session.surface.limited_appendix_v1() == LimitedAppendixV1::FullPool))
         || session.state.engine.active_replacements.iter().any(|replacement| {
             match replacement.kind {
                 crate::event::ReplacementEffectKind::PreventCombatDamageToObjectUntilEndOfTurn { .. } => !matches!(session.flat_action_contract_mode,FlatActionContractModeV1::TwinflameV38|FlatActionContractModeV1::AkromaV40|FlatActionContractModeV1::LimitedCommonV1|FlatActionContractModeV1::AjaniV42|FlatActionContractModeV1::FaebloomV43|FlatActionContractModeV1::DivineV44|FlatActionContractModeV1::HunterV45|FlatActionContractModeV1::EatenV46|FlatActionContractModeV1::PandaV47|FlatActionContractModeV1::SeasonV48 | FlatActionContractModeV1::ConquerorV49 | FlatActionContractModeV1::FakeV50
@@ -8470,6 +8536,7 @@ impl FastActorSessionV1 {
         use crate::kernel_native_search_opponent_v1::{
             pending_selection_hidden_objects_v1, redeterminize_hidden_zones_pinned_v1,
         };
+        self.refuse_curator_sampling_v1()?;
         let actor = self.current.as_ref().ok_or("no current decision")?.actor;
         let pinned = pending_selection_hidden_objects_v1(&self.state, actor);
         let mut sampled = self.clone();
@@ -8494,6 +8561,13 @@ impl FastActorSessionV1 {
         Ok(sampled)
     }
 
+    pub(crate) fn refuse_curator_sampling_v1(&self) -> Result<(), String> {
+        if self.state.curator_unordered_reveal_v1 {
+            return Err("Curator profile has no unordered-pile sampler".into());
+        }
+        Ok(())
+    }
+
     /// Limited match search (issue #110 milestone 6): the census world with a
     /// caller rewrite of the actor's unknown slots. Unlike the census clone,
     /// every unknown slot of both owners counts as changed, whether or not its
@@ -8508,6 +8582,7 @@ impl FastActorSessionV1 {
         use crate::kernel_native_search_opponent_v1::{
             pending_selection_hidden_objects_v1, redeterminize_hidden_zones_pinned_v1,
         };
+        self.refuse_sampled_kinship_checkpoint_v1()?;
         let actor = self.current.as_ref().ok_or("no current decision")?.actor;
         let pinned = pending_selection_hidden_objects_v1(&self.state, actor);
         let slots: Vec<_> = [PlayerId::P0, PlayerId::P1]
@@ -8523,6 +8598,297 @@ impl FastActorSessionV1 {
         redeterminize_hidden_zones_pinned_v1(&mut sampled.state, actor, seed, &pinned)
             .map_err(|error| error.to_string())?;
         rewrite(&mut sampled.state, actor, &pinned)?;
+        Ok(sampled)
+    }
+
+    /// Closed-list v2 installs an independent future RNG and never draws
+    /// from the opponent's native unknown identities. The disposable clone
+    /// keeps the original root binding for applying the selected index.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn limited_closed_list_clone_v2(
+        &self,
+        seed: u64,
+        belief: &crate::limited_match_v1::LimitedBeliefV1,
+    ) -> Result<Self, String> {
+        use crate::kernel_native_search_opponent_v1::pending_selection_hidden_objects_v1;
+        use crate::limited_match_v1::closed_list_v2;
+
+        if self.flat_action_contract_mode != FlatActionContractModeV1::RulesOnlyV1
+            || !self.state.hand_knowledge_by_name_v2
+        {
+            return Err("closedlist-v2 requires rules-only play with name-level hand facts".into());
+        }
+        self.refuse_sampled_kinship_checkpoint_v1()?;
+        let actor = self.current.as_ref().ok_or("no current decision")?.actor;
+        let pinned = pending_selection_hidden_objects_v1(&self.state, actor);
+        if pinned.iter().any(|id| {
+            self.state.players[actor.opponent().index()]
+                .hand
+                .contains(id)
+        }) {
+            return Err("opponent hand selection binds physical copies".into());
+        }
+        if self.state.objects.iter().any(|(_, card)| {
+            card.v4
+                .face_down_v1
+                .is_some_and(|face| face.lookers & (1 << actor.index()) == 0)
+        }) {
+            return Err("unknown face-down identity".into());
+        }
+        let slots = closed_list_v2::resampled_slots(&self.state, actor, &pinned);
+        let changed: Vec<_> = slots.iter().flatten().copied().collect();
+        if flat_action_v4::census_hidden_source_conflicts_v1(&self.state, &changed) {
+            return Err("hidden-source provenance conflict".into());
+        }
+        let mut sampled = self.clone();
+        closed_list_v2::rewrite(&mut sampled.state, actor, slots, belief, seed)?;
+        sampled.state.resample_future_randomness_for_search_v3(seed);
+        Ok(sampled)
+    }
+
+    /// Enable the public reveal journal for a fresh rules-only Limited game.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn enable_limited_reveals_v3(&mut self) -> Result<(), String> {
+        if self.flat_action_contract_mode != FlatActionContractModeV1::RulesOnlyV1
+            || self.policy_step_count != 0
+        {
+            return Err("closedlist-v3 requires a fresh rules-only session".into());
+        }
+        self.state.reveal_meaning_v3.enable();
+        Ok(())
+    }
+
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn limited_closed_list_root_v3(
+        &self,
+    ) -> Result<LimitedClosedListRootV3<'_>, String> {
+        use crate::kernel_native_search_opponent_v1::pending_selection_hidden_objects_v1;
+        use crate::limited_match_v1::closed_list_v2;
+        use crate::reveal_meaning_v3::RevealReducerV3;
+
+        let typed_full_pool = self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75
+            && self.surface.limited_appendix_v1()
+                == crate::policy_surface_v5::LimitedAppendixV1::FullPool;
+        if self.flat_action_contract_mode != FlatActionContractModeV1::RulesOnlyV1
+            && !typed_full_pool
+        {
+            return Err("closedlist-v3 requires a rules-only or full-pool owning session".into());
+        }
+        let actor = self.current.as_ref().ok_or("no current decision")?.actor;
+        let courtyard =
+            crate::linked_aura_operation_v1::CourtyardSampleV1::from_live(&self.state, actor)?;
+        let sampling_state = match &courtyard {
+            Some(checkpoint) => checkpoint.original(&self.state)?,
+            None => &self.state,
+        };
+        let opponent = actor.opponent();
+        let knowledge = if typed_full_pool {
+            self.state
+                .reveal_knowledge_v4
+                .as_ref()
+                .ok_or("full-pool sampling requires public reveal minima")?[actor.index()]
+            .clone()
+        } else {
+            let transcript = self
+                .state
+                .reveal_meaning_v3
+                .transcript(actor)
+                .ok_or("closedlist-v3 needs the viewer's public reveal stream")?;
+            let mut reducer = RevealReducerV3::default();
+            reducer.absorb(&transcript)?;
+            reducer.opponent_knowledge(actor)
+        };
+        let hand_len = sampling_state.players[opponent.index()].hand.len();
+        let mut known_names = Vec::new();
+        for (def, count) in knowledge.hand(opponent) {
+            if count > hand_len - known_names.len() {
+                return Err("public reveal minima exceed the hand size".into());
+            }
+            known_names.extend(std::iter::repeat_n(def, count));
+        }
+        if sampling_state.objects.iter().any(|(_, card)| {
+            card.v4
+                .face_down_v1
+                .is_some_and(|face| face.lookers & (1 << actor.index()) == 0)
+        }) {
+            return Err("unknown face-down identity".into());
+        }
+        let sampled_history = if typed_full_pool {
+            crate::sampled_history_v1::capture(sampling_state)?
+        } else {
+            Default::default()
+        };
+        let revealed_discard = if typed_full_pool && courtyard.is_none() {
+            crate::effect::revealed_discard_sampling_v1::PreparedV1::capture(
+                sampling_state,
+                actor,
+                &known_names,
+            )?
+        } else {
+            None
+        };
+        let mut pinned = pending_selection_hidden_objects_v1(sampling_state, actor);
+        if let Some(discard) = &revealed_discard {
+            // Only the proved menu operands can change aliases. Independent
+            // retained-source pins are collected separately below.
+            pinned.retain(|id| !discard.releases_selection_pin(*id));
+        }
+        pinned.extend(flat_action_v4::limited_public_source_pins_v3(
+            sampling_state,
+            actor,
+            &sampled_history,
+        )?);
+        if pinned
+            .iter()
+            .any(|id| sampling_state.players[opponent.index()].hand.contains(id))
+        {
+            return Err("opponent hand selection binds physical copies".into());
+        }
+        let slots = closed_list_v2::resampled_slots(sampling_state, actor, &pinned);
+        let library_minima = if typed_full_pool {
+            crate::limited_match_v1::library_minima_v1::minimum_names(sampling_state, opponent)
+        } else {
+            Vec::new()
+        };
+        Ok(LimitedClosedListRootV3 {
+            actor,
+            courtyard,
+            revealed_discard,
+            slots,
+            knowledge,
+            known_names,
+            library_minima,
+            typed_full_pool,
+            sampled_history,
+        })
+    }
+
+    /// Sample only the prepared viewer's public root. Rebuild the rules-only
+    /// menu in the sample, then order its fresh bindings by the live semantics.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn limited_closed_list_clone_v3(
+        &self,
+        root: &LimitedClosedListRootV3<'_>,
+        seed: u64,
+        belief: &crate::limited_match_v1::LimitedBeliefV1,
+    ) -> Result<Self, String> {
+        use crate::limited_match_v1::closed_list_v2;
+
+        let live = self.current.as_ref().ok_or("no current decision")?;
+        let typed_full_pool = self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75
+            && self.surface.limited_appendix_v1()
+                == crate::policy_surface_v5::LimitedAppendixV1::FullPool;
+        if root.actor != live.actor || root.typed_full_pool != typed_full_pool {
+            return Err("sampled root actor or owning profile differs".into());
+        }
+        let mut sampled = self.clone();
+        if let Some(checkpoint) = &root.courtyard {
+            sampled.state = checkpoint.original(&self.state)?.clone();
+        } else if crate::linked_aura_operation_v1::has_pending(&self.state) {
+            return Err("linked operation checkpoint requires sampled replay".into());
+        }
+        sampled.state.sampled_history_v1 = root.sampled_history.clone();
+        let opening = crate::leyline_axe_v1::sampling::prepare(&mut sampled.state, root.actor)?;
+        if typed_full_pool {
+            let hand_names = root.revealed_discard.as_ref().map_or_else(
+                || root.known_names.clone(),
+                |discard| discard.names().to_vec(),
+            );
+            crate::limited_match_v1::curator_sampling_v1::rewrite(
+                &mut sampled.state,
+                root.actor,
+                root.slots.clone(),
+                belief,
+                seed,
+                hand_names,
+                &root.library_minima,
+            )?;
+        } else {
+            closed_list_v2::rewrite_names(
+                &mut sampled.state,
+                root.actor,
+                root.slots.clone(),
+                belief,
+                seed,
+                root.known_names.clone(),
+            )?;
+        }
+        if let Some(future) = opening {
+            future.rebind(&mut sampled.state)?;
+        }
+        let mut viewers = [Default::default(), Default::default()];
+        viewers[root.actor.index()] = root.knowledge.clone();
+        sampled.state.reveal_knowledge_v4 = Some(viewers);
+        if root.rebinds_revealed_discard() {
+            // Exact prompt names constrained the sample. Only the prior
+            // conservative ledger survives the choice.
+            sampled
+                .state
+                .bind_reveal_names_v4(root.actor, root.actor.opponent());
+        }
+        sampled.state.reveal_meaning_v3 = Default::default();
+        sampled.state.hand_departures_by_name_v1 = false;
+        sampled.state.hand_knowledge_by_name_v2 = false;
+        sampled.state.resample_future_randomness_for_search_v3(seed);
+        if let Some(checkpoint) = &root.courtyard {
+            sampled.state = checkpoint.replay(&sampled.state)?;
+        }
+
+        if typed_full_pool {
+            // Rebind the exact native root without advancing it again. A
+            // repeated advance can append genuine enclosing-operation rows.
+            let mut current = sampled
+                .current
+                .take()
+                .ok_or("sampled full-pool root absent")?;
+            if let Some(revealed_discard) = &root.revealed_discard {
+                current.origin_decision = PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+                    revealed_discard.rebind(&mut sampled.state)?,
+                ));
+            }
+            kaito_v75::prepare_current(&sampled, &mut current)
+                .map_err(|e| format!("sampled full-pool binding: {e:?}"))?;
+            sampled.flat_action_cache_spare = None;
+            sampled.flat_action_cache_spare_v2 = None;
+            sampled.current = Some(current);
+        } else {
+            sampled.advance_rules_only_v1();
+        }
+        let rebuilt = sampled
+            .current
+            .as_mut()
+            .ok_or("sampled root menu unavailable")?;
+        if rebuilt.actor != live.actor
+            || rebuilt.decision_kind != live.decision_kind
+            || rebuilt.substep_index != live.substep_index
+            || rebuilt.substep_count != live.substep_count
+            || rebuilt.candidates.len() != live.candidates.len()
+        {
+            return Err("sampled root menu differs".into());
+        }
+        if root.rebinds_revealed_discard() {
+            // The sample owns a fresh native menu. Its public name ordinals
+            // are compared by the sealed numeric owner after this rebinding.
+            return Ok(sampled);
+        }
+        let mut by_semantic = std::collections::HashMap::with_capacity(rebuilt.candidates.len());
+        for candidate in std::mem::take(&mut rebuilt.candidates) {
+            if by_semantic
+                .insert(candidate.semantic.clone(), candidate)
+                .is_some()
+            {
+                return Err("sampled root action is ambiguous".into());
+            }
+        }
+        for expected in &live.candidates {
+            let candidate = by_semantic
+                .remove(&expected.semantic)
+                .ok_or("sampled root action differs")?;
+            if candidate.policy_action != expected.policy_action {
+                return Err("sampled root binding differs".into());
+            }
+            rebuilt.candidates.push(candidate);
+        }
         Ok(sampled)
     }
 
@@ -8828,7 +9194,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -8885,7 +9251,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -8950,7 +9316,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -9400,7 +9766,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -9467,7 +9833,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -9538,7 +9904,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -9640,7 +10006,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -9712,7 +10078,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -9928,7 +10294,7 @@ impl FastActorSessionV1 {
                     | FlatActionContractModeV1::KaitoV75
             ) {
                 if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                    crate::kaito_observation_v75::validate_state(&self.state)
+                    self.validate_kaito_state_v75()
                 } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                     crate::chandra_observation_v74::validate_state(&self.state)
                 } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -10365,7 +10731,7 @@ impl FastActorSessionV1 {
                 | FlatActionContractModeV1::KaitoV75
         ) {
             if self.flat_action_contract_mode == FlatActionContractModeV1::KaitoV75 {
-                crate::kaito_observation_v75::validate_state(&self.state)
+                self.validate_kaito_state_v75()
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::ChandraV74 {
                 crate::chandra_observation_v74::validate_state(&self.state)
             } else if self.flat_action_contract_mode == FlatActionContractModeV1::LilianaV73 {
@@ -21100,7 +21466,10 @@ pub use liliana_v73::{LilianaDecisionV73, LilianaSessionV73, LilianaSnapshotV73}
 pub(crate) mod chandra_v74;
 pub use chandra_v74::{ChandraDecisionV74, ChandraSessionV74, ChandraSnapshotV74};
 
+mod eternal_actor_v1;
 pub(crate) mod kaito_v75;
+mod limited_return_v1;
+pub use eternal_actor_v1::{EternalActorDecisionV1, EternalActorSessionV1, EternalActorSnapshotV1};
 #[cfg(feature = "limited-fdn-fixtures")]
 mod rules_only_v1;
 pub use kaito_v75::{KaitoDecisionV75, KaitoSessionV75, KaitoSnapshotV75};

@@ -86,7 +86,7 @@ pub(crate) fn record_attack(state: &mut GameState, id: ObjectId) {
     state.engine.event_history.push(event.clone());
     state.engine.event_log.push(event);
 }
-fn source_at(state: &GameState, index: u64) -> Result<AbilitySourceContractV4, String> {
+pub(crate) fn source_at(state: &GameState, index: u64) -> Result<AbilitySourceContractV4, String> {
     let JournalV1::Attack {
         declaration,
         source,
@@ -102,7 +102,20 @@ fn source_at(state: &GameState, index: u64) -> Result<AbilitySourceContractV4, S
     {
         return Err("Sphinx original declaration changed".into());
     }
-    crate::engine::validate_historical_ability_source_contract(state, *source)?;
+    let live = state
+        .objects
+        .try_get(source.source)
+        .ok_or("Sphinx original attacker absent")?;
+    if live.owner != source.owner || live.zone_change_count < source.zone_change_count {
+        return Err("Sphinx original attacker ownership or incarnation changed".into());
+    }
+    if live.zone_change_count == source.zone_change_count {
+        crate::engine::validate_historical_ability_source_contract(state, *source)?;
+    } else {
+        // The adjacent native declaration and captured receipt own the old
+        // public identity. Later hidden incarnations cannot validate that name.
+        crate::engine::validate_historical_permanent_copy_source(state, *source, live)?;
+    }
     Ok(*source)
 }
 pub(crate) fn collect(
@@ -175,7 +188,7 @@ pub(crate) fn validate_root(
     Ok(())
 }
 pub(crate) fn selected(state: &GameState, item: &StackItem) -> bool {
-    state.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::SphinxLoreV1{journal:JournalV1::Published{item:r,..}}if r.v4.stack_item_id==item.v4.stack_item_id))
+    state.engine.event_history.of_kinds_v2(&[crate::event_history_v1::EventKindV1::SphinxLoreV1]).any(|(_, e)|matches!(e,event::CommittedEvent::SphinxLoreV1{journal:JournalV1::Published{item:r,..}}if r.v4.stack_item_id==item.v4.stack_item_id))
         || item.inline_effect.as_ref().is_some_and(recipe)
 }
 pub(crate) fn waiting(state: &GameState, ctx: &ExecCtx) -> bool {
@@ -357,7 +370,10 @@ pub(crate) fn installation(
         .objects
         .try_get(object)
         .ok_or("Sphinx granted card absent")?;
-    if o.owner != owner || o.card_def != card_def || o.zone_change_count < zone_change_count {
+    if o.owner != owner
+        || (o.zone_change_count == zone_change_count && o.card_def != card_def)
+        || o.zone_change_count < zone_change_count
+    {
         return Err("Sphinx granted original card changed".into());
     }
     let d = &card_def::CARD_DEFS[usize::from(card_def)];
@@ -709,4 +725,4 @@ pub(crate) fn definition(id: u16) -> bool {
     not(feature = "standard-magezero-fixtures")
 ))]
 #[path = "sphinx_lore_v1_tests.rs"]
-mod tests;
+pub(crate) mod tests;

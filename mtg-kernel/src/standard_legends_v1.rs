@@ -293,6 +293,18 @@ pub(crate) fn katilda_mana_colors(
     state: &GameState,
     object: ObjectId,
 ) -> Vec<crate::mana::ManaColor> {
+    let colors = granted_mana_colors(state, object);
+    // A granted mana ability obeys the eternal prohibitions on activated
+    // abilities as a printed one does (Null Rod, Cursed Totem).
+    #[cfg(feature = "eternal-fixtures")]
+    if !colors.is_empty() && crate::eternal_vintage_v1::activations_prohibited(state, object) {
+        return Vec::new();
+    }
+    colors
+}
+
+/// The colors of the tap-for-one mana abilities granted to `object`.
+fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<crate::mana::ManaColor> {
     use crate::mana::ManaColor;
     // Chrome Mox's "add one mana of any of the exiled card's colors" uses
     // the same granted-color activation (tap, add one).
@@ -306,6 +318,18 @@ pub(crate) fn katilda_mana_colors(
         // {C}."' Yavimaya, Cradle of Growth makes each land a Forest.
         let mut colors = crate::eternal_legacy_e5b_v1::granted_mana_colors(state, object);
         for color in crate::eternal_legacy_e7a_v1::granted_mana_colors(state, object) {
+            if !colors.contains(&color) {
+                colors.push(color);
+            }
+        }
+        // Navigator's Compass (wave S1d).
+        for color in crate::eternal_sideboard_s1d_v1::statics::granted_mana_colors(state, object) {
+            if !colors.contains(&color) {
+                colors.push(color);
+            }
+        }
+        // Urborg, Tomb of Yawgmoth's Swamps (wave S1c).
+        for color in crate::eternal_sideboard_s1c_v1::statics::granted_mana_colors(state, object) {
             if !colors.contains(&color) {
                 colors.push(color);
             }
@@ -476,6 +500,17 @@ pub(crate) fn hexproof_from_color(
         );
     characteristics.hexproof_color_mask & source_colors != 0
 }
+pub(crate) fn hexproof_from_color_mask(
+    state: &GameState,
+    target: ObjectId,
+    targeter: crate::ids::PlayerId,
+    source_colors: u8,
+) -> bool {
+    state.objects.get(target).controller != targeter
+        && characteristics(state, target)
+            .is_some_and(|current| current.hexproof_color_mask & source_colors != 0)
+}
+
 pub(crate) fn skrelv_blocks(state: &GameState, attacker: ObjectId, blocker: ObjectId) -> bool {
     characteristics(state, attacker).is_some_and(|c| {
         c.cant_be_blocked_by_color_mask & crate::engine::object_color_mask(state, blocker) != 0

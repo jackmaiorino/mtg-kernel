@@ -4455,7 +4455,9 @@ pub fn trigger_effect_matches(card_def: u16, effect: &EffectOp) -> bool {
         return true;
     }
     if crate::eternal_vintage_v1::initiative_granter(card.name)
-        && matches!(effect, EffectOp::ResolveInitiativeTrigger { .. })
+        && (matches!(effect, EffectOp::ResolveInitiativeTrigger { .. })
+            || (cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cards_v1::e3::dungeons::occurrences::is_bound(effect)))
     {
         return true;
     }
@@ -4690,6 +4692,12 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
             TargetSpec::TargetOpponent
         } else if card.name == "Journey to Nowhere" && *effect == journey_to_nowhere_etb_effect() {
             TargetSpec::CreatureOtherThanSource
+        } else if cfg!(feature = "eternal-fixtures")
+            && (crate::eternal_vintage_v1::initiative_granter(card.name)
+                || card.name == crate::eternal_cards_v1::e3::dungeons::ACERERAK)
+            && crate::eternal_cards_v1::e3::dungeons::occurrences::is_bound(effect)
+        {
+            crate::eternal_cards_v1::e3::dungeons::trigger_target_spec(effect)
         } else if let Some(spec) = crate::standard_cards_v1::trigger_target_spec(card.name, effect)
         {
             spec
@@ -4705,6 +4713,7 @@ pub fn target_spec_for_trigger(card_def: u16, effect: &EffectOp) -> Option<Targe
                     }
                     _ => TargetSpec::None,
                 },
+
                 _ => trigger_target_spec(card_def),
             }
         } else {
@@ -4857,6 +4866,11 @@ pub(crate) fn invalid_sba_aura(
     if aura.zone != Zone::Battlefield {
         return false;
     }
+    // Overencumbered enchants a player (eternal wave S1f).
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(invalid) = crate::eternal_sideboard_s1f_v1::invalid_player_aura(state, id) {
+        return invalid;
+    }
     let definition = &crate::card_def::CARD_DEFS[aura.card_def as usize];
     if aura.v4.attached_to.is_some_and(|link| {
         crate::progenitus_v1::attachment_forbidden(state, id, link.object)
@@ -4942,6 +4956,10 @@ fn sba_fixed_point_with_protected_triggers(
             crate::standard_keywords_v1::sync_day_night(state);
         }
         let mut changed = protected_draws_consumed;
+        changed |= crate::eternal_cards_v1::e3::dungeons::occurrences::complete_ready(
+            state,
+            protected_triggers,
+        );
 
         // 704.5g: a creature with toughness 0 or less is put into its
         // owner's graveyard. 704.5h: a creature with lethal damage marked
@@ -5618,6 +5636,14 @@ fn triggers_from_events(
         new_triggers.extend(crate::eternal_premodern_p2a_v1::delayed_triggers(
             state, events,
         ));
+        // A resolving Acererak trigger can venture after its source left the
+        // battlefield, without returning anything to hand in this batch.
+        #[cfg(feature = "eternal-fixtures")]
+        new_triggers.extend(crate::eternal_cards_v1::e3::dungeons::room_triggers(state));
+        // Coveted Jewel also queues its unblocked-attack trigger when
+        // blockers are declared, without adding a committed event.
+        #[cfg(feature = "eternal-fixtures")]
+        new_triggers.extend(crate::eternal_vintage_v1::delayed_triggers(state, events));
         uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
         state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
         return new_triggers;
@@ -6051,6 +6077,17 @@ fn triggers_from_events(
                         if def.intervening_if_kicked && !kicked {
                             continue;
                         }
+                        // Triumph of Saint Katherine (eternal wave S1l): "put
+                        // into your graveyard" -- a card goes to its owner's
+                        // graveyard, so its owner controlled it as it left.
+                        if event_controller != obj.owner
+                            && crate::eternal_sideboard_s1l_v1::requires_owner_controller(
+                                card.name,
+                                &(def.effect)(),
+                            )
+                        {
+                            continue;
+                        }
                         if crate::eternal_premodern_p2b_v1::is_thornscape(card)
                             && !crate::eternal_premodern_p2b_v1::thornscape_etb_is_enabled(
                                 state.engine.battlemage_entry_v1,
@@ -6125,13 +6162,7 @@ fn triggers_from_events(
                             };
                         let target_spec = target_spec_for_trigger(obj.card_def, &effect)
                             .unwrap_or(TargetSpec::None);
-                        let limit =
-                            per_turn_trigger_cap(def.condition).or_else(|| match def.condition {
-                                TriggerCondition::StandardV1(condition) => {
-                                    crate::standard_cards_v1::trigger_limit_per_turn(condition)
-                                }
-                                _ => None,
-                            });
+                        let limit = per_turn_trigger_cap(def.condition);
                         if let Some(maximum) = limit {
                             let ability_index =
                                 u16::try_from(ability_index).expect("bounded definition abilities");
@@ -6637,11 +6668,14 @@ fn draws_this_turn_snapshot(events: &[CommittedEvent], state: &GameState) -> Vec
 /// pairing.
 /// How many times per turn a triggered ability may trigger, tracked in
 /// `GameState::trigger_uses_v1`. `None` means unlimited.
-fn per_turn_trigger_cap(condition: TriggerCondition) -> Option<u16> {
+pub(crate) fn per_turn_trigger_cap(condition: TriggerCondition) -> Option<u16> {
     match condition {
         TriggerCondition::ControllerAddedPlusOneCountersToSelf { max_per_turn } => max_per_turn,
         TriggerCondition::BecomesTargetOfControllerSpellOrAbilityFirstTimeEachTurn => Some(1),
         TriggerCondition::OtherControlledCreatureWithPowerAtMostEntersOncePerTurn(_) => Some(1),
+        TriggerCondition::StandardV1(condition) => {
+            crate::standard_cards_v1::trigger_limit_per_turn(condition)
+        }
         _ => None,
     }
 }

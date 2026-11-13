@@ -713,6 +713,19 @@ pub enum InitiativeTriggerKindV1 {
     VentureAfterTaking,
     VentureAtUpkeep,
     UndercityRoom(UndercityRoomV1),
+    UndercityRoomBoundV1 {
+        room: UndercityRoomV1,
+        entered_at: usize,
+    },
+}
+
+impl InitiativeTriggerKindV1 {
+    pub(crate) fn undercity_room(self) -> Option<UndercityRoomV1> {
+        match self {
+            Self::UndercityRoom(room) | Self::UndercityRoomBoundV1 { room, .. } => Some(room),
+            _ => None,
+        }
+    }
 }
 
 /// Self-indexed provenance for one global Initiative or Undercity trigger.
@@ -1307,6 +1320,46 @@ pub fn stack_target_contract_is_structurally_valid(
     target: Target,
     contract: StackTargetContractV4,
 ) -> bool {
+    stack_target_contract_shape(state, spec, target_index, target, contract, false)
+}
+
+/// Only a full native Storm snapshot can retain historical targets without
+/// reading a later hidden printing. Owner, generation, kind and current stack
+/// identity still use the ordinary structural checks below.
+pub(crate) fn stack_target_contract_for_storm_snapshot(
+    state: &GameState,
+    spell: &StackItem,
+    spec: TargetSpec,
+    target_index: usize,
+    target: Target,
+    contract: StackTargetContractV4,
+) -> bool {
+    crate::effect::thousand_year_storm_v1::owns_snapshot(state, spell)
+        && spell.targets.get(target_index) == Some(&target)
+        && spell.v4.target_contracts.get(target_index) == Some(&contract)
+        && stack_target_contract_shape(state, spec, target_index, target, contract, true)
+}
+
+pub(crate) fn stack_target_contract_for_sampled_snapshot(
+    state: &GameState,
+    item: &StackItem,
+    spec: TargetSpec,
+    slot: usize,
+    target: Target,
+    contract: StackTargetContractV4,
+) -> bool {
+    crate::sampled_history_v1::object_target_face(state, item, slot, contract).is_some()
+        && stack_target_contract_shape(state, spec, slot, target, contract, true)
+}
+
+fn stack_target_contract_shape(
+    state: &GameState,
+    spec: TargetSpec,
+    target_index: usize,
+    target: Target,
+    contract: StackTargetContractV4,
+    historical_storm: bool,
+) -> bool {
     if contract.target() != target {
         return false;
     }
@@ -1337,7 +1390,8 @@ pub fn stack_target_contract_is_structurally_valid(
             && stack_item_id.0 > 0
             && stack_item_id.0 <= state.engine.next_stack_item_id
             && state.objects.try_get(source).is_some_and(|live| {
-                live.card_def == card_def
+                (live.card_def == card_def
+                    || historical_storm && live.zone_change_count > source_zone_change_count)
                     && live.owner == owner
                     && live.zone_change_count >= source_zone_change_count
             })
@@ -1555,7 +1609,8 @@ pub fn stack_target_contract_is_structurally_valid(
         return true;
     };
     state.objects.try_get(object).is_some_and(|live| {
-        live.card_def == card_def
+        (live.card_def == card_def
+            || historical_storm && live.zone_change_count > zone_change_count)
             && live.owner == owner
             && live.spell_copy_origin == spell_copy_origin
             && if spell_copy_origin.is_some() {
@@ -1678,7 +1733,59 @@ pub struct StackStateV4 {
     pub inspiration_started_v1: InspirationStartedV1,
     #[serde(default, skip_serializing_if = "HighSocietyHunterStartedV45::is_empty")]
     pub high_society_hunter_started_v45: HighSocietyHunterStartedV45,
+    #[serde(default, skip_serializing_if = "BombardmentLkiV1::is_empty")]
+    pub bombardment_lki_v1: BombardmentLkiV1,
+    #[serde(default, skip_serializing_if = "VialMetamorphPaidV1::is_empty")]
+    pub vial_metamorph_paid_v1: VialMetamorphPaidV1,
 }
+
+/// Native paid Vial index. Absence preserves the historical bytes and Hash.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct VialMetamorphPaidV1(pub(crate) Option<usize>);
+
+impl VialMetamorphPaidV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+
+impl Hash for VialMetamorphPaidV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(at) = self.0 {
+            b"vial-metamorph-paid/v1".hash(state);
+            at.hash(state);
+        }
+    }
+}
+
+/// Native paid Bombardment activations after the departure-LKI contract.
+/// Older stack rows write neither serialized bytes nor a hash domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BombardmentPaidV1 {
+    pub sacrifice_at: u32,
+    pub move_at: u32,
+    pub cost: PaidCostRefV4,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct BombardmentLkiV1(pub Option<BombardmentPaidV1>);
+impl BombardmentLkiV1 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+}
+impl Hash for BombardmentLkiV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if let Some(paid) = self.0 {
+            b"bombardment-lki/v1".hash(state);
+            paid.hash(state);
+        }
+    }
+}
+
 /// Empty writes no historical bytes or Hash domain. The pointer owns one
 /// original Hunter publication after its real engine removal has started.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -2526,6 +2633,21 @@ pub struct GameState {
     /// Historical games and hands without this printing retain absence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub leyline_opening_v1: Option<crate::leyline_axe_v1::OpeningV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) eternal_opening_v1: Option<crate::eternal_opening_v1::OpeningV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) coveted_jewel_draw_progress_v1:
+        Option<crate::eternal_vintage_v1::JewelDrawProgressV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) paradoxical_outcome_draw_progress_v1:
+        Option<crate::eternal_vintage_v1::paradoxical_outcome_v1::DrawProgressV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) eternal_owned_draw_progress_v1:
+        Option<crate::eternal_cards_v1::owned_draws_v1::ProgressV1>,
+    /// Native opening answers retired before the disposable belief rewrite.
+    #[serde(skip)]
+    pub(crate) leyline_sampled_history_v1:
+        Option<crate::leyline_axe_v1::sampling::SampledHistoryV1>,
     /// Opt-in (issue #531): the other player reads a card leaving a hand by
     /// name, never by copy (see [`GameState::forget_departing_hand_object`]).
     /// Off in every historical session, whose rows, snapshot bytes and hashes
@@ -2551,6 +2673,26 @@ pub struct GameState {
     /// Compact public name ledger carried only in reveal-v4 search worlds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) reveal_knowledge_v4: Option<[RevealKnowledgeV3; 2]>,
+    #[serde(skip)]
+    pub(crate) sampled_history_v1: crate::sampled_history_v1::CustodyV1,
+    /// The declared Curator profile reveals the pile by name, without assigning
+    /// its publicly shown cards to the controller's private library positions.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) curator_unordered_reveal_v1: bool,
+    // Only the opaque owning search clone can detach a name-only arrival from
+    // its native opponent hand slot. Serialized live checkpoints cannot mint it.
+    #[serde(skip)]
+    pub(crate) curator_sampled_hand_arrivals_v1: crate::curator_receipts_v1::SampledHandArrivalsV1,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) greatwurm_commit_receipts_v1: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) harvester_commit_receipts_v1: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) fiend_artisan_receipts_v1: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) etali_commit_receipts_v1: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) thousand_year_storm_consumer_v1: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2815,6 +2957,26 @@ impl Hash for GameState {
             "leyline-opening/v1".hash(state);
             opening.hash(state);
         }
+        if let Some(opening) = &self.eternal_opening_v1 {
+            "eternal-opening/v1".hash(state);
+            opening.hash(state);
+        }
+        if let Some(progress) = &self.coveted_jewel_draw_progress_v1 {
+            "coveted-jewel-draw-progress/v1".hash(state);
+            progress.hash(state);
+        }
+        if let Some(progress) = &self.paradoxical_outcome_draw_progress_v1 {
+            "paradoxical-outcome-draw-progress/v1".hash(state);
+            progress.hash(state);
+        }
+        if let Some(progress) = &self.eternal_owned_draw_progress_v1 {
+            "eternal-owned-draw-progress/v1".hash(state);
+            progress.hash(state);
+        }
+        if let Some(history) = &self.leyline_sampled_history_v1 {
+            "leyline-sampled-opening/v1".hash(state);
+            history.hash(state);
+        }
         if self.hand_departures_by_name_v1 {
             "hand-departures-by-name/v1".hash(state);
         }
@@ -2827,6 +2989,26 @@ impl Hash for GameState {
         }
         if self.public_shroud_v1 {
             "public-shroud/v1".hash(state);
+        }
+        if self.curator_unordered_reveal_v1 {
+            "curator-unordered-reveal/v1".hash(state);
+        }
+        self.curator_sampled_hand_arrivals_v1.hash_if_sampled(state);
+        self.sampled_history_v1.hash_if_sampled(state);
+        if self.harvester_commit_receipts_v1 {
+            "harvester-commit-receipts/v1".hash(state);
+        }
+        if self.etali_commit_receipts_v1 {
+            "etali-primal-storm-commit-receipts/v1".hash(state);
+        }
+        if self.thousand_year_storm_consumer_v1 {
+            "thousand-year-storm-consumer/v1".hash(state);
+        }
+        if self.greatwurm_commit_receipts_v1 {
+            "greatwurm-commit-receipts/v1".hash(state);
+        }
+        if self.fiend_artisan_receipts_v1 {
+            "fiend-artisan-receipts/v1".hash(state);
         }
     }
 }
@@ -3061,12 +3243,25 @@ impl GameState {
             eternal_v1: None,
             nine_lives_delayed_v1: None,
             leyline_opening_v1: None,
+            eternal_opening_v1: None,
+            coveted_jewel_draw_progress_v1: None,
+            paradoxical_outcome_draw_progress_v1: None,
+            eternal_owned_draw_progress_v1: None,
+            leyline_sampled_history_v1: None,
             hand_departures_by_name_v1: false,
             hand_knowledge_by_name_v2: false,
             public_shroud_v1: false,
             observation_journal: ObservationJournalV1::default(),
             reveal_meaning_v3: Default::default(),
             reveal_knowledge_v4: None,
+            sampled_history_v1: Default::default(),
+            curator_unordered_reveal_v1: false,
+            curator_sampled_hand_arrivals_v1: Default::default(),
+            greatwurm_commit_receipts_v1: false,
+            harvester_commit_receipts_v1: false,
+            fiend_artisan_receipts_v1: false,
+            etali_commit_receipts_v1: false,
+            thousand_year_storm_consumer_v1: false,
         };
         crate::life_gain_turn_v1::initialize_for_pool(&mut state);
         crate::life_loss_turn_v1::initialize_for_catalog(&mut state);
@@ -3438,7 +3633,7 @@ impl GameState {
 
     /// The legacy observation and sampler use object rows. Bind the public
     /// minima to deterministic representatives inside this sampled world.
-    fn bind_reveal_names_v4(&mut self, observer: PlayerId, owner: PlayerId) {
+    pub(crate) fn bind_reveal_names_v4(&mut self, observer: PlayerId, owner: PlayerId) {
         let Some(knowledge) = &self.reveal_knowledge_v4 else {
             return;
         };
@@ -4217,6 +4412,41 @@ impl GameState {
         for observer in [PlayerId::P0, PlayerId::P1] {
             self.library_knowledge[observer.index()][owner.index()]
                 .retain(|entry| (entry.position as usize) < start);
+        }
+        Ok(())
+    }
+
+    /// Randomizes only the top `count` cards (Triumph of Saint Katherine's
+    /// pile), the counterpart of `randomize_library_bottom_v1`: the same
+    /// checked randomness transaction, with every position fact in the
+    /// randomized prefix dropped and deeper positions and their known
+    /// identities intact.
+    pub(crate) fn randomize_library_top_v1(
+        &mut self,
+        owner: PlayerId,
+        count: usize,
+    ) -> Result<(), LibraryShuffleError> {
+        let owner = library_shuffle_owner(owner)?;
+        let len = self.players[owner.index()].library.len();
+        let count = count.min(len);
+        if count < 2 {
+            return Ok(());
+        }
+        // As for the bottom: the journal has no note for a partial
+        // randomization, so refuse rather than drift.
+        if self.engine.spellbench_neutral_v1.choices {
+            return Err(LibraryShuffleError::SpellbenchNeutralPartialRandomization);
+        }
+        let mut staged = self.clone();
+        staged.players[owner.index()].library =
+            self.players[owner.index()].library[..count].to_vec();
+        staged.shuffle_library(owner)?;
+        self.players[owner.index()].library[..count]
+            .copy_from_slice(&staged.players[owner.index()].library);
+        self.randomness = staged.randomness;
+        for observer in [PlayerId::P0, PlayerId::P1] {
+            self.library_knowledge[observer.index()][owner.index()]
+                .retain(|entry| (entry.position as usize) >= count);
         }
         Ok(())
     }

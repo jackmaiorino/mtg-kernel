@@ -1277,6 +1277,12 @@ fn semantic_category(semantic: &ActionSemanticV1) -> Result<&'static str, String
         ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. } => {
             return Err("matched-uniform frozen benchmark requires a separate successor for full-range cast-X decisions".into());
         }
+        ActionSemanticV1::ChooseEntryCreatureTypeV60 { .. } => {
+            return Err("matched-uniform frozen benchmark requires a separate successor for entry-creature-type decisions".into());
+        }
+        ActionSemanticV1::ChooseMeddlingMageNameV1 { .. } => {
+            return Err("matched-uniform frozen benchmark requires a separate successor for Meddling Mage name decisions".into());
+        }
         ActionSemanticV1::ChooseEntryColorV36 { .. }
         | ActionSemanticV1::ChooseDivineKickerV44 { .. }
         | ActionSemanticV1::ChooseDivineTargetV44 { .. }

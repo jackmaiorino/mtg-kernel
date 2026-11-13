@@ -26,8 +26,11 @@
 //! in full as before.
 //! Duplicates come from `FrozenPlayPolicyV1::duplicate_loaded_v1`, which only
 //! accepts a policy in its as-loaded state, and from cloning the train state.
+//! Lookups, hits, misses, kept entries and the bytes each copy are counted by
+//! caller role (`loaded_source_profile_v1`); counting changes no result.
 
 use super::fresh_initialization_source::{self, ExpandedFreshInitializationSourceV1};
+use super::loaded_source_profile_v1 as profile;
 use super::{
     check_pinned_v1, ensure, no_state_digest_v1, CheckpointInputExpectationV1,
     ExpandedCheckpointV1, ExpandedModelSourceV1, FrozenPlayPolicyV1, NativePolicyValueTrainStateV1,
@@ -143,6 +146,7 @@ pub(super) fn lookup_v1(
     if BYPASS_FOR_TEST_V1.with(std::cell::Cell::get) {
         return Ok(None);
     }
+    profile::record_lookup_v1();
     let entry = with_entries_v1(|entries| {
         let index = entries.iter().position(|entry| {
             entry.source == *source
@@ -166,6 +170,7 @@ pub(super) fn lookup_v1(
     })
     .flatten();
     let Some(entry) = entry else {
+        profile::record_miss_v1();
         return Ok(None);
     };
     #[cfg(test)]
@@ -182,7 +187,10 @@ pub(super) fn lookup_v1(
         KindV1::Converted { .. } => {
             no_state_digest_v1::reverify_converted_v1(source, descriptor_bytes)?;
         }
-        KindV1::FlatCheckpoint(_) => return Ok(None),
+        KindV1::FlatCheckpoint(_) => {
+            profile::record_miss_v1();
+            return Ok(None);
+        }
     }
     serve_v1(&entry, inputs)
 }
@@ -210,6 +218,7 @@ pub(super) fn lookup_flat_checkpoint_v1(
     let Some(pin) = &source.checkpoint else {
         return Ok(None);
     };
+    profile::record_lookup_v1();
     let entry = with_entries_v1(|entries| {
         let index = entries.iter().position(|entry| {
             entry.source == *source
@@ -222,9 +231,11 @@ pub(super) fn lookup_flat_checkpoint_v1(
     })
     .flatten();
     let Some(entry) = entry else {
+        profile::record_miss_v1();
         return Ok(None);
     };
     let KindV1::FlatCheckpoint(descriptor) = &entry.kind else {
+        profile::record_miss_v1();
         return Ok(None);
     };
     #[cfg(test)]
@@ -251,9 +262,24 @@ fn serve_v1(
         (Some(_), None) => {}
     }
     let Ok(policy) = entry.policy.duplicate_loaded_v1() else {
+        profile::record_miss_v1();
         return Ok(None);
     };
-    Ok(Some((policy, entry.state.clone())))
+    let state = entry.state.clone();
+    let (state_bytes, policy_bytes) = copied_bytes_v1(&policy, &state);
+    profile::record_hit_v1(state_bytes, policy_bytes);
+    Ok(Some((policy, state)))
+}
+
+/// The bytes a copy of `state` and of `policy` duplicates.
+fn copied_bytes_v1(
+    policy: &FrozenPlayPolicyV1,
+    state: &NativePolicyValueTrainStateV1,
+) -> (u64, u64) {
+    (
+        profile::f32_bytes_v1(state.owned_f32_len_v1()),
+        profile::f32_bytes_v1(policy.owned_f32_len_v1()),
+    )
 }
 
 /// Keep a full load's result. `saved` is the checkpoint it restored, if any.
@@ -388,6 +414,8 @@ pub(super) fn remember_flat_checkpoint_v1(
 }
 
 fn insert_v1(entry: Arc<LoadedSourceV1>) {
+    let (state_bytes, policy_bytes) = copied_bytes_v1(&entry.policy, &entry.state);
+    profile::record_kept_v1(state_bytes, policy_bytes);
     with_entries_v1(|entries| {
         // Concurrent loads of one source keep a single entry.
         entries.retain(|cached| {

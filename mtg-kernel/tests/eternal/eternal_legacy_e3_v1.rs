@@ -1171,12 +1171,40 @@ fn show_and_tell_puts_each_players_chosen_card_onto_the_battlefield() {
             assert_eq!(player, P1);
             assert_eq!(legal_targets, vec![Target::Object(diamond)]);
             assert!(
-                state
+                !state
                     .known_hand_cards(P1, P0)
                     .iter()
                     .any(|entry| entry.object == wraith),
-                "the second player sees the first choice"
+                "the second player chooses before the first card is revealed"
             );
+            use mtg_kernel::rl::{EngineDecisionStageV2, PendingEffectChoiceSemanticV4};
+            for (viewer, visible) in [(P0, 0), (P1, 1)] {
+                let observation = mtg_kernel::rl::observe_policy_v5(
+                    &state,
+                    &mtg_kernel::policy_surface_v5::PolicySurfaceV5::new(),
+                    viewer,
+                    0,
+                    0,
+                    0,
+                    1,
+                )
+                .unwrap();
+                let context = observation.projection.surface.engine_context;
+                assert_eq!(context.current_stage, EngineDecisionStageV2::PendingEffect);
+                assert!(matches!(context.pending_effect.unwrap().choice,
+                    Some(PendingEffectChoiceSemanticV4::Targets {
+                        player, selected_targets, legal_targets, min_targets: 0,
+                        max_targets: 1, can_finish: true, ..
+                    }) if player == P1.into() && selected_targets.is_empty()
+                        && legal_targets.len() == visible));
+            }
+            let before = state.state_hash();
+            assert!(mtg_kernel::effect::choose_resumable_target(
+                &mut state,
+                Target::Object(diamond),
+            )
+            .is_err());
+            assert_eq!(state.state_hash(), before);
             act(
                 &mut state,
                 Action::ChooseEffectTarget(Target::Object(diamond)),
@@ -1560,6 +1588,852 @@ fn completing_tomb_of_annihilation_makes_the_atropal_and_stops_acererak() {
 }
 
 #[test]
+fn lost_mine_completion_waits_for_all_room_triggers_both_seats() {
+    let marker = |state: &GameState, player: PlayerId| {
+        let dungeon = &state.players[player.index()].dungeon;
+        (
+            dungeon.dungeon_id,
+            dungeon.room_id,
+            dungeon.completed_dungeons.clone(),
+        )
+    };
+    let bottom = (Some(LOST_MINE), Some(7), Vec::new());
+    let completed = (None, None, vec![LOST_MINE]);
+
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let aluren = put(&mut state, actor, "Aluren", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::G; 2], 2);
+        cast(&mut state, aluren, &[]);
+        settled(&mut state);
+        let acererak = put(&mut state, actor, ACERERAK, Zone::Hand);
+        cast(&mut state, acererak, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption { player, option_count: 3, .. }) if player == actor
+        ));
+        act(&mut state, Action::ChooseEffectOption(0));
+        let cave_top = state.players[actor.index()].library[0];
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { player, ref legal_targets, .. })
+                if player == actor && legal_targets.as_slice() == [Target::Object(cave_top)]
+        ));
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(cave_top)),
+        );
+        settled(&mut state);
+
+        cast(&mut state, acererak, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            })
+        ));
+        act(&mut state, Action::ChooseEffectOption(0)); // Goblin Lair.
+        settled(&mut state);
+        cast(&mut state, acererak, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            })
+        ));
+        act(&mut state, Action::ChooseEffectOption(1)); // Dark Pool.
+        pass_until(&mut state, |state| {
+            marker(state, actor).1 == Some(5) && state.stack.len() == 1
+        });
+
+        // Aluren lets the same Acererak advance again above the older room.
+        cast(&mut state, acererak, &[]);
+        pass_until(&mut state, |state| {
+            marker(state, actor) == bottom && state.stack.len() == 2
+        });
+        assert_eq!(state.players[actor.opponent().index()].life, 20);
+        let before_draw = state.players[actor.index()].library.len();
+        let snapshot = serde_json::to_vec(&state).unwrap();
+        let mut resolved: GameState = serde_json::from_slice(&snapshot).unwrap();
+        pass_until(&mut resolved, |state| state.stack.len() == 1);
+        assert_eq!(marker(&resolved, actor), bottom);
+        assert_eq!(
+            resolved.players[actor.index()].library.len(),
+            before_draw - 1
+        );
+        settled(&mut resolved);
+        assert_eq!(marker(&resolved, actor), completed);
+        assert_eq!(resolved.players[actor.opponent().index()].life, 19);
+
+        let mut countered: GameState = serde_json::from_slice(&snapshot).unwrap();
+        let temple = Target::StackItem(countered.stack.last().unwrap().v4.stack_item_id);
+        let stifle = put(&mut countered, actor, "Stifle", Zone::Hand);
+        pool(&mut countered, actor, &[ManaColor::U], 0);
+        cast(&mut countered, stifle, &[temple]);
+        pass_until(&mut countered, |state| state.stack.len() == 1);
+        assert_eq!(marker(&countered, actor), bottom);
+        settled(&mut countered);
+        assert_eq!(marker(&countered, actor), completed);
+        assert_eq!(countered.players[actor.index()].library.len(), before_draw);
+
+        // A new venture completes the old instance before a new room is
+        // chosen. The original Temple and Dark Pool remain on the stack.
+        cast(&mut state, acererak, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption { player, option_count: 3, .. }) if player == actor
+        ));
+        assert_eq!(marker(&state, actor), completed);
+        act(&mut state, Action::ChooseEffectOption(0));
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
+        assert_eq!(
+            marker(&state, actor),
+            (Some(LOST_MINE), Some(1), vec![LOST_MINE])
+        );
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(cave_top)),
+        );
+        settled(&mut state);
+        assert_eq!(
+            marker(&state, actor),
+            (Some(LOST_MINE), Some(1), vec![LOST_MINE])
+        );
+        assert_eq!(state.players[actor.index()].library.len(), before_draw - 1);
+        assert_eq!(state.players[actor.opponent().index()].life, 19);
+    }
+}
+
+#[test]
+fn a_departed_acererak_still_publishes_its_room_before_priority_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        in_room(&mut state, actor, LOST_MINE, 5);
+        let acererak = put(&mut state, actor, ACERERAK, Zone::Hand);
+        let bounce = put(&mut state, opponent, "Echoing Truth", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::B], 2);
+        cast(&mut state, acererak, &[]);
+        pass_until(&mut state, |state| {
+            state.objects.get(acererak).zone == Zone::Battlefield && state.stack.len() == 1
+        });
+        act(&mut state, Action::Pass);
+        pool(&mut state, opponent, &[ManaColor::U], 1);
+        cast(&mut state, bounce, &[Target::Object(acererak)]);
+        pass_until(&mut state, |state| {
+            state.objects.get(acererak).zone == Zone::Hand && state.stack.len() == 1
+        });
+        let enter = state.stack[0].v4.stack_item_id;
+        let library = state.players[actor.index()].library.len();
+        for seat in [actor, opponent] {
+            assert!(
+                matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == seat)
+            );
+            act(&mut state, Action::Pass);
+        }
+
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        let [room] = state.stack.as_slice() else {
+            panic!("the room must be published before priority returns");
+        };
+        assert_eq!(room.source, acererak);
+        assert_ne!(room.v4.stack_item_id, enter);
+        let marker = &state.players[actor.index()].dungeon;
+        assert_eq!(
+            (marker.dungeon_id, marker.room_id),
+            (Some(LOST_MINE), Some(7))
+        );
+        assert!(marker.completed_dungeons.is_empty());
+        settled(&mut state);
+        assert_eq!(state.players[actor.index()].library.len(), library - 1);
+        assert_eq!(
+            state.players[actor.index()].dungeon.completed_dungeons,
+            vec![LOST_MINE]
+        );
+    }
+}
+
+#[test]
+fn taking_initiative_advances_the_current_forgotten_realms_dungeon_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let acererak = put(&mut state, actor, ACERERAK, Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::B], 2);
+        cast(&mut state, acererak, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption {
+                option_count: 3,
+                ..
+            })
+        ));
+        act(&mut state, Action::ChooseEffectOption(0));
+        let top = state.players[actor.index()].library[0];
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(top)));
+        settled(&mut state);
+        pool(&mut state, actor, &[ManaColor::B], 2);
+        cast(&mut state, acererak, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            })
+        ));
+        act(&mut state, Action::ChooseEffectOption(0)); // Goblin Lair.
+        settled(&mut state);
+
+        let hunter = put(&mut state, actor, "Avenging Hunter", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::G], 4);
+        cast(&mut state, hunter, &[]);
+        let route = settle(&mut state).expect("initiative must advance the existing dungeon");
+        assert!(matches!(route, Decision::ChooseEffectOption {
+            player, source, option_count: 2, ..
+        } if player == actor && source == hunter));
+        let marker = &state.players[actor.index()].dungeon;
+        assert_eq!(
+            (marker.dungeon_id, marker.room_id),
+            (Some(LOST_MINE), Some(2))
+        );
+
+        let saved = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(next(&mut restored), route);
+        let mut reordered = restored.clone();
+        let Some(mtg_kernel::effect::PendingEffectChoice::ChooseOption { options, .. }) = reordered
+            .engine
+            .pending_effect
+            .as_mut()
+            .and_then(|pending| pending.choice.as_mut())
+        else {
+            panic!("native initiative route menu");
+        };
+        options.swap(0, 1);
+        assert!(mtg_kernel::effect::validate_pending_effect_choice(&reordered).is_err());
+
+        act(&mut restored, Action::ChooseEffectOption(0)); // Storeroom.
+        assert!(
+            matches!(settle(&mut restored), Some(Decision::ChooseTargets {
+            player, legal_targets, ..
+        }) if player == actor && legal_targets.contains(&Target::Object(hunter)))
+        );
+        act(&mut restored, Action::ChooseTarget(Target::Object(hunter)));
+        settled(&mut restored);
+        assert_eq!(restored.objects.get(hunter).counters.plus1_plus1, 1);
+        let marker = &restored.players[actor.index()].dungeon;
+        assert_eq!(
+            (marker.dungeon_id, marker.room_id),
+            (Some(LOST_MINE), Some(4))
+        );
+        assert!(marker.completed_dungeons.is_empty());
+    }
+}
+
+fn paid_black_painter(state: &mut GameState, player: PlayerId) -> ObjectId {
+    let painter = put(state, player, "Painter's Servant", Zone::Hand);
+    pool(state, player, &[], 2);
+    cast(state, painter, &[]);
+    assert!(matches!(
+        settle(state),
+        Some(Decision::ChooseEffectOption {
+            option_count: 5,
+            ..
+        })
+    ));
+    act(state, Action::ChooseEffectOption(2));
+    settled(state);
+    assert_eq!(
+        state.objects.get(painter).v4.chosen_color,
+        Some(ManaColor::B)
+    );
+    painter
+}
+
+#[test]
+fn fungi_cavern_targets_using_the_active_dungeons_characteristics_both_seats() {
+    use mtg_kernel::effect::EffectOp;
+    use mtg_kernel::eternal_cards_v1::EternalOpV1;
+    use mtg_kernel::standard_cards_v1::StandardOpV1;
+
+    let legacy = EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::RoomAbilityV1 {
+        dungeon: LOST_MINE,
+        room: 6,
+    }));
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        for painted in [false, true] {
+            let mut state = islands();
+            state.active_player = actor;
+            state.priority_player = actor;
+            in_room(&mut state, actor, LOST_MINE, 3);
+            if painted {
+                paid_black_painter(&mut state, actor);
+            }
+            let enforcer = put(&mut state, opponent, "Mystic Enforcer", Zone::Battlefield);
+            let chaplain = put(&mut state, opponent, "Beloved Chaplain", Zone::Battlefield);
+            let shroud = put(
+                &mut state,
+                opponent,
+                "Argothian Enchantress",
+                Zone::Battlefield,
+            );
+            let acererak = put(&mut state, actor, ACERERAK, Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::B], 2);
+            cast(&mut state, acererak, &[]);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectOption {
+                    option_count: 2,
+                    ..
+                })
+            ));
+            act(&mut state, Action::ChooseEffectOption(1));
+            let Some(Decision::ChooseTargets {
+                player,
+                legal_targets,
+                ..
+            }) = settle(&mut state)
+            else {
+                panic!("Fungi Cavern must have legal targets");
+            };
+            assert_eq!(player, actor);
+            assert_eq!(legal_targets.contains(&Target::Object(enforcer)), !painted);
+            assert!(legal_targets.contains(&Target::Object(chaplain)));
+            assert!(!legal_targets.contains(&Target::Object(shroud)));
+            let target = if painted { chaplain } else { enforcer };
+            let power = engine::effective_power(&state, target);
+            if !painted {
+                let mut downgraded = state.clone();
+                downgraded.engine.pending_triggers[0].effect = legacy.clone();
+                let mut downgraded: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&downgraded).unwrap()).unwrap();
+                assert!(matches!(
+                    engine::advance_until_decision(&mut downgraded),
+                    Decision::Halted {
+                        mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ..
+                    }
+                ));
+            }
+            act(&mut state, Action::ChooseTarget(Target::Object(target)));
+            if !painted {
+                assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+                let mut downgraded = state.clone();
+                let room = downgraded.stack.last_mut().expect("published Fungi Cavern");
+                assert!(matches!(
+                    &room.inline_effect,
+                    Some(EffectOp::StandardV1(StandardOpV1::EternalV1(
+                        EternalOpV1::RoomBoundV1 { .. }
+                    )))
+                ));
+                room.inline_effect = Some(legacy.clone());
+                let mut downgraded: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&downgraded).unwrap()).unwrap();
+                for _ in 0..2 {
+                    assert!(matches!(
+                        next(&mut downgraded),
+                        Decision::CastSpellOrPass { .. }
+                    ));
+                    act(&mut downgraded, Action::Pass);
+                }
+                assert!(matches!(
+                    engine::advance_until_decision(&mut downgraded),
+                    Decision::Halted {
+                        mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ..
+                    }
+                ));
+            }
+            settled(&mut state);
+            assert_eq!(engine::effective_power(&state, target), power - 4);
+        }
+    }
+}
+
+#[test]
+fn fungi_cavern_keeps_painted_color_after_its_dungeon_leaves_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        in_room(&mut state, actor, LOST_MINE, 3);
+        let painter = paid_black_painter(&mut state, actor);
+        let aluren = put(&mut state, actor, "Aluren", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::G; 2], 2);
+        cast(&mut state, aluren, &[]);
+        settled(&mut state);
+        let target = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let acererak = put(&mut state, actor, ACERERAK, Zone::Hand);
+        cast(&mut state, acererak, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            })
+        ));
+        act(&mut state, Action::ChooseEffectOption(1)); // Fungi Cavern.
+        choose_target(&mut state, Target::Object(target));
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        let fungi = state.stack.last().unwrap().v4.stack_item_id;
+        let mut active = state.clone();
+
+        cast(&mut state, acererak, &[]); // Reach Temple with Fungi still waiting.
+        pass_until(&mut state, |state| {
+            state.players[actor.index()].dungeon.room_id == Some(7) && state.stack.len() == 2
+        });
+        cast(&mut state, acererak, &[]); // Complete Lost Mine before choosing the new dungeon.
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption {
+                option_count: 3,
+                ..
+            })
+        ));
+        assert_eq!(
+            state.players[actor.index()].dungeon.completed_dungeons,
+            vec![LOST_MINE]
+        );
+        act(&mut state, Action::ChooseEffectOption(1)); // Mad Mage's Yawning Portal.
+        pass_until(&mut state, |state| {
+            let marker = &state.players[actor.index()].dungeon;
+            marker.dungeon_id == Some(MAD_MAGE)
+                && marker.room_id == Some(1)
+                && state.stack.len() == 2
+        });
+
+        for (branch, departed) in [(&mut active, false), (&mut state, true)] {
+            let bounce = put(branch, actor, "Echoing Truth", Zone::Hand);
+            pool(branch, actor, &[ManaColor::U], 1);
+            cast(branch, bounce, &[Target::Object(painter)]);
+            pass_until(branch, |state| {
+                state.objects.get(painter).zone == Zone::Hand
+            });
+            let blessing = put(branch, actor, "Benevolent Blessing", Zone::Hand);
+            pool(branch, actor, &[ManaColor::W], 1);
+            cast(branch, blessing, &[Target::Object(target)]);
+            assert!(matches!(
+                settle(branch),
+                Some(Decision::ChooseEffectOption {
+                    option_count: 5,
+                    ..
+                })
+            ));
+            act(branch, Action::ChooseEffectOption(2));
+            pass_until(branch, |state| {
+                state.objects.get(blessing).v4.chosen_color == Some(ManaColor::B)
+            });
+            assert!(branch
+                .stack
+                .iter()
+                .any(|item| item.v4.stack_item_id == fungi));
+            let power = engine::effective_power(branch, target);
+
+            let saved = serde_json::to_value(branch).unwrap();
+            if departed {
+                let mut forged = saved.clone();
+                let removal = forged["engine"]["event_history"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find_map(|row| {
+                        row.get_mut("EternalOwnedDrawV1")?
+                            .get_mut("journal")?
+                            .get_mut("DungeonRoomV1")?
+                            .get_mut("Removed")
+                    })
+                    .expect("original Lost Mine removal");
+                assert_eq!(
+                    removal["colors"],
+                    serde_json::json!(mtg_kernel::card_def::mana_color_mask(ManaColor::B))
+                );
+                // The first room of this occurrence was Fungi Cavern, not its bottom room.
+                removal["last_room"] = removal["occurrence"].clone();
+                let mut forged: GameState = serde_json::from_value(forged).unwrap();
+                for _ in 0..2 {
+                    assert!(matches!(
+                        next(&mut forged),
+                        Decision::CastSpellOrPass { .. }
+                    ));
+                    act(&mut forged, Action::Pass);
+                }
+                assert!(matches!(
+                    engine::advance_until_decision(&mut forged),
+                    Decision::Halted { .. }
+                ));
+            }
+            let mut restored: GameState = serde_json::from_value(saved).unwrap();
+            settled(&mut restored);
+            assert_eq!(
+                engine::effective_power(&restored, target),
+                if departed { power } else { power - 4 }
+            );
+        }
+    }
+}
+
+fn choose_venture_route(state: &mut GameState, option: u16) {
+    assert!(matches!(
+        settle(state),
+        Some(Decision::ChooseEffectOption { .. })
+    ));
+    act(state, Action::ChooseEffectOption(option));
+}
+
+#[test]
+fn acererak_advances_native_undercity_with_bound_throne_restore_both_seats() {
+    use mtg_kernel::effect::EffectOp;
+    use mtg_kernel::state::{InitiativeTriggerKindV1, UndercityRoomV1, UNDERCITY_DUNGEON_ID_V1};
+
+    for actor in [P0, P1] {
+        let mut state = game(&[
+            "Island",
+            "Forest",
+            "Llanowar Elves",
+            "Llanowar Elves",
+            "Llanowar Elves",
+            "Island",
+            "Island",
+            "Island",
+        ]);
+        state.active_player = actor;
+        state.priority_player = actor;
+        let hunter = put(&mut state, actor, "Avenging Hunter", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::G], 4);
+        cast(&mut state, hunter, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets {
+                can_finish: true,
+                ..
+            })
+        ));
+        act(&mut state, Action::FinishEffectSelection);
+        settled(&mut state);
+        assert_eq!(state.initiative, Some(actor));
+        assert_eq!(
+            state.players[actor.index()].dungeon.dungeon_id,
+            Some(UNDERCITY_DUNGEON_ID_V1)
+        );
+        assert_eq!(
+            state.players[actor.index()].dungeon.room_id,
+            Some(UndercityRoomV1::SecretEntrance.stable_id())
+        );
+
+        let enforcer = put(
+            &mut state,
+            actor.opponent(),
+            "Mystic Enforcer",
+            Zone::Battlefield,
+        );
+        let chaplain = put(
+            &mut state,
+            actor.opponent(),
+            "Beloved Chaplain",
+            Zone::Battlefield,
+        );
+        let acererak = put(&mut state, actor, ACERERAK, Zone::Hand);
+        let mut painted = state.clone();
+        paid_black_painter(&mut painted, actor);
+        for (branch, painted) in [(&mut state, false), (&mut painted, true)] {
+            pool(branch, actor, &[ManaColor::B], 2);
+            cast(branch, acererak, &[]);
+            choose_venture_route(branch, 0); // Forge.
+            let Some(Decision::ChooseTargets {
+                player,
+                spell: source,
+                legal_targets,
+                ..
+            }) = settle(branch)
+            else {
+                panic!("Forge must use the current Undercity room");
+            };
+            assert_eq!(player, actor);
+            assert_eq!(source, acererak);
+            assert_eq!(legal_targets.contains(&Target::Object(enforcer)), !painted);
+            assert!(legal_targets.contains(&Target::Object(chaplain)));
+            let target = if painted { chaplain } else { enforcer };
+            act(branch, Action::ChooseTarget(Target::Object(target)));
+            settled(branch);
+            assert_eq!(branch.objects.get(target).counters.plus1_plus1, 2);
+            assert_eq!(
+                branch.players[actor.index()].dungeon.room_id,
+                Some(UndercityRoomV1::Forge.stable_id())
+            );
+        }
+
+        pool(&mut state, actor, &[ManaColor::B], 2);
+        cast(&mut state, acererak, &[]);
+        choose_venture_route(&mut state, 1); // Arena.
+        choose_target(&mut state, Target::Object(chaplain));
+        settled(&mut state);
+        pool(&mut state, actor, &[ManaColor::B], 2);
+        cast(&mut state, acererak, &[]);
+        choose_venture_route(&mut state, 0); // Archives.
+        settled(&mut state);
+
+        pool(&mut state, actor, &[ManaColor::B], 2);
+        cast(&mut state, acererak, &[]);
+        let throne = settle(&mut state).expect("bound Throne selection");
+        let Decision::ChooseEffectTargets {
+            player,
+            ref legal_targets,
+            can_finish: false,
+            ..
+        } = throne
+        else {
+            panic!("Throne must reveal and offer its creature choices");
+        };
+        assert_eq!(player, actor);
+        let Target::Object(chosen) = legal_targets[0] else {
+            panic!("Throne creature")
+        };
+        let marker = &state.players[actor.index()].dungeon;
+        assert_eq!(
+            marker.room_id,
+            Some(UndercityRoomV1::ThroneOfTheDeadThree.stable_id())
+        );
+        assert!(marker.completed_dungeons.is_empty());
+        // Frozen observations show the bound room like a bound Forgotten
+        // Realms room: its venture source's waiting trigger.
+        mtg_kernel::rl::observe_v1(&state, actor, 0)
+            .expect("frozen observations show a bound Undercity room");
+
+        let pending = state.engine.pending_effect.as_ref().unwrap();
+        let Some(EffectOp::ResolveInitiativeTrigger { binding }) =
+            pending.resolving_item.inline_effect.as_ref()
+        else {
+            panic!("Throne must retain its native room binding");
+        };
+        let InitiativeTriggerKindV1::UndercityRoomBoundV1 {
+            room: UndercityRoomV1::ThroneOfTheDeadThree,
+            entered_at,
+        } = binding.kind
+        else {
+            panic!("bound Throne entry")
+        };
+        let saved = serde_json::to_value(&state).unwrap();
+        let mut forged = saved.clone();
+        forged["engine"]["event_history"][entered_at]["EternalOwnedDrawV1"]["journal"]
+            ["DungeonRoomV1"]["Entered"]["room"] =
+            serde_json::json!(UndercityRoomV1::Archives.stable_id());
+        let forged: GameState = serde_json::from_value(forged).unwrap();
+        assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err());
+
+        let mut restored: GameState = serde_json::from_value(saved).unwrap();
+        assert_eq!(next(&mut restored), throne);
+        act(
+            &mut restored,
+            Action::ChooseEffectTarget(Target::Object(chosen)),
+        );
+        settled(&mut restored);
+        assert_eq!(restored.objects.get(chosen).zone, Zone::Battlefield);
+        assert_eq!(restored.objects.get(chosen).counters.plus1_plus1, 3);
+        let marker = &restored.players[actor.index()].dungeon;
+        assert_eq!((marker.dungeon_id, marker.room_id), (None, None));
+        assert_eq!(marker.completed_dungeons, vec![UNDERCITY_DUNGEON_ID_V1]);
+    }
+}
+
+#[test]
+fn paid_metamorph_acererak_keeps_original_undercity_room_source_both_seats() {
+    use mtg_kernel::effect::EffectOp;
+    use mtg_kernel::state::{InitiativeTriggerKindV1, UndercityRoomV1, UNDERCITY_DUNGEON_ID_V1};
+
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let hunter = put(&mut state, actor, "Avenging Hunter", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::G], 4);
+        cast(&mut state, hunter, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets {
+                can_finish: true,
+                ..
+            })
+        ));
+        act(&mut state, Action::FinishEffectSelection);
+        settled(&mut state);
+        assert_eq!(state.initiative, Some(actor));
+
+        let original = put(&mut state, actor.opponent(), ACERERAK, Zone::Battlefield);
+        let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Hand);
+        let physical_def = state.objects.get(metamorph).card_def;
+        let copied_def = state.objects.get(original).card_def;
+        let life = state.players[actor.index()].life;
+        pool(&mut state, actor, &[ManaColor::U], 3);
+        cast(&mut state, metamorph, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                if legal_targets.contains(&Target::Object(original))
+        ));
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(original)),
+        );
+        choose_venture_route(&mut state, 0); // Forge from the copied Acererak ETB.
+        assert_eq!(state.objects.get(metamorph).zone, Zone::Hand);
+        assert_eq!(state.objects.get(metamorph).card_def, physical_def);
+        assert_eq!(state.players[actor.index()].life, life);
+        assert_eq!(state.players[actor.index()].mana_pool, [0; 6]);
+
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseTargets { player, spell, legal_targets, .. })
+                if player == actor && spell == metamorph && legal_targets.contains(&Target::Object(original))
+        ));
+        act(&mut state, Action::ChooseTarget(Target::Object(original)));
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        let item = state.stack.last().expect("published Forge ability");
+        let Some(EffectOp::ResolveInitiativeTrigger { binding }) = item.inline_effect.as_ref()
+        else {
+            panic!("Forge must retain its original room source");
+        };
+        assert!(matches!(
+            binding.kind,
+            InitiativeTriggerKindV1::UndercityRoomBoundV1 {
+                room: UndercityRoomV1::Forge,
+                ..
+            }
+        ));
+        assert_eq!(binding.player, actor);
+        assert_eq!(binding.source.source, metamorph);
+        assert_eq!(binding.source.card_def, copied_def);
+        assert_eq!(binding.source.zone, Zone::Battlefield);
+        assert!(binding.source.zone_change_count < state.objects.get(metamorph).zone_change_count);
+
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        settled(&mut restored);
+        assert_eq!(restored.objects.get(original).counters.plus1_plus1, 2);
+        let marker = &restored.players[actor.index()].dungeon;
+        assert_eq!(marker.dungeon_id, Some(UNDERCITY_DUNGEON_ID_V1));
+        assert_eq!(marker.room_id, Some(UndercityRoomV1::Forge.stable_id()));
+    }
+}
+
+#[test]
+fn undercity_arena_keeps_painted_color_after_its_dungeon_leaves_both_seats() {
+    use mtg_kernel::state::{UndercityRoomV1, UNDERCITY_DUNGEON_ID_V1};
+
+    for actor in [P0, P1] {
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        in_room(
+            &mut state,
+            actor,
+            UNDERCITY_DUNGEON_ID_V1,
+            UndercityRoomV1::Forge.stable_id(),
+        );
+        let painter = paid_black_painter(&mut state, actor);
+        let aluren = put(&mut state, actor, "Aluren", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::G; 2], 2);
+        cast(&mut state, aluren, &[]);
+        settled(&mut state);
+        let target = put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let acererak = put(&mut state, actor, ACERERAK, Zone::Hand);
+        cast(&mut state, acererak, &[]);
+        choose_venture_route(&mut state, 1); // Arena.
+        choose_target(&mut state, Target::Object(target));
+        assert!(
+            matches!(next(&mut state), Decision::CastSpellOrPass { player, .. } if player == actor)
+        );
+        let mut active = state.clone();
+
+        cast(&mut state, acererak, &[]);
+        choose_venture_route(&mut state, 0); // Archives.
+        pass_until(&mut state, |state| {
+            state.players[actor.index()].dungeon.room_id
+                == Some(UndercityRoomV1::Archives.stable_id())
+                && state.stack.len() == 1
+        });
+        cast(&mut state, acererak, &[]);
+        pass_until(&mut state, |state| {
+            state.players[actor.index()].dungeon.room_id
+                == Some(UndercityRoomV1::ThroneOfTheDeadThree.stable_id())
+                && state.stack.len() == 2
+        });
+        cast(&mut state, acererak, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption {
+                option_count: 3,
+                ..
+            })
+        ));
+        assert_eq!(
+            state.players[actor.index()].dungeon.completed_dungeons,
+            vec![UNDERCITY_DUNGEON_ID_V1]
+        );
+        act(&mut state, Action::ChooseEffectOption(1)); // Start Mad Mage.
+        pass_until(&mut state, |state| {
+            state.players[actor.index()].dungeon.dungeon_id == Some(MAD_MAGE)
+                && state.stack.len() == 2
+        });
+
+        for (branch, departed) in [(&mut active, false), (&mut state, true)] {
+            let bounce = put(branch, actor, "Echoing Truth", Zone::Hand);
+            pool(branch, actor, &[ManaColor::U], 1);
+            cast(branch, bounce, &[Target::Object(painter)]);
+            pass_until(branch, |state| {
+                state.objects.get(painter).zone == Zone::Hand
+            });
+            let blessing = put(branch, actor, "Benevolent Blessing", Zone::Hand);
+            pool(branch, actor, &[ManaColor::W], 1);
+            cast(branch, blessing, &[Target::Object(target)]);
+            assert!(matches!(
+                settle(branch),
+                Some(Decision::ChooseEffectOption {
+                    option_count: 5,
+                    ..
+                })
+            ));
+            act(branch, Action::ChooseEffectOption(2));
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(branch).unwrap()).unwrap();
+            settled(&mut restored);
+            assert_eq!(
+                restored.objects.get(target).v4.goaded_by.len(),
+                usize::from(!departed)
+            );
+        }
+    }
+}
+
+#[test]
 fn veils_of_fear_costs_two_life_unless_a_card_is_discarded() {
     let mut state = islands();
     in_room(&mut state, P0, TOMB, 1);
@@ -1662,8 +2536,17 @@ fn mad_wizards_lair_casts_a_drawn_card_for_free_and_completes_the_dungeon() {
     let ritual = state.players[0].library[0];
     in_room(&mut state, P0, MAD_MAGE, 8);
     cast_acererak(&mut state);
-    match settle(&mut state) {
-        Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+    let decision = settle(&mut state).expect("Mad Wizard's Lair choice");
+    let marker = &state.players[0].dungeon;
+    assert_eq!(
+        (marker.dungeon_id, marker.room_id),
+        (Some(MAD_MAGE), Some(9))
+    );
+    assert!(marker.completed_dungeons.is_empty());
+    state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    assert_eq!(next(&mut state), decision);
+    match decision {
+        Decision::ChooseEffectTargets { legal_targets, .. } => {
             assert_eq!(legal_targets, vec![Target::Object(ritual)]);
             assert!(state
                 .known_hand_cards(P1, P0)
@@ -1680,6 +2563,253 @@ fn mad_wizards_lair_casts_a_drawn_card_for_free_and_completes_the_dungeon() {
     assert_eq!(state.objects.get(ritual).zone, Zone::Graveyard);
     assert_eq!(mana(&state, P0, ManaColor::B), 3, "cast without paying");
     assert_eq!(state.players[0].dungeon.completed_dungeons, vec![MAD_MAGE]);
+}
+
+fn pay_for_acererak(state: &mut GameState, player: PlayerId, acererak: ObjectId) {
+    pool(state, player, &[ManaColor::B], 2);
+    cast(state, acererak, &[]);
+}
+
+fn approach_draw_room(state: &mut GameState, player: PlayerId, dungeon: u16) -> ObjectId {
+    state.active_player = player;
+    state.priority_player = player;
+    let acererak = put(state, player, ACERERAK, Zone::Hand);
+    let route = match dungeon {
+        LOST_MINE => &[Some(0), Some(0), Some(1)][..],
+        MAD_MAGE => &[Some(1), None, Some(0), None, Some(1), None][..],
+        _ => panic!("drawing dungeon"),
+    };
+    for &option in route {
+        pay_for_acererak(state, player, acererak);
+        let mut room = option;
+        while let Some(decision) = settle(state) {
+            match decision {
+                Decision::ChooseEffectOption { .. } => {
+                    act(state, Action::ChooseEffectOption(room.take().unwrap()));
+                }
+                // Keep each scry card on top in its original order.
+                Decision::ChooseEffectTargets { legal_targets, .. } => {
+                    act(state, Action::ChooseEffectTarget(legal_targets[0]));
+                }
+                other => panic!("unexpected approach to drawing room: {other:?}"),
+            }
+        }
+        assert!(room.is_none());
+    }
+    assert_eq!(state.objects.get(acererak).zone, Zone::Hand);
+    assert_eq!(
+        state.players[player.index()].dungeon.dungeon_id,
+        Some(dungeon)
+    );
+    assert_eq!(
+        state.players[player.index()].dungeon.room_id,
+        Some(if dungeon == LOST_MINE { 5 } else { 8 })
+    );
+    acererak
+}
+
+fn treasure_count(state: &GameState, player: PlayerId) -> usize {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .filter(|&&object| state.objects.get(object).name == "Treasure Token")
+        .count()
+}
+
+fn cast_dungeon_draw_jace(state: &mut GameState, player: PlayerId) -> ObjectId {
+    let jace = put(state, player, "Jace, Wielder of Mysteries", Zone::Hand);
+    pool(state, player, &[ManaColor::U; 3], 1);
+    cast(state, jace, &[]);
+    settled(state);
+    assert_eq!(state.objects.get(jace).zone, Zone::Battlefield);
+    assert_eq!(mtg_kernel::planeswalker_v1::loyalty(state, jace), Some(4));
+    jace
+}
+
+#[test]
+fn paid_temple_room_owns_each_replacement_and_stops_after_jace_both_seats() {
+    for player in [P0, P1] {
+        let opponent = player.opponent();
+        for terminal in [false, true] {
+            let mut state = if terminal { game(&[]) } else { islands() };
+            let acererak = approach_draw_room(&mut state, player, LOST_MINE);
+            put(&mut state, player, "Quantum Riddler", Zone::Battlefield);
+            put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+            let alternative = if terminal {
+                cast_dungeon_draw_jace(&mut state, player)
+            } else {
+                put(&mut state, player, "Golgari Thug", Zone::Graveyard)
+            };
+            let library_before = state.players[player.index()].library.len();
+            pay_for_acererak(&mut state, player, acererak);
+            let first = settle(&mut state).expect("actual Temple replacement");
+            assert!(matches!(&first, Decision::ChooseEffectTargets {
+                player: drawer, source, legal_targets, can_finish: true, ..
+            } if *drawer == player && *source == acererak
+                && legal_targets.as_slice() == [Target::Object(alternative)]));
+            assert_eq!(state.objects.get(acererak).zone, Zone::Hand);
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(next(&mut restored), first);
+            act(
+                &mut restored,
+                Action::ChooseEffectTarget(Target::Object(alternative)),
+            );
+            let mut answered: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
+            for branch in [&mut restored, &mut answered] {
+                if terminal {
+                    assert!(
+                        matches!(next(branch), Decision::GameOver { winner: Some(winner) }
+                        if winner == player)
+                    );
+                    assert_eq!(treasure_count(branch, opponent), 0);
+                } else {
+                    settled(branch);
+                    assert_eq!(branch.objects.get(alternative).zone, Zone::Hand);
+                    assert_eq!(
+                        branch.players[player.index()].library.len(),
+                        library_before - 4
+                    );
+                    assert_eq!(treasure_count(branch, opponent), 1);
+                }
+            }
+            assert_eq!(restored.state_hash(), answered.state_hash());
+            act(&mut state, Action::FinishEffectSelection);
+            assert_eq!(settle(&mut state), Some(first));
+            act(&mut state, Action::FinishEffectSelection);
+            settled(&mut state);
+            assert_eq!(treasure_count(&state, opponent), 2);
+        }
+    }
+}
+
+#[test]
+fn paid_mad_wizard_room_reveals_and_casts_only_actual_draws_both_seats() {
+    for player in [P0, P1] {
+        let opponent = player.opponent();
+        let mut state = game(&[
+            "Island",
+            "Island",
+            "Island",
+            "Island",
+            "Lightning Bolt",
+            "Island",
+            "Island",
+            "Island",
+        ]);
+        let acererak = approach_draw_room(&mut state, player, MAD_MAGE);
+        put(&mut state, player, "Quantum Riddler", Zone::Battlefield);
+        let library = state.players[player.index()].library.clone();
+        let bolt = library[4];
+
+        let mut replaced = state.clone();
+        put(&mut replaced, opponent, "Hullbreacher", Zone::Battlefield);
+        pay_for_acererak(&mut replaced, player, acererak);
+        settled(&mut replaced);
+        assert_eq!(treasure_count(&replaced, opponent), 4);
+        assert_eq!(replaced.players[player.index()].hand, vec![acererak]);
+        assert_eq!(replaced.players[player.index()].library, library);
+
+        let mut terminal = state.clone();
+        mtg_kernel::event::propose_and_commit_batch(
+            &mut terminal,
+            library
+                .iter()
+                .copied()
+                .filter(|&card| card != bolt)
+                .map(|card| mtg_kernel::event::ProposedEvent::zone_change(card, Zone::Exile))
+                .collect(),
+        );
+        cast_dungeon_draw_jace(&mut terminal, player);
+        assert_eq!(terminal.players[player.index()].library.as_slice(), [bolt]);
+        pay_for_acererak(&mut terminal, player, acererak);
+        assert_eq!(
+            settle(&mut terminal),
+            Some(Decision::GameOver {
+                winner: Some(player)
+            })
+        );
+        assert_eq!(terminal.objects.get(bolt).zone, Zone::Hand);
+        assert!(!terminal
+            .known_hand_cards(opponent, player)
+            .iter()
+            .any(|entry| entry.object == bolt));
+
+        let thug = put(&mut state, player, "Golgari Thug", Zone::Graveyard);
+        pay_for_acererak(&mut state, player, acererak);
+        let first = settle(&mut state).expect("Lair's actual Dredge menu");
+        assert!(
+            matches!(first, Decision::ChooseEffectTargets { legal_targets, .. }
+            if legal_targets == [Target::Object(thug)])
+        );
+        let mut rewind = serde_json::to_value(&state).unwrap();
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+        let cast_menu = settle(&mut state).expect("Lair's actual drawn spell is castable");
+        assert!(
+            matches!(&cast_menu, Decision::ChooseEffectTargets { legal_targets, .. }
+            if legal_targets.as_slice() == [Target::Object(bolt)])
+        );
+        assert_eq!(state.objects.get(thug).zone, Zone::Hand);
+        assert_eq!(state.players[player.index()].library, library[7..]);
+        assert!(library[4..7].iter().all(|drawn| state
+            .known_hand_cards(opponent, player)
+            .iter()
+            .any(|entry| entry.object == *drawn)));
+
+        let saved = serde_json::to_value(&state).unwrap();
+        let early_history = rewind["engine"]["event_history"].as_array_mut().unwrap();
+        let later_history = saved["engine"]["event_history"].as_array().unwrap();
+        early_history.extend(
+            later_history[early_history.len()..]
+                .iter()
+                .filter(|row| {
+                    row["EternalOwnedDrawV1"]["journal"]
+                        .get("Completed")
+                        .is_none()
+                })
+                .cloned(),
+        );
+        let rewind: GameState = serde_json::from_value(rewind).unwrap();
+        assert_eq!(
+            mtg_kernel::effect::validate_pending_effect_choice(&rewind),
+            Err("Mad Wizard cannot resume drawing after its cast stage".into()),
+        );
+
+        let mut forged = saved.clone();
+        let card = forged["engine"]["event_history"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find_map(|row| {
+                row.get_mut("EternalOwnedDrawV1")?
+                    .get_mut("journal")?
+                    .get_mut("RoomDrawRevealedV1")?
+                    .get_mut("card")?
+                    .get_mut("object")
+            })
+            .expect("native Lair reveal receipt");
+        *card = serde_json::json!(thug);
+        let forged: GameState = serde_json::from_value(forged).unwrap();
+        assert!(mtg_kernel::effect::validate_pending_effect_choice(&forged).is_err());
+
+        let mut restored: GameState = serde_json::from_value(saved).unwrap();
+        assert_eq!(next(&mut restored), cast_menu);
+        act(
+            &mut restored,
+            Action::ChooseEffectTarget(Target::Object(bolt)),
+        );
+        let mut answered: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&restored).unwrap()).unwrap();
+        for branch in [&mut restored, &mut answered] {
+            choose_target(branch, Target::Player(opponent));
+            settled(branch);
+            assert_eq!(branch.objects.get(bolt).zone, Zone::Graveyard);
+            assert_eq!(branch.players[opponent.index()].life, 17);
+            assert_eq!(branch.players[player.index()].mana_pool, [0; 6]);
+        }
+        assert_eq!(restored.state_hash(), answered.state_hash());
+    }
 }
 
 #[test]
