@@ -11,8 +11,8 @@ use super::root_allocation::{RootAllocation, RootAllocator, SearchOptions};
 use super::seeds::{Purpose, RootSeeds};
 use super::sharing::{Cursor as SharingCursor, Sharing};
 use super::tree::{
-    canon, canon_values, child_key, live_index, raw_decision, Found, Key, Mapping, Node, Tree,
-    MAX_DEPTH,
+    canon, canon_values, child_key, live_index, raw_decision, Canon, Found, Key, Mapping, Node,
+    Tree, MAX_DEPTH,
 };
 use super::world::{sample_recorded, DeckPrior};
 use crate::ids::PlayerId;
@@ -193,6 +193,30 @@ fn sample_world(
     let t = Instant::now();
     let mut encoding_failure = None;
     let r = sample_recorded(s, seed, ctx.prior, &mut encoding_failure);
+    record_world_sample(r, encoding_failure, t, stats)
+}
+
+fn sample_root_world(
+    ctx: &RootCtx,
+    prepared: Option<&mut super::world::PreparedRootSampler>,
+    seed: u64,
+    stats: &mut SamplerStats,
+) -> Result<FastActorSessionV1, String> {
+    let t = Instant::now();
+    let mut encoding_failure = None;
+    let r = match prepared {
+        Some(sampler) => sampler.sample_recorded(ctx.root, seed, ctx.prior, &mut encoding_failure),
+        None => sample_recorded(ctx.root, seed, ctx.prior, &mut encoding_failure),
+    };
+    record_world_sample(r, encoding_failure, t, stats)
+}
+
+fn record_world_sample(
+    r: Result<super::world::Sample, String>,
+    encoding_failure: Option<crate::rl_session::V4BoundaryEncodingFailureV1>,
+    t: Instant,
+    stats: &mut SamplerStats,
+) -> Result<FastActorSessionV1, String> {
     stats.seconds += t.elapsed().as_secs_f64();
     if let Some(f) = &encoding_failure {
         stats.boundary_encoding.add(&f.kind, &f.detail);
@@ -740,6 +764,7 @@ impl Roles {
         let mut rounds = 0u64;
         let mut consecutive = 0u64;
         let mut i = 0u64;
+        let mut root_sampler = super::world::PreparedRootSampler::new(ctx.root, ctx.prior);
         'rounds: loop {
             if consecutive >= MAX_CONSECUTIVE_REJECTIONS {
                 sel.incomplete = true;
@@ -749,13 +774,14 @@ impl Roles {
             let index = i;
             i += 1;
             sel.attempted += 1;
-            let world = match sample_world(ctx, ctx.root, seed, &mut sel.sampler) {
-                Ok(w) => w,
-                Err(_) => {
-                    consecutive += 1;
-                    continue;
-                }
-            };
+            let world =
+                match sample_root_world(ctx, Some(&mut root_sampler), seed, &mut sel.sampler) {
+                    Ok(w) => w,
+                    Err(_) => {
+                        consecutive += 1;
+                        continue;
+                    }
+                };
             consecutive = 0;
             let mut scores = Vec::with_capacity(n);
             let mut ok = true;
@@ -971,7 +997,8 @@ impl Roles {
                             crate::search_profile_v1::Bucket::KeyStep,
                         );
                         let st = keyer.step_memo(&s, d, memo.as_deref_mut())?;
-                        let (key, pk, pe, cn) = keyer.storage(&st);
+                        let (key, pk, pe, cn_arc) = keyer.storage_arc(&st);
+                        let cn: &Canon = cn_arc;
                         drop(span);
                         let sharing_probe = sharing
                             .as_deref_mut()
@@ -990,7 +1017,7 @@ impl Roles {
                         let span = crate::search_profile_v1::span(
                             crate::search_profile_v1::Bucket::TreeFind,
                         );
-                        let found = tree.find(&key, &pk, &pe, cn)?;
+                        let found = tree.find_arc(&key, &pk, &pe, cn_arc)?;
                         drop(span);
                         let (edge_index, edge) = match found {
                             Found::Hit(node) => {
@@ -1028,7 +1055,13 @@ impl Roles {
                                     crate::search_profile_v1::Bucket::Expand,
                                 );
                                 let perm = keyer.perm(&st, ctx.seeds)?;
-                                let mut node = Node::with_perm(pk, pe, cn.clone(), depth, perm);
+                                let mut node = Node::with_perm_arc(
+                                    pk,
+                                    pe,
+                                    std::sync::Arc::clone(cn_arc),
+                                    depth,
+                                    perm,
+                                );
                                 node.skip = keyer.skipped(&st);
                                 if value_leaf.is_some() {
                                     node.vsum = vec![0; node.n.len()];
@@ -1408,6 +1441,8 @@ impl Roles {
         // here reads the environment (`S4A_WORLD` is parsed by the s4a-budget
         // runner alone), so ordinary collection and deployment stay `Fresh`.
         let world_mode = options.world.unwrap_or_default();
+        let mut root_sampler =
+            (!cpu_limited).then(|| super::world::PreparedRootSampler::new(ctx.root, ctx.prior));
         let mut world_receipt = Value::Null;
         let mut pinned: Option<FastActorSessionV1> = None;
         let mut world_ok = true;
@@ -1418,7 +1453,8 @@ impl Roles {
                 let seed = ctx
                     .seeds
                     .get(Purpose::Select, "pinned-v1", j, b"pinned-world");
-                if let Ok(w) = sample_world(ctx, ctx.root, seed, &mut sel.sampler) {
+                if let Ok(w) = sample_root_world(ctx, root_sampler.as_mut(), seed, &mut sel.sampler)
+                {
                     pinned = Some(w);
                     world_receipt = json!({"mode":"pinned-v1","pinned_ordinal":j,
                         "pinned_seed":seed,"pinned_attempts":attempts});
@@ -1493,7 +1529,7 @@ impl Roles {
                     true,
                     &mut sel.sampler,
                 ),
-                _ => sample_world(ctx, ctx.root, seed, &mut sel.sampler),
+                _ => sample_root_world(ctx, root_sampler.as_mut(), seed, &mut sel.sampler),
             };
             drop(span);
             let world = match world {

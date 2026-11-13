@@ -1229,3 +1229,170 @@ fn pipelined_gae_reraises_a_worker_panic_after_joining_its_helpers() {
         .unwrap();
     assert_eq!(bits_v1(&gradient), bits_v1(&serial));
 }
+
+#[test]
+fn simd_gelu_and_softmax_match_scalar_bits_across_edges_and_samples() {
+    let mut rng = SplitMixV1::new(20_261_113);
+    let mut xs = vec![
+        0.0f32,
+        -0.0,
+        1.0e-45,
+        -1.0e-45,
+        1.0e-38,
+        -1.0e-38,
+        1.0e-7,
+        -1.0e-7,
+        0.5,
+        -0.5,
+        1.0,
+        -1.0,
+        3.0,
+        -3.0,
+        12.0,
+        -12.0,
+        -87.0,
+        -87.3,
+        -88.0,
+        -104.0,
+        88.0,
+        88.7,
+        89.0,
+        1.0e17,
+        -1.0e17,
+        1.0e18,
+        -1.0e18,
+        1.0e20,
+        -1.0e20,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+    ];
+    for _ in 0..50_000 {
+        xs.push(rng.uniform(-15.0, 15.0));
+    }
+    let mut post_simd = vec![0.0f32; xs.len()];
+    kernels::gelu_slice_v1(&xs, &mut post_simd);
+    for (idx, (&x, &y)) in xs.iter().zip(&post_simd).enumerate() {
+        let expected = kernels::gelu_v1(x);
+        if expected.is_nan() {
+            assert!(y.is_nan(), "gelu NaN mismatch at {idx} ({x})");
+        } else {
+            assert_eq!(
+                y.to_bits(),
+                expected.to_bits(),
+                "gelu bits mismatch at {idx} ({x}): got {y} vs {expected}"
+            );
+        }
+    }
+
+    let grads_in: Vec<f32> = (0..xs.len()).map(|_| rng.uniform(-2.0, 2.0)).collect();
+    let mut grads_simd = grads_in.clone();
+    kernels::gelu_backward_slice_v1(&xs, &mut grads_simd);
+    for (idx, ((&x, &gin), &gout)) in xs.iter().zip(&grads_in).zip(&grads_simd).enumerate() {
+        let expected = gin * kernels::gelu_grad_v1(x);
+        if expected.is_nan() {
+            assert!(gout.is_nan(), "gelu_bwd NaN mismatch at {idx} ({x})");
+        } else {
+            assert_eq!(
+                gout.to_bits(),
+                expected.to_bits(),
+                "gelu_bwd bits mismatch at {idx} ({x}): got {gout} vs {expected}"
+            );
+        }
+    }
+
+    for len in [1usize, 2, 7, 8, 9, 15, 16, 17, 33, 64, 99] {
+        let mut row: Vec<f32> = (0..len).map(|_| rng.uniform(-30.0, 30.0)).collect();
+        let mut expected = row.clone();
+        let max_val = expected.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let mut sum = 0.0f32;
+        for v in &mut expected {
+            *v = kernels::exp_v1(*v - max_val);
+            sum += *v;
+        }
+        for v in &mut expected {
+            *v /= sum;
+        }
+        kernels::softmax_row_v1(&mut row);
+        assert_eq!(bits_v1(&row), bits_v1(&expected), "softmax len {len}");
+    }
+}
+
+#[test]
+fn score_tensor_matches_forward_bits_and_parallel_auxiliary_matches_serial_bits() {
+    use crate::line_b_teacher_target_v1::{LineBDivergenceV1, LineBSoftmaxV1};
+    let mut rng = SplitMixV1::new(20_261_114);
+    let model = SModelV1::init_parity_v1(SConfigV1::s_v1(), 91).unwrap();
+    let mut tape = STapeV1::default();
+    for _ in 0..16 {
+        let t = synthetic_decision_v1(&mut rng, super::tools::PARITY_SHAPE_V1);
+        let out = model
+            .forward_v1(SInputV1::of_tensor_v1(&t), &mut tape)
+            .unwrap();
+        let (logits, value) = model.score_tensor_v1(&t).unwrap();
+        assert_eq!(bits_v1(&logits), bits_v1(&out.logits));
+        assert_eq!(value.to_bits(), out.value.to_bits());
+    }
+
+    let tiny_model = SModelV1::init_parity_v1(TINY_V1, 92).unwrap();
+    let data = ragged_groups_v1(93);
+    let groups = as_groups_v1(&data);
+    let aux_tensors: Vec<NativeFlatDecisionTensorV2> = (0..5)
+        .map(|_| {
+            synthetic_decision_v1(
+                &mut rng,
+                ShapeV1 {
+                    objects: (3, 7),
+                    edges: (1, 4),
+                    actions: (2, 5),
+                    refs: (1, 4),
+                },
+            )
+        })
+        .collect();
+    let targets: Vec<LineBSoftmaxV1> = aux_tensors
+        .iter()
+        .map(|t| {
+            let a = t.action_features.len() / ACTION_FEATURE_DIM_V1;
+            let raw: Vec<f64> = (0..a).map(|i| 0.25 * i as f64 - 0.3).collect();
+            crate::line_b_teacher_target_v1::line_b_softmax_v1(&raw).unwrap()
+        })
+        .collect();
+    let make_input = || SAuxiliaryInputV1 {
+        direction: LineBDivergenceV1::Forward,
+        coefficient: 1.0,
+        denominator: 8,
+        cap: Some(2.0),
+        step_telemetry: true,
+        rows: aux_tensors
+            .iter()
+            .zip(&targets)
+            .map(|(t, target)| SAuxiliaryRowV1 {
+                input: SInputV1::of_tensor_v1(t),
+                target,
+            })
+            .collect(),
+        policy_mask: vec![(0, 1), (2, 0), (3, 2), (7, 1)],
+    };
+    let base_state = STrainStateV1::fresh_optimizer_v1(tiny_model);
+    let mut serial_state = base_state.clone();
+    let (serial_step, serial_aux) = serial_state
+        .train_step_gae_auxiliary_v1(&groups, 0.5, 1.0e-3, &make_input(), &mut SWorkV1::default())
+        .unwrap();
+    for workers in [1, 2, 4] {
+        let mut par_state = base_state.clone();
+        let (par_step, par_aux) = par_state
+            .train_step_gae_auxiliary_with_workers_v1(
+                &groups,
+                0.5,
+                1.0e-3,
+                &make_input(),
+                &mut SWorkV1::default(),
+                workers,
+            )
+            .unwrap();
+        assert_eq!(par_step, serial_step, "workers {workers}");
+        assert_eq!(par_aux, serial_aux, "workers {workers}");
+        assert_eq!(par_state, serial_state, "workers {workers}");
+    }
+}

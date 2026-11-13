@@ -3,7 +3,10 @@ mtg_kernel::fast_global_allocator!();
 use mtg_kernel::expanded_deck_training_v1::{execute_v1, ExpandedTrainingCommandV1};
 
 fn main() {
+    // SAFETY: first statement of main; no other thread exists yet.
+    unsafe { mtg_kernel::retain_freed_memory_v1() };
     mtg_kernel::opt_out_of_power_throttling_v1();
+    mtg_kernel::set_default_digest_memo_mib_v1(16);
     // The command runs on a thread with the census binary's 256 MiB stack:
     // Windows gives the main thread 1 MiB, which the collection hooks' deep
     // play (W5/SD1 capture continuations) can overflow. Stack size changes no

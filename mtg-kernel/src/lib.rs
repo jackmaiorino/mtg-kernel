@@ -146,6 +146,20 @@ pub fn opt_out_of_power_throttling_v1() -> bool {
     }
 }
 
+/// Settles the platform vector `tanh8` proof once for this process, reading or
+/// writing the proof witness under `MTG_KERNEL_VECTOR_TANH_DIR` / cache home.
+/// Computed float bits are identical with or without calling this upfront.
+pub fn settle_vector_tanh_v1() {
+    vector_tanh_v1::prepare_v1();
+}
+
+/// Sets the process-default per-thread tensorizer digest memo budget in MiB
+/// when `MTG_KERNEL_TENSORIZE_DIGEST_MEMO_MIB` is unset. Must be called before
+/// the first tensorizer fill. Computed tensor bits are identical on or off.
+pub fn set_default_digest_memo_mib_v1(mib: usize) {
+    native_flat_tensorizer_v2::set_default_digest_memo_mib_v1(mib);
+}
+
 #[cfg(all(
     feature = "native-training-store-v2-production",
     target_os = "windows",
