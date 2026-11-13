@@ -135,10 +135,11 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
     if source.get("checkpoint") is not None:
         pinned = source["checkpoint"]
     elif dose.get("fresh") is True:
-        assert not source.get("s_learner"), "a fresh net-8 parent has no S learner"
+        assert not source.get("s_learner") and not source.get("w_learner"),             "a fresh net-8 parent has no S or wide learner"
         pinned = source.get("play_import")
     else:
-        pinned = (source.get("s_learner") or {}).get("initial")
+        # An S or wide (net-8w128, w_learner_v1.rs) learner without a checkpoint: its starting train state.
+        pinned = (source.get("s_learner") or source.get("w_learner") or {}).get("initial")
     assert pinned is not None, "the parent has neither a checkpoint nor an S initial state"
     assert sha(pinned["path"]) == pinned["sha256"], "parent differs from its dose pin"
     plan = base["iterations"]
