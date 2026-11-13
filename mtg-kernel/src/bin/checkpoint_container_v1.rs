@@ -8,6 +8,7 @@
 //! checkpoint_container_v1 materialize --template SOURCE.json --input SNAPSHOT --sha256 HEX --output OUT.json
 //! checkpoint_container_v1 s-document --input S_CONTAINER --sha256 HEX
 //! checkpoint_container_v1 widen --source SOURCE.json --seed-label LABEL --optimizer keep|fresh --output FRESH_DIR
+//! checkpoint_container_v1 w-movement --from W_CONTAINER --from-sha256 HEX --to W_CONTAINER --to-sha256 HEX
 //! ```
 //!
 //! `widen` writes a wide (net-8w128) learner's starting train state from a
@@ -32,14 +33,16 @@
 
 mtg_kernel::fast_global_allocator!();
 
-use mtg_kernel::expanded_deck_training_v1::w_learner_v1::{widen_source_v1, WideningOptimizerV1};
+use mtg_kernel::expanded_deck_training_v1::w_learner_v1::{
+    w_movement_v1, widen_source_v1, WideningOptimizerV1,
+};
 use mtg_kernel::expanded_deck_training_v1::{
     convert_checkpoint_v1_to_v2, export_checkpoint_v2_to_v1, materialize_weights_snapshot_v1,
     s_container_document_v1, weights_snapshot_v1, ExpandedModelSourceV1, PinnedFileV1,
 };
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: checkpoint_container_v1 convert --source SOURCE.json --output FRESH_ABSOLUTE_PATH | export --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | weights-snapshot --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | materialize --template SOURCE.json --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | s-document --input PATH --sha256 HEX | widen --source SOURCE.json --seed-label LABEL --optimizer keep|fresh --output FRESH_ABSOLUTE_PATH";
+const USAGE: &str = "usage: checkpoint_container_v1 convert --source SOURCE.json --output FRESH_ABSOLUTE_PATH | export --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | weights-snapshot --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | materialize --template SOURCE.json --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | s-document --input PATH --sha256 HEX | widen --source SOURCE.json --seed-label LABEL --optimizer keep|fresh --output FRESH_ABSOLUTE_PATH | w-movement --from PATH --from-sha256 HEX --to PATH --to-sha256 HEX";
 
 fn flags_v1(rest: &[String], names: &[&str]) -> Option<Vec<String>> {
     if rest.len() != 2 * names.len() {
@@ -126,6 +129,19 @@ fn run_v1(args: &[String]) -> Option<Result<String, String>> {
                 .and_then(|source| {
                     widen_source_v1(&source, &values[1], optimizer, &PathBuf::from(&values[3]))
                 })
+        }
+        "w-movement" => {
+            let values = flags_v1(rest, &["--from", "--from-sha256", "--to", "--to-sha256"])?;
+            w_movement_v1(
+                &PinnedFileV1 {
+                    path: PathBuf::from(&values[0]),
+                    sha256: values[1].clone(),
+                },
+                &PinnedFileV1 {
+                    path: PathBuf::from(&values[2]),
+                    sha256: values[3].clone(),
+                },
+            )
         }
         _ => return None,
     };
