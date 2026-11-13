@@ -56,7 +56,7 @@ pub(crate) mod verified_row_v1;
 
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::training_math_v1::TrainingMathV1;
-use kernels::{gemm_v1, InitV1};
+use kernels::{gemm_strided_v1, gemm_v1, InitV1};
 use parallel::SGradientSinkV1;
 use profile::{SectionV1, StageV1};
 use serde::{Deserialize, Serialize};
@@ -625,9 +625,7 @@ impl SModelV1 {
     /// SHA-256 of the parameters (layout order, f32 bits little-endian).
     pub fn parameter_sha256_v1(&self) -> String {
         let mut hasher = Sha256::new();
-        for value in &self.values {
-            hasher.update(value.to_bits().to_le_bytes());
-        }
+        hash_f32_le_slice_v1(&mut hasher, &self.values);
         hex_v1(&hasher.finalize())
     }
 
@@ -673,7 +671,7 @@ impl SModelV1 {
     ) -> Result<(), String> {
         ensure_mxcsr_v1()?;
         let counts = input.validate_v1(&self.layout.config)?;
-        self.forward_validated_into_v1(input, tape, counts)
+        self.forward_validated_into_v1(input, tape, counts, true)
     }
 
     fn forward_validated_into_v1(
@@ -681,6 +679,7 @@ impl SModelV1 {
         input: SInputV1<'_>,
         tape: &mut STapeV1,
         counts: CountsV1,
+        for_backward: bool,
     ) -> Result<(), String> {
         #[cfg(test)]
         verified_row_v1::note_forward_v1();
@@ -692,7 +691,11 @@ impl SModelV1 {
         let cd = config.card_dim;
         let ffn = config.ffn;
         let l = 1 + n + a;
-        tape.reset_v1(&config, counts);
+        if for_backward {
+            tape.reset_v1(&config, counts);
+        } else {
+            tape.reset_for_infer_v1(&config, counts);
+        }
         let lay = &self.layout;
 
         // Object tokens.
@@ -806,16 +809,53 @@ impl SModelV1 {
                 lt.ln1_stats[2 * t] = mean;
                 lt.ln1_stats[2 * t + 1] = rstd;
             }
-            self.linear_fwd(block.qkv, l, &lt.ln1, &mut lt.qkv);
+            let live_segments = [(0, 1), (1 + n, a)];
+            let all_segments = [(0, l)];
             // Query rows: every token, except in the last block, whose object
             // rows reach no output (the heads read the state and action
             // tokens only). Rows are independent, so the live rows' values
-            // are the same either way; the skipped rows stay zero in the tape.
-            let segments: Vec<(usize, usize)> = if layer + 1 == config.layers {
-                vec![(0, 1), (1 + n, a)]
+            // are the same either way; when recording a backward tape, every
+            // QKV entry is still computed for `final_block_compacts_v1` and
+            // skipped downstream rows stay zero in the tape.
+            let is_last = layer + 1 == config.layers;
+            let segments: &[(usize, usize)] = if is_last {
+                &live_segments
             } else {
-                vec![(0, l)]
+                &all_segments
             };
+            if is_last && !for_backward && n > 0 {
+                let (wt, bias) = self.lin(block.qkv);
+                for &(start, count) in segments {
+                    if count > 0 {
+                        gemm_v1(
+                            count,
+                            3 * d,
+                            d,
+                            &lt.ln1[start * d..(start + count) * d],
+                            d,
+                            1,
+                            wt,
+                            InitV1::Bias(bias),
+                            &mut lt.qkv[start * 3 * d..(start + count) * 3 * d],
+                        );
+                    }
+                }
+                gemm_strided_v1(
+                    n,
+                    2 * d,
+                    d,
+                    &lt.ln1[d..(1 + n) * d],
+                    d,
+                    1,
+                    &wt[d..],
+                    3 * d,
+                    InitV1::Bias(&bias[d..]),
+                    &mut lt.qkv[3 * d + d..],
+                    3 * d,
+                );
+            } else {
+                self.linear_fwd(block.qkv, l, &lt.ln1, &mut lt.qkv);
+            }
             for head in 0..h {
                 // Contiguous K_h^T [dh, l] and V_h [l, dh].
                 for j in 0..l {
@@ -824,7 +864,7 @@ impl SModelV1 {
                         tape.value_h[j * dh + c] = lt.qkv[j * 3 * d + 2 * d + head * dh + c];
                     }
                 }
-                for &(start, count) in &segments {
+                for &(start, count) in segments {
                     let probs =
                         &mut lt.probs[(head * l + start) * l..(head * l + start + count) * l];
                     // scores[i, j] = sum over c ascending of q[i, c] k[j, c].
@@ -870,7 +910,7 @@ impl SModelV1 {
                 Some(next) => &mut next.x_in,
                 None => &mut tape.x_out,
             };
-            for &(start, count) in &segments {
+            for &(start, count) in segments {
                 let rows = start * d..(start + count) * d;
                 self.linear_fwd(
                     block.proj,
@@ -954,9 +994,12 @@ impl SModelV1 {
         &self,
         t: &NativeFlatDecisionTensorV2,
     ) -> Result<(Vec<f32>, f32), String> {
+        ensure_mxcsr_v1()?;
+        let input = SInputV1::of_tensor_v1(t);
+        let counts = input.validate_v1(&self.layout.config)?;
         THREAD_TAPE_V1.with(|tape| {
             let mut tape = tape.borrow_mut();
-            self.forward_into_v1(SInputV1::of_tensor_v1(t), &mut tape)?;
+            self.forward_validated_into_v1(input, &mut tape, counts, false)?;
             Ok((tape.logits.clone(), tape.value))
         })
     }
@@ -966,9 +1009,10 @@ impl SModelV1 {
         let config = self.layout.config;
         let card = self.layout.card;
         let mut hasher = Sha256::new();
-        for value in &self.values[card..card + config.card_vocab * config.card_dim] {
-            hasher.update(value.to_bits().to_le_bytes());
-        }
+        hash_f32_le_slice_v1(
+            &mut hasher,
+            &self.values[card..card + config.card_vocab * config.card_dim],
+        );
         hex_v1(&hasher.finalize())
     }
 
@@ -1042,6 +1086,22 @@ impl LayerTapeV1 {
         size(&mut self.ff_pre, l * config.ffn);
         size(&mut self.ff_act, l * config.ffn);
     }
+
+    fn size_final_tape_v1(&mut self, config: &SConfigV1, counts: CountsV1) {
+        let d = config.d_model;
+        let l = 1 + counts.objects + counts.actions;
+        resized_unzeroed_v1(&mut self.x_in, l * d);
+        resized_unzeroed_v1(&mut self.ln1, l * d);
+        resized_unzeroed_v1(&mut self.ln1_stats, 2 * l);
+        resized_unzeroed_v1(&mut self.qkv, l * 3 * d);
+        sized_v1(&mut self.probs, config.heads * l * l);
+        sized_v1(&mut self.attn, l * d);
+        sized_v1(&mut self.x_mid, l * d);
+        sized_v1(&mut self.ln2, l * d);
+        sized_v1(&mut self.ln2_stats, 2 * l);
+        sized_v1(&mut self.ff_pre, l * config.ffn);
+        sized_v1(&mut self.ff_act, l * config.ffn);
+    }
 }
 
 /// Forward workspace and tape. Buffers grow to the largest decision seen and
@@ -1084,15 +1144,44 @@ fn sized_v1(buffer: &mut Vec<f32>, len: usize) {
     buffer.resize(len, 0.0);
 }
 
+fn resized_unzeroed_v1(buffer: &mut Vec<f32>, len: usize) {
+    if buffer.len() >= len {
+        buffer.truncate(len);
+    } else {
+        buffer.resize(len, 0.0);
+    }
+}
+
 impl STapeV1 {
     fn reset_v1(&mut self, config: &SConfigV1, counts: CountsV1) {
         self.counts = Some(counts);
-        self.size_prefix_v1(config, counts, sized_v1);
+        self.size_prefix_v1(config, counts, resized_unzeroed_v1);
+        self.layers.resize_with(config.layers, LayerTapeV1::default);
+        let last = config.layers.saturating_sub(1);
+        for (index, layer) in self.layers.iter_mut().enumerate() {
+            if index == last {
+                layer.size_final_tape_v1(config, counts);
+            } else {
+                layer.size_v1(config, counts, resized_unzeroed_v1);
+            }
+        }
+        sized_v1(
+            &mut self.x_out,
+            (1 + counts.objects + counts.actions) * config.d_model,
+        );
+        self.size_tail_after_x_out_v1(config, counts, resized_unzeroed_v1);
+        self.value_logit = 0.0;
+        self.value = 0.0;
+    }
+
+    fn reset_for_infer_v1(&mut self, config: &SConfigV1, counts: CountsV1) {
+        self.counts = Some(counts);
+        self.size_prefix_v1(config, counts, resized_unzeroed_v1);
         self.layers.resize_with(config.layers, LayerTapeV1::default);
         for layer in &mut self.layers {
-            layer.size_v1(config, counts, sized_v1);
+            layer.size_v1(config, counts, resized_unzeroed_v1);
         }
-        self.size_tail_v1(config, counts, sized_v1);
+        self.size_tail_v1(config, counts, resized_unzeroed_v1);
         self.value_logit = 0.0;
         self.value = 0.0;
     }
@@ -1137,6 +1226,17 @@ impl STapeV1 {
         let a = counts.actions;
         let l = 1 + counts.objects + a;
         size(&mut self.x_out, l * d);
+        self.size_tail_after_x_out_v1(config, counts, size);
+    }
+
+    fn size_tail_after_x_out_v1(
+        &mut self,
+        config: &SConfigV1,
+        counts: CountsV1,
+        mut size: impl FnMut(&mut Vec<f32>, usize),
+    ) {
+        let d = config.d_model;
+        let a = counts.actions;
         size(&mut self.fin, (1 + a) * d);
         size(&mut self.fin_stats, 2 * (1 + a));
         size(&mut self.pol_inp, a * 2 * d);
@@ -1273,6 +1373,9 @@ pub(crate) struct SBackScratchV1 {
     /// Its query and key-value parts of the QKV adjoint (`[m, d]`, `[l, 2d]`).
     live_dq: Vec<f32>,
     live_dkv: Vec<f32>,
+    ln_out: Vec<f32>,
+    dref: Vec<f32>,
+    deb: Vec<f32>,
 }
 
 /// The query rows one block's backward visits, in token order.
@@ -1484,22 +1587,23 @@ impl SModelV1 {
             .max(3 * d)
             .max(2 * d)
             .max(OBJECT_FEATURE_DIM_V1 + cd);
-        sized_v1(&mut ws.dx, l * d);
-        sized_v1(&mut ws.dx2, l * d);
-        sized_v1(&mut ws.dwide, l * width);
-        sized_v1(&mut ws.dqkv, l * 3 * d);
-        sized_v1(&mut ws.dattn, l * d);
-        sized_v1(&mut ws.dbias, h * l * l);
-        sized_v1(&mut ws.dsmall, a.max(r).max(n).max(1) * width);
-        sized_v1(&mut ws.dsmall2, a.max(r).max(n).max(1) * width);
-        sized_v1(&mut ws.dfin, (1 + a) * d);
-        sized_v1(&mut ws.ln_scratch, d);
-        sized_v1(&mut ws.head_q, l * dh);
-        sized_v1(&mut ws.head_k, l * dh);
-        sized_v1(&mut ws.head_vt, dh * l);
-        sized_v1(&mut ws.head_do, l * dh);
-        sized_v1(&mut ws.head_out, l * dh);
-        sized_v1(&mut ws.dscore, l * l);
+        resized_unzeroed_v1(&mut ws.dx, l * d);
+        resized_unzeroed_v1(&mut ws.dx2, l * d);
+        resized_unzeroed_v1(&mut ws.dwide, l * width);
+        resized_unzeroed_v1(&mut ws.dqkv, l * 3 * d);
+        resized_unzeroed_v1(&mut ws.dattn, l * d);
+        resized_unzeroed_v1(&mut ws.dbias, h * l * l);
+        resized_unzeroed_v1(&mut ws.dsmall, a.max(r).max(n).max(1) * width);
+        resized_unzeroed_v1(&mut ws.dsmall2, a.max(r).max(n).max(1) * width);
+        resized_unzeroed_v1(&mut ws.dfin, (1 + a) * d);
+        resized_unzeroed_v1(&mut ws.ln_scratch, d);
+        resized_unzeroed_v1(&mut ws.ln_out, d);
+        resized_unzeroed_v1(&mut ws.head_q, l * dh);
+        resized_unzeroed_v1(&mut ws.head_k, l * dh);
+        resized_unzeroed_v1(&mut ws.head_vt, dh * l);
+        resized_unzeroed_v1(&mut ws.head_do, l * dh);
+        resized_unzeroed_v1(&mut ws.head_out, l * dh);
+        resized_unzeroed_v1(&mut ws.dscore, l * l);
 
         // Value head: v = tanh(z / 2).
         let heads = profile::span_v1(StageV1::BackHeads);
@@ -1509,12 +1613,11 @@ impl SModelV1 {
             let dact = &mut ws.dsmall[..d];
             self.linear_bwd(lay.val2, 1, &tape.val_act, &dz_row, grad, Some(&mut *dact));
             kernels::gelu_backward_slice_v1(&tape.val_pre, dact);
-            let dpre = ws.dsmall[..d].to_vec();
             self.linear_bwd(
                 lay.val0,
                 1,
                 &tape.fin[..d],
-                &dpre,
+                &ws.dsmall[..d],
                 grad,
                 Some(&mut ws.dsmall2[..d]),
             );
@@ -1525,9 +1628,15 @@ impl SModelV1 {
             let dact = &mut ws.dsmall[..a * d];
             self.linear_bwd(lay.pol2, a, &tape.pol_act, dlogits, grad, Some(&mut *dact));
             kernels::gelu_backward_slice_v1(&tape.pol_pre, dact);
-            let dpre = ws.dsmall[..a * d].to_vec();
             let dinp = &mut ws.dsmall2[..a * 2 * d];
-            self.linear_bwd(lay.pol0, a, &tape.pol_inp, &dpre, grad, Some(dinp));
+            self.linear_bwd(
+                lay.pol0,
+                a,
+                &tape.pol_inp,
+                &ws.dsmall[..a * d],
+                grad,
+                Some(dinp),
+            );
             for j in 0..a {
                 for c in 0..d {
                     ws.dfin[c] += ws.dsmall2[j * 2 * d + c];
@@ -1616,7 +1725,6 @@ impl SModelV1 {
             // LN2: dx_mid = dx_out + LN2'(dln2).
             let section = profile::section_v1(SectionV1::Ln2, layer);
             {
-                let mut dmid = vec![0.0f32; d];
                 for r in 0..m {
                     let t = rows.token(r);
                     grad.layer_norm_v1(
@@ -1627,12 +1735,12 @@ impl SModelV1 {
                         lt.ln2_stats[2 * t + 1],
                         &self.values[block.ln2_g..block.ln2_g + d],
                         &ws.dx2[r * d..(r + 1) * d],
-                        &mut dmid,
+                        &mut ws.ln_out,
                         &mut ws.ln_scratch,
                     );
                     let dx = if live { &mut ws.live_dx } else { &mut ws.dx };
                     for c in 0..d {
-                        dx[r * d + c] += dmid[c];
+                        dx[r * d + c] += ws.ln_out[c];
                     }
                 }
             }
@@ -1782,7 +1890,6 @@ impl SModelV1 {
             // LN1: dx_in = dx_mid + LN1'(dln1).
             let section = profile::section_v1(SectionV1::Ln1, layer);
             {
-                let mut din = vec![0.0f32; d];
                 for t in 0..l {
                     grad.layer_norm_v1(
                         block.ln1_g,
@@ -1792,11 +1899,11 @@ impl SModelV1 {
                         lt.ln1_stats[2 * t + 1],
                         &self.values[block.ln1_g..block.ln1_g + d],
                         &ws.dx2[t * d..(t + 1) * d],
-                        &mut din,
+                        &mut ws.ln_out,
                         &mut ws.ln_scratch,
                     );
                     for c in 0..d {
-                        ws.dx[t * d + c] += din[c];
+                        ws.dx[t * d + c] += ws.ln_out[c];
                     }
                 }
             }
@@ -1816,30 +1923,35 @@ impl SModelV1 {
                 Some(&mut *dact),
             );
             kernels::gelu_backward_slice_v1(&tape.state_pre, dact);
-            let dpre = ws.dsmall[..d].to_vec();
             self.linear_bwd(
                 lay.state0,
                 1,
                 &input.state[..STATE_KEEP_V1],
-                &dpre,
+                &ws.dsmall[..d],
                 grad,
                 None,
             );
         }
         // Objects: group embedding, MLP, card rows (row 0 excluded).
         {
-            let dobj = ws.dx[d..(1 + n) * d].to_vec();
+            let dobj = &ws.dx[d..(1 + n) * d];
             for i in 0..n {
                 let g = input.object_groups[i] as usize;
                 grad.add_v1(lay.group + g * d, &dobj[i * d..(i + 1) * d]);
             }
             let dact = &mut ws.dsmall[..n * d];
-            self.linear_bwd(lay.obj2, n, &tape.obj_act, &dobj, grad, Some(&mut *dact));
+            self.linear_bwd(lay.obj2, n, &tape.obj_act, dobj, grad, Some(&mut *dact));
             kernels::gelu_backward_slice_v1(&tape.obj_pre, dact);
-            let dpre = ws.dsmall[..n * d].to_vec();
             let obj_in = OBJECT_FEATURE_DIM_V1 + cd;
             let dinp = &mut ws.dsmall2[..n * obj_in];
-            self.linear_bwd(lay.obj0, n, &tape.obj_inp, &dpre, grad, Some(dinp));
+            self.linear_bwd(
+                lay.obj0,
+                n,
+                &tape.obj_inp,
+                &ws.dsmall[..n * d],
+                grad,
+                Some(dinp),
+            );
             for i in 0..n {
                 let card = input.object_card_ids[i] as usize;
                 if card != 0 {
@@ -1850,25 +1962,44 @@ impl SModelV1 {
         }
         // Actions and their references.
         {
-            let dtok = ws.dx[(1 + n) * d..l * d].to_vec();
+            let dtok = &ws.dx[(1 + n) * d..l * d];
             let dact = &mut ws.dsmall[..a * d];
-            self.linear_bwd(lay.act2, a, &tape.act_act, &dtok, grad, Some(&mut *dact));
+            self.linear_bwd(lay.act2, a, &tape.act_act, dtok, grad, Some(&mut *dact));
             kernels::gelu_backward_slice_v1(&tape.act_pre, dact);
-            let dpre = ws.dsmall[..a * d].to_vec();
-            self.linear_bwd(lay.act0, a, input.action_features, &dpre, grad, None);
+            self.linear_bwd(
+                lay.act0,
+                a,
+                input.action_features,
+                &ws.dsmall[..a * d],
+                grad,
+                None,
+            );
             if r > 0 {
-                let mut dref = vec![0.0f32; r * d];
+                let dref = grown_v1(&mut ws.dref, r * d);
                 for k in 0..r {
                     let j = input.ref_action[k] as usize;
                     dref[k * d..(k + 1) * d].copy_from_slice(&dtok[j * d..(j + 1) * d]);
                 }
                 let dact = &mut ws.dsmall[..r * d];
-                self.linear_bwd(lay.ref2, r, &tape.ref_act, &dref, grad, Some(&mut *dact));
+                self.linear_bwd(
+                    lay.ref2,
+                    r,
+                    &tape.ref_act,
+                    &ws.dref[..r * d],
+                    grad,
+                    Some(&mut *dact),
+                );
                 kernels::gelu_backward_slice_v1(&tape.ref_pre, dact);
-                let dpre = ws.dsmall[..r * d].to_vec();
                 let ref_in = REF_FEATURE_DIM_V1 + cd;
                 let dinp = &mut ws.dsmall2[..r * ref_in];
-                self.linear_bwd(lay.ref0, r, &tape.ref_inp, &dpre, grad, Some(dinp));
+                self.linear_bwd(
+                    lay.ref0,
+                    r,
+                    &tape.ref_inp,
+                    &ws.dsmall[..r * d],
+                    grad,
+                    Some(dinp),
+                );
                 for k in 0..r {
                     let card = input.ref_card_ids[k] as usize;
                     if card != 0 {
@@ -1880,7 +2011,7 @@ impl SModelV1 {
         }
         // Attention-bias parameters (the bias is shared by every block).
         if e > 0 {
-            let mut deb = vec![0.0f32; e * 2 * h];
+            let deb = grown_v1(&mut ws.deb, e * 2 * h);
             for k in 0..e {
                 let s = 1 + input.edge_source[k] as usize;
                 let t = 1 + input.edge_target[k] as usize;
@@ -1889,7 +2020,14 @@ impl SModelV1 {
                     deb[k * 2 * h + h + head] = ws.dbias[(head * l + t) * l + s];
                 }
             }
-            self.linear_bwd(lay.edge, e, input.edge_features, &deb, grad, None);
+            self.linear_bwd(
+                lay.edge,
+                e,
+                input.edge_features,
+                &ws.deb[..e * 2 * h],
+                grad,
+                None,
+            );
         }
         for k in 0..r {
             let ai = 1 + n + input.ref_action[k] as usize;
@@ -2017,9 +2155,20 @@ pub struct SLossV1 {
     pub loss: f32,
 }
 
-/// Log-softmax under the portable math (libm 0.2.16), as the RT1 learner's
-/// `selected_log_softmax_math_v1` computes it.
-fn log_softmax_v1(logits: &[f32]) -> Vec<f32> {
+fn gae_policy_row_into_v1(
+    logits: &[f32],
+    selected_action: usize,
+    d_joint: f32,
+    index: usize,
+    sub: usize,
+    dlogits: &mut Vec<f32>,
+) -> Result<f32, String> {
+    if selected_action >= logits.len() {
+        return Err(format!(
+            "S group {index} substep {sub}: selected {selected_action} of {} actions",
+            logits.len()
+        ));
+    }
     let math = TrainingMathV1::PortableV1;
     let maximum = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     let mut sum = 0.0f32;
@@ -2027,10 +2176,18 @@ fn log_softmax_v1(logits: &[f32]) -> Vec<f32> {
         sum += math.exp_f32_v1(*logit - maximum);
     }
     let log_sum = math.ln_f32_v1(sum);
-    logits
-        .iter()
-        .map(|logit| (*logit - maximum) - log_sum)
-        .collect()
+    let selected = (logits[selected_action] - maximum) - log_sum;
+    if !selected.is_finite() {
+        return Err(format!("S group {index}: non-finite log-probability"));
+    }
+    resized_unzeroed_v1(dlogits, logits.len());
+    for (action, (out, logit)) in dlogits.iter_mut().zip(logits).enumerate() {
+        let lp = (*logit - maximum) - log_sum;
+        let p = math.exp_f32_v1(lp);
+        let indicator = if action == selected_action { 1.0 } else { 0.0 };
+        *out = d_joint * (indicator - p);
+    }
+    Ok(selected)
 }
 
 fn gae_policy_row_v1(
@@ -2040,27 +2197,9 @@ fn gae_policy_row_v1(
     index: usize,
     sub: usize,
 ) -> Result<(f32, Vec<f32>), String> {
-    if selected_action >= logits.len() {
-        return Err(format!(
-            "S group {index} substep {sub}: selected {selected_action} of {} actions",
-            logits.len()
-        ));
-    }
-    let log_probabilities = log_softmax_v1(logits);
-    let selected = log_probabilities[selected_action];
-    if !selected.is_finite() {
-        return Err(format!("S group {index}: non-finite log-probability"));
-    }
-    let math = TrainingMathV1::PortableV1;
-    let dlogits = log_probabilities
-        .iter()
-        .enumerate()
-        .map(|(action, lp)| {
-            let p = math.exp_f32_v1(*lp);
-            let indicator = if action == selected_action { 1.0 } else { 0.0 };
-            d_joint * (indicator - p)
-        })
-        .collect();
+    let mut dlogits = Vec::with_capacity(logits.len());
+    let selected =
+        gae_policy_row_into_v1(logits, selected_action, d_joint, index, sub, &mut dlogits)?;
     Ok((selected, dlogits))
 }
 
@@ -2069,6 +2208,7 @@ fn gae_policy_row_v1(
 pub struct SWorkV1 {
     tape: STapeV1,
     back: SBackScratchV1,
+    dlogits: Vec<f32>,
     /// The most `tape` retained before a verified forward of the current
     /// verified update (`verified_row_v1::VerifiedJobsV1`), within its cap.
     verified_tape_peak: usize,
@@ -2150,8 +2290,14 @@ impl SModelV1 {
                 drop(forward);
                 update_forward.finish_v1(&work.tape.logits, work.tape.value);
                 let policy_row = profile::span_v1(StageV1::PolicyRow);
-                let (selected, dlogits) =
-                    gae_policy_row_v1(&work.tape.logits, substep.selected, d_joint, index, sub)?;
+                let selected = gae_policy_row_into_v1(
+                    &work.tape.logits,
+                    substep.selected,
+                    d_joint,
+                    index,
+                    sub,
+                    &mut work.dlogits,
+                )?;
                 drop(policy_row);
                 joint = if sub == 0 { selected } else { joint + selected };
                 if !is_masked {
@@ -2169,7 +2315,7 @@ impl SModelV1 {
                 self.backward_v1(
                     substep.input,
                     &work.tape,
-                    &dlogits,
+                    &work.dlogits,
                     dvalue,
                     grad,
                     &mut work.back,
@@ -2355,6 +2501,58 @@ impl STrainStateV1 {
         grad: &[f32],
         learning_rate: f32,
     ) -> Result<(), String> {
+        ensure_mxcsr_v1()?;
+        if grad.len() != self.model.layout.total {
+            return Err("S gradient has the wrong length".into());
+        }
+        if !learning_rate.is_finite() || learning_rate <= 0.0 {
+            return Err("S learning rate must be positive".into());
+        }
+        for range in self.model.layout.gauge_ranges_v1() {
+            if grad[range].iter().any(|g| g.to_bits() != 0) {
+                return Err("S gauge gradient must be +0".into());
+            }
+        }
+        let step_num = self.adam_step + 1;
+        let exponent = i32::try_from(step_num).map_err(|_| "S Adam step overflows".to_owned())?;
+        // When every input has moderate magnitude, no element can overflow or
+        // produce NaN, so we can update parameters and moments in place without
+        // cloning four 460k-float vectors; extreme values fall back to the
+        // rollback-safe copy path.
+        if learning_rate < 1.0e10
+            && grad.iter().all(|g| g.abs() < 1.0e18)
+            && self.model.values.iter().all(|v| v.abs() < 1.0e30)
+            && self.first.iter().all(|m| m.abs() < 1.0e18)
+            && self.second.iter().all(|v| *v >= 0.0 && *v < 1.0e36)
+        {
+            let math = TrainingMathV1::PortableV1;
+            let bias_correction1 = 1.0f64 - math.powi_f64_v1(f64::from(ADAM_BETA1_V1), exponent);
+            let bias_correction2 = 1.0f64 - math.powi_f64_v1(f64::from(ADAM_BETA2_V1), exponent);
+            let step_size = (f64::from(learning_rate) / bias_correction1) as f32;
+            let bias_correction2_sqrt = bias_correction2.sqrt() as f32;
+            for index in 0..grad.len() {
+                let gradient = grad[index];
+                let previous_first = self.first[index];
+                let previous_second = self.second[index];
+                if gradient.to_bits() == 0
+                    && previous_first.to_bits() == 0
+                    && previous_second.to_bits() == 0
+                {
+                    continue;
+                }
+                let m = previous_first + (gradient - previous_first) * (1.0 - ADAM_BETA1_V1);
+                let v =
+                    previous_second * ADAM_BETA2_V1 + gradient * gradient * (1.0 - ADAM_BETA2_V1);
+                let denominator = v.sqrt() / bias_correction2_sqrt + ADAM_EPSILON_V1;
+                let delta = (-step_size) * m / denominator;
+                self.first[index] = m;
+                self.second[index] = v;
+                self.model.values[index] += delta;
+            }
+            self.model.rebuild_transposed_v1();
+            self.adam_step = step_num;
+            return Ok(());
+        }
         let step = self.adam_update_v1(grad, learning_rate)?;
         let mut values = self.model.values.clone();
         for index in 0..values.len() {
@@ -2465,9 +2663,7 @@ impl STrainStateV1 {
                 for dim in &spec.shape {
                     hasher.update((*dim as u64).to_le_bytes());
                 }
-                for value in &data[spec.offset..spec.offset + spec.len] {
-                    hasher.update(value.to_bits().to_le_bytes());
-                }
+                hash_f32_le_slice_v1(&mut hasher, &data[spec.offset..spec.offset + spec.len]);
             }
         }
         hex_v1(&hasher.finalize())
@@ -2488,6 +2684,26 @@ impl STrainStateV1 {
             hasher.update(bytes);
         }
         hex_v1(&hasher.finalize())
+    }
+}
+
+#[inline]
+fn hash_f32_le_slice_v1(hasher: &mut Sha256, values: &[f32]) {
+    #[cfg(target_endian = "little")]
+    {
+        // SAFETY: `f32` has size 4, alignment >= 1 and no padding bytes; on
+        // little-endian targets its in-memory bytes equal `to_bits().to_le_bytes()`
+        // for every bit pattern including signed zeros and NaN payloads.
+        let bytes = unsafe {
+            std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(values))
+        };
+        hasher.update(bytes);
+    }
+    #[cfg(not(target_endian = "little"))]
+    {
+        for value in values {
+            hasher.update(value.to_bits().to_le_bytes());
+        }
     }
 }
 

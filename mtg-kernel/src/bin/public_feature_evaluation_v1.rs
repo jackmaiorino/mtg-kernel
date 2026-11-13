@@ -2,6 +2,8 @@ mtg_kernel::fast_global_allocator!();
 
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 fn main() {
+    // SAFETY: first statement of main; no other thread exists yet.
+    unsafe { mtg_kernel::retain_freed_memory_v1() };
     mtg_kernel::opt_out_of_power_throttling_v1();
     // Native debug policy construction has large stack frames on Windows.
     // Match the existing fresh-initialization and training CLI convention.
