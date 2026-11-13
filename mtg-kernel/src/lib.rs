@@ -913,6 +913,10 @@ pub mod surface_v2;
 pub mod thousand_year_storm_consumer_v1;
 pub mod thousand_year_storm_public_v1;
 pub mod trace;
+// Test-only timing harness (ignored tests): w128 vs w64 forward and
+// train-state cost. No production code reaches it.
+#[cfg(test)]
+mod w128_cost_harness_v1;
 pub mod trigger;
 pub mod tutelage_consumer_v1;
 pub mod tutelage_public_v1;
