@@ -480,5 +480,37 @@ fn widening_explicit_rows_v1() {
     .err()
     .unwrap();
     assert!(refused.contains("not played by the parent"), "{refused}");
+    // The parent's hash with another recorded output (a learner row's value
+    // altered) is refused too.
+    let mut doc: Value = read_pinned(&played[0]).unwrap();
+    let learner = doc["episode"]["learner_seat"].as_u64().unwrap();
+    let row = doc["decisions"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| row["actor"].as_u64() == Some(learner))
+        .unwrap();
+    let value = row["value"].as_u64().unwrap() as u32;
+    row["value"] = json!(f32::from_bits(value).mul_add(0.5, 0.25).to_bits());
+    let altered = root.join("altered.json");
+    let bytes = serde_json::to_vec(&doc).unwrap();
+    fs::write(&altered, &bytes).unwrap();
+    let pin = PinnedFileV1 {
+        path: altered,
+        sha256: {
+            use sha2::{Digest, Sha256};
+            format!("{:x}", Sha256::digest(&bytes))
+        },
+    };
+    let refused = widen_source_with_rows_v1(
+        &parent,
+        "test|rows|1",
+        WideningOptimizerV1::Keep,
+        Some(&[pin]),
+        &root.join("widen-altered"),
+    )
+    .err()
+    .unwrap();
+    assert!(refused.contains("not the parent's"), "{refused}");
     let _ = fs::remove_dir_all(&root);
 }

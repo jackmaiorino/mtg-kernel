@@ -886,6 +886,19 @@ pub fn widen_source_with_rows_v1(
                 row.tensor.tensor(),
                 &[],
             )?;
+            // Explicit rows must be the parent's own: every recorded output
+            // equals the parent's replay bit for bit (the update's replay
+            // authentication).
+            ensure(
+                rows.is_none()
+                    || (a.logits.len() == row.logits.len()
+                        && a.logits
+                            .iter()
+                            .zip(&row.logits)
+                            .all(|(x, bits)| x.to_bits() == *bits)
+                        && a.value.to_bits() == row.value),
+                "a widening rows decision's recorded output is not the parent's",
+            )?;
             ensure(
                 a.logits.len() == b.logits.len()
                     && a.logits.iter().zip(&b.logits).all(|(x, y)| x == y)
