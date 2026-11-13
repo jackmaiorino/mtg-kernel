@@ -180,6 +180,7 @@ fn fixture() -> Fixture {
         },
         checkpoint: None,
         s_learner: None,
+        w_learner: None,
     };
     Fixture {
         root,

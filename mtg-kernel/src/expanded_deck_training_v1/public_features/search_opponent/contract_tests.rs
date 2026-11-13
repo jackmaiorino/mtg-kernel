@@ -29,6 +29,7 @@ fn g115() -> ExpandedModelSourceV1 {
         },
         checkpoint: Some(pin("checkpoint.json", G115_CHECKPOINT_SHA256)),
         s_learner: None,
+        w_learner: None,
     }
 }
 

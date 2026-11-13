@@ -444,6 +444,7 @@ impl FrozenPlayPolicyV1 {
             no_digest_check: None,
             s_model: None,
             s_state_digest_off: false,
+            w_model: None,
             training_math: crate::training_math_v1::TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),

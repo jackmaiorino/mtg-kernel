@@ -4733,6 +4733,26 @@ fn forward_with_tape_dims_v1<D: NetDimsV1>(
     forward_with_tape_input_major_dims_v1::<D>(parameters, None, config, encoded, math)
 }
 
+/// Tests only: the wide train step's tape forward of `encoded` under the
+/// platform libm, as (logits, value). The update's replay demands that the
+/// wide play policy's forward equals it bit for bit.
+#[cfg(test)]
+pub(crate) fn wide_tape_scores_for_test_v1(
+    model: &NativePolicyValueNetWideV1,
+    config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
+    encoded: NativeEncodedDecisionViewV1<'_>,
+) -> (Vec<f32>, f32) {
+    let parameters = model.parameter_snapshot_wide_v1();
+    let tape = forward_with_tape_dims_v1::<Net8W128DimsV1>(
+        &parameters,
+        config,
+        encoded,
+        TrainingMathV1::PlatformLibm,
+    )
+    .unwrap();
+    (tape.logits_v1().to_vec(), tape.value_v1())
+}
+
 /// `forward_with_tape`, with the hidden-width layers' rows on the vectorized
 /// kernel when `input_major` holds the parameters' input-major weights. The
 /// tape's bits are the same either way.

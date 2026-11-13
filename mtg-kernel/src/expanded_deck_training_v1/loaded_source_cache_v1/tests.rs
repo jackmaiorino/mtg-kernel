@@ -73,6 +73,7 @@ fn fresh_source_with_v1(
         },
         checkpoint: None,
         s_learner: None,
+        w_learner: None,
     }
 }
 
