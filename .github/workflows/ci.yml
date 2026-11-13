@@ -366,7 +366,7 @@ jobs:
         run: |
           mkdir -p "$WINDOWS_RUNNER_TEMP"
           runner_temp="$(cygpath -w "$WINDOWS_RUNNER_TEMP")"
-          printf 'TEMP=%s\nTMP=%s\n' "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"
+          printf 'TEMP=%s\nTMP=%s\nTMPDIR=%s\n' "$runner_temp" "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"
 
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -654,7 +654,7 @@ jobs:
         run: |
           mkdir -p "$WINDOWS_RUNNER_TEMP"
           runner_temp="$(cygpath -w "$WINDOWS_RUNNER_TEMP")"
-          printf 'TEMP=%s\nTMP=%s\n' "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"
+          printf 'TEMP=%s\nTMP=%s\nTMPDIR=%s\n' "$runner_temp" "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"
 
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -772,7 +772,7 @@ jobs:
         run: |
           mkdir -p "$WINDOWS_RUNNER_TEMP"
           runner_temp="$(cygpath -w "$WINDOWS_RUNNER_TEMP")"
-          printf 'TEMP=%s\nTMP=%s\n' "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"
+          printf 'TEMP=%s\nTMP=%s\nTMPDIR=%s\n' "$runner_temp" "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"
 
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -1131,7 +1131,7 @@ jobs:
         run: |
           mkdir -p "$WINDOWS_RUNNER_TEMP"
           runner_temp="$(cygpath -w "$WINDOWS_RUNNER_TEMP")"
-          printf 'TEMP=%s\nTMP=%s\n' "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"
+          printf 'TEMP=%s\nTMP=%s\nTMPDIR=%s\n' "$runner_temp" "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"
 
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
@@ -1233,7 +1233,7 @@ jobs:
         run: |
           mkdir -p "$WINDOWS_RUNNER_TEMP"
           runner_temp="$(cygpath -w "$WINDOWS_RUNNER_TEMP")"
-          printf 'TEMP=%s\nTMP=%s\n' "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"
+          printf 'TEMP=%s\nTMP=%s\nTMPDIR=%s\n' "$runner_temp" "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"
 
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7

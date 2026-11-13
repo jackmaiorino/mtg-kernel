@@ -73,12 +73,18 @@ class WindowsRunnerTempTests(unittest.TestCase):
                     steps,
                     f"{workflow.name}:{job_name} must point Windows TEMP and TMP at runner.temp",
                 )
+                git_bash_pos = steps.index("- name: Use Git Bash for bash steps on Windows")
                 temp_step_pos = steps.index("- name: Point Windows TEMP and TMP at runner.temp")
                 checkout_pos = steps.index("uses: actions/checkout@")
                 self.assertLess(
+                    git_bash_pos,
+                    temp_step_pos,
+                    f"{workflow.name}:{job_name} must put Git Bash on PATH before running bash/cygpath",
+                )
+                self.assertLess(
                     temp_step_pos,
                     checkout_pos,
-                    f"{workflow.name}:{job_name} must set TEMP/TMP before checkout and test steps",
+                    f"{workflow.name}:{job_name} must set TEMP/TMP/TMPDIR before checkout and test steps",
                 )
                 step_slice = steps[temp_step_pos:checkout_pos]
                 self.assertIn("if: runner.os == 'Windows'", step_slice)
@@ -86,7 +92,7 @@ class WindowsRunnerTempTests(unittest.TestCase):
                 self.assertIn("WINDOWS_RUNNER_TEMP: ${{ runner.temp }}", step_slice)
                 self.assertIn('runner_temp="$(cygpath -w "$WINDOWS_RUNNER_TEMP")"', step_slice)
                 self.assertIn(
-                    'printf \'TEMP=%s\\nTMP=%s\\n\' "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"',
+                    'printf \'TEMP=%s\\nTMP=%s\\nTMPDIR=%s\\n\' "$runner_temp" "$runner_temp" "$runner_temp" >> "$GITHUB_ENV"',
                     step_slice,
                 )
 
