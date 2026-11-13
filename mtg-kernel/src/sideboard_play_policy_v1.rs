@@ -2893,6 +2893,11 @@ impl FrozenPlayPolicyV1 {
         Ok(())
     }
 
+    /// Whether the wide net is installed (every V4 forward is then its).
+    pub(crate) fn has_wide_model_v1(&self) -> bool {
+        self.w_model.is_some()
+    }
+
     /// The wide net when installed: every V4 forward of this policy is then
     /// the wide net's.
     #[cfg(test)]

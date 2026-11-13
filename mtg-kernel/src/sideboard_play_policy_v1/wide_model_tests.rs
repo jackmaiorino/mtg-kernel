@@ -178,3 +178,12 @@ fn wide_install_and_net8_operations_refuse() {
     later.reset_sampling_v1([3, 4]);
     assert!(later.select_with_training_tensor_v4(&session_v1()).is_err());
 }
+
+#[test]
+fn wide_policy_refuses_the_net8_search_leaf() {
+    let policy = wide_policy_v1(runner_fixed_wide_model_v1());
+    let refused = super::search_leaf_v4::V4SearchLeafEvaluatorV1::new(&policy)
+        .err()
+        .unwrap();
+    assert!(refused.contains("wide net"), "{refused}");
+}

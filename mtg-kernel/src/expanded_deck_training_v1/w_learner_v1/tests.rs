@@ -309,3 +309,42 @@ fn wide_state_container_round_trips_and_refuses_other_bytes() {
     assert!(decode_w_state_v1(&version).is_err());
     assert!(decode_w_state_v1(&bytes[..bytes.len() - 4]).is_err());
 }
+
+#[test]
+fn a_source_with_both_s_and_wide_learners_is_refused_by_every_loader() {
+    let pin = PinnedFileV1 {
+        path: PathBuf::from("/models/none.bin"),
+        sha256: "0".repeat(64),
+    };
+    let mixed = ExpandedModelSourceV1 {
+        play_import: pin.clone(),
+        feature_transfer: crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
+            expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
+        },
+        checkpoint: None,
+        s_learner: Some(Box::new(super::super::s_learner_v1::SLearnerSourceV1 {
+            schema: super::super::s_learner_v1::S_LEARNER_SOURCE_SCHEMA_V1.into(),
+            initial: pin.clone(),
+        })),
+        w_learner: Some(Box::new(WLearnerSourceV1 {
+            schema: W_LEARNER_SOURCE_SCHEMA_V1.into(),
+            initial: pin,
+        })),
+    };
+    for refused in [
+        super::super::load_expanded_inference_any_math_v1(&mixed)
+            .err()
+            .unwrap(),
+        load_w_v1(&mixed, None).err().unwrap(),
+        collection_learner_v1(
+            &mixed,
+            TrainingMathV1::PlatformLibm,
+            CollectionSamplerV1::Legacy,
+        )
+        .err()
+        .unwrap(),
+    ] {
+        assert!(refused.contains("at most one"), "{refused}");
+    }
+}

@@ -4141,6 +4141,10 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             let (mut policy, learner, state_hash) = if source.s_learner.is_some() {
                 s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
             } else if source.w_learner.is_some() {
+                ensure(
+                    ex1.is_none(),
+                    "a wide learner refuses EX1 and W5 search collection",
+                )?;
                 w_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
             } else {
                 let (mut policy, mut state, transfer) =
