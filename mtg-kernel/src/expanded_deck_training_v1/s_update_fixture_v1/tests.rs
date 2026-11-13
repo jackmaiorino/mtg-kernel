@@ -5,7 +5,7 @@
 use super::*;
 use crate::expanded_deck_training_v1::s_learner_v1::{
     execute_s_update_v1, SUnsupportedOptionsV1, SUpdateInputsV1, VerifiedReplayAttemptV1,
-    VerifiedReplayOptionsV1,
+    VerifiedReplayOptionsV1, S_PARALLEL_UPDATE_BACKEND_V1,
 };
 
 fn on_large_stack(body: fn()) {
@@ -66,6 +66,19 @@ fn fixture_serial_inputs_v1(
     }
 }
 
+fn fixture_prepared_inputs_v1(
+    manifest: &FixtureManifestV1,
+    batch: &FixtureBatchV1,
+    output_directory: PathBuf,
+    workers: usize,
+    verified_tape_cap: Option<usize>,
+) -> SUpdateInputsV1 {
+    SUpdateInputsV1 {
+        preparation_workers: Some(workers),
+        ..fixture_serial_inputs_v1(manifest, batch, output_directory, verified_tape_cap)
+    }
+}
+
 fn fixture_verified_cap_v1(batch: &FixtureBatchV1) -> usize {
     // The census counts live payload. Include the slot's headers and leave
     // headroom for ragged retained capacities.
@@ -121,6 +134,77 @@ fn assert_verified_replay_bench_v1(
         let profile = &sample["forward_profile"];
         assert_eq!(sample["attribution_verified"], true);
         assert_eq!(profile["counts_match_execution"], true);
+        assert_eq!(profile["forward_calls"], batch.census.rows);
+        assert_eq!(
+            profile["removed_learner_forwards"],
+            batch.census.learner_rows
+        );
+        assert_eq!(profile["stages"]["learner_forward"]["calls"], 0);
+        for stage in ["replay_learner_rows", "replay_other_rows"] {
+            assert_eq!(
+                profile["stages"][stage]["output_digest"],
+                reference_profile["stages"][stage]["output_digest"]
+            );
+        }
+    } else {
+        assert!(sample["attribution_verified"].is_null());
+    }
+}
+
+/// The prepared opt-in on `workers` workers: the reference bits, every
+/// learner row forwarded once (in the learner, not the replay) within each
+/// worker's cap, and the reference preparation's replay outputs.
+fn assert_verified_prepared_bench_v1(
+    root: &Path,
+    fixture: &Path,
+    batch: &FixtureBatchV1,
+    reference_profile: &Value,
+    workers: usize,
+) {
+    let cap = fixture_verified_cap_v1(batch);
+    let receipt = main_v1(&args(&[
+        "bench",
+        &format!("fixture={}", fixture.display()),
+        &format!("batch={}", batch.name),
+        "path=prepared",
+        &format!("workers={workers}"),
+        &format!("verified_replay_tape_bytes={cap}"),
+        &format!(
+            "out={}",
+            root.join(format!("verified-prepared-{}-{workers}", batch.name))
+                .display()
+        ),
+    ]))
+    .unwrap();
+    assert_eq!(
+        receipt["path"],
+        json!({"verified_prepared":{"tape_cap_bytes":cap}})
+    );
+    let sample = &receipt["samples"][0];
+    assert_eq!(sample["verified"], true, "{sample}");
+    assert_eq!(sample["numerical_backend"], S_PARALLEL_UPDATE_BACKEND_V1);
+    assert_eq!(sample["update_preparation"]["started_workers"], workers);
+    let replay = &sample["verified_replay"];
+    assert_eq!(replay["used"], true, "{replay}");
+    let attempt: VerifiedReplayAttemptV1 =
+        serde_json::from_value(replay["attempt"].clone()).unwrap();
+    assert_eq!(attempt.tape_slots, Some(workers));
+    assert!(attempt.peak_retained_tape_bytes > batch.census.learner_row_tape_bytes.max as usize);
+    assert!(attempt.peak_retained_tape_bytes <= workers * cap);
+    assert_eq!(
+        attempt.learner_replay_forwards,
+        batch.census.learner_rows as u64
+    );
+    assert_eq!(
+        attempt.other_replay_forwards,
+        batch.census.other_rows as u64
+    );
+    assert_eq!(attempt.learner_backwards, batch.census.learner_rows as u64);
+    assert_combined_seconds_v1(sample, false);
+    if s_update_profile::ENABLED_V1 {
+        let profile = &sample["forward_profile"];
+        assert_eq!(sample["attribution_verified"], true);
+        assert_eq!(profile["counts_match_execution"], true, "{profile}");
         assert_eq!(profile["forward_calls"], batch.census.rows);
         assert_eq!(
             profile["removed_learner_forwards"],
@@ -247,6 +331,141 @@ fn assert_verified_replay_refusals_v1(
             assert!(!out.exists());
         }
     }
+}
+
+/// The prepared opt-in's fallbacks and refusals are the prepared
+/// reference's: a cap below an empty tape falls back before any replay, and
+/// a corrupt learner or other row, a learner pairing relation, or invalid
+/// targets with a corrupt row give the reference's error and no output.
+fn assert_verified_prepared_refusals_v1(
+    root: &Path,
+    manifest: &FixtureManifestV1,
+    batch: &FixtureBatchV1,
+) {
+    let fallback = execute_v1(
+        update_command_v1(
+            manifest,
+            batch,
+            UpdatePathV1::VerifiedPrepared { tape_cap_bytes: 1 },
+            2,
+            root.join("verified-prepared-fallback"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(fallback["verified_replay"]["used"], false);
+    assert_eq!(fallback["verified_replay"]["fallback"], "tape_capacity");
+    let attempt: VerifiedReplayAttemptV1 =
+        serde_json::from_value(fallback["verified_replay"]["attempt"].clone()).unwrap();
+    assert_eq!(
+        (
+            attempt.tape_slots,
+            attempt.peak_retained_tape_bytes,
+            attempt.learner_replay_forwards,
+            attempt.other_replay_forwards,
+            attempt.learner_backwards
+        ),
+        (Some(2), 0, 0, 0, 0)
+    );
+    assert_combined_seconds_v1(&fallback, true);
+    assert_eq!(
+        verify_v1(manifest, batch, &fallback).unwrap()["verified"],
+        true
+    );
+
+    let cap = fixture_verified_cap_v1(batch);
+    for (learner_row, pairing) in [(false, false), (true, false), (true, true)] {
+        let mut trajectory: ExpandedTrajectoryV1 = read_pinned(&batch.trajectories[1]).unwrap();
+        let seat = trajectory.episode.learner_seat;
+        let row = trajectory
+            .decisions
+            .iter_mut()
+            .rev()
+            .find(|row| (row.actor == seat) == learner_row)
+            .unwrap();
+        if pairing {
+            row.tensor.pairing_node_indices.extend([0, 1]);
+        } else {
+            // A stored value mismatch leaves the action-sampler check intact.
+            row.value ^= 1;
+        }
+        let label = format!("{learner_row}-{pairing}");
+        let path = root.join(format!("corrupt-prepared-{label}.json"));
+        fs::write(&path, serde_json::to_vec(&trajectory).unwrap()).unwrap();
+        let pin = pin_file_v1(&path).unwrap();
+        let mut corrupt = batch.clone();
+        corrupt.trajectories[1] = pin.clone();
+        for workers in [2, 4] {
+            let reference_out = root.join(format!("refused-prepared-{label}-{workers}"));
+            let reference = execute_v1(
+                update_command_v1(
+                    manifest,
+                    &corrupt,
+                    UpdatePathV1::Prepared,
+                    workers,
+                    reference_out.clone(),
+                )
+                .unwrap(),
+            )
+            .unwrap_err();
+            assert!(reference.starts_with("preparation group "), "{reference}");
+            assert!(!reference_out.exists());
+            let out = root.join(format!("refused-verified-prepared-{label}-{workers}"));
+            let command = update_command_v1(
+                manifest,
+                &corrupt,
+                UpdatePathV1::VerifiedPrepared {
+                    tape_cap_bytes: cap,
+                },
+                workers,
+                out.clone(),
+            )
+            .unwrap();
+            assert_eq!(execute_v1(command).unwrap_err(), reference, "{label}");
+            assert!(!out.exists());
+            // Invalid targets must not mask a replay error.
+            let mut errors = Vec::new();
+            for opt_in in [None, Some(cap)] {
+                let out = root.join(format!("refused-targets-{label}-{workers}-{opt_in:?}"));
+                let mut inputs =
+                    fixture_prepared_inputs_v1(manifest, batch, out.clone(), workers, opt_in);
+                inputs.trajectories[1] = pin.clone();
+                inputs.loss_selection = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                    gamma: -0.25,
+                    lambda: 1.0,
+                    entropy_coefficient: 0.0,
+                };
+                errors.push(execute_s_update_v1(inputs).unwrap_err());
+                assert!(!out.exists());
+            }
+            assert_eq!(errors, [reference.clone(), reference], "{label}");
+        }
+    }
+
+    // Invalid targets alone are the reference's error too, after the
+    // candidate has replayed every row.
+    let mut errors = Vec::new();
+    for opt_in in [None, Some(cap)] {
+        let out = root.join(format!("refused-targets-only-{opt_in:?}"));
+        let mut inputs = fixture_prepared_inputs_v1(manifest, batch, out.clone(), 2, opt_in);
+        inputs.loss_selection = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: -0.25,
+            lambda: 1.0,
+            entropy_coefficient: 0.0,
+        };
+        errors.push(execute_s_update_v1(inputs).unwrap_err());
+        assert!(!out.exists());
+    }
+    assert_eq!(errors[0], errors[1]);
+
+    // One worker is the serial opt-in's.
+    let out = root.join("refused-verified-prepared-one-worker");
+    let inputs = fixture_prepared_inputs_v1(manifest, batch, out.clone(), 1, Some(cap));
+    assert_eq!(
+        execute_s_update_v1(inputs).unwrap_err(),
+        "verified prepared replay needs at least two workers; the serial opt-in runs one"
+    );
+    assert!(!out.exists());
 }
 
 fn assert_late_capacity_fallback_v1(
@@ -376,6 +595,50 @@ fn assert_late_capacity_fallback_v1(
                 + attempt.other_replay_forwards
         );
     }
+
+    // The prepared opt-in replays every other row first, and its learner
+    // reaches the oversized row, the batch's last learner substep, last: it
+    // forwards and learns on every other learner row before falling back.
+    for workers in [2, 4] {
+        let profile = s_update_profile::arm_v1();
+        let fallback = execute_v1(
+            update_command_v1(
+                manifest,
+                &ragged,
+                UpdatePathV1::VerifiedPrepared {
+                    tape_cap_bytes: cap,
+                },
+                workers,
+                root.join(format!("late-oversized-prepared-{workers}")),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(fallback["verified_replay"]["used"], false);
+        assert_eq!(fallback["verified_replay"]["fallback"], "tape_capacity");
+        assert!(fallback["verified_replay"].get("attempt_error").is_none());
+        assert_combined_seconds_v1(&fallback, true);
+        assert_eq!(
+            verify_v1(manifest, &ragged, &fallback).unwrap()["verified"],
+            true
+        );
+        let attempt: VerifiedReplayAttemptV1 =
+            serde_json::from_value(fallback["verified_replay"]["attempt"].clone()).unwrap();
+        let learner_rows = ragged.census.learner_rows as u64;
+        assert_eq!(attempt.tape_slots, Some(workers));
+        assert_eq!(attempt.learner_replay_forwards, learner_rows - 1);
+        assert_eq!(attempt.learner_backwards, learner_rows - 1);
+        assert_eq!(
+            attempt.other_replay_forwards,
+            ragged.census.other_rows as u64
+        );
+        assert!(attempt.peak_retained_tape_bytes <= workers * cap);
+        let forward =
+            forward_profile_v1(profile.totals_v1(), &ragged.census, Some((false, &attempt)));
+        if s_update_profile::ENABLED_V1 {
+            assert_eq!(forward["counts_match_execution"], true, "{forward}");
+        }
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -409,6 +672,35 @@ fn assert_dirty_mxcsr_fallback_v1(
         .unwrap();
     assert_eq!(fallback["verified_replay"]["used"], false);
     assert_eq!(fallback["verified_replay"]["fallback"], "caller_math_state");
+    assert_eq!(
+        verify_v1(manifest, batch, &fallback).unwrap()["verified"],
+        true
+    );
+
+    // The prepared opt-in falls back before its preparation starts.
+    let inputs = fixture_prepared_inputs_v1(
+        manifest,
+        batch,
+        root.join("dirty-mxcsr-prepared-fallback"),
+        2,
+        Some(fixture_verified_cap_v1(batch)),
+    );
+    let fallback = std::thread::Builder::new()
+        .stack_size(64 << 20)
+        .spawn(move || {
+            const FTZ: u32 = 1 << 15;
+            write_mxcsr_v1(read_mxcsr_v1() | FTZ);
+            assert!(verify_pinned_mxcsr_state_v1().is_err());
+            execute_s_update_v1(inputs).unwrap()
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(fallback["verified_replay"]["used"], false);
+    assert_eq!(fallback["verified_replay"]["fallback"], "caller_math_state");
+    let attempt: VerifiedReplayAttemptV1 =
+        serde_json::from_value(fallback["verified_replay"]["attempt"].clone()).unwrap();
+    assert_eq!(attempt.other_replay_forwards, 0);
     assert_eq!(
         verify_v1(manifest, batch, &fallback).unwrap()["verified"],
         true
@@ -541,9 +833,15 @@ fn fixture_end_to_end_v1() {
             if path == UpdatePathV1::Serial {
                 assert_verified_replay_bench_v1(&root, &fixture, batch, profile);
             }
+            if path == UpdatePathV1::Prepared && workers == 2 {
+                for workers in [2, 4] {
+                    assert_verified_prepared_bench_v1(&root, &fixture, batch, profile, workers);
+                }
+            }
         }
     }
     assert_verified_replay_refusals_v1(&root, &manifest, initial);
+    assert_verified_prepared_refusals_v1(&root, &manifest, initial);
     assert_late_capacity_fallback_v1(&root, &manifest, warmed);
     #[cfg(target_arch = "x86_64")]
     assert_dirty_mxcsr_fallback_v1(&root, &manifest, initial);
@@ -792,6 +1090,82 @@ fn assert_verified_command_v1(
         verify_v1(manifest, batch, &result).unwrap()["verified"],
         true
     );
+
+    // The prepared opt-in: the prepared command's fields and the cap.
+    let out = root.join("verified-prepared-command");
+    let arguments = args(&[
+        "command",
+        &format!("fixture={}", fixture.display()),
+        &format!("batch={}", batch.name),
+        "path=prepared",
+        "workers=2",
+        &format!("out={}", out.display()),
+    ]);
+    let default = main_v1(&arguments).unwrap();
+    assert_eq!(default["mode"], "update_prepared");
+    let mut arguments = arguments;
+    arguments.push(format!("verified_replay_tape_bytes={cap}"));
+    let command = main_v1(&arguments).unwrap();
+    assert_eq!(command["mode"], "update_s_verified_prepared");
+    let mut expected = default;
+    expected["mode"] = command["mode"].clone();
+    expected["tape_cap_bytes"] = json!(cap);
+    assert_eq!(command, expected);
+    for (field, value) in [
+        ("workers", json!(2)),
+        ("ex1", json!({"w5":{}})),
+        ("training_math", json!("portable-math-v1")),
+        ("update_backend", json!("cuda")),
+    ] {
+        let mut incompatible = command.clone();
+        incompatible[field] = value;
+        let error = serde_json::from_value::<ExpandedTrainingCommandV1>(incompatible).unwrap_err();
+        assert!(error.to_string().contains("unknown field"), "{error}");
+    }
+    for (field, value, refusal) in [
+        (
+            "preparation_workers",
+            json!(1),
+            "verified prepared replay needs at least two workers",
+        ),
+        (
+            "preparation_workers",
+            json!(33),
+            "preparation workers must be in 1..=32",
+        ),
+        (
+            "max_prepared_tensor_mebibytes",
+            json!(63),
+            "max_prepared_tensor_mebibytes",
+        ),
+        (
+            "tape_cap_bytes",
+            json!(0),
+            "verified replay tape cap must be in",
+        ),
+        (
+            "source",
+            json!(manifest.net8),
+            "requires an S learner source",
+        ),
+    ] {
+        let mut incompatible = command.clone();
+        incompatible[field] = value;
+        let error = execute_v1(serde_json::from_value(incompatible).unwrap()).unwrap_err();
+        assert!(error.contains(refusal), "{field}: {error}");
+        assert!(!out.exists());
+    }
+    let result = execute_v1(serde_json::from_value(command).unwrap()).unwrap();
+    assert_eq!(result["verified_replay"]["used"], true);
+    assert_eq!(result["numerical_backend"], S_PARALLEL_UPDATE_BACKEND_V1);
+    assert_eq!(
+        result["update_preparation"]["deferred_learner_rows"],
+        batch.census.learner_rows
+    );
+    assert_eq!(
+        verify_v1(manifest, batch, &result).unwrap()["verified"],
+        true
+    );
 }
 
 #[test]
@@ -870,7 +1244,7 @@ fn s_update_fixture_cli_refuses_unknown_repeated_and_out_of_range_arguments() {
                 "verified_replay_tape_bytes=1048576",
                 "out=y",
             ],
-            "verified_replay_tape_bytes requires path=serial and workers=1",
+            "verified_replay_tape_bytes requires path=serial with workers=1 or path=prepared with two or more workers",
         ),
         (
             vec![
@@ -882,7 +1256,7 @@ fn s_update_fixture_cli_refuses_unknown_repeated_and_out_of_range_arguments() {
                 "verified_replay_tape_bytes=1048576",
                 "out=y",
             ],
-            "verified_replay_tape_bytes requires path=serial and workers=1",
+            "verified_replay_tape_bytes requires path=serial with workers=1 or path=prepared with two or more workers",
         ),
         (
             vec![

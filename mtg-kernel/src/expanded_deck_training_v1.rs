@@ -3632,6 +3632,27 @@ pub enum ExpandedTrainingCommandV1 {
         tape_cap_bytes: usize,
         output_directory: PathBuf,
     },
+    /// Opt-in execution of ordinary prepared CPU S GAE on two or more
+    /// workers, whose learner checks each learner row's forward against the
+    /// stored row in place of the replay's, each worker's tape within the cap
+    /// (`s_learner_v1::verified_replay_v1`). The run driver does not select
+    /// this mode.
+    UpdateSVerifiedPrepared {
+        source: ExpandedModelSourceV1,
+        trajectories: Vec<PinnedFileV1>,
+        learning_rate: f32,
+        value_coefficient: f32,
+        loss_selection: ExpandedLossSelectionV1,
+        preparation_workers: usize,
+        /// As `UpdatePrepared`'s; absent means the historical 256.
+        #[serde(
+            default = "default_max_prepared_tensor_mebibytes",
+            skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
+        )]
+        max_prepared_tensor_mebibytes: usize,
+        tape_cap_bytes: usize,
+        output_directory: PathBuf,
+    },
     /// Explicit execution-only preparation. The old Update wire shape and
     /// sequential reference remain unchanged; backward and Adam are identical.
     UpdatePrepared {
@@ -4309,6 +4330,41 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             RecordEnvelopeV1::None,
             Some(s_learner_v1::VerifiedReplayOptionsV1::new(tape_cap_bytes)?),
         ),
+        ExpandedTrainingCommandV1::UpdateSVerifiedPrepared {
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            loss_selection,
+            preparation_workers,
+            max_prepared_tensor_mebibytes,
+            tape_cap_bytes,
+            output_directory,
+        } => {
+            validate_preparation_workers_v1(preparation_workers)?;
+            validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
+            execute_update_inner_v1(
+                source,
+                trajectories,
+                learning_rate,
+                value_coefficient,
+                ExpandedUpdateBackendV1::Cpu,
+                UpdateBackwardExecutionV1::Sequential,
+                loss_selection,
+                output_directory,
+                Some(preparation_workers),
+                max_prepared_tensor_mebibytes,
+                None,
+                None,
+                None,
+                None,
+                None,
+                TrainingMathV1::PlatformLibm,
+                CheckpointRecordFormatV1::default(),
+                RecordEnvelopeV1::None,
+                Some(s_learner_v1::VerifiedReplayOptionsV1::new(tape_cap_bytes)?),
+            )
+        }
     }
 }
 

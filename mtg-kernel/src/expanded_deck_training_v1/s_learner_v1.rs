@@ -385,11 +385,26 @@ impl VerifiedReplayOptionsV1 {
 #[derive(Default, Serialize, Deserialize)]
 pub(super) struct VerifiedReplayAttemptV1 {
     /// Retained capacity before forward, excluding inputs, gradient,
-    /// scratch, transient allocations and allocator overhead.
+    /// scratch, transient allocations and allocator overhead. With
+    /// `tape_slots`, the sum of every slot's peak.
     pub(super) peak_retained_tape_bytes: usize,
     pub(super) learner_replay_forwards: u64,
     pub(super) other_replay_forwards: u64,
     pub(super) learner_backwards: u64,
+    /// The prepared candidate's tapes, one per learner worker and each
+    /// within the cap; absent for the serial candidate's single slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) tape_slots: Option<usize>,
+}
+
+/// The bounded candidate's outcome, for the receipt.
+struct VerifiedOutcomeV1 {
+    tape_cap: usize,
+    attempt: VerifiedReplayAttemptV1,
+    fallback: Option<&'static str>,
+    /// The prepared candidate's own failure, when the reference then ran.
+    attempt_error: Option<String>,
+    seconds: f64,
 }
 
 /// The update command's inputs.
@@ -430,9 +445,12 @@ struct LearnedSV1 {
 /// The refusals of an S update, before any input is read.
 fn refuse_unsupported_v1(inputs: &SUpdateInputsV1) -> Result<(f32, f32), String> {
     if inputs.verified_replay.is_some() {
+        ensure(inputs.ex1.is_none(), "verified replay requires ordinary S")?;
         ensure(
-            inputs.preparation_workers.is_none() && inputs.ex1.is_none(),
-            "verified replay requires ordinary serial S",
+            inputs
+                .preparation_workers
+                .is_none_or(|workers| workers >= 2),
+            "verified prepared replay needs at least two workers; the serial opt-in runs one",
         )?;
     }
     let u = &inputs.unsupported;
@@ -569,39 +587,71 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
 
             let started = std::time::Instant::now();
             let mut attempt = VerifiedReplayAttemptV1::default();
-            let candidate = verified_replay_v1::gradient_v1(
-                &episodes,
-                &policy,
-                &learner,
-                state.model_v1(),
-                verified_replay_v1::OptionsV1 {
-                    gamma,
-                    lambda,
-                    coefficient: value_coefficient,
-                    tape_cap,
-                    #[cfg(test)]
-                    short_first_gradient,
-                    training_math,
-                },
-                &mut attempt,
-            );
+            let options = verified_replay_v1::OptionsV1 {
+                gamma,
+                lambda,
+                coefficient: value_coefficient,
+                tape_cap,
+                #[cfg(test)]
+                short_first_gradient,
+                training_math,
+            };
+            let candidate = match preparation_workers {
+                None => verified_replay_v1::gradient_v1(
+                    &episodes,
+                    &policy,
+                    &learner,
+                    state.model_v1(),
+                    options,
+                    &mut attempt,
+                )
+                .map(|candidate| {
+                    (
+                        candidate.loss,
+                        candidate.gradient,
+                        candidate.gae,
+                        candidate.policy_substeps,
+                        None,
+                    )
+                }),
+                Some(workers) => verified_replay_v1::prepared_gradient_v1(
+                    &episodes,
+                    &policy,
+                    &learner,
+                    state.model_v1(),
+                    workers,
+                    max_prepared_tensor_mebibytes,
+                    options,
+                    &mut attempt,
+                )
+                .map(|candidate| {
+                    (
+                        candidate.loss,
+                        candidate.gradient,
+                        candidate.gae,
+                        candidate.policy_substeps,
+                        Some(candidate.telemetry),
+                    )
+                }),
+            };
             let replay_and_gradient_seconds = started.elapsed().as_secs_f64();
+            let mut attempt_error = None;
             let (learned, fallback) = match candidate {
-                Ok(candidate) => {
+                Ok((loss, gradient, gae, policy_substeps, preparation_telemetry)) => {
                     let learner_started = std::time::Instant::now();
-                    state.adam_step_with_gradient_v1(&candidate.gradient, learning_rate)?;
+                    state.adam_step_with_gradient_v1(&gradient, learning_rate)?;
                     let step = SStepV1 {
-                        loss: candidate.loss,
+                        loss,
                         adam_step: state.adam_step_v1(),
                         after_state_sha256: state.state_sha256_v1(),
                     };
                     (
                         Some(LearnedSV1 {
                             step,
-                            gae_statistics: candidate.gae.statistics,
-                            policy_substeps: candidate.policy_substeps,
-                            learner_workers: 1,
-                            preparation_telemetry: None,
+                            gae_statistics: gae.statistics,
+                            policy_substeps,
+                            learner_workers: preparation_workers.unwrap_or(1),
+                            preparation_telemetry,
                             teacher_receipt: None,
                             ex1_exposure: None,
                             teacher_seconds: 0.0,
@@ -611,20 +661,34 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
                         None,
                     )
                 }
-                Err(ReplayErrorV1::Replay(error)) => return Err(error),
+                // The serial candidate replays in the reference's order, so
+                // its replay errors are the reference's.
+                Err(ReplayErrorV1::Replay(error)) if preparation_workers.is_none() => {
+                    return Err(error)
+                }
                 Err(error) => {
                     let reason = match error {
                         ReplayErrorV1::Capacity => "tape_capacity",
                         ReplayErrorV1::CallerMathState => "caller_math_state",
                         ReplayErrorV1::UnsupportedGeneration => "unsupported_generation",
-                        ReplayErrorV1::Replay(_) => unreachable!(),
+                        // The reference reports its own error, if any.
+                        ReplayErrorV1::Replay(error) => {
+                            attempt_error = Some(error);
+                            "attempt_error"
+                        }
                     };
                     (None, Some(reason))
                 }
             };
             (
                 learned,
-                Some((tape_cap, attempt, fallback, replay_and_gradient_seconds)),
+                Some(VerifiedOutcomeV1 {
+                    tape_cap,
+                    attempt,
+                    fallback,
+                    attempt_error,
+                    seconds: replay_and_gradient_seconds,
+                }),
             )
         }
         None => (None, None),
@@ -910,21 +974,24 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
     if learner_workers > 1 {
         record_parallel_update_execution_v1(&mut result, learner_workers);
     }
-    if let Some((cap, attempt, fallback, attempt_seconds)) = verified_replay {
-        let discarded_seconds = if fallback.is_some() {
-            attempt_seconds
+    if let Some(outcome) = verified_replay {
+        let discarded_seconds = if outcome.fallback.is_some() {
+            outcome.seconds
         } else {
             0.0
         };
         result["verified_replay"] = json!({
-            "used":fallback.is_none(),
-            "fallback":fallback,
-            "tape_cap_bytes":cap,
-            "attempt":attempt,
-            "replay_and_gradient_seconds":attempt_seconds,
+            "used":outcome.fallback.is_none(),
+            "fallback":outcome.fallback,
+            "tape_cap_bytes":outcome.tape_cap,
+            "attempt":outcome.attempt,
+            "replay_and_gradient_seconds":outcome.seconds,
             "combined_replay_learner_seconds":
                 behavior_replay_seconds + learner_update_seconds + discarded_seconds,
         });
+        if let Some(error) = outcome.attempt_error {
+            result["verified_replay"]["attempt_error"] = json!(error);
+        }
     }
     result["checkpoint_io_seconds"] = json!(checkpoint_started.elapsed().as_secs_f64());
     result["update_elapsed_seconds"] = json!(started.elapsed().as_secs_f64());

@@ -821,6 +821,38 @@ fn loss_bits_v1(loss: SLossV1) -> [u32; 5] {
     .map(f32::to_bits)
 }
 
+/// Each substep's stored row for a verified update: its own forward's
+/// outputs, or none where the forward refuses.
+fn stored_bits_v1(model: &SModelV1, groups: &[SGroupV1<'_>]) -> Vec<(Vec<u32>, u32)> {
+    groups
+        .iter()
+        .flat_map(|group| &group.substeps)
+        .map(
+            |substep| match model.forward_v1(substep.input, &mut STapeV1::default()) {
+                Ok(output) => (bits_v1(&output.logits), output.value.to_bits()),
+                Err(_) => (Vec::new(), 0),
+            },
+        )
+        .collect()
+}
+
+fn stored_rows_v1(bits: &[(Vec<u32>, u32)]) -> Vec<verified_row_v1::StoredRowV1<'_>> {
+    bits.iter()
+        .map(|(logits, value)| verified_row_v1::StoredRowV1 {
+            logits,
+            value: *value,
+        })
+        .collect()
+}
+
+/// What one substep's forward retains in an empty worker tape.
+fn verified_slot_bytes_v1(substep: &SSubstepV1<'_>) -> usize {
+    let counts = substep.input.validate_v1(&TINY_V1).unwrap();
+    STapeV1::bytes_for_counts_v1(&TINY_V1, counts)
+        + std::mem::size_of::<STapeV1>()
+        + TINY_V1.layers * std::mem::size_of::<LayerTapeV1>()
+}
+
 /// Every term plan gives the serial gradient and loss bit for bit: two sets
 /// that record one block while the previous replays, one set of several
 /// slots, and one slot. Its slots never hold more than the plan reserves,
@@ -851,6 +883,14 @@ fn pipelined_gae_matches_serial_bits_for_every_term_plan() {
         })
         .unwrap();
     let slot = bound.bytes_v1();
+    let stored_bits = stored_bits_v1(&model, &groups);
+    let stored = stored_rows_v1(&stored_bits);
+    let largest = groups
+        .iter()
+        .flat_map(|g| &g.substeps)
+        .map(verified_slot_bytes_v1)
+        .max()
+        .unwrap();
     for workers in [2, 3, 5] {
         for (budget, sets, slots) in [
             (parallel::TERM_BUDGET_BYTES_V1, 2, workers),
@@ -887,6 +927,43 @@ fn pipelined_gae_matches_serial_bits_for_every_term_plan() {
                 "{label}"
             );
             assert!(used.capacity_bytes <= budget.max(slot), "{label}");
+            // The verified learner checks every forward against its stored
+            // row and gives the same bits and plan, its tapes within the
+            // cap: the largest row's own (which recycles a tape for most
+            // longer rows) or room for every row.
+            for cap in [largest, 1 << 20] {
+                let jobs = verified_row_v1::VerifiedJobsV1::new_v1(&groups, &stored, cap).unwrap();
+                let mut verified = vec![0.0; serial.len()];
+                let (loss, verified_use) = model
+                    .gae_loss_gradient_verified_v1(
+                        &groups,
+                        0.5,
+                        &mut verified,
+                        workers,
+                        &mut SWorkV1::default(),
+                        &jobs,
+                        parallel::PipelineOptionsV1 {
+                            budget_bytes: budget,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                let label = format!("{label}, cap {cap}");
+                assert_eq!(verified_use, used, "{label}");
+                assert_eq!(bits_v1(&verified), bits_v1(&serial), "{label}");
+                assert_eq!(loss_bits_v1(loss), loss_bits_v1(expected), "{label}");
+                let usage = jobs.usage_v1();
+                assert_eq!(
+                    (usage.learner_forwards, usage.learner_backwards),
+                    (20, 20),
+                    "{label}"
+                );
+                let empty = std::mem::size_of::<STapeV1>();
+                assert!(
+                    (workers * empty..=workers * cap).contains(&usage.peak_retained_tape_bytes),
+                    "{label}: {usage:?}"
+                );
+            }
         }
     }
 }
@@ -934,8 +1011,14 @@ fn pipelined_gae_reports_the_first_failure_in_substep_order() {
         let expected = model
             .gae_loss_gradient_v1(&groups, 0.5, &mut gradient, &mut work)
             .unwrap_err();
+        let stored_bits = stored_bits_v1(&model, &groups);
+        let stored = stored_rows_v1(&stored_bits);
         for workers in [2, 3, 5] {
             for budget in [parallel::TERM_BUDGET_BYTES_V1, 1] {
+                let options = parallel::PipelineOptionsV1 {
+                    budget_bytes: budget,
+                    ..Default::default()
+                };
                 let error = model
                     .gae_loss_gradient_planned_v1(
                         &groups,
@@ -943,19 +1026,164 @@ fn pipelined_gae_reports_the_first_failure_in_substep_order() {
                         &mut gradient,
                         workers,
                         &mut work,
-                        parallel::PipelineOptionsV1 {
-                            budget_bytes: budget,
-                            ..Default::default()
-                        },
+                        options,
                     )
                     .unwrap_err();
                 assert_eq!(
                     error, expected,
                     "group {group} substep {sub}, workers {workers}, budget {budget}"
                 );
+                // The verified learner refuses the same row first.
+                let jobs =
+                    verified_row_v1::VerifiedJobsV1::new_v1(&groups, &stored, 1 << 20).unwrap();
+                let error = model
+                    .gae_loss_gradient_verified_v1(
+                        &groups,
+                        0.5,
+                        &mut gradient,
+                        workers,
+                        &mut work,
+                        &jobs,
+                        options,
+                    )
+                    .unwrap_err();
+                assert_eq!(
+                    error, expected,
+                    "verified: group {group} substep {sub}, workers {workers}, budget {budget}"
+                );
             }
         }
     }
+}
+
+/// A verified learner reports the first stored row its forward does not
+/// reproduce, or the first row whose tape exceeds the cap, in substep order
+/// before any later failure, and counts only the forwards and backwards it
+/// ran.
+#[test]
+fn pipelined_verified_gae_reports_stored_rows_and_capacity_in_substep_order() {
+    let model = SModelV1::init_parity_v1(TINY_V1, 77).unwrap();
+    let data = ragged_groups_v1(87);
+    let mut groups = as_groups_v1(&data);
+    // A later failure must not win.
+    groups[9].substeps[1].selected = usize::MAX - 1;
+    let starts: Vec<usize> = groups
+        .iter()
+        .scan(0, |next, group| {
+            let start = *next;
+            *next += group.substeps.len();
+            Some(start)
+        })
+        .collect();
+    let clean = stored_bits_v1(&model, &groups);
+    let slots: Vec<usize> = groups
+        .iter()
+        .flat_map(|g| &g.substeps)
+        .map(verified_slot_bytes_v1)
+        .collect();
+    // Long rows (group + substep a multiple of 3) exceed every short row.
+    let short = (0..slots.len())
+        .filter(|&flat| {
+            let group = starts.iter().rposition(|&start| start <= flat).unwrap();
+            !(group + flat - starts[group]).is_multiple_of(3)
+        })
+        .map(|flat| slots[flat])
+        .max()
+        .unwrap();
+    assert!(slots[0] > short);
+    let late_stored_failure = "stored tensor does not reproduce rollout outputs";
+    for (group, sub, kind, cap) in [
+        (0, 0, 0, 1 << 20),
+        (0, 1, 1, 1 << 20),
+        (3, 2, 0, 1 << 20),
+        (6, 0, 1, 1 << 20),
+        (9, 0, 0, 1 << 20),
+        // The first long row, before a stored mismatch.
+        (0, 1, 0, short),
+    ] {
+        let mut stored_bits = clean.clone();
+        let flat = starts[group] + sub;
+        match kind {
+            0 => stored_bits[flat].0[0] ^= 1,
+            _ => stored_bits[flat].1 ^= 1,
+        }
+        let stored = stored_rows_v1(&stored_bits);
+        let expected = if cap == short {
+            verified_row_v1::VERIFIED_TAPE_CAPACITY_V1
+        } else {
+            late_stored_failure
+        };
+        for workers in [2, 3, 5] {
+            for budget in [parallel::TERM_BUDGET_BYTES_V1, 1] {
+                let jobs = verified_row_v1::VerifiedJobsV1::new_v1(&groups, &stored, cap).unwrap();
+                let mut gradient = vec![0.0; model.layout_v1().total];
+                let error = model
+                    .gae_loss_gradient_verified_v1(
+                        &groups,
+                        0.5,
+                        &mut gradient,
+                        workers,
+                        &mut SWorkV1::default(),
+                        &jobs,
+                        parallel::PipelineOptionsV1 {
+                            budget_bytes: budget,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap_err();
+                let label = format!(
+                    "group {group} substep {sub} kind {kind}, workers {workers}, budget {budget}"
+                );
+                assert_eq!(error, expected, "{label}");
+                // The refused row's backward never runs, nor its forward
+                // over the cap.
+                let usage = jobs.usage_v1();
+                let refused_forward = u64::from(cap != short);
+                assert!(
+                    usage.learner_backwards + refused_forward <= usage.learner_forwards
+                        && usage.learner_forwards < 20 + refused_forward,
+                    "{label}: {usage:?}"
+                );
+                assert!(
+                    usage.peak_retained_tape_bytes <= workers * cap,
+                    "{label}: {usage:?}"
+                );
+            }
+        }
+    }
+    // The entry refuses a cap below an empty tape before any forward, a
+    // side table of another length, and another model generation.
+    let stored = stored_rows_v1(&clean);
+    assert!(matches!(
+        verified_row_v1::VerifiedJobsV1::new_v1(
+            &groups,
+            &stored,
+            std::mem::size_of::<STapeV1>() - 1
+        ),
+        Err(verified_row_v1::ReplayErrorV1::Capacity)
+    ));
+    assert!(matches!(
+        verified_row_v1::VerifiedJobsV1::new_v1(&groups, &stored[1..], 1 << 20),
+        Err(verified_row_v1::ReplayErrorV1::Replay(_))
+    ));
+    let other = SModelV1::init_parity_v1(TINY_V1, 78).unwrap();
+    let mut usage = verified_row_v1::ParallelVerifiedUseV1::default();
+    match verified_row_v1::parallel_gradient_v1(
+        &model,
+        other.cache_namespace_v1(),
+        &groups,
+        &stored,
+        0.5,
+        2,
+        1 << 20,
+        &mut usage,
+    ) {
+        Err(verified_row_v1::ReplayErrorV1::Replay(error)) => {
+            assert_eq!(error, "S verified model generation differs")
+        }
+        _ => panic!("a stale generation is refused"),
+    }
+    assert_eq!(usage, verified_row_v1::ParallelVerifiedUseV1::default());
 }
 
 /// A worker that panics in any phase, a helper or the caller, ends the

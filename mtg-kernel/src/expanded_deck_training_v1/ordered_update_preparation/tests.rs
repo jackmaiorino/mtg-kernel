@@ -304,6 +304,81 @@ fn phase1_preparation_current_model_reuse_avoids_disk_load_and_keeps_rng_outputs
     assert_eq!(group_bytes(&expected), group_bytes(&prepared.groups));
 }
 
+/// A deferring preparation (the bounded verified update's) decodes the
+/// learner's rows without replaying them: the reference's groups, whatever a
+/// learner row's stored outputs, while every other row is replayed, counted
+/// and checked as before, with the reference's error.
+#[test]
+fn deferring_preparation_replays_and_counts_only_the_other_rows() {
+    let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+    let (mut t, learner, _) = replay_fixture(&mut policy, None, 0, &[0, 1, 0, 1, 1, 0]);
+    t.schema = POPULATION_TRAJECTORY_SCHEMA.into();
+    t.episode.opponent = Some(learner.source.clone());
+    t.seat_behaviors = Some([learner.clone(), learner.clone()]);
+    validate_trajectory(&t).unwrap();
+    assert_eq!(t.episode.learner_seat, 0);
+    let reference = |t: &ExpandedTrajectoryV1| {
+        prepare_with_loader_v1(
+            std::slice::from_ref(t),
+            &policy,
+            &learner,
+            2,
+            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            ReplayRowCacheV1::Off,
+            |_| panic!("the current source reuses the learner"),
+        )
+        .map(|prepared| (group_bytes(&prepared.groups), prepared.telemetry))
+    };
+    let deferred = |t: &ExpandedTrajectoryV1, workers| {
+        let other_forwards = AtomicU64::new(0);
+        let prepared = prepare_counting_v1(
+            std::slice::from_ref(t),
+            &policy,
+            &learner,
+            workers,
+            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            LearnerRowsV1::Defer {
+                other_forwards: &other_forwards,
+            },
+            |_| panic!("the current source reuses the learner"),
+        )
+        .map(|prepared| (group_bytes(&prepared.groups), prepared.telemetry));
+        (prepared, other_forwards.load(Ordering::Relaxed))
+    };
+    let (groups, telemetry) = reference(&t).unwrap();
+    assert_eq!(telemetry.deferred_learner_rows, None);
+    for workers in [1, 3] {
+        let (prepared, other_forwards) = deferred(&t, workers);
+        let (deferred_groups, telemetry) = prepared.unwrap();
+        assert_eq!(deferred_groups, groups);
+        assert_eq!(other_forwards, 3);
+        assert_eq!(telemetry.deferred_learner_rows, Some(3));
+        assert_eq!(telemetry.physical_group_jobs, 6);
+    }
+
+    // A learner row's stored value is the verified learner's to check.
+    let mut corrupt = t.clone();
+    corrupt.decisions[2].value ^= 1;
+    assert!(reference(&corrupt)
+        .unwrap_err()
+        .contains("stored tensor does not reproduce rollout outputs"));
+    let (prepared, other_forwards) = deferred(&corrupt, 2);
+    assert!(prepared.is_ok());
+    assert_eq!(other_forwards, 3);
+    // Another row's is still the preparation's.
+    let mut corrupt = t.clone();
+    corrupt.decisions[3].value ^= 1;
+    let error = reference(&corrupt).unwrap_err();
+    assert_eq!(
+        error,
+        "preparation group 3: stored tensor does not reproduce rollout outputs"
+    );
+    let (prepared, other_forwards) = deferred(&corrupt, 1);
+    assert_eq!(prepared.unwrap_err(), error);
+    // One worker replays in order and stops at the corrupt row.
+    assert_eq!(other_forwards, 2);
+}
+
 #[test]
 fn phase1_preparation_rejects_stale_and_corrupted_opponent_before_learning() {
     let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
