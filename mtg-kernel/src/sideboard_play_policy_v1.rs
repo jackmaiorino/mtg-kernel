@@ -1413,6 +1413,18 @@ impl FrozenPlayPolicyV1 {
             .ok_or_else(|| "the pairing relation requires the V8 scorer".into())
     }
 
+    /// The `f32` values `duplicate_loaded_v1` copies: the embedding table and
+    /// any boxed no-state-digest check model. The duplicate shares the model
+    /// and any S model (`Arc`), so their weights are not copied
+    /// (`loaded_source_profile_v1`).
+    pub(crate) fn owned_f32_len_v1(&self) -> usize {
+        self.embeddings.len()
+            + self
+                .no_digest_check
+                .as_ref()
+                .map_or(0, |model| model.owned_f32_len_v1())
+    }
+
     /// An exact duplicate of a policy in the state its loader returned it:
     /// no sampling started and no collection sampler, search forward,
     /// prediction cache, probe or trace attached. Anything else is refused.

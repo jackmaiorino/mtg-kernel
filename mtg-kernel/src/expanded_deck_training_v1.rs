@@ -4,6 +4,7 @@
 
 pub mod archive_distillation_v1;
 pub mod b_width_prescreen_v1;
+pub(crate) mod cache_diagnostics_v1;
 pub mod e_supported_teacher_v1;
 pub mod ex1_collect_v1;
 pub mod ex1_update_v1;
@@ -16,6 +17,7 @@ pub mod s_update_fixture_v1;
 pub mod search_targets_v1;
 pub mod soft_q_teacher_v1;
 use e_supported_teacher_v1::ESupportedTeacherOptionsV1;
+use loaded_source_profile_v1::LoadRoleV1;
 use search_targets_v1::SearchTargetsOptionsV1;
 use soft_q_teacher_v1::{SoftQDiagnosticCaseV1, SoftQTeacherOptionsV1};
 
@@ -123,6 +125,7 @@ mod line_b_root_selection_v1;
 mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
 mod loaded_source_cache_v1;
+pub(crate) mod loaded_source_profile_v1;
 pub mod portable_chain_v1;
 pub mod record_envelope_v1;
 mod trajectory_parse_ahead_v1;
@@ -794,7 +797,10 @@ impl OpponentCacheV1 {
             } else {
                 // Unrecognized import schemas retain their original complete
                 // loader validation rather than trusting a process cache hit.
-                let (policy, identity) = load_expanded_inference_any_math_v1(source)?;
+                let (policy, identity) =
+                    loaded_source_profile_v1::scoped_v1(LoadRoleV1::Opponent, || {
+                        load_expanded_inference_any_math_v1(source)
+                    })?;
                 LoadedOpponentV1 {
                     policy,
                     behavior: ExpandedSeatBehaviorV1 {
@@ -4088,7 +4094,10 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             let (mut policy, learner, state_hash) = if source.s_learner.is_some() {
                 s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
             } else {
-                let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+                let (mut policy, mut state, transfer) =
+                    loaded_source_profile_v1::scoped_v1(LoadRoleV1::CollectLearner, || {
+                        initialize_with_transfer_context(&source)
+                    })?;
                 if let Some(context) = &transfer {
                     context.validate_batch(&episodes)?;
                 }
@@ -4656,7 +4665,10 @@ fn execute_update_inner_v1(
             read_pinned_bytes(&packet)?;
         }
     }
-    let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
+    let (mut policy, mut state, transfer) =
+        loaded_source_profile_v1::scoped_v1(LoadRoleV1::UpdateLearner, || {
+            initialize_with_transfer_context(&source)
+        })?;
     bind_training_math_v1(
         &source,
         transfer.as_ref(),
@@ -5710,7 +5722,9 @@ fn execute_update_inner_v1(
         checkpoint: Some(checkpoint_pin.clone()),
         ..source.clone()
     };
-    let (_, restored) = initialize_any_math_v1(&resumed_source)?;
+    let (_, restored) = loaded_source_profile_v1::scoped_v1(LoadRoleV1::UpdateReadback, || {
+        initialize_any_math_v1(&resumed_source)
+    })?;
     ensure(
         hex(&restored.state_sha256_v1().map_err(err)?) == after
             && restored.training_math_v1() == training_math,

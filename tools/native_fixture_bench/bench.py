@@ -1,0 +1,1493 @@
+#!/usr/bin/env python3
+"""Opt-in local benchmark of the native training run (#595, under #594's contract).
+
+`generate` writes the source-generated net-8 fixture: the ignored lib test
+`native_expanded_training_run_v1::fixture_bench_v1::write_native_fixture_v1`
+builds synthetic valid FlatV4 weights, the checked-in Affinity/Terror schedule,
+a fresh case and (after an in-process warm-up) a warm case that resumes the
+retained warmed checkpoint.
+
+`run` times two prebuilt `native_expanded_training_run_v1` binaries (a baseline
+and a candidate) on those cases in balanced A-B-B-A blocks. Every sample is a
+new process. A case always writes its run to the same fixed path, which the
+driver moves out after each sample, so the raw files of any two samples
+compare byte for byte; every difference is either accounted for (a timing
+field, a build-provenance field across builds, or the pin of a file that
+differs only that way) or reported as a mismatch.
+
+Standard library only. On Linux and macOS each process is timed with os.wait4;
+on Windows, in its own job object. See README.md for the commands.
+"""
+from __future__ import annotations
+
+import argparse
+import functools
+import hashlib
+import json
+import os
+import platform
+import re
+import shutil
+import signal
+import statistics
+import subprocess
+import sys
+import threading
+import time
+import types
+from datetime import datetime, timezone
+from itertools import islice
+from pathlib import Path
+
+FIXTURE_SCHEMA = "mtg-kernel-native-fixture/v1"
+BENCH_SCHEMA = "mtg-kernel-native-fixture-bench/v1"
+SAMPLE_SCHEMA = "mtg-kernel-native-fixture-sample/v1"
+COMPARISON_SCHEMA = "mtg-kernel-native-fixture-comparison/v1"
+GENERATE_SCHEMA = "mtg-kernel-native-fixture-generate/v1"
+RECEIPT_SCHEMA = "mtg-kernel-native-fixture-receipt/v1"
+RUN_SCHEMA = "mtg-kernel-native-expanded-training-run/v1"
+DIAGNOSTICS_ENV = "MTG_KERNEL_CACHE_DIAGNOSTICS_V1"
+DIAGNOSTICS_SCHEMA = "mtg-kernel-cache-diagnostics/v1"
+GENERATOR_TEST = "native_expanded_training_run_v1::fixture_bench_v1::write_native_fixture_v1"
+ABBA = ("A", "B", "B", "A")
+
+# Every difference between two samples' run trees must fall in one of these
+# classes; anything else is a mismatch. Timing: a numeric leaf whose key ends
+# in one of these suffixes (wall-clock receipts such as update.json's
+# `checkpoint_io_seconds`; they never enter state or hashes). Provenance: the
+# build identity in run.json, only between samples of different builds. Pin:
+# the sha256 of a run file that itself differs only in accounted fields.
+TIMING_SUFFIXES = ("_seconds", "_nanos", "_ns")
+PROVENANCE_KEYS = frozenset({"git_commit", "tracked_tree_sha256", "implementation_sha256"})
+JSON_DIFF_CAP = 64 << 20
+COLLECTED_DIFFERENCES = 10_000
+LISTED_DIFFERENCES = 20
+
+# Per-iteration timings, by source. stdout: the run's own per-iteration line
+# (`scheduler_timing`); the receipts: collect/collection.json, update/update.json.
+SCHEDULER_FIELDS = (
+    "iteration_wall_seconds",
+    "collection_execution_seconds",
+    "update_execution_seconds",
+    "collection_validation_seconds",
+    "update_validation_seconds",
+)
+COLLECTION_FIELDS = ("collection_elapsed_seconds", "collection_initialization_seconds")
+UPDATE_FIELDS = (
+    "input_read_seconds",
+    "behavior_replay_seconds",
+    "learner_update_seconds",
+    "checkpoint_io_seconds",
+    "update_elapsed_seconds",
+)
+PREPARATION_FIELDS = (
+    "preparation_elapsed_seconds",
+    "opponent_loading_seconds",
+    "parallel_replay_seconds",
+)
+# Compared metrics: name -> True when lower is better.
+PROCESS_METRICS = {
+    "wall_seconds": True,
+    "user_seconds": True,
+    "sys_seconds": True,
+    "max_rss_mib": True,
+    "updates_per_hour": False,
+    "outside_iterations_seconds": True,
+}
+
+
+class BenchError(Exception):
+    pass
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def read_json(path: Path):
+    with open(path, "rb") as handle:
+        return json.load(handle)
+
+
+def write_json(path: Path, value) -> None:
+    staged = path.with_name(f".{path.name}.stage")
+    with open(staged, "w", encoding="utf-8", newline="\n") as handle:
+        json.dump(value, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(staged, path)
+
+
+def append_jsonl(path: Path, value) -> None:
+    with open(path, "a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(value, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def require_absent_or_empty(path: Path, what: str) -> None:
+    if not path.is_absolute():
+        raise BenchError(f"{what} must be an absolute path: {path}")
+    if path.exists() and (not path.is_dir() or any(path.iterdir())):
+        raise BenchError(f"{what} must be absent or an empty directory: {path}")
+
+
+def command_output(command: list[str]) -> str | None:
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return (done.stdout or done.stderr).strip() or None
+
+
+def max_rss_mib(ru_maxrss: int, system: str = sys.platform) -> float:
+    """wait4's peak RSS in MiB: Linux reports KiB, macOS bytes."""
+    return ru_maxrss / (1 << 20) if system == "darwin" else ru_maxrss / 1024
+
+
+def posix_cpu_and_memory() -> tuple[str | None, int | None]:
+    cpu = None
+    try:
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            if line.startswith("model name"):
+                cpu = line.split(":", 1)[1].strip()
+                break
+    except OSError:
+        cpu = command_output(["sysctl", "-n", "machdep.cpu.brand_string"])
+    memory_kib = None
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                memory_kib = int(line.split()[1])
+    except (OSError, ValueError):
+        try:
+            memory_kib = int(command_output(["sysctl", "-n", "hw.memsize"]) or "") // 1024
+        except ValueError:
+            pass
+    return cpu, memory_kib
+
+
+def host_record() -> dict:
+    if os.name == "nt":
+        cpu, memory_kib, affinity = windows_host()
+    else:
+        cpu, memory_kib = posix_cpu_and_memory()
+        affinity = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else None
+    first_line = lambda text: text.splitlines()[0] if text else None  # noqa: E731
+    return {
+        "hostname": platform.node(),
+        "platform": platform.platform(),
+        "kernel": platform.release(),
+        "machine": platform.machine(),
+        "cpu_model": cpu,
+        "logical_cpus": os.cpu_count(),
+        "affinity_cpus": affinity,
+        "memory_total_mib": round(memory_kib / 1024, 1) if memory_kib else None,
+        "python": platform.python_version(),
+        # The host's toolchain, which is not necessarily the one that built the arms.
+        "rustc_on_host": command_output(["rustc", "-vV"]),
+        "cc_on_host": first_line(command_output(["cc", "--version"])),
+        "ld_on_host": first_line(command_output(["ld", "--version"])),
+    }
+
+
+# ---------------------------------------------------------------- generate
+
+
+def generate(args) -> int:
+    root = Path(args.root)
+    require_absent_or_empty(root, "--root")
+    env = dict(os.environ)
+    settings = {
+        "MTG_NATIVE_FIXTURE_ROOT": str(root),
+        "MTG_NATIVE_FIXTURE_SEED": str(args.seed),
+        "MTG_NATIVE_FIXTURE_UPDATES": str(args.updates),
+        "MTG_NATIVE_FIXTURE_GAMES": str(args.games),
+        "MTG_NATIVE_FIXTURE_WARMUP_UPDATES": str(
+            args.updates if args.warmup_updates is None else args.warmup_updates
+        ),
+        "MTG_NATIVE_FIXTURE_COLLECTION_WORKERS": str(args.collection_workers),
+        "MTG_NATIVE_FIXTURE_PREPARATION_WORKERS": str(args.preparation_workers),
+    }
+    env.update(settings)
+    selector = ["--ignored", "--exact", GENERATOR_TEST, "--nocapture", "--test-threads", "1"]
+    if args.test_binary:
+        test_binary = Path(args.test_binary).resolve()
+        command = [str(test_binary), *selector]
+        # cargo runs a crate's tests from the package root.
+        cwd = Path(args.repo) / "mtg-kernel"
+        if not cwd.is_dir():
+            cwd = None
+    else:
+        test_binary = None
+        command = ["cargo", "test", "--release", "--locked", "-p", "mtg-kernel", "--lib",
+                   GENERATOR_TEST, "--", *selector]
+        cwd = args.repo
+    started = time.monotonic()
+    done = subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", check=False)
+    wall = time.monotonic() - started
+    if done.returncode != 0:
+        sys.stderr.write(done.stdout[-4000:] + done.stderr[-4000:])
+        raise BenchError(f"fixture generator exited {done.returncode}")
+    fixture_path = root / "fixture.json"
+    if not fixture_path.is_file():
+        raise BenchError(f"fixture generator wrote no {fixture_path}")
+    fixture = read_json(fixture_path)
+    validate_fixture(fixture, root.resolve())
+    printed = [line for line in done.stdout.splitlines() if line.startswith("NATIVE_FIXTURE_V1 ")]
+    if printed and json.loads(printed[-1].split(" ", 1)[1]) != fixture:
+        raise BenchError("the generator's printed manifest differs from fixture.json")
+    log_directory = root / "generate"
+    log_directory.mkdir()
+    (log_directory / "stdout.txt").write_text(done.stdout, encoding="utf-8")
+    (log_directory / "stderr.txt").write_text(done.stderr, encoding="utf-8")
+    record = {
+        "schema": GENERATE_SCHEMA,
+        "created_utc": utc_now(),
+        "command": command,
+        "settings": settings,
+        "test_binary": None if test_binary is None else {
+            "path": str(test_binary), "sha256": sha256_file(test_binary)},
+        "generator_wall_seconds": round(wall, 3),
+        "fixture_sha256": sha256_file(fixture_path),
+        "note": "generation time includes the in-process warm-up; it is not a benchmark sample",
+    }
+    write_json(log_directory / "generate.json", record)
+    print(json.dumps({"fixture": str(fixture_path), "fixture_sha256": record["fixture_sha256"],
+                      "cases": [case["name"] for case in fixture["cases"]],
+                      "generator_wall_seconds": record["generator_wall_seconds"]}, indent=2))
+    return 0
+
+
+def plain_path(value: str, windows: bool = os.name == "nt") -> str:
+    """A Windows verbatim path (`\\\\?\\C:\\...`, the form Rust's canonicalize
+    returns there) in its ordinary form, so it compares with the paths the
+    driver builds. Other paths are returned unchanged."""
+    if windows and value.startswith("\\\\?\\"):
+        rest = value[4:]
+        if rest[:4].upper() == "UNC\\":
+            return "\\\\" + rest[4:]
+        if rest[1:2] == ":":
+            return rest
+    return value
+
+
+def matches_fixture_path(value, expected: Path) -> bool:
+    if not isinstance(value, str):
+        return False
+    path = Path(plain_path(value))
+    return path.is_absolute() and path.resolve() == Path(plain_path(str(expected))).resolve()
+
+
+def validate_fixture(fixture: dict, root: Path) -> dict[str, dict]:
+    if not isinstance(fixture, dict) or fixture.get("schema") != FIXTURE_SCHEMA:
+        raise BenchError(f"not a {FIXTURE_SCHEMA} manifest")
+    if not matches_fixture_path(fixture.get("root"), root):
+        raise BenchError(f"fixture root {fixture.get('root')} is not {root}")
+    cases = fixture.get("cases")
+    if not isinstance(cases, list) or not cases:
+        raise BenchError("fixture must contain at least one case")
+    configs = {}
+    for case in cases:
+        name = case.get("name") if isinstance(case, dict) else None
+        if (not isinstance(name, str) or not name
+                or any(not (c.isascii() and (c.isalnum() or c in "-_")) for c in name)
+                or name in configs):
+            raise BenchError(f"invalid or duplicate fixture case {name!r}")
+        pin = case.get("config")
+        config_path = root / "cases" / name / "config.json"
+        if not isinstance(pin, dict) or not matches_fixture_path(pin.get("path"), config_path):
+            raise BenchError(f"case {name}: config does not name {config_path}")
+        try:
+            data = config_path.read_bytes()
+            if hashlib.sha256(data).hexdigest() != pin.get("sha256"):
+                raise BenchError(f"case {name}: {config_path} changed since generation")
+            config = json.loads(data)
+        except (OSError, ValueError) as error:
+            raise BenchError(f"case {name}: cannot read pinned config: {error}") from error
+        expected = root / "work" / name / "run"
+        if (not isinstance(config, dict)
+                or not matches_fixture_path(case.get("output_directory"), expected)
+                or not matches_fixture_path(config.get("output_directory"), expected)):
+            raise BenchError(f"case {name}: manifest and config must write to {expected}")
+        iterations = config.get("iterations")
+        if (not isinstance(iterations, list) or not iterations
+                or type(case.get("iterations")) is not int or len(iterations) != case["iterations"]):
+            raise BenchError(f"case {name}: manifest and config iteration counts differ")
+        if "initial_source" in case and config.get("initial_source") != case["initial_source"]:
+            raise BenchError(f"case {name}: manifest and config initial sources differ")
+        configs[name] = config
+    return configs
+
+
+# ---------------------------------------------------------------- Windows
+
+# Windows has no wait4. Each sample runs in its own job object instead: the job
+# accounts the CPU time of every process in the tree, a timeout ends the whole
+# tree as killpg does, and closing the job ends anything the run left behind.
+# The peak memory is the started process's own peak working set, the
+# counterpart of the peak resident set that wait4 reports; the job also counts
+# its processes and keeps the largest peak commit of any of them.
+JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
+JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+CREATE_SUSPENDED = 0x4
+# Terminate and set quota (to join a job), suspend/resume, and query and VM
+# read (GetProcessMemoryInfo).
+PROCESS_RIGHTS = 0x0001 | 0x0100 | 0x0800 | 0x0400 | 0x0010
+
+
+@functools.lru_cache(maxsize=None)
+def windows_api():
+    """The kernel32 and ntdll calls the driver uses, typed for 64-bit handles,
+    and the structures they fill."""
+    import ctypes
+    from ctypes import wintypes
+
+    size, u64, i64, dword = ctypes.c_size_t, ctypes.c_uint64, ctypes.c_int64, wintypes.DWORD
+
+    def structure(name, fields):
+        return type(name, (ctypes.Structure,), {"_fields_": fields})
+
+    basic_limits = structure("BasicLimits", [
+        ("PerProcessUserTimeLimit", i64), ("PerJobUserTimeLimit", i64), ("LimitFlags", dword),
+        ("MinimumWorkingSetSize", size), ("MaximumWorkingSetSize", size),
+        ("ActiveProcessLimit", dword), ("Affinity", size), ("PriorityClass", dword),
+        ("SchedulingClass", dword)])
+    io_counters = structure("IoCounters", [(name, u64) for name in (
+        "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+        "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")])
+    extended_limits = structure("ExtendedLimits", [
+        ("BasicLimitInformation", basic_limits), ("IoInfo", io_counters),
+        ("ProcessMemoryLimit", size), ("JobMemoryLimit", size),
+        ("PeakProcessMemoryUsed", size), ("PeakJobMemoryUsed", size)])
+    accounting = structure("BasicAccounting", [
+        ("TotalUserTime", i64), ("TotalKernelTime", i64),
+        ("ThisPeriodTotalUserTime", i64), ("ThisPeriodTotalKernelTime", i64),
+        ("TotalPageFaultCount", dword), ("TotalProcesses", dword),
+        ("ActiveProcesses", dword), ("TotalTerminatedProcesses", dword)])
+    memory_counters = structure("MemoryCounters", [
+        ("cb", dword), ("PageFaultCount", dword), *((name, size) for name in (
+            "PeakWorkingSetSize", "WorkingSetSize", "QuotaPeakPagedPoolUsage",
+            "QuotaPagedPoolUsage", "QuotaPeakNonPagedPoolUsage", "QuotaNonPagedPoolUsage",
+            "PagefileUsage", "PeakPagefileUsage"))])
+    memory_status = structure("MemoryStatus", [
+        ("dwLength", dword), ("dwMemoryLoad", dword), *((name, u64) for name in (
+            "ullTotalPhys", "ullAvailPhys", "ullTotalPageFile", "ullAvailPageFile",
+            "ullTotalVirtual", "ullAvailVirtual", "ullAvailExtendedVirtual"))])
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    ntdll = ctypes.WinDLL("ntdll")
+    handle, boolean, pointer = wintypes.HANDLE, wintypes.BOOL, ctypes.c_void_p
+    for name, result, arguments in (
+            ("CreateJobObjectW", handle, (pointer, wintypes.LPCWSTR)),
+            ("SetInformationJobObject", boolean, (handle, ctypes.c_int, pointer, dword)),
+            ("QueryInformationJobObject", boolean, (handle, ctypes.c_int, pointer, dword, pointer)),
+            ("AssignProcessToJobObject", boolean, (handle, handle)),
+            ("TerminateJobObject", boolean, (handle, ctypes.c_uint)),
+            ("OpenProcess", handle, (dword, boolean, dword)),
+            ("CloseHandle", boolean, (handle,)),
+            ("K32GetProcessMemoryInfo", boolean, (handle, pointer, dword)),
+            ("GlobalMemoryStatusEx", boolean, (pointer,)),
+            ("GetCurrentProcess", handle, ()),
+            ("GetProcessAffinityMask", boolean, (handle, pointer, pointer))):
+        function = getattr(kernel32, name)
+        function.restype, function.argtypes = result, arguments
+    ntdll.NtResumeProcess.restype, ntdll.NtResumeProcess.argtypes = ctypes.c_long, (handle,)
+    return types.SimpleNamespace(
+        ctypes=ctypes, kernel32=kernel32, ntdll=ntdll, ExtendedLimits=extended_limits,
+        BasicAccounting=accounting, MemoryCounters=memory_counters, MemoryStatus=memory_status)
+
+
+def windows_host() -> tuple[str | None, int | None, int | None]:
+    """The CPU model, physical memory in KiB and the CPUs this process may use."""
+    import winreg
+
+    api = windows_api()
+    ctypes = api.ctypes
+    cpu = memory_kib = affinity = None
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                            r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as key:
+            cpu = str(winreg.QueryValueEx(key, "ProcessorNameString")[0]).strip() or None
+    except OSError:
+        pass
+    status = api.MemoryStatus(dwLength=ctypes.sizeof(api.MemoryStatus))
+    if api.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+        memory_kib = status.ullTotalPhys // 1024
+    mask, system = ctypes.c_size_t(), ctypes.c_size_t()
+    if api.kernel32.GetProcessAffinityMask(api.kernel32.GetCurrentProcess(),
+                                           ctypes.byref(mask), ctypes.byref(system)):
+        affinity = bin(mask.value).count("1")
+    return cpu, memory_kib, affinity
+
+
+def run_process_windows(command: list[str], env: dict, out, err, timeout: float | None) -> dict:
+    api = windows_api()
+    ctypes, kernel32 = api.ctypes, api.kernel32
+
+    def check(ok) -> None:
+        if not ok:
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    job = kernel32.CreateJobObjectW(None, None)
+    check(job)
+    try:
+        limits = api.ExtendedLimits()
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        check(kernel32.SetInformationJobObject(job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+                                               ctypes.byref(limits), ctypes.sizeof(limits)))
+        started_utc = utc_now()
+        # QueryPerformanceCounter: before Python 3.13, monotonic() ticks every 15.6 ms here.
+        started = time.perf_counter()
+        # The process starts suspended and runs only once it is in the job, so
+        # every process it starts is in the job too.
+        process = subprocess.Popen(command, stdout=out, stderr=err, env=env,
+                                   creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | CREATE_SUSPENDED)
+        handle = kernel32.OpenProcess(PROCESS_RIGHTS, False, process.pid)
+        try:
+            check(handle)
+            check(kernel32.AssignProcessToJobObject(job, handle))
+            status = api.ntdll.NtResumeProcess(handle)
+            if status != 0:
+                raise OSError(f"NtResumeProcess failed with status {status & 0xFFFFFFFF:#010x}")
+            timed_out = False
+            try:
+                process.wait(timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                kernel32.TerminateJobObject(job, 1)
+                process.wait()
+            wall = time.perf_counter() - started
+            accounting = api.BasicAccounting()
+            check(kernel32.QueryInformationJobObject(
+                job, JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION, ctypes.byref(accounting),
+                ctypes.sizeof(accounting), None))
+            check(kernel32.QueryInformationJobObject(
+                job, JOB_OBJECT_EXTENDED_LIMIT_INFORMATION, ctypes.byref(limits),
+                ctypes.sizeof(limits), None))
+            memory = api.MemoryCounters(cb=ctypes.sizeof(api.MemoryCounters))
+            check(kernel32.K32GetProcessMemoryInfo(handle, ctypes.byref(memory), memory.cb))
+        except BaseException:
+            if process.returncode is None:
+                process.kill()
+                process.wait()
+            raise
+        finally:
+            if handle:
+                kernel32.CloseHandle(handle)
+    finally:
+        kernel32.CloseHandle(job)
+    return {
+        "command": command,
+        "started_utc": started_utc,
+        "exit_code": process.returncode,
+        "timed_out": timed_out,
+        "wall_seconds": wall,
+        "user_seconds": accounting.TotalUserTime / 1e7,
+        "sys_seconds": accounting.TotalKernelTime / 1e7,
+        "max_rss_mib": memory.PeakWorkingSetSize / (1 << 20),
+        # Windows counts soft and hard page faults together and keeps no
+        # per-process context switch counts.
+        "major_page_faults": None,
+        "voluntary_context_switches": None,
+        "involuntary_context_switches": None,
+        "page_faults": accounting.TotalPageFaultCount,
+        "job_processes": accounting.TotalProcesses,
+        "peak_commit_mib": limits.PeakProcessMemoryUsed / (1 << 20),
+    }
+
+
+# ---------------------------------------------------------------- processes
+
+
+def run_process(command: list[str], env: dict, stdout_path: Path, stderr_path: Path,
+                timeout: float | None) -> dict:
+    """Runs one process to exit; its wall time, CPU and peak RSS (wait4, or a
+    job object on Windows)."""
+    with open(stdout_path, "wb") as out, open(stderr_path, "wb") as err:
+        if os.name == "nt":
+            return run_process_windows(command, env, out, err, timeout)
+        started_utc = utc_now()
+        started = time.monotonic()
+        process = subprocess.Popen(command, stdout=out, stderr=err, env=env,
+                                   start_new_session=True)
+        timed_out = threading.Event()
+
+        def kill() -> None:
+            timed_out.set()
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+        timer = threading.Timer(timeout, kill) if timeout else None
+        if timer:
+            timer.start()
+        try:
+            _, status, usage = os.wait4(process.pid, 0)
+        finally:
+            if timer:
+                timer.cancel()
+        wall = time.monotonic() - started
+        process.returncode = os.waitstatus_to_exitcode(status)
+    return {
+        "command": command,
+        "started_utc": started_utc,
+        "exit_code": process.returncode,
+        "timed_out": timed_out.is_set(),
+        "wall_seconds": wall,
+        "user_seconds": usage.ru_utime,
+        "sys_seconds": usage.ru_stime,
+        "max_rss_mib": max_rss_mib(usage.ru_maxrss),
+        "major_page_faults": usage.ru_majflt,
+        "voluntary_context_switches": usage.ru_nvcsw,
+        "involuntary_context_switches": usage.ru_nivcsw,
+    }
+
+
+def parse_stdout(path: Path) -> dict:
+    iterations, result, other = [], None, 0
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            other += 1
+            continue
+        if isinstance(value, dict) and "completed_iteration" in value:
+            iterations.append(value)
+        elif isinstance(value, dict) and value.get("schema") == RUN_SCHEMA:
+            result = value
+        else:
+            other += 1
+    return {"iterations": iterations, "result": result, "other_lines": other}
+
+
+def read_diagnostics(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not lines:
+        return None
+    for line in lines:
+        if line.get("schema") != DIAGNOSTICS_SCHEMA:
+            raise BenchError(f"{path}: unexpected diagnostics schema")
+    last = dict(lines[-1])
+    for key in ("schema", "completed_iteration", "newly_completed", "process_id"):
+        last.pop(key)
+    return {"lines": len(lines), "process_ids": sorted({line["process_id"] for line in lines}),
+            "completed_iterations": [line["completed_iteration"] for line in lines],
+            "final": last}
+
+
+# ---------------------------------------------------------------- run trees
+
+
+def tree_files(root: Path) -> dict[str, Path]:
+    files = {}
+    if not root.exists():
+        return files
+    for directory, subdirectories, names in os.walk(root):
+        subdirectories.sort()
+        for name in sorted(names):
+            path = Path(directory) / name
+            files[path.relative_to(root).as_posix()] = path
+    return files
+
+
+def map_pin(path, prefix: str) -> str | None:
+    """A pin's absolute path inside the fixed run directory, as a tree path."""
+    if not isinstance(path, str):
+        return None
+    try:
+        relative = Path(plain_path(path)).relative_to(plain_path(prefix))
+    except ValueError:
+        return None
+    return relative.as_posix() if relative.parts and ".." not in relative.parts else None
+
+
+def mapped_json(tree: Path, prefix: str, pin) -> dict | None:
+    relative = map_pin(pin.get("path") if isinstance(pin, dict) else None, prefix)
+    if relative is None or not (tree / relative).is_file():
+        return None
+    return read_json(tree / relative)
+
+
+def boundaries(tree: Path, prefix: str) -> list[dict]:
+    """The published state after every completed iteration."""
+    found = []
+    iterations = tree / "iterations"
+    if not iterations.is_dir():
+        return found
+    for directory in sorted(iterations.iterdir()):
+        complete = directory / "complete.json"
+        if not complete.is_file():
+            continue
+        receipt = read_json(complete)
+        identity = receipt.get("output_identity") or {}
+        update = map_pin(receipt.get("update", {}).get("path"), prefix)
+        checkpoint = None
+        if update is not None:
+            path = (tree / update).parent / "checkpoint.json"
+            checkpoint = sha256_file(path) if path.is_file() else None
+        found.append({"iteration": receipt.get("iteration"),
+                      "adam_step": identity.get("adam_step"),
+                      "state_sha256": identity.get("state_sha256"),
+                      "output_identity_sha256": hashlib.sha256(
+                          json.dumps(identity, sort_keys=True).encode()).hexdigest(),
+                      "checkpoint_sha256": checkpoint})
+    return found
+
+
+def iteration_receipts(tree: Path, prefix: str) -> list[dict]:
+    """Phase timings recorded in each completed iteration's receipts."""
+    rows = []
+    iterations = tree / "iterations"
+    if not iterations.is_dir():
+        return rows
+    for directory in sorted(iterations.iterdir()):
+        complete = directory / "complete.json"
+        if not complete.is_file():
+            continue
+        receipt = read_json(complete)
+        row = {"iteration": receipt.get("iteration")}
+        collection = mapped_json(tree, prefix, receipt.get("collection")) or {}
+        update = mapped_json(tree, prefix, receipt.get("update")) or {}
+        for field in COLLECTION_FIELDS:
+            row[field] = collection.get(field)
+        for field in UPDATE_FIELDS:
+            row[field] = update.get(field)
+        preparation = update.get("update_preparation") or {}
+        for field in PREPARATION_FIELDS:
+            row[f"update_preparation.{field}"] = preparation.get(field)
+        rows.append(row)
+    return rows
+
+
+def storage(tree: Path) -> dict:
+    files = tree_files(tree)
+    by_kind: dict[str, int] = {}
+    total = 0
+    for relative, path in files.items():
+        size = path.stat().st_size
+        total += size
+        # One entry per file name pattern: episode-0001.json is "episode-#.json".
+        kind = re.sub(r"[0-9]+", "#", Path(relative).name)
+        by_kind[kind] = by_kind.get(kind, 0) + size
+    return {"files": len(files), "bytes": total, "bytes_by_name": dict(sorted(by_kind.items()))}
+
+
+def json_differences(a, b, path, parents):
+    if isinstance(a, dict) and isinstance(b, dict):
+        for key in sorted(set(a) | set(b)):
+            if key not in a or key not in b:
+                yield path + (key,), "structure", parents
+            else:
+                yield from json_differences(a[key], b[key], path + (key,), (a, b))
+    elif isinstance(a, list) and isinstance(b, list):
+        if len(a) != len(b):
+            yield path, "structure", parents
+        else:
+            for index, (left, right) in enumerate(zip(a, b)):
+                yield from json_differences(left, right, path + (index,), (a, b))
+    elif type(a) is not type(b) or a != b:
+        yield path, "value", parents
+
+
+def is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def without_timing(value):
+    """A diagnostics value without its timing leaves (see TIMING_SUFFIXES)."""
+    if isinstance(value, dict):
+        return {key: without_timing(item) for key, item in value.items()
+                if not (key.endswith(TIMING_SUFFIXES) and is_number(item))}
+    return value
+
+
+def timing_leaves(value, path=""):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            name = f"{path}/{key}" if path else key
+            if key.endswith(TIMING_SUFFIXES) and is_number(item):
+                yield name, item
+            else:
+                yield from timing_leaves(item, name)
+
+
+class TreeComparison:
+    """Compares a sample's run tree with the reference sample's, file by file."""
+
+    def __init__(self, reference: Path, sample: Path, prefix: str, across_builds: bool):
+        self.reference, self.sample = reference, sample
+        self.prefix, self.across_builds = prefix, across_builds
+        self.reference_files = tree_files(reference)
+        self.sample_files = tree_files(sample)
+        self.results: dict[str, dict] = {}
+        self.visiting: set[str] = set()
+
+    def file(self, relative: str) -> dict:
+        if relative in self.results:
+            return self.results[relative]
+        if relative in self.visiting:
+            return {"status": "mismatch", "differences": ["pin cycle"]}
+        self.visiting.add(relative)
+        try:
+            result = self._file(relative)
+        finally:
+            self.visiting.discard(relative)
+        self.results[relative] = result
+        return result
+
+    def _file(self, relative: str) -> dict:
+        left, right = self.reference_files.get(relative), self.sample_files.get(relative)
+        if left is None or right is None:
+            return {"status": "mismatch", "differences": ["file present on one side only"]}
+        if left.stat().st_size == right.stat().st_size and sha256_file(left) == sha256_file(right):
+            return {"status": "identical"}
+        if max(left.stat().st_size, right.stat().st_size) > JSON_DIFF_CAP:
+            return {"status": "mismatch", "differences": ["large file differs"]}
+        try:
+            a, b = read_json(left), read_json(right)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return {"status": "mismatch", "differences": ["non-JSON file differs"]}
+        found = list(islice(json_differences(a, b, (), (None, None)), COLLECTED_DIFFERENCES + 1))
+        # Only a real extra difference proves the comparison was incomplete.
+        truncated = len(found) > COLLECTED_DIFFERENCES
+        if truncated:
+            found.pop()
+        classes: dict[str, int] = {}
+        unaccounted = []
+        for path, kind, parents in found:
+            label = self.classify(path, kind, parents, a, b)
+            classes[label] = classes.get(label, 0) + 1
+            if label == "unaccounted":
+                unaccounted.append("/".join(map(str, path)) + f" ({kind})")
+        if unaccounted or truncated:
+            differences = unaccounted[:LISTED_DIFFERENCES]
+            if truncated:
+                differences = ["JSON difference limit exceeded", *differences[:LISTED_DIFFERENCES - 1]]
+            return {"status": "mismatch", "classes": classes, "differences": differences,
+                    "unaccounted": len(unaccounted), "truncated": truncated}
+        return {"status": "accounted", "classes": classes}
+
+    def classify(self, path, kind, parents, a, b) -> str:
+        if kind != "value" or not path or not isinstance(path[-1], str):
+            return "unaccounted"
+        key = path[-1]
+        left, right = value_at(a, path), value_at(b, path)
+        if key.endswith(TIMING_SUFFIXES) and is_number(left) and is_number(right):
+            return "timing"
+        if self.across_builds and key in PROVENANCE_KEYS:
+            return "provenance"
+        parent_a, parent_b = parents
+        if (key == "sha256" and isinstance(parent_a, dict) and isinstance(parent_b, dict)
+                and parent_a.get("path") == parent_b.get("path")):
+            target = map_pin(parent_a.get("path"), self.prefix)
+            if target is not None and self.file(target)["status"] == "accounted":
+                return "pin"
+        return "unaccounted"
+
+    def summary(self) -> dict:
+        names = sorted(set(self.reference_files) | set(self.sample_files))
+        missing = [n for n in names if n not in self.sample_files]
+        extra = [n for n in names if n not in self.reference_files]
+        identical, accounted, mismatched = 0, [], []
+        for name in names:
+            if name in missing or name in extra:
+                continue
+            result = self.file(name)
+            if result["status"] == "identical":
+                identical += 1
+            elif result["status"] == "accounted":
+                accounted.append({"file": name, "classes": result["classes"]})
+            else:
+                mismatched.append({"file": name, **{k: v for k, v in result.items() if k != "status"}})
+        reference_states = boundaries(self.reference, self.prefix)
+        sample_states = boundaries(self.sample, self.prefix)
+        if missing or extra or mismatched or reference_states != sample_states:
+            status = "mismatch"
+        elif accounted:
+            status = "equal_up_to_accounted_fields"
+        else:
+            status = "identical"
+        return {"status": status, "files": len(names), "identical_files": identical,
+                "accounted_files": accounted, "mismatched_files": mismatched,
+                "missing_files": missing, "extra_files": extra,
+                "boundaries_equal": reference_states == sample_states,
+                "boundaries": len(sample_states), "across_builds": self.across_builds}
+
+
+def value_at(document, path):
+    for step in path:
+        document = document[step]
+    return document
+
+
+# ---------------------------------------------------------------- statistics
+
+
+def describe(values: list[float]) -> dict:
+    if not values:
+        return {"n": 0}
+    median = statistics.median(values)
+    return {"n": len(values), "median": median, "mean": statistics.fmean(values),
+            "min": min(values), "max": max(values),
+            "stdev": statistics.stdev(values) if len(values) > 1 else None,
+            "spread_fraction": (max(values) - min(values)) / median if median else None,
+            "samples": values}
+
+
+def verdict(baseline: list[float], candidate: list[float], blocks: list[tuple],
+            lower_is_better: bool) -> dict:
+    """The comparison rule (#594 item 3): fewer than two complete A-B-B-A
+    blocks, an effect no larger than the observed run-to-run spread (the
+    larger arm's max minus min over its median), or blocks that disagree in
+    direction is inconclusive; otherwise the candidate/baseline median ratio
+    is an improvement or a regression.
+    """
+    if len(baseline) < 2 or len(candidate) < 2:
+        return {"verdict": "inconclusive", "reason": "fewer than two samples per arm"}
+    base, cand = statistics.median(baseline), statistics.median(candidate)
+    if base <= 0:
+        return {"verdict": "inconclusive", "reason": "the baseline median is not positive"}
+    ratio = cand / base
+    spreads = [describe(values)["spread_fraction"] for values in (baseline, candidate)]
+    spread = max(s for s in spreads if s is not None)
+    block_ratios = [sum(b) / sum(a) for a, b in blocks if sum(a) > 0]
+    result = {"ratio_candidate_to_baseline": ratio, "effect_fraction": ratio - 1,
+              "max_spread_fraction": spread, "block_ratios": block_ratios}
+    if len(block_ratios) < 2:
+        result.update(verdict="inconclusive", reason="fewer than two complete A-B-B-A blocks")
+    elif abs(ratio - 1) <= spread:
+        result.update(verdict="inconclusive", reason="the median effect is within the observed spread")
+    elif block_ratios and not (all(r < 1 for r in block_ratios) or all(r > 1 for r in block_ratios)):
+        result.update(verdict="inconclusive", reason="A-B-B-A blocks disagree in direction")
+    else:
+        improved = ratio < 1 if lower_is_better else ratio > 1
+        result.update(verdict="improvement" if improved else "regression",
+                      reason="the median effect exceeds the observed spread in every block")
+    return result
+
+
+def sample_metrics(sample: dict) -> dict:
+    """The compared numbers of one completed sample."""
+    metrics = {name: sample["process"][name] for name in
+               ("wall_seconds", "user_seconds", "sys_seconds", "max_rss_mib")}
+    completed = sample["newly_completed_iterations"]
+    wall = sample["process"]["wall_seconds"]
+    metrics["updates_per_hour"] = completed * 3600 / wall if wall > 0 else None
+    for field in SCHEDULER_FIELDS:
+        values = [line.get("scheduler_timing", {}).get(field) for line in sample["iterations_stdout"]]
+        if values and all(is_number(value) for value in values):
+            metrics[f"scheduler.{field}"] = sum(values)
+    if "scheduler.iteration_wall_seconds" in metrics:
+        metrics["outside_iterations_seconds"] = wall - metrics["scheduler.iteration_wall_seconds"]
+    for field in COLLECTION_FIELDS + UPDATE_FIELDS + tuple(
+            f"update_preparation.{f}" for f in PREPARATION_FIELDS):
+        values = [row[field] for row in sample["iteration_receipts"] if is_number(row.get(field))]
+        if values:
+            metrics[f"receipts.{field}"] = sum(values)
+    return metrics
+
+
+def compare_case(case: str, samples: list[dict], arms: dict) -> dict:
+    timed = [s for s in samples if s["kind"] == "timed"]
+    complete = [s for s in timed if s["ok"]]
+    by_arm = {letter: [s for s in complete if s["arm_letter"] == letter] for letter in "AB"}
+    metrics = {}
+    names = sorted(set().union(*(set(s["metrics"]) for s in complete))) if complete else []
+    for name in names:
+        lower = PROCESS_METRICS.get(name, True)
+        values = {letter: [s["metrics"][name] for s in by_arm[letter]
+                           if is_number(s["metrics"].get(name))] for letter in "AB"}
+        blocks = []
+        for block in sorted({s["block"] for s in complete}):
+            members = [s for s in complete if s["block"] == block and is_number(s["metrics"].get(name))]
+            a = [s["metrics"][name] for s in members if s["arm_letter"] == "A"]
+            b = [s["metrics"][name] for s in members if s["arm_letter"] == "B"]
+            if len(a) == 2 and len(b) == 2:
+                blocks.append((a, b))
+        metrics[name] = {"lower_is_better": lower, "baseline": describe(values["A"]),
+                         "candidate": describe(values["B"]),
+                         **verdict(values["A"], values["B"], blocks, lower)}
+    parity = [{"ordinal": s["ordinal"], "kind": s["kind"], "arm": s["arm"],
+               "status": s["parity"]["status"] if s.get("parity") else "reference"}
+              for s in samples if s["ok"]]
+    counters = {}
+    for letter in "AB":
+        finals = [s["diagnostics"]["final"] for s in by_arm[letter] if s.get("diagnostics")]
+        counts = [without_timing(final) for final in finals]
+        timings: dict[str, list] = {}
+        for final in finals:
+            for path, value in timing_leaves(final):
+                timings.setdefault(path, []).append(value)
+        counters[arms[letter]["name"]] = {
+            "available": bool(finals),
+            # Counts are deterministic; their timing leaves are not compared.
+            "equal_across_samples": all(c == counts[0] for c in counts) if counts else None,
+            "counts": counts[0] if counts else None,
+            "timing_medians": {path: statistics.median(values)
+                               for path, values in sorted(timings.items())}}
+    cold = [s for s in samples if s["kind"] == "cold_resume"]
+    failures = [{"ordinal": s["ordinal"], "arm": s["arm"], "kind": s["kind"], "error": s.get("error")}
+                for s in samples if not s["ok"]]
+    parity_ok = all(p["status"] in ("reference", "identical", "equal_up_to_accounted_fields")
+                    for p in parity)
+    provenance = {arms[l]["name"]: sorted({json.dumps(s.get("run_provenance"), sort_keys=True)
+                                           for s in by_arm[l]}) for l in "AB"}
+    return {"timed_samples": {arms[l]["name"]: len(by_arm[l]) for l in "AB"},
+            "run_provenance": {name: [json.loads(v) for v in values]
+                               for name, values in provenance.items()},
+            "failures": failures, "parity_ok": parity_ok and not failures, "parity": parity,
+            "metrics": metrics, "counters": counters,
+            "cold_resume": [{"arm": s["arm"], "ok": s["ok"],
+                             "first_process_completed": s.get("first_process_completed"),
+                             "status": s["parity"]["status"] if s.get("parity") else None}
+                            for s in cold],
+            "storage": {arms[l]["name"]: describe([s["storage"]["bytes"] for s in by_arm[l]])
+                        for l in "AB"}}
+
+
+# ---------------------------------------------------------------- run
+
+
+def plan_samples(cases: list[str], blocks: int, warmup_runs: int, cold_resume: bool) -> list[dict]:
+    plan = []
+    for case in cases:
+        for repeat in range(warmup_runs):
+            for letter in "AB":
+                plan.append({"case": case, "kind": "warmup", "arm_letter": letter,
+                             "block": None, "position": f"warmup{repeat + 1}"})
+        for block in range(blocks):
+            seen: dict[str, int] = {}
+            for letter in ABBA:
+                seen[letter] = seen.get(letter, 0) + 1
+                plan.append({"case": case, "kind": "timed", "arm_letter": letter,
+                             "block": block, "position": f"{letter}{seen[letter]}"})
+        if cold_resume:
+            for letter in "AB":
+                plan.append({"case": case, "kind": "cold_resume", "arm_letter": letter,
+                             "block": None, "position": "cold"})
+    for ordinal, entry in enumerate(plan):
+        entry["ordinal"] = ordinal
+    return plan
+
+
+def parse_assignments(values: list[str], what: str) -> dict:
+    parsed = {}
+    for value in values or []:
+        key, sep, rest = value.partition("=")
+        if not sep or not key:
+            raise BenchError(f"{what} takes KEY=VALUE, not {value!r}")
+        parsed[key] = rest
+    return parsed
+
+
+def parse_arm(value: str, letter: str) -> dict:
+    name, sep, binary = value.partition("=")
+    if not sep or not name or not binary:
+        raise BenchError(f"an arm is NAME=BINARY, not {value!r}")
+    path = Path(binary).resolve()
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise BenchError(f"arm {name}: {path} is not an executable file")
+    return {"letter": letter, "name": name, "binary": str(path), "sha256": sha256_file(path),
+            "bytes": path.stat().st_size, "env": {}}
+
+
+def run(args) -> int:
+    fixture_root = Path(args.fixture).resolve()
+    fixture = read_json(fixture_root / "fixture.json")
+    validate_fixture(fixture, fixture_root)
+    out = Path(args.out)
+    require_absent_or_empty(out, "--out")
+    arms = {"A": parse_arm(args.baseline, "A"), "B": parse_arm(args.candidate, "B")}
+    if arms["A"]["name"] == arms["B"]["name"]:
+        raise BenchError("the baseline and candidate need different names")
+    shared_env = parse_assignments(args.env, "--env")
+    for value in args.arm_env or []:
+        name, sep, assignment = value.partition(":")
+        matches = [arm for arm in arms.values() if arm["name"] == name]
+        if not sep or not matches:
+            raise BenchError(f"--arm-env takes ARM:KEY=VALUE with a known arm, not {value!r}")
+        matches[0]["env"].update(parse_assignments([assignment], "--arm-env"))
+    for env in [shared_env, *(arm["env"] for arm in arms.values())]:
+        if DIAGNOSTICS_ENV in env:
+            raise BenchError(f"the driver controls {DIAGNOSTICS_ENV} for every sample")
+    known = {case["name"]: case for case in fixture["cases"]}
+    cases = args.cases.split(",") if args.cases else list(known)
+    for case in cases:
+        if case not in known:
+            raise BenchError(f"unknown case {case}; the fixture has {sorted(known)}")
+    plan = plan_samples(cases, args.blocks, args.warmup_runs, args.cold_resume)
+    if args.plan_only:
+        print(json.dumps(plan, indent=2))
+        return 0
+    for case in cases:
+        if Path(known[case]["output_directory"]).exists():
+            raise BenchError(f"{known[case]['output_directory']} exists: a previous driver was "
+                             "interrupted; move it away before running")
+    out.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "schema": BENCH_SCHEMA,
+        "status": "running",
+        "created_utc": utc_now(),
+        "label": args.label,
+        "build_profile": args.build_profile,
+        "driver": {"path": str(Path(__file__).resolve()), "sha256": sha256_file(Path(__file__)),
+                   "argv": sys.argv[1:]},
+        "fixture": {"root": str(fixture_root), "sha256": sha256_file(fixture_root / "fixture.json"),
+                    "generator": fixture.get("generator"), "options": fixture.get("options"),
+                    "workload": fixture.get("workload"),
+                    "cases": {name: {"config": known[name]["config"],
+                                     "initial_source": known[name].get("initial_source"),
+                                     "first_iteration": known[name].get("first_iteration"),
+                                     "iterations": known[name].get("iterations")}
+                              for name in cases}},
+        "arms": {"baseline": arms["A"], "candidate": arms["B"]},
+        "env": shared_env,
+        "host": host_record(),
+        "policy": {
+            "order": "per case: warm-up runs (A then B, excluded from comparison), then "
+                     f"{args.blocks} A-B-B-A block(s), then optional cold-resume checks",
+            "process": "every sample is a new process of the arm's binary",
+            "page_cache": "not dropped between samples",
+            "work_path": "each case writes to its fixed output directory; the driver moves "
+                         "the run under runs/ after each sample",
+            "reference": "each case's first completed sample; every later sample's run tree "
+                         "is compared with it",
+            "max_wall_seconds": args.max_wall_seconds,
+            "keep_runs": args.keep_runs,
+            "cache_diagnostics": not args.no_cache_diagnostics,
+        },
+        "plan": plan,
+    }
+    write_json(out / "bench.json", manifest)
+    samples_path = out / "samples.jsonl"
+    references: dict[str, dict] = {}
+    samples: list[dict] = []
+    for entry in plan:
+        arm = arms[entry["arm_letter"]]
+        case = known[entry["case"]]
+        sample = run_sample(
+            entry, arm, case, out, shared_env, args.max_wall_seconds,
+            cache_diagnostics=not args.no_cache_diagnostics,
+        )
+        reference = references.get(entry["case"])
+        if sample["ok"] and reference is None:
+            references[entry["case"]] = sample
+        elif sample["ok"]:
+            comparison = TreeComparison(out / reference["run_directory"], out / sample["run_directory"],
+                                        case["output_directory"],
+                                        across_builds=reference["arm_letter"] != entry["arm_letter"])
+            sample["parity"] = comparison.summary()
+            sample["parity"]["reference_ordinal"] = reference["ordinal"]
+        if (args.keep_runs == "reference" and sample["ok"]
+                and references.get(entry["case"]) is not sample
+                and (sample.get("parity") or {}).get("status") in (
+                    "identical", "equal_up_to_accounted_fields")):
+            shutil.rmtree(out / sample["run_directory"], ignore_errors=True)
+            sample["run_pruned"] = True
+        append_jsonl(samples_path, sample)
+        samples.append(sample)
+        status = sample["parity"]["status"] if sample.get("parity") else (
+            "reference" if sample["ok"] else f"FAILED: {sample.get('error')}")
+        print(f"[{entry['ordinal'] + 1}/{len(plan)}] {entry['case']} {entry['kind']} "
+              f"{entry['position']} {arm['name']}: {sample['process']['wall_seconds']:.2f} s, "
+              f"{sample['process']['max_rss_mib']:.0f} MiB, {status}", flush=True)
+    manifest["binaries_unchanged"] = all(
+        sha256_file(Path(arm["binary"])) == arm["sha256"] for arm in arms.values())
+    manifest.update(status="complete", completed_utc=utc_now())
+    return finish(out, manifest, samples)
+
+
+def finish(out: Path, manifest: dict, samples: list[dict]) -> int:
+    """Writes comparison.json from the samples and the manifest's outputs."""
+    arms = {"A": manifest["arms"]["baseline"], "B": manifest["arms"]["candidate"]}
+    unchanged = manifest.get("binaries_unchanged")
+    comparison = {
+        "schema": COMPARISON_SCHEMA,
+        "created_utc": utc_now(),
+        # `compare` can recompute with a newer driver than the one that ran.
+        "compared_by": {"path": str(Path(__file__).resolve()), "sha256": sha256_file(Path(__file__))},
+        "label": manifest["label"],
+        "baseline": arms["A"]["name"],
+        "candidate": arms["B"]["name"],
+        "rule": verdict.__doc__.strip(),
+        "binaries_unchanged": unchanged,
+        "cases": {case: compare_case(case, [s for s in samples if s["case"] == case], arms)
+                  for case in manifest["fixture"]["cases"]},
+    }
+    comparison["ok"] = unchanged is True and all(
+        c["parity_ok"] for c in comparison["cases"].values())
+    write_json(out / "comparison.json", comparison)
+    manifest["outputs"] = {"samples.jsonl": sha256_file(out / "samples.jsonl"),
+                           "comparison.json": sha256_file(out / "comparison.json")}
+    write_json(out / "bench.json", manifest)
+    print_summary(comparison)
+    return 0 if comparison["ok"] else 1
+
+
+def compare(args) -> int:
+    """Recomputes comparison.json from a finished run's samples, unchanged."""
+    out = Path(args.out).resolve()
+    manifest = read_json(out / "bench.json")
+    if manifest.get("schema") != BENCH_SCHEMA or manifest.get("status") != "complete":
+        raise BenchError(f"{out} holds no complete {BENCH_SCHEMA} run")
+    if manifest.get("outputs", {}).get("samples.jsonl") != sha256_file(out / "samples.jsonl"):
+        raise BenchError("samples.jsonl changed since the run")
+    samples = [json.loads(line)
+               for line in (out / "samples.jsonl").read_text(encoding="utf-8").splitlines()]
+    if "binaries_unchanged" not in manifest and (out / "comparison.json").is_file():
+        # A run from before the manifest recorded it.
+        manifest["binaries_unchanged"] = read_json(out / "comparison.json").get("binaries_unchanged")
+    return finish(out, manifest, samples)
+
+
+def compact(value):
+    """Rounds every float to six significant digits; the raw outputs keep full precision."""
+    if isinstance(value, float):
+        return float(f"{value:.6g}")
+    if isinstance(value, dict):
+        return {key: compact(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [compact(item) for item in value]
+    return value
+
+
+def receipt_run(out: Path) -> dict:
+    """One finished run as receipt rows, after checking its outputs against its manifest."""
+    manifest = read_json(out / "bench.json")
+    if manifest.get("schema") != BENCH_SCHEMA or manifest.get("status") != "complete":
+        raise BenchError(f"{out} holds no complete {BENCH_SCHEMA} run")
+    for name, pin in manifest.get("outputs", {}).items():
+        if sha256_file(out / name) != pin:
+            raise BenchError(f"{out / name} changed since the run")
+    comparison = read_json(out / "comparison.json")
+    samples = [json.loads(line)
+               for line in (out / "samples.jsonl").read_text(encoding="utf-8").splitlines()]
+    metrics = sorted({name for sample in samples for name in sample.get("metrics", {})})
+    rows = []
+    for sample in samples:
+        parity = sample.get("parity") or {}
+        accounted: dict[str, int] = {}
+        for entry in parity.get("accounted_files", []):
+            for label, count in entry["classes"].items():
+                accounted[label] = accounted.get(label, 0) + count
+        processes = sample.get("processes", [])
+        rows.append(compact([
+            sample["ordinal"], sample["case"], sample["kind"], sample["block"], sample["position"],
+            sample["arm"], sample["ok"], sample.get("error"),
+            processes[0]["wall_seconds"] if len(processes) > 1 else None,
+            *(sample.get("metrics", {}).get(name) for name in metrics),
+            sample.get("durable_completed_iterations"), sample["storage"]["bytes"],
+            parity.get("status", "reference" if sample["ok"] else None),
+            parity.get("identical_files"), parity.get("files"), accounted or None]))
+    cases = {}
+    for case, result in comparison["cases"].items():
+        reference = next((s for s in samples if s["case"] == case and s["ok"]), None)
+        cases[case] = {
+            "parity_ok": result["parity_ok"],
+            "failures": result["failures"],
+            "timed_samples": result["timed_samples"],
+            "boundaries": reference and reference["boundaries"],
+            "storage_bytes_by_name": reference and reference["storage"]["bytes_by_name"],
+            "cold_resume": result["cold_resume"],
+            "counters": {arm: compact(counters) for arm, counters in result["counters"].items()
+                         if counters.get("available")},
+            "verdicts": [compact([name, body["baseline"].get("median"), body["candidate"].get("median"),
+                                  body.get("ratio_candidate_to_baseline"), body.get("max_spread_fraction"),
+                                  body.get("effect_fraction"), body.get("block_ratios"), body["verdict"],
+                                  body.get("reason")])
+                         for name, body in result["metrics"].items()],
+        }
+    provenance = next(iter(comparison["cases"].values()), {}).get("run_provenance", {})
+    arms = {role: {**arm, "run_provenance": provenance.get(arm["name"])}
+            for role, arm in manifest["arms"].items()}
+    return {
+        "label": manifest["label"],
+        "created_utc": manifest["created_utc"],
+        "completed_utc": manifest.get("completed_utc"),
+        "argv": manifest["driver"]["argv"],
+        "run_driver_sha256": manifest["driver"]["sha256"],
+        "compared_by_sha256": comparison.get("compared_by", {}).get("sha256"),
+        "build_profile": manifest["build_profile"],
+        "host": manifest["host"],
+        "env": manifest["env"],
+        "policy": manifest["policy"],
+        "fixture": manifest["fixture"],
+        "rule": comparison["rule"],
+        "arms": arms,
+        "binaries_unchanged": comparison["binaries_unchanged"],
+        "ok": comparison["ok"],
+        "outputs_sha256": {name: sha256_file(out / name)
+                           for name in ("bench.json", "samples.jsonl", "comparison.json")},
+        "sample_columns": ["ordinal", "case", "kind", "block", "position", "arm", "ok", "error",
+                           "first_process_wall_seconds", *metrics, "durable_completed_iterations",
+                           "storage_bytes", "parity", "identical_files", "files", "accounted"],
+        "samples": rows,
+        "verdict_columns": ["metric", "baseline_median", "candidate_median", "ratio",
+                            "max_spread_fraction", "effect_fraction", "block_ratios", "verdict",
+                            "reason"],
+        "cases": cases,
+    }
+
+
+def receipt(args) -> int:
+    """Writes one small committed receipt for finished runs: pins, every raw sample, verdicts."""
+    runs: dict[str, Path] = {}
+    for item in args.run:
+        name, sep, out = item.partition("=")
+        if not sep or not name or not out or name in runs:
+            raise BenchError(f"--run is a unique NAME=OUTPUT_DIRECTORY, not {item!r}")
+        runs[name] = Path(out).resolve()
+    body = {name: receipt_run(out) for name, out in runs.items()}
+    common = {}
+    for key in ("build_profile", "host", "env", "policy", "fixture", "rule"):
+        values = [run[key] for run in body.values()]
+        if len(values) > 1 and all(value == values[0] for value in values):
+            common[key] = values[0]
+            for run in body.values():
+                del run[key]
+    document = {"schema": RECEIPT_SCHEMA, "created_utc": utc_now(),
+                "receipt_driver_sha256": sha256_file(Path(__file__)),
+                "note": "Floats are rounded to six significant digits; outputs_sha256 pins the raw files.",
+                "common": common, "runs": body}
+    # One line per sample row, verdict row or flat object keeps the file short and diffable.
+    rows: list[str] = []
+
+    class Held(str):
+        """A placeholder for one value written on its own line."""
+
+    def hold(value) -> Held:
+        rows.append(json.dumps(value, sort_keys=True))
+        return Held(f"@@row{len(rows) - 1}@@")
+
+    def fold(value):
+        if isinstance(value, (dict, list)):
+            items = value.values() if isinstance(value, dict) else value
+            if value and not any(isinstance(item, (dict, list, Held)) for item in items):
+                return hold(value)
+            if isinstance(value, dict):
+                return {key: fold(item) for key, item in value.items()}
+            return [fold(item) for item in value]
+        return value
+
+    for run in body.values():
+        run["samples"] = [hold(row) for row in run["samples"]]
+        for case in run["cases"].values():
+            case["verdicts"] = [hold(row) for row in case["verdicts"]]
+    text = re.sub(r'"@@row(\d+)@@"', lambda match: rows[int(match.group(1))],
+                  json.dumps(fold(document), indent=1, sort_keys=True))
+    target = Path(args.write)
+    with open(target, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(text + "\n")
+    print(f"{target}: {len(text) + 1} bytes")
+    return 0
+
+
+def move_run(work: Path, destination: Path) -> None:
+    """Moves a sample's run tree out of the case's fixed path. Windows refuses to
+    rename a directory while any file in it is open, and an on-access scanner may
+    briefly hold files the run just wrote, so there the rename is retried first."""
+    if os.name == "nt":
+        for delay in (0.1, 0.25, 0.5, 1.0, 2.0, 4.0):
+            try:
+                os.rename(work, destination)
+                return
+            except PermissionError:
+                time.sleep(delay)
+            except OSError:
+                break
+    shutil.move(str(work), str(destination))
+
+
+def require_completed_sample(result: dict, states: list[dict], tree: Path,
+                             prefix: str, expected: int) -> None:
+    if result.get("complete") is not True:
+        raise BenchError("the run did not report completion")
+    pins = result.get("iterations")
+    if (result.get("completed_iterations") != expected
+            or result.get("planned_iterations") != expected
+            or not isinstance(pins, list) or len(pins) != expected):
+        raise BenchError(f"the run did not report all {expected} planned iterations")
+    if ([row["iteration"] for row in states] != list(range(expected))
+            or any(not row["state_sha256"] or not row["checkpoint_sha256"] for row in states)):
+        raise BenchError(f"the run lacks {expected} durable iteration boundaries")
+    for index, pin in enumerate(pins):
+        relative = f"iterations/{index:06d}/complete.json"
+        if (not isinstance(pin, dict) or map_pin(pin.get("path"), prefix) != relative
+                or sha256_file(tree / relative) != pin.get("sha256")):
+            raise BenchError(f"iteration {index}: durable completion does not match its pin")
+    completion = tree / "completion.json"
+    if not completion.is_file() or read_json(completion) != result:
+        raise BenchError("the durable completion does not match the run result")
+
+
+def run_sample(entry: dict, arm: dict, case: dict, out: Path, shared_env: dict,
+               max_wall_seconds: float | None, *, cache_diagnostics: bool = True) -> dict:
+    name = f"{entry['ordinal']:03d}-{entry['kind']}-{entry['position']}-{arm['name']}"
+    directory = out / "runs" / entry["case"] / name
+    if not directory.resolve().is_relative_to(out.resolve()):
+        raise BenchError("sample directory escapes the requested output directory")
+    directory.mkdir(parents=True)
+    work = Path(case["output_directory"])
+    expected_work = work.resolve()
+    config = case["config"]["path"]
+    env = dict(os.environ)
+    env.update(shared_env)
+    env.update(arm["env"])
+    if cache_diagnostics:
+        env[DIAGNOSTICS_ENV] = str(directory / "diagnostics.jsonl")
+    else:
+        env.pop(DIAGNOSTICS_ENV, None)
+    sample = {"schema": SAMPLE_SCHEMA, **entry, "arm": arm["name"], "binary_sha256": arm["sha256"],
+              "cache_diagnostics": cache_diagnostics,
+              "directory": str(directory.relative_to(out)),
+              "run_directory": str((directory / "run").relative_to(out))}
+    processes = []
+    try:
+        if entry["kind"] == "cold_resume":
+            if case.get("iterations", 0) < 2:
+                raise BenchError("a cold resume needs a case with at least two iterations")
+            first = run_process([arm["binary"], config, "--max-new-iterations", "1"], env,
+                                directory / "stdout-first.jsonl", directory / "stderr-first.txt",
+                                max_wall_seconds)
+            processes.append(first)
+            first_out = parse_stdout(directory / "stdout-first.jsonl")
+            sample["first_process_completed"] = (first_out["result"] or {}).get("completed_iterations")
+            if first["exit_code"] != 0 or sample["first_process_completed"] != 1:
+                raise BenchError("the interrupted first process did not stop after one iteration")
+        processes.append(run_process([arm["binary"], config], env, directory / "stdout.jsonl",
+                                     directory / "stderr.txt", max_wall_seconds))
+    except BenchError as error:
+        sample["error"] = str(error)
+    finally:
+        if work.exists():
+            destination = directory / "run"
+            if (work.resolve() != expected_work
+                    or not destination.resolve().is_relative_to(out.resolve())):
+                sample["error"] = "run archive path changed while the sample was running"
+            else:
+                move_run(work, destination)
+    final = processes[-1] if processes else None
+    sample["processes"] = processes
+    sample["process"] = final or {"wall_seconds": 0.0, "max_rss_mib": 0.0}
+    if final is not None and "error" not in sample:
+        if final["timed_out"]:
+            sample["error"] = f"exceeded {max_wall_seconds} s"
+        elif final["exit_code"] != 0:
+            sample["error"] = f"exit code {final['exit_code']}"
+    stdout = parse_stdout(directory / "stdout.jsonl") if (directory / "stdout.jsonl").exists() else {
+        "iterations": [], "result": None, "other_lines": 0}
+    result = stdout["result"] or {}
+    tree = directory / "run"
+    prefix = str(work)
+    sample["iterations_stdout"] = stdout["iterations"]
+    sample["stdout_other_lines"] = stdout["other_lines"]
+    sample["newly_completed_iterations"] = len(stdout["iterations"])
+    sample["completed_iterations"] = result.get("completed_iterations")
+    sample["complete"] = result.get("complete")
+    sample["boundaries"] = boundaries(tree, prefix)
+    sample["durable_completed_iterations"] = len(sample["boundaries"])
+    sample["iteration_receipts"] = iteration_receipts(tree, prefix)
+    sample["diagnostics"] = read_diagnostics(directory / "diagnostics.jsonl")
+    sample["storage"] = storage(tree)
+    if (tree / "run.json").is_file():
+        recorded = read_json(tree / "run.json")
+        sample["run_provenance"] = {key: recorded.get(key) for key in sorted(PROVENANCE_KEYS)}
+    if "error" not in sample:
+        try:
+            require_completed_sample(result, sample["boundaries"], tree, prefix, case["iterations"])
+        except (BenchError, OSError, ValueError) as error:
+            sample["error"] = str(error)
+    sample["ok"] = "error" not in sample
+    sample["metrics"] = sample_metrics(sample) if sample["ok"] else {}
+    return sample
+
+
+def print_summary(comparison: dict) -> None:
+    print(f"\n{comparison['baseline']} (baseline) vs {comparison['candidate']} (candidate); "
+          f"ok={comparison['ok']}")
+    shown = ("wall_seconds", "user_seconds", "max_rss_mib", "updates_per_hour",
+             "scheduler.collection_execution_seconds", "scheduler.update_execution_seconds",
+             "scheduler.update_validation_seconds", "receipts.checkpoint_io_seconds")
+    for case, result in comparison["cases"].items():
+        print(f"\ncase {case}: parity_ok={result['parity_ok']} timed={result['timed_samples']}")
+        for name in shown:
+            metric = result["metrics"].get(name)
+            if not metric:
+                continue
+            base, cand = metric["baseline"].get("median"), metric["candidate"].get("median")
+            ratio = metric.get("ratio_candidate_to_baseline")
+            spread = metric.get("max_spread_fraction")
+            print(f"  {name:42s} {base!s:>10.10} {cand!s:>10.10} "
+                  f"ratio={'-' if ratio is None else f'{ratio:.3f}'} "
+                  f"spread={'-' if spread is None else f'{spread:.3f}'} {metric['verdict']}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    gen = commands.add_parser("generate", help="write the fixture")
+    gen.add_argument("--root", required=True, help="absolute; absent or empty")
+    gen.add_argument("--seed", type=int, default=2_026_091_601)
+    gen.add_argument("--updates", type=int, default=2, help="iterations per case")
+    gen.add_argument("--games", type=int, default=2, help="episodes per iteration")
+    gen.add_argument("--warmup-updates", type=int, default=None,
+                     help="iterations run in process for the warm case (default --updates; 0: no warm case)")
+    gen.add_argument("--collection-workers", type=int, default=1)
+    gen.add_argument("--preparation-workers", type=int, default=1)
+    gen.add_argument("--test-binary", help="a built mtg-kernel lib test executable (default: cargo test)")
+    gen.add_argument("--repo", default=str(Path(__file__).resolve().parents[2]),
+                     help="repository root for the cargo route")
+    bench = commands.add_parser("run", help="time two builds on the fixture's cases")
+    bench.add_argument("--fixture", required=True, help="the generated fixture root")
+    bench.add_argument("--out", required=True, help="absolute; absent or empty")
+    bench.add_argument("--baseline", required=True, help="NAME=BINARY (arm A)")
+    bench.add_argument("--candidate", required=True, help="NAME=BINARY (arm B)")
+    bench.add_argument("--cases", help="comma-separated (default: every case)")
+    bench.add_argument("--blocks", type=int, default=1, help="A-B-B-A blocks per case")
+    bench.add_argument("--warmup-runs", type=int, default=1, help="untimed runs per arm per case")
+    bench.add_argument("--cold-resume", action="store_true",
+                       help="per arm and case: stop after one iteration, finish in a new process, compare")
+    bench.add_argument("--env", action="append", help="KEY=VALUE for every sample")
+    bench.add_argument("--arm-env", action="append", help="ARM:KEY=VALUE for one arm's samples")
+    bench.add_argument("--no-cache-diagnostics", action="store_true",
+                       help="disable diagnostic report creation for both timing arms")
+    bench.add_argument("--max-wall-seconds", type=float, default=None, help="per process")
+    bench.add_argument("--keep-runs", choices=("all", "reference"), default="all",
+                       help="'reference' prunes only nonreference run trees that pass parity")
+    bench.add_argument("--label", default="", help="e.g. 'local smoke, shared vCPU, noisy'")
+    bench.add_argument("--build-profile", default="unspecified",
+                       help="how both arms were built (they must match)")
+    bench.add_argument("--plan-only", action="store_true", help="print the sample order and exit")
+    again = commands.add_parser("compare", help="recompute comparison.json from a run's samples")
+    again.add_argument("--out", required=True, help="a finished run's output directory")
+    summary = commands.add_parser("receipt", help="write one small receipt for finished runs")
+    summary.add_argument("--run", action="append", required=True,
+                         help="NAME=OUTPUT_DIRECTORY of a finished run (repeatable)")
+    summary.add_argument("--write", required=True, help="the receipt file to write")
+    args = parser.parse_args(argv)
+    if args.command == "run" and (args.blocks < 1 or args.warmup_runs < 0):
+        parser.error("--blocks must be positive and --warmup-runs nonnegative")
+    try:
+        return {"generate": generate, "run": run, "compare": compare,
+                "receipt": receipt}[args.command](args)
+    except BenchError as error:
+        print(f"bench: {error}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

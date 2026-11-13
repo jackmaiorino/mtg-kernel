@@ -458,7 +458,10 @@ pub(super) fn load_opponent_cached_v1(
             true,
         ));
     }
-    let (policy, identity) = load_expanded_inference_any_math_v1(source)?;
+    let (policy, identity) = super::loaded_source_profile_v1::scoped_v1(
+        super::loaded_source_profile_v1::LoadRoleV1::Opponent,
+        || load_expanded_inference_any_math_v1(source),
+    )?;
     // The tag is the check model the loaded policy actually holds, never a
     // setting sampled apart from its load.
     let no_state_digest_check = policy

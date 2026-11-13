@@ -2147,6 +2147,19 @@ impl NativePolicyValueTrainStateV1 {
         self.check_no_state_digest_candidate_dims_v1(parameters, first_moments, second_moments)
     }
 
+    /// The `f32` values a clone of this state copies: its model's
+    /// (`NativePolicyValueNetV1::owned_f32_len_v1`) and both Adam moments
+    /// (`loaded_source_profile_v1`).
+    pub(crate) fn owned_f32_len_v1(&self) -> usize {
+        self.model.owned_f32_len_v1()
+            + self
+                .first_moments
+                .iter()
+                .chain(&self.second_moments)
+                .map(Vec::len)
+                .sum::<usize>()
+    }
+
     pub(crate) fn first_moment_snapshot_v1(&self) -> Vec<NativeNamedParameterV1> {
         named_state_snapshot(&self.model.parameter_snapshot_v1(), &self.first_moments)
     }
