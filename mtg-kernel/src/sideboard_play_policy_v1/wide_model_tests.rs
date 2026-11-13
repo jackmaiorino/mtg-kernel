@@ -88,7 +88,7 @@ fn wide_policy_collects_and_replays_with_the_wide_tape_bits() {
     let diagnostic = policy.diagnostic_forward_v4(&tensor).unwrap();
     assert_bits_v1("diagnostic against the tape", &diagnostic, &logits, value);
     // The wide net, not net-8, scored it.
-    let mut narrow = FrozenPlayPolicyV1::training_fixture_v4();
+    let narrow = FrozenPlayPolicyV1::training_fixture_v4();
     let narrow_scores = narrow.score_training_tensor_v4(&tensor).unwrap();
     assert_ne!(narrow_scores.logits, scores.logits);
 }

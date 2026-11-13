@@ -2895,6 +2895,7 @@ impl FrozenPlayPolicyV1 {
 
     /// The wide net when installed: every V4 forward of this policy is then
     /// the wide net's.
+    #[cfg(test)]
     pub(crate) fn wide_model_v1(&self) -> Option<&NativePolicyValueNetWideV1> {
         self.w_model.as_deref()
     }

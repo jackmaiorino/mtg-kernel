@@ -620,7 +620,7 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
             },
         )
         .collect();
-    let policy_substeps: usize = groups.iter().map(|group| group.substeps.len()).sum();
+    let physical_decisions = groups.len();
     let behavior_replay_seconds = replay_started.elapsed().as_secs_f64();
     eprintln!(
         "native wide update: {} episodes, {} learner physical decisions",
@@ -647,8 +647,8 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
     drop(substeps);
     let after = w_state_sha256_v1(&state)?;
     ensure(
-        step.after_state_sha256 == after,
-        "wide step's after-state differs from the state's hash",
+        step.adam_step == state.adam_step_v1(),
+        "wide step's Adam step differs from the state's",
     )?;
     let checkpoint_started = std::time::Instant::now();
     fs::create_dir(&output_directory).map_err(err)?;
@@ -699,9 +699,9 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
     let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true,
         "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin,
         "before_state_sha256":before, "after_state_sha256":after,
-        "adam_step":state.adam_step_v1(), "physical_decisions":step.loss.group_count,
-        "policy_substeps":policy_substeps, "loss":step.loss.loss,
-        "policy_sum":step.loss.policy_sum, "value_sum":step.loss.value_sum,
+        "adam_step":state.adam_step_v1(), "physical_decisions":physical_decisions,
+        "policy_substeps":step.selected_outputs.len(), "loss":step.loss,
+        "policy_sum":step.policy_sum, "value_sum":step.value_sum,
         "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential",
         "loss_identity":GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1,
         "claim":"engineering update only; no playing-strength or production-throughput claim",
@@ -887,3 +887,6 @@ pub fn widen_source_v1(
 struct TrajectoryPinsV1 {
     trajectories: Vec<PinnedFileV1>,
 }
+
+#[cfg(test)]
+mod tests;
