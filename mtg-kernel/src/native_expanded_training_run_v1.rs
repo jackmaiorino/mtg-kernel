@@ -598,21 +598,19 @@ impl NativeExpandedTrainingRunV1 {
                     && self.ex1.is_none()),
             "record_format v2 is not available with e_supported, soft_q, search_targets or ex1 updates",
         )?;
-        // The envelope is carried by the parallel collection and prepared
-        // update commands of ordinary CPU runs; every other path keeps plain
-        // records.
+        // The envelope is carried by parallel collection and prepared or EX1
+        // CPU updates (net-8 and S); every other path keeps plain records.
         check(
             self.record_envelope.is_none()
                 || (self.collection_workers > 1
-                    && self.preparation_workers > 1
+                    && (self.preparation_workers > 1 || self.ex1.is_some())
                     && self.update_backend.is_cpu()
                     && self.line_b.is_none()
                     && self.e_supported.is_none()
                     && self.soft_q.is_none()
-                    && self.search_targets.is_none()
-                    && self.ex1.is_none()
-                    && self.initial_source.s_learner.is_none()),
-            "record_envelope requires parallel collection and a prepared CPU update, without              line (b), E, SQ1, search targets, EX1 or an S learner",
+                    && self.search_targets.is_none()),
+            "record_envelope requires parallel collection and a prepared or EX1 CPU update, \
+             without line (b), E, SQ1 or search targets",
         )?;
         if !self.training_math.is_platform_libm() {
             check(
@@ -749,13 +747,12 @@ impl NativeExpandedTrainingRunV1 {
                     && self.search_targets.is_none()
                     && self.update_backend.is_cpu()
                     && self.update_backward_execution.is_sequential()
-                    && self.preparation_workers == 1
                     && self.collection_sampler.is_legacy()
                     && matches!(
                         self.loss_selection,
                         ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
                     ),
-                "ex1 requires ordinary sequential CPU GAE, serial preparation and the legacy sampler",
+                "ex1 requires ordinary sequential CPU GAE and the legacy sampler",
             )?;
             options.collect_options_v1(0).validate_v1()?;
             options
@@ -1429,8 +1426,7 @@ fn validate_update(
         "line (b) frozen tensors differ from the run's initial source",
     )?;
     let s_parallel_workers =
-        (source.s_learner.is_some() && ex1.is_none() && preparation_workers > 1)
-            .then_some(preparation_workers);
+        (source.s_learner.is_some() && preparation_workers > 1).then_some(preparation_workers);
     update_backend.validate_update_execution_v1(&document, s_parallel_workers)?;
     validate_preparation_execution(
         &document,
@@ -2130,6 +2126,10 @@ pub fn run_native_expanded_training_v1(
                     value_coefficient: config.value_coefficient,
                     loss_selection: config.loss_selection,
                     ex1: options.update_options_v1(index, collection.clone()),
+                    preparation_workers: (config.preparation_workers > 1)
+                        .then_some(config.preparation_workers),
+                    max_prepared_tensor_mebibytes: config.max_prepared_tensor_mebibytes,
+                    record_envelope: config.record_envelope,
                     output_directory: attempt.join("update"),
                 },
                 (Some(options), None) => ExpandedTrainingCommandV1::SearchTargetsUpdate {
@@ -4130,6 +4130,63 @@ mod tests {
             .unwrap()
             .get("chain_ledger")
             .is_none());
+    }
+
+    #[test]
+    fn w5_ex1_prepared_and_sealed_run_matches_serial_states() {
+        use crate::expanded_deck_training_v1::RecordEnvelopeV1 as Envelope;
+        let gae = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.95,
+            entropy_coefficient: 0.0,
+        };
+        let ex1_opts = Ex1RunOptionsV1 {
+            run: "w5/chain-prep-test".into(),
+            update_offset: 0,
+            coefficient: 1.0,
+            cap: crate::expanded_deck_training_v1::search_targets_v1::SearchTargetCapV1::Ratio {
+                kappa: 2.0,
+            },
+            w5: Some(W5RunOptionsV1 {
+                budget: 1_500,
+                key_memo_mib: 512,
+            }),
+        };
+        let mut serial =
+            real_two_iteration_config_v1("w5-ex1-serial", gae, ExpandedUpdateBackendV1::Cpu);
+        let serial_root = serial.output_directory.parent().unwrap().to_path_buf();
+        serial.ex1 = Some(ex1_opts.clone());
+        serial.validate_v1().unwrap();
+
+        let mut prepared =
+            real_two_iteration_config_v1("w5-ex1-prep-zstd", gae, ExpandedUpdateBackendV1::Cpu);
+        let prepared_root = prepared.output_directory.parent().unwrap().to_path_buf();
+        prepared.ex1 = Some(ex1_opts);
+        prepared.collection_workers = 2;
+        prepared.preparation_workers = 2;
+        prepared.record_envelope = Envelope::Zstd1;
+        prepared.validate_v1().unwrap();
+
+        let serial_res = run_native_expanded_training_v1(&serial, None).unwrap();
+        let prepared_res = run_native_expanded_training_v1(&prepared, None).unwrap();
+        assert_eq!(
+            prepared_res["actual_identity"]["state_sha256"],
+            serial_res["actual_identity"]["state_sha256"]
+        );
+        for i in 0..2 {
+            let s_up: PinnedFileV1 =
+                serde_json::from_value(iteration_receipt_v1(&serial_res, i)["update"].clone())
+                    .unwrap();
+            let p_up: PinnedFileV1 =
+                serde_json::from_value(iteration_receipt_v1(&prepared_res, i)["update"].clone())
+                    .unwrap();
+            let s_doc = read_pin(&s_up).unwrap();
+            let p_doc = read_pin(&p_up).unwrap();
+            assert_eq!(p_doc["after_state_sha256"], s_doc["after_state_sha256"]);
+            assert!(p_doc.get("update_preparation").is_some());
+        }
+        let _ = fs::remove_dir_all(&serial_root);
+        let _ = fs::remove_dir_all(&prepared_root);
     }
 
     /// Bookkeeping design 2.3, the crash point, in both record formats: an

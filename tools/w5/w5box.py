@@ -238,13 +238,20 @@ def read_topology(sys_cpu: Path = SYS_CPU) -> dict:
 
 
 def compute_layout(topology: dict, cores_per_box: int, offbox_cores_per_domain: int,
-                   boxes: int | None = None) -> dict:
+                   boxes: int | None = None, threads_per_core: int | None = None) -> dict:
     """Boxes of whole cores inside one L3 domain each; the first cores of every domain stay off the boxes."""
     require(cores_per_box >= 1 and offbox_cores_per_domain >= 0, "Bad box shape")
+    require(threads_per_core is None or (type(threads_per_core) is int and threads_per_core >= 1),
+            "Bad threads_per_core")
     slots, offbox = [], []
     for domain in topology["domains"]:
-        offbox += [cpu for core in domain[:offbox_cores_per_domain] for cpu in core]
-        rest = domain[offbox_cores_per_domain:]
+        if threads_per_core is not None:
+            eligible = [core for core in domain if len(core) == threads_per_core]
+            offbox += [cpu for core in domain if len(core) != threads_per_core for cpu in core]
+        else:
+            eligible = domain
+        offbox += [cpu for core in eligible[:offbox_cores_per_domain] for cpu in core]
+        rest = eligible[offbox_cores_per_domain:]
         for i in range(len(rest) // cores_per_box):
             group = rest[i * cores_per_box:(i + 1) * cores_per_box]
             slots.append({"cores": group, "cpus": sorted(cpu for core in group for cpu in core)})
@@ -263,6 +270,15 @@ def compute_layout(topology: dict, cores_per_box: int, offbox_cores_per_domain: 
     return {"schema": LAYOUT_SCHEMA, "cores_per_box": cores_per_box,
             "offbox_cores_per_domain": offbox_cores_per_domain, "threads_per_core": threads.pop(),
             "boxes": slots, "offbox_cpus": sorted(offbox), "positions_sha256": sha256_bytes(canonical(positions))}
+
+
+def detect_plan_layout(frozen: dict, topo: dict | None = None) -> dict:
+    """Recomputes the host layout against `frozen`; hybrid topologies filter to `frozen['threads_per_core']`."""
+    if topo is None:
+        topo = read_topology()
+    mixed = len({len(core) for domain in topo["domains"] for core in domain}) > 1
+    return compute_layout(topo, frozen["cores_per_box"], frozen["offbox_cores_per_domain"],
+                          len(frozen["boxes"]), frozen.get("threads_per_core") if mixed else None)
 
 
 def host_class(cpuinfo: str | None = None, online: list[int] | None = None) -> str:
@@ -1465,8 +1481,7 @@ def guarded_supervisor(args) -> Supervisor:
     plan, plan_sha = load_plan(args.plan)
     spec = chain_spec(plan, args.chain)
     frozen = plan["layout"]
-    layout = compute_layout(read_topology(), frozen["cores_per_box"], frozen["offbox_cores_per_domain"],
-                            len(frozen["boxes"]))
+    layout = detect_plan_layout(frozen)
     detected = host_class()
     check_pins(plan, args.chain, spec, layout, detected)
     throughput = None
@@ -1505,6 +1520,7 @@ def main(argv=None) -> int:
     p.add_argument("--cores-per-box", type=int, default=2)
     p.add_argument("--offbox-cores-per-domain", type=int, default=2)
     p.add_argument("--boxes", type=int, default=None)
+    p.add_argument("--threads-per-core", type=int, default=None)
     p.add_argument("--out", type=Path, default=None)
     sub.add_parser("host-class")
     p = sub.add_parser("run")
@@ -1535,7 +1551,8 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "layout":
-            layout = compute_layout(read_topology(), args.cores_per_box, args.offbox_cores_per_domain, args.boxes)
+            layout = compute_layout(read_topology(), args.cores_per_box, args.offbox_cores_per_domain, args.boxes,
+                                    args.threads_per_core)
             text = json.dumps(dict(layout, host_class=host_class()), indent=2) + "\n"
             if args.out:
                 args.out.write_text(text, encoding="utf-8", newline="\n")
@@ -1551,8 +1568,7 @@ def main(argv=None) -> int:
             plan, plan_sha = load_plan(args.plan)
             chain_spec(plan, args.chain)
             frozen = plan["layout"]
-            layout = compute_layout(read_topology(), frozen["cores_per_box"], frozen["offbox_cores_per_domain"],
-                                    len(frozen["boxes"]))
+            layout = detect_plan_layout(frozen)
             require({k: frozen.get(k) for k in LAYOUT_KEYS} == {k: layout[k] for k in LAYOUT_KEYS},
                     "The plan's box layout differs from the layout detected on this host")
             print(json.dumps(recover_chain(plan, plan_sha, args.chain, layout, host_class())))
@@ -1561,8 +1577,7 @@ def main(argv=None) -> int:
             require(sys.platform.startswith("linux"), "The W5 launcher runs on Linux only")
             plan, _ = load_plan(args.plan)
             frozen = plan["layout"]
-            layout = compute_layout(read_topology(), frozen["cores_per_box"], frozen["offbox_cores_per_domain"],
-                                    len(frozen["boxes"]))
+            layout = detect_plan_layout(frozen)
             require(host_class() == plan["host_class"], "Host class differs from the plan's")
             require({k: frozen.get(k) for k in LAYOUT_KEYS} == {k: layout[k] for k in LAYOUT_KEYS},
                     "The plan's box layout differs from the layout detected on this host")

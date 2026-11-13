@@ -245,7 +245,7 @@ pub(super) fn ex1_teach_with_v1(
 ) -> Result<(Value, Vec<Ex1TaughtRowV1>), String> {
     options.validate_v1()?;
     let collection: Value =
-        serde_json::from_slice(&read_pinned_bytes(&options.collection)?).map_err(err)?;
+        serde_json::from_slice(&read_pinned_shared_v1(&options.collection)?).map_err(err)?;
     let expected = options.collect_options_v1();
     ensure(
         collection["ex1"]["options"] == json!(expected),
@@ -271,7 +271,12 @@ pub(super) fn ex1_teach_with_v1(
     let mut pg_masked = Vec::new();
     let mut w5_totals: BTreeMap<String, u64> = BTreeMap::new();
     for (slot, (pin, trajectory)) in sidecars.iter().zip(episodes).enumerate() {
-        let record: Value = serde_json::from_slice(&read_pinned_bytes(pin)?).map_err(err)?;
+        let sidecar_raw = read_pinned_shared_v1(pin)?;
+        let record: Value = serde_json::from_slice(&super::record_envelope_v1::open_v1(
+            &sidecar_raw,
+            super::MAX_FILE_BYTES,
+        )?)
+        .map_err(err)?;
         let attempts = record["attempts"]
             .as_array()
             .ok_or("ex1 record lacks attempts")?;

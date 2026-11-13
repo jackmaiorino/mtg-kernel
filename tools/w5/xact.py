@@ -66,10 +66,10 @@ def played_action(q, chain, update, seed, slot):
 
 
 def build_config(base, dose_record, root, chain, offset, updates, workers, budget=None, coefficient=None,
-                 dose='primary', ledger_source=None):
+                 dose='primary', ledger_source=None, prep_workers=None):
     """EX1's qualification construction (episode ids and seeds keyed by the chain), with W5's options."""
     cfg = qual.build_config(base, dose_record, root, chain, 'w5', offset, updates, workers,
-                            coefficient if budget is not None else None, DOSES[dose][1])
+                            coefficient if budget is not None else None, DOSES[dose][1], prep_workers=prep_workers)
     if budget is not None:
         cfg['ex1']['w5'] = {'budget': budget}
     if ledger_source is not None:
@@ -180,6 +180,7 @@ def main(argv=None):
     p.add_argument('--offset', type=int, required=True)
     p.add_argument('--updates', type=int, required=True)
     p.add_argument('--workers', type=int, default=1)
+    p.add_argument('--prep-workers', type=int, default=None)
     p.add_argument('--budget', type=int)
     p.add_argument('--coefficient', type=float)
     p.add_argument('--dose', choices=sorted(DOSES), default='primary')
@@ -195,7 +196,7 @@ def main(argv=None):
         if (a.budget is None) != (a.coefficient is None):
             raise SystemExit('stop: an X chain needs both --budget and --coefficient')
         cfg = build_config(qual.read(a.base), qual.read(a.parent), a.root, a.chain, a.offset, a.updates, a.workers,
-                           a.budget, a.coefficient, a.dose, a.ledger_source)
+                           a.budget, a.coefficient, a.dose, a.ledger_source, prep_workers=a.prep_workers)
         Path(a.out).write_text(json.dumps(cfg, indent=1) + '\n', encoding='utf-8')
     elif a.cmd == 'calibrate':
         calibrate(a.roots, a.dose)

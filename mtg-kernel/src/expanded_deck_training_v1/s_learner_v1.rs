@@ -51,12 +51,13 @@
 use super::ex1_update_v1::{self, Ex1UpdateOptionsV1};
 use super::{
     compute_gae_targets_of_values_v1, ensure, err, inference_schema_v1, ordered_update_preparation,
-    publish_json, publish_json_bytes_v1, read_pinned_bytes, read_trajectory_batch_v1,
-    replay_learner_groups_v1, validate_actual_behaviors_v1, validate_trajectory,
+    publish_json, publish_json_shared_v1, read_pinned_shared_v1, read_trajectory_batch_v1,
+    replay_learner_groups_v1, serialize_json_v1, validate_actual_behaviors_v1, validate_trajectory,
     CheckpointInputExpectationV1, CheckpointRecordFormatV1, CollectionSamplerV1,
     ExpandedInferenceIdentityV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
     ExpandedSeatBehaviorV1, ExpandedUpdateBackendV1, OpponentCacheV1, PinnedFileV1,
-    UpdateBackwardExecutionV1, GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1, MAX_BATCH_BYTES,
+    RecordEnvelopeV1, UpdateBackwardExecutionV1, GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1,
+    MAX_BATCH_BYTES,
 };
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
@@ -179,7 +180,7 @@ pub(super) fn load_s_v1(
                 == FEATURE_ENCODING_DIGEST_V4,
         "an S learner runs on the plain FlatV4 contract; FlatV7 and FlatV8 are refused",
     )?;
-    let bytes = read_pinned_bytes(&source.play_import)?;
+    let bytes = read_pinned_shared_v1(&source.play_import)?;
     let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
     let schema = probe.get("schema").and_then(Value::as_str);
     ensure(
@@ -193,7 +194,11 @@ pub(super) fn load_s_v1(
             && policy.input_contract_v1().is_none(),
         "an S learner's shell must load with the plain FlatV4 identity",
     )?;
-    let initial = decode_checkpoint_v1(&read_pinned_bytes(&member.initial)?)?;
+    let initial_raw = read_pinned_shared_v1(&member.initial)?;
+    let initial = decode_checkpoint_v1(&super::record_envelope_v1::open_v1(
+        &initial_raw,
+        super::MAX_FILE_BYTES,
+    )?)?;
     let (state, checkpoint) = match &source.checkpoint {
         None => {
             ensure(inputs.is_none(), "update requires checkpoint")?;
@@ -203,8 +208,11 @@ pub(super) fn load_s_v1(
             )
         }
         Some(pin) => {
-            let record: SLearnerCheckpointV1 =
-                serde_json::from_slice(&read_pinned_bytes(pin)?).map_err(err)?;
+            let record_raw = read_pinned_shared_v1(pin)?;
+            let record: SLearnerCheckpointV1 = serde_json::from_slice(
+                &super::record_envelope_v1::open_v1(&record_raw, super::MAX_FILE_BYTES)?,
+            )
+            .map_err(err)?;
             let identity = policy.feature_identity_v1();
             ensure(
                 record.schema == S_LEARNER_CHECKPOINT_SCHEMA_V1
@@ -224,7 +232,11 @@ pub(super) fn load_s_v1(
                     record.value_coefficient_bits,
                 )?;
             }
-            let state = decode_checkpoint_v1(&read_pinned_bytes(&record.state)?)?;
+            let state_raw = read_pinned_shared_v1(&record.state)?;
+            let state = decode_checkpoint_v1(&super::record_envelope_v1::open_v1(
+                &state_raw,
+                super::MAX_FILE_BYTES,
+            )?)?;
             ensure(
                 state.state_sha256_v1() == record.state_sha256
                     && state.adam_step_v1() == record.adam_step,
@@ -301,8 +313,12 @@ pub(crate) fn validate_update_loss_v1(
         .checkpoint
         .as_ref()
         .ok_or("an S update requires its checkpoint")?;
-    let record: SLearnerCheckpointV1 =
-        serde_json::from_slice(&read_pinned_bytes(pin)?).map_err(err)?;
+    let record_raw = read_pinned_shared_v1(pin)?;
+    let record: SLearnerCheckpointV1 = serde_json::from_slice(&super::record_envelope_v1::open_v1(
+        &record_raw,
+        super::MAX_FILE_BYTES,
+    )?)
+    .map_err(err)?;
     let ExpandedLossSelectionV1::GaeAdvantageValueV1 {
         gamma,
         lambda,
@@ -430,6 +446,7 @@ pub(super) struct SUpdateInputsV1 {
     pub(super) ex1: Option<Ex1UpdateOptionsV1>,
     pub(super) training_math: TrainingMathV1,
     pub(super) record_format: CheckpointRecordFormatV1,
+    pub(super) record_envelope: RecordEnvelopeV1,
     pub(super) started: std::time::Instant,
 }
 
@@ -514,6 +531,7 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         verified_replay,
         ex1,
         training_math,
+        record_envelope,
         started,
         ..
     } = inputs;
@@ -873,10 +891,10 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
     };
     let checkpoint_started = std::time::Instant::now();
     fs::create_dir(&output_directory).map_err(err)?;
-    let container = publish_json_bytes_v1(
+    let container = publish_json_shared_v1(
         &output_directory,
         S_LEARNER_STATE_FILE_V1,
-        &encode_checkpoint_v1(&state),
+        &Arc::new(record_envelope.seal_owned_v1(encode_checkpoint_v1(&state))?),
     )?;
     let ex1_pin = match (&teacher_receipt, &ex1_exposure) {
         (Some(receipt), Some(exposure)) => {
@@ -921,7 +939,11 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
             saved
         }),
     };
-    let checkpoint_pin = publish_json(&output_directory, "checkpoint.json", &record)?;
+    let checkpoint_pin = publish_json_shared_v1(
+        &output_directory,
+        "checkpoint.json",
+        &Arc::new(record_envelope.seal_owned_v1(serialize_json_v1("checkpoint.json", &record)?)?),
+    )?;
     // Readback through the continuation loader, with this update's inputs.
     let resumed = ExpandedModelSourceV1 {
         checkpoint: Some(checkpoint_pin.clone()),

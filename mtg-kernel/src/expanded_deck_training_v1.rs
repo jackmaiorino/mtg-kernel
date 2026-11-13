@@ -3771,6 +3771,15 @@ pub enum ExpandedTrainingCommandV1 {
         value_coefficient: f32,
         loss_selection: ExpandedLossSelectionV1,
         ex1: ex1_update_v1::Ex1UpdateOptionsV1,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preparation_workers: Option<usize>,
+        #[serde(
+            default = "default_max_prepared_tensor_mebibytes",
+            skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
+        )]
+        max_prepared_tensor_mebibytes: usize,
+        #[serde(default, skip_serializing_if = "RecordEnvelopeV1::is_none")]
+        record_envelope: RecordEnvelopeV1,
         output_directory: PathBuf,
     },
     /// SQ1's target diagnostic (design section 6.1): construction and
@@ -3969,28 +3978,46 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             value_coefficient,
             loss_selection,
             ex1,
+            preparation_workers,
+            max_prepared_tensor_mebibytes,
+            record_envelope,
             output_directory,
-        } => execute_update_inner_v1(
-            source,
-            trajectories,
-            learning_rate,
-            value_coefficient,
-            ExpandedUpdateBackendV1::Cpu,
-            UpdateBackwardExecutionV1::Sequential,
-            loss_selection,
-            output_directory,
-            None,
-            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
-            None,
-            None,
-            None,
-            None,
-            Some(ex1),
-            TrainingMathV1::PlatformLibm,
-            CheckpointRecordFormatV1::V1,
-            RecordEnvelopeV1::None,
-            None,
-        ),
+        } => {
+            if let Some(workers) = preparation_workers {
+                validate_preparation_workers_v1(workers)?;
+                ensure(
+                    workers >= 2,
+                    "use serial Ex1Update (preparation_workers omitted) for 1 worker",
+                )?;
+            } else {
+                ensure(
+                    max_prepared_tensor_mebibytes == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+                    "max_prepared_tensor_mebibytes applies to prepared updates only",
+                )?;
+            }
+            validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
+            execute_update_inner_v1(
+                source,
+                trajectories,
+                learning_rate,
+                value_coefficient,
+                ExpandedUpdateBackendV1::Cpu,
+                UpdateBackwardExecutionV1::Sequential,
+                loss_selection,
+                output_directory,
+                preparation_workers,
+                max_prepared_tensor_mebibytes,
+                None,
+                None,
+                None,
+                None,
+                Some(ex1),
+                TrainingMathV1::PlatformLibm,
+                CheckpointRecordFormatV1::V1,
+                record_envelope,
+                None,
+            )
+        }
         ExpandedTrainingCommandV1::SoftQDiagnostic {
             parent,
             prior_deck_indices,
@@ -4716,11 +4743,6 @@ fn execute_update_inner_v1(
         });
     }
     if source.s_learner.is_some() {
-        // The S update writes its own records; it takes no envelope.
-        ensure(
-            record_envelope.is_none(),
-            "a record envelope is not available with an S learner update",
-        )?;
         return s_learner_v1::execute_s_update_v1(s_learner_v1::SUpdateInputsV1 {
             source,
             trajectories,
@@ -4742,6 +4764,7 @@ fn execute_update_inner_v1(
             ex1,
             training_math,
             record_format,
+            record_envelope,
             started: update_started,
         });
     }
