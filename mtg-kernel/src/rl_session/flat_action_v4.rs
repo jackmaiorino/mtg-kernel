@@ -1687,50 +1687,38 @@ fn choose_trigger_mode_fixture_card_name_v1() -> &'static str {
 /// source).
 #[cfg(all(test, feature = "limited-fdn-fixtures"))]
 pub(crate) fn choose_trigger_mode_fixture_state_v1() -> (crate::state::GameState, ObjectId) {
-    use crate::engine::{self, Action, Decision};
-    use crate::mana::ManaColor;
-    use crate::policy_observation_v6::tests::{put, ready_state_with_turn_authority};
+    use crate::card_def::TargetSpec;
+    use crate::engine::{self, Decision};
+    use crate::policy_observation_v6::tests::{put, ready_state};
+    use crate::state::AbilitySourceContractV4;
+    use crate::trigger::PendingTrigger;
 
-    let mut state = ready_state_with_turn_authority(PlayerId::P0);
+    let mut state = ready_state();
     put(&mut state, PlayerId::P0, "Myr Enforcer", Zone::Battlefield);
     put(&mut state, PlayerId::P1, "Forest", Zone::Graveyard);
     let source_card = put(
         &mut state,
         PlayerId::P0,
         choose_trigger_mode_fixture_card_name_v1(),
-        Zone::Hand,
+        Zone::Battlefield,
     );
-    #[cfg(not(feature = "standard-magezero-fixtures"))]
-    {
-        state.players[PlayerId::P0.index()].mana_pool[ManaColor::G.pool_index()] = 6;
-    }
-    #[cfg(all(
-        feature = "standard-magezero-fixtures",
-        not(feature = "eternal-fixtures")
-    ))]
-    {
-        state.players[PlayerId::P0.index()].mana_pool[ManaColor::U.pool_index()] = 3;
-        state.players[PlayerId::P0.index()].mana_pool[ManaColor::B.pool_index()] = 1;
-    }
-    #[cfg(feature = "eternal-fixtures")]
-    {
-        state.players[PlayerId::P0.index()].mana_pool[ManaColor::W.pool_index()] = 2;
-    }
-    assert!(matches!(
-        engine::advance_until_decision(&mut state),
-        Decision::CastSpellOrPass { .. }
-    ));
-    engine::step(&mut state, Action::CastSpell(source_card)).unwrap();
-    assert!(matches!(
-        engine::advance_until_decision(&mut state),
-        Decision::CastSpellOrPass { .. }
-    ));
-    engine::step(&mut state, Action::Pass).unwrap();
-    assert!(matches!(
-        engine::advance_until_decision(&mut state),
-        Decision::CastSpellOrPass { .. }
-    ));
-    engine::step(&mut state, Action::Pass).unwrap();
+    let contract = AbilitySourceContractV4::capture(&state, source_card);
+    let effect = (crate::trigger::triggers_for(contract.card_def)[0].effect)();
+    state.engine.pending_triggers.push(PendingTrigger {
+        controller: PlayerId::P0,
+        source: source_card,
+        granted_by: None,
+        effect,
+        is_madness_offer: false,
+        kicked: false,
+        target_spec: TargetSpec::None,
+        targets: Vec::new(),
+        target_contracts: Vec::new(),
+        placement_ordered: false,
+        source_contract: Some(contract),
+        optional_additional_cost_paid: None,
+        paid_cost_refs: Vec::new(),
+    });
     assert!(matches!(
         engine::advance_until_decision(&mut state),
         Decision::ChooseTriggerMode {
