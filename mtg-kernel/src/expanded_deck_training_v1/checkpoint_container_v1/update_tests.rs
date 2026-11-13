@@ -76,6 +76,7 @@ fn fixture(
         },
         checkpoint: None,
         s_learner: None,
+        w_learner: None,
     };
     let decks = [list("Affinity"), list("Terror")];
     let episode = ExpandedEpisodeV1 {
@@ -395,6 +396,7 @@ fn the_default_record_format_is_never_serialized() {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         },
         trajectories: Vec::new(),
         learning_rate: 0.0001,

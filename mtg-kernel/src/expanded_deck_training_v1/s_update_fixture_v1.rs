@@ -368,6 +368,7 @@ pub fn net8_source_v1(root: &Path) -> Result<ExpandedModelSourceV1, String> {
         },
         checkpoint: None,
         s_learner: None,
+        w_learner: None,
     })
 }
 
