@@ -86,10 +86,14 @@ OPPONENTS_PANEL_NS = "opponents-20261111/a"
 # Chain A and the old lineage against the fresh-init lineages G1 and G2 (collab LANES/freshinit-20261111,
 # DEFINITIONS.md): one namespace for every panel at every dose.
 FRESHINIT_PANEL_NS = "freshinit-20261111/a"
+# The second anchor panel (collab LANES/wave2-20261113, ANCHOR.md, frozen before any game): every focal checkpoint
+# against the three anchors (chain A c4 at 1,048,576; G1 and G2 at 245,760); used for nothing else.
+ANCHOR_PANEL_NS = "anchor-20261113/a"
 PANEL_NAMESPACES = (PANEL_NS, SD1_PANEL_NS, SQ1_PANEL_NS, TP1B_PANEL_NS, TP1B2_PANEL_NS, NSD5_PANEL_NS,
                     OH1_PANEL_NS, OH2_PANEL_NS_A, OH2_PANEL_NS_B, OH2_SCREEN_NS, D1_PANEL_NS_A, D1_PANEL_NS_B,
                     D1_H2H_NS, G_MIRROR_NS, G_CROSS_NS, W4C_PANEL_NS_A, W4C_PANEL_NS_B, W4C_H2H_NS,
-                    CENSUS_PANEL_NS, CENSUS_SMOKE_NS, OPPONENTS_PANEL_NS, FRESHINIT_PANEL_NS)
+                    CENSUS_PANEL_NS, CENSUS_SMOKE_NS, OPPONENTS_PANEL_NS, FRESHINIT_PANEL_NS,
+                    ANCHOR_PANEL_NS)
 
 
 def key(parts: list) -> bytes:
