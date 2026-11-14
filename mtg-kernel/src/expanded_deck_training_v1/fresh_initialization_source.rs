@@ -354,15 +354,56 @@ fn validate_source(source: &ExpandedFreshInitializationSourceV1) -> Result<(), S
 }
 
 /// The file reads of `load_policy_v1`, in its order and with its errors, for a
-/// descriptor whose loaded policy is already cached (`loaded_source_cache_v1`).
-/// Every other step of that loader is a pure function of these bytes.
+/// descriptor whose loaded policy is already cached (`loaded_source_cache_v1`)
+/// or carried across iterations: streams each file in fixed 64 KiB chunks
+/// without allocating a whole-file `Vec<u8>`. Every other step of that loader
+/// is a pure function of these bytes.
 pub(super) fn reverify_input_files_v1(
     source: &ExpandedFreshInitializationSourceV1,
 ) -> Result<(), String> {
     validate_source(source)?;
-    read_actual(&source.initialization, JSON_CAP)?;
-    read_actual(&source.parameters, PAYLOAD_BYTES)?;
+    check_actual(&source.initialization, JSON_CAP)?;
+    check_actual(&source.parameters, PAYLOAD_BYTES)?;
     Ok(())
+}
+
+fn check_actual(pin: &PinnedFileV1, cap: usize) -> Result<(), String> {
+    check_actual_in_v1(super::verified_bytes_cache_v1::global_v1(), pin, cap)
+}
+
+/// `read_actual_in_v1` for a caller that only needs the verification check.
+pub(super) fn check_actual_in_v1(
+    cache: &super::verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    pin: &PinnedFileV1,
+    cap: usize,
+) -> Result<(), String> {
+    actual_pin(pin)?;
+    let started = std::time::Instant::now();
+    let file = File::open(&pin.path).map_err(|e| e.to_string())?;
+    let metadata = file.metadata().map_err(|e| e.to_string())?;
+    require(
+        metadata.is_file() && metadata.len() <= cap as u64,
+        "fresh input is not a bounded regular file",
+    )?;
+    if cache
+        .resident_bytes_v1(&pin.path, &pin.sha256, metadata.len())
+        .is_some()
+    {
+        return Ok(());
+    }
+    let open_nanos = super::opponent_cache_diagnostics_v1::nanos_since_v1(started);
+    require(
+        cache
+            .stream_digest_matches_v1(
+                file.take(cap as u64 + 1),
+                cap as u64,
+                open_nanos,
+                &pin.path,
+                &pin.sha256,
+            )
+            .map_err(|e| e.to_string())?,
+        "fresh input bytes differ from their size bound or SHA256 pin",
+    )
 }
 
 fn read_actual(pin: &PinnedFileV1, cap: usize) -> Result<Vec<u8>, String> {

@@ -74,6 +74,8 @@ impl LoadRoleV1 {
     }
 }
 
+const FIELD_COUNT_V1: usize = 16;
+
 /// One role's counters, in report order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct RoleCountsV1 {
@@ -87,16 +89,27 @@ pub(crate) struct RoleCountsV1 {
     pub(crate) cache_misses: u64,
     /// Full loads kept as a new entry.
     pub(crate) cache_kept: u64,
+    /// Hits split by what the caller needed: mutable train state, policy and
+    /// identity only, or validated identity only.
+    pub(crate) state_served: u64,
+    pub(crate) policy_served: u64,
+    pub(crate) identity_served: u64,
     /// Bytes copied out of an entry on hits.
     pub(crate) served_state_bytes: u64,
     pub(crate) served_policy_bytes: u64,
     /// Bytes copied into kept entries.
     pub(crate) kept_state_bytes: u64,
     pub(crate) kept_policy_bytes: u64,
+    /// Committed-iteration learner handoffs (`CarriedLearnerV1`): owned state
+    /// moves into an update without copying, and collection duplicates only a
+    /// policy view from the borrowed handle.
+    pub(crate) carried_state_handoffs: u64,
+    pub(crate) carried_policy_views: u64,
+    pub(crate) carried_policy_bytes: u64,
 }
 
 impl RoleCountsV1 {
-    fn fields_v1(&self) -> [(&'static str, u64); 10] {
+    fn fields_v1(&self) -> [(&'static str, u64); FIELD_COUNT_V1] {
         [
             ("scoped_loads", self.scoped_loads),
             ("scoped_nanos", self.scoped_nanos),
@@ -104,10 +117,16 @@ impl RoleCountsV1 {
             ("cache_hits", self.cache_hits),
             ("cache_misses", self.cache_misses),
             ("cache_kept", self.cache_kept),
+            ("state_served", self.state_served),
+            ("policy_served", self.policy_served),
+            ("identity_served", self.identity_served),
             ("served_state_bytes", self.served_state_bytes),
             ("served_policy_bytes", self.served_policy_bytes),
             ("kept_state_bytes", self.kept_state_bytes),
             ("kept_policy_bytes", self.kept_policy_bytes),
+            ("carried_state_handoffs", self.carried_state_handoffs),
+            ("carried_policy_views", self.carried_policy_views),
+            ("carried_policy_bytes", self.carried_policy_bytes),
         ]
     }
 
@@ -118,20 +137,26 @@ impl RoleCountsV1 {
         self.cache_hits += other.cache_hits;
         self.cache_misses += other.cache_misses;
         self.cache_kept += other.cache_kept;
+        self.state_served += other.state_served;
+        self.policy_served += other.policy_served;
+        self.identity_served += other.identity_served;
         self.served_state_bytes += other.served_state_bytes;
         self.served_policy_bytes += other.served_policy_bytes;
         self.kept_state_bytes += other.kept_state_bytes;
         self.kept_policy_bytes += other.kept_policy_bytes;
+        self.carried_state_handoffs += other.carried_state_handoffs;
+        self.carried_policy_views += other.carried_policy_views;
+        self.carried_policy_bytes += other.carried_policy_bytes;
     }
 }
 
 #[cfg(not(test))]
 mod counters_v1 {
-    use super::{RoleCountsV1, ROLES_V1};
+    use super::{RoleCountsV1, FIELD_COUNT_V1, ROLES_V1};
     use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
-    static COUNTS: [[AtomicU64; 10]; ROLES_V1.len()] =
-        [const { [const { AtomicU64::new(0) }; 10] }; ROLES_V1.len()];
+    static COUNTS: [[AtomicU64; FIELD_COUNT_V1]; ROLES_V1.len()] =
+        [const { [const { AtomicU64::new(0) }; FIELD_COUNT_V1] }; ROLES_V1.len()];
 
     pub(super) fn add_delta_v1(role: usize, delta: &RoleCountsV1) {
         for (counter, (_, value)) in COUNTS[role].iter().zip(delta.fields_v1()) {
@@ -142,7 +167,7 @@ mod counters_v1 {
     }
 
     pub(super) fn read_v1(role: usize) -> RoleCountsV1 {
-        let [scoped_loads, scoped_nanos, cache_lookups, cache_hits, cache_misses, cache_kept, served_state_bytes, served_policy_bytes, kept_state_bytes, kept_policy_bytes] =
+        let [scoped_loads, scoped_nanos, cache_lookups, cache_hits, cache_misses, cache_kept, state_served, policy_served, identity_served, served_state_bytes, served_policy_bytes, kept_state_bytes, kept_policy_bytes, carried_state_handoffs, carried_policy_views, carried_policy_bytes] =
             std::array::from_fn(|index| COUNTS[role][index].load(Relaxed));
         RoleCountsV1 {
             scoped_loads,
@@ -151,10 +176,16 @@ mod counters_v1 {
             cache_hits,
             cache_misses,
             cache_kept,
+            state_served,
+            policy_served,
+            identity_served,
             served_state_bytes,
             served_policy_bytes,
             kept_state_bytes,
             kept_policy_bytes,
+            carried_state_handoffs,
+            carried_policy_views,
+            carried_policy_bytes,
         }
     }
 }
@@ -237,11 +268,48 @@ pub(crate) fn record_lookup_v1() {
 }
 
 /// A lookup served copies of `state_bytes` and `policy_bytes`.
-pub(crate) fn record_hit_v1(state_bytes: u64, policy_bytes: u64) {
+pub(crate) fn state_served_v1(state_bytes: u64, policy_bytes: u64) {
     record_v1(current_role_v1(), |counts| {
         counts.cache_hits = 1;
+        counts.state_served = 1;
         counts.served_state_bytes = state_bytes;
         counts.served_policy_bytes = policy_bytes;
+    });
+}
+
+/// A lookup served a policy copy of `policy_bytes` and its validated identity,
+/// with zero train-state bytes copied.
+pub(crate) fn policy_served_v1(policy_bytes: u64) {
+    record_v1(current_role_v1(), |counts| {
+        counts.cache_hits = 1;
+        counts.policy_served = 1;
+        counts.served_policy_bytes = policy_bytes;
+    });
+}
+
+/// A lookup served a validated identity alone, copying neither train state nor
+/// policy buffers.
+pub(crate) fn identity_served_v1() {
+    record_v1(current_role_v1(), |counts| {
+        counts.cache_hits = 1;
+        counts.identity_served = 1;
+    });
+}
+
+/// An update took ownership of the carried learner's policy and train state
+/// across a committed iteration boundary without copying either.
+pub(crate) fn carried_state_handoff_v1() {
+    record_v1(current_role_v1(), |counts| {
+        counts.carried_state_handoffs = 1;
+    });
+}
+
+/// Collection duplicated a policy view of `policy_bytes` from the carried
+/// learner without touching or copying its train state.
+pub(crate) fn carried_policy_view_v1(policy_bytes: u64) {
+    record_v1(current_role_v1(), |counts| {
+        counts.carried_policy_views = 1;
+        counts.carried_policy_bytes = policy_bytes;
     });
 }
 
@@ -308,15 +376,27 @@ mod tests {
         {
             let _outer = RoleScopeV1::enter(LoadRoleV1::UpdateLearner);
             record_lookup_v1();
-            record_hit_v1(12, 4);
+            state_served_v1(12, 4);
             {
                 let _inner = RoleScopeV1::enter(LoadRoleV1::Opponent);
                 record_lookup_v1();
                 record_miss_v1();
                 record_kept_v1(8, 2);
+                record_lookup_v1();
+                policy_served_v1(2);
             }
             record_lookup_v1();
-            record_hit_v1(12, 4);
+            state_served_v1(12, 4);
+            carried_state_handoff_v1();
+        }
+        {
+            let _validation = RoleScopeV1::enter(LoadRoleV1::UpdateValidation);
+            record_lookup_v1();
+            identity_served_v1();
+        }
+        {
+            let _collect = RoleScopeV1::enter(LoadRoleV1::CollectLearner);
+            carried_policy_view_v1(6);
         }
         record_miss_v1();
         let learner = counts_v1(LoadRoleV1::UpdateLearner);
@@ -324,9 +404,13 @@ mod tests {
             (
                 learner.scoped_loads,
                 learner.cache_lookups,
-                learner.cache_hits
+                learner.cache_hits,
+                learner.state_served,
+                learner.policy_served,
+                learner.identity_served,
+                learner.carried_state_handoffs,
             ),
-            (1, 2, 2)
+            (1, 2, 2, 2, 0, 0, 1)
         );
         assert_eq!(
             (learner.served_state_bytes, learner.served_policy_bytes),
@@ -338,12 +422,37 @@ mod tests {
             (
                 opponent.scoped_loads,
                 opponent.cache_lookups,
+                opponent.cache_hits,
+                opponent.policy_served,
                 opponent.cache_misses,
                 opponent.cache_kept,
+                opponent.served_state_bytes,
+                opponent.served_policy_bytes,
                 opponent.kept_state_bytes,
                 opponent.kept_policy_bytes
             ),
-            (1, 1, 1, 1, 8, 2)
+            (1, 2, 1, 1, 1, 1, 0, 2, 8, 2)
+        );
+        let validation = counts_v1(LoadRoleV1::UpdateValidation);
+        assert_eq!(
+            (
+                validation.scoped_loads,
+                validation.cache_lookups,
+                validation.cache_hits,
+                validation.identity_served,
+                validation.served_state_bytes,
+                validation.served_policy_bytes,
+            ),
+            (1, 1, 1, 1, 0, 0)
+        );
+        let collect = counts_v1(LoadRoleV1::CollectLearner);
+        assert_eq!(
+            (
+                collect.scoped_loads,
+                collect.carried_policy_views,
+                collect.carried_policy_bytes,
+            ),
+            (1, 1, 6)
         );
         let outside = counts_v1(LoadRoleV1::Unattributed);
         assert_eq!(
@@ -359,8 +468,20 @@ mod tests {
         let report = report_v1();
         assert_eq!(report["schema"], REPORT_SCHEMA_V1);
         assert_eq!(report["roles"]["update_learner"]["cache_hits"], 2);
+        assert_eq!(report["roles"]["update_learner"]["state_served"], 2);
+        assert_eq!(
+            report["roles"]["update_learner"]["carried_state_handoffs"],
+            1
+        );
+        assert_eq!(report["roles"]["opponent"]["policy_served"], 1);
         assert_eq!(report["roles"]["opponent"]["kept_state_bytes"], 8);
-        assert_eq!(report["total"]["cache_lookups"], 4);
+        assert_eq!(report["roles"]["update_validation"]["identity_served"], 1);
+        assert_eq!(
+            report["roles"]["collect_learner"]["carried_policy_views"],
+            1
+        );
+        assert_eq!(report["total"]["cache_lookups"], 6);
+        assert_eq!(report["total"]["cache_hits"], 4);
         assert_eq!(report["total"]["cache_misses"], 2);
         assert_eq!(
             report["roles"].as_object().unwrap().len(),

@@ -139,17 +139,36 @@ pub(in crate::expanded_deck_training_v1) fn holds_bytes_in_v1(
     if resident {
         return true;
     }
-    let mut read = Vec::with_capacity(expected.len() + 1);
-    if file
-        .take(expected.len() as u64 + 1)
-        .read_to_end(&mut read)
-        .is_err()
-    {
-        return false;
+    let mut reader = file.take(expected.len() as u64 + 1);
+    let mut buffer = [0u8; 64 * 1024];
+    let mut offset = 0usize;
+    #[cfg(test)]
+    let mut read_total = 0u64;
+    let mut matched = true;
+    loop {
+        let Ok(count) = reader.read(&mut buffer) else {
+            return false;
+        };
+        if count == 0 {
+            break;
+        }
+        #[cfg(test)]
+        {
+            read_total += count as u64;
+        }
+        if offset
+            .checked_add(count)
+            .is_some_and(|end| end <= expected.len() && expected[offset..end] == buffer[..count])
+        {
+            offset += count;
+        } else {
+            matched = false;
+            break;
+        }
     }
     #[cfg(test)]
-    BYTES_READ_FOR_TEST_V1.with(|total| total.set(total.get() + read.len() as u64));
-    read == expected
+    BYTES_READ_FOR_TEST_V1.with(|total| total.set(total.get() + read_total));
+    matched && offset == expected.len()
 }
 
 type EntriesV1 = VecDeque<Arc<VerifiedBaseV1>>;

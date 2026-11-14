@@ -521,12 +521,19 @@ fn load_expanded_inference_any_math_v1(
     if source.w_learner.is_some() {
         return w_learner_v1::load_inference_v1(source);
     }
+    let bytes = read_pinned_shared_v1(&source.play_import)?;
+    load_expanded_inference_from_bytes_v1(source, &bytes)
+}
+
+fn load_expanded_inference_from_bytes_v1(
+    source: &ExpandedModelSourceV1,
+    bytes: &[u8],
+) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
     // Inference alone admits the explicit BO3 objective. Legacy initialization
     // and update dispatch keep rejecting its descriptor/checkpoint schemas.
-    let bytes = read_pinned_bytes(&source.play_import)?;
-    let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
+    let probe: Value = serde_json::from_slice(bytes).map_err(err)?;
     if probe.get("schema").and_then(Value::as_str) == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
-        return no_state_digest_v1::load_v1(source, &bytes);
+        return no_state_digest_v1::load_v1(source, bytes);
     }
     if probe.get("schema").and_then(Value::as_str)
         == Some(crate::phase1_bo3_learning_v1::BO3_GAMEPLAY_SOURCE_SCHEMA_V1)
@@ -549,7 +556,7 @@ fn load_expanded_inference_any_math_v1(
             "registry evolution imports admit no successor checkpoint",
         )?;
         let descriptor: FrozenPlayPolicyRegistryEvolutionImportV1 =
-            serde_json::from_slice(&bytes).map_err(err)?;
+            serde_json::from_slice(bytes).map_err(err)?;
         let policy =
             FrozenPlayPolicyV1::load_registry_evolution_v3(&descriptor, &source.feature_transfer)?;
         let mut model =
@@ -562,8 +569,7 @@ fn load_expanded_inference_any_math_v1(
         let receipt = inference_identity_v1(source, &policy, &state)?;
         return Ok((policy, receipt));
     }
-    let (policy, state, _) = initialize_from_source_bytes_v1(source, &bytes, None)?;
-    let receipt = inference_identity_v1(source, &policy, &state)?;
+    let (policy, receipt, _) = load_train_policy_and_identity_v1(source, bytes)?;
     Ok((policy, receipt))
 }
 
@@ -587,9 +593,8 @@ pub(crate) fn load_expanded_update_inference_v1(
     if source.w_learner.is_some() {
         return w_learner_v1::load_update_inference_v1(source, &inputs);
     }
-    let bytes = read_pinned_bytes(&source.play_import)?;
-    let (policy, state, _) = initialize_from_source_bytes_v1(source, &bytes, Some(&inputs))?;
-    inference_identity_v1(source, &policy, &state)
+    let bytes = read_pinned_shared_v1(&source.play_import)?;
+    load_update_identity_from_source_bytes_v1(source, &bytes, &inputs)
 }
 
 struct CheckpointInputExpectationV1<'a> {
@@ -664,6 +669,15 @@ fn inference_identity_with_state_sha256_v1(
     state: &NativePolicyValueTrainStateV1,
     state_sha256: String,
 ) -> ExpandedInferenceIdentityV1 {
+    inference_identity_with_state_and_step_v1(source, policy, state_sha256, state.adam_step_v1())
+}
+
+fn inference_identity_with_state_and_step_v1(
+    source: &ExpandedModelSourceV1,
+    policy: &FrozenPlayPolicyV1,
+    state_sha256: String,
+    adam_step: u64,
+) -> ExpandedInferenceIdentityV1 {
     // Single accessor, not a hand-picked constant: a fresh-V4 policy must
     // stamp the V4 schema/registry/source/descriptor identity here, never
     // the V3 one, and this is the one place that decides which.
@@ -674,7 +688,7 @@ fn inference_identity_with_state_sha256_v1(
         checkpoint_sha256: source.checkpoint.as_ref().map(|pin| pin.sha256.clone()),
         model: policy.actual_model_identity_v1(),
         state_sha256,
-        adam_step: state.adam_step_v1(),
+        adam_step,
         feature_schema_version: feature_identity.feature_schema_version.into(),
         feature_registry_version: feature_identity.feature_registry_version.into(),
         features_source_sha256: feature_identity.features_source_sha256.into(),
@@ -701,7 +715,7 @@ pub(crate) fn load_ordinary_bo3_parent_v1(
         .as_ref()
         .ok_or("BO3 transition requires an existing ordinary checkpoint")?;
     validate_ordinary_source_descriptor_v1(source)?;
-    let bytes = read_pinned_bytes(&source.play_import)?;
+    let bytes = read_pinned_shared_v1(&source.play_import)?;
     let mut policy = load_ordinary_policy_v1(source, &bytes)?;
     let mut model =
         NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
@@ -999,7 +1013,7 @@ fn import_pins_v1(bytes: &[u8]) -> Result<Option<Vec<PinnedFileV1>>, String> {
         sha256: import.expected_metadata_sha256,
     };
     let metadata: Value =
-        serde_json::from_slice(&read_pinned_bytes(&metadata_pin)?).map_err(err)?;
+        serde_json::from_slice(&read_pinned_shared_v1(&metadata_pin)?).map_err(err)?;
     let source_run = PinnedFileV1 {
         path: import.source_run_path,
         sha256: metadata
@@ -1036,7 +1050,7 @@ fn verify_import_pins_v1(bytes: &[u8]) -> Result<bool, String> {
         return Ok(false);
     };
     for pin in &pins {
-        read_pinned_bytes(pin)?;
+        check_pinned_v1(pin)?;
     }
     Ok(true)
 }
@@ -1816,6 +1830,194 @@ fn initialize_any_math_v1(
     Ok((policy, state))
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CacheRememberV1 {
+    WithState,
+    PolicyOnly,
+}
+
+struct UncachedLearnerLoadV1 {
+    policy: FrozenPlayPolicyV1,
+    state: NativePolicyValueTrainStateV1,
+    identity: ExpandedInferenceIdentityV1,
+    transfer: Option<TransferContextV1>,
+    verifiable_kind: Option<loaded_source_cache_v1::VerifiableSourceKindV1>,
+}
+
+struct CarriedLearnerInnerV1 {
+    source: ExpandedModelSourceV1,
+    descriptor_bytes: Vec<u8>,
+    kind: loaded_source_cache_v1::VerifiableSourceKindV1,
+    policy: FrozenPlayPolicyV1,
+    state: NativePolicyValueTrainStateV1,
+    identity: ExpandedInferenceIdentityV1,
+}
+
+/// Owned learner state carried across committed iteration boundaries in
+/// `native_expanded_training_run_v1` (#595). Always holds the as-loaded policy
+/// and train state of a durably committed boundary, reverifying every pinned
+/// file on each handoff under the active `VerifiedReadsV1` setting.
+pub(crate) struct CarriedLearnerV1(Box<CarriedLearnerInnerV1>);
+
+/// Uncommitted carried learner built from an update's readback. Advances to
+/// [`CarriedLearnerV1`] only after update validation and durable `complete.json`
+/// publication succeed.
+pub(crate) struct PendingCarriedLearnerV1(Box<CarriedLearnerInnerV1>);
+
+impl CarriedLearnerV1 {
+    #[inline(never)]
+    fn duplicate_policy_for_collect_v1(
+        &self,
+        source: &ExpandedModelSourceV1,
+    ) -> Result<Option<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1)>, String> {
+        let inner = &*self.0;
+        if inner.source != *source || !inner.kind.matches_current_setting_v1() {
+            return Ok(None);
+        }
+        let descriptor_bytes = read_pinned_shared_v1(&source.play_import)?;
+        if descriptor_bytes.as_slice() != inner.descriptor_bytes.as_slice() {
+            return Ok(None);
+        }
+        inner.kind.reverify_v1(source, &descriptor_bytes)?;
+        let Ok(policy) = inner.policy.duplicate_loaded_v1() else {
+            return Ok(None);
+        };
+        loaded_source_profile_v1::carried_policy_view_v1(
+            loaded_source_cache_v1::policy_copied_bytes_v1(&policy),
+        );
+        Ok(Some((policy, inner.identity.clone())))
+    }
+
+    #[inline(never)]
+    fn into_update_learner_v1(
+        self,
+        source: &ExpandedModelSourceV1,
+    ) -> Result<
+        Option<(
+            FrozenPlayPolicyV1,
+            NativePolicyValueTrainStateV1,
+            ExpandedInferenceIdentityV1,
+        )>,
+        String,
+    > {
+        let inner = *self.0;
+        if inner.source != *source || !inner.kind.matches_current_setting_v1() {
+            return Ok(None);
+        }
+        let descriptor_bytes = read_pinned_shared_v1(&source.play_import)?;
+        if descriptor_bytes.as_slice() != inner.descriptor_bytes.as_slice() {
+            return Ok(None);
+        }
+        inner.kind.reverify_v1(source, &descriptor_bytes)?;
+        loaded_source_profile_v1::carried_state_handoff_v1();
+        Ok(Some((inner.policy, inner.state, inner.identity)))
+    }
+}
+
+impl PendingCarriedLearnerV1 {
+    pub(crate) fn commit_v1(
+        self,
+        committed_source: &ExpandedModelSourceV1,
+        committed_identity: &ExpandedInferenceIdentityV1,
+    ) -> Option<CarriedLearnerV1> {
+        if self.0.source == *committed_source && self.0.identity == *committed_identity {
+            Some(CarriedLearnerV1(self.0))
+        } else {
+            None
+        }
+    }
+}
+
+pub(crate) struct LoadedRunInitialV1 {
+    pub(crate) identity: ExpandedInferenceIdentityV1,
+    pub(crate) input_contract_record: Option<Value>,
+    pub(crate) contract_digest: Option<String>,
+    pub(crate) carried: Option<CarriedLearnerV1>,
+}
+
+/// Validates a run's initial source under `math` and, when `want_carried` is
+/// true and the source is a verifiable net-8 learner, returns the single owned
+/// `CarriedLearnerV1` without cloning `NativePolicyValueTrainStateV1`.
+#[inline(never)]
+pub(crate) fn load_initial_for_run_v1(
+    source: &ExpandedModelSourceV1,
+    math: TrainingMathV1,
+    want_carried: bool,
+) -> Result<LoadedRunInitialV1, String> {
+    let build_response = |policy: &FrozenPlayPolicyV1,
+                          identity: ExpandedInferenceIdentityV1,
+                          carried: Option<CarriedLearnerV1>|
+     -> Result<LoadedRunInitialV1, String> {
+        let input_contract_record = no_state_digest_v1::policy_contract_record_v1(policy)?
+            .map(|record| serde_json::to_value(record).map_err(err))
+            .transpose()?;
+        let contract_digest = policy.input_contract_v1().map(str::to_owned);
+        Ok(LoadedRunInitialV1 {
+            identity,
+            input_contract_record,
+            contract_digest,
+            carried,
+        })
+    };
+    if !want_carried || source.s_learner.is_some() || source.w_learner.is_some() {
+        let (policy, identity) = load_expanded_inference_bound_v1(source, math)?;
+        return build_response(&policy, identity, None);
+    }
+    let bytes = read_pinned_shared_v1(&source.play_import)?;
+    let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
+    let schema = probe.get("schema").and_then(Value::as_str);
+    let delegates_to_inference = match schema {
+        Some(no_state_digest_v1::IMPORT_SCHEMA_V1) => !no_state_digest_v1::trains_v1(&bytes)?,
+        Some(crate::phase1_bo3_learning_v1::BO3_GAMEPLAY_SOURCE_SCHEMA_V1)
+        | Some(REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1) => true,
+        #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
+        Some(stack_features::terminal_tactics::learning::campaign::TEACHER_INFERENCE_SCHEMA) => {
+            true
+        }
+        _ => false,
+    };
+    if delegates_to_inference {
+        let (mut policy, identity) = load_expanded_inference_from_bytes_v1(source, &bytes)?;
+        bind_opponent_math_v1(source, &mut policy, math)?;
+        return build_response(&policy, identity, None);
+    }
+    let loaded =
+        load_learner_from_source_bytes_v1(source, &bytes, None, CacheRememberV1::PolicyOnly)?;
+    if source.checkpoint.is_some() {
+        ensure(
+            loaded.policy.training_math_v1() == math,
+            "opponent checkpoint training math differs from the command's",
+        )?;
+    }
+    let response = build_response(&loaded.policy, loaded.identity.clone(), None)?;
+    let carried = match (loaded.transfer.is_none(), loaded.verifiable_kind) {
+        (true, Some(kind)) => Some(CarriedLearnerV1(Box::new(CarriedLearnerInnerV1 {
+            source: source.clone(),
+            descriptor_bytes: bytes.as_ref().clone(),
+            kind,
+            policy: loaded.policy,
+            state: loaded.state,
+            identity: loaded.identity,
+        }))),
+        _ => None,
+    };
+    Ok(LoadedRunInitialV1 {
+        carried,
+        ..response
+    })
+}
+
+fn check_net8_learner_source_v1(source: &ExpandedModelSourceV1) -> Result<(), String> {
+    ensure(
+        source.s_learner.is_none(),
+        s_learner_v1::S_LEARNER_NET8_REFUSAL_V1,
+    )?;
+    ensure(
+        source.w_learner.is_none(),
+        w_learner_v1::W_LEARNER_NET8_REFUSAL_V1,
+    )
+}
+
 fn initialize_with_transfer_context(
     source: &ExpandedModelSourceV1,
 ) -> Result<
@@ -1826,7 +2028,7 @@ fn initialize_with_transfer_context(
     ),
     String,
 > {
-    let bytes = read_pinned_bytes(&source.play_import)?;
+    let bytes = read_pinned_shared_v1(&source.play_import)?;
     initialize_from_source_bytes_v1(source, &bytes, None)
 }
 
@@ -1842,85 +2044,96 @@ fn initialize_from_source_bytes_v1(
     ),
     String,
 > {
-    ensure(
-        source.s_learner.is_none(),
-        s_learner_v1::S_LEARNER_NET8_REFUSAL_V1,
-    )?;
-    ensure(
-        source.w_learner.is_none(),
-        w_learner_v1::W_LEARNER_NET8_REFUSAL_V1,
-    )?;
+    let loaded =
+        load_learner_from_source_bytes_v1(source, bytes, inputs, CacheRememberV1::WithState)?;
+    Ok((loaded.policy, loaded.state, loaded.transfer))
+}
+
+fn load_learner_from_source_bytes_v1(
+    source: &ExpandedModelSourceV1,
+    bytes: &[u8],
+    inputs: Option<&CheckpointInputExpectationV1<'_>>,
+    remember: CacheRememberV1,
+) -> Result<UncachedLearnerLoadV1, String> {
+    check_net8_learner_source_v1(source)?;
     if flat_v8_requested_v1(source)? {
-        // A FlatV8 source (the V8 inclusion contract). Its checkpoint is a V8
-        // one: the first is made by the function-preserving V8 conversion
-        // (`v8_inclusion_conversion_v1`), with its seeded pairing draws, and
-        // every FlatV8 update saves one. The play import loads under its V4
-        // identity and takes the V8 identity (`into_flat_v8_v1`), then the
-        // V8 checkpoint restores every parameter and Adam moment.
         let pin = source
             .checkpoint
             .as_ref()
             .ok_or("a FlatV8 source requires its V8 checkpoint")?;
-        // A cached load of these exact descriptor and checkpoint bytes, after
-        // this branch's reads (`loaded_source_cache_v1`).
-        if let Some((policy, state)) =
-            loaded_source_cache_v1::lookup_flat_checkpoint_v1(source, bytes, inputs)?
+        if let Some((policy, state, identity, kind)) =
+            loaded_source_cache_v1::lookup_flat_checkpoint_with_kind_v1(source, bytes, inputs)?
         {
-            return Ok((policy, state, None));
+            return Ok(UncachedLearnerLoadV1 {
+                policy,
+                state,
+                identity,
+                transfer: None,
+                verifiable_kind: Some(kind),
+            });
         }
-        ensure(
-            checkpoint_feature_contract_v1(pin)?
-                == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8,
-            "a FlatV8 source requires a checkpoint with the FlatV8 identity",
-        )?;
-        let import_only = ExpandedModelSourceV1 {
-            feature_transfer: FrozenPlayObservationTransferV3 {
-                expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
-                expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
-            },
-            checkpoint: None,
-            ..source.clone()
-        };
-        let (policy, _, context) = initialize_from_source_bytes_v1(&import_only, bytes, None)?;
-        ensure(
-            context.is_none(),
-            "a FlatV8 checkpoint resumes only an ordinary source",
-        )?;
-        let mut policy = policy.into_flat_v8_v1()?;
-        let model = policy.training_model_v3();
-        let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
-        if let Some(inputs) = inputs {
-            inputs.validate_v1(
-                &saved.trajectories,
-                saved.learning_rate_bits,
-                saved.value_coefficient_bits,
-            )?;
-        }
-        let state = restore_checkpoint_state_v1(&saved, &mut policy, model)?;
-        loaded_source_cache_v1::remember_flat_checkpoint_v1(source, bytes, &policy, &state, &saved);
-        return Ok((policy, state, None));
+        return load_flat_v8_uncached_v1(source, pin, bytes, inputs, remember);
     }
     if flat_v7_transfer_requested_v1(source)? {
-        // A FlatV7 source (Pauper London mulligans v1). The play import loads
-        // under its V4 identity and takes the FlatV7 identity
-        // (`into_flat_v7_transfer_v1`). A V4 checkpoint is the explicit
-        // V4-to-V7 transfer: it restores under V4 first, with its parameters
-        // and Adam state unchanged. A FlatV7 checkpoint, which every FlatV7
-        // update saves, restores under the FlatV7 identity, so a FlatV7
-        // lineage resumes without another transfer.
-        let v4 = ExpandedModelSourceV1 {
-            feature_transfer: FrozenPlayObservationTransferV3 {
-                expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
-                expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
-            },
-            ..source.clone()
-        };
-        // Only a load through the FlatV7 checkpoint below is cached, so a hit
-        // makes that path's reads (`loaded_source_cache_v1`).
-        if let Some((policy, state)) =
-            loaded_source_cache_v1::lookup_flat_checkpoint_v1(source, bytes, inputs)?
+        if let Some((policy, state, identity, kind)) =
+            loaded_source_cache_v1::lookup_flat_checkpoint_with_kind_v1(source, bytes, inputs)?
         {
-            return Ok((policy, state, None));
+            return Ok(UncachedLearnerLoadV1 {
+                policy,
+                state,
+                identity,
+                transfer: None,
+                verifiable_kind: Some(kind),
+            });
+        }
+        return load_flat_v7_uncached_v1(source, bytes, inputs, remember);
+    }
+    if let Some((policy, state, identity, kind)) =
+        loaded_source_cache_v1::lookup_with_kind_v1(source, bytes, inputs)?
+    {
+        return Ok(UncachedLearnerLoadV1 {
+            policy,
+            state,
+            identity,
+            transfer: None,
+            verifiable_kind: Some(kind),
+        });
+    }
+    load_nonflat_uncached_v1(source, bytes, inputs, remember)
+}
+
+#[inline(never)]
+fn load_train_policy_and_identity_v1(
+    source: &ExpandedModelSourceV1,
+    bytes: &[u8],
+) -> Result<
+    (
+        FrozenPlayPolicyV1,
+        ExpandedInferenceIdentityV1,
+        Option<TransferContextV1>,
+    ),
+    String,
+> {
+    check_net8_learner_source_v1(source)?;
+    if flat_v8_requested_v1(source)? {
+        let pin = source
+            .checkpoint
+            .as_ref()
+            .ok_or("a FlatV8 source requires its V8 checkpoint")?;
+        if let Some((policy, identity)) =
+            loaded_source_cache_v1::lookup_flat_checkpoint_policy_v1(source, bytes, None)?
+        {
+            return Ok((policy, identity, None));
+        }
+        let loaded =
+            load_flat_v8_uncached_v1(source, pin, bytes, None, CacheRememberV1::PolicyOnly)?;
+        return Ok((loaded.policy, loaded.identity, loaded.transfer));
+    }
+    if flat_v7_transfer_requested_v1(source)? {
+        if let Some((policy, identity)) =
+            loaded_source_cache_v1::lookup_flat_checkpoint_policy_v1(source, bytes, None)?
+        {
+            return Ok((policy, identity, None));
         }
         let v7_checkpoint = match &source.checkpoint {
             Some(pin)
@@ -1931,65 +2144,286 @@ fn initialize_from_source_bytes_v1(
             }
             _ => None,
         };
-        let Some(pin) = v7_checkpoint else {
-            ensure(
-                inputs.is_none(),
-                "a FlatV7 update's checkpoint has the FlatV7 identity",
-            )?;
-            let (policy, state, context) = initialize_from_source_bytes_v1(&v4, bytes, None)?;
-            return Ok((policy.into_flat_v7_transfer_v1()?, state, context));
-        };
-        let import_only = ExpandedModelSourceV1 {
-            checkpoint: None,
-            ..v4
-        };
-        let (policy, _, context) = initialize_from_source_bytes_v1(&import_only, bytes, None)?;
-        ensure(
-            context.is_none(),
-            "a FlatV7 checkpoint resumes only an ordinary source",
-        )?;
-        let mut policy = policy.into_flat_v7_transfer_v1()?;
-        let model = policy.training_model_v3();
-        let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
-        if let Some(inputs) = inputs {
-            inputs.validate_v1(
-                &saved.trajectories,
-                saved.learning_rate_bits,
-                saved.value_coefficient_bits,
-            )?;
+        if v7_checkpoint.is_none() {
+            let v4 = ExpandedModelSourceV1 {
+                feature_transfer: FrozenPlayObservationTransferV3 {
+                    expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
+                    expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
+                },
+                ..source.clone()
+            };
+            let (policy, v4_identity, context) = load_train_policy_and_identity_v1(&v4, bytes)?;
+            let policy = policy.into_flat_v7_transfer_v1()?;
+            let identity = inference_identity_with_state_and_step_v1(
+                source,
+                &policy,
+                v4_identity.state_sha256,
+                v4_identity.adam_step,
+            );
+            return Ok((policy, identity, context));
         }
-        let state = restore_checkpoint_state_v1(&saved, &mut policy, model)?;
-        loaded_source_cache_v1::remember_flat_checkpoint_v1(source, bytes, &policy, &state, &saved);
-        return Ok((policy, state, None));
+        let loaded = load_flat_v7_uncached_v1(source, bytes, None, CacheRememberV1::PolicyOnly)?;
+        return Ok((loaded.policy, loaded.identity, loaded.transfer));
     }
-    if let Some((policy, state)) = loaded_source_cache_v1::lookup_v1(source, bytes, inputs)? {
-        return Ok((policy, state, None));
-    }
-    let probe: Value = serde_json::from_slice(bytes).map_err(err)?;
-    if probe.get("schema").and_then(Value::as_str) == Some(registry_transfer_source::SOURCE_SCHEMA)
+    if let Some((policy, identity)) = loaded_source_cache_v1::lookup_policy_v1(source, bytes, None)?
     {
+        return Ok((policy, identity, None));
+    }
+    let loaded = load_nonflat_uncached_v1(source, bytes, None, CacheRememberV1::PolicyOnly)?;
+    Ok((loaded.policy, loaded.identity, loaded.transfer))
+}
+
+#[inline(never)]
+fn load_update_identity_from_source_bytes_v1(
+    source: &ExpandedModelSourceV1,
+    bytes: &[u8],
+    inputs: &CheckpointInputExpectationV1<'_>,
+) -> Result<ExpandedInferenceIdentityV1, String> {
+    check_net8_learner_source_v1(source)?;
+    if flat_v8_requested_v1(source)? {
+        let pin = source
+            .checkpoint
+            .as_ref()
+            .ok_or("a FlatV8 source requires its V8 checkpoint")?;
+        if let Some(identity) =
+            loaded_source_cache_v1::lookup_flat_checkpoint_identity_v1(source, bytes, Some(inputs))?
+        {
+            return Ok(identity);
+        }
+        return Ok(load_flat_v8_uncached_v1(
+            source,
+            pin,
+            bytes,
+            Some(inputs),
+            CacheRememberV1::PolicyOnly,
+        )?
+        .identity);
+    }
+    if flat_v7_transfer_requested_v1(source)? {
+        if let Some(identity) =
+            loaded_source_cache_v1::lookup_flat_checkpoint_identity_v1(source, bytes, Some(inputs))?
+        {
+            return Ok(identity);
+        }
+        return Ok(load_flat_v7_uncached_v1(
+            source,
+            bytes,
+            Some(inputs),
+            CacheRememberV1::PolicyOnly,
+        )?
+        .identity);
+    }
+    if let Some(identity) = loaded_source_cache_v1::lookup_identity_v1(source, bytes, Some(inputs))?
+    {
+        return Ok(identity);
+    }
+    Ok(
+        load_nonflat_uncached_v1(source, bytes, Some(inputs), CacheRememberV1::PolicyOnly)?
+            .identity,
+    )
+}
+
+#[inline(never)]
+fn load_flat_v8_uncached_v1(
+    source: &ExpandedModelSourceV1,
+    pin: &PinnedFileV1,
+    bytes: &[u8],
+    inputs: Option<&CheckpointInputExpectationV1<'_>>,
+    remember: CacheRememberV1,
+) -> Result<UncachedLearnerLoadV1, String> {
+    ensure(
+        checkpoint_feature_contract_v1(pin)?
+            == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8,
+        "a FlatV8 source requires a checkpoint with the FlatV8 identity",
+    )?;
+    let import_only = ExpandedModelSourceV1 {
+        feature_transfer: FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
+            expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
+        },
+        checkpoint: None,
+        ..source.clone()
+    };
+    let (policy, _, context) = load_train_policy_and_identity_v1(&import_only, bytes)?;
+    ensure(
+        context.is_none(),
+        "a FlatV8 checkpoint resumes only an ordinary source",
+    )?;
+    let mut policy = policy.into_flat_v8_v1()?;
+    let model = policy.training_model_v3();
+    let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+    if let Some(inputs) = inputs {
+        inputs.validate_v1(
+            &saved.trajectories,
+            saved.learning_rate_bits,
+            saved.value_coefficient_bits,
+        )?;
+    }
+    let state = restore_checkpoint_state_v1(&saved, &mut policy, model)?;
+    let identity = inference_identity_v1(source, &policy, &state)?;
+    let verifiable_kind =
+        loaded_source_cache_v1::classify_flat_checkpoint_v1(source, bytes, &policy, &saved)
+            .map(|(kind, _)| kind);
+    match remember {
+        CacheRememberV1::WithState => {
+            loaded_source_cache_v1::remember_flat_checkpoint_v1(
+                source, bytes, &policy, &state, &saved,
+            );
+        }
+        CacheRememberV1::PolicyOnly => {
+            loaded_source_cache_v1::remember_flat_checkpoint_policy_v1(
+                source, bytes, &policy, &identity, &saved,
+            );
+        }
+    }
+    Ok(UncachedLearnerLoadV1 {
+        policy,
+        state,
+        identity,
+        transfer: None,
+        verifiable_kind,
+    })
+}
+
+#[inline(never)]
+fn load_flat_v7_uncached_v1(
+    source: &ExpandedModelSourceV1,
+    bytes: &[u8],
+    inputs: Option<&CheckpointInputExpectationV1<'_>>,
+    remember: CacheRememberV1,
+) -> Result<UncachedLearnerLoadV1, String> {
+    let v4 = ExpandedModelSourceV1 {
+        feature_transfer: FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V4.into(),
+            expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V4.into(),
+        },
+        ..source.clone()
+    };
+    let v7_checkpoint = match &source.checkpoint {
+        Some(pin)
+            if checkpoint_feature_contract_v1(pin)?
+                == crate::native_flat_tensorizer_v7::FEATURE_CONTRACT_DIGEST_V7 =>
+        {
+            Some(pin)
+        }
+        _ => None,
+    };
+    let Some(pin) = v7_checkpoint else {
+        ensure(
+            inputs.is_none(),
+            "a FlatV7 update's checkpoint has the FlatV7 identity",
+        )?;
+        let v4_load = load_learner_from_source_bytes_v1(&v4, bytes, None, remember)?;
+        let policy = v4_load.policy.into_flat_v7_transfer_v1()?;
+        let identity = inference_identity_with_state_and_step_v1(
+            source,
+            &policy,
+            v4_load.identity.state_sha256,
+            v4_load.identity.adam_step,
+        );
+        return Ok(UncachedLearnerLoadV1 {
+            policy,
+            state: v4_load.state,
+            identity,
+            transfer: v4_load.transfer,
+            verifiable_kind: None,
+        });
+    };
+    let import_only = ExpandedModelSourceV1 {
+        checkpoint: None,
+        ..v4
+    };
+    let (policy, _, context) = load_train_policy_and_identity_v1(&import_only, bytes)?;
+    ensure(
+        context.is_none(),
+        "a FlatV7 checkpoint resumes only an ordinary source",
+    )?;
+    let mut policy = policy.into_flat_v7_transfer_v1()?;
+    let model = policy.training_model_v3();
+    let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+    if let Some(inputs) = inputs {
+        inputs.validate_v1(
+            &saved.trajectories,
+            saved.learning_rate_bits,
+            saved.value_coefficient_bits,
+        )?;
+    }
+    let state = restore_checkpoint_state_v1(&saved, &mut policy, model)?;
+    let identity = inference_identity_v1(source, &policy, &state)?;
+    let verifiable_kind =
+        loaded_source_cache_v1::classify_flat_checkpoint_v1(source, bytes, &policy, &saved)
+            .map(|(kind, _)| kind);
+    match remember {
+        CacheRememberV1::WithState => {
+            loaded_source_cache_v1::remember_flat_checkpoint_v1(
+                source, bytes, &policy, &state, &saved,
+            );
+        }
+        CacheRememberV1::PolicyOnly => {
+            loaded_source_cache_v1::remember_flat_checkpoint_policy_v1(
+                source, bytes, &policy, &identity, &saved,
+            );
+        }
+    }
+    Ok(UncachedLearnerLoadV1 {
+        policy,
+        state,
+        identity,
+        transfer: None,
+        verifiable_kind,
+    })
+}
+
+#[inline(never)]
+fn load_nonflat_uncached_v1(
+    source: &ExpandedModelSourceV1,
+    bytes: &[u8],
+    inputs: Option<&CheckpointInputExpectationV1<'_>>,
+    remember: CacheRememberV1,
+) -> Result<UncachedLearnerLoadV1, String> {
+    let probe: Value = serde_json::from_slice(bytes).map_err(err)?;
+    let schema = probe.get("schema").and_then(Value::as_str);
+    if schema == Some(registry_transfer_source::SOURCE_SCHEMA) {
         let (policy, state, context) = registry_transfer_source::initialize(source, bytes)?;
         if let Some(inputs) = inputs {
             inputs.validate_transfer_v1(source)?;
         }
-        return Ok((policy, state, context.map(TransferContextV1::Imported)));
+        let identity = inference_identity_v1(source, &policy, &state)?;
+        return Ok(UncachedLearnerLoadV1 {
+            policy,
+            state,
+            identity,
+            transfer: context.map(TransferContextV1::Imported),
+            verifiable_kind: None,
+        });
     }
-    if probe.get("schema").and_then(Value::as_str)
-        == Some(fresh_registry_transfer_source::SOURCE_SCHEMA)
-    {
+    if schema == Some(fresh_registry_transfer_source::SOURCE_SCHEMA) {
         let (policy, state, context) = fresh_registry_transfer_source::initialize(source, bytes)?;
         if let Some(inputs) = inputs {
             inputs.validate_transfer_v1(source)?;
         }
-        return Ok((policy, state, context.map(TransferContextV1::Fresh)));
+        let identity = inference_identity_v1(source, &policy, &state)?;
+        return Ok(UncachedLearnerLoadV1 {
+            policy,
+            state,
+            identity,
+            transfer: context.map(TransferContextV1::Fresh),
+            verifiable_kind: None,
+        });
     }
-    if probe.get("schema").and_then(Value::as_str) == Some(REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1) {
+    if schema == Some(REGISTRY_EVOLUTION_IMPORT_SCHEMA_V1) {
         return Err(REGISTRY_EVOLUTION_LEARNER_REFUSAL_V1.into());
     }
-    if probe.get("schema").and_then(Value::as_str) == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
-        // Cached under its own exact reverification (the lookup above);
-        // returned directly, so its policy locals stay out of this frame.
-        return no_state_digest_v1::initialize_training_v1(source, bytes, inputs);
+    if schema == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
+        let (policy, state, identity, verifiable_kind) =
+            no_state_digest_v1::initialize_training_uncached_v1(source, bytes, inputs, remember)?;
+        return Ok(UncachedLearnerLoadV1 {
+            policy,
+            state,
+            identity,
+            transfer: None,
+            verifiable_kind,
+        });
     }
     let mut policy = load_ordinary_policy_v1(source, bytes)?;
     // The validated policy already owns the exact contract model. A private
@@ -2016,12 +2450,57 @@ fn initialize_from_source_bytes_v1(
             None,
         )
     };
-    if probe.get("schema").and_then(Value::as_str)
-        == Some(fresh_initialization_source::SOURCE_SCHEMA)
-    {
-        loaded_source_cache_v1::remember_v1(source, bytes, &policy, &state, saved.as_ref());
-    }
-    Ok((policy, state, None))
+    let identity = inference_identity_v1(source, &policy, &state)?;
+    let verifiable_kind = if schema == Some(fresh_initialization_source::SOURCE_SCHEMA) {
+        match remember {
+            CacheRememberV1::WithState => {
+                loaded_source_cache_v1::remember_v1(source, bytes, &policy, &state, saved.as_ref());
+            }
+            CacheRememberV1::PolicyOnly => {
+                loaded_source_cache_v1::remember_policy_v1(
+                    source,
+                    bytes,
+                    &policy,
+                    &identity,
+                    saved.as_ref(),
+                );
+            }
+        }
+        loaded_source_cache_v1::classify_fresh_v1(source, bytes, &policy, saved.as_ref())
+            .map(|(kind, _)| kind)
+    } else {
+        None
+    };
+    Ok(UncachedLearnerLoadV1 {
+        policy,
+        state,
+        identity,
+        transfer: None,
+        verifiable_kind,
+    })
+}
+
+#[inline(never)]
+fn load_collection_policy_and_identity_v1(
+    source: &ExpandedModelSourceV1,
+    carried: Option<&CarriedLearnerV1>,
+) -> Result<
+    (
+        FrozenPlayPolicyV1,
+        ExpandedInferenceIdentityV1,
+        Option<TransferContextV1>,
+    ),
+    String,
+> {
+    loaded_source_profile_v1::scoped_v1(LoadRoleV1::CollectLearner, || {
+        if let Some(carried) = carried {
+            if let Some((policy, identity)) = carried.duplicate_policy_for_collect_v1(source)? {
+                return Ok((policy, identity, None));
+            }
+        }
+        let bytes = read_pinned_shared_v1(&source.play_import)?;
+        load_train_policy_and_identity_v1(source, &bytes)
+    })
 }
 
 /// Syntax admission only. Actual checkpoint/parameter/Adam binding is checked
@@ -2041,7 +2520,7 @@ pub(crate) fn validate_ordinary_source_descriptor_v1(
         source.checkpoint.is_some(),
         "ordinary parent checkpoint is required",
     )?;
-    let bytes = read_pinned_bytes(&source.play_import)?;
+    let bytes = read_pinned_shared_v1(&source.play_import)?;
     let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
     if probe.get("schema").and_then(Value::as_str)
         == Some(fresh_initialization_source::SOURCE_SCHEMA)
@@ -2182,7 +2661,7 @@ pub fn inspect_fresh_initialization_v1(
         source.checkpoint.is_none(),
         "fresh inspection cannot restore a checkpoint",
     )?;
-    let bytes = read_pinned_bytes(&source.play_import)?;
+    let bytes = read_pinned_shared_v1(&source.play_import)?;
     let descriptor = fresh_initialization_source::parse_source_v1(&bytes)?;
     let policy =
         fresh_initialization_source::load_policy_v1(&descriptor, &source.feature_transfer)?;
@@ -2370,17 +2849,27 @@ fn bind_training_math_v1(
     policy: &mut FrozenPlayPolicyV1,
     state: &mut NativePolicyValueTrainStateV1,
 ) -> Result<(), String> {
+    bind_collection_training_math_v1(source, transfer, math, policy)?;
+    state.set_training_math_v1(math);
+    Ok(())
+}
+
+fn bind_collection_training_math_v1(
+    source: &ExpandedModelSourceV1,
+    transfer: Option<&TransferContextV1>,
+    math: TrainingMathV1,
+    policy: &mut FrozenPlayPolicyV1,
+) -> Result<(), String> {
     ensure(
         math.is_platform_libm() || transfer.is_none(),
         "portable training math is not available to registry-transfer sources",
     )?;
     if source.checkpoint.is_some() {
         ensure(
-            state.training_math_v1() == math,
+            policy.training_math_v1() == math,
             "checkpoint training math differs from the command's",
         )?;
     }
-    state.set_training_math_v1(math);
     policy.set_training_math_v1(math);
     Ok(())
 }
@@ -3932,6 +4421,31 @@ pub enum ExpandedTrainingCommandV1 {
 }
 
 pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
+    execute_command_v1(command, None, None, false, false).map(|(value, _)| value)
+}
+
+pub(crate) fn execute_collect_with_carried_v1(
+    command: ExpandedTrainingCommandV1,
+    carried: Option<&CarriedLearnerV1>,
+) -> Result<Value, String> {
+    execute_command_v1(command, carried, None, true, false).map(|(value, _)| value)
+}
+
+pub(crate) fn execute_update_with_carried_v1(
+    command: ExpandedTrainingCommandV1,
+    carried: Option<CarriedLearnerV1>,
+    want_next_carried: bool,
+) -> Result<(Value, Option<PendingCarriedLearnerV1>), String> {
+    execute_command_v1(command, None, carried, true, want_next_carried)
+}
+
+fn execute_command_v1(
+    command: ExpandedTrainingCommandV1,
+    carried_collect: Option<&CarriedLearnerV1>,
+    carried_update: Option<CarriedLearnerV1>,
+    from_run: bool,
+    want_next_carried: bool,
+) -> Result<(Value, Option<PendingCarriedLearnerV1>), String> {
     match command {
         ExpandedTrainingCommandV1::ESupportedUpdate {
             source,
@@ -3958,6 +4472,9 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            carried_update,
+            from_run,
+            want_next_carried,
         ),
         ExpandedTrainingCommandV1::SoftQUpdate {
             source,
@@ -3984,6 +4501,9 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             TrainingMathV1::PlatformLibm,
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
+            carried_update,
+            from_run,
+            want_next_carried,
         ),
         ExpandedTrainingCommandV1::SearchTargetsUpdate {
             source,
@@ -4013,6 +4533,9 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             CheckpointRecordFormatV1::V1,
             RecordEnvelopeV1::None,
             None,
+            carried_update,
+            from_run,
+            want_next_carried,
         ),
         ExpandedTrainingCommandV1::Ex1Update {
             source,
@@ -4059,6 +4582,9 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 CheckpointRecordFormatV1::V1,
                 record_envelope,
                 None,
+                carried_update,
+                from_run,
+                want_next_carried,
             )
         }
         ExpandedTrainingCommandV1::SoftQDiagnostic {
@@ -4073,19 +4599,22 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             teacher_workers,
             &cases,
             &output_directory,
-        ),
+        )
+        .map(|value| (value, None)),
 
         ExpandedTrainingCommandV1::ScoreSavedStates {
             source,
             probes,
             membership_sha256,
             output_directory,
-        } => exploration_probe_v1::score_v1(source, probes, membership_sha256, output_directory),
+        } => exploration_probe_v1::score_v1(source, probes, membership_sha256, output_directory)
+            .map(|value| (value, None)),
         ExpandedTrainingCommandV1::ESupportedProbeScore {
             source,
             probes,
             output_directory,
-        } => e_supported_teacher_v1::probe_score(&source, &probes, &output_directory),
+        } => e_supported_teacher_v1::probe_score(&source, &probes, &output_directory)
+            .map(|value| (value, None)),
         ExpandedTrainingCommandV1::ESupportedTeacherDiagnostic {
             teacher,
             prior_deck_indices,
@@ -4100,9 +4629,11 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             max_transitions,
             &probes,
             &output_directory,
-        ),
+        )
+        .map(|value| (value, None)),
         ExpandedTrainingCommandV1::LineBHeadDistance { treatment, control } => {
             line_b_teacher_packet_v1::line_b_head_distance_v1(&treatment, &control)
+                .map(|value| (value, None))
         }
         ExpandedTrainingCommandV1::ArchiveDistillationBank {
             parent,
@@ -4110,7 +4641,8 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             games,
             sources,
             output_directory,
-        } => archive_distillation_v1::bank_v1(parent, lineage, games, sources, output_directory),
+        } => archive_distillation_v1::bank_v1(parent, lineage, games, sources, output_directory)
+            .map(|value| (value, None)),
         ExpandedTrainingCommandV1::ArchiveDistillationPhase1 {
             parent,
             lineage,
@@ -4135,7 +4667,8 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             options,
             update_scope,
             output_directory,
-        ),
+        )
+        .map(|value| (value, None)),
         ExpandedTrainingCommandV1::ArchiveDistillationProbe {
             parent,
             lineage,
@@ -4156,12 +4689,14 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             evidence,
             evidence_logits,
             output_directory,
-        ),
+        )
+        .map(|value| (value, None)),
         ExpandedTrainingCommandV1::LineRetentionTrace {
             run,
             completion,
             output_directory,
-        } => archive_distillation_v1::retention_trace_v1(run, completion, output_directory),
+        } => archive_distillation_v1::retention_trace_v1(run, completion, output_directory)
+            .map(|value| (value, None)),
         ExpandedTrainingCommandV1::CollectParallel {
             source,
             episodes,
@@ -4182,7 +4717,9 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             ex1,
             record_envelope,
             output_directory,
-        ),
+            carried_collect,
+        )
+        .map(|value| (value, None)),
         ExpandedTrainingCommandV1::Collect {
             source,
             episodes,
@@ -4217,30 +4754,22 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 )?;
                 w_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
             } else {
-                let (mut policy, mut state, transfer) =
-                    loaded_source_profile_v1::scoped_v1(LoadRoleV1::CollectLearner, || {
-                        initialize_with_transfer_context(&source)
-                    })?;
+                let (mut policy, identity, transfer) =
+                    load_collection_policy_and_identity_v1(&source, carried_collect)?;
                 if let Some(context) = &transfer {
                     context.validate_batch(&episodes)?;
                 }
-                bind_training_math_v1(
+                bind_collection_training_math_v1(
                     &source,
                     transfer.as_ref(),
                     training_math,
                     &mut policy,
-                    &mut state,
                 )?;
                 collection_sampler.apply_to_learner_v1(&mut policy);
-                let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
+                let state_hash = identity.state_sha256.clone();
                 let learner = ExpandedSeatBehaviorV1 {
                     source: source.clone(),
-                    identity: inference_identity_with_state_sha256_v1(
-                        &source,
-                        &policy,
-                        &state,
-                        state_hash.clone(),
-                    ),
+                    identity,
                 };
                 (policy, learner, state_hash)
             };
@@ -4334,7 +4863,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 result["ex1"] = json!({"options":options,"episodes":ex1_outputs});
             }
             publish_json(&output_directory, "collection.json", &result)?;
-            Ok(result)
+            Ok((result, None))
         }
         ExpandedTrainingCommandV1::Update {
             source,
@@ -4365,6 +4894,9 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             training_math,
             record_format,
             RecordEnvelopeV1::None,
+            carried_update,
+            from_run,
+            want_next_carried,
         ),
         ExpandedTrainingCommandV1::UpdatePrepared {
             source,
@@ -4401,6 +4933,9 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 training_math,
                 record_format,
                 record_envelope,
+                carried_update,
+                from_run,
+                want_next_carried,
             )
         }
         ExpandedTrainingCommandV1::UpdateSVerifiedSerial {
@@ -4431,6 +4966,9 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             CheckpointRecordFormatV1::default(),
             RecordEnvelopeV1::None,
             Some(s_learner_v1::VerifiedReplayOptionsV1::new(tape_cap_bytes)?),
+            carried_update,
+            from_run,
+            want_next_carried,
         ),
         ExpandedTrainingCommandV1::UpdateSVerifiedPrepared {
             source,
@@ -4465,6 +5003,9 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 CheckpointRecordFormatV1::default(),
                 RecordEnvelopeV1::None,
                 Some(s_learner_v1::VerifiedReplayOptionsV1::new(tape_cap_bytes)?),
+                carried_update,
+                from_run,
+                want_next_carried,
             )
         }
     }
@@ -4634,7 +5175,10 @@ fn execute_update_v1(
     training_math: TrainingMathV1,
     record_format: CheckpointRecordFormatV1,
     record_envelope: RecordEnvelopeV1,
-) -> Result<Value, String> {
+    carried: Option<CarriedLearnerV1>,
+    from_run: bool,
+    want_next_carried: bool,
+) -> Result<(Value, Option<PendingCarriedLearnerV1>), String> {
     execute_update_inner_v1(
         source,
         trajectories,
@@ -4655,6 +5199,9 @@ fn execute_update_v1(
         record_format,
         record_envelope,
         None,
+        carried,
+        from_run,
+        want_next_carried,
     )
 }
 
@@ -4682,7 +5229,10 @@ fn execute_update_inner_v1(
     record_format: CheckpointRecordFormatV1,
     record_envelope: RecordEnvelopeV1,
     verified_replay: Option<s_learner_v1::VerifiedReplayOptionsV1>,
-) -> Result<Value, String> {
+    carried: Option<CarriedLearnerV1>,
+    from_run: bool,
+    want_next_carried: bool,
+) -> Result<(Value, Option<PendingCarriedLearnerV1>), String> {
     let update_started = std::time::Instant::now();
     ensure(
         verified_replay.is_none() || source.s_learner.is_some(),
@@ -4783,7 +5333,8 @@ fn execute_update_inner_v1(
             record_format,
             record_envelope,
             started: update_started,
-        });
+        })
+        .map(|value| (value, None));
     }
     if source.s_learner.is_some() {
         return s_learner_v1::execute_s_update_v1(s_learner_v1::SUpdateInputsV1 {
@@ -4809,7 +5360,8 @@ fn execute_update_inner_v1(
             record_format,
             record_envelope,
             started: update_started,
-        });
+        })
+        .map(|value| (value, None));
     }
     if let Some(pin) = &source.checkpoint {
         let saved: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(pin)?;
@@ -4824,7 +5376,7 @@ fn execute_update_inner_v1(
             )?;
             let packet: PinnedFileV1 =
                 serde_json::from_value(identity["packet"].clone()).map_err(err)?;
-            read_pinned_bytes(&packet)?;
+            check_pinned_v1(&packet)?;
         }
         ex1_update_v1::check_continuation_v1(saved.ex1.as_ref(), ex1.as_ref())?;
         if let Some(identity) = &saved.search_targets {
@@ -4844,12 +5396,29 @@ fn execute_update_inner_v1(
             )?;
             let packet: PinnedFileV1 =
                 serde_json::from_value(identity["packet"].clone()).map_err(err)?;
-            read_pinned_bytes(&packet)?;
+            check_pinned_v1(&packet)?;
         }
     }
-    let (mut policy, mut state, transfer) =
-        loaded_source_profile_v1::scoped_v1(LoadRoleV1::UpdateLearner, || {
-            initialize_with_transfer_context(&source)
+    let remember = if from_run {
+        CacheRememberV1::PolicyOnly
+    } else {
+        CacheRememberV1::WithState
+    };
+    let (mut policy, mut state, learner_identity, transfer) =
+        loaded_source_profile_v1::scoped_v1(LoadRoleV1::UpdateLearner, || -> Result<_, String> {
+            if let Some(carried) = carried {
+                if let Some((policy, state, identity)) = carried.into_update_learner_v1(&source)? {
+                    return Ok((policy, state, identity, None));
+                }
+            }
+            let bytes = read_pinned_shared_v1(&source.play_import)?;
+            let loaded = load_learner_from_source_bytes_v1(&source, &bytes, None, remember)?;
+            Ok((
+                loaded.policy,
+                loaded.state,
+                loaded.identity,
+                loaded.transfer,
+            ))
         })?;
     bind_training_math_v1(
         &source,
@@ -4933,10 +5502,11 @@ fn execute_update_inner_v1(
             "gae_advantage_value/v1 is not available to registry-transfer sources",
         )?;
     }
-    let before = hex(&state.state_sha256_v1().map_err(err)?);
+    let before = learner_identity.state_sha256.clone();
+    debug_assert_eq!(before, hex(&state.state_sha256_v1().map_err(err)?));
     let learner = ExpandedSeatBehaviorV1 {
         source: source.clone(),
-        identity: inference_identity_with_state_sha256_v1(&source, &policy, &state, before.clone()),
+        identity: learner_identity,
     };
     let mut ids = BTreeSet::new();
     let mut hashes = BTreeSet::new();
@@ -5909,19 +6479,30 @@ fn execute_update_inner_v1(
         checkpoint: Some(checkpoint_pin.clone()),
         ..source.clone()
     };
-    let (_, restored) = loaded_source_profile_v1::scoped_v1(LoadRoleV1::UpdateReadback, || {
-        initialize_any_math_v1(&resumed_source)
-    })?;
-    ensure(
-        hex(&restored.state_sha256_v1().map_err(err)?) == after
-            && restored.training_math_v1() == training_math,
-        "published checkpoint round trip differs",
-    )?;
-    if record_format == CheckpointRecordFormatV1::V2 {
+    let readback_load =
+        |resumed: &ExpandedModelSourceV1| -> Result<(Arc<Vec<u8>>, UncachedLearnerLoadV1), String> {
+            loaded_source_profile_v1::scoped_v1(LoadRoleV1::UpdateReadback, || {
+                let resumed_bytes = read_pinned_shared_v1(&resumed.play_import)?;
+                let loaded =
+                    load_learner_from_source_bytes_v1(resumed, &resumed_bytes, None, remember)?;
+                Ok((resumed_bytes, loaded))
+            })
+        };
+    let (resumed_bytes, restored_load) = if record_format == CheckpointRecordFormatV1::V2 {
+        let (resumed_bytes, restored_load) = readback_load(&resumed_source)?;
+        debug_assert_eq!(
+            restored_load.identity.state_sha256,
+            hex(&restored_load.state.state_sha256_v1().map_err(err)?)
+        );
+        ensure(
+            restored_load.identity.state_sha256 == after
+                && restored_load.state.training_math_v1() == training_math,
+            "published checkpoint round trip differs",
+        )?;
         // Design section 3: the restored state equals the published one item
         // for item (Adam step, anchor, every tensor's name, shape and bits),
         // beyond the state digest. Compared in place, without copies.
-        let back = restored.tensors_v1().map_err(err)?;
+        let back = restored_load.state.tensors_v1().map_err(err)?;
         let same = checkpoint_container_v1::same_tensors_v1;
         ensure(
             back.adam_step == checkpoint.adam_step
@@ -5931,7 +6512,42 @@ fn execute_update_inner_v1(
                 && same(&back.second_moments, &checkpoint.second_moments),
             "published checkpoint container round trip differs",
         )?;
-    }
+        drop(checkpoint);
+        drop(tensors);
+        drop(state);
+        drop(policy);
+        (resumed_bytes, restored_load)
+    } else {
+        drop(checkpoint);
+        drop(tensors);
+        drop(state);
+        drop(policy);
+        let (resumed_bytes, restored_load) = readback_load(&resumed_source)?;
+        debug_assert_eq!(
+            restored_load.identity.state_sha256,
+            hex(&restored_load.state.state_sha256_v1().map_err(err)?)
+        );
+        ensure(
+            restored_load.identity.state_sha256 == after
+                && restored_load.state.training_math_v1() == training_math,
+            "published checkpoint round trip differs",
+        )?;
+        (resumed_bytes, restored_load)
+    };
+    let pending_carried = match (
+        want_next_carried && restored_load.transfer.is_none(),
+        restored_load.verifiable_kind,
+    ) {
+        (true, Some(kind)) => Some(PendingCarriedLearnerV1(Box::new(CarriedLearnerInnerV1 {
+            source: resumed_source,
+            descriptor_bytes: resumed_bytes.as_ref().clone(),
+            kind,
+            policy: restored_load.policy,
+            state: restored_load.state,
+            identity: restored_load.identity,
+        }))),
+        _ => None,
+    };
     let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true, "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin, "before_state_sha256":before, "after_state_sha256":after, "adam_step":update.adam_step, "physical_decisions":groups.len(), "policy_substeps":update.selected_outputs.len(), "loss":update.loss, "policy_sum":update.policy_sum, "value_sum":update.value_sum, "checkpoint_readback":true, "numerical_backend":"native-cpu-sequential", "loss_identity":loss_selection.loss_identity_v1(), "claim":"engineering update only; no playing-strength or production-throughput claim"});
     if let Some(mut exploration) = exploration_report {
         let gauge = &update.scorer_bias_gauge;
@@ -6047,7 +6663,7 @@ fn execute_update_inner_v1(
         return Err("crash point: the checkpoint is published, update.json is not".into());
     }
     publish_json(&output_directory, "update.json", &result)?;
-    Ok(result)
+    Ok((result, pending_carried))
 }
 
 #[cfg(test)]
@@ -6178,20 +6794,26 @@ fn check_pinned_in_v1(
     cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
     pin: &PinnedFileV1,
 ) -> Result<(), String> {
-    if cache.resident_v1() {
-        let metadata = fs::metadata(&pin.path).map_err(err)?;
-        ensure(
-            metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
-            "input is not a bounded regular file",
-        )?;
-        if cache
-            .resident_bytes_v1(&pin.path, &pin.sha256, metadata.len())
-            .is_some()
-        {
-            return Ok(());
-        }
+    let started = std::time::Instant::now();
+    let metadata = fs::metadata(&pin.path).map_err(err)?;
+    ensure(
+        metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
+        "input is not a bounded regular file",
+    )?;
+    if cache
+        .resident_bytes_v1(&pin.path, &pin.sha256, metadata.len())
+        .is_some()
+    {
+        return Ok(());
     }
-    read_pinned_bytes_in_v1(cache, pin).map(drop)
+    let file = fs::File::open(&pin.path).map_err(err)?;
+    let open_nanos = opponent_cache_diagnostics_v1::nanos_since_v1(started);
+    ensure(
+        cache
+            .stream_digest_matches_v1(file, MAX_FILE_BYTES, open_nanos, &pin.path, &pin.sha256)
+            .map_err(err)?,
+        "input file SHA differs",
+    )
 }
 
 /// `read_pinned_bytes` against the verified-bytes cache `cache`.
