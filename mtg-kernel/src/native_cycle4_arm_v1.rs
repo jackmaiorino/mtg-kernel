@@ -3314,19 +3314,9 @@ mod tests {
     ];
 
     /// A fresh, uniquely named directory under the OS temp root for one
-    /// test's exclusive use (the convention `cycle4_refresh_build_v1.rs`'s
-    /// own tests follow). The caller removes it when done.
-    fn fresh_temp_dir_v1(label: &str) -> PathBuf {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "mtg-kernel-cycle4-arm-{label}-{}-{nonce}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&root).expect("create temp dir");
-        root
+    /// test's exclusive use. Removed automatically on normal test completion.
+    fn fresh_temp_dir_v1(label: &str) -> crate::test_temp_dir_v1::TempTestDir {
+        crate::test_temp_dir_v1::TempTestDir::new_v1(&format!("mtg-kernel-cycle4-arm-{label}"))
     }
 
     fn digest_v1(tag: u8, nonce: u8) -> String {
@@ -5039,7 +5029,7 @@ mod tests {
         // so nothing authorizes reconstruction and a missing sidecar stays a
         // hard failure rather than being invented during an evaluation.
         let dir = fresh_temp_dir_v1("probe-access");
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         for update_index in 0_u64..=8 {
             assert!(!access.may_reconstruct_sidecar_v4(update_index));
         }
@@ -5098,7 +5088,7 @@ mod tests {
     #[test]
     fn sidecar_publication_is_durable_before_the_store_and_idempotent_v1() {
         let dir = fresh_temp_dir_v1("sidecar-publish");
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         let prior = NativeBaselineStateV4::empty_v4();
         let bytes = synthetic_sidecar_v1(&prior, 1, 3);
         let promoted = dir.join("baseline-update-00000001.record.json");
@@ -5164,7 +5154,7 @@ mod tests {
         // through the repository's durable move publication, whose receipt
         // names the mechanism that actually ran.
         let dir = fresh_temp_dir_v1("sidecar-durable");
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         let prior = NativeBaselineStateV4::empty_v4();
         let bytes = synthetic_sidecar_v1(&prior, 1, 9);
         let final_name = sidecar_record_name_v4(1).expect("name");
@@ -5215,7 +5205,7 @@ mod tests {
         // file behind. A replay removes it first, exactly as the chain's own
         // boundary publication does, so a retry cannot die on its own debris.
         let dir = fresh_temp_dir_v1("sidecar-stale-stage");
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         let prior = NativeBaselineStateV4::empty_v4();
         let bytes = synthetic_sidecar_v1(&prior, 1, 11);
         let final_name = sidecar_record_name_v4(1).expect("name");
@@ -5311,7 +5301,7 @@ mod tests {
         // survives untouched, and a foreign name in the legacy directory we
         // own outright still fails closed.
         let dir = fresh_temp_dir_v1("debris-sweep");
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         let legacy = dir.join(CYCLE4_LEGACY_STAGED_SIDECAR_DIRNAME_V1);
         std::fs::create_dir_all(&legacy).expect("create legacy dir");
         let record = sidecar_record_name_v4(3).expect("name");
@@ -5370,7 +5360,7 @@ mod tests {
         // `baseline-staged/`. They are still found, still served to the walk,
         // still promoted, and the drained directory is then removed.
         let dir = fresh_temp_dir_v1("legacy-staged");
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         let legacy = dir.join(CYCLE4_LEGACY_STAGED_SIDECAR_DIRNAME_V1);
         std::fs::create_dir_all(&legacy).expect("create legacy dir");
         let mut state = NativeBaselineStateV4::empty_v4();
@@ -5432,7 +5422,7 @@ mod tests {
         // the legacy copy left unread, so conflicting bytes could advance the
         // chain once before a later commit tripped over the leftover.
         let dir = fresh_temp_dir_v1("layout-conflict");
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         let prior = NativeBaselineStateV4::empty_v4();
         let bytes = synthetic_sidecar_v1(&prior, 1, 13);
         let other = synthetic_sidecar_v1(&prior, 1, 14);
@@ -5471,7 +5461,7 @@ mod tests {
         // The agreeing branch: one promotion, and BOTH copies drain, so a
         // legacy leftover cannot outlive the promotion that consumed it.
         let dir = fresh_temp_dir_v1("layout-agree");
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         let prior = NativeBaselineStateV4::empty_v4();
         let bytes = synthetic_sidecar_v1(&prior, 1, 13);
         stage_under_both_layouts_v1(&access, &dir, 1, &bytes, &bytes);
@@ -5518,7 +5508,7 @@ mod tests {
         // its chain from bytes OUTSIDE the chain directory while the commit
         // reported success without ever creating the promoted sidecar.
         let dir = fresh_temp_dir_v1("irregular-staged");
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         let prior = NativeBaselineStateV4::empty_v4();
         let bytes = synthetic_sidecar_v1(&prior, 1, 15);
         let outside = dir.join("outside-the-chain.json");
@@ -5572,7 +5562,7 @@ mod tests {
         // The same no-follow rule on the PROMOTED name: a symlink there must
         // not be read as the committed record, nor overwritten.
         let dir = fresh_temp_dir_v1("irregular-promoted");
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         let prior = NativeBaselineStateV4::empty_v4();
         let bytes = synthetic_sidecar_v1(&prior, 1, 17);
         let outside = dir.join("outside-the-chain.json");
@@ -5600,7 +5590,7 @@ mod tests {
         // the walk that revalidates them against that committed evidence,
         // and take their immutable names once the walk accepts the Store.
         let dir = fresh_temp_dir_v1("reconcile-promote");
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         stage_segment_v1(&access, 4);
         access
             .reconcile_staged_sidecars_v1(4)
@@ -5631,11 +5621,11 @@ mod tests {
         // those, and the retry stages the same updates cleanly.
         let dir = fresh_temp_dir_v1("reconcile-discard");
         {
-            let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+            let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
             stage_segment_v1(&access, 4);
             // The segment is abandoned here: no Store publish, no promotion.
         }
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         assert_eq!(
             access.staged_update_indexes_v1().expect("staged"),
             vec![1, 2, 3, 4],
@@ -5662,7 +5652,7 @@ mod tests {
             "nothing was promoted, and the discarded records are gone"
         );
         // A partially committed segment keeps exactly its committed prefix.
-        let retry = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let retry = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         stage_segment_v1(&retry, 4);
         retry
             .reconcile_staged_sidecars_v1(2)
@@ -5683,7 +5673,7 @@ mod tests {
         // earlier update whose sidecar is gone is unrecoverable and must
         // fail the walk closed.
         let dir = fresh_temp_dir_v1("reconcile-reconstruct");
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         // Before any reconcile, nothing may be reconstructed.
         for update_index in 0_u64..=8 {
             assert!(!access.may_reconstruct_sidecar_v4(update_index));
@@ -5705,7 +5695,7 @@ mod tests {
     #[test]
     fn a_missing_sidecar_fails_the_boundary_replay_closed_v1() {
         let dir = fresh_temp_dir_v1("sidecar-missing");
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         assert!(access.sidecar_record_bytes_v4(1).is_none());
         // Generation 0 is the empty pre-training state and needs no record.
         assert_eq!(
@@ -5724,7 +5714,7 @@ mod tests {
     #[test]
     fn in_boundary_sidecars_reconstruct_the_next_boundary_state_v1() {
         let dir = fresh_temp_dir_v1("sidecar-replay");
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         let mut expected = NativeBaselineStateV4::empty_v4();
         for update_index in 1_u64..=4 {
             let bytes = synthetic_sidecar_v1(&expected, update_index, update_index as u8);
@@ -5746,7 +5736,7 @@ mod tests {
     #[test]
     fn a_tampered_sidecar_never_advances_the_replay_v1() {
         let dir = fresh_temp_dir_v1("sidecar-tampered");
-        let access = Cycle4BaselineChainAccessV1::new_v1(dir.clone(), 4);
+        let access = Cycle4BaselineChainAccessV1::new_v1(dir.to_path_buf(), 4);
         let prior = NativeBaselineStateV4::empty_v4();
         let bytes = synthetic_sidecar_v1(&prior, 1, 5);
         let decoded = decode_update_baseline_record_v4(&bytes).expect("decode");
