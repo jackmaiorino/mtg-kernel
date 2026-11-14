@@ -96,6 +96,7 @@ fn fixture(
         opening: None,
         mulligan_modes: None,
         priority_windows: None,
+        london_keep_offset: None,
     };
     let collect_root = root.to_path_buf();
     let collect = move |source: &ExpandedModelSourceV1, label: &str| -> Vec<PinnedFileV1> {

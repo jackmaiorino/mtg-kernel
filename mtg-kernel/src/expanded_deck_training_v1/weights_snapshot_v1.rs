@@ -387,6 +387,7 @@ mod tests {
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
+            london_keep_offset: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),

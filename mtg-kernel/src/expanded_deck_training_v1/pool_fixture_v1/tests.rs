@@ -50,6 +50,7 @@ fn assigned_draws_name_each_slot_its_member() {
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
+            london_keep_offset: None,
         },
         opponent: ExpandedOpponentAssignmentV1::Current,
     };
@@ -213,6 +214,7 @@ fn members_are_distinct_valid_containers_over_one_import_v1() {
                 opening: None,
                 mulligan_modes: None,
                 priority_windows: None,
+                london_keep_offset: None,
             }
         })
         .collect();

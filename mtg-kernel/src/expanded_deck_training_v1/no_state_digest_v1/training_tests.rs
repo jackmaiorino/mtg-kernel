@@ -1524,6 +1524,7 @@ fn episode(id: &str, seed: u64, opponent: Option<ExpandedModelSourceV1>) -> Expa
         opening: None,
         mulligan_modes: None,
         priority_windows: None,
+        london_keep_offset: None,
     }
 }
 

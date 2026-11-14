@@ -101,6 +101,7 @@ fn fixture(tag: &str) -> (TempTestDir, ExpandedModelSourceV1, Vec<PinnedFileV1>)
             opening: None,
             mulligan_modes: None,
             priority_windows: None,
+            london_keep_offset: None,
         })
         .collect();
     let collection = execute_v1(ExpandedTrainingCommandV1::Collect {

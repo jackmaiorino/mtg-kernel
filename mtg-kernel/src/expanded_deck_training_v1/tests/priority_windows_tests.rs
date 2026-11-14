@@ -72,6 +72,7 @@ fn episode(
         opening: london.then_some(PauperOpeningV1::LondonV1),
         mulligan_modes: london.then_some([Learned, Learned]),
         priority_windows: windows,
+        london_keep_offset: None,
     }
 }
 
