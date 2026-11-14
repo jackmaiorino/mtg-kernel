@@ -474,3 +474,98 @@ fn genuine_replaced_counter_power_primitive_keeps_actual_count_and_sample_across
         }
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn closed_crystal_prevention_proof_rejects_live_state_tamper_after_cached_cursor() {
+    use crate::engine::{self, Action, Decision};
+    use crate::event_history_v1::proof_tests_v1;
+
+    let actor = PlayerId::P0;
+    let opponent = actor.opponent();
+    let mut state = crate::policy_observation_v6::tests::ready_state_for(actor);
+    let barricade = put(&mut state, opponent, "Crystal Barricade", Zone::Battlefield);
+    let target = put(&mut state, opponent, "Llanowar Elves", Zone::Battlefield);
+    state.engine.next_replacement_id = 78;
+    state.engine.active_replacements.push(ActiveReplacement {
+        id: 77,
+        source: barricade,
+        kind: ReplacementEffectKind::PreventNextDamage {
+            target: Target::Object(target),
+            remaining: 2,
+        },
+    });
+    let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+    state.players[actor.index()].mana_pool[crate::mana::ManaColor::R.pool_index()] = 1;
+    engine::advance_until_decision(&mut state);
+    engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::ChooseTargets { .. }
+    ));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    for _ in 0..16 {
+        let decision = engine::advance_until_decision(&mut state);
+        if state.stack.is_empty() && state.engine.pending_effect.is_none() {
+            break;
+        }
+        match decision {
+            Decision::CastSpellOrPass { .. } => engine::step(&mut state, Action::Pass).unwrap(),
+            Decision::ChooseEffectOption { .. } => {
+                engine::step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+            }
+            other => panic!("unexpected decision during Crystal resolution: {other:?}"),
+        }
+    }
+    assert!(boundaries(&state).next().is_some());
+    assert!(state.stack.is_empty());
+    assert!(state.engine.pending_effect.is_none());
+
+    // First post-closure call establishes the proof; second call hits the proof.
+    validate(&state).unwrap();
+    let before = proof_tests_v1::uses();
+    validate(&state).unwrap();
+    assert_eq!(proof_tests_v1::uses(), before + 1);
+
+    let closed_boundary = boundaries(&state).next().unwrap().clone();
+
+    // 1. Live active_replacements tamper: resurrect or alter tracked shield ID 77.
+    let mut shield_tamper = state.clone();
+    shield_tamper.engine.active_replacements.clear();
+    shield_tamper
+        .engine
+        .active_replacements
+        .push(ActiveReplacement {
+            id: 77,
+            source: barricade,
+            kind: ReplacementEffectKind::PreventNextDamage {
+                target: Target::Object(target),
+                remaining: 99,
+            },
+        });
+    assert!(validate(&shield_tamper).is_err());
+
+    // 2. Live stack tamper: reintroduce closed item onto state.stack.
+    let mut stack_tamper = state.clone();
+    stack_tamper.stack.push((*closed_boundary.item).clone());
+    assert!(validate(&stack_tamper).is_err());
+
+    // 3. Live event_log tamper: private Crystal boundary leaked into event_log.
+    let mut log_tamper = state.clone();
+    log_tamper
+        .engine
+        .event_log
+        .push(CommittedEvent::CrystalPreventionBoundaryV1 {
+            boundary: Box::new(closed_boundary.clone()),
+        });
+    assert!(validate(&log_tamper).is_err());
+
+    // 4. Live objects tamper: corrupt source card_def so owned_root mismatches.
+    let mut object_tamper = state.clone();
+    object_tamper.objects.get_mut(bolt).card_def =
+        crate::card_def::card_id_by_name("Forest").unwrap();
+    assert!(validate(&object_tamper).is_err());
+}

@@ -184,7 +184,24 @@ pub(crate) fn validate_root(
             Ok(())
         };
     };
-    if Some(source_at(state,*attack_history_index)?)!=source || state.engine.event_history.iter().filter(|e|matches!(e,event::CommittedEvent::SphinxLoreV1{journal:JournalV1::Collected{attack}}if attack==attack_history_index)).count()!=1{return Err("Sphinx captured source/occurrence changed".into());}
+    if Some(source_at(state, *attack_history_index)?) != source
+        || state
+            .engine
+            .event_history
+            .of_kinds_v2(&[crate::event_history_v1::EventKindV1::SphinxLoreV1])
+            .filter(|(_, e)| {
+                matches!(
+                    e,
+                    event::CommittedEvent::SphinxLoreV1 {
+                        journal: JournalV1::Collected { attack }
+                    } if attack == attack_history_index
+                )
+            })
+            .count()
+            != 1
+    {
+        return Err("Sphinx captured source/occurrence changed".into());
+    }
     Ok(())
 }
 pub(crate) fn selected(state: &GameState, item: &StackItem) -> bool {
@@ -243,7 +260,21 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
     if item.targets.len() != 1 {
         return Err("Sphinx publication requires its announced target".into());
     }
-    if state.engine.event_history.iter().any(|e|matches!(e,event::CommittedEvent::SphinxLoreV1{journal:JournalV1::Published{attack,..}}if *attack==attack_history_index)){return Err("Sphinx attack already published".into());}
+    if state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::SphinxLoreV1])
+        .any(|(_, e)| {
+            matches!(
+                e,
+                event::CommittedEvent::SphinxLoreV1 {
+                    journal: JournalV1::Published { attack, .. }
+                } if *attack == attack_history_index
+            )
+        })
+    {
+        return Err("Sphinx attack already published".into());
+    }
     append(
         state,
         JournalV1::Published {
@@ -258,8 +289,8 @@ pub(crate) fn validate_published(state: &GameState, item: &StackItem) -> Result<
     let rows = state
         .engine
         .event_history
-        .iter()
-        .filter_map(|e| match e {
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::SphinxLoreV1])
+        .filter_map(|(_, e)| match e {
             event::CommittedEvent::SphinxLoreV1 {
                 journal: JournalV1::Published { item: r, .. },
             } if r.v4.stack_item_id == item.v4.stack_item_id => Some(r.as_ref()),
@@ -499,13 +530,17 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     if !state
         .engine
         .event_history
-        .iter()
-        .any(|e| matches!(e, event::CommittedEvent::SphinxLoreV1 { .. }))
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::SphinxLoreV1])
+        .any(|(_, e)| matches!(e, event::CommittedEvent::SphinxLoreV1 { .. }))
     {
         return Ok(());
     }
     active_at(state, state.engine.event_history.len())?;
-    for (i, e) in state.engine.event_history.iter().enumerate() {
+    for (i, e) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::SphinxLoreV1])
+    {
         match e {
             event::CommittedEvent::SphinxLoreV1 {
                 journal: JournalV1::Attack { .. },
@@ -516,7 +551,24 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 journal: JournalV1::Collected { attack },
             } => {
                 source_at(state, *attack)?;
-                if *attack>=i as u64||state.engine.event_history.iter().filter(|e|matches!(e,event::CommittedEvent::SphinxLoreV1{journal:JournalV1::Collected{attack:a}}if a==attack)).count()!=1{return Err("Sphinx collection order/uniqueness changed".into());}
+                if *attack >= i as u64
+                    || state
+                        .engine
+                        .event_history
+                        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::SphinxLoreV1])
+                        .filter(|(_, e)| {
+                            matches!(
+                                e,
+                                event::CommittedEvent::SphinxLoreV1 {
+                                    journal: JournalV1::Collected { attack: a }
+                                } if a == attack
+                            )
+                        })
+                        .count()
+                        != 1
+                {
+                    return Err("Sphinx collection order/uniqueness changed".into());
+                }
             }
             event::CommittedEvent::SphinxLoreV1 {
                 journal: JournalV1::Published { attack, item },

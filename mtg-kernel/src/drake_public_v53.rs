@@ -777,8 +777,11 @@ fn capture_for_consumer(
     let rows = state
         .engine
         .event_history
-        .iter()
-        .filter_map(custody::journal)
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::DrakeJournalV1])
+        .filter_map(|(_, event)| match event {
+            CommittedEvent::DrakeJournalV1 { record } => Some(record.as_ref()),
+            _ => None,
+        })
         .collect::<Vec<_>>();
     let mut combat = Vec::new();
     let mut activations = Vec::new();

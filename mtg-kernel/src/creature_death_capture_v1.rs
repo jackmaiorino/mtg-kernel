@@ -144,15 +144,18 @@ pub(crate) fn pending(
     let mut authorities = state
         .engine
         .event_history
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::ControlledCreatureDeathCaptureV1])
         .filter(|(_, event)| *event == &events[index]);
     let (history_index, _) = authorities.next().ok_or_else(invalid)?;
     if authorities.next().is_some()
-        || state.engine.event_history.scan_for_v1(&[EventKindV1::ControlledCreatureDeathCaptureCollectedV1]).iter().any(|event| {
-            matches!(event, CommittedEvent::ControlledCreatureDeathCaptureCollectedV1 { capture_history_index }
-                if u64::try_from(history_index).ok() == Some(*capture_history_index))
-        })
+        || state
+            .engine
+            .event_history
+            .of_kinds_v2(&[EventKindV1::ControlledCreatureDeathCaptureCollectedV1])
+            .any(|(_, event)| {
+                matches!(event, CommittedEvent::ControlledCreatureDeathCaptureCollectedV1 { capture_history_index }
+                    if u64::try_from(history_index).ok() == Some(*capture_history_index))
+            })
     {
         return Err(invalid());
     }

@@ -565,3 +565,108 @@ fn public_original_source_and_ordered_sacrifice_menu_refuse_forgery_without_priv
         }
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn closed_hunter_custody_proof_rejects_live_state_tamper_after_cached_cursor() {
+    use crate::event_history_v1::{proof_tests_v1, ProvedV1};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, hunter, other) = attack_state(actor);
+        menu(&mut state);
+        engine::step(
+            &mut state,
+            Action::ChooseEffectTarget(crate::state::Target::Object(other)),
+        )
+        .unwrap();
+        for _ in 0..24 {
+            let decision = engine::advance_until_decision(&mut state);
+            if state.stack.is_empty() && state.engine.pending_triggers.is_empty() {
+                break;
+            }
+            assert!(
+                matches!(decision, Decision::CastSpellOrPass { .. }),
+                "{decision:?}"
+            );
+            engine::step(&mut state, Action::Pass).unwrap();
+        }
+        assert!(state.stack.is_empty());
+        assert!(state.engine.pending_effect.is_none());
+
+        // Establish and then hit the closed HighSocietyHunterCustody proof.
+        validate(&state).unwrap();
+        assert!(state
+            .engine
+            .event_history
+            .proof_memo_v1::<super::HunterCustodyProofV45>(ProvedV1::HighSocietyHunterCustody)
+            .is_some());
+        let before = proof_tests_v1::uses();
+        validate(&state).unwrap();
+        assert_eq!(proof_tests_v1::uses(), before + 1);
+
+        let published = state
+            .engine
+            .event_history
+            .of_kinds_v2(&[EventKindV1::HighSocietyHunterJournalV45])
+            .find_map(|(_, e)| match e {
+                CommittedEvent::HighSocietyHunterJournalV45 { journal } => match journal.as_ref() {
+                    JournalV45::Published { item, .. } => Some(item.as_ref().clone()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("published Hunter item");
+        let (capture_idx, attack_flag) =
+            binding(published.inline_effect.as_ref().unwrap()).unwrap();
+
+        // 1. Live deceased creature tamper: mark sacrificed nontoken creature as token.
+        let mut token_tamper = state.clone();
+        token_tamper.objects.get_mut(other).v4.is_token = true;
+        assert!(validate(&token_tamper).is_err());
+
+        // 2. Live Hunter source tamper: corrupt Hunter source card_def.
+        let mut source_tamper = state.clone();
+        source_tamper.objects.get_mut(hunter).card_def =
+            crate::card_def::card_id_by_name("Forest").unwrap();
+        assert!(validate(&source_tamper).is_err());
+
+        // 3. Live stack tamper: reintroduce closed Hunter stack item.
+        let mut stack_tamper = state.clone();
+        stack_tamper.stack.push(published.clone());
+        assert!(validate(&stack_tamper).is_err());
+
+        // 4. Live waiting-trigger tamper: resurrect closed Hunter capture in pending_triggers.
+        let mut waiting_tamper = state.clone();
+        waiting_tamper.engine.pending_triggers.push(PendingTrigger {
+            controller: actor,
+            source: hunter,
+            effect: bound(capture_idx, attack_flag),
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: crate::card_def::TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            source_contract: published.v4.ability_source_contract,
+            granted_by: None,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
+        assert!(validate(&waiting_tamper).is_err());
+
+        // 5. Live event_log tamper: leak private HighSocietyHunterJournalV45 into mutable log.
+        let journal_event = state
+            .engine
+            .event_history
+            .of_kinds_v2(&[EventKindV1::HighSocietyHunterJournalV45])
+            .next()
+            .unwrap()
+            .1
+            .clone();
+        let mut log_tamper = state.clone();
+        log_tamper.engine.event_log.push(journal_event);
+        assert!(validate(&log_tamper).is_err());
+    }
+}

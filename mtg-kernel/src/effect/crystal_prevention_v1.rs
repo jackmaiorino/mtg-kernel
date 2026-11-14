@@ -356,7 +356,9 @@ pub(crate) fn shield_operation(
         .push(CommittedEvent::CrystalShieldOperationV1 { operation });
     Ok(())
 }
-fn validate_shields(state: &GameState) -> Result<(), String> {
+fn collect_expected_shields(
+    state: &GameState,
+) -> Result<std::collections::BTreeMap<u32, Option<ActiveReplacement>>, String> {
     let mut expected = std::collections::BTreeMap::<u32, Option<ActiveReplacement>>::new();
     for (index, event) in state.engine.event_history.of_kinds_v2(&[
         EventKindV1::CrystalPreventionBoundaryV1,
@@ -442,21 +444,32 @@ fn validate_shields(state: &GameState) -> Result<(), String> {
             _ => {}
         }
     }
+    Ok(expected)
+}
+fn validate_live_shields(
+    state: &GameState,
+    expected: &[(u32, Option<ActiveReplacement>)],
+) -> Result<(), String> {
     for (id, replacement) in expected {
         let current = state
             .engine
             .active_replacements
             .iter()
-            .filter(|r| r.id == id)
+            .filter(|r| r.id == *id)
             .collect::<Vec<_>>();
         if match replacement {
-            Some(expected) => current.len() != 1 || *current[0] != expected,
+            Some(expected) => current.len() != 1 || *current[0] != *expected,
             None => !current.is_empty(),
         } {
             return Err("Crystal shield installation was erased or resurrected".into());
         }
     }
     Ok(())
+}
+fn validate_shields(state: &GameState) -> Result<Vec<(u32, Option<ActiveReplacement>)>, String> {
+    let expected: Vec<_> = collect_expected_shields(state)?.into_iter().collect();
+    validate_live_shields(state, &expected)?;
+    Ok(expected)
 }
 /// A private loan acquired against the complete, genuine live row before pop.
 pub(crate) struct OwnerV1 {
@@ -1349,20 +1362,13 @@ pub(crate) fn validate_ordered_donated_archive(state: &GameState) -> Result<(), 
     if state
         .engine
         .event_history
-        .scan_for_v1(&[
+        .of_kinds_v2(&[
             EventKindV1::CrystalPreventionBoundaryV1,
             EventKindV1::CrystalExecutionV1,
             EventKindV1::CrystalDamageOperationV3,
         ])
-        .iter()
-        .any(|event| {
-            matches!(
-                event,
-                CommittedEvent::CrystalPreventionBoundaryV1 { .. }
-                    | CommittedEvent::CrystalExecutionV1 { .. }
-                    | CommittedEvent::CrystalDamageOperationV3 { .. }
-            )
-        })
+        .next()
+        .is_some()
     {
         validate(state)?;
     }
@@ -1517,29 +1523,236 @@ fn record(state: &mut GameState, owner: &OwnerV1, answer: Option<AnswerV1>) -> R
         });
     Ok(())
 }
-pub(crate) fn validate(state: &GameState) -> Result<(), String> {
-    crate::twinflame_tyrant_v1::combat::validate(state)?;
-    validate_with_owner(state, None)
+const CRYSTAL_HISTORY_KINDS: [EventKindV1; 15] = [
+    EventKindV1::CrystalPreventionBoundaryV1,
+    EventKindV1::CrystalShieldOperationV1,
+    EventKindV1::CrystalExecutionV1,
+    EventKindV1::CrystalDamageOperationV3,
+    EventKindV1::CrystalBatchPreparedV3,
+    EventKindV1::CrystalProgramChoiceV3,
+    EventKindV1::TwinflameCombatPublishedV38,
+    EventKindV1::TwinflameCombatInputV38,
+    EventKindV1::TwinflameCombatOperationV38,
+    EventKindV1::TwinflameReplacementInputV38,
+    EventKindV1::TwinflameReplacementOperationV38,
+    EventKindV1::TwinflameDamagePreparationV38,
+    EventKindV1::TwinflameDynamicDamageSampleV38,
+    EventKindV1::TwinflameFieryCaptureV38,
+    EventKindV1::TwinflameFieryFinishedV38,
+];
+
+const CRYSTAL_PROOF_STRIDE: usize = 64;
+
+#[derive(Clone)]
+struct CrystalInitialRootV1 {
+    item: StackItem,
+    root: EffectOp,
+    expected_niv_origin: Option<crate::event::NivDamageOriginV1>,
 }
+
+#[derive(Clone)]
+struct CrystalPreventionProofV1 {
+    had_boundaries: bool,
+    closed_items: Vec<crate::ids::StackItemId>,
+    expected_shields: Vec<(u32, Option<ActiveReplacement>)>,
+    initial_roots: Vec<CrystalInitialRootV1>,
+}
+
+fn is_crystal_tail_watch_event(event: &CommittedEvent) -> bool {
+    matches!(
+        event.kind_v1(),
+        EventKindV1::CrystalPreventionBoundaryV1
+            | EventKindV1::CrystalShieldOperationV1
+            | EventKindV1::CrystalExecutionV1
+            | EventKindV1::CrystalDamageOperationV3
+            | EventKindV1::CrystalBatchPreparedV3
+            | EventKindV1::CrystalProgramChoiceV3
+            | EventKindV1::TwinflameCombatPublishedV38
+            | EventKindV1::TwinflameCombatInputV38
+            | EventKindV1::TwinflameCombatOperationV38
+            | EventKindV1::TwinflameReplacementInputV38
+            | EventKindV1::TwinflameReplacementOperationV38
+            | EventKindV1::TwinflameDamagePreparationV38
+            | EventKindV1::TwinflameDynamicDamageSampleV38
+            | EventKindV1::TwinflameFieryCaptureV38
+            | EventKindV1::TwinflameFieryFinishedV38
+            | EventKindV1::GorehornPublishedV1
+            | EventKindV1::GorehornPreparedV1
+            | EventKindV1::EquipmentDamagePublishedV4
+            | EventKindV1::EquipmentDamagePreparedV4
+            | EventKindV1::FixedDamageDepartureV3
+            | EventKindV1::FixedDamagePaidV3
+            | EventKindV1::FixedDamageRemovedV3
+            | EventKindV1::SourcePowerActivationCommittedV1
+            | EventKindV1::ChandraFlameshaperV74
+            | EventKindV1::ThousandYearStormV1
+            | EventKindV1::FullTextTriggerCapturedV1
+            | EventKindV1::FullTextBatchEntryV1
+            | EventKindV1::FullTextRestrictedUseV1
+            | EventKindV1::TimeStopJournalV1
+    )
+}
+
+fn has_private_crystal_or_twinflame_log_event(state: &GameState) -> bool {
+    state
+        .engine
+        .event_log
+        .iter()
+        .any(|event| CRYSTAL_HISTORY_KINDS.contains(&event.kind_v1()))
+}
+
+fn validate_live_triggered_stack_items(state: &GameState) -> Result<(), String> {
+    for item in state
+        .stack
+        .iter()
+        .filter(|item| item.kind == crate::state::StackItemKind::TriggeredAbility)
+    {
+        crate::engine::validated_stack_item_target_spec(item, state)?;
+        if item.v4.crystal_prevention_started_v1.is_empty()
+            && equipment_damage_grant(item)
+            && !crate::equipment_damage_source_v4::has_publication(state, item.v4.stack_item_id)
+            && !live_equipment_damage_source(state, item)
+        {
+            return Err("Crystal legacy equipment damage needs original live source".into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_empty_live(state: &GameState) -> Result<(), String> {
+    if has_private_crystal_or_twinflame_log_event(state)
+        || state.engine.twinflame_combat_v38.0.is_some()
+        || state
+            .stack
+            .iter()
+            .any(|item| item.v4.crystal_prevention_started_v1.0.is_some())
+        || state.engine.pending_effect.as_ref().is_some_and(|p| {
+            p.resolving_item
+                .v4
+                .crystal_prevention_started_v1
+                .0
+                .is_some()
+        })
+    {
+        return validate_full(state, false);
+    }
+    if crate::crystal_barricade_v1::active(state) {
+        validate_live_triggered_stack_items(state)?;
+    }
+    Ok(())
+}
+
+fn validate_from_proof(
+    state: &GameState,
+    from: usize,
+    proof: &std::sync::Arc<CrystalPreventionProofV1>,
+) -> Result<(), String> {
+    if has_private_crystal_or_twinflame_log_event(state)
+        || state.engine.twinflame_combat_v38.0.is_some()
+    {
+        return validate_full(state, false);
+    }
+    if (crate::crystal_barricade_v1::active(state) || proof.had_boundaries)
+        && validate_live_triggered_stack_items(state).is_err()
+    {
+        return validate_full(state, false);
+    }
+    if validate_live_shields(state, &proof.expected_shields).is_err() {
+        return validate_full(state, false);
+    }
+    for entry in &proof.initial_roots {
+        if crate::event::niv_damage_origin_for_saved_item_v1(state, &entry.item)
+            != entry.expected_niv_origin
+        {
+            return validate_full(state, false);
+        }
+        let mut initial = probe_with_niv_damage_origin(&entry.item, entry.expected_niv_origin);
+        initial.frames.push(EffectFrame::Program {
+            op: entry.root.clone(),
+            path: Vec::new(),
+        });
+        if owned_root(state, &initial).as_deref() != Ok(&entry.root) {
+            return validate_full(state, false);
+        }
+    }
+    for item in &state.stack {
+        if item.v4.crystal_prevention_started_v1.0.is_some()
+            || proof.closed_items.contains(&item.v4.stack_item_id)
+        {
+            return validate_full(state, false);
+        }
+    }
+    if let Some(p) = state.engine.pending_effect.as_ref() {
+        if p.resolving_item
+            .v4
+            .crystal_prevention_started_v1
+            .0
+            .is_some()
+            || proof
+                .closed_items
+                .contains(&p.resolving_item.v4.stack_item_id)
+        {
+            return validate_full(state, false);
+        }
+    }
+    let len = state.engine.event_history.len();
+    if len.saturating_sub(from) >= CRYSTAL_PROOF_STRIDE {
+        state.engine.event_history.set_proof_memo_v1(
+            crate::event_history_v1::ProvedV1::CrystalPrevention,
+            len,
+            std::sync::Arc::clone(proof),
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn validate(state: &GameState) -> Result<(), String> {
+    let history = &state.engine.event_history;
+    if !history.has_any(&CRYSTAL_HISTORY_KINDS) {
+        return validate_empty_live(state);
+    }
+    if let Some((from, proof)) = history.proof_memo_v1::<CrystalPreventionProofV1>(
+        crate::event_history_v1::ProvedV1::CrystalPrevention,
+    ) {
+        if history
+            .range_v2(from..)
+            .iter()
+            .any(is_crystal_tail_watch_event)
+        {
+            return validate_full(state, true);
+        }
+        let proved = validate_from_proof(state, from, &proof);
+        #[cfg(test)]
+        crate::event_history_v1::proof_tests_v1::assert_same(
+            crate::event_history_v1::ProvedV1::CrystalPrevention,
+            &proved,
+            &validate_full(state, false),
+        );
+        return proved;
+    }
+    validate_full(state, true)
+}
+
+fn validate_full(state: &GameState, record_proof: bool) -> Result<(), String> {
+    crate::twinflame_tyrant_v1::combat::validate(state)?;
+    validate_with_owner_inner(state, None, record_proof)
+}
+
 fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(), String> {
+    validate_with_owner_inner(state, owner, false)
+}
+
+fn validate_with_owner_inner(
+    state: &GameState,
+    owner: Option<&OwnerV1>,
+    record_proof: bool,
+) -> Result<(), String> {
     // This selected environment authenticates actual inherited trigger roots
     // before priority or automatic work. Generated Ward remains on its engine
     // validator; equipment grants retain the separate historical donor contract.
-    if crate::crystal_barricade_v1::active(state) || boundaries(state).next().is_some() {
-        for item in state
-            .stack
-            .iter()
-            .filter(|item| item.kind == crate::state::StackItemKind::TriggeredAbility)
-        {
-            crate::engine::validated_stack_item_target_spec(item, state)?;
-            if item.v4.crystal_prevention_started_v1.is_empty()
-                && equipment_damage_grant(item)
-                && !crate::equipment_damage_source_v4::has_publication(state, item.v4.stack_item_id)
-                && !live_equipment_damage_source(state, item)
-            {
-                return Err("Crystal legacy equipment damage needs original live source".into());
-            }
-        }
+    let had_boundaries = boundaries(state).next().is_some();
+    if crate::crystal_barricade_v1::active(state) || had_boundaries {
+        validate_live_triggered_stack_items(state)?;
     }
     if state.engine.event_log.iter().any(|event| {
         matches!(
@@ -1557,7 +1770,7 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
     crate::twinflame_tyrant_v1::ordering::validate(state)?;
     crate::twinflame_tyrant_v1::sampling::validate(state)?;
     crate::twinflame_tyrant_v1::fiery::validate(state)?;
-    validate_shields(state)?;
+    let expected_shields = validate_shields(state)?;
     validate_damage_operations(state)?;
     validate_batch_preparations(state)?;
     validate_program_operations(state)?;
@@ -1565,6 +1778,7 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
     // The latest boundary of each item so far: what a reverse scan of the
     // history before a boundary finds for its item.
     let mut latest = std::collections::HashMap::new();
+    let mut initial_roots = Vec::new();
     for (index, event) in state
         .engine
         .event_history
@@ -1720,6 +1934,11 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
             {
                 return Err("Crystal initial root/owner authority changed".into());
             }
+            initial_roots.push(CrystalInitialRootV1 {
+                item: (*b.item).clone(),
+                root: b.root.clone(),
+                expected_niv_origin: expected_origin,
+            });
         }
         if let Some(p) = b.pending.as_deref() {
             if let Some(PendingEffectChoice::ChooseOption {
@@ -1786,8 +2005,10 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
             }
         }
     }
+    let mut any_open_boundary = false;
+    let mut closed_items = Vec::new();
     for b in boundaries(state) {
-        if last(state, &b.item) != Some(b) {
+        if latest.get(&b.item.v4.stack_item_id).copied() != Some(b) {
             continue;
         }
         let live = state
@@ -1798,6 +2019,7 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
         let removed = owner.is_some_and(|o| o.expected == *b.item);
         match b.pending.as_deref() {
             Some(p) => {
+                any_open_boundary = true;
                 if (!removed && (live.len() != 1 || *live[0] != *b.item))
                     || (removed && !live.is_empty())
                     || state.engine.pending_effect.as_ref() != Some(p)
@@ -1816,11 +2038,14 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
                 {
                     return Err("closed Crystal resolution was reintroduced".into());
                 }
+                closed_items.push(b.item.v4.stack_item_id);
             }
         }
     }
     for item in &state.stack {
-        if item.v4.crystal_prevention_started_v1.0.is_some() && last(state, item).is_none() {
+        if item.v4.crystal_prevention_started_v1.0.is_some()
+            && !latest.contains_key(&item.v4.stack_item_id)
+        {
             return Err("Crystal started owner lost every receipt".into());
         }
     }
@@ -1830,10 +2055,22 @@ fn validate_with_owner(state: &GameState, owner: Option<&OwnerV1>) -> Result<(),
             .crystal_prevention_started_v1
             .0
             .is_some()
-            && last(state, &p.resolving_item).is_none()
+            && !latest.contains_key(&p.resolving_item.v4.stack_item_id)
         {
             return Err("Crystal pending owner lost every receipt".into());
         }
+    }
+    if record_proof && !any_open_boundary && state.engine.twinflame_combat_v38.0.is_none() {
+        state.engine.event_history.set_proof_memo_v1(
+            crate::event_history_v1::ProvedV1::CrystalPrevention,
+            state.engine.event_history.len(),
+            std::sync::Arc::new(CrystalPreventionProofV1 {
+                had_boundaries,
+                closed_items,
+                expected_shields,
+                initial_roots,
+            }),
+        );
     }
     Ok(())
 }

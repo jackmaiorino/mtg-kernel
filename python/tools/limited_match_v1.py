@@ -256,7 +256,7 @@ def smoke(binary: Path) -> dict:
 DRAFTZERO_SAMPLE = REPO_ROOT / "data/limited/draftzero_sample_v1"
 # Full cards whose engine cost makes games outlast any game timeout. A hung game holding one says nothing
 # about the other cards in it.
-KNOWN_SLOW_FULL = {"Drake Hatcher": "mtg-kernel#375"}
+KNOWN_SLOW_FULL: dict[str, str] = {}
 ADMISSION_MIN_GAMES = 20
 ADMISSION_ALPHA = 0.05
 

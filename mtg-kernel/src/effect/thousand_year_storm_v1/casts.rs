@@ -228,7 +228,10 @@ pub(super) fn validate_roster(state: &GameState) -> Result<(), String> {
         return Ok(());
     }
     cast_identity_v1::unsupported_public_history(state, |_| false)?;
-    for (index, row) in state.engine.event_history.iter().enumerate() {
+    for (index, row) in state.engine.event_history.of_kinds_v2(&[
+        crate::event_history_v1::EventKindV1::SpellCast,
+        crate::event_history_v1::EventKindV1::ThousandYearStormV1,
+    ]) {
         match row {
             E::SpellCast { .. } => {
                 cast_form_at(state, index)?;

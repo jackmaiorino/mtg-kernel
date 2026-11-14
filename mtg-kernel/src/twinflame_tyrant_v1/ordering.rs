@@ -122,10 +122,8 @@ pub(crate) fn record_input(
     let previous = state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::CrystalPreventionBoundaryV1])
-        .iter()
-        .rev()
-        .find_map(|e| match e {
+        .of_kinds_v2(&[EventKindV1::CrystalPreventionBoundaryV1])
+        .filter_map(|(_, e)| match e {
             crate::event::CommittedEvent::CrystalPreventionBoundaryV1 { boundary }
                 if boundary.item.v4.stack_item_id == before.resolving_item.v4.stack_item_id =>
             {
@@ -133,6 +131,7 @@ pub(crate) fn record_input(
             }
             _ => None,
         })
+        .last()
         .ok_or("multiplier answer lost original boundary")?;
     let index = u32::try_from(state.engine.event_history.len())
         .map_err(|_| "multiplier input index overflow")?;
@@ -174,9 +173,7 @@ pub(crate) fn validate(state: &crate::state::GameState) -> Result<(), String> {
     for (at, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::TwinflameReplacementInputV38])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::TwinflameReplacementInputV38])
     {
         let E::TwinflameReplacementInputV38 { input } = event else {
             continue;
@@ -203,9 +200,7 @@ pub(crate) fn validate(state: &crate::state::GameState) -> Result<(), String> {
         let mut operations = state
             .engine
             .event_history
-            .scan_for_v1(&[EventKindV1::TwinflameReplacementOperationV38])
-            .iter()
-            .enumerate()
+            .of_kinds_v2(&[EventKindV1::TwinflameReplacementOperationV38])
             .filter_map(|(at, e)| match e {
                 E::TwinflameReplacementOperationV38 { operation }
                     if operation.input == input.index =>
@@ -280,9 +275,7 @@ pub(crate) fn validate(state: &crate::state::GameState) -> Result<(), String> {
     for (at, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::TwinflameDamagePreparationV38])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::TwinflameDamagePreparationV38])
     {
         let E::TwinflameDamagePreparationV38 { preparation: p } = event else {
             continue;
@@ -309,9 +302,7 @@ pub(crate) fn validate(state: &crate::state::GameState) -> Result<(), String> {
         let mut outputs = state
             .engine
             .event_history
-            .scan_for_v1(&[EventKindV1::CrystalDamageOperationV3])
-            .iter()
-            .enumerate()
+            .of_kinds_v2(&[EventKindV1::CrystalDamageOperationV3])
             .filter_map(|(index, e)| match e {
                 E::CrystalDamageOperationV3 { operation }
                     if operation.ctx == p.ctx
@@ -348,10 +339,10 @@ pub(crate) fn validate(state: &crate::state::GameState) -> Result<(), String> {
             return Err("multiplier preparation lost mandatory actual lifelink result".into());
         }
     }
-    for event in state
+    for (_, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::TwinflameReplacementOperationV38])
+        .of_kinds_v2(&[EventKindV1::TwinflameReplacementOperationV38])
     {
         if let E::TwinflameReplacementOperationV38 { operation } = event {
             if !matches!(state.engine.event_history.get(operation.input as usize),Some(E::TwinflameReplacementInputV38{input}) if input.index==operation.input)
@@ -385,9 +376,9 @@ pub(crate) fn preparation_at<'a>(
     let mut preparations = state
         .engine
         .event_history
-        .range_v2(..until)
-        .iter()
-        .filter_map(|e| match e {
+        .of_kinds_v2(&[EventKindV1::TwinflameDamagePreparationV38])
+        .take_while(|(index, _)| *index < until)
+        .filter_map(|(_, e)| match e {
             E::TwinflameDamagePreparationV38 { preparation }
                 if preparation.ctx == operation.ctx
                     && preparation.op == operation.op

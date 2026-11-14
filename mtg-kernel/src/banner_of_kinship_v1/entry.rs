@@ -378,7 +378,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     {
         return Err("private Kinship receipt in public event log".into());
     }
-    for (at, e) in state.engine.event_history.iter().enumerate() {
+    for (at, e) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::KinshipEntryV1])
+    {
         let CommittedEvent::KinshipEntryV1 { journal: row } = e else {
             continue;
         };
@@ -390,7 +394,21 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 if !crate::linked_aura_operation_v1::origin_digest_well_formed(original_sha256) {
                     return Err("Kinship original input digest malformed".into());
                 }
-                let closed=state.engine.event_history.iter().enumerate().filter(|(_,e)|matches!(e,CommittedEvent::KinshipEntryV1{journal} if matches!(journal.as_ref(),JournalV1::Completed{operation,..} if *operation as usize==at))).collect::<Vec<_>>();
+                let closed = state
+                    .engine
+                    .event_history
+                    .of_kinds_v2(&[crate::event_history_v1::EventKindV1::KinshipEntryV1])
+                    .filter(|(_, e)| {
+                        matches!(
+                            e,
+                            CommittedEvent::KinshipEntryV1 { journal }
+                                if matches!(
+                                    journal.as_ref(),
+                                    JournalV1::Completed { operation, .. } if *operation as usize == at
+                                )
+                        )
+                    })
+                    .collect::<Vec<_>>();
                 if closed.len() != 1 || closed[0].0 <= at {
                     return Err("Kinship operation not completed exactly once".into());
                 }
@@ -401,7 +419,22 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 {
                     return Err("Kinship completion has no original operation/entries".into());
                 }
-                let actual=state.engine.event_history.iter().enumerate().filter_map(|(i,e)|match e{CommittedEvent::KinshipEntryV1{journal} if matches!(journal.as_ref(),JournalV1::Committed{entered} if entered.operation==*operation)=>Some(i as u32),_=>None}).collect::<Vec<_>>();
+                let actual = state
+                    .engine
+                    .event_history
+                    .of_kinds_v2(&[crate::event_history_v1::EventKindV1::KinshipEntryV1])
+                    .filter_map(|(i, e)| match e {
+                        CommittedEvent::KinshipEntryV1 { journal }
+                            if matches!(
+                                journal.as_ref(),
+                                JournalV1::Committed { entered } if entered.operation == *operation
+                            ) =>
+                        {
+                            Some(i as u32)
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
                 if *entries != actual || entries.iter().any(|i| *i as usize >= at) {
                     return Err("Kinship completion entry roster changed".into());
                 }
@@ -416,7 +449,21 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 {
                     return Err("Kinship capture has foreign operation/printing/scene".into());
                 }
-                let answers=state.engine.event_history.iter().enumerate().filter(|(_,e)|matches!(e,CommittedEvent::KinshipEntryV1{journal} if matches!(journal.as_ref(),JournalV1::Chosen{capture,..} if *capture as usize==at))).collect::<Vec<_>>();
+                let answers = state
+                    .engine
+                    .event_history
+                    .of_kinds_v2(&[crate::event_history_v1::EventKindV1::KinshipEntryV1])
+                    .filter(|(_, e)| {
+                        matches!(
+                            e,
+                            CommittedEvent::KinshipEntryV1 { journal }
+                                if matches!(
+                                    journal.as_ref(),
+                                    JournalV1::Chosen { capture, .. } if *capture as usize == at
+                                )
+                        )
+                    })
+                    .collect::<Vec<_>>();
                 if answers.len() != 1 || answers[0].0 <= at {
                     return Err("Kinship capture has no unique later answer".into());
                 }
@@ -432,7 +479,21 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 if *capture as usize >= at || *count != amount(choice, *chosen)? {
                     return Err("Kinship answer count/type changed".into());
                 }
-                let commits=state.engine.event_history.iter().enumerate().filter(|(_,e)|matches!(e,CommittedEvent::KinshipEntryV1{journal} if matches!(journal.as_ref(),JournalV1::Committed{entered} if entered.answer as usize==at))).collect::<Vec<_>>();
+                let commits = state
+                    .engine
+                    .event_history
+                    .of_kinds_v2(&[crate::event_history_v1::EventKindV1::KinshipEntryV1])
+                    .filter(|(_, e)| {
+                        matches!(
+                            e,
+                            CommittedEvent::KinshipEntryV1 { journal }
+                                if matches!(
+                                    journal.as_ref(),
+                                    JournalV1::Committed { entered } if entered.answer as usize == at
+                                )
+                        )
+                    })
+                    .collect::<Vec<_>>();
                 if commits.len() != 1 || commits[0].0 <= at {
                     return Err("Kinship answer has no unique later actual entry".into());
                 }

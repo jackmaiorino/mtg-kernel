@@ -1083,3 +1083,92 @@ fn paid_fiery_attachment_retarget_uses_feasible_final_assignment_both_seats() {
         assert_eq!(s.objects.get(equipment[1]).zone, Zone::Exile);
     }
 }
+
+#[test]
+fn storm_proof_rejects_live_state_tamper_after_cached_cursor() {
+    use crate::event_history_v1::{proof_tests_v1, ProvedV1};
+
+    let mut state = ready(PlayerId::P0, "Forest");
+    let enchantment = paid_storm(&mut state, PlayerId::P0);
+    let spell = cast(
+        &mut state,
+        PlayerId::P0,
+        "Lightning Bolt",
+        &[Target::Player(PlayerId::P1)],
+        1,
+    );
+    finish(&mut state);
+    assert!(state.stack.is_empty());
+
+    thousand_year_storm_v1::validate_state(&state).unwrap();
+    let initial_len = state.engine.event_history.len();
+    let initial_covered = state
+        .engine
+        .event_history
+        .proof_memo_v1::<thousand_year_storm_v1::StormProofV1>(ProvedV1::ThousandYearStorm)
+        .map(|(covered, _)| covered)
+        .expect("Storm proof recorded");
+    assert!(initial_covered <= initial_len && initial_len - initial_covered < 64);
+
+    for _ in 0..70u32 {
+        state
+            .engine
+            .event_history
+            .push(event::CommittedEvent::UpkeepBegan {
+                player: PlayerId::P0,
+            });
+    }
+    let uses_before = proof_tests_v1::uses();
+    thousand_year_storm_v1::validate_state(&state).unwrap();
+    assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+    assert_eq!(
+        state
+            .engine
+            .event_history
+            .proof_memo_v1::<thousand_year_storm_v1::StormProofV1>(ProvedV1::ThousandYearStorm)
+            .map(|(covered, _)| covered),
+        Some(state.engine.event_history.len())
+    );
+
+    // (a) Corrupt cast spell's owner in live objects table.
+    let mut bad_spell = state.clone();
+    bad_spell.objects.get_mut(spell).owner = PlayerId::P1;
+    let uses_before = proof_tests_v1::uses();
+    assert!(thousand_year_storm_v1::validate_state(&bad_spell).is_err());
+    assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+
+    // (b) Corrupt Storm observer's owner in live objects table.
+    let mut bad_observer = state.clone();
+    bad_observer.objects.get_mut(enchantment).owner = PlayerId::P1;
+    let uses_before = proof_tests_v1::uses();
+    assert!(thousand_year_storm_v1::validate_state(&bad_observer).is_err());
+    assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+
+    // (c) Leak a private Storm journal row into transient event_log.
+    let private_row = state
+        .engine
+        .event_history
+        .iter()
+        .find(|e| {
+            matches!(
+                e,
+                event::CommittedEvent::ThousandYearStormV1 {
+                    journal: JournalV1::Collected { .. }
+                }
+            )
+        })
+        .unwrap()
+        .clone();
+    let mut leaked_log = state.clone();
+    leaked_log.engine.event_log.push(private_row);
+    let uses_before = proof_tests_v1::uses();
+    assert!(thousand_year_storm_v1::validate_state(&leaked_log).is_err());
+    assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+
+    // (d) Flip thousand_year_storm_consumer_v1 without CastForm/TargetFaces witnesses.
+    let mut consumer_flipped = state.clone();
+    consumer_flipped.thousand_year_storm_consumer_v1 = true;
+    let uses_before = proof_tests_v1::uses();
+    assert!(thousand_year_storm_v1::validate_state(&consumer_flipped).is_err());
+    assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+}

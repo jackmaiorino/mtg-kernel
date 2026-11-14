@@ -1298,6 +1298,35 @@ fn proofs_last_exactly_while_their_events_are_unchanged() {
     });
     assert_eq!(off, None);
     assert_eq!(history.proof_v1(ProvedV1::GarrukObservations), None);
+
+    // Typed proof summaries obey the same retention, prefix, clone, and drop rules.
+    let summary = std::sync::Arc::new(vec![11_u64, 22_u64]);
+    history.set_proof_memo_v1(
+        ProvedV1::CerberusCapture,
+        6,
+        std::sync::Arc::clone(&summary),
+    );
+    let got = history.proof_memo_v1::<Vec<u64>>(ProvedV1::CerberusCapture);
+    assert_eq!(
+        got.as_ref().map(|(c, v)| (*c, v.as_slice())),
+        Some((6, &[11, 22][..]))
+    );
+    assert_eq!(
+        history
+            .prefix_v1(7)
+            .proof_memo_v1::<Vec<u64>>(ProvedV1::CerberusCapture)
+            .map(|(c, _)| c),
+        Some(6)
+    );
+    assert!(history
+        .prefix_v1(5)
+        .proof_memo_v1::<Vec<u64>>(ProvedV1::CerberusCapture)
+        .is_none());
+    let mut edited = history.clone();
+    edited[0] = tap(99);
+    assert!(edited
+        .proof_memo_v1::<Vec<u64>>(ProvedV1::CerberusCapture)
+        .is_none());
 }
 
 #[test]
@@ -1350,4 +1379,7 @@ fn each_validator_keeps_its_recent_proofs_and_one_per_block() {
             "{len} keeps {covered}"
         );
     }
+    let before = proof_tests_v1::uses();
+    proof_tests_v1::assert_same(ProvedV1::GarrukObservations, &Ok(()), &Ok(()));
+    assert_eq!(proof_tests_v1::uses(), before + 1);
 }

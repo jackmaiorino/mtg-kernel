@@ -182,7 +182,7 @@ pub(crate) fn owns_snapshot(state: &GameState, spell: &StackItem) -> bool {
     if !state.thousand_year_storm_consumer_v1 {
         return false;
     }
-    let mut matches = state.engine.event_history.iter().enumerate().filter(|(at, e)| {
+    let mut matches = storm_rows(state).filter(|(at, e)| {
         match e {
             event::CommittedEvent::ThousandYearStormV1 { journal: JournalV1::Cast { event, spell: captured, .. } } => {
                 captured.as_ref() == spell && !spell.is_copy && event.checked_add(1) == Some(*at as u64)
@@ -190,7 +190,7 @@ pub(crate) fn owns_snapshot(state: &GameState, spell: &StackItem) -> bool {
             }
             event::CommittedEvent::ThousandYearStormV1 { journal: JournalV1::Copy { trigger, ordinal, item } } => {
                 item.as_ref() == spell && spell.is_copy && *ordinal > 0
-                    && state.engine.event_history[..*at].iter().any(|event| matches!(event,
+                    && storm_rows(state).take_while(|(prior, _)| *prior < *at).any(|(_, event)| matches!(event,
                         event::CommittedEvent::ThousandYearStormV1 { journal: JournalV1::Published { item, .. } }
                             if item.v4.stack_item_id == *trigger))
             }
@@ -216,7 +216,7 @@ pub(crate) fn historical_parent_cast(
         return Ok(None);
     }
     let mut found = None;
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in storm_rows(state) {
         let event::CommittedEvent::ThousandYearStormV1 {
             journal: JournalV1::Cast { spell, .. },
         } = event
@@ -612,10 +612,10 @@ fn count_uncached(state: &GameState, index: u64) -> Result<u16, String> {
     let start = state
         .engine
         .event_history
-        .range_v2(..index as usize)
-        .iter()
-        .rposition(|e| matches!(e, event::CommittedEvent::LifeLossTurnBeganV1 { .. }))
-        .map_or(0, |i| i + 1);
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::LifeLossTurnBeganV1])
+        .take_while(|(at, _)| *at < index as usize)
+        .last()
+        .map_or(0, |(i, _)| i + 1);
     let mut count = 0u16;
     let rows: Vec<(usize, &event::CommittedEvent)> = match self::index(state) {
         Some(found) => {
@@ -978,18 +978,101 @@ pub(crate) fn exact_cast_tail(state: &GameState, index: usize, spell: &StackItem
         && matches!(state.engine.event_history.last(),Some(event::CommittedEvent::ThousandYearStormV1{journal:JournalV1::Cast{event,spell:captured,..}})if *event==index as u64 && captured.as_ref()==spell)
 }
 
+const PROOF_STRIDE: usize = 64;
+
+pub(crate) struct StormProofV1 {
+    snapshots: Vec<StackItem>,
+    observers: Vec<AbilitySourceContractV4>,
+}
+
 /// Structural validation of the new occurrence roster, within the existing raw-world contract.
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    if !state
+        .engine
+        .event_history
+        .has_any(&[crate::event_history_v1::EventKindV1::ThousandYearStormV1])
+    {
+        return validate_full(state, false);
+    }
+    let history = &state.engine.event_history;
+    if let Some((from, summary)) =
+        history.proof_memo_v1::<StormProofV1>(crate::event_history_v1::ProvedV1::ThousandYearStorm)
+    {
+        if history
+            .range_v2(from..)
+            .iter()
+            .any(|e| matches!(e, event::CommittedEvent::ThousandYearStormV1 { .. }))
+        {
+            return validate_full(state, true);
+        }
+        let proved = validate_from_proof(state, from, &summary);
+        #[cfg(test)]
+        crate::event_history_v1::proof_tests_v1::assert_same(
+            crate::event_history_v1::ProvedV1::ThousandYearStorm,
+            &proved,
+            &validate_full(state, false),
+        );
+        return proved;
+    }
+    validate_full(state, true)
+}
+
+fn validate_from_proof(
+    state: &GameState,
+    from: usize,
+    summary: &std::sync::Arc<StormProofV1>,
+) -> Result<(), String> {
+    if state.thousand_year_storm_consumer_v1
+        || state
+            .engine
+            .event_log
+            .iter()
+            .any(|e| matches!(e, event::CommittedEvent::ThousandYearStormV1 { .. }))
+        || summary
+            .snapshots
+            .iter()
+            .any(|spell| crate::engine::validate_copy_snapshot(state, spell).is_err())
+        || summary
+            .observers
+            .iter()
+            .any(|&source| validate_observer(state, source).is_err())
+    {
+        return validate_full(state, false);
+    }
+    let len = state.engine.event_history.len();
+    if len.saturating_sub(from) >= PROOF_STRIDE {
+        state.engine.event_history.set_proof_memo_v1(
+            crate::event_history_v1::ProvedV1::ThousandYearStorm,
+            len,
+            std::sync::Arc::clone(summary),
+        );
+    }
+    Ok(())
+}
+
+fn validate_full(state: &GameState, record_proof: bool) -> Result<(), String> {
     let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
     casts::validate_roster(state)?;
     targets::validate_state(state)?;
+    let mut snapshots = Vec::<StackItem>::new();
+    let mut observers_seen = Vec::<AbilitySourceContractV4>::new();
     for (index, e) in storm_rows(state) {
         let event::CommittedEvent::ThousandYearStormV1 { journal } = e else {
             continue;
         };
         match journal {
-            JournalV1::Cast { .. } => {
+            JournalV1::Cast {
+                spell, observers, ..
+            } => {
                 cast_at(state, index as u64)?;
+                if record_proof {
+                    snapshots.push((**spell).clone());
+                    for &source in observers {
+                        if !observers_seen.contains(&source) {
+                            observers_seen.push(source);
+                        }
+                    }
+                }
             }
             JournalV1::CastForm { .. } | JournalV1::TargetFaces { .. } => {
                 if !state.thousand_year_storm_consumer_v1 {
@@ -1014,7 +1097,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 }
                 validate_published(state, item)?;
             }
-            JournalV1::Copy { trigger, .. } => {
+            JournalV1::Copy { trigger, item, .. } => {
                 let rows = published_items(state, *trigger, index);
                 let [row] = rows.as_slice() else {
                     return Err("Storm copy lost original published trigger".into());
@@ -1023,17 +1106,36 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 if copies(state, row)? > n {
                     return Err("Storm created too many copies".into());
                 }
+                if record_proof {
+                    snapshots.push((**item).clone());
+                }
             }
         }
     }
+    let mut has_logged = false;
     for e in &state.engine.event_log {
         if let event::CommittedEvent::ThousandYearStormV1 { journal } = e {
+            has_logged = true;
             if !matches!(journal, JournalV1::Cast { .. })
                 || storm_events(state).filter(|r| *r == e).count() != 1
             {
                 return Err("Storm private journal leaked or collector receipt changed".into());
             }
         }
+    }
+    if record_proof
+        && !state.thousand_year_storm_consumer_v1
+        && !has_logged
+        && !snapshots.is_empty()
+    {
+        state.engine.event_history.set_proof_memo_v1(
+            crate::event_history_v1::ProvedV1::ThousandYearStorm,
+            state.engine.event_history.len(),
+            std::sync::Arc::new(StormProofV1 {
+                snapshots,
+                observers: observers_seen,
+            }),
+        );
     }
     Ok(())
 }

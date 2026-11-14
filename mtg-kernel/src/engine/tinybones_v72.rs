@@ -1072,7 +1072,11 @@ fn stashed_incarnation(state: &GameState, id: ObjectId, generation: u32, count: 
     // physical generation. Derive those rebinding links in actual history order.
     let mut known = Vec::<(EffectObjectBinding, i32)>::new();
     let mut plays = Vec::<(u64, PlayV72)>::new();
-    for (at, e) in state.engine.event_history.iter().enumerate() {
+    for (at, e) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::TinybonesV72])
+    {
         let CommittedEvent::TinybonesV72 { journal } = e else {
             continue;
         };
@@ -1160,14 +1164,34 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     {
         return Err("Tinybones private custody entered trigger log".into());
     }
-    for (at, e) in state.engine.event_history.iter().enumerate() {
+    for (at, e) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::TinybonesV72])
+    {
         let CommittedEvent::TinybonesV72 { journal: j } = e else {
             continue;
         };
         match j.as_ref() {
             JournalV72::ForeignAdventure { .. } | JournalV72::AdventureAborted { .. } => {
                 let (b, _) = adventure_binding(state, at as u64)?;
-                if state.engine.event_history.iter().take(at).enumerate().any(|(i,e)|matches!(e,CommittedEvent::TinybonesV72{journal} if matches!(journal.as_ref(),JournalV72::ForeignAdventure{..}|JournalV72::AdventureAborted{..})) && adventure_binding(state,i as u64).is_ok_and(|(old,_)|old==b)) {
+                if state
+                    .engine
+                    .event_history
+                    .of_kinds_v2(&[crate::event_history_v1::EventKindV1::TinybonesV72])
+                    .take_while(|(i, _)| *i < at)
+                    .any(|(i, e)| {
+                        matches!(
+                            e,
+                            CommittedEvent::TinybonesV72 { journal }
+                                if matches!(
+                                    journal.as_ref(),
+                                    JournalV72::ForeignAdventure { .. }
+                                        | JournalV72::AdventureAborted { .. }
+                                )
+                        ) && adventure_binding(state, i as u64).is_ok_and(|(old, _)| old == b)
+                    })
+                {
                     return Err("foreign Adventure permission duplicated".into());
                 }
                 let live = state.objects.get(b.object);
@@ -1193,7 +1217,22 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                                 }
                         })
                         .count();
-                    let published=state.engine.event_history.iter().filter(|e|matches!(e,CommittedEvent::TinybonesV72{journal} if matches!(journal.as_ref(),JournalV72::Published{discard,observer:o,..}if *discard==at as u64 && *o==observer as u32))).count();
+                    let published = state
+                        .engine
+                        .event_history
+                        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::TinybonesV72])
+                        .filter(|(_, e)| {
+                            matches!(
+                                e,
+                                CommittedEvent::TinybonesV72 { journal }
+                                    if matches!(
+                                        journal.as_ref(),
+                                        JournalV72::Published { discard, observer: o, .. }
+                                            if *discard == at as u64 && *o == observer as u32
+                                    )
+                            )
+                        })
+                        .count();
                     if pending + published != 1 {
                         return Err(
                             "Tinybones original pending/publication inventory changed".into()
@@ -1221,8 +1260,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let finished = state
                     .engine
                     .event_history
-                    .iter()
-                    .enumerate()
+                    .of_kinds_v2(&[crate::event_history_v1::EventKindV1::TinybonesV72])
                     .filter_map(|(i, e)| match e {
                         CommittedEvent::TinybonesV72 { journal } => match journal.as_ref() {
                             JournalV72::Finished { publication, .. }
@@ -1269,7 +1307,21 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         return Err("Tinybones finish lost original publication".into());
                     };
                     let d = discard(state, *d)?;
-                    let stashed=state.engine.event_history.iter().take(at).any(|e|matches!(e,CommittedEvent::TinybonesV72{journal} if matches!(journal.as_ref(),JournalV72::Stashed{publication,..}if publication==p)));
+                    let stashed = state
+                        .engine
+                        .event_history
+                        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::TinybonesV72])
+                        .take_while(|(i, _)| *i < at)
+                        .any(|(_, e)| {
+                            matches!(
+                                e,
+                                CommittedEvent::TinybonesV72 { journal }
+                                    if matches!(
+                                        journal.as_ref(),
+                                        JournalV72::Stashed { publication, .. } if publication == p
+                                    )
+                            )
+                        });
                     if !stashed
                         && d.outcome.expected_zone == Zone::Graveyard
                         && matches_binding(state, d.outcome)
@@ -1293,7 +1345,24 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     return Err("Tinybones stash publication absent".into());
                 };
                 let original = discard(state, *d)?;
-                if state.engine.event_history.iter().take(at).any(|e|matches!(e,CommittedEvent::TinybonesV72{journal} if matches!(journal.as_ref(),JournalV72::Stashed{publication,..}if publication==p))){return Err("Tinybones stash output duplicated".into());}
+                if state
+                    .engine
+                    .event_history
+                    .of_kinds_v2(&[crate::event_history_v1::EventKindV1::TinybonesV72])
+                    .take_while(|(i, _)| *i < at)
+                    .any(|(_, e)| {
+                        matches!(
+                            e,
+                            CommittedEvent::TinybonesV72 { journal }
+                                if matches!(
+                                    journal.as_ref(),
+                                    JournalV72::Stashed { publication, .. } if publication == p
+                                )
+                        )
+                    })
+                {
+                    return Err("Tinybones stash output duplicated".into());
+                }
                 if *after != 1
                     || (matches_binding(state, *exiled)
                         && state.objects.get(exiled.object).counters.stash != *after)
@@ -1315,7 +1384,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let mut paid = 0usize;
                 let mut aborted = 0usize;
                 let mut lands = 0usize;
-                for (after, event) in state.engine.event_history.iter().enumerate() {
+                for (after, event) in state
+                    .engine
+                    .event_history
+                    .of_kinds_v2(&[crate::event_history_v1::EventKindV1::TinybonesV72])
+                {
                     let CommittedEvent::TinybonesV72 { journal } = event else {
                         continue;
                     };
