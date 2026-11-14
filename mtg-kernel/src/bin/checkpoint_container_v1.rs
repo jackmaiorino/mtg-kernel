@@ -7,7 +7,7 @@
 //! checkpoint_container_v1 weights-snapshot --input CHECKPOINT --sha256 HEX --output OUT
 //! checkpoint_container_v1 materialize --template SOURCE.json --input SNAPSHOT --sha256 HEX --output OUT.json
 //! checkpoint_container_v1 s-document --input S_CONTAINER --sha256 HEX
-//! checkpoint_container_v1 widen --source SOURCE.json --seed-label LABEL --optimizer keep|fresh --output FRESH_DIR
+//! checkpoint_container_v1 widen --source SOURCE.json --seed-label LABEL --optimizer keep|fresh [--rows TRAJECTORIES.json] --output FRESH_DIR
 //! checkpoint_container_v1 w-movement --from W_CONTAINER --from-sha256 HEX --to W_CONTAINER --to-sha256 HEX
 //! ```
 //!
@@ -34,7 +34,7 @@
 mtg_kernel::fast_global_allocator!();
 
 use mtg_kernel::expanded_deck_training_v1::w_learner_v1::{
-    w_movement_v1, widen_source_v1, WideningOptimizerV1,
+    w_movement_v1, widen_source_with_rows_v1, WideningOptimizerV1,
 };
 use mtg_kernel::expanded_deck_training_v1::{
     convert_checkpoint_v1_to_v2, export_checkpoint_v2_to_v1, materialize_weights_snapshot_v1,
@@ -42,7 +42,7 @@ use mtg_kernel::expanded_deck_training_v1::{
 };
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: checkpoint_container_v1 convert --source SOURCE.json --output FRESH_ABSOLUTE_PATH | export --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | weights-snapshot --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | materialize --template SOURCE.json --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | s-document --input PATH --sha256 HEX | widen --source SOURCE.json --seed-label LABEL --optimizer keep|fresh --output FRESH_ABSOLUTE_PATH | w-movement --from PATH --from-sha256 HEX --to PATH --to-sha256 HEX";
+const USAGE: &str = "usage: checkpoint_container_v1 convert --source SOURCE.json --output FRESH_ABSOLUTE_PATH | export --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | weights-snapshot --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | materialize --template SOURCE.json --input PATH --sha256 HEX --output FRESH_ABSOLUTE_PATH | s-document --input PATH --sha256 HEX | widen --source SOURCE.json --seed-label LABEL --optimizer keep|fresh [--rows TRAJECTORIES.json] --output FRESH_ABSOLUTE_PATH | w-movement --from PATH --from-sha256 HEX --to PATH --to-sha256 HEX";
 
 fn flags_v1(rest: &[String], names: &[&str]) -> Option<Vec<String>> {
     if rest.len() != 2 * names.len() {
@@ -111,23 +111,57 @@ fn run_v1(args: &[String]) -> Option<Result<String, String>> {
             })
         }
         "widen" => {
-            let values = flags_v1(
+            // `--rows` (optional): a JSON list of trajectory pins the parent
+            // state itself played, for the equality check.
+            let (values, rows) = match flags_v1(
                 rest,
-                &["--source", "--seed-label", "--optimizer", "--output"],
-            )?;
+                &[
+                    "--source",
+                    "--seed-label",
+                    "--optimizer",
+                    "--rows",
+                    "--output",
+                ],
+            ) {
+                Some(v) => (
+                    vec![v[0].clone(), v[1].clone(), v[2].clone(), v[4].clone()],
+                    Some(v[3].clone()),
+                ),
+                None => (
+                    flags_v1(
+                        rest,
+                        &["--source", "--seed-label", "--optimizer", "--output"],
+                    )?,
+                    None,
+                ),
+            };
             let optimizer = match values[2].as_str() {
                 "keep" => WideningOptimizerV1::Keep,
                 "fresh" => WideningOptimizerV1::Fresh,
                 _ => return None,
             };
-            std::fs::read(&values[0])
-                .map_err(|e| e.to_string())
+            let read = |path: &str| std::fs::read(path).map_err(|e| e.to_string());
+            read(&values[0])
                 .and_then(|text| {
                     serde_json::from_slice::<ExpandedModelSourceV1>(&text)
                         .map_err(|e| e.to_string())
                 })
                 .and_then(|source| {
-                    widen_source_v1(&source, &values[1], optimizer, &PathBuf::from(&values[3]))
+                    let rows = rows
+                        .map(|path| {
+                            read(&path).and_then(|text| {
+                                serde_json::from_slice::<Vec<PinnedFileV1>>(&text)
+                                    .map_err(|e| e.to_string())
+                            })
+                        })
+                        .transpose()?;
+                    widen_source_with_rows_v1(
+                        &source,
+                        &values[1],
+                        optimizer,
+                        rows.as_deref(),
+                        &PathBuf::from(&values[3]),
+                    )
                 })
         }
         "w-movement" => {
