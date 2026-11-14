@@ -1048,13 +1048,14 @@ pub struct ExpandedEpisodeV1 {
     /// Per-physical-seat mulligan modes, present exactly when `opening` is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mulligan_modes: Option<[PauperMulliganModeV1; 2]>,
-    /// Some subtracts this positive logit offset (at most 1e6) from the
+    /// Some subtracts this positive logit offset (at most 1e6, an f64 holding
+    /// exactly an f32 value) from the
     /// mulligan row of every London announcement, in collection, record
     /// validation and the update (`london_keep_offset_v1`); those rows are
     /// drawn from the unclamped softmax sampler. Only with `opening`. None keeps
     /// every prior serialized byte and every behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub london_keep_offset: Option<f32>,
+    pub london_keep_offset: Option<f64>,
 }
 
 /// Named game-level runtime rules profiles an episode may select.
@@ -1130,7 +1131,7 @@ impl ExpandedEpisodeV1 {
             );
         };
         if let Some(offset) = self.london_keep_offset {
-            london_keep_offset_v1::validate_offset_v1(offset)?;
+            london_keep_offset_v1::offset_f32_v1(offset)?;
         }
         ensure(
             self.reset.is_none(),
@@ -2548,7 +2549,10 @@ fn collect_episode_hooked_v1(
                 {
                     let (selected, scores, tensor) = acting.select_with_training_tensor_offset_v4(
                         &session,
-                        episode.london_keep_offset,
+                        episode
+                            .london_keep_offset
+                            .map(london_keep_offset_v1::offset_f32_v1)
+                            .transpose()?,
                     )?;
                     // FlatV8 rows also record their pairing relation.
                     let bits = if acting.feature_identity_v1().feature_contract_digest
@@ -2606,15 +2610,17 @@ fn collect_episode_hooked_v1(
 /// compared by bits; a batch mixing values (or offset and no offset) is
 /// refused.
 fn batch_london_keep_offset_v1(
-    offsets: impl IntoIterator<Item = Option<f32>>,
+    offsets: impl IntoIterator<Item = Option<f64>>,
 ) -> Result<Option<f32>, String> {
-    let mut values = offsets.into_iter().map(|offset| offset.map(f32::to_bits));
+    let mut values = offsets.into_iter().map(|offset| offset.map(f64::to_bits));
     let first = values.next().flatten();
     ensure(
         values.all(|value| value == first),
         "an update batch mixes London keep offsets",
     )?;
-    Ok(first.map(f32::from_bits))
+    first
+        .map(|bits| london_keep_offset_v1::offset_f32_v1(f64::from_bits(bits)))
+        .transpose()
 }
 
 /// One non-natural collection attempt, preserved for audit even though it is
@@ -3277,7 +3283,11 @@ fn validate_episode_records_with_search_v1(
                     // draw was made from the offset logits; the stored
                     // logits stay raw.
                     // An adjusted row was drawn from the unclamped sampler.
-                    match episode.london_keep_offset {
+                    match episode
+                        .london_keep_offset
+                        .map(london_keep_offset_v1::offset_f32_v1)
+                        .transpose()?
+                    {
                         Some(offset) => {
                             let tensor = row.tensor.tensor();
                             match london_keep_offset_v1::offset_logits_v1(

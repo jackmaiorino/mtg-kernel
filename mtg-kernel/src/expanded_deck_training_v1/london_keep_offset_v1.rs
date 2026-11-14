@@ -22,6 +22,9 @@
 //! (the legacy sampler quantizes gaps and clamps them at 16 nats). Every other
 //! row of the episode keeps its sampler.
 //!
+//! The episode field is an f64 holding exactly an f32 value
+//! ([`offset_f32_v1`]); the trainer narrows it once, where it is used.
+//!
 //! A schedule (its start value, shape and end update) belongs to the caller
 //! that writes each episode (the chains tools); the trainer applies whatever
 //! value an episode carries. A decay to zero is an episode with `None`.
@@ -55,6 +58,20 @@ pub(crate) fn validate_offset_v1(offset: f32) -> Result<(), String> {
     } else {
         Err("london_keep_offset must be finite, positive and at most 1e6".into())
     }
+}
+
+/// The f32 an episode's recorded offset stands for. The field is stored as an
+/// f64 that must be exactly an f32 value: a trajectory's JSON then reads back
+/// to the same number (an f32 field would be written in its shortest f32
+/// form, which does not parse back to the widened f32 the run's own
+/// comparison builds, so a resumed run would refuse its saved episodes).
+pub(crate) fn offset_f32_v1(recorded: f64) -> Result<f32, String> {
+    let narrow = recorded as f32;
+    validate_offset_v1(narrow)?;
+    if f64::from(narrow) != recorded {
+        return Err("london_keep_offset must be exactly an f32 value".into());
+    }
+    Ok(narrow)
 }
 
 /// Indices of the mulligan rows of one decision (at most one), from its

@@ -336,7 +336,8 @@ fn keep_offset_is_absent_by_default_and_refused_without_london() {
     let parsed: ExpandedEpisodeV1 = serde_json::from_value(value).unwrap();
     assert_eq!(parsed, offset);
     assert!(offset.configurations_checked_v1().is_ok());
-    for bad in [0.0, -2.0, f32::NAN, f32::INFINITY, 1.0e7, f32::MAX] {
+    // 15.3 as an f64 is not an f32 value: refused with the rest.
+    for bad in [0.0, -2.0, f64::NAN, f64::INFINITY, 1.0e7, f64::MAX, 15.3] {
         let mut e = episode(true);
         e.london_keep_offset = Some(bad);
         assert!(e.configurations_checked_v1().is_err());
@@ -345,6 +346,30 @@ fn keep_offset_is_absent_by_default_and_refused_without_london() {
     keep_seven.london_keep_offset = Some(6.5);
     let error = keep_seven.configurations_checked_v1().unwrap_err();
     assert!(error.contains("requires a London opening"), "{error}");
+}
+
+#[test]
+fn keep_offset_json_round_trips_to_the_value_the_run_compares_against() {
+    // A run resumed from saved trajectories compares each saved episode (parsed
+    // JSON) with `serde_json::to_value` of the scheduled one. A non-dyadic
+    // offset must survive that for every value a schedule writes.
+    for b0 in [15.3003f32, 27.5723, 22.1944, 0.1, 1.0e-3, 123456.7] {
+        for step in [1.0f32, 0.9999, 0.5, 0.123456] {
+            let offset = f64::from(b0 * step);
+            let mut e = episode(true);
+            e.london_keep_offset = Some(offset);
+            e.configurations_checked_v1().unwrap();
+            let text = serde_json::to_string(&e).unwrap();
+            let reread: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(reread, serde_json::to_value(&e).unwrap(), "{text}");
+            let parsed: ExpandedEpisodeV1 = serde_json::from_str(&text).unwrap();
+            assert_eq!(parsed, e);
+            assert_eq!(
+                london_keep_offset_v1::offset_f32_v1(offset).unwrap(),
+                b0 * step
+            );
+        }
+    }
 }
 
 #[test]
