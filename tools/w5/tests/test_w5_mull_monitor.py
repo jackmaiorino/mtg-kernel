@@ -341,6 +341,42 @@ class ReaperHook(unittest.TestCase):
         self.assertTrue(gone and all(('episode-' in g or g.endswith('checkpoint.json')) for g in gone), gone)
         self.assertFalse(list(seg.rglob(mm.LOG_NAME)))
 
+    def test_plain_directories_are_reaped_exactly_as_before_the_link_guard(self):
+        """The reaper's deletion as it was before the link guard and the hook (a frozen copy), against today's, on
+        the plain directories the trainer writes: the same count and the same tree, byte for byte."""
+        def old_reap_iteration(iteration):
+            n = 0
+            for f in Path(iteration).rglob('*'):
+                if f.is_file() and not f.is_symlink() and chains.scratch_bulk(f):
+                    try:
+                        f.unlink()
+                        n += 1
+                    except FileNotFoundError:
+                        pass
+            return n
+
+        def old_reap(native):
+            its = Path(native) / 'iterations'
+            if not its.exists():
+                return 0
+            done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists())
+            return sum(old_reap_iteration(d) for d in done[:-1])
+
+        def tree(seg):  # complete.json names its own segment path; the rest is compared byte for byte
+            return {k: v.replace(seg.as_posix().encode(), b'SEG') for k, v in snapshot(seg).items()}
+        old, new, ticked = self.segment('old'), self.segment('new'), self.segment('ticked')
+        self.assertEqual(tree(old), tree(new))
+        n_old, n_new = old_reap(old), chains.reap(new)
+        self.assertEqual(n_old, 3 * 4)
+        self.assertEqual(n_new, n_old)
+        self.assertEqual(tree(new), tree(old))
+        self.assertEqual(chains.Reaper(ticked).tick(), n_old)  # the thread's cursor reaps the same files
+        self.assertEqual(tree(ticked), tree(old))
+        self.assertEqual(old_reap_iteration(old / 'iterations' / '000003'),
+                         chains.reap_iteration(new / 'iterations' / '000003'))
+        self.assertEqual(tree(new), tree(old))
+        self.assertEqual(old_reap(self.t / 'absent'), chains.reap(self.t / 'absent'))  # no iterations directory: 0
+
     def test_the_hook_on_deletes_the_same_files_and_adds_one_log(self):
         off, on = self.segment('a'), self.segment('b')
         log = on / mm.LOG_NAME
