@@ -161,6 +161,7 @@ fn members_are_distinct_valid_containers_over_one_import_v1() {
         },
         checkpoint: None,
         s_learner: None,
+        w_learner: None,
     };
     let members = write_members_v1(&root.join("pool"), &import, 2).unwrap();
     assert_eq!(
