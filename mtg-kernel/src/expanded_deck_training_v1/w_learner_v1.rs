@@ -151,6 +151,54 @@ pub(crate) fn w_state_sha256_v1(
     Ok(hex_v1(&state.state_sha256_v1().map_err(err)?))
 }
 
+/// Decoded wide containers this process has read, keyed by the container
+/// file's pinned sha256, with the state's `state_sha256`. A decode is a pure
+/// function of the file's bytes, and every load still reads the file and
+/// verifies it against its pin (`read_pinned_bytes`) before a lookup, so a hit
+/// is exactly what a decode of those bytes returns. A run driver iteration
+/// loads the same state for its recovery check, its collection and its
+/// update; this decodes it once. Holds the last two containers (a lineage's
+/// initial state and its latest).
+type WDecodedEntryV1 = Arc<(NativePolicyValueTrainStateWideV1, String)>;
+static W_DECODED_V1: std::sync::Mutex<Vec<(String, WDecodedEntryV1)>> =
+    std::sync::Mutex::new(Vec::new());
+const W_DECODED_CAPACITY_V1: usize = 2;
+
+/// The wide state in the container `pin` names, with its `state_sha256`.
+/// With `fresh`, the bytes are decoded even if this process holds them (an
+/// update's readback of the container it just wrote).
+fn decode_pinned_w_state_v1(
+    pin: &PinnedFileV1,
+    fresh: bool,
+) -> Result<(NativePolicyValueTrainStateWideV1, String), String> {
+    let bytes = read_pinned_bytes(pin)?;
+    if !fresh {
+        let held = W_DECODED_V1
+            .lock()
+            .map_err(|_| "wide decode cache poisoned")?
+            .iter()
+            .find(|(key, _)| *key == pin.sha256)
+            .map(|(_, entry)| Arc::clone(entry));
+        if let Some(entry) = held {
+            return Ok((entry.0.clone(), entry.1.clone()));
+        }
+    }
+    let state = decode_w_state_v1(&open_v1(&bytes, MAX_FILE_BYTES)?)?;
+    let state_sha256 = w_state_sha256_v1(&state)?;
+    let entry = Arc::new((state, state_sha256));
+    {
+        let mut cache = W_DECODED_V1
+            .lock()
+            .map_err(|_| "wide decode cache poisoned")?;
+        cache.retain(|(key, _)| *key != pin.sha256);
+        if cache.len() >= W_DECODED_CAPACITY_V1 {
+            cache.remove(0);
+        }
+        cache.push((pin.sha256.clone(), Arc::clone(&entry)));
+    }
+    Ok((entry.0.clone(), entry.1.clone()))
+}
+
 fn hex_v1(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -197,6 +245,8 @@ pub struct WLearnerCheckpointV1 {
 pub(super) struct LoadedWV1 {
     pub(super) policy: FrozenPlayPolicyV1,
     pub(super) state: NativePolicyValueTrainStateWideV1,
+    /// `state`'s `state_sha256`, computed once per decode.
+    pub(super) state_sha256: String,
     pub(super) checkpoint: Option<WLearnerCheckpointV1>,
 }
 
@@ -222,6 +272,16 @@ pub(super) fn load_w_v1(
     source: &ExpandedModelSourceV1,
     inputs: Option<&CheckpointInputExpectationV1<'_>>,
 ) -> Result<LoadedWV1, String> {
+    load_w_fresh_v1(source, inputs, false)
+}
+
+/// [`load_w_v1`]; with `fresh`, the container is decoded from its bytes even
+/// if this process holds it.
+fn load_w_fresh_v1(
+    source: &ExpandedModelSourceV1,
+    inputs: Option<&CheckpointInputExpectationV1<'_>>,
+    fresh: bool,
+) -> Result<LoadedWV1, String> {
     let member = w_member_v1(source)?;
     ensure(
         source.feature_transfer.expected_feature_contract_digest == FEATURE_CONTRACT_DIGEST_V4
@@ -243,14 +303,11 @@ pub(super) fn load_w_v1(
             && policy.input_contract_v1().is_none(),
         "a wide learner's shell must load with the plain FlatV4 identity",
     )?;
-    let initial = decode_w_state_v1(&open_v1(
-        &read_pinned_bytes(&member.initial)?,
-        MAX_FILE_BYTES,
-    )?)?;
-    let (state, checkpoint) = match &source.checkpoint {
+    let (state, state_sha256, checkpoint) = match &source.checkpoint {
         None => {
             ensure(inputs.is_none(), "update requires checkpoint")?;
-            (initial, None)
+            let (initial, initial_sha256) = decode_pinned_w_state_v1(&member.initial, fresh)?;
+            (initial, initial_sha256, None)
         }
         Some(pin) => {
             let record: WLearnerCheckpointV1 =
@@ -274,16 +331,17 @@ pub(super) fn load_w_v1(
                     record.value_coefficient_bits,
                 )?;
             }
-            let state = decode_w_state_v1(&open_v1(
-                &read_pinned_bytes(&record.state)?,
-                MAX_FILE_BYTES,
-            )?)?;
+            // The lineage's initial container is bound by the record (its
+            // sha256 equals the source's pin, checked above) and is read and
+            // verified against that pin here; a continuation does not decode
+            // it.
+            read_pinned_bytes(&member.initial)?;
+            let (state, state_sha256) = decode_pinned_w_state_v1(&record.state, fresh)?;
             ensure(
-                w_state_sha256_v1(&state)? == record.state_sha256
-                    && state.adam_step_v1() == record.adam_step,
+                state_sha256 == record.state_sha256 && state.adam_step_v1() == record.adam_step,
                 "wide checkpoint record and container differ",
             )?;
-            (state, Some(record))
+            (state, state_sha256, Some(record))
         }
     };
     ensure(
@@ -294,6 +352,7 @@ pub(super) fn load_w_v1(
     Ok(LoadedWV1 {
         policy,
         state,
+        state_sha256,
         checkpoint,
     })
 }
@@ -304,6 +363,7 @@ pub(super) fn w_identity_v1(
     source: &ExpandedModelSourceV1,
     policy: &FrozenPlayPolicyV1,
     state: &NativePolicyValueTrainStateWideV1,
+    state_sha256: &str,
 ) -> Result<ExpandedInferenceIdentityV1, String> {
     let feature_identity = policy.feature_identity_v1();
     Ok(ExpandedInferenceIdentityV1 {
@@ -311,7 +371,7 @@ pub(super) fn w_identity_v1(
         source_import: policy.identity_v1().clone(),
         checkpoint_sha256: source.checkpoint.as_ref().map(|pin| pin.sha256.clone()),
         model: policy.actual_model_identity_v1(),
-        state_sha256: w_state_sha256_v1(state)?,
+        state_sha256: state_sha256.into(),
         adam_step: state.adam_step_v1(),
         feature_schema_version: feature_identity.feature_schema_version.into(),
         feature_registry_version: feature_identity.feature_registry_version.into(),
@@ -326,7 +386,7 @@ pub(super) fn load_inference_v1(
     source: &ExpandedModelSourceV1,
 ) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
     let loaded = load_w_v1(source, None)?;
-    let identity = w_identity_v1(source, &loaded.policy, &loaded.state)?;
+    let identity = w_identity_v1(source, &loaded.policy, &loaded.state, &loaded.state_sha256)?;
     Ok((loaded.policy, identity))
 }
 
@@ -336,7 +396,7 @@ pub(super) fn load_update_inference_v1(
     inputs: &CheckpointInputExpectationV1<'_>,
 ) -> Result<ExpandedInferenceIdentityV1, String> {
     let loaded = load_w_v1(source, Some(inputs))?;
-    w_identity_v1(source, &loaded.policy, &loaded.state)
+    w_identity_v1(source, &loaded.policy, &loaded.state, &loaded.state_sha256)
 }
 
 /// The run driver's recovery check of a wide checkpoint's GAE settings: the
@@ -387,7 +447,7 @@ pub(super) fn collection_learner_v1(
         "a wide learner runs under the platform libm only",
     )?;
     let loaded = load_w_v1(source, None)?;
-    let identity = w_identity_v1(source, &loaded.policy, &loaded.state)?;
+    let identity = w_identity_v1(source, &loaded.policy, &loaded.state, &loaded.state_sha256)?;
     let state_hash = identity.state_sha256.clone();
     Ok((
         loaded.policy,
@@ -498,6 +558,7 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
     let LoadedWV1 {
         policy,
         mut state,
+        state_sha256: before,
         checkpoint,
     } = load_w_v1(&source, None)?;
     if let Some(record) = &checkpoint {
@@ -506,8 +567,7 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
             "wide continuation must keep the lineage's gamma and lambda",
         )?;
     }
-    let identity = w_identity_v1(&source, &policy, &state)?;
-    let before = identity.state_sha256.clone();
+    let identity = w_identity_v1(&source, &policy, &state, &before)?;
     let learner = ExpandedSeatBehaviorV1 {
         source: source.clone(),
         identity,
@@ -703,9 +763,10 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
         learning_rate_bits: learning_rate.to_bits(),
         value_coefficient_bits: value_coefficient.to_bits(),
     };
-    let restored = load_w_v1(&resumed, Some(&expectation))?;
+    // Decoded from the bytes just written, never from this process's cache.
+    let restored = load_w_fresh_v1(&resumed, Some(&expectation), true)?;
     ensure(
-        w_state_sha256_v1(&restored.state)? == after
+        restored.state_sha256 == after
             && restored.state.snapshot_v1().map_err(err)? == state.snapshot_v1().map_err(err)?,
         "published wide checkpoint round trip differs",
     )?;
