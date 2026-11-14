@@ -4162,15 +4162,13 @@ mod tests {
                 key_memo_mib: 512,
             }),
         };
-        let mut serial =
+        let (_serial_root, mut serial) =
             real_two_iteration_config_v1("w5-ex1-serial", gae, ExpandedUpdateBackendV1::Cpu);
-        let serial_root = serial.output_directory.parent().unwrap().to_path_buf();
         serial.ex1 = Some(ex1_opts.clone());
         serial.validate_v1().unwrap();
 
-        let mut prepared =
+        let (_prepared_root, mut prepared) =
             real_two_iteration_config_v1("w5-ex1-prep-zstd", gae, ExpandedUpdateBackendV1::Cpu);
-        let prepared_root = prepared.output_directory.parent().unwrap().to_path_buf();
         prepared.ex1 = Some(ex1_opts);
         prepared.collection_workers = 2;
         prepared.preparation_workers = 2;
@@ -4195,8 +4193,6 @@ mod tests {
             assert_eq!(p_doc["after_state_sha256"], s_doc["after_state_sha256"]);
             assert!(p_doc.get("update_preparation").is_some());
         }
-        let _ = fs::remove_dir_all(&serial_root);
-        let _ = fs::remove_dir_all(&prepared_root);
     }
 
     /// Bookkeeping design 2.3, the crash point, in both record formats: an

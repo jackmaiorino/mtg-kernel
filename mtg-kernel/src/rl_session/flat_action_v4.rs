@@ -2374,7 +2374,10 @@ mod tests {
             );
 
             let (result, objects) = encoded_v4(&session);
-            assert_eq!(usize::from(result.active_action_count), expected_modes);
+            assert_eq!(
+                usize::try_from(result.active_action_count).unwrap(),
+                expected_modes
+            );
             let pending_rows: Vec<_> = objects
                 .iter()
                 .filter(|row| row.group == FlatActionObjectGroupV1::HistoricalPublicSource)
