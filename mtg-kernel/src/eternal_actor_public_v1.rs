@@ -274,17 +274,26 @@ pub fn capture_v1(state: &GameState) -> Result<PublicChoicesV1, RlContractError>
         let Some(object) = state.objects.try_get(copy) else {
             return Err(RlContractError("missing public prepare copy".into()));
         };
-        if object.zone != Zone::Exile {
+        let copy_zone = if object.zone == Zone::Exile
+            || (object.zone == Zone::Stack
+                && state
+                    .engine
+                    .pending_cast
+                    .as_ref()
+                    .is_some_and(|pending| pending.spell == copy))
+        {
+            object.zone
+        } else {
             return Err(RlContractError(
                 "unrepresented prepare copy lifecycle".into(),
             ));
-        }
+        };
         let target = ObjectLinkV4 {
             object: copy,
             zone_change_count: object.zone_change_count,
         };
         out.prepare_copies
-            .push(public_link(state, source, target, Zone::Exile)?);
+            .push(public_link(state, source, target, copy_zone)?);
     }
     for &(source, target) in &eternal.e7a.animating {
         out.animate_dead_waiting
@@ -292,7 +301,7 @@ pub fn capture_v1(state: &GameState) -> Result<PublicChoicesV1, RlContractError>
     }
     for &(source, target) in &eternal.e7a.animated {
         out.animate_dead_attached
-            .push(public_link(state, source, target, Zone::Battlefield)?);
+            .push(animate_dead_link(state, source, target)?);
     }
     if let Some(e3) = &eternal.e3 {
         for &(link, chosen_type) in &e3.cavern_types {
@@ -341,6 +350,40 @@ pub fn capture_v1(state: &GameState) -> Result<PublicChoicesV1, RlContractError>
         }
     }
     Ok(out)
+}
+
+fn animate_dead_link(
+    state: &GameState,
+    source: ObjectLinkV4,
+    target: ObjectLinkV4,
+) -> Result<PublicLinkV1, RlContractError> {
+    let source = match current_public(state, source, Zone::Battlefield)? {
+        Some(live) => live,
+        None => {
+            let frozen = crate::eternal_legacy_e7a_v1::animate_dead_leaves_source(state, source)
+                .ok_or_else(|| {
+                    RlContractError("departed Eternal link needs public historical source".into())
+                })?;
+            if crate::card_def::CARD_DEFS
+                .get(usize::from(frozen.card_def))
+                .is_none()
+            {
+                return Err(RlContractError("invalid historical Eternal source".into()));
+            }
+            CardStableRefV1 {
+                arena_id: frozen.source.0,
+                card_db_id: frozen.card_def,
+                owner: frozen.owner.into(),
+                controller: frozen.controller.into(),
+                zone: frozen.zone,
+                zone_change_count: frozen.zone_change_count,
+            }
+        }
+    };
+    let target = current_public(state, target, Zone::Battlefield)?.ok_or_else(|| {
+        RlContractError("departed Eternal link needs lifecycle projection".into())
+    })?;
+    Ok(PublicLinkV1 { source, target })
 }
 
 fn public_link(
@@ -632,6 +675,101 @@ mod tests {
             state.objects.get_mut(cavern).card_def = named;
             state.objects.get_mut(needle).card_def = named;
             assert_eq!(capture_v1(&state).unwrap(), departed);
+        }
+    }
+
+    #[test]
+    fn prepare_copy_pending_cast_link_is_captured() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(player);
+            let source = put(&mut state, player, "Carnivorous Cultivator", Zone::Hand);
+            put(&mut state, player, "Elvish Spirit Guide", Zone::Battlefield);
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            crate::trigger::collect_and_process(&mut state);
+
+            let exile_captured = capture_v1(&state).unwrap();
+            assert_eq!(exile_captured.prepare_copies.len(), 1);
+            assert_eq!(exile_captured.prepare_copies[0].target.zone, Zone::Exile);
+            let copy = crate::ids::ObjectId(exile_captured.prepare_copies[0].target.arena_id);
+
+            state.players[player.index()].mana_pool = [5, 5, 5, 5, 5, 5];
+            let _ = crate::engine::advance_until_decision(&mut state);
+            crate::engine::step(&mut state, crate::engine::Action::CastSpell(copy)).unwrap();
+            assert_eq!(
+                state.engine.pending_cast.as_ref().map(|p| p.spell),
+                Some(copy)
+            );
+            assert_eq!(state.objects.get(copy).zone, Zone::Stack);
+
+            let stack_captured = capture_v1(&state).unwrap();
+            assert_eq!(stack_captured.prepare_copies.len(), 1);
+            assert_eq!(stack_captured.prepare_copies[0].target.zone, Zone::Stack);
+            assert_ne!(stack_captured, exile_captured);
+
+            // Moving to Stack without PendingCast is rejected.
+            let mut forged = state.clone();
+            forged.engine.pending_cast = None;
+            assert!(capture_v1(&forged).is_err());
+        }
+    }
+
+    #[test]
+    fn animate_dead_departed_aura_uses_public_trigger_source_without_hidden_hand() {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ready_state_for(player);
+            let creature = put(&mut state, player, "Elvish Spirit Guide", Zone::Graveyard);
+            let aura = put(&mut state, player, "Animate Dead", Zone::Hand);
+            state.players[player.index()].mana_pool = [5, 5, 5, 5, 5, 5];
+
+            let _ = crate::engine::advance_until_decision(&mut state);
+            crate::engine::step(&mut state, crate::engine::Action::CastSpell(aura)).unwrap();
+            crate::engine::step(
+                &mut state,
+                crate::engine::Action::ChooseTarget(crate::state::Target::Object(creature)),
+            )
+            .unwrap();
+            for _ in 0..8 {
+                if state.stack.is_empty() && state.engine.pending_triggers.is_empty() {
+                    break;
+                }
+                let _ = crate::engine::advance_until_decision(&mut state);
+                crate::engine::step(&mut state, crate::engine::Action::Pass).unwrap();
+            }
+            assert_eq!(state.objects.get(aura).zone, Zone::Battlefield);
+            assert_eq!(state.objects.get(creature).zone, Zone::Battlefield);
+            let aura_bf_generation = state.objects.get(aura).zone_change_count;
+
+            // Bounce Animate Dead to a hidden zone; its LTB trigger enters the stack.
+            crate::event::propose_and_commit(
+                &mut state,
+                crate::event::ProposedEvent::zone_change(aura, Zone::Hand),
+            );
+            let pending = crate::trigger::collect_and_process(&mut state);
+            state.engine.pending_triggers.extend(pending);
+            let _ = crate::engine::advance_until_decision(&mut state);
+            assert_eq!(state.objects.get(aura).zone, Zone::Hand);
+            assert!(!state.stack.is_empty());
+
+            let baseline = capture_v1(&state).unwrap();
+            assert_eq!(baseline.animate_dead_attached.len(), 1);
+            assert_eq!(
+                baseline.animate_dead_attached[0].source.zone,
+                Zone::Battlefield
+            );
+            assert_eq!(
+                baseline.animate_dead_attached[0].source.zone_change_count,
+                aura_bf_generation
+            );
+
+            for hidden_name in ["Island", "Forest"] {
+                let mut variant = state.clone();
+                variant.objects.get_mut(aura).card_def =
+                    crate::card_def::card_id_by_name(hidden_name).unwrap();
+                assert_eq!(capture_v1(&variant).unwrap(), baseline);
+            }
         }
     }
 }
