@@ -1,6 +1,6 @@
 # Pinned Linux release build
 
-The workflow builds the combined trainer at `951576e0aed053a43937d03632d2bfa488f5c0a9` on a standard public-repository GitHub runner. It exports `native_expanded_training_run_v1` and `checkpoint_container_v1` with SHA-256s and a source/toolchain manifest. It does not execute training or qualify throughput.
+The workflow builds the combined trainer at `3210eac3152c66a6769a780143526bb67e1537b9` on a standard public-repository GitHub runner. It exports `native_expanded_training_run_v1` and `checkpoint_container_v1` with SHA-256s and a source/toolchain manifest. It does not execute training or qualify throughput.
 
 The source is the w128 backport (branch `claude/w128-backport-c5719e1cf-20261114`, PR #694 into `release/w128-c5719e1cf`): the production trainer source `c5719e1cf` plus the V4 engine-fault fix (#673), the net-8w128 learner, movement reader and widening rows (#678, #681, #682) and the wide-state I/O fix. The w128 forks must play the same game as their control chains, which run `c5719e1cf`; main's later rules changes are not in it. The guard also accepts `411feed25` (the backport before the I/O fix) for the fix's equality check only.
 

@@ -15,7 +15,7 @@ import sys
 import time
 
 
-SOURCE = "951576e0aed053a43937d03632d2bfa488f5c0a9"
+SOURCE = "3210eac3152c66a6769a780143526bb67e1537b9"
 # The w128 backport before its wide-state I/O fix, built only for the fix's equality check.
 PRE_FIX_SOURCE = "411feed252dc842fcbf647c106dab16fe739305b"
 SOURCES = (SOURCE, PRE_FIX_SOURCE)
