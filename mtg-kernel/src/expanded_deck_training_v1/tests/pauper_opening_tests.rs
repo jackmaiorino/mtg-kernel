@@ -53,6 +53,7 @@ fn episode(opening: bool) -> ExpandedEpisodeV1 {
         reset: None,
         opening: opening.then_some(PauperOpeningV1::LondonV1),
         mulligan_modes: opening.then_some([Learned, Learned]),
+        london_keep_offset: None,
     }
 }
 

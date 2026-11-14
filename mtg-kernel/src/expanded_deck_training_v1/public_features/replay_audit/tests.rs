@@ -35,6 +35,7 @@ fn episode(id: &str, seed: u64) -> ExpandedEpisodeV1 {
         reset: None,
         opening: None,
         mulligan_modes: None,
+        london_keep_offset: None,
     }
 }
 
