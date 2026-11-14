@@ -132,6 +132,9 @@ KEEP_OFFSET_MAX = 1.0e6  # the trainer's london_keep_offset_v1::MAX_OFFSET_V1
 KEEP_OFFSET_MAX_END = 1 << 53  # (T - u) stays exact in binary64
 KEEP_OFFSET_OPENING = "london-v1"  # the one opening protocol the offset belongs to
 KEEP_OFFSET_MODES = ("learned", "keep_seven")
+# Run options the trainer refuses together with an offset ("london_keep_offset trains only on the plain CPU GAE
+# update"): a base that sets any of them would collect games and then fail at its first update.
+KEEP_OFFSET_REFUSED_OPTIONS = ("line_b", "e_supported", "soft_q", "search_targets", "ex1")
 
 
 def _is_number(value):
@@ -151,7 +154,8 @@ def validate_keep_offset(keep_offset, base=None):
     With `base` (an OH1/OH2 base), also raises unless the base is one the trainer can train with an offset (see
     `check_london_base`): every episode of every iteration has the London opening and its mulligan modes (the
     trainer refuses an update batch that mixes offset and no offset), no episode already carries a
-    `london_keep_offset` (the schedule is the only writer of that field), and the update is the plain CPU GAE one."""
+    `london_keep_offset` (the schedule is the only writer of that field), and the update is the plain CPU GAE one
+    (no line_b, e_supported, soft_q, search_targets or ex1 block)."""
     if not isinstance(keep_offset, dict):
         raise ValueError("keep_offset must be an object {b0, end_update, shape}")
     unknown = sorted(str(k) for k in set(keep_offset) - KEEP_OFFSET_KEYS)
@@ -202,6 +206,9 @@ def check_london_base(base):
         raise ValueError("keep_offset trains only on the gae_advantage_value_v1 loss (the base's loss_selection)")
     if not (isinstance(backend, dict) and backend.get("kind") == "cpu"):
         raise ValueError("keep_offset trains only on the CPU update backend (the base's update_backend)")
+    for key in KEEP_OFFSET_REFUSED_OPTIONS:
+        if base.get(key) is not None:
+            raise ValueError(f"keep_offset trains only on the plain CPU GAE update: the base's {key} is refused")
 
 
 def keep_offset_value(keep_offset, u):
@@ -237,6 +244,8 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
         keep_offset = validate_keep_offset(keep_offset, base)
         if offset < 0:
             raise ValueError(f"keep_offset needs a non-negative global update offset, got {offset}")
+        if coefficient is not None:
+            raise ValueError("keep_offset is refused with an EX1 coefficient (the trainer refuses the offset with ex1)")
     source = dose["source"]
     # An S source starting from its initial train state (W5's XS parent, S0) has no checkpoint; its pin is
     # `s_learner.initial` (s_learner_v1.rs). A fresh net-8 start (a dose record that says `"fresh": true`, e.g. a

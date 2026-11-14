@@ -206,6 +206,11 @@ class BuildConfigTests(unittest.TestCase):
             if budget is not None:
                 want['ex1']['w5'] = {'budget': budget}
             self.assertEqual(plain, want)
+            if budget is not None:  # an X chain's config carries an ex1 block, which the trainer refuses with it
+                with self.assertRaisesRegex(ValueError, 'refused with an EX1 coefficient'):
+                    xact.build_config(base, self.dose, self.out, 'ch', 0, 6, 2, budget, coefficient,
+                                      keep_offset=KEEP)
+                continue
             stamped = xact.build_config(base, self.dose, self.out, 'ch', 0, 6, 2, budget, coefficient,
                                         keep_offset=KEEP)
             self.assertEqual(stamps(stamped), [[expected(6.0, 8, u)] * 2 for u in range(6)])
@@ -281,11 +286,17 @@ class BuildConfigTests(unittest.TestCase):
         bad(lambda b: b.pop('loss_selection'), 'gae_advantage_value_v1 loss')
         bad(lambda b: b.update(loss_selection={'kind': 'terminal_reinforce_value_v3'}), 'gae_advantage_value_v1 loss')
         bad(lambda b: b.update(update_backend={'kind': 'cuda', 'device_ordinal': 0}), 'CPU update backend')
-        # keep_seven on the opponent's seat is how a fixed opponent plays, and an absent backend is the CPU default
+        for option in ('line_b', 'e_supported', 'soft_q', 'search_targets', 'ex1'):  # the trainer's own list
+            bad(lambda b, option=option: b.update({option: {'any': 'block'}}), f"the base's {option} is refused")
+        # keep_seven on the opponent's seat is how a fixed opponent plays, an absent backend is the CPU default, and
+        # an explicit null option (as chain A's base writes them) is no option
         ok = opening_base()
         first(ok)['mulligan_modes'] = ['learned', 'keep_seven']
         ok.pop('update_backend')
+        ok.update({option: None for option in qual.KEEP_OFFSET_REFUSED_OPTIONS})
         self.assertEqual(qual.validate_keep_offset(KEEP, ok), KEEP)
+        with self.assertRaisesRegex(ValueError, 'refused with an EX1 coefficient'):  # a direct X-style build
+            self.build(opening_base(), 0, 1, KEEP, coefficient=1.0)
 
     def test_a_segment_spanning_the_end_stamps_each_iteration_by_its_own_update(self):
         base = opening_base()

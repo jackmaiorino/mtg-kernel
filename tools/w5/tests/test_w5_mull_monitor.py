@@ -104,6 +104,45 @@ def snapshot(root):
     return {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(Path(root).rglob('*')) if p.is_file()}
 
 
+def seal(raw):
+    """A record envelope of `raw` built by hand: one zstd frame of raw (stored) blocks that declares its content
+    size (descriptor 0xA0: a four-byte content size, single segment), which any zstd decoder opens."""
+    out = bytearray(qual.ZSTD_MAGIC + bytes([0xA0]) + len(raw).to_bytes(4, 'little'))
+    blocks = [raw[i:i + 100_000] for i in range(0, len(raw), 100_000)] or [b'']
+    for k, block in enumerate(blocks):
+        out += ((len(block) << 3) | (k == len(blocks) - 1)).to_bytes(3, 'little') + block
+    return bytes(out)
+
+
+def unseal(data):
+    """The content of a `seal` frame (the stand-in zstd tool's decoder)."""
+    size, at, out = qual.zstd_frame_content_size(data), 9, b''
+    while True:
+        header = int.from_bytes(data[at:at + 3], 'little')
+        out += data[at + 3:at + 3 + (header >> 3)]
+        at += 3 + (header >> 3)
+        if header & 1:
+            break
+    assert len(out) == size
+    return out
+
+
+class FakeZstd:
+    """subprocess.Popen for `zstd -q -d -c -- FILE...`: the concatenated contents on stdout, as the tool writes."""
+    calls, extra, code = [], b'', 0
+
+    def __init__(self, argv, stdin=None, stdout=None, stderr=None):
+        type(self).calls.append(list(argv))
+        assert argv[:5] == ['zstd', '-q', '-d', '-c', '--'], argv
+        self.stdout = io.BytesIO(b''.join(unseal(Path(p).read_bytes()) for p in argv[5:]) + type(self).extra)
+
+    def kill(self):
+        pass
+
+    def wait(self):
+        return type(self).code
+
+
 class ReadEpisode(unittest.TestCase):
     def test_the_two_members_are_parsed_alone_and_agree_with_a_full_parse(self):
         cases = [([seat(taken=0), seat(taken=2)], {}), ([seat(taken=7), seat('keep_seven')], {'offset': 0.4375}),
@@ -308,6 +347,68 @@ class Hook(unittest.TestCase):
         self.assertEqual(mm.record_iteration(it, self.log), 'recorded')  # an ordinary file works as before
         mm.append_line(self.log, {'v': 1, 'it': 7})
         self.assertEqual(sorted(mm.read_log(self.log)[0]), [0, 7])
+
+    def test_a_linked_segment_directory_is_refused(self):
+        import os
+        real = self.t / 'real-segment'
+        it = make_iteration(real, 0, mixed_iteration(0))
+        try:
+            os.symlink(real, self.seg, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest('no symlinks here')
+        before = snapshot(real)
+        with self.assertRaises(OSError):
+            mm.append_line(self.log, {'v': 1, 'it': 9})  # <link>/opening.jsonl
+        self.assertEqual(mm.record_iteration(self.seg / 'iterations' / '000000', self.log), 'failed')
+        self.assertEqual(snapshot(real), before)  # nothing was written through the link
+        self.assertEqual(mm.record_iteration(it, real / mm.LOG_NAME), 'recorded')  # the plain directory works
+
+    def test_sealed_trajectories_without_a_decoder_module_take_one_zstd_call_and_no_file(self):
+        trajs = mixed_iteration(0)
+        it = make_iteration(self.seg, 0, [seal(trajs[0]), trajs[1], seal(trajs[2])])  # sealed and plain, mixed
+        plain = make_iteration(self.t / 'plain', 0, trajs)
+        self.assertEqual(mm.record_iteration(plain, self.t / 'plain' / mm.LOG_NAME), 'recorded')
+        before = snapshot(self.seg)
+        FakeZstd.calls, FakeZstd.extra, FakeZstd.code = [], b'', 0
+        with mock.patch.object(mm, '_memory_decoder', return_value=False), \
+                mock.patch.object(mm.subprocess, 'Popen', FakeZstd), \
+                mock.patch('tempfile.TemporaryDirectory', side_effect=AssertionError('a temporary file')), \
+                mock.patch('tempfile.mkstemp', side_effect=AssertionError('a temporary file')):
+            self.assertEqual(mm.open_records(mm.trajectory_files(it)), trajs)  # in order, the plain one untouched
+            self.assertEqual(mm.record_iteration(it, self.log), 'recorded')
+        self.assertEqual(len(FakeZstd.calls), 2)  # one process per pass over the iteration, not one per file
+        self.assertEqual([Path(p).name for p in FakeZstd.calls[1][5:]], ['episode-0000.json', 'episode-0002.json'])
+        self.assertEqual({k: v for k, v in snapshot(self.seg).items() if k != mm.LOG_NAME}, before)
+        self.assertEqual(self.log.read_bytes(), (self.t / 'plain' / mm.LOG_NAME).read_bytes())  # the unsealed line
+
+    def test_a_failing_or_missing_zstd_tool_is_an_error_line_never_an_empty_iteration(self):
+        it = make_iteration(self.seg, 0, [seal(t) for t in mixed_iteration(0)])
+        cases = (('exit', dict(code=1, extra=b''), FakeZstd), ('long', dict(code=0, extra=b'x'), FakeZstd),
+                 ('missing', dict(code=0, extra=b''), mock.Mock(side_effect=FileNotFoundError('zstd'))))
+        for name, settings, popen in cases:
+            with self.subTest(name=name):
+                FakeZstd.calls, FakeZstd.extra, FakeZstd.code = [], settings['extra'], settings['code']
+                with mock.patch.object(mm, '_memory_decoder', return_value=False), \
+                        mock.patch.object(mm.subprocess, 'Popen', popen):
+                    self.assertEqual(mm.record_iteration(it, self.log), 'error')
+                self.assertIn('zstd', mm.read_log(self.log)[1][0])
+        FakeZstd.calls, FakeZstd.extra, FakeZstd.code = [], b'', 0
+        with mock.patch.object(mm, '_memory_decoder', return_value=False), \
+                mock.patch.object(mm.subprocess, 'Popen', FakeZstd):
+            self.assertEqual(mm.record_iteration(it, self.log), 'recorded')  # a later pass replaces the error line
+        nested = make_iteration(self.t / 'nested', 0, [seal(seal(mixed_iteration(0)[0]))])
+        with mock.patch.object(mm, '_memory_decoder', return_value=False), \
+                mock.patch.object(mm.subprocess, 'Popen', FakeZstd):
+            with self.assertRaisesRegex(ValueError, 'unsealed record bytes only'):
+                mm.open_records(mm.trajectory_files(nested))
+
+    @unittest.skipUnless(shutil.which('zstd'), 'no zstd tool here')
+    def test_the_real_zstd_tool_opens_sealed_trajectories_in_one_call(self):
+        trajs = mixed_iteration(0)
+        it = make_iteration(self.seg, 0, [seal(t) for t in trajs])
+        with mock.patch.object(mm, '_memory_decoder', return_value=False):
+            self.assertEqual(mm.open_records(mm.trajectory_files(it)), trajs)
+            self.assertEqual(mm.record_iteration(it, self.log), 'recorded')
 
     def test_record_all_visits_the_completed_iterations_only(self):
         for i in range(3):

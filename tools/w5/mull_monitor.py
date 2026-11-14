@@ -36,6 +36,7 @@ import argparse
 import json
 import os
 import struct
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -77,6 +78,62 @@ def _member(text, key, last):
     while at < len(text) and text[at] in ' \t\r\n':
         at += 1
     return _DECODER.raw_decode(text, at)[0]
+
+
+def _memory_decoder():
+    """Whether qual.open_record opens a sealed record in memory here (Python 3.14's compression.zstd or the
+    zstandard package). Without one it runs the zstd tool through a temporary file per record, which the hook
+    never does: see open_records."""
+    try:
+        from compression import zstd  # noqa: F401
+        return True
+    except ImportError:
+        pass
+    try:
+        import zstandard  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def open_records(files):
+    """The record bytes of each trajectory file, in order. A plain file is its own bytes. Sealed files
+    (`record_envelope` zstd1: one zstd frame of the record's exact bytes) are opened in memory where a decoder
+    module exists. Where none does, ONE `zstd -d -c` call reads all of them from their own paths and its output is
+    cut by each frame's declared content size: no file is created, and an iteration costs one process, not one per
+    trajectory. It fails closed as qual.open_record does: one frame per file, a declared size within the record
+    cap, output of exactly the declared lengths and nothing past them, content not itself sealed."""
+    qual = _qual()
+    files = [Path(f) for f in files]
+    datas = [f.read_bytes() for f in files]
+    sealed = [i for i, data in enumerate(datas) if data.startswith(qual.ZSTD_MAGIC)]
+    if not sealed:
+        return datas
+    if _memory_decoder():
+        return [qual.open_record(data) for data in datas]
+    sizes = [qual.zstd_frame_content_size(datas[i]) for i in sealed]
+    total = sum(sizes)
+    try:
+        proc = subprocess.Popen(['zstd', '-q', '-d', '-c', '--', *[str(files[i]) for i in sealed]],
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError as exc:  # no zstd tool: an error line, never mistaken for an empty iteration
+        raise ValueError(f'no zstd decoder for the sealed trajectories ({type(exc).__name__})') from exc
+    try:
+        content = proc.stdout.read(total + 1)  # never more than one byte past the declared sizes
+        if len(content) > total:
+            proc.kill()
+    finally:
+        proc.stdout.close()
+        code = proc.wait()
+    if code != 0 or len(content) != total:
+        raise ValueError('zstd could not decode the sealed trajectories to their declared sizes')
+    at = 0
+    for i, size in zip(sealed, sizes):
+        datas[i] = content[at:at + size]
+        at += size
+        if datas[i].startswith(qual.ZSTD_MAGIC):
+            raise ValueError('a record envelope holds unsealed record bytes only')
+    return datas
 
 
 def read_episode(data):
@@ -184,7 +241,11 @@ def _is_link(path):
 def append_line(path, line):
     """One compact line appended (a torn last line first gets its newline, so it stays one unreadable line). The
     log must be an ordinary file of its own: a link (a symlink or junction), a directory or a file with a second
-    hard link (a checkpoint, say) is refused with an OSError, so the monitor never appends to anything else."""
+    hard link (a checkpoint, say) is refused with an OSError, so the monitor never appends to anything else. The
+    segment directory holding it must not be a link either. Directories above the segment are the plan's (the
+    scratch root, where the trainer writes every file of the segment) and are not this function's to judge."""
+    if _is_link(Path(path).parent):
+        raise OSError(f'{Path(path).parent} is a link; the monitor writes only into a plain segment directory')
     if _is_link(path) or (os.path.lexists(path) and not (os.path.isfile(path) and os.stat(path).st_nlink == 1)):
         raise OSError(f'{path} is not an ordinary file of its own; the monitor appends to nothing else')
     data = (json.dumps(line, sort_keys=True, separators=(',', ':')) + '\n').encode('utf-8')
@@ -228,7 +289,7 @@ def record_iteration(iteration, log_path):
         files = trajectory_files(iteration)
         if not files:
             return 'empty'
-        line = iteration_line(it, [read_episode(f.read_bytes()) for f in files])
+        line = iteration_line(it, [read_episode(data) for data in open_records(files)])
         status = 'recorded'
     except FileNotFoundError:
         return 'empty'
