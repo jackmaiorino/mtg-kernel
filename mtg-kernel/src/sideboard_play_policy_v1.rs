@@ -42,9 +42,10 @@ use crate::native_flat_tensorizer_v4::{
 use crate::native_policy_train_step_v1::native_train_state_parameter_layout_v1;
 use crate::native_policy_value_net_v1::{
     ForwardActivationModeV1, NativeNamedParameterV1, NativePolicyValueForwardScratchV1,
-    NativePolicyValueModelConfigV1, NativePolicyValueNetV1, CARD_EMBEDDING_DIM_V1,
-    CARD_VOCAB_SIZE_V1, FEATURE_CONTRACT_DIGEST_V1, FEATURE_ENCODING_DIGEST_V1,
-    MODEL_ARCHITECTURE_VERSION_V1, MODEL_CONFIG_FINGERPRINT_V1, PARAMETER_COUNT_V1,
+    NativePolicyValueModelConfigV1, NativePolicyValueNetV1, NativePolicyValueNetWideV1,
+    CARD_EMBEDDING_DIM_V1, CARD_VOCAB_SIZE_V1, FEATURE_CONTRACT_DIGEST_V1,
+    FEATURE_ENCODING_DIGEST_V1, MODEL_ARCHITECTURE_VERSION_V1, MODEL_CONFIG_FINGERPRINT_V1,
+    PARAMETER_COUNT_V1,
 };
 use crate::paired_bo1_harness_v1::{
     PairedBo1PolicyInputV1, PairedBo1PolicyV1, PlayPolicyGenerationV1,
@@ -80,6 +81,8 @@ pub mod registry_evolution_v1;
 pub(crate) mod search_leaf_v4;
 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
 pub(crate) mod stack_inputs;
+#[cfg(test)]
+mod wide_model_tests;
 pub use origin::{
     FreshPlayPolicyIdentityV1, PlayPolicyOriginV1, TransferredFreshPlayPolicyIdentityV1,
     FRESH_PLAY_INITIALIZATION_SCHEMA_V1, TRANSFERRED_FRESH_PLAY_SCHEMA_V1,
@@ -314,6 +317,14 @@ pub struct FrozenPlayPolicyV1 {
     /// Search roles record no tensor; collection and replay keep the digest.
     /// Forks keep it.
     s_state_digest_off: bool,
+    /// The capacity-experiment wide net (`kernel-policy-value-net-8w128`,
+    /// collab LANES/w128-20261113) in place of the net-8 forward, on a plain
+    /// FlatV4 policy shell as native S is: the shell's encoder, tensorizer,
+    /// samplers and RNG streams are used unchanged, and every V4 forward of
+    /// this policy (collection and the update's replay checks) is the wide
+    /// net's, under the platform libm (the wide net has no other math). None
+    /// unless `install_wide_model_v1` sets it; forks keep it.
+    w_model: Option<std::sync::Arc<NativePolicyValueNetWideV1>>,
 }
 
 /// An installed no-state-digest input contract (`no_state_digest_v1`).
@@ -639,6 +650,7 @@ impl FrozenPlayPolicyV1 {
             no_digest_check: None,
             s_model: None,
             s_state_digest_off: false,
+            w_model: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -694,6 +706,7 @@ impl FrozenPlayPolicyV1 {
             no_digest_check: None,
             s_model: None,
             s_state_digest_off: false,
+            w_model: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -790,6 +803,7 @@ impl FrozenPlayPolicyV1 {
             no_digest_check: None,
             s_model: None,
             s_state_digest_off: false,
+            w_model: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -862,6 +876,7 @@ impl FrozenPlayPolicyV1 {
             no_digest_check: None,
             s_model: None,
             s_state_digest_off: false,
+            w_model: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -934,6 +949,7 @@ impl FrozenPlayPolicyV1 {
             no_digest_check: None,
             s_model: None,
             s_state_digest_off: false,
+            w_model: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -1018,6 +1034,7 @@ impl FrozenPlayPolicyV1 {
             no_digest_check: None,
             s_model: None,
             s_state_digest_off: false,
+            w_model: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -1207,6 +1224,7 @@ impl FrozenPlayPolicyV1 {
             no_digest_check: None,
             s_model: None,
             s_state_digest_off: false,
+            w_model: None,
             training_math: TrainingMathV1::PlatformLibm,
             inference_cache: None,
             inference_key: Vec::new(),
@@ -1302,6 +1320,7 @@ impl FrozenPlayPolicyV1 {
             no_digest_check: self.no_digest_check.clone(),
             s_model: self.s_model.clone(),
             s_state_digest_off: self.s_state_digest_off,
+            w_model: self.w_model.clone(),
             training_math: self.training_math,
             inference_cache: self.inference_cache.clone(),
             inference_key: Vec::new(),
@@ -1339,6 +1358,10 @@ impl FrozenPlayPolicyV1 {
             "this operation is net-8's; a policy with native S refuses it",
         )?;
         require(
+            self.w_model.is_none(),
+            "this operation is net-8's; a policy with the wide net (net-8w128) refuses it",
+        )?;
+        require(
             self.successor.is_none() && self.input_contract.is_none(),
             "the V4-to-V7 transfer requires a V4 policy with its original inputs",
         )?;
@@ -1369,6 +1392,10 @@ impl FrozenPlayPolicyV1 {
         require(
             self.s_model.is_none(),
             "this operation is net-8's; a policy with native S refuses it",
+        )?;
+        require(
+            self.w_model.is_none(),
+            "this operation is net-8's; a policy with the wide net (net-8w128) refuses it",
         )?;
         require(
             self.successor.is_none()
@@ -1579,6 +1606,28 @@ impl FrozenPlayPolicyV1 {
                 card_db_hash: self.identity.destination_card_db_hash_v1().to_owned(),
             };
         }
+        if let Some(w_model) = &self.w_model {
+            let mut weights = Sha256::new();
+            let mut embeddings = Sha256::new();
+            w_model.visit_parameters_wide_v1(|name, _, values| {
+                for value in values {
+                    let bytes = value.to_bits().to_le_bytes();
+                    weights.update(bytes);
+                    if name == "card_embedding.weight" {
+                        embeddings.update(bytes);
+                    }
+                }
+            });
+            return PlayModelIdentityV1 {
+                schema: "mtg-kernel-actual-play-model/v1".into(),
+                weights_sha256: format!("{:x}", weights.finalize()),
+                model_parameter_sha256: w_model.parameter_manifest_sha256_wide_v1(),
+                embedding_table_sha256: format!("{:x}", embeddings.finalize()),
+                feature_contract_digest: self.model_feature_contract_digest_v1().to_owned(),
+                feature_encoding_digest: self.identity.feature_encoding_digest_v1().to_owned(),
+                card_db_hash: self.identity.destination_card_db_hash_v1().to_owned(),
+            };
+        }
         let mut weights = Sha256::new();
         let mut embeddings = Sha256::new();
         self.model.visit_parameters_v1(|name, _, values| {
@@ -1610,6 +1659,10 @@ impl FrozenPlayPolicyV1 {
             self.s_model.is_none(),
             "training_model_v3 is net-8's; a policy with native S has no net-8 training model"
         );
+        assert!(
+            self.w_model.is_none(),
+            "training_model_v3 is net-8's; a policy with the wide net has no net-8 training model"
+        );
         (*self.model).clone()
     }
 
@@ -1617,6 +1670,10 @@ impl FrozenPlayPolicyV1 {
         assert!(
             self.s_model.is_none(),
             "training_parameters_v3 is net-8's; a policy with native S has no net-8 parameters"
+        );
+        assert!(
+            self.w_model.is_none(),
+            "training_parameters_v3 is net-8's; a policy with the wide net has no net-8 parameters"
         );
         self.model.parameter_snapshot_v1()
     }
@@ -1637,6 +1694,10 @@ impl FrozenPlayPolicyV1 {
         require(
             self.s_model.is_none(),
             "this operation is net-8's; a policy with native S refuses it",
+        )?;
+        require(
+            self.w_model.is_none(),
+            "this operation is net-8's; a policy with the wide net (net-8w128) refuses it",
         )?;
         require(
             self.input_contract.is_none(),
@@ -1744,6 +1805,10 @@ impl FrozenPlayPolicyV1 {
         require(
             self.s_model.is_none(),
             "this operation is net-8's; a policy with native S refuses it",
+        )?;
+        require(
+            self.w_model.is_none(),
+            "this operation is net-8's; a policy with the wide net (net-8w128) refuses it",
         )?;
         require(
             self.successor.is_some() || self.fresh_successor.is_some(),
@@ -1973,6 +2038,10 @@ impl FrozenPlayPolicyV1 {
                     let (logits, value) = s_model.score_tensor_v1(common)?;
                     return Ok(FrozenPlayDecisionScoresV1 { logits, value });
                 }
+                // And so does the wide net.
+                if let Some(w_model) = &self.w_model {
+                    return self.wide_forward_v1(w_model, view);
+                }
                 self.forward_replay_view_v1(ReplayForwardPathV1::V4, view, rows)
             }
         }
@@ -2024,6 +2093,9 @@ impl FrozenPlayPolicyV1 {
         if let Some(s_model) = &self.s_model {
             let (logits, value) = s_model.score_tensor_v1(&tensor.common)?;
             return Ok(FrozenPlayDecisionScoresV1 { logits, value });
+        }
+        if let Some(w_model) = &self.w_model {
+            return self.wide_forward_v1(w_model, encoded_decision_view_v4(tensor));
         }
         let output = self
             .model
@@ -2106,6 +2178,10 @@ impl FrozenPlayPolicyV1 {
         require(
             self.s_model.is_none(),
             "hidden capture is net-8's; a policy with native S refuses it",
+        )?;
+        require(
+            self.w_model.is_none(),
+            "hidden capture is net-8's; a policy with the wide net refuses it",
         )?;
         let fresh = self
             .fresh_successor
@@ -2388,6 +2464,9 @@ impl FrozenPlayPolicyV1 {
             let (logits, value) = s_model.score_tensor_v1(&tensor.common)?;
             return Ok(FrozenPlayDecisionScoresV1 { logits, value });
         }
+        if let Some(w_model) = &self.w_model {
+            return self.wide_forward_v1(w_model, encoded_decision_view_v4(tensor));
+        }
         require(
             self.input_contract.is_none(),
             "diagnostic forwards are not defined under the no-state-digest contract",
@@ -2550,6 +2629,9 @@ impl FrozenPlayPolicyV1 {
         if self.s_model.is_some() {
             return self.score_owned_s_v1();
         }
+        if self.w_model.is_some() {
+            return self.score_owned_w_v1();
+        }
         if self.input_contract.is_some() {
             // Zeroed and removed digest columns agree only in the pinned
             // environment (round to nearest, no flush-to-zero, no
@@ -2709,6 +2791,8 @@ impl FrozenPlayPolicyV1 {
         let scores = cached_s_forward_v1(
             &s_model,
             &fresh.tensor,
+            #[cfg(feature = "gpu-exact-v1")]
+            &mut self.gpu_exact,
             self.inference_cache.as_ref(),
             &mut self.inference_key,
             self.inference_probe.as_mut(),
@@ -2746,8 +2830,14 @@ impl FrozenPlayPolicyV1 {
             "install native S before attaching a prediction cache or probe",
         )?;
         require(self.s_model.is_none(), "native S is already installed")?;
+        require(
+            self.w_model.is_none(),
+            "native S and the wide net exclude each other",
+        )?;
         self.s_model = Some(model);
         self.row_cache = Default::default();
+        #[cfg(feature = "gpu-exact-v1")]
+        self.gpu_exact.clear();
         Ok(())
     }
 
@@ -2755,6 +2845,129 @@ impl FrozenPlayPolicyV1 {
     /// then S's, which reads no training math.
     pub(crate) fn s_model_v1(&self) -> Option<&crate::s_transformer_v1::SModelV1> {
         self.s_model.as_deref()
+    }
+
+    /// Native S's model when this policy's replay of a V4 row without a
+    /// pairing relation (`score_replay_tensor_ref_v1`) is exactly S's forward
+    /// of the stored tensor: S on a V4 policy that is not FlatV8, without the
+    /// no-state-digest contract.
+    pub(crate) fn s_plain_v4_replay_v1(&self) -> Option<&crate::s_transformer_v1::SModelV1> {
+        let plain = self
+            .fresh_successor
+            .as_ref()
+            .is_some_and(|fresh| !fresh.flat_v8)
+            && self.input_contract.is_none();
+        self.s_model.as_deref().filter(|_| plain)
+    }
+
+    /// Installs the wide net (`w_model`) on a plain FlatV4 policy, with
+    /// native S's preconditions (fresh-initialization FlatV4 shell, not FlatV7
+    /// or FlatV8, no no-state-digest contract or check model, before any
+    /// prediction cache or probe), under the platform libm and the ordinary
+    /// forward. A cache attached later is keyed by the wide parameters.
+    pub(crate) fn install_wide_model_v1(
+        &mut self,
+        model: std::sync::Arc<NativePolicyValueNetWideV1>,
+    ) -> Result<(), String> {
+        require(
+            self.fresh_successor
+                .as_ref()
+                .is_some_and(|fresh| !fresh.flat_v7 && !fresh.flat_v8),
+            "the wide net runs on a plain FlatV4 policy",
+        )?;
+        require(
+            self.input_contract.is_none() && self.no_digest_check.is_none(),
+            "the wide net reads the FlatV4 inputs without the no-state-digest contract",
+        )?;
+        require(
+            self.inference_cache.is_none() && self.inference_probe.is_none(),
+            "install the wide net before attaching a prediction cache or probe",
+        )?;
+        require(
+            self.s_model.is_none(),
+            "native S and the wide net exclude each other",
+        )?;
+        require(self.w_model.is_none(), "the wide net is already installed")?;
+        require(
+            self.training_math.is_platform_libm() && !self.fast_search_forward,
+            "the wide net runs under the platform libm with the ordinary forward only",
+        )?;
+        self.w_model = Some(model);
+        self.row_cache = Default::default();
+        Ok(())
+    }
+
+    /// Whether the wide net is installed (every V4 forward is then its).
+    pub(crate) fn has_wide_model_v1(&self) -> bool {
+        self.w_model.is_some()
+    }
+
+    /// The wide net when installed: every V4 forward of this policy is then
+    /// the wide net's.
+    #[cfg(test)]
+    pub(crate) fn wide_model_v1(&self) -> Option<&NativePolicyValueNetWideV1> {
+        self.w_model.as_deref()
+    }
+
+    /// The wide net's V4 forward of `view`: the reference rows
+    /// (`forward_feature_transfer_v4_wide_v1`, platform libm), which the wide
+    /// train step's tape forward reproduces bit for bit. Refused under any
+    /// other math or the search-only fast forward, which the wide net lacks.
+    fn wide_forward_v1(
+        &self,
+        model: &NativePolicyValueNetWideV1,
+        view: crate::native_policy_value_net_v1::NativeEncodedDecisionViewV1<'_>,
+    ) -> Result<FrozenPlayDecisionScoresV1, String> {
+        require(
+            self.training_math.is_platform_libm() && !self.fast_search_forward,
+            "the wide net runs under the platform libm with the ordinary forward only",
+        )?;
+        let output = model
+            .forward_feature_transfer_v4_wide_v1(view)
+            .map_err(|e| format!("explicit V4 wide feature transfer: {e:?}"))?;
+        Ok(FrozenPlayDecisionScoresV1 {
+            logits: output.logits,
+            value: output.value,
+        })
+    }
+
+    /// `score_owned` under the wide net: the plain V4 tensorization, then the
+    /// wide forward, through the prediction cache when one is attached.
+    fn score_owned_w_v1(&mut self) -> Result<FrozenPlayDecisionScoresV1, String> {
+        let w_model = self
+            .w_model
+            .clone()
+            .ok_or("the wide net is not installed")?;
+        let fresh = self
+            .fresh_successor
+            .as_mut()
+            .ok_or("the wide net requires the V4 scorer")?;
+        fresh
+            .tensorizer
+            .fill(
+                FlatScoringDecisionViewV4::new(self.owned.view(), &fresh.extensions),
+                &mut fresh.tensor,
+            )
+            .map_err(|e| format!("V4 visible tensorization: {e:?}"))?;
+        require(
+            self.training_math.is_platform_libm() && !self.fast_search_forward,
+            "the wide net runs under the platform libm with the ordinary forward only",
+        )?;
+        let scores = cached_w_forward_v1(
+            &w_model,
+            &fresh.tensor,
+            self.inference_cache.as_ref(),
+            &mut self.inference_key,
+            self.inference_probe.as_mut(),
+        )?;
+        require(
+            scores.logits.len() == self.owned.actions.len()
+                && !scores.logits.is_empty()
+                && scores.logits.iter().all(|x| x.is_finite())
+                && scores.value.is_finite(),
+            "invalid frozen inference output",
+        )?;
+        Ok(scores)
     }
 
     /// Shares a worker's prediction cache with this policy (and its later
@@ -3081,12 +3294,68 @@ fn s_search_digest_skip_v1() -> bool {
     }
 }
 
+/// [`cached_forward_v1`] for the wide net: the same key (namespace = the
+/// wide parameters' digest, the V4 path, the platform libm activation) and
+/// the same hit, miss and probe accounting.
+fn cached_w_forward_v1(
+    model: &NativePolicyValueNetWideV1,
+    tensor: &NativeFlatDecisionTensorV4,
+    cache: Option<&crate::inference_cache_v1::PolicyCacheV1>,
+    key: &mut Vec<u8>,
+    probe: Option<&mut crate::inference_cache_v1::ProbeV1>,
+) -> Result<FrozenPlayDecisionScoresV1, String> {
+    use crate::inference_cache_v1::{hash_v1, write_key_v1, CallOutcomeV1, ForwardPathV1};
+    let mode = ForwardActivationModeV1::LibmTanh;
+    let view = encoded_decision_view_v4(tensor);
+    let hash = cache.map(|c| {
+        write_key_v1(key, &c.model, ForwardPathV1::TransferV4, mode, &view);
+        hash_v1(key)
+    });
+    if let (None, Some(p)) = (cache, probe.as_deref()) {
+        write_key_v1(key, &p.model, ForwardPathV1::TransferV4, mode, &view);
+    }
+    let mut outcome = CallOutcomeV1::Uncached;
+    if let (Some(c), Some(hash)) = (cache, hash) {
+        let mut guard = c.cache.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some((logits, value)) = guard.get(hash, key) {
+            if let Some(p) = probe {
+                p.record(CallOutcomeV1::Hit, key, Some(guard.bytes()));
+            }
+            return Ok(FrozenPlayDecisionScoresV1 { logits, value });
+        }
+        guard.count_forward();
+        outcome = CallOutcomeV1::Miss;
+    }
+    let output = model
+        .forward_feature_transfer_v4_wide_v1(view)
+        .map_err(|e| format!("explicit V4 wide feature transfer: {e:?}"))?;
+    if let (Some(c), Some(hash)) = (cache, hash) {
+        if output.logits.iter().all(|x| x.is_finite()) && output.value.is_finite() {
+            c.cache.lock().unwrap_or_else(|p| p.into_inner()).insert(
+                hash,
+                key,
+                &output.logits,
+                output.value,
+            );
+        }
+    }
+    if let Some(p) = probe {
+        let bytes = cache.map(|c| c.cache.lock().unwrap_or_else(|p| p.into_inner()).bytes());
+        p.record(outcome, key, bytes);
+    }
+    Ok(FrozenPlayDecisionScoresV1 {
+        logits: output.logits,
+        value: output.value,
+    })
+}
+
 /// [`cached_forward_v1`] for native S: the same key (namespace = S's
 /// parameter digest, the V4 path, a fixed activation byte since S has one
 /// arithmetic) and the same hit, miss and probe accounting.
 fn cached_s_forward_v1(
-    model: &crate::s_transformer_v1::SModelV1,
+    model: &std::sync::Arc<crate::s_transformer_v1::SModelV1>,
     tensor: &NativeFlatDecisionTensorV4,
+    #[cfg(feature = "gpu-exact-v1")] gpu_exact: &mut crate::gpu_exact_v1::service::PolicySlotV1,
     cache: Option<&crate::inference_cache_v1::PolicyCacheV1>,
     key: &mut Vec<u8>,
     probe: Option<&mut crate::inference_cache_v1::ProbeV1>,
@@ -3113,7 +3382,23 @@ fn cached_s_forward_v1(
         guard.count_forward();
         outcome = CallOutcomeV1::Miss;
     }
-    let (logits, value) = model.score_tensor_v1(&tensor.common)?;
+    #[cfg(feature = "gpu-exact-v1")]
+    let gpu = probe
+        .is_none()
+        .then(|| {
+            crate::gpu_exact_v1::service::collector_s_forward_v1(
+                gpu_exact,
+                model,
+                crate::s_transformer_v1::SInputV1::of_tensor_v1(&tensor.common),
+            )
+        })
+        .flatten();
+    #[cfg(not(feature = "gpu-exact-v1"))]
+    let gpu: Option<Result<(Vec<f32>, f32), String>> = None;
+    let (logits, value) = match gpu {
+        Some(output) => output?,
+        None => model.score_tensor_v1(&tensor.common)?,
+    };
     if let (Some(c), Some(hash)) = (cache, hash) {
         if logits.iter().all(|x| x.is_finite()) && value.is_finite() {
             c.cache

@@ -84,8 +84,10 @@ def write(path, value):
 
 
 def sha(path):
-    h = hashlib.sha256()
     with open(path, "rb") as f:
+        if hasattr(hashlib, "file_digest"):
+            return hashlib.file_digest(f, "sha256").hexdigest()
+        h = hashlib.sha256()
         for block in iter(lambda: f.read(1 << 20), b""):
             h.update(block)
     return h.hexdigest()

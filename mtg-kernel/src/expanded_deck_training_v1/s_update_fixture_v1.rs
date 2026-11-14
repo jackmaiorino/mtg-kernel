@@ -310,9 +310,22 @@ pub enum UpdatePathV1 {
     /// `UpdatePrepared`: ordered preparation and the learner, both with
     /// `workers` workers (the run driver's path for more than one).
     Prepared,
+    /// The opt-in prepared reuse path on two or more workers, with a
+    /// required retained tape cap for each worker.
+    VerifiedPrepared { tape_cap_bytes: usize },
 }
 
 impl UpdatePathV1 {
+    /// The opt-in reuse paths' tape cap.
+    fn tape_cap_bytes_v1(self) -> Option<usize> {
+        match self {
+            Self::VerifiedSerial { tape_cap_bytes } | Self::VerifiedPrepared { tape_cap_bytes } => {
+                Some(tape_cap_bytes)
+            }
+            Self::Serial | Self::Prepared => None,
+        }
+    }
+
     fn parse_v1(value: &str) -> Result<Self, String> {
         match value {
             "serial" => Ok(Self::Serial),
@@ -355,6 +368,7 @@ pub fn net8_source_v1(root: &Path) -> Result<ExpandedModelSourceV1, String> {
         },
         checkpoint: None,
         s_learner: None,
+        w_learner: None,
     })
 }
 
@@ -448,7 +462,10 @@ pub fn update_command_v1(
     output_directory: PathBuf,
 ) -> Result<ExpandedTrainingCommandV1, String> {
     let learning = &manifest.learning;
-    if path != UpdatePathV1::Prepared {
+    if matches!(
+        path,
+        UpdatePathV1::Serial | UpdatePathV1::VerifiedSerial { .. }
+    ) {
         ensure(
             workers == 1,
             "path=serial runs one worker; use path=prepared for more",
@@ -496,6 +513,25 @@ pub fn update_command_v1(
                 training_math: TrainingMathV1::PlatformLibm,
                 record_format: CheckpointRecordFormatV1::default(),
                 record_envelope: RecordEnvelopeV1::default(),
+                output_directory,
+            }
+        }
+        UpdatePathV1::VerifiedPrepared { tape_cap_bytes } => {
+            validate_preparation_workers_v1(workers)?;
+            ensure(
+                workers >= 2,
+                "the verified prepared path runs two or more workers; the serial one runs one",
+            )?;
+            s_learner_v1::VerifiedReplayOptionsV1::new(tape_cap_bytes)?;
+            ExpandedTrainingCommandV1::UpdateSVerifiedPrepared {
+                source: batch.source.clone(),
+                trajectories: batch.trajectories.clone(),
+                learning_rate: learning.learning_rate,
+                value_coefficient: learning.value_coefficient,
+                loss_selection: learning.loss_selection,
+                preparation_workers: workers,
+                max_prepared_tensor_mebibytes: manifest.options.max_prepared_tensor_mebibytes,
+                tape_cap_bytes,
                 output_directory,
             }
         }
@@ -996,16 +1032,23 @@ pub fn bench_v1(fixture: &Path, options: &BenchOptionsV1, out: &Path) -> Result<
         });
         let peak_rss = peak_rss_bytes_v1();
         let verification = verify_v1(&manifest, batch, &result)?;
-        let execution = if let UpdatePathV1::VerifiedSerial { tape_cap_bytes } = options.path {
+        let execution = if let Some(tape_cap_bytes) = options.path.tape_cap_bytes_v1() {
             let receipt = &result["verified_replay"];
             let used = receipt["used"]
                 .as_bool()
                 .ok_or("the opt-in update did not report its replay path")?;
             let attempt: s_learner_v1::VerifiedReplayAttemptV1 =
                 serde_json::from_value(receipt["attempt"].clone()).map_err(err)?;
+            // One slot per learner worker, each within the cap.
+            let slots = match options.path {
+                UpdatePathV1::VerifiedPrepared { .. } => Some(options.workers),
+                _ => None,
+            };
             ensure(
                 receipt["tape_cap_bytes"] == json!(tape_cap_bytes)
-                    && attempt.peak_retained_tape_bytes <= tape_cap_bytes,
+                    && attempt.tape_slots == slots
+                    && attempt.peak_retained_tape_bytes
+                        <= tape_cap_bytes.saturating_mul(slots.unwrap_or(1)),
                 "the opt-in update did not respect the tape cap",
             )?;
             Some((used, attempt))
@@ -1359,7 +1402,8 @@ const USAGE_V1: &str = "usage:
   s_update_fixture_v1 verify fixture=<dir> batch=initial|warmed result=<update.json>
   s_update_fixture_v1 bench fixture=<dir> batch=initial|warmed path=serial|prepared
       [workers=1..32] [verified_replay_tape_bytes=1..67108864] [reps=1..100] out=<new dir>
-verified_replay_tape_bytes requires path=serial and workers=1.
+verified_replay_tape_bytes selects the opt-in reuse path: path=serial with workers=1, or
+path=prepared with workers=2..32 (the cap is each worker's).
 Unknown, repeated or out-of-range arguments are refused.";
 
 /// Strict `key=value` arguments: each key at most once, every key known.
@@ -1407,13 +1451,21 @@ impl ArgumentsV1 {
         if !self.values.contains_key("verified_replay_tape_bytes") {
             return Ok((path, workers));
         }
-        ensure(
-            path == UpdatePathV1::Serial && workers == 1,
-            "verified_replay_tape_bytes requires path=serial and workers=1",
-        )?;
         let tape_cap_bytes = self.number_v1("verified_replay_tape_bytes", 0)?;
         s_learner_v1::VerifiedReplayOptionsV1::new(tape_cap_bytes)?;
-        Ok((UpdatePathV1::VerifiedSerial { tape_cap_bytes }, workers))
+        match path {
+            UpdatePathV1::Serial if workers == 1 => {
+                Ok((UpdatePathV1::VerifiedSerial { tape_cap_bytes }, workers))
+            }
+            UpdatePathV1::Prepared if workers >= 2 => {
+                Ok((UpdatePathV1::VerifiedPrepared { tape_cap_bytes }, workers))
+            }
+            _ => Err(
+                "verified_replay_tape_bytes requires path=serial with workers=1 or \
+                 path=prepared with two or more workers"
+                    .into(),
+            ),
+        }
     }
 }
 

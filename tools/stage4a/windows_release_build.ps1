@@ -3,7 +3,9 @@ param(
     [Parameter(Mandatory=$true)][string]$ExpectedSha,
     [string]$TargetDirectory = 'D:/cargo-target-search-sharing-allocation-20261013',
     [int]$Jobs = 4,
-    [string]$LinkerPath = 'C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64/link.exe'
+    [string]$LinkerPath = 'C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.50.35717/bin/Hostx64/x64/link.exe',
+    [ValidateSet('default', 'x86-64-v3-no-fma', 'x86-64-v4-no-fma')][string]$TargetCpu = 'default',
+    [ValidateSet('false', 'thin')][string]$Lto = 'false'
 )
 $ErrorActionPreference = 'Stop'
 $buildDirectory = Join-Path $TargetDirectory ('build-receipts/' + $ExpectedSha)
@@ -21,9 +23,21 @@ $rustc = (& rustc -vV) -join "`n"
 $cargo = (& cargo -V) -join "`n"
 if ($rustc -notmatch '(?m)^release: 1\.94\.1$') { throw 'Pinned Rust 1.94.1 is required.' }
 $env:CARGO_TARGET_DIR = $TargetDirectory
-$env:CARGO_PROFILE_RELEASE_LTO = 'false'
+$env:CARGO_PROFILE_RELEASE_LTO = $Lto
 $env:CARGO_PROFILE_RELEASE_CODEGEN_UNITS = '16'
 $env:CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER = $LinkerPath
+$rustFlags = switch ($TargetCpu) {
+    'default' { $null }
+    'x86-64-v3-no-fma' { '-C target-cpu=x86-64-v3 -C target-feature=-fma' }
+    'x86-64-v4-no-fma' { '-C target-cpu=x86-64-v4 -C target-feature=-fma' }
+}
+if ($null -ne $rustFlags) {
+    $env:RUSTFLAGS = if ([string]::IsNullOrWhiteSpace($env:RUSTFLAGS)) {
+        $rustFlags
+    } else {
+        "$($env:RUSTFLAGS) $rustFlags"
+    }
+}
 $env:TMP = $buildTemporary
 $env:TEMP = $buildTemporary
 $receipt = [ordered]@{
@@ -35,13 +49,17 @@ $receipt = [ordered]@{
     cargo = $cargo
     linker_path = $LinkerPath
     linker_version = (Get-Item -LiteralPath $LinkerPath).VersionInfo.FileVersion
-    release_lto = 'false'
+    release_lto = $Lto
     release_codegen_units = 16
     cargo_jobs = $Jobs
     command = "cargo build -p mtg-kernel --bin regret_census_v1 --release --jobs $Jobs --locked"
     started_utc = (Get-Date).ToUniversalTime().ToString('o')
     status = 'building'
     stdout_log = $logPath
+}
+if ($TargetCpu -ne 'default') {
+    $receipt.target_cpu = $TargetCpu
+    $receipt.rustflags = $env:RUSTFLAGS
 }
 $receipt | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $receiptPath -Encoding utf8
 & cargo build -p mtg-kernel --bin regret_census_v1 --release --jobs $Jobs --locked 2>&1 | Tee-Object -FilePath $logPath

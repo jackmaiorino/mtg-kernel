@@ -51,19 +51,20 @@
 use super::ex1_update_v1::{self, Ex1UpdateOptionsV1};
 use super::{
     compute_gae_targets_of_values_v1, ensure, err, inference_schema_v1, ordered_update_preparation,
-    publish_json, publish_json_bytes_v1, read_pinned_bytes, read_trajectory_batch_v1,
-    replay_learner_groups_v1, validate_actual_behaviors_v1, validate_trajectory,
+    publish_json, publish_json_shared_v1, read_pinned_shared_v1, read_trajectory_batch_v1,
+    replay_learner_groups_v1, serialize_json_v1, validate_actual_behaviors_v1, validate_trajectory,
     CheckpointInputExpectationV1, CheckpointRecordFormatV1, CollectionSamplerV1,
     ExpandedInferenceIdentityV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
     ExpandedSeatBehaviorV1, ExpandedUpdateBackendV1, OpponentCacheV1, PinnedFileV1,
-    UpdateBackwardExecutionV1, GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1, MAX_BATCH_BYTES,
+    RecordEnvelopeV1, UpdateBackwardExecutionV1, GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1,
+    MAX_BATCH_BYTES,
 };
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCODING_DIGEST_V4};
 use crate::s_transformer_v1::{
     decode_checkpoint_v1, encode_checkpoint_v1, SGroupV1, SInputV1, SModelV1, SStepV1, SSubstepV1,
-    STapeV1, STrainStateV1, SWorkV1, S_ARCHITECTURE_V1,
+    STrainStateV1, SWorkV1, S_ARCHITECTURE_V1,
 };
 use crate::sideboard_play_policy_v1::{
     FrozenPlayPolicyV1, PlayPolicyOriginV1, FRESH_FEATURE_IDENTITY_V4,
@@ -159,6 +160,10 @@ fn s_member_v1(source: &ExpandedModelSourceV1) -> Result<&SLearnerSourceV1, Stri
         member.schema == S_LEARNER_SOURCE_SCHEMA_V1,
         "unknown S learner source schema",
     )?;
+    ensure(
+        source.w_learner.is_none(),
+        "a source has at most one of the S and wide learners",
+    )?;
     Ok(member)
 }
 
@@ -175,7 +180,7 @@ pub(super) fn load_s_v1(
                 == FEATURE_ENCODING_DIGEST_V4,
         "an S learner runs on the plain FlatV4 contract; FlatV7 and FlatV8 are refused",
     )?;
-    let bytes = read_pinned_bytes(&source.play_import)?;
+    let bytes = read_pinned_shared_v1(&source.play_import)?;
     let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
     let schema = probe.get("schema").and_then(Value::as_str);
     ensure(
@@ -189,7 +194,11 @@ pub(super) fn load_s_v1(
             && policy.input_contract_v1().is_none(),
         "an S learner's shell must load with the plain FlatV4 identity",
     )?;
-    let initial = decode_checkpoint_v1(&read_pinned_bytes(&member.initial)?)?;
+    let initial_raw = read_pinned_shared_v1(&member.initial)?;
+    let initial = decode_checkpoint_v1(&super::record_envelope_v1::open_v1(
+        &initial_raw,
+        super::MAX_FILE_BYTES,
+    )?)?;
     let (state, checkpoint) = match &source.checkpoint {
         None => {
             ensure(inputs.is_none(), "update requires checkpoint")?;
@@ -199,8 +208,11 @@ pub(super) fn load_s_v1(
             )
         }
         Some(pin) => {
-            let record: SLearnerCheckpointV1 =
-                serde_json::from_slice(&read_pinned_bytes(pin)?).map_err(err)?;
+            let record_raw = read_pinned_shared_v1(pin)?;
+            let record: SLearnerCheckpointV1 = serde_json::from_slice(
+                &super::record_envelope_v1::open_v1(&record_raw, super::MAX_FILE_BYTES)?,
+            )
+            .map_err(err)?;
             let identity = policy.feature_identity_v1();
             ensure(
                 record.schema == S_LEARNER_CHECKPOINT_SCHEMA_V1
@@ -220,7 +232,11 @@ pub(super) fn load_s_v1(
                     record.value_coefficient_bits,
                 )?;
             }
-            let state = decode_checkpoint_v1(&read_pinned_bytes(&record.state)?)?;
+            let state_raw = read_pinned_shared_v1(&record.state)?;
+            let state = decode_checkpoint_v1(&super::record_envelope_v1::open_v1(
+                &state_raw,
+                super::MAX_FILE_BYTES,
+            )?)?;
             ensure(
                 state.state_sha256_v1() == record.state_sha256
                     && state.adam_step_v1() == record.adam_step,
@@ -297,8 +313,12 @@ pub(crate) fn validate_update_loss_v1(
         .checkpoint
         .as_ref()
         .ok_or("an S update requires its checkpoint")?;
-    let record: SLearnerCheckpointV1 =
-        serde_json::from_slice(&read_pinned_bytes(pin)?).map_err(err)?;
+    let record_raw = read_pinned_shared_v1(pin)?;
+    let record: SLearnerCheckpointV1 = serde_json::from_slice(&super::record_envelope_v1::open_v1(
+        &record_raw,
+        super::MAX_FILE_BYTES,
+    )?)
+    .map_err(err)?;
     let ExpandedLossSelectionV1::GaeAdvantageValueV1 {
         gamma,
         lambda,
@@ -385,11 +405,26 @@ impl VerifiedReplayOptionsV1 {
 #[derive(Default, Serialize, Deserialize)]
 pub(super) struct VerifiedReplayAttemptV1 {
     /// Retained capacity before forward, excluding inputs, gradient,
-    /// scratch, transient allocations and allocator overhead.
+    /// scratch, transient allocations and allocator overhead. With
+    /// `tape_slots`, the sum of every slot's peak.
     pub(super) peak_retained_tape_bytes: usize,
     pub(super) learner_replay_forwards: u64,
     pub(super) other_replay_forwards: u64,
     pub(super) learner_backwards: u64,
+    /// The prepared candidate's tapes, one per learner worker and each
+    /// within the cap; absent for the serial candidate's single slot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) tape_slots: Option<usize>,
+}
+
+/// The bounded candidate's outcome, for the receipt.
+struct VerifiedOutcomeV1 {
+    tape_cap: usize,
+    attempt: VerifiedReplayAttemptV1,
+    fallback: Option<&'static str>,
+    /// The prepared candidate's own failure, when the reference then ran.
+    attempt_error: Option<String>,
+    seconds: f64,
 }
 
 /// The update command's inputs.
@@ -411,6 +446,7 @@ pub(super) struct SUpdateInputsV1 {
     pub(super) ex1: Option<Ex1UpdateOptionsV1>,
     pub(super) training_math: TrainingMathV1,
     pub(super) record_format: CheckpointRecordFormatV1,
+    pub(super) record_envelope: RecordEnvelopeV1,
     pub(super) started: std::time::Instant,
 }
 
@@ -430,9 +466,12 @@ struct LearnedSV1 {
 /// The refusals of an S update, before any input is read.
 fn refuse_unsupported_v1(inputs: &SUpdateInputsV1) -> Result<(f32, f32), String> {
     if inputs.verified_replay.is_some() {
+        ensure(inputs.ex1.is_none(), "verified replay requires ordinary S")?;
         ensure(
-            inputs.preparation_workers.is_none() && inputs.ex1.is_none(),
-            "verified replay requires ordinary serial S",
+            inputs
+                .preparation_workers
+                .is_none_or(|workers| workers >= 2),
+            "verified prepared replay needs at least two workers; the serial opt-in runs one",
         )?;
     }
     let u = &inputs.unsupported;
@@ -492,6 +531,7 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         verified_replay,
         ex1,
         training_math,
+        record_envelope,
         started,
         ..
     } = inputs;
@@ -569,39 +609,71 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
 
             let started = std::time::Instant::now();
             let mut attempt = VerifiedReplayAttemptV1::default();
-            let candidate = verified_replay_v1::gradient_v1(
-                &episodes,
-                &policy,
-                &learner,
-                state.model_v1(),
-                verified_replay_v1::OptionsV1 {
-                    gamma,
-                    lambda,
-                    coefficient: value_coefficient,
-                    tape_cap,
-                    #[cfg(test)]
-                    short_first_gradient,
-                    training_math,
-                },
-                &mut attempt,
-            );
+            let options = verified_replay_v1::OptionsV1 {
+                gamma,
+                lambda,
+                coefficient: value_coefficient,
+                tape_cap,
+                #[cfg(test)]
+                short_first_gradient,
+                training_math,
+            };
+            let candidate = match preparation_workers {
+                None => verified_replay_v1::gradient_v1(
+                    &episodes,
+                    &policy,
+                    &learner,
+                    state.model_v1(),
+                    options,
+                    &mut attempt,
+                )
+                .map(|candidate| {
+                    (
+                        candidate.loss,
+                        candidate.gradient,
+                        candidate.gae,
+                        candidate.policy_substeps,
+                        None,
+                    )
+                }),
+                Some(workers) => verified_replay_v1::prepared_gradient_v1(
+                    &episodes,
+                    &policy,
+                    &learner,
+                    state.model_v1(),
+                    workers,
+                    max_prepared_tensor_mebibytes,
+                    options,
+                    &mut attempt,
+                )
+                .map(|candidate| {
+                    (
+                        candidate.loss,
+                        candidate.gradient,
+                        candidate.gae,
+                        candidate.policy_substeps,
+                        Some(candidate.telemetry),
+                    )
+                }),
+            };
             let replay_and_gradient_seconds = started.elapsed().as_secs_f64();
+            let mut attempt_error = None;
             let (learned, fallback) = match candidate {
-                Ok(candidate) => {
+                Ok((loss, gradient, gae, policy_substeps, preparation_telemetry)) => {
                     let learner_started = std::time::Instant::now();
-                    state.adam_step_with_gradient_v1(&candidate.gradient, learning_rate)?;
+                    state.adam_step_with_gradient_v1(&gradient, learning_rate)?;
                     let step = SStepV1 {
-                        loss: candidate.loss,
+                        loss,
                         adam_step: state.adam_step_v1(),
                         after_state_sha256: state.state_sha256_v1(),
                     };
                     (
                         Some(LearnedSV1 {
                             step,
-                            gae_statistics: candidate.gae.statistics,
-                            policy_substeps: candidate.policy_substeps,
-                            learner_workers: 1,
-                            preparation_telemetry: None,
+                            gae_statistics: gae.statistics,
+                            policy_substeps,
+                            learner_workers: preparation_workers.unwrap_or(1),
+                            preparation_telemetry,
                             teacher_receipt: None,
                             ex1_exposure: None,
                             teacher_seconds: 0.0,
@@ -611,20 +683,34 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
                         None,
                     )
                 }
-                Err(ReplayErrorV1::Replay(error)) => return Err(error),
+                // The serial candidate replays in the reference's order, so
+                // its replay errors are the reference's.
+                Err(ReplayErrorV1::Replay(error)) if preparation_workers.is_none() => {
+                    return Err(error)
+                }
                 Err(error) => {
                     let reason = match error {
                         ReplayErrorV1::Capacity => "tape_capacity",
                         ReplayErrorV1::CallerMathState => "caller_math_state",
                         ReplayErrorV1::UnsupportedGeneration => "unsupported_generation",
-                        ReplayErrorV1::Replay(_) => unreachable!(),
+                        // The reference reports its own error, if any.
+                        ReplayErrorV1::Replay(error) => {
+                            attempt_error = Some(error);
+                            "attempt_error"
+                        }
                     };
                     (None, Some(reason))
                 }
             };
             (
                 learned,
-                Some((tape_cap, attempt, fallback, replay_and_gradient_seconds)),
+                Some(VerifiedOutcomeV1 {
+                    tape_cap,
+                    attempt,
+                    fallback,
+                    attempt_error,
+                    seconds: replay_and_gradient_seconds,
+                }),
             )
         }
         None => (None, None),
@@ -683,11 +769,8 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
             .as_ref()
             .map(|options| {
                 let model = state.model_v1();
-                let mut tape = STapeV1::default();
                 ex1_update_v1::ex1_teach_with_v1(options, &trajectories, &episodes, &mut |tensor| {
-                    model
-                        .forward_v1(SInputV1::of_tensor_v1(tensor), &mut tape)
-                        .map(|output| output.logits)
+                    model.score_tensor_v1(tensor).map(|(logits, _)| logits)
                 })
             })
             .transpose()?;
@@ -729,21 +812,18 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
             groups.len()
         );
         let learner_started = std::time::Instant::now();
-        let learner_workers = if ex1.is_none() {
-            preparation_workers.unwrap_or(1)
-        } else {
-            1
-        };
+        let learner_workers = preparation_workers.unwrap_or(1);
         let (step, ex1_exposure) = match (&ex1_teacher, &ex1) {
             (Some((_, rows)), Some(options)) => {
                 let masked_rows = policy_mask.len();
                 let input = ex1_update_v1::ex1_s_auxiliary_input_v1(rows, options, policy_mask);
-                let (step, auxiliary) = state.train_step_gae_auxiliary_v1(
+                let (step, auxiliary) = state.train_step_gae_auxiliary_with_workers_v1(
                     &groups,
                     value_coefficient,
                     learning_rate,
                     &input,
                     &mut SWorkV1::default(),
+                    learner_workers,
                 )?;
                 let movement =
                     s_movement_v1(rows, state.model_v1(), auxiliary.ordinary_only.as_ref())?;
@@ -811,10 +891,10 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
     };
     let checkpoint_started = std::time::Instant::now();
     fs::create_dir(&output_directory).map_err(err)?;
-    let container = publish_json_bytes_v1(
+    let container = publish_json_shared_v1(
         &output_directory,
         S_LEARNER_STATE_FILE_V1,
-        &encode_checkpoint_v1(&state),
+        &Arc::new(record_envelope.seal_owned_v1(encode_checkpoint_v1(&state))?),
     )?;
     let ex1_pin = match (&teacher_receipt, &ex1_exposure) {
         (Some(receipt), Some(exposure)) => {
@@ -859,7 +939,11 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
             saved
         }),
     };
-    let checkpoint_pin = publish_json(&output_directory, "checkpoint.json", &record)?;
+    let checkpoint_pin = publish_json_shared_v1(
+        &output_directory,
+        "checkpoint.json",
+        &Arc::new(record_envelope.seal_owned_v1(serialize_json_v1("checkpoint.json", &record)?)?),
+    )?;
     // Readback through the continuation loader, with this update's inputs.
     let resumed = ExpandedModelSourceV1 {
         checkpoint: Some(checkpoint_pin.clone()),
@@ -910,21 +994,24 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
     if learner_workers > 1 {
         record_parallel_update_execution_v1(&mut result, learner_workers);
     }
-    if let Some((cap, attempt, fallback, attempt_seconds)) = verified_replay {
-        let discarded_seconds = if fallback.is_some() {
-            attempt_seconds
+    if let Some(outcome) = verified_replay {
+        let discarded_seconds = if outcome.fallback.is_some() {
+            outcome.seconds
         } else {
             0.0
         };
         result["verified_replay"] = json!({
-            "used":fallback.is_none(),
-            "fallback":fallback,
-            "tape_cap_bytes":cap,
-            "attempt":attempt,
-            "replay_and_gradient_seconds":attempt_seconds,
+            "used":outcome.fallback.is_none(),
+            "fallback":outcome.fallback,
+            "tape_cap_bytes":outcome.tape_cap,
+            "attempt":outcome.attempt,
+            "replay_and_gradient_seconds":outcome.seconds,
             "combined_replay_learner_seconds":
                 behavior_replay_seconds + learner_update_seconds + discarded_seconds,
         });
+        if let Some(error) = outcome.attempt_error {
+            result["verified_replay"]["attempt_error"] = json!(error);
+        }
     }
     result["checkpoint_io_seconds"] = json!(checkpoint_started.elapsed().as_secs_f64());
     result["update_elapsed_seconds"] = json!(started.elapsed().as_secs_f64());
@@ -940,9 +1027,7 @@ fn s_movement_v1(
     alone: Option<&SModelV1>,
 ) -> Result<Value, String> {
     let forward = |model: &SModelV1, tensor: &NativeFlatDecisionTensorV2| {
-        model
-            .forward_v1(SInputV1::of_tensor_v1(tensor), &mut STapeV1::default())
-            .map(|output| output.logits)
+        model.score_tensor_v1(tensor).map(|(logits, _)| logits)
     };
     let mut alone =
         alone.map(|model| move |tensor: &NativeFlatDecisionTensorV2| forward(model, tensor));

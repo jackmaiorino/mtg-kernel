@@ -1796,6 +1796,82 @@ mod tests {
             .expect("both layers must be mutually consistent for the shared-physical-source case");
     }
 
+    /// fg-b regression, full pipeline: two pending triggers whose shared
+    /// source token ceased to exist before they were ordered. The observation
+    /// already projects their source as unknown (`visible_card_ref` requires
+    /// zone-list membership); the registry must add one `PendingTrigger` row
+    /// per position so the action slice's frozen-contract references link,
+    /// and the tensorizer must accept the result.
+    #[test]
+    fn v4_order_triggers_from_a_ceased_token_get_pending_trigger_rows_end_to_end() {
+        let (state, _token) =
+            crate::rl_session::ceased_token_order_triggers_shared_source_state_v1();
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let mut owned = OwnedScoringV4::default();
+        let decision = owned
+            .encode(&session)
+            .expect("V4 scoring must encode OrderTriggers from a ceased token");
+        let hist = &decision.extensions.historical_public_sources;
+        let mut positions: Vec<u32> = hist
+            .iter()
+            .map(|row| match row.context {
+                HistoricalSourceContextV7::PendingTrigger { position } => position,
+                other => panic!("expected PendingTrigger, found {other:?}"),
+            })
+            .collect();
+        positions.sort_unstable();
+        assert_eq!(positions, vec![0, 1]);
+        let view = owned.view(&decision);
+        let mut tensor = NativeFlatDecisionTensorV4::default();
+        NativeFlatTensorizerV4::default()
+            .fill(view, &mut tensor)
+            .expect("both layers must agree for the ceased-token case");
+    }
+
+    /// The `ChooseTargets` side of the same fix: a targeted pending trigger
+    /// whose source is in no zone list. The source here is moved to the
+    /// graveyard and removed by `cease_to_exist`, which yields the same
+    /// encoder state as a token that died before its trigger was placed.
+    /// Every `ChooseTarget` and `FinishTargetSelection` candidate names that
+    /// source; each must resolve to the frozen `PendingTrigger { position: 0 }`
+    /// row, end to end.
+    #[test]
+    fn v4_choose_targets_from_a_ceased_source_gets_a_pending_trigger_row_end_to_end() {
+        use crate::state::Zone;
+        let (mut state, hunter, _goaded, _ordinary) =
+            avenging_hunter_undercity_arena_choose_targets_state_v1(false);
+        state.players[PlayerId::P0.index()]
+            .battlefield
+            .retain(|&id| id != hunter);
+        {
+            let live = state.objects.get_mut(hunter);
+            live.zone = Zone::Graveyard;
+            live.zone_change_count += 1;
+        }
+        state.players[PlayerId::P0.index()].graveyard.push(hunter);
+        assert!(crate::event::cease_to_exist(&mut state, hunter));
+        assert!(crate::trigger::pending_trigger_ceased_source_v1(
+            &state,
+            &state.engine.pending_triggers[0]
+        ));
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        let mut owned = OwnedScoringV4::default();
+        let decision = owned
+            .encode(&session)
+            .expect("V4 scoring must encode ChooseTargets from a ceased source");
+        let hist = &decision.extensions.historical_public_sources;
+        assert_eq!(hist.len(), 1);
+        assert_eq!(
+            hist[0].context,
+            HistoricalSourceContextV7::PendingTrigger { position: 0 }
+        );
+        let view = owned.view(&decision);
+        let mut tensor = NativeFlatDecisionTensorV4::default();
+        NativeFlatTensorizerV4::default()
+            .fill(view, &mut tensor)
+            .expect("both layers must agree for the ceased ChooseTargets case");
+    }
+
     /// Dimension-stability check (plan section 3, step 7): encoding a
     /// common, non-hidden fixture through V3 and V4 must produce numerically
     /// identical object/edge feature widths -- proving mechanically, not

@@ -13,11 +13,18 @@
 //! slot reserves an analytic bound ([`TermBoundV1`]) once per update, and
 //! all slots together reserve at most [`TERM_BUDGET_BYTES_V1`]
 //! ([`TermPlanV1`]).
+//!
+//! The bounded verified update (`verified_row_v1::VerifiedJobsV1`) records
+//! the same tasks in the same order; each first reserves its worker's tape
+//! within that worker's cap, outside the term budget, and checks its forward
+//! against the substep's stored row.
 
 use super::profile::{self, DrainV1, StageV1};
+use super::verified_row_v1::VerifiedJobsV1;
 use super::*;
 use std::mem::size_of;
 use std::ops::Range;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError, RwLock};
 use std::thread;
 
@@ -468,6 +475,87 @@ fn replay_shard_terms_v1(
     }
 }
 
+pub(super) fn replay_terms_v1(
+    layout: &LayoutV1,
+    gradient: &mut [f32],
+    terms: &[SGradientTermsV1],
+    workers: usize,
+) -> Result<(), String> {
+    ensure_mxcsr_v1()?;
+    let workers = workers.max(1);
+    let parts = GradientPartsV1::new_v1(layout, gradient, workers);
+    if workers == 1 || terms.is_empty() {
+        let mut rest = parts
+            .rest
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner);
+        for substep in terms {
+            add_terms_v1(&mut rest, substep);
+        }
+        for shard in parts.shards {
+            let mut shard = shard.into_inner().unwrap_or_else(PoisonError::into_inner);
+            let mut census = profile::shard_v1(
+                layout,
+                shard.offset,
+                shard.start_row,
+                shard.rows,
+                shard.values.len(),
+            );
+            for substep in terms {
+                replay_shard_terms_v1(&mut shard, substep, &mut census);
+            }
+        }
+        return Ok(());
+    }
+    let next_shard = AtomicUsize::new(0);
+    thread::scope(|scope| {
+        let run_shards = || -> Result<(), String> {
+            ensure_mxcsr_v1()?;
+            loop {
+                let idx = next_shard.fetch_add(1, Ordering::Relaxed);
+                let Some(slot) = parts.shards.get(idx) else {
+                    break;
+                };
+                let mut shard = slot.lock().unwrap_or_else(PoisonError::into_inner);
+                let mut census = profile::shard_v1(
+                    layout,
+                    shard.offset,
+                    shard.start_row,
+                    shard.rows,
+                    shard.values.len(),
+                );
+                for substep in terms {
+                    replay_shard_terms_v1(&mut shard, substep, &mut census);
+                }
+            }
+            Ok(())
+        };
+        let mut handles = Vec::with_capacity(workers - 1);
+        for _ in 1..workers {
+            handles.push(scope.spawn(run_shards));
+        }
+        {
+            let mut rest = parts.rest.lock().unwrap_or_else(PoisonError::into_inner);
+            for substep in terms {
+                add_terms_v1(&mut rest, substep);
+            }
+        }
+        let mut first_err = run_shards().err();
+        for handle in handles {
+            match handle.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) if first_err.is_none() => first_err = Some(e),
+                Ok(Err(_)) => {}
+                Err(payload) => std::panic::resume_unwind(payload),
+            }
+        }
+        match first_err {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    })
+}
+
 /// Replays recorded substeps into `gradient` on the calling thread, in
 /// order, as one block.
 #[cfg(test)]
@@ -476,26 +564,7 @@ pub(super) fn replay_verified_test_terms_v1(
     gradient: &mut [f32],
     terms: Vec<SGradientTermsV1>,
 ) -> Result<(), String> {
-    ensure_mxcsr_v1()?;
-    let parts = GradientPartsV1::new_v1(layout, gradient, 1);
-    let mut rest = parts.rest.into_inner().expect("S test gradient runs");
-    for substep in &terms {
-        add_terms_v1(&mut rest, substep);
-    }
-    for shard in parts.shards {
-        let mut shard = shard.into_inner().expect("S test shard");
-        let mut census = profile::shard_v1(
-            layout,
-            shard.offset,
-            shard.start_row,
-            shard.rows,
-            shard.values.len(),
-        );
-        for substep in &terms {
-            replay_shard_terms_v1(&mut shard, substep, &mut census);
-        }
-    }
-    Ok(())
+    replay_terms_v1(layout, gradient, &terms, 1)
 }
 
 #[derive(Clone, Copy)]
@@ -504,6 +573,8 @@ struct GaeJobV1<'a> {
     index: usize,
     sub: usize,
     last: bool,
+    is_masked: bool,
+    d_joint: f32,
     advantage: f32,
     target: f32,
 }
@@ -572,8 +643,10 @@ fn partial_block_counts_inactive_slot_capacity_separately() {
 
 fn jobs_v1<'a>(
     groups: &'a [SGroupV1<'a>],
+    mask: Option<&'a super::auxiliary::SPolicyMaskV1>,
 ) -> impl Iterator<Item = Result<GaeJobV1<'a>, String>> + 'a {
-    groups.iter().enumerate().flat_map(|(index, group)| {
+    let group_count = groups.len() as f32;
+    groups.iter().enumerate().flat_map(move |(index, group)| {
         let invalid = if group.substeps.is_empty() {
             Some(format!("S group {index} has no substeps"))
         } else if !group.advantage.is_finite() || !group.value_target.is_finite() {
@@ -586,15 +659,23 @@ fn jobs_v1<'a>(
         } else {
             &group.substeps
         };
+        let masked = mask.map(|m| &m.masked[index]);
+        let d_unmasked = match mask {
+            None => -group.advantage / group_count,
+            Some(m) => -group.advantage / m.policy_count,
+        };
         invalid
             .into_iter()
             .map(Err)
             .chain(substeps.iter().enumerate().map(move |(sub, &substep)| {
+                let is_masked = masked.is_some_and(|m| m[sub]);
                 Ok(GaeJobV1 {
                     substep,
                     index,
                     sub,
                     last: sub + 1 == group.substeps.len(),
+                    is_masked,
+                    d_joint: if is_masked { 0.0 } else { d_unmasked },
                     advantage: group.advantage,
                     target: group.value_target,
                 })
@@ -664,6 +745,10 @@ struct PipelineV1<'u, 'a, 'g> {
     model: &'u SModelV1,
     group_count: f32,
     value_coefficient: f32,
+    /// The bounded verified update: every recorded substep's forward is
+    /// checked against its stored row, on a tape within the cap.
+    verified: Option<&'u VerifiedJobsV1<'u>>,
+    masked: bool,
     slots: Vec<RwLock<PreparedGaeV1<'a>>>,
     parts: GradientPartsV1<'g>,
     phase: Mutex<PhaseV1>,
@@ -743,6 +828,7 @@ impl<'a> PipelineV1<'_, 'a, '_> {
                         job,
                         self.group_count,
                         self.value_coefficient,
+                        self.verified,
                         work,
                         &mut slot.terms,
                     );
@@ -869,6 +955,7 @@ impl<'a> PipelineV1<'_, 'a, '_> {
         let mut policy_sum = 0.0f32;
         let mut value_sum = 0.0f32;
         let mut joint = 0.0f32;
+        let mut policy_joint: Option<f32> = None;
         let mut value_error = 0.0f32;
         let mut replaying: Option<Range<usize>> = None;
         let mut next_set = 0;
@@ -921,12 +1008,20 @@ impl<'a> PipelineV1<'_, 'a, '_> {
                     let (selected, error) = slot.score.take().expect("S learner prepared job")?;
                     if job.sub == 0 {
                         joint = selected;
+                        policy_joint = (!job.is_masked).then_some(selected);
                         value_error = error;
                     } else {
                         joint += selected;
+                        if !job.is_masked {
+                            policy_joint = Some(policy_joint.map_or(selected, |j| j + selected));
+                        }
                     }
                     if job.last {
-                        policy_sum += -joint * job.advantage;
+                        policy_sum += if self.masked {
+                            -policy_joint.unwrap_or(0.0) * job.advantage
+                        } else {
+                            -joint * job.advantage
+                        };
                         value_sum += value_error * value_error;
                     }
                 }
@@ -946,6 +1041,12 @@ impl SModelV1 {
         workers: usize,
         caller_work: &mut SWorkV1,
     ) -> Result<SLossV1, String> {
+        #[cfg(feature = "gpu-exact-v1")]
+        if let Some(loss) =
+            self.try_gpu_gae_loss_gradient_masked_v1(groups, value_coefficient, None, gradient)?
+        {
+            return Ok(loss);
+        }
         self.gae_loss_gradient_planned_v1(
             groups,
             value_coefficient,
@@ -953,6 +1054,34 @@ impl SModelV1 {
             workers,
             caller_work,
             PipelineOptionsV1::default(),
+        )
+        .map(|(loss, _)| loss)
+    }
+
+    pub(super) fn gae_loss_gradient_masked_parallel_v1(
+        &self,
+        groups: &[SGroupV1<'_>],
+        value_coefficient: f32,
+        mask: Option<&super::auxiliary::SPolicyMaskV1>,
+        gradient: &mut [f32],
+        workers: usize,
+        caller_work: &mut SWorkV1,
+    ) -> Result<SLossV1, String> {
+        #[cfg(feature = "gpu-exact-v1")]
+        if let Some(loss) =
+            self.try_gpu_gae_loss_gradient_masked_v1(groups, value_coefficient, mask, gradient)?
+        {
+            return Ok(loss);
+        }
+        self.gae_loss_gradient_pipelined_v1(
+            groups,
+            value_coefficient,
+            mask,
+            gradient,
+            workers,
+            caller_work,
+            PipelineOptionsV1::default(),
+            None,
         )
         .map(|(loss, _)| loss)
     }
@@ -968,7 +1097,72 @@ impl SModelV1 {
         caller_work: &mut SWorkV1,
         options: PipelineOptionsV1,
     ) -> Result<(SLossV1, TermUseV1), String> {
+        self.gae_loss_gradient_pipelined_v1(
+            groups,
+            value_coefficient,
+            None,
+            gradient,
+            workers,
+            caller_work,
+            options,
+            None,
+        )
+    }
+
+    /// [`Self::gae_loss_gradient_planned_v1`] whose every substep's forward
+    /// is first checked against its stored row (`verified`). The first
+    /// failure in substep order is reported, a tape over the cap as
+    /// `verified_row_v1::VERIFIED_TAPE_CAPACITY_V1`; `verified` records the
+    /// work done and the tapes retained, also on failure.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn gae_loss_gradient_verified_v1(
+        &self,
+        groups: &[SGroupV1<'_>],
+        value_coefficient: f32,
+        gradient: &mut [f32],
+        workers: usize,
+        caller_work: &mut SWorkV1,
+        verified: &VerifiedJobsV1<'_>,
+        options: PipelineOptionsV1,
+    ) -> Result<(SLossV1, TermUseV1), String> {
+        // Each slot's peak is this update's, whatever the caller's tape held.
+        caller_work.verified_tape_peak = 0;
+        self.gae_loss_gradient_pipelined_v1(
+            groups,
+            value_coefficient,
+            None,
+            gradient,
+            workers,
+            caller_work,
+            options,
+            Some(verified),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn gae_loss_gradient_pipelined_v1(
+        &self,
+        groups: &[SGroupV1<'_>],
+        value_coefficient: f32,
+        mask: Option<&super::auxiliary::SPolicyMaskV1>,
+        gradient: &mut [f32],
+        workers: usize,
+        caller_work: &mut SWorkV1,
+        options: PipelineOptionsV1,
+        verified: Option<&VerifiedJobsV1<'_>>,
+    ) -> Result<(SLossV1, TermUseV1), String> {
         ensure_mxcsr_v1()?;
+        if let Some(mask) = mask {
+            if mask.masked.len() != groups.len()
+                || mask
+                    .masked
+                    .iter()
+                    .zip(groups)
+                    .any(|(m, g)| m.len() != g.substeps.len())
+            {
+                return Err("S policy mask does not match the batch".into());
+            }
+        }
         if groups.is_empty() {
             return Err("S update has no groups".into());
         }
@@ -992,6 +1186,8 @@ impl SModelV1 {
                 model: self,
                 group_count: groups.len() as f32,
                 value_coefficient,
+                verified,
+                masked: mask.is_some(),
                 slots: (0..plan.sets * plan.slots)
                     .map(|_| RwLock::default())
                     .collect(),
@@ -1029,8 +1225,13 @@ impl SModelV1 {
                     })
                     .collect();
                 census.spawn_done_v1(spawning);
-                let sums =
-                    pipeline.phases_v1(jobs_v1(groups), plan, helpers.len(), caller_work, &census);
+                let sums = pipeline.phases_v1(
+                    jobs_v1(groups, mask),
+                    plan,
+                    helpers.len(),
+                    caller_work,
+                    &census,
+                );
                 drop(stop);
                 let joining = census.mark_v1();
                 let joins = helpers.len();
@@ -1051,6 +1252,14 @@ impl SModelV1 {
                 .iter()
                 .map(|slot| read_v1(slot).terms.bytes_v1().2)
                 .sum();
+            if let Some(verified) = verified {
+                verified.slots_done_v1(
+                    helper_work
+                        .iter()
+                        .chain([&*caller_work])
+                        .map(|work| work.verified_tape_peak),
+                );
+            }
             (sums, capacity_bytes)
         };
         let (policy_sum, value_sum) = sums?;
@@ -1058,7 +1267,16 @@ impl SModelV1 {
             gradient[range].fill(0.0);
         }
         let group_count = groups.len() as f32;
-        let loss = (policy_sum + value_coefficient * value_sum) / group_count;
+        let (loss, policy_term) = match mask {
+            None => (
+                (policy_sum + value_coefficient * value_sum) / group_count,
+                policy_sum / group_count,
+            ),
+            Some(m) => (
+                policy_sum / m.policy_count + value_coefficient * value_sum / group_count,
+                policy_sum / m.policy_count,
+            ),
+        };
         if !loss.is_finite() || gradient.iter().any(|g| !g.is_finite()) {
             return Err("S loss or gradient is not finite".into());
         }
@@ -1066,7 +1284,7 @@ impl SModelV1 {
             group_count: groups.len(),
             policy_sum,
             value_sum,
-            policy_term: policy_sum / group_count,
+            policy_term,
             value_term: value_sum / group_count,
             loss,
         };
@@ -1084,22 +1302,38 @@ impl SModelV1 {
         job: GaeJobV1<'_>,
         group_count: f32,
         value_coefficient: f32,
+        verified: Option<&VerifiedJobsV1<'_>>,
         work: &mut SWorkV1,
         terms: &mut SGradientTermsV1,
     ) -> Result<(f32, f32), String> {
-        let update_forward =
-            super::update_profile_v1::span_v1(super::update_profile_v1::StageV1::LearnerForward);
-        let forward = profile::span_v1(StageV1::Forward);
-        self.forward_into_v1(job.substep.input, &mut work.tape)?;
-        drop(forward);
-        update_forward.finish_v1(&work.tape.logits, work.tape.value);
+        if let Some(verified) = verified {
+            // The replay's forward of a learner row, which this update does
+            // not repeat: its outputs must be the stored row's.
+            let _forward = profile::span_v1(StageV1::Forward);
+            verified.forward_v1(
+                self,
+                (job.index, job.sub),
+                job.substep.input,
+                &mut work.tape,
+                &mut work.verified_tape_peak,
+            )?;
+        } else {
+            let update_forward = super::update_profile_v1::span_v1(
+                super::update_profile_v1::StageV1::LearnerForward,
+            );
+            let forward = profile::span_v1(StageV1::Forward);
+            self.forward_into_v1(job.substep.input, &mut work.tape)?;
+            drop(forward);
+            update_forward.finish_v1(&work.tape.logits, work.tape.value);
+        }
         let policy_row = profile::span_v1(StageV1::PolicyRow);
-        let (selected, dlogits) = gae_policy_row_v1(
+        let selected = gae_policy_row_into_v1(
             &work.tape.logits,
             job.substep.selected,
-            -job.advantage / group_count,
+            job.d_joint,
             job.index,
             job.sub,
+            &mut work.dlogits,
         )?;
         drop(policy_row);
         let (value_error, dvalue) = if job.sub == 0 {
@@ -1114,13 +1348,16 @@ impl SModelV1 {
         self.backward_into_v1(
             job.substep.input,
             &work.tape,
-            &dlogits,
+            &work.dlogits,
             dvalue,
             &mut SGradientSinkV1::Record(terms),
             &mut work.back,
         )?;
         drop(backward);
         update_backward.finish_plain_v1();
+        if let Some(verified) = verified {
+            verified.backward_done_v1();
+        }
         Ok((selected, value_error))
     }
 }
