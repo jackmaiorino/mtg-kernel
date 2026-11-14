@@ -58,6 +58,44 @@ fn readers_receive_exactly_their_own_parse_once() {
     assert!(!lock_v1(shared_v1()).entries.contains_key(key));
 }
 
+/// The hand-over of a trajectory whose episode carries a London keep offset
+/// (the episode's only floating-point member) equals the parse of its file,
+/// as it does for every other trajectory: the offset is an f64, written in
+/// its shortest round-trip form and read back to the same f64. (An f32 field
+/// would be written in its shortest f32 form, which does not read back to
+/// the widened value the hand-over holds.)
+#[test]
+fn a_handed_over_keep_offset_episode_equals_the_parse_of_its_file() {
+    let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
+    let (mut trajectory, _, _) = replay_fixture(&mut policy, None, 0, &[0, 1]);
+    // Values a schedule writes: float32 start values, decayed in float32.
+    for b0 in [15.3003f32, 27.5723, 22.1944, 0.1, 1.0e-3, 123456.7] {
+        for step in [1.0f32, 0.9999, 0.5, 0.123456] {
+            trajectory.episode.london_keep_offset = Some(f64::from(b0 * step));
+            let bytes = serde_json::to_vec(&trajectory).unwrap();
+            let handed = CollectionTrajectoryFieldsV1::of_trajectory_v1(&trajectory).unwrap();
+            let document: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                handed,
+                CollectionTrajectoryFieldsV1::of_document_v1(&document),
+                "{b0} {step}"
+            );
+            let parsed: ExpandedTrajectoryV1 = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(parsed, trajectory, "{b0} {step}");
+        }
+    }
+    // Without the offset the hand-over is unchanged and has no such member.
+    trajectory.episode.london_keep_offset = None;
+    let handed = CollectionTrajectoryFieldsV1::of_trajectory_v1(&trajectory).unwrap();
+    assert!(handed.episode.get("london_keep_offset").is_none());
+    let document: Value =
+        serde_json::from_slice(&serde_json::to_vec(&trajectory).unwrap()).unwrap();
+    assert_eq!(
+        handed,
+        CollectionTrajectoryFieldsV1::of_document_v1(&document)
+    );
+}
+
 #[test]
 fn failed_parses_are_not_kept() {
     let key = "parse-ahead-test-failed";
