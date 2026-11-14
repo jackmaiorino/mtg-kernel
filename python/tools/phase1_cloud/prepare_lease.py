@@ -5,18 +5,23 @@ Does not query or mutate RunPod unless --execute is passed. Inject RUNPOD_API_KE
 only in-memory: in the outer request's Authorization header, and (already handled
 by prepare()) the placeholder-replaced copy the resident guard uses after boot.
 Never save or print a request or response containing the actual key value, and
-never persist a raw provider response: only sanitize_pod's six fields are written
+never persist a raw provider response: only sanitize_pod's fields are written
 to disk.
 
-RunPod API reference relied on (retrieved 2026-09-15T15:44:06Z from
-https://docs.runpod.io/llms.txt and the pages it links):
+Runpod API reference relied on (REST API v2, retrieved 2026-11-14 from
+https://api.runpod.io/v2/openapi.json and
+https://docs.runpod.io/api-reference-v2/migrate-from-v1; REST v1 retired
+2026-11-15):
 
-  POST https://rest.runpod.io/v1/pods
-    (https://docs.runpod.io/api-reference/pods/POST/pods)
-    request body: see prepare()'s `body` dict below.
-    response body (Pod): id (string), name (string), desiredStatus (string),
-      costPerHr (number), dataCenterId (string), networkVolumeId (string, or
-      nested under networkVolume.id), imageName (string), among other fields.
+  POST https://api.runpod.io/v2/pods
+    request body (CreatePodRequest): see prepare()'s `body` dict below. v2
+      rejects unknown fields (422), so v1-only fields are not sent: there is no
+      v2 equivalent of interruptible (every v2 Pod is on-demand),
+      supportPublicIp, cpuFlavorPriority or dataCenterPriority.
+    response body (Pod, 201): id, name, status (actual state), cost (hourly
+      USD), cpu {id, vcpuCount, memory}, mounts {network: [{volumeId, path}]},
+      dataCenterId, image, among other fields. A 202 QueuedPod is only
+      returned for requests that carry `queue`, which this tool never sends.
 """
 from __future__ import annotations
 import argparse
@@ -31,14 +36,14 @@ import time
 import urllib.error
 import urllib.request
 from common import encoded, pin, read, require, write, require_fresh_funding_snapshot
-from lease_guard import Provider as AccountProvider, validate
+from lease_guard import (PODS_URL, RESOURCE_ID_PATTERN, Provider as AccountProvider,
+                         pod_network_volume_ids, validate)
 from external_guard import (LeaseClient, ReleaseClaimed, StoreClosed, record_create_attempt, record_created_pod,
                             require_boundary, resolve_or_alert, valid_id)
 from runtime_observation import IMAGE_REFERENCE
 
 KEY_PLACEHOLDER = '__INJECT_AT_POST_DO_NOT_SAVE__'
 
-PODS_URL = 'https://rest.runpod.io/v1/pods'
 USER_AGENT = 'Mozilla/5.0 g115-lease-execute/1'
 CREATED_SCHEMA = 'phase1-cloud-pod-created/v1'
 MIN_RELEASE_SECONDS = 120   # a creator's own release loop always gets time for two spaced absences
@@ -154,14 +159,18 @@ raise SystemExit(0)
                  '\nPUBLIC_KEY=' + repr(spec['public_ssh_key']) + '\n' + bootstrap)
     command = ['python3', '-c', "import base64;exec(base64.b64decode('" +
                base64.b64encode(bootstrap.encode()).decode() + "'))"]
-    body = {'name': run_id, 'cloudType': 'SECURE', 'computeType': 'CPU',
-            'cpuFlavorIds': ['cpu3c'], 'cpuFlavorPriority': 'custom', 'vcpuCount': 32,
-            'containerDiskInGb': container_disk, 'volumeInGb': 0,
-            'imageName': image_name,
-            'interruptible': False, 'supportPublicIp': True, 'ports': ['22/tcp'],
-            'networkVolumeId': lease['network_volume_id'], 'volumeMountPath': '/workspace',
-            'dataCenterIds': ['EU-RO-1'], 'dataCenterPriority': 'custom',
-            'dockerEntrypoint': command, 'dockerStartCmd': [],
+    # v2 CreatePodRequest: CPU under `cpu`, the volume under mounts.network (a CPU
+    # Pod takes no persistent mount, matching v1's volumeInGb 0), the container
+    # command under `entrypoint`. Exactly one network volume, mounted where v1's
+    # volumeMountPath put it.
+    body = {'name': run_id, 'cloud': 'SECURE',
+            'cpu': {'id': 'cpu3c', 'vcpuCount': 32},
+            'disk': container_disk,
+            'image': image_name,
+            'ports': ['22/tcp'],
+            'mounts': {'network': [{'volumeId': lease['network_volume_id'], 'path': '/workspace'}]},
+            'dataCenterIds': ['EU-RO-1'],
+            'entrypoint': command,
             'env': {'RUNPOD_API_KEY': KEY_PLACEHOLDER, 'CUDA_VISIBLE_DEVICES': ''}}
     output = Path(output)
     require(not output.exists(), 'fresh lease output required')
@@ -231,27 +240,32 @@ def live_funds(api):
 
 
 def sanitize_pod(raw):
-    """Keep only the six fields root needs before native launch. The raw
-    provider response is never written to disk or printed."""
+    """Keep only the fields root needs before native launch, from a v2 Pod.
+    The raw provider response is never written to disk or printed."""
     require(isinstance(raw, dict), 'pod response malformed')
-    for field in ('id', 'name', 'desiredStatus', 'costPerHr'):
+    for field in ('id', 'name', 'status', 'cost'):
         require(field in raw, 'pod response missing ' + field)
     require(isinstance(raw['id'], str) and isinstance(raw['name'], str)
-            and isinstance(raw['desiredStatus'], str), 'invalid pod field types')
-    require(isinstance(raw['costPerHr'], (int, float)) and not isinstance(raw['costPerHr'], bool)
-            and raw['costPerHr'] >= 0, 'invalid pod cost in response')
+            and isinstance(raw['status'], str), 'invalid pod field types')
+    require(valid_id(raw['id']), 'invalid exact pod id')
+    require(isinstance(raw['cost'], (int, float)) and not isinstance(raw['cost'], bool)
+            and raw['cost'] >= 0, 'invalid pod cost in response')
     data_center = raw.get('dataCenterId')
-    # The live create response observed on 2026-09-15 omitted dataCenterId (null); the
-    # request pins the data center and the volume verification confirms it, so absence
-    # is recorded as None rather than rejected.
+    # v2 documents dataCenterId as nullable ("assigned by scheduler"), as the live v1
+    # create response observed on 2026-09-15 also was; the request pins the data center
+    # and the volume verification confirms it, so absence is recorded as None rather
+    # than rejected.
     require(data_center is None or (isinstance(data_center, str) and data_center),
             'pod response dataCenterId malformed')
-    nested_volume = raw.get('networkVolume')
-    volume_id = raw.get('networkVolumeId') or (nested_volume.get('id') if isinstance(nested_volume, dict) else None)
-    require(isinstance(volume_id, str) and volume_id, 'pod response missing network volume id')
-    return {'id': raw['id'], 'name': raw['name'], 'desired_status': raw['desiredStatus'],
-            'cost_per_hour_usd': raw['costPerHr'], 'data_center_id': data_center,
-            'data_center_id_reported': data_center is not None, 'volume_id': volume_id}
+    try:
+        volumes = pod_network_volume_ids(raw)
+    except ValueError:
+        volumes = None
+    require(volumes is not None and len(volumes) == 1, 'pod response missing network volume id')
+    require(re.fullmatch(RESOURCE_ID_PATTERN, volumes[0]), 'invalid exact volume id')
+    return {'id': raw['id'], 'name': raw['name'], 'status': raw['status'],
+            'cost_per_hour_usd': raw['cost'], 'data_center_id': data_center,
+            'data_center_id_reported': data_center is not None, 'volume_id': volumes[0]}
 
 
 def _require_execute_key():
@@ -283,6 +297,7 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
     require(funding_snapshot_path, '--funding-snapshot is required with --execute')
     require_fresh_funding_snapshot(funding_snapshot_path, now)
     require(volume_id, '--volume-id is required with --execute')
+    require(isinstance(volume_id, str) and re.fullmatch(RESOURCE_ID_PATTERN, volume_id), 'invalid exact volume id')
     # Unlike prepare_volume.py's template, prepare_lease.py saves the raw Pod
     # create-request body directly (no method/url/headers wrapper): the key
     # goes only in the Authorization header, injected by Provider.create().
@@ -294,9 +309,11 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
     # so the key is injected into the posted copy in memory only; the on-disk
     # template keeps the placeholder and nothing below writes the body.
     body['env']['RUNPOD_API_KEY'] = key
-    require(body.get('networkVolumeId') == volume_id,
+    template_volumes = [mount.get('volumeId') for mount in
+                        ((body.get('mounts') or {}).get('network') or []) if isinstance(mount, dict)]
+    require(template_volumes == [volume_id],
             'prepared template volume id differs from --volume-id')
-    require_pinned_image(body.get('imageName'), allow_mutable_image)
+    require_pinned_image(body.get('image'), allow_mutable_image)
     output = Path(output)
     api = api or Provider(key)
     options = dict(release or {})

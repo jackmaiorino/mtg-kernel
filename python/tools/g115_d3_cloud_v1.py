@@ -37,7 +37,7 @@ def execute(manifest, package, control):
     sys.path.insert(0, str(Path(__file__).parent / 'phase1_cloud'))
     from common import write, pin
     from prepare_lease import execute_create, prepared_template
-    from lease_guard import Provider, validate as validate_lease, verify_pod, verify_pod_identity
+    from lease_guard import Provider, pod_ssh_direct, validate as validate_lease, verify_pod, verify_pod_identity
     lease = read(control / 'lease/lease.json')
     validate_lease(lease)
     require(0 <= time.time() - lease['created_epoch'] <= 300, 'Refresh lease preparation')
@@ -162,9 +162,9 @@ def execute(manifest, package, control):
             pod = api.call('GET')
             require(pod is not None, 'Pod absent during startup')
             require(verify_pod(pod, lease, created['id']) <= lease['rate_ceiling_usd_hour'], 'Rate above guard cap')
-            port = (pod.get('portMappings') or {}).get('22')
-            if pod.get('publicIp') and port:
-                endpoint = dict(ip=pod['publicIp'], port=int(port))
+            direct = pod_ssh_direct(pod)   # Runpod v2 ssh.direct replaces publicIp/portMappings
+            if direct:
+                endpoint = dict(ip=direct[0], port=direct[1])
                 break
             time.sleep(5)
         require(endpoint is not None, 'SSH endpoint not ready')

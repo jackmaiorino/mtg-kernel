@@ -89,7 +89,7 @@ ROOTS = ('state', 'cold', 'retained', 'checkpoints', 'exposure', 'hot')
 TEMPLATE_KEYS = {'lane', 'decks', 't1_source', 'a48_source', 'placement', 'runtime', 'storage', 'wall_seconds',
                  'choice', 'choice_verification', 'cold_keep_blocks', 'roots', 'compute_host_name', 'host_slots',
                  'lease_block_seconds'}
-POD_SHAPE = {'computeType': 'CPU', 'cpuFlavorIds': ['cpu3c'], 'vcpuCount': 32, 'interruptible': False}  # verify_pod
+POD_CPU = {'id': 'cpu3c', 'vcpuCount': 32}  # the v2 create request's `cpu`, as verify_pod checks it
 LEASE_CAP_SECONDS = 8 * 3600
 FRESH_SECONDS = 300  # prepared lease age accepted before allocation, as prepare_lease and the D3 controller
 STARTUP_SECONDS = 900  # boot, SSH, resident guard, hardware check and staging before the driver starts
@@ -483,7 +483,7 @@ def assigned(source, name):
 def embedded_lease(template):
     """The lease bytes the resident guard runs: prepare_lease embeds them in the Pod entrypoint."""
     try:
-        call = ast.parse(template['dockerEntrypoint'][2]).body[-1].value
+        call = ast.parse(template['entrypoint'][2]).body[-1].value
         bootstrap = base64.b64decode(call.args[0].args[0].value).decode()
         return base64.b64decode(assigned(assigned(bootstrap, 'GUARD_PROGRAM'), 'BLOBS')['lease.json'])
     except (AttributeError, IndexError, KeyError, TypeError, ValueError, SyntaxError):
@@ -504,10 +504,12 @@ def plan(package_dir, control, external_guard=EXTERNAL_GUARD, now=None):
             'create request changed after lease preparation')
     require(0 <= now - lease['created_epoch'] <= FRESH_SECONDS, 'lease preparation expired: prepare a fresh lease')
     require(lease['deadline_epoch'] - lease['created_epoch'] <= LEASE_CAP_SECONDS, 'lease exceeds eight hours')
-    require(template['imageName'] == manifest['image'] == IMAGE_REFERENCE, 'Pod image differs from the runtime image')
-    require(template['name'] == lease['name'] and template['networkVolumeId'] == lease['network_volume_id']
-            and template['volumeMountPath'] == manifest['workspace'] == str(WORKSPACE)
-            and all(template.get(key) == value for key, value in POD_SHAPE.items()),
+    require(template['image'] == manifest['image'] == IMAGE_REFERENCE, 'Pod image differs from the runtime image')
+    require(template['name'] == lease['name']
+            and template.get('mounts') == {'network': [{'volumeId': lease['network_volume_id'],
+                                                        'path': manifest['workspace']}]}
+            and manifest['workspace'] == str(WORKSPACE)
+            and template.get('cpu') == POD_CPU,
             'create request differs from the lease, volume or Pod shape')
     require(preparation['guard_state'] == GUARD_PARENT + lease['name'], 'resident guard state differs')
     require(embedded_lease(template) == (prepared / 'lease.json').read_bytes(),
@@ -515,7 +517,7 @@ def plan(package_dir, control, external_guard=EXTERNAL_GUARD, now=None):
     require(lease['startup_idle_seconds'] >= STARTUP_SECONDS, 'lease startup bound below the staging allowance')
     require(lease['recovery_seconds'] >= RECOVERY_SECONDS, 'lease recovery window below the recovery bound')
     cpus, qualified = manifest['placement']['cpu_affinity'], manifest['hardware']['qualified']
-    require(len(cpus) <= POD_SHAPE['vcpuCount'], 'placement CPUs exceed the Pod')
+    require(len(cpus) <= POD_CPU['vcpuCount'], 'placement CPUs exceed the Pod')
     if qualified:
         require(set(cpus) <= set(qualified['affinity']) and qualified['profile']['effective_cpu_capacity'] >= len(cpus)
                 and qualified['profile']['memory_limit_bytes'] >= manifest['hardware']['min_memory_bytes'],
@@ -526,7 +528,7 @@ def plan(package_dir, control, external_guard=EXTERNAL_GUARD, now=None):
     require_fresh_funding_snapshot(Path(control) / 'funding.json', now)
     require(Path(external_guard).is_file(), 'external guard unavailable: ' + str(external_guard))
     return {'planning_valid': True, 'allocated': False, 'native_dispatched': False, 'lease': lease['name'],
-            'pod_root': manifest['pod_root'], 'runs': manifest['runs'], 'image': template['imageName'],
+            'pod_root': manifest['pod_root'], 'runs': manifest['runs'], 'image': template['image'],
             'block_estimate_seconds': estimate, 'available_block_seconds': available,
             'projected_conservative_usd': projected, 'volume_inputs': manifest['volume_inputs'],
             'external_guard_sha256': sha(external_guard)}
@@ -870,9 +872,9 @@ class Cycle:
             require(pod is not None, 'Pod absent during startup')
             require(lease_guard.verify_pod(pod, self.lease, self.created['id']) <= self.lease['rate_ceiling_usd_hour'],
                     'rate above guard cap')
-            port = (pod.get('portMappings') or {}).get('22')
-            if pod.get('publicIp') and port:
-                endpoint = {'ip': pod['publicIp'], 'port': int(port)}
+            direct = lease_guard.pod_ssh_direct(pod)   # v2 ssh.direct replaces publicIp/portMappings
+            if direct:
+                endpoint = {'ip': direct[0], 'port': direct[1]}
                 break
             self.sleep(5)
         require(endpoint is not None, 'SSH endpoint not ready')
