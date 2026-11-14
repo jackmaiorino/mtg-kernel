@@ -230,6 +230,29 @@ fn decode_pinned_w_state_v1(
     Ok((entry.0.clone(), entry.1.clone()))
 }
 
+/// Holds `state` as the decode of the container `pin` names, for an update
+/// that has just written that container and verified, by reading the file
+/// back against its pin, that it opens to exactly `encode_w_state_v1(state)`.
+/// A decode refuses any bytes that are not its result's own encoding, so the
+/// decode of those bytes is `state`. A process that does not hold it (every
+/// segment's first load) decodes the file.
+fn hold_written_w_state_v1(
+    pin: &PinnedFileV1,
+    state: &NativePolicyValueTrainStateWideV1,
+    state_sha256: &str,
+) -> Result<(), String> {
+    let entry = Arc::new((state.clone(), state_sha256.to_owned()));
+    let mut cache = W_DECODED_V1
+        .lock()
+        .map_err(|_| "wide decode cache poisoned")?;
+    cache.retain(|(key, _)| *key != pin.sha256);
+    if cache.len() >= W_DECODED_CAPACITY_V1 {
+        cache.remove(0);
+    }
+    cache.push((pin.sha256.clone(), entry));
+    Ok(())
+}
+
 fn hex_v1(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -758,10 +781,11 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
     )?;
     let checkpoint_started = std::time::Instant::now();
     fs::create_dir(&output_directory).map_err(err)?;
+    let encoded = encode_w_state_v1(&state)?;
     let container = publish_json_bytes_v1(
         &output_directory,
         W_LEARNER_STATE_FILE_V1,
-        &record_envelope.seal_owned_v1(encode_w_state_v1(&state)?)?,
+        &record_envelope.seal_v1(&encoded)?,
     )?;
     let feature_identity = policy.feature_identity_v1();
     let record = WLearnerCheckpointV1 {
@@ -784,24 +808,34 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
         value_coefficient_bits: value_coefficient.to_bits(),
     };
     let checkpoint_pin = publish_json(&output_directory, "checkpoint.json", &record)?;
-    // Readback through the continuation loader, with this update's inputs.
-    let resumed = ExpandedModelSourceV1 {
-        checkpoint: Some(checkpoint_pin.clone()),
-        ..source.clone()
-    };
-    let expectation = CheckpointInputExpectationV1 {
+    // Readback of both files as written, each verified against its pin: the
+    // record reads back as this record with this update's inputs, and the
+    // container opens to exactly this state's encoding. A decode of the
+    // container (`decode_w_state_v1`) refuses any bytes that are not its
+    // result's own encoding, so it would give this state; the next load in
+    // this process holds it, and a new process decodes the file.
+    let read_record: WLearnerCheckpointV1 =
+        serde_json::from_slice(&read_pinned_bytes(&checkpoint_pin)?).map_err(err)?;
+    ensure(
+        read_record == record,
+        "published wide checkpoint record round trip differs",
+    )?;
+    CheckpointInputExpectationV1 {
         trajectories: &trajectories,
         learning_rate_bits: learning_rate.to_bits(),
         value_coefficient_bits: value_coefficient.to_bits(),
-    };
-    // Decoded from the bytes just written, never from this process's cache.
-    let restored = load_w_fresh_v1(&resumed, Some(&expectation), true)?;
-    ensure(
-        restored.state_sha256 == after
-            && restored.state.snapshot_v1().map_err(err)? == state.snapshot_v1().map_err(err)?,
-        "published wide checkpoint round trip differs",
+    }
+    .validate_v1(
+        &read_record.trajectories,
+        read_record.learning_rate_bits,
+        read_record.value_coefficient_bits,
     )?;
-    drop(restored);
+    ensure(
+        open_v1(&read_pinned_bytes(&container)?, MAX_FILE_BYTES)?.as_ref() == encoded.as_slice(),
+        "published wide container is not the state's encoding",
+    )?;
+    drop(encoded);
+    hold_written_w_state_v1(&container, &state, &after)?;
     let model = state.model_v1();
     let mut result = json!({"schema":"mtg-kernel-expanded-deck-update/v1", "complete":true,
         "source":source, "trajectories":trajectories, "checkpoint":checkpoint_pin,
