@@ -1664,27 +1664,33 @@ pub(crate) fn ceased_token_order_triggers_shared_source_state_v1(
 fn choose_trigger_mode_fixture_card_name_v1() -> &'static str {
     #[cfg(not(feature = "standard-magezero-fixtures"))]
     {
-        "Apothecary Stomper"
+        "Wardens of the Cycle"
     }
-    #[cfg(all(
-        feature = "standard-magezero-fixtures",
-        not(feature = "eternal-fixtures")
-    ))]
+    #[cfg(feature = "standard-magezero-fixtures")]
     {
-        "Ertai Resurrected"
-    }
-    #[cfg(feature = "eternal-fixtures")]
-    {
-        "Dawnbringer Cleric"
+        "Tranquil Frillback"
     }
 }
 
-/// Modal triggered-ability fixture (#674) across Limited (`Apothecary Stomper`),
-/// Standard (`Ertai Resurrected`), and Eternal (`Dawnbringer Cleric`) card
-/// registries. Enters the battlefield with two legal mode choices so callers
-/// can either move the source to the graveyard and call `cease_to_exist`
-/// (ceased source) or call `shuffle_trigger_source_into_library_v1` (hidden
-/// source).
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+fn choose_trigger_mode_fixture_effect_v1(card_def: u16) -> crate::effect::EffectOp {
+    #[cfg(not(feature = "standard-magezero-fixtures"))]
+    {
+        (crate::trigger::triggers_for(card_def)[0].effect)()
+    }
+    #[cfg(feature = "standard-magezero-fixtures")]
+    {
+        let _ = card_def;
+        crate::standard_creature_choices_v1::frillback_marker(1)
+    }
+}
+
+/// Modal triggered-ability fixture (#674) across Limited (`Wardens of the Cycle`)
+/// and Standard/Eternal (`Tranquil Frillback`) card registries. Both fixtures
+/// retain at least two untargeted (`TargetSpec::None`) mode choices after the
+/// trigger source ceases to exist (`cease_to_exist`) or is shuffled into a
+/// library (`shuffle_trigger_source_into_library_v1`), without depending on
+/// protection color-LKI departure events for targeted modes.
 #[cfg(all(test, feature = "limited-fdn-fixtures"))]
 pub(crate) fn choose_trigger_mode_fixture_state_v1() -> (crate::state::GameState, ObjectId) {
     use crate::card_def::TargetSpec;
@@ -1694,8 +1700,6 @@ pub(crate) fn choose_trigger_mode_fixture_state_v1() -> (crate::state::GameState
     use crate::trigger::PendingTrigger;
 
     let mut state = ready_state();
-    put(&mut state, PlayerId::P0, "Myr Enforcer", Zone::Battlefield);
-    put(&mut state, PlayerId::P1, "Forest", Zone::Graveyard);
     let source_card = put(
         &mut state,
         PlayerId::P0,
@@ -1703,7 +1707,7 @@ pub(crate) fn choose_trigger_mode_fixture_state_v1() -> (crate::state::GameState
         Zone::Battlefield,
     );
     let contract = AbilitySourceContractV4::capture(&state, source_card);
-    let effect = (crate::trigger::triggers_for(contract.card_def)[0].effect)();
+    let effect = choose_trigger_mode_fixture_effect_v1(contract.card_def);
     state.engine.pending_triggers.push(PendingTrigger {
         controller: PlayerId::P0,
         source: source_card,
@@ -1726,7 +1730,7 @@ pub(crate) fn choose_trigger_mode_fixture_state_v1() -> (crate::state::GameState
             source,
             ref legal_modes,
             ..
-        } if source == source_card && legal_modes.len() == 2
+        } if source == source_card && legal_modes.len() >= 2
     ));
     (state, source_card)
 }
@@ -2339,16 +2343,17 @@ mod tests {
             }
             assert!(crate::engine::pending_trigger_choose_mode_active_v1(&state));
 
-            let session = FastActorSessionV1::from_v3_fixture_state(state);
-            assert!(matches!(
-                session.current.as_ref().unwrap().origin_decision,
+            let mut session = FastActorSessionV1::from_v3_fixture_state(state);
+            let expected_modes = match &session.current.as_ref().unwrap().origin_decision {
                 PolicyDecisionV5::Surface(SurfaceDecision::Decision(
-                    Decision::ChooseTriggerMode {
-                        ref legal_modes,
-                        ..
-                    }
-                )) if legal_modes.len() == 2
-            ));
+                    Decision::ChooseTriggerMode { legal_modes, .. },
+                )) => legal_modes.len(),
+                other => panic!("expected ChooseTriggerMode, got {other:?}"),
+            };
+            assert!(
+                expected_modes >= 2,
+                "modal trigger fixture must retain at least two legal mode choices (got {expected_modes})"
+            );
 
             let mut v3_actions = vec![FlatActionCoreV1::default(); 128];
             let mut v3_refs = vec![FlatActionRefV2::default(); 256];
@@ -2369,7 +2374,7 @@ mod tests {
             );
 
             let (result, objects) = encoded_v4(&session);
-            assert_eq!(result.active_action_count, 2);
+            assert_eq!(usize::from(result.active_action_count), expected_modes);
             let pending_rows: Vec<_> = objects
                 .iter()
                 .filter(|row| row.group == FlatActionObjectGroupV1::HistoricalPublicSource)
@@ -2380,8 +2385,12 @@ mod tests {
             assert_eq!(
                 objects.len(),
                 1,
-                "both mode choices share position 0's frozen row"
+                "all mode choices share position 0's frozen row"
             );
+            let decision = expected(&session);
+            session
+                .step(decision.episode_id, decision.step, 0)
+                .expect("stepping untargeted mode 0 must push the trigger onto the stack cleanly");
         }
     }
 
