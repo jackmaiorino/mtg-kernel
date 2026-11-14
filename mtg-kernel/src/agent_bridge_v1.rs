@@ -25,8 +25,9 @@ use crate::agent_bridge_flat_v4::{FlatV4LockstepErrorV1, FlatV4LockstepV1};
 #[cfg(test)]
 use crate::agent_bridge_flat_v4_encode::FlatV4EncodeErrorV1;
 use crate::agent_bridge_flat_v4_encode::{
-    encode_flat_v4_tensor_v1, flat_v4_extension_value_v1, FlatV4EncodeScratchV1,
-    SPELLBENCH_EXTENSION_KERNEL_FLAT_V4,
+    encode_flat_v4_tensor_v1, encode_flat_v7_tensor_v1, flat_v4_extension_value_v1,
+    flat_v7_extension_value_v1, FlatV4EncodeScratchV1, SPELLBENCH_EXTENSION_KERNEL_FLAT_V4,
+    SPELLBENCH_EXTENSION_KERNEL_FLAT_V7,
 };
 pub use crate::agent_bridge_infoset_v1::SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1;
 use crate::agent_bridge_infoset_v1::{
@@ -80,6 +81,10 @@ pub const SPELLBENCH_OBJECT_ID_DERIVATION_V1: &str = "kernel-arena-id-zone-chang
 /// Command-line flag enabling `x_kernel_flat_v4`.
 pub const SPELLBENCH_FLAG_X_KERNEL_FLAT_V4: &str = "--x-kernel-flat-v4";
 pub const SPELLBENCH_FLAG_V2_SUPPORT: &str = "--private-v2-support";
+/// Human-play London mode: both seats mulligan (London, learned) and the
+/// model input is `x_kernel_flat_v7`. Never part of a rated engine.
+pub const SPELLBENCH_FLAG_PAUPER_LONDON_HUMAN_V1: &str = "--pauper-london-human-v1";
+pub const SPELLBENCH_FLAG_X_KERNEL_FLAT_V7: &str = "--x-kernel-flat-v7";
 
 /// Opt-in behaviors of one bridge process.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -268,6 +273,9 @@ struct SpellbenchBridgeGameV1 {
     session: RlEpisodeSessionV1,
     terminal_sent: bool,
     flat_v4: Option<FlatV4LockstepV1>,
+    /// Human-play London game: the lockstep copy encodes FlatV7 (under the
+    /// `x_kernel_flat_v7` key) instead of V4.
+    flat_v7: bool,
     /// Row map of the pending decision (row r executes candidate rows[r]).
     flat_v4_rows: Vec<u32>,
     flat_v4_scratch: FlatV4EncodeScratchV1,
@@ -297,6 +305,10 @@ struct SpellbenchBridgeGameV1 {
 pub struct SpellbenchBridgeServerV1 {
     identity: SpellbenchEngineIdentityV1,
     options: SpellbenchBridgeOptionsV1,
+    /// Human-play London mode (`--pauper-london-human-v1`); false for every
+    /// other process. The lockstep copy then runs London and the model input
+    /// is FlatV7.
+    london_human: bool,
     game: Option<SpellbenchBridgeGameV1>,
     used_game_ids: HashSet<String>,
     last_exchange: Option<CachedSpellbenchExchangeV1>,
@@ -338,11 +350,28 @@ impl SpellbenchBridgeServerV1 {
         SpellbenchBridgeServerV1 {
             identity,
             options,
+            london_human: false,
             game: None,
             used_game_ids: HashSet::new(),
             last_exchange: None,
             private_preview: None,
         }
+    }
+
+    /// The human-play London server: London opening for both seats, the
+    /// lockstep copy on, `x_kernel_flat_v7` instead of `x_kernel_flat_v4`,
+    /// private v2 support on, no infoset. Only the human-play path builds it.
+    pub fn with_pauper_london_human_v1(identity: SpellbenchEngineIdentityV1) -> Self {
+        let mut server = Self::with_options(
+            identity,
+            SpellbenchBridgeOptionsV1 {
+                x_kernel_flat_v4: true,
+                x_kernel_infoset_v1: false,
+                private_v2_support: true,
+            },
+        );
+        server.london_human = true;
+        server
     }
 
     fn identity(&self) -> &SpellbenchEngineIdentityV1 {
@@ -476,7 +505,9 @@ impl SpellbenchBridgeServerV1 {
         match request {
             SpellbenchRequestV1::Hello { request_id, .. } => {
                 let mut extensions = vec![SPELLBENCH_EXTENSION_KERNEL_V5];
-                if self.options.x_kernel_flat_v4 {
+                if self.london_human {
+                    extensions.push(SPELLBENCH_EXTENSION_KERNEL_FLAT_V7);
+                } else if self.options.x_kernel_flat_v4 {
                     extensions.push(SPELLBENCH_EXTENSION_KERNEL_FLAT_V4);
                 }
                 if self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1 {
@@ -589,12 +620,14 @@ impl SpellbenchBridgeServerV1 {
             (*cache.copy, cache.prefix.len())
         } else {
             let mut copy = Self::with_options(self.identity.clone(), self.options);
+            copy.london_human = self.london_human;
             copy.game = Some(SpellbenchBridgeGameV1 {
                 game_id: game.game_id.clone(),
                 episode_id: game.episode_id,
                 session: game.session.clone(),
                 terminal_sent: false,
                 flat_v4: game.flat_v4.clone(),
+                flat_v7: game.flat_v7,
                 flat_v4_rows: game.flat_v4_rows.clone(),
                 flat_v4_scratch: FlatV4EncodeScratchV1::default(),
                 private_block_root_step: game.private_block_root_step,
@@ -808,7 +841,15 @@ impl SpellbenchBridgeServerV1 {
             }
         }
         let episode_id = spellbench_episode_id_v1(game_id);
-        let lockstep = if self.options.x_kernel_flat_v4 {
+        let lockstep = if self.london_human {
+            Some(FlatV4LockstepV1::reset_london_human(
+                episode_id,
+                game_seed,
+                max_decisions,
+                max_steps,
+                deck_ids.clone(),
+            ))
+        } else if self.options.x_kernel_flat_v4 {
             Some(FlatV4LockstepV1::reset(
                 episode_id,
                 game_seed,
@@ -819,13 +860,25 @@ impl SpellbenchBridgeServerV1 {
         } else {
             None
         };
-        let mut session = match RlEpisodeSessionV1::reset_with_decks_and_limits(
-            episode_id,
-            game_seed,
-            max_decisions,
-            max_steps,
-            deck_ids,
-        ) {
+        let session = if self.london_human {
+            RlEpisodeSessionV1::reset_pauper_london_human_v1(
+                episode_id,
+                game_seed,
+                max_decisions,
+                max_steps,
+                deck_ids,
+                [crate::rl_session::pauper_london_v1::PauperMulliganModeV1::Learned; 2],
+            )
+        } else {
+            RlEpisodeSessionV1::reset_with_decks_and_limits(
+                episode_id,
+                game_seed,
+                max_decisions,
+                max_steps,
+                deck_ids,
+            )
+        };
+        let mut session = match session {
             Ok(session) => session,
             Err(error) => {
                 return error_response_value_v1(
@@ -857,6 +910,7 @@ impl SpellbenchBridgeServerV1 {
             session,
             terminal_sent: false,
             flat_v4: lockstep,
+            flat_v7: self.london_human,
             flat_v4_rows: Vec::new(),
             flat_v4_scratch: FlatV4EncodeScratchV1::default(),
             private_block_root_step: None,
@@ -1075,6 +1129,15 @@ impl SpellbenchBridgeServerV1 {
                     flat_v4,
                 ) {
                     Ok(mut value) => {
+                        if self.london_human {
+                            // The V7 payload travels under its own key.
+                            if let Some(payload) = value["extensions"]
+                                .as_object_mut()
+                                .and_then(|map| map.remove(SPELLBENCH_EXTENSION_KERNEL_FLAT_V4))
+                            {
+                                value["extensions"][SPELLBENCH_EXTENSION_KERNEL_FLAT_V7] = payload;
+                            }
+                        }
                         if let Some(support) = private_support {
                             value["extensions"]["x_kernel_v2_support"] = support;
                         }
@@ -1279,6 +1342,7 @@ impl BridgeMirrorV1 {
             session: raw,
             terminal_sent: false,
             flat_v4: None,
+            flat_v7: false,
             flat_v4_rows: rows.clone(),
             flat_v4_scratch: FlatV4EncodeScratchV1::default(),
             private_block_root_step: self.private_block_root_step,
@@ -1354,6 +1418,7 @@ fn flat_v4_extension_v1(
     let SpellbenchBridgeGameV1 {
         session,
         flat_v4,
+        flat_v7,
         flat_v4_rows,
         flat_v4_scratch,
         infoset,
@@ -1381,6 +1446,14 @@ fn flat_v4_extension_v1(
     #[cfg(test)]
     if game.force_flat_v4_encode_error {
         return Err(FlatV4EncodeErrorV1::Encode("forced by test".to_string()).halt_reason());
+    }
+    if *flat_v7 {
+        let encoded = encode_flat_v7_tensor_v1(lockstep.fast_session(), flat_v4_scratch)
+            .map_err(|error| error.halt_reason())?;
+        let value =
+            flat_v7_extension_value_v1(&encoded, &rows).map_err(|error| error.halt_reason())?;
+        *flat_v4_rows = rows;
+        return Ok(Some(value));
     }
     let encoded = encode_flat_v4_tensor_v1(lockstep.fast_session(), flat_v4_scratch)
         .map_err(|error| error.halt_reason())?;
@@ -1636,6 +1709,15 @@ fn private_v2_support(game: &SpellbenchBridgeGameV1) -> Value {
     let state = game.session.game_state();
     let mut support = json!({"stack_instances": state.stack.iter()
         .map(|item| item.v4.stack_item_id.0.to_string()).collect::<Vec<_>>()});
+    // Human-play London: the public facts of the opening (counts, who has
+    // kept, the phase). Never a card identity.
+    if let Some(london) = game.session.pauper_london_public_v1() {
+        support["london"] = json!({
+            "phase": london.phase,
+            "mulligans_taken": london.mulligans_taken,
+            "kept": london.kept,
+        });
+    }
     let RlSessionResponseV1::Decision(decision) = game.session.current_response() else {
         return support;
     };
@@ -2337,9 +2419,28 @@ fn neutral_semantic_v1(
             "engine_contract_failure:policy surface v5 semantic has no spellbench v1 kind"
                 .to_string(),
         ),
-        // Opt-in rules (London mulligans, Foundations combat, attack
-        // targets) and non-Pauper catalogs. The Pauper bridge never enables
-        // them, so reaching one is an engine fault, never a guessed kind.
+        // Human-play London opening (`--pauper-london-human-v1`): only that
+        // mode's sessions surface these two, and the Python wrapper maps them
+        // to the protocol's `mulligan` and `order_pick` `mulligan_bottom`.
+        ActionSemanticV1::ChooseLondonMulligan {
+            mulligan_count,
+            mulligan,
+            ..
+        } => Ok(json!({
+            "kind": "london_mulligan",
+            "mulligan_count": u32::from(*mulligan_count),
+            "mulligan": *mulligan,
+        })),
+        ActionSemanticV1::ChooseLondonBottom {
+            remaining, card, ..
+        } => Ok(json!({
+            "kind": "london_bottom",
+            "remaining": u32::from(*remaining),
+            "card": neutral_object_ref_v1(card, observer)?,
+        })),
+        // Other opt-in rules (Foundations combat, attack targets) and
+        // non-Pauper catalogs. The Pauper bridge never enables them, so
+        // reaching one is an engine fault, never a guessed kind.
         ActionSemanticV1::ChooseAttackTarget { .. }
         | ActionSemanticV1::ChooseCombatDamageRange { .. }
         | ActionSemanticV1::ChooseDivineKickerV44 { .. }
@@ -2347,8 +2448,6 @@ fn neutral_semantic_v1(
         | ActionSemanticV1::ChooseEntryColorV36 { .. }
         | ActionSemanticV1::ChooseFullRangeCastXValueV59 { .. }
         | ActionSemanticV1::ChooseLegendPermanent { .. }
-        | ActionSemanticV1::ChooseLondonBottom { .. }
-        | ActionSemanticV1::ChooseLondonMulligan { .. }
         | ActionSemanticV1::FinishDivineTargetsV44 { .. }
         | ActionSemanticV1::TurnFaceUp { .. } => {
             Err("engine_contract_failure:semantic outside the Pauper neutral contract".to_string())
@@ -4292,6 +4391,7 @@ imported {:#?}",
             session,
             terminal_sent: false,
             flat_v4: Some(lockstep),
+            flat_v7: false,
             flat_v4_rows: Vec::new(),
             flat_v4_scratch: FlatV4EncodeScratchV1::default(),
             private_block_root_step: None,

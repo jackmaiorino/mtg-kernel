@@ -20,6 +20,8 @@ use crate::london_mulligan_v1;
 
 #[cfg(test)]
 mod flat_v7_tests;
+#[cfg(test)]
+mod human_bridge_tests;
 // Binds the Pauper registry (its parity fixture), so the appended-registry
 // builds leave it out.
 #[cfg(all(test, not(feature = "limited-fdn-fixtures")))]
@@ -231,89 +233,249 @@ impl FastActorSessionV1 {
     }
 
     /// The session-owned pregame boundary, run at the start of every advance
-    /// while London is pending. Returns with the state either at an exposed
-    /// London decision (the ordinary advance then publishes it) or completed
-    /// and canonicalized (the ordinary advance then enters turn 1).
+    /// while London is pending (see `drive_london_pregame_v1`).
     pub(super) fn drive_pauper_london_v1(&mut self) -> Result<(), String> {
         let Some(london) = self.pauper_london_v1.as_deref_mut() else {
             return Ok(());
         };
-        if !london_mulligan_v1::has_pending(&self.state) {
-            return Ok(());
-        }
-        loop {
-            match london_mulligan_v1::drain_or_decide(&mut self.state)? {
-                Some(Decision::ChooseLondonMulligan { player, .. }) => {
-                    match london.modes[player.index()] {
-                        PauperMulliganModeV1::KeepSeven => {
-                            // Automatic progression: no counter, revision or
-                            // random draw, applied through the engine.
-                            crate::engine::step(
-                                &mut self.state,
-                                Action::ChooseLondonMulligan { mulligan: false },
-                            )?;
-                        }
-                        PauperMulliganModeV1::Learned => {
-                            london.exposed[player.index()] += 1;
-                            return Ok(());
-                        }
+        drive_london_pregame_v1(&mut self.state, london)
+    }
+}
+
+/// The session-owned pregame boundary of both session types. Returns with
+/// the state either at an exposed London decision (the ordinary advance then
+/// publishes it) or completed and canonicalized (the ordinary advance then
+/// enters turn 1).
+pub(super) fn drive_london_pregame_v1(
+    state: &mut crate::state::GameState,
+    london: &mut PauperLondonSessionV1,
+) -> Result<(), String> {
+    if !london_mulligan_v1::has_pending(state) {
+        return Ok(());
+    }
+    loop {
+        match london_mulligan_v1::drain_or_decide(state)? {
+            Some(Decision::ChooseLondonMulligan { player, .. }) => {
+                match london.modes[player.index()] {
+                    PauperMulliganModeV1::KeepSeven => {
+                        // Automatic progression: no counter, revision or
+                        // random draw, applied through the engine.
+                        crate::engine::step(
+                            state,
+                            Action::ChooseLondonMulligan { mulligan: false },
+                        )?;
                     }
-                }
-                Some(Decision::ChooseLondonBottom { player, .. }) => {
-                    if london.modes[player.index()] != PauperMulliganModeV1::Learned {
-                        return Err("a keep-seven seat cannot reach a London bottom".into());
+                    PauperMulliganModeV1::Learned => {
+                        london.exposed[player.index()] += 1;
+                        return Ok(());
                     }
-                    london.exposed[player.index()] += 1;
-                    return Ok(());
-                }
-                Some(other) => {
-                    return Err(format!(
-                        "pregame decision other than a London choice: {other:?}"
-                    ));
-                }
-                None => {
-                    let pregame = self
-                        .state
-                        .london_mulligans_v1
-                        .as_ref()
-                        .ok_or("London state vanished before completion")?;
-                    if !pregame.is_complete() || pregame.kept() != [true, true] {
-                        return Err("London opening ended without both keeps".into());
-                    }
-                    let counts = pregame.counts();
-                    let seats = [PlayerId::P0, PlayerId::P1].map(|player| {
-                        let seat = player.index();
-                        PauperOpeningSeatRecordV1 {
-                            mode: london.modes[seat],
-                            mulligans_taken: counts[seat],
-                            kept_hand_size: u8::try_from(self.state.players[seat].hand.len())
-                                .unwrap_or(u8::MAX),
-                            exposed_pregame_decisions: london.exposed[seat],
-                            forced_zero_card_keep: counts[seat] == 7,
-                        }
-                    });
-                    if seats.iter().any(|seat| {
-                        u16::from(seat.kept_hand_size) + u16::from(seat.mulligans_taken) != 7
-                    }) {
-                        return Err("kept hand size differs from seven minus mulligans".into());
-                    }
-                    // The `keep_seven_v2` handoff (`human_opening_v1.rs`):
-                    // opening hands and London redraws are not turn-1 draws,
-                    // and the setup event batch is not a turn-1 event batch.
-                    // Pregame zone changes and draws stay in `event_history`.
-                    for player in &mut self.state.players {
-                        player.draws_this_turn = 0;
-                    }
-                    self.state.engine.event_log.clear();
-                    self.state.london_mulligans_v1 = None;
-                    london.record = Some(PauperOpeningRecordV1 {
-                        opening: PauperOpeningV1::LondonV1,
-                        seats,
-                    });
-                    return Ok(());
                 }
             }
+            Some(Decision::ChooseLondonBottom { player, .. }) => {
+                if london.modes[player.index()] != PauperMulliganModeV1::Learned {
+                    return Err("a keep-seven seat cannot reach a London bottom".into());
+                }
+                london.exposed[player.index()] += 1;
+                return Ok(());
+            }
+            Some(other) => {
+                return Err(format!(
+                    "pregame decision other than a London choice: {other:?}"
+                ));
+            }
+            None => {
+                let pregame = state
+                    .london_mulligans_v1
+                    .as_ref()
+                    .ok_or("London state vanished before completion")?;
+                if !pregame.is_complete() || pregame.kept() != [true, true] {
+                    return Err("London opening ended without both keeps".into());
+                }
+                let counts = pregame.counts();
+                let seats = [PlayerId::P0, PlayerId::P1].map(|player| {
+                    let seat = player.index();
+                    PauperOpeningSeatRecordV1 {
+                        mode: london.modes[seat],
+                        mulligans_taken: counts[seat],
+                        kept_hand_size: u8::try_from(state.players[seat].hand.len())
+                            .unwrap_or(u8::MAX),
+                        exposed_pregame_decisions: london.exposed[seat],
+                        forced_zero_card_keep: counts[seat] == 7,
+                    }
+                });
+                if seats.iter().any(|seat| {
+                    u16::from(seat.kept_hand_size) + u16::from(seat.mulligans_taken) != 7
+                }) {
+                    return Err("kept hand size differs from seven minus mulligans".into());
+                }
+                // The `keep_seven_v2` handoff (`human_opening_v1.rs`):
+                // opening hands and London redraws are not turn-1 draws,
+                // and the setup event batch is not a turn-1 event batch.
+                // Pregame zone changes and draws stay in `event_history`.
+                for player in &mut state.players {
+                    player.draws_this_turn = 0;
+                }
+                state.engine.event_log.clear();
+                state.london_mulligans_v1 = None;
+                london.record = Some(PauperOpeningRecordV1 {
+                    opening: PauperOpeningV1::LondonV1,
+                    seats,
+                });
+                return Ok(());
+            }
         }
+    }
+}
+
+/// The public facts of a London opening, for the human-play bridge: what a
+/// spectator sees (mulligan counts, whether each seat has kept) and the
+/// phase. Never any card identity.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PauperLondonPublicV1 {
+    /// "announce", "bottom" or "done" (the opening record exists).
+    pub phase: &'static str,
+    pub mulligans_taken: [u8; 2],
+    pub kept: [bool; 2],
+}
+
+fn london_public_v1(
+    state: &crate::state::GameState,
+    london: &PauperLondonSessionV1,
+) -> Option<PauperLondonPublicV1> {
+    if let Some(record) = &london.record {
+        return Some(PauperLondonPublicV1 {
+            phase: "done",
+            mulligans_taken: [
+                record.seats[0].mulligans_taken,
+                record.seats[1].mulligans_taken,
+            ],
+            kept: [true, true],
+        });
+    }
+    let view = london_pregame_view_v1(state).ok().flatten()?;
+    Some(PauperLondonPublicV1 {
+        phase: match view.phase {
+            LondonPregamePhaseV1::Announce => "announce",
+            LondonPregamePhaseV1::Bottom => "bottom",
+        },
+        mulligans_taken: view.counts,
+        kept: view.kept,
+    })
+}
+
+impl RlEpisodeSessionV1 {
+    /// The human-play London opening on the Spellbench bridge's raw session:
+    /// the same deal as `reset_with_decks_and_limits` (legacy seed, seat P0
+    /// first), London enabled before any advance, and the session-owned
+    /// boundary of `FastActorSessionV1::reset_pauper_london_v1`. Its
+    /// lockstep copy is `FastActorSessionV1::reset_pauper_london_human_v1`
+    /// with the same arguments.
+    pub fn reset_pauper_london_human_v1(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        modes: [PauperMulliganModeV1; 2],
+    ) -> Result<Self, RlSessionError> {
+        let (deck_hashes, mut state) = build_session_deck_pair_state(
+            &deck_ids,
+            ResetRandomization::Legacy { env_seed },
+            None,
+        )?;
+        london_mulligan_v1::enable_london_mulligans_v1(&mut state)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        let mut session = RlEpisodeSessionV1 {
+            deck_ids,
+            deck_hashes,
+            episode_id,
+            max_physical_decisions,
+            max_policy_steps,
+            state,
+            surface: PolicySurfaceV5::new_for_session(),
+            environment_revision: 0,
+            policy_step_count: 0,
+            physical_decision_count: 0,
+            current: None,
+            terminal: None,
+            scan_menu: ScanMenuV1::LegalAnswersOnly,
+            pauper_london_v1: Some(Box::new(PauperLondonSessionV1 {
+                modes,
+                exposed: [0; 2],
+                record: None,
+            })),
+            #[cfg(feature = "limited-fdn-fixtures")]
+            limited_incremental_trigger_order: false,
+            #[cfg(feature = "limited-fdn-fixtures")]
+            limited_trigger_order: None,
+        };
+        session.advance_to_decision_or_terminal_profiled(None);
+        Ok(session)
+    }
+
+    /// Public London facts; None for a session without London.
+    pub fn pauper_london_public_v1(&self) -> Option<PauperLondonPublicV1> {
+        london_public_v1(&self.state, self.pauper_london_v1.as_deref()?)
+    }
+
+    /// The opening record, once both seats have kept.
+    pub fn pauper_opening_record_v1(&self) -> Option<&PauperOpeningRecordV1> {
+        self.pauper_london_v1
+            .as_ref()
+            .and_then(|london| london.record.as_ref())
+    }
+}
+
+impl FastActorSessionV1 {
+    /// The lockstep twin of `RlEpisodeSessionV1::reset_pauper_london_human_v1`
+    /// (flat-action V3, legacy deal, London before any advance).
+    pub fn reset_pauper_london_human_v1(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        modes: [PauperMulliganModeV1; 2],
+    ) -> Result<Self, RlSessionError> {
+        let (deck_hashes, mut state) = build_session_deck_pair_state(
+            &deck_ids,
+            ResetRandomization::Legacy { env_seed },
+            None,
+        )?;
+        london_mulligan_v1::enable_london_mulligans_v1(&mut state)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
+        let mut session = FastActorSessionV1 {
+            deck_ids,
+            deck_hashes,
+            episode_id,
+            max_physical_decisions,
+            max_policy_steps,
+            state,
+            surface: PolicySurfaceV5::new_for_session(),
+            environment_revision: 0,
+            policy_step_count: 0,
+            physical_decision_count: 0,
+            current: None,
+            flat_action_contract_mode: FlatActionContractModeV1::V3,
+            v3_spell_target_reference_adapter: false,
+            #[cfg(feature = "gameplay-decision-trace-v1")]
+            trace_pending: crate::gameplay_trace_v1::TraceSlot::default(),
+            flat_action_cache_spare: None,
+            flat_action_cache_spare_v2: None,
+            pauper_london_v1: Some(Box::new(PauperLondonSessionV1 {
+                modes,
+                exposed: [0; 2],
+                record: None,
+            })),
+            terminal: None,
+        };
+        session.advance_to_decision_or_terminal();
+        Ok(session)
+    }
+
+    /// Public London facts; None for a session without London.
+    pub fn pauper_london_public_v1(&self) -> Option<PauperLondonPublicV1> {
+        london_public_v1(&self.state, self.pauper_london_v1.as_deref()?)
     }
 }
 

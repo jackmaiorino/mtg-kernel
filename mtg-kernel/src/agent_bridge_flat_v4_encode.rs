@@ -12,9 +12,13 @@ use crate::flat_policy_v2::{
     FlatScoringOwnedBuffersV2,
 };
 use crate::flat_policy_v4::{FlatDecisionEncoderV4, FlatScoringDecisionViewV4};
+use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
 use crate::native_flat_tensorizer_v4::{
     NativeFlatDecisionTensorV4, NativeFlatTensorizerV4, FEATURE_CONTRACT_DIGEST_V4,
     FEATURE_ENCODING_DIGEST_V4,
+};
+use crate::native_flat_tensorizer_v7::{
+    NativeFlatTensorizerV7, FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7,
 };
 use crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1;
 use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
@@ -23,6 +27,10 @@ use serde_json::{json, Value};
 
 pub const SPELLBENCH_EXTENSION_KERNEL_FLAT_V4: &str = "x_kernel_flat_v4";
 pub const FLAT_V4_EXTENSION_SCHEMA_V1: &str = "mtg-kernel-spellbench-flat-v4/v1";
+/// The human-play London bridge's model input: the FlatV7 tensor (the V4
+/// shape; in-game rows byte-equal to V4's, pregame rows London-aware).
+pub const SPELLBENCH_EXTENSION_KERNEL_FLAT_V7: &str = "x_kernel_flat_v7";
+pub const FLAT_V7_EXTENSION_SCHEMA_V1: &str = "mtg-kernel-spellbench-flat-v7/v1";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FlatV4EncodeErrorV1 {
@@ -149,6 +157,111 @@ pub(crate) fn encode_flat_v4_tensor_v1(
     })
 }
 
+/// One encoded FlatV7 decision (human-play London bridge): the V7 model
+/// input and the header of the decision it was computed for.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct EncodedFlatV7V1 {
+    tensor: NativeFlatDecisionTensorV2,
+    step: u64,
+    acting_seat: &'static str,
+}
+
+/// `encode_flat_v4_tensor_v1` with the V7 tensorizer: the same encoder and
+/// buffers (which add the London pregame facts at a pregame decision), then
+/// `NativeFlatTensorizerV7::fill`. In-game decisions give the V4 bytes.
+pub(crate) fn encode_flat_v7_tensor_v1(
+    fast: &FastActorSessionV1,
+    scratch: &mut FlatV4EncodeScratchV1,
+) -> Result<EncodedFlatV7V1, FlatV4EncodeErrorV1> {
+    let FastActorResponseV1::Decision(expected) = fast.current_response() else {
+        return Err(FlatV4EncodeErrorV1::NotADecision);
+    };
+    let FlatV4EncodeScratchV1 {
+        encoder,
+        objects,
+        relations,
+        object_subtypes,
+        ability_uses,
+        goads,
+        completed_dungeons,
+        effect_subtype_changes,
+        context_path_elements,
+        actions,
+        action_refs,
+    } = scratch;
+    let decision = fast
+        .encode_current_flat_scoring_decision_owned_v4(
+            expected,
+            encoder,
+            &mut FlatScoringOwnedBuffersV2 {
+                objects,
+                relations,
+                object_subtypes,
+                ability_uses,
+                goads,
+                completed_dungeons,
+                effect_subtype_changes,
+                context_path_elements,
+                actions,
+                action_refs,
+            },
+        )
+        .map_err(|error| FlatV4EncodeErrorV1::Encode(format!("{error:?}")))?;
+    let view = FlatScoringDecisionViewV4::new(
+        FlatScoringDecisionViewV2::new(
+            &decision.globals,
+            objects,
+            relations,
+            object_subtypes,
+            ability_uses,
+            goads,
+            completed_dungeons,
+            effect_subtype_changes,
+            context_path_elements,
+            actions,
+            action_refs,
+        ),
+        &decision.extensions,
+    );
+    let mut tensor = NativeFlatDecisionTensorV2::default();
+    NativeFlatTensorizerV7::default()
+        .fill(view, &mut tensor)
+        .map_err(|error| FlatV4EncodeErrorV1::Tensorize(format!("{error:?}")))?;
+    Ok(EncodedFlatV7V1 {
+        tensor,
+        step: expected.step,
+        acting_seat: seat_str_v1(expected.acting_player),
+    })
+}
+
+/// The `x_kernel_flat_v7` payload for the decision `encoded` holds; same
+/// members as the V4 payload under the V7 identity.
+pub(crate) fn flat_v7_extension_value_v1(
+    encoded: &EncodedFlatV7V1,
+    rows: &[u32],
+) -> Result<Value, FlatV4EncodeErrorV1> {
+    let action_dim = NativePolicyValueModelConfigV1::contract_v1().action_feature_dim;
+    let features = encoded.tensor.action_features.len();
+    let tensor_actions = features / action_dim;
+    if tensor_actions * action_dim != features || tensor_actions != rows.len() {
+        return Err(FlatV4EncodeErrorV1::RowCount {
+            rows: rows.len(),
+            tensor_actions,
+        });
+    }
+    Ok(json!({
+        "schema": FLAT_V7_EXTENSION_SCHEMA_V1,
+        "feature_contract_digest": FEATURE_CONTRACT_DIGEST_V7,
+        "feature_encoding_digest": FEATURE_ENCODING_DIGEST_V7,
+        "card_db_hash": format!("{KERNEL_CARDDB_HASH:016x}"),
+        "acting_seat": encoded.acting_seat,
+        "step": encoded.step,
+        "row_candidate_ids": rows,
+        "tensor": serde_json::to_value(tensor_bits_common_v1(&encoded.tensor))
+            .expect("tensor bits serialize"),
+    }))
+}
+
 /// The `x_kernel_flat_v4` member that carries
 /// [`known_hand_masked_observation_sha256_v1`] (amendment 43.9 (a)).
 pub(crate) const KNOWN_HAND_MASKED_OBSERVATION_FIELD_V1: &str =
@@ -200,7 +313,10 @@ fn bits(values: &[f32]) -> Vec<u32> {
 }
 
 pub(crate) fn tensor_bits_v1(tensor: &NativeFlatDecisionTensorV4) -> ObservedTensorBitsV1 {
-    let t = &tensor.common;
+    tensor_bits_common_v1(&tensor.common)
+}
+
+pub(crate) fn tensor_bits_common_v1(t: &NativeFlatDecisionTensorV2) -> ObservedTensorBitsV1 {
     ObservedTensorBitsV1 {
         state: bits(&t.state),
         object_features: bits(&t.object_features),
