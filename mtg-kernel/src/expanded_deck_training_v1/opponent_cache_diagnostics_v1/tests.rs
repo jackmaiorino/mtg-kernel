@@ -261,3 +261,69 @@ fn the_process_opponent_cache_counts_a_full_load_and_its_hits_v1() {
     assert!(retained["opponent_cache_bytes"].as_u64().unwrap() >= on_disk);
     fs::remove_dir_all(&root).unwrap();
 }
+
+#[test]
+fn the_process_opponent_cache_counts_checkpoint_decodes() {
+    on_large_stack_v1(the_process_opponent_cache_counts_checkpoint_decodes_v1);
+}
+
+fn the_process_opponent_cache_counts_checkpoint_decodes_v1() {
+    let root = std::env::temp_dir().join(format!(
+        "opponent-cache-decode-diagnostics-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let (import, _) = fresh_source_v1(&root);
+    let member = super::super::loaded_source_cache_v1::bypassed_for_test_v1(|| {
+        super::super::pool_fixture_v1::write_members_v1(&root.join("pool"), &import, 1)
+    })
+    .unwrap()
+    .pop()
+    .unwrap();
+    let source = member.source;
+    let checkpoint_len = fs::metadata(&source.checkpoint.as_ref().unwrap().path)
+        .unwrap()
+        .len();
+    let counters = counters_v1();
+    let stats = &counters.process_opponent;
+    let decodes_before = counters.checkpoint_decodes.decodes.get();
+    let decode_bytes_before = counters.checkpoint_decodes.bytes.get();
+    let full_decode_before = stats.full_load.decode.get();
+    let capture_decode_before = stats.capture.decode.get();
+    let load = |revalidate| {
+        ordered_update_preparation::load_opponent_cached_v1(&source, revalidate)
+            .unwrap()
+            .1
+    };
+    assert!(!load(true));
+    assert_eq!(
+        counters.checkpoint_decodes.decodes.get() - decodes_before,
+        1
+    );
+    assert_eq!(
+        counters.checkpoint_decodes.bytes.get() - decode_bytes_before,
+        checkpoint_len
+    );
+    assert!(stats.full_load.decode.get() > full_decode_before);
+    assert_eq!(stats.capture.decode.get(), capture_decode_before);
+    for split in [&stats.full_load, &stats.capture] {
+        let parts = split.read.get() + split.verify.get() + split.decode.get();
+        assert!(split.read.get() > 0 && parts <= split.total.get());
+    }
+    assert!(load(true));
+    assert!(load(false));
+    assert_eq!(
+        counters.checkpoint_decodes.decodes.get() - decodes_before,
+        1
+    );
+    assert_eq!(
+        counters.checkpoint_decodes.bytes.get() - decode_bytes_before,
+        checkpoint_len
+    );
+    fs::remove_dir_all(&root).unwrap();
+}

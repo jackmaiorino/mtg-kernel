@@ -1351,10 +1351,12 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             "objective":"gae_uniform_kl_recovery/v1", "diagnostics":diagnostics.map(|d|d.finish(&parameters,&gradients,&next_parameters))
         }));
         let gradient_snapshot = named_state_snapshot(&parameters, &gradients);
-        self.model = candidate_model;
-        self.adam_step = next_step;
-        self.first_moments = next_first_moments;
-        self.second_moments = next_second_moments;
+        self.commit_step_dims_v1(
+            candidate_model,
+            next_step,
+            next_first_moments,
+            next_second_moments,
+        );
         phase_recorder.finish_v1(finalization_timer);
         Ok((
             NativePolicyTrainStepResultV1 {

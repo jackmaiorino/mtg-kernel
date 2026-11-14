@@ -465,7 +465,7 @@ impl STrainStateV1 {
             auxiliary_loss,
             mask,
             auxiliary_bias_residual,
-        } = self.model.auxiliary_gradients_with_workers_v1(
+        } = self.model_v1().auxiliary_gradients_with_workers_v1(
             groups,
             value_coefficient,
             input,
@@ -473,9 +473,10 @@ impl STrainStateV1 {
             workers,
         )?;
         let active = input.coefficient > 0.0 && !input.rows.is_empty();
-        let gradient_components = components_v1(&self.model.layout, &auxiliary, &grad);
-        let auxiliary_head_l2 = head_l2_v1(&self.model.layout, &auxiliary);
-        let ordinary_head_l2 = head_l2_v1(&self.model.layout, &grad);
+        let layout = &self.model_v1().layout;
+        let gradient_components = components_v1(layout, &auxiliary, &grad);
+        let auxiliary_head_l2 = head_l2_v1(layout, &auxiliary);
+        let ordinary_head_l2 = head_l2_v1(layout, &grad);
         let cap = if input.step_telemetry || input.cap.is_some() {
             let (a, b) = (l2_v1(&auxiliary), l2_v1(&grad));
             let applied = match input.cap {
@@ -505,18 +506,22 @@ impl STrainStateV1 {
                 *value += *extra;
             }
         }
-        let before = self.model.values.clone();
+        let before = self.model_v1().values.clone();
         let ordinary_only = ordinary_gradient
             .map(|ordinary| {
                 let mut alone = self.clone();
                 alone.adam_step_with_gradient_v1(&ordinary, learning_rate)?;
-                Ok::<_, String>(alone.model)
+                Ok::<_, String>(alone.into_model_v1())
             })
             .transpose()?;
         self.adam_step_with_gradient_v1(&grad, learning_rate)?;
         let adam_steps = ordinary_only.as_ref().map(|alone| {
             let (mut combined, mut ordinary, mut difference) = (0.0_f64, 0.0_f64, 0.0_f64);
-            for ((&x, &y), &o) in before.iter().zip(&self.model.values).zip(&alone.values) {
+            for ((&x, &y), &o) in before
+                .iter()
+                .zip(&self.model_v1().values)
+                .zip(&alone.values)
+            {
                 let (x, y, o) = (f64::from(x), f64::from(y), f64::from(o));
                 combined += (y - x) * (y - x);
                 ordinary += (o - x) * (o - x);
@@ -529,7 +534,7 @@ impl STrainStateV1 {
         Ok((
             SStepV1 {
                 loss,
-                adam_step: self.adam_step,
+                adam_step: self.adam_step_v1(),
                 after_state_sha256: self.state_sha256_v1(),
             },
             SAuxiliaryResultV1 {

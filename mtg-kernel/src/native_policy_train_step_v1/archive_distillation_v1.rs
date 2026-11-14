@@ -432,10 +432,12 @@ impl NativePolicyValueTrainStateV1 {
             &next_second_moments,
             self.scorer_bias_anchor_bits,
         )?;
-        self.model = candidate_model;
-        self.adam_step = next_step;
-        self.first_moments = next_first_moments;
-        self.second_moments = next_second_moments;
+        self.commit_step_dims_v1(
+            candidate_model,
+            next_step,
+            next_first_moments,
+            next_second_moments,
+        );
         Ok(())
     }
 }

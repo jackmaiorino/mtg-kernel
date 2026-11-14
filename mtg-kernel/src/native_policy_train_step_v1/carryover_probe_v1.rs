@@ -35,7 +35,7 @@ impl NativePolicyValueTrainStateV1 {
             scorer_bias_anchor_bits: before.scorer_bias_anchor_bits,
         };
         let mut successor = Self::from_snapshot_v1(self.model_v1().clone(), &after)?;
-        successor.training_math = self.training_math;
+        successor.set_training_math_v1(self.training_math);
         Ok(successor)
     }
 }

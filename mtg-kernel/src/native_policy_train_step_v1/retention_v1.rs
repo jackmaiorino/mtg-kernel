@@ -280,10 +280,7 @@ impl NativePolicyValueTrainStateV1 {
             teacher_gauge: teaching_result.scorer_bias_gauge,
             retention_gauge: Some(retained.gauge),
         };
-        self.model = model;
-        self.first_moments = first;
-        self.second_moments = second;
-        self.adam_step = next_step;
+        self.commit_step_dims_v1(model, next_step, first, second);
         Ok(result)
     }
 }
