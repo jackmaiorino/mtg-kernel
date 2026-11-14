@@ -15,9 +15,14 @@ use super::net8::{
     forward_batch_v1, DeviceBuffersV1, ExactOutputV1, Net8DeviceModelV1, Net8HostModelV1,
     PackedBatchV1, DEVICE_ERROR_PREFIX_V1,
 };
+use super::s_transformer::{
+    forward_s_batch_v1, SDeviceBuffersV1, SDeviceModelV1, SHostModelV1, SPackedBatchV1,
+    S_MAX_MODELS,
+};
 use super::ExactDeviceV1;
 use crate::inference_cache_v1::ForwardPathV1;
 use crate::native_policy_value_net_v1::{NativeEncodedDecisionViewV1, NativePolicyValueNetV1};
+use crate::s_transformer_v1::{SConfigV1, SInputV1, SModelV1};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError};
@@ -66,9 +71,19 @@ fn size_bucket_v1(size: usize) -> usize {
 
 type Reply = Result<ExactOutputV1, String>;
 
+enum RequestPayload {
+    Net8 {
+        model: Arc<Net8HostModelV1>,
+        packed: PackedBatchV1,
+    },
+    S {
+        model: Arc<SHostModelV1>,
+        packed: SPackedBatchV1,
+    },
+}
+
 struct Request {
-    model: Arc<Net8HostModelV1>,
-    packed: PackedBatchV1,
+    payload: RequestPayload,
     reply: SyncSender<Reply>,
 }
 
@@ -212,8 +227,33 @@ impl InferenceClientV1 {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
             .send(Message::Request(Request {
-                model: Arc::clone(model),
-                packed,
+                payload: RequestPayload::Net8 {
+                    model: Arc::clone(model),
+                    packed,
+                },
+                reply,
+            }))
+            .map_err(|_| "inference service stopped".to_owned())?;
+        receiver
+            .recv()
+            .map_err(|_| "inference service stopped".to_owned())?
+    }
+
+    /// The exact forward of `input` under an S `model`, from the service.
+    pub(crate) fn forward_s_v1(
+        &mut self,
+        model: &Arc<SHostModelV1>,
+        input: SInputV1<'_>,
+    ) -> Result<ExactOutputV1, String> {
+        let mut packed = SPackedBatchV1::default();
+        packed.push_infer_v1(0, &model.config, input)?;
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(Message::Request(Request {
+                payload: RequestPayload::S {
+                    model: Arc::clone(model),
+                    packed,
+                },
                 reply,
             }))
             .map_err(|_| "inference service stopped".to_owned())?;
@@ -240,6 +280,11 @@ struct Resident {
     last_used: u64,
 }
 
+struct ResidentS {
+    model: SDeviceModelV1,
+    last_used: u64,
+}
+
 fn serve_v1(
     device: ExactDeviceV1,
     policy: BatchPolicyV1,
@@ -247,8 +292,11 @@ fn serve_v1(
     shared: Arc<Shared>,
 ) {
     let mut resident: HashMap<[u8; 32], Resident> = HashMap::new();
+    let mut resident_s: HashMap<[u8; 32], ResidentS> = HashMap::new();
     let mut buffers = DeviceBuffersV1::default();
     let mut batch = PackedBatchV1::default();
+    let mut s_buffers = SDeviceBuffersV1::default();
+    let mut s_batch = SPackedBatchV1::default();
     let mut stats = ServiceStatsV1::default();
     let mut tick = 0u64;
     let mut pending: Vec<Request> = Vec::new();
@@ -326,8 +374,11 @@ fn serve_v1(
             &device,
             &policy,
             &mut resident,
+            &mut resident_s,
             &mut buffers,
             &mut batch,
+            &mut s_buffers,
+            &mut s_batch,
             &pending,
             tick,
             &mut stats,
@@ -344,12 +395,15 @@ fn serve_v1(
         }
         stats.batch_sizes[size_bucket_v1(pending.len())] += 1;
         for (request, reply) in pending.drain(..).zip(result) {
+            let is_s = matches!(request.payload, RequestPayload::S { .. });
             // The CPU forward refuses a non-finite output the same way.
             let reply = reply.and_then(|output| {
                 let finite =
                     output.value.is_finite() && output.logits.iter().all(|x| x.is_finite());
                 if finite {
                     Ok(output)
+                } else if is_s {
+                    Err("S forward produced a non-finite output".into())
                 } else {
                     Err("non-finite GPU forward output".into())
                 }
@@ -361,33 +415,50 @@ fn serve_v1(
     }
 }
 
-/// Every pending request's reply, in order. Requests run in groups of at
-/// most `max_models` distinct models (first-use order, at most one v2 launch
-/// each), so any mix of models is served. A group's device error fails every
-/// request of the batch and stops before the next group; the caller then
-/// stops serving. A group's other errors fail only that group. Grouping
-/// changes launches, never a reply's bits.
+/// Every pending request's reply, in order. Net-8 and S requests each run in
+/// groups of at most `max_models` distinct models, so any mix of Net-8 and S
+/// models (e.g. W5 XS learner vs Net-8 opponent) is served on one device. A
+/// group's device error fails every request of the batch and stops before the
+/// next group; the caller then stops serving.
 #[allow(clippy::too_many_arguments)]
 fn run_batch_v1(
     device: &ExactDeviceV1,
     policy: &BatchPolicyV1,
     resident: &mut HashMap<[u8; 32], Resident>,
+    resident_s: &mut HashMap<[u8; 32], ResidentS>,
     buffers: &mut DeviceBuffersV1,
     batch: &mut PackedBatchV1,
+    s_buffers: &mut SDeviceBuffersV1,
+    s_batch: &mut SPackedBatchV1,
     pending: &[Request],
     tick: u64,
     stats: &mut ServiceStatsV1,
 ) -> Vec<Reply> {
     let mut digests: Vec<[u8; 32]> = Vec::new();
+    let mut s_configs: Vec<SConfigV1> = Vec::new();
     for request in pending {
-        if !digests.contains(&request.model.digest) {
-            digests.push(request.model.digest);
+        match &request.payload {
+            RequestPayload::Net8 { model, .. } => {
+                if !digests.contains(&model.digest) {
+                    digests.push(model.digest);
+                }
+            }
+            RequestPayload::S { model, .. } => {
+                if !s_configs.contains(&model.config) {
+                    s_configs.push(model.config);
+                }
+            }
         }
     }
     let mut replies: Vec<Option<Reply>> = (0..pending.len()).map(|_| None).collect();
     for group in digests.chunks(policy.max_models.clamp(1, super::net8::V2_MAX_MODELS)) {
         let members: Vec<usize> = (0..pending.len())
-            .filter(|&i| group.contains(&pending[i].model.digest))
+            .filter(|&i| {
+                matches!(
+                    &pending[i].payload,
+                    RequestPayload::Net8 { model, .. } if group.contains(&model.digest)
+                )
+            })
             .collect();
         stats.groups += 1;
         let result = run_group_v1(
@@ -399,9 +470,6 @@ fn run_batch_v1(
                     replies[i] = Some(Ok(output));
                 }
             }
-            // A device error fails the whole batch at once, earlier groups
-            // included, and no later group touches the device (design 2.2:
-            // the context may be poisoned).
             Err(error) if error.starts_with(DEVICE_ERROR_PREFIX_V1) => {
                 return (0..pending.len()).map(|_| Err(error.clone())).collect();
             }
@@ -412,6 +480,49 @@ fn run_batch_v1(
             }
         }
     }
+
+    for config in &s_configs {
+        let mut s_digests: Vec<[u8; 32]> = Vec::new();
+        for request in pending {
+            if let RequestPayload::S { model, .. } = &request.payload {
+                if model.config == *config && !s_digests.contains(&model.digest) {
+                    s_digests.push(model.digest);
+                }
+            }
+        }
+        for group in s_digests.chunks(policy.max_models.clamp(1, S_MAX_MODELS)) {
+            let members: Vec<usize> = (0..pending.len())
+                .filter(|&i| {
+                    matches!(
+                        &pending[i].payload,
+                        RequestPayload::S { model, .. }
+                            if model.config == *config && group.contains(&model.digest)
+                    )
+                })
+                .collect();
+            stats.groups += 1;
+            let result = run_s_group_v1(
+                device, policy, resident_s, s_buffers, s_batch, pending, &members, group, tick,
+                stats,
+            );
+            match result {
+                Ok(outputs) => {
+                    for (&i, output) in members.iter().zip(outputs) {
+                        replies[i] = Some(Ok(output));
+                    }
+                }
+                Err(error) if error.starts_with(DEVICE_ERROR_PREFIX_V1) => {
+                    return (0..pending.len()).map(|_| Err(error.clone())).collect();
+                }
+                Err(error) => {
+                    for &i in &members {
+                        replies[i] = Some(Err(error.clone()));
+                    }
+                }
+            }
+        }
+    }
+
     replies
         .into_iter()
         .map(|reply| reply.expect("every request is in one group"))
@@ -432,7 +543,10 @@ fn run_group_v1(
     stats: &mut ServiceStatsV1,
 ) -> Result<Vec<ExactOutputV1>, String> {
     for &i in members {
-        let digest = pending[i].model.digest;
+        let RequestPayload::Net8 { model: host, .. } = &pending[i].payload else {
+            unreachable!("Net-8 group member");
+        };
+        let digest = host.digest;
         if !resident.contains_key(&digest) {
             while resident.len() >= policy.max_models {
                 // Drop the least recently used model this group does not use.
@@ -444,7 +558,7 @@ fn run_group_v1(
                     .ok_or("every resident model is in use by this group")?;
                 resident.remove(&victim);
             }
-            let model = Net8DeviceModelV1::upload_v1(device, &pending[i].model)?;
+            let model = Net8DeviceModelV1::upload_v1(device, host)?;
             stats.model_uploads += 1;
             resident.insert(
                 digest,
@@ -458,11 +572,11 @@ fn run_group_v1(
     }
     batch.clear();
     for &i in members {
-        let slot = group
-            .iter()
-            .position(|d| *d == pending[i].model.digest)
-            .expect("slot");
-        batch.append_v1(&pending[i].packed, slot)?;
+        let RequestPayload::Net8 { model, packed } = &pending[i].payload else {
+            unreachable!("Net-8 group member");
+        };
+        let slot = group.iter().position(|d| *d == model.digest).expect("slot");
+        batch.append_v1(packed, slot)?;
     }
     let models: Vec<&Net8DeviceModelV1> = group.iter().map(|d| &resident[d].model).collect();
     stats.requests += members.len() as u64;
@@ -471,6 +585,70 @@ fn run_group_v1(
         KernelsV1::V2 => 1,
     };
     forward_batch_v1(device, device.options.kernels, &models, batch, buffers)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_s_group_v1(
+    device: &ExactDeviceV1,
+    policy: &BatchPolicyV1,
+    resident_s: &mut HashMap<[u8; 32], ResidentS>,
+    buffers: &mut SDeviceBuffersV1,
+    batch: &mut SPackedBatchV1,
+    pending: &[Request],
+    members: &[usize],
+    group: &[[u8; 32]],
+    tick: u64,
+    stats: &mut ServiceStatsV1,
+) -> Result<Vec<ExactOutputV1>, String> {
+    for &i in members {
+        let RequestPayload::S { model: host, .. } = &pending[i].payload else {
+            unreachable!("S group member");
+        };
+        let digest = host.digest;
+        if !resident_s.contains_key(&digest) {
+            while resident_s.len() >= policy.max_models {
+                let victim = resident_s
+                    .iter()
+                    .filter(|(d, _)| !group.contains(d))
+                    .min_by_key(|(_, r)| r.last_used)
+                    .map(|(d, _)| *d)
+                    .ok_or("every resident S model is in use by this group")?;
+                resident_s.remove(&victim);
+            }
+            let model = SDeviceModelV1::upload_v1(device, host)?;
+            stats.model_uploads += 1;
+            resident_s.insert(
+                digest,
+                ResidentS {
+                    model,
+                    last_used: tick,
+                },
+            );
+        }
+        resident_s.get_mut(&digest).expect("resident S").last_used = tick;
+    }
+    batch.clear();
+    for &i in members {
+        let RequestPayload::S { model, packed } = &pending[i].payload else {
+            unreachable!("S group member");
+        };
+        let slot = group
+            .iter()
+            .position(|d| *d == model.digest)
+            .expect("S slot");
+        batch.append_v1(packed, slot)?;
+    }
+    let models: Vec<&SDeviceModelV1> = group.iter().map(|d| &resident_s[d].model).collect();
+    stats.requests += members.len() as u64;
+    stats.launches += 1;
+    let outputs = forward_s_batch_v1(device, &models, batch, buffers)?;
+    Ok(outputs
+        .into_iter()
+        .map(|out| ExactOutputV1 {
+            logits: out.logits,
+            value: out.value,
+        })
+        .collect())
 }
 
 /// The process's service, installed once by a run that declares the GPU
@@ -568,11 +746,14 @@ impl Drop for CollectorGuardV1 {
 pub(crate) struct PolicySlotV1 {
     /// Some(None): this net is not one the exact GPU forward runs.
     host: Option<Option<Arc<Net8HostModelV1>>>,
+    /// Cached `(Arc<SModelV1>, Arc<SHostModelV1>)` keyed by `Arc::ptr_eq`.
+    s_host: Option<(Arc<SModelV1>, Arc<SHostModelV1>)>,
 }
 
 impl PolicySlotV1 {
     pub(crate) fn clear(&mut self) {
         self.host = None;
+        self.s_host = None;
     }
 }
 
@@ -602,5 +783,35 @@ pub(crate) fn collector_forward_v1(
             .get_or_insert_with(|| Net8HostModelV1::from_net_v1(net).ok().map(Arc::new))
             .as_ref()?;
         Some(client.forward_v1(host, net, path, view))
+    })
+}
+
+/// The service's reply for this collector thread's S forward, or `None` when
+/// the thread has no client (the caller then runs `SModelV1::score_tensor_v1`,
+/// with the same bits).
+pub(crate) fn collector_s_forward_v1(
+    slot: &mut PolicySlotV1,
+    model: &Arc<SModelV1>,
+    input: SInputV1<'_>,
+) -> Option<Result<(Vec<f32>, f32), String>> {
+    COLLECTOR.with(|client| {
+        let mut client = client.borrow_mut();
+        let client = client.as_mut()?;
+        let needs_refresh = slot
+            .s_host
+            .as_ref()
+            .is_none_or(|(cached, _)| !Arc::ptr_eq(cached, model));
+        if needs_refresh {
+            slot.s_host = Some((
+                Arc::clone(model),
+                Arc::new(SHostModelV1::from_model_v1(model)),
+            ));
+        }
+        let (_, host) = slot.s_host.as_ref().expect("populated");
+        Some(
+            client
+                .forward_s_v1(host, input)
+                .map(|out| (out.logits, out.value)),
+        )
     })
 }

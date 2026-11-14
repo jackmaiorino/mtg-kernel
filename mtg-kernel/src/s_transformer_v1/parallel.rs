@@ -1041,6 +1041,12 @@ impl SModelV1 {
         workers: usize,
         caller_work: &mut SWorkV1,
     ) -> Result<SLossV1, String> {
+        #[cfg(feature = "gpu-exact-v1")]
+        if let Some(loss) =
+            self.try_gpu_gae_loss_gradient_masked_v1(groups, value_coefficient, None, gradient)?
+        {
+            return Ok(loss);
+        }
         self.gae_loss_gradient_planned_v1(
             groups,
             value_coefficient,
@@ -1061,6 +1067,12 @@ impl SModelV1 {
         workers: usize,
         caller_work: &mut SWorkV1,
     ) -> Result<SLossV1, String> {
+        #[cfg(feature = "gpu-exact-v1")]
+        if let Some(loss) =
+            self.try_gpu_gae_loss_gradient_masked_v1(groups, value_coefficient, mask, gradient)?
+        {
+            return Ok(loss);
+        }
         self.gae_loss_gradient_pipelined_v1(
             groups,
             value_coefficient,
