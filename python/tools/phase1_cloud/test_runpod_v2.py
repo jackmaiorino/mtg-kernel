@@ -6,6 +6,7 @@ since v2 rejects unknown body fields with a 422.
 """
 from __future__ import annotations
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -15,9 +16,10 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import external_guard  # noqa: E402
 import lease_guard  # noqa: E402
-from prepare_lease import prepare  # noqa: E402
+from prepare_lease import prepare, sanitize_pod  # noqa: E402
 import prepare_volume  # noqa: E402
 from test_cloud import lease  # noqa: E402
+import verify_pod_absent  # noqa: E402
 
 # CreatePodRequest = ContainerConfig + its own properties (unevaluatedProperties: false).
 CREATE_POD_FIELDS = {'args', 'cmd', 'entrypoint', 'disk', 'env', 'image', 'ports', 'registry',
@@ -136,6 +138,93 @@ class RequestSchemaTests(unittest.TestCase):
                 text = path.read_text(encoding='utf-8')
                 self.assertNotIn('rest.runpod.io', text)
                 self.assertNotIn("get('portMappings')", text)
+
+
+class ResourceIdTests(unittest.TestCase):
+    def test_v2_prefixed_ids_are_accepted_and_unsafe_ids_rejected(self):
+        valid = ('pod_abc123', 'vol_xyz', 'pod-123_abc', 'a', 'abc123')
+        invalid = ('', '_pod', '-pod', 'pod_abc123.presence', 'pod_abc123.absent',
+                   'pod/evil', 'pod\\evil', 'pod?x=1', 'pod#frag', 'pod%20', 'pod id', None, 123)
+        for resource_id in valid:
+            with self.subTest(valid=resource_id):
+                self.assertTrue(external_guard.valid_id(resource_id))
+                self.assertEqual(lease_guard.Provider('fake-key', resource_id).pod_id, resource_id)
+                self.assertEqual(verify_pod_absent.endpoint_for(resource_id),
+                                 'https://api.runpod.io/v2/pods/' + resource_id)
+        for bad in invalid:
+            with self.subTest(invalid=bad):
+                self.assertFalse(external_guard.valid_id(bad))
+                with self.assertRaises(ValueError):
+                    lease_guard.Provider('fake-key', bad)
+                if isinstance(bad, str):
+                    with self.assertRaises(ValueError):
+                        verify_pod_absent.endpoint_for(bad)
+
+    def test_sanitize_pod_and_volume_accept_v2_prefixed_ids(self):
+        pod = sanitize_pod({
+            'id': 'pod_abc123', 'name': 'phase1-test', 'status': 'RUNNING', 'cost': 0.96,
+            'dataCenterId': 'EU-RO-1',
+            'mounts': {'network': [{'volumeId': 'vol_xyz', 'path': '/workspace'}]},
+        })
+        self.assertEqual(pod['id'], 'pod_abc123')
+        self.assertEqual(pod['volume_id'], 'vol_xyz')
+        volume = prepare_volume.sanitize_volume({
+            'id': 'vol_xyz', 'name': 'phase1-volume-test', 'size': 20, 'dataCenter': 'EU-RO-1',
+        })
+        self.assertEqual(volume['id'], 'vol_xyz')
+        for bad_id in ('_pod', 'pod.presence', 'pod/evil'):
+            with self.subTest(bad_id=bad_id), self.assertRaises(ValueError):
+                sanitize_pod({
+                    'id': bad_id, 'name': 'phase1-test', 'status': 'RUNNING', 'cost': 0.96,
+                    'mounts': {'network': [{'volumeId': 'vol_xyz', 'path': '/workspace'}]},
+                })
+            with self.subTest(bad_vol=bad_id), self.assertRaises(ValueError):
+                prepare_volume.sanitize_volume({
+                    'id': bad_id, 'name': 'phase1-volume-test', 'size': 20, 'dataCenter': 'EU-RO-1',
+                })
+
+    def test_guards_retain_and_release_underscore_pod_id(self):
+        owned, listed, malformed = external_guard.census_entries(
+            [{'id': 'pod_abc123', 'name': 'phase1-test'}], 'phase1-test')
+        self.assertEqual((owned, listed, malformed), (['pod_abc123'], {'pod_abc123'}, False))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            known = root / 'lease/known-pods'
+            with external_guard.LeaseClient(known, 'phase1-test', 'fake-key', clock=lambda: 1000.0,
+                                            sleep=lambda _: None) as client:
+                created = client.post({'name': 'phase1-test'},
+                                      poster=lambda _: {'id': 'pod_abc123', 'name': 'phase1-test'})
+            self.assertEqual(created['id'], 'pod_abc123')
+            self.assertTrue((known / 'pod_abc123.json').exists())
+
+            calls = []
+            clock = [100.0]
+            api = MagicMock()
+            api.call.side_effect = lambda method: (calls.append(method), None)[1]
+            with patch('time.sleep'), patch('time.time', side_effect=lambda: clock.__setitem__(0, clock[0] + 31.0) or clock[0]):
+                lease_guard.release_after_failure(
+                    api, {'name': 'phase1-test', 'network_volume_id': 'vol_xyz'},
+                    'pod_abc123', root / 'guard', 'test_failure')
+            self.assertIn('DELETE', calls)
+
+            snapshot = root / 'funding.json'
+            snapshot.write_text(json.dumps({
+                'observed_utc': '1970-01-01T00:16:40+00:00',
+            }), encoding='utf-8')
+            vol_api = MagicMock()
+            vol_api.get.return_value = {
+                'id': 'vol_xyz', 'name': 'phase1-volume-test', 'size': 20, 'dataCenter': 'EU-RO-1',
+            }
+            absent_api = MagicMock()
+            absent_api.lookup.return_value = {'status': 404, 'kind': 'not_found', 'body': None, 'reason': None}
+            with patch.dict(os.environ, {'RUNPOD_API_KEY': 'fake-key'}):
+                verified = prepare_volume.verify_volume('vol_xyz', root / 'vol', snapshot, api=vol_api, now=1010)
+                absence, _ = verify_pod_absent.verify_absence(
+                    'pod_abc123', root / 'absent', repeat=2, interval=0,
+                    api=absent_api, now=lambda: 1010.0, sleep=lambda _: None)
+            self.assertEqual(verified['id'], 'vol_xyz')
+            self.assertTrue(absence['provider_absent'])
 
 
 if __name__ == '__main__':

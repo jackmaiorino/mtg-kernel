@@ -36,7 +36,8 @@ import time
 import urllib.error
 import urllib.request
 from common import encoded, pin, read, require, write, require_fresh_funding_snapshot
-from lease_guard import PODS_URL, Provider as AccountProvider, pod_network_volume_ids, validate
+from lease_guard import (PODS_URL, RESOURCE_ID_PATTERN, Provider as AccountProvider,
+                         pod_network_volume_ids, validate)
 from external_guard import (LeaseClient, ReleaseClaimed, StoreClosed, record_create_attempt, record_created_pod,
                             require_boundary, resolve_or_alert, valid_id)
 from runtime_observation import IMAGE_REFERENCE
@@ -246,6 +247,7 @@ def sanitize_pod(raw):
         require(field in raw, 'pod response missing ' + field)
     require(isinstance(raw['id'], str) and isinstance(raw['name'], str)
             and isinstance(raw['status'], str), 'invalid pod field types')
+    require(valid_id(raw['id']), 'invalid exact pod id')
     require(isinstance(raw['cost'], (int, float)) and not isinstance(raw['cost'], bool)
             and raw['cost'] >= 0, 'invalid pod cost in response')
     data_center = raw.get('dataCenterId')
@@ -260,6 +262,7 @@ def sanitize_pod(raw):
     except ValueError:
         volumes = None
     require(volumes is not None and len(volumes) == 1, 'pod response missing network volume id')
+    require(re.fullmatch(RESOURCE_ID_PATTERN, volumes[0]), 'invalid exact volume id')
     return {'id': raw['id'], 'name': raw['name'], 'status': raw['status'],
             'cost_per_hour_usd': raw['cost'], 'data_center_id': data_center,
             'data_center_id_reported': data_center is not None, 'volume_id': volumes[0]}
@@ -294,6 +297,7 @@ def execute_create(template, output, funding_snapshot_path, volume_id, api=None,
     require(funding_snapshot_path, '--funding-snapshot is required with --execute')
     require_fresh_funding_snapshot(funding_snapshot_path, now)
     require(volume_id, '--volume-id is required with --execute')
+    require(isinstance(volume_id, str) and re.fullmatch(RESOURCE_ID_PATTERN, volume_id), 'invalid exact volume id')
     # Unlike prepare_volume.py's template, prepare_lease.py saves the raw Pod
     # create-request body directly (no method/url/headers wrapper): the key
     # goes only in the Authorization header, injected by Provider.create().

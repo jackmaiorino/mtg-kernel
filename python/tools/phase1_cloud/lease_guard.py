@@ -71,6 +71,10 @@ DELETE_MARGIN_SECONDS = 600       # the resident guard starts deleting 10 min be
 API_V2 = 'https://api.runpod.io/v2'
 PODS_URL = API_V2 + '/pods'
 GRAPHQL_URL = 'https://api.runpod.io/graphql'   # account balance only: v2 has no equivalent
+# OpenAPI v2 documents Pod IDs such as "pod_abc123" and volume IDs such as "vol_xyz".
+# Require an alphanumeric start and allow ASCII letters, digits, underscores and hyphens,
+# keeping dots, slashes, query/fragment characters and whitespace forbidden.
+RESOURCE_ID_PATTERN = r'[A-Za-z0-9][A-Za-z0-9_-]*'
 
 
 def pod_rate(pod):
@@ -208,7 +212,8 @@ def decision(lease, now, highest_rate, progress=None):
 
 class Provider:
     def __init__(self, key, pod_id):
-        require(key and re.fullmatch('[A-Za-z0-9]+', pod_id), 'runtime Pod ID/key missing')
+        require(key and isinstance(pod_id, str) and re.fullmatch(RESOURCE_ID_PATTERN, pod_id),
+                'runtime Pod ID/key missing')
         self.key = key; self.pod_id = pod_id
 
     def call(self, method):
@@ -324,7 +329,7 @@ def release_after_failure(api,identity,pod_id,state,reason):
         state=Path(state)
     except Exception:  # noqa: BLE001
         state=Path('/tmp')
-    if not (isinstance(pod_id,str) and re.fullmatch('[A-Za-z0-9]+',pod_id)):
+    if not (isinstance(pod_id, str) and re.fullmatch(RESOURCE_ID_PATTERN, pod_id)):
         # Without the runtime ID there is nothing safe to delete; the workstation guards cover this.
         raise SystemExit('runtime Pod ID unavailable for failure recovery')
     absence=AbsenceConfirmer()

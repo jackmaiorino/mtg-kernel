@@ -74,12 +74,12 @@ import time
 import urllib.error
 import urllib.request
 from common import encoded, require, write
-from lease_guard import PODS_URL
+from lease_guard import PODS_URL, RESOURCE_ID_PATTERN
 from prepare_lease import KEY_PLACEHOLDER
 
 SCHEMA = 'phase1-cloud-pod-absence/v1'
 USER_AGENT = 'phase1-pod-absence-verify/1'
-POD_ID_PATTERN = '[A-Za-z0-9]+'
+POD_ID_PATTERN = RESOURCE_ID_PATTERN
 DEFAULT_REPEAT = 2
 DEFAULT_INTERVAL_SECONDS = 30.0
 

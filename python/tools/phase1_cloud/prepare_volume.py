@@ -43,7 +43,7 @@ import urllib.error
 import urllib.request
 from common import (encoded, pin, read, require, write, FUNDING_SNAPSHOT_MAX_AGE_SECONDS,
                     funding_snapshot_age_seconds, require_fresh_funding_snapshot)
-from lease_guard import API_V2
+from lease_guard import API_V2, RESOURCE_ID_PATTERN
 from prepare_lease import KEY_PLACEHOLDER
 
 SPEC_SCHEMA = 'phase1-cloud-volume-preparation/v1'
@@ -54,7 +54,7 @@ VERIFY_SCHEMA = 'phase1-cloud-volume-verification/v1'
 VOLUMES_URL = API_V2 + '/network-volumes'
 USER_AGENT = 'phase1-volume-prepare/1'
 VOLUME_NAME_PATTERN = '[a-zA-Z0-9-]+'
-VOLUME_ID_PATTERN = '[A-Za-z0-9]+'
+VOLUME_ID_PATTERN = RESOURCE_ID_PATTERN
 
 # Must match prepare_lease.py's body['dataCenterIds'] == ['EU-RO-1']: a network
 # volume is created in one fixed data center and a Pod can only attach a volume
@@ -276,6 +276,7 @@ def sanitize_volume(raw):
         require(field in raw, 'volume response missing ' + field)
     require(isinstance(raw['id'], str) and isinstance(raw['name'], str)
             and isinstance(raw['dataCenter'], str), 'invalid volume field types')
+    require(re.fullmatch(VOLUME_ID_PATTERN, raw['id']), 'invalid exact volume id')
     require(isinstance(raw['size'], int) and not isinstance(raw['size'], bool) and raw['size'] >= 0,
             'invalid volume size in response')
     return {'id': raw['id'], 'name': raw['name'], 'size_gb': raw['size'],
