@@ -415,10 +415,12 @@ impl NativePolicyValueTrainStateV1 {
         )?;
         let gradient_snapshot = named_state_snapshot(&parameters, &gradients);
         // No fallible work follows: commit the whole candidate state together.
-        self.model = candidate_model;
-        self.adam_step = next_step;
-        self.first_moments = next_first_moments;
-        self.second_moments = next_second_moments;
+        self.commit_step_dims_v1(
+            candidate_model,
+            next_step,
+            next_first_moments,
+            next_second_moments,
+        );
         Ok(NativePolicyTrainStepResultV1 {
             policy_sum,
             value_sum,

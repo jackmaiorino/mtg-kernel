@@ -36,7 +36,7 @@ Loaded-source train-state copies (`kept_state_bytes + served_state_bytes`) dropp
 from `192.14` MiB (`201,473,272` B) to `0` B on `fresh` and `warm`, and from
 `251.26` MiB (`263,465,048` B) to `0` B on `pool2` (where `checkpoint.json` decodes
 also dropped from `10` to `6`, `-40.0%`, because carrying the learner state outside
-the 4-slot `loaded_source_cache_v1` stopped evicting cached pool members).
+the 2-entry LRU `loaded_source_cache_v1` stopped evicting cached pool members).
 
 The [receipt](t1_native_fixture_desktop_dj1c40r_20261114.json) was written by
 `tools/native_fixture_bench/bench.py receipt`. It records every sample row, verdict
@@ -247,7 +247,7 @@ files).
 
 ### `pool2` loaded-source and decode counters (17 scoped loads per 2-update run)
 
-On `pool2`, `main` suffered 4-slot FIFO thrashing in `loaded_source_cache_v1` because
+On `pool2`, `main` suffered 2-entry LRU thrashing in `loaded_source_cache_v1` because
 learner checkpoints (`run_initial`, `update_readback`) competed with the 2 fixed-pool
 opponents, causing 13 cache misses and 10 full `checkpoint.json` decodes
 (`147.88 MB`). On `branch`, `CarriedLearnerV1` kept `collect_learner` and

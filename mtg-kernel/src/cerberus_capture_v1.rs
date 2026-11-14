@@ -800,7 +800,98 @@ fn validate_selected_catalog(state: &GameState, selected: bool) -> Result<(), St
     Ok(())
 }
 
+const CERBERUS_KINDS: [EventKindV1; 6] = [
+    EventKindV1::CerberusObserversV1,
+    EventKindV1::CerberusCaptureV1,
+    EventKindV1::CerberusCollectedV1,
+    EventKindV1::CerberusPublishedV1,
+    EventKindV1::CerberusOperationV1,
+    EventKindV1::CerberusCompletedV1,
+];
+const CERBERUS_WATCHED_KINDS: [EventKindV1; 7] = [
+    EventKindV1::CerberusObserversV1,
+    EventKindV1::CerberusCaptureV1,
+    EventKindV1::CerberusCollectedV1,
+    EventKindV1::CerberusPublishedV1,
+    EventKindV1::CerberusOperationV1,
+    EventKindV1::CerberusCompletedV1,
+    EventKindV1::TimeStopJournalV1,
+];
+const PROOF_STRIDE: usize = 64;
+
+pub(crate) struct CerberusProofV1 {
+    sources: Vec<AbilitySourceContractV4>,
+}
+
+fn is_cerberus_event(event: &CommittedEvent) -> bool {
+    matches!(
+        event,
+        CommittedEvent::CerberusObserversV1 { .. }
+            | CommittedEvent::CerberusCaptureV1 { .. }
+            | CommittedEvent::CerberusCollectedV1 { .. }
+            | CommittedEvent::CerberusPublishedV1 { .. }
+            | CommittedEvent::CerberusOperationV1 { .. }
+            | CommittedEvent::CerberusCompletedV1 { .. }
+    )
+}
+
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
+    if !enabled() || !state.engine.event_history.has_any(&CERBERUS_KINDS) {
+        return validate_full(state, false);
+    }
+    let history = &state.engine.event_history;
+    if let Some((from, summary)) =
+        history.proof_memo_v1::<CerberusProofV1>(crate::event_history_v1::ProvedV1::CerberusCapture)
+    {
+        if history
+            .range_v2(from..)
+            .iter()
+            .any(|event| CERBERUS_WATCHED_KINDS.contains(&event.kind_v1()))
+        {
+            return validate_full(state, true);
+        }
+        let proved = validate_from_proof(state, from, &summary);
+        #[cfg(test)]
+        crate::event_history_v1::proof_tests_v1::assert_same(
+            crate::event_history_v1::ProvedV1::CerberusCapture,
+            &proved,
+            &validate_full(state, false),
+        );
+        return proved;
+    }
+    validate_full(state, true)
+}
+
+fn validate_from_proof(
+    state: &GameState,
+    from: usize,
+    summary: &std::sync::Arc<CerberusProofV1>,
+) -> Result<(), String> {
+    if state.engine.event_log.iter().any(is_cerberus_event)
+        || pending_owners(state)
+            .any(|pending| matches!(pending.effect, EffectOp::CerberusUntapV1 { .. }))
+        || state
+            .stack
+            .iter()
+            .any(|item| matches!(item.inline_effect, Some(EffectOp::CerberusUntapV1 { .. })))
+        || summary.sources.iter().any(|&source| {
+            crate::engine::validate_historical_ability_source_contract(state, source).is_err()
+        })
+    {
+        return validate_full(state, false);
+    }
+    let len = state.engine.event_history.len();
+    if len.saturating_sub(from) >= PROOF_STRIDE {
+        state.engine.event_history.set_proof_memo_v1(
+            crate::event_history_v1::ProvedV1::CerberusCapture,
+            len,
+            std::sync::Arc::clone(summary),
+        );
+    }
+    Ok(())
+}
+
+fn validate_full(state: &GameState, record_proof: bool) -> Result<(), String> {
     let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
     validate_selected_catalog(state, enabled())?;
     if !enabled() {
@@ -846,12 +937,17 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         }
     }
     let count = |by: &HashMap<u64, usize>, capture: u64| by.get(&capture).copied().unwrap_or(0);
+    let mut has_open = false;
+    let mut sources = Vec::<AbilitySourceContractV4>::new();
     for event in events_of(state, &[EventKindV1::CerberusCaptureV1]) {
         let CommittedEvent::CerberusCaptureV1 { capture } = event else {
             continue;
         };
         if capture_at(state, capture.history_index)? != capture {
             return Err("Cerberus end-step capture changed".into());
+        }
+        if !sources.contains(&capture.source) {
+            sources.push(capture.source);
         }
         let collected = count(&collected_by, capture.history_index);
         if collected > 1
@@ -885,6 +981,9 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             if capture_history_index == capture.history_index)
             })
             .count();
+        if collected == 0 || pending > 0 || live > 0 {
+            has_open = true;
+        }
         let published = published_by
             .get(&capture.history_index)
             .map_or(&[][..], Vec::as_slice);
@@ -1006,6 +1105,20 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
             crate::engine::validated_stack_item_target_spec(item, state)?;
         }
+    }
+    if record_proof
+        && !has_open
+        && !sources.is_empty()
+        && !state
+            .engine
+            .event_history
+            .has_any(&[EventKindV1::TimeStopJournalV1])
+    {
+        state.engine.event_history.set_proof_memo_v1(
+            crate::event_history_v1::ProvedV1::CerberusCapture,
+            state.engine.event_history.len(),
+            std::sync::Arc::new(CerberusProofV1 { sources }),
+        );
     }
     Ok(())
 }

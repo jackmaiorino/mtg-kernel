@@ -139,11 +139,11 @@ impl VerifiableSourceKindV1 {
     }
 }
 
-pub(super) fn classify_fresh_v1(
+pub(super) fn classify_fresh_v1<T>(
     source: &ExpandedModelSourceV1,
     descriptor_bytes: &[u8],
     policy: &FrozenPlayPolicyV1,
-    saved: Option<&ExpandedCheckpointV1>,
+    saved: Option<&ExpandedCheckpointV1<T>>,
 ) -> Option<(VerifiableSourceKindV1, Option<RecordedInputsV1>)> {
     if source.checkpoint.is_some() != saved.is_some()
         || saved.is_some_and(|saved| saved.archive_distillation.is_some())
@@ -185,11 +185,11 @@ pub(super) fn classify_converted_v1(
     ))
 }
 
-pub(super) fn classify_flat_checkpoint_v1(
+pub(super) fn classify_flat_checkpoint_v1<T>(
     source: &ExpandedModelSourceV1,
     descriptor_bytes: &[u8],
     policy: &FrozenPlayPolicyV1,
-    saved: &ExpandedCheckpointV1,
+    saved: &ExpandedCheckpointV1<T>,
 ) -> Option<(VerifiableSourceKindV1, Option<RecordedInputsV1>)> {
     if source.checkpoint.is_none()
         || saved.archive_distillation.is_some()
@@ -564,13 +564,14 @@ pub(super) fn policy_copied_bytes_v1(policy: &FrozenPlayPolicyV1) -> u64 {
 }
 
 /// Keep a full load's result, including its mutable train state. `saved` is
-/// the checkpoint it restored, if any.
-pub(super) fn remember_v1(
+/// the checkpoint it restored, if any. Sources this cache cannot serve
+/// exactly are left out.
+pub(super) fn remember_v1<T>(
     source: &ExpandedModelSourceV1,
     descriptor_bytes: &[u8],
     policy: &FrozenPlayPolicyV1,
     state: &NativePolicyValueTrainStateV1,
-    saved: Option<&ExpandedCheckpointV1>,
+    saved: Option<&ExpandedCheckpointV1<T>>,
 ) {
     #[cfg(test)]
     if BYPASS_FOR_TEST_V1.with(std::cell::Cell::get) {
@@ -598,12 +599,12 @@ pub(super) fn remember_v1(
 
 /// Keep a full load's policy and validated identity without cloning its train
 /// state (`kept_state_bytes == 0`).
-pub(super) fn remember_policy_v1(
+pub(super) fn remember_policy_v1<T>(
     source: &ExpandedModelSourceV1,
     descriptor_bytes: &[u8],
     policy: &FrozenPlayPolicyV1,
     identity: &ExpandedInferenceIdentityV1,
-    saved: Option<&ExpandedCheckpointV1>,
+    saved: Option<&ExpandedCheckpointV1<T>>,
 ) {
     #[cfg(test)]
     if BYPASS_FOR_TEST_V1.with(std::cell::Cell::get) {
@@ -698,12 +699,12 @@ pub(super) fn remember_converted_policy_v1(
 /// or FlatV8 branch with a checkpoint of that identity). Never inlined: its
 /// policy template stays out of the loader's frame.
 #[inline(never)]
-pub(super) fn remember_flat_checkpoint_v1(
+pub(super) fn remember_flat_checkpoint_v1<T>(
     source: &ExpandedModelSourceV1,
     descriptor_bytes: &[u8],
     policy: &FrozenPlayPolicyV1,
     state: &NativePolicyValueTrainStateV1,
-    saved: &ExpandedCheckpointV1,
+    saved: &ExpandedCheckpointV1<T>,
 ) {
     #[cfg(test)]
     if BYPASS_FOR_TEST_V1.with(std::cell::Cell::get) {
@@ -734,12 +735,12 @@ pub(super) fn remember_flat_checkpoint_v1(
 /// its train state. Never inlined: its policy template stays out of the
 /// loader's frame.
 #[inline(never)]
-pub(super) fn remember_flat_checkpoint_policy_v1(
+pub(super) fn remember_flat_checkpoint_policy_v1<T>(
     source: &ExpandedModelSourceV1,
     descriptor_bytes: &[u8],
     policy: &FrozenPlayPolicyV1,
     identity: &ExpandedInferenceIdentityV1,
-    saved: &ExpandedCheckpointV1,
+    saved: &ExpandedCheckpointV1<T>,
 ) {
     #[cfg(test)]
     if BYPASS_FOR_TEST_V1.with(std::cell::Cell::get) {

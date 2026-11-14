@@ -748,19 +748,86 @@ fn history(state: &GameState) -> Result<Vec<&InspirationResolutionReceiptV1>, St
     Ok(receipts)
 }
 
+const INSPIRATION_KINDS: [EventKindV1; 4] = [
+    EventKindV1::InspirationResolutionBoundaryV1,
+    EventKindV1::InspirationResolutionInputV1,
+    EventKindV1::InspirationResolutionOperationV1,
+    EventKindV1::InspirationEngineDepartureV1,
+];
+const PROOF_STRIDE: usize = 64;
+
+struct InspirationProofV1 {
+    closed_items: Vec<StackItemId>,
+    had_progenitus: bool,
+}
+
+fn is_inspiration_event(event: &CommittedEvent) -> bool {
+    matches!(
+        event,
+        CommittedEvent::InspirationResolutionBoundaryV1 { .. }
+            | CommittedEvent::InspirationResolutionInputV1 { .. }
+            | CommittedEvent::InspirationResolutionOperationV1 { .. }
+            | CommittedEvent::InspirationEngineDepartureV1 { .. }
+    )
+}
+
 pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     if locally_owned(state) {
         return Ok(());
     }
-    if state.engine.event_log.iter().any(|event| {
-        matches!(
-            event,
-            CommittedEvent::InspirationResolutionBoundaryV1 { .. }
-                | CommittedEvent::InspirationResolutionInputV1 { .. }
-                | CommittedEvent::InspirationResolutionOperationV1 { .. }
-                | CommittedEvent::InspirationEngineDepartureV1 { .. }
-        )
-    }) {
+    let history = &state.engine.event_history;
+    if !history.has_any(&INSPIRATION_KINDS) {
+        return validate_full(state, false);
+    }
+    if let Some((from, summary)) = history.proof_memo_v1::<InspirationProofV1>(
+        crate::event_history_v1::ProvedV1::InspirationResolution,
+    ) {
+        if history.range_v2(from..).iter().any(is_inspiration_event) {
+            return validate_full(state, true);
+        }
+        let proved = validate_from_proof(state, from, &summary);
+        #[cfg(test)]
+        crate::event_history_v1::proof_tests_v1::assert_same(
+            crate::event_history_v1::ProvedV1::InspirationResolution,
+            &proved,
+            &validate_full(state, false),
+        );
+        return proved;
+    }
+    validate_full(state, true)
+}
+
+fn validate_from_proof(
+    state: &GameState,
+    from: usize,
+    summary: &std::sync::Arc<InspirationProofV1>,
+) -> Result<(), String> {
+    if state.engine.event_log.iter().any(is_inspiration_event)
+        || (summary.had_progenitus && crate::progenitus_v1::validate(state).is_err())
+        || state.stack.iter().any(|item| {
+            item.v4.inspiration_started_v1.0.is_some()
+                || summary.closed_items.contains(&item.v4.stack_item_id)
+        })
+        || !matches!(tracked(state), Ok(false))
+    {
+        return validate_full(state, false);
+    }
+    let len = state.engine.event_history.len();
+    if len.saturating_sub(from) >= PROOF_STRIDE {
+        state.engine.event_history.set_proof_memo_v1(
+            crate::event_history_v1::ProvedV1::InspirationResolution,
+            len,
+            std::sync::Arc::clone(summary),
+        );
+    }
+    Ok(())
+}
+
+fn validate_full(state: &GameState, record_proof: bool) -> Result<(), String> {
+    if locally_owned(state) {
+        return Ok(());
+    }
+    if state.engine.event_log.iter().any(is_inspiration_event) {
         return Err("mandatory return receipt cannot enter the public trigger event log".into());
     }
     let receipts = history(state)?;
@@ -780,6 +847,13 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             }
         }
     }
+    let mut first_by_item =
+        std::collections::HashMap::<StackItemId, &InspirationResolutionReceiptV1>::new();
+    for receipt in &receipts {
+        first_by_item
+            .entry(receipt.stack_item_id)
+            .or_insert(*receipt);
+    }
     // The operations using each input, counted once instead of per input.
     let mut uses_of = std::collections::HashMap::new();
     for (_, e) in state
@@ -791,6 +865,8 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             *uses_of.entry(operation.input).or_insert(0usize) += 1;
         }
     }
+    let mut departures_by_closed =
+        std::collections::HashMap::<u32, Vec<(usize, &InspirationDepartureV1)>>::new();
     for (at, event) in state.engine.event_history.of_kinds_v2(&[
         EventKindV1::InspirationEngineDepartureV1,
         EventKindV1::InspirationResolutionInputV1,
@@ -820,6 +896,10 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 {
                     return Err("orphan Inspiration engine departure".into());
                 }
+                departures_by_closed
+                    .entry(departure.closed)
+                    .or_default()
+                    .push((at, departure.as_ref()));
             }
             _ => {}
         }
@@ -846,10 +926,21 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
                 return Err("Inspiration open boundary lost sole actual marked live row".into());
             }
         } else {
-            validate_departure(state, receipt)?;
+            validate_departure(
+                state,
+                receipt,
+                first_by_item.get(&receipt.stack_item_id).copied(),
+                departures_by_closed
+                    .get(&receipt.history_index)
+                    .map_or(&[][..], Vec::as_slice),
+            )?;
         }
     }
-    let open: Vec<_> = latest.into_iter().filter(|r| r.pending.is_some()).collect();
+    let open: Vec<_> = latest
+        .iter()
+        .copied()
+        .filter(|r| r.pending.is_some())
+        .collect();
     if open.len() > 1 {
         return Err("multiple mandatory return resolutions claim ownership".into());
     }
@@ -875,6 +966,20 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             .map_err(|_| "resolution history exceeds u32")?;
     } else if tracked(state)? {
         return Err("mandatory return resolution has no open committed boundary".into());
+    } else if record_proof && !receipts.is_empty() {
+        let closed_items = latest.iter().map(|r| r.stack_item_id).collect();
+        let had_progenitus = state
+            .engine
+            .event_history
+            .has_any(&[EventKindV1::ProgenitusShuffledV1]);
+        state.engine.event_history.set_proof_memo_v1(
+            crate::event_history_v1::ProvedV1::InspirationResolution,
+            state.engine.event_history.len(),
+            std::sync::Arc::new(InspirationProofV1 {
+                closed_items,
+                had_progenitus,
+            }),
+        );
     }
     Ok(())
 }
@@ -882,27 +987,13 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
 fn validate_departure(
     state: &GameState,
     receipt: &InspirationResolutionReceiptV1,
+    first: Option<&InspirationResolutionReceiptV1>,
+    rows: &[(usize, &InspirationDepartureV1)],
 ) -> Result<(), String> {
-    let rows = state
-        .engine
-        .event_history
-        .of_kinds_v2(&[EventKindV1::InspirationEngineDepartureV1])
-        .filter_map(|(at, e)| match e {
-            CommittedEvent::InspirationEngineDepartureV1 { departure }
-                if departure.closed == receipt.history_index =>
-            {
-                Some((at, departure.as_ref()))
-            }
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    let [(at, departure)] = rows.as_slice() else {
+    let [(at, departure)] = rows else {
         return Err("Inspiration closure lacks unique actual engine departure".into());
     };
-    let first = history(state)?
-        .into_iter()
-        .find(|r| r.stack_item_id == receipt.stack_item_id)
-        .ok_or("Inspiration initial row missing")?;
+    let first = first.ok_or("Inspiration initial row missing")?;
     if departure.index as usize != *at
         || departure.index <= receipt.history_index
         || first
@@ -1197,5 +1288,125 @@ mod absence_tests {
             serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         assert_eq!(state, restored);
         validate(&state).unwrap();
+    }
+
+    #[cfg(all(
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    #[test]
+    fn closed_inspiration_proof_rejects_live_state_tamper_after_cached_cursor() {
+        use crate::engine::{self, Action, Decision};
+        use crate::event_history_v1::{proof_tests_v1, ProvedV1};
+        use crate::ids::PlayerId;
+
+        let mut state =
+            crate::inspiration_observation_v1::tests::registered::at_mill(PlayerId::P0, "Island");
+        let open_pending = state.engine.pending_effect.clone().unwrap();
+        for _ in 0..8 {
+            let decision = engine::advance_until_decision(&mut state);
+            match decision {
+                Decision::ChooseEffectTargets {
+                    legal_targets,
+                    min_targets,
+                    ..
+                } => {
+                    if let Some(&target) = legal_targets.first() {
+                        engine::step(&mut state, Action::ChooseEffectTarget(target)).unwrap();
+                    } else {
+                        assert_eq!(min_targets, 0);
+                        engine::step(&mut state, Action::FinishEffectSelection).unwrap();
+                    }
+                }
+                Decision::CastSpellOrPass { .. } => break,
+                other => panic!("unexpected decision: {other:?}"),
+            }
+        }
+        assert!(state.engine.pending_effect.is_none());
+        validate(&state).unwrap();
+        let initial_len = state.engine.event_history.len();
+        assert_eq!(
+            state
+                .engine
+                .event_history
+                .proof_memo_v1::<InspirationProofV1>(ProvedV1::InspirationResolution)
+                .map(|(covered, _)| covered),
+            Some(initial_len)
+        );
+
+        for _ in 0..70u32 {
+            state
+                .engine
+                .event_history
+                .push(CommittedEvent::UpkeepBegan {
+                    player: PlayerId::P0,
+                });
+        }
+        let uses_before = proof_tests_v1::uses();
+        validate(&state).unwrap();
+        assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+        assert_eq!(
+            state
+                .engine
+                .event_history
+                .proof_memo_v1::<InspirationProofV1>(ProvedV1::InspirationResolution)
+                .map(|(covered, _)| covered),
+            Some(state.engine.event_history.len())
+        );
+
+        let departure_event = state
+            .engine
+            .event_history
+            .iter()
+            .rev()
+            .find(|e| matches!(e, CommittedEvent::InspirationEngineDepartureV1 { .. }))
+            .unwrap()
+            .clone();
+        let CommittedEvent::InspirationEngineDepartureV1 { ref departure } = departure_event else {
+            unreachable!();
+        };
+
+        // (a) Reintroduce closed stack row onto live stack.
+        let mut reintroduced = state.clone();
+        reintroduced.stack.push((*departure.item).clone());
+        let uses_before = proof_tests_v1::uses();
+        assert_eq!(
+            validate(&reintroduced),
+            Err("Inspiration closed row was redirected or reintroduced".into())
+        );
+        assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+
+        // (b) Forge inspiration_started_v1 on a new live stack row.
+        let mut forged_stack = state.clone();
+        let mut forged_item = (*departure.item).clone();
+        forged_item.v4.stack_item_id = StackItemId(999_999);
+        forged_item.v4.inspiration_started_v1 = InspirationStartedV1(Some(999_999));
+        forged_stack.stack.push(forged_item);
+        let uses_before = proof_tests_v1::uses();
+        assert_eq!(
+            validate(&forged_stack),
+            Err("Inspiration marked live row lost its original receipt".into())
+        );
+        assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+
+        // (c) Inject Inspiration receipt into transient event_log.
+        let mut forged_log = state.clone();
+        forged_log.engine.event_log.push(departure_event);
+        let uses_before = proof_tests_v1::uses();
+        assert_eq!(
+            validate(&forged_log),
+            Err("mandatory return receipt cannot enter the public trigger event log".into())
+        );
+        assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+
+        // (d) Restore tracked pending_effect without an open committed boundary.
+        let mut forged_pending = state.clone();
+        forged_pending.engine.pending_effect = Some(open_pending);
+        let uses_before = proof_tests_v1::uses();
+        assert_eq!(
+            validate(&forged_pending),
+            Err("mandatory return resolution has no open committed boundary".into())
+        );
+        assert_eq!(proof_tests_v1::uses(), uses_before + 1);
     }
 }

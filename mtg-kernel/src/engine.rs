@@ -11165,7 +11165,22 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
             out.push(id);
         }
     }
-    let has_sphinx_lore_grant = !state.players[player.index()].graveyard.is_empty() && state.engine.event_history.iter().any(|e|matches!(e,CommittedEvent::SphinxLoreV1{journal:crate::effect::sphinx_lore_v1::JournalV1::Installed{controller,..}}if *controller==player));
+    let has_sphinx_lore_grant = !state.players[player.index()].graveyard.is_empty()
+        && state
+            .engine
+            .event_history
+            .of_kinds_v2(&[crate::event_history_v1::EventKindV1::SphinxLoreV1])
+            .any(|(_, e)| {
+                matches!(
+                    e,
+                    CommittedEvent::SphinxLoreV1 {
+                        journal: crate::effect::sphinx_lore_v1::JournalV1::Installed {
+                            controller,
+                            ..
+                        }
+                    } if *controller == player
+                )
+            });
     for &id in &state.players[player.index()].graveyard {
         let def = &card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
         let castable = match unambiguous_graveyard_cast_method(def) {

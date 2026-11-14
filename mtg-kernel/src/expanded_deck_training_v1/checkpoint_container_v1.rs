@@ -33,12 +33,13 @@
 //! # Tensors where they are held
 //!
 //! [`ExpandedCheckpointV1`] is generic over its tensors ([`TensorBitsV1`]):
-//! a decoded checkpoint owns [`ParameterBitsV1`]s, and an update publishes a
-//! checkpoint of [`ParameterBitsRefV1`]s, which borrow the live train state's
-//! tensors (`TrainTensorsV1`) instead of copying every value's bits. Either
-//! way each format
-//! writes the same bytes: the v1 JSON through the same derived serialization,
-//! the container through one encoder.
+//! a decoded checkpoint owns [`ParameterBitsV1`]s or borrows a container's
+//! aligned little-endian `u32` sections in place as
+//! [`BorrowedParameterBitsV1`]s, and an update publishes a checkpoint of
+//! [`ParameterBitsRefV1`]s, which borrow the live train state's tensors
+//! (`TrainTensorsV1`) instead of copying every value's bits. Either way each
+//! format writes the same bytes: the v1 JSON through the same derived
+//! serialization, the container through one encoder.
 //!
 //! # Default, identity and config bytes (the default switch)
 //!
@@ -305,6 +306,53 @@ impl TensorBitsV1 for ParameterBitsRefV1<'_> {
 
     fn values_v1(&self) -> TensorValuesV1<'_> {
         TensorValuesV1::Floats(self.values)
+    }
+}
+
+/// A decoded tensor whose values borrow a container's aligned little-endian
+/// `u32` section in place when possible, or own a decoded `Vec<u32>` when the
+/// input comes from JSON, an unaligned byte slice or a big-endian target. Its
+/// serialization is [`ParameterBitsV1`]'s, member for member and value for
+/// value.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename = "ParameterBitsV1", deny_unknown_fields)]
+pub(crate) struct BorrowedParameterBitsV1<'a> {
+    pub(crate) name: String,
+    pub(crate) shape: Vec<usize>,
+    pub(crate) values: Cow<'a, [u32]>,
+}
+
+const _: fn(ParameterBitsV1) = |bits| {
+    let ParameterBitsV1 {
+        name,
+        shape,
+        values,
+    } = bits;
+    let _ = BorrowedParameterBitsV1 {
+        name,
+        shape,
+        values: Cow::Owned(values),
+    };
+};
+
+#[cfg(test)]
+impl BorrowedParameterBitsV1<'_> {
+    pub(crate) fn is_borrowed_v1(&self) -> bool {
+        matches!(self.values, Cow::Borrowed(_))
+    }
+}
+
+impl TensorBitsV1 for BorrowedParameterBitsV1<'_> {
+    fn name_v1(&self) -> &str {
+        &self.name
+    }
+
+    fn shape_v1(&self) -> &[usize] {
+        &self.shape
+    }
+
+    fn values_v1(&self) -> TensorValuesV1<'_> {
+        TensorValuesV1::Bits(&self.values)
     }
 }
 
@@ -772,6 +820,70 @@ fn open_record_v1(bytes: &[u8]) -> Result<Cow<'_, [u8]>, String> {
     super::record_envelope_v1::open_v1(bytes, super::MAX_FILE_BYTES)
 }
 
+fn decode_u32_le_vec_v1(bytes: &[u8]) -> Vec<u32> {
+    debug_assert_eq!(bytes.len() % 4, 0);
+    bytes
+        .chunks_exact(4)
+        .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("four bytes")))
+        .collect()
+}
+
+/// Borrows a 4-byte-sized little-endian `u32` section in place when `bytes` is
+/// 4-byte aligned on a little-endian target (as every container section in a
+/// `Vec<u8>` buffer is, since `data_start` and each section `offset` are
+/// multiples of 256), falling back to an owned `Vec<u32>` otherwise.
+fn borrow_u32_le_v1(bytes: &[u8]) -> Cow<'_, [u32]> {
+    debug_assert_eq!(bytes.len() % 4, 0);
+    if bytes.is_empty() {
+        return Cow::Borrowed(&[]);
+    }
+    #[cfg(target_endian = "little")]
+    {
+        // SAFETY: `u32` has no invalid bit patterns, and `align_to::<u32>()`
+        // splits `bytes` into an unaligned byte prefix, a properly aligned
+        // `&[u32]` middle and a trailing byte suffix within `bytes`'s borrow.
+        // On a little-endian target each aligned `u32` in memory equals
+        // `u32::from_le_bytes` of its four bytes.
+        let (prefix, middle, suffix) = unsafe { bytes.align_to::<u32>() };
+        if prefix.is_empty() && suffix.is_empty() {
+            return Cow::Borrowed(middle);
+        }
+    }
+    Cow::Owned(decode_u32_le_vec_v1(bytes))
+}
+
+/// Decodes a container into the checkpoint it encodes, borrowing aligned
+/// little-endian `u32` sections directly from `bytes` without copying each
+/// section into an intermediate `Vec<u32>`. Refuses exactly what [`decode_v1`]
+/// refuses, with the same messages, because [`check_structure_v1`] runs
+/// unchanged before any section is borrowed.
+pub(crate) fn decode_borrowed_v1(
+    bytes: &[u8],
+) -> Result<ExpandedCheckpointV1<BorrowedParameterBitsV1<'_>>, String> {
+    let CheckedV1 {
+        saved, sections, ..
+    } = check_structure_v1(bytes)?;
+    let mut parameters = Vec::new();
+    let mut first_moments = Vec::new();
+    let mut second_moments = Vec::new();
+    for (entry, range) in sections {
+        let tensor = BorrowedParameterBitsV1 {
+            name: entry.name,
+            shape: entry.shape,
+            values: borrow_u32_le_v1(&bytes[range]),
+        };
+        match entry.section.as_str() {
+            "parameters" => parameters.push(tensor),
+            "first_moments" => first_moments.push(tensor),
+            _ => second_moments.push(tensor),
+        }
+    }
+    Ok(with_tensors_v1(
+        &saved,
+        [parameters, first_moments, second_moments],
+    ))
+}
+
 /// Decodes a container into the checkpoint it encodes. Refuses anything that
 /// is not the canonical encoding of what it decodes to: the structure check
 /// ([`check_structure_v1`]) binds every byte [`encode_v1`] writes for the
@@ -785,10 +897,7 @@ pub(crate) fn decode_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
         ..
     } = check_structure_v1(bytes)?;
     for (entry, range) in sections {
-        let values = bytes[range]
-            .chunks_exact(4)
-            .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("four bytes")))
-            .collect();
+        let values = decode_u32_le_vec_v1(&bytes[range]);
         let tensor = ParameterBitsV1 {
             name: entry.name,
             shape: entry.shape,
@@ -806,7 +915,7 @@ pub(crate) fn decode_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
 /// The v1 JSON bytes of the checkpoint a container encodes: exactly what
 /// `publish_json` writes for that checkpoint.
 pub(crate) fn export_v1(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    serde_json::to_vec(&decode_v1(bytes)?).map_err(|e| e.to_string())
+    serde_json::to_vec(&decode_borrowed_v1(bytes)?).map_err(|e| e.to_string())
 }
 
 /// `bytes` themselves for a v1 JSON checkpoint, or the exported v1 JSON of a
@@ -819,6 +928,19 @@ pub(crate) fn json_document_v1(bytes: &[u8]) -> Result<Cow<'_, [u8]>, String> {
         export_v1(&record).map(Cow::Owned)
     } else {
         Ok(record)
+    }
+}
+
+/// The checkpoint an already-opened record encodes, borrowing aligned
+/// little-endian container sections in place for v2 and parsing v1 JSON into
+/// owned values otherwise.
+pub(crate) fn parse_record_borrowed_v1(
+    record: &[u8],
+) -> Result<ExpandedCheckpointV1<BorrowedParameterBitsV1<'_>>, String> {
+    if is_container_v1(record) {
+        decode_borrowed_v1(record)
+    } else {
+        serde_json::from_slice(record).map_err(|e| e.to_string())
     }
 }
 

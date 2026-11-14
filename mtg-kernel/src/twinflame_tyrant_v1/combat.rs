@@ -655,13 +655,30 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     }) {
         return Err("combat private operation moved into public mutable log".into());
     }
+    let mut all_inputs = Vec::new();
+    let mut all_ops = Vec::new();
+    let mut ops_by_input = std::collections::HashMap::<u32, Vec<(usize, &OperationV38)>>::new();
+    for (i, event) in state.engine.event_history.of_kinds_v2(&[
+        EventKindV1::TwinflameCombatInputV38,
+        EventKindV1::TwinflameCombatOperationV38,
+    ]) {
+        match event {
+            E::TwinflameCombatInputV38 { input } => {
+                all_inputs.push((i, input.as_ref()));
+            }
+            E::TwinflameCombatOperationV38 { operation } => {
+                let op = operation.as_ref();
+                all_ops.push(op);
+                ops_by_input.entry(op.input).or_default().push((i, op));
+            }
+            _ => {}
+        }
+    }
     let mut open = None;
     for (at, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::TwinflameCombatPublishedV38])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::TwinflameCombatPublishedV38])
     {
         let E::TwinflameCombatPublishedV38 {
             publication: original,
@@ -674,27 +691,20 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         }
         let mut expected = initial(original)?;
         let mut closed = false;
-        for (input_at, event) in state.engine.event_history.iter().enumerate().skip(at + 1) {
-            let E::TwinflameCombatInputV38 { input } = event else {
-                continue;
-            };
-            if input.before.publication != original.index {
+        for &(input_at, input) in &all_inputs {
+            if input_at <= at || input.before.publication != original.index {
                 continue;
             }
             if closed || input.index as usize != input_at || input.before != expected {
                 return Err("combat input skipped or replayed actual prior operation".into());
             }
             let mut next = transition(original, &expected, &input.kind, input.chosen)?;
-            let mut operations = state.engine.event_history.iter().enumerate().filter_map(
-                |(i, event)| match event {
-                    E::TwinflameCombatOperationV38 { operation }
-                        if operation.input == input.index =>
-                    {
-                        Some((i, operation))
-                    }
-                    _ => None,
-                },
-            );
+            let mut operations = ops_by_input
+                .get(&input.index)
+                .map(Vec::as_slice)
+                .unwrap_or(&[])
+                .iter()
+                .copied();
             let (op_at, operation) = operations
                 .next()
                 .ok_or("combat input lost actual engine operation")?;
@@ -777,21 +787,13 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
             }
         }
     }
-    for event in state.engine.event_history.scan_for_v1(&[
-        EventKindV1::TwinflameCombatInputV38,
-        EventKindV1::TwinflameCombatOperationV38,
-    ]) {
-        match event {
-            E::TwinflameCombatInputV38 { input } => {
-                publication(state, input.before.publication)?;
-            }
-            E::TwinflameCombatOperationV38 { operation } => {
-                if !matches!(state.engine.event_history.get(operation.input as usize),Some(E::TwinflameCombatInputV38 {input}) if input.index==operation.input)
-                {
-                    return Err("orphan combat operation".into());
-                }
-            }
-            _ => {}
+    for &(_, input) in &all_inputs {
+        publication(state, input.before.publication)?;
+    }
+    for operation in all_ops {
+        if !matches!(state.engine.event_history.get(operation.input as usize),Some(E::TwinflameCombatInputV38 {input}) if input.index==operation.input)
+        {
+            return Err("orphan combat operation".into());
         }
     }
     Ok(())

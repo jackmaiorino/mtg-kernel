@@ -94,12 +94,15 @@ class DraftZeroReportTest(unittest.TestCase):
         self.assertAlmostEqual(match.binomial_tail(3, 2, 0.5), 0.5)
 
     def test_a_hung_game_with_a_known_slow_full_card_counts_against_nothing(self):
-        # FDN_top_02819_WU holds Drake Hatcher, the default known slow Full card.
-        report = self.report(dict(match.KNOWN_SLOW_FULL))
+        # FDN_top_02819_WU holds Drake Hatcher; verify the KNOWN_SLOW_FULL filter with an explicit entry.
+        report = self.report({"Drake Hatcher": "mtg-kernel#375"})
         self.assertEqual(report["play"]["results"]["hang"], 2)
         self.assertEqual(report["known_slow_full"]["hung_games_not_counted"], 2)
         self.assertNotIn("Arahbo, the First Fang", report["partial_cards"])
         self.assertEqual(report["admission_candidates"], ["Brineborn Cutthroat"])
+
+    def test_known_slow_full_is_empty(self):
+        self.assertEqual(match.KNOWN_SLOW_FULL, {})
 
 
 class LimitedMatchV1Test(unittest.TestCase):

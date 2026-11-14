@@ -173,12 +173,37 @@ pub(crate) fn resolve_return(state: &mut GameState, resolution: u64) -> Result<b
         }
     }
     let start = input as usize + 1;
-    let returned = state.engine.event_history.iter().enumerate().skip(start).filter_map(|(at, event)|
-        matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Graveyard, to: Zone::Battlefield, .. }
-            if *object == choice.aura.object).then_some(at as u64)).collect::<Vec<_>>();
-    let attached = state.engine.event_history.iter().enumerate().skip(start).filter_map(|(at, event)|
-        matches!(journal(event), Some(JournalV50::AuraAttachmentCommitted { input: original, .. })
-            if *original == input).then_some(at as u64)).collect::<Vec<_>>();
+    let tail = state.engine.event_history.range_v2(start..);
+    let returned = tail
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, event)| {
+            matches!(
+                event,
+                CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Graveyard,
+                    to: Zone::Battlefield,
+                    ..
+                } if *object == choice.aura.object
+            )
+            .then_some((start + offset) as u64)
+        })
+        .collect::<Vec<_>>();
+    let attached = tail
+        .iter()
+        .enumerate()
+        .filter_map(|(offset, event)| {
+            matches!(
+                journal(event),
+                Some(JournalV50::AuraAttachmentCommitted {
+                    input: original,
+                    ..
+                }) if *original == input
+            )
+            .then_some((start + offset) as u64)
+        })
+        .collect::<Vec<_>>();
     if returned.len() != usize::from(selected.is_some())
         || attached.len() != usize::from(selected.is_some())
     {
@@ -271,8 +296,11 @@ pub(crate) fn validate_history(state: &GameState) -> Result<(), String> {
                     || input.choice.resolution >= at as u64
                     || input.choice.resolution < n as u64
                     || n > state.engine.event_history.len()
-                    || state.engine.event_history.range_v2(..n)
-                        != input.original.engine.event_history.range_v2(..)
+                    || !state.engine.event_history.iter().take(n).eq(input
+                        .original
+                        .engine
+                        .event_history
+                        .iter())
                     || !matches!(input.operation, OperationV1::Step(_) | OperationV1::Advance)
                     || input.original.stack != *original_stack
                     || context.ability_source_contract != Some(input.choice.source)
