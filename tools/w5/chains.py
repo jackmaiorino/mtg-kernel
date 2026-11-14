@@ -32,7 +32,15 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
   trajectory and checkpoint in one zstd frame of its exact bytes, mtg-kernel `record_envelope_v1`; same states, about
   a fifth of the bytes) and optional `verified_reads` (`resident`: the trainer reuses bytes its process already
   verified against a pin instead of rereading them, mtg-kernel `verified_bytes_cache_v1`; same states and bytes,
-  less memory traffic per update), for X arms `budget`, `coefficient`, `dose`, and for a CG arm (P-grow, independent
+  less memory traffic per update), optional `keep_offset` (`{b0, end_update, shape: "linear-v1"}`, qual.py: every
+  episode with an `opening` carries `london_keep_offset = b(u)` while the chain's update u (counted from 0 at its
+  first segment, so from the fork point) is below `end_update`, and no such field from there on; C-recipe arms only,
+  on a base whose every episode has the London opening and its modes and whose loss and backend are the plain CPU GAE
+  update; part of the recipe identity only when present, so a started chain refuses a changed schedule), for a
+  scratch arm optional `mull_monitor` (`true`: the reaper appends one line per iteration to
+  `<segment>/opening.jsonl` before it deletes the trajectories, for `mull_monitor.py`'s descriptive reading; needs a
+  base with openings; not part of the recipe, pinned in the arm's tool shas only when set, so other arm files keep
+  their bytes), for X arms `budget`, `coefficient`, `dose`, and for a CG arm (P-grow, independent
   Stage 0 plans) `ladder` (`stride`, `roster_max`, `replaces`, `test_stride`, and for a fork `history`: pgrow.py;
   the base's fixed-parent share plays a per-segment roster drawn from the chain's own checkpoint ladder, each state
   verified before use; `start_member: false` for a parent without a checkpoint), and for an extra C-recipe arm of an
@@ -372,8 +380,19 @@ def is_link(path):
     return p.is_symlink() or (hasattr(p, 'is_junction') and p.is_junction())
 
 
-def tools_shas():
-    return {name: sha(path) for name, path in TOOL_FILES.items()}
+def tools_shas(monitor=False):
+    """The pinned tool files' hashes; an arm with `mull_monitor` also pins mull_monitor.py (which only it loads)."""
+    shas = {name: sha(path) for name, path in TOOL_FILES.items()}
+    if monitor:
+        shas['mull_monitor.py'] = sha(HERE / 'mull_monitor.py')
+    return shas
+
+
+def monitor_module():
+    """tools/w5/mull_monitor.py, imported only by an arm that asks for it (an arm without it never loads the file,
+    which its pins do not cover)."""
+    import mull_monitor
+    return mull_monitor
 
 
 # ---------------------------------------------------------------- segments (as tools/ex1/stagef.py)
@@ -431,9 +450,16 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
     (pgrow.ladder), by default the parent alone (a chain's first segments, segcheck)."""
     x = arm['x'] or {}
     parent = read(arm['parent']['path'])
-    cfg = xact.build_config(read(arm['base']['path']), parent, native, seed_root, offset,
-                            updates, arm['workers'], x.get('budget'), x.get('coefficient'), x.get('dose', 'primary'),
-                            ledger_source, prep_workers=arm.get('preparation_workers'))
+    keep_offset = arm.get('keep_offset')  # absent otherwise: the config is exactly what it was
+    try:
+        cfg = xact.build_config(read(arm['base']['path']), parent, native, seed_root, offset,
+                                updates, arm['workers'], x.get('budget'), x.get('coefficient'),
+                                x.get('dose', 'primary'), ledger_source,
+                                prep_workers=arm.get('preparation_workers'), keep_offset=keep_offset)
+    except ValueError as exc:
+        if keep_offset is None:
+            raise
+        raise Stop(f'{arm["arm"]}: {exc}') from exc
     if source is not None:
         cfg['initial_source'] = source
     if arm.get('record_envelope'):
@@ -549,6 +575,8 @@ def recipe_identity(arm):
         identity['ladder'] = arm['ladder']  # absent otherwise: existing manifests unchanged
     if arm.get('initial_opponent'):
         identity['initial_opponent'] = arm['initial_opponent']
+    if arm.get('keep_offset') is not None:
+        identity['keep_offset'] = arm['keep_offset']  # absent otherwise: existing manifests unchanged
     return identity
 
 
@@ -689,10 +717,32 @@ def make_plan(inputs_path):
         verified_reads = spec.get('verified_reads')
         require(verified_reads is None or verified_reads in VERIFIED_READS,
                 f'{a}: verified_reads is one of {VERIFIED_READS}')
+        # keep_offset: the London keep-offset schedule {b0, end_update, shape} (qual.validate_keep_offset), stamped
+        # into each opening episode by update (a chain's updates count from 0 at its fork point). It needs a base
+        # with openings and is part of the arm's frozen recipe. Absent (or null): nothing changes.
+        keep_offset = spec.get('keep_offset')
+        if keep_offset is not None:
+            # The trainer refuses the offset with any search (EX1) block, which every X-recipe arm carries: it would
+            # collect games and fail at its first update. (The base's loss and backend are checked by the validator.)
+            require(recipe == 'C', f'{a}: keep_offset trains only on the plain CPU update of a C-recipe arm')
+            try:
+                keep_offset = qual.validate_keep_offset(keep_offset, base_doc)
+            except ValueError as exc:
+                raise Stop(f'{a}: {exc}') from exc
+        # mull_monitor: the descriptive London opening log (mull_monitor.py), kept by the scratch reaper. Absent (or
+        # false): nothing changes, including the arm's tool pins.
+        monitor = spec.get('mull_monitor')
+        require(monitor is None or isinstance(monitor, bool), f'{a}: mull_monitor is true or absent')
+        monitor = monitor is True
+        if monitor:
+            require(spec.get('scratch'), f'{a}: mull_monitor is kept by the scratch reaper (a scratch arm only)')
+            require(any(entry['episode'].get('opening') is not None for item in base_doc['iterations']
+                        for entry in item['episodes']), f'{a}: mull_monitor needs a base with an opening')
         doc = {'schema': ARM_SCHEMA, 'arm': a, 'recipe': recipe, 'retention_arm': ret, 'root': root.as_posix(),
                'trainer': common['trainer'], 'base': base, 'parent': pin(spec['parent']), 'frozen': frozen_pin,
                'x': x, 'workers': int(spec['workers']), 'segment_updates': length, 'bytes_per_update': bpu,
-               'c_wall_seconds': c_wall if recipe == 'C' and a != 'F' else None, 'tools': tools}
+               'c_wall_seconds': c_wall if recipe == 'C' and a != 'F' else None,
+               'tools': tools_shas(monitor=True) if monitor else tools}
         if spec.get('scratch'):
             scratch_root = inputs.get('scratch_root')
             require(recipe == 'C' and a != 'F' and stage == '0',
@@ -713,6 +763,10 @@ def make_plan(inputs_path):
             doc['record_envelope'] = envelope
         if verified_reads is not None:  # absent otherwise, as record_envelope
             doc['verified_reads'] = verified_reads
+        if keep_offset is not None:  # absent otherwise, as record_envelope
+            doc['keep_offset'] = keep_offset
+        if monitor:  # absent otherwise, as record_envelope
+            doc['mull_monitor'] = True
         text = json.dumps(doc, indent=1, sort_keys=True) + '\n'
         digest = w5box.sha256_bytes(text.encode('utf-8'))
         path = root / 'plan' / 'arms' / f'{a}-{digest[:12]}.json'
@@ -816,7 +870,9 @@ def make_plan(inputs_path):
                       'c_wall_seconds', 'snapshot_dir'):
                 require(have.get(k) == header[k], f'{name}: the manifest has another {k}')
             require(not have['segments'] or have['recipe'] == header['recipe'],
-                    f'{name}: the recipe changed after the chain started')
+                    f'{name}: the recipe changed after the chain started' +
+                    (' (keep_offset differs)' if have['recipe'].get('keep_offset') != header['recipe'].get(
+                        'keep_offset') else ''))
             require(have.get('r_nom_usec') in (None, r_nom), f'{name}: R_nom is frozen in the manifest')
             have.update(recipe=header['recipe'], arm_file=pin(arm_paths[c['arm']]), r_nom_usec=r_nom)
             write(path, have)
@@ -885,7 +941,8 @@ def load_plan(path, check=True):
 def load_arm(path):
     arm = read(path)
     require(arm.get('schema') == ARM_SCHEMA, 'not a w5-arm/v1 document')
-    require(arm['tools'] == tools_shas(), 'the W5 tools differ from the arm file pins')
+    require(arm['tools'] == tools_shas(monitor=bool(arm.get('mull_monitor'))),
+            'the W5 tools differ from the arm file pins')
     for key in ('trainer', 'base', 'parent'):
         check_pin(arm[key], key)
     if (arm.get('ladder') or {}).get('history'):
@@ -1041,18 +1098,27 @@ def scratch_bulk(path):
         base.endswith('.stage')
 
 
-def reap(native):
+def reap(native, opening_log=None):
     """Deletes the transient bulk of every completed iteration except the newest; returns the number of files.
-    It visits every completed iteration (persist's final pass); the reaper thread's ticks use a Reaper."""
+    It visits every completed iteration (persist's final pass); the reaper thread's ticks use a Reaper.
+    `opening_log`: see reap_iteration."""
     its = Path(native) / 'iterations'
-    if not its.exists():
+    if not its.exists() or is_link(its):
         return 0
     done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists())
-    return sum(reap_iteration(d) for d in done[:-1])
+    return sum(reap_iteration(d, opening_log) for d in done[:-1])
 
 
-def reap_iteration(iteration):
-    """Deletes one completed iteration's transient bulk; returns the number of files."""
+def reap_iteration(iteration, opening_log=None):
+    """Deletes one completed iteration's transient bulk; returns the number of files. With `opening_log` (a path:
+    an arm with `mull_monitor`) the iteration's one opening line is appended to it first
+    (mull_monitor.record_iteration: idempotent, never raises, keeps and deletes nothing else); without it nothing
+    else happens. An iteration directory that is a link (or sits in a linked `iterations` directory) is left alone:
+    the trainer writes plain directories, and a link could lead the deletion into files of another tree."""
+    if is_link(iteration) or is_link(Path(iteration).parent):
+        return 0
+    if opening_log is not None:
+        monitor_module().record_iteration(iteration, opening_log)
     n = 0
     for f in Path(iteration).rglob('*'):
         if f.is_file() and not f.is_symlink() and scratch_bulk(f):
@@ -1075,8 +1141,9 @@ class Reaper:
     stops the probe, and a tick then reaps less than `reap` would, never more. Each run_reaped starts a new Reaper at
     iteration 0, so a driver start, a resumed trainer or the next segment rescans the whole completed prefix."""
 
-    def __init__(self, native):
+    def __init__(self, native, opening_log=None):
         self.iterations = Path(native) / 'iterations'
+        self.opening_log = opening_log  # reap_iteration's: set only for an arm with `mull_monitor`
         self.completed = 0  # iterations below this have complete.json
         self.reaped = 0  # iterations below this have had their bulk deleted
 
@@ -1086,7 +1153,7 @@ class Reaper:
             self.completed += 1
         n = 0
         while self.reaped < self.completed - 1:
-            n += reap_iteration(self.iterations / f'{self.reaped:06d}')
+            n += reap_iteration(self.iterations / f'{self.reaped:06d}', self.opening_log)
             self.reaped += 1
         return n
 
@@ -1152,6 +1219,9 @@ def persist(arm, native, cdir):
     its = target / 'iterations'
     done = sorted(p for p in its.iterdir() if (p / 'complete.json').exists()) if its.exists() else []
     keep = scratch_kept_pins(done[-1] if done else None)
+    if arm.get('mull_monitor'):  # before reap and the copy: the newest iteration's trajectories are dropped unread
+        monitor = monitor_module()
+        monitor.record_all(target, monitor.opening_log_path(target))
     reap(native)
     tmp = Path(cdir) / f'.{native.name}.persist'
     shutil.rmtree(tmp, ignore_errors=True)
@@ -1236,7 +1306,8 @@ def run_reaped(arm, config_path, deadline, logs, native):
     """run_trainer with the reaper running beside it in this (the chain's) process; returns (code, killed,
     files reaped)."""
     import threading
-    stop, count, reaper = threading.Event(), [0], Reaper(native)
+    log = monitor_module().opening_log_path(native) if arm.get('mull_monitor') else None
+    stop, count, reaper = threading.Event(), [0], Reaper(native, log)
 
     def loop():
         while not stop.wait(REAP_EVERY):
@@ -1506,6 +1577,8 @@ def drive_locked(a, arm, root, cdir, man_path):
     deadline = man['launched_unix'] + arm['c_wall_seconds'] if arm['recipe'] == 'C' else None
     waiting = None
     scratch = bool(arm.get('scratch_root'))
+    if arm.get('mull_monitor'):
+        monitor_module()  # loaded at the driver's start, like every pinned tool file
     instance, recovered = ledger_instance(a.ledger_source), False
     while True:
         if (cdir / 'END.json').exists():

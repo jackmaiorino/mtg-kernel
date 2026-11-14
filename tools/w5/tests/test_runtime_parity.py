@@ -1,5 +1,7 @@
 """E11 runtime parity receipt tests. The end-to-end receipt runs on Spellbench's published pauper-ladder-v1 run
 (SPELLBENCH_ROOT) against this repository's history (needs the board revision; CI fetches it)."""
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -150,6 +152,153 @@ class CompareTests(unittest.TestCase):
         cfg = training_config()
         cfg["iterations"][0]["episodes"][0]["episode"]["registered"] = []
         self.assertFalse(run(cfg)["checks"]["ordinary_starts_game_one"])
+
+
+def london_board():
+    manifest = json.loads(json.dumps(MANIFEST))
+    manifest["information_rules"]["rules"]["mulligan"] = "london"
+    return manifest
+
+
+def mixed_config(opening="london-v1"):
+    cfg = training_config(opening=opening)
+    for key in ("opening", "mulligan_modes"):
+        del cfg["iterations"][0]["episodes"][0]["episode"][key]
+    return cfg
+
+
+def failed(result):
+    return {k for k, v in result["checks"].items() if not v}
+
+
+class MulliganParityTests(unittest.TestCase):
+    REASON = "no London board exists yet"
+
+    def test_no_opening_receipt_is_unchanged(self):
+        """A keep-seven run adds no key and the flag changes nothing, whether or not it is given."""
+        cfg = training_config()
+        plain, flagged = run(cfg), rp.compare(
+            rp.training_side([cfg], CARD_NAMES), MANIFEST, BOARD_CONFIG,
+            rp.board_decks(RUNTIME_DECKS, BOARD_POOL, CARD_NAMES), BRIDGE_OK, self.REASON)
+        self.assertEqual(json.dumps(plain, indent=2), json.dumps(flagged, indent=2))
+        self.assertEqual(list(plain), ["checks", "deck_matches", "unmatched_board_decks", "training_only_decks",
+                                       "recorded"])
+        self.assertEqual(list(plain["checks"]), [
+            "mulligans_off_on_board", "mulligans_off_in_training", "training_rules_profile_is_default",
+            "board_rules_profile_is_default", "neutral_choices_equal", "ordinary_starts_game_one",
+            "starting_player_assigned_both_seats", "limits_equal", "every_board_deck_equals_a_training_deck"])
+        self.assertTrue(rp.passes(plain))
+        profiles = rp.training_side([cfg], CARD_NAMES)["mulligan_profiles"]
+        self.assertEqual(profiles, {"none": len(RUNTIME_DECKS["decks"])})
+
+    def test_matching_opening_passes_without_a_flag(self):
+        result = run(training_config(opening="london-v1"), manifest=london_board())
+        self.assertEqual(failed(result), set())
+        self.assertTrue(rp.passes(result))
+        self.assertNotIn("parity", result)
+        self.assertEqual(result["mulligan"], {"board_rule": "london", "board_rule_supported": True,
+                                              "training_rule": "london", "rules_equal": True, "exception": None})
+
+    def test_mismatch_is_refused_without_a_flag(self):
+        result = run(training_config(opening="london-v1"))  # board keeps seven
+        self.assertEqual(failed(result), {"mulligans_off_in_training"})
+        self.assertFalse(rp.passes(result))
+        self.assertIsNone(result["mulligan"]["exception"])
+        self.assertNotIn("parity", result)
+        # a London board against keep-seven training stays a refusal and is not covered by the flag
+        result = run(training_config(), manifest=london_board(), )
+        self.assertEqual(failed(result), {"mulligans_off_on_board"})
+        self.assertFalse(rp.passes(result))
+
+    def test_flag_with_reason_records_the_exception(self):
+        cfg = training_config(opening="london-v1")
+        result = rp.compare(rp.training_side([cfg], CARD_NAMES), MANIFEST, BOARD_CONFIG,
+                            rp.board_decks(RUNTIME_DECKS, BOARD_POOL, CARD_NAMES), BRIDGE_OK, f"  {self.REASON}  ")
+        self.assertEqual(failed(result), {"mulligans_off_in_training"})  # the check itself stays honest
+        self.assertTrue(rp.passes(result))
+        exception = result["mulligan"]["exception"]
+        self.assertEqual(exception, {"flag": "--allow-london-training", "reason": self.REASON,
+                                     "excepted_checks": ["mulligans_off_in_training"],
+                                     "training_openings": ["london-v1"], "board_rule": "none"})
+        self.assertIn("holds only with a recorded exception", result["parity"])
+        self.assertIn(self.REASON, result["parity"])
+
+    def test_empty_reason_is_refused(self):
+        cfg = training_config(opening="london-v1")
+        for reason in ("", "   ", "\n"):
+            with self.assertRaises(rp.ParityError):
+                rp.compare(rp.training_side([cfg], CARD_NAMES), MANIFEST, BOARD_CONFIG,
+                           rp.board_decks(RUNTIME_DECKS, BOARD_POOL, CARD_NAMES), BRIDGE_OK, reason)
+            # main refuses before it reads any input, even on a keep-seven run
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code = rp.main(["--training-config", "t.json", "--board-run", "b", "--repo", "r",
+                                "--allow-london-training", reason])
+            self.assertEqual(code, 1)
+            self.assertIn("non-empty reason", err.getvalue())
+
+    def test_mixed_set_is_refused_unless_flagged(self):
+        cfg = mixed_config()
+        profiles = rp.training_side([cfg], CARD_NAMES)["mulligan_profiles"]
+        self.assertEqual(profiles, {"none": 1, "opening=london-v1": len(RUNTIME_DECKS["decks"]) - 1})
+        for manifest in (MANIFEST, london_board()):
+            result = run(cfg, manifest=manifest)
+            self.assertIn("mulligans_off_in_training", failed(result))
+            self.assertFalse(rp.passes(result))
+            self.assertEqual(result["mulligan"]["training_rule"], "mixed")
+            self.assertIsNone(result["mulligan"]["exception"])
+            flagged = rp.compare(rp.training_side([cfg], CARD_NAMES), manifest, BOARD_CONFIG,
+                                 rp.board_decks(RUNTIME_DECKS, BOARD_POOL, CARD_NAMES), BRIDGE_OK, self.REASON)
+            self.assertTrue(rp.passes(flagged))
+            self.assertEqual(flagged["mulligan"]["exception"]["training_openings"], ["london-v1", "none"])
+            self.assertEqual(flagged["mulligan"]["exception"]["board_rule"],
+                             manifest["information_rules"]["rules"]["mulligan"])
+
+    def test_flag_does_not_cover_other_openings_or_other_failures(self):
+        flagged = lambda cfg, **kw: rp.compare(  # noqa: E731
+            rp.training_side([cfg], CARD_NAMES), kw.get("manifest", MANIFEST), BOARD_CONFIG,
+            rp.board_decks(RUNTIME_DECKS, BOARD_POOL, CARD_NAMES), kw.get("bridge", BRIDGE_OK), self.REASON)
+        result = flagged(training_config(opening="shroud-v9"))
+        self.assertFalse(rp.passes(result))
+        self.assertIsNone(result["mulligan"]["exception"])
+        self.assertEqual(result["mulligan"]["training_rule"], "unknown")
+        result = flagged(training_config(opening="london-v1"), bridge={"calls_set_runtime_rules": True})
+        self.assertFalse(rp.passes(result))  # the exception covers the mulligan check only
+        self.assertNotIn("parity", result)
+        unsupported = json.loads(json.dumps(MANIFEST))
+        unsupported["engine_profile"]["rules_supported"]["mulligan"] = ["none"]
+        unsupported["information_rules"]["rules"]["mulligan"] = "london"
+        self.assertFalse(rp.passes(flagged(training_config(opening="london-v1"), manifest=unsupported)))
+
+    def test_an_opening_nobody_mulligans_is_not_the_boards_london_rule(self):
+        # The profile once keyed on the protocol name alone: london-v1 with both seats keep_seven passed a London
+        # board. The learner seat's mode must be learned (the trainer's own rule), and the mode mix is recorded.
+        def with_modes(modes, seat=0):
+            cfg = training_config(opening="london-v1")
+            for entry in cfg["iterations"][0]["episodes"]:
+                entry["episode"]["mulligan_modes"], entry["episode"]["learner_seat"] = modes, seat
+            return cfg
+        n = len(RUNTIME_DECKS["decks"])
+        for modes, seat in ((["keep_seven", "keep_seven"], 0), (["keep_seven", "learned"], 0),
+                            (["learned", "keep_seven"], 1), (["learned"], 0), ("learned", 0), (None, 0)):
+            cfg = with_modes(modes, seat)
+            profile = rp.training_side([cfg], CARD_NAMES)["mulligan_profiles"]
+            self.assertEqual(profile, {"opening=london-v1;learner-mode-not-learned": n}, (modes, seat))
+            result = run(cfg, manifest=london_board())
+            self.assertIn("mulligans_off_in_training", failed(result), (modes, seat))
+            self.assertFalse(rp.passes(result))
+            self.assertEqual(result["mulligan"]["training_rule"], "unknown")
+            flagged = rp.compare(rp.training_side([cfg], CARD_NAMES), london_board(), BOARD_CONFIG,
+                                 rp.board_decks(RUNTIME_DECKS, BOARD_POOL, CARD_NAMES), BRIDGE_OK, self.REASON)
+            self.assertFalse(rp.passes(flagged))  # the flag does not cover it
+            self.assertIsNone(flagged["mulligan"]["exception"])
+        for modes, seat in ((["learned", "learned"], 0), (["learned", "keep_seven"], 0),
+                            (["keep_seven", "learned"], 1)):
+            side = rp.training_side([with_modes(modes, seat)], CARD_NAMES)
+            self.assertEqual(side["mulligan_profiles"], {"opening=london-v1": n})
+            self.assertEqual(side["mulligan_modes"], {"/".join(modes): n})  # the mix is in the receipt
+            self.assertEqual(failed(run(with_modes(modes, seat), manifest=london_board())), set())
+        self.assertNotIn("mulligan_modes", rp.training_side([training_config()], CARD_NAMES))
 
 
 def has_revision(revision):
