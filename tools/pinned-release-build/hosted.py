@@ -18,7 +18,10 @@ import time
 SOURCE = "a30c3769f1ef3a7b569ab52814688141969d877f"
 # The w128 backport before its checkpoint-write change (the a266eb4d launch pin), for that change's equality check.
 PRE_FIX_SOURCE = "f933c8b8dfc60945eff683b5125d694231109417"
-SOURCES = (SOURCE, PRE_FIX_SOURCE)
+# The London keep-offset backport (PR #700 into release/mull-c5719e1cf): the production source c5719e1cf plus
+# only the opt-in pregame keep offset. Built by explicit dispatch (`source_commit`); the default source is unchanged.
+KEEP_OFFSET_SOURCE = "529c72e6592b381d8034b7d0c035335b15de107c"
+SOURCES = (SOURCE, PRE_FIX_SOURCE, KEEP_OFFSET_SOURCE)
 IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
 GIB = 2**30
 FREE_FLOOR = 60 * GIB + GIB // 2
