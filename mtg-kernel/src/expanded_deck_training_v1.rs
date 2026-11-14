@@ -1048,10 +1048,11 @@ pub struct ExpandedEpisodeV1 {
     /// Per-physical-seat mulligan modes, present exactly when `opening` is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mulligan_modes: Option<[PauperMulliganModeV1; 2]>,
-    /// Some subtracts this positive logit offset from the mulligan row of
-    /// every London announcement, in collection, record validation and the
-    /// update (`london_keep_offset_v1`). Only with `opening`. None keeps every
-    /// prior serialized byte and every behavior.
+    /// Some subtracts this positive logit offset (at most 1e6) from the
+    /// mulligan row of every London announcement, in collection, record
+    /// validation and the update (`london_keep_offset_v1`); those rows are
+    /// drawn from the unclamped softmax sampler. Only with `opening`. None keeps
+    /// every prior serialized byte and every behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub london_keep_offset: Option<f32>,
 }
@@ -3275,16 +3276,22 @@ fn validate_episode_records_with_search_v1(
                     // The London keep offset (`london_keep_offset_v1`): the
                     // draw was made from the offset logits; the stored
                     // logits stay raw.
+                    // An adjusted row was drawn from the unclamped sampler.
                     match episode.london_keep_offset {
                         Some(offset) => {
                             let tensor = row.tensor.tensor();
-                            london_keep_offset_v1::offset_logits_v1(
+                            match london_keep_offset_v1::offset_logits_v1(
                                 &raw,
                                 &tensor.state,
                                 &tensor.action_features,
                                 offset,
-                            )?
-                            .unwrap_or(raw)
+                            )? {
+                                Some(adjusted) => {
+                                    use_unclamped = true;
+                                    adjusted
+                                }
+                                None => raw,
+                            }
                         }
                         None => raw,
                     }

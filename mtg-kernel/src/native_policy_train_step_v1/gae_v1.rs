@@ -714,6 +714,11 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         ),
         NativePolicyTrainErrorV1,
     > {
+        // The London keep offset of this step's batch, or None (every
+        // existing step): taken before anything can return, so a step that
+        // ends in an error leaves no offset behind. Only the plain GAE
+        // objective takes it.
+        let london_keep_offset = self.london_keep_offset.take();
         // The wide refusal list (design section 2.1), before any forward work.
         if !is_net8_dims_v1::<D>() {
             if let Some(source) = line_b {
@@ -812,9 +817,6 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             math,
             mxcsr,
         );
-        // Read once: the offset of this step's batch, or None (every existing
-        // step). Only the plain GAE objective takes it.
-        let london_keep_offset = self.london_keep_offset;
         if london_keep_offset.is_some() && (line_b.is_some() || exploration.is_some() || imitation)
         {
             return Err(NativePolicyTrainErrorV1::LondonKeepOffset {

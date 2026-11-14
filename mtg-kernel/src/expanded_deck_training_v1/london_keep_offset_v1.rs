@@ -15,6 +15,13 @@
 //! - `None` (the default) skips the offset entirely, so an episode without it
 //!   collects, validates and trains bit for bit as before.
 //!
+//! The rows an offset adjusts are drawn with the unclamped softmax sampler
+//! (`unclamped-softmax-f64-icdf-u53-v1`, one seat-stream draw per decision as
+//! always), so the draw follows the softmax of the offset logits that the
+//! update's log-softmax uses, whatever sampler the policy's other rows use
+//! (the legacy sampler quantizes gaps and clamps them at 16 nats). Every other
+//! row of the episode keeps its sampler.
+//!
 //! A schedule (its start value, shape and end update) belongs to the caller
 //! that writes each episode (the chains tools); the trainer applies whatever
 //! value an episode carries. A decay to zero is an episode with `None`.
@@ -34,12 +41,19 @@ pub(crate) const LONDON_OPENING_ACTION_COLUMN_V1: usize = 15;
 /// FlatV7 action VALUE flag column: 1.0 on the mulligan row of an announcement.
 pub(crate) const MULLIGAN_FLAG_ACTION_COLUMN_V1: usize = 69;
 
-/// Checks an episode's offset value: finite and strictly positive.
+/// Largest accepted offset. A real start value is a few tens of nats (a
+/// probability of `e^-104` already underflows the f32 softmax); the ceiling
+/// only keeps `raw - offset` finite for every finite raw logit, so the f64
+/// sampler and the f32 update log-softmax see the same finite row.
+pub(crate) const MAX_OFFSET_V1: f32 = 1.0e6;
+
+/// Checks an episode's offset value: finite, strictly positive and at most
+/// [`MAX_OFFSET_V1`].
 pub(crate) fn validate_offset_v1(offset: f32) -> Result<(), String> {
-    if offset.is_finite() && offset > 0.0 {
+    if offset.is_finite() && offset > 0.0 && offset <= MAX_OFFSET_V1 {
         Ok(())
     } else {
-        Err("london_keep_offset must be finite and positive".into())
+        Err("london_keep_offset must be finite, positive and at most 1e6".into())
     }
 }
 
@@ -54,7 +68,7 @@ pub(crate) fn mulligan_rows_v1(
     if state.get(PREGAME_STATE_COLUMN_V1).copied() != Some(1.0) || action_count == 0 {
         return Ok(Vec::new());
     }
-    if action_features.len() % action_count != 0 {
+    if !action_features.len().is_multiple_of(action_count) {
         return Err("action features do not divide into the action rows".into());
     }
     let width = action_features.len() / action_count;
@@ -83,6 +97,7 @@ pub(crate) fn offset_logits_v1(
     action_features: &[f32],
     offset: f32,
 ) -> Result<Option<Vec<f32>>, String> {
+    validate_offset_v1(offset)?;
     let rows = mulligan_rows_v1(state, action_features, raw.len())?;
     if rows.is_empty() {
         return Ok(None);
@@ -90,6 +105,9 @@ pub(crate) fn offset_logits_v1(
     let mut adjusted = raw.to_vec();
     for row in rows {
         adjusted[row] -= offset;
+        if !adjusted[row].is_finite() {
+            return Err("london keep offset left a non-finite mulligan logit".into());
+        }
     }
     Ok(Some(adjusted))
 }
@@ -155,6 +173,21 @@ mod tests {
             assert!(validate_offset_v1(bad).is_err());
         }
         assert!(validate_offset_v1(4.0).is_ok());
+        assert!(validate_offset_v1(MAX_OFFSET_V1).is_ok());
+        for too_big in [f32::MAX, MAX_OFFSET_V1 * 2.0] {
+            assert!(validate_offset_v1(too_big).is_err());
+        }
+        // An accepted offset cannot overflow a finite raw logit, and the
+        // check also runs inside the adjustment itself.
+        let announce = rows(&[(1.0, 0.0), (1.0, 1.0)], 195);
+        assert!(offset_logits_v1(&[1.0, 0.5], &pregame_state(true), &announce, f32::MAX).is_err());
+        assert!(offset_logits_v1(
+            &[1.0, -3.0e38],
+            &pregame_state(true),
+            &announce,
+            MAX_OFFSET_V1
+        )
+        .is_ok());
         let two = rows(&[(1.0, 1.0), (1.0, 1.0)], 195);
         assert!(mulligan_rows_v1(&pregame_state(true), &two, 2).is_err());
         assert!(mulligan_rows_v1(&pregame_state(true), &[0.0; 10], 3).is_err());

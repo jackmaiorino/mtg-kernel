@@ -336,7 +336,7 @@ fn keep_offset_is_absent_by_default_and_refused_without_london() {
     let parsed: ExpandedEpisodeV1 = serde_json::from_value(value).unwrap();
     assert_eq!(parsed, offset);
     assert!(offset.configurations_checked_v1().is_ok());
-    for bad in [0.0, -2.0, f32::NAN] {
+    for bad in [0.0, -2.0, f32::NAN, f32::INFINITY, 1.0e7, f32::MAX] {
         let mut e = episode(true);
         e.london_keep_offset = Some(bad);
         assert!(e.configurations_checked_v1().is_err());
@@ -392,6 +392,24 @@ fn keep_offset_steers_announcements_records_raw_logits_and_validates() {
             raw[rows[0]] > -1.0e3,
             "raw logit recorded, not the offset one"
         );
+    }
+    // A moderate offset with the policy's legacy sampler: the announcement
+    // rows are drawn from the unclamped sampler, every other row from the
+    // legacy one, and the trajectory validates (the re-draw agrees) with the
+    // legacy sampler identity unchanged on every row.
+    for seed in [41u64, 42, 43, 44] {
+        let mut moderate = episode(true);
+        moderate.seed = seed;
+        moderate.london_keep_offset = Some(12.0);
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v4()
+            .into_flat_v7_transfer_v1()
+            .unwrap();
+        let collected = collect_episode(&mut policy, &learner, None, &moderate).unwrap();
+        validate_trajectory(&collected).unwrap();
+        assert!(collected.learner_sampler.is_none());
+        assert!(collected.decisions.iter().all(
+            |row| row.sampler_identity.as_deref() != Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1)
+        ));
     }
     // An episode without the offset collects exactly as before: same
     // trajectory bytes as a collection that never knew the field.

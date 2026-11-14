@@ -2026,8 +2026,72 @@ fn london_keep_offset_is_refused_outside_the_plain_gae_loss() {
     assert_eq!(
         error,
         NativePolicyTrainErrorV1::LondonKeepOffset {
-            code: "london-keep-offset-requires-gae"
+            code: "london-keep-offset-requires-plain-gae"
         }
     );
+    // The refusal also clears the setting, and the state is unchanged.
+    assert_eq!(legacy.london_keep_offset_v1(), None);
     assert_eq!(state_bits(&legacy), state_bits(&base));
+}
+
+#[test]
+fn london_keep_offset_never_outlives_the_step_that_took_it() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = announcement_fixture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    // Ok: the plain GAE step consumes it.
+    let mut ok = base.clone();
+    ok.set_london_keep_offset_v1(Some(2.5));
+    ok.train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    assert_eq!(ok.london_keep_offset_v1(), None);
+    // Err on the first early return (a bad learning rate): consumed as well,
+    // and the state is untouched.
+    let mut early = base.clone();
+    early.set_london_keep_offset_v1(Some(2.5));
+    assert!(early
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, f32::NAN)
+        .is_err());
+    assert_eq!(early.london_keep_offset_v1(), None);
+    assert_eq!(state_bits(&early), state_bits(&base));
+    // Err with mismatched inputs: same.
+    let mut mismatched = base.clone();
+    mismatched.set_london_keep_offset_v1(Some(2.5));
+    assert!(mismatched
+        .train_step_gae_feature_transfer_v3(&groups, &targets[..0], &advantages, VC, LR)
+        .is_err());
+    assert_eq!(mismatched.london_keep_offset_v1(), None);
+    assert_eq!(state_bits(&mismatched), state_bits(&base));
+}
+
+#[test]
+fn london_keep_offset_is_refused_by_the_other_update_entry_points() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let expected = NativePolicyTrainErrorV1::LondonKeepOffset {
+        code: "london-keep-offset-requires-plain-gae",
+    };
+    // The weighted loss.
+    let mut weighted = base.clone();
+    weighted.set_london_keep_offset_v1(Some(1.0));
+    let weights = vec![0.5f32; groups.len()];
+    assert_eq!(
+        weighted
+            .train_step_weighted_feature_transfer_v3(&groups, &weights, VC, LR)
+            .unwrap_err(),
+        expected
+    );
+    assert_eq!(weighted.london_keep_offset_v1(), None);
+    assert_eq!(state_bits(&weighted), state_bits(&base));
+    // The shared helper, as the CUDA, E-supported, soft-target, archive
+    // distillation and retention entry points call it.
+    let mut helper = base.clone();
+    assert_eq!(helper.require_no_london_keep_offset_v1(), Ok(()));
+    helper.set_london_keep_offset_v1(Some(1.0));
+    assert_eq!(helper.require_no_london_keep_offset_v1(), Err(expected));
+    assert_eq!(helper.london_keep_offset_v1(), None);
 }

@@ -1711,6 +1711,21 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         self.london_keep_offset
     }
 
+    /// Refuses a learner path that is not the plain CPU GAE step while a London
+    /// keep offset is set, and clears the setting either way: the offset lives
+    /// for one plain GAE step only (`london_keep_offset_v1`).
+    pub(crate) fn require_no_london_keep_offset_v1(
+        &mut self,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        if self.london_keep_offset.take().is_some() {
+            Err(NativePolicyTrainErrorV1::LondonKeepOffset {
+                code: "london-keep-offset-requires-plain-gae",
+            })
+        } else {
+            Ok(())
+        }
+    }
+
     pub(crate) fn adam_step_dims_v1(&self) -> u64 {
         self.adam_step
     }
@@ -2364,6 +2379,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
         self.require_no_input_contract_v1("cuda")?;
+        self.require_no_london_keep_offset_v1()?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_feature_transfer_v3(
             self,
             groups,
@@ -2393,6 +2409,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
         self.require_no_input_contract_v1("cuda")?;
+        self.require_no_london_keep_offset_v1()?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_feature_transfer_v4(
             self,
             groups,
@@ -2416,6 +2433,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
         self.require_no_input_contract_v1("cuda")?;
+        self.require_no_london_keep_offset_v1()?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_v3(
             self,
             groups,
@@ -2440,6 +2458,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
         self.require_no_input_contract_v1("cuda")?;
+        self.require_no_london_keep_offset_v1()?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_v4(
             self,
             groups,
@@ -2474,6 +2493,7 @@ impl NativePolicyValueTrainStateV1 {
     > {
         self.require_platform_math_v1("cuda")?;
         self.require_no_input_contract_v1("cuda")?;
+        self.require_no_london_keep_offset_v1()?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_line_b_v1(
             self,
             matches!(
@@ -2853,6 +2873,8 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
         input_config: NativePolicyValueModelConfigV1,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        // The terminal-reinforce loss never takes a London keep offset.
+        self.require_no_london_keep_offset_v1()?;
         // The wide refusal list (design section 2.1), before any forward work.
         if !is_net8_dims_v1::<D>() {
             if groups
@@ -3059,11 +3081,6 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                         substep_index,
                         selected: substep.selected_action_index,
                         action_count: tape.logits_v1().len(),
-                    });
-                }
-                if self.london_keep_offset.is_some() {
-                    return Err(NativePolicyTrainErrorV1::LondonKeepOffset {
-                        code: "london-keep-offset-requires-gae",
                     });
                 }
                 let (selected_log_probability, log_probabilities) = selected_log_softmax_math_v1(
