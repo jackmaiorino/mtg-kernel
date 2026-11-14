@@ -1510,8 +1510,6 @@ impl<'a> TrainTensorsV1<'a> {
 
     /// [`NativePolicyValueTrainSnapshotV1::state_sha256_v1`] of the snapshot
     /// these tensors are, without one: the same validation, then the digest
-    /// [`NativePolicyValueTrainSnapshotV1::state_sha256_v1`] of the snapshot
-    /// these tensors are, without one: the same validation, then the digest
     /// streamed straight from the borrowed slices without copying them into a
     /// process memo. A view built from a live state (`tensors_v1()`) has its
     /// state's own memoized digest; this is for tensors held elsewhere, such

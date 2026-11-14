@@ -2042,7 +2042,7 @@ fn initialize_from_source_bytes_v1(
         .as_ref()
         .map(read_checkpoint_record_v1)
         .transpose()?;
-    let (state, saved) = if let Some(record) = checkpoint_record.as_deref() {
+    let (state, saved) = if let Some(record) = checkpoint_record.as_ref() {
         let saved = parse_ordinary_checkpoint_borrowed_v1(record, policy.identity_v1())?;
         if let Some(inputs) = inputs {
             inputs.validate_v1(
@@ -2160,10 +2160,10 @@ fn load_ordinary_policy_v1(
 }
 
 fn parse_ordinary_checkpoint_borrowed_v1<'a>(
-    record: &'a [u8],
+    record: &'a OpenedCheckpointRecordV1,
     origin: &PlayPolicyOriginV1,
 ) -> Result<ExpandedCheckpointV1<BorrowedParameterBitsV1<'a>>, String> {
-    let saved = checkpoint_container_v1::parse_record_borrowed_v1(record)?;
+    let saved = record.parse_borrowed_v1()?;
     if !origin.is_fresh_v1() {
         ensure(
             saved.registry_transfer.is_none() && !saved.source_import.is_fresh_v1(),
@@ -4936,7 +4936,7 @@ fn execute_update_inner_v1(
                 .as_ref()
                 .ok_or("recovery continuation requires checkpoint")?;
             let record = read_checkpoint_record_v1(pin)?;
-            let saved = checkpoint_container_v1::parse_record_borrowed_v1(&record)?;
+            let saved = record.parse_borrowed_v1()?;
             ensure(
                 saved.exploration == Some(loss_selection),
                 "recovery continuation selection differs",
@@ -6187,15 +6187,55 @@ fn read_pinned<T: for<'de> Deserialize<'de>>(pin: &PinnedFileV1) -> Result<T, St
     serde_json::from_slice(&checkpoint_container_v1::json_document_v1(&bytes)?).map_err(err)
 }
 
+/// A pinned checkpoint's opened record bytes together with its pinned byte
+/// length and envelope-open time, so borrowed parsing records the same
+/// checkpoint decode diagnostics (`WorkV1::Decode`) as `read_checkpoint_v1`.
+struct OpenedCheckpointRecordV1 {
+    record: Arc<Vec<u8>>,
+    pinned_bytes: usize,
+    open_nanos: u64,
+}
+
+impl OpenedCheckpointRecordV1 {
+    fn parse_borrowed_v1(
+        &self,
+    ) -> Result<ExpandedCheckpointV1<BorrowedParameterBitsV1<'_>>, String> {
+        let started = std::time::Instant::now();
+        let saved = checkpoint_container_v1::parse_record_borrowed_v1(&self.record);
+        let parse_nanos = opponent_cache_diagnostics_v1::nanos_since_v1(started);
+        opponent_cache_diagnostics_v1::note_checkpoint_decode_nanos_v1(
+            self.pinned_bytes,
+            self.open_nanos.saturating_add(parse_nanos),
+        );
+        saved
+    }
+}
+
 /// A pinned checkpoint's opened record bytes: shared directly from the
 /// verified-bytes cache when unsealed, or the decompressed record when sealed
 /// (`record_envelope_v1`).
-fn read_checkpoint_record_v1(pin: &PinnedFileV1) -> Result<Arc<Vec<u8>>, String> {
+fn read_checkpoint_record_v1(pin: &PinnedFileV1) -> Result<OpenedCheckpointRecordV1, String> {
     let shared = read_pinned_shared_v1(pin)?;
-    match record_envelope_v1::open_v1(&shared, MAX_FILE_BYTES)? {
-        std::borrow::Cow::Borrowed(_) => Ok(shared),
-        std::borrow::Cow::Owned(record) => Ok(Arc::new(record)),
-    }
+    let pinned_bytes = shared.len();
+    let open_started = std::time::Instant::now();
+    let opened = record_envelope_v1::open_v1(&shared, MAX_FILE_BYTES);
+    let open_nanos = opponent_cache_diagnostics_v1::nanos_since_v1(open_started);
+    let record = match opened {
+        Ok(std::borrow::Cow::Borrowed(_)) => shared,
+        Ok(std::borrow::Cow::Owned(record)) => Arc::new(record),
+        Err(error) => {
+            opponent_cache_diagnostics_v1::note_checkpoint_decode_nanos_v1(
+                pinned_bytes,
+                open_nanos,
+            );
+            return Err(error);
+        }
+    };
+    Ok(OpenedCheckpointRecordV1 {
+        record,
+        pinned_bytes,
+        open_nanos,
+    })
 }
 
 /// A pinned checkpoint, from either format, decoded directly (design 4.1,
