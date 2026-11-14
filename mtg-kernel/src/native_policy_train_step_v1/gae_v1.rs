@@ -1407,7 +1407,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         // The scaled step's record (the result's gradients are then the rest
         // buffer). A step with the scale and no announcement row records it
         // as such.
-        self.pregame_announcement_step_record = announcement_scale.map(|scale| {
+        *self.pregame_announcement_step_record_mut_dims_v1() = announcement_scale.map(|scale| {
             pregame_announcement_step_v1::PregameAnnouncementStepRecordV1 {
                 scale,
                 routed_groups: match &announcement_step {
@@ -1420,10 +1420,12 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 rest_gradient_l2: pregame_announcement_step_v1::gradient_l2_v1(&gradients),
             }
         });
-        self.model = candidate_model;
-        self.adam_step = next_step;
-        self.first_moments = next_first_moments;
-        self.second_moments = next_second_moments;
+        self.commit_step_dims_v1(
+            candidate_model,
+            next_step,
+            next_first_moments,
+            next_second_moments,
+        );
         phase_recorder.finish_v1(finalization_timer);
         Ok((
             NativePolicyTrainStepResultV1 {
