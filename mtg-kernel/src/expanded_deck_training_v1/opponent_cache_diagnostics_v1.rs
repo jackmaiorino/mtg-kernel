@@ -209,7 +209,12 @@ pub(crate) struct FileReadsV1 {
 
 /// Records one pinned file read of `bytes` bytes that began at `started`.
 pub(crate) fn note_file_read_v1(bytes: usize, started: Instant) {
-    let nanos = nanos_since_v1(started);
+    note_file_read_nanos_v1(bytes, nanos_since_v1(started));
+}
+
+/// [`note_file_read_v1`] for a streaming reader that accumulates read time
+/// separately from chunk verification.
+pub(crate) fn note_file_read_nanos_v1(bytes: usize, nanos: u64) {
     let reads = &counters_v1().file_reads;
     reads.reads.add(1);
     reads.bytes.add_usize(bytes);

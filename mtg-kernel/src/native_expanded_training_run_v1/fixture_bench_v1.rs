@@ -502,9 +502,11 @@ fn the_fixture_schedule_is_explicit_and_every_case_writes_to_a_fixed_path() {
 /// The warm-up runs the fresh schedule's first iterations in this process;
 /// the warm case resumes its retained checkpoint with the next iterations.
 /// The loads of that run are counted by caller role
-/// (`loaded_source_profile_v1`): every lookup ends as a hit or a miss, each
-/// update's readback is the one full load and the one kept entry, and every
-/// other per-update load is a hit that copies a whole train state and policy.
+/// (`loaded_source_profile_v1`): every lookup ends as a hit or a miss, no
+/// train state is ever copied into or out of the process cache, collection
+/// duplicates only a policy view from the carried learner, update consumes the
+/// carried learner by owned handoff, and update validation checks identity
+/// without cloning policy or train-state bytes.
 #[test]
 fn the_warm_case_resumes_the_warm_up_and_every_load_is_counted_by_role() {
     use crate::expanded_deck_training_v1::loaded_source_profile_v1::{
@@ -551,10 +553,18 @@ fn the_warm_case_resumes_the_warm_up_and_every_load_is_counted_by_role() {
             initial.cache_kept
         ),
         (1, 1, 1, 1),
-        "the fresh descriptor loads in full once and is kept"
+        "the fresh descriptor loads once and caches only its policy+identity"
     );
-    // Every state and policy of this net has one size: the kept fresh one's.
-    let (state_bytes, policy_bytes) = (initial.kept_state_bytes, initial.kept_policy_bytes);
+    let state_bytes = 4
+        * crate::native_policy_train_step_v1::NativePolicyValueTrainStateV1::new_v1(
+            crate::native_policy_value_net_v1::NativePolicyValueNetV1::runner_fixed_v1(
+                crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1::contract_v1(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .owned_f32_len_v1() as u64;
+    let policy_bytes = initial.kept_policy_bytes;
     let parameter_bytes = 4 * crate::native_policy_value_net_v1::PARAMETER_COUNT_V1 as u64;
     assert!(
         state_bytes >= 3 * parameter_bytes,
@@ -564,6 +574,27 @@ fn the_warm_case_resumes_the_warm_up_and_every_load_is_counted_by_role() {
         0 < policy_bytes && policy_bytes < parameter_bytes,
         "a policy copy holds its embedding table and shares its model"
     );
+    for (role, counts) in all_roles.iter().zip(&counted) {
+        assert_eq!(
+            (
+                counts.kept_state_bytes,
+                counts.served_state_bytes,
+                counts.state_served,
+            ),
+            (0, 0, 0),
+            "{role:?}: run roles never copy train-state bytes into or out of the process cache"
+        );
+        assert_eq!(
+            counts.cache_lookups,
+            counts.cache_hits + counts.cache_misses,
+            "{role:?}: every lookup is a hit or a miss"
+        );
+        assert_eq!(
+            counts.cache_hits,
+            counts.state_served + counts.policy_served + counts.identity_served,
+            "{role:?}: every hit accounts its serving granularity"
+        );
+    }
     let readback = count(LoadRoleV1::UpdateReadback);
     assert_eq!(
         (
@@ -575,38 +606,62 @@ fn the_warm_case_resumes_the_warm_up_and_every_load_is_counted_by_role() {
         (updates, updates, updates, 0),
         "each update's readback is its new checkpoint's one full load"
     );
-    assert_eq!(readback.kept_state_bytes, updates * state_bytes);
     assert_eq!(readback.kept_policy_bytes, updates * policy_bytes);
-    for role in [
-        LoadRoleV1::CollectLearner,
-        LoadRoleV1::UpdateLearner,
-        LoadRoleV1::UpdateValidation,
-    ] {
-        let counts = count(role);
-        assert_eq!(
-            (counts.scoped_loads, counts.cache_hits, counts.cache_misses),
-            (updates, updates, 0),
-            "{role:?}"
-        );
-        assert_eq!(counts.served_state_bytes, updates * state_bytes, "{role:?}");
-        assert_eq!(
-            counts.served_policy_bytes,
-            updates * policy_bytes,
-            "{role:?}"
-        );
-    }
+    let collect = count(LoadRoleV1::CollectLearner);
+    assert_eq!(
+        (
+            collect.scoped_loads,
+            collect.carried_policy_views,
+            collect.carried_policy_bytes,
+            collect.cache_lookups,
+            collect.served_policy_bytes,
+        ),
+        (updates, updates, updates * policy_bytes, 0, 0),
+        "collection duplicates its policy view directly from CarriedLearnerV1"
+    );
+    let learner = count(LoadRoleV1::UpdateLearner);
+    assert_eq!(
+        (
+            learner.scoped_loads,
+            learner.carried_state_handoffs,
+            learner.cache_lookups,
+            learner.served_policy_bytes,
+        ),
+        (updates, updates, 0, 0),
+        "each update consumes the owned CarriedLearnerV1 without cache cloning"
+    );
+    let validation = count(LoadRoleV1::UpdateValidation);
+    assert_eq!(
+        (
+            validation.scoped_loads,
+            validation.cache_hits,
+            validation.cache_misses,
+            validation.identity_served,
+            validation.policy_served,
+            validation.served_policy_bytes,
+        ),
+        (updates, updates, 0, updates, 0, 0),
+        "update validation serves identity only with zero policy or state copies"
+    );
     let opponent = count(LoadRoleV1::Opponent);
     assert!(
         opponent.cache_hits >= updates,
         "the current learner is its own opponent"
     );
-    for (role, counts) in all_roles.iter().zip(&counted) {
-        assert_eq!(
-            counts.cache_lookups,
-            counts.cache_hits + counts.cache_misses,
-            "{role:?}: every lookup is a hit or a miss"
-        );
-    }
+    assert_eq!(
+        (
+            opponent.cache_misses,
+            opponent.policy_served,
+            opponent.identity_served,
+            opponent.served_policy_bytes,
+        ),
+        (
+            0,
+            opponent.cache_hits,
+            0,
+            opponent.cache_hits * policy_bytes,
+        )
+    );
     assert_eq!(count(LoadRoleV1::Unattributed).cache_lookups, 0);
     assert_eq!(count(LoadRoleV1::RunFixedOpponent).scoped_loads, 0);
 

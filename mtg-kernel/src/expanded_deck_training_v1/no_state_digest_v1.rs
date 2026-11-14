@@ -30,9 +30,10 @@
 //! ([`InputContractRecordV1`]), absent from every unconverted record.
 
 use super::{
-    check_pinned_v1, ensure, err, hex, identity_valid, initialize_from_source_bytes_v1,
-    load_expanded_inference_any_math_v1, ordinary_checkpoint_schema_v1, publish_json_bytes_v1,
-    read_ordinary_checkpoint_v1, read_pinned, read_pinned_bytes, restore_checkpoint_state_v1, sha,
+    check_pinned_v1, ensure, err, hex, identity_valid, load_expanded_inference_any_math_v1,
+    load_learner_from_source_bytes_v1, load_train_policy_and_identity_v1,
+    ordinary_checkpoint_schema_v1, publish_json_bytes_v1, read_ordinary_checkpoint_v1, read_pinned,
+    read_pinned_bytes, read_pinned_shared_v1, restore_checkpoint_state_v1, sha, CacheRememberV1,
     CheckpointInputExpectationV1, DecisionRecordV1, ExpandedCheckpointV1,
     ExpandedInferenceIdentityV1, ExpandedModelSourceV1, ParameterBitsV1, PinnedFileV1,
 };
@@ -439,15 +440,17 @@ pub(super) fn load_v1(
     bytes: &[u8],
 ) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
     let (import, conversion) = read_import_v1(bytes)?;
-    if base_trains_v1(&read_pinned_bytes(&import.base_play_import)?)? {
-        // The loaded-source cache serves it exactly as it serves training
-        // loads.
-        let (policy, state, _) =
-            match super::loaded_source_cache_v1::lookup_v1(source, bytes, None)? {
-                Some((policy, state)) => (policy, state, None),
-                None => initialize_training_v1(source, bytes, None)?,
-            };
+    if base_trains_v1(&read_pinned_shared_v1(&import.base_play_import)?)? {
+        // Policy-only serving: a hit duplicates only the policy and validated
+        // identity, and a miss remembers them without cloning train state.
+        if let Some(hit) = super::loaded_source_cache_v1::lookup_policy_v1(source, bytes, None)? {
+            return Ok(hit);
+        }
+        let (policy, state, load) = initialize_v1(source, bytes, None)?;
         let identity = super::inference_identity_v1(source, &policy, &state)?;
+        super::loaded_source_cache_v1::remember_converted_policy_v1(
+            source, bytes, &policy, &identity, &load,
+        );
         return Ok((policy, identity));
     }
     ensure(
@@ -465,6 +468,13 @@ pub(super) fn load_v1(
     install_v1(&mut policy, &conversion, check_enabled_v1())?;
     identity.model = policy.actual_model_identity_v1();
     Ok((policy, identity))
+}
+
+/// Whether `bytes` (a [`NoStateDigestImportV1`] `play_import`) name a base
+/// that trains under the contract rather than an inference-only base.
+pub(super) fn trains_v1(bytes: &[u8]) -> Result<bool, String> {
+    let (import, _) = read_import_v1(bytes)?;
+    base_trains_v1(&read_pinned_shared_v1(&import.base_play_import)?)
 }
 
 /// A converted import and its validated conversion record, which must name
@@ -497,24 +507,41 @@ fn base_trains_v1(base_bytes: &[u8]) -> Result<bool, String> {
     })
 }
 
-/// [`initialize_v1`] in the shape of the ordinary training loader, which
-/// returns it directly: no registry-transfer context.
+/// [`initialize_v1`] for an uncached load, remembering according to `remember`
+/// and returning its validated identity and reverification kind. Never
+/// inlined: its policy locals stay out of the ordinary loader's frame.
+#[allow(clippy::type_complexity)]
 #[inline(never)]
-pub(super) fn initialize_training_v1(
+pub(super) fn initialize_training_uncached_v1(
     source: &ExpandedModelSourceV1,
     bytes: &[u8],
     inputs: Option<&CheckpointInputExpectationV1<'_>>,
+    remember: CacheRememberV1,
 ) -> Result<
     (
         FrozenPlayPolicyV1,
         NativePolicyValueTrainStateV1,
-        Option<super::TransferContextV1>,
+        ExpandedInferenceIdentityV1,
+        Option<super::loaded_source_cache_v1::VerifiableSourceKindV1>,
     ),
     String,
 > {
     let (policy, state, load) = initialize_v1(source, bytes, inputs)?;
-    super::loaded_source_cache_v1::remember_converted_v1(source, bytes, &policy, &state, &load);
-    Ok((policy, state, None))
+    let identity = super::inference_identity_v1(source, &policy, &state)?;
+    match remember {
+        CacheRememberV1::WithState => {
+            super::loaded_source_cache_v1::remember_converted_v1(
+                source, bytes, &policy, &state, &load,
+            );
+        }
+        CacheRememberV1::PolicyOnly => {
+            super::loaded_source_cache_v1::remember_converted_policy_v1(
+                source, bytes, &policy, &identity, &load,
+            );
+        }
+    }
+    let kind = super::loaded_source_cache_v1::classify_converted_v1(&load).map(|(kind, _)| kind);
+    Ok((policy, state, identity, kind))
 }
 
 /// What a converted full load restored, for the loaded-source cache: a run
@@ -549,7 +576,7 @@ pub(super) fn reverify_converted_v1(
     // base read below; otherwise those reads run and report as before.
     let base = base_cache_v1::lookup_v1(source, bytes);
     if base.is_none() {
-        let base_bytes = read_pinned_bytes(&import.base_play_import)?;
+        let base_bytes = read_pinned_shared_v1(&import.base_play_import)?;
         ensure(
             base_trains_v1(&base_bytes)?,
             "this no-state-digest source's base is inference-only and does not train",
@@ -570,7 +597,7 @@ pub(super) fn reverify_converted_v1(
             }
         }
     } else {
-        read_pinned_bytes(
+        check_pinned_v1(
             source
                 .checkpoint
                 .as_ref()
@@ -600,7 +627,7 @@ pub(super) fn verify_source_pins_v1(
         return Ok(false);
     }
     if base.is_none() {
-        let base_bytes = read_pinned_bytes(&import.base_play_import)?;
+        let base_bytes = read_pinned_shared_v1(&import.base_play_import)?;
         if !base_trains_v1(&base_bytes)? {
             return Ok(false);
         }
@@ -611,7 +638,7 @@ pub(super) fn verify_source_pins_v1(
         // phase-1 archive-distillation parent) keeps its full load, which
         // reads that file; the cache would not.
         if let Some(pin) = &conversion.base_checkpoint {
-            if names_another_file_v1(&read_pinned_bytes(pin)?)? {
+            if names_another_file_v1(&read_pinned_shared_v1(pin)?)? {
                 return Ok(false);
             }
         }
@@ -647,7 +674,7 @@ pub(super) fn source_pins_v1(
     bytes: &[u8],
 ) -> Result<Option<SourcePinsV1>, String> {
     let (import, conversion) = read_import_v1(bytes)?;
-    let base_bytes = read_pinned_bytes(&import.base_play_import)?;
+    let base_bytes = read_pinned_shared_v1(&import.base_play_import)?;
     if !base_trains_v1(&base_bytes)? {
         return Ok(None);
     }
@@ -763,34 +790,42 @@ fn initialize_v1(
         s_learner: None,
         w_learner: None,
     };
-    let base_bytes = read_pinned_bytes(&base.play_import)?;
+    let base_bytes = read_pinned_shared_v1(&base.play_import)?;
     ensure(
         base_trains_v1(&base_bytes)?,
         "this no-state-digest source's base is inference-only and does not train",
     )?;
-    let (mut policy, base_state, transfer) =
-        initialize_from_source_bytes_v1(&base, &base_bytes, inputs.filter(|_| run_start))?;
-    ensure(
-        transfer.is_none(),
-        "registry-transfer sources do not train under the no-state-digest contract",
-    )?;
     let check = check_enabled_v1();
     let mut run_start_template = None;
-    let (mut state, mut kind, template) = if run_start {
-        (
-            convert_state_v1(&mut policy, base_state, &conversion, check)?,
-            ConvertedLoadKindV1::RunStart,
-            None,
-        )
+    let (mut policy, mut state, mut kind, template) = if run_start {
+        let base_load = load_learner_from_source_bytes_v1(
+            &base,
+            &base_bytes,
+            inputs.filter(|_| run_start),
+            CacheRememberV1::PolicyOnly,
+        )?;
+        ensure(
+            base_load.transfer.is_none(),
+            "registry-transfer sources do not train under the no-state-digest contract",
+        )?;
+        let mut policy = base_load.policy;
+        let state = convert_state_v1(&mut policy, base_load.state, &conversion, check)?;
+        (policy, state, ConvertedLoadKindV1::RunStart, None)
     } else {
-        continue_state_v1(
+        let (mut policy, _, transfer) = load_train_policy_and_identity_v1(&base, &base_bytes)?;
+        ensure(
+            transfer.is_none(),
+            "registry-transfer sources do not train under the no-state-digest contract",
+        )?;
+        let (state, kind, template) = continue_state_v1(
             source,
             &mut policy,
             &conversion,
             &import.conversion,
             inputs,
             Some(check),
-        )?
+        )?;
+        (policy, state, kind, template)
     };
     if run_start {
         policy.bind_input_contract_conversion_v1(import.conversion.clone())?;
@@ -803,7 +838,7 @@ fn initialize_v1(
         .map_err(err)?;
     // A base checkpoint that names a further file keeps every load full.
     if let Some(pin) = &conversion.base_checkpoint {
-        if names_another_file_v1(&read_pinned_bytes(pin)?)? {
+        if names_another_file_v1(&read_pinned_shared_v1(pin)?)? {
             kind = ConvertedLoadKindV1::NotCached;
         }
     }
@@ -820,7 +855,7 @@ fn initialize_v1(
         state,
         ConvertedLoadV1 {
             kind,
-            base_bytes,
+            base_bytes: base_bytes.as_ref().clone(),
             check,
         },
     ))
