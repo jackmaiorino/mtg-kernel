@@ -421,8 +421,8 @@ class ChainTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(chains.Stop, text):
                 self.plan(doc)
         # an explicit null is the same as no schedule
-        _, plan = self.plan(self.inputs(None, label='nul'))
-        doc = self.inputs(None, label='nul2')
+        _, plan = self.plan(self.inputs(None, label='absent'))  # (labels are directory names: none reserved on Windows)
+        doc = self.inputs(None, label='explicit-null')
         doc['arms']['C']['keep_offset'] = None
         _, again = self.plan(doc)
         self.assertEqual(again['arms']['C']['file']['sha256'], plan['arms']['C']['file']['sha256'])
