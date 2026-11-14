@@ -461,7 +461,10 @@ fn may_target(action: &Value) -> bool {
         Some("cast_spell") => {
             def.target_spec != TargetSpec::None
                 || def.mode2.is_some()
-                || matches!(def.name, "Portable Hole" | "Witch Enchanter")
+                || matches!(
+                    def.name,
+                    "Portable Hole" | "Witch Enchanter" | "Monk Realist" | "Ghitu Slinger"
+                )
         }
         Some("activate_ability") => s["ability_index"]
             .as_u64()

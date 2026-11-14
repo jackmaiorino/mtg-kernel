@@ -1159,6 +1159,9 @@ pub enum LibraryCardFilter {
     /// A card with this effective subtype, of any card type ("a Wizard
     /// card", wizardcycling). Appended for the eternal catalog.
     CardWithSubtypeV1(Subtype),
+    /// An artifact or enchantment card (Enlightened Tutor). Appended for the
+    /// eternal catalog.
+    ArtifactOrEnchantmentCardV1,
 }
 
 impl LibraryCardFilter {
@@ -19211,6 +19214,9 @@ fn library_filter_matches(
             def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery)
         }
         LibraryCardFilter::CardWithSubtypeV1(subtype) => subtype.is_in_subtype_ids(subtype_ids),
+        LibraryCardFilter::ArtifactOrEnchantmentCardV1 => {
+            def.has_type(CardType::Artifact) || def.has_type(CardType::Enchantment)
+        }
     })
 }
 
@@ -19269,6 +19275,7 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
             fnv1a_u64(0xcbf2_9ce4_8422_2325, 64),
             u64::from(subtype.stable_id()),
         ),
+        LibraryCardFilter::ArtifactOrEnchantmentCardV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 65),
     }
 }
 

@@ -792,6 +792,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::UpToOneOpponentArtifactCreatureOrPlaneswalkerV1 => ObjF::Permanent,
         S::NoncreaturePermanentV1 => ObjF::Permanent,
         S::RepeatableArtifactsV1(_) => typed(CardType::Artifact),
+        S::EnchantmentCardInOwnGraveyardV1 => typed(CardType::Enchantment),
     }
 }
 
@@ -803,7 +804,8 @@ pub(super) fn standard_target_origin(
         S::InstantOrSorceryCardInOwnGraveyard
         | S::ArtifactCardInOwnGraveyardV1
         | S::ArtifactCardInOwnGraveyardManaValueAtMostV1(_)
-        | S::UpToThreeLandCardsInOwnGraveyardV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
+        | S::UpToThreeLandCardsInOwnGraveyardV1
+        | S::EnchantmentCardInOwnGraveyardV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
         S::CreatureCardInAGraveyardV1 => (Some(ZoneF::Graveyard), None),
         S::CardInAGraveyard
         | S::CreatureCardPutIntoGraveyardThisTurnV1
@@ -1213,7 +1215,9 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             // Vocabulary gap: the Vehicle subtype has no facet.
             out.atoms.push(Atom::Opaque);
         }
-        S::ArtifactCardInOwnGraveyardV1 | S::CreatureCardInAGraveyardV1 => {
+        S::ArtifactCardInOwnGraveyardV1
+        | S::CreatureCardInAGraveyardV1
+        | S::EnchantmentCardInOwnGraveyardV1 => {
             object(out, standard_target_obj(filter), relation, zone);
         }
         S::ArtifactCardInOwnGraveyardManaValueAtMostV1(maximum) => {

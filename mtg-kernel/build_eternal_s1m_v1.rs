@@ -1,9 +1,9 @@
 //! Card-database recipes for the eternal catalog's Legacy sideboard wave
-//! S1m. This module is the tail of the recipe chains: wave S1l's tables
-//! (and wave P1a's second and third modes, wave E5b's other modes) fall
-//! through to these, and its own defaults are the chains' base values.
-//! Runtime programs live in `src/eternal_sideboard_s1m_v1.rs`. Every row is
-//! keyed by a name that occurs only in the eternal registry.
+//! S1m. Wave S1l's tables (and wave P1a's second and third modes, wave E5b's
+//! other modes) fall through to these, and these fall through to wave P3h's
+//! (`build_eternal_p3h_v1.rs`), the tail of the recipe chains. Runtime
+//! programs live in `src/eternal_sideboard_s1m_v1.rs`. Every row is keyed by
+//! a name that occurs only in the eternal registry.
 
 use super::{AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, Special};
 
@@ -23,7 +23,7 @@ const EXTINGUISHER_BATTLESHIP: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRe
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
         "Extinguisher Battleship" => &EXTINGUISHER_BATTLESHIP,
-        _ => &[],
+        _ => super::build_eternal_p3h_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -39,7 +39,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             target_spec: "TargetSpec::None",
             program: "crate::eternal_sideboard_s1m_v1::fiery_confluence_0",
         }),
-        _ => None,
+        _ => super::build_eternal_p3h_v1::special_for(name),
     }
 }
 
@@ -71,30 +71,30 @@ pub(super) fn additional_modes_for(name: &str) -> &'static str {
 }
 
 /// No S1m card has kicker.
-pub(super) fn kicker_cost_for(_name: &str) -> Option<&'static str> {
-    None
+pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
+    super::build_eternal_p3h_v1::kicker_cost_for(name)
 }
 
 /// No S1m card is an Aura or an Equipment.
-pub(super) fn attachment_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn attachment_for(name: &str) -> &'static str {
+    super::build_eternal_p3h_v1::attachment_for(name)
 }
 
 /// No S1m card has flashback.
-pub(super) fn flashback_for(_name: &str) -> String {
-    "None".to_string()
+pub(super) fn flashback_for(name: &str) -> String {
+    super::build_eternal_p3h_v1::flashback_for(name)
 }
 
 /// No S1m card has an alternative cost.
-pub(super) fn alt_cost_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn alt_cost_for(name: &str) -> &'static str {
+    super::build_eternal_p3h_v1::alt_cost_for(name)
 }
 
 /// No S1m card has a printed evergreen keyword: Extinguisher Battleship's
 /// flying and trample are its station 5+ abilities
 /// (`eternal_sideboard_s1m_v1::granted_keywords`).
-pub(super) fn keywords_for(_name: &str) -> &'static [&'static str] {
-    &[]
+pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
+    super::build_eternal_p3h_v1::keywords_for(name)
 }
 
 /// Card-database tokens for this wave's abilities.
@@ -106,6 +106,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Fiery Confluence" => {
             "modes:choose_three_with_repeats:damage_each_creature_1|damage_each_opponent_2|destroy_target_artifact:printed_order:separate_damage_events"
         }
-        _ => "none",
+        _ => super::build_eternal_p3h_v1::trigger_recipe_for(name),
     }
 }

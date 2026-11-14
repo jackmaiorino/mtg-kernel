@@ -56,6 +56,8 @@ mod eternal_premodern_p3e_v1;
 mod eternal_premodern_p3f_v1;
 #[path = "eternal/eternal_premodern_p3g_v1.rs"]
 mod eternal_premodern_p3g_v1;
+#[path = "eternal/eternal_premodern_p3h_v1.rs"]
+mod eternal_premodern_p3h_v1;
 #[path = "eternal/eternal_public_shroud_v1.rs"]
 mod eternal_public_shroud_v1;
 #[path = "eternal/eternal_sideboard_s1a_v1.rs"]
@@ -86,6 +88,8 @@ mod eternal_vintage_e4b_v1;
 mod eternal_vintage_e5a_v1;
 #[path = "eternal/eternal_vintage_e7b_v1.rs"]
 mod eternal_vintage_e7b_v1;
+#[path = "eternal/premodern_feb_jsonl_v1.rs"]
+mod premodern_feb_jsonl_v1;
 
 #[path = "eternal/bonder_owned_draws_v1.rs"]
 mod bonder_owned_draws_v1;

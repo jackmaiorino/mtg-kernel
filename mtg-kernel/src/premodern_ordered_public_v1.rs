@@ -19,6 +19,8 @@ use serde::Serialize;
 mod decision;
 #[cfg(feature = "eternal-fixtures")]
 pub mod feb;
+#[cfg(feature = "eternal-fixtures")]
+pub mod feb_jsonl;
 pub use decision::{
     advance_numeric, HumanDecisionViewV1, HumanFullTextActionV1, NumericBoundaryV1,
     NumericDecisionV1, NumericDecisionViewV1, NumericMenuV1, NumericNativeActionV1,

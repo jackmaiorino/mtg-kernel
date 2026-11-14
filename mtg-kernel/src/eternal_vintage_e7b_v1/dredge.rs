@@ -88,6 +88,9 @@ fn draws(op: &EffectOp) -> bool {
         EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::VintageV1(
             VintageOpV1::CovetedJewelChangesHandsV1 | VintageOpV1::ParadoxicalOutcomeV1,
         ))) => true,
+        EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::P3hV1(
+            crate::eternal_premodern_p3h_v1::P3hOpV1::DecreeOfPainV1,
+        ))) => true,
         _ => false,
     }
 }

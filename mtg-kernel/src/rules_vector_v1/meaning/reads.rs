@@ -709,6 +709,11 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
             out.atoms.push(Atom::Opaque);
             ObjF::AnyCard
         }
+        LibraryCardFilter::ArtifactOrEnchantmentCardV1 => {
+            // The vocabulary lacks a disjunction of permanent types.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Permanent
+        }
     }
 }
 
