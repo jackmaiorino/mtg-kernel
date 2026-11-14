@@ -2604,10 +2604,10 @@ fn collect_episode_hooked_v1(
 /// The London keep offset shared by every trajectory of an update batch,
 /// compared by bits; a batch mixing values (or offset and no offset) is
 /// refused.
-fn batch_london_keep_offset_v1(episodes: &[ExpandedTrajectoryV1]) -> Result<Option<f32>, String> {
-    let mut values = episodes
-        .iter()
-        .map(|trajectory| trajectory.episode.london_keep_offset.map(f32::to_bits));
+fn batch_london_keep_offset_v1(
+    offsets: impl IntoIterator<Item = Option<f32>>,
+) -> Result<Option<f32>, String> {
+    let mut values = offsets.into_iter().map(|offset| offset.map(f32::to_bits));
     let first = values.next().flatten();
     ensure(
         values.all(|value| value == first),
@@ -4632,7 +4632,9 @@ fn execute_update_inner_v1(
     // The London keep offset (`london_keep_offset_v1`): one value per update,
     // carried by every trajectory of the batch (its episodes are one
     // iteration of a schedule), and only on the plain CPU GAE update.
-    let london_keep_offset = batch_london_keep_offset_v1(&episodes)?;
+    let london_keep_offset = batch_london_keep_offset_v1(
+        episodes.iter().map(|trajectory| trajectory.episode.london_keep_offset),
+    )?;
     if london_keep_offset.is_some() {
         ensure(
             matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
