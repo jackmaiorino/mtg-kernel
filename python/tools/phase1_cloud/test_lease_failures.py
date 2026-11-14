@@ -26,8 +26,16 @@ from test_cloud import lease
 
 
 def pod(**changes):
-    return {'id':'pod123','name':lease()['name'],'cpuFlavorId':'cpu3c','vcpuCount':32,
-            'networkVolumeId':'testvolume','costPerHr':.96}|changes
+    return {'id':'pod123','name':lease()['name'],'status':'RUNNING','cpu':{'id':'cpu3c','vcpuCount':32,'memory':64},
+            'mounts':{'network':[{'volumeId':'testvolume','path':'/workspace'}]},'cost':.96}|changes
+
+
+def cpu(**changes):
+    return {'id':'cpu3c','vcpuCount':32,'memory':64}|changes
+
+
+def volumes(*ids):
+    return {'network':[{'volumeId':volume,'path':'/workspace'} for volume in ids]}
 
 
 def guard(test, value, state, world, start=1100., pod_id='pod123', **options):
@@ -117,7 +125,8 @@ class LeaseFailureTests(unittest.TestCase):
                                  ['absent_confirmations'], 2)
 
     def test_wrong_cpu_or_volume_still_releases_owned_pod_without_volume_operation(self):
-        for wrong in (pod(vcpuCount=64), pod(cpuFlavorId='wrong'), pod(networkVolumeId='different')):
+        for wrong in (pod(cpu=cpu(vcpuCount=64)), pod(cpu=cpu(id='wrong')), pod(mounts=volumes('different')),
+                      pod(mounts=volumes('testvolume', 'extra')), pod(mounts=None), pod(cpu=None)):
             with self.subTest(shape=wrong), tempfile.TemporaryDirectory() as temporary:
                 world = World([wrong])
                 guard(self, lease(), temporary, world)
@@ -160,24 +169,25 @@ class LeaseFailureTests(unittest.TestCase):
 class PriceAndReleaseTests(unittest.TestCase):
     """mtg-kernel-collab#335 items 2 and 5 on the resident guard."""
 
-    def test_pod_rate_counts_adjusted_and_rejects_malformed(self):
-        self.assertEqual(lease_guard.pod_rate({'costPerHr': .96, 'adjustedCostPerHr': 1.05}), 1.05)
-        for bad in ({}, {'costPerHr': None}, {'costPerHr': 'n/a'}, {'costPerHr': 0}, {'costPerHr': float('nan')},
-                    {'costPerHr': True}, {'costPerHr': -1}, {'costPerHr': {'x': 1}},
-                    {'costPerHr': 1, 'adjustedCostPerHr': 'y'}):
+    def test_pod_rate_reads_v2_cost_and_rejects_malformed(self):
+        self.assertEqual(lease_guard.pod_rate({'cost': 1.05}), 1.05)
+        self.assertEqual(lease_guard.pod_rate({'cost': '.96'}), .96)
+        # v1's fields are gone in v2: a Pod carrying only them has no readable rate.
+        for bad in ({}, {'costPerHr': .96}, {'cost': None}, {'cost': 'n/a'}, {'cost': 0}, {'cost': float('nan')},
+                    {'cost': float('inf')}, {'cost': True}, {'cost': -1}, {'cost': {'x': 1}}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 lease_guard.pod_rate(bad)
 
     def test_verify_pod_rejects_rate_above_ceiling(self):
         with self.assertRaisesRegex(ValueError, 'above ceiling'):
-            lease_guard.verify_pod(pod(adjustedCostPerHr=1.5), lease(), 'pod123')
-        self.assertEqual(lease_guard.verify_pod(pod(costPerHr=.96, vcpuCount=64), lease() | {'vcpu_count': 64},
+            lease_guard.verify_pod(pod(cost=1.5), lease(), 'pod123')
+        self.assertEqual(lease_guard.verify_pod(pod(cost=.96, cpu=cpu(vcpuCount=64)), lease() | {'vcpu_count': 64},
                                                 'pod123'), .96)
 
     def test_malformed_or_missing_price_releases_at_once(self):
-        missing = pod(); del missing['costPerHr']
-        for bad in (pod(costPerHr='n/a'), pod(costPerHr=None), pod(costPerHr=float('nan')), missing,
-                    pod(adjustedCostPerHr=2.0)):
+        missing = pod(); del missing['cost']
+        for bad in (pod(cost='n/a'), pod(cost=None), pod(cost=float('nan')), missing,
+                    pod(cost=2.0)):
             with self.subTest(bad=bad), tempfile.TemporaryDirectory() as temporary:
                 world = World([bad])
                 clock = guard(self, lease(), temporary, world)
@@ -263,7 +273,7 @@ class ProviderResponseTests(unittest.TestCase):
                     lease_guard.Provider('fake-key', 'pod123').call('GET')
 
     def test_only_http_404_is_absence(self):
-        error = urllib.error.HTTPError('https://rest.runpod.io/v1/pods/pod123', 404, 'absent', {}, None)
+        error = urllib.error.HTTPError('https://api.runpod.io/v2/pods/pod123', 404, 'absent', {}, None)
         with no_network(), patch('urllib.request.urlopen', side_effect=error):
             self.assertIsNone(lease_guard.Provider('fake-key', 'pod123').call('GET'))
         with no_network(), patch('urllib.request.urlopen', return_value=http_response(json.dumps(pod()).encode())):
@@ -326,7 +336,7 @@ class BootstrapFailureTests(unittest.TestCase):
               'public_ssh_key':'ssh-ed25519 AAAATEST public'}
         result=prepare(spec,root/'prepared',now=1001)
         body=json.loads(Path(result['create_request_template']['path']).read_text())
-        cls.command=body['dockerEntrypoint'][2]
+        cls.command=body['entrypoint'][2]
         cls.bootstrap=base64.b64decode(cls.command.split("'")[1]).decode()
         tree=ast.parse(cls.bootstrap)
         cls.guard_program=ast.literal_eval(tree.body[0].value)
@@ -389,7 +399,7 @@ class BootstrapFailureTests(unittest.TestCase):
         self.assertEqual(requests[0][0],'DELETE')
         self.assertEqual(world.pods,{})
         for _,url in requests:
-            self.assertEqual(url,'https://rest.runpod.io/v1/pods/pod123')
+            self.assertEqual(url,'https://api.runpod.io/v2/pods/pod123')
             self.assertNotIn('fake-sensitive-key',url)
 
 

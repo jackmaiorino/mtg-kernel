@@ -6,22 +6,24 @@ RUNPOD_API_KEY only in-memory, only inside Provider.lookup (reached only
 through --execute), only in the Authorization header of each GET. Never save
 or print a request or response containing the actual key value, and never
 persist a raw provider response: only sanitize_pod_listing's two fields
-(desiredStatus, costPerHr) are written to disk, and only when the Pod is
-still listed.
+(status, cost) are written to disk, and only when the Pod is still listed.
 
-RunPod API reference relied on (retrieved 2026-09-15T16:50:42Z from
-https://docs.runpod.io/llms.txt and the page it links):
+Runpod API reference relied on (REST API v2, retrieved 2026-11-14 from
+https://api.runpod.io/v2/openapi.json and
+https://docs.runpod.io/api-reference-v2/migrate-from-v1; REST v1 retired
+2026-11-15):
 
-  GET https://rest.runpod.io/v1/pods/{podId}
-    (https://docs.runpod.io/api-reference/pods/GET/pods/podId)
+  GET https://api.runpod.io/v2/pods/{id}
     Authorization: Bearer <key>, same scheme as lease_guard.Provider and
     prepare_lease.Provider.
-    200 response body (Pod): id, name, desiredStatus ("RUNNING", "EXITED" or
-      "TERMINATED"), costPerHr, adjustedCostPerHr, dataCenterId,
-      networkVolumeId, among other fields.
-    404 response: "Pod not found" -- the only response this module treats as
-      a definitive absence. A 400 ("Invalid ID supplied") or any other
-      non-2xx, non-404 status is treated as ambiguous, not as absence.
+    200 response body (Pod): id, name, status (PROVISIONING, STARTING,
+      RUNNING, EXITED, ERROR or TERMINATED: the actual state, unlike v1's
+      requested desiredStatus), cost (hourly USD rate), cpu, mounts,
+      dataCenterId, among other fields.
+    404 response (RFC 9457 problem body) -- the only response this module
+      treats as a definitive absence. A 200 with status TERMINATED is still a
+      listing, as v1's desiredStatus TERMINATED was. Any other non-2xx,
+      non-404 status is treated as ambiguous, not as absence.
 
 Runbook discipline: a released Pod is confirmed absent only by a *subsequent*
 independent lookup, not by the guard's own in-process detection alone (see
@@ -42,8 +44,8 @@ Receipt shape (pod-absence-<podid>.json, schema phase1-cloud-pod-absence/v1):
   transient/ambiguous lookup), http_status (the deciding lookup's HTTP
   status, or null for a timeout/unavailable request), endpoint (the exact
   URL requested), repeat_required, attempts_performed, interval_seconds,
-  lookups (the full per-attempt trail), pod (sanitized desiredStatus/
-  costPerHr, present only when provider_absent is false), reason (present
+  lookups (the full per-attempt trail), pod (sanitized status/cost,
+  present only when provider_absent is false), reason (present
   only when provider_absent is null), key_saved (always false).
 
 This receipt shape is deliberately compatible with lifecycle_timing.py's
@@ -72,12 +74,12 @@ import time
 import urllib.error
 import urllib.request
 from common import encoded, require, write
+from lease_guard import PODS_URL, RESOURCE_ID_PATTERN
 from prepare_lease import KEY_PLACEHOLDER
 
 SCHEMA = 'phase1-cloud-pod-absence/v1'
-PODS_URL = 'https://rest.runpod.io/v1/pods'
 USER_AGENT = 'phase1-pod-absence-verify/1'
-POD_ID_PATTERN = '[A-Za-z0-9]+'
+POD_ID_PATTERN = RESOURCE_ID_PATTERN
 DEFAULT_REPEAT = 2
 DEFAULT_INTERVAL_SECONDS = 30.0
 
@@ -91,12 +93,12 @@ def sanitize_pod_listing(raw):
     """Keep only the two fields the runbook needs when a Pod is still
     listed. The raw provider response is never written to disk or printed."""
     require(isinstance(raw, dict), 'pod response malformed')
-    for field in ('desiredStatus', 'costPerHr'):
+    for field in ('status', 'cost'):
         require(field in raw, 'pod response missing ' + field)
-    require(isinstance(raw['desiredStatus'], str), 'invalid pod field types')
-    require(isinstance(raw['costPerHr'], (int, float)) and not isinstance(raw['costPerHr'], bool)
-            and raw['costPerHr'] >= 0, 'invalid pod cost in response')
-    return {'desired_status': raw['desiredStatus'], 'cost_per_hour_usd': raw['costPerHr']}
+    require(isinstance(raw['status'], str), 'invalid pod field types')
+    require(isinstance(raw['cost'], (int, float)) and not isinstance(raw['cost'], bool)
+            and raw['cost'] >= 0, 'invalid pod cost in response')
+    return {'status': raw['status'], 'cost_per_hour_usd': raw['cost']}
 
 
 # ---- Live provider client (only reached through --execute) -----------------

@@ -124,12 +124,13 @@ import re
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 import uuid
 
 from common import read, write
-from lease_guard import (AbsenceConfirmer, Provider, decision, pod_rate, validate,
-                         verify_pod_identity)
+from lease_guard import (PODS_URL, RESOURCE_ID_PATTERN, AbsenceConfirmer, Provider, decision, list_all,
+                         pod_rate, validate, verify_pod_identity)
 
 POLL_SECONDS = 15
 PRESERVE_MIN_REMAINING = 900      # no preservation with less than 15 min to the deadline
@@ -149,15 +150,25 @@ SYNC_ALERT = 'ALERT-sync-degraded.json'      # the store lock, closure probe or 
 KNOWN_DIR = 'lease/known-pods'
 STORE_LOCK_SECONDS = 20           # a handoff or completion waiting longer for the store lock fails closed
 CREATE_ROLES = ('receipt', 'adopted')   # roles that mark a retained ID as the create result (I3)
-POD_ID = re.compile('[A-Za-z0-9]+')
+POD_ID = re.compile(RESOURCE_ID_PATTERN)
 
 
 def list_pods(key):
+    """The full v2 Pod census as a list, walking every page (lease_guard.list_all).
+
+    v2 wraps the list as {"pods": [...], "pagination": {...}} and pages it; a
+    malformed page or an unfinished walk raises, so a partial census is never
+    taken for a complete one.
+    """
     require_boundary('Pod census')
-    request = urllib.request.Request('https://rest.runpod.io/v1/pods', headers={
-        'Authorization': 'Bearer ' + key, 'User-Agent': 'Mozilla/5.0 g115-external-guard/1'})
-    with urllib.request.urlopen(request, timeout=15) as response:
-        return json.load(response)
+
+    def fetch(cursor):
+        url = PODS_URL + ('?' + urllib.parse.urlencode({'cursor': cursor}) if cursor else '')
+        request = urllib.request.Request(url, headers={
+            'Authorization': 'Bearer ' + key, 'User-Agent': 'Mozilla/5.0 g115-external-guard/1'})
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.load(response)
+    return list_all(fetch, 'pods')
 
 
 def api_key():
@@ -172,7 +183,7 @@ def api_key():
 
 
 def valid_id(pod_id):
-    """A Pod ID is a raw string of letters and digits; nothing is coerced (I1)."""
+    """A Pod ID is a raw URL/filename-safe string (RESOURCE_ID_PATTERN); nothing is coerced (I1)."""
     return isinstance(pod_id, str) and POD_ID.fullmatch(pod_id) is not None
 
 

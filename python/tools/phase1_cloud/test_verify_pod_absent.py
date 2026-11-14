@@ -53,7 +53,7 @@ class FakeResponse:
 
 
 def http_error(code):
-    return urllib.error.HTTPError('https://rest.runpod.io/v1/pods/abc123', code, 'reason', {}, None)
+    return urllib.error.HTTPError('https://api.runpod.io/v2/pods/abc123', code, 'reason', {}, None)
 
 
 class NotFoundConfirmationTests(unittest.TestCase):
@@ -89,7 +89,7 @@ class NotFoundConfirmationTests(unittest.TestCase):
             api.lookup.side_effect = [
                 {'status': 404, 'kind': 'not_found', 'body': None, 'reason': None},
                 {'status': 200, 'kind': 'listed',
-                 'body': {'id': 'abc123', 'desiredStatus': 'RUNNING', 'costPerHr': 0.2}, 'reason': None},
+                 'body': {'id': 'abc123', 'status': 'RUNNING', 'cost': 0.2}, 'reason': None},
             ]
             with patch.dict('os.environ', {'RUNPOD_API_KEY': FAKE_KEY}):
                 result, _ = vpa.verify_absence('abc123', temporary, repeat=3, api=api,
@@ -104,14 +104,14 @@ class ListedPodTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             api = Mock()
             api.lookup.return_value = {'status': 200, 'kind': 'listed',
-                'body': {'id': 'abc123', 'name': 'phase1-qual', 'desiredStatus': 'RUNNING',
-                         'costPerHr': 0.14, 'ownerId': 'acct-secret-owner', 'extra': 'drop-me'},
+                'body': {'id': 'abc123', 'name': 'phase1-qual', 'status': 'RUNNING',
+                         'cost': 0.14, 'ownerId': 'acct-secret-owner', 'extra': 'drop-me'},
                 'reason': None}
             with patch.dict('os.environ', {'RUNPOD_API_KEY': FAKE_KEY}):
                 result, path = vpa.verify_absence('abc123', temporary, api=api,
                     now=make_clock(NOW), sleep=fail_on_sleep)
             self.assertIs(result['provider_absent'], False)
-            self.assertEqual(result['pod'], {'desired_status': 'RUNNING', 'cost_per_hour_usd': 0.14})
+            self.assertEqual(result['pod'], {'status': 'RUNNING', 'cost_per_hour_usd': 0.14})
             self.assertEqual(result['attempts_performed'], 1)
             self.assertEqual(result['http_status'], 200)
             self.assertIsNone(result['reason'])
@@ -261,13 +261,13 @@ class ProviderHttpClassificationTests(unittest.TestCase):
         self.assertEqual(outcome['reason'], 'malformed_response_body')
 
     def test_listed_200_body_is_parsed(self):
-        body = json.dumps({'id': 'abc123', 'desiredStatus': 'RUNNING', 'costPerHr': 0.1}).encode()
+        body = json.dumps({'id': 'abc123', 'status': 'RUNNING', 'cost': 0.1}).encode()
         with patch('verify_pod_absent.urllib.request.urlopen',
                    return_value=FakeResponse(200, body)):
             outcome = vpa.Provider(FAKE_KEY).lookup('abc123')
         self.assertEqual(outcome['kind'], 'listed')
         self.assertEqual(outcome['status'], 200)
-        self.assertEqual(outcome['body']['desiredStatus'], 'RUNNING')
+        self.assertEqual(outcome['body']['status'], 'RUNNING')
 
     def test_request_unavailable_on_os_error(self):
         with patch('verify_pod_absent.urllib.request.urlopen', side_effect=OSError('no route')):
@@ -278,17 +278,17 @@ class ProviderHttpClassificationTests(unittest.TestCase):
 
 class SanitizePodListingTests(unittest.TestCase):
     def test_keeps_only_the_two_documented_fields(self):
-        sanitized = vpa.sanitize_pod_listing({'id': 'x', 'desiredStatus': 'EXITED',
-                                              'costPerHr': 0.0, 'extra': 'drop'})
-        self.assertEqual(sanitized, {'desired_status': 'EXITED', 'cost_per_hour_usd': 0.0})
+        sanitized = vpa.sanitize_pod_listing({'id': 'x', 'status': 'EXITED',
+                                              'cost': 0.0, 'extra': 'drop'})
+        self.assertEqual(sanitized, {'status': 'EXITED', 'cost_per_hour_usd': 0.0})
 
     def test_rejects_missing_or_malformed_fields(self):
         with self.assertRaises(ValueError):
-            vpa.sanitize_pod_listing({'desiredStatus': 'RUNNING'})
+            vpa.sanitize_pod_listing({'status': 'RUNNING'})
         with self.assertRaises(ValueError):
-            vpa.sanitize_pod_listing({'desiredStatus': 'RUNNING', 'costPerHr': '0.1'})
+            vpa.sanitize_pod_listing({'status': 'RUNNING', 'cost': '0.1'})
         with self.assertRaises(ValueError):
-            vpa.sanitize_pod_listing({'desiredStatus': 'RUNNING', 'costPerHr': True})
+            vpa.sanitize_pod_listing({'status': 'RUNNING', 'cost': True})
 
 
 if __name__ == '__main__':
