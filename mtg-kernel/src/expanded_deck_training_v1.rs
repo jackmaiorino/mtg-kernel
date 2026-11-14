@@ -117,6 +117,7 @@ mod line_b_root_selection_v1;
 mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
 mod loaded_source_cache_v1;
+pub(crate) mod london_keep_offset_v1;
 pub mod record_envelope_v1;
 mod trajectory_parse_ahead_v1;
 pub mod v8_inclusion_conversion_v1;
@@ -1047,6 +1048,12 @@ pub struct ExpandedEpisodeV1 {
     /// Per-physical-seat mulligan modes, present exactly when `opening` is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mulligan_modes: Option<[PauperMulliganModeV1; 2]>,
+    /// Some subtracts this positive logit offset from the mulligan row of
+    /// every London announcement, in collection, record validation and the
+    /// update (`london_keep_offset_v1`). Only with `opening`. None keeps every
+    /// prior serialized byte and every behavior.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub london_keep_offset: Option<f32>,
 }
 
 /// Named game-level runtime rules profiles an episode may select.
@@ -1116,8 +1123,14 @@ impl ExpandedEpisodeV1 {
             "mulligan modes are present exactly when an opening is",
         )?;
         let Some(modes) = self.mulligan_modes else {
-            return Ok(());
+            return ensure(
+                self.london_keep_offset.is_none(),
+                "london_keep_offset requires a London opening",
+            );
         };
+        if let Some(offset) = self.london_keep_offset {
+            london_keep_offset_v1::validate_offset_v1(offset)?;
+        }
         ensure(
             self.reset.is_none(),
             "an opening is refused with a reset start (recorded prefixes predate London)",
@@ -2529,27 +2542,30 @@ fn collect_episode_hooked_v1(
                     Some(hook) if hook.hooks_v1(&d) => Some(hook.before_select_v1(&session, d)?),
                     _ => None,
                 };
-                let (selected, scores, tensor_bits) =
-                    if acting.feature_identity_v1().generation == FreshLineageGenerationV1::V4 {
-                        let (selected, scores, tensor) =
-                            acting.select_with_training_tensor_v4(&session)?;
-                        // FlatV8 rows also record their pairing relation.
-                        let bits = if acting.feature_identity_v1().feature_contract_digest
-                            == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8
-                        {
-                            TensorBitsV1::from_tensor_v8(
-                                &tensor.common,
-                                acting.last_scored_pairing_v8()?,
-                            )
-                        } else {
-                            TensorBitsV1::from_tensor(&tensor.common)
-                        };
-                        (selected, scores, bits)
+                let (selected, scores, tensor_bits) = if acting.feature_identity_v1().generation
+                    == FreshLineageGenerationV1::V4
+                {
+                    let (selected, scores, tensor) = acting.select_with_training_tensor_offset_v4(
+                        &session,
+                        episode.london_keep_offset,
+                    )?;
+                    // FlatV8 rows also record their pairing relation.
+                    let bits = if acting.feature_identity_v1().feature_contract_digest
+                        == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8
+                    {
+                        TensorBitsV1::from_tensor_v8(
+                            &tensor.common,
+                            acting.last_scored_pairing_v8()?,
+                        )
                     } else {
-                        let (selected, scores, tensor) =
-                            acting.select_with_training_tensor_v3(&session)?;
-                        (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                        TensorBitsV1::from_tensor(&tensor.common)
                     };
+                    (selected, scores, bits)
+                } else {
+                    let (selected, scores, tensor) =
+                        acting.select_with_training_tensor_v3(&session)?;
+                    (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                };
                 let logits = bits(&scores.logits);
                 let played = match (hook.as_deref_mut(), pending) {
                     (Some(hook), Some(pending)) => {
@@ -2583,6 +2599,21 @@ fn collect_episode_hooked_v1(
             }
         }
     }
+}
+
+/// The London keep offset shared by every trajectory of an update batch,
+/// compared by bits; a batch mixing values (or offset and no offset) is
+/// refused.
+fn batch_london_keep_offset_v1(
+    offsets: impl IntoIterator<Item = Option<f32>>,
+) -> Result<Option<f32>, String> {
+    let mut values = offsets.into_iter().map(|offset| offset.map(f32::to_bits));
+    let first = values.next().flatten();
+    ensure(
+        values.all(|value| value == first),
+        "an update batch mixes London keep offsets",
+    )?;
+    Ok(first.map(f32::from_bits))
 }
 
 /// One non-natural collection attempt, preserved for audit even though it is
@@ -3239,7 +3270,25 @@ fn validate_episode_records_with_search_v1(
             let logits = match draw {
                 #[cfg(any(test, feature = "experimental-burn-net8-packed-cuda-v1"))]
                 SeatRowDrawV1::None => continue,
-                SeatRowDrawV1::Logits => floats(&row.logits),
+                SeatRowDrawV1::Logits => {
+                    let raw = floats(&row.logits);
+                    // The London keep offset (`london_keep_offset_v1`): the
+                    // draw was made from the offset logits; the stored
+                    // logits stay raw.
+                    match episode.london_keep_offset {
+                        Some(offset) => {
+                            let tensor = row.tensor.tensor();
+                            london_keep_offset_v1::offset_logits_v1(
+                                &raw,
+                                &tensor.state,
+                                &tensor.action_features,
+                                offset,
+                            )?
+                            .unwrap_or(raw)
+                        }
+                        None => raw,
+                    }
+                }
                 SeatRowDrawV1::Singleton => vec![0.0],
             };
             let bits = rng[row.actor as usize].next_u64();
@@ -4580,6 +4629,30 @@ fn execute_update_inner_v1(
         )?;
     }
     let episodes = read_trajectory_batch_v1(&trajectories, preparation_workers.unwrap_or(1))?;
+    // The London keep offset (`london_keep_offset_v1`): one value per update,
+    // carried by every trajectory of the batch (its episodes are one
+    // iteration of a schedule), and only on the plain CPU GAE update.
+    let london_keep_offset = batch_london_keep_offset_v1(
+        episodes
+            .iter()
+            .map(|trajectory| trajectory.episode.london_keep_offset),
+    )?;
+    if london_keep_offset.is_some() {
+        ensure(
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
+                && line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none()
+                && ex1.is_none(),
+            "london_keep_offset trains only on the plain CPU GAE update",
+        )?;
+    }
+    state.set_london_keep_offset_v1(london_keep_offset);
     // Rows the search played are authenticated and masked only by a W5
     // update; every other update refuses them.
     ensure(
@@ -5369,6 +5442,8 @@ fn execute_update_inner_v1(
         }
         None => None,
     };
+    // The offset lived for this update's step only.
+    state.set_london_keep_offset_v1(None);
     let checkpoint_started = std::time::Instant::now();
     let snapshot = state.snapshot_v1().map_err(err)?;
     let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
@@ -6477,6 +6552,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         }
     }
 
@@ -7011,6 +7087,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         assert!(e.configurations().is_ok());
         let selected = &mut e.selected[0];
@@ -7121,6 +7198,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -7259,6 +7337,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7399,6 +7478,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7536,6 +7616,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7656,6 +7737,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7790,6 +7872,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7935,6 +8018,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8070,6 +8154,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8222,6 +8307,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8376,6 +8462,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8418,6 +8505,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         }
     }
 
@@ -9372,6 +9460,7 @@ pub(crate) mod tests {
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
+                london_keep_offset: None,
             };
             if let Err(error) = collect_episode(&mut policy, &learner, None, &episode) {
                 failures.push(format!(
@@ -9432,6 +9521,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -9475,6 +9565,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -9599,6 +9690,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -9657,6 +9749,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -9701,6 +9794,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -9760,6 +9854,7 @@ pub(crate) mod tests {
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
+                london_keep_offset: None,
             };
             let trajectory =
                 collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -9834,6 +9929,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -9870,6 +9966,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -9924,6 +10021,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -9961,6 +10059,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -10108,6 +10207,7 @@ pub(crate) mod tests {
                 opening: opening.then_some(PauperOpeningV1::LondonV1),
                 mulligan_modes: opening
                     .then_some([PauperMulliganModeV1::Learned, PauperMulliganModeV1::Learned]),
+                london_keep_offset: None,
             };
             let collect_result = execute_v1(ExpandedTrainingCommandV1::Collect {
                 source: source.clone(),
@@ -10487,6 +10587,7 @@ pub(crate) mod tests {
                     reset: None,
                     opening: None,
                     mulligan_modes: None,
+                    london_keep_offset: None,
                 }],
                 max_non_natural_episode_fraction: 0.0,
                 collection_sampler: CollectionSamplerV1::Legacy,
@@ -10914,6 +11015,7 @@ pub(crate) mod tests {
                     reset: None,
                     opening: None,
                     mulligan_modes: None,
+                    london_keep_offset: None,
                 };
                 let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
                     source: source.clone(),
@@ -11062,6 +11164,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
 
@@ -11186,6 +11289,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -11654,6 +11758,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -12129,6 +12234,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -12278,6 +12384,7 @@ pub(crate) mod tests {
             reset: None,
             opening: None,
             mulligan_modes: None,
+            london_keep_offset: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),

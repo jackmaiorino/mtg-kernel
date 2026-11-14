@@ -812,6 +812,15 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             math,
             mxcsr,
         );
+        // Read once: the offset of this step's batch, or None (every existing
+        // step). Only the plain GAE objective takes it.
+        let london_keep_offset = self.london_keep_offset;
+        if london_keep_offset.is_some() && (line_b.is_some() || exploration.is_some() || imitation)
+        {
+            return Err(NativePolicyTrainErrorV1::LondonKeepOffset {
+                code: "london-keep-offset-requires-plain-gae",
+            });
+        }
         let mut selected_outputs = Vec::new();
         let mut physical_terms = Vec::with_capacity(groups.len());
         let mut group_tapes = Vec::with_capacity(groups.len());
@@ -874,8 +883,29 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                         action_count: tape.logits_v1().len(),
                     });
                 }
+                // The London keep offset (`london_keep_offset_v1`): the
+                // mulligan row's logit less the offset, exactly as collection
+                // sampled it. The offset is a constant, so the gradient with
+                // respect to the raw logits keeps its softmax form. None
+                // reads the raw logits, as before.
+                let offset_logits = match london_keep_offset {
+                    Some(offset) => {
+                        crate::expanded_deck_training_v1::london_keep_offset_v1::offset_logits_v1(
+                            tape.logits_v1(),
+                            encoded.state,
+                            encoded.action_features,
+                            offset,
+                        )
+                        .map_err(|_| {
+                            NativePolicyTrainErrorV1::LondonKeepOffset {
+                                code: "london-keep-offset-malformed-decision",
+                            }
+                        })?
+                    }
+                    None => None,
+                };
                 let (selected_log_probability, log_probabilities) = selected_log_softmax_math_v1(
-                    tape.logits_v1(),
+                    offset_logits.as_deref().unwrap_or(tape.logits_v1()),
                     substep.selected_action_index,
                     math,
                 )?;

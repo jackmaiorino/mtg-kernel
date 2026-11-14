@@ -2327,6 +2327,7 @@ mod tests {
                         reset: None,
                         opening: None,
                         mulligan_modes: None,
+                        london_keep_offset: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Fixed {
                         id: "archive".into(),
@@ -3318,6 +3319,7 @@ mod tests {
                         reset: None,
                         opening: None,
                         mulligan_modes: None,
+                        london_keep_offset: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Current,
                 }],
