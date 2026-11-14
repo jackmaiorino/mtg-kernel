@@ -54,11 +54,12 @@ pub(crate) const VETERAN_BRAWLERS: &str = "Veteran Brawlers";
 
 /// The echo cost of a creature with echo: its colored mana and generic
 /// mana. Avalanche Riders {3}{R}; Karmic Guide {3}{W}{W} (Premodern wave
-/// P2c).
+/// P2c); Ghitu Slinger {2}{R} (Premodern wave P3h).
 pub(crate) fn echo_cost(name: &str) -> Option<(&'static [ManaColor], u8)> {
     match name {
         AVALANCHE_RIDERS => Some((&[ManaColor::R], 3)),
         crate::eternal_premodern_p2c_v1::KARMIC_GUIDE => Some((&[ManaColor::W, ManaColor::W], 3)),
+        crate::eternal_premodern_p3h_v1::GHITU_SLINGER => Some((&[ManaColor::R], 2)),
         _ => None,
     }
 }

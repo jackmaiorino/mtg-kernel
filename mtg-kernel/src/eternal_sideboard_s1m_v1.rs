@@ -145,12 +145,11 @@ const BATTLESHIP_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     effect: battleship_enters,
 }];
 
-/// Triggered abilities of this module's cards, the tail of the trigger
-/// tables.
+/// Triggered abilities of this module's cards, falling through to wave P3h.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         EXTINGUISHER_BATTLESHIP => &BATTLESHIP_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_premodern_p3h_v1::triggers_for(name),
     }
 }
 

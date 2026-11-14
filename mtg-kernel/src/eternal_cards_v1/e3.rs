@@ -1204,6 +1204,9 @@ pub(crate) fn drive(
         EternalOpV1::P1aV1(op) => {
             crate::eternal_premodern_p1a_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::P3hV1(op) => {
+            crate::eternal_premodern_p3h_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::DelayedUpkeepDrawV1 => crate::eternal_vintage_e7b_v1::dredge::drive_draws(
             state,
             continuation,
