@@ -199,13 +199,18 @@ fn retention_positive_beta_has_direct_loss_gradient_and_worker_parity() {
         RetentionGroupV1 { rows: &one },
     ];
     let mut reference = None;
+    let before_digest = original.state_sha256_v1().unwrap();
     for workers in [1, 2, 4] {
         let mut s = original.clone();
+        assert_eq!(s.state_sha256_v1().unwrap(), before_digest);
         let r = s
             .train_step_retained_imitation_v4(&teaching, &retained, 0.75, 0.0001, workers)
             .unwrap();
         assert!((r.loss as f64 - oracle(original.model_v1(), &f, 0.75)).abs() < 2e-5);
         assert_eq!(s.adam_step_v1(), 8);
+        let after_digest = s.state_sha256_v1().unwrap();
+        assert_ne!(after_digest, before_digest);
+        assert_eq!(after_digest, compute_live_train_state_sha256_dims_v1(&s));
         if let Some((old, result)) = &reference {
             assert_eq!(old, &s.snapshot_v1().unwrap());
             assert_eq!(result, &r);
