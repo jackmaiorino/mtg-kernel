@@ -637,6 +637,29 @@ impl NativeExpandedTrainingRunV1 {
         // W5's native S learner (`s_learner_v1`) runs the ordinary CPU GAE
         // update and collection, with or without EX1/W5; its own update and
         // loader refuse the rest too, this check refuses them before any work.
+        // The wide learner (`w_learner_v1`, net-8w128): the ordinary CPU GAE
+        // update and collection under the platform libm, without EX1/W5 or a
+        // record envelope; its own update and loader refuse the rest too.
+        if self.initial_source.w_learner.is_some() {
+            check(
+                self.initial_source.s_learner.is_none()
+                    && self.training_math.is_platform_libm()
+                    && self.ex1.is_none()
+                    && self.update_backend.is_cpu()
+                    && self.update_backward_execution.is_sequential()
+                    && !self.record_format.is_v2()
+                    && self.collection_sampler.is_legacy()
+                    && self.line_b.is_none()
+                    && self.e_supported.is_none()
+                    && self.soft_q.is_none()
+                    && self.search_targets.is_none()
+                    && matches!(
+                        self.loss_selection,
+                        ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                    ),
+                "a wide learner run requires the ordinary CPU GAE update under the platform libm, record format v1 and the legacy sampler, without EX1, net-8 backward modes, line (b), E, SQ1, search targets or an S learner",
+            )?;
+        }
         if self.initial_source.s_learner.is_some() {
             check(
                 self.update_backend.is_cpu()
@@ -849,6 +872,7 @@ fn validate_source_paths(source: &ExpandedModelSourceV1) -> Result<(), String> {
     for pin in std::iter::once(&source.play_import)
         .chain(source.checkpoint.iter())
         .chain(source.s_learner.iter().map(|member| &member.initial))
+        .chain(source.w_learner.iter().map(|member| &member.initial))
     {
         check(
             pin.path.is_absolute()
@@ -1372,6 +1396,8 @@ fn validate_update(
         load_expanded_update_inference_v1(&next, trajectories, learning_rate, value_coefficient)?;
     // An S checkpoint also binds the run's GAE settings (`s_learner_v1`).
     crate::expanded_deck_training_v1::s_learner_v1::validate_update_loss_v1(&next, loss_selection)?;
+    // And a wide checkpoint (`w_learner_v1`).
+    crate::expanded_deck_training_v1::w_learner_v1::validate_update_loss_v1(&next, loss_selection)?;
     check(
         after.adam_step
             == before
@@ -3286,6 +3312,7 @@ mod tests {
             feature_transfer,
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let list = |id: &str| {
             let registration =
@@ -3475,6 +3502,7 @@ mod tests {
             feature_transfer: transfer(FEATURE_CONTRACT_DIGEST_V8, FEATURE_ENCODING_DIGEST_V8),
             checkpoint: Some(converted.pin.clone()),
             s_learner: None,
+            w_learner: None,
         };
         london(&mut v8);
         // The RT1 chains' parallel collection and ordered update preparation.

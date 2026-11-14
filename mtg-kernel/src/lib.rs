@@ -807,7 +807,11 @@ pub mod stromkirk_public_v1;
 pub mod surface;
 pub mod surface_v2;
 pub mod trace;
+// Test-only timing harness (ignored tests): w128 vs w64 forward and
+// train-state cost. No production code reaches it.
 pub mod trigger;
+#[cfg(test)]
+mod w128_cost_harness_v1;
 pub mod w5_xact_v1;
 mod wildwood_capture_v1;
 mod wildwood_scourge_v1;

@@ -849,6 +849,7 @@ pub(crate) use flat_action_v4::V4SearchSampleMode;
 pub(crate) use flat_action_v4::V4SearchStateErrorV1;
 #[cfg(test)]
 pub(crate) use flat_action_v4::{
+    ceased_token_order_triggers_shared_source_state_v1,
     hidden_order_triggers_shared_source_state_v1, hidden_order_triggers_state_v1,
 };
 pub use flat_action_v5::{FlatActionDecisionBindingV5, FlatActionDecisionSliceV5};

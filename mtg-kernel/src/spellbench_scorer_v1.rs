@@ -367,7 +367,11 @@ impl SpellbenchScorerV1 {
         if feature_identity.generation != FreshLineageGenerationV1::V4 {
             return Err("model_generation_unsupported");
         }
-        let architecture = policy.s_model_v1().map(|_| S_ARCHITECTURE_V1);
+        let architecture = policy.s_model_v1().map(|_| S_ARCHITECTURE_V1).or_else(|| {
+            policy
+                .has_wide_model_v1()
+                .then_some(crate::native_policy_value_net_v1::W_MODEL_ARCHITECTURE_VERSION_V1)
+        });
         Ok(Self {
             policy,
             feature_identity,

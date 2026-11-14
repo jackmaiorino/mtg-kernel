@@ -254,7 +254,9 @@ pub(super) fn frozen_pending_trigger_semantic_v4(
             let Some(contract) = pending.source_contract else {
                 return live.clone();
             };
-            if !crate::trigger::pending_trigger_hidden_source_v1(state, pending) {
+            // Hidden, or ceased to exist (a token that died before its
+            // triggers were placed): the live ref cannot be resolved.
+            if !crate::trigger::pending_trigger_frozen_source_v4(state, pending) {
                 return live.clone();
             }
             CardStableRefV1 {
@@ -339,7 +341,7 @@ fn pending_trigger_frozen_source_components_v4(
     let Some(contract) = pending.source_contract else {
         return Ok(None);
     };
-    if !crate::trigger::pending_trigger_hidden_source_v1(state, pending) {
+    if !crate::trigger::pending_trigger_frozen_source_v4(state, pending) {
         return Ok(None);
     }
     if reference.card_db_id != contract.card_def
@@ -1426,6 +1428,13 @@ pub(crate) fn spell_and_own_cast_trigger_shared_source_state_v1(
 #[cfg(test)]
 pub(crate) fn visible_order_triggers_shared_source_state_v1() -> (crate::state::GameState, ObjectId)
 {
+    visible_order_triggers_shared_source_state_v1_with("Myr Enforcer")
+}
+
+#[cfg(test)]
+fn visible_order_triggers_shared_source_state_v1_with(
+    source_name: &str,
+) -> (crate::state::GameState, ObjectId) {
     use crate::card_def::TargetSpec;
     use crate::effect::EffectOp;
     use crate::policy_observation_v6::tests::{put, ready_state};
@@ -1433,7 +1442,7 @@ pub(crate) fn visible_order_triggers_shared_source_state_v1() -> (crate::state::
     use crate::trigger::PendingTrigger;
 
     let mut state = ready_state();
-    let object = put(&mut state, PlayerId::P0, "Myr Enforcer", Zone::Battlefield);
+    let object = put(&mut state, PlayerId::P0, source_name, Zone::Battlefield);
     let contract = AbilitySourceContractV4::capture(&state, object);
     for _ in 0..2 {
         state.engine.pending_triggers.push(PendingTrigger {
@@ -1452,6 +1461,41 @@ pub(crate) fn visible_order_triggers_shared_source_state_v1() -> (crate::state::
             paid_cost_refs: Vec::new(),
         });
     }
+    (state, object)
+}
+
+/// Regression fixture for the fg-b `InvalidActionReference` fault (V4
+/// self-play, Wildfire vs Affinity, step 219): two `Decision::OrderTriggers`
+/// positions share one source, a token that left the battlefield before the
+/// triggers were placed and then ceased to exist (111.8/704.5d). In the real
+/// game two Black Mage's Rods were attached to one Hero token; casting
+/// Reckoner's Bargain triggered both granted abilities, and the token died
+/// before the triggers were placed. `cease_to_exist` removes the token
+/// from its zone list but keeps its object record (zone `Graveyard`), so
+/// the live `card_ref` in each candidate names an object no zone holds.
+///
+/// Test-only. Re-exported as
+/// `crate::rl_session::ceased_token_order_triggers_shared_source_state_v1`.
+#[cfg(test)]
+pub(crate) fn ceased_token_order_triggers_shared_source_state_v1(
+) -> (crate::state::GameState, ObjectId) {
+    let (mut state, object) = visible_order_triggers_shared_source_state_v1_with("Hero Token");
+    state.players[PlayerId::P0.index()]
+        .battlefield
+        .retain(|&id| id != object);
+    {
+        let live = state.objects.get_mut(object);
+        assert_eq!(live.zone, Zone::Battlefield);
+        live.zone = Zone::Graveyard;
+        live.zone_change_count += 1;
+    }
+    state.players[PlayerId::P0.index()].graveyard.push(object);
+    assert!(crate::event::cease_to_exist(&mut state, object));
+    let live = state.objects.try_get(object).expect("record survives");
+    assert_eq!(live.zone, Zone::Graveyard);
+    assert!(!state.players[PlayerId::P0.index()]
+        .graveyard
+        .contains(&object));
     (state, object)
 }
 
@@ -1846,6 +1890,60 @@ mod tests {
             .iter()
             .all(|row| row.group != FlatActionObjectGroupV1::HistoricalPublicSource));
         let _ = shared_object;
+    }
+
+    /// fg-b regression (`InvalidActionReference`, V4 self-play, Wildfire vs
+    /// Affinity, seed 7167950909562342456, step 219, actor P1, Surface,
+    /// `legal_action_count` 2): two `OrderTriggers` positions whose shared
+    /// source token has ceased to exist. The live reference names an object
+    /// no zone list holds, so the ordinary lookup has no ordinal for it. Each
+    /// position must resolve by its frozen public `source_contract`, exactly
+    /// as a hidden source does: one `HistoricalPublicSource` row per position.
+    #[test]
+    fn v4_order_triggers_from_a_ceased_token_resolve_by_frozen_contract() {
+        let (state, token) = ceased_token_order_triggers_shared_source_state_v1();
+        let session = FastActorSessionV1::from_v3_fixture_state(state);
+        assert!(matches!(
+            session.current.as_ref().unwrap().origin_decision,
+            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::OrderTriggers { .. }))
+        ));
+        let live = session.state.objects.try_get(token).unwrap();
+        assert_eq!(
+            flat_visible_action_object_components_v4(
+                &session.state,
+                PlayerId::P0,
+                0,
+                &CardStableRefV1 {
+                    arena_id: token.0,
+                    card_db_id: live.card_def,
+                    owner: PlayerSeatV1::P0,
+                    controller: PlayerSeatV1::P0,
+                    zone: Zone::Graveyard,
+                    zone_change_count: live.zone_change_count,
+                },
+            )
+            .unwrap_err(),
+            FlatActionDecisionSliceErrorV1::InvalidActionReference,
+            "the live (ceased) incarnation itself stays unresolvable"
+        );
+
+        let (result, objects) = encoded_v4(&session);
+        assert_eq!(result.active_action_count, 2);
+        let pending_rows: Vec<_> = objects
+            .iter()
+            .filter(|row| row.group == FlatActionObjectGroupV1::HistoricalPublicSource)
+            .collect();
+        assert_eq!(pending_rows.len(), 2, "one row per position");
+        assert_eq!(
+            pending_source_ordinals(&objects),
+            vec![1, 2],
+            "ceiling(=1, empty stack) + position 0 and + position 1"
+        );
+        for row in &pending_rows {
+            assert_eq!(row.zone, flat_zone_v1(Zone::Battlefield));
+            assert_eq!(row.zone_change_count, 0, "the incarnation that triggered");
+        }
+        assert_eq!(objects.len(), 2, "no row for the ceased live incarnation");
     }
 
     /// Campaign-001 block-1 regression, fast self-contained unit fixture
