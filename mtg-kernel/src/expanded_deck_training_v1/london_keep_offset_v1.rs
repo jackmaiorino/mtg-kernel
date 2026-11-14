@@ -117,12 +117,19 @@ mod tests {
     fn finds_only_the_announcement_mulligan_row() {
         for width in [195, 196] {
             let announce = rows(&[(1.0, 0.0), (1.0, 1.0)], width);
-            assert_eq!(mulligan_rows_v1(&pregame_state(true), &announce, 2).unwrap(), vec![1]);
+            assert_eq!(
+                mulligan_rows_v1(&pregame_state(true), &announce, 2).unwrap(),
+                vec![1]
+            );
             // In-game (stage column clear): never, whatever the columns hold.
-            assert!(mulligan_rows_v1(&pregame_state(false), &announce, 2).unwrap().is_empty());
+            assert!(mulligan_rows_v1(&pregame_state(false), &announce, 2)
+                .unwrap()
+                .is_empty());
             // Bottom rows: kind set, flag clear.
             let bottom = rows(&[(1.0, 0.0), (1.0, 0.0), (1.0, 0.0)], width);
-            assert!(mulligan_rows_v1(&pregame_state(true), &bottom, 3).unwrap().is_empty());
+            assert!(mulligan_rows_v1(&pregame_state(true), &bottom, 3)
+                .unwrap()
+                .is_empty());
         }
     }
 
@@ -135,9 +142,11 @@ mod tests {
             .unwrap();
         assert_eq!(adjusted[0].to_bits(), raw[0].to_bits());
         assert_eq!(adjusted[1].to_bits(), (3.5f32 - 2.0).to_bits());
-        assert!(offset_logits_v1(&raw, &pregame_state(false), &announce, 2.0)
-            .unwrap()
-            .is_none());
+        assert!(
+            offset_logits_v1(&raw, &pregame_state(false), &announce, 2.0)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
