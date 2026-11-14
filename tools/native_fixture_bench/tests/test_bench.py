@@ -217,6 +217,59 @@ class FixtureValidationTest(unittest.TestCase):
         with self.assertRaisesRegex(bench.BenchError, "durable completion does not match"):
             bench.require_completed_sample(result, sample["boundaries"], tree, prefix, 2)
 
+    def test_pool_cases_bind_the_member_bytes_and_each_draw(self):
+        def publish(path, data):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data), encoding="utf-8")
+            return {"path": str(path), "sha256": bench.sha256_file(path)}
+
+        descriptor = publish(self.root / "descriptor.json", {"synthetic": "fixture"})
+        member_pins = [publish(self.root / f"pool/member-{index:02d}/checkpoint.json",
+                               {"member": index}) for index in range(2)]
+        members = [{"id": f"member-{index:02d}", "checkpoint": pin}
+                   for index, pin in enumerate(member_pins)]
+        source = {"play_import": descriptor, "checkpoint": None}
+        self.fixture.update(options={"pool_members": [2], "seed": 2026091601,
+                                     "games": 3, "updates": 1},
+                            descriptor=descriptor,
+                            pool={"directory": str(self.root / "pool"), "members": members,
+                                  "draw": {"tag": "mtg-kernel-pool-fixture-draw/v1",
+                                           "seed_root": "2026091601"}})
+        episodes = [{"episode": {"id": f"fixture-0000-{slot:02d}", "seed": 2026091601 + slot,
+                                 "starting_player": slot % 2, "learner_seat": 0},
+                     "opponent": {"kind": "current"}} for slot in range(3)]
+        fresh = {"output_directory": self.case["output_directory"], "initial_source": source,
+                 "iterations": [{"episodes": episodes}]}
+        self.case["iterations"] = 1
+        self.case["config"] = publish(Path(self.case["config"]["path"]), fresh)
+
+        # Published draw rule for seed 2026091601, iteration 0 and slots 0..2.
+        draws = ["member-00", "member-01", "member-01"]
+        pool = {**fresh, "output_directory": str(self.root / "work/pool2/run"),
+                "opponents": [{"id": member["id"],
+                               "source": {**source, "checkpoint": member["checkpoint"]}}
+                              for member in members],
+                "iterations": [{"episodes": [
+                    {**row, "opponent": {"kind": "fixed", "id": drawn}}
+                    for row, drawn in zip(episodes, draws, strict=True)]}]}
+        config_path = self.root / "cases/pool2/config.json"
+        case = {"name": "pool2", "iterations": 1, "first_iteration": 0,
+                "output_directory": pool["output_directory"], "config": publish(config_path, pool),
+                "pool": {"members": 2, "draws": [draws.copy()]}}
+        self.fixture["cases"].append(case)
+        bench.validate_fixture(self.fixture, self.root)
+        case["pool"]["draws"][0][0] = "member-01"
+        with self.assertRaisesRegex(bench.BenchError, "differs from the pinned roster and draws"):
+            bench.validate_fixture(self.fixture, self.root)
+        case["pool"]["draws"][0][0] = draws[0]
+        pool["iterations"][0]["episodes"][0]["episode"]["seed"] += 1
+        case["config"] = publish(config_path, pool)
+        with self.assertRaisesRegex(bench.BenchError, "differs from the pinned roster and draws"):
+            bench.validate_fixture(self.fixture, self.root)
+        Path(member_pins[0]["path"]).write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(bench.BenchError, "pool fixture pin changed"):
+            bench.validate_fixture(self.fixture, self.root)
+
 
 class PlanAndRuleTest(unittest.TestCase):
     def test_the_plan_runs_warm_ups_then_balanced_blocks_then_cold_resumes(self):
@@ -528,11 +581,12 @@ class DriverTest(unittest.TestCase):
         root = self.temp / "generated"
         with redirect_stdout(StringIO()):
             code = bench.main(["generate", "--root", str(root), "--seed", "7",
-                               "--test-binary", str(generator)])
+                               "--pool-members", "2,18", "--test-binary", str(generator)])
         self.assertEqual(code, 0)
         record = json.loads((root / "generate" / "generate.json").read_text())
         self.assertEqual(record["settings"]["MTG_NATIVE_FIXTURE_SEED"], "7")
         self.assertEqual(record["settings"]["MTG_NATIVE_FIXTURE_WARMUP_UPDATES"], "2")
+        self.assertEqual(record["settings"]["MTG_NATIVE_FIXTURE_POOL_MEMBERS"], "2,18")
         self.assertEqual(record["fixture_sha256"], bench.sha256_file(root / "fixture.json"))
         self.assertEqual(record["test_binary"]["sha256"], bench.sha256_file(generator))
         self.assertIn(bench.GENERATOR_TEST, record["command"])
