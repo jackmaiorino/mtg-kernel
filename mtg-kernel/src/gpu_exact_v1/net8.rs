@@ -324,6 +324,28 @@ pub(crate) struct DeviceBuffersV1 {
     download: Option<PinnedV1<f32>>,
 }
 
+impl DeviceBuffersV1 {
+    /// Additional device bytes `forward_v1` allocates for `batch`.
+    pub(super) fn extra_v1_bytes(&self, batch: &PackedBatchV1) -> usize {
+        extra_slice_bytes(&self.requests, batch.requests.len())
+            + extra_slice_bytes(&self.floats, batch.floats.len())
+            + extra_slice_bytes(&self.ints, batch.ints.len())
+            + extra_slice_bytes(&self.scratch, batch.scratch_len)
+            + extra_slice_bytes(&self.logits, batch.logits_len)
+            + extra_slice_bytes(&self.values, batch.len())
+    }
+}
+
+pub(super) fn extra_slice_bytes<T>(slot: &Option<CudaSlice<T>>, len: usize) -> usize {
+    let len = len.max(1);
+    match slot {
+        Some(s) if s.len() >= len => 0,
+        _ => len
+            .next_power_of_two()
+            .saturating_mul(std::mem::size_of::<T>()),
+    }
+}
+
 /// Page-locked host memory. Uploads use write-combined memory (fast for the
 /// device to read, slow for the host to read); downloads use cached memory.
 /// Every batch synchronizes its stream before returning, so a buffer is never
@@ -358,7 +380,7 @@ impl<T: Copy + Default> PinnedV1<T> {
         Ok(Self { ptr, len })
     }
 
-    fn slice_mut(&mut self, len: usize) -> &mut [T] {
+    pub(super) fn slice_mut(&mut self, len: usize) -> &mut [T] {
         assert!(len <= self.len);
         // SAFETY: in bounds, and `&mut self` excludes other access.
         unsafe { std::slice::from_raw_parts_mut(self.ptr, len) }
@@ -372,7 +394,7 @@ impl<T> Drop for PinnedV1<T> {
     }
 }
 
-fn ensure_pinned<T: Copy + Default>(
+pub(super) fn ensure_pinned<T: Copy + Default>(
     device: &ExactDeviceV1,
     slot: &mut Option<PinnedV1<T>>,
     len: usize,
@@ -397,6 +419,7 @@ pub(super) fn ensure<T: DeviceRepr + cudarc::driver::ValidAsZeroBits>(
 ) -> Result<(), String> {
     let len = len.max(1);
     if slot.as_ref().is_none_or(|s| s.len() < len) {
+        *slot = None;
         *slot = Some(
             device
                 .stream

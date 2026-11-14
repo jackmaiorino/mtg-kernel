@@ -9,8 +9,8 @@
 //! gradient element, and the gradients downloaded in parameter order.
 
 use super::net8::{
-    ensure, forward_batch_v1, DeviceBuffersV1, DimsV1, Net8DeviceModelV1, PackedBatchV1, R_FIELDS,
-    THREADS_PER_BLOCK,
+    ensure, extra_slice_bytes, forward_batch_v1, DeviceBuffersV1, DimsV1, Net8DeviceModelV1,
+    PackedBatchV1, R_FIELDS, THREADS_PER_BLOCK,
 };
 use super::ExactDeviceV1;
 use crate::native_policy_value_net_v1::{
@@ -49,11 +49,39 @@ pub(crate) struct LearnerSubstepV1<'a> {
     pub(crate) d_value: f32,
 }
 
-/// Device state reused across updates.
+/// Device and host scratch reused across updates (grown, never shrunk).
 #[derive(Default)]
 pub(crate) struct LearnerBuffersV1 {
     forward: DeviceBuffersV1,
     grad_scratch: Option<CudaSlice<f32>>,
+    batch: PackedBatchV1,
+    forward_params: Vec<f32>,
+    forward_layout: Vec<i64>,
+    torch_host: Vec<f32>,
+    torch_offsets: Vec<i64>,
+    torch_layout_host: Vec<i64>,
+    device_model: Option<Net8DeviceModelV1>,
+    torch_device: Option<CudaSlice<f32>>,
+    torch_layout_device: Option<CudaSlice<i64>>,
+    d_logits_host: Vec<f32>,
+    d_values_host: Vec<f32>,
+    shapes: Vec<Shape>,
+    grad_offsets_host: Vec<i64>,
+    d_logits_device: Option<CudaSlice<f32>>,
+    d_values_device: Option<CudaSlice<f32>>,
+    grad_offsets_device: Option<CudaSlice<i64>>,
+    gradients: Option<CudaSlice<f32>>,
+    terms_per_layer: [Vec<[i64; TERM_FIELDS]>; LAYERS],
+    terms_flat: Vec<i64>,
+    terms_device: Option<CudaSlice<i64>>,
+    occurrences: Vec<(i32, i64)>,
+    tokens_host: Vec<i32>,
+    starts_host: Vec<i32>,
+    offsets_host: Vec<i64>,
+    tokens_device: Option<CudaSlice<i32>>,
+    starts_device: Option<CudaSlice<i32>>,
+    offsets_device: Option<CudaSlice<i64>>,
+    host_gradients: Vec<f32>,
 }
 
 /// A request's shape, read back from its packed descriptor.
@@ -257,12 +285,19 @@ fn term(dout: i64, rows: usize, segments: &[(i64, i64, i64, i64, i64)]) -> [i64;
     t
 }
 
-/// The forward's input-major parameter buffer (`gpu_exact_parameters_v1`'s
+/// Fills the forward's input-major parameter buffer (`gpu_exact_parameters_v1`'s
 /// layout) from the Torch-layout tensors, and the Torch buffer with each
 /// tensor's offset.
-fn layouts(tensors: &[&[f32]]) -> (Vec<f32>, Vec<i64>, Vec<f32>, Vec<i64>) {
-    let mut forward = Vec::new();
-    let mut forward_layout = Vec::new();
+fn layouts_into(
+    tensors: &[&[f32]],
+    forward: &mut Vec<f32>,
+    forward_layout: &mut Vec<i64>,
+    torch: &mut Vec<f32>,
+    torch_offsets: &mut Vec<i64>,
+    torch_layout: &mut Vec<i64>,
+) {
+    forward.clear();
+    forward_layout.clear();
     forward_layout.push(0);
     forward.extend_from_slice(tensors[0]);
     for layer in 0..LAYERS {
@@ -279,13 +314,14 @@ fn layouts(tensors: &[&[f32]]) -> (Vec<f32>, Vec<i64>, Vec<f32>, Vec<i64>) {
         forward_layout.push(forward.len() as i64);
         forward.extend_from_slice(bias);
     }
-    let mut torch = Vec::new();
-    let mut torch_offsets = Vec::new();
+    torch.clear();
+    torch_offsets.clear();
     for tensor in tensors {
         torch_offsets.push(torch.len() as i64);
         torch.extend_from_slice(tensor);
     }
-    (forward, forward_layout, torch, torch_offsets)
+    torch_layout.clear();
+    torch_layout.extend((0..LAYERS).map(|l| torch_offsets[1 + 2 * l]));
 }
 
 /// The gradients of every parameter tensor (Torch layout, parameter order)
@@ -303,15 +339,19 @@ pub(crate) fn net8_gradients_v1(
             tensors.len()
         ));
     }
+    if substeps.is_empty() {
+        return Ok(tensors.iter().map(|t| vec![0.0; t.len()]).collect());
+    }
     let dims = DimsV1::of_config_v1(&config);
     let stream = &device.stream;
     let e =
         |what: &'static str| move |error: cudarc::driver::DriverError| format!("{what}: {error:?}");
 
     // Forward with the tape kept; its outputs must be the CPU tape's bits.
-    let mut batch = PackedBatchV1::default();
+    buffers.batch.clear();
     for substep in substeps {
-        batch
+        buffers
+            .batch
             .push_with_config_v1(0, config, substep.view)
             .map_err(|e| {
                 if e.starts_with("batch too large") {
@@ -321,45 +361,141 @@ pub(crate) fn net8_gradients_v1(
                 }
             })?;
     }
-    let (forward, forward_layout, torch, torch_offsets) = layouts(tensors);
-    // Everything this update allocates, against what the device has free
-    // (another process, such as the inference service, may hold the rest).
-    let grad_floats: i64 = batch
-        .requests
-        .chunks_exact(R_FIELDS)
-        .map(|d| grad(&Shape::of(d), &dims).len)
-        .sum();
-    let needed_floats = batch.floats.len()
-        + batch.ints.len()
-        + batch.requests.len()
-        + 2 * batch.scratch_len.next_power_of_two()
-        + 3 * batch.logits_len
-        + 2 * substeps.len()
-        + (grad_floats as usize).next_power_of_two()
-        + 2 * torch.len()
-        + forward.len();
-    let (free, _) = device.memory_v1()?;
-    if needed_floats.saturating_mul(4) > free / 10 * 9 {
-        return Err(resource(format!(
-            "update needs about {} MiB, device has {} MiB free",
-            (needed_floats * 4) >> 20,
-            free >> 20
-        )));
+    layouts_into(
+        tensors,
+        &mut buffers.forward_params,
+        &mut buffers.forward_layout,
+        &mut buffers.torch_host,
+        &mut buffers.torch_offsets,
+        &mut buffers.torch_layout_host,
+    );
+    let forward_len = buffers.forward_params.len();
+    let forward_layout_len = buffers.forward_layout.len();
+    let torch_len = buffers.torch_host.len();
+    buffers.shapes.clear();
+    buffers
+        .shapes
+        .extend(buffers.batch.requests.chunks_exact(R_FIELDS).map(Shape::of));
+    buffers.grad_offsets_host.clear();
+    let mut grad_len = 0i64;
+    for shape in &buffers.shapes {
+        buffers.grad_offsets_host.push(grad_len);
+        grad_len += grad(shape, &dims).len;
     }
-    let model = Net8DeviceModelV1 {
-        params: stream.clone_htod(&forward).map_err(e("upload"))?,
-        layout: stream.clone_htod(&forward_layout).map_err(e("upload"))?,
-        layout_host: forward_layout.clone(),
-        dims,
+    let total_objects: usize = buffers.shapes.iter().map(|s| s.objects).sum();
+    let total_terms_i64 = LAYERS
+        .saturating_mul(substeps.len())
+        .saturating_mul(TERM_FIELDS);
+
+    // Additional device memory this update must allocate beyond buffers already
+    // resident in `buffers`, checked against free device memory.
+    let model_extra_bytes = match &buffers.device_model {
+        Some(m) if m.params.len() >= forward_len && m.layout.len() >= forward_layout_len => 0,
+        _ => forward_len
+            .max(1)
+            .next_power_of_two()
+            .saturating_mul(std::mem::size_of::<f32>())
+            .saturating_add(
+                forward_layout_len
+                    .max(1)
+                    .next_power_of_two()
+                    .saturating_mul(std::mem::size_of::<i64>()),
+            ),
     };
+    let extra_needed_bytes = buffers
+        .forward
+        .extra_v1_bytes(&buffers.batch)
+        .saturating_add(model_extra_bytes)
+        .saturating_add(extra_slice_bytes(&buffers.grad_scratch, grad_len as usize))
+        .saturating_add(extra_slice_bytes(&buffers.torch_device, torch_len))
+        .saturating_add(extra_slice_bytes(&buffers.torch_layout_device, LAYERS))
+        .saturating_add(extra_slice_bytes(
+            &buffers.d_logits_device,
+            buffers.batch.logits_len,
+        ))
+        .saturating_add(extra_slice_bytes(&buffers.d_values_device, substeps.len()))
+        .saturating_add(extra_slice_bytes(
+            &buffers.grad_offsets_device,
+            substeps.len(),
+        ))
+        .saturating_add(extra_slice_bytes(&buffers.gradients, torch_len))
+        .saturating_add(extra_slice_bytes(&buffers.terms_device, total_terms_i64))
+        .saturating_add(extra_slice_bytes(&buffers.tokens_device, total_objects))
+        .saturating_add(extra_slice_bytes(
+            &buffers.starts_device,
+            total_objects.saturating_add(1),
+        ))
+        .saturating_add(extra_slice_bytes(&buffers.offsets_device, total_objects));
+    if extra_needed_bytes > 0 {
+        let (free, _) = device.memory_v1()?;
+        if extra_needed_bytes > free / 10 * 9 {
+            return Err(resource(format!(
+                "update needs about {} MiB additional, device has {} MiB free",
+                extra_needed_bytes >> 20,
+                free >> 20
+            )));
+        }
+    }
+
+    let needs_new_model = buffers
+        .device_model
+        .as_ref()
+        .is_none_or(|m| m.params.len() < forward_len || m.layout.len() < forward_layout_len);
+    if needs_new_model {
+        buffers.device_model = None;
+        let mut params = stream
+            .alloc_zeros::<f32>(forward_len.max(1).next_power_of_two())
+            .map_err(e("alloc model params"))?;
+        let mut layout = stream
+            .alloc_zeros::<i64>(forward_layout_len.max(1).next_power_of_two())
+            .map_err(e("alloc model layout"))?;
+        stream
+            .memcpy_htod(
+                &buffers.forward_params,
+                &mut params.slice_mut(..forward_len),
+            )
+            .map_err(e("upload"))?;
+        stream
+            .memcpy_htod(
+                &buffers.forward_layout,
+                &mut layout.slice_mut(..forward_layout_len),
+            )
+            .map_err(e("upload"))?;
+        buffers.device_model = Some(Net8DeviceModelV1 {
+            params,
+            layout,
+            layout_host: buffers.forward_layout.clone(),
+            dims,
+        });
+    } else {
+        let model = buffers.device_model.as_mut().expect("checked");
+        stream
+            .memcpy_htod(
+                &buffers.forward_params,
+                &mut model.params.slice_mut(..forward_len),
+            )
+            .map_err(e("upload"))?;
+        stream
+            .memcpy_htod(
+                &buffers.forward_layout,
+                &mut model.layout.slice_mut(..forward_layout_len),
+            )
+            .map_err(e("upload"))?;
+        model.layout_host.clone_from(&buffers.forward_layout);
+        model.dims = dims;
+    }
+
     // Phase A reads the v1 path's separate input buffers.
-    let outputs = forward_batch_v1(
-        device,
-        super::device::KernelsV1::V1,
-        &[&model],
-        &batch,
-        &mut buffers.forward,
-    )?;
+    let outputs = {
+        let model_ref = buffers.device_model.as_ref().expect("ensured");
+        forward_batch_v1(
+            device,
+            super::device::KernelsV1::V1,
+            &[model_ref],
+            &buffers.batch,
+            &mut buffers.forward,
+        )?
+    };
     for (index, (output, substep)) in outputs.iter().zip(substeps).enumerate() {
         let same = output.value.to_bits() == substep.value.to_bits()
             && output.logits.len() == substep.logits.len()
@@ -376,39 +512,94 @@ pub(crate) fn net8_gradients_v1(
     }
 
     // The logits' and value's gradients at the forward's offsets.
-    let mut d_logits = vec![0f32; batch.logits_len];
-    let mut d_values = vec![0f32; substeps.len()];
+    buffers.d_logits_host.clear();
+    buffers.d_logits_host.resize(buffers.batch.logits_len, 0.0);
+    buffers.d_values_host.clear();
+    buffers.d_values_host.resize(substeps.len(), 0.0);
     for (index, substep) in substeps.iter().enumerate() {
-        let (_, at, actions) = batch.replies[index];
+        let (_, at, actions) = buffers.batch.replies[index];
         if substep.d_logits.len() != actions {
             return Err("d_logits length differs from the action count".into());
         }
-        d_logits[at..at + actions].copy_from_slice(substep.d_logits);
-        d_values[index] = substep.d_value;
-    }
-    let shapes: Vec<Shape> = batch
-        .requests
-        .chunks_exact(R_FIELDS)
-        .map(Shape::of)
-        .collect();
-    let mut grad_offsets = Vec::with_capacity(shapes.len());
-    let mut grad_len = 0i64;
-    for shape in &shapes {
-        grad_offsets.push(grad_len);
-        grad_len += grad(shape, &dims).len;
+        buffers.d_logits_host[at..at + actions].copy_from_slice(substep.d_logits);
+        buffers.d_values_host[index] = substep.d_value;
     }
     ensure(device, &mut buffers.grad_scratch, grad_len as usize)?;
-    let torch_device = stream.clone_htod(&torch).map_err(e("upload"))?;
-    let torch_layout: Vec<i64> = (0..LAYERS).map(|l| torch_offsets[1 + 2 * l]).collect();
-    let torch_layout_device = stream.clone_htod(&torch_layout).map_err(e("upload"))?;
-    let d_logits_device = stream.clone_htod(&d_logits).map_err(e("upload"))?;
-    let d_values_device = stream.clone_htod(&d_values).map_err(e("upload"))?;
-    let grad_offsets_device = stream.clone_htod(&grad_offsets).map_err(e("upload"))?;
+    ensure(device, &mut buffers.torch_device, torch_len)?;
+    ensure(device, &mut buffers.torch_layout_device, LAYERS)?;
+    ensure(
+        device,
+        &mut buffers.d_logits_device,
+        buffers.batch.logits_len,
+    )?;
+    ensure(device, &mut buffers.d_values_device, substeps.len())?;
+    ensure(device, &mut buffers.grad_offsets_device, substeps.len())?;
+    ensure(device, &mut buffers.gradients, torch_len)?;
+    ensure(device, &mut buffers.terms_device, total_terms_i64)?;
+
+    stream
+        .memcpy_htod(
+            &buffers.torch_host,
+            &mut buffers
+                .torch_device
+                .as_mut()
+                .expect("ensured")
+                .slice_mut(..torch_len),
+        )
+        .map_err(e("upload"))?;
+    stream
+        .memcpy_htod(
+            &buffers.torch_layout_host,
+            &mut buffers
+                .torch_layout_device
+                .as_mut()
+                .expect("ensured")
+                .slice_mut(..LAYERS),
+        )
+        .map_err(e("upload"))?;
+    if !buffers.d_logits_host.is_empty() {
+        let logits_len = buffers.d_logits_host.len();
+        stream
+            .memcpy_htod(
+                &buffers.d_logits_host,
+                &mut buffers
+                    .d_logits_device
+                    .as_mut()
+                    .expect("ensured")
+                    .slice_mut(..logits_len),
+            )
+            .map_err(e("upload"))?;
+    }
+    stream
+        .memcpy_htod(
+            &buffers.d_values_host,
+            &mut buffers
+                .d_values_device
+                .as_mut()
+                .expect("ensured")
+                .slice_mut(..substeps.len()),
+        )
+        .map_err(e("upload"))?;
+    stream
+        .memcpy_htod(
+            &buffers.grad_offsets_host,
+            &mut buffers
+                .grad_offsets_device
+                .as_mut()
+                .expect("ensured")
+                .slice_mut(..substeps.len()),
+        )
+        .map_err(e("upload"))?;
+
     let forward_buffers = &buffers.forward;
     let requests = forward_buffers.requests.as_ref().expect("forward ran");
-    let floats = forward_buffers.floats.as_ref().expect("forward ran");
     let ints = forward_buffers.ints.as_ref().expect("forward ran");
     let scratch = forward_buffers.scratch.as_ref().expect("forward ran");
+    let torch_device = buffers.torch_device.as_ref().expect("ensured");
+    let torch_layout_device = buffers.torch_layout_device.as_ref().expect("ensured");
+    let d_logits_device = buffers.d_logits_device.as_ref().expect("ensured");
+    let d_values_device = buffers.d_values_device.as_ref().expect("ensured");
+    let grad_offsets_device = buffers.grad_offsets_device.as_ref().expect("ensured");
     let grad_scratch = buffers.grad_scratch.as_mut().expect("ensured");
 
     // Phase A: one block per substep.
@@ -417,13 +608,13 @@ pub(crate) fn net8_gradients_v1(
         launch
             .arg(requests)
             .arg(ints)
-            .arg(&torch_device)
-            .arg(&torch_layout_device)
+            .arg(torch_device)
+            .arg(torch_layout_device)
             .arg(&dims)
             .arg(scratch)
-            .arg(&d_logits_device)
-            .arg(&d_values_device)
-            .arg(&grad_offsets_device)
+            .arg(d_logits_device)
+            .arg(d_values_device)
+            .arg(grad_offsets_device)
             .arg(&mut *grad_scratch);
         let config = LaunchConfig {
             grid_dim: (substeps.len() as u32, 1, 1),
@@ -444,20 +635,24 @@ pub(crate) fn net8_gradients_v1(
     let emb = i64::from(dims.embedding_dim);
     let gh = i64::from(dims.group_count) * H as i64;
     let h = H as i64;
-    let mut terms: Vec<Vec<[i64; TERM_FIELDS]>> = vec![Vec::new(); LAYERS];
-    let mut occurrences: Vec<(i32, i64)> = Vec::new();
-    for (index, shape) in shapes.iter().enumerate() {
+    for layer_terms in &mut buffers.terms_per_layer {
+        layer_terms.clear();
+    }
+    buffers.occurrences.clear();
+    let emb_param_offset = buffers.torch_offsets[0];
+    for (index, shape) in buffers.shapes.iter().enumerate() {
         let t = tape(shape, &dims);
         let g = grad(shape, &dims);
-        let gs = grad_offsets[index];
+        let gs = buffers.grad_offsets_host[index];
         let sc = shape.scratch;
         let [state, obj_feat, edge_feat, ref_feat, act_feat] = shape.floats;
         let [card_ids, _groups, edge_src, edge_tgt, ref_node, _ref_action] = shape.ints;
         let none = -1;
         let (o, ed, r, a) = (shape.objects, shape.edges, shape.refs, shape.actions);
+        let terms_per_layer = &mut buffers.terms_per_layer;
         let mut push =
             |layer: usize, dout: i64, rows: usize, segs: &[(i64, i64, i64, i64, i64)]| {
-                terms[layer].push(term(gs + dout, rows, segs));
+                terms_per_layer[layer].push(term(gs + dout, rows, segs));
             };
         push(
             0,
@@ -465,7 +660,7 @@ pub(crate) fn net8_gradients_v1(
             o,
             &[
                 (FLOATS, obj_feat, none, fo, fo),
-                (PARAMS, torch_offsets[0], card_ids, emb, emb),
+                (PARAMS, emb_param_offset, card_ids, emb, emb),
             ],
         );
         push(1, g.d2_obj, o, &[(SCRATCH, sc + t.obj_h1, none, h, h)]);
@@ -537,32 +732,65 @@ pub(crate) fn net8_gradients_v1(
         let k_obj = fo + emb;
         for (object, &token) in substeps[index].view.object_card_ids.iter().enumerate() {
             if token != 0 {
-                occurrences.push((token as i32, gs + g.d_oin + object as i64 * k_obj + fo));
+                buffers
+                    .occurrences
+                    .push((token as i32, gs + g.d_oin + object as i64 * k_obj + fo));
             }
         }
     }
 
-    let mut gradients = stream.alloc_zeros::<f32>(torch.len()).map_err(e("alloc"))?;
-    for (layer, layer_terms) in terms.iter().enumerate() {
-        let weight_offset = torch_offsets[1 + 2 * layer] as usize;
-        let bias_offset = torch_offsets[2 + 2 * layer] as usize;
+    // Pack all 16 layers' terms contiguously and upload in one H2D copy.
+    buffers.terms_flat.clear();
+    let mut layer_ranges = [(0usize, 0usize, 0usize); LAYERS];
+    for (layer, layer_terms) in buffers.terms_per_layer.iter().enumerate() {
+        let start = buffers.terms_flat.len();
+        for t in layer_terms {
+            buffers.terms_flat.extend_from_slice(t);
+        }
+        layer_ranges[layer] = (start, buffers.terms_flat.len(), layer_terms.len());
+    }
+    {
+        let flat_len = buffers.terms_flat.len();
+        let terms_device = buffers.terms_device.as_mut().expect("ensured");
+        if flat_len > 0 {
+            stream
+                .memcpy_htod(&buffers.terms_flat, &mut terms_device.slice_mut(..flat_len))
+                .map_err(e("upload terms"))?;
+        }
+    }
+
+    let forward_buffers = &buffers.forward;
+    let floats = forward_buffers.floats.as_ref().expect("forward ran");
+    let ints = forward_buffers.ints.as_ref().expect("forward ran");
+    let scratch = forward_buffers.scratch.as_ref().expect("forward ran");
+    let torch_device = buffers.torch_device.as_ref().expect("ensured");
+    let grad_scratch = buffers.grad_scratch.as_ref().expect("ensured");
+    let terms_device = buffers.terms_device.as_ref().expect("ensured");
+    let gradients = buffers.gradients.as_mut().expect("ensured");
+    stream
+        .memset_zeros(&mut gradients.slice_mut(..torch_len))
+        .map_err(e("zero gradients"))?;
+
+    for (layer, &(term_start, term_end, nterms_usize)) in layer_ranges.iter().enumerate() {
+        let weight_offset = buffers.torch_offsets[1 + 2 * layer] as usize;
+        let bias_offset = buffers.torch_offsets[2 + 2 * layer] as usize;
         let n = tensors[2 + 2 * layer].len();
         let k = tensors[1 + 2 * layer].len() / n;
-        let flat: Vec<i64> = layer_terms.iter().flatten().copied().collect();
-        let terms_device = stream.clone_htod(&flat).map_err(e("upload"))?;
-        let (nterms, n_i, k_i) = (layer_terms.len() as i32, n as i32, k as i32);
+        let layer_terms_view = terms_device.slice(term_start..term_end);
+        let (nterms, n_i, k_i) = (nterms_usize as i32, n as i32, k as i32);
         // The scorer's output bias adds its rows in reverse (`linear_backward_into`).
         let reverse = i32::from(layer == 13);
-        let (mut left, mut bias_view) = gradients.split_at_mut(bias_offset);
-        let mut weight_view = left.slice_mut(weight_offset..);
+        let (mut left, mut right) = gradients.split_at_mut(bias_offset);
+        let mut weight_view = left.slice_mut(weight_offset..weight_offset + n * k);
+        let mut bias_view = right.slice_mut(..n);
         let mut launch = stream.launch_builder(&device.net8_param_grad);
         launch
-            .arg(&terms_device)
+            .arg(&layer_terms_view)
             .arg(&nterms)
-            .arg(&*grad_scratch)
+            .arg(grad_scratch)
             .arg(floats)
             .arg(scratch)
-            .arg(&torch_device)
+            .arg(torch_device)
             .arg(ints)
             .arg(&n_i)
             .arg(&k_i)
@@ -580,32 +808,88 @@ pub(crate) fn net8_gradients_v1(
     }
 
     // Card embedding: touched tokens ascending, occurrences in visiting order.
-    occurrences.sort_by_key(|&(token, _)| token); // stable: keeps visiting order per token
-    if !occurrences.is_empty() {
-        let mut tokens = Vec::new();
-        let mut starts = Vec::new();
-        for (q, &(token, _)) in occurrences.iter().enumerate() {
-            if tokens.last() != Some(&token) {
-                tokens.push(token);
-                starts.push(q as i32);
+    buffers.occurrences.sort_by_key(|&(token, _)| token); // stable: keeps visiting order per token
+    if !buffers.occurrences.is_empty() {
+        buffers.tokens_host.clear();
+        buffers.starts_host.clear();
+        for (q, &(token, _)) in buffers.occurrences.iter().enumerate() {
+            if buffers.tokens_host.last() != Some(&token) {
+                buffers.tokens_host.push(token);
+                buffers.starts_host.push(q as i32);
             }
         }
-        starts.push(occurrences.len() as i32);
-        let offsets: Vec<i64> = occurrences.iter().map(|&(_, at)| at).collect();
-        let tokens_device = stream.clone_htod(&tokens).map_err(e("upload"))?;
-        let starts_device = stream.clone_htod(&starts).map_err(e("upload"))?;
-        let offsets_device = stream.clone_htod(&offsets).map_err(e("upload"))?;
-        let (ntokens, emb_i) = (tokens.len() as i32, dims.embedding_dim);
+        buffers.starts_host.push(buffers.occurrences.len() as i32);
+        buffers.offsets_host.clear();
+        buffers
+            .offsets_host
+            .extend(buffers.occurrences.iter().map(|&(_, at)| at));
+
+        let ntokens_usize = buffers.tokens_host.len();
+        let nstarts_usize = buffers.starts_host.len();
+        let noffsets_usize = buffers.offsets_host.len();
+        ensure(device, &mut buffers.tokens_device, ntokens_usize)?;
+        ensure(device, &mut buffers.starts_device, nstarts_usize)?;
+        ensure(device, &mut buffers.offsets_device, noffsets_usize)?;
+        stream
+            .memcpy_htod(
+                &buffers.tokens_host,
+                &mut buffers
+                    .tokens_device
+                    .as_mut()
+                    .expect("ensured")
+                    .slice_mut(..ntokens_usize),
+            )
+            .map_err(e("upload"))?;
+        stream
+            .memcpy_htod(
+                &buffers.starts_host,
+                &mut buffers
+                    .starts_device
+                    .as_mut()
+                    .expect("ensured")
+                    .slice_mut(..nstarts_usize),
+            )
+            .map_err(e("upload"))?;
+        stream
+            .memcpy_htod(
+                &buffers.offsets_host,
+                &mut buffers
+                    .offsets_device
+                    .as_mut()
+                    .expect("ensured")
+                    .slice_mut(..noffsets_usize),
+            )
+            .map_err(e("upload"))?;
+
+        let tokens_view = buffers
+            .tokens_device
+            .as_ref()
+            .expect("ensured")
+            .slice(..ntokens_usize);
+        let starts_view = buffers
+            .starts_device
+            .as_ref()
+            .expect("ensured")
+            .slice(..nstarts_usize);
+        let offsets_view = buffers
+            .offsets_device
+            .as_ref()
+            .expect("ensured")
+            .slice(..noffsets_usize);
+        let grad_scratch = buffers.grad_scratch.as_ref().expect("ensured");
+        let gradients = buffers.gradients.as_mut().expect("ensured");
+        let mut emb_grad_view = gradients.slice_mut(..tensors[0].len());
+        let (ntokens, emb_i) = (ntokens_usize as i32, dims.embedding_dim);
         let mut launch = stream.launch_builder(&device.net8_embedding_grad);
         launch
-            .arg(&tokens_device)
+            .arg(&tokens_view)
             .arg(&ntokens)
-            .arg(&starts_device)
-            .arg(&offsets_device)
-            .arg(&*grad_scratch)
+            .arg(&starts_view)
+            .arg(&offsets_view)
+            .arg(grad_scratch)
             .arg(&emb_i)
-            .arg(&mut gradients);
-        let items = (tokens.len() * dims.embedding_dim as usize) as u32;
+            .arg(&mut emb_grad_view);
+        let items = (ntokens_usize * dims.embedding_dim as usize) as u32;
         let config = LaunchConfig {
             grid_dim: (items.div_ceil(256), 1, 1),
             block_dim: (256, 1, 1),
@@ -614,10 +898,21 @@ pub(crate) fn net8_gradients_v1(
         // SAFETY: tokens are validated card ids; offsets lie in the scratch.
         unsafe { launch.launch(config) }.map_err(e("embedding launch"))?;
     }
-    let host = stream.clone_dtoh(&gradients).map_err(e("download"))?;
-    Ok(torch_offsets
+
+    buffers.host_gradients.resize(torch_len, 0.0);
+    let gradients = buffers.gradients.as_ref().expect("ensured");
+    stream
+        .memcpy_dtoh(
+            &gradients.slice(..torch_len),
+            &mut buffers.host_gradients[..torch_len],
+        )
+        .map_err(e("download"))?;
+    Ok(buffers
+        .torch_offsets
         .iter()
         .zip(tensors)
-        .map(|(&at, tensor)| host[at as usize..at as usize + tensor.len()].to_vec())
+        .map(|(&at, tensor)| {
+            buffers.host_gradients[at as usize..at as usize + tensor.len()].to_vec()
+        })
         .collect())
 }
