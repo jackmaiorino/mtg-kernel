@@ -7,9 +7,18 @@ fn main() -> io::Result<()> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     #[cfg(feature = "eternal-fixtures")]
     if matches!(args.as_slice(), [flag] if flag == "--premodern-feb-v1") {
-        let mut server =
-            mtg_kernel::premodern_ordered_public_v1::feb_jsonl::FebJsonlServerV1::default();
-        return run_jsonl(|line| server.handle_line(line));
+        // Unoptimized FEB public observation and numeric-tree frames exceed the
+        // 1 MiB default main-thread stack on Windows; match human_match_v2.
+        return std::thread::Builder::new()
+            .name("premodern-feb-v1".into())
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let mut server =
+                    mtg_kernel::premodern_ordered_public_v1::feb_jsonl::FebJsonlServerV1::default();
+                run_jsonl(|line| server.handle_line(line))
+            })?
+            .join()
+            .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
     }
     let mode = match args.as_slice() {
         [] => 1,
