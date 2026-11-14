@@ -28,7 +28,7 @@ pub(crate) fn fault_trigger_v1(kind: &str) -> Option<u64> {
 }
 
 /// Sets the process's forward kernels (`"v1"` or `"v2"`, the default) and how
-/// a host thread waits for the GPU (`"spin"`, the default, or `"block"`).
+/// a host thread waits for the GPU (`"block"`, the default, or `"spin"`).
 /// Call before installing a service or learner. Neither changes a result bit.
 pub fn configure_v1(kernels: &str, wait: &str) -> Result<(), String> {
     let kernels = match kernels {

@@ -67,6 +67,7 @@ import sys
 import time
 import uuid
 import copy
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -495,6 +496,15 @@ def bulk_files(iteration, keep_checkpoint):
     return out
 
 
+def _sha_batch(paths):
+    """Parallel GIL-free SHA-256 over candidate regular files; returns {path: hexdigest}."""
+    if len(paths) < 4:
+        return {p: sha(p) for p in paths}
+    workers = min(8, os.cpu_count() or 1, len(paths))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return dict(zip(paths, pool.map(sha, paths)))
+
+
 def thin_chain(plan, name, apply):
     """Moves the bulk of every finished segment into the holding folder; returns (files, bytes)."""
     chain, root = plan["chains"][name], Path(plan["root"])
@@ -505,24 +515,28 @@ def thin_chain(plan, name, apply):
             break
         if is_link(native) or is_link(native / "iterations"):
             raise SystemExit(f"refused: {native} is a link")
+        candidates = []
         for i in range(n):
             it = native / "iterations" / f"{i:06d}"
             for path, digest in bulk_files(it, keep_checkpoint=(i == n - 1)):
-                if not path.exists():
-                    continue
-                if is_link(path) or sha(path) != digest:
-                    raise SystemExit(f"stop: {path} is a link or differs from the hash its records pin")
-                dest = root / HOLD_DIR / name / path.relative_to(Path(chain["native"]).parent)
-                files += 1
-                size += path.stat().st_size
-                if apply:
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    thin_manifest(root, name).parent.mkdir(parents=True, exist_ok=True)
-                    os.replace(path, dest)           # same volume: a rename
-                    with open(thin_manifest(root, name), "a", encoding="utf-8", newline="\n") as f:
-                        f.write(json.dumps({"chain": name, "from": path.as_posix(), "to": dest.as_posix(),
-                                            "bytes": dest.stat().st_size, "sha256": digest,
-                                            "moved_at": time.time()}) + "\n")
+                if path.exists():
+                    candidates.append((path, digest))
+        to_hash = [p for p, _ in candidates if not is_link(p)]
+        digests = _sha_batch(to_hash)
+        for path, digest in candidates:
+            if is_link(path) or digests.get(path) != digest:
+                raise SystemExit(f"stop: {path} is a link or differs from the hash its records pin")
+            dest = root / HOLD_DIR / name / path.relative_to(Path(chain["native"]).parent)
+            files += 1
+            size += path.stat().st_size
+            if apply:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                thin_manifest(root, name).parent.mkdir(parents=True, exist_ok=True)
+                os.replace(path, dest)           # same volume: a rename
+                with open(thin_manifest(root, name), "a", encoding="utf-8", newline="\n") as f:
+                    f.write(json.dumps({"chain": name, "from": path.as_posix(), "to": dest.as_posix(),
+                                        "bytes": dest.stat().st_size, "sha256": digest,
+                                        "moved_at": time.time()}) + "\n")
     return files, size
 
 
@@ -610,6 +624,7 @@ def purge_held(plan, apply):
         cutoff = time.time() - plan["thin"]["hold_days"] * 86400
         out = {"files": 0, "bytes": 0, "deleted": apply, "receipt": receipt}
         parents = set()
+        pending = []
         for row in thin_rows(root):
             if row["to"] in done or (not receipt and row["moved_at"] > cutoff):
                 continue
@@ -621,7 +636,12 @@ def purge_held(plan, apply):
             # Lexically, every folder from the holding folder down to the file, and the file.
             between = [hold.joinpath(*rel.parts[:k]) for k in range(1, len(rel.parts) + 1)]
             if not p.exists() or any(is_link(q) for q in between) or not p.is_file() or \
-                    real_hold not in Path(os.path.realpath(p)).parents or sha(p) != row["sha256"]:
+                    real_hold not in Path(os.path.realpath(p)).parents:
+                raise SystemExit(f"stop: held file {p} is missing, linked, outside the holding folder or changed")
+            pending.append((row, p, between))
+        digests = _sha_batch([p for _, p, _ in pending])
+        for row, p, between in pending:
+            if digests.get(p) != row["sha256"]:
                 raise SystemExit(f"stop: held file {p} is missing, linked, outside the holding folder or changed")
             out["files"] += 1
             out["bytes"] += row["bytes"]

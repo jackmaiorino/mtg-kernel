@@ -55,7 +55,7 @@ impl Default for ExactOptionsV1 {
     fn default() -> Self {
         Self {
             kernels: KernelsV1::V2,
-            blocking_wait: false,
+            blocking_wait: true,
         }
     }
 }

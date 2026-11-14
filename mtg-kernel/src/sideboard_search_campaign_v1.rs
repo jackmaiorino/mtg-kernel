@@ -1213,8 +1213,7 @@ mod tests {
 
     #[test]
     fn load_and_verify_manifest_rejects_a_tampered_file() {
-        let dir = std::env::temp_dir().join(format!("search_manifest_test_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_temp_dir_v1::TempTestDir::new_v1("search_manifest_test");
         let manifest = sample_manifest();
         let path = dir.join("manifest.json");
         std::fs::write(&path, manifest_canonical_bytes_v1(&manifest)).unwrap();
@@ -1676,8 +1675,7 @@ mod tests {
     #[test]
     fn run_bo1_provisional_search_completes_end_to_end_against_the_committed_template_manifest() {
         let manifest = sample_manifest_with_n_per_cell_v1(3);
-        let dir = std::env::temp_dir().join(format!("bo1_driver_test_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_temp_dir_v1::TempTestDir::new_v1("bo1_driver_test");
         let manifest_path = dir.join("manifest.json");
         std::fs::write(&manifest_path, manifest_canonical_bytes_v1(&manifest)).unwrap();
         std::fs::write(
@@ -1721,9 +1719,7 @@ mod tests {
 
     #[test]
     fn load_and_verify_manifest_refuses_bo1_alpha_or_bo3_confidence_outside_zero_one() {
-        let dir =
-            std::env::temp_dir().join(format!("search_manifest_alpha_test_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_temp_dir_v1::TempTestDir::new_v1("search_manifest_alpha_test");
 
         let mut bad_alpha = sample_manifest();
         bad_alpha.bo1_one_sided_alpha = 0.0;
@@ -1968,8 +1964,7 @@ mod tests {
     #[test]
     fn run_bo3_ratification_refuses_a_game_index_below_two() {
         let manifest = sample_manifest();
-        let dir = std::env::temp_dir().join(format!("bo3_game_index_test_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_temp_dir_v1::TempTestDir::new_v1("bo3_game_index_test");
         let manifest_path = dir.join("manifest.json");
         std::fs::write(&manifest_path, manifest_canonical_bytes_v1(&manifest)).unwrap();
         std::fs::write(
@@ -2001,8 +1996,7 @@ mod tests {
     fn run_bo3_ratification_completes_a_real_match_with_a_full_disclosable_trace() {
         let mut manifest = sample_manifest();
         manifest.m_bo3_matches_per_ratification = 2;
-        let dir = std::env::temp_dir().join(format!("bo3_driver_test_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_temp_dir_v1::TempTestDir::new_v1("bo3_driver_test");
         let manifest_path = dir.join("manifest.json");
         std::fs::write(&manifest_path, manifest_canonical_bytes_v1(&manifest)).unwrap();
         std::fs::write(
@@ -2137,8 +2131,7 @@ mod tests {
         // for the exact same plan.
         let mut manifest = sample_manifest();
         manifest.m_bo3_matches_per_ratification = 1;
-        let dir = std::env::temp_dir().join(format!("bo3_trace_hash_test_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_temp_dir_v1::TempTestDir::new_v1("bo3_trace_hash_test");
         let manifest_path = dir.join("manifest.json");
         std::fs::write(&manifest_path, manifest_canonical_bytes_v1(&manifest)).unwrap();
         std::fs::write(

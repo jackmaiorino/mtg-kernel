@@ -598,21 +598,19 @@ impl NativeExpandedTrainingRunV1 {
                     && self.ex1.is_none()),
             "record_format v2 is not available with e_supported, soft_q, search_targets or ex1 updates",
         )?;
-        // The envelope is carried by the parallel collection and prepared
-        // update commands of ordinary CPU runs; every other path keeps plain
-        // records.
+        // The envelope is carried by parallel collection and prepared or EX1
+        // CPU updates (net-8 and S); every other path keeps plain records.
         check(
             self.record_envelope.is_none()
                 || (self.collection_workers > 1
-                    && self.preparation_workers > 1
+                    && (self.preparation_workers > 1 || self.ex1.is_some())
                     && self.update_backend.is_cpu()
                     && self.line_b.is_none()
                     && self.e_supported.is_none()
                     && self.soft_q.is_none()
-                    && self.search_targets.is_none()
-                    && self.ex1.is_none()
-                    && self.initial_source.s_learner.is_none()),
-            "record_envelope requires parallel collection and a prepared CPU update, without              line (b), E, SQ1, search targets, EX1 or an S learner",
+                    && self.search_targets.is_none()),
+            "record_envelope requires parallel collection and a prepared or EX1 CPU update, \
+             without line (b), E, SQ1 or search targets",
         )?;
         if !self.training_math.is_platform_libm() {
             check(
@@ -667,6 +665,29 @@ impl NativeExpandedTrainingRunV1 {
         // W5's native S learner (`s_learner_v1`) runs the ordinary CPU GAE
         // update and collection, with or without EX1/W5; its own update and
         // loader refuse the rest too, this check refuses them before any work.
+        // The wide learner (`w_learner_v1`, net-8w128): the ordinary CPU GAE
+        // update and collection under the platform libm, without EX1/W5 or a
+        // record envelope; its own update and loader refuse the rest too.
+        if self.initial_source.w_learner.is_some() {
+            check(
+                self.initial_source.s_learner.is_none()
+                    && self.training_math.is_platform_libm()
+                    && self.ex1.is_none()
+                    && self.update_backend.is_cpu()
+                    && self.update_backward_execution.is_sequential()
+                    && !self.record_format.is_v2()
+                    && self.collection_sampler.is_legacy()
+                    && self.line_b.is_none()
+                    && self.e_supported.is_none()
+                    && self.soft_q.is_none()
+                    && self.search_targets.is_none()
+                    && matches!(
+                        self.loss_selection,
+                        ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                    ),
+                "a wide learner run requires the ordinary CPU GAE update under the platform libm, record format v1 and the legacy sampler, without EX1, net-8 backward modes, line (b), E, SQ1, search targets or an S learner",
+            )?;
+        }
         if self.initial_source.s_learner.is_some() {
             check(
                 self.update_backend.is_cpu()
@@ -726,13 +747,12 @@ impl NativeExpandedTrainingRunV1 {
                     && self.search_targets.is_none()
                     && self.update_backend.is_cpu()
                     && self.update_backward_execution.is_sequential()
-                    && self.preparation_workers == 1
                     && self.collection_sampler.is_legacy()
                     && matches!(
                         self.loss_selection,
                         ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
                     ),
-                "ex1 requires ordinary sequential CPU GAE, serial preparation and the legacy sampler",
+                "ex1 requires ordinary sequential CPU GAE and the legacy sampler",
             )?;
             options.collect_options_v1(0).validate_v1()?;
             options
@@ -879,6 +899,7 @@ fn validate_source_paths(source: &ExpandedModelSourceV1) -> Result<(), String> {
     for pin in std::iter::once(&source.play_import)
         .chain(source.checkpoint.iter())
         .chain(source.s_learner.iter().map(|member| &member.initial))
+        .chain(source.w_learner.iter().map(|member| &member.initial))
     {
         check(
             pin.path.is_absolute()
@@ -1405,8 +1426,7 @@ fn validate_update(
         "line (b) frozen tensors differ from the run's initial source",
     )?;
     let s_parallel_workers =
-        (source.s_learner.is_some() && ex1.is_none() && preparation_workers > 1)
-            .then_some(preparation_workers);
+        (source.s_learner.is_some() && preparation_workers > 1).then_some(preparation_workers);
     update_backend.validate_update_execution_v1(&document, s_parallel_workers)?;
     validate_preparation_execution(
         &document,
@@ -1430,6 +1450,8 @@ fn validate_update(
     })?;
     // An S checkpoint also binds the run's GAE settings (`s_learner_v1`).
     crate::expanded_deck_training_v1::s_learner_v1::validate_update_loss_v1(&next, loss_selection)?;
+    // And a wide checkpoint (`w_learner_v1`).
+    crate::expanded_deck_training_v1::w_learner_v1::validate_update_loss_v1(&next, loss_selection)?;
     check(
         after.adam_step
             == before
@@ -2104,6 +2126,10 @@ pub fn run_native_expanded_training_v1(
                     value_coefficient: config.value_coefficient,
                     loss_selection: config.loss_selection,
                     ex1: options.update_options_v1(index, collection.clone()),
+                    preparation_workers: (config.preparation_workers > 1)
+                        .then_some(config.preparation_workers),
+                    max_prepared_tensor_mebibytes: config.max_prepared_tensor_mebibytes,
+                    record_envelope: config.record_envelope,
                     output_directory: attempt.join("update"),
                 },
                 (Some(options), None) => ExpandedTrainingCommandV1::SearchTargetsUpdate {
@@ -2272,17 +2298,8 @@ mod tests {
     const PORTABLE_PARALLEL_RUN_STATE_SHA256_V1: &str =
         "af94495eac0f2c8bd390173327afda86fd007cb81c69ac03cb2a945e80d29439";
 
-    fn temporary_directory(label: &str) -> PathBuf {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let directory = std::env::temp_dir().join(format!(
-            "native-expanded-{label}-{}-{nonce}",
-            std::process::id()
-        ));
-        fs::create_dir(&directory).unwrap();
-        directory
+    fn temporary_directory(label: &str) -> crate::test_temp_dir_v1::TempTestDir {
+        crate::test_temp_dir_v1::TempTestDir::new_v1(&format!("native-expanded-{label}"))
     }
 
     #[test]
@@ -2315,7 +2332,6 @@ mod tests {
         fs::write(&ledger.path, b"{\"entries\":[]}").unwrap();
         fs::write(&collection.path, b"{\"trajectories\":[]}").unwrap();
         assert!(reverify_validated_collection(&collection, &[trajectory]).is_err());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2492,10 +2508,7 @@ mod tests {
         config.max_non_natural_episode_fraction = 0.2;
         config.collection_workers = 4;
         let episodes = resolve_episodes(&config, 0, &config.initial_source, &[]).unwrap();
-        let attempt =
-            std::env::temp_dir().join(format!("rt1-saved-command-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&attempt);
-        fs::create_dir_all(&attempt).unwrap();
+        let attempt = crate::test_temp_dir_v1::TempTestDir::new_v1("rt1-saved-command");
         let command = collection_command(
             &config,
             0,
@@ -2682,7 +2695,7 @@ mod tests {
         stripped.as_object_mut().unwrap().remove("record_envelope");
         assert_eq!(stripped, default_value);
         // Serial collection or a serial update keeps plain records.
-        let mut parallel = parallel_two_iteration_config_v1("envelope-validation");
+        let (_root, mut parallel) = parallel_two_iteration_config_v1("envelope-validation");
         parallel.record_envelope = Envelope::Zstd1;
         parallel.validate_v1().unwrap();
         for (collection, preparation) in [(1, 2), (2, 1)] {
@@ -2758,7 +2771,7 @@ mod tests {
         if std::env::var(RESIDENT_READS_CHILD_ENV_V1).as_deref() != Ok("1") {
             return;
         }
-        let plain = parallel_two_iteration_config_v1("resident");
+        let (_root, plain) = parallel_two_iteration_config_v1("resident");
         let mut resident = plain.clone();
         resident.verified_reads = VerifiedReadsV1::Resident;
         resident.output_directory = plain.output_directory.with_file_name("run-resident");
@@ -2865,7 +2878,7 @@ mod tests {
         use crate::expanded_deck_training_v1::checkpoint_container_v1::parse_checkpoint_v1;
         use crate::expanded_deck_training_v1::record_envelope_v1::{is_sealed_v1, open_v1};
         use crate::expanded_deck_training_v1::RecordEnvelopeV1 as Envelope;
-        let plain = parallel_two_iteration_config_v1("envelope");
+        let (_root, plain) = parallel_two_iteration_config_v1("envelope");
         let mut sealed = plain.clone();
         sealed.record_envelope = Envelope::Zstd1;
         sealed.output_directory = plain.output_directory.with_file_name("run-sealed");
@@ -3488,11 +3501,13 @@ mod tests {
         label: &str,
         loss_selection: ExpandedLossSelectionV1,
         update_backend: ExpandedUpdateBackendV1,
-    ) -> NativeExpandedTrainingRunV1 {
+    ) -> (
+        crate::test_temp_dir_v1::TempTestDir,
+        NativeExpandedTrainingRunV1,
+    ) {
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-        let root = std::env::temp_dir().join(format!(
-            "native-expanded-loss-selection-{label}-{}",
-            std::process::id()
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1(&format!(
+            "native-expanded-loss-selection-{label}"
         ));
         let source_struct =
             crate::expanded_deck_training_v1::write_synthetic_fresh_source_with_parameters_v1(
@@ -3516,6 +3531,7 @@ mod tests {
             feature_transfer,
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let list = |id: &str| {
             let registration =
@@ -3553,34 +3569,38 @@ mod tests {
                 }],
             })
             .collect();
-        NativeExpandedTrainingRunV1 {
-            schema: SCHEMA.into(),
-            initial_source,
-            opponents: vec![],
-            iterations,
-            record_format: Default::default(),
-            record_envelope: Default::default(),
-            verified_reads: Default::default(),
-            learning_rate: 0.0003,
-            value_coefficient: 0.5,
-            update_backend,
-            loss_selection,
-            update_backward_execution: UpdateBackwardExecutionV1::Sequential,
-            collection_workers: 1,
-            preparation_workers: 1,
-            max_non_natural_episode_fraction: 0.0,
-            max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
-            collection_sampler: CollectionSamplerV1::Legacy,
-            training_math: TrainingMathV1::PlatformLibm,
-            line_b: None,
-            e_supported: None,
-            soft_q: None,
-            search_targets: None,
-            ex1: None,
-            record_process_cpu: false,
-            chain_ledger: None,
-            output_directory: root.join("run"),
-        }
+        let output_directory = root.join("run");
+        (
+            root,
+            NativeExpandedTrainingRunV1 {
+                schema: SCHEMA.into(),
+                initial_source,
+                opponents: vec![],
+                iterations,
+                record_format: Default::default(),
+                record_envelope: Default::default(),
+                verified_reads: Default::default(),
+                learning_rate: 0.0003,
+                value_coefficient: 0.5,
+                update_backend,
+                loss_selection,
+                update_backward_execution: UpdateBackwardExecutionV1::Sequential,
+                collection_workers: 1,
+                preparation_workers: 1,
+                max_non_natural_episode_fraction: 0.0,
+                max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+                collection_sampler: CollectionSamplerV1::Legacy,
+                training_math: TrainingMathV1::PlatformLibm,
+                line_b: None,
+                e_supported: None,
+                soft_q: None,
+                search_targets: None,
+                ex1: None,
+                record_process_cpu: false,
+                chain_ledger: None,
+                output_directory,
+            },
+        )
     }
 
     /// `result["iterations"]` is a `Vec<PinnedFileV1>`, one pin per
@@ -3675,7 +3695,8 @@ mod tests {
             episode.mulligan_modes =
                 Some([PauperMulliganModeV1::Learned, PauperMulliganModeV1::Learned]);
         };
-        let mut v7 = real_two_iteration_config_v1("flat-v7", gae, ExpandedUpdateBackendV1::Cpu);
+        let (_v7_root, mut v7) =
+            real_two_iteration_config_v1("flat-v7", gae, ExpandedUpdateBackendV1::Cpu);
         v7.initial_source.feature_transfer =
             transfer(FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7);
         london(&mut v7);
@@ -3704,12 +3725,14 @@ mod tests {
                 0x0008_0000_0000_0007,
             )
             .unwrap();
-        let mut v8 = real_two_iteration_config_v1("flat-v8", gae, ExpandedUpdateBackendV1::Cpu);
+        let (_v8_root, mut v8) =
+            real_two_iteration_config_v1("flat-v8", gae, ExpandedUpdateBackendV1::Cpu);
         v8.initial_source = ExpandedModelSourceV1 {
             play_import: v7.initial_source.play_import.clone(),
             feature_transfer: transfer(FEATURE_CONTRACT_DIGEST_V8, FEATURE_ENCODING_DIGEST_V8),
             checkpoint: Some(converted.pin.clone()),
             s_learner: None,
+            w_learner: None,
         };
         london(&mut v8);
         // The RT1 chains' parallel collection and ordered update preparation.
@@ -3736,7 +3759,8 @@ mod tests {
         // The same two updates without a pause must reach identical full
         // train states, including all optimizer moments after the next update.
         let mut uninterrupted = v8.clone();
-        uninterrupted.output_directory = temporary_directory("flat-v8-uninterrupted").join("run");
+        let uninterrupted_root = temporary_directory("flat-v8-uninterrupted");
+        uninterrupted.output_directory = uninterrupted_root.join("run");
         let continuous = run_native_expanded_training_v1(&uninterrupted, None).unwrap();
         for index in 0..2 {
             let resumed = checkpoint_document_v1(&iteration_checkpoint_v1(&result, index));
@@ -3757,7 +3781,7 @@ mod tests {
 
     #[test]
     fn loss_selection_reaches_a_real_two_iteration_cpu_run_receipt() {
-        let config = real_two_iteration_config_v1(
+        let (_root, config) = real_two_iteration_config_v1(
             "cpu",
             ExpandedLossSelectionV1::GaeAdvantageValueV1 {
                 gamma: 1.0,
@@ -3789,8 +3813,13 @@ mod tests {
         assert!(manifest.get("input_contract").is_none());
     }
 
-    fn e_supported_run_config_v1(label: &str) -> NativeExpandedTrainingRunV1 {
-        let mut config = real_two_iteration_config_v1(
+    fn e_supported_run_config_v1(
+        label: &str,
+    ) -> (
+        crate::test_temp_dir_v1::TempTestDir,
+        NativeExpandedTrainingRunV1,
+    ) {
+        let (root, mut config) = real_two_iteration_config_v1(
             label,
             ExpandedLossSelectionV1::GaeAdvantageValueV1 {
                 gamma: 1.0,
@@ -3814,7 +3843,7 @@ mod tests {
                 vec![],
             ],
         });
-        config
+        (root, config)
     }
 
     fn iteration_receipt_v1(result: &Value, index: usize) -> Value {
@@ -3825,7 +3854,7 @@ mod tests {
 
     #[test]
     fn e_supported_run_binds_packets_resumes_and_replays() {
-        let config = e_supported_run_config_v1("e-run-a");
+        let (_root, config) = e_supported_run_config_v1("e-run-a");
         config.validate_v1().unwrap();
         let first = run_native_expanded_training_v1(&config, Some(1)).unwrap();
         assert_eq!(first["completed_iterations"], 1);
@@ -3869,8 +3898,11 @@ mod tests {
         label: &str,
         arm: SoftQArmV1,
         workers: usize,
-    ) -> NativeExpandedTrainingRunV1 {
-        let mut config = real_two_iteration_config_v1(
+    ) -> (
+        crate::test_temp_dir_v1::TempTestDir,
+        NativeExpandedTrainingRunV1,
+    ) {
+        let (root, mut config) = real_two_iteration_config_v1(
             label,
             ExpandedLossSelectionV1::GaeAdvantageValueV1 {
                 gamma: 1.0,
@@ -3887,7 +3919,7 @@ mod tests {
             teacher_workers: workers,
             engineering_zero_treatment: false,
         });
-        config
+        (root, config)
     }
 
     /// TP1 Stage B: a stand-in orchestrator writes each update's packet, bound
@@ -3940,8 +3972,13 @@ mod tests {
         })
     }
 
-    fn search_targets_run_config_v1(label: &str) -> NativeExpandedTrainingRunV1 {
-        let mut config = soft_q_run_config_v1(label, SoftQArmV1::Treatment, 2);
+    fn search_targets_run_config_v1(
+        label: &str,
+    ) -> (
+        crate::test_temp_dir_v1::TempTestDir,
+        NativeExpandedTrainingRunV1,
+    ) {
+        let (root, mut config) = soft_q_run_config_v1(label, SoftQArmV1::Treatment, 2);
         config.soft_q = None;
         let packets = config.output_directory.with_extension("packets");
         let _ = std::fs::remove_dir_all(&packets);
@@ -3966,7 +4003,7 @@ mod tests {
             target: Default::default(),
             cap: Default::default(),
         });
-        config
+        (root, config)
     }
 
     /// TP1 Stage B: a packet is refused before its update when its searched
@@ -3975,7 +4012,7 @@ mod tests {
     /// packet is already there.
     #[test]
     fn search_target_runs_refuse_unbound_packets_and_honor_stop() {
-        let config = search_targets_run_config_v1("st-run-fake-game");
+        let (_fake_root, config) = search_targets_run_config_v1("st-run-fake-game");
         config.validate_v1().unwrap();
         let writer = spawn_packet_writer_v1(&config, 1, None);
         let error = run_native_expanded_training_v1(&config, None).unwrap_err();
@@ -3985,7 +4022,7 @@ mod tests {
             .output_directory
             .join("iterations/000000/complete.json")
             .exists());
-        let tampered = search_targets_run_config_v1("st-run-tampered");
+        let (_tampered_root, tampered) = search_targets_run_config_v1("st-run-tampered");
         let writer = spawn_packet_writer_v1(&tampered, 1, Some(0));
         let error = run_native_expanded_training_v1(&tampered, None).unwrap_err();
         writer.join().unwrap();
@@ -3993,7 +4030,7 @@ mod tests {
             error.contains("another run, arm, seed or update"),
             "{error}"
         );
-        let stopped = search_targets_run_config_v1("st-run-stopped");
+        let (_stopped_root, stopped) = search_targets_run_config_v1("st-run-stopped");
         let writer = spawn_packet_writer_v1(&stopped, 1, None);
         writer.join().unwrap();
         let options = stopped.search_targets.as_ref().unwrap();
@@ -4015,7 +4052,8 @@ mod tests {
             entropy_coefficient: 0.0,
         };
         let w5_config = |label: &str, closed: u64, stop: Option<u64>| {
-            let mut config = real_two_iteration_config_v1(label, gae, ExpandedUpdateBackendV1::Cpu);
+            let (root_guard, mut config) =
+                real_two_iteration_config_v1(label, gae, ExpandedUpdateBackendV1::Cpu);
             let root = config.output_directory.parent().unwrap().to_path_buf();
             let stat = root.join("cpu.stat");
             fs::write(&stat, "usage_usec 1000\nuser_usec 600\nsystem_usec 400\n").unwrap();
@@ -4041,7 +4079,7 @@ mod tests {
             });
             config.chain_ledger = Some(ChainLedgerOptionsV1 { source });
             config.validate_v1().unwrap();
-            (config, document)
+            (root_guard, config, document)
         };
         let states = |result: &Value| {
             (0..2)
@@ -4053,7 +4091,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         };
-        let (a, _) = w5_config("w5-ledger-a", 5_000, None);
+        let (_a_root, a, _) = w5_config("w5-ledger-a", 5_000, None);
         let result = run_native_expanded_training_v1(&a, None).unwrap();
         assert_eq!(result["complete"], true);
         for i in 0..2 {
@@ -4068,14 +4106,14 @@ mod tests {
             let telemetry = ex1["w5"]["step_telemetry"].as_bool().unwrap();
             assert_eq!(telemetry, i == 0, "update {i}");
         }
-        let (b, _) = w5_config("w5-ledger-b", 9_000_000, None);
+        let (_b_root, b, _) = w5_config("w5-ledger-b", 9_000_000, None);
         let other = run_native_expanded_training_v1(&b, None).unwrap();
         assert_eq!(
             states(&result),
             states(&other),
             "the ledger changed a state"
         );
-        let (c, mut document) = w5_config("w5-ledger-c", 5_000, Some(6_000));
+        let (_c_root, c, mut document) = w5_config("w5-ledger-c", 5_000, Some(6_000));
         let stopped = run_native_expanded_training_v1(&c, None).unwrap();
         assert_eq!(stopped["completed_iterations"], 1);
         assert_eq!(stopped["complete"], false);
@@ -4095,13 +4133,70 @@ mod tests {
         assert!(iteration_receipt_v1(&result, 0)
             .get("chain_ledger")
             .is_some());
-        let plain =
+        let (_plain_root, plain) =
             real_two_iteration_config_v1("w5-ledger-plain", gae, ExpandedUpdateBackendV1::Cpu);
         plain.validate_v1().unwrap();
         assert!(serde_json::to_value(&plain)
             .unwrap()
             .get("chain_ledger")
             .is_none());
+    }
+
+    #[test]
+    fn w5_ex1_prepared_and_sealed_run_matches_serial_states() {
+        use crate::expanded_deck_training_v1::RecordEnvelopeV1 as Envelope;
+        let gae = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.95,
+            entropy_coefficient: 0.0,
+        };
+        let ex1_opts = Ex1RunOptionsV1 {
+            run: "w5/chain-prep-test".into(),
+            update_offset: 0,
+            coefficient: 1.0,
+            cap: crate::expanded_deck_training_v1::search_targets_v1::SearchTargetCapV1::Ratio {
+                kappa: 2.0,
+            },
+            w5: Some(W5RunOptionsV1 {
+                budget: 1_500,
+                key_memo_mib: 512,
+            }),
+        };
+        let mut serial =
+            real_two_iteration_config_v1("w5-ex1-serial", gae, ExpandedUpdateBackendV1::Cpu);
+        let serial_root = serial.output_directory.parent().unwrap().to_path_buf();
+        serial.ex1 = Some(ex1_opts.clone());
+        serial.validate_v1().unwrap();
+
+        let mut prepared =
+            real_two_iteration_config_v1("w5-ex1-prep-zstd", gae, ExpandedUpdateBackendV1::Cpu);
+        let prepared_root = prepared.output_directory.parent().unwrap().to_path_buf();
+        prepared.ex1 = Some(ex1_opts);
+        prepared.collection_workers = 2;
+        prepared.preparation_workers = 2;
+        prepared.record_envelope = Envelope::Zstd1;
+        prepared.validate_v1().unwrap();
+
+        let serial_res = run_native_expanded_training_v1(&serial, None).unwrap();
+        let prepared_res = run_native_expanded_training_v1(&prepared, None).unwrap();
+        assert_eq!(
+            prepared_res["actual_identity"]["state_sha256"],
+            serial_res["actual_identity"]["state_sha256"]
+        );
+        for i in 0..2 {
+            let s_up: PinnedFileV1 =
+                serde_json::from_value(iteration_receipt_v1(&serial_res, i)["update"].clone())
+                    .unwrap();
+            let p_up: PinnedFileV1 =
+                serde_json::from_value(iteration_receipt_v1(&prepared_res, i)["update"].clone())
+                    .unwrap();
+            let s_doc = read_pin(&s_up).unwrap();
+            let p_doc = read_pin(&p_up).unwrap();
+            assert_eq!(p_doc["after_state_sha256"], s_doc["after_state_sha256"]);
+            assert!(p_doc.get("update_preparation").is_some());
+        }
+        let _ = fs::remove_dir_all(&serial_root);
+        let _ = fs::remove_dir_all(&prepared_root);
     }
 
     /// Bookkeeping design 2.3, the crash point, in both record formats: an
@@ -4127,13 +4222,13 @@ mod tests {
             crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V2,
         ] {
             let label = format!("crash-point-{format:?}");
-            let mut plain = real_two_iteration_config_v1(
+            let (_plain_root, mut plain) = real_two_iteration_config_v1(
                 &format!("{label}-plain"),
                 gae,
                 ExpandedUpdateBackendV1::Cpu,
             );
             plain.record_format = format;
-            let mut crashed =
+            let (_crashed_root, mut crashed) =
                 real_two_iteration_config_v1(&label, gae, ExpandedUpdateBackendV1::Cpu);
             crashed.record_format = format;
             let reference = run_native_expanded_training_v1(&plain, None).unwrap();
@@ -4294,7 +4389,7 @@ mod tests {
     /// nondecreasing; without it receipts are unchanged.
     #[test]
     fn record_process_cpu_marks_every_iteration_boundary() {
-        let mut config = soft_q_run_config_v1("cpu-marks", SoftQArmV1::Treatment, 1);
+        let (_marks_root, mut config) = soft_q_run_config_v1("cpu-marks", SoftQArmV1::Treatment, 1);
         config.soft_q = None;
         config.record_process_cpu = true;
         let result = run_native_expanded_training_v1(&config, None).unwrap();
@@ -4306,7 +4401,8 @@ mod tests {
             })
             .collect();
         assert!(marks[0] > 0.0 && marks[1] >= marks[0], "{marks:?}");
-        let mut plain = soft_q_run_config_v1("cpu-marks-off", SoftQArmV1::Treatment, 1);
+        let (_plain_root, mut plain) =
+            soft_q_run_config_v1("cpu-marks-off", SoftQArmV1::Treatment, 1);
         plain.soft_q = None;
         let result = run_native_expanded_training_v1(&plain, None).unwrap();
         assert!(iteration_receipt_v1(&result, 0)
@@ -4318,9 +4414,10 @@ mod tests {
     /// an SQ1 update equals the ordinary update bit for bit.
     #[test]
     fn soft_q_zero_treatment_equals_the_ordinary_update() {
-        let mut zero = soft_q_run_config_v1("sq-run-zero", SoftQArmV1::Treatment, 2);
+        let (_zero_root, mut zero) = soft_q_run_config_v1("sq-run-zero", SoftQArmV1::Treatment, 2);
         zero.soft_q.as_mut().unwrap().engineering_zero_treatment = true;
-        let mut ordinary = soft_q_run_config_v1("sq-run-ordinary", SoftQArmV1::Treatment, 2);
+        let (_ordinary_root, mut ordinary) =
+            soft_q_run_config_v1("sq-run-ordinary", SoftQArmV1::Treatment, 2);
         ordinary.soft_q = None;
         let z = run_native_expanded_training_v1(&zero, Some(1)).unwrap();
         let o = run_native_expanded_training_v1(&ordinary, Some(1)).unwrap();
@@ -4345,7 +4442,7 @@ mod tests {
 
     #[test]
     fn soft_q_run_binds_packets_resumes_replays_and_diagnoses() {
-        let config = soft_q_run_config_v1("sq-run-a", SoftQArmV1::Treatment, 3);
+        let (_root, config) = soft_q_run_config_v1("sq-run-a", SoftQArmV1::Treatment, 3);
         config.validate_v1().unwrap();
         let first = run_native_expanded_training_v1(&config, Some(1)).unwrap();
         assert_eq!(first["completed_iterations"], 1);
@@ -4382,7 +4479,8 @@ mod tests {
             run_native_expanded_training_v1(&config, None).unwrap(),
             result
         );
-        let serial = soft_q_run_config_v1("sq-run-serial", SoftQArmV1::Treatment, 1);
+        let (_serial_root, serial) =
+            soft_q_run_config_v1("sq-run-serial", SoftQArmV1::Treatment, 1);
         let again = run_native_expanded_training_v1(&serial, None).unwrap();
         assert_eq!(
             again["actual_identity"]["state_sha256"],
@@ -4429,7 +4527,8 @@ mod tests {
         assert!(error.contains("resume plan"), "{error}");
         // The shuffled arm shares the treatment's worlds: same census, and its
         // target is built from the permuted means.
-        let shuffled = soft_q_run_config_v1("sq-run-shuffled", SoftQArmV1::ShuffledQ, 3);
+        let (_shuffled_root, shuffled) =
+            soft_q_run_config_v1("sq-run-shuffled", SoftQArmV1::ShuffledQ, 3);
         let s = run_native_expanded_training_v1(&shuffled, Some(1)).unwrap();
         let s_document = read_pin(
             &serde_json::from_value(iteration_receipt_v1(&s, 0)["update"].clone()).unwrap(),
@@ -4473,7 +4572,7 @@ mod tests {
 
     #[test]
     fn e_supported_run_rejects_incompatible_execution_and_schedules() {
-        let base = e_supported_run_config_v1("e-run-validation");
+        let (_root, base) = e_supported_run_config_v1("e-run-validation");
         base.validate_v1().unwrap();
         let mut prepared = base.clone();
         prepared.preparation_workers = 2;
@@ -4503,8 +4602,13 @@ mod tests {
     /// `real_two_iteration_config_v1` with two games per iteration, collected
     /// and prepared on two workers, so the parallel collection, its idle-worker
     /// parse-ahead and the parallel update preparation all run.
-    fn parallel_two_iteration_config_v1(label: &str) -> NativeExpandedTrainingRunV1 {
-        let mut config = real_two_iteration_config_v1(
+    fn parallel_two_iteration_config_v1(
+        label: &str,
+    ) -> (
+        crate::test_temp_dir_v1::TempTestDir,
+        NativeExpandedTrainingRunV1,
+    ) {
+        let (root, mut config) = real_two_iteration_config_v1(
             label,
             ExpandedLossSelectionV1::GaeAdvantageValueV1 {
                 gamma: 1.0,
@@ -4522,7 +4626,7 @@ mod tests {
         }
         config.collection_workers = 2;
         config.preparation_workers = 2;
-        config
+        (root, config)
     }
 
     /// B5 through the run driver: a run under `portable-math-v1` with
@@ -4533,7 +4637,7 @@ mod tests {
     /// same run under the default math names none and trains other bits.
     #[test]
     fn portable_math_run_trains_one_state_on_every_system_and_worker_count() {
-        let mut config = parallel_two_iteration_config_v1("portable-math");
+        let (_root, mut config) = parallel_two_iteration_config_v1("portable-math");
         config.training_math = TrainingMathV1::PortableV1;
         config.validate_v1().unwrap();
         let result = run_native_expanded_training_v1(&config, None).unwrap();
@@ -4589,7 +4693,7 @@ mod tests {
     /// line (b) or E; a config that asks for more is refused before any work.
     #[test]
     fn portable_math_run_refuses_paths_it_does_not_cover() {
-        let mut base = real_two_iteration_config_v1(
+        let (_base_root, mut base) = real_two_iteration_config_v1(
             "portable-math-refusals",
             ExpandedLossSelectionV1::GaeAdvantageValueV1 {
                 gamma: 1.0,
@@ -4616,7 +4720,7 @@ mod tests {
             diagnostics: false,
         };
         refused(recovery);
-        let mut e_supported = e_supported_run_config_v1("portable-math-refusals-e");
+        let (_e_root, mut e_supported) = e_supported_run_config_v1("portable-math-refusals-e");
         e_supported.training_math = TrainingMathV1::PortableV1;
         refused(e_supported);
     }
@@ -4652,7 +4756,7 @@ mod tests {
         use crate::durable_publication_v1::crash_points_for_test_v1::{
             with_crash_point_v1, CrashPointV1,
         };
-        let config = parallel_two_iteration_config_v1("crash-points");
+        let (_root, config) = parallel_two_iteration_config_v1("crash-points");
         config.validate_v1().unwrap();
         let directory = config.output_directory.clone();
         let reference_directory = directory.with_file_name("uninterrupted");
@@ -4724,7 +4828,7 @@ mod tests {
     #[ignore = "requires a real GPU; explicit GPU execution only"]
     #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
     fn loss_selection_reaches_a_real_two_iteration_cuda_run_receipt() {
-        let config = real_two_iteration_config_v1(
+        let (_root, config) = real_two_iteration_config_v1(
             "cuda",
             ExpandedLossSelectionV1::GaeAdvantageValueV1 {
                 gamma: 1.0,

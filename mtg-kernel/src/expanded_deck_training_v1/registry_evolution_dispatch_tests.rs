@@ -78,6 +78,7 @@ fn source(play_import: PinnedFileV1, checkpoint: Option<PinnedFileV1>) -> Expand
         feature_transfer: v3_transfer(),
         checkpoint,
         s_learner: None,
+        w_learner: None,
     }
 }
 
