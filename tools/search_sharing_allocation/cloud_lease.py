@@ -13,7 +13,7 @@ Spend safety (mtg-kernel-collab#335):
   POST and DELETEs duplicates. Every Pod ID it sees is retained under
   lease/known-pods/, so the guardian keeps deleting each until it alone is
   confirmed absent; post-creation diagnostics are best-effort. A missing, malformed or above-ceiling price
-  (max of costPerHr and adjustedCostPerHr) requests release and DELETEs at once.
+  (the Runpod REST v2 Pod's `cost`) requests release and DELETEs at once.
 - an ambiguous POST (timeout, 5xx, transport error) with no Pod seen never
   resolves automatically: lease/create-ambiguous.json keeps the guardian
   deleting any Pod with the lease's name until an operator runs
@@ -136,14 +136,16 @@ except Exception as e:
 while guard.poll() is None: time.sleep(15)
 raise SystemExit(guard.returncode)
 '''
+    # Runpod REST v2 CreatePodRequest (unknown fields are a 422): CPU under `cpu`, the container
+    # command under `entrypoint`; v2 has no interruptible/supportPublicIp/priority fields.
     body = {
-        "name": name, "cloudType": "SECURE", "computeType": "CPU",
-        "cpuFlavorIds": ["cpu3c"], "cpuFlavorPriority": "custom", "vcpuCount": 32,
-        "containerDiskInGb": 100, "volumeInGb": 0,
-        "imageName": IMAGE_REFERENCE, "interruptible": False,
-        "supportPublicIp": True, "ports": ["22/tcp"],
-        "dataCenterIds": [region], "dataCenterPriority": "custom",
-        "dockerEntrypoint": ["python3", "-c", bootstrap], "dockerStartCmd": [],
+        "name": name, "cloud": "SECURE",
+        "cpu": {"id": "cpu3c", "vcpuCount": 32},
+        "disk": 100,
+        "image": IMAGE_REFERENCE,
+        "ports": ["22/tcp"],
+        "dataCenterIds": [region],
+        "entrypoint": ["python3", "-c", bootstrap],
         "env": {"RUNPOD_API_KEY": KEY_PLACEHOLDER,
                 "SSH_PUBLIC_KEY": "__INJECT_EXISTING_PUBLIC_KEY_AT_POST__", "CUDA_VISIBLE_DEVICES": ""},
     }
@@ -197,16 +199,16 @@ def pod_identity(pod, name):
 
 
 def safe_pod(pod, name):
-    """Identity plus sanitized detail; non-finite numbers become None so receipts always serialize."""
+    """Identity plus sanitized detail from a v2 Pod; non-finite numbers become None so receipts always serialize."""
     out = pod_identity(pod, name)
-    out.update({"desired_status": pod.get("desiredStatus") if isinstance(pod.get("desiredStatus"), str) else None,
-                "cost_per_hour_usd": finite_or_none(pod.get("costPerHr")),
-                "adjusted_cost_per_hour_usd": finite_or_none(pod.get("adjustedCostPerHr")),
+    cpu = pod.get("cpu") if isinstance(pod.get("cpu"), dict) else {}
+    out.update({"status": pod.get("status") if isinstance(pod.get("status"), str) else None,
+                "cost_per_hour_usd": finite_or_none(pod.get("cost")),
                 "data_center_id": pod.get("dataCenterId") if isinstance(pod.get("dataCenterId"), str) else None,
-                "cpu_flavor": pod.get("cpuFlavorId") if isinstance(pod.get("cpuFlavorId"), str) else None,
-                "vcpu_count": pod.get("vcpuCount") if type(pod.get("vcpuCount")) is int else None,
-                "memory_gb": finite_or_none(pod.get("memoryInGb")),
-                "container_disk_gb": finite_or_none(pod.get("containerDiskInGb"))})
+                "cpu_flavor": cpu.get("id") if isinstance(cpu.get("id"), str) else None,
+                "vcpu_count": cpu.get("vcpuCount") if type(cpu.get("vcpuCount")) is int else None,
+                "memory_gb": finite_or_none(cpu.get("memory")),
+                "container_disk_gb": finite_or_none(pod.get("disk"))})
     return out
 
 
@@ -334,8 +336,9 @@ def create(root, execute, *, key=None, pods=None, poster=None, funds=None, provi
         # name, price and allocation validated from the raw data before any priced receipt is written
         try:
             rate = lease_guard.pod_rate(source if isinstance(source, dict) else {})
+            source_cpu = source.get("cpu") if isinstance(source.get("cpu"), dict) else {}
             ok = (source.get("name") == lease["name"] and rate <= lease["rate_ceiling_usd_hour"]
-                  and source.get("vcpuCount") in (None, lease.get("vcpu_count", 32)))
+                  and source_cpu.get("vcpuCount") in (None, lease.get("vcpu_count", 32)))
         except Exception:  # noqa: BLE001 - NaN, missing or malformed price
             ok = False
         if not ok:
@@ -395,8 +398,9 @@ def pod_marker_probe(root, run=None):
             if not re.fullmatch(r"/run/phase1/[A-Za-z0-9-]+", state):
                 return False
             private_key = str(Path(metadata["public_key_path"]).with_suffix(""))
-            host = str(ipaddress.ip_address(pod.get("publicIp")))
-            port = int((pod.get("portMappings") or {}).get("22"))
+            direct = lease_guard.pod_ssh_direct(pod)   # v2 ssh.direct replaces publicIp/portMappings
+            host = str(ipaddress.ip_address(direct[0]))
+            port = int(direct[1])
         except Exception:  # noqa: BLE001 - not ready
             return False
         if not 1 <= port <= 65535:

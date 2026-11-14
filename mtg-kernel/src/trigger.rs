@@ -7496,6 +7496,54 @@ pub(crate) fn pending_trigger_hidden_source_v1(
     }
 }
 
+/// Whether `pending.source` has ceased to exist (111.8/704.5d: a token that
+/// left the battlefield, for example by dying before its triggers were
+/// placed). `event::cease_to_exist` removes the object from its zone list but
+/// keeps its record and zone, so no ordinary zone lookup can name it, and the
+/// observation already projects the source as unknown (`rl.rs`'s
+/// `visible_card_ref` requires zone-list membership). The stack is excluded:
+/// its membership rules (a resolving spell popped before an optional cost)
+/// belong to the stack-ordinal resolver.
+///
+/// Real gameplay (V4 self-play, Wildfire vs Affinity, seed
+/// 7167950909562342456, step 219): two Black Mage's Rods on one Hero token,
+/// both granted triggers from one noncreature spell, the token dead before
+/// `Decision::OrderTriggers`.
+pub(crate) fn pending_trigger_ceased_source_v1(
+    state: &crate::state::GameState,
+    pending: &PendingTrigger,
+) -> bool {
+    let Some(live) = state.objects.try_get(pending.source) else {
+        return false;
+    };
+    let id = pending.source;
+    let member = match live.zone {
+        Zone::Library => state.players[live.owner.index()].library.contains(&id),
+        Zone::Hand => state.players[live.owner.index()].hand.contains(&id),
+        Zone::Battlefield => state.players[live.controller.index()]
+            .battlefield
+            .contains(&id),
+        Zone::Graveyard => state.players[live.owner.index()].graveyard.contains(&id),
+        Zone::Exile => state.exile.contains(&id),
+        Zone::Command => state.command.contains(&id),
+        Zone::Stack => true,
+    };
+    !member
+}
+
+/// V4 only: a pending trigger whose live source no ordinary zone lookup can
+/// name, hidden ([`pending_trigger_hidden_source_v1`]) or ceased
+/// ([`pending_trigger_ceased_source_v1`]). Such a source is named by its
+/// frozen `source_contract` and gets a `PendingTrigger { position }` row.
+/// The frozen V3 gate keeps using the hidden predicate alone.
+pub(crate) fn pending_trigger_frozen_source_v4(
+    state: &crate::state::GameState,
+    pending: &PendingTrigger,
+) -> bool {
+    pending_trigger_hidden_source_v1(state, pending)
+        || pending_trigger_ceased_source_v1(state, pending)
+}
+
 /// Whether the currently active decision is `Decision::ChooseTargets` for
 /// `pending_triggers[0]` (`engine.rs`'s `drain_pending_triggers_or_decide`
 /// never surfaces that decision for any other pending trigger), and, if

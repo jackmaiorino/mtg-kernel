@@ -1,6 +1,8 @@
 # Pinned Linux release build
 
-The workflow builds the combined trainer at `c5719e1cf81769f4f30f9e91ae1079d4ee3cbfcf` on a standard public-repository GitHub runner. It exports `native_expanded_training_run_v1` and `checkpoint_container_v1` with SHA-256s and a source/toolchain manifest. It does not execute training or qualify throughput.
+The workflow builds the combined trainer at `84460551a3fe40d5bd1804c1dbf394896c08b1a9` on a standard public-repository GitHub runner. It exports `native_expanded_training_run_v1` and `checkpoint_container_v1` with SHA-256s and a source/toolchain manifest. It does not execute training or qualify throughput.
+
+The source is main `84460551a`. It contains the V4 engine-fault fix (#673) and the net-8w128 learner, movement reader and widening rows (#678, #681, #682); these are the w128 forks' launch binaries (#672).
 
 `build.sh` installs hash-pinned Rust 1.94.1 components in a pinned Debian 12 Python image. It verifies glibc 2.36, GCC 12, GNU ld 2.40 and the checkout's thin-LTO/one-codegen-unit release profile. Both binaries build sequentially with two Cargo jobs and a clean environment. The current hosted guard accepts only the exact combined source above.
 

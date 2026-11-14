@@ -635,16 +635,8 @@ fn bo3_continuation_public_parser_is_bounded_and_preserves_explicit_transition_t
 #[test]
 fn bo3_continuation_progress_orphan_recovery_preserves_debris_and_rejects_corrupt_final() {
     let (mut request, preparation, plan) = accounting_fixture();
-    let directory = std::env::temp_dir().join(format!(
-        "bo3-progress-publication-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos(),
-    ));
-    std::fs::create_dir(&directory).unwrap();
-    request.output_directory = directory.clone();
+    let directory = crate::test_temp_dir_v1::TempTestDir::new_v1("bo3-progress-publication");
+    request.output_directory = directory.to_path_buf();
     let progress = Progress {
         schema: PROGRESS_SCHEMA.into(),
         operation_request: pin_for(

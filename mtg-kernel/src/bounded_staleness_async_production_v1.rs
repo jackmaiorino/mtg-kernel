@@ -555,17 +555,10 @@ mod tests {
 
     // ---- execution-mode sidecar ------------------------------------------
 
-    fn temp_store_root_v1(label: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "mtg-kernel-bounded-staleness-async-production-v1-{label}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&path).unwrap();
-        path
+    fn temp_store_root_v1(label: &str) -> crate::test_temp_dir_v1::TempTestDir {
+        crate::test_temp_dir_v1::TempTestDir::new_v1(&format!(
+            "mtg-kernel-bounded-staleness-async-production-v1-{label}"
+        ))
     }
 
     #[test]
@@ -581,7 +574,6 @@ mod tests {
             None,
             "reading back a synchronous Store root must report no sidecar, not an error"
         );
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -595,7 +587,6 @@ mod tests {
         let decoded = read_execution_mode_sidecar_v1(&root).unwrap().unwrap();
         assert_eq!(decoded, execution_mode_run_metadata_v1(mode));
         assert!(decoded.reproducibility_claim.starts_with("NOT"));
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     // ---- real trainer, small scale ---------------------------------------

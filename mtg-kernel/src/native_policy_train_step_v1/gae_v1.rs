@@ -134,11 +134,41 @@ impl NativePolicyValueTrainStateV1 {
         line_b: &LineBAuxiliaryInputV1,
     ) -> Result<(NativePolicyTrainStepResultV1, LineBAuxiliaryResultV1), NativePolicyTrainErrorV1>
     {
+        self.train_step_gae_line_b_workers_v1(
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_worker_limit,
+            1,
+            input_config,
+            line_b,
+        )
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "keeps the existing explicit input contract"
+    )]
+    pub(crate) fn train_step_gae_line_b_workers_v1(
+        &mut self,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: Option<usize>,
+        forward_workers: usize,
+        input_config: NativePolicyValueModelConfigV1,
+        line_b: &LineBAuxiliaryInputV1,
+    ) -> Result<(NativePolicyTrainStepResultV1, LineBAuxiliaryResultV1), NativePolicyTrainErrorV1>
+    {
         let backward_execution = match backward_worker_limit {
             None => BackwardExecutionV1::Sequential,
             Some(worker_limit) => BackwardExecutionV1::FixedPartitions { worker_limit },
         };
-        let (result, auxiliary, _) = self.train_step_gae_core_v1(
+        let (result, auxiliary, _) = self.train_step_gae_core_profiled_v1(
             groups,
             value_targets,
             advantages,
@@ -149,6 +179,8 @@ impl NativePolicyValueTrainStateV1 {
             false,
             Some(AuxiliaryTermsSourceV1::InBatch(line_b)),
             None,
+            forward_workers.max(1),
+            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
         )?;
         let auxiliary = auxiliary.ok_or(NativePolicyTrainErrorV1::LineBAuxiliary {
             code: "line-b-auxiliary-missing-result",
@@ -178,6 +210,36 @@ impl NativePolicyValueTrainStateV1 {
         external: &archive_distillation_v1::ExternalAuxiliaryInputV1<'_>,
     ) -> Result<(NativePolicyTrainStepResultV1, LineBAuxiliaryResultV1), NativePolicyTrainErrorV1>
     {
+        self.train_step_gae_external_auxiliary_workers_v1(
+            generation,
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_worker_limit,
+            1,
+            external,
+        )
+    }
+
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "keeps the existing explicit input contract"
+    )]
+    pub(crate) fn train_step_gae_external_auxiliary_workers_v1(
+        &mut self,
+        generation: crate::sideboard_play_policy_v1::FreshLineageGenerationV1,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: Option<usize>,
+        forward_workers: usize,
+        external: &archive_distillation_v1::ExternalAuxiliaryInputV1<'_>,
+    ) -> Result<(NativePolicyTrainStepResultV1, LineBAuxiliaryResultV1), NativePolicyTrainErrorV1>
+    {
         let input_config = match generation {
             crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3 => {
                 self.model.feature_transfer_config_v3()
@@ -190,7 +252,7 @@ impl NativePolicyValueTrainStateV1 {
             None => BackwardExecutionV1::Sequential,
             Some(worker_limit) => BackwardExecutionV1::FixedPartitions { worker_limit },
         };
-        let (result, auxiliary, _) = self.train_step_gae_core_v1(
+        let (result, auxiliary, _) = self.train_step_gae_core_profiled_v1(
             groups,
             value_targets,
             advantages,
@@ -201,6 +263,8 @@ impl NativePolicyValueTrainStateV1 {
             false,
             Some(AuxiliaryTermsSourceV1::External(external)),
             None,
+            forward_workers.max(1),
+            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
         )?;
         let auxiliary = auxiliary.ok_or(NativePolicyTrainErrorV1::LineBAuxiliary {
             code: "external-auxiliary-missing-result",
@@ -223,6 +287,33 @@ impl NativePolicyValueTrainStateV1 {
         line_b: &LineBAuxiliaryInputV1,
     ) -> Result<(NativePolicyTrainStepResultV1, LineBAuxiliaryResultV1), NativePolicyTrainErrorV1>
     {
+        self.train_step_gae_feature_transfer_line_b_workers_v1(
+            generation,
+            groups,
+            value_targets,
+            advantages,
+            value_coefficient,
+            learning_rate,
+            backward_worker_limit,
+            1,
+            line_b,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn train_step_gae_feature_transfer_line_b_workers_v1(
+        &mut self,
+        generation: crate::sideboard_play_policy_v1::FreshLineageGenerationV1,
+        groups: &[NativePolicyPhysicalDecisionV1<'_>],
+        value_targets: &[f32],
+        advantages: &[f32],
+        value_coefficient: f32,
+        learning_rate: f32,
+        backward_worker_limit: Option<usize>,
+        forward_workers: usize,
+        line_b: &LineBAuxiliaryInputV1,
+    ) -> Result<(NativePolicyTrainStepResultV1, LineBAuxiliaryResultV1), NativePolicyTrainErrorV1>
+    {
         let input_config = match generation {
             crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3 => {
                 self.model.feature_transfer_config_v3()
@@ -231,13 +322,14 @@ impl NativePolicyValueTrainStateV1 {
                 self.model.feature_transfer_config_v4()
             }
         };
-        self.train_step_gae_line_b_v1(
+        self.train_step_gae_line_b_workers_v1(
             groups,
             value_targets,
             advantages,
             value_coefficient,
             learning_rate,
             backward_worker_limit,
+            forward_workers,
             input_config,
             line_b,
         )
@@ -675,6 +767,10 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         ),
         NativePolicyTrainErrorV1,
     > {
+        let forward_workers = match backward_execution {
+            BackwardExecutionV1::Sequential => 1,
+            BackwardExecutionV1::FixedPartitions { worker_limit } => worker_limit.max(1),
+        };
         self.train_step_gae_core_profiled_dims_v1(
             groups,
             value_targets,
@@ -686,7 +782,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             imitation,
             line_b,
             exploration,
-            1,
+            forward_workers,
             &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
         )
     }

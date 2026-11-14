@@ -90,6 +90,7 @@ fn package() -> CompleteAgentPackageV1 {
                     expected_feature_encoding_digest: digest('6'),
                 },
                 s_learner: None,
+                w_learner: None,
             },
             identity: ExpandedInferenceIdentityV1 {
                 schema: "mtg-kernel-expanded-deck-inference/v1".into(),

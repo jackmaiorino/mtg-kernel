@@ -48,6 +48,23 @@ where
     F: Fn(&mut W, usize) -> Result<T, String> + Sync,
     I: Fn() + Sync,
 {
+    let schedule: Vec<usize> = (0..job_count).collect();
+    ordered_parallel_jobs_scheduled_v1(contexts, &schedule, work, on_idle)
+}
+
+pub(super) fn ordered_parallel_jobs_scheduled_v1<W, T, F, I>(
+    contexts: Vec<W>,
+    schedule: &[usize],
+    work: F,
+    on_idle: I,
+) -> Result<(Vec<T>, Vec<WorkerTimingV1>), String>
+where
+    W: Send,
+    T: Send,
+    F: Fn(&mut W, usize) -> Result<T, String> + Sync,
+    I: Fn() + Sync,
+{
+    let job_count = schedule.len();
     ensure(
         !contexts.is_empty() && contexts.len() <= job_count,
         "invalid parallel job dimensions",
@@ -74,13 +91,14 @@ where
                     let mut busy_seconds = 0.0;
                     let mut episode_seconds = Vec::new();
                     while !cancelled.load(Ordering::Acquire) {
-                        let index = next.fetch_add(1, Ordering::Relaxed);
-                        if index >= job_count || cancelled.load(Ordering::Acquire) {
-                            if index >= job_count {
+                        let slot = next.fetch_add(1, Ordering::Relaxed);
+                        if slot >= job_count || cancelled.load(Ordering::Acquire) {
+                            if slot >= job_count {
                                 on_idle();
                             }
                             break;
                         }
+                        let index = schedule[slot];
                         let started = Instant::now();
                         let result = catch_unwind(AssertUnwindSafe(|| work(&mut context, index)));
                         let seconds = started.elapsed().as_secs_f64();
@@ -173,11 +191,6 @@ pub(super) fn collect_parallel_v1(
     let started = Instant::now();
     validate_collection_workers_v1(workers)?;
     ensure(workers >= 2, "use collect for a single collection worker")?;
-    // EX1's readers take plain trajectory JSON; the envelope is not offered there.
-    ensure(
-        record_envelope.is_none() || ex1.is_none(),
-        "a record envelope is not available with EX1 collection",
-    )?;
     ensure(
         !episodes.is_empty() && episodes.len() <= 1024,
         "invalid collection size",
@@ -194,6 +207,12 @@ pub(super) fn collect_parallel_v1(
     )?;
     let (policy, learner, state_hash) = if source.s_learner.is_some() {
         super::s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
+    } else if source.w_learner.is_some() {
+        ensure(
+            ex1.is_none(),
+            "a wide learner refuses EX1 and W5 search collection",
+        )?;
+        super::w_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
     } else {
         let (mut policy, mut state, transfer) = super::loaded_source_profile_v1::scoped_v1(
             super::loaded_source_profile_v1::LoadRoleV1::CollectLearner,
@@ -244,10 +263,28 @@ pub(super) fn collect_parallel_v1(
     // (a slot exhausting `NON_NATURAL_RETRY_LIMIT`, which
     // `ordered_parallel_jobs_v1` turns into a fatal `Err` that discards
     // every worker's normal `T` return value).
+    let mut schedule: Vec<usize> = (0..episodes.len()).collect();
+    if let Some(options) = ex1.as_ref().filter(|e| e.w5.is_some()) {
+        // W5 placement draws are pure hashes of `(run, update, seed, slot)`:
+        // slots with small placement indices almost always run a heavy MCTS
+        // search, while large indices usually finish before reaching the
+        // placed decision. Starting small placements first avoids tail
+        // stragglers while keeping outputs in exact `0..episodes.len()` order.
+        schedule.sort_by_key(|&index| {
+            let placement =
+                crate::w5_xact_v1::w5_placement_index_v1(crate::w5_xact_v1::w5_placement_hash_v1(
+                    &options.run,
+                    options.update,
+                    episodes[index].seed,
+                    index as u64,
+                ));
+            (placement, index)
+        });
+    }
     let ledger: Mutex<Vec<NonNaturalLedgerEntryV1>> = Mutex::new(Vec::new());
-    let collection_result = ordered_parallel_jobs_v1(
+    let collection_result = ordered_parallel_jobs_scheduled_v1(
         contexts,
-        episodes.len(),
+        &schedule,
         |collector, index| {
             let episode = &episodes[index];
             eprintln!(
@@ -311,7 +348,11 @@ pub(super) fn collect_parallel_v1(
             trajectory_parse_ahead_v1::offer_serialized_v1(&pin.sha256, bytes, trajectory)?;
             let ex1_pin = ex1_record
                 .map(|record| {
-                    publish_json(&output_directory, &format!("ex1-{index:04}.json"), &record)
+                    let ex1_name = format!("ex1-{index:04}.json");
+                    let ex1_bytes = std::sync::Arc::new(
+                        record_envelope.seal_owned_v1(serialize_json_v1(&ex1_name, &record)?)?,
+                    );
+                    publish_json_shared_v1(&output_directory, &ex1_name, &ex1_bytes)
                 })
                 .transpose()?;
             Ok((pin, ex1_pin))
@@ -502,11 +543,12 @@ mod tests {
 
     /// A five-game parallel collection on two workers under a fresh temporary
     /// root, returning the root and the published trajectory pins.
-    fn collect_parallel_for_parse_ahead_test_v1(label: &str) -> (PathBuf, Vec<PinnedFileV1>) {
+    fn collect_parallel_for_parse_ahead_test_v1(
+        label: &str,
+    ) -> (crate::test_temp_dir_v1::TempTestDir, Vec<PinnedFileV1>) {
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3;
-        let root = std::env::temp_dir().join(format!(
-            "expanded-collect-parallel-{label}-{}",
-            std::process::id()
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1(&format!(
+            "expanded-collect-parallel-{label}"
         ));
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
@@ -528,6 +570,7 @@ mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let deck = |id: &str| {
             let registration =
@@ -582,7 +625,7 @@ mod tests {
     /// parse of the file.
     #[test]
     fn parallel_collection_parses_its_trajectories_ahead_for_both_readers() {
-        let (root, pins) = collect_parallel_for_parse_ahead_test_v1("parse-ahead");
+        let (_root, pins) = collect_parallel_for_parse_ahead_test_v1("parse-ahead");
         for pin in &pins {
             trajectory_parse_ahead_v1::wait_until_parsed_for_test_v1(&pin.sha256);
         }
@@ -604,7 +647,6 @@ mod tests {
                 [true, true]
             );
         }
-        fs::remove_dir_all(root).unwrap();
     }
 
     /// Stage 1's failure-order check for parse-ahead (collab actor-learner
@@ -615,7 +657,7 @@ mod tests {
     /// published bytes are back, it is served to them.
     #[test]
     fn a_trajectory_changed_after_its_parse_ahead_fails_its_readers_as_before() {
-        let (root, pins) = collect_parallel_for_parse_ahead_test_v1("parse-ahead-changed");
+        let (_root, pins) = collect_parallel_for_parse_ahead_test_v1("parse-ahead-changed");
         for pin in &pins {
             trajectory_parse_ahead_v1::wait_until_parsed_for_test_v1(&pin.sha256);
         }
@@ -647,7 +689,6 @@ mod tests {
             trajectory_parse_ahead_v1::served_for_test_v1(&pins[1].sha256),
             [false, true]
         );
-        fs::remove_dir_all(root).unwrap();
     }
 
     /// Mirrors `expanded_deck_training_v1::tests::
@@ -659,10 +700,8 @@ mod tests {
     #[test]
     fn phase1_parallel_tolerant_collection_ledgers_and_enforces_the_fraction_cap() {
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3;
-        let root = std::env::temp_dir().join(format!(
-            "expanded-collect-parallel-tolerant-{}",
-            std::process::id()
-        ));
+        let root =
+            crate::test_temp_dir_v1::TempTestDir::new_v1("expanded-collect-parallel-tolerant");
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -683,6 +722,7 @@ mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let deck = |id: &str| {
             let registration =
@@ -791,6 +831,7 @@ mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let mut model =
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
@@ -882,6 +923,7 @@ mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let mut model =
             NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
@@ -993,10 +1035,7 @@ mod tests {
             .parse()
             .unwrap();
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-        let root = std::env::temp_dir().join(format!(
-            "expanded-collect-gpu-serial-{}",
-            std::process::id()
-        ));
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("expanded-collect-gpu-serial");
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -1017,6 +1056,7 @@ mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let registered =
             crate::sideboard::checked_in_pauper_registered_deck_by_id_v1("Burn").unwrap();
@@ -1101,7 +1141,6 @@ mod tests {
             assert_eq!(serial, cpu, "serial Collect on the GPU against the CPU");
         }
         assert_eq!(run("parallel", 2), serial);
-        let _ = fs::remove_dir_all(&root);
     }
 
     /// Line (b) collection sampler end to end through the real commands:
@@ -1114,8 +1153,7 @@ mod tests {
     #[test]
     fn unclamped_learner_collection_is_serial_parallel_identical_and_keeps_opponents_legacy() {
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-        let root =
-            std::env::temp_dir().join(format!("expanded-collect-unclamped-{}", std::process::id()));
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("expanded-collect-unclamped");
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -1136,6 +1174,7 @@ mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let deck = |id: &str| {
             let registration =

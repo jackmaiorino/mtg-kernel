@@ -164,6 +164,43 @@ struct Boundary {
     refs: Vec<FlatActionRefV2>,
     objects: Vec<FlatActionObjectV2>,
 }
+
+/// Reusable scratch buffers for encoding and comparing resampled search
+/// boundaries across many simulations of one search.
+#[derive(Default)]
+pub(crate) struct V4BoundaryScratchV1 {
+    visible: Vec<u8>,
+    semantics: Vec<ActionSemanticV1>,
+    encoder: crate::flat_policy_v4::FlatDecisionEncoderV4,
+    scoring_objects: Vec<crate::flat_policy_v2::FlatObjectCoreV2>,
+    relations: Vec<crate::flat_policy_v2::FlatRelationV2>,
+    subtypes: Vec<crate::flat_policy_v2::FlatObjectSubtypeV2>,
+    uses: Vec<crate::flat_policy_v2::FlatObjectAbilityUseV2>,
+    goads: Vec<crate::flat_policy_v2::FlatObjectGoadV2>,
+    dungeons: Vec<crate::flat_policy_v2::FlatCompletedDungeonV2>,
+    changes: Vec<crate::flat_policy_v2::FlatEffectSubtypeChangeV2>,
+    paths: Vec<crate::flat_policy_v2::FlatContextPathElementV2>,
+    scoring_actions: Vec<crate::flat_policy_v2::FlatScorerActionCoreV2>,
+    action_refs: Vec<crate::flat_policy_v2::FlatScorerActionRefV2>,
+    actions: Vec<FlatActionCoreV1>,
+    refs: Vec<FlatActionRefV2>,
+    objects: Vec<FlatActionObjectV2>,
+}
+
+/// Precomputed root boundary and library-choice plan for an immutable search
+/// root (`FastActorSessionV1`), shared across all simulations at that root.
+pub(crate) struct PreparedV4SearchRootV1 {
+    mode: V4SearchSampleMode,
+    inner: Result<PreparedV4RootOkV1, Error>,
+}
+
+struct PreparedV4RootOkV1 {
+    decision: FastActorDecisionV1,
+    actor: PlayerId,
+    before: Boundary,
+    plan: Option<crate::effect::library_choice_search_v2::Plan>,
+}
+
 #[cfg(test)]
 fn boundary(
     s: &FastActorSessionV1,
@@ -181,8 +218,33 @@ fn encode_boundary(
     mode: V4SearchSampleMode,
     diagnose: bool,
 ) -> Result<Boundary, BoundaryFailure> {
+    let mut scratch = V4BoundaryScratchV1::default();
+    let (scoring, slice) = encode_boundary_scratch(s, d, mode, diagnose, &mut scratch)?;
+    Ok(Boundary {
+        visible: scratch.visible,
+        scoring,
+        slice,
+        actions: scratch.actions,
+        refs: scratch.refs,
+        objects: scratch.objects,
+    })
+}
+
+fn encode_boundary_scratch(
+    s: &FastActorSessionV1,
+    d: FastActorDecisionV1,
+    mode: V4SearchSampleMode,
+    diagnose: bool,
+    scratch: &mut V4BoundaryScratchV1,
+) -> Result<
+    (
+        crate::flat_policy_v4::FlatDecisionV4,
+        FlatActionDecisionSliceV3,
+    ),
+    BoundaryFailure,
+> {
     let invalid = |stage| BoundaryFailure::at(stage, Error::InvalidVisibleBinding);
-    let (observation, semantics) = s.diagnostic_current_decision_input_v4(d).map_err(|e| {
+    let (observation, raw_semantics) = s.diagnostic_current_decision_input_v4(d).map_err(|e| {
         invalid("decision_input")(if diagnose {
             // `<variant>@<check> <detail>`: the kind keeps variant and check.
             let check = s.diagnose_current_decision_input_v4(d);
@@ -201,50 +263,40 @@ fn encode_boundary(
         });
     }
     // Match the scorer's frozen-source semantics, not a relabeled hidden card.
-    let semantics: Vec<_> = semantics
-        .into_iter()
-        .map(|x| frozen_pending_trigger_semantic_v4(&s.state, x))
-        .collect();
-    let visible = serde_json::to_vec(&(observation, semantics))
-        .map_err(|e| invalid("visible_json")(format!("Serialize {e}")))?;
-    let (
-        mut scoring_objects,
-        mut relations,
-        mut subtypes,
-        mut uses,
-        mut goads,
-        mut dungeons,
-        mut changes,
-        mut paths,
-        mut scoring_actions,
-        mut action_refs,
-    ) = (
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
+    scratch.semantics.clear();
+    scratch.semantics.extend(
+        raw_semantics
+            .into_iter()
+            .map(|x| frozen_pending_trigger_semantic_v4(&s.state, x)),
     );
+    scratch.visible.clear();
+    serde_json::to_writer(&mut scratch.visible, &(&observation, &scratch.semantics))
+        .map_err(|e| invalid("visible_json")(format!("Serialize {e}")))?;
+    scratch.scoring_objects.clear();
+    scratch.relations.clear();
+    scratch.subtypes.clear();
+    scratch.uses.clear();
+    scratch.goads.clear();
+    scratch.dungeons.clear();
+    scratch.changes.clear();
+    scratch.paths.clear();
+    scratch.scoring_actions.clear();
+    scratch.action_refs.clear();
     let scoring = s
         .encode_current_flat_scoring_decision_owned_v4(
             d,
-            &mut crate::flat_policy_v4::FlatDecisionEncoderV4::default(),
+            &mut scratch.encoder,
             &mut crate::flat_policy_v2::FlatScoringOwnedBuffersV2 {
-                objects: &mut scoring_objects,
-                relations: &mut relations,
-                object_subtypes: &mut subtypes,
-                ability_uses: &mut uses,
-                goads: &mut goads,
-                completed_dungeons: &mut dungeons,
-                effect_subtype_changes: &mut changes,
-                context_path_elements: &mut paths,
-                actions: &mut scoring_actions,
-                action_refs: &mut action_refs,
+                objects: &mut scratch.scoring_objects,
+                relations: &mut scratch.relations,
+                object_subtypes: &mut scratch.subtypes,
+                ability_uses: &mut scratch.uses,
+                goads: &mut scratch.goads,
+                completed_dungeons: &mut scratch.dungeons,
+                effect_subtype_changes: &mut scratch.changes,
+                context_path_elements: &mut scratch.paths,
+                actions: &mut scratch.scoring_actions,
+                action_refs: &mut scratch.action_refs,
             },
         )
         .map_err(|e| invalid("scoring")(format!("{e:?}")))?;
@@ -253,30 +305,44 @@ fn encode_boundary(
         .checked_mul(FLAT_ACTION_MAX_TRIGGER_ORDER_REFS_V1)
         .ok_or_else(|| invalid("capacity")("CheckedIntegerRange".into()))?
         .max(256);
-    let mut actions = vec![FlatActionCoreV1::default(); count];
-    let mut refs = vec![FlatActionRefV2::default(); capacity];
-    let mut objects = vec![FlatActionObjectV2::default(); capacity];
+    scratch.actions.clear();
+    scratch.actions.resize(count, FlatActionCoreV1::default());
+    scratch.refs.clear();
+    scratch.refs.resize(capacity, FlatActionRefV2::default());
+    scratch.objects.clear();
+    scratch
+        .objects
+        .resize(capacity, FlatActionObjectV2::default());
     let slice = s
         .encode_current_flat_action_slice_v4(
             d,
             &mut FlatActionDecisionSliceBuffersV2 {
-                actions: &mut actions,
-                refs: &mut refs,
-                objects: &mut objects,
+                actions: &mut scratch.actions,
+                refs: &mut scratch.refs,
+                objects: &mut scratch.objects,
             },
         )
         .map_err(|e| invalid("action_slice")(format!("{e:?}")))?;
-    actions.truncate(slice.active_action_count as usize);
-    refs.truncate(slice.active_ref_count as usize);
-    objects.truncate(slice.active_object_count as usize);
-    Ok(Boundary {
-        visible,
-        scoring,
-        slice,
-        actions,
-        refs,
-        objects,
-    })
+    scratch.actions.truncate(slice.active_action_count as usize);
+    scratch.refs.truncate(slice.active_ref_count as usize);
+    scratch.objects.truncate(slice.active_object_count as usize);
+    Ok((scoring, slice))
+}
+
+impl Boundary {
+    fn matches_scratch(
+        &self,
+        scoring: &crate::flat_policy_v4::FlatDecisionV4,
+        slice: &FlatActionDecisionSliceV3,
+        scratch: &V4BoundaryScratchV1,
+    ) -> bool {
+        self.visible == scratch.visible
+            && self.scoring == *scoring
+            && self.slice == *slice
+            && self.actions == scratch.actions
+            && self.refs == scratch.refs
+            && self.objects == scratch.objects
+    }
 }
 
 // Keep the origin-to-live-choice check separate so a stale stored origin can
@@ -403,6 +469,66 @@ impl FastActorSessionV1 {
             None,
         )
     }
+    pub(crate) fn prepare_v4_search_root_v1(
+        &self,
+        mode: V4SearchSampleMode,
+    ) -> PreparedV4SearchRootV1 {
+        let inner = (|| -> Result<PreparedV4RootOkV1, Error> {
+            if self.flat_action_contract_mode != FlatActionContractModeV1::V3 {
+                return Err(Error::UnsupportedActionContract);
+            }
+            let FastActorResponseV1::Decision(decision) = self.current_response() else {
+                return Err(Error::NoLiveDecision);
+            };
+            let before = encode_boundary(self, decision, mode, false).map_err(|f| f.error)?;
+            let actor = self.current.as_ref().ok_or(Error::NoLiveDecision)?.actor;
+            let plan = if mode == V4SearchSampleMode::FutureChanceV3 {
+                crate::effect::library_choice_search_v2::plan_future_v3(&self.state, actor)
+                    .map_err(|_| Error::LibraryChoicePlanFailed)?
+            } else if mode != V4SearchSampleMode::Legacy {
+                crate::effect::library_choice_search_v2::plan(&self.state, actor)
+                    .map_err(|_| Error::LibraryChoicePlanFailed)?
+            } else {
+                None
+            };
+            Ok(PreparedV4RootOkV1 {
+                decision,
+                actor,
+                before,
+                plan,
+            })
+        })();
+        PreparedV4SearchRootV1 { mode, inner }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn kernel_search_redeterminized_clone_prepared_hooked_v4(
+        &self,
+        prepared: &PreparedV4SearchRootV1,
+        scratch: &mut V4BoundaryScratchV1,
+        seed: u64,
+        hook: impl FnOnce(&mut GameState, PlayerId) -> Result<(), Error>,
+        encoding_failure: &mut Option<V4BoundaryEncodingFailureV1>,
+        partial: Option<SlotFilterV1>,
+    ) -> Result<Self, Error> {
+        let root = match &prepared.inner {
+            Ok(ok) => ok,
+            Err(error) => return Err(*error),
+        };
+        self.search_clone_v4_with_root_inner(
+            seed,
+            prepared.mode,
+            root.decision,
+            root.actor,
+            &root.before,
+            root.plan.as_ref(),
+            scratch,
+            hook,
+            Some(encoding_failure),
+            partial,
+        )
+    }
+
     fn search_clone_v4_mode_inner(
         &self,
         seed: u64,
@@ -411,23 +537,40 @@ impl FastActorSessionV1 {
         encoding_failure: Option<&mut Option<V4BoundaryEncodingFailureV1>>,
         partial: Option<SlotFilterV1>,
     ) -> Result<Self, Error> {
-        if self.flat_action_contract_mode != FlatActionContractModeV1::V3 {
-            return Err(Error::UnsupportedActionContract);
-        }
-        let FastActorResponseV1::Decision(d) = self.current_response() else {
-            return Err(Error::NoLiveDecision);
+        let prepared = self.prepare_v4_search_root_v1(mode);
+        let root = match &prepared.inner {
+            Ok(ok) => ok,
+            Err(error) => return Err(*error),
         };
-        let before = encode_boundary(self, d, mode, false).map_err(|f| f.error)?;
-        let actor = self.current.as_ref().ok_or(Error::NoLiveDecision)?.actor;
-        let plan = if mode == V4SearchSampleMode::FutureChanceV3 {
-            crate::effect::library_choice_search_v2::plan_future_v3(&self.state, actor)
-                .map_err(|_| Error::LibraryChoicePlanFailed)?
-        } else if mode != V4SearchSampleMode::Legacy {
-            crate::effect::library_choice_search_v2::plan(&self.state, actor)
-                .map_err(|_| Error::LibraryChoicePlanFailed)?
-        } else {
-            None
-        };
+        let mut scratch = V4BoundaryScratchV1::default();
+        self.search_clone_v4_with_root_inner(
+            seed,
+            mode,
+            root.decision,
+            root.actor,
+            &root.before,
+            root.plan.as_ref(),
+            &mut scratch,
+            after_sample,
+            encoding_failure,
+            partial,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn search_clone_v4_with_root_inner(
+        &self,
+        seed: u64,
+        mode: V4SearchSampleMode,
+        d: FastActorDecisionV1,
+        actor: PlayerId,
+        before: &Boundary,
+        plan: Option<&crate::effect::library_choice_search_v2::Plan>,
+        scratch: &mut V4BoundaryScratchV1,
+        after_sample: impl FnOnce(&mut GameState, PlayerId) -> Result<(), Error>,
+        encoding_failure: Option<&mut Option<V4BoundaryEncodingFailureV1>>,
+        partial: Option<SlotFilterV1>,
+    ) -> Result<Self, Error> {
         let original_candidates = &self
             .current
             .as_ref()
@@ -435,16 +578,11 @@ impl FastActorSessionV1 {
             .candidates;
         let mut copy = self.clone();
         let sample = if let (V4SearchSampleMode::FutureChanceV3, Some(filter)) = (mode, partial) {
-            sampler::redeterminize_partial_v1(&mut copy.state, actor, seed, plan.as_ref(), filter)
+            sampler::redeterminize_partial_v1(&mut copy.state, actor, seed, plan, filter)
         } else if mode == V4SearchSampleMode::FutureChanceV3 {
-            sampler::redeterminize_with_library_plan_classified(
-                &mut copy.state,
-                actor,
-                seed,
-                plan.as_ref(),
-            )
+            sampler::redeterminize_with_library_plan_classified(&mut copy.state, actor, seed, plan)
         } else {
-            sampler::redeterminize_with_library_plan(&mut copy.state, actor, seed, plan.as_ref())
+            sampler::redeterminize_with_library_plan(&mut copy.state, actor, seed, plan)
         };
         if let Err(error) = sample {
             // Opt-in local correctness diagnostics only. Never overwrite a prior
@@ -473,7 +611,7 @@ impl FastActorSessionV1 {
         }
         after_sample(&mut copy.state, actor)?;
         let mut current = copy.current.take().ok_or(Error::NoLiveDecision)?;
-        if let Some(plan) = &plan {
+        if let Some(plan) = plan {
             plan.rebuild(&mut copy.state)
                 .map_err(|_| Error::LibraryChoiceRebuildFailed)?;
             let pending = copy
@@ -507,27 +645,35 @@ impl FastActorSessionV1 {
         copy.flat_action_cache_spare = None;
         copy.flat_action_cache_spare_v2 = None;
         copy.current = Some(current);
-        let after = match encode_boundary(&copy, d, mode, encoding_failure.is_some()) {
-            Ok(after) => after,
-            Err(failure) => {
-                // Recording only (mtg-kernel#380): keep the inner error that
-                // the sampler's rejection kind does not carry.
-                let dump = std::env::var_os("MTG_V4_SEARCH_BOUNDARY_FAILURE_STATE");
-                if encoding_failure.is_some() || dump.is_some() {
-                    let candidates = &copy.current.as_ref().expect("installed above").candidates;
-                    let failure =
-                        boundary_encoding_failure_v1(&failure, d, original_candidates, candidates);
-                    if let Some(path) = dump {
-                        write_boundary_failure_state_v1(path, actor, seed, &failure, self, &copy);
+        let (after_scoring, after_slice) =
+            match encode_boundary_scratch(&copy, d, mode, encoding_failure.is_some(), scratch) {
+                Ok(after) => after,
+                Err(failure) => {
+                    // Recording only (mtg-kernel#380): keep the inner error that
+                    // the sampler's rejection kind does not carry.
+                    let dump = std::env::var_os("MTG_V4_SEARCH_BOUNDARY_FAILURE_STATE");
+                    if encoding_failure.is_some() || dump.is_some() {
+                        let candidates =
+                            &copy.current.as_ref().expect("installed above").candidates;
+                        let failure = boundary_encoding_failure_v1(
+                            &failure,
+                            d,
+                            original_candidates,
+                            candidates,
+                        );
+                        if let Some(path) = dump {
+                            write_boundary_failure_state_v1(
+                                path, actor, seed, &failure, self, &copy,
+                            );
+                        }
+                        if let Some(sink) = encoding_failure {
+                            *sink = Some(failure);
+                        }
                     }
-                    if let Some(sink) = encoding_failure {
-                        *sink = Some(failure);
-                    }
+                    return Err(Error::SampleBoundaryEncodingFailed);
                 }
-                return Err(Error::SampleBoundaryEncodingFailed);
-            }
-        };
-        if before != after {
+            };
+        if !before.matches_scratch(&after_scoring, &after_slice, scratch) {
             return Err(Error::SampleBoundaryChanged);
         }
         Ok(copy)

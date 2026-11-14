@@ -161,9 +161,10 @@ class FakeCloud:
     def create(self, body):
         assert body["env"]["RUNPOD_API_KEY"] == KEY  # injected in memory only
         self.created += 1
-        pod = {"id": f"testpod{self.created}", "name": body["name"], "desiredStatus": "RUNNING", "costPerHr": 0.96,
-               "networkVolumeId": body["networkVolumeId"], "cpuFlavorId": "cpu3c", "vcpuCount": 32,
-               "publicIp": "203.0.113.7", "portMappings": {"22": 40022}}
+        pod = {"id": f"testpod{self.created}", "name": body["name"], "status": "RUNNING", "cost": 0.96,
+               "mounts": body["mounts"], "cpu": {"id": "cpu3c", "vcpuCount": 32, "memory": 64},
+               "ssh": {"proxy": None, "direct": {"host": "203.0.113.7", "port": 40022, "username": "root",
+                                                 "command": "ssh root@203.0.113.7 -p 40022"}}}
         self.pods[pod["id"]] = pod
         return dict(pod)
 

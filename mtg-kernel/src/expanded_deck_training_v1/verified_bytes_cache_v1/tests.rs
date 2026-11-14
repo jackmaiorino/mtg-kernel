@@ -124,33 +124,31 @@ fn digest_matches_compares_held_bytes_and_hashes_otherwise() {
     assert!(cache.held_v1(path, "0").is_none());
 }
 
-fn temp_directory_v1(label: &str) -> PathBuf {
-    let directory = std::env::temp_dir().join(format!(
-        "verified-bytes-cache-{label}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&directory).unwrap();
-    directory
+fn temp_directory_v1(label: &str) -> crate::test_temp_dir_v1::TempTestDir {
+    crate::test_temp_dir_v1::TempTestDir::new_v1(&format!("verified-bytes-cache-{label}"))
 }
 
-fn pinned_file_v1(label: &str, bytes: &[u8]) -> PinnedFileV1 {
-    let path = temp_directory_v1(label).join("input.json");
+fn pinned_file_v1(
+    label: &str,
+    bytes: &[u8],
+) -> (crate::test_temp_dir_v1::TempTestDir, PinnedFileV1) {
+    let directory = temp_directory_v1(label);
+    let path = directory.join("input.json");
     fs::write(&path, bytes).unwrap();
-    PinnedFileV1 {
-        path,
-        sha256: sha(bytes),
-    }
+    (
+        directory,
+        PinnedFileV1 {
+            path,
+            sha256: sha(bytes),
+        },
+    )
 }
 
 #[test]
 fn pinned_reads_compare_held_bytes_and_fail_as_before() {
     let cache = VerifiedBytesCacheV1::new_v1(1 << 20, 16);
     let bytes = br#"{"verified":"original"}"#.to_vec();
-    let pin = pinned_file_v1("reads", &bytes);
+    let (_dir, pin) = pinned_file_v1("reads", &bytes);
     assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap(), bytes);
     assert_eq!(cache.hashed_for_test_v1(), 1);
     // The hashed read recorded the bytes; the next reads compare with them.
@@ -191,7 +189,6 @@ fn pinned_reads_compare_held_bytes_and_fail_as_before() {
         read_pinned_bytes_in_v1(&cache, &pin).unwrap_err(),
         fs::metadata(&pin.path).unwrap_err().to_string()
     );
-    fs::remove_dir_all(pin.path.parent().unwrap()).unwrap();
 }
 
 #[test]
@@ -200,7 +197,7 @@ fn fresh_input_reads_compare_held_bytes_and_fail_as_before() {
     const DIFFERS: &str = "fresh input bytes differ from their size bound or SHA256 pin";
     let cache = VerifiedBytesCacheV1::new_v1(1 << 20, 16);
     let bytes = br#"{"fresh":"original"}"#.to_vec();
-    let pin = pinned_file_v1("fresh", &bytes);
+    let (_dir, pin) = pinned_file_v1("fresh", &bytes);
     for _ in 0..3 {
         assert_eq!(read_actual_in_v1(&cache, &pin, CAP).unwrap(), bytes);
     }
@@ -221,7 +218,6 @@ fn fresh_input_reads_compare_held_bytes_and_fail_as_before() {
         read_actual_in_v1(&cache, &pin, CAP).unwrap_err(),
         fs::File::open(&pin.path).unwrap_err().to_string()
     );
-    fs::remove_dir_all(pin.path.parent().unwrap()).unwrap();
 }
 
 #[test]
@@ -255,7 +251,6 @@ fn publication_records_its_bytes_only_after_success() {
         "input file SHA differs"
     );
     assert_eq!(cache.hashed_for_test_v1(), 1);
-    fs::remove_dir_all(directory).unwrap();
 }
 
 fn resident_cache_v1() -> VerifiedBytesCacheV1 {
@@ -291,7 +286,7 @@ fn resident_bytes_need_the_mode_the_pin_and_the_exact_length() {
 fn resident_pinned_reads_reuse_verified_bytes_and_keep_the_metadata_checks() {
     let cache = resident_cache_v1();
     let bytes = br#"{"verified":"original"}"#.to_vec();
-    let pin = pinned_file_v1("resident-reads", &bytes);
+    let (_dir, pin) = pinned_file_v1("resident-reads", &bytes);
     // The first read verifies in full; later reads and checks reuse its bytes.
     assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap(), bytes);
     assert_eq!(cache.hashed_for_test_v1(), 1);
@@ -342,7 +337,6 @@ fn resident_pinned_reads_reuse_verified_bytes_and_keep_the_metadata_checks() {
         check_pinned_in_v1(&cache, &pin).unwrap_err(),
         "input is not a bounded regular file"
     );
-    fs::remove_dir_all(pin.path.parent().unwrap()).unwrap();
 }
 
 #[test]
@@ -361,13 +355,12 @@ fn resident_publication_holds_its_bytes_and_later_reads_reuse_them() {
     assert!(publish_json_bytes_in_v1(&cache, &directory, "document.json", &other).is_err());
     assert!(cache.held_v1(&pin.path, &sha(&other)).is_none());
     assert_eq!(fs::read(&pin.path).unwrap(), bytes);
-    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
 fn resident_cache_comparisons_check_metadata_without_reading() {
     let bytes = br#"{"cached":"original"}"#.to_vec();
-    let pin = pinned_file_v1("resident-holds", &bytes);
+    let (_dir, pin) = pinned_file_v1("resident-holds", &bytes);
     for resident in [false, true] {
         assert!(holds_bytes_in_v1(&pin.path, &bytes, resident));
     }
@@ -386,7 +379,6 @@ fn resident_cache_comparisons_check_metadata_without_reading() {
     for resident in [false, true] {
         assert!(!holds_bytes_in_v1(&pin.path, &bytes, resident));
     }
-    fs::remove_dir_all(pin.path.parent().unwrap()).unwrap();
 }
 
 #[test]

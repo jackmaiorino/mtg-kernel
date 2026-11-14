@@ -83,6 +83,7 @@ fn fresh_source(root: &Path) -> ExpandedModelSourceV1 {
         },
         checkpoint: None,
         s_learner: None,
+        w_learner: None,
     }
 }
 

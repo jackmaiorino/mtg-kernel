@@ -355,12 +355,31 @@ fn state_digest_features_v1(blocks: &[[u8; 64]], state_digest_off: bool, output:
     }
 }
 
+/// The six SHA-512 digests of the empty state message under
+/// `STATE_HASH_NAMESPACE_V2`, computed once so `state_digest_off` slots never
+/// enter the SHA-512 multi-buffer job batch or the whole-message memo while
+/// keeping `DigestBatchV1::blocks` byte-identical.
+fn empty_state_digest_blocks_v1() -> &'static [[u8; 64]; ACTION_HASH_BLOCK_COUNT_V1] {
+    static BLOCKS: std::sync::OnceLock<[[u8; 64]; ACTION_HASH_BLOCK_COUNT_V1]> =
+        std::sync::OnceLock::new();
+    BLOCKS.get_or_init(|| {
+        std::array::from_fn(|counter| {
+            crate::sha512_multi_v1::sha512_job_scalar_v1(&Sha512JobV1::new(
+                STATE_HASH_NAMESPACE_V2,
+                counter as u32,
+                &[],
+            ))
+        })
+    })
+}
+
 /// SHA-512 blocks and cache checkpoints for every message of the slots
 /// hashed together (one decision in production). All of them go through one
 /// multi-buffer call; the messages and the block-to-feature mapping are
 /// unchanged.
 struct DigestBatchV1 {
     blocks: Vec<[u8; 64]>,
+    scratch_blocks: Vec<[u8; 64]>,
     checkpoints: Sha512CheckpointsV1,
 }
 
@@ -368,6 +387,7 @@ impl Default for DigestBatchV1 {
     fn default() -> Self {
         Self {
             blocks: Vec::new(),
+            scratch_blocks: Vec::new(),
             checkpoints: Sha512CheckpointsV1 {
                 every: STATE_CHECKPOINT_EVERY_V1,
                 states: Vec::new(),
@@ -378,22 +398,24 @@ impl Default for DigestBatchV1 {
 
 // --- State digest prefix cache ------------------------------------------
 //
-// Consecutive decisions often share a long prefix of their state JSON. The
-// six state digests are Merkle-Damgard hashes of `namespace || counter ||
-// json`, so their chaining states after any block depend only on the bytes
-// up to that block. The cache keeps, for recent state JSONs, the six chaining
-// states at every eighth data-only block. A new JSON resumes from the
-// deepest checkpoint inside its byte-for-byte common prefix with a cached
-// JSON (compared in full, never by hash) and inside its own data-only
-// blocks, so its digests are exactly those of hashing from scratch. The cache
-// is shared by all tensorizers in the process; it changes cost, never output.
+// Consecutive decisions on a thread share a long prefix of their state JSON.
+// The six state digests are Merkle-Damgard hashes of `namespace || counter ||
+// json`, so their chaining states after any block depend only on the bytes up
+// to that block. Each thread keeps, for recent state JSONs, the six chaining
+// states at every eighth data-only block. A new JSON resumes from the deepest
+// checkpoint inside its byte-for-byte common prefix with a cached JSON
+// (compared in full, never by hash) and inside its own data-only blocks, so
+// its digests are exactly those of hashing from scratch. Keeping the ring
+// thread-local eliminates cross-thread lock contention and preserves episode
+// prefix locality; it changes cost, never output.
 
 const STATE_CHECKPOINT_EVERY_V1: usize = 8;
-const STATE_CACHE_ENTRIES_V1: usize = 64;
+const STATE_CACHE_ENTRIES_V1: usize = 16;
 const STATE_CACHE_MAX_ENTRIES_V1: usize = 4096;
 
-/// Prefix cache capacity: 64 unless `MTG_KERNEL_TENSORIZE_STATE_CACHE_ENTRIES`
-/// names another count (1 to 4096). Capacity changes cost, never output.
+/// Per-thread prefix cache capacity: 16 unless
+/// `MTG_KERNEL_TENSORIZE_STATE_CACHE_ENTRIES` names another count (1 to 4096).
+/// Capacity changes cost, never output.
 fn state_prefix_cache_entries_v1() -> usize {
     static ENTRIES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *ENTRIES.get_or_init(|| {
@@ -419,21 +441,26 @@ struct StatePrefixEntryV1 {
 struct StatePrefixResumeV1 {
     blocks: usize,
     states: [[u64; 8]; ACTION_HASH_BLOCK_COUNT_V1],
-    /// The matched entry's checkpoints up to `blocks`, reused for the new
-    /// entry (identical prefix, identical states).
-    prefix_checkpoints: Vec<(usize, [[u64; 8]; ACTION_HASH_BLOCK_COUNT_V1])>,
+    /// Matched entry slot and checkpoint index in this thread's cache, reused
+    /// in place on single-slot batches without heap allocation. Multi-slot
+    /// batches snapshot `copied_prefix` at lookup time so an earlier slot's
+    /// insert cannot overwrite a cache entry referenced by a later slot in the
+    /// same batch.
+    slot_index: usize,
+    position: usize,
+    copied_prefix: Option<Vec<(usize, [[u64; 8]; ACTION_HASH_BLOCK_COUNT_V1])>>,
 }
 
+#[derive(Default)]
 struct StatePrefixCacheV1 {
     entries: Vec<StatePrefixEntryV1>,
     next: usize,
 }
 
-static STATE_PREFIX_CACHE_V1: std::sync::Mutex<StatePrefixCacheV1> =
-    std::sync::Mutex::new(StatePrefixCacheV1 {
-        entries: Vec::new(),
-        next: 0,
-    });
+thread_local! {
+    static STATE_PREFIX_CACHE_V1: std::cell::RefCell<StatePrefixCacheV1> =
+        std::cell::RefCell::new(StatePrefixCacheV1::default());
+}
 
 fn state_prefix_cache_enabled_v1() -> bool {
     static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -470,33 +497,41 @@ fn common_prefix_len_v1(left: &[u8], right: &[u8]) -> usize {
     index
 }
 
-fn state_prefix_cache_lookup_v1(json: &[u8]) -> Option<StatePrefixResumeV1> {
+fn state_prefix_cache_lookup_v1(json: &[u8], snapshot_prefix: bool) -> Option<StatePrefixResumeV1> {
     let key = state_prefix_cache_key_v1(json)?;
     let data_blocks = (STATE_HEADER_BYTES_V1 + json.len()) / 128;
-    let cache = STATE_PREFIX_CACHE_V1
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut best: Option<(usize, &StatePrefixEntryV1, usize)> = None;
-    for entry in cache.entries.iter().filter(|entry| entry.key == key) {
-        let shared = common_prefix_len_v1(json, &entry.json);
-        // Blocks whose bytes are identical in both messages and hold no
-        // padding in the new one (the entry only records data-only blocks).
-        let usable = ((STATE_HEADER_BYTES_V1 + shared) / 128).min(data_blocks);
-        let deepest = entry
-            .checkpoints
-            .iter()
-            .rposition(|(blocks, _)| *blocks <= usable);
-        if let Some(position) = deepest {
-            let blocks = entry.checkpoints[position].0;
-            if best.is_none_or(|(best_blocks, _, _)| blocks > best_blocks) {
-                best = Some((blocks, entry, position));
+    STATE_PREFIX_CACHE_V1.with(|cell| {
+        let cache = cell.borrow();
+        let mut best: Option<(usize, usize, usize, [[u64; 8]; ACTION_HASH_BLOCK_COUNT_V1])> = None;
+        for (slot_index, entry) in cache.entries.iter().enumerate() {
+            if entry.key != key {
+                continue;
+            }
+            let shared = common_prefix_len_v1(json, &entry.json);
+            // Blocks whose bytes are identical in both messages and hold no
+            // padding in the new one (the entry only records data-only blocks).
+            let usable = ((STATE_HEADER_BYTES_V1 + shared) / 128).min(data_blocks);
+            let deepest = entry
+                .checkpoints
+                .iter()
+                .rposition(|(blocks, _)| *blocks <= usable);
+            if let Some(position) = deepest {
+                let (blocks, states) = entry.checkpoints[position];
+                if best.is_none_or(|(best_blocks, _, _, _)| blocks > best_blocks) {
+                    best = Some((blocks, slot_index, position, states));
+                }
             }
         }
-    }
-    best.map(|(blocks, entry, position)| StatePrefixResumeV1 {
-        blocks,
-        states: entry.checkpoints[position].1,
-        prefix_checkpoints: entry.checkpoints[..=position].to_vec(),
+        best.map(
+            |(blocks, slot_index, position, states)| StatePrefixResumeV1 {
+                blocks,
+                states,
+                slot_index,
+                position,
+                copied_prefix: snapshot_prefix
+                    .then(|| cache.entries[slot_index].checkpoints[..=position].to_vec()),
+            },
+        )
     })
 }
 
@@ -509,33 +544,62 @@ fn state_prefix_cache_insert_v1(
     let Some(key) = state_prefix_cache_key_v1(json) else {
         return;
     };
-    let mut checkpoints = resume.map_or_else(Vec::new, |hit| hit.prefix_checkpoints);
-    let first = &produced[0];
-    for (index, (blocks, _)) in first.iter().enumerate() {
-        let mut states = [[0u64; 8]; ACTION_HASH_BLOCK_COUNT_V1];
-        for (counter, slot) in states.iter_mut().enumerate() {
-            let (counter_blocks, state) = produced[counter][index];
-            debug_assert_eq!(counter_blocks, *blocks);
-            *slot = state;
-        }
-        checkpoints.push((*blocks, states));
-    }
-    let entry = StatePrefixEntryV1 {
-        key,
-        json: json.to_vec(),
-        checkpoints,
-    };
-    let mut cache = STATE_PREFIX_CACHE_V1
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let capacity = state_prefix_cache_entries_v1();
-    if cache.entries.len() < capacity {
-        cache.entries.push(entry);
-    } else {
-        let slot = cache.next;
-        cache.entries[slot] = entry;
-        cache.next = (slot + 1) % capacity;
-    }
+    STATE_PREFIX_CACHE_V1.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        let target_slot = if cache.entries.len() < capacity {
+            let slot = cache.entries.len();
+            cache.entries.push(StatePrefixEntryV1 {
+                key: 0,
+                json: Vec::new(),
+                checkpoints: Vec::new(),
+            });
+            slot
+        } else {
+            let slot = cache.next;
+            cache.next = (slot + 1) % capacity;
+            slot
+        };
+        if let Some(hit) = resume {
+            if let Some(prefix) = hit.copied_prefix {
+                cache.entries[target_slot].checkpoints = prefix;
+            } else if hit.slot_index == target_slot {
+                cache.entries[target_slot]
+                    .checkpoints
+                    .truncate(hit.position + 1);
+            } else {
+                let prefix_len = hit.position + 1;
+                let (left, right) = if hit.slot_index < target_slot {
+                    let (head, tail) = cache.entries.split_at_mut(target_slot);
+                    (&head[hit.slot_index], &mut tail[0])
+                } else {
+                    let (head, tail) = cache.entries.split_at_mut(hit.slot_index);
+                    (&tail[0], &mut head[target_slot])
+                };
+                right.checkpoints.clear();
+                right
+                    .checkpoints
+                    .extend_from_slice(&left.checkpoints[..prefix_len]);
+            }
+        } else {
+            cache.entries[target_slot].checkpoints.clear();
+        }
+        let entry = &mut cache.entries[target_slot];
+        entry.key = key;
+        entry.json.clear();
+        entry.json.extend_from_slice(json);
+        let first = &produced[0];
+        entry.checkpoints.reserve(first.len());
+        for (index, (blocks, _)) in first.iter().enumerate() {
+            let mut states = [[0u64; 8]; ACTION_HASH_BLOCK_COUNT_V1];
+            for (counter, slot) in states.iter_mut().enumerate() {
+                let (counter_blocks, state) = produced[counter][index];
+                debug_assert_eq!(counter_blocks, *blocks);
+                *slot = state;
+            }
+            entry.checkpoints.push((*blocks, states));
+        }
+    });
 }
 
 // --- Whole-message digest memo -------------------------------------------
@@ -1050,16 +1114,83 @@ fn hash_prepared_slots_unmemoized_v2(
     slots: &[DigestSlotV1],
     batch: &mut DigestBatchV1,
 ) -> Vec<usize> {
-    let mut offsets = Vec::with_capacity(slots.len() + 1);
-    let mut resumes = Vec::with_capacity(slots.len());
-    let mut groups = Vec::with_capacity(slots.len());
-    let mut jobs = Vec::new();
-    for slot in slots {
+    const N: usize = ACTION_HASH_BLOCK_COUNT_V1;
+    if !slots.iter().any(|slot| slot.state_digest_off) {
+        let mut offsets = Vec::with_capacity(slots.len() + 1);
+        let mut resumes = Vec::with_capacity(slots.len());
+        let mut groups = Vec::with_capacity(slots.len());
+        let mut jobs = Vec::new();
+        let snapshot_prefix = slots.len() > 1;
+        for slot in slots {
+            offsets.push(jobs.len());
+            groups.push(jobs.len()..jobs.len() + N);
+            let state = slot.state_message();
+            let resume = state_prefix_cache_lookup_v1(state, snapshot_prefix);
+            #[cfg(feature = "s4a-profile-v1")]
+            crate::search_profile_v1::digest::observe(
+                state,
+                &slot
+                    .action_ranges
+                    .iter()
+                    .map(|&(start, end)| &slot.action_json[start..end])
+                    .collect::<Vec<_>>(),
+                resume.as_ref().map_or(0, |hit| hit.blocks),
+                STATE_HEADER_BYTES_V1,
+                ACTION_HASH_NAMESPACE_V1.len() + 4,
+                STATE_CHECKPOINT_EVERY_V1,
+                STATE_CACHE_KEY_BYTES_V1,
+            );
+            for counter in 0..N as u32 {
+                let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter, state);
+                jobs.push(match &resume {
+                    Some(hit) => job.resumed(hit.blocks, hit.states[counter as usize]),
+                    None => job,
+                });
+            }
+            resumes.push(resume);
+            for &(start, end) in slot.action_ranges.iter() {
+                for counter in 0..N as u32 {
+                    jobs.push(Sha512JobV1::new(
+                        ACTION_HASH_NAMESPACE_V1,
+                        counter,
+                        &slot.action_json[start..end],
+                    ));
+                }
+            }
+        }
         offsets.push(jobs.len());
-        groups.push(jobs.len()..jobs.len() + ACTION_HASH_BLOCK_COUNT_V1);
+        batch.blocks.clear();
+        batch.blocks.resize(jobs.len(), [0; 64]);
+        let caching = state_prefix_cache_enabled_v1();
+        sha512_jobs_grouped_v1(
+            &jobs,
+            &groups,
+            &mut batch.blocks,
+            caching.then_some(&mut batch.checkpoints),
+        );
+        if caching {
+            for ((slot, resume), &offset) in slots.iter().zip(resumes).zip(&offsets) {
+                state_prefix_cache_insert_v1(
+                    &slot.state_json,
+                    resume,
+                    &batch.checkpoints.states[offset..offset + N],
+                );
+            }
+        }
+        return offsets;
+    }
+
+    let mut offsets = Vec::with_capacity(slots.len() + 1);
+    let mut state_resumes = Vec::new();
+    let mut groups = Vec::new();
+    let mut jobs = Vec::new();
+    let mut total_blocks = 0usize;
+    let snapshot_prefix = slots.len() > 1;
+    for slot in slots {
+        offsets.push(total_blocks);
         let state = slot.state_message();
         let resume = (!slot.state_digest_off)
-            .then(|| state_prefix_cache_lookup_v1(state))
+            .then(|| state_prefix_cache_lookup_v1(state, snapshot_prefix))
             .flatten();
         #[cfg(feature = "s4a-profile-v1")]
         crate::search_profile_v1::digest::observe(
@@ -1075,45 +1206,69 @@ fn hash_prepared_slots_unmemoized_v2(
             STATE_CHECKPOINT_EVERY_V1,
             STATE_CACHE_KEY_BYTES_V1,
         );
-        for counter in 0..ACTION_HASH_BLOCK_COUNT_V1 as u32 {
-            let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter, state);
-            jobs.push(match &resume {
-                Some(hit) => job.resumed(hit.blocks, hit.states[counter as usize]),
-                None => job,
-            });
+        if !slot.state_digest_off {
+            let first = jobs.len();
+            groups.push(first..first + N);
+            for counter in 0..N as u32 {
+                let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter, state);
+                jobs.push(match &resume {
+                    Some(hit) => job.resumed(hit.blocks, hit.states[counter as usize]),
+                    None => job,
+                });
+            }
+            state_resumes.push((&slot.state_json, resume, first));
         }
-        resumes.push(resume);
+        total_blocks += N;
         for &(start, end) in slot.action_ranges.iter() {
-            for counter in 0..ACTION_HASH_BLOCK_COUNT_V1 as u32 {
+            for counter in 0..N as u32 {
                 jobs.push(Sha512JobV1::new(
                     ACTION_HASH_NAMESPACE_V1,
                     counter,
                     &slot.action_json[start..end],
                 ));
             }
+            total_blocks += N;
         }
     }
-    offsets.push(jobs.len());
-    batch.blocks.clear();
-    batch.blocks.resize(jobs.len(), [0; 64]);
+    offsets.push(total_blocks);
+    batch.scratch_blocks.clear();
+    batch.scratch_blocks.resize(jobs.len(), [0; 64]);
     let caching = state_prefix_cache_enabled_v1();
-    sha512_jobs_grouped_v1(
-        &jobs,
-        &groups,
-        &mut batch.blocks,
-        caching.then_some(&mut batch.checkpoints),
-    );
-    if caching {
-        for ((slot, resume), &offset) in slots.iter().zip(resumes).zip(&offsets) {
-            if slot.state_digest_off {
-                continue;
+    if !jobs.is_empty() {
+        sha512_jobs_grouped_v1(
+            &jobs,
+            &groups,
+            &mut batch.scratch_blocks,
+            caching.then_some(&mut batch.checkpoints),
+        );
+        if caching {
+            for (state_json, resume, first) in state_resumes {
+                state_prefix_cache_insert_v1(
+                    state_json,
+                    resume,
+                    &batch.checkpoints.states[first..first + N],
+                );
             }
-            state_prefix_cache_insert_v1(
-                &slot.state_json,
-                resume,
-                &batch.checkpoints.states[offset..offset + ACTION_HASH_BLOCK_COUNT_V1],
-            );
         }
+    }
+    batch.blocks.clear();
+    batch.blocks.reserve(total_blocks);
+    let empty_blocks = empty_state_digest_blocks_v1();
+    let mut job_cursor = 0usize;
+    for slot in slots {
+        if slot.state_digest_off {
+            batch.blocks.extend_from_slice(empty_blocks);
+        } else {
+            batch
+                .blocks
+                .extend_from_slice(&batch.scratch_blocks[job_cursor..job_cursor + N]);
+            job_cursor += N;
+        }
+        let action_blocks = slot.action_ranges.len() * N;
+        batch
+            .blocks
+            .extend_from_slice(&batch.scratch_blocks[job_cursor..job_cursor + action_blocks]);
+        job_cursor += action_blocks;
     }
     offsets
 }
@@ -1130,8 +1285,10 @@ fn hash_prepared_slots_memoized_v2(
 ) -> Vec<usize> {
     const N: usize = ACTION_HASH_BLOCK_COUNT_V1;
     // Per message (in output order): its memo hash and either the index of
-    // its copied stored digests or the index of its first job.
+    // its copied stored digests, its precomputed empty-state blocks, or the
+    // index of its first job.
     enum Source {
+        EmptyState,
         Stored(usize),
         Jobs(usize),
     }
@@ -1142,37 +1299,38 @@ fn hash_prepared_slots_memoized_v2(
     let mut jobs = Vec::new();
     let mut stored: Vec<[[u8; 64]; N]> = Vec::new();
     let (mut hits, mut misses) = (0u64, 0u64);
+    let snapshot_prefix = slots.len() > 1;
     for slot in slots {
         offsets.push(messages.len() * N);
-        let state = slot.state_message();
-        let hash = digest_memo_hash_v1(STATE_HASH_NAMESPACE_V2, state);
-        if let Some(blocks) = memo.get(hash, STATE_HASH_NAMESPACE_V2, state) {
-            hits += 1;
-            stored.push(*blocks);
-            messages.push((
-                STATE_HASH_NAMESPACE_V2,
-                state,
-                hash,
-                Source::Stored(stored.len() - 1),
-            ));
+        if slot.state_digest_off {
+            messages.push((STATE_HASH_NAMESPACE_V2, &[], 0, Source::EmptyState));
         } else {
-            misses += 1;
-            let resume = (!slot.state_digest_off)
-                .then(|| state_prefix_cache_lookup_v1(state))
-                .flatten();
-            let first = jobs.len();
-            groups.push(first..first + N);
-            for counter in 0..N as u32 {
-                let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter, state);
-                jobs.push(match &resume {
-                    Some(hit) => job.resumed(hit.blocks, hit.states[counter as usize]),
-                    None => job,
-                });
-            }
-            if !slot.state_digest_off {
+            let state = slot.state_message();
+            let hash = digest_memo_hash_v1(STATE_HASH_NAMESPACE_V2, state);
+            if let Some(blocks) = memo.get(hash, STATE_HASH_NAMESPACE_V2, state) {
+                hits += 1;
+                stored.push(*blocks);
+                messages.push((
+                    STATE_HASH_NAMESPACE_V2,
+                    state,
+                    hash,
+                    Source::Stored(stored.len() - 1),
+                ));
+            } else {
+                misses += 1;
+                let resume = state_prefix_cache_lookup_v1(state, snapshot_prefix);
+                let first = jobs.len();
+                groups.push(first..first + N);
+                for counter in 0..N as u32 {
+                    let job = Sha512JobV1::new(STATE_HASH_NAMESPACE_V2, counter, state);
+                    jobs.push(match &resume {
+                        Some(hit) => job.resumed(hit.blocks, hit.states[counter as usize]),
+                        None => job,
+                    });
+                }
                 state_resumes.push((state, resume, first));
+                messages.push((STATE_HASH_NAMESPACE_V2, state, hash, Source::Jobs(first)));
             }
-            messages.push((STATE_HASH_NAMESPACE_V2, state, hash, Source::Jobs(first)));
         }
         for &(start, end) in slot.action_ranges.iter() {
             let action = &slot.action_json[start..end];
@@ -1201,13 +1359,14 @@ fn hash_prepared_slots_memoized_v2(
         let (h, m) = counts.get();
         counts.set((h + hits, m + misses));
     });
-    let mut hashed = vec![[0u8; 64]; jobs.len()];
+    batch.scratch_blocks.clear();
+    batch.scratch_blocks.resize(jobs.len(), [0u8; 64]);
     let caching = state_prefix_cache_enabled_v1();
     if !jobs.is_empty() {
         sha512_jobs_grouped_v1(
             &jobs,
             &groups,
-            &mut hashed,
+            &mut batch.scratch_blocks,
             caching.then_some(&mut batch.checkpoints),
         );
         if caching {
@@ -1222,11 +1381,13 @@ fn hash_prepared_slots_memoized_v2(
     }
     batch.blocks.clear();
     batch.blocks.reserve(messages.len() * N);
+    let empty_blocks = empty_state_digest_blocks_v1();
     for (namespace, message, hash, source) in messages {
         match source {
+            Source::EmptyState => batch.blocks.extend_from_slice(empty_blocks),
             Source::Stored(index) => batch.blocks.extend_from_slice(&stored[index]),
             Source::Jobs(first) => {
-                let blocks: [[u8; 64]; N] = hashed[first..first + N]
+                let blocks: [[u8; 64]; N] = batch.scratch_blocks[first..first + N]
                     .try_into()
                     .expect("six digests per message");
                 batch.blocks.extend_from_slice(&blocks);

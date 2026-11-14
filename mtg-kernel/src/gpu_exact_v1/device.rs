@@ -10,11 +10,13 @@ use std::sync::Arc;
 /// Version of the kernel source and its compile options; part of every
 /// cache and proof key.
 const PROGRAM_V1: &str = "mtg-kernel-gpu-exact-v1";
+const S_PROGRAM_V1: &str = "mtg-kernel-gpu-exact-s-v1";
 
 const TANH_SOURCE: &str = include_str!("tanh.cuh");
 const NET8_SOURCE: &str = include_str!("net8_forward.cu");
 const NET8_BACKWARD_SOURCE: &str = include_str!("net8_backward.cu");
 const NET8_V2_SOURCE: &str = include_str!("net8_forward_v2.cu");
+const S_SOURCE: &str = include_str!("s_transformer.cu");
 
 /// What a result depends on beyond its inputs: the program and options, the
 /// NVRTC that compiled it and the device that runs it.
@@ -55,7 +57,7 @@ impl Default for ExactOptionsV1 {
     fn default() -> Self {
         Self {
             kernels: KernelsV1::V2,
-            blocking_wait: false,
+            blocking_wait: true,
         }
     }
 }
@@ -94,6 +96,18 @@ impl TileShapeV1 {
     }
 }
 
+/// Loaded CUDA functions for S (`s_transformer.cu`), compiled lazily on first
+/// S forward or learner update so Net-8-only callers keep the original program
+/// hash and startup path.
+pub(crate) struct SExactKernelsV1 {
+    pub(crate) forward: CudaFunction,
+    pub(crate) reverse: CudaFunction,
+    pub(crate) linear_grad: CudaFunction,
+    pub(crate) ln_grad: CudaFunction,
+    pub(crate) group_refbias_grad: CudaFunction,
+    pub(crate) card_grad: CudaFunction,
+}
+
 pub(crate) struct ExactDeviceV1 {
     pub(crate) identity: DeviceIdentityV1,
     pub(crate) stream: Arc<CudaStream>,
@@ -112,6 +126,7 @@ pub(crate) struct ExactDeviceV1 {
         allow(dead_code)
     )]
     fault_trap: CudaFunction,
+    s_kernels: std::sync::OnceLock<Result<SExactKernelsV1, String>>,
     /// Kept alive for the functions above; also allocates pinned host memory.
     pub(crate) ctx: Arc<CudaContext>,
 }
@@ -122,6 +137,17 @@ fn hex(bytes: &[u8]) -> String {
 
 /// The fault-injection kernel, which the v2 source also defines.
 const FAULT_TRAP_SOURCE: &str = "extern \"C\" __global__ void mtg_fault_trap() { __trap(); }\n";
+
+/// The S kernel source and NVRTC options (no `cp.async`, compiles from sm_75+).
+pub(super) fn s_source_and_options() -> (&'static str, Vec<String>) {
+    let options = vec![
+        "--fmad=false".to_owned(),
+        "--ftz=false".to_owned(),
+        "--prec-div=true".to_owned(),
+        "--prec-sqrt=true".to_owned(),
+    ];
+    (S_SOURCE, options)
+}
 
 /// The program for `tile`. The v2 source uses `cp.async` (sm_80 and newer),
 /// so without `with_v2` it is left out (keeping its fault-trap kernel) and
@@ -267,6 +293,7 @@ impl ExactDeviceV1 {
             net8_embedding_grad: load("mtg_net8_embedding_grad")?,
             tanh_proof: load("mtg_tanh_proof")?,
             fault_trap: load("mtg_fault_trap")?,
+            s_kernels: std::sync::OnceLock::new(),
             identity,
             stream,
             ctx,
@@ -406,6 +433,68 @@ impl ExactDeviceV1 {
             }
         }
     }
+
+    /// Loads or NVRTC-compiles the S exact kernels (`s_transformer.cu`) once
+    /// per device handle, caching PTX on disk under `record_dir()/ptx/`.
+    pub(crate) fn s_kernels_v1(&self) -> Result<&SExactKernelsV1, String> {
+        self.s_kernels
+            .get_or_init(|| compile_and_load_s_v1(&self.ctx, &self.identity))
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+}
+
+fn compile_and_load_s_v1(
+    ctx: &Arc<CudaContext>,
+    identity: &DeviceIdentityV1,
+) -> Result<SExactKernelsV1, String> {
+    let (source, options) = s_source_and_options();
+    let (major, minor) = identity.compute_capability;
+    let arch: &'static str = Box::leak(format!("compute_{major}{minor}").into_boxed_str());
+    let mut h = Sha256::new();
+    h.update(S_PROGRAM_V1.as_bytes());
+    h.update(source.as_bytes());
+    for option in &options {
+        h.update(option.as_bytes());
+    }
+    h.update(format!("{:?}{arch}", identity.nvrtc_version));
+    let key = hex(&h.finalize());
+    let path = record_dir().map(|dir| dir.join("ptx").join(format!("s-{key}.ptx")));
+    let ptx = match path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()) {
+        Some(text) => Ptx::from_src(text),
+        None => {
+            let compiled = compile_ptx_with_opts(
+                source,
+                CompileOptions {
+                    arch: Some(arch),
+                    options,
+                    name: Some("mtg_gpu_exact_s_v1.cu".into()),
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| format!("S NVRTC: {e:?}"))?;
+            if let Some(path) = &path {
+                write_atomically(path, compiled.to_src().as_bytes());
+            }
+            compiled
+        }
+    };
+    let module = ctx
+        .load_module(ptx)
+        .map_err(|e| format!("load S module: {e:?}"))?;
+    let load = |name: &str| {
+        module
+            .load_function(name)
+            .map_err(|e| format!("{name}: {e:?}"))
+    };
+    Ok(SExactKernelsV1 {
+        forward: load("mtg_s_forward")?,
+        reverse: load("mtg_s_reverse")?,
+        linear_grad: load("mtg_s_linear_grad")?,
+        ln_grad: load("mtg_s_ln_grad")?,
+        group_refbias_grad: load("mtg_s_group_refbias_grad")?,
+        card_grad: load("mtg_s_card_grad")?,
+    })
 }
 
 fn load_or_compile_v1(

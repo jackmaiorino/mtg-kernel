@@ -351,6 +351,7 @@ mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         // This is deliverable 1's own confirmation: the transfer source this
         // CLI just wrote loads for evaluation through the exact function

@@ -84,7 +84,8 @@ pub(crate) struct PolicyObservationExtensionsV7 {
 /// its live source is unrevealed in the owner's library (the exact
 /// predicate of `trigger::pending_trigger_choose_targets_gate_v1`'s
 /// hiddenness check, factored into
-/// [`crate::trigger::pending_trigger_hidden_source_v1`]). This is
+/// [`crate::trigger::pending_trigger_hidden_source_v1`]) or has ceased to
+/// exist ([`crate::trigger::pending_trigger_ceased_source_v1`]). This is
 /// decision-agnostic: it does not consult the current `Decision` at all, so
 /// it produces the identical set of rows whether the active decision is
 /// `ChooseTargets` (position 0 only, since only `pending_triggers[0]` can
@@ -118,7 +119,9 @@ pub(crate) fn policy_observation_extensions_v7_from_v6(
         let Some(contract) = pending.source_contract else {
             continue;
         };
-        if !crate::trigger::pending_trigger_hidden_source_v1(state, pending) {
+        // Hidden, or ceased to exist: either way the observation projects
+        // the source as unknown and only the frozen contract can name it.
+        if !crate::trigger::pending_trigger_frozen_source_v4(state, pending) {
             continue;
         }
         let position = u32::try_from(position)

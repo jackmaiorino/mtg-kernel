@@ -1,11 +1,16 @@
 use super::super::{
-    authenticate_serial_replay_row_v1, visit_serial_replay_rows_v1, ExpandedTrajectoryV1,
-    GaeTargetsV1, S_UPDATE_REPLAY_LEARNER_ROW_V1, S_UPDATE_REPLAY_OTHER_ROW_V1,
+    authenticate_serial_replay_row_v1, trajectory_contract_v1, visit_serial_replay_rows_v1,
+    ExpandedTrajectoryV1, GaeTargetsV1, S_UPDATE_REPLAY_LEARNER_ROW_V1,
+    S_UPDATE_REPLAY_OTHER_ROW_V1,
 };
 use super::*;
-use crate::s_transformer_v1::verified_row_v1::{ReplayErrorV1, SerialVerifiedGaeV1};
+use crate::s_transformer_v1::verified_row_v1::{
+    check_parallel_tape_cap_v1, parallel_gradient_v1, ParallelVerifiedUseV1, ReplayErrorV1,
+    SerialVerifiedGaeV1, StoredRowV1,
+};
 use crate::s_transformer_v1::SLossV1;
 use crate::sideboard_play_policy_v1::FreshLineageGenerationV1;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(super) struct OptionsV1 {
     pub(super) gamma: f32,
@@ -164,5 +169,135 @@ pub(super) fn gradient_v1(
         gradient,
         gae,
         policy_substeps,
+    })
+}
+
+pub(super) struct PreparedGradientV1 {
+    pub(super) loss: SLossV1,
+    pub(super) gradient: Vec<f32>,
+    pub(super) gae: GaeTargetsV1,
+    pub(super) policy_substeps: usize,
+    pub(super) telemetry: ordered_update_preparation::PreparationTelemetryV1,
+}
+
+/// The bounded candidate of a prepared update on `workers` workers: the
+/// other rows replay as in `ordered_update_preparation::prepare_v1`, and
+/// each learner row only in the parallel learner, whose forward of it is
+/// checked against the stored row before its backward. The caller has
+/// validated the stored trajectories and their sampler draws. The
+/// preparation's errors and their precedence are not the reference's, so
+/// every failure is for the caller to fall back to the reference.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prepared_gradient_v1(
+    episodes: &[ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    model: &SModelV1,
+    workers: usize,
+    max_prepared_tensor_mebibytes: usize,
+    options: OptionsV1,
+    attempt: &mut VerifiedReplayAttemptV1,
+) -> Result<PreparedGradientV1, ReplayErrorV1> {
+    // One tape per learner worker, made only if the learner runs.
+    attempt.tape_slots = Some(workers);
+    // Workers start in the caller's state. The reference pins a worker's
+    // MXCSR at its first learner forward, before that worker's later other
+    // rows; this candidate leaves the preparation workers' learner rows to
+    // the learner, which is the same only from the pinned state.
+    if crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1().is_err() {
+        return Err(ReplayErrorV1::CallerMathState);
+    }
+    // Only a plain V4 replay of a learner row is S's forward of the stored
+    // tensor, which the learner's forward then repeats.
+    let expected = policy
+        .s_plain_v4_replay_v1()
+        .ok_or(ReplayErrorV1::UnsupportedGeneration)?;
+    // An empty slot over the cap refuses before any replay.
+    check_parallel_tape_cap_v1(options.tape_cap)?;
+    for episode in episodes {
+        let seat = episode.episode.learner_seat;
+        let generation = trajectory_contract_v1(episode)?.generation;
+        if episode.decisions.iter().any(|row| {
+            row.actor == seat
+                && (generation != FreshLineageGenerationV1::V4
+                    || !row.tensor.pairing_node_indices.is_empty())
+        }) {
+            return Err(ReplayErrorV1::UnsupportedGeneration);
+        }
+    }
+    let other_forwards = AtomicU64::new(0);
+    let prepared = ordered_update_preparation::prepare_deferring_learner_rows_v1(
+        episodes,
+        policy,
+        learner,
+        workers,
+        max_prepared_tensor_mebibytes,
+        options.training_math,
+        &other_forwards,
+    );
+    attempt.other_replay_forwards = other_forwards.load(Ordering::Relaxed);
+    let ordered_update_preparation::PreparedGroupsV1 { groups, telemetry } = prepared?;
+    // The reference's targets, from the recorded first values.
+    ensure(!groups.is_empty(), "no learner decisions")?;
+    let mut values = Vec::with_capacity(groups.len());
+    for (index, (_, _, rows)) in groups.iter().enumerate() {
+        let (first, _) = rows
+            .first()
+            .ok_or_else(|| format!("gae group {index} has no substeps"))?;
+        values.push(f32::from_bits(first.value));
+    }
+    let returns: Vec<i8> = groups.iter().map(|group| group.0).collect();
+    let ordinals: Vec<usize> = groups.iter().map(|group| group.1).collect();
+    let gae = compute_gae_targets_of_values_v1(
+        &values,
+        &returns,
+        &ordinals,
+        options.gamma,
+        options.lambda,
+    )?;
+    let s_groups: Vec<SGroupV1<'_>> = groups
+        .iter()
+        .zip(gae.advantages.iter().zip(&gae.value_targets))
+        .map(|((_, _, rows), (advantage, value_target))| SGroupV1 {
+            substeps: rows
+                .iter()
+                .map(|(row, tensor)| SSubstepV1 {
+                    input: SInputV1::of_tensor_v1(tensor),
+                    selected: row.selected as usize,
+                })
+                .collect(),
+            advantage: *advantage,
+            value_target: *value_target,
+        })
+        .collect();
+    let stored: Vec<StoredRowV1<'_>> = groups
+        .iter()
+        .flat_map(|(_, _, rows)| rows)
+        .map(|(row, _)| StoredRowV1 {
+            logits: &row.logits,
+            value: row.value,
+        })
+        .collect();
+    let mut usage = ParallelVerifiedUseV1::default();
+    let result = parallel_gradient_v1(
+        model,
+        expected.cache_namespace_v1(),
+        &s_groups,
+        &stored,
+        options.coefficient,
+        workers,
+        options.tape_cap,
+        &mut usage,
+    );
+    attempt.peak_retained_tape_bytes = usage.peak_retained_tape_bytes;
+    attempt.learner_replay_forwards = usage.learner_forwards;
+    attempt.learner_backwards = usage.learner_backwards;
+    let (loss, gradient) = result?;
+    Ok(PreparedGradientV1 {
+        loss,
+        gradient,
+        gae,
+        policy_substeps: stored.len(),
+        telemetry,
     })
 }

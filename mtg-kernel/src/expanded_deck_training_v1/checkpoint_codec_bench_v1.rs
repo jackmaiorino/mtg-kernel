@@ -916,6 +916,7 @@ pub fn generate_fixture_v1(config: &GenerateConfigV1) -> Result<Value, String> {
         },
         checkpoint: None,
         s_learner: None,
+        w_learner: None,
     };
     let decks = [deck_list_v1("Affinity")?, deck_list_v1("Terror")?];
     let mut sources = vec![initial_source.clone()];
@@ -1377,6 +1378,10 @@ fn load_ordinary_state_v1(
     ensure_v1(
         source.s_learner.is_none(),
         format!("state {label} is an S learner source; the s section measures S"),
+    )?;
+    ensure_v1(
+        source.w_learner.is_none(),
+        format!("state {label} is a wide learner source; the bench measures net-8"),
     )?;
     let (_, state) = initialize_any_math_v1(source)?;
     let saved = read_checkpoint_v1(pin)?;
@@ -2180,6 +2185,7 @@ mod fixture_tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let chain: Vec<_> = (0..2)
             .map(|update| FixtureUpdateV1 {

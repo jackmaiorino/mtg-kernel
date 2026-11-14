@@ -32,7 +32,7 @@ class DiagnosedProvider(cloud_lease.prepare_lease.Provider):
                     value = raw.get(field)
                     if isinstance(value, (str, int)):
                         text = str(value).replace(self.key, "[redacted]")[:1024]
-                        if re.search(r"RUNPOD_API_KEY|SSH_PUBLIC_KEY|dockerEntrypoint|Bearer", text, re.I):
+                        if re.search(r"RUNPOD_API_KEY|SSH_PUBLIC_KEY|entrypoint|Bearer", text, re.I):
                             text = "[request details omitted]"
                         safe[field] = text
             cloud_lease.write(self.control / ("create-http-error-" + str(time.time_ns()) + ".json"),

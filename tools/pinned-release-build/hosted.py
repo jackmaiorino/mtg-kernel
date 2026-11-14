@@ -15,7 +15,7 @@ import sys
 import time
 
 
-SOURCE = "c5719e1cf81769f4f30f9e91ae1079d4ee3cbfcf"
+SOURCE = "84460551a3fe40d5bd1804c1dbf394896c08b1a9"
 IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
 GIB = 2**30
 FREE_FLOOR = 60 * GIB + GIB // 2

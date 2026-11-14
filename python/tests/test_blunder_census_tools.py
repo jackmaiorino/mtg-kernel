@@ -46,6 +46,19 @@ class FreshInitNamespace(unittest.TestCase):
     def test_admitted_and_fresh(self):
         ns = pilot.FRESHINIT_PANEL_NS
         self.assertEqual(ns, "freshinit-20261111/a")
+        self.assertEqual(pilot.PANEL_NAMESPACES[21], ns)
+        fresh = {pilot.panel_seed(*key, ns) for key in KEYS}
+        self.assertEqual(len(fresh), len(KEYS))
+        self.assertFalse(fresh & {row["seed"] for row in pilot.all_seeds()["train"]})
+        for other in pilot.PANEL_NAMESPACES:
+            if other != ns:
+                self.assertFalse(fresh & {pilot.panel_seed(*key, other) for key in KEYS}, other)
+
+
+class AnchorNamespace(unittest.TestCase):
+    def test_admitted_and_fresh(self):
+        ns = pilot.ANCHOR_PANEL_NS
+        self.assertEqual(ns, "anchor-20261113/a")
         self.assertEqual(pilot.PANEL_NAMESPACES[-1], ns)
         fresh = {pilot.panel_seed(*key, ns) for key in KEYS}
         self.assertEqual(len(fresh), len(KEYS))

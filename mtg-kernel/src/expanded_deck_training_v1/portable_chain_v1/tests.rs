@@ -20,6 +20,7 @@ fn fixture(root: &Path, attempt: &str, changed_action: bool, changed_moment: boo
         },
         checkpoint: None,
         s_learner: None,
+        w_learner: None,
     };
     let policy =
         fresh_initialization_source::load_policy_v1(&descriptor, &source.feature_transfer).unwrap();

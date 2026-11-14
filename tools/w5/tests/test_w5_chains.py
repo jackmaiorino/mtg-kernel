@@ -127,6 +127,23 @@ class Node:
                             '--seed-root', c['seed_root'], '--state', str(self.root / 'state' / name),
                             '--ledger-source', str(source)])
 
+    def drive_c_segments(self, plan, name, step_seconds=1.0):
+        """Drive a C chain while advancing `chains.time` only between real stand-in segments so host startup and
+        filesystem latency never decide how many segments fit before `c_wall`."""
+        wall = [time.time()]
+        run_trainer = chains.run_trainer
+
+        def run_segment(*args, **kwargs):
+            result = run_trainer(*args, **kwargs)
+            wall[0] += step_seconds
+            return result
+
+        with mock.patch.object(chains, 'time', wraps=time) as clock, \
+                mock.patch.object(chains, 'run_trainer', side_effect=run_segment) as trainer:
+            clock.time.side_effect = lambda: wall[0]
+            code = self.drive(plan, name)
+        return code, trainer.call_count
+
 
 class ChainTests(unittest.TestCase):
     def setUp(self):
@@ -287,14 +304,43 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(chains.recipe_identity(arm)['record_envelope'], 'zstd1')
         self.assertEqual(chains.arm_config(arm, 'w5/q1', 0, 4, self.node.t / 'e')['record_envelope'], 'zstd1')
         self.assertIn('record_envelope', chains.PAIR_ONLY_KEYS)  # it changes bytes on disk, never a game
-        for arm_name, value in (('C', 'zstd'), ('X8', 'zstd1')):
+        for arm_name, value in (('C', 'zstd'), ('X8', 'zstd'), ('XS', 'none')):
             bad = json.loads(json.dumps(inputs))
             bad['label'] = 'bad'
             bad['arms'][arm_name]['record_envelope'] = value
             bad['chains'] = {'cb1': {'arm': 'C', 'slot': 0, 'seed_root': 'w5/q1'},
-                             'xb1': {'arm': 'X8', 'slot': 1, 'seed_root': 'w5/q1'}}
+                             'xb1': {'arm': 'X8', 'slot': 1, 'seed_root': 'w5/q1'},
+                             'xs1': {'arm': 'XS', 'slot': 2, 'seed_root': 'w5/q1'}}
             with self.assertRaisesRegex(chains.Stop, 'record_envelope'):
                 chains.make_plan(jwrite(self.node.t / f'bad-{arm_name}.json', bad))
+        both = json.loads(json.dumps(inputs))
+        both['label'] = 'env-x'
+        both['arms']['X8']['record_envelope'] = 'zstd1'
+        both['arms']['X8']['preparation_workers'] = 4
+        both['arms']['XS']['record_envelope'] = 'zstd1'
+        both['arms']['XS']['preparation_workers'] = 4
+        both['chains'] = {'cx1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/q1'},
+                          'xx1': {'arm': 'X8', 'slot': 1, 'pair': 1, 'seed_root': 'w5/q1'},
+                          'cx2': {'arm': 'C', 'slot': 2, 'pair': 2, 'seed_root': 'w5/q2'},
+                          'xs2': {'arm': 'XS', 'slot': 3, 'pair': 2, 'seed_root': 'w5/q2'}}
+        _, x_plan = chains.make_plan(jwrite(self.node.t / 'env-x.json', both))
+        x8_arm = json.loads(Path(x_plan['arms']['X8']['file']['path']).read_text())
+        xs_arm = json.loads(Path(x_plan['arms']['XS']['file']['path']).read_text())
+        self.assertEqual(x8_arm['record_envelope'], 'zstd1')
+        self.assertEqual(x8_arm['preparation_workers'], 4)
+        self.assertEqual(chains.recipe_identity(x8_arm)['preparation_workers'], 4)
+        x8_cfg = chains.arm_config(x8_arm, 'w5/q1', 0, 4, self.node.t / 'ex8')
+        xs_cfg = chains.arm_config(xs_arm, 'w5/q1', 0, 4, self.node.t / 'exs')
+        self.assertEqual(x8_cfg['record_envelope'], 'zstd1')
+        self.assertEqual(x8_cfg['preparation_workers'], 4)
+        self.assertEqual(xs_cfg['record_envelope'], 'zstd1')
+        self.assertEqual(xs_cfg['preparation_workers'], 4)
+        for bad_arm, bad_prep in (('C', 2), ('X8', 0), ('X8', 33), ('XS', True)):
+            bad = json.loads(json.dumps(both))
+            bad['label'] = 'bad-prep'
+            bad['arms'][bad_arm]['preparation_workers'] = bad_prep
+            with self.assertRaisesRegex(chains.Stop, 'preparation_workers'):
+                chains.make_plan(jwrite(self.node.t / f'bad-prep-{bad_arm}-{bad_prep}.json', bad))
 
     def test_verified_reads_is_an_optional_c_recipe_arm_key(self):
         _, plain = self.node.stage0()
@@ -312,14 +358,27 @@ class ChainTests(unittest.TestCase):
         self.assertEqual(chains.recipe_identity(arm)['verified_reads'], 'resident')
         self.assertEqual(chains.arm_config(arm, 'w5/q1', 0, 4, self.node.t / 'r')['verified_reads'], 'resident')
         self.assertIn('verified_reads', chains.PAIR_ONLY_KEYS)  # it changes memory traffic, never a game
-        for arm_name, value in (('C', 'reread'), ('C', 'Resident'), ('X8', 'resident')):
+        for arm_name, value in (('C', 'reread'), ('C', 'Resident'), ('X8', 'reread'), ('XS', 'Resident')):
             bad = json.loads(json.dumps(inputs))
             bad['label'] = 'bad'
             bad['arms'][arm_name]['verified_reads'] = value
             bad['chains'] = {'cb1': {'arm': 'C', 'slot': 0, 'seed_root': 'w5/q1'},
-                             'xb1': {'arm': 'X8', 'slot': 1, 'seed_root': 'w5/q1'}}
+                             'xb1': {'arm': 'X8', 'slot': 1, 'seed_root': 'w5/q1'},
+                             'xs1': {'arm': 'XS', 'slot': 2, 'seed_root': 'w5/q1'}}
             with self.assertRaisesRegex(chains.Stop, 'verified_reads'):
                 chains.make_plan(jwrite(self.node.t / f'bad-{arm_name}-{value}.json', bad))
+        ok = json.loads(json.dumps(inputs))
+        ok['label'] = 'res-x'
+        ok['arms']['X8']['verified_reads'] = 'resident'
+        ok['arms']['XS']['verified_reads'] = 'resident'
+        ok['chains'] = {'cx1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/q1'},
+                        'xx1': {'arm': 'X8', 'slot': 1, 'pair': 1, 'seed_root': 'w5/q1'},
+                        'cx2': {'arm': 'C', 'slot': 2, 'pair': 2, 'seed_root': 'w5/q2'},
+                        'xs2': {'arm': 'XS', 'slot': 3, 'pair': 2, 'seed_root': 'w5/q2'}}
+        _, x_plan = chains.make_plan(jwrite(self.node.t / 'res-x.json', ok))
+        x8_arm = json.loads(Path(x_plan['arms']['X8']['file']['path']).read_text())
+        self.assertEqual(x8_arm['verified_reads'], 'resident')
+        self.assertEqual(chains.arm_config(x8_arm, 'w5/q1', 0, 4, self.node.t / 'rx8')['verified_reads'], 'resident')
 
     def test_r_nom_is_frozen_in_the_manifests(self):
         self.node.stage0(r_nom_usec=100)
@@ -405,22 +464,7 @@ class ChainTests(unittest.TestCase):
     def test_c_chain_runs_segments_to_its_wall_and_matches_one_run(self):
         _, plan = self.node.stage0(c_wall=1.5)
         self.node.guard()
-        # Advance the driver's wall after each real stand-in segment. Host
-        # startup and filesystem latency must not decide whether two segments
-        # fit, while publication and state continuation still run in children.
-        wall = [time.time()]
-        run_trainer = chains.run_trainer
-
-        def run_segment(*args, **kwargs):
-            result = run_trainer(*args, **kwargs)
-            wall[0] += 1.0
-            return result
-
-        with mock.patch.object(chains, 'time', wraps=time) as clock, \
-                mock.patch.object(chains, 'run_trainer', side_effect=run_segment) as trainer:
-            clock.time.side_effect = lambda: wall[0]
-            self.assertEqual(self.node.drive(plan, 'c1'), 0)
-        self.assertEqual(trainer.call_count, 2)
+        self.assertEqual(self.node.drive_c_segments(plan, 'c1'), (0, 2))
         root = self.node.root
         end = json.loads((root / 'chains' / 'c1' / 'END.json').read_text())
         chain, records = retention.index(plan['chains']['c1']['manifest'])
@@ -521,7 +565,7 @@ class ChainTests(unittest.TestCase):
     # ------------------------------------------------------------ run and end
 
     def test_run_records_an_oom_kill_and_end_is_once(self):
-        path, plan = self.node.stage0()
+        path, plan = self.node.stage0(c_wall=600.0)
         self.node.guard()
         with mock.patch.dict(os.environ, {'FAKE_FAIL_AT': '3'}):
             self.node.drive(plan, 'c1')
@@ -839,7 +883,7 @@ class ChainTests(unittest.TestCase):
     def test_supervise_selects_replays_and_prunes_a_pair(self):
         path, plan = self.node.stage0(c_wall=1.5, r_nom_usec=10_000_000)
         self.node.guard()
-        self.assertEqual(self.node.drive(plan, 'c1'), 0)
+        self.assertEqual(self.node.drive_c_segments(plan, 'c1'), (0, 2))
         _, c_records = retention.index(plan['chains']['c1']['manifest'])
         r = c_records[-1]['ledger_usec']
         stop = (r // STEP_X + 3) * STEP_X
@@ -910,6 +954,34 @@ class ChainTests(unittest.TestCase):
             Path(seg['config']).unlink()
         chain = retention.load_chain(plan['chains']['x1']['manifest'])
         self.assertEqual([s['updates'] for s in chain['segments']], [3, 3])
+
+    def test_run_trainer_provides_vector_tanh_dir_under_clean_env(self):
+        _, plan = self.node.stage0()
+        arm = chains.load_arm(plan['arms']['C']['file']['path'])
+        cfg = self.node.t / 'noop-seg.json'
+        jwrite(cfg, {'output_directory': (self.node.t / 'noop-out').as_posix(),
+                     'initial_source': {'checkpoint': None, 'play_import': {'path': str(self.node.b512),
+                                                                            'sha256': chains.sha(self.node.b512)}},
+                     'iterations': []})
+        captured = {}
+
+        class DummyProc:
+            pid = 12345
+
+            def wait(self, timeout=None):
+                return 0
+
+        def fake_popen(cmd, **kwargs):
+            captured['env'] = kwargs.get('env')
+            return DummyProc()
+
+        with mock.patch.dict(os.environ, {'PATH': os.environ.get('PATH', ''), 'LANG': 'C.UTF-8'}, clear=True), \
+                mock.patch.object(chains.subprocess, 'Popen', side_effect=fake_popen):
+            code, killed = chains.run_trainer(arm, cfg)
+        self.assertEqual((code, killed), (0, False))
+        expected = chains.vector_tanh_dir(arm['root'])
+        self.assertEqual(captured['env']['MTG_KERNEL_VECTOR_TANH_DIR'], str(expected))
+        self.assertTrue(expected.is_dir())
 
 
 if __name__ == '__main__':

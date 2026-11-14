@@ -87,10 +87,16 @@ class GuardTests(unittest.TestCase):
             {'finished': True, 'last_productive_epoch': 1100})['reason'], 'worker_finished')
 
     def test_provider_identity_and_no_gpu_route(self):
-        pod = {'id': 'pod123', 'name': lease()['name'], 'cpuFlavorId': 'cpu3c',
-               'vcpuCount': 32, 'networkVolumeId': 'testvolume', 'costPerHr': '.96'}
+        pod = {'id': 'pod123', 'name': lease()['name'], 'status': 'RUNNING',
+               'cpu': {'id': 'cpu3c', 'vcpuCount': 32, 'memory': 64},
+               'mounts': {'network': [{'volumeId': 'testvolume', 'path': '/workspace'}]}, 'cost': '.96'}
         self.assertEqual(verify_pod(pod, lease(), 'pod123'), .96)
-        for changes in ({'id': 'other'}, {'vcpuCount': 64}, {'networkVolumeId': 'other'}):
+        for changes in ({'id': 'other'}, {'cpu': {'id': 'cpu3c', 'vcpuCount': 64, 'memory': 64}},
+                        {'cpu': None}, {'gpu': {'id': 'x', 'count': 1}, 'cpu': None},
+                        {'mounts': {'network': [{'volumeId': 'other', 'path': '/workspace'}]}},
+                        {'mounts': {'network': [{'volumeId': 'testvolume', 'path': '/workspace'},
+                                                {'volumeId': 'second', 'path': '/second'}]}},
+                        {'mounts': {}}, {'mounts': 'testvolume'}):
             with self.assertRaises(ValueError):
                 verify_pod(pod | changes, lease(), 'pod123')
 
@@ -101,7 +107,7 @@ class GuardTests(unittest.TestCase):
         with patch('urllib.request.urlopen', return_value=response) as call:
             provider.call('DELETE')
             request = call.call_args.args[0]
-            self.assertEqual(request.full_url, 'https://rest.runpod.io/v1/pods/pod123')
+            self.assertEqual(request.full_url, 'https://api.runpod.io/v2/pods/pod123')
             self.assertEqual(request.method, 'DELETE')
         with self.assertRaises(ValueError):
             provider.call('POST')
@@ -115,7 +121,7 @@ class GuardTests(unittest.TestCase):
             result = prepare_lease(spec, Path(temporary) / 'prepared', now=1001)
             body = read(result['create_request_template']['path'])
             self.assertEqual(body['env']['RUNPOD_API_KEY'], KEY_PLACEHOLDER)
-            boot = base64.b64decode(body['dockerEntrypoint'][2].split("'")[1]).decode()
+            boot = base64.b64decode(body['entrypoint'][2].split("'")[1]).decode()
             compile(boot, '<bootstrap>', 'exec')
             self.assertLess(boot.index('guard=subprocess.Popen'), boot.index("['apt-get','update']"))
             self.assertIn('resident guard remains active', boot)
@@ -128,9 +134,9 @@ class GuardTests(unittest.TestCase):
                 'quoted_cpu_usd_hour': .96, 'observed_pods': 0,
                 'autopay_enabled': False, 'public_ssh_key': 'ssh-ed25519 AAAATEST public'}
             result = prepare_lease(spec, Path(temporary) / 'default', now=1001)
-            self.assertEqual(read(result['create_request_template']['path'])['containerDiskInGb'], 40)
+            self.assertEqual(read(result['create_request_template']['path'])['disk'], 40)
             result = prepare_lease(spec | {'container_disk_gb': 200}, Path(temporary) / 'sized', now=1001)
-            self.assertEqual(read(result['create_request_template']['path'])['containerDiskInGb'], 200)
+            self.assertEqual(read(result['create_request_template']['path'])['disk'], 200)
             for bad in (10, 401, 100.5):
                 with self.assertRaises(ValueError):
                     prepare_lease(spec | {'container_disk_gb': bad}, Path(temporary) / f'bad-{bad}', now=1001)
@@ -139,8 +145,8 @@ class GuardTests(unittest.TestCase):
         import lease_guard
         from lease_test_support import FakeClock, World, guard_time, no_network
         with tempfile.TemporaryDirectory() as temporary:
-            pod = {'id':'pod123', 'name':lease()['name'], 'cpuFlavorId':'cpu3c',
-                   'vcpuCount':32, 'networkVolumeId':'testvolume', 'costPerHr':'.96'}
+            pod = {'id':'pod123', 'name':lease()['name'], 'cpu':{'id':'cpu3c','vcpuCount':32},
+                   'mounts':{'network':[{'volumeId':'testvolume','path':'/workspace'}]}, 'cost':'.96'}
             world = World([pod]); clock = FakeClock(15400)
             with no_network(), guard_time(lease_guard, clock):
                 run_guard(lease(), temporary, 'pod123', world.provider('k', 'pod123'))
@@ -176,8 +182,8 @@ class GuardTests(unittest.TestCase):
         import lease_guard
         from lease_test_support import FakeClock, World, guard_time, no_network
         with tempfile.TemporaryDirectory() as temporary:
-            pod={'id':'pod123','name':lease()['name'],'cpuFlavorId':'cpu3c',
-                 'vcpuCount':32,'networkVolumeId':'testvolume','costPerHr':'.96'}
+            pod={'id':'pod123','name':lease()['name'],'cpu':{'id':'cpu3c','vcpuCount':32},
+                 'mounts':{'network':[{'volumeId':'testvolume','path':'/workspace'}]},'cost':'.96'}
             world=World([pod]);clock=FakeClock(1000)
             world.funds_script=iter([{'balance_usd':31.,'account_spend_usd_hour':1.15,'under_balance':False}])
             world.funds_value=RuntimeError('unavailable')

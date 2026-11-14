@@ -84,6 +84,31 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(w5box.host_class("model name : AMD EPYC 7763 64-Core Processor\n", [0, 1, 2, 3]),
                          "linux-amd-epyc-7763-64-core-processor")
 
+    def test_hybrid_topology_threads_per_core_filter(self):
+        hybrid = {
+            "online": list(range(24)),
+            "domains": [
+                [[2 * k, 2 * k + 1] for k in range(8)] + [[16 + e] for e in range(8)]
+            ],
+        }
+        with self.assertRaisesRegex(w5box.Refusal, "mix SMT and non-SMT"):
+            w5box.compute_layout(hybrid, 2, 2)
+        p_layout = w5box.compute_layout(hybrid, 2, 2, threads_per_core=2)
+        self.assertEqual(p_layout["threads_per_core"], 2)
+        self.assertEqual([b["cpus"] for b in p_layout["boxes"]],
+                         [[4, 5, 6, 7], [8, 9, 10, 11], [12, 13, 14, 15]])
+        self.assertEqual(p_layout["offbox_cpus"], [0, 1, 2, 3] + list(range(16, 24)))
+        self.assertEqual(w5box.detect_plan_layout(p_layout, hybrid), p_layout)
+        e_layout = w5box.compute_layout(hybrid, 4, 0, threads_per_core=1)
+        self.assertEqual(e_layout["threads_per_core"], 1)
+        self.assertEqual([b["cpus"] for b in e_layout["boxes"]],
+                         [[16, 17, 18, 19], [20, 21, 22, 23]])
+        self.assertEqual(e_layout["offbox_cpus"], list(range(16)))
+        self.assertEqual(w5box.detect_plan_layout(e_layout, hybrid), e_layout)
+        # Homogeneous hosts keep detecting tampered threads_per_core.
+        tampered = dict(w5box.compute_layout(self.topology, 2, 2), threads_per_core=1)
+        self.assertNotEqual(w5box.detect_plan_layout(tampered, self.topology)["threads_per_core"], 1)
+
 
 class LedgerTests(unittest.TestCase):
     def test_closed_total_and_hash_chain(self):

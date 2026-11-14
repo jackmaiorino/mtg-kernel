@@ -44,6 +44,7 @@ fn episode(learner_seat: u8, kind: Option<ExpandedOpponentKindV1>) -> ExpandedEp
         },
         checkpoint: None,
         s_learner: None,
+        w_learner: None,
     };
     ExpandedEpisodeV1 {
         id: format!("opponent-kind-fixture-{learner_seat}"),

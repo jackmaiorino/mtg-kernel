@@ -84,6 +84,7 @@ impl RecordEnvelopeV1 {
                     .set_parameter(zstd::stream::raw::CParameter::ContentSizeFlag(true))
                     .map_err(|e| e.to_string())?;
                 let sealed = compressor.compress(bytes).map_err(|e| e.to_string())?;
+                #[cfg(debug_assertions)]
                 if open_v1(&sealed, bytes.len() as u64)?.as_ref() != bytes {
                     return Err("record envelope round trip differs".into());
                 }

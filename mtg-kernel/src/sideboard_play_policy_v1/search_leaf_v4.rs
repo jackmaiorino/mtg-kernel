@@ -18,6 +18,10 @@ impl<'a> V4SearchLeafEvaluatorV1<'a> {
             policy.s_model.is_none(),
             "the model-guided search leaf is net-8's; native S searches through s4a",
         )?;
+        require(
+            policy.w_model.is_none(),
+            "the model-guided search leaf is net-8's; the wide net has no search forward",
+        )?;
         crate::deterministic_math_v1::ensure_thread_mxcsr_normalized_v1()
             .map_err(|e| format!("V4 search leaf floating-point state: {e:?}"))?;
         crate::deterministic_math_v1::verify_pinned_mxcsr_state_v1()

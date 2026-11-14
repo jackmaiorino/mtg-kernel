@@ -259,8 +259,8 @@ EXIT_STOP, EXIT_ROOM, EXIT_FAILED = 5, 7, 8
 FAILED_ENDS = ('chain-failure', 'operator')  # END reasons whose recorded last valid boundary is the endpoint
 PAIR_ONLY_KEYS = {'ex1', 'preparation_workers', 'output_directory', 'chain_ledger', 'collection_workers',
                   'record_envelope', 'verified_reads'}
-RECORD_ENVELOPES = ('zstd1',)  # mtg-kernel record_envelope_v1; C-recipe arms only (the trainer refuses EX1)
-VERIFIED_READS = ('resident',)  # mtg-kernel verified_bytes_cache_v1 resident reads; C-recipe arms only
+RECORD_ENVELOPES = ('zstd1',)  # mtg-kernel record_envelope_v1
+VERIFIED_READS = ('resident',)  # mtg-kernel verified_bytes_cache_v1 resident reads
 INITIAL_SEGMENT_START = 'segment-start'  # arm key initial_opponent: the base's `initial` kind is the segment start
 TOOL_FILES = {'chains.py': HERE / 'chains.py', 'retention.py': HERE / 'retention.py', 'xact.py': HERE / 'xact.py',
               'replay_sample.py': HERE / 'replay_sample.py', 'pgrow.py': HERE / 'pgrow.py',
@@ -433,7 +433,7 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
     parent = read(arm['parent']['path'])
     cfg = xact.build_config(read(arm['base']['path']), parent, native, seed_root, offset,
                             updates, arm['workers'], x.get('budget'), x.get('coefficient'), x.get('dose', 'primary'),
-                            ledger_source)
+                            ledger_source, prep_workers=arm.get('preparation_workers'))
     if source is not None:
         cfg['initial_source'] = source
     if arm.get('record_envelope'):
@@ -464,19 +464,49 @@ def chain_ladder(arm, man, cdir, offset):
         raise Stop(str(exc)) from exc
 
 
+def vector_tanh_dir(root):
+    """Persistent host witness folder for `vector_tanh_v1`, shared across segments outside the box environment."""
+    return Path(root) / 'state' / 'vector-tanh'
+
+
+def settle_vector_tanh(trainer, root):
+    """Settles the trainer's vector-tanh witness on the host before a stage enters w5box's metered cgroups."""
+    if not sys.platform.startswith('linux'):
+        return
+    path = Path(trainer['path'])
+    if not path.is_file() or path.suffix.lower() in ('.py', '.sh', '.ps1'):
+        return
+    try:
+        with open(path, 'rb') as f:
+            if f.read(4) != b'\x7fELF':
+                return
+    except OSError:
+        return
+    target = vector_tanh_dir(root)
+    target.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ, MTG_KERNEL_VECTOR_TANH_DIR=str(target))
+    subprocess.run([str(path), '--settle-vector-tanh'], env=env, stdin=subprocess.DEVNULL,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
 def run_trainer(arm, config_path, deadline=None, logs=None):
     """Runs one native segment in its own process group; at `deadline` (C's wall) the group is killed. With
     `logs` (a directory) the segment's stdout replaces `trainer.out` and stderr is appended to `trainer.err`."""
     check_pin(arm['trainer'], 'the trainer')
     kwargs = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else \
         {'start_new_session': True}
+    env = dict(os.environ)
+    if arm.get('root') and not env.get('MTG_KERNEL_VECTOR_TANH_DIR'):
+        target = vector_tanh_dir(arm['root'])
+        target.mkdir(parents=True, exist_ok=True)
+        env['MTG_KERNEL_VECTOR_TANH_DIR'] = str(target)
     if logs:
         Path(logs).mkdir(parents=True, exist_ok=True)
     out = open(Path(logs) / 'trainer.out', 'wb') if logs else None
     err = open(Path(logs) / 'trainer.err', 'ab') if logs else None
     try:
         proc = subprocess.Popen(exe(arm['trainer']['path']) + [str(config_path)], stdout=out, stderr=err,
-                                stdin=subprocess.DEVNULL, **kwargs)
+                                stdin=subprocess.DEVNULL, env=env, **kwargs)
         if deadline is None:
             return proc.wait(), False
         while True:
@@ -513,6 +543,8 @@ def recipe_identity(arm):
         identity['record_envelope'] = arm['record_envelope']
     if arm.get('verified_reads'):
         identity['verified_reads'] = arm['verified_reads']
+    if arm.get('preparation_workers') is not None:
+        identity['preparation_workers'] = arm['preparation_workers']
     if arm.get('ladder'):
         identity['ladder'] = arm['ladder']  # absent otherwise: existing manifests unchanged
     if arm.get('initial_opponent'):
@@ -648,12 +680,15 @@ def make_plan(inputs_path):
             x = {'budget': spec['budget'], 'coefficient': float(spec['coefficient']), 'dose': spec['dose']}
         else:
             require(not {'budget', 'coefficient', 'dose'} & set(spec), f'{a}: a C-recipe arm has no search block')
+        prep_workers = spec.get('preparation_workers')
+        require(prep_workers is None or (recipe == 'X' and type(prep_workers) is int and 1 <= prep_workers <= 32),
+                f'{a}: preparation_workers is an integer 1..32 on X-recipe arms only')
         envelope = spec.get('record_envelope')
-        require(envelope is None or (envelope in RECORD_ENVELOPES and recipe == 'C'),
-                f'{a}: record_envelope is one of {RECORD_ENVELOPES}, for C-recipe arms only')
+        require(envelope is None or envelope in RECORD_ENVELOPES,
+                f'{a}: record_envelope is one of {RECORD_ENVELOPES}')
         verified_reads = spec.get('verified_reads')
-        require(verified_reads is None or (verified_reads in VERIFIED_READS and recipe == 'C'),
-                f'{a}: verified_reads is one of {VERIFIED_READS}, for C-recipe arms only')
+        require(verified_reads is None or verified_reads in VERIFIED_READS,
+                f'{a}: verified_reads is one of {VERIFIED_READS}')
         doc = {'schema': ARM_SCHEMA, 'arm': a, 'recipe': recipe, 'retention_arm': ret, 'root': root.as_posix(),
                'trainer': common['trainer'], 'base': base, 'parent': pin(spec['parent']), 'frozen': frozen_pin,
                'x': x, 'workers': int(spec['workers']), 'segment_updates': length, 'bytes_per_update': bpu,
@@ -672,6 +707,8 @@ def make_plan(inputs_path):
             doc['ladder'] = ladder  # CG only: other arm files unchanged
         if initial_opponent is not None:  # absent otherwise, so existing arm files keep their bytes
             doc['initial_opponent'] = initial_opponent
+        if prep_workers is not None:  # absent otherwise, so existing arm files keep their bytes
+            doc['preparation_workers'] = prep_workers
         if envelope is not None:  # absent otherwise, so every existing arm file keeps its bytes and pin
             doc['record_envelope'] = envelope
         if verified_reads is not None:  # absent otherwise, as record_envelope
@@ -1982,7 +2019,7 @@ def replay_cmd(a):
     require(held is not None, 'a replay is already running here')
     try:
         quarantine(rdir / 'native', rdir)
-        arm = {'trainer': plan['trainer']}
+        arm = {'trainer': plan['trainer'], 'root': plan['root']}
         code, _ = run_trainer(arm, rdir / 'config.json', None, rdir)
         write(rdir / 'EXIT.json', {'exit': code, 'unix': time.time()})
         return code
@@ -2319,6 +2356,7 @@ def launch(a):
     box is occupied: a chain's start restores its own box, a verified filler a filler box."""
     plan = load_plan(a.plan)
     root = Path(plan['root'])
+    settle_vector_tanh(plan['trainer'], root)
     node = w5box.NodeLog(root / 'state')
     opened = []
     with node.locked():

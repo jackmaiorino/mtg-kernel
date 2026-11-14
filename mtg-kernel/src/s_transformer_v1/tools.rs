@@ -621,8 +621,23 @@ fn time_per_decision_v1(
     Ok(best * 1e6)
 }
 
-/// `bench`: microseconds per decision (best of `reps` passes, one thread).
+/// `bench`: microseconds per decision (best of `reps` passes, one thread; with
+/// `gpu=<ordinal>` under `gpu-exact-v1`, also times GPU batched S forward and
+/// GPU S learner forward+backward).
 pub fn bench_v1(seed: u64, count: usize, reps: usize) -> Result<Value, String> {
+    bench_with_gpu_v1(seed, count, reps, None)
+}
+
+pub fn bench_with_gpu_v1(
+    seed: u64,
+    count: usize,
+    reps: usize,
+    gpu: Option<usize>,
+) -> Result<Value, String> {
+    #[cfg(not(feature = "gpu-exact-v1"))]
+    if gpu.is_some() {
+        return Err("bench gpu=<ordinal> requires --features gpu-exact-v1".into());
+    }
     let mut rng = SplitMixV1::new(seed);
     let states: Vec<_> = (0..count)
         .map(|_| synthetic_decision_v1(&mut rng, MEAN_SHAPE_V1))
@@ -666,6 +681,71 @@ pub fn bench_v1(seed: u64, count: usize, reps: usize) -> Result<Value, String> {
         })?;
         net8_us.push(us);
     }
+
+    #[cfg(feature = "gpu-exact-v1")]
+    let gpu_forward_receipt = if let Some(ordinal) = gpu {
+        use crate::gpu_exact_v1::s_transformer::{
+            forward_s_batch_v1, SDeviceBuffersV1, SDeviceModelV1, SHostModelV1, SPackedBatchV1,
+        };
+        let device = crate::gpu_exact_v1::ExactDeviceV1::open_v1(ordinal)?;
+        let host_model = SHostModelV1::from_model_v1(&s_model);
+        let dev_model = SDeviceModelV1::upload_v1(&device, &host_model)?;
+        let mut dev_buffers = SDeviceBuffersV1::default();
+        let mut batch = SPackedBatchV1::default();
+        let cfg = s_model.config_v1();
+
+        // Warm + verify bit-for-bit parity across all `states`.
+        batch.clear();
+        for t in &states {
+            batch.push_infer_v1(0, &cfg, SInputV1::of_tensor_v1(t))?;
+        }
+        let gpu_outs = forward_s_batch_v1(&device, &[&dev_model], &batch, &mut dev_buffers)?;
+        for (t, gpu_out) in states.iter().zip(&gpu_outs) {
+            s_model.forward_into_v1(SInputV1::of_tensor_v1(t), &mut tape)?;
+            if tape.value_v1().to_bits() != gpu_out.value.to_bits()
+                || tape.logits_v1().len() != gpu_out.logits.len()
+                || tape
+                    .logits_v1()
+                    .iter()
+                    .zip(&gpu_out.logits)
+                    .any(|(a, b)| a.to_bits() != b.to_bits())
+            {
+                return Err("GPU S forward differed from CPU S forward in bench".into());
+            }
+        }
+
+        let mut by_batch = serde_json::Map::new();
+        for batch_size in [1usize, 16, 64, 256] {
+            let mut best = f64::INFINITY;
+            for _ in 0..reps.max(1) {
+                let started = Instant::now();
+                for chunk in states.chunks(batch_size) {
+                    batch.clear();
+                    for t in chunk {
+                        batch.push_infer_v1(0, &cfg, SInputV1::of_tensor_v1(t))?;
+                    }
+                    let out = forward_s_batch_v1(&device, &[&dev_model], &batch, &mut dev_buffers)?;
+                    std::hint::black_box(out);
+                }
+                best = best.min(started.elapsed().as_secs_f64() / states.len() as f64 * 1e6);
+            }
+            by_batch.insert(format!("batch_{batch_size}"), json!(best));
+        }
+        if !crate::gpu_exact_v1::learner_installed_v1() {
+            crate::gpu_exact_v1::install_learner_v1(ordinal)?;
+        }
+        Some(json!({
+            "ordinal": ordinal,
+            "device": device.identity.name,
+            "bit_exact_verified_states": states.len(),
+            "s_gpu_forward_us": by_batch,
+        }))
+    } else {
+        None
+    };
+    #[cfg(not(feature = "gpu-exact-v1"))]
+    let gpu_forward_receipt: Option<Value> = None;
+
     // Learner cost: forward plus backward per decision (one-substep groups).
     let groups: Vec<SGroupV1<'_>> = states
         .iter()
@@ -681,10 +761,16 @@ pub fn bench_v1(seed: u64, count: usize, reps: usize) -> Result<Value, String> {
         .collect();
     let mut work = SWorkV1::default();
     let mut grad = vec![0.0f32; s_model.layout_v1().total];
+    #[cfg(feature = "gpu-exact-v1")]
+    if gpu.is_some() {
+        // Warm buffers once before timing when GPU learner is active.
+        s_model.gae_loss_gradient_v1(&groups, RT1_VALUE_COEFFICIENT_V1, &mut grad, &mut work)?;
+        grad.fill(0.0);
+    }
     let started = Instant::now();
     s_model.gae_loss_gradient_v1(&groups, RT1_VALUE_COEFFICIENT_V1, &mut grad, &mut work)?;
     let learner_us = started.elapsed().as_secs_f64() / groups.len() as f64 * 1e6;
-    Ok(json!({
+    let mut out = json!({
         "schema": "s-bench-v1",
         "os": std::env::consts::OS,
         "avx2": cfg!(target_arch = "x86_64") && avx2_v1(),
@@ -696,7 +782,7 @@ pub fn bench_v1(seed: u64, count: usize, reps: usize) -> Result<Value, String> {
         "ratio_s_to_net8_portable": s_us / net8_us[0],
         "ratio_s_to_net8_platform": s_us / net8_us[1],
         "s_learner_forward_backward_us": learner_us,
-        // W5 amendment A2: the speed bar is read on the Linux nodes against
+        // W5 amendment A2: the speed bar is read on the Linux node against
         // the net-8 math the C arm runs, and re-timed at Stage 0.
         "c_arm_net8_math": {
             "math": "platform-libm",
@@ -704,7 +790,11 @@ pub fn bench_v1(seed: u64, count: usize, reps: usize) -> Result<Value, String> {
             "evidence": C_ARM_MATH_EVIDENCE_V1,
             "bar": "at most 20x on the Linux node class; hosted-runner times are indicative only",
         },
-    }))
+    });
+    if let Some(gpu_info) = gpu_forward_receipt {
+        out["gpu"] = gpu_info;
+    }
+    Ok(out)
 }
 
 /// Why the C arm's net-8 runs the platform libm (W5 amendment A2, item 2).
@@ -728,8 +818,28 @@ fn avx2_v1() -> bool {
 /// reports each repetition's attribution (`profile`), whose spans add
 /// overhead to its `seconds`.
 pub fn gae_bench_v1(seed: u64, count: usize, reps: usize, workers: usize) -> Result<Value, String> {
+    gae_bench_with_gpu_v1(seed, count, reps, workers, None)
+}
+
+pub fn gae_bench_with_gpu_v1(
+    seed: u64,
+    count: usize,
+    reps: usize,
+    workers: usize,
+    gpu: Option<usize>,
+) -> Result<Value, String> {
+    #[cfg(not(feature = "gpu-exact-v1"))]
+    if gpu.is_some() {
+        return Err("gae-bench gpu=<ordinal> requires --features gpu-exact-v1".into());
+    }
     if !(1..=2048).contains(&count) || !(1..=32).contains(&reps) || !(1..=32).contains(&workers) {
         return Err("gae-bench requires groups=1..2048 reps=1..32 workers=1..32".into());
+    }
+    #[cfg(feature = "gpu-exact-v1")]
+    if let Some(ordinal) = gpu {
+        if !crate::gpu_exact_v1::learner_installed_v1() {
+            crate::gpu_exact_v1::install_learner_v1(ordinal)?;
+        }
     }
     let mut rng = SplitMixV1::new(seed);
     let warm_batch = synthetic_batch_v1(&mut rng, 4, MEAN_SHAPE_V1);
@@ -745,6 +855,19 @@ pub fn gae_bench_v1(seed: u64, count: usize, reps: usize, workers: usize) -> Res
         &mut warm_work,
     )?;
     let before = initial.state_sha256_v1();
+    #[cfg(feature = "gpu-exact-v1")]
+    if gpu.is_some() {
+        // Pre-size device buffers on `groups` once before timing repetitions.
+        let mut warm_full = initial.clone();
+        let mut work = SWorkV1::default();
+        let _ = warm_full.train_step_gae_with_workers_v1(
+            &groups,
+            RT1_VALUE_COEFFICIENT_V1,
+            RT1_LEARNING_RATE_V1,
+            &mut work,
+            workers,
+        )?;
+    }
     // The warm step's attribution is not a repetition's.
     let _ = super::profile::take_v1();
     let mut seconds = Vec::new();
@@ -786,6 +909,11 @@ pub fn gae_bench_v1(seed: u64, count: usize, reps: usize, workers: usize) -> Res
     });
     if !profiles.is_empty() {
         receipt["profile"] = Value::Array(profiles);
+    }
+    #[cfg(feature = "gpu-exact-v1")]
+    if let Some(ordinal) = gpu {
+        receipt["gpu"] = json!(ordinal);
+        receipt["gpu_learner"] = json!(crate::gpu_exact_v1::learner_receipt_v1());
     }
     Ok(receipt)
 }
@@ -979,17 +1107,31 @@ pub fn main_v1(args: &[String]) -> Result<Value, String> {
             &get("model").ok_or("model= is required")?,
             &get("states").ok_or("states= is required")?,
         ),
-        "bench" => bench_v1(
-            seed,
-            number("count", 2000)? as usize,
-            number("reps", 3)? as usize,
-        ),
-        "gae-bench" => gae_bench_v1(
-            seed,
-            number("groups", 256)? as usize,
-            number("reps", 3)? as usize,
-            number("workers", 1)? as usize,
-        ),
+        "bench" => {
+            let gpu = match get("gpu") {
+                Some(v) => Some(v.parse::<usize>().map_err(|_| "bad gpu".to_owned())?),
+                None => None,
+            };
+            bench_with_gpu_v1(
+                seed,
+                number("count", 2000)? as usize,
+                number("reps", 3)? as usize,
+                gpu,
+            )
+        }
+        "gae-bench" => {
+            let gpu = match get("gpu") {
+                Some(v) => Some(v.parse::<usize>().map_err(|_| "bad gpu".to_owned())?),
+                None => None,
+            };
+            gae_bench_with_gpu_v1(
+                seed,
+                number("groups", 256)? as usize,
+                number("reps", 3)? as usize,
+                number("workers", 1)? as usize,
+                gpu,
+            )
+        }
         "resume-check" => resume_check_v1(
             Path::new(&get("out").ok_or("out=<dir> is required")?),
             seed,

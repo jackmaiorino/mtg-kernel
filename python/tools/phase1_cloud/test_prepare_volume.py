@@ -35,28 +35,29 @@ def spec(**changes):
 
 def volume(**changes):
     return {'id': 'agv6w2qcg7', 'name': 'phase1-volume-qualification-test',
-            'size': 2, 'dataCenterId': 'EU-RO-1'} | changes
+            'size': 10, 'dataCenter': 'EU-RO-1', 'type': 'STANDARD'} | changes
 
 
 class TemplateTests(unittest.TestCase):
     def test_template_targets_documented_endpoint_and_shape(self):
-        template = pv.build_template('phase1-volume-test', 5)
+        template = pv.build_template('phase1-volume-test', 12)
         self.assertEqual(template['method'], 'POST')
-        self.assertEqual(template['url'], 'https://rest.runpod.io/v1/networkvolumes')
-        self.assertEqual(template['body'], {'name': 'phase1-volume-test', 'size': 5,
-                                             'dataCenterId': 'EU-RO-1'})
+        self.assertEqual(template['url'], 'https://api.runpod.io/v2/network-volumes')
+        self.assertEqual(template['body'], {'name': 'phase1-volume-test', 'size': 12,
+                                             'dataCenter': 'EU-RO-1'})
 
     def test_template_targets_same_data_center_as_prepare_lease(self):
-        template = pv.build_template('phase1-volume-test', 5)
-        self.assertEqual(template['body']['dataCenterId'], pv.DATA_CENTER_ID)
+        template = pv.build_template('phase1-volume-test', 12)
+        self.assertEqual(template['body']['dataCenter'], pv.DATA_CENTER_ID)
         self.assertEqual(pv.DATA_CENTER_ID, 'EU-RO-1')
         with self.assertRaisesRegex(ValueError, 'same data center'):
-            pv.build_template('phase1-volume-test', 5, data_center_id='US-KS-2')
+            pv.build_template('phase1-volume-test', 12, data_center_id='US-KS-2')
 
     def test_template_rejects_invalid_name_or_out_of_bound_size(self):
         with self.assertRaisesRegex(ValueError, 'invalid exact volume name'):
-            pv.build_template('has spaces', 5)
-        for bad_size in (0, -1, pv.VOLUME_SIZE_GB_CAP + 1, 5.5, True):
+            pv.build_template('has spaces', 12)
+        # v2 rejects volumes under 10 GB, so 1 to 9 are out of bound too.
+        for bad_size in (0, -1, 1, 9, pv.VOLUME_SIZE_GB_CAP + 1, 10.5, True):
             with self.subTest(bad_size=bad_size), self.assertRaises(ValueError):
                 pv.build_template('phase1-volume-test', bad_size)
 
@@ -73,19 +74,19 @@ class TemplateTests(unittest.TestCase):
                 pv.prepare(spec(size_gb=251, size_reason='too big'), Path(temporary) / 'big', now=NOW)
 
     def test_template_accepts_boundary_sizes(self):
-        pv.build_template('phase1-volume-test', 1)
+        pv.build_template('phase1-volume-test', pv.V2_MIN_VOLUME_GB)
         pv.build_template('phase1-volume-test', pv.VOLUME_SIZE_GB_CAP)
 
     def test_prepare_writes_template_and_pinned_receipt(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / 'prepared'
-            result = pv.prepare(spec(size_gb=3), output, now=NOW)
-            self.assertEqual(result['size_gb'], 3)
+            result = pv.prepare(spec(size_gb=13), output, now=NOW)
+            self.assertEqual(result['size_gb'], 13)
             self.assertFalse(result['size_default_used'])
             self.assertFalse(result['allocated'])
             saved = read(output / 'create-request-template.json')
             self.assertEqual(saved['body']['name'], 'phase1-volume-qualification-test')
-            self.assertEqual(saved['body']['size'], 3)
+            self.assertEqual(saved['body']['size'], 13)
             self.assertEqual(result['create_request_template']['path'],
                               str(output / 'create-request-template.json'))
 
@@ -113,9 +114,12 @@ class SizeBoundTests(unittest.TestCase):
     def test_default_size_matches_documented_formula(self):
         expected_bytes = pv.PACKAGE_KINDS_PER_LEASE * pv.RECOVERY_HEADROOM_MULTIPLIER * pv.PACKAGE_BYTES_ESTIMATE
         import math
-        expected_gb = max(1, min(math.ceil(expected_bytes / 1_000_000_000), pv.VOLUME_SIZE_GB_CAP))
+        expected_gb = max(pv.V2_MIN_VOLUME_GB,
+                          min(math.ceil(expected_bytes / 1_000_000_000), pv.VOLUME_SIZE_GB_CAP))
         self.assertEqual(pv.default_size_gb(), expected_gb)
-        self.assertEqual(pv.default_size_gb(), 2)
+        # The formula gives 2 GB; v2's 10 GB minimum floors it.
+        self.assertEqual(math.ceil(expected_bytes / 1_000_000_000), 2)
+        self.assertEqual(pv.default_size_gb(), 10)
 
     def test_default_size_is_derived_from_about_230mb_per_package(self):
         # FRESH-CLOUD-RESULTS-001.md: 1,391,298,940 exported bytes / 6 hot roots.
@@ -159,7 +163,7 @@ class PlaceholderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             snapshot = snapshot_path(temporary)
             api = Mock(); api.create.return_value = volume()
-            template = pv.build_template('phase1-volume-test', 2)
+            template = pv.build_template('phase1-volume-test', 10)
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 pv.execute_create(template, temporary, snapshot, api=api, now=NOW)
             name, size, data_center = api.create.call_args.args
@@ -186,14 +190,16 @@ class PlaceholderTests(unittest.TestCase):
 
 class SanitizedVerifyTests(unittest.TestCase):
     def test_sanitize_keeps_only_the_four_documented_fields(self):
-        raw = volume(createdAt='2026-09-15T00:00:00Z', dataCenter={'id': 'EU-RO-1'}, extraField='drop-me')
+        raw = volume(createdAt='2026-09-15T00:00:00Z', dataCenterId='legacy-drop-me', extraField='drop-me')
         sanitized = pv.sanitize_volume(raw)
         self.assertEqual(sanitized, {'id': 'agv6w2qcg7', 'name': 'phase1-volume-qualification-test',
-                                      'size_gb': 2, 'data_center_id': 'EU-RO-1'})
+                                      'size_gb': 10, 'data_center_id': 'EU-RO-1'})
 
     def test_sanitize_rejects_missing_or_malformed_fields(self):
         with self.assertRaises(ValueError):
-            pv.sanitize_volume({'id': 'x', 'name': 'y', 'dataCenterId': 'EU-RO-1'})
+            pv.sanitize_volume({'id': 'x', 'name': 'y', 'dataCenter': 'EU-RO-1'})
+        with self.assertRaises(ValueError):
+            pv.sanitize_volume({'id': 'x', 'name': 'y', 'size': 10, 'dataCenterId': 'EU-RO-1'})
         with self.assertRaises(ValueError):
             pv.sanitize_volume(volume(size='2'))
         with self.assertRaises(ValueError):
@@ -207,7 +213,7 @@ class SanitizedVerifyTests(unittest.TestCase):
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 result = pv.verify_volume('agv6w2qcg7', temporary, snapshot, api=api, now=NOW)
             self.assertEqual(result['id'], 'agv6w2qcg7')
-            self.assertEqual(result['size_gb'], 2)
+            self.assertEqual(result['size_gb'], 10)
             self.assertEqual(result['data_center_id'], 'EU-RO-1')
             self.assertTrue(result['matches_prepare_lease_data_center'])
             api.get.assert_called_once_with('agv6w2qcg7')
@@ -232,7 +238,7 @@ class SanitizedVerifyTests(unittest.TestCase):
     def test_verify_flags_a_data_center_other_than_prepare_lease_without_raising(self):
         with tempfile.TemporaryDirectory() as temporary:
             snapshot = snapshot_path(temporary)
-            api = Mock(); api.get.return_value = volume(dataCenterId='US-KS-2')
+            api = Mock(); api.get.return_value = volume(dataCenter='US-KS-2')
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 result = pv.verify_volume('agv6w2qcg7', temporary, snapshot, api=api, now=NOW)
             self.assertFalse(result['matches_prepare_lease_data_center'])
@@ -241,7 +247,7 @@ class SanitizedVerifyTests(unittest.TestCase):
 class FundingSnapshotGateTests(unittest.TestCase):
     def test_execute_create_refuses_without_a_funding_snapshot_path(self):
         api = Mock()
-        template = pv.build_template('phase1-volume-test', 2)
+        template = pv.build_template('phase1-volume-test', 10)
         with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
             with self.assertRaisesRegex(ValueError, 'funding-snapshot is required'):
                 pv.execute_create(template, tempfile.gettempdir(), None, api=api, now=NOW)
@@ -258,7 +264,7 @@ class FundingSnapshotGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             stale = snapshot_path(temporary, age_seconds=31 * 60)
             api = Mock()
-            template = pv.build_template('phase1-volume-test', 2)
+            template = pv.build_template('phase1-volume-test', 10)
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 with self.assertRaisesRegex(ValueError, 'stale'):
                     pv.execute_create(template, temporary, stale, api=api, now=NOW)
@@ -277,7 +283,7 @@ class FundingSnapshotGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             future = snapshot_path(temporary, age_seconds=-600)
             api = Mock()
-            template = pv.build_template('phase1-volume-test', 2)
+            template = pv.build_template('phase1-volume-test', 10)
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 with self.assertRaises(ValueError):
                     pv.execute_create(template, temporary, future, api=api, now=NOW)
@@ -287,7 +293,7 @@ class FundingSnapshotGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             fresh = snapshot_path(temporary, age_seconds=29 * 60 + 59)
             api = Mock(); api.create.return_value = volume()
-            template = pv.build_template('phase1-volume-test', 2)
+            template = pv.build_template('phase1-volume-test', 10)
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 pv.execute_create(template, temporary, fresh, api=api, now=NOW)
             api.create.assert_called_once()
@@ -296,7 +302,7 @@ class FundingSnapshotGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             fresh = snapshot_path(temporary)
             api = Mock()
-            template = pv.build_template('phase1-volume-test', 2)
+            template = pv.build_template('phase1-volume-test', 10)
             with patch.dict('os.environ', {}, clear=False):
                 import os
                 os.environ.pop('RUNPOD_API_KEY', None)
@@ -321,7 +327,7 @@ class CostNoteTests(unittest.TestCase):
 
     def test_prepare_receipt_carries_a_cost_note_usable_on_the_lease_storage_line(self):
         with tempfile.TemporaryDirectory() as temporary:
-            result = pv.prepare(spec(size_gb=5), Path(temporary) / 'prepared', now=NOW)
+            result = pv.prepare(spec(size_gb=15), Path(temporary) / 'prepared', now=NOW)
             self.assertIn('storage_usd_hour', result['cost_note'])
             self.assertGreater(result['cost_note']['storage_usd_hour'], 0)
 
@@ -330,7 +336,7 @@ class EndToEndExecuteTests(unittest.TestCase):
     def test_main_offline_then_execute_writes_created_volume_receipt(self):
         with tempfile.TemporaryDirectory() as temporary:
             spec_path = Path(temporary) / 'spec.json'
-            write(spec_path, spec(size_gb=2))
+            write(spec_path, spec(size_gb=12))
             output = Path(temporary) / 'prepared'
             argv = ['prepare_volume.py', '--spec', str(spec_path), '--output', str(output)]
             with patch.object(sys, 'argv', argv):
@@ -348,7 +354,7 @@ class EndToEndExecuteTests(unittest.TestCase):
                  patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 pv.main()
             provider_cls.assert_called_once_with('fake-sensitive-key')
-            fake_api.create.assert_called_once_with('phase1-volume-qualification-test', 2, 'EU-RO-1',
+            fake_api.create.assert_called_once_with('phase1-volume-qualification-test', 12, 'EU-RO-1',
                                                     cap_gb=pv.VOLUME_SIZE_GB_CAP)
             created = read(output / 'created-volume.json')
             self.assertEqual(created['id'], 'agv6w2qcg7')

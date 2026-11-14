@@ -154,13 +154,33 @@ pub(crate) fn training_forward_v1(
     parameters: &[NativeNamedParameterV1],
     encoded: NativeEncodedDecisionViewV1<'_>,
 ) -> Result<(Vec<f32>, f32), NativePolicyTrainErrorV1> {
-    let tape = forward_with_tape(
+    training_forward_input_major_v1(model, generation, parameters, None, encoded)
+}
+
+/// [`training_forward_v1`] with optional prebuilt input-major weights so
+/// callers scoring multiple rows against fixed parameters run on the
+/// vectorized hidden-width kernel with bit-identical results.
+pub(crate) fn training_forward_input_major_v1(
+    model: &NativePolicyValueNetV1,
+    generation: FreshLineageGenerationV1,
+    parameters: &[NativeNamedParameterV1],
+    input_major: Option<&InputMajorWeightsV1>,
+    encoded: NativeEncodedDecisionViewV1<'_>,
+) -> Result<(Vec<f32>, f32), NativePolicyTrainErrorV1> {
+    let tape = forward_with_tape_input_major_v1(
         parameters,
+        input_major,
         input_config_v1(model, generation),
         encoded,
         TrainingMathV1::PlatformLibm,
     )?;
     Ok((tape.logits_v1().to_vec(), tape.value_v1()))
+}
+
+/// Prebuild input-major weights for repeated [`training_forward_input_major_v1`]
+/// calls against a fixed Net-8 parameter snapshot.
+pub(crate) fn input_major_weights_v1(parameters: &[NativeNamedParameterV1]) -> InputMajorWeightsV1 {
+    InputMajorWeightsV1::of_dims_v1::<Net8DimsV1>(parameters)
 }
 
 /// Each row's own forward tape at the start-of-step parameters, its logit
@@ -186,10 +206,9 @@ pub(super) fn external_auxiliary_terms_v1(
         return Err(invalid("external-auxiliary-coefficient"));
     }
     let scale = input.coefficient / input.denominator as f64;
-    let mut gradients: Vec<Vec<f32>> = parameters
-        .iter()
-        .map(|parameter| vec![0.0; parameter.values.len()])
-        .collect();
+    let mut gradients =
+        accumulate_transposed_v1::sequential_gradients_dims_v1::<Net8DimsV1>(parameters);
+    let mut sink = accumulate_transposed_v1::AccumulateTransposedV1::new_v1(&mut gradients);
     let mut workspace = ReverseWorkspaceV1::default();
     let mut rows = Vec::with_capacity(input.rows.len());
     let mut divergences = Vec::with_capacity(input.rows.len());
@@ -214,9 +233,9 @@ pub(super) fn external_auxiliary_terms_v1(
             .map_err(|_| invalid("external-auxiliary-divergence"))?;
         let exact: Vec<f64> = value.logit_gradient.iter().map(|g| scale * g).collect();
         let d_logits: Vec<f32> = exact.iter().map(|&g| g as f32).collect();
-        reverse_decision(
+        reverse_decision_into_dims_v1::<Net8DimsV1>(
             parameters,
-            &mut gradients,
+            &mut sink,
             &tape,
             &d_logits,
             0.0,
@@ -228,7 +247,7 @@ pub(super) fn external_auxiliary_terms_v1(
     }
     Ok(LineBAuxiliaryTermsV1::from_parts_v1(
         input.coefficient > 0.0 && !input.rows.is_empty(),
-        gradients,
+        gradients.into_gradients_v1(),
         rows,
         divergences,
         loss,

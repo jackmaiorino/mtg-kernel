@@ -143,6 +143,7 @@ fn fresh_source_v1(root: &Path) -> (ExpandedModelSourceV1, Vec<PathBuf>) {
         },
         checkpoint: None,
         s_learner: None,
+        w_learner: None,
     };
     (source, read)
 }

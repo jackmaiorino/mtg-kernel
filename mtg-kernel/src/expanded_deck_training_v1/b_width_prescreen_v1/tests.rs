@@ -458,6 +458,7 @@ fn fixture_v1(label: &str) -> FixtureV1 {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         },
     }];
     config.fitting.batch_groups = 8;

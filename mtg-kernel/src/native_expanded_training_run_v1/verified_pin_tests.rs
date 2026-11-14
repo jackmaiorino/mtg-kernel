@@ -95,29 +95,27 @@ fn stream_compares_equal_held_bytes_and_hashes_everything_else() {
     }
 }
 
-fn pinned_artifact_v1(label: &str, bytes: &[u8]) -> PinnedFileV1 {
-    let directory = std::env::temp_dir().join(format!(
-        "verified-pin-{label}-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&directory).unwrap();
+fn pinned_artifact_v1(
+    label: &str,
+    bytes: &[u8],
+) -> (crate::test_temp_dir_v1::TempTestDir, PinnedFileV1) {
+    let directory = crate::test_temp_dir_v1::TempTestDir::new_v1(&format!("verified-pin-{label}"));
     let path = directory.join("artifact.json");
     fs::write(&path, bytes).unwrap();
-    PinnedFileV1 {
-        path,
-        sha256: digest(bytes),
-    }
+    (
+        directory,
+        PinnedFileV1 {
+            path,
+            sha256: digest(bytes),
+        },
+    )
 }
 
 #[test]
 fn pinned_artifact_reads_compare_held_bytes_and_fail_as_before() {
     let cache = VerifiedBytesCacheV1::new_v1(1 << 20, 16);
     let bytes = artifact_bytes_v1();
-    let pin = pinned_artifact_v1("compare", &bytes);
+    let (_dir, pin) = pinned_artifact_v1("compare", &bytes);
     // Nothing held: `verify_pin` hashes and records nothing.
     verify_pin_in_v1(&cache, &pin).unwrap();
     assert!(cache.held_v1(&pin.path, &pin.sha256).is_none());
@@ -158,5 +156,4 @@ fn pinned_artifact_reads_compare_held_bytes_and_fail_as_before() {
     let missing = fs::File::open(&pin.path).unwrap_err().to_string();
     assert_eq!(verify_pin_in_v1(&cache, &pin).unwrap_err(), missing);
     assert_eq!(read(ARTIFACT_CAP).unwrap_err(), missing);
-    fs::remove_dir_all(pin.path.parent().unwrap()).unwrap();
 }

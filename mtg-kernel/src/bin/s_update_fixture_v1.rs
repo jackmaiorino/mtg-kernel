@@ -16,6 +16,8 @@ mtg_kernel::fast_global_allocator!();
 use mtg_kernel::expanded_deck_training_v1::s_update_fixture_v1::main_v1;
 
 fn main() {
+    // SAFETY: first statement of main; no other thread exists yet.
+    unsafe { mtg_kernel::retain_freed_memory_v1() };
     mtg_kernel::opt_out_of_power_throttling_v1();
     let args: Vec<String> = std::env::args().skip(1).collect();
     // Games and updates run on a large stack, as the source test runs them.

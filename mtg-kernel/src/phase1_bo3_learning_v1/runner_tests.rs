@@ -5,17 +5,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier};
 use std::time::Duration;
 
-fn scratch(label: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "phase1-bo3-runner-{label}-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir(&path).unwrap();
-    path
+fn scratch(label: &str) -> crate::test_temp_dir_v1::TempTestDir {
+    crate::test_temp_dir_v1::TempTestDir::new_v1(&format!("phase1-bo3-runner-{label}"))
 }
 
 #[test]

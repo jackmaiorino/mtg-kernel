@@ -485,6 +485,13 @@ class RetentionTests(unittest.TestCase):
             _, plain = retention.index(net8)
             self.assertTrue(all(r['state'] is None for r in plain))
 
+    def test_wide_learner_container_pins_like_s(self):
+        """The wide (net-8w128) learner's `w_learner.state` is the update's container, as S's `s_learner.state`."""
+        pin = {'path': '/w/w128-train-state.bin', 'sha256': 'a' * 64}
+        self.assertEqual(retention.state_pin({'w_learner': {'state': pin}}), pin)
+        self.assertEqual(retention.state_pin({'s_learner': {'state': pin}}), pin)
+        self.assertIsNone(retention.state_pin({'checkpoint': pin}))
+
     def test_guard(self):
         with tempfile.TemporaryDirectory() as tmp:
             Path(tmp, 'a').write_bytes(b'x' * 1000)

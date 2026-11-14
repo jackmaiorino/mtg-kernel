@@ -821,6 +821,38 @@ fn loss_bits_v1(loss: SLossV1) -> [u32; 5] {
     .map(f32::to_bits)
 }
 
+/// Each substep's stored row for a verified update: its own forward's
+/// outputs, or none where the forward refuses.
+fn stored_bits_v1(model: &SModelV1, groups: &[SGroupV1<'_>]) -> Vec<(Vec<u32>, u32)> {
+    groups
+        .iter()
+        .flat_map(|group| &group.substeps)
+        .map(
+            |substep| match model.forward_v1(substep.input, &mut STapeV1::default()) {
+                Ok(output) => (bits_v1(&output.logits), output.value.to_bits()),
+                Err(_) => (Vec::new(), 0),
+            },
+        )
+        .collect()
+}
+
+fn stored_rows_v1(bits: &[(Vec<u32>, u32)]) -> Vec<verified_row_v1::StoredRowV1<'_>> {
+    bits.iter()
+        .map(|(logits, value)| verified_row_v1::StoredRowV1 {
+            logits,
+            value: *value,
+        })
+        .collect()
+}
+
+/// What one substep's forward retains in an empty worker tape.
+fn verified_slot_bytes_v1(substep: &SSubstepV1<'_>) -> usize {
+    let counts = substep.input.validate_v1(&TINY_V1).unwrap();
+    STapeV1::bytes_for_counts_v1(&TINY_V1, counts)
+        + std::mem::size_of::<STapeV1>()
+        + TINY_V1.layers * std::mem::size_of::<LayerTapeV1>()
+}
+
 /// Every term plan gives the serial gradient and loss bit for bit: two sets
 /// that record one block while the previous replays, one set of several
 /// slots, and one slot. Its slots never hold more than the plan reserves,
@@ -851,6 +883,14 @@ fn pipelined_gae_matches_serial_bits_for_every_term_plan() {
         })
         .unwrap();
     let slot = bound.bytes_v1();
+    let stored_bits = stored_bits_v1(&model, &groups);
+    let stored = stored_rows_v1(&stored_bits);
+    let largest = groups
+        .iter()
+        .flat_map(|g| &g.substeps)
+        .map(verified_slot_bytes_v1)
+        .max()
+        .unwrap();
     for workers in [2, 3, 5] {
         for (budget, sets, slots) in [
             (parallel::TERM_BUDGET_BYTES_V1, 2, workers),
@@ -887,6 +927,43 @@ fn pipelined_gae_matches_serial_bits_for_every_term_plan() {
                 "{label}"
             );
             assert!(used.capacity_bytes <= budget.max(slot), "{label}");
+            // The verified learner checks every forward against its stored
+            // row and gives the same bits and plan, its tapes within the
+            // cap: the largest row's own (which recycles a tape for most
+            // longer rows) or room for every row.
+            for cap in [largest, 1 << 20] {
+                let jobs = verified_row_v1::VerifiedJobsV1::new_v1(&groups, &stored, cap).unwrap();
+                let mut verified = vec![0.0; serial.len()];
+                let (loss, verified_use) = model
+                    .gae_loss_gradient_verified_v1(
+                        &groups,
+                        0.5,
+                        &mut verified,
+                        workers,
+                        &mut SWorkV1::default(),
+                        &jobs,
+                        parallel::PipelineOptionsV1 {
+                            budget_bytes: budget,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
+                let label = format!("{label}, cap {cap}");
+                assert_eq!(verified_use, used, "{label}");
+                assert_eq!(bits_v1(&verified), bits_v1(&serial), "{label}");
+                assert_eq!(loss_bits_v1(loss), loss_bits_v1(expected), "{label}");
+                let usage = jobs.usage_v1();
+                assert_eq!(
+                    (usage.learner_forwards, usage.learner_backwards),
+                    (20, 20),
+                    "{label}"
+                );
+                let empty = std::mem::size_of::<STapeV1>();
+                assert!(
+                    (workers * empty..=workers * cap).contains(&usage.peak_retained_tape_bytes),
+                    "{label}: {usage:?}"
+                );
+            }
         }
     }
 }
@@ -934,8 +1011,14 @@ fn pipelined_gae_reports_the_first_failure_in_substep_order() {
         let expected = model
             .gae_loss_gradient_v1(&groups, 0.5, &mut gradient, &mut work)
             .unwrap_err();
+        let stored_bits = stored_bits_v1(&model, &groups);
+        let stored = stored_rows_v1(&stored_bits);
         for workers in [2, 3, 5] {
             for budget in [parallel::TERM_BUDGET_BYTES_V1, 1] {
+                let options = parallel::PipelineOptionsV1 {
+                    budget_bytes: budget,
+                    ..Default::default()
+                };
                 let error = model
                     .gae_loss_gradient_planned_v1(
                         &groups,
@@ -943,19 +1026,164 @@ fn pipelined_gae_reports_the_first_failure_in_substep_order() {
                         &mut gradient,
                         workers,
                         &mut work,
-                        parallel::PipelineOptionsV1 {
-                            budget_bytes: budget,
-                            ..Default::default()
-                        },
+                        options,
                     )
                     .unwrap_err();
                 assert_eq!(
                     error, expected,
                     "group {group} substep {sub}, workers {workers}, budget {budget}"
                 );
+                // The verified learner refuses the same row first.
+                let jobs =
+                    verified_row_v1::VerifiedJobsV1::new_v1(&groups, &stored, 1 << 20).unwrap();
+                let error = model
+                    .gae_loss_gradient_verified_v1(
+                        &groups,
+                        0.5,
+                        &mut gradient,
+                        workers,
+                        &mut work,
+                        &jobs,
+                        options,
+                    )
+                    .unwrap_err();
+                assert_eq!(
+                    error, expected,
+                    "verified: group {group} substep {sub}, workers {workers}, budget {budget}"
+                );
             }
         }
     }
+}
+
+/// A verified learner reports the first stored row its forward does not
+/// reproduce, or the first row whose tape exceeds the cap, in substep order
+/// before any later failure, and counts only the forwards and backwards it
+/// ran.
+#[test]
+fn pipelined_verified_gae_reports_stored_rows_and_capacity_in_substep_order() {
+    let model = SModelV1::init_parity_v1(TINY_V1, 77).unwrap();
+    let data = ragged_groups_v1(87);
+    let mut groups = as_groups_v1(&data);
+    // A later failure must not win.
+    groups[9].substeps[1].selected = usize::MAX - 1;
+    let starts: Vec<usize> = groups
+        .iter()
+        .scan(0, |next, group| {
+            let start = *next;
+            *next += group.substeps.len();
+            Some(start)
+        })
+        .collect();
+    let clean = stored_bits_v1(&model, &groups);
+    let slots: Vec<usize> = groups
+        .iter()
+        .flat_map(|g| &g.substeps)
+        .map(verified_slot_bytes_v1)
+        .collect();
+    // Long rows (group + substep a multiple of 3) exceed every short row.
+    let short = (0..slots.len())
+        .filter(|&flat| {
+            let group = starts.iter().rposition(|&start| start <= flat).unwrap();
+            !(group + flat - starts[group]).is_multiple_of(3)
+        })
+        .map(|flat| slots[flat])
+        .max()
+        .unwrap();
+    assert!(slots[0] > short);
+    let late_stored_failure = "stored tensor does not reproduce rollout outputs";
+    for (group, sub, kind, cap) in [
+        (0, 0, 0, 1 << 20),
+        (0, 1, 1, 1 << 20),
+        (3, 2, 0, 1 << 20),
+        (6, 0, 1, 1 << 20),
+        (9, 0, 0, 1 << 20),
+        // The first long row, before a stored mismatch.
+        (0, 1, 0, short),
+    ] {
+        let mut stored_bits = clean.clone();
+        let flat = starts[group] + sub;
+        match kind {
+            0 => stored_bits[flat].0[0] ^= 1,
+            _ => stored_bits[flat].1 ^= 1,
+        }
+        let stored = stored_rows_v1(&stored_bits);
+        let expected = if cap == short {
+            verified_row_v1::VERIFIED_TAPE_CAPACITY_V1
+        } else {
+            late_stored_failure
+        };
+        for workers in [2, 3, 5] {
+            for budget in [parallel::TERM_BUDGET_BYTES_V1, 1] {
+                let jobs = verified_row_v1::VerifiedJobsV1::new_v1(&groups, &stored, cap).unwrap();
+                let mut gradient = vec![0.0; model.layout_v1().total];
+                let error = model
+                    .gae_loss_gradient_verified_v1(
+                        &groups,
+                        0.5,
+                        &mut gradient,
+                        workers,
+                        &mut SWorkV1::default(),
+                        &jobs,
+                        parallel::PipelineOptionsV1 {
+                            budget_bytes: budget,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap_err();
+                let label = format!(
+                    "group {group} substep {sub} kind {kind}, workers {workers}, budget {budget}"
+                );
+                assert_eq!(error, expected, "{label}");
+                // The refused row's backward never runs, nor its forward
+                // over the cap.
+                let usage = jobs.usage_v1();
+                let refused_forward = u64::from(cap != short);
+                assert!(
+                    usage.learner_backwards + refused_forward <= usage.learner_forwards
+                        && usage.learner_forwards < 20 + refused_forward,
+                    "{label}: {usage:?}"
+                );
+                assert!(
+                    usage.peak_retained_tape_bytes <= workers * cap,
+                    "{label}: {usage:?}"
+                );
+            }
+        }
+    }
+    // The entry refuses a cap below an empty tape before any forward, a
+    // side table of another length, and another model generation.
+    let stored = stored_rows_v1(&clean);
+    assert!(matches!(
+        verified_row_v1::VerifiedJobsV1::new_v1(
+            &groups,
+            &stored,
+            std::mem::size_of::<STapeV1>() - 1
+        ),
+        Err(verified_row_v1::ReplayErrorV1::Capacity)
+    ));
+    assert!(matches!(
+        verified_row_v1::VerifiedJobsV1::new_v1(&groups, &stored[1..], 1 << 20),
+        Err(verified_row_v1::ReplayErrorV1::Replay(_))
+    ));
+    let other = SModelV1::init_parity_v1(TINY_V1, 78).unwrap();
+    let mut usage = verified_row_v1::ParallelVerifiedUseV1::default();
+    match verified_row_v1::parallel_gradient_v1(
+        &model,
+        other.cache_namespace_v1(),
+        &groups,
+        &stored,
+        0.5,
+        2,
+        1 << 20,
+        &mut usage,
+    ) {
+        Err(verified_row_v1::ReplayErrorV1::Replay(error)) => {
+            assert_eq!(error, "S verified model generation differs")
+        }
+        _ => panic!("a stale generation is refused"),
+    }
+    assert_eq!(usage, verified_row_v1::ParallelVerifiedUseV1::default());
 }
 
 /// A worker that panics in any phase, a helper or the caller, ends the
@@ -1000,4 +1228,171 @@ fn pipelined_gae_reraises_a_worker_panic_after_joining_its_helpers() {
         .gae_loss_gradient_parallel_v1(&groups, 0.5, &mut gradient, 3, &mut work)
         .unwrap();
     assert_eq!(bits_v1(&gradient), bits_v1(&serial));
+}
+
+#[test]
+fn simd_gelu_and_softmax_match_scalar_bits_across_edges_and_samples() {
+    let mut rng = SplitMixV1::new(20_261_113);
+    let mut xs = vec![
+        0.0f32,
+        -0.0,
+        1.0e-45,
+        -1.0e-45,
+        1.0e-38,
+        -1.0e-38,
+        1.0e-7,
+        -1.0e-7,
+        0.5,
+        -0.5,
+        1.0,
+        -1.0,
+        3.0,
+        -3.0,
+        12.0,
+        -12.0,
+        -87.0,
+        -87.3,
+        -88.0,
+        -104.0,
+        88.0,
+        88.7,
+        89.0,
+        1.0e17,
+        -1.0e17,
+        1.0e18,
+        -1.0e18,
+        1.0e20,
+        -1.0e20,
+        f32::INFINITY,
+        f32::NEG_INFINITY,
+        f32::NAN,
+    ];
+    for _ in 0..50_000 {
+        xs.push(rng.uniform(-15.0, 15.0));
+    }
+    let mut post_simd = vec![0.0f32; xs.len()];
+    kernels::gelu_slice_v1(&xs, &mut post_simd);
+    for (idx, (&x, &y)) in xs.iter().zip(&post_simd).enumerate() {
+        let expected = kernels::gelu_v1(x);
+        if expected.is_nan() {
+            assert!(y.is_nan(), "gelu NaN mismatch at {idx} ({x})");
+        } else {
+            assert_eq!(
+                y.to_bits(),
+                expected.to_bits(),
+                "gelu bits mismatch at {idx} ({x}): got {y} vs {expected}"
+            );
+        }
+    }
+
+    let grads_in: Vec<f32> = (0..xs.len()).map(|_| rng.uniform(-2.0, 2.0)).collect();
+    let mut grads_simd = grads_in.clone();
+    kernels::gelu_backward_slice_v1(&xs, &mut grads_simd);
+    for (idx, ((&x, &gin), &gout)) in xs.iter().zip(&grads_in).zip(&grads_simd).enumerate() {
+        let expected = gin * kernels::gelu_grad_v1(x);
+        if expected.is_nan() {
+            assert!(gout.is_nan(), "gelu_bwd NaN mismatch at {idx} ({x})");
+        } else {
+            assert_eq!(
+                gout.to_bits(),
+                expected.to_bits(),
+                "gelu_bwd bits mismatch at {idx} ({x}): got {gout} vs {expected}"
+            );
+        }
+    }
+
+    for len in [1usize, 2, 7, 8, 9, 15, 16, 17, 33, 64, 99] {
+        let mut row: Vec<f32> = (0..len).map(|_| rng.uniform(-30.0, 30.0)).collect();
+        let mut expected = row.clone();
+        let max_val = expected.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let mut sum = 0.0f32;
+        for v in &mut expected {
+            *v = kernels::exp_v1(*v - max_val);
+            sum += *v;
+        }
+        for v in &mut expected {
+            *v /= sum;
+        }
+        kernels::softmax_row_v1(&mut row);
+        assert_eq!(bits_v1(&row), bits_v1(&expected), "softmax len {len}");
+    }
+}
+
+#[test]
+fn score_tensor_matches_forward_bits_and_parallel_auxiliary_matches_serial_bits() {
+    use crate::line_b_teacher_target_v1::{LineBDivergenceV1, LineBSoftmaxV1};
+    let mut rng = SplitMixV1::new(20_261_114);
+    let model = SModelV1::init_parity_v1(SConfigV1::s_v1(), 91).unwrap();
+    let mut tape = STapeV1::default();
+    for _ in 0..16 {
+        let t = synthetic_decision_v1(&mut rng, super::tools::PARITY_SHAPE_V1);
+        let out = model
+            .forward_v1(SInputV1::of_tensor_v1(&t), &mut tape)
+            .unwrap();
+        let (logits, value) = model.score_tensor_v1(&t).unwrap();
+        assert_eq!(bits_v1(&logits), bits_v1(&out.logits));
+        assert_eq!(value.to_bits(), out.value.to_bits());
+    }
+
+    let tiny_model = SModelV1::init_parity_v1(TINY_V1, 92).unwrap();
+    let data = ragged_groups_v1(93);
+    let groups = as_groups_v1(&data);
+    let aux_tensors: Vec<NativeFlatDecisionTensorV2> = (0..5)
+        .map(|_| {
+            synthetic_decision_v1(
+                &mut rng,
+                ShapeV1 {
+                    objects: (3, 7),
+                    edges: (1, 4),
+                    actions: (2, 5),
+                    refs: (1, 4),
+                },
+            )
+        })
+        .collect();
+    let targets: Vec<LineBSoftmaxV1> = aux_tensors
+        .iter()
+        .map(|t| {
+            let a = t.action_features.len() / ACTION_FEATURE_DIM_V1;
+            let raw: Vec<f64> = (0..a).map(|i| 0.25 * i as f64 - 0.3).collect();
+            crate::line_b_teacher_target_v1::line_b_softmax_v1(&raw).unwrap()
+        })
+        .collect();
+    let make_input = || SAuxiliaryInputV1 {
+        direction: LineBDivergenceV1::Forward,
+        coefficient: 1.0,
+        denominator: 8,
+        cap: Some(2.0),
+        step_telemetry: true,
+        rows: aux_tensors
+            .iter()
+            .zip(&targets)
+            .map(|(t, target)| SAuxiliaryRowV1 {
+                input: SInputV1::of_tensor_v1(t),
+                target,
+            })
+            .collect(),
+        policy_mask: vec![(0, 1), (2, 0), (3, 2), (7, 1)],
+    };
+    let base_state = STrainStateV1::fresh_optimizer_v1(tiny_model);
+    let mut serial_state = base_state.clone();
+    let (serial_step, serial_aux) = serial_state
+        .train_step_gae_auxiliary_v1(&groups, 0.5, 1.0e-3, &make_input(), &mut SWorkV1::default())
+        .unwrap();
+    for workers in [1, 2, 4] {
+        let mut par_state = base_state.clone();
+        let (par_step, par_aux) = par_state
+            .train_step_gae_auxiliary_with_workers_v1(
+                &groups,
+                0.5,
+                1.0e-3,
+                &make_input(),
+                &mut SWorkV1::default(),
+                workers,
+            )
+            .unwrap();
+        assert_eq!(par_step, serial_step, "workers {workers}");
+        assert_eq!(par_aux, serial_aux, "workers {workers}");
+        assert_eq!(par_state, serial_state, "workers {workers}");
+    }
 }

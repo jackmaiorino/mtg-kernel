@@ -16,6 +16,12 @@ static GLOBAL_ALLOCATOR: mtg_kernel::s_transformer_v1::profile::SProfileAllocato
     mtg_kernel::s_transformer_v1::profile::SProfileAllocatorV1;
 
 fn main() {
+    #[cfg(not(feature = "s-learner-profile-v1"))]
+    // SAFETY: first statement of main; no other thread exists yet.
+    unsafe {
+        mtg_kernel::retain_freed_memory_v1();
+    }
+    mtg_kernel::opt_out_of_power_throttling_v1();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match mtg_kernel::s_transformer_v1::tools::main_v1(&args) {
         Ok(receipt) => println!(

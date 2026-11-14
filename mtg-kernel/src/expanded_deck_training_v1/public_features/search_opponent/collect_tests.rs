@@ -35,6 +35,7 @@ fn source(checkpoint: &str) -> ExpandedModelSourceV1 {
         },
         checkpoint: Some(pin("checkpoint.json", checkpoint)),
         s_learner: None,
+        w_learner: None,
     }
 }
 

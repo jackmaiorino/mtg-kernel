@@ -1,9 +1,11 @@
 """The hosted fallback reruns only jobs that a self-hosted runner could not admit, once."""
+import io
 import json
 import os
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -58,6 +60,14 @@ class FallbackTests(unittest.TestCase):
                     assert posts == []
             assert "dispatched ci.yml" in summary.read_text()
 
+    def test_the_token_is_not_forwarded_to_the_log_redirect(self):
+        # Job logs redirect to signed blob storage, which answers 401 to a request carrying the token,
+        # so a forwarded token hid every admission timeout from the fallback.
+        with patch.dict(os.environ, {"GH_TOKEN": "t"}):
+            req = fb._build_request("GET", "/repos/o/r/actions/jobs/1/logs")
+        assert req.unredirected_hdrs == {"Authorization": "Bearer t"}
+        assert not any(k.lower() == "authorization" for k in req.headers)
+
     def test_a_rerun_covers_only_the_windows_part_of_the_group_set(self):
         assert fb.fallback_scope("pr") == "windows-pr"
         assert fb.fallback_scope("windows-complement") == "windows-complement"
@@ -91,6 +101,63 @@ class FallbackTests(unittest.TestCase):
         assert "actions: write" in block.split("steps:")[0]
         for needed in ("rust-test-groups", "rust-limited-groups", "python-tests"):
             assert needed in block.split("steps:")[0]
+
+    def test_run_43458844883_ci_win_6_admission_timeout_is_detected(self):
+        # Regression for #679: exact job record and PowerShell hook failure log from run 43458844883
+        # (job 132000491403 on runner ci-win-6).
+        ci_win_6_job = {
+            "id": 132000491403,
+            "run_id": 43458844883,
+            "status": "completed",
+            "conclusion": "failure",
+            "name": "Rust tests (windows-2025, workspace-targets)",
+            "labels": ["self-hosted", "mtg-ci-windows", "bn6"],
+            "runner_name": "ci-win-6",
+        }
+        other_jobs = [
+            job(132000491421, "success", ["ubuntu-24.04"], "Rust tests (ubuntu-24.04, workspace-targets)"),
+            job(132000491400, "success", ["self-hosted", "mtg-ci-windows", "bn6"], "Rust tests (windows-2025, workspace-lib)"),
+        ]
+        ci_win_6_log = (
+            "\ufeff2026-11-13T16:04:26.1682565Z Current runner version: '2.338.2'\n"
+            "2026-11-13T16:04:26.1687619Z Runner name: 'ci-win-6'\n"
+            "2026-11-13T16:04:29.1014371Z ##[group]Run 'D:\\mtg-ci\\tools\\host-slots\\job-started-slots.ps1'\n"
+            "2026-11-13T16:19:30.1409164Z ##[error]MTG_CI_ADMISSION_TIMEOUT: no CPU slots within 900 s on ci-win-6; "
+            "the hosted-fallback workflow job reruns this group on hosted runners\n"
+            "2026-11-13T16:19:30.1417506Z MTG_CI_ADMISSION_TIMEOUT: no CPU slots within 900 s on ci-win-6; "
+            "the hosted-fallback workflow job reruns this group on hosted runners\n"
+            "2026-11-13T16:19:30.2142405Z CI CPU admission failed (1)\n"
+        )
+        matched = fb.admission_timeouts([ci_win_6_job, *other_jobs], {132000491403: ci_win_6_log}.get)
+        assert [j["id"] for j in matched] == [132000491403]
+
+    def test_job_log_retries_until_the_log_archive_is_ready(self):
+        # A job that fails right before hosted-fallback starts can briefly return 404 or 503 while
+        # GitHub finalizes its log blob; permanent auth errors (401) fail without sleeping and log
+        # the HTTP status to stderr so redirect/token regressions are visible in the step log.
+        def http_error(code: int) -> urllib.error.HTTPError:
+            return urllib.error.HTTPError("https://example.invalid/logs", code, "err", {}, io.BytesIO(b""))
+
+        responses = iter([http_error(404), http_error(503), b"", (fb.ADMISSION_MARKER + "\n").encode("utf-8")])
+        sleeps = []
+
+        def flaky_request(method, path, body=None):
+            item = next(responses)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        with patch.object(fb, "_request", side_effect=flaky_request):
+            text = fb.job_log("o/r", 132000491403, attempts=4, delay=2.0, sleep=sleeps.append)
+        assert text == fb.ADMISSION_MARKER + "\n"
+        assert sleeps == [2.0, 4.0, 8.0]
+
+        sleeps.clear()
+        stderr = io.StringIO()
+        with patch.object(fb, "_request", side_effect=http_error(401)), patch.object(sys, "stderr", stderr):
+            assert fb.job_log("o/r", 132000491403, attempts=4, delay=2.0, sleep=sleeps.append) is None
+        assert sleeps == []
+        assert "132000491403 (HTTP 401)" in stderr.getvalue()
 
 
 if __name__ == "__main__":

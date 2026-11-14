@@ -1826,6 +1826,7 @@ fn extraction_binds_rows_to_the_recorded_game_and_drops_any_mismatch() {
                 },
                 checkpoint: None,
                 s_learner: None,
+                w_learner: None,
             })
         }),
     ];
@@ -2143,6 +2144,7 @@ fn world_v1(label: &str) -> WorldV1 {
         },
         checkpoint: None,
         s_learner: None,
+        w_learner: None,
     };
     let trajectories = collect_pins(
         &parent,
@@ -2920,6 +2922,7 @@ fn retention_run_config_v1(
         },
         checkpoint: None,
         s_learner: None,
+        w_learner: None,
     };
     // `real_episode` seats Spy at its seat argument.
     let scheduled = |id: &str, seed: u64, learner_seat: u8, spy_learner: bool| {

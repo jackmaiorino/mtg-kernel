@@ -1645,10 +1645,8 @@ mod tests {
 
     #[test]
     fn append_game_summary_jsonl_writes_one_line_per_call_and_round_trips() {
-        let dir = std::env::temp_dir().join(format!("game_summary_test_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = crate::test_temp_dir_v1::TempTestDir::new_v1("game_summary_test");
         let path = dir.join("summaries.jsonl");
-        let _ = std::fs::remove_file(&path);
 
         let mainboards = burn_and_rally();
         let deck_ids = ["Burn".to_owned(), "Rally".to_owned()];

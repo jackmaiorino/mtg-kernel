@@ -86,7 +86,7 @@ fn visit_source(
     visit: &mut impl FnMut(Kind, &mut PinnedFileV1) -> Result<(), String>,
 ) -> Result<(), String> {
     ensure(
-        source.s_learner.is_none(),
+        source.s_learner.is_none() && source.w_learner.is_none(),
         "portable chain requires an ordinary fresh model source",
     )?;
     visit(Kind::Import, &mut source.play_import)?;

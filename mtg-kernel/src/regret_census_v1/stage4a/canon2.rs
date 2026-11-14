@@ -802,6 +802,8 @@ pub(crate) struct KeyMemo {
     /// budget (`max_bytes / RAW_INDEX_SHARE`), so step storage and every
     /// recorded memo counter stay exactly as without it.
     raw_bytes: usize,
+    /// Reusable scratch buffer for `raw_frame_text_into` so hits never allocate.
+    raw_scratch: Vec<u8>,
     entries: Vec<MemoEntry>,
     nodes: u32,
     /// Estimated heap bytes of the stored steps, and their limit.
@@ -830,18 +832,19 @@ const RAW_INDEX_ENTRY_BYTES: usize = 96;
 const RAW_INDEX_SHARE: usize = 4;
 
 impl KeyMemo {
-    /// Records that raw frame `raw` (digest and text) at `node` resolves to
-    /// entry `e`, within the raw index's own budget. A digest already taken
-    /// keeps its first frame (a collision never replaces it).
-    fn remember_raw(&mut self, node: u32, raw: Option<([u8; 32], Vec<u8>)>, e: u32) {
-        let Some((raw, text)) = raw else { return };
-        let cost = RAW_INDEX_ENTRY_BYTES + text.len();
+    /// Records that raw frame `raw` (with its text in `self.raw_scratch`) at
+    /// `node` resolves to entry `e`, within the raw index's own budget. A
+    /// digest already taken keeps its first frame (a collision never replaces
+    /// it).
+    fn remember_raw(&mut self, node: u32, raw: Option<[u8; 32]>, e: u32) {
+        let Some(raw) = raw else { return };
+        let cost = RAW_INDEX_ENTRY_BYTES + self.raw_scratch.len();
         if self.raw_bytes + cost > self.max_bytes / RAW_INDEX_SHARE {
             return;
         }
         use std::collections::hash_map::Entry;
         if let Entry::Vacant(slot) = self.raw_index.entry((node, raw)) {
-            slot.insert((e, text.into_boxed_slice()));
+            slot.insert((e, self.raw_scratch.as_slice().into()));
             self.raw_bytes += cost;
         }
     }
@@ -918,19 +921,21 @@ impl KeyMemo {
 /// can print alike yet widen to different values; never mix types at one
 /// memo.) So frames with equal raw text prepare to equal views and menus.
 /// The raw index buckets by this text's SHA-256 and compares the text itself.
-fn raw_frame_text<O: serde::Serialize, M: serde::Serialize>(
+fn raw_frame_text_into<O: serde::Serialize, M: serde::Serialize>(
     obs: &O,
     menu: &[M],
-) -> Result<Vec<u8>, PlayErr> {
+    text: &mut Vec<u8>,
+) -> Result<(), PlayErr> {
     let fault = |e: serde_json::Error| PlayErr::Fault(e.to_string());
-    let mut text = b"key-memo-raw-v1".to_vec();
-    serde_json::to_writer(&mut text, obs).map_err(fault)?;
+    text.clear();
+    text.extend_from_slice(b"key-memo-raw-v1");
+    serde_json::to_writer(&mut *text, obs).map_err(fault)?;
     text.extend_from_slice(&(menu.len() as u64).to_le_bytes());
     for m in menu {
         text.push(b'\n');
-        serde_json::to_writer(&mut text, m).map_err(fault)?;
+        serde_json::to_writer(&mut *text, m).map_err(fault)?;
     }
-    Ok(text)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1155,10 +1160,10 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
             return self.key_raw(raw_obs, raw_menu.map_err(fault)?);
         };
         let t0 = Instant::now();
-        let text = raw_frame_text(obs, sem)?;
-        let raw = memo_digest(Sha256::digest(&text).into());
+        raw_frame_text_into(obs, sem, &mut memo.raw_scratch)?;
+        let raw = memo_digest(Sha256::digest(&memo.raw_scratch).into());
         if let Some((e, stored)) = memo.raw_index.get(&(node, raw)) {
-            if **stored == *text {
+            if **stored == *memo.raw_scratch {
                 let e = *e;
                 return Ok(self.memo_hit(memo, e, t0));
             }
@@ -1168,14 +1173,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
             .iter()
             .map(serde_json::to_value)
             .collect::<Result<_, _>>();
-        self.key_raw_memo_at(
-            raw_obs,
-            raw_menu.map_err(fault)?,
-            memo,
-            node,
-            Some((raw, text)),
-            t0,
-        )
+        self.key_raw_memo_at(raw_obs, raw_menu.map_err(fault)?, memo, node, Some(raw), t0)
     }
 
     /// A memo hit on entry `e`: replays its statistics increments and
@@ -1186,9 +1184,11 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
         let entry = &memo.entries[e as usize];
         self.stats.borrow_mut().merge(&entry.delta);
         let mut st = entry.step.clone();
-        // A fresh view over the entry's text: parsing it later never grows
-        // the entry.
-        st.view = Arc::new(entry.step.view.compact());
+        if self.mode != KeyMode::Legacy {
+            // A fresh view over the entry's text: parsing it later never grows
+            // the entry.
+            st.view = Arc::new(entry.step.view.compact());
+        }
         st.memo_entry = Some(e);
         self.stats.borrow_mut().seconds += t0.elapsed().as_secs_f64();
         st
@@ -1210,7 +1210,8 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
     }
 
     /// `key_raw_memo` at memo node `node`; `raw`, when given, is the frame's
-    /// raw digest and text, recorded for the entry this frame resolves to.
+    /// raw digest (with its text in `memo.raw_scratch`), recorded for the entry
+    /// this frame resolves to.
     /// A stored entry answers only when its prepared view and menu equal
     /// this frame's in full; a frame whose digest is taken by a different
     /// frame is keyed afresh and not stored.
@@ -1220,7 +1221,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
         raw_menu: Vec<Value>,
         memo: &mut KeyMemo,
         node: u32,
-        raw: Option<([u8; 32], Vec<u8>)>,
+        raw: Option<[u8; 32]>,
         t0: Instant,
     ) -> Result<Step, PlayErr> {
         let (obs, menu) = prepare(raw_obs, raw_menu);
@@ -1386,6 +1387,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                 }
             }
         } else {
+            static EMPTY_CACHE: std::sync::OnceLock<Arc<FrameCache>> = std::sync::OnceLock::new();
             Step {
                 legacy_key,
                 repaired_key: legacy_key,
@@ -1395,7 +1397,7 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
                 resolved: Vec::new(),
                 orbits,
                 memo_entry: None,
-                cache: Arc::default(),
+                cache: Arc::clone(EMPTY_CACHE.get_or_init(Arc::default)),
             }
         };
         self.stats.borrow_mut().frames += 1;
@@ -1405,18 +1407,24 @@ impl<S: std::borrow::BorrowMut<KeyStats>> Keyer<S> {
 
     /// Storage (key, parent key, parent edge, canonical view) of a step.
     pub(crate) fn storage<'a>(&self, st: &'a Step) -> (Key, Key, Vec<u8>, &'a Canon) {
+        let (k, pk, pe, cn) = self.storage_arc(st);
+        (k, pk, pe, &**cn)
+    }
+
+    /// Storage (key, parent key, parent edge, shared canonical view) of a step.
+    pub(crate) fn storage_arc<'a>(&self, st: &'a Step) -> (Key, Key, Vec<u8>, &'a Arc<Canon>) {
         match self.mode {
             KeyMode::Legacy | KeyMode::Shadow => (
                 st.legacy_key,
                 self.legacy.0,
                 self.legacy.1.clone(),
-                &*st.legacy,
+                &st.legacy,
             ),
             KeyMode::Repaired => (
                 st.repaired_key,
                 self.repaired.0,
                 self.repaired.1.clone(),
-                &*st.repaired,
+                &st.repaired,
             ),
         }
     }

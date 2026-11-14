@@ -24,8 +24,8 @@ NAME = "search-sharing-allocation-20261013-test"
 
 
 def pod(pid="A", **changes):
-    return {"id": pid, "name": NAME, "costPerHr": 0.96, "cpuFlavorId": "cpu3c", "vcpuCount": 32,
-            "desiredStatus": "RUNNING", **changes}
+    return {"id": pid, "name": NAME, "cost": 0.96, "cpu": {"id": "cpu3c", "vcpuCount": 32, "memory": 64},
+            "status": "RUNNING", **changes}
 
 
 def funds_ok(key):
@@ -229,7 +229,8 @@ class CreateTests(Base):
         self.assertFalse((root / 'lease/create-attempt.json').exists())
 
     def test_malformed_or_above_ceiling_price_at_create_deletes(self):
-        for returned in (pod(costPerHr="n/a"), pod(costPerHr=None), pod(adjustedCostPerHr=1.5), pod(vcpuCount=64)):
+        for returned in (pod(cost="n/a"), pod(cost=None), pod(cost=1.5),
+                         pod(cpu={"id": "cpu3c", "vcpuCount": 64, "memory": 128})):
             with self.subTest(returned=returned):
                 root = self.control(); world = World()
 
@@ -298,10 +299,12 @@ class GuardianTests(Base):
             calls.append(command)
             return subprocess.CompletedProcess(command, 0, stdout="STARTED\n", stderr="")
         probe = lease.pod_marker_probe(root, run=ssh)
-        published = {"publicIp": "192.0.2.1", "portMappings": {"22": 40022}}
+        published = {"status": "RUNNING", "ssh": {"proxy": None, "direct": {
+            "host": "192.0.2.1", "port": 40022, "username": "root", "command": "ssh root@192.0.2.1 -p 40022"}}}
         self.assertTrue(probe(published))
         self.assertIn("/run/phase1/" + NAME + "/progress.json", calls[0][-1])
-        self.assertFalse(probe({"publicIp": None, "portMappings": {}}))
+        self.assertFalse(probe({"status": "RUNNING", "ssh": {"proxy": None, "direct": None}}))
+        self.assertFalse(probe(dict(published, status="EXITED")))
 
         def broken(command, **kw):
             raise OSError("ssh unavailable")
@@ -467,7 +470,7 @@ class ReviewR1CreateTests(Base):
             return world.list(key)
 
         def poster(body):
-            world.pods["A"] = pod("A", costPerHr=9.0); return pod("A", costPerHr=9.0)
+            world.pods["A"] = pod("A", cost=9.0); return pod("A", cost=9.0)
         with patch.object(lease, "write", write):
             with self.assertRaisesRegex(ValueError, "price or allocation invalid"):
                 lease.create(root, True, key="k", pods=census, poster=poster, funds=funds_ok,
@@ -518,7 +521,7 @@ class InvariantTests(Base):
         root = self.control(); world = World(); world.delete_failures = -1
 
         def poster(body):
-            world.pods["A"] = pod("A", costPerHr=9.0); return pod("A", costPerHr=9.0)
+            world.pods["A"] = pod("A", cost=9.0); return pod("A", cost=9.0)
         with patch.object(lease, "write", write):
             with self.assertRaisesRegex(ValueError, "price or allocation invalid"):
                 self.create(root, world, poster)
