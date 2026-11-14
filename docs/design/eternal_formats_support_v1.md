@@ -570,7 +570,7 @@ New, each built once in the first wave that needs it:
   Top's move, Veil's protection and remaining Ring or Dragon Engine attempts,
   with or without a replacement choice. The Jewel
   combat continuation binds draw progress to the original trigger and transfers
-  only its original battlefield incarnation after the third attempt. Outcome
+  only its original battlefield incarnation after the last attempt. Outcome
   returns its legal targets in one batch and derives draw progress from actual
   original-incarnation arrivals into the spell controller's hand. Both progress
   checks validate continuation consistency. Plunder and Twinned Vision retain
@@ -675,9 +675,19 @@ New, each built once in the first wave that needs it:
   dynamic draw instructions. Named draws and top-level fixed draw instructions
   from physical spells or printed triggers retain the adjusted count across
   replacement choices using native start and completion receipts.
-  Nested or dynamic suspended draws, copies, the Coveted Jewel and Paradoxical
-  Outcome owners, and turn-based draws with replacement choices still need
-  count ownership. The selected Flame, Curie and Riddler cases passed at
+  Coveted Jewel's entry uses the printed fixed-root owner. Its combat trigger
+  and physical Paradoxical Outcome now retain one adjusted count per
+  instruction with the common start and completion receipts. Outcome checks
+  the native return batch before validating the adjustment. A terminal Jace
+  win stops the remaining attempts and skips Jewel's transfer. Earlier saved
+  continuations keep their prior format. Both-seat paid fixtures cover
+  Dredge, Hullbreacher, Jace, restore and tampering. Native qualification is
+  pending. Wizards' Edge of Eternities release notes specify that Riddler
+  adjusts the whole instruction before individual draw replacements
+  (https://magic.wizards.com/en/news/feature/edge-of-eternities-release-notes).
+  Nested or dynamic suspended draws, copies, and turn-based draws with
+  replacement choices still need count ownership. The selected Flame,
+  Curie and Riddler cases passed at
   `4d8cd0bb9`; those passes do not cover the remaining draw owners.
 - S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before

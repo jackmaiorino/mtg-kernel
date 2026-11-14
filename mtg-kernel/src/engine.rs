@@ -20871,7 +20871,12 @@ fn execute_resolving_program(
         && inspiration_owner.is_none()
         && hunter_owner.is_none()
         && native_row.is_none()
-        && crate::eternal_vintage_e7b_v1::dredge::forces_resumable(state, program, ctx);
+        && crate::eternal_vintage_e7b_v1::dredge::forces_resumable(
+            state,
+            program,
+            ctx,
+            item.is_copy,
+        );
     if crystal_owner.is_none() && !effect::contains_player_choice(program) && !dredge {
         if let Some(owner) = native_row {
             if effect::execute_owned_native_row_v1(state, item, ctx, program, owner).is_err() {
