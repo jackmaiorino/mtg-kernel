@@ -337,6 +337,51 @@ now reads in place, the digest memo's held copy (item 2), which is milestone
 4's, and the restore's copies into the policy and the loaded-source cache
 (item 9), which are T1's.
 
+### After milestone 4 (borrowed v2 decode and live-state digest reuse)
+
+Milestone 4 removes the v2 container decoder's `u32` section copy (item 8) and
+memoizes `state_sha256` on the live train states (`NativePolicyValueTrainStateDimsV1`
+and `STrainStateV1`), removing the process digest memo's held copy from live
+state and borrowed-tensor digests (item 2), without changing either format's
+bytes, any digest, or any refusal:
+
+- The parse (ordinary item 8): `decode_borrowed_v1` and
+  `parse_record_borrowed_v1` run the same `check_structure_v1` check as
+  `decode_v1`, then return `ExpandedCheckpointV1<BorrowedParameterBitsV1>`. On
+  a little-endian target when the container slice is 4-byte aligned (every
+  `Vec<u8>` record buffer, since `data_start` and every section offset are
+  multiples of 256), each tensor's `Cow<'_, [u32]>` borrows the container's
+  section bytes in place with zero heap allocation; unaligned slices fall back
+  to `Cow::Owned`. All checkpoint validation, restore, snapshot-cut and
+  v2-to-v1 export callers read through `BorrowedParameterBitsV1` so the
+  14.8 MB `Vec<u32>` section copy is gone from both `readback_load` and
+  `probe_decode`.
+- `digest` and `readback_digest` (ordinary items 2, 9 and 10):
+  `NativePolicyValueTrainStateDimsV1` encapsulates its fields and carries a
+  `MemoizedDigestV1<[u8; 32]>` (`OnceLock<[u8; 32]>`, preserved across `Clone`
+  and ignored by `Debug`), cleared by every mutating method. Both
+  `NativePolicyValueTrainStateDimsV1::state_sha256_dims_v1` and
+  `TrainTensorsV1::state_sha256_v1` hash directly without populating
+  `state_digest_memo_v1`, removing the 14.8 MB memo entry from `digest`.
+  `restore_checkpoint_fields_v1` verifies `TrainTensorsV1::state_sha256_v1`
+  against `saved.state_sha256` and records that verified digest on the
+  restored live state, so `readback_digest` and subsequent read-only queries
+  on the untouched state (including `loaded_source_cache_v1` clones) return
+  the verified digest in place without re-walking or re-hashing the tensors.
+  In `ordinary`, `measure_ordinary_stages_v1` clears the live state's cached
+  digest untimed before each timed repetition alongside `evictor.evict_v1()`,
+  so every `digest` repetition measures a cold post-step state hash.
+- S `encode`, `readback_digest` and `readback_digest_again`: `STrainStateV1`
+  encapsulates its fields and carries a `MemoizedDigestV1<String>`, cleared on
+  both the in-place and rollback-safe paths of `adam_step_with_gradient_v1`.
+  After an S update computes `after_state_sha256`, `encode_checkpoint_v1`
+  reuses the memoized digest instead of hashing a second time, and after
+  `decode_checkpoint_v1` verifies the container's `state_sha256` once,
+  `readback_digest` and `readback_digest_again` reuse it without re-hashing.
+
+What remains: the restore's copies into the policy and the loaded-source cache
+(item 9), and S's `readback_model_clone`, which belong to T1.
+
 ## A-B-B-A
 
 Build the baseline and candidate binaries from their exact commits with one

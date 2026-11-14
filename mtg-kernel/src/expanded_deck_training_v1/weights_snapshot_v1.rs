@@ -26,7 +26,9 @@
 //! binds the lineage: initial state, shell and features). Any other input
 //! kind is refused as before.
 
-use super::checkpoint_container_v1::{decode_v1, encode_v1, is_container_v1, parse_checkpoint_v1};
+use super::checkpoint_container_v1::{
+    decode_borrowed_v1, decode_v1, encode_v1, is_container_v1, parse_record_borrowed_v1,
+};
 use super::*;
 use crate::native_policy_train_step_v1::NativePolicyValueTrainSnapshotV1;
 use crate::s_transformer_v1::{
@@ -37,7 +39,7 @@ use s_learner_v1::{SLearnerCheckpointV1, S_LEARNER_CHECKPOINT_SCHEMA_V1, S_LEARN
 
 pub const WEIGHTS_SNAPSHOT_SCHEMA_PREFIX_V1: &str = "w5-weights-snapshot/v1:";
 
-fn parameters_sha256_v1(parameters: &[ParameterBitsV1]) -> Result<String, String> {
+fn parameters_sha256_v1<T: Serialize>(parameters: &[T]) -> Result<String, String> {
     Ok(hex(&Sha256::digest(
         serde_json::to_vec(parameters).map_err(err)?,
     )))
@@ -56,7 +58,7 @@ pub fn weights_snapshot_v1(input: &PinnedFileV1, output: &Path) -> Result<Value,
     if is_s_record_v1(&bytes) {
         return s_weights_snapshot_v1(input, &bytes, output);
     }
-    let mut saved = parse_checkpoint_v1(&bytes)?;
+    let mut saved = parse_record_borrowed_v1(&bytes)?;
     ensure(
         !saved.schema.starts_with(WEIGHTS_SNAPSHOT_SCHEMA_PREFIX_V1),
         "the input is already a weights snapshot",
@@ -72,7 +74,7 @@ pub fn weights_snapshot_v1(input: &PinnedFileV1, output: &Path) -> Result<Value,
     saved.second_moments.clear();
     saved.schema = format!("{WEIGHTS_SNAPSHOT_SCHEMA_PREFIX_V1}{}", saved.schema);
     let encoded = encode_v1(&saved)?;
-    let back = decode_v1(&encoded)?;
+    let back = decode_borrowed_v1(&encoded)?;
     ensure(
         parameters_sha256_v1(&back.parameters)? == parameters_sha256
             && back.first_moments.is_empty()
