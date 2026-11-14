@@ -10,7 +10,7 @@ fn fixture_v1() -> ExpandedCheckpointV1 {
     saved
 }
 
-fn json_v1(saved: &ExpandedCheckpointV1) -> Vec<u8> {
+fn json_v1<T: Serialize>(saved: &ExpandedCheckpointV1<T>) -> Vec<u8> {
     serde_json::to_vec(saved).unwrap()
 }
 
@@ -412,14 +412,28 @@ fn decode_with_copy_v1(bytes: &[u8]) -> Result<ExpandedCheckpointV1, String> {
     Ok(saved)
 }
 
-/// Asserts that `decode_v1` and the re-encoding reference give `bytes` the
-/// same outcome: the same checkpoint, or the same refusal.
+/// Asserts that `decode_v1`, `decode_borrowed_v1` (both aligned and
+/// unaligned), and the re-encoding reference give `bytes` the same outcome:
+/// the same checkpoint, or the same refusal.
 fn assert_same_outcome_v1(bytes: &[u8], what: &str) -> bool {
     let got = decode_v1(bytes).map(|saved| json_v1(&saved));
     assert_eq!(
         got,
         decode_with_copy_v1(bytes).map(|saved| json_v1(&saved)),
         "{what}"
+    );
+    assert_eq!(
+        decode_borrowed_v1(bytes).map(|saved| json_v1(&saved)),
+        got,
+        "{what} (borrowed)"
+    );
+    let mut shifted = Vec::with_capacity(bytes.len() + 1);
+    shifted.push(0xaa);
+    shifted.extend_from_slice(bytes);
+    assert_eq!(
+        decode_borrowed_v1(&shifted[1..]).map(|saved| json_v1(&saved)),
+        got,
+        "{what} (unaligned borrowed)"
     );
     got.is_ok()
 }
@@ -820,4 +834,87 @@ fn tensors_compare_by_name_shape_and_bits_in_place() {
     tensor.values[5000] = f32::from_bits(tensor.values[5000].to_bits() ^ 0x8000_0000);
     assert!(same_tensors_v1(&native_v1(&large), &large));
     assert!(!same_tensors_v1(&changed, &large));
+}
+
+#[test]
+fn borrowed_decode_borrows_aligned_sections_and_copies_unaligned_slices() {
+    let owned = fixture_v1();
+    let expected_json = json_v1(&owned);
+    let container = encode_v1(&owned).unwrap();
+    assert_eq!((container.as_ptr() as usize) % 4, 0);
+    let range = container.as_ptr_range();
+
+    let borrowed = decode_borrowed_v1(&container).unwrap();
+    assert_eq!(json_v1(&borrowed), expected_json);
+    assert_eq!(encode_v1(&borrowed).unwrap(), container);
+    assert_eq!(export_v1(&container).unwrap(), expected_json);
+    assert!(same_tensors_v1(&borrowed.parameters, &owned.parameters));
+    assert!(same_tensors_v1(
+        &borrowed.first_moments,
+        &owned.first_moments
+    ));
+    assert!(same_tensors_v1(
+        &borrowed.second_moments,
+        &owned.second_moments
+    ));
+
+    if cfg!(target_endian = "little") {
+        for section in [
+            &borrowed.parameters,
+            &borrowed.first_moments,
+            &borrowed.second_moments,
+        ] {
+            for tensor in section {
+                assert!(
+                    tensor.is_borrowed_v1(),
+                    "aligned tensor {} should borrow from the container slice",
+                    tensor.name
+                );
+                if !tensor.values.is_empty() {
+                    let start = tensor.values.as_ptr() as *const u8;
+                    let end = start.wrapping_add(tensor.values.len() * 4);
+                    assert!(
+                        range.start <= start && end <= range.end,
+                        "borrowed tensor {} must point inside the container buffer",
+                        tensor.name
+                    );
+                }
+            }
+        }
+    }
+
+    // Check every byte alignment offset 0..4, plus parse_record_borrowed_v1 on
+    // both v2 containers and v1 JSON records.
+    let mut padded = vec![0x5a_u8; container.len() + 8];
+    for shift in 0..4 {
+        let slice = &mut padded[shift..shift + container.len()];
+        slice.copy_from_slice(&container);
+        let aligned = (slice.as_ptr() as usize).is_multiple_of(4);
+        let decoded = decode_borrowed_v1(slice).unwrap();
+        assert_eq!(json_v1(&decoded), expected_json);
+        for tensor in decoded
+            .parameters
+            .iter()
+            .chain(&decoded.first_moments)
+            .chain(&decoded.second_moments)
+            .filter(|tensor| !tensor.values.is_empty())
+        {
+            assert_eq!(
+                tensor.is_borrowed_v1(),
+                cfg!(target_endian = "little") && aligned,
+                "shift {shift} aligned={aligned} tensor {}",
+                tensor.name
+            );
+        }
+        let from_record = parse_record_borrowed_v1(slice).unwrap();
+        assert_eq!(json_v1(&from_record), expected_json);
+    }
+
+    let from_v1 = parse_record_borrowed_v1(&expected_json).unwrap();
+    assert_eq!(json_v1(&from_v1), expected_json);
+    assert!(from_v1
+        .parameters
+        .iter()
+        .filter(|tensor| !tensor.values.is_empty())
+        .all(|tensor| !tensor.is_borrowed_v1()));
 }

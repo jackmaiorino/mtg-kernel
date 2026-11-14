@@ -2507,14 +2507,144 @@ impl SModelV1 {
     }
 }
 
-/// S with its Adam state: the learner's whole train state.
-#[derive(Clone, Debug, PartialEq)]
-pub struct STrainStateV1 {
-    model: SModelV1,
-    first: Vec<f32>,
-    second: Vec<f32>,
-    adam_step: u64,
+#[cfg(test)]
+thread_local! {
+    static S_STATE_HASH_COMPUTE_COUNT_V1: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
+
+#[cfg(test)]
+pub(crate) fn reset_s_state_hash_compute_count_for_test_v1() {
+    S_STATE_HASH_COMPUTE_COUNT_V1.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+pub(crate) fn s_state_hash_compute_count_for_test_v1() -> u64 {
+    S_STATE_HASH_COMPUTE_COUNT_V1.with(std::cell::Cell::get)
+}
+
+mod live_s_train_state_v1 {
+    use super::SModelV1;
+    use crate::native_policy_train_step_v1::MemoizedDigestV1;
+
+    /// S with its Adam state: the learner's whole train state, carrying a
+    /// memoized `state_sha256` cleared on every state mutation.
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct STrainStateV1 {
+        model: SModelV1,
+        first: Vec<f32>,
+        second: Vec<f32>,
+        adam_step: u64,
+        cached_state_sha256: MemoizedDigestV1<String>,
+    }
+
+    impl STrainStateV1 {
+        pub(super) fn from_validated_parts_v1(
+            model: SModelV1,
+            first: Vec<f32>,
+            second: Vec<f32>,
+            adam_step: u64,
+        ) -> Self {
+            Self {
+                model,
+                first,
+                second,
+                adam_step,
+                cached_state_sha256: MemoizedDigestV1::new_v1(),
+            }
+        }
+
+        pub fn model_v1(&self) -> &SModelV1 {
+            &self.model
+        }
+
+        pub(super) fn into_model_v1(self) -> SModelV1 {
+            self.model
+        }
+
+        pub fn adam_step_v1(&self) -> u64 {
+            self.adam_step
+        }
+
+        pub fn first_moments_v1(&self) -> &[f32] {
+            &self.first
+        }
+
+        pub fn second_moments_v1(&self) -> &[f32] {
+            &self.second
+        }
+
+        pub(super) fn commit_adam_step_v1(
+            &mut self,
+            values: Vec<f32>,
+            first: Vec<f32>,
+            second: Vec<f32>,
+        ) {
+            self.cached_state_sha256.clear_v1();
+            self.model.values = values;
+            self.model.rebuild_transposed_v1();
+            self.first = first;
+            self.second = second;
+            self.adam_step += 1;
+        }
+
+        pub(super) fn try_in_place_adam_step_v1(
+            &mut self,
+            grad: &[f32],
+            learning_rate: f32,
+            step_num: u64,
+            exponent: i32,
+        ) -> bool {
+            // When every input has moderate magnitude, no element can overflow or
+            // produce NaN, so we can update parameters and moments in place without
+            // cloning four 460k-float vectors; extreme values fall back to the
+            // rollback-safe copy path.
+            if !(learning_rate < 1.0e10
+                && grad.iter().all(|g| g.abs() < 1.0e18)
+                && self.model.values.iter().all(|v| v.abs() < 1.0e30)
+                && self.first.iter().all(|m| m.abs() < 1.0e18)
+                && self.second.iter().all(|v| *v >= 0.0 && *v < 1.0e36))
+            {
+                return false;
+            }
+            self.cached_state_sha256.clear_v1();
+            let math = super::TrainingMathV1::PortableV1;
+            let bias_correction1 =
+                1.0f64 - math.powi_f64_v1(f64::from(super::ADAM_BETA1_V1), exponent);
+            let bias_correction2 =
+                1.0f64 - math.powi_f64_v1(f64::from(super::ADAM_BETA2_V1), exponent);
+            let step_size = (f64::from(learning_rate) / bias_correction1) as f32;
+            let bias_correction2_sqrt = bias_correction2.sqrt() as f32;
+            for index in 0..grad.len() {
+                let gradient = grad[index];
+                let previous_first = self.first[index];
+                let previous_second = self.second[index];
+                if gradient.to_bits() == 0
+                    && previous_first.to_bits() == 0
+                    && previous_second.to_bits() == 0
+                {
+                    continue;
+                }
+                let m = previous_first + (gradient - previous_first) * (1.0 - super::ADAM_BETA1_V1);
+                let v = previous_second * super::ADAM_BETA2_V1
+                    + gradient * gradient * (1.0 - super::ADAM_BETA2_V1);
+                let denominator = v.sqrt() / bias_correction2_sqrt + super::ADAM_EPSILON_V1;
+                let delta = (-step_size) * m / denominator;
+                self.first[index] = m;
+                self.second[index] = v;
+                self.model.values[index] += delta;
+            }
+            self.model.rebuild_transposed_v1();
+            self.adam_step = step_num;
+            true
+        }
+
+        pub(super) fn get_or_init_state_sha256_v1(&self, f: impl FnOnce() -> String) -> &str {
+            self.cached_state_sha256.get_or_init_v1(f).as_str()
+        }
+    }
+}
+
+pub use live_s_train_state_v1::STrainStateV1;
 
 /// One Adam step, computed but not applied.
 #[derive(Clone, Debug, PartialEq)]
@@ -2532,18 +2662,44 @@ pub struct SStepV1 {
     pub after_state_sha256: String,
 }
 
+fn compute_s_state_sha256_v1(state: &STrainStateV1) -> String {
+    let model = state.model_v1();
+    let mut hasher = Sha256::new();
+    hasher.update(S_TRAIN_STATE_SCHEMA_V1.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(
+        serde_json::to_string(&model.layout.config)
+            .expect("config serializes")
+            .as_bytes(),
+    );
+    hasher.update(b"\n");
+    hasher.update(state.adam_step_v1().to_le_bytes());
+    for (section, data) in [
+        ("parameters", model.values_v1()),
+        ("first_moments", state.first_moments_v1()),
+        ("second_moments", state.second_moments_v1()),
+    ] {
+        hasher.update(section.as_bytes());
+        hasher.update([0u8]);
+        for spec in &model.layout.tensors {
+            hasher.update(spec.name.as_bytes());
+            hasher.update([0u8]);
+            for dim in &spec.shape {
+                hasher.update((*dim as u64).to_le_bytes());
+            }
+            hash_f32_le_slice_v1(&mut hasher, &data[spec.offset..spec.offset + spec.len]);
+        }
+    }
+    hex_v1(&hasher.finalize())
+}
+
 impl STrainStateV1 {
     /// A fresh optimizer state for `model`: zero first and second moments
     /// and step 0 (W5 ruling 6, XS's switch to native RL). The first update
     /// then applies the ordinary bias corrections from step 1.
     pub fn fresh_optimizer_v1(model: SModelV1) -> Self {
         let total = model.layout.total;
-        Self {
-            model,
-            first: vec![0.0; total],
-            second: vec![0.0; total],
-            adam_step: 0,
-        }
+        Self::from_validated_parts_v1(model, vec![0.0; total], vec![0.0; total], 0)
     }
 
     pub(crate) fn from_parts_v1(
@@ -2571,28 +2727,9 @@ impl STrainStateV1 {
             }
         }
         i32::try_from(adam_step).map_err(|_| "S Adam step overflows".to_owned())?;
-        Ok(Self {
-            model,
-            first,
-            second,
-            adam_step,
-        })
-    }
-
-    pub fn model_v1(&self) -> &SModelV1 {
-        &self.model
-    }
-
-    pub fn adam_step_v1(&self) -> u64 {
-        self.adam_step
-    }
-
-    pub fn first_moments_v1(&self) -> &[f32] {
-        &self.first
-    }
-
-    pub fn second_moments_v1(&self) -> &[f32] {
-        &self.second
+        Ok(Self::from_validated_parts_v1(
+            model, first, second, adam_step,
+        ))
     }
 
     /// One RT1 update: the GAE loss's gradient and one Adam step (betas 0.9
@@ -2620,12 +2757,12 @@ impl STrainStateV1 {
     ) -> Result<SStepV1, String> {
         crate::expanded_deck_training_v1::validate_preparation_workers_v1(workers)?;
         let gradient = profile::span_v1(StageV1::Gradient);
-        let mut grad = vec![0.0f32; self.model.layout.total];
+        let mut grad = vec![0.0f32; self.model_v1().layout.total];
         let loss = if workers == 1 {
-            self.model
+            self.model_v1()
                 .gae_loss_gradient_v1(groups, value_coefficient, &mut grad, work)?
         } else {
-            self.model.gae_loss_gradient_parallel_v1(
+            self.model_v1().gae_loss_gradient_parallel_v1(
                 groups,
                 value_coefficient,
                 &mut grad,
@@ -2640,7 +2777,7 @@ impl STrainStateV1 {
         let _hash = profile::span_v1(StageV1::StateHash);
         Ok(SStepV1 {
             loss,
-            adam_step: self.adam_step,
+            adam_step: self.adam_step_v1(),
             after_state_sha256: self.state_sha256_v1(),
         })
     }
@@ -2652,64 +2789,31 @@ impl STrainStateV1 {
         learning_rate: f32,
     ) -> Result<(), String> {
         ensure_mxcsr_v1()?;
-        if grad.len() != self.model.layout.total {
+        if grad.len() != self.model_v1().layout.total {
             return Err("S gradient has the wrong length".into());
         }
         if !learning_rate.is_finite() || learning_rate <= 0.0 {
             return Err("S learning rate must be positive".into());
         }
-        for range in self.model.layout.gauge_ranges_v1() {
+        for range in self.model_v1().layout.gauge_ranges_v1() {
             if grad[range].iter().any(|g| g.to_bits() != 0) {
                 return Err("S gauge gradient must be +0".into());
             }
         }
-        let step_num = self.adam_step + 1;
+        let step_num = self.adam_step_v1() + 1;
         let exponent = i32::try_from(step_num).map_err(|_| "S Adam step overflows".to_owned())?;
-        // When every input has moderate magnitude, no element can overflow or
-        // produce NaN, so we can update parameters and moments in place without
-        // cloning four 460k-float vectors; extreme values fall back to the
-        // rollback-safe copy path.
-        if learning_rate < 1.0e10
-            && grad.iter().all(|g| g.abs() < 1.0e18)
-            && self.model.values.iter().all(|v| v.abs() < 1.0e30)
-            && self.first.iter().all(|m| m.abs() < 1.0e18)
-            && self.second.iter().all(|v| *v >= 0.0 && *v < 1.0e36)
-        {
-            let math = TrainingMathV1::PortableV1;
-            let bias_correction1 = 1.0f64 - math.powi_f64_v1(f64::from(ADAM_BETA1_V1), exponent);
-            let bias_correction2 = 1.0f64 - math.powi_f64_v1(f64::from(ADAM_BETA2_V1), exponent);
-            let step_size = (f64::from(learning_rate) / bias_correction1) as f32;
-            let bias_correction2_sqrt = bias_correction2.sqrt() as f32;
-            for index in 0..grad.len() {
-                let gradient = grad[index];
-                let previous_first = self.first[index];
-                let previous_second = self.second[index];
-                if gradient.to_bits() == 0
-                    && previous_first.to_bits() == 0
-                    && previous_second.to_bits() == 0
-                {
-                    continue;
-                }
-                let m = previous_first + (gradient - previous_first) * (1.0 - ADAM_BETA1_V1);
-                let v =
-                    previous_second * ADAM_BETA2_V1 + gradient * gradient * (1.0 - ADAM_BETA2_V1);
-                let denominator = v.sqrt() / bias_correction2_sqrt + ADAM_EPSILON_V1;
-                let delta = (-step_size) * m / denominator;
-                self.first[index] = m;
-                self.second[index] = v;
-                self.model.values[index] += delta;
-            }
-            self.model.rebuild_transposed_v1();
-            self.adam_step = step_num;
+        if self.try_in_place_adam_step_v1(grad, learning_rate, step_num, exponent) {
             return Ok(());
         }
         let step = self.adam_update_v1(grad, learning_rate)?;
-        let mut values = self.model.values.clone();
+        let first = self.first_moments_v1();
+        let second = self.second_moments_v1();
+        let mut values = self.model_v1().values.clone();
         for index in 0..values.len() {
             // Exactly as the step skips it: an all-+0 element keeps its bits.
             if grad[index].to_bits() == 0
-                && self.first[index].to_bits() == 0
-                && self.second[index].to_bits() == 0
+                && first[index].to_bits() == 0
+                && second[index].to_bits() == 0
             {
                 continue;
             }
@@ -2719,11 +2823,7 @@ impl STrainStateV1 {
             }
             values[index] = parameter;
         }
-        self.model.values = values;
-        self.model.rebuild_transposed_v1();
-        self.first = step.first;
-        self.second = step.second;
-        self.adam_step += 1;
+        self.commit_adam_step_v1(values, step.first, step.second);
         Ok(())
     }
 
@@ -2737,26 +2837,27 @@ impl STrainStateV1 {
         learning_rate: f32,
     ) -> Result<SAdamUpdateV1, String> {
         ensure_mxcsr_v1()?;
-        if grad.len() != self.model.layout.total {
+        let model = self.model_v1();
+        if grad.len() != model.layout.total {
             return Err("S gradient has the wrong length".into());
         }
         if !learning_rate.is_finite() || learning_rate <= 0.0 {
             return Err("S learning rate must be positive".into());
         }
-        for range in self.model.layout.gauge_ranges_v1() {
+        for range in model.layout.gauge_ranges_v1() {
             if grad[range].iter().any(|g| g.to_bits() != 0) {
                 return Err("S gauge gradient must be +0".into());
             }
         }
         let math = TrainingMathV1::PortableV1;
-        let step = self.adam_step + 1;
+        let step = self.adam_step_v1() + 1;
         let exponent = i32::try_from(step).map_err(|_| "S Adam step overflows".to_owned())?;
         let bias_correction1 = 1.0f64 - math.powi_f64_v1(f64::from(ADAM_BETA1_V1), exponent);
         let bias_correction2 = 1.0f64 - math.powi_f64_v1(f64::from(ADAM_BETA2_V1), exponent);
         let step_size = (f64::from(learning_rate) / bias_correction1) as f32;
         let bias_correction2_sqrt = bias_correction2.sqrt() as f32;
-        let mut first = self.first.clone();
-        let mut second = self.second.clone();
+        let mut first = self.first_moments_v1().to_vec();
+        let mut second = self.second_moments_v1().to_vec();
         let mut update = vec![0.0f32; grad.len()];
         for index in 0..grad.len() {
             let gradient = grad[index];
@@ -2788,35 +2889,15 @@ impl STrainStateV1 {
 
     /// SHA-256 of the whole train state: the schema, the config, the Adam
     /// step and every tensor of the parameters, first moments and second
-    /// moments (name, shape, f32 bits) in layout order.
+    /// moments (name, shape, f32 bits) in layout order. Memoized on the live
+    /// state and cleared on every state mutation.
     pub fn state_sha256_v1(&self) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(S_TRAIN_STATE_SCHEMA_V1.as_bytes());
-        hasher.update(b"\n");
-        hasher.update(
-            serde_json::to_string(&self.model.layout.config)
-                .expect("config serializes")
-                .as_bytes(),
-        );
-        hasher.update(b"\n");
-        hasher.update(self.adam_step.to_le_bytes());
-        for (section, data) in [
-            ("parameters", &self.model.values),
-            ("first_moments", &self.first),
-            ("second_moments", &self.second),
-        ] {
-            hasher.update(section.as_bytes());
-            hasher.update([0u8]);
-            for spec in &self.model.layout.tensors {
-                hasher.update(spec.name.as_bytes());
-                hasher.update([0u8]);
-                for dim in &spec.shape {
-                    hasher.update((*dim as u64).to_le_bytes());
-                }
-                hash_f32_le_slice_v1(&mut hasher, &data[spec.offset..spec.offset + spec.len]);
-            }
-        }
-        hex_v1(&hasher.finalize())
+        self.get_or_init_state_sha256_v1(|| {
+            #[cfg(test)]
+            S_STATE_HASH_COMPUTE_COUNT_V1.with(|count| count.set(count.get() + 1));
+            compute_s_state_sha256_v1(self)
+        })
+        .to_owned()
     }
 
     /// XS's frozen starting-state hash (design 6.2): this state's hash plus

@@ -892,7 +892,11 @@ fn validate_paid(state: &GameState, paid: &PaidV1) -> Result<(), String> {
 
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     let mut ids = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state.engine.event_history.of_kinds_v2(&[
+        EventKindV1::RavenousPaymentV1,
+        EventKindV1::RavenousRemovedV1,
+        EventKindV1::RavenousCompletedV1,
+    ]) {
         match event {
             CommittedEvent::RavenousRemovedV1 { removed } => {
                 if removed.index != index as u64
@@ -931,8 +935,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let removals = state
             .engine
             .event_history
-            .iter()
-            .filter_map(|event| match event {
+            .of_kinds_v2(&[EventKindV1::RavenousRemovedV1])
+            .filter_map(|(_, event)| match event {
                 CommittedEvent::RavenousRemovedV1 { removed } if removed.paid == paid.index => {
                     Some(removed.as_ref())
                 }
@@ -946,8 +950,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 let completions = state
                     .engine
                     .event_history
-                    .iter()
-                    .filter_map(|event| match event {
+                    .of_kinds_v2(&[EventKindV1::RavenousCompletedV1])
+                    .filter_map(|(_, event)| match event {
                         CommittedEvent::RavenousCompletedV1 { completed }
                             if completed.removed == removed.index =>
                         {

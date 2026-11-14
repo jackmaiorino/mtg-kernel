@@ -409,3 +409,100 @@ fn completed_live_source_cannot_be_rewritten_to_absent_before_or_after_later_dep
         }
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn closed_cerberus_proof_rejects_live_state_tamper_after_cached_cursor() {
+    use crate::event_history_v1::{proof_tests_v1, ProvedV1};
+
+    let (mut open_state, source) = actual_trigger(PlayerId::P0);
+    let published_item = open_state.stack.last().unwrap().clone();
+    let capture_event = open_state
+        .engine
+        .event_history
+        .iter()
+        .find(|event| matches!(event, CommittedEvent::CerberusCaptureV1 { .. }))
+        .unwrap()
+        .clone();
+
+    resolve_actual(&mut open_state);
+    let mut state = open_state;
+    validate_state(&state).unwrap();
+    let initial_len = state.engine.event_history.len();
+    assert_eq!(
+        state
+            .engine
+            .event_history
+            .proof_memo_v1::<CerberusProofV1>(ProvedV1::CerberusCapture)
+            .map(|(covered, _)| covered),
+        Some(initial_len)
+    );
+
+    for _ in 0..70u32 {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::UpkeepBegan {
+                player: PlayerId::P0,
+            });
+    }
+    let uses_before = proof_tests_v1::uses();
+    validate_state(&state).unwrap();
+    assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+    assert_eq!(
+        state
+            .engine
+            .event_history
+            .proof_memo_v1::<CerberusProofV1>(ProvedV1::CerberusCapture)
+            .map(|(covered, _)| covered),
+        Some(state.engine.event_history.len())
+    );
+
+    // (a) Reintroduce completed trigger onto live stack.
+    let mut reintroduced_stack = state.clone();
+    reintroduced_stack.stack.push(published_item.clone());
+    let uses_before = proof_tests_v1::uses();
+    assert!(validate_state(&reintroduced_stack).is_err());
+    assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+
+    // (b) Inject pending Cerberus trigger into live pending_triggers.
+    let mut forged_pending = state.clone();
+    forged_pending
+        .engine
+        .pending_triggers
+        .push(crate::trigger::PendingTrigger {
+            source,
+            controller: PlayerId::P0,
+            source_contract: published_item.v4.ability_source_contract,
+            granted_by: None,
+            effect: published_item.inline_effect.clone().unwrap(),
+            is_madness_offer: false,
+            kicked: false,
+            target_spec: crate::card_def::TargetSpec::None,
+            targets: Vec::new(),
+            target_contracts: Vec::new(),
+            placement_ordered: false,
+            optional_additional_cost_paid: None,
+            paid_cost_refs: Vec::new(),
+        });
+    let uses_before = proof_tests_v1::uses();
+    assert!(validate_state(&forged_pending).is_err());
+    assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+
+    // (c) Inject Cerberus capture into live event_log.
+    let mut forged_log = state.clone();
+    forged_log.engine.event_log.push(capture_event);
+    let uses_before = proof_tests_v1::uses();
+    assert!(validate_state(&forged_log).is_err());
+    assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+
+    // (d) Corrupt historical source owner in live objects table.
+    let mut corrupted_source = state.clone();
+    corrupted_source.objects.get_mut(source).owner = PlayerId::P1;
+    let uses_before = proof_tests_v1::uses();
+    assert!(validate_state(&corrupted_source).is_err());
+    assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+}

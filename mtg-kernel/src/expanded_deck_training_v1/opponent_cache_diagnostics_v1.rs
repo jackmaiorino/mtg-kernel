@@ -96,7 +96,8 @@ pub(crate) enum WorkV1 {
     Read = 0,
     /// Hashing, or comparing with held bytes, in the verified-bytes memo.
     Verify = 1,
-    /// Decoding a checkpoint (`read_checkpoint_v1`), either format.
+    /// Decoding a checkpoint (`read_checkpoint_v1` or borrowed
+    /// `read_checkpoint_record_v1`), either format.
     Decode = 2,
 }
 
@@ -217,8 +218,9 @@ pub(crate) fn note_file_read_v1(bytes: usize, started: Instant) {
     add_thread_work_v1(WorkV1::Read, nanos);
 }
 
-/// Checkpoint decodes (`read_checkpoint_v1`, either format), over every
-/// caller: learner loads, validation and opponent loads alike.
+/// Checkpoint decodes (`read_checkpoint_v1` and borrowed
+/// `read_checkpoint_record_v1` decodes, either format), over every caller:
+/// learner loads, validation and opponent loads alike.
 #[derive(Default)]
 pub(crate) struct CheckpointDecodesV1 {
     pub(crate) decodes: CountV1,
@@ -226,15 +228,20 @@ pub(crate) struct CheckpointDecodesV1 {
     pub(crate) nanos: CountV1,
 }
 
-/// Records one checkpoint decode of `bytes` record bytes that began at
-/// `started`.
-pub(crate) fn note_checkpoint_decode_v1(bytes: usize, started: Instant) {
-    let nanos = nanos_since_v1(started);
+/// Records one checkpoint decode of `bytes` pinned checkpoint bytes taking
+/// `nanos` nanoseconds.
+pub(crate) fn note_checkpoint_decode_nanos_v1(bytes: usize, nanos: u64) {
     let decodes = &counters_v1().checkpoint_decodes;
     decodes.decodes.add(1);
     decodes.bytes.add_usize(bytes);
     decodes.nanos.add(nanos);
     add_thread_work_v1(WorkV1::Decode, nanos);
+}
+
+/// Records one checkpoint decode of `bytes` record bytes that began at
+/// `started`.
+pub(crate) fn note_checkpoint_decode_v1(bytes: usize, started: Instant) {
+    note_checkpoint_decode_nanos_v1(bytes, nanos_since_v1(started));
 }
 
 /// The process opponent cache (`ordered_update_preparation`).

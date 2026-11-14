@@ -14,6 +14,14 @@ fn binding(item: &StackItem) -> Option<u64> {
     item.inline_effect.as_ref().and_then(effect_capture)
 }
 
+pub(super) fn has_fake_binding(item: &StackItem) -> bool {
+    binding(item).is_some()
+}
+
+pub(super) fn has_fake_capture_effect(effect: &EffectOp) -> bool {
+    effect_capture(effect).is_some()
+}
+
 fn effect_capture(effect: &EffectOp) -> Option<u64> {
     match effect {
         EffectOp::FakeDeathFromCaptureV50 { capture } => Some(*capture),
@@ -82,16 +90,11 @@ fn canonical_item(item: &StackItem, source: AbilitySourceContractV4, capture: u6
 }
 
 fn collection_at(state: &GameState, capture: u64) -> Result<u64, String> {
-    let mut found = state
-        .engine
-        .event_history
-        .iter()
-        .enumerate()
-        .filter_map(|(index, event)| {
-            matches!(journal(event), Some(JournalV50::DeathCollected { capture: original, .. })
-            if *original == capture)
-            .then_some(index as u64)
-        });
+    let mut found = rows(state).filter_map(|(index, event)| {
+        matches!(journal(event), Some(JournalV50::DeathCollected { capture: original, .. })
+        if *original == capture)
+        .then_some(index as u64)
+    });
     let index = found
         .next()
         .ok_or("Fake trigger lost its original collection")?;
@@ -393,9 +396,25 @@ pub(crate) fn resolve_owned(
     if state.engine.halted.is_some() {
         return Err("Fake owned return halted".into());
     }
-    let returned = state.engine.event_history.iter().enumerate().skip(input as usize + 1)
-        .find_map(|(index, event)| matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Graveyard, to: Zone::Battlefield, .. }
-            if *object == item.source).then_some(index as u64));
+    let start = input as usize + 1;
+    let returned = state
+        .engine
+        .event_history
+        .range_v2(start..)
+        .iter()
+        .enumerate()
+        .find_map(|(offset, event)| {
+            matches!(
+                event,
+                CommittedEvent::ZoneChange {
+                    object,
+                    from: Zone::Graveyard,
+                    to: Zone::Battlefield,
+                    ..
+                } if *object == item.source
+            )
+            .then_some((start + offset) as u64)
+        });
     let replacement =
         crate::doubling_season_v48::ReplacementInputV48::capture(state, item.controller);
     let expected_count = replacement.replaced_token_count(1)?;
@@ -445,30 +464,33 @@ fn token_roster(
 ) -> Result<Vec<(u64, ObjectId)>, String> {
     let definition = super::treasure_definition()?;
     let mut roster = Vec::new();
-    for (index, event) in state
-        .engine
-        .event_history
-        .iter()
-        .enumerate()
-        .take(end)
-        .skip(start)
-    {
-        if let CommittedEvent::CreateToken {
-            object,
-            token_def,
-            controller: actual,
-            ..
-        } = event
+    let end = end.min(state.engine.event_history.len());
+    if start < end {
+        for (offset, event) in state
+            .engine
+            .event_history
+            .range_v2(start..end)
+            .iter()
+            .enumerate()
         {
-            if *token_def != definition
-                || *actual != controller
-                || roster.iter().any(|(_, old)| old == object)
+            let index = start + offset;
+            if let CommittedEvent::CreateToken {
+                object,
+                token_def,
+                controller: actual,
+                ..
+            } = event
             {
-                return Err(
-                    "Fake Treasure operation changed its complete issued token roster".into(),
-                );
+                if *token_def != definition
+                    || *actual != controller
+                    || roster.iter().any(|(_, old)| old == object)
+                {
+                    return Err(
+                        "Fake Treasure operation changed its complete issued token roster".into(),
+                    );
+                }
+                roster.push((index as u64, *object));
             }
-            roster.push((index as u64, *object));
         }
     }
     Ok(roster)
@@ -507,8 +529,14 @@ fn validate_pending_shape(
 /// and publication callbacks. Removal owners will later supply a closed state;
 /// until then every published gained trigger must retain its exact live row.
 pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> {
+    validate_retained_owners_with_closed(state).map(|_| ())
+}
+
+pub(super) fn validate_retained_owners_with_closed(
+    state: &GameState,
+) -> Result<Option<Vec<crate::ids::StackItemId>>, String> {
     super::return_aura::validate_history(state)?;
-    validate_mutable_capture_roster(state, &state.engine.event_log)?;
+    let uncollected = validate_mutable_capture_roster(state, &state.engine.event_log)?;
     for pending in held_triggers(state) {
         let Some(capture) = effect_capture(&pending.effect) else {
             continue;
@@ -527,6 +555,10 @@ pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> 
             return Err("Fake live gained trigger lost its complete original publication".into());
         }
     }
+    let mut any_open = !uncollected.is_empty()
+        || super::return_aura::pending(state).is_some()
+        || crate::linked_aura_operation_v1::locally_owned(state);
+    let mut closed_items = Vec::new();
     for event in row_events(state) {
         if let Some(JournalV50::DeathCollected { capture, .. }) = journal(event) {
             let pending = held_triggers(state)
@@ -543,7 +575,10 @@ pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> 
                 })
                 .collect::<Vec<_>>();
             match (pending.as_slice(), published.as_slice()) {
-                ([held], []) => validate_pending_shape(state, held, *capture)?,
+                ([held], []) => {
+                    any_open = true;
+                    validate_pending_shape(state, held, *capture)?;
+                }
                 ([], [(publication, original)]) => {
                     let rows = state
                         .stack
@@ -606,6 +641,11 @@ pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> 
                                 .into(),
                         );
                     }
+                    if (!disposed && departures == 0) || entry_borrowed_row {
+                        any_open = true;
+                    } else {
+                        closed_items.push(original.v4.stack_item_id);
+                    }
                 }
                 _ => {
                     return Err(
@@ -616,7 +656,7 @@ pub(crate) fn validate_retained_owners(state: &GameState) -> Result<(), String> 
             }
         }
     }
-    Ok(())
+    Ok((!any_open).then_some(closed_items))
 }
 
 /// The captures before `end` that no collection before `end` consumed, in
@@ -645,7 +685,14 @@ fn captures_before(state: &GameState, end: usize) -> Vec<u64> {
 /// Every original collection input consumes its complete earlier uncollected
 /// capture roster, contiguously and once. No erased mutable receipt can make an
 /// already collected gained ability available again.
+#[cfg(test)]
 pub(crate) fn validate_collection(state: &GameState) -> Result<(), String> {
+    validate_collection_with_seasons(state).map(|_| ())
+}
+
+pub(super) fn validate_collection_with_seasons(
+    state: &GameState,
+) -> Result<Vec<AbilitySourceContractV4>, String> {
     for (index, event) in rows(state) {
         match journal(event) {
             Some(JournalV50::CollectionInput { captures }) => {
@@ -808,7 +855,8 @@ fn resolution_completions(state: &GameState, input: u64) -> Vec<(usize, &Journal
 
 /// Metadata validation permits a synchronous in-flight input. Only the stable
 /// ingress validator above can admit a completed or replay-owned state.
-fn validate_resolution_history(state: &GameState) -> Result<(), String> {
+fn validate_resolution_history(state: &GameState) -> Result<Vec<AbilitySourceContractV4>, String> {
+    let mut season_sources = Vec::new();
     for (index, event) in rows(state) {
         match journal(event) {
             Some(JournalV50::DeathResolutionInput {
@@ -876,9 +924,30 @@ fn validate_resolution_history(state: &GameState) -> Result<(), String> {
                     };
                     let treasury = row_events(state).filter(|event|
                         matches!(journal(event), Some(JournalV50::DeathTreasureInput { resolution, .. }) if *resolution == index as u64)).count();
-                    let returns = state.engine.event_history.iter().enumerate().take(treasure_at).skip(index+1).filter_map(|(at, event)|
-                        matches!(event, CommittedEvent::ZoneChange { object, from: Zone::Graveyard, to: Zone::Battlefield, .. }
-                            if *object == item.source).then_some(at as u64)).collect::<Vec<_>>();
+                    let return_end = treasure_at.min(state.engine.event_history.len());
+                    let returns = if index + 1 < return_end {
+                        state
+                            .engine
+                            .event_history
+                            .range_v2(index + 1..return_end)
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(offset, event)| {
+                                matches!(
+                                    event,
+                                    CommittedEvent::ZoneChange {
+                                        object,
+                                        from: Zone::Graveyard,
+                                        to: Zone::Battlefield,
+                                        ..
+                                    } if *object == item.source
+                                )
+                                .then_some((index + 1 + offset) as u64)
+                            })
+                            .collect::<Vec<_>>()
+                    } else {
+                        Vec::new()
+                    };
                     if matches!(program.as_ref(), EffectOp::Sequence(steps) if steps.len() == 2)
                         && original_source.as_ref().is_some_and(|source| {
                             crate::card_def::CARD_DEFS
@@ -918,6 +987,9 @@ fn validate_resolution_history(state: &GameState) -> Result<(), String> {
                             );
                         }
                         crate::engine::validate_historical_ability_source_contract(state, *source)?;
+                        if !season_sources.contains(source) {
+                            season_sources.push(*source);
+                        }
                     }
                 }
             }
@@ -952,7 +1024,7 @@ fn validate_resolution_history(state: &GameState) -> Result<(), String> {
             _ => {}
         }
     }
-    Ok(())
+    Ok(season_sources)
 }
 
 /// Derive mandatory gained triggers from independent committed history. Every

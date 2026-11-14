@@ -97,3 +97,105 @@ fn future_real_firebrand_counter_primitive_owns_removal_and_refuses_erasure_both
         assert_eq!(serde_json::to_vec(&reintroduced).unwrap(), before);
     }
 }
+
+#[test]
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+fn closed_fixed_damage_proof_rejects_live_state_tamper_after_cached_cursor() {
+    use crate::engine::{self, Action, Decision};
+    use crate::event_history_v1::{proof_tests_v1, ProvedV1};
+    use crate::ids::PlayerId;
+    use crate::policy_observation_v6::tests::{put, ready_state_for};
+
+    let mut state = ready_state_for(PlayerId::P0);
+    let fire = put(
+        &mut state,
+        PlayerId::P0,
+        "Fanatical Firebrand",
+        Zone::Battlefield,
+    );
+    let target = put(
+        &mut state,
+        PlayerId::P1,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    engine::step(&mut state, Action::ActivateAbility(fire, 0)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::ChooseTargets { .. }
+    ));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    let _ = engine::advance_until_decision(&mut state);
+    let item = state
+        .stack
+        .iter()
+        .find(|i| i.source == fire)
+        .unwrap()
+        .clone();
+    engine::step(&mut state, Action::Pass).unwrap();
+    engine::step(&mut state, Action::Pass).unwrap();
+    let _ = engine::advance_until_decision(&mut state);
+    assert!(state.stack.is_empty());
+    assert_eq!(state.objects.get(target).zone, Zone::Graveyard);
+
+    validate_state(&state).unwrap();
+    let initial_len = state.engine.event_history.len();
+    assert_eq!(
+        state
+            .engine
+            .event_history
+            .proof_memo_v1::<FixedDamageProofV3>(ProvedV1::FixedSourceDamage)
+            .map(|(covered, _)| covered),
+        Some(initial_len)
+    );
+
+    for _ in 0..70u32 {
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::UpkeepBegan {
+                player: PlayerId::P0,
+            });
+    }
+    let uses_before = proof_tests_v1::uses();
+    validate_state(&state).unwrap();
+    assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+
+    // (a) Reintroduce closed activation onto live stack.
+    let mut reintroduced = state.clone();
+    reintroduced.stack.push(item.clone());
+    let uses_before = proof_tests_v1::uses();
+    assert!(validate_state(&reintroduced).is_err());
+    assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+
+    // (b) Inject an unpaid selected Firebrand activation onto live stack.
+    let mut unpaid = state.clone();
+    let mut forged = item.clone();
+    forged.v4.stack_item_id = StackItemId(999_999);
+    forged.v4.fixed_damage_paid_v3 = crate::state::FixedDamagePaidV3::default();
+    unpaid.stack.push(forged);
+    let uses_before = proof_tests_v1::uses();
+    assert!(validate_state(&unpaid).is_err());
+    assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+
+    // (c) Inject payment record into transient event_log.
+    let paid_event = state
+        .engine
+        .event_history
+        .iter()
+        .find(|e| matches!(e, CommittedEvent::FixedDamagePaidV3 { .. }))
+        .unwrap()
+        .clone();
+    let mut forged_log = state.clone();
+    forged_log.engine.event_log.push(paid_event);
+    let uses_before = proof_tests_v1::uses();
+    assert!(validate_state(&forged_log).is_err());
+    assert_eq!(proof_tests_v1::uses(), uses_before + 1);
+}

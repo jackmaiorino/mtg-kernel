@@ -143,9 +143,7 @@ pub(crate) fn validate_journals(state: &GameState) -> Result<(), String> {
     for (at, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::TokenAttachmentJournalV48])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::TokenAttachmentJournalV48])
     {
         let crate::event::CommittedEvent::TokenAttachmentJournalV48 { journal } = event else {
             continue;
@@ -155,9 +153,7 @@ pub(crate) fn validate_journals(state: &GameState) -> Result<(), String> {
                 let closed = state
                     .engine
                     .event_history
-                    .scan_for_v1(&[EventKindV1::TokenAttachmentJournalV48])
-                    .iter()
-                    .enumerate()
+                    .of_kinds_v2(&[EventKindV1::TokenAttachmentJournalV48])
                     .filter_map(|(i, e)| match e {
                         crate::event::CommittedEvent::TokenAttachmentJournalV48 { journal } => {
                             match journal.as_ref() {

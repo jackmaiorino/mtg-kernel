@@ -84,7 +84,7 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
         || state
             .engine
             .event_history
-            .scan_for_v1(&[
+            .of_kinds_v2(&[
                 EventKindV1::TwinflameCombatInputV38,
                 EventKindV1::TwinflameCombatOperationV38,
                 EventKindV1::TwinflameCombatPublishedV38,
@@ -95,19 +95,18 @@ pub(crate) fn requires_successor(state: &GameState) -> bool {
                 EventKindV1::TwinflameReplacementInputV38,
                 EventKindV1::TwinflameReplacementOperationV38,
             ])
-            .iter()
-            .any(|e| {
+            .any(|(_, event)| {
                 matches!(
-                    e,
-                    crate::event::CommittedEvent::TwinflameCombatPublishedV38 { .. }
-                        | crate::event::CommittedEvent::TwinflameCombatInputV38 { .. }
+                    event,
+                    crate::event::CommittedEvent::TwinflameCombatInputV38 { .. }
                         | crate::event::CommittedEvent::TwinflameCombatOperationV38 { .. }
-                        | crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
-                        | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
+                        | crate::event::CommittedEvent::TwinflameCombatPublishedV38 { .. }
                         | crate::event::CommittedEvent::TwinflameDamagePreparationV38 { .. }
                         | crate::event::CommittedEvent::TwinflameDynamicDamageSampleV38 { .. }
                         | crate::event::CommittedEvent::TwinflameFieryCaptureV38 { .. }
                         | crate::event::CommittedEvent::TwinflameFieryFinishedV38 { .. }
+                        | crate::event::CommittedEvent::TwinflameReplacementInputV38 { .. }
+                        | crate::event::CommittedEvent::TwinflameReplacementOperationV38 { .. }
                 )
             })
 }
