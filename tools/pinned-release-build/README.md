@@ -1,8 +1,8 @@
 # Pinned Linux release build
 
-The workflow builds the combined trainer at `f933c8b8dfc60945eff683b5125d694231109417` on a standard public-repository GitHub runner. It exports `native_expanded_training_run_v1` and `checkpoint_container_v1` with SHA-256s and a source/toolchain manifest. It does not execute training or qualify throughput.
+The workflow builds the combined trainer at `a30c3769f1ef3a7b569ab52814688141969d877f` on a standard public-repository GitHub runner. It exports `native_expanded_training_run_v1` and `checkpoint_container_v1` with SHA-256s and a source/toolchain manifest. It does not execute training or qualify throughput.
 
-The source is the w128 backport (branch `claude/w128-backport-c5719e1cf-20261114`, PR #694 into `release/w128-c5719e1cf`): the production trainer source `c5719e1cf` plus the V4 engine-fault fix (#673), the net-8w128 learner, movement reader and widening rows (#678, #681, #682) and the wide-state I/O fix. The w128 forks must play the same game as their control chains, which run `c5719e1cf`; main's later rules changes are not in it. The guard also accepts `411feed25` (the backport before the I/O fix) for the fix's equality check only.
+The source is the w128 backport (branch `claude/w128-backport-c5719e1cf-20261114`, PR #694 into `release/w128-c5719e1cf`): the production trainer source `c5719e1cf` plus the V4 engine-fault fix (#673), the net-8w128 learner, movement reader and widening rows (#678, #681, #682), the wide-state I/O fix and the checkpoint-write change (#696). The w128 forks must play the same game as their control chains, which run `c5719e1cf`; main's later rules changes are not in it. The guard also accepts `f933c8b8d` (the backport before the checkpoint-write change, the a266eb4d pin) for that change's equality check.
 
 `build.sh` installs hash-pinned Rust 1.94.1 components in a pinned Debian 12 Python image. It verifies glibc 2.36, GCC 12, GNU ld 2.40 and the checkout's thin-LTO/one-codegen-unit release profile. Both binaries build sequentially with two Cargo jobs and a clean environment. The current hosted guard accepts only the exact sources above.
 

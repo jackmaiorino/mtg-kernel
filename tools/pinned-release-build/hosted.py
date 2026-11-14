@@ -15,9 +15,9 @@ import sys
 import time
 
 
-SOURCE = "f933c8b8dfc60945eff683b5125d694231109417"
-# The w128 backport before its wide-state I/O fix, built only for the fix's equality check.
-PRE_FIX_SOURCE = "411feed252dc842fcbf647c106dab16fe739305b"
+SOURCE = "a30c3769f1ef3a7b569ab52814688141969d877f"
+# The w128 backport before its checkpoint-write change (the a266eb4d launch pin), for that change's equality check.
+PRE_FIX_SOURCE = "f933c8b8dfc60945eff683b5125d694231109417"
 SOURCES = (SOURCE, PRE_FIX_SOURCE)
 IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
 GIB = 2**30
