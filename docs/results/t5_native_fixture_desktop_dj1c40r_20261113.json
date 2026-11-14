@@ -1,0 +1,928 @@
+{
+ "common": {
+  "build_profile": "release, checked-in profile (thin LTO, codegen-units 1), cargo 1.94.1 --release --locked -j 4 in a 4-core below-normal host_slots claim, x86_64-pc-windows-msvc, VS 2022 17.13.2; identical for both arms",
+  "env": {},
+  "fixture": {
+   "cases": {
+    "pool18": {
+     "config": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\cases\\pool18\\config.json", "sha256": "1e9eee9419fa3867ddb05cdea3b56460f6fea957564bfcd38298ad16daf28d53"},
+     "first_iteration": 0,
+     "initial_source": {
+      "checkpoint": null,
+      "feature_transfer": {"expected_feature_contract_digest": "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b", "expected_feature_encoding_digest": "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de"},
+      "play_import": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\descriptor.json", "sha256": "6516cf3edff2a5e909faf52cdf85529cb1fcf4e3b97d9b135e1acfaa3a14bf9e"}
+     },
+     "iterations": 3,
+     "pool": {
+      "draws": [
+       ["member-08", "member-03", "member-13", "member-10", "member-06", "member-07", "member-16", "member-03"],
+       ["member-06", "member-05", "member-10", "member-16", "member-10", "member-05", "member-12", "member-07"],
+       ["member-07", "member-13", "member-05", "member-06", "member-17", "member-14", "member-00", "member-09"]
+      ],
+      "members": 18
+     }
+    },
+    "pool2": {
+     "config": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\cases\\pool2\\config.json", "sha256": "c726200ebab58a9043cf566a686ae365df9c6b81adbd3f125020658d64cbd198"},
+     "first_iteration": 0,
+     "initial_source": {
+      "checkpoint": null,
+      "feature_transfer": {"expected_feature_contract_digest": "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b", "expected_feature_encoding_digest": "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de"},
+      "play_import": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\descriptor.json", "sha256": "6516cf3edff2a5e909faf52cdf85529cb1fcf4e3b97d9b135e1acfaa3a14bf9e"}
+     },
+     "iterations": 3,
+     "pool": {
+      "draws": [
+       ["member-00", "member-01", "member-01", "member-00", "member-00", "member-01", "member-00", "member-01"],
+       ["member-00", "member-01", "member-00", "member-00", "member-00", "member-01", "member-00", "member-01"],
+       ["member-01", "member-01", "member-01", "member-00", "member-01", "member-00", "member-00", "member-01"]
+      ],
+      "members": 2
+     }
+    }
+   },
+   "generator": {"git_clean": "true", "git_commit": "b5dc72c0a9b88864d363087b68c4e5c154556958", "git_tree": "1c1695b4ceec14f85816150715d524d5ee0be977", "test": "native_expanded_training_run_v1::fixture_bench_v1::write_native_fixture_v1", "tracked_tree_sha256": "a4710ac6b360631509d2b07816136d69d1a01601faec10df074bfaf236707d63"},
+   "options": {
+    "collection_workers": 1,
+    "games": 8,
+    "pool_members": [2, 18],
+    "preparation_workers": 1,
+    "seed": 2026091601,
+    "updates": 3,
+    "warmup_updates": 0
+   },
+   "pool": {
+    "directory": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool",
+    "draw": {"rule": "slot j of update i plays member u64_be(sha256(json([tag, seed_root, i, j]))[0..8]) mod N, of the case's first N; the JSON is compact", "seed_root": "2026091601", "tag": "mtg-kernel-pool-fixture-draw/v1"},
+    "import": "the fresh source's descriptor, shared by every member",
+    "members": [
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-00\\checkpoint.json", "sha256": "7f11e61c519638f662b108fbb16b2583bfe6989eb7c99c4bba1cbb29da4e1294"},
+      "id": "member-00"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-01\\checkpoint.json", "sha256": "ae405bd83f5f8656824fae0872a462bfb36ed5c307ba3ee076963a14c044fee8"},
+      "id": "member-01"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-02\\checkpoint.json", "sha256": "efa5c0100cebce7ff862b05fbf6f92ec397bb6ecc04a0184b23e38469d9d9d73"},
+      "id": "member-02"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-03\\checkpoint.json", "sha256": "7d370d3fca35757f25d74c4c2fc36383512dbf30f6783b54966b54485c67b7a9"},
+      "id": "member-03"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-04\\checkpoint.json", "sha256": "3254793862f24a53c6ea9b0c14f6841f5fb66f7b8668085b7191208414db23ab"},
+      "id": "member-04"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-05\\checkpoint.json", "sha256": "f06db7df613307b3a5438aaff02aaef200acd30da02d2d8bcc629f9cf612838c"},
+      "id": "member-05"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-06\\checkpoint.json", "sha256": "ca3d883828bdca0b3392c5eb2066c1e57e96ee8fc6d985496be20e8bb2e8b29e"},
+      "id": "member-06"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-07\\checkpoint.json", "sha256": "171461968aa82fd72d2ad5d38e0cb7e3994d7da0e983a6d4d6039ebbd2bbabca"},
+      "id": "member-07"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-08\\checkpoint.json", "sha256": "19e249c3c5e4f8efed16219dcacaa4d8db78d3a1578ebfbc0d8b991cd57ce58b"},
+      "id": "member-08"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-09\\checkpoint.json", "sha256": "f2bc7bde4265adae592c89eb307cf530a72414c5fa85bc6ee2ca718cbd64df5a"},
+      "id": "member-09"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-10\\checkpoint.json", "sha256": "e5b69881390e016b337d631ccdc1a0d15c13518d0f0abc501501f5db3142fd1e"},
+      "id": "member-10"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-11\\checkpoint.json", "sha256": "719e39782795f923c7ce2da6c5d16d66799ded0bfeb0e890fa211c5e1f99ebe9"},
+      "id": "member-11"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-12\\checkpoint.json", "sha256": "ec714681b3f525037a7faad3b854552dc64a6662ee21306d5aadcc07b6a7fa6a"},
+      "id": "member-12"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-13\\checkpoint.json", "sha256": "42d4c43cb274a1d4d8ffb290d300608de0baeef9b5f3b776c38d2d747e3a92d6"},
+      "id": "member-13"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-14\\checkpoint.json", "sha256": "53afdc81f3e9df6e20ffb473c156c1ccd24452db57b62fc1a0438f2cad187ba3"},
+      "id": "member-14"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-15\\checkpoint.json", "sha256": "75bb5eefddaba95a1ad2e42b191ad2cc90220f779f0698864d4f5166bb395aa6"},
+      "id": "member-15"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-16\\checkpoint.json", "sha256": "5af99293f6821442d1610b087a19aaf9cdafb5b788a0b20d9c6aaf95493b95a5"},
+      "id": "member-16"
+     },
+     {
+      "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\t5-fixture-run\\fixture\\pool\\member-17\\checkpoint.json", "sha256": "4451bfd8299765b37cd44d8088ba664eeece72e423bf9e20f1a2d63224b5aac2"},
+      "id": "member-17"
+     }
+    ]
+   },
+   "root": "D:\\antigravity-20261112\\t5-fixture-run\\fixture",
+   "sha256": "bc7afaecf25faf98f6c21a2c1e477466da4f7759a7df9bd91d8b48836fa7c5b8",
+   "workload": {
+    "decks": ["Affinity", "Terror"],
+    "learner": "net-8 FlatV4 synthetic fresh source",
+    "learner_seat": 0,
+    "learning_rate": 0.0003000000142492354,
+    "loss_selection": {"entropy_coefficient": 0.0, "gamma": 1.0, "kind": "gae_advantage_value_v1", "lambda": 0.8999999761581421},
+    "opponent": "current",
+    "seed": "seed + iteration * games + game",
+    "starting_player": "game % 2",
+    "value_coefficient": 0.5
+   }
+  },
+  "host": {"affinity_cpus": 8, "cc_on_host": null, "cpu_model": "13th Gen Intel(R) Core(TM) i7-13700K", "hostname": "DESKTOP-DJ1C40R", "kernel": "11", "ld_on_host": null, "logical_cpus": 24, "machine": "AMD64", "memory_total_mib": 130884.2, "platform": "Windows-11-10.0.26300-SP0", "python": "3.14.3", "rustc_on_host": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-pc-windows-msvc\nrelease: 1.94.1\nLLVM version: 21.1.8"},
+  "rule": "The comparison rule (#594 item 3): fewer than two complete A-B-B-A\nblocks, an effect no larger than the observed run-to-run spread (the\nlarger arm's max minus min over its median), or blocks that disagree in\ndirection is inconclusive; otherwise the candidate/baseline median ratio\nis an improvement or a regression."
+ },
+ "created_utc": "2026-11-14T01:37:50.545284Z",
+ "note": "Floats are rounded to six significant digits; outputs_sha256 pins the raw files.",
+ "receipt_driver_sha256": "ebf86f4c04edddc3e599115d7f1e4160f321c19256d376d1e3e0303a2f15c347",
+ "runs": {
+  "aa": {
+   "argv": ["run", "--fixture", "D:/antigravity-20261112/t5-fixture-run/fixture", "--out", "D:\\antigravity-20261112\\t5-fixture-run\\aa", "--cases", "pool2,pool18", "--baseline", "main-a=D:/antigravity-20261112/target-bench-t1/release/native_expanded_training_run_v1.exe", "--candidate", "main-b=D:/antigravity-20261112/target-bench-t1/release/native_expanded_training_run_v1.exe", "--blocks", "2", "--warmup-runs", "1", "--keep-runs", "reference", "--no-cache-diagnostics", "--build-profile", "release, checked-in profile (thin LTO, codegen-units 1), cargo 1.94.1 --release --locked -j 4 in a 4-core below-normal host_slots claim, x86_64-pc-windows-msvc, VS 2022 17.13.2; identical for both arms", "--label", "A/A noise check (DESKTOP-DJ1C40R: Intel Core i7-13700K 24 logical CPUs, 128 GiB RAM, Windows 11 10.0.26300; pinned on P-cores 0-7 under host reservation while background CI claim ci-win-5 on cores 10-15 and WSL2 claim fe-c 620c0a6986724aec908495a615c7eb18 / dd43a204f4094e10801105c05af6aa21 on E-cores 20-23 ran concurrently)"],
+   "arms": {
+    "baseline": {
+     "binary": "D:\\antigravity-20261112\\target-bench-t1\\release\\native_expanded_training_run_v1.exe",
+     "bytes": 63614976,
+     "env": {},
+     "letter": "A",
+     "name": "main-a",
+     "run_provenance": [
+      {"git_commit": "791701e2fc11cad336815faac558b21e41387140", "implementation_sha256": "adeba0f271f14e9fbc3edae7fef043f6a9fdff60733ce8c9c0d2b861843dec6b", "tracked_tree_sha256": "18455fc5dca7fab3a2027af658605c3ecb0e9d3b549fdf7d0bea5393cc32b018"}
+     ],
+     "sha256": "5c50ca8591f96f8f842a318c38022dc84a8b7603d92a6aa844b5c40648996859"
+    },
+    "candidate": {
+     "binary": "D:\\antigravity-20261112\\target-bench-t1\\release\\native_expanded_training_run_v1.exe",
+     "bytes": 63614976,
+     "env": {},
+     "letter": "B",
+     "name": "main-b",
+     "run_provenance": [
+      {"git_commit": "791701e2fc11cad336815faac558b21e41387140", "implementation_sha256": "adeba0f271f14e9fbc3edae7fef043f6a9fdff60733ce8c9c0d2b861843dec6b", "tracked_tree_sha256": "18455fc5dca7fab3a2027af658605c3ecb0e9d3b549fdf7d0bea5393cc32b018"}
+     ],
+     "sha256": "5c50ca8591f96f8f842a318c38022dc84a8b7603d92a6aa844b5c40648996859"
+    }
+   },
+   "binaries_unchanged": true,
+   "cases": {
+    "pool18": {
+     "boundaries": [
+      {"adam_step": 1, "checkpoint_sha256": "77d556c600ce801c5be667b5d94103c0db682736d19df74574cd5c290fa3d556", "iteration": 0, "output_identity_sha256": "a81e026b8f80cde8102bbf01f8e21f822889e1e65ecfa68a81a8755469603290", "state_sha256": "c7779685fa100f6a8c3a855f399e27525f8dc2f08516026331260741cc6c2c2a"},
+      {"adam_step": 2, "checkpoint_sha256": "09d3547481393c66662726719974cc090d8f0a3272486e0378c187d5f79cf575", "iteration": 1, "output_identity_sha256": "91d871b393418e049a38d4046dd724264217f263ffdf2cbbecea2401030e09dd", "state_sha256": "751c5143849a1da2619f7d2fcc0d6bc23c1ddc74f7ed9509dbc4261bc2b62384"},
+      {"adam_step": 3, "checkpoint_sha256": "c26e3a5cd5223db1d2d4d30e6990de069d77ba96459908da851c32c070509ca8", "iteration": 2, "output_identity_sha256": "c3a764134233cb69828a39a5848194ff830adeb2539e2291b6484048de516310", "state_sha256": "7d88bed602e5fd79c045365bb8fbc7e3b6dba60d5f35a60659a72305ccfeafcb"}
+     ],
+     "cold_resume": [],
+     "counters": {},
+     "failures": [],
+     "parity_ok": true,
+     "storage_bytes_by_name": {"checkpoint.json": 44368908, "collect-command.json": 47772, "collection.json": 7952, "complete.json": 10812, "completion.json": 4002, "episode-#.json": 152450717, "run.json": 45058, "run.lock": 0, "update-command.json": 8145, "update-input.json": 717, "update.json": 10652},
+     "timed_samples": {"main-a": 4, "main-b": 4},
+     "verdicts": [
+      ["max_rss_mib", 1147.86, 1149.97, 1.00184, 0.192383, 0.00184447, [0.911404, 1.02329], "inconclusive", "the median effect is within the observed spread"],
+      ["outside_iterations_seconds", 1.23808, 1.2564, 1.0148, 0.0927025, 0.0147997, [1.0148, 1.02633], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.behavior_replay_seconds", 1.40658, 1.44963, 1.03061, 0.101061, 0.03061, [1.01471, 1.0354], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.checkpoint_io_seconds", 0.400972, 0.404688, 1.00927, 0.173007, 0.00926761, [0.959714, 1.024], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.collection_elapsed_seconds", 4.88105, 4.64898, 0.952454, 0.0614957, -0.047546, [0.942738, 0.991886], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.collection_initialization_seconds", 0.261957, 0.2628, 1.00322, 0.0861622, 0.00321751, [0.960291, 1.02807], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.input_read_seconds", 0.51647, 0.51616, 0.9994, 0.0838062, -0.000600132, [1.01664, 0.978035], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.learner_update_seconds", 0.326712, 0.336181, 1.02898, 0.149979, 0.0289801, [1.04206, 1.01722], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.update_elapsed_seconds", 2.66368, 2.71713, 1.02007, 0.0907583, 0.0200675, [1.01003, 1.02007], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.collection_execution_seconds", 4.91991, 4.68485, 0.952221, 0.062101, -0.047779, [0.942592, 0.991717], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.collection_validation_seconds", 0.236125, 0.242121, 1.02539, 0.0627191, 0.0253914, [1.01645, 1.00678], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.iteration_wall_seconds", 8.03426, 7.96795, 0.991747, 0.0436369, -0.00825336, [0.967135, 1.00362], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.update_execution_seconds", 2.70404, 2.76094, 1.02104, 0.0886969, 0.0210439, [1.00896, 1.02104], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.update_validation_seconds", 0.0601353, 0.0574708, 0.955692, 0.202986, -0.0443076, [0.889498, 1.06837], "inconclusive", "the median effect is within the observed spread"],
+      ["sys_seconds", 1.32812, 1.35156, 1.01765, 0.150289, 0.0176471, [1.02941, 1.02367], "inconclusive", "the median effect is within the observed spread"],
+      ["updates_per_hour", 1161.56, 1167.79, 1.00536, 0.0325382, 0.00536196, [1.0274, 0.99338], "inconclusive", "the median effect is within the observed spread"],
+      ["user_seconds", 8.02344, 7.90625, 0.985394, 0.0988142, -0.0146056, [0.954369, 1.01784], "inconclusive", "the median effect is within the observed spread"],
+      ["wall_seconds", 9.2979, 9.24844, 0.99468, 0.0318044, -0.00531968, [0.973446, 1.00663], "inconclusive", "the median effect is within the observed spread"]
+     ]
+    },
+    "pool2": {
+     "boundaries": [
+      {"adam_step": 1, "checkpoint_sha256": "46a125b69b9c8c20a402b6e11b5baffd9061ef364fc02e8d5cc18156275b7d08", "iteration": 0, "output_identity_sha256": "a6d94f9902e09bb4e909d34eace0b960b22f839e8e2a1b9ec84eefe7355ed123", "state_sha256": "c7779685fa100f6a8c3a855f399e27525f8dc2f08516026331260741cc6c2c2a"},
+      {"adam_step": 2, "checkpoint_sha256": "41dbe8bd8cec61874960d8844c72f861adf90c90b617534c9b476f5fadd55624", "iteration": 1, "output_identity_sha256": "3a88e9a52e1c04c1a5f74e9a13e0b50952d81a20face2f5d6c2c4daa53ae6c4d", "state_sha256": "87679750542174521f3e5e4621cfbd311ee340a66a8c477d367a1277e5435e91"},
+      {"adam_step": 3, "checkpoint_sha256": "ab7c3b4da4e4e5ea6c49d54f75462cc54e5e398ecf1c9505f252066097c72aaa", "iteration": 2, "output_identity_sha256": "f9073a63614180a25b1b74de596586fe364f1be443284eb8ce8af0f4c6afafc6", "state_sha256": "14b134e1b5c7fdea395f3f1145659f573c41b996fc45d407c31fda881779b318"}
+     ],
+     "cold_resume": [],
+     "counters": {},
+     "failures": [],
+     "parity_ok": true,
+     "storage_bytes_by_name": {"checkpoint.json": 44368908, "collect-command.json": 47767, "collection.json": 7935, "complete.json": 10804, "completion.json": 3998, "episode-#.json": 152450634, "run.json": 35121, "run.lock": 0, "update-command.json": 8116, "update-input.json": 714, "update.json": 10625},
+     "timed_samples": {"main-a": 4, "main-b": 4},
+     "verdicts": [
+      ["max_rss_mib", 906.104, 910.371, 1.00471, 0.0352729, 0.00470981, [0.994129, 1.01014], "inconclusive", "the median effect is within the observed spread"],
+      ["outside_iterations_seconds", 0.266956, 0.260129, 0.974428, 0.663201, -0.0255722, [0.743151, 1.00707], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.behavior_replay_seconds", 0.564242, 0.563056, 0.997899, 0.0899413, -0.00210123, [1.017, 0.997145], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.checkpoint_io_seconds", 0.400386, 0.407956, 1.01891, 0.0602928, 0.0189076, [1.03431, 1.03357], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.collection_elapsed_seconds", 3.98396, 4.19651, 1.05335, 0.109293, 0.0533514, [1.04853, 1.03836], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.collection_initialization_seconds", 0.121158, 0.125984, 1.03983, 0.178871, 0.0398305, [1.02781, 0.999807], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.input_read_seconds", 0.444864, 0.460975, 1.03621, 0.112116, 0.0362149, [1.06155, 1.03621], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.learner_update_seconds", 0.342381, 0.34851, 1.0179, 0.0984852, 0.0179002, [1.02661, 0.995954], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.update_elapsed_seconds", 1.75668, 1.78681, 1.01715, 0.076325, 0.017151, [1.03414, 1.01508], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.collection_execution_seconds", 4.0219, 4.23399, 1.05273, 0.108457, 0.0527323, [1.0483, 1.03807], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.collection_validation_seconds", 0.238457, 0.23224, 0.973927, 0.0820478, -0.0260728, [0.965554, 0.99214], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.iteration_wall_seconds", 6.41967, 6.5261, 1.01658, 0.10142, 0.0165797, [1.02545, 0.985744], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.update_execution_seconds", 1.79951, 1.82747, 1.01554, 0.086312, 0.0155375, [1.0296, 0.99623], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.update_validation_seconds", 0.0625207, 0.0605875, 0.969077, 0.0911426, -0.0309225, [0.92795, 1.01591], "inconclusive", "the median effect is within the observed spread"],
+      ["sys_seconds", 1.03906, 1.10156, 1.06015, 0.360902, 0.0601504, [1.13534, 0.992647], "inconclusive", "the median effect is within the observed spread"],
+      ["updates_per_hour", 1596.27, 1591.75, 0.997166, 0.0984205, -0.00283428, [0.989882, 1.01365], "inconclusive", "the median effect is within the observed spread"],
+      ["user_seconds", 5.59375, 5.64844, 1.00978, 0.102351, 0.00977654, [0.973464, 1.01806], "inconclusive", "the median effect is within the observed spread"],
+      ["wall_seconds", 6.76736, 6.79222, 1.00367, 0.0985101, 0.0036732, [1.01097, 0.98657], "inconclusive", "the median effect is within the observed spread"]
+     ]
+    }
+   },
+   "compared_by_sha256": "ebf86f4c04edddc3e599115d7f1e4160f321c19256d376d1e3e0303a2f15c347",
+   "completed_utc": "2026-11-13T22:43:09.383003Z",
+   "created_utc": "2026-11-13T22:40:14.879306Z",
+   "label": "A/A noise check (DESKTOP-DJ1C40R: Intel Core i7-13700K 24 logical CPUs, 128 GiB RAM, Windows 11 10.0.26300; pinned on P-cores 0-7 under host reservation while background CI claim ci-win-5 on cores 10-15 and WSL2 claim fe-c 620c0a6986724aec908495a615c7eb18 / dd43a204f4094e10801105c05af6aa21 on E-cores 20-23 ran concurrently)",
+   "ok": true,
+   "outputs_sha256": {"bench.json": "708b679959b506688b084a031e4c516067d9cffe98b59d8daba96b9e2b0a898d", "comparison.json": "d550061ef5b50cf37883bcad73e04f7e9114d022e8913081ed61fa1ed9141fbb", "samples.jsonl": "92992c1a9167f83fd383fdd0b03c760a46e1916f7f2f5c7aa2a72ec247bf996d"},
+   "policy": {"cache_diagnostics": false, "keep_runs": "reference", "max_wall_seconds": null, "order": "per case: warm-up runs (A then B, excluded from comparison), then 2 A-B-B-A block(s), then optional cold-resume checks", "page_cache": "not dropped between samples", "process": "every sample is a new process of the arm's binary", "reference": "each case's first completed sample; every later sample's run tree is compared with it", "work_path": "each case writes to its fixed output directory; the driver moves the run under runs/ after each sample"},
+   "run_driver_sha256": "ebf86f4c04edddc3e599115d7f1e4160f321c19256d376d1e3e0303a2f15c347",
+   "sample_columns": ["ordinal", "case", "kind", "block", "position", "arm", "ok", "error", "first_process_wall_seconds", "max_rss_mib", "outside_iterations_seconds", "receipts.behavior_replay_seconds", "receipts.checkpoint_io_seconds", "receipts.collection_elapsed_seconds", "receipts.collection_initialization_seconds", "receipts.input_read_seconds", "receipts.learner_update_seconds", "receipts.update_elapsed_seconds", "scheduler.collection_execution_seconds", "scheduler.collection_validation_seconds", "scheduler.iteration_wall_seconds", "scheduler.update_execution_seconds", "scheduler.update_validation_seconds", "sys_seconds", "updates_per_hour", "user_seconds", "wall_seconds", "durable_completed_iterations", "storage_bytes", "parity", "identical_files", "files", "accounted"],
+   "samples": [
+    [0, "pool2", "warmup", null, "warmup1", "main-a", true, null, null, 917.25, 0.314114, 0.552062, 0.403765, 7.69362, 0.11704, 0.448804, 0.347275, 1.75192, 7.73154, 0.224185, 9.96871, 1.79224, 0.0569288, 1.26562, 1050.3, 29.0469, 10.2828, 3, 196944622, "reference", null, null, null],
+    [1, "pool2", "warmup", null, "warmup1", "main-b", true, null, null, 890.809, 0.25174, 0.546185, 0.417782, 4.20202, 0.118437, 0.425733, 0.339047, 1.72876, 4.24157, 0.236153, 6.45632, 1.77132, 0.0573515, 1.01562, 1610.0, 5.70312, 6.70806, 3, 196944614, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [2, "pool2", "timed", 0, "A1", "main-a", true, null, null, 926.691, 0.253034, 0.546797, 0.382775, 3.98786, 0.113106, 0.423132, 0.327356, 1.68007, 4.02335, 0.239074, 6.19149, 1.73247, 0.0620367, 1.01562, 1675.84, 5.57812, 6.44452, 3, 196944613, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [3, "pool2", "timed", 0, "B1", "main-b", true, null, null, 904.961, 0.257102, 0.541441, 0.407835, 3.96527, 0.108543, 0.439773, 0.328726, 1.71778, 4.00374, 0.226234, 6.19091, 1.75927, 0.0592952, 1.26562, 1674.93, 5.23438, 6.44802, 3, 196944615, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [4, "pool2", "timed", 0, "B2", "main-b", true, null, null, 916.66, 0.250554, 0.592083, 0.408078, 4.38708, 0.127727, 0.491455, 0.362535, 1.85416, 4.4224, 0.234253, 6.76303, 1.89635, 0.0586187, 1.09375, 1539.87, 5.65625, 7.01359, 3, 196944615, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [5, "pool2", "timed", 0, "A2", "main-a", true, null, null, 905.688, 0.430079, 0.567776, 0.406075, 3.97792, 0.11677, 0.454104, 0.345986, 1.77395, 4.01457, 0.237841, 6.44094, 1.81804, 0.0650325, 1.0625, 1571.82, 5.60938, 6.87101, 3, 196944616, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [6, "pool2", "timed", 1, "A1", "main-a", true, null, null, 894.73, 0.268602, 0.568628, 0.406915, 3.98005, 0.129822, 0.444501, 0.361075, 1.78113, 4.02046, 0.242703, 6.84257, 1.88779, 0.0630048, 1.25, 1518.74, 5.42188, 7.11117, 3, 196944624, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [7, "pool2", "timed", 1, "B1", "main-b", true, null, null, 903.742, 0.263157, 0.568497, 0.40524, 4.00594, 0.124242, 0.460523, 0.353075, 1.78735, 4.04558, 0.230227, 6.30769, 1.82784, 0.0618797, 1.0, 1643.62, 5.64062, 6.57085, 3, 196944616, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [8, "pool2", "timed", 1, "B2", "main-b", true, null, null, 915.781, 0.274528, 0.557615, 0.423284, 4.42392, 0.131078, 0.461426, 0.343945, 1.78628, 4.46294, 0.245289, 6.74451, 1.8271, 0.0641408, 1.10938, 1538.67, 5.8125, 7.01904, 3, 196944622, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [9, "pool2", "timed", 1, "A2", "main-a", true, null, null, 906.52, 0.26531, 0.560707, 0.394697, 4.13841, 0.125547, 0.445227, 0.338776, 1.73942, 4.17601, 0.23658, 6.3984, 1.78098, 0.0610427, 0.875, 1620.72, 5.82812, 6.66371, 3, 196944614, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [10, "pool18", "warmup", null, "warmup1", "main-a", true, null, null, 1157.26, 1.18817, 1.48569, 0.407511, 4.90953, 0.270534, 0.498486, 0.358392, 2.75009, 4.94656, 0.245402, 8.3138, 2.79563, 0.0607377, 1.375, 1136.61, 7.92188, 9.50197, 3, 196954735, "reference", null, null, null],
+    [11, "pool18", "warmup", null, "warmup1", "main-b", true, null, null, 1131.71, 1.19514, 1.37835, 0.395681, 4.88341, 0.261229, 0.526657, 0.33576, 2.63646, 4.91767, 0.227922, 8.01492, 2.68295, 0.0596396, 1.15625, 1172.63, 8.17188, 9.21006, 3, 196954743, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [12, "pool18", "timed", 0, "A1", "main-a", true, null, null, 1130.29, 1.21926, 1.404, 0.440666, 4.9361, 0.265259, 0.519532, 0.330519, 2.69473, 4.97534, 0.23929, 8.16872, 2.73781, 0.0617409, 1.28125, 1150.41, 8.03125, 9.38798, 3, 196954744, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [13, "pool18", "timed", 0, "B1", "main-b", true, null, null, 1135.05, 1.25956, 1.36271, 0.379763, 4.65318, 0.244811, 0.505395, 0.314864, 2.56274, 4.6897, 0.243311, 7.73803, 2.60248, 0.0532313, 1.46875, 1200.32, 7.40625, 8.99759, 3, 196954740, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [14, "pool18", "timed", 0, "B2", "main-b", true, null, null, 1126.51, 1.25325, 1.49815, 0.401165, 4.64112, 0.258298, 0.544728, 0.365284, 2.80934, 4.67616, 0.241176, 7.95645, 2.84737, 0.0537492, 1.26562, 1172.68, 7.95312, 9.2097, 3, 196954734, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [15, "pool18", "timed", 0, "A2", "main-a", true, null, null, 1351.12, 1.2569, 1.41537, 0.373042, 4.92274, 0.258655, 0.513408, 0.322179, 2.62401, 4.96094, 0.237357, 8.05908, 2.66365, 0.0585297, 1.375, 1159.3, 8.0625, 9.31598, 3, 196954742, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [16, "pool18", "timed", 1, "A1", "main-a", true, null, null, 1137.52, 1.282, 1.40167, 0.371295, 4.83937, 0.250662, 0.549311, 0.322906, 2.64519, 4.87888, 0.234894, 7.99782, 2.68548, 0.0558058, 1.25, 1163.82, 8.01562, 9.27981, 3, 196954735, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [17, "pool18", "timed", 1, "B1", "main-b", true, null, null, 1184.29, 1.31227, 1.50921, 0.408211, 4.64478, 0.267455, 0.526925, 0.351875, 2.79623, 4.67999, 0.243065, 7.97946, 2.83988, 0.0611925, 1.32812, 1162.32, 8.1875, 9.29173, 3, 196954732, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [18, "pool18", "timed", 1, "B2", "main-b", true, null, null, 1164.89, 1.20145, 1.40112, 0.411192, 4.92702, 0.267301, 0.505233, 0.320486, 2.63804, 4.9671, 0.228125, 8.08573, 2.68201, 0.0648971, 1.375, 1162.89, 7.85938, 9.28717, 3, 196954741, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [19, "pool18", "timed", 1, "A2", "main-a", true, null, null, 1158.2, 1.16722, 1.40915, 0.428902, 4.81073, 0.269491, 0.506028, 0.338075, 2.68217, 4.84878, 0.233126, 8.00945, 2.7226, 0.0622152, 1.39062, 1176.9, 7.75, 9.17667, 3, 196954733, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}]
+   ],
+   "verdict_columns": ["metric", "baseline_median", "candidate_median", "ratio", "max_spread_fraction", "effect_fraction", "block_ratios", "verdict", "reason"]
+  },
+  "ab": {
+   "argv": ["run", "--fixture", "D:/antigravity-20261112/t5-fixture-run/fixture", "--out", "D:\\antigravity-20261112\\t5-fixture-run\\ab", "--cases", "pool2,pool18", "--baseline", "main=D:/antigravity-20261112/target-bench-t1/release/native_expanded_training_run_v1.exe", "--candidate", "branch=D:/antigravity-20261112/target-bench-t5/release/native_expanded_training_run_v1.exe", "--blocks", "2", "--warmup-runs", "1", "--cold-resume", "--keep-runs", "reference", "--no-cache-diagnostics", "--build-profile", "release, checked-in profile (thin LTO, codegen-units 1), cargo 1.94.1 --release --locked -j 4 in a 4-core below-normal host_slots claim, x86_64-pc-windows-msvc, VS 2022 17.13.2; identical for both arms", "--label", "A/B comparison main vs PR #608 (DESKTOP-DJ1C40R: Intel Core i7-13700K 24 logical CPUs, 128 GiB RAM, Windows 11 10.0.26300; pinned on P-cores 0-7 under host reservation while background CI claim ci-win-5 on cores 10-15 and WSL2 claim fe-c 620c0a6986724aec908495a615c7eb18 / dd43a204f4094e10801105c05af6aa21 on E-cores 20-23 ran concurrently)"],
+   "arms": {
+    "baseline": {
+     "binary": "D:\\antigravity-20261112\\target-bench-t1\\release\\native_expanded_training_run_v1.exe",
+     "bytes": 63614976,
+     "env": {},
+     "letter": "A",
+     "name": "main",
+     "run_provenance": [
+      {"git_commit": "791701e2fc11cad336815faac558b21e41387140", "implementation_sha256": "adeba0f271f14e9fbc3edae7fef043f6a9fdff60733ce8c9c0d2b861843dec6b", "tracked_tree_sha256": "18455fc5dca7fab3a2027af658605c3ecb0e9d3b549fdf7d0bea5393cc32b018"}
+     ],
+     "sha256": "5c50ca8591f96f8f842a318c38022dc84a8b7603d92a6aa844b5c40648996859"
+    },
+    "candidate": {
+     "binary": "D:\\antigravity-20261112\\target-bench-t5\\release\\native_expanded_training_run_v1.exe",
+     "bytes": 63673856,
+     "env": {},
+     "letter": "B",
+     "name": "branch",
+     "run_provenance": [
+      {"git_commit": "b5dc72c0a9b88864d363087b68c4e5c154556958", "implementation_sha256": "adeba0f271f14e9fbc3edae7fef043f6a9fdff60733ce8c9c0d2b861843dec6b", "tracked_tree_sha256": "a4710ac6b360631509d2b07816136d69d1a01601faec10df074bfaf236707d63"}
+     ],
+     "sha256": "f40805a700ce6cc27a4cb7fbae13e16c624453963d7b8cadc6e2ecc06dabf0ac"
+    }
+   },
+   "binaries_unchanged": true,
+   "cases": {
+    "pool18": {
+     "boundaries": [
+      {"adam_step": 1, "checkpoint_sha256": "77d556c600ce801c5be667b5d94103c0db682736d19df74574cd5c290fa3d556", "iteration": 0, "output_identity_sha256": "a81e026b8f80cde8102bbf01f8e21f822889e1e65ecfa68a81a8755469603290", "state_sha256": "c7779685fa100f6a8c3a855f399e27525f8dc2f08516026331260741cc6c2c2a"},
+      {"adam_step": 2, "checkpoint_sha256": "09d3547481393c66662726719974cc090d8f0a3272486e0378c187d5f79cf575", "iteration": 1, "output_identity_sha256": "91d871b393418e049a38d4046dd724264217f263ffdf2cbbecea2401030e09dd", "state_sha256": "751c5143849a1da2619f7d2fcc0d6bc23c1ddc74f7ed9509dbc4261bc2b62384"},
+      {"adam_step": 3, "checkpoint_sha256": "c26e3a5cd5223db1d2d4d30e6990de069d77ba96459908da851c32c070509ca8", "iteration": 2, "output_identity_sha256": "c3a764134233cb69828a39a5848194ff830adeb2539e2291b6484048de516310", "state_sha256": "7d88bed602e5fd79c045365bb8fbc7e3b6dba60d5f35a60659a72305ccfeafcb"}
+     ],
+     "cold_resume": [
+      {"arm": "main", "first_process_completed": 1, "ok": true, "status": "equal_up_to_accounted_fields"},
+      {"arm": "branch", "first_process_completed": 1, "ok": true, "status": "equal_up_to_accounted_fields"}
+     ],
+     "counters": {},
+     "failures": [],
+     "parity_ok": true,
+     "storage_bytes_by_name": {"checkpoint.json": 44368908, "collect-command.json": 47772, "collection.json": 7962, "complete.json": 10812, "completion.json": 4002, "episode-#.json": 152450717, "run.json": 45058, "run.lock": 0, "update-command.json": 8145, "update-input.json": 717, "update.json": 10652},
+     "timed_samples": {"branch": 4, "main": 4},
+     "verdicts": [
+      ["max_rss_mib", 1147.67, 1139.18, 0.992597, 0.0227022, -0.00740289, [0.99331, 0.995669], "inconclusive", "the median effect is within the observed spread"],
+      ["outside_iterations_seconds", 1.22547, 1.20082, 0.979883, 0.136938, -0.0201166, [1.01496, 0.954215], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.behavior_replay_seconds", 1.39149, 1.4408, 1.03544, 0.0599141, 0.0354386, [1.03076, 1.05565], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.checkpoint_io_seconds", 0.424058, 0.396676, 0.93543, 0.220013, -0.0645701, [0.906945, 1.00991], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.collection_elapsed_seconds", 4.98079, 4.72373, 0.948389, 0.0964858, -0.0516109, [0.965343, 0.941938], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.collection_initialization_seconds", 0.282514, 0.270209, 0.956443, 0.12427, -0.0435572, [0.93846, 1.00015], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.input_read_seconds", 0.509449, 0.527585, 1.0356, 0.142806, 0.035601, [1.0525, 1.02899], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.learner_update_seconds", 0.324678, 0.340431, 1.04852, 0.087234, 0.0485169, [1.03775, 1.08304], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.update_elapsed_seconds", 2.66281, 2.71151, 1.01829, 0.0792691, 0.01829, [1.01467, 1.04689], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.collection_execution_seconds", 5.02012, 4.76292, 0.948768, 0.0963582, -0.0512322, [0.965549, 0.942457], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.collection_validation_seconds", 0.240965, 0.239763, 0.995012, 0.0489021, -0.00498766, [0.97653, 1.01654], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.iteration_wall_seconds", 8.12772, 7.99573, 0.983762, 0.0593821, -0.0162384, [0.980567, 0.980404], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.update_execution_seconds", 2.70562, 2.75075, 1.01668, 0.0810028, 0.0166815, [1.01168, 1.04524], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.update_validation_seconds", 0.0581598, 0.0571246, 0.982202, 0.121359, -0.0177975, [0.97161, 0.980544], "inconclusive", "the median effect is within the observed spread"],
+      ["sys_seconds", 1.49219, 1.47656, 0.989529, 0.240838, -0.0104712, [1.0359, 0.91623], "inconclusive", "the median effect is within the observed spread"],
+      ["updates_per_hour", 1152.51, 1174.51, 1.01909, 0.069432, 0.019089, [1.01537, 1.02381], "inconclusive", "the median effect is within the observed spread"],
+      ["user_seconds", 7.67969, 7.71875, 1.00509, 0.0610376, 0.00508647, [1.0, 0.990844], "inconclusive", "the median effect is within the observed spread"],
+      ["wall_seconds", 9.3727, 9.19655, 0.981206, 0.0695087, -0.0187937, [0.984966, 0.976853], "inconclusive", "the median effect is within the observed spread"]
+     ]
+    },
+    "pool2": {
+     "boundaries": [
+      {"adam_step": 1, "checkpoint_sha256": "46a125b69b9c8c20a402b6e11b5baffd9061ef364fc02e8d5cc18156275b7d08", "iteration": 0, "output_identity_sha256": "a6d94f9902e09bb4e909d34eace0b960b22f839e8e2a1b9ec84eefe7355ed123", "state_sha256": "c7779685fa100f6a8c3a855f399e27525f8dc2f08516026331260741cc6c2c2a"},
+      {"adam_step": 2, "checkpoint_sha256": "41dbe8bd8cec61874960d8844c72f861adf90c90b617534c9b476f5fadd55624", "iteration": 1, "output_identity_sha256": "3a88e9a52e1c04c1a5f74e9a13e0b50952d81a20face2f5d6c2c4daa53ae6c4d", "state_sha256": "87679750542174521f3e5e4621cfbd311ee340a66a8c477d367a1277e5435e91"},
+      {"adam_step": 3, "checkpoint_sha256": "ab7c3b4da4e4e5ea6c49d54f75462cc54e5e398ecf1c9505f252066097c72aaa", "iteration": 2, "output_identity_sha256": "f9073a63614180a25b1b74de596586fe364f1be443284eb8ce8af0f4c6afafc6", "state_sha256": "14b134e1b5c7fdea395f3f1145659f573c41b996fc45d407c31fda881779b318"}
+     ],
+     "cold_resume": [
+      {"arm": "main", "first_process_completed": 1, "ok": true, "status": "equal_up_to_accounted_fields"},
+      {"arm": "branch", "first_process_completed": 1, "ok": true, "status": "equal_up_to_accounted_fields"}
+     ],
+     "counters": {},
+     "failures": [],
+     "parity_ok": true,
+     "storage_bytes_by_name": {"checkpoint.json": 44368908, "collect-command.json": 47767, "collection.json": 7925, "complete.json": 10804, "completion.json": 3998, "episode-#.json": 152450634, "run.json": 35121, "run.lock": 0, "update-command.json": 8116, "update-input.json": 714, "update.json": 10625},
+     "timed_samples": {"branch": 4, "main": 4},
+     "verdicts": [
+      ["max_rss_mib", 905.877, 916.803, 1.01206, 0.0206134, 0.012061, [1.01962, 0.995384], "inconclusive", "the median effect is within the observed spread"],
+      ["outside_iterations_seconds", 0.250746, 0.25299, 1.00895, 0.113876, 0.00894629, [1.04763, 0.967311], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.behavior_replay_seconds", 0.534921, 0.526733, 0.984694, 0.104115, -0.0153056, [0.978717, 1.02879], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.checkpoint_io_seconds", 0.465963, 0.475665, 1.02082, 0.050227, 0.0208222, [1.02336, 1.01294], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.collection_elapsed_seconds", 4.02371, 4.07683, 1.0132, 0.0578963, 0.0132015, [1.0121, 1.00449], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.collection_initialization_seconds", 0.111273, 0.113255, 1.01781, 0.101848, 0.0178071, [1.05629, 1.02165], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.input_read_seconds", 0.425266, 0.43142, 1.01447, 0.0922315, 0.0144715, [1.05775, 0.979232], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.learner_update_seconds", 0.319678, 0.324352, 1.01462, 0.0611025, 0.0146203, [1.0462, 0.97303], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.update_elapsed_seconds", 1.74831, 1.76035, 1.00688, 0.0508473, 0.0068835, [1.02177, 1.00201], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.collection_execution_seconds", 4.05791, 4.11212, 1.01336, 0.0572138, 0.013361, [1.0122, 1.00452], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.collection_validation_seconds", 0.229648, 0.228003, 0.992838, 0.102758, -0.00716204, [1.01652, 0.968448], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.iteration_wall_seconds", 6.26194, 6.32228, 1.00964, 0.022215, 0.00963606, [1.01455, 1.00226], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.update_execution_seconds", 1.79134, 1.80025, 1.00497, 0.0455994, 0.00497441, [1.02054, 1.0035], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.update_validation_seconds", 0.0548808, 0.0544942, 0.992956, 0.109933, -0.00704436, [1.01671, 0.996206], "inconclusive", "the median effect is within the observed spread"],
+      ["sys_seconds", 0.921875, 1.03906, 1.12712, 0.315789, 0.127119, [1.06977, 1.08475], "inconclusive", "the median effect is within the observed spread"],
+      ["updates_per_hour", 1657.12, 1642.27, 0.991036, 0.0191948, -0.00896419, [0.984395, 0.999061], "inconclusive", "the median effect is within the observed spread"],
+      ["user_seconds", 5.25781, 5.23438, 0.995542, 0.0716418, -0.00445765, [1.00599, 0.995542], "inconclusive", "the median effect is within the observed spread"],
+      ["wall_seconds", 6.5177, 6.57657, 1.00903, 0.0191671, 0.00903181, [1.01578, 1.00088], "inconclusive", "the median effect is within the observed spread"]
+     ]
+    }
+   },
+   "compared_by_sha256": "ebf86f4c04edddc3e599115d7f1e4160f321c19256d376d1e3e0303a2f15c347",
+   "completed_utc": "2026-11-13T23:22:32.634790Z",
+   "created_utc": "2026-11-13T23:19:02.165824Z",
+   "label": "A/B comparison main vs PR #608 (DESKTOP-DJ1C40R: Intel Core i7-13700K 24 logical CPUs, 128 GiB RAM, Windows 11 10.0.26300; pinned on P-cores 0-7 under host reservation while background CI claim ci-win-5 on cores 10-15 and WSL2 claim fe-c 620c0a6986724aec908495a615c7eb18 / dd43a204f4094e10801105c05af6aa21 on E-cores 20-23 ran concurrently)",
+   "ok": true,
+   "outputs_sha256": {"bench.json": "8b1780f6fd393cd9977ab848c9b0dee81956a9de62b77bed2fa5da58238e1fc0", "comparison.json": "274eea8060cd39daf0207525ab7a166219e23734fd5bb4275e6620b3471bcd29", "samples.jsonl": "24468c43452752a3cc1773c02734dfcdf4c399529830d2ac0bc39a5a6cbad3f2"},
+   "policy": {"cache_diagnostics": false, "keep_runs": "reference", "max_wall_seconds": null, "order": "per case: warm-up runs (A then B, excluded from comparison), then 2 A-B-B-A block(s), then optional cold-resume checks", "page_cache": "not dropped between samples", "process": "every sample is a new process of the arm's binary", "reference": "each case's first completed sample; every later sample's run tree is compared with it", "work_path": "each case writes to its fixed output directory; the driver moves the run under runs/ after each sample"},
+   "run_driver_sha256": "ebf86f4c04edddc3e599115d7f1e4160f321c19256d376d1e3e0303a2f15c347",
+   "sample_columns": ["ordinal", "case", "kind", "block", "position", "arm", "ok", "error", "first_process_wall_seconds", "max_rss_mib", "outside_iterations_seconds", "receipts.behavior_replay_seconds", "receipts.checkpoint_io_seconds", "receipts.collection_elapsed_seconds", "receipts.collection_initialization_seconds", "receipts.input_read_seconds", "receipts.learner_update_seconds", "receipts.update_elapsed_seconds", "scheduler.collection_execution_seconds", "scheduler.collection_validation_seconds", "scheduler.iteration_wall_seconds", "scheduler.update_execution_seconds", "scheduler.update_validation_seconds", "sys_seconds", "updates_per_hour", "user_seconds", "wall_seconds", "durable_completed_iterations", "storage_bytes", "parity", "identical_files", "files", "accounted"],
+   "samples": [
+    [0, "pool2", "warmup", null, "warmup1", "main", true, null, null, 910.59, 0.261983, 0.526919, 0.495492, 4.06144, 0.112128, 0.433225, 0.348234, 1.80388, 4.10138, 0.237821, 6.38161, 1.84523, 0.0524495, 0.796875, 1625.63, 5.29688, 6.64359, 3, 196944612, "reference", null, null, null],
+    [1, "pool2", "warmup", null, "warmup1", "branch", true, null, null, 902.129, 0.300517, 0.547444, 0.489503, 7.6727, 0.113538, 0.425835, 0.319259, 1.78205, 7.70881, 0.230906, 9.94354, 1.81969, 0.054379, 1.03125, 1054.27, 28.8125, 10.2441, 3, 196944614, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [2, "pool2", "timed", 0, "A1", "main", true, null, null, 901.652, 0.23384, 0.529855, 0.457297, 4.15008, 0.108485, 0.412694, 0.308407, 1.70826, 4.18462, 0.228163, 6.34864, 1.7509, 0.0560152, 0.890625, 1640.72, 5.29688, 6.58248, 3, 196944611, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [3, "pool2", "timed", 0, "B1", "branch", true, null, null, 919.324, 0.251858, 0.523701, 0.472757, 4.13625, 0.113466, 0.447467, 0.321015, 1.76495, 4.1712, 0.226401, 6.38313, 1.80349, 0.0530972, 0.953125, 1627.73, 5.4375, 6.63499, 3, 196944615, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [4, "pool2", "timed", 0, "B2", "branch", true, null, null, 921.477, 0.254121, 0.523372, 0.487151, 4.1138, 0.121608, 0.416477, 0.328739, 1.75575, 4.14887, 0.229606, 6.36688, 1.797, 0.0588517, 1.20312, 1631.17, 5.0625, 6.621, 3, 196944613, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [5, "pool2", "timed", 0, "A2", "main", true, null, null, 903.734, 0.249137, 0.539987, 0.480701, 4.00131, 0.114061, 0.404079, 0.312654, 1.73743, 4.03515, 0.220434, 6.21851, 1.77712, 0.0540939, 1.125, 1669.85, 5.14062, 6.46765, 3, 196944616, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [6, "pool2", "timed", 1, "A1", "main", true, null, null, 908.02, 0.262394, 0.522249, 0.472397, 4.04612, 0.114106, 0.437838, 0.326701, 1.75919, 4.08066, 0.231133, 6.30537, 1.80555, 0.0556677, 0.9375, 1644.4, 5.29688, 6.56776, 3, 196944616, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [7, "pool2", "timed", 1, "B1", "branch", true, null, null, 902.578, 0.24346, 0.529766, 0.465411, 4.03987, 0.110073, 0.426666, 0.309298, 1.73115, 4.07538, 0.234129, 6.26548, 1.7809, 0.052861, 0.875, 1659.26, 5.34375, 6.50894, 3, 196944615, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [8, "pool2", "timed", 1, "B2", "branch", true, null, null, 914.281, 0.254463, 0.578213, 0.478573, 3.95911, 0.113043, 0.436174, 0.327688, 1.82066, 3.99404, 0.226044, 6.27768, 1.86299, 0.0558912, 1.125, 1653.36, 5.125, 6.53214, 3, 196944613, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [9, "pool2", "timed", 1, "A2", "main", true, null, null, 917.266, 0.252355, 0.55472, 0.459528, 3.91712, 0.104281, 0.443302, 0.32794, 1.7855, 3.95245, 0.244033, 6.20953, 1.82562, 0.0534987, 0.90625, 1671.34, 5.21875, 6.46188, 3, 196944613, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [10, "pool2", "cold_resume", null, "cold", "main", true, null, 2.67741, 850.043, 0.364409, 0.510248, 0.471963, 4.22669, 0.109905, 0.434703, 0.328902, 1.74583, 2.59512, 0.136667, 4.00369, 1.14747, 0.0353999, 0.859375, 1648.31, 3.59375, 4.3681, 3, 196944612, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [11, "pool2", "cold_resume", null, "cold", "branch", true, null, 2.73511, 853.57, 0.368037, 0.545621, 0.497074, 4.22567, 0.109561, 0.455278, 0.340796, 1.83878, 2.57454, 0.147234, 4.08093, 1.21883, 0.0376223, 0.796875, 1618.35, 3.60938, 4.44897, 3, 196944624, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [12, "pool18", "warmup", null, "warmup1", "main", true, null, null, 1137.85, 1.1664, 1.34901, 0.469654, 4.89722, 0.252055, 0.475577, 0.318833, 2.61308, 4.93389, 0.237746, 8.01575, 2.65069, 0.0523869, 1.40625, 1176.2, 7.5625, 9.18215, 3, 196954745, "reference", null, null, null],
+    [13, "pool18", "warmup", null, "warmup1", "branch", true, null, null, 1164.3, 1.18718, 1.453, 0.478157, 4.83191, 0.256425, 0.58629, 0.332733, 2.85019, 4.87172, 0.233597, 8.21814, 2.88708, 0.057764, 1.46875, 1148.29, 7.59375, 9.40532, 3, 196954739, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [14, "pool18", "timed", 0, "A1", "main", true, null, null, 1157.68, 1.21077, 1.42612, 0.450004, 5.07294, 0.289804, 0.497578, 0.324808, 2.69852, 5.11067, 0.242365, 8.29349, 2.74024, 0.0589679, 1.34375, 1136.33, 8.03125, 9.50426, 3, 196954733, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [15, "pool18", "timed", 0, "B1", "branch", true, null, null, 1138.91, 1.16902, 1.41275, 0.391289, 4.978, 0.269738, 0.519993, 0.337716, 2.66176, 5.01536, 0.231784, 8.13382, 2.70023, 0.0571626, 1.64062, 1160.94, 7.78125, 9.30284, 3, 196954731, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [16, "pool18", "timed", 0, "B2", "branch", true, null, null, 1135.08, 1.31302, 1.49907, 0.452857, 4.81914, 0.276398, 0.588601, 0.336157, 2.8767, 4.85738, 0.243111, 8.21316, 2.91642, 0.0558546, 1.51562, 1133.72, 7.8125, 9.52618, 3, 196954733, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [17, "pool18", "timed", 0, "A2", "main", true, null, null, 1131.63, 1.23469, 1.39881, 0.480753, 5.07593, 0.292145, 0.555713, 0.324549, 2.75983, 5.11434, 0.243943, 8.37746, 2.81155, 0.0573516, 1.70312, 1123.58, 7.5625, 9.61214, 3, 196954734, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [18, "pool18", "timed", 1, "A1", "main", true, null, null, 1146.7, 1.21625, 1.34552, 0.398111, 4.88865, 0.257037, 0.500574, 0.308829, 2.55305, 4.92956, 0.239565, 7.9458, 2.59239, 0.0568311, 1.39062, 1178.78, 7.60938, 9.16205, 3, 196954735, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [19, "pool18", "timed", 1, "B1", "branch", true, null, null, 1145.96, 1.23262, 1.42063, 0.399725, 4.62832, 0.261663, 0.535178, 0.356481, 2.71203, 4.66847, 0.237747, 7.85765, 2.74967, 0.061285, 1.4375, 1188.08, 7.5625, 9.09027, 3, 196954743, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [20, "pool18", "timed", 1, "B2", "branch", true, null, null, 1139.44, 1.14858, 1.46096, 0.393628, 4.52223, 0.270679, 0.513258, 0.343145, 2.711, 4.55642, 0.241779, 7.73836, 2.75184, 0.0570867, 1.29688, 1215.27, 7.65625, 8.88694, 3, 196954743, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [21, "pool18", "timed", 1, "A2", "main", true, null, null, 1148.64, 1.2792, 1.38416, 0.387454, 4.82594, 0.275225, 0.518323, 0.337152, 2.6271, 4.85856, 0.232159, 7.96194, 2.67101, 0.0638893, 1.59375, 1168.69, 7.75, 9.24114, 3, 196954731, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [22, "pool18", "cold_resume", null, "cold", "main", true, null, 4.19076, 1077.51, 1.35322, 1.40755, 0.380082, 5.22582, 0.282639, 0.521545, 0.330973, 2.64016, 3.32549, 0.150911, 5.33988, 1.73496, 0.0378203, 0.984375, 1075.73, 6.01562, 6.6931, 3, 196954733, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [23, "pool18", "cold_resume", null, "cold", "branch", true, null, 4.27022, 1067.23, 1.33998, 1.40347, 0.38373, 5.16713, 0.288445, 0.548189, 0.352763, 2.68816, 3.26019, 0.15239, 5.33485, 1.79654, 0.0370876, 0.921875, 1078.68, 6.0, 6.67484, 3, 196954734, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}]
+   ],
+   "verdict_columns": ["metric", "baseline_median", "candidate_median", "ratio", "max_spread_fraction", "effect_fraction", "block_ratios", "verdict", "reason"]
+  },
+  "counters": {
+   "argv": ["run", "--fixture", "D:/antigravity-20261112/t5-fixture-run/fixture", "--out", "D:\\antigravity-20261112\\t5-fixture-run\\counters", "--cases", "pool2,pool18", "--baseline", "branch-a=D:/antigravity-20261112/target-bench-t5/release/native_expanded_training_run_v1.exe", "--candidate", "branch-b=D:/antigravity-20261112/target-bench-t5/release/native_expanded_training_run_v1.exe", "--blocks", "1", "--warmup-runs", "0", "--keep-runs", "reference", "--build-profile", "release, checked-in profile (thin LTO, codegen-units 1), cargo 1.94.1 --release --locked -j 4 in a 4-core below-normal host_slots claim, x86_64-pc-windows-msvc, VS 2022 17.13.2; identical for both arms", "--label", "Counter collection and repeatability check with cache diagnostics enabled (DESKTOP-DJ1C40R: Intel Core i7-13700K 24 logical CPUs, 128 GiB RAM, Windows 11 10.0.26300; pinned on P-cores 0-7 under host reservation while background CI claim ci-win-5 on cores 10-15 and WSL2 claim fe-c 620c0a6986724aec908495a615c7eb18 / dd43a204f4094e10801105c05af6aa21 on E-cores 20-23 ran concurrently)"],
+   "arms": {
+    "baseline": {
+     "binary": "D:\\antigravity-20261112\\target-bench-t5\\release\\native_expanded_training_run_v1.exe",
+     "bytes": 63673856,
+     "env": {},
+     "letter": "A",
+     "name": "branch-a",
+     "run_provenance": [
+      {"git_commit": "b5dc72c0a9b88864d363087b68c4e5c154556958", "implementation_sha256": "adeba0f271f14e9fbc3edae7fef043f6a9fdff60733ce8c9c0d2b861843dec6b", "tracked_tree_sha256": "a4710ac6b360631509d2b07816136d69d1a01601faec10df074bfaf236707d63"}
+     ],
+     "sha256": "f40805a700ce6cc27a4cb7fbae13e16c624453963d7b8cadc6e2ecc06dabf0ac"
+    },
+    "candidate": {
+     "binary": "D:\\antigravity-20261112\\target-bench-t5\\release\\native_expanded_training_run_v1.exe",
+     "bytes": 63673856,
+     "env": {},
+     "letter": "B",
+     "name": "branch-b",
+     "run_provenance": [
+      {"git_commit": "b5dc72c0a9b88864d363087b68c4e5c154556958", "implementation_sha256": "adeba0f271f14e9fbc3edae7fef043f6a9fdff60733ce8c9c0d2b861843dec6b", "tracked_tree_sha256": "a4710ac6b360631509d2b07816136d69d1a01601faec10df074bfaf236707d63"}
+     ],
+     "sha256": "f40805a700ce6cc27a4cb7fbae13e16c624453963d7b8cadc6e2ecc06dabf0ac"
+    }
+   },
+   "binaries_unchanged": true,
+   "cases": {
+    "pool18": {
+     "boundaries": [
+      {"adam_step": 1, "checkpoint_sha256": "77d556c600ce801c5be667b5d94103c0db682736d19df74574cd5c290fa3d556", "iteration": 0, "output_identity_sha256": "a81e026b8f80cde8102bbf01f8e21f822889e1e65ecfa68a81a8755469603290", "state_sha256": "c7779685fa100f6a8c3a855f399e27525f8dc2f08516026331260741cc6c2c2a"},
+      {"adam_step": 2, "checkpoint_sha256": "09d3547481393c66662726719974cc090d8f0a3272486e0378c187d5f79cf575", "iteration": 1, "output_identity_sha256": "91d871b393418e049a38d4046dd724264217f263ffdf2cbbecea2401030e09dd", "state_sha256": "751c5143849a1da2619f7d2fcc0d6bc23c1ddc74f7ed9509dbc4261bc2b62384"},
+      {"adam_step": 3, "checkpoint_sha256": "c26e3a5cd5223db1d2d4d30e6990de069d77ba96459908da851c32c070509ca8", "iteration": 2, "output_identity_sha256": "c3a764134233cb69828a39a5848194ff830adeb2539e2291b6484048de516310", "state_sha256": "7d88bed602e5fd79c045365bb8fbc7e3b6dba60d5f35a60659a72305ccfeafcb"}
+     ],
+     "cold_resume": [],
+     "counters": {
+      "branch-a": {
+       "available": true,
+       "counts": {
+        "io": {
+         "checkpoint_decodes": {"bytes": 842916068, "decodes": 57, "seconds": 0.0746331},
+         "file_reads": {"bytes": 2090198809, "reads": 419, "seconds": 0.602965}
+        },
+        "loaded_source": {
+         "roles": {
+          "collect_learner": {"cache_hits": 2, "cache_kept": 1, "cache_lookups": 3, "cache_misses": 1, "kept_policy_bytes": 4194368, "kept_state_bytes": 15497944, "scoped_loads": 3, "served_policy_bytes": 8388736, "served_state_bytes": 30995888},
+          "opponent": {"cache_hits": 0, "cache_kept": 34, "cache_lookups": 34, "cache_misses": 34, "kept_policy_bytes": 142608512, "kept_state_bytes": 526930096, "scoped_loads": 34, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "run_fixed_opponent": {"cache_hits": 0, "cache_kept": 18, "cache_lookups": 18, "cache_misses": 18, "kept_policy_bytes": 75498624, "kept_state_bytes": 278962992, "scoped_loads": 18, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "run_initial": {"cache_hits": 0, "cache_kept": 1, "cache_lookups": 1, "cache_misses": 1, "kept_policy_bytes": 4194368, "kept_state_bytes": 15497944, "scoped_loads": 1, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "unattributed": {"cache_hits": 0, "cache_kept": 0, "cache_lookups": 0, "cache_misses": 0, "kept_policy_bytes": 0, "kept_state_bytes": 0, "scoped_loads": 0, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "update_learner": {"cache_hits": 0, "cache_kept": 3, "cache_lookups": 3, "cache_misses": 3, "kept_policy_bytes": 12583104, "kept_state_bytes": 46493832, "scoped_loads": 3, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "update_readback": {"cache_hits": 0, "cache_kept": 3, "cache_lookups": 3, "cache_misses": 3, "kept_policy_bytes": 12583104, "kept_state_bytes": 46493832, "scoped_loads": 3, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "update_validation": {"cache_hits": 3, "cache_kept": 0, "cache_lookups": 3, "cache_misses": 0, "kept_policy_bytes": 0, "kept_state_bytes": 0, "scoped_loads": 3, "served_policy_bytes": 12583104, "served_state_bytes": 46493832}
+         },
+         "schema": "mtg-kernel-loaded-source-profile/v1",
+         "total": {"cache_hits": 5, "cache_kept": 60, "cache_lookups": 65, "cache_misses": 60, "kept_policy_bytes": 251662080, "kept_state_bytes": 929876640, "scoped_loads": 65, "served_policy_bytes": 20971840, "served_state_bytes": 77489720}
+        },
+        "opponent_cache": {
+         "boundary": {
+          "cacheable_sources": 21,
+          "checks": 3,
+          "sources": 21,
+          "time": {"seconds": 0.22259}
+         },
+         "collection": {
+          "entry_limit": 8,
+          "evictions": 0,
+          "hits": 6,
+          "inserts": 42,
+          "live_entries": 0,
+          "live_policy_bytes": 0,
+          "misses": {"unverified": 21, "verified": 21},
+          "peak_live_entries": 8,
+          "peak_live_policy_bytes": 33554944
+         },
+         "process": {
+          "capture": {"seconds": 0.0988093},
+          "captured_bytes": 256390784,
+          "duplicate_file_bytes": 59214288,
+          "entries": 13,
+          "entry_limit": 32,
+          "evicted_file_bytes": 0,
+          "evictions": 0,
+          "file_bytes": 256390784,
+          "forked_policy_bytes": 88081728,
+          "forks": 21,
+          "full_load": {"seconds": 0.733603},
+          "full_loads": 13,
+          "hits": {"revalidated": 0, "trusted": 8},
+          "kept": 13,
+          "lookups": 21,
+          "misses": {"absent": 13, "check_setting": 0, "revalidation": 0},
+          "model_bytes": 73449896,
+          "models": 13,
+          "not_kept": {"unforkable": 0, "unverifiable": 0},
+          "policy_bytes": 54526784,
+          "replaced": 0,
+          "revalidated_payload_bytes": 0,
+          "unique_file_bytes": 197176496
+         }
+        },
+        "process": {"peak_rss_bytes": null, "rss_bytes": null},
+        "retained_files": {"duplicate_bytes": 182451564, "memo_bytes": 167595361, "opponent_cache_bytes": 256390784, "opponent_cache_bytes_also_in_memo": 123237276, "total_bytes": 423986145, "unique_bytes": 241534581},
+        "verified_bytes": {
+         "budget_bytes": 167772160,
+         "charged_bytes": 167603739,
+         "compared_hit_bytes": 1675801691,
+         "compared_hits": 411,
+         "copied_bytes": 719351658,
+         "entries": 20,
+         "entry_limit": 4096,
+         "evicted_bytes": 596125205,
+         "evictions": 57,
+         "hash_mismatches": 0,
+         "hashed": 44,
+         "hashed_bytes": 566882340,
+         "held_bytes": 167595361,
+         "lookup_hits": 431,
+         "lookups": 479,
+         "misses": {"absent": 44, "differ": 0, "disabled": 0},
+         "peak_charged_bytes": 167606396,
+         "recorded_bytes": 763720566,
+         "records": 77,
+         "records_refused": 0,
+         "rerecords": 0,
+         "resident": false,
+         "resident_hit_bytes": 0,
+         "resident_hits": 0
+        }
+       },
+       "equal_across_samples": false,
+       "timing_medians": {"loaded_source/roles/collect_learner/scoped_nanos": 37840400.0, "loaded_source/roles/opponent/scoped_nanos": 1899030000.0, "loaded_source/roles/run_fixed_opponent/scoped_nanos": 1057230000.0, "loaded_source/roles/run_initial/scoped_nanos": 51020800.0, "loaded_source/roles/unattributed/scoped_nanos": 0.0, "loaded_source/roles/update_learner/scoped_nanos": 128302000.0, "loaded_source/roles/update_readback/scoped_nanos": 108560000.0, "loaded_source/roles/update_validation/scoped_nanos": 56207200.0, "loaded_source/total/scoped_nanos": 3338190000.0, "opponent_cache/boundary/time/decode_seconds": 0.0, "opponent_cache/boundary/time/other_seconds": 0.015037, "opponent_cache/boundary/time/read_seconds": 0.0988957, "opponent_cache/boundary/time/verify_seconds": 0.093072, "opponent_cache/collection/hit_seconds": 5.03e-05, "opponent_cache/collection/miss_seconds": 2.00541, "opponent_cache/process/capture/decode_seconds": 0.0, "opponent_cache/process/capture/other_seconds": 0.0019766, "opponent_cache/process/capture/read_seconds": 0.0674171, "opponent_cache/process/capture/verify_seconds": 0.0287944, "opponent_cache/process/fork_seconds": 0.0029648, "opponent_cache/process/full_load/decode_seconds": 0.017752, "opponent_cache/process/full_load/other_seconds": 0.607156, "opponent_cache/process/full_load/read_seconds": 0.0775932, "opponent_cache/process/full_load/verify_seconds": 0.0291717, "opponent_cache/process/hit_max_seconds": 0.00057175, "opponent_cache/process/hit_seconds": 0.003045, "opponent_cache/process/revalidation_seconds": 0.0, "process/cpu_seconds": 9.66406, "verified_bytes/compare_seconds": 0.223018, "verified_bytes/hash_seconds": 0.225956}
+      },
+      "branch-b": {
+       "available": true,
+       "counts": {
+        "io": {
+         "checkpoint_decodes": {"bytes": 842916068, "decodes": 57, "seconds": 0.0751102},
+         "file_reads": {"bytes": 2090198809, "reads": 419, "seconds": 0.585987}
+        },
+        "loaded_source": {
+         "roles": {
+          "collect_learner": {"cache_hits": 2, "cache_kept": 1, "cache_lookups": 3, "cache_misses": 1, "kept_policy_bytes": 4194368, "kept_state_bytes": 15497944, "scoped_loads": 3, "served_policy_bytes": 8388736, "served_state_bytes": 30995888},
+          "opponent": {"cache_hits": 0, "cache_kept": 34, "cache_lookups": 34, "cache_misses": 34, "kept_policy_bytes": 142608512, "kept_state_bytes": 526930096, "scoped_loads": 34, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "run_fixed_opponent": {"cache_hits": 0, "cache_kept": 18, "cache_lookups": 18, "cache_misses": 18, "kept_policy_bytes": 75498624, "kept_state_bytes": 278962992, "scoped_loads": 18, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "run_initial": {"cache_hits": 0, "cache_kept": 1, "cache_lookups": 1, "cache_misses": 1, "kept_policy_bytes": 4194368, "kept_state_bytes": 15497944, "scoped_loads": 1, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "unattributed": {"cache_hits": 0, "cache_kept": 0, "cache_lookups": 0, "cache_misses": 0, "kept_policy_bytes": 0, "kept_state_bytes": 0, "scoped_loads": 0, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "update_learner": {"cache_hits": 0, "cache_kept": 3, "cache_lookups": 3, "cache_misses": 3, "kept_policy_bytes": 12583104, "kept_state_bytes": 46493832, "scoped_loads": 3, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "update_readback": {"cache_hits": 0, "cache_kept": 3, "cache_lookups": 3, "cache_misses": 3, "kept_policy_bytes": 12583104, "kept_state_bytes": 46493832, "scoped_loads": 3, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "update_validation": {"cache_hits": 3, "cache_kept": 0, "cache_lookups": 3, "cache_misses": 0, "kept_policy_bytes": 0, "kept_state_bytes": 0, "scoped_loads": 3, "served_policy_bytes": 12583104, "served_state_bytes": 46493832}
+         },
+         "schema": "mtg-kernel-loaded-source-profile/v1",
+         "total": {"cache_hits": 5, "cache_kept": 60, "cache_lookups": 65, "cache_misses": 60, "kept_policy_bytes": 251662080, "kept_state_bytes": 929876640, "scoped_loads": 65, "served_policy_bytes": 20971840, "served_state_bytes": 77489720}
+        },
+        "opponent_cache": {
+         "boundary": {
+          "cacheable_sources": 21,
+          "checks": 3,
+          "sources": 21,
+          "time": {"seconds": 0.209459}
+         },
+         "collection": {
+          "entry_limit": 8,
+          "evictions": 0,
+          "hits": 6,
+          "inserts": 42,
+          "live_entries": 0,
+          "live_policy_bytes": 0,
+          "misses": {"unverified": 21, "verified": 21},
+          "peak_live_entries": 8,
+          "peak_live_policy_bytes": 33554944
+         },
+         "process": {
+          "capture": {"seconds": 0.0943831},
+          "captured_bytes": 256390784,
+          "duplicate_file_bytes": 59214288,
+          "entries": 13,
+          "entry_limit": 32,
+          "evicted_file_bytes": 0,
+          "evictions": 0,
+          "file_bytes": 256390784,
+          "forked_policy_bytes": 88081728,
+          "forks": 21,
+          "full_load": {"seconds": 0.720193},
+          "full_loads": 13,
+          "hits": {"revalidated": 0, "trusted": 8},
+          "kept": 13,
+          "lookups": 21,
+          "misses": {"absent": 13, "check_setting": 0, "revalidation": 0},
+          "model_bytes": 73449896,
+          "models": 13,
+          "not_kept": {"unforkable": 0, "unverifiable": 0},
+          "policy_bytes": 54526784,
+          "replaced": 0,
+          "revalidated_payload_bytes": 0,
+          "unique_file_bytes": 197176496
+         }
+        },
+        "process": {"peak_rss_bytes": null, "rss_bytes": null},
+        "retained_files": {"duplicate_bytes": 182451564, "memo_bytes": 167595361, "opponent_cache_bytes": 256390784, "opponent_cache_bytes_also_in_memo": 123237276, "total_bytes": 423986145, "unique_bytes": 241534581},
+        "verified_bytes": {
+         "budget_bytes": 167772160,
+         "charged_bytes": 167603739,
+         "compared_hit_bytes": 1675801712,
+         "compared_hits": 411,
+         "copied_bytes": 719351679,
+         "entries": 20,
+         "entry_limit": 4096,
+         "evicted_bytes": 596125226,
+         "evictions": 57,
+         "hash_mismatches": 0,
+         "hashed": 44,
+         "hashed_bytes": 566882349,
+         "held_bytes": 167595361,
+         "lookup_hits": 431,
+         "lookups": 479,
+         "misses": {"absent": 44, "differ": 0, "disabled": 0},
+         "peak_charged_bytes": 167606396,
+         "recorded_bytes": 763720587,
+         "records": 77,
+         "records_refused": 0,
+         "rerecords": 0,
+         "resident": false,
+         "resident_hit_bytes": 0,
+         "resident_hits": 0
+        }
+       },
+       "equal_across_samples": false,
+       "timing_medians": {"loaded_source/roles/collect_learner/scoped_nanos": 39856700.0, "loaded_source/roles/opponent/scoped_nanos": 1836900000.0, "loaded_source/roles/run_fixed_opponent/scoped_nanos": 1104320000.0, "loaded_source/roles/run_initial/scoped_nanos": 50842000.0, "loaded_source/roles/unattributed/scoped_nanos": 0.0, "loaded_source/roles/update_learner/scoped_nanos": 105756000.0, "loaded_source/roles/update_readback/scoped_nanos": 112275000.0, "loaded_source/roles/update_validation/scoped_nanos": 59715700.0, "loaded_source/total/scoped_nanos": 3309660000.0, "opponent_cache/boundary/time/decode_seconds": 0.0, "opponent_cache/boundary/time/other_seconds": 0.013142, "opponent_cache/boundary/time/read_seconds": 0.0940599, "opponent_cache/boundary/time/verify_seconds": 0.090935, "opponent_cache/collection/hit_seconds": 4.845e-05, "opponent_cache/collection/miss_seconds": 1.93118, "opponent_cache/process/capture/decode_seconds": 0.0, "opponent_cache/process/capture/other_seconds": 0.0016368, "opponent_cache/process/capture/read_seconds": 0.06022, "opponent_cache/process/capture/verify_seconds": 0.025696, "opponent_cache/process/fork_seconds": 0.00228505, "opponent_cache/process/full_load/decode_seconds": 0.0157889, "opponent_cache/process/full_load/other_seconds": 0.571475, "opponent_cache/process/full_load/read_seconds": 0.0734375, "opponent_cache/process/full_load/verify_seconds": 0.0259164, "opponent_cache/process/hit_max_seconds": 0.00036315, "opponent_cache/process/hit_seconds": 0.0023506, "opponent_cache/process/revalidation_seconds": 0.0, "process/cpu_seconds": 9.07812, "verified_bytes/compare_seconds": 0.200213, "verified_bytes/hash_seconds": 0.225313}
+      }
+     },
+     "failures": [],
+     "parity_ok": true,
+     "storage_bytes_by_name": {"checkpoint.json": 44368908, "collect-command.json": 47772, "collection.json": 7952, "complete.json": 10812, "completion.json": 4002, "episode-#.json": 152450717, "run.json": 45058, "run.lock": 0, "update-command.json": 8145, "update-input.json": 717, "update.json": 10649},
+     "timed_samples": {"branch-a": 2, "branch-b": 2},
+     "verdicts": [
+      ["max_rss_mib", 1131.44, 1154.05, 1.01998, 0.00771971, 0.0199829, [1.01998], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["outside_iterations_seconds", 1.19848, 1.48488, 1.23896, 0.29365, 0.238965, [1.23896], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["receipts.behavior_replay_seconds", 1.45232, 1.43427, 0.98757, 0.0538036, -0.0124304, [0.98757], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["receipts.checkpoint_io_seconds", 0.531197, 0.511599, 0.963105, 0.494313, -0.0368946, [0.963105], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["receipts.collection_elapsed_seconds", 5.67521, 5.21186, 0.918356, 0.196184, -0.0816442, [0.918356], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["receipts.collection_initialization_seconds", 0.282622, 0.274709, 0.972002, 0.111599, -0.0279978, [0.972002], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["receipts.input_read_seconds", 0.576356, 0.513138, 0.890314, 0.0438743, -0.109686, [0.890314], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["receipts.learner_update_seconds", 0.353175, 0.33972, 0.961903, 0.212972, -0.0380966, [0.961903], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["receipts.update_elapsed_seconds", 2.91306, 2.79874, 0.960755, 0.110603, -0.0392452, [0.960755], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["scheduler.collection_execution_seconds", 5.71955, 5.26445, 0.92043, 0.196746, -0.0795703, [0.92043], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["scheduler.collection_validation_seconds", 0.259743, 0.236774, 0.911569, 0.0447698, -0.0884306, [0.911569], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["scheduler.iteration_wall_seconds", 9.22535, 8.63482, 0.935988, 0.162542, -0.0640123, [0.935988], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["scheduler.update_execution_seconds", 2.96349, 2.83985, 0.958277, 0.108974, -0.0417229, [0.958277], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["scheduler.update_validation_seconds", 0.0566098, 0.0601413, 1.06238, 0.123945, 0.0623832, [1.06238], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["sys_seconds", 1.57812, 1.46094, 0.925743, 0.0962567, -0.0742574, [0.925743], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["updates_per_hour", 1042.67, 1073.33, 1.0294, 0.15898, 0.029397, [1.0294], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["user_seconds", 8.14844, 7.67969, 0.942474, 0.0977948, -0.0575264, [0.942474], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["wall_seconds", 10.4238, 10.1197, 0.970823, 0.15898, -0.0291774, [0.970823], "inconclusive", "fewer than two complete A-B-B-A blocks"]
+     ]
+    },
+    "pool2": {
+     "boundaries": [
+      {"adam_step": 1, "checkpoint_sha256": "46a125b69b9c8c20a402b6e11b5baffd9061ef364fc02e8d5cc18156275b7d08", "iteration": 0, "output_identity_sha256": "a6d94f9902e09bb4e909d34eace0b960b22f839e8e2a1b9ec84eefe7355ed123", "state_sha256": "c7779685fa100f6a8c3a855f399e27525f8dc2f08516026331260741cc6c2c2a"},
+      {"adam_step": 2, "checkpoint_sha256": "41dbe8bd8cec61874960d8844c72f861adf90c90b617534c9b476f5fadd55624", "iteration": 1, "output_identity_sha256": "3a88e9a52e1c04c1a5f74e9a13e0b50952d81a20face2f5d6c2c4daa53ae6c4d", "state_sha256": "87679750542174521f3e5e4621cfbd311ee340a66a8c477d367a1277e5435e91"},
+      {"adam_step": 3, "checkpoint_sha256": "ab7c3b4da4e4e5ea6c49d54f75462cc54e5e398ecf1c9505f252066097c72aaa", "iteration": 2, "output_identity_sha256": "f9073a63614180a25b1b74de596586fe364f1be443284eb8ce8af0f4c6afafc6", "state_sha256": "14b134e1b5c7fdea395f3f1145659f573c41b996fc45d407c31fda881779b318"}
+     ],
+     "cold_resume": [],
+     "counters": {
+      "branch-a": {
+       "available": true,
+       "counts": {
+        "io": {
+         "checkpoint_decodes": {"bytes": 177459504, "decodes": 12, "seconds": 0.016097},
+         "file_reads": {"bytes": 749077702, "reads": 147, "seconds": 0.195739}
+        },
+        "loaded_source": {
+         "roles": {
+          "collect_learner": {"cache_hits": 2, "cache_kept": 1, "cache_lookups": 3, "cache_misses": 1, "kept_policy_bytes": 4194368, "kept_state_bytes": 15497944, "scoped_loads": 3, "served_policy_bytes": 8388736, "served_state_bytes": 30995888},
+          "opponent": {"cache_hits": 1, "cache_kept": 7, "cache_lookups": 8, "cache_misses": 7, "kept_policy_bytes": 29360576, "kept_state_bytes": 108485608, "scoped_loads": 8, "served_policy_bytes": 4194368, "served_state_bytes": 15497944},
+          "run_fixed_opponent": {"cache_hits": 0, "cache_kept": 2, "cache_lookups": 2, "cache_misses": 2, "kept_policy_bytes": 8388736, "kept_state_bytes": 30995888, "scoped_loads": 2, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "run_initial": {"cache_hits": 0, "cache_kept": 1, "cache_lookups": 1, "cache_misses": 1, "kept_policy_bytes": 4194368, "kept_state_bytes": 15497944, "scoped_loads": 1, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "unattributed": {"cache_hits": 0, "cache_kept": 0, "cache_lookups": 0, "cache_misses": 0, "kept_policy_bytes": 0, "kept_state_bytes": 0, "scoped_loads": 0, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "update_learner": {"cache_hits": 2, "cache_kept": 1, "cache_lookups": 3, "cache_misses": 1, "kept_policy_bytes": 4194368, "kept_state_bytes": 15497944, "scoped_loads": 3, "served_policy_bytes": 8388736, "served_state_bytes": 30995888},
+          "update_readback": {"cache_hits": 0, "cache_kept": 3, "cache_lookups": 3, "cache_misses": 3, "kept_policy_bytes": 12583104, "kept_state_bytes": 46493832, "scoped_loads": 3, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "update_validation": {"cache_hits": 3, "cache_kept": 0, "cache_lookups": 3, "cache_misses": 0, "kept_policy_bytes": 0, "kept_state_bytes": 0, "scoped_loads": 3, "served_policy_bytes": 12583104, "served_state_bytes": 46493832}
+         },
+         "schema": "mtg-kernel-loaded-source-profile/v1",
+         "total": {"cache_hits": 8, "cache_kept": 15, "cache_lookups": 23, "cache_misses": 15, "kept_policy_bytes": 62915520, "kept_state_bytes": 232469160, "scoped_loads": 23, "served_policy_bytes": 33554944, "served_state_bytes": 123983552}
+        },
+        "opponent_cache": {
+         "boundary": {
+          "cacheable_sources": 6,
+          "checks": 3,
+          "sources": 6,
+          "time": {"seconds": 0.0436608}
+         },
+         "collection": {
+          "entry_limit": 8,
+          "evictions": 0,
+          "hits": 36,
+          "inserts": 12,
+          "live_entries": 0,
+          "live_policy_bytes": 0,
+          "misses": {"unverified": 6, "verified": 6},
+          "peak_live_entries": 2,
+          "peak_live_policy_bytes": 8388736
+         },
+         "process": {
+          "capture": {"seconds": 0.0162271},
+          "captured_bytes": 39444736,
+          "duplicate_file_bytes": 4934524,
+          "entries": 2,
+          "entry_limit": 32,
+          "evicted_file_bytes": 0,
+          "evictions": 0,
+          "file_bytes": 39444736,
+          "forked_policy_bytes": 25166208,
+          "forks": 6,
+          "full_load": {"seconds": 0.100485},
+          "full_loads": 2,
+          "hits": {"revalidated": 0, "trusted": 4},
+          "kept": 2,
+          "lookups": 6,
+          "misses": {"absent": 2, "check_setting": 0, "revalidation": 0},
+          "model_bytes": 11299984,
+          "models": 2,
+          "not_kept": {"unforkable": 0, "unverifiable": 0},
+          "policy_bytes": 8388736,
+          "replaced": 0,
+          "revalidated_payload_bytes": 0,
+          "unique_file_bytes": 34510212
+         }
+        },
+        "process": {"peak_rss_bytes": null, "rss_bytes": null},
+        "retained_files": {"duplicate_bytes": 39444736, "memo_bytes": 159402513, "opponent_cache_bytes": 39444736, "opponent_cache_bytes_also_in_memo": 34510212, "total_bytes": 198847249, "unique_bytes": 159402513},
+        "verified_bytes": {
+         "budget_bytes": 167772160,
+         "charged_bytes": 159414236,
+         "compared_hit_bytes": 867052585,
+         "compared_hits": 178,
+         "copied_bytes": 186979417,
+         "entries": 27,
+         "entry_limit": 4096,
+         "evicted_bytes": 71945812,
+         "evictions": 11,
+         "hash_mismatches": 0,
+         "hashed": 5,
+         "hashed_bytes": 34510212,
+         "held_bytes": 159402513,
+         "lookup_hits": 202,
+         "lookups": 207,
+         "misses": {"absent": 5, "differ": 0, "disabled": 0},
+         "peak_charged_bytes": 166099558,
+         "recorded_bytes": 231348325,
+         "records": 38,
+         "records_refused": 0,
+         "rerecords": 0,
+         "resident": false,
+         "resident_hit_bytes": 0,
+         "resident_hits": 0
+        }
+       },
+       "equal_across_samples": false,
+       "timing_medians": {"loaded_source/roles/collect_learner/scoped_nanos": 40648600.0, "loaded_source/roles/opponent/scoped_nanos": 382422000.0, "loaded_source/roles/run_fixed_opponent/scoped_nanos": 130372000.0, "loaded_source/roles/run_initial/scoped_nanos": 47996400.0, "loaded_source/roles/unattributed/scoped_nanos": 0.0, "loaded_source/roles/update_learner/scoped_nanos": 39868700.0, "loaded_source/roles/update_readback/scoped_nanos": 108764000.0, "loaded_source/roles/update_validation/scoped_nanos": 55179200.0, "loaded_source/total/scoped_nanos": 805250000.0, "opponent_cache/boundary/time/decode_seconds": 0.0, "opponent_cache/boundary/time/other_seconds": 0.00037745, "opponent_cache/boundary/time/read_seconds": 0.026902, "opponent_cache/boundary/time/verify_seconds": 0.0126912, "opponent_cache/collection/hit_seconds": 0.00019165, "opponent_cache/collection/miss_seconds": 0.399947, "opponent_cache/process/capture/decode_seconds": 0.0, "opponent_cache/process/capture/other_seconds": 0.00025895, "opponent_cache/process/capture/read_seconds": 0.0108863, "opponent_cache/process/capture/verify_seconds": 0.0043204, "opponent_cache/process/fork_seconds": 0.0012708, "opponent_cache/process/full_load/decode_seconds": 0.0028146, "opponent_cache/process/full_load/other_seconds": 0.0849527, "opponent_cache/process/full_load/read_seconds": 0.0104263, "opponent_cache/process/full_load/verify_seconds": 0.0039704, "opponent_cache/process/hit_max_seconds": 0.0004077, "opponent_cache/process/hit_seconds": 0.00130085, "opponent_cache/process/revalidation_seconds": 0.0, "process/cpu_seconds": 6.27344, "verified_bytes/compare_seconds": 0.11568, "verified_bytes/hash_seconds": 0.0137042}
+      },
+      "branch-b": {
+       "available": true,
+       "counts": {
+        "io": {
+         "checkpoint_decodes": {"bytes": 177459504, "decodes": 12, "seconds": 0.015779},
+         "file_reads": {"bytes": 749077702, "reads": 147, "seconds": 0.188502}
+        },
+        "loaded_source": {
+         "roles": {
+          "collect_learner": {"cache_hits": 2, "cache_kept": 1, "cache_lookups": 3, "cache_misses": 1, "kept_policy_bytes": 4194368, "kept_state_bytes": 15497944, "scoped_loads": 3, "served_policy_bytes": 8388736, "served_state_bytes": 30995888},
+          "opponent": {"cache_hits": 1, "cache_kept": 7, "cache_lookups": 8, "cache_misses": 7, "kept_policy_bytes": 29360576, "kept_state_bytes": 108485608, "scoped_loads": 8, "served_policy_bytes": 4194368, "served_state_bytes": 15497944},
+          "run_fixed_opponent": {"cache_hits": 0, "cache_kept": 2, "cache_lookups": 2, "cache_misses": 2, "kept_policy_bytes": 8388736, "kept_state_bytes": 30995888, "scoped_loads": 2, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "run_initial": {"cache_hits": 0, "cache_kept": 1, "cache_lookups": 1, "cache_misses": 1, "kept_policy_bytes": 4194368, "kept_state_bytes": 15497944, "scoped_loads": 1, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "unattributed": {"cache_hits": 0, "cache_kept": 0, "cache_lookups": 0, "cache_misses": 0, "kept_policy_bytes": 0, "kept_state_bytes": 0, "scoped_loads": 0, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "update_learner": {"cache_hits": 2, "cache_kept": 1, "cache_lookups": 3, "cache_misses": 1, "kept_policy_bytes": 4194368, "kept_state_bytes": 15497944, "scoped_loads": 3, "served_policy_bytes": 8388736, "served_state_bytes": 30995888},
+          "update_readback": {"cache_hits": 0, "cache_kept": 3, "cache_lookups": 3, "cache_misses": 3, "kept_policy_bytes": 12583104, "kept_state_bytes": 46493832, "scoped_loads": 3, "served_policy_bytes": 0, "served_state_bytes": 0},
+          "update_validation": {"cache_hits": 3, "cache_kept": 0, "cache_lookups": 3, "cache_misses": 0, "kept_policy_bytes": 0, "kept_state_bytes": 0, "scoped_loads": 3, "served_policy_bytes": 12583104, "served_state_bytes": 46493832}
+         },
+         "schema": "mtg-kernel-loaded-source-profile/v1",
+         "total": {"cache_hits": 8, "cache_kept": 15, "cache_lookups": 23, "cache_misses": 15, "kept_policy_bytes": 62915520, "kept_state_bytes": 232469160, "scoped_loads": 23, "served_policy_bytes": 33554944, "served_state_bytes": 123983552}
+        },
+        "opponent_cache": {
+         "boundary": {
+          "cacheable_sources": 6,
+          "checks": 3,
+          "sources": 6,
+          "time": {"seconds": 0.0390524}
+         },
+         "collection": {
+          "entry_limit": 8,
+          "evictions": 0,
+          "hits": 36,
+          "inserts": 12,
+          "live_entries": 0,
+          "live_policy_bytes": 0,
+          "misses": {"unverified": 6, "verified": 6},
+          "peak_live_entries": 2,
+          "peak_live_policy_bytes": 8388736
+         },
+         "process": {
+          "capture": {"seconds": 0.0164005},
+          "captured_bytes": 39444736,
+          "duplicate_file_bytes": 4934524,
+          "entries": 2,
+          "entry_limit": 32,
+          "evicted_file_bytes": 0,
+          "evictions": 0,
+          "file_bytes": 39444736,
+          "forked_policy_bytes": 25166208,
+          "forks": 6,
+          "full_load": {"seconds": 0.111586},
+          "full_loads": 2,
+          "hits": {"revalidated": 0, "trusted": 4},
+          "kept": 2,
+          "lookups": 6,
+          "misses": {"absent": 2, "check_setting": 0, "revalidation": 0},
+          "model_bytes": 11299984,
+          "models": 2,
+          "not_kept": {"unforkable": 0, "unverifiable": 0},
+          "policy_bytes": 8388736,
+          "replaced": 0,
+          "revalidated_payload_bytes": 0,
+          "unique_file_bytes": 34510212
+         }
+        },
+        "process": {"peak_rss_bytes": null, "rss_bytes": null},
+        "retained_files": {"duplicate_bytes": 39444736, "memo_bytes": 159402501, "opponent_cache_bytes": 39444736, "opponent_cache_bytes_also_in_memo": 34510212, "total_bytes": 198847237, "unique_bytes": 159402501},
+        "verified_bytes": {
+         "budget_bytes": 167772160,
+         "charged_bytes": 159414224,
+         "compared_hit_bytes": 867052529,
+         "compared_hits": 178,
+         "copied_bytes": 186979397,
+         "entries": 27,
+         "entry_limit": 4096,
+         "evicted_bytes": 71945804,
+         "evictions": 11,
+         "hash_mismatches": 0,
+         "hashed": 5,
+         "hashed_bytes": 34510212,
+         "held_bytes": 159402501,
+         "lookup_hits": 202,
+         "lookups": 207,
+         "misses": {"absent": 5, "differ": 0, "disabled": 0},
+         "peak_charged_bytes": 166133817,
+         "recorded_bytes": 231348305,
+         "records": 38,
+         "records_refused": 0,
+         "rerecords": 0,
+         "resident": false,
+         "resident_hit_bytes": 0,
+         "resident_hits": 0
+        }
+       },
+       "equal_across_samples": false,
+       "timing_medians": {"loaded_source/roles/collect_learner/scoped_nanos": 41389700.0, "loaded_source/roles/opponent/scoped_nanos": 379268000.0, "loaded_source/roles/run_fixed_opponent/scoped_nanos": 123285000.0, "loaded_source/roles/run_initial/scoped_nanos": 45959800.0, "loaded_source/roles/unattributed/scoped_nanos": 0.0, "loaded_source/roles/update_learner/scoped_nanos": 38560000.0, "loaded_source/roles/update_readback/scoped_nanos": 107022000.0, "loaded_source/roles/update_validation/scoped_nanos": 56937000.0, "loaded_source/total/scoped_nanos": 792421000.0, "opponent_cache/boundary/time/decode_seconds": 0.0, "opponent_cache/boundary/time/other_seconds": 0.00038445, "opponent_cache/boundary/time/read_seconds": 0.0261024, "opponent_cache/boundary/time/verify_seconds": 0.0119337, "opponent_cache/collection/hit_seconds": 0.0001791, "opponent_cache/collection/miss_seconds": 0.396502, "opponent_cache/process/capture/decode_seconds": 0.0, "opponent_cache/process/capture/other_seconds": 0.0002465, "opponent_cache/process/capture/read_seconds": 0.0105416, "opponent_cache/process/capture/verify_seconds": 0.00432965, "opponent_cache/process/fork_seconds": 0.00130765, "opponent_cache/process/full_load/decode_seconds": 0.00308835, "opponent_cache/process/full_load/other_seconds": 0.0871959, "opponent_cache/process/full_load/read_seconds": 0.00994505, "opponent_cache/process/full_load/verify_seconds": 0.00433595, "opponent_cache/process/hit_max_seconds": 0.0004479, "opponent_cache/process/hit_seconds": 0.00133645, "opponent_cache/process/revalidation_seconds": 0.0, "process/cpu_seconds": 6.08594, "verified_bytes/compare_seconds": 0.115896, "verified_bytes/hash_seconds": 0.013448}
+      }
+     },
+     "failures": [],
+     "parity_ok": true,
+     "storage_bytes_by_name": {"checkpoint.json": 44368908, "collect-command.json": 47767, "collection.json": 7945, "complete.json": 10804, "completion.json": 3998, "episode-#.json": 152450634, "run.json": 35121, "run.lock": 0, "update-command.json": 8116, "update-input.json": 714, "update.json": 10626},
+     "timed_samples": {"branch-a": 2, "branch-b": 2},
+     "verdicts": [
+      ["max_rss_mib", 911.268, 920.539, 1.01017, 0.0184967, 0.0101743, [1.01017], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["outside_iterations_seconds", 0.262942, 0.25083, 0.953937, 0.0490313, -0.0460633, [0.953937], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["receipts.behavior_replay_seconds", 0.554698, 0.537375, 0.968771, 0.0373321, -0.0312289, [0.968771], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["receipts.checkpoint_io_seconds", 0.488579, 0.606509, 1.24138, 0.20767, 0.241375, [1.24138], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["receipts.collection_elapsed_seconds", 4.14461, 4.4354, 1.07016, 0.0673754, 0.0701613, [1.07016], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["receipts.collection_initialization_seconds", 0.118895, 0.118342, 0.995351, 0.128625, -0.00464908, [0.995351], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["receipts.input_read_seconds", 0.43326, 0.419969, 0.969324, 0.0655891, -0.0306763, [0.969324], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["receipts.learner_update_seconds", 0.344485, 0.315011, 0.914439, 0.04789, -0.0855605, [0.914439], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["receipts.update_elapsed_seconds", 1.82104, 1.87887, 1.03176, 0.0262843, 0.0317596, [1.03176], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["scheduler.collection_execution_seconds", 4.18729, 4.47257, 1.06813, 0.0677305, 0.0681302, [1.06813], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["scheduler.collection_validation_seconds", 0.231849, 0.227881, 0.982884, 0.0617371, -0.0171157, [0.982884], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["scheduler.iteration_wall_seconds", 6.49479, 6.82547, 1.05092, 0.0483473, 0.0509152, [1.05092], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["scheduler.update_execution_seconds", 1.86008, 1.91702, 1.03061, 0.0276442, 0.0306123, [1.03061], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["scheduler.update_validation_seconds", 0.0555858, 0.0573439, 1.03163, 0.0961883, 0.0316286, [1.03163], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["sys_seconds", 1.23438, 1.05469, 0.85443, 0.162963, -0.14557, [0.85443], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["updates_per_hour", 1598.96, 1526.3, 0.954554, 0.0445583, -0.045446, [0.954554], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["user_seconds", 5.08594, 5.07812, 0.998464, 0.0522273, -0.0015361, [0.998464], "inconclusive", "fewer than two complete A-B-B-A blocks"],
+      ["wall_seconds", 6.75773, 7.0763, 1.04714, 0.0445583, 0.0471418, [1.04714], "inconclusive", "fewer than two complete A-B-B-A blocks"]
+     ]
+    }
+   },
+   "compared_by_sha256": "ebf86f4c04edddc3e599115d7f1e4160f321c19256d376d1e3e0303a2f15c347",
+   "completed_utc": "2026-11-14T01:37:49.767412Z",
+   "created_utc": "2026-11-14T01:36:37.249587Z",
+   "label": "Counter collection and repeatability check with cache diagnostics enabled (DESKTOP-DJ1C40R: Intel Core i7-13700K 24 logical CPUs, 128 GiB RAM, Windows 11 10.0.26300; pinned on P-cores 0-7 under host reservation while background CI claim ci-win-5 on cores 10-15 and WSL2 claim fe-c 620c0a6986724aec908495a615c7eb18 / dd43a204f4094e10801105c05af6aa21 on E-cores 20-23 ran concurrently)",
+   "ok": true,
+   "outputs_sha256": {"bench.json": "b4c35182f3ee3fd82d5bb9890afcf955062effc096cfb1daad2693edb9d173ce", "comparison.json": "d0413c3546f7e55e47384f2e3411fc64f2040ec61d6e21d1ae8934f3948baef3", "samples.jsonl": "3e7f9baec0d13e110bfb1d83a5b16443d5033499886e295009f2aa9d18d187df"},
+   "policy": {"cache_diagnostics": true, "keep_runs": "reference", "max_wall_seconds": null, "order": "per case: warm-up runs (A then B, excluded from comparison), then 1 A-B-B-A block(s), then optional cold-resume checks", "page_cache": "not dropped between samples", "process": "every sample is a new process of the arm's binary", "reference": "each case's first completed sample; every later sample's run tree is compared with it", "work_path": "each case writes to its fixed output directory; the driver moves the run under runs/ after each sample"},
+   "run_driver_sha256": "ebf86f4c04edddc3e599115d7f1e4160f321c19256d376d1e3e0303a2f15c347",
+   "sample_columns": ["ordinal", "case", "kind", "block", "position", "arm", "ok", "error", "first_process_wall_seconds", "max_rss_mib", "outside_iterations_seconds", "receipts.behavior_replay_seconds", "receipts.checkpoint_io_seconds", "receipts.collection_elapsed_seconds", "receipts.collection_initialization_seconds", "receipts.input_read_seconds", "receipts.learner_update_seconds", "receipts.update_elapsed_seconds", "scheduler.collection_execution_seconds", "scheduler.collection_validation_seconds", "scheduler.iteration_wall_seconds", "scheduler.update_execution_seconds", "scheduler.update_validation_seconds", "sys_seconds", "updates_per_hour", "user_seconds", "wall_seconds", "durable_completed_iterations", "storage_bytes", "parity", "identical_files", "files", "accounted"],
+   "samples": [
+    [0, "pool2", "timed", 0, "A1", "branch-a", true, null, null, 902.84, 0.256496, 0.544344, 0.53931, 4.28423, 0.126541, 0.419051, 0.336237, 1.83896, 4.3291, 0.224692, 6.65179, 1.87635, 0.0582591, 1.14062, 1563.34, 5.21875, 6.90829, 3, 196944633, "reference", null, null, null],
+    [1, "pool2", "timed", 0, "B1", "branch-b", true, null, null, 921.574, 0.25614, 0.53195, 0.592555, 4.50695, 0.123181, 0.420909, 0.308759, 1.85418, 4.54673, 0.226982, 6.87006, 1.89052, 0.0569658, 1.14062, 1515.53, 5.04688, 7.1262, 3, 196944613, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [2, "pool2", "timed", 0, "B2", "branch-b", true, null, null, 919.504, 0.245521, 0.542799, 0.620464, 4.36385, 0.113503, 0.419029, 0.321263, 1.90357, 4.39842, 0.22878, 6.78088, 1.94352, 0.0577219, 0.96875, 1537.06, 5.10938, 7.02641, 3, 196944622, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [3, "pool2", "timed", 0, "A2", "branch-a", true, null, null, 919.695, 0.269389, 0.565052, 0.437847, 4.00498, 0.111248, 0.447468, 0.352734, 1.80311, 4.04549, 0.239006, 6.33779, 1.84381, 0.0529124, 1.32812, 1634.59, 4.95312, 6.60718, 3, 196944625, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [4, "pool18", "timed", 0, "A1", "branch-a", true, null, null, 1135.8, 1.27732, 1.45063, 0.662486, 6.2319, 0.298392, 0.563712, 0.390783, 3.06762, 6.28221, 0.25458, 9.97511, 3.12496, 0.060118, 1.625, 959.793, 8.54688, 11.2524, 3, 196954732, "reference", null, null, null],
+    [5, "pool18", "timed", 0, "B1", "branch-b", true, null, null, 1157.43, 1.7029, 1.47286, 0.600858, 5.58085, 0.286414, 0.523037, 0.35675, 2.95351, 5.62416, 0.242074, 9.17976, 2.99113, 0.0636167, 1.53125, 992.404, 8.01562, 10.8827, 3, 196954744, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [6, "pool18", "timed", 0, "B2", "branch-b", true, null, null, 1150.67, 1.26686, 1.39569, 0.42234, 4.84287, 0.263004, 0.503238, 0.32269, 2.64396, 4.90474, 0.231473, 8.08987, 2.68857, 0.0566658, 1.39062, 1154.25, 7.34375, 9.35674, 3, 196954744, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [7, "pool18", "timed", 0, "A2", "branch-a", true, null, null, 1127.07, 1.11964, 1.45402, 0.399909, 5.11852, 0.266852, 0.589, 0.315567, 2.75851, 5.1569, 0.264906, 8.4756, 2.80202, 0.0531015, 1.53125, 1125.56, 7.75, 9.59525, 3, 196954742, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}]
+   ],
+   "verdict_columns": ["metric", "baseline_median", "candidate_median", "ratio", "max_spread_fraction", "effect_fraction", "block_ratios", "verdict", "reason"]
+  }
+ },
+ "schema": "mtg-kernel-native-fixture-receipt/v1"
+}
