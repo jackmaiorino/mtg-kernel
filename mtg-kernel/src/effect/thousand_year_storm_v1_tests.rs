@@ -1172,3 +1172,27 @@ fn storm_proof_rejects_live_state_tamper_after_cached_cursor() {
     assert!(thousand_year_storm_v1::validate_state(&consumer_flipped).is_err());
     assert_eq!(proof_tests_v1::uses(), uses_before + 1);
 }
+
+#[test]
+fn forced_scans_multi_spell_storm_count_preserves_prior_casts_both_seats() {
+    crate::event_history_v1::guard_tests_v1::with_scans_forced(|| {
+        for p in [PlayerId::P0, PlayerId::P1] {
+            let mut s = ready(p, "Island");
+            bolt(&mut s, p);
+            bolt(&mut s, p);
+            paid_storm(&mut s, p);
+            cast(
+                &mut s,
+                p,
+                "Lightning Bolt",
+                &[Target::Player(p.opponent())],
+                1,
+            );
+            let storm_trigger = published(&s)[0].clone();
+            thousand_year_storm_v1::validate_published(&s, &storm_trigger).unwrap();
+            finish(&mut s);
+            assert_eq!(copies(&s).len(), 2);
+            thousand_year_storm_v1::validate_state(&s).unwrap();
+        }
+    });
+}

@@ -661,7 +661,7 @@ fn closed_hunter_custody_proof_rejects_live_state_tamper_after_cached_cursor() {
             .engine
             .event_history
             .of_kinds_v2(&[EventKindV1::HighSocietyHunterJournalV45])
-            .next()
+            .find(|(_, e)| matches!(e, CommittedEvent::HighSocietyHunterJournalV45 { .. }))
             .unwrap()
             .1
             .clone();

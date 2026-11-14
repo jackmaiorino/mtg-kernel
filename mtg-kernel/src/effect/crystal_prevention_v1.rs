@@ -1367,8 +1367,14 @@ pub(crate) fn validate_ordered_donated_archive(state: &GameState) -> Result<(), 
             EventKindV1::CrystalExecutionV1,
             EventKindV1::CrystalDamageOperationV3,
         ])
-        .next()
-        .is_some()
+        .any(|(_, event)| {
+            matches!(
+                event,
+                CommittedEvent::CrystalPreventionBoundaryV1 { .. }
+                    | CommittedEvent::CrystalExecutionV1 { .. }
+                    | CommittedEvent::CrystalDamageOperationV3 { .. }
+            )
+        })
     {
         validate(state)?;
     }

@@ -569,3 +569,56 @@ fn closed_crystal_prevention_proof_rejects_live_state_tamper_after_cached_cursor
         crate::card_def::card_id_by_name("Forest").unwrap();
     assert!(validate(&object_tamper).is_err());
 }
+
+#[test]
+fn forced_scans_non_crystal_history_validates_ordered_donated_archive() {
+    let mut state = ready_state();
+    let source = put(
+        &mut state,
+        PlayerId::P0,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
+    let target = put(
+        &mut state,
+        PlayerId::P1,
+        "Llanowar Elves",
+        Zone::Battlefield,
+    );
+    crate::event::propose_and_commit(
+        &mut state,
+        crate::event::ProposedEvent::damage(source, Target::Object(target), 1),
+    );
+    assert!(!state.engine.event_history.is_empty());
+    validate(&state).unwrap();
+    assert_eq!(validate_ordered_donated_archive(&state), Ok(()));
+    crate::event_history_v1::guard_tests_v1::with_scans_forced(|| {
+        assert_eq!(validate_ordered_donated_archive(&state), Ok(()));
+    });
+
+    // Ensure non-Crystal events under forced scans do not spuriously enter validate(state).
+    let mut marker_without_history = state;
+    marker_without_history.engine.twinflame_combat_v38 =
+        crate::twinflame_tyrant_v1::combat::StateV38(Some(
+            crate::twinflame_tyrant_v1::combat::PendingV38 {
+                publication: 0,
+                latest: 0,
+                remaining: Vec::new(),
+                selected: None,
+                packets: Vec::new(),
+                outcomes: Vec::new(),
+                shields: Vec::new(),
+            },
+        ));
+    assert!(validate(&marker_without_history).is_err());
+    assert_eq!(
+        validate_ordered_donated_archive(&marker_without_history),
+        Ok(())
+    );
+    crate::event_history_v1::guard_tests_v1::with_scans_forced(|| {
+        assert_eq!(
+            validate_ordered_donated_archive(&marker_without_history),
+            Ok(())
+        );
+    });
+}

@@ -614,6 +614,7 @@ fn count_uncached(state: &GameState, index: u64) -> Result<u16, String> {
         .event_history
         .of_kinds_v2(&[crate::event_history_v1::EventKindV1::LifeLossTurnBeganV1])
         .take_while(|(at, _)| *at < index as usize)
+        .filter(|(_, e)| matches!(e, event::CommittedEvent::LifeLossTurnBeganV1 { .. }))
         .last()
         .map_or(0, |(i, _)| i + 1);
     let mut count = 0u16;
