@@ -10,7 +10,7 @@ on:
       source_commit:
         description: Exact public source commit using Rust 1.94.1 and release thin LTO
         required: true
-        default: c5719e1cf81769f4f30f9e91ae1079d4ee3cbfcf
+        default: 84460551a3fe40d5bd1804c1dbf394896c08b1a9
         type: string
 
 permissions:
@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      BUILD_SOURCE: ${{ inputs.source_commit || 'c5719e1cf81769f4f30f9e91ae1079d4ee3cbfcf' }}
+      BUILD_SOURCE: ${{ inputs.source_commit || '84460551a3fe40d5bd1804c1dbf394896c08b1a9' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
