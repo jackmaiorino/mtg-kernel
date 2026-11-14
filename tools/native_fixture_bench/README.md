@@ -18,6 +18,18 @@ It has two cases:
 - `fresh` runs `--updates` iterations from the fresh source (Adam step 0).
 - `warm` resumes a retained warmed checkpoint. The generator runs the first `--warmup-updates` iterations of the same schedule in process. The warm case then runs the next `--updates` iterations from that state.
 
+With `--pool-members`, it adds pool cases (#599), which play a W5-shaped roster of fixed opponents instead of the current learner:
+
+- The generator writes the largest pool's members under `pool/member-NN/`. Each member is a distinct, valid checkpoint container (about 15 MB) over the fresh source's import, which all members share. No private model is used.
+- `poolN` runs the `fresh` schedule, except that every slot plays a fixed member of the first N. Slot `j` of iteration `i` plays member `u64_be(sha256(json([tag, seed_root, i, j]))[0..8]) mod N`. The JSON is compact, the tag is `mtg-kernel-pool-fixture-draw/v1` and the seed root is the fixture seed in decimal. `fixture.json` records the members and every case's drawn ids.
+
+Before running a pool fixture, the driver verifies the shared descriptor and all
+member checkpoint pins. It recomputes each draw and checks that the pool config
+matches the fresh schedule with those fixed opponents. This reads the pinned
+files before timing. Each sample starts a new process with the existing OS page
+cache. The benchmark manifest records the roster and the draws of selected cases.
+- Start with `--pool-members 2,18`. Add 64 only after the 18-member memory envelope is known.
+
 ## 1. Build the two arms
 
 Build the baseline (for example `origin/main`) and the candidate in separate worktrees. Use the same toolchain, profile and flags for both. Name both binaries in the results.
@@ -50,6 +62,7 @@ python3 tools/native_fixture_bench/bench.py generate --root /abs/fixture \
 - `source/` and `descriptor.json`;
 - `cases/NAME/config.json`;
 - `warmup/run/` and `warm/checkpoint.json`;
+- with `--pool-members`, `pool/member-NN/checkpoint.json`;
 - `fixture.json`, the schema `mtg-kernel-native-fixture/v1`. It holds the options, the generator's build identity and every case's config pin;
 - `generate/`, the command and logs. Generation time includes the warm-up and is not a sample.
 
@@ -84,8 +97,18 @@ For every sample, the driver records:
 The driver sets `MTG_KERNEL_CACHE_DIAGNOSTICS_V1` for every sample by default.
 Use `--no-cache-diagnostics` for a matched timing run that excludes diagnostic
 report creation. It also removes an inherited diagnostics path from the sample
-environment. A build without support for that variable ignores it.
+environment. Cache counters still run in builds that include the instrumentation.
+A build without support for that variable ignores it.
 `--env KEY=VALUE` and `--arm-env ARM:KEY=VALUE` pass extra settings to the samples.
+
+Each diagnostics line holds this process's cumulative counters, so differences between lines give one iteration's. The sections are:
+
+- `loaded_source` (#595): loads and copies by caller role;
+- `opponent_cache` (#599) records lookup outcomes, hit, pin revalidation and fork time, full-load work, entries and evictions. `revalidated_payload_bytes` counts held payload covered by successful hit revalidation, including resident checks that skip the byte read. Held policy bytes count owned f32 payloads and shared model f32 payloads. It also reports the summed collection caches and the collection boundary's pin checks.
+- `verified_bytes`: the verified-bytes memo's budget, entries, comparisons, misses by reason, hashes, records, copied bytes and evictions, and with resident reads (#592) the reads it served;
+- `retained_files`: logical file payload bytes across both caches, and how much repeats equal bytes at the same path;
+- `io`: pinned file reads by the fresh-source reader and checkpoint decodes. Process-cache hit revalidation uses a separate reader.
+- `process`: peak and current resident memory, on Linux only, and CPU seconds. Elsewhere the memory fields are null, and the driver's own figures cover each sample (`wait4`, or the job object on Windows).
 
 Outputs in `--out` (absent or empty):
 

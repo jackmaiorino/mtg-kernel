@@ -127,6 +127,9 @@ mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
 mod loaded_source_cache_v1;
 pub(crate) mod loaded_source_profile_v1;
+pub(crate) mod opponent_cache_diagnostics_v1;
+#[cfg(test)]
+pub(crate) mod pool_fixture_v1;
 pub mod portable_chain_v1;
 pub mod record_envelope_v1;
 mod trajectory_parse_ahead_v1;
@@ -779,20 +782,34 @@ impl OpponentCacheV1 {
     }
 
     fn insert(&mut self, entry: LoadedOpponentV1) {
+        let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
         if let Some(index) = self
             .entries
             .iter()
             .position(|old| old.behavior.source == entry.behavior.source)
         {
-            self.entries.remove(index);
+            let old = self.entries.remove(index);
+            stats.released_v1(opponent_cache_diagnostics_v1::policy_bytes_v1(&old.policy));
         }
         if self.entries.len() == OPPONENT_CACHE_CAPACITY_V1 {
-            self.entries.remove(0);
+            self.evict_oldest_v1();
         }
+        stats.held_v1(opponent_cache_diagnostics_v1::policy_bytes_v1(
+            &entry.policy,
+        ));
         self.entries.push(entry);
     }
 
+    fn evict_oldest_v1(&mut self) {
+        let old = self.entries.remove(0);
+        let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
+        stats.evictions.add(1);
+        stats.released_v1(opponent_cache_diagnostics_v1::policy_bytes_v1(&old.policy));
+    }
+
     fn load(&mut self, source: &ExpandedModelSourceV1) -> Result<&mut LoadedOpponentV1, String> {
+        let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
+        let started = std::time::Instant::now();
         if let Some(index) = self
             .entries
             .iter()
@@ -802,11 +819,19 @@ impl OpponentCacheV1 {
             // independently resets physical-seat sampling before any action.
             let entry = self.entries.remove(index);
             self.entries.push(entry);
+            stats.hits.add(1);
+            stats.hit_nanos.add_elapsed(started);
         } else {
             if self.entries.len() == OPPONENT_CACHE_CAPACITY_V1 {
-                self.entries.remove(0);
+                self.evict_oldest_v1();
             }
-            let mut opponent = if self.verified_sources.contains(source) {
+            let verified = self.verified_sources.contains(source);
+            if verified {
+                stats.misses_verified.add(1);
+            } else {
+                stats.misses_unverified.add(1);
+            }
+            let mut opponent = if verified {
                 ordered_update_preparation::load_opponent_cached_v1(source, false)?.0
             } else {
                 // Unrecognized import schemas retain their original complete
@@ -824,11 +849,23 @@ impl OpponentCacheV1 {
                 }
             };
             bind_opponent_math_v1(source, &mut opponent.policy, self.training_math)?;
+            stats.miss_nanos.add_elapsed(started);
             self.insert(opponent);
         }
         self.entries
             .last_mut()
             .ok_or_else(|| "opponent cache is empty".into())
+    }
+}
+
+impl Drop for OpponentCacheV1 {
+    fn drop(&mut self) {
+        let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
+        for entry in &self.entries {
+            stats.released_v1(opponent_cache_diagnostics_v1::policy_bytes_v1(
+                &entry.policy,
+            ));
+        }
     }
 }
 
@@ -842,6 +879,7 @@ impl OpponentCacheV1 {
 fn verify_collection_opponent_sources_v1(
     episodes: &[ExpandedEpisodeV1],
 ) -> Result<Vec<ExpandedModelSourceV1>, String> {
+    let mark = opponent_cache_diagnostics_v1::WorkMarkV1::now_v1();
     let mut verified = Vec::new();
     let mut checked = Vec::new();
     for source in episodes
@@ -889,6 +927,11 @@ fn verify_collection_opponent_sources_v1(
         }
         verified.push(source.clone());
     }
+    let boundary = &opponent_cache_diagnostics_v1::counters_v1().boundary;
+    boundary.checks.add(1);
+    boundary.sources.add_usize(checked.len());
+    boundary.cacheable_sources.add_usize(verified.len());
+    mark.finish_v1(&boundary.split);
     Ok(verified)
 }
 
@@ -6158,7 +6201,11 @@ fn read_checkpoint_record_v1(pin: &PinnedFileV1) -> Result<Arc<Vec<u8>>, String>
 /// A pinned checkpoint, from either format, decoded directly (design 4.1,
 /// the direct-decode interface).
 fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String> {
-    checkpoint_container_v1::parse_checkpoint_v1(&read_pinned_shared_v1(pin)?)
+    let bytes = read_pinned_shared_v1(pin)?;
+    let started = std::time::Instant::now();
+    let checkpoint = checkpoint_container_v1::parse_checkpoint_v1(&bytes);
+    opponent_cache_diagnostics_v1::note_checkpoint_decode_v1(bytes.len(), started);
+    checkpoint
 }
 
 /// Metadata fields of a pinned checkpoint, parsed from a v1 document or a
@@ -6232,6 +6279,7 @@ fn read_pinned_bytes_in_v1(
     cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
     pin: &PinnedFileV1,
 ) -> Result<Vec<u8>, String> {
+    let started = std::time::Instant::now();
     let metadata = fs::metadata(&pin.path).map_err(err)?;
     ensure(
         metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
@@ -6243,6 +6291,7 @@ fn read_pinned_bytes_in_v1(
         return Ok(held.as_ref().clone());
     }
     let bytes = fs::read(&pin.path).map_err(err)?;
+    opponent_cache_diagnostics_v1::note_file_read_v1(bytes.len(), started);
     // Bytes equal to bytes this process already verified against this pin
     // have its digest (`verified_bytes_cache_v1`); anything else is hashed as
     // before.
@@ -6610,10 +6659,38 @@ pub(crate) mod tests {
                 behavior,
             }
         };
+        // This test thread's counters (`opponent_cache_diagnostics_v1`).
+        let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
+        let count = || {
+            [
+                stats.hits.get(),
+                stats.misses_verified.get(),
+                stats.misses_unverified.get(),
+                stats.inserts.get(),
+                stats.evictions.get(),
+                stats.live_entries.get(),
+            ]
+        };
+        let before = count();
+        let bytes_before = stats.live_policy_bytes.get();
+        let counted = |expected: [u64; 6]| {
+            let now = count();
+            let rose: Vec<u64> = (0..6).map(|index| now[index] - before[index]).collect();
+            assert_eq!(rose, expected, "hits, misses, inserts, evictions, live");
+        };
         let mut cache = OpponentCacheV1::default();
         for index in 0..OPPONENT_CACHE_CAPACITY_V1 {
             cache.insert(entry(index));
         }
+        let held = OPPONENT_CACHE_CAPACITY_V1 as u64;
+        counted([0, 0, 0, held, 0, held]);
+        let policy_bytes = opponent_cache_diagnostics_v1::policy_bytes_v1(&cache.entries[0].policy);
+        assert!(policy_bytes > 0);
+        assert_eq!(
+            stats.live_policy_bytes.get() - bytes_before,
+            held * policy_bytes as u64,
+            "every entry holds its own copy"
+        );
         let first = cache.entries[0].behavior.source.clone();
         let second = cache.entries[1].behavior.source.clone();
         // No file exists for these fixture pins: a cache miss would fail.
@@ -6626,6 +6703,7 @@ pub(crate) mod tests {
         assert!(!cache.contains(&evicted));
         assert!(cache.contains(&first));
         assert!(cache.contains(&second));
+        counted([3, 0, 0, held + 1, 1, held]);
         let mut changed = first.clone();
         changed.play_import.sha256 = "b".repeat(64);
         assert!(!cache.contains(&changed));
@@ -6637,6 +6715,12 @@ pub(crate) mod tests {
         });
         assert!(!cache.contains(&changed));
         assert!(cache.load(&changed).is_err());
+        // Each miss is counted before its load, which fails here; the first
+        // dropped the oldest entry before loading, as a full cache does.
+        counted([3, 0, 2, held + 1, 2, held - 1]);
+        drop(cache);
+        counted([3, 0, 2, held + 1, 2, 0]);
+        assert_eq!(stats.live_policy_bytes.get(), bytes_before);
     }
 
     #[test]

@@ -755,6 +755,19 @@ jobs:
     # other groups; pull requests from forks never run on self-hosted runners.
     runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     steps:
+      # The Limited-only shards compile the default-feature library test binary
+      # via default_library_names() to diff its inventory against the Limited
+      # build. Give hosted Linux shards the same 12 GB swap space as the other
+      # heavy Rust builds so rustc does not exhaust the 16 GB VM memory limit.
+      - name: Add swap space for Limited-only default-library builds
+        if: runner.environment == 'github-hosted' && runner.os == 'Linux' && startsWith(matrix.group, 'limited-only')
+        run: |
+          sudo fallocate -l 12G /mnt/build.swap
+          sudo chmod 600 /mnt/build.swap
+          sudo mkswap /mnt/build.swap
+          sudo swapon /mnt/build.swap
+          free -m
+
       # Windows can resolve `bash` to the WSL launcher in System32 first;
       # put Git Bash ahead of it for every later step.
       - name: Use Git Bash for bash steps on Windows
@@ -1068,6 +1081,9 @@ jobs:
       - name: Validate every other Limited-only library case
         if: ${{ !cancelled() && startsWith(matrix.group, 'limited-only') }}
         run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            export CARGO_BUILD_JOBS=2
+          fi
           shard=0
           if [ '${{ matrix.group }}' = limited-only-1 ]; then
             shard=1

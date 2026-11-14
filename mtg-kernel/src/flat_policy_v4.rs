@@ -1872,6 +1872,60 @@ mod tests {
             .expect("both layers must agree for the ceased ChooseTargets case");
     }
 
+    /// Issue #674 regression: `Decision::ChooseTriggerMode` from either a
+    /// ceased source (`cease_to_exist`) or a hidden library source
+    /// (`shuffle_trigger_source_into_library_v1`) substitutes the frozen
+    /// `source_contract` on every `ChooseSpellMode` candidate and reconciles
+    /// end to end against `PendingTrigger { position: 0 }`.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    #[test]
+    fn v4_choose_trigger_mode_from_ceased_or_hidden_source_gets_a_pending_trigger_row_end_to_end() {
+        use crate::rl_session::choose_trigger_mode_fixture_state_v1;
+        use crate::state::Zone;
+
+        for ceased in [true, false] {
+            let (mut state, stomper) = choose_trigger_mode_fixture_state_v1();
+            if ceased {
+                state.players[PlayerId::P0.index()]
+                    .battlefield
+                    .retain(|&id| id != stomper);
+                {
+                    let live = state.objects.get_mut(stomper);
+                    live.zone = Zone::Graveyard;
+                    live.zone_change_count += 1;
+                }
+                state.players[PlayerId::P0.index()].graveyard.push(stomper);
+                assert!(crate::event::cease_to_exist(&mut state, stomper));
+                assert!(crate::trigger::pending_trigger_ceased_source_v1(
+                    &state,
+                    &state.engine.pending_triggers[0]
+                ));
+            } else {
+                shuffle_trigger_source_into_library_v1(&mut state, stomper, PlayerId::P0);
+                assert!(crate::trigger::pending_trigger_hidden_source_v1(
+                    &state,
+                    &state.engine.pending_triggers[0]
+                ));
+            }
+            let session = FastActorSessionV1::from_v3_fixture_state(state);
+            let mut owned = OwnedScoringV4::default();
+            let decision = owned
+                .encode(&session)
+                .expect("V4 scoring must encode ChooseTriggerMode from a ceased or hidden source");
+            let hist = &decision.extensions.historical_public_sources;
+            assert_eq!(hist.len(), 1);
+            assert_eq!(
+                hist[0].context,
+                HistoricalSourceContextV7::PendingTrigger { position: 0 }
+            );
+            let view = owned.view(&decision);
+            let mut tensor = NativeFlatDecisionTensorV4::default();
+            NativeFlatTensorizerV4::default()
+                .fill(view, &mut tensor)
+                .expect("both layers must agree for ChooseTriggerMode frozen source");
+        }
+    }
+
     /// Dimension-stability check (plan section 3, step 7): encoding a
     /// common, non-hidden fixture through V3 and V4 must produce numerically
     /// identical object/edge feature widths -- proving mechanically, not

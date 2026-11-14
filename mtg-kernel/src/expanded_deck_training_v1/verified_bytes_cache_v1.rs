@@ -45,11 +45,21 @@
 //! process (a segment, a resume, an audit) reads and verifies every file
 //! again. The other process-cache comparisons (`holds_bytes_v1`) and durable
 //! publication follow the same switch. The mode only ever turns on, never off.
+//!
+//! Each cache counts its lookups, hits, misses by reason, digests, records,
+//! copies, evictions and resident serves (`VerifiedBytesStatsV1`), for the
+//! diagnostics file (`opponent_cache_diagnostics_v1`); no count is read by
+//! any decision.
 
+use super::opponent_cache_diagnostics_v1::{
+    add_thread_work_v1, nanos_since_v1, CountV1, HeldFileV1, WorkV1,
+};
+use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::time::Instant;
 
 #[cfg(test)]
 mod tests;
@@ -98,6 +108,46 @@ struct HeldV1 {
     charged: usize,
 }
 
+/// A cache's diagnostic counters, cumulative from its creation.
+#[derive(Default)]
+struct VerifiedBytesStatsV1 {
+    /// `held_v1` calls, from every caller, and those that found bytes.
+    lookups: CountV1,
+    lookup_hits: CountV1,
+    /// `digest_matches_v1` calls answered by comparison with held bytes,
+    /// and their bytes; the time of every lookup and comparison.
+    compared_hits: CountV1,
+    compared_hit_bytes: CountV1,
+    compare_nanos: CountV1,
+    /// `digest_matches_v1` misses, by reason: the cache is off, it holds no
+    /// bytes for the pin, or the held bytes differ from the bytes read.
+    misses_disabled: CountV1,
+    misses_absent: CountV1,
+    misses_differ: CountV1,
+    /// The digests those misses computed, their bytes and time, and the
+    /// digests that differed from the pin.
+    hashed: CountV1,
+    hashed_bytes: CountV1,
+    hash_nanos: CountV1,
+    hash_mismatches: CountV1,
+    /// Entries held and their bytes, and the bytes copied for them (a
+    /// shared record keeps the caller's allocation); entries refused
+    /// (charged above the budget, or the cache off); re-records of a held
+    /// pin; entries dropped for the bounds and their bytes; the peak charge.
+    records: CountV1,
+    recorded_bytes: CountV1,
+    copied_bytes: CountV1,
+    records_refused: CountV1,
+    rerecords: CountV1,
+    evictions: CountV1,
+    evicted_bytes: CountV1,
+    peak_charged: CountV1,
+    /// With resident reads on, reads served from held bytes instead of the
+    /// file, and their bytes.
+    resident_hits: CountV1,
+    resident_hit_bytes: CountV1,
+}
+
 pub(crate) struct VerifiedBytesCacheV1 {
     /// Bound on the held entries' charges; 0 turns the cache off.
     budget: usize,
@@ -106,6 +156,7 @@ pub(crate) struct VerifiedBytesCacheV1 {
     held: Mutex<HeldV1>,
     /// Resident reads (module docs): set once by a run, never cleared.
     resident: AtomicBool,
+    stats: VerifiedBytesStatsV1,
     /// Digests computed by `digest_matches_v1`, so tests can tell a
     /// comparison from a fallback.
     #[cfg(test)]
@@ -119,6 +170,7 @@ impl VerifiedBytesCacheV1 {
             entry_limit,
             held: Mutex::new(HeldV1::default()),
             resident: AtomicBool::new(false),
+            stats: VerifiedBytesStatsV1::default(),
             #[cfg(test)]
             hashed: std::sync::atomic::AtomicUsize::new(0),
         }
@@ -134,18 +186,36 @@ impl VerifiedBytesCacheV1 {
         bytes: &[u8],
         digest: impl FnOnce(&[u8]) -> String,
     ) -> bool {
-        if self
-            .held_v1(path, sha256)
-            .is_some_and(|held| held.as_slice() == bytes)
-        {
+        let started = Instant::now();
+        let held = self.held_v1(path, sha256);
+        let equal = held.as_ref().is_some_and(|held| held.as_slice() == bytes);
+        let compared = nanos_since_v1(started);
+        self.stats.compare_nanos.add(compared);
+        add_thread_work_v1(WorkV1::Verify, compared);
+        if equal {
+            self.stats.compared_hits.add(1);
+            self.stats.compared_hit_bytes.add_usize(bytes.len());
             return true;
+        }
+        match (self.budget, held) {
+            (0, _) => self.stats.misses_disabled.add(1),
+            (_, None) => self.stats.misses_absent.add(1),
+            (_, Some(_)) => self.stats.misses_differ.add(1),
         }
         #[cfg(test)]
         self.hashed
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let started = Instant::now();
         let matches = digest(bytes) == sha256;
+        let hashed = nanos_since_v1(started);
+        self.stats.hashed.add(1);
+        self.stats.hashed_bytes.add_usize(bytes.len());
+        self.stats.hash_nanos.add(hashed);
+        add_thread_work_v1(WorkV1::Verify, hashed);
         if matches {
             self.record_verified_v1(path, sha256, bytes);
+        } else {
+            self.stats.hash_mismatches.add(1);
         }
         matches
     }
@@ -174,11 +244,18 @@ impl VerifiedBytesCacheV1 {
         if !self.resident_v1() {
             return None;
         }
-        self.held_v1(path, sha256)
-            .filter(|held| held.len() as u64 == file_length)
+        let served = self
+            .held_v1(path, sha256)
+            .filter(|held| held.len() as u64 == file_length);
+        if let Some(held) = &served {
+            self.stats.resident_hits.add(1);
+            self.stats.resident_hit_bytes.add_usize(held.len());
+        }
+        served
     }
 
     pub(crate) fn held_v1(&self, path: &Path, sha256: &str) -> Option<Arc<Vec<u8>>> {
+        self.stats.lookups.add(1);
         if self.budget == 0 {
             return None;
         }
@@ -190,6 +267,7 @@ impl VerifiedBytesCacheV1 {
         let entry = held.entries.remove(index)?;
         let bytes = Arc::clone(&entry.bytes);
         held.entries.push_back(entry);
+        self.stats.lookup_hits.add(1);
         Some(bytes)
     }
 
@@ -198,7 +276,10 @@ impl VerifiedBytesCacheV1 {
     /// the new entry fits both bounds, then `bytes` are copied in; an entry
     /// whose charge exceeds the whole budget is not held.
     pub(crate) fn record_verified_v1(&self, path: &Path, sha256: &str, bytes: &[u8]) {
-        self.record_with_v1(path, sha256, bytes.len(), || Arc::new(bytes.to_vec()));
+        self.record_with_v1(path, sha256, bytes.len(), || {
+            self.stats.copied_bytes.add_usize(bytes.len());
+            Arc::new(bytes.to_vec())
+        });
     }
 
     /// [`Self::record_verified_v1`] keeping the caller's allocation instead
@@ -220,6 +301,7 @@ impl VerifiedBytesCacheV1 {
     ) {
         let charge = charge_v1(path, sha256, length);
         if self.entry_limit == 0 || charge > self.budget {
+            self.stats.records_refused.add(1);
             return;
         }
         let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
@@ -230,6 +312,7 @@ impl VerifiedBytesCacheV1 {
         {
             if let Some(entry) = held.entries.remove(index) {
                 held.charged -= entry.charge;
+                self.stats.rerecords.add(1);
             }
         }
         while held.charged + charge > self.budget || held.entries.len() >= self.entry_limit {
@@ -237,6 +320,8 @@ impl VerifiedBytesCacheV1 {
                 break;
             };
             held.charged -= oldest.charge;
+            self.stats.evictions.add(1);
+            self.stats.evicted_bytes.add_usize(oldest.bytes.len());
         }
         held.charged += charge;
         held.entries.push_back(EntryV1 {
@@ -245,6 +330,62 @@ impl VerifiedBytesCacheV1 {
             bytes: bytes(),
             charge,
         });
+        self.stats.records.add(1);
+        self.stats.recorded_bytes.add_usize(length);
+        self.stats.peak_charged.raise(held.charged as u64);
+    }
+
+    /// Every held entry's path and bytes, shared, not copied
+    /// (`opponent_cache_diagnostics_v1`).
+    pub(crate) fn held_files_v1(&self) -> Vec<HeldFileV1> {
+        let held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        held.entries
+            .iter()
+            .map(|entry| (entry.path.clone(), Arc::clone(&entry.bytes)))
+            .collect()
+    }
+
+    /// The `verified_bytes` diagnostics section: the bounds, what is held
+    /// now, and the counters.
+    pub(crate) fn diagnostics_v1(&self) -> Value {
+        let (entries, charged, held_bytes) = {
+            let held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+            let bytes: usize = held.entries.iter().map(|entry| entry.bytes.len()).sum();
+            (held.entries.len(), held.charged, bytes)
+        };
+        let stats = &self.stats;
+        json!({
+            "budget_bytes": self.budget,
+            "resident": self.resident_v1(),
+            "entry_limit": self.entry_limit,
+            "entries": entries,
+            "charged_bytes": charged,
+            "held_bytes": held_bytes,
+            "peak_charged_bytes": stats.peak_charged.get(),
+            "lookups": stats.lookups.get(),
+            "lookup_hits": stats.lookup_hits.get(),
+            "compared_hits": stats.compared_hits.get(),
+            "compared_hit_bytes": stats.compared_hit_bytes.get(),
+            "compare_seconds": stats.compare_nanos.seconds(),
+            "misses": {
+                "disabled": stats.misses_disabled.get(),
+                "absent": stats.misses_absent.get(),
+                "differ": stats.misses_differ.get(),
+            },
+            "hashed": stats.hashed.get(),
+            "hashed_bytes": stats.hashed_bytes.get(),
+            "hash_seconds": stats.hash_nanos.seconds(),
+            "hash_mismatches": stats.hash_mismatches.get(),
+            "records": stats.records.get(),
+            "recorded_bytes": stats.recorded_bytes.get(),
+            "copied_bytes": stats.copied_bytes.get(),
+            "records_refused": stats.records_refused.get(),
+            "rerecords": stats.rerecords.get(),
+            "evictions": stats.evictions.get(),
+            "evicted_bytes": stats.evicted_bytes.get(),
+            "resident_hits": stats.resident_hits.get(),
+            "resident_hit_bytes": stats.resident_hit_bytes.get(),
+        })
     }
 
     #[cfg(test)]
