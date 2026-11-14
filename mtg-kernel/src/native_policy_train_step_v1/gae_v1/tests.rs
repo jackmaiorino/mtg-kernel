@@ -1885,3 +1885,149 @@ fn w5_policy_mask_zeroes_masked_substeps_and_renormalizes_the_policy_term() {
         assert!(step(bad).0.is_err());
     }
 }
+
+// London keep offset (`expanded_deck_training_v1::london_keep_offset_v1`).
+
+fn gae_inputs(groups: &[NativePolicyPhysicalDecisionV1<'_>]) -> (Vec<f32>, Vec<f32>) {
+    let value_targets: Vec<f32> = groups
+        .iter()
+        .map(|g| f32::from(g.terminal_return))
+        .collect();
+    let advantages = groups
+        .iter()
+        .zip(&value_targets)
+        .map(|(g, t)| t - f32::from_bits(g.substeps[0].expected_value_bits))
+        .collect();
+    (value_targets, advantages)
+}
+
+/// The fixture with its first tensor made a London announcement: pregame
+/// stage set, every action row of kind `london_opening`, row 0 the mulligan
+/// row (VALUE flag), the rest keep-like rows.
+fn announcement_fixture(model: &NativePolicyValueNetV1) -> Fixture {
+    use crate::expanded_deck_training_v1::london_keep_offset_v1::{
+        LONDON_OPENING_ACTION_COLUMN_V1, MULLIGAN_FLAG_ACTION_COLUMN_V1, PREGAME_STATE_COLUMN_V1,
+    };
+    let mut fixture = Fixture::capture(model);
+    let tensor = &mut fixture.tensors[0].common;
+    tensor.state[PREGAME_STATE_COLUMN_V1] = 1.0;
+    let rows = fixture.logits[0].len();
+    let width = tensor.action_features.len() / rows;
+    for row in 0..rows {
+        tensor.action_features[row * width + LONDON_OPENING_ACTION_COLUMN_V1] = 1.0;
+        tensor.action_features[row * width + MULLIGAN_FLAG_ACTION_COLUMN_V1] =
+            if row == 0 { 1.0 } else { 0.0 };
+    }
+    let output = model
+        .forward_feature_transfer_v3_mode(
+            encoded_decision_view_v3(&fixture.tensors[0]),
+            ForwardActivationModeV1::LibmTanh,
+        )
+        .unwrap();
+    fixture.logits[0] = output.logits.iter().map(|v| v.to_bits()).collect();
+    fixture.values[0] = output.value.to_bits();
+    fixture
+}
+
+#[test]
+fn london_keep_offset_without_pregame_rows_changes_no_bit() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    let mut plain = base.clone();
+    let mut offset = base.clone();
+    offset.set_london_keep_offset_v1(Some(5.0));
+    let a = plain
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    let b = offset
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    assert_eq!(a.selected_outputs, b.selected_outputs);
+    assert_eq!(a.gradients, b.gradients);
+    assert_eq!(a.loss.to_bits(), b.loss.to_bits());
+    offset.set_london_keep_offset_v1(None);
+    assert_eq!(state_bits(&plain), state_bits(&offset));
+    assert_eq!(
+        plain.state_sha256_v1().unwrap(),
+        offset.state_sha256_v1().unwrap()
+    );
+}
+
+#[test]
+fn london_keep_offset_trains_on_the_sampled_distribution() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = announcement_fixture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    let offset = 2.5f32;
+    let mut plain = base.clone();
+    let mut shifted = base.clone();
+    shifted.set_london_keep_offset_v1(Some(offset));
+    let a = plain
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    let b = shifted
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    // The announcement substep (group 0, substep 0, selected row 0 = the
+    // mulligan row) uses log-softmax over the offset logits.
+    let raw: Vec<f32> = fixture.logits[0]
+        .iter()
+        .map(|b| f32::from_bits(*b))
+        .collect();
+    let mut adjusted = raw.clone();
+    adjusted[0] -= offset;
+    let (expected, _) =
+        selected_log_softmax_math_v1(&adjusted, 0, TrainingMathV1::PlatformLibm).unwrap();
+    let announce = |r: &NativePolicyTrainStepResultV1| {
+        r.selected_outputs
+            .iter()
+            .find(|o| o.group_index == 0 && o.substep_index == 0)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(
+        announce(&b).selected_log_probability.to_bits(),
+        expected.to_bits()
+    );
+    assert_ne!(
+        announce(&a).selected_log_probability.to_bits(),
+        announce(&b).selected_log_probability.to_bits()
+    );
+    // Raw outputs stay raw: the selected logit and value are the scorer's.
+    assert_eq!(
+        announce(&a).selected_logit.to_bits(),
+        announce(&b).selected_logit.to_bits()
+    );
+    assert_ne!(a.gradients, b.gradients);
+    // Rows other than the announcement train exactly as without the offset.
+    for (x, y) in a.selected_outputs.iter().zip(&b.selected_outputs) {
+        if (x.group_index, x.substep_index) != (0, 0) {
+            assert_eq!(x, y);
+        }
+    }
+}
+
+#[test]
+fn london_keep_offset_is_refused_outside_the_plain_gae_loss() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = Fixture::capture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let mut legacy = base.clone();
+    legacy.set_london_keep_offset_v1(Some(1.0));
+    let error = legacy
+        .train_step_feature_transfer_v3(&groups, VC, LR)
+        .unwrap_err();
+    assert_eq!(
+        error,
+        NativePolicyTrainErrorV1::LondonKeepOffset {
+            code: "london-keep-offset-requires-gae"
+        }
+    );
+    assert_eq!(state_bits(&legacy), state_bits(&base));
+}

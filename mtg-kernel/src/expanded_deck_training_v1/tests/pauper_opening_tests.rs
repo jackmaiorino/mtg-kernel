@@ -350,7 +350,10 @@ fn keep_offset_is_absent_by_default_and_refused_without_london() {
 #[test]
 fn keep_offset_batches_carry_one_value() {
     assert_eq!(batch_london_keep_offset_v1([None, None]).unwrap(), None);
-    assert_eq!(batch_london_keep_offset_v1([Some(3.0), Some(3.0)]).unwrap(), Some(3.0));
+    assert_eq!(
+        batch_london_keep_offset_v1([Some(3.0), Some(3.0)]).unwrap(),
+        Some(3.0)
+    );
     assert!(batch_london_keep_offset_v1([Some(3.0), None]).is_err());
     assert!(batch_london_keep_offset_v1([None, Some(3.0)]).is_err());
     assert!(batch_london_keep_offset_v1([Some(3.0), Some(2.0)]).is_err());
@@ -378,10 +381,17 @@ fn keep_offset_steers_announcements_records_raw_logits_and_validates() {
     for row in &trajectory.decisions[..2] {
         let tensor = row.tensor.tensor();
         let raw: Vec<f32> = row.logits.iter().map(|b| f32::from_bits(*b)).collect();
-        let rows = london_keep_offset_v1::mulligan_rows_v1(&tensor.state, &tensor.action_features, raw.len())
-            .unwrap();
+        let rows = london_keep_offset_v1::mulligan_rows_v1(
+            &tensor.state,
+            &tensor.action_features,
+            raw.len(),
+        )
+        .unwrap();
         assert_eq!(rows.len(), 1);
-        assert!(raw[rows[0]] > -1.0e3, "raw logit recorded, not the offset one");
+        assert!(
+            raw[rows[0]] > -1.0e3,
+            "raw logit recorded, not the offset one"
+        );
     }
     // An episode without the offset collects exactly as before: same
     // trajectory bytes as a collection that never knew the field.
@@ -394,6 +404,11 @@ fn keep_offset_steers_announcements_records_raw_logits_and_validates() {
         .into_flat_v7_transfer_v1()
         .unwrap();
     let second = collect_episode(&mut fresh, &learner, None, &plain).unwrap();
-    assert_eq!(serde_json::to_vec(&first).unwrap(), serde_json::to_vec(&second).unwrap());
-    assert!(serde_json::to_value(&first).unwrap()["episode"].get("london_keep_offset").is_none());
+    assert_eq!(
+        serde_json::to_vec(&first).unwrap(),
+        serde_json::to_vec(&second).unwrap()
+    );
+    assert!(serde_json::to_value(&first).unwrap()["episode"]
+        .get("london_keep_offset")
+        .is_none());
 }

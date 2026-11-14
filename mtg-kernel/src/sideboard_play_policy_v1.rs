@@ -2082,12 +2082,14 @@ impl FrozenPlayPolicyV1 {
             .tensor
             .clone();
         let adjusted = match london_keep_offset {
-            Some(offset) => crate::expanded_deck_training_v1::london_keep_offset_v1::offset_logits_v1(
-                &scores.logits,
-                &tensor.common.state,
-                &tensor.common.action_features,
-                offset,
-            )?,
+            Some(offset) => {
+                crate::expanded_deck_training_v1::london_keep_offset_v1::offset_logits_v1(
+                    &scores.logits,
+                    &tensor.common.state,
+                    &tensor.common.action_features,
+                    offset,
+                )?
+            }
             None => None,
         };
         let selected = self.sample_scores(

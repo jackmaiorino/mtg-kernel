@@ -2542,30 +2542,30 @@ fn collect_episode_hooked_v1(
                     Some(hook) if hook.hooks_v1(&d) => Some(hook.before_select_v1(&session, d)?),
                     _ => None,
                 };
-                let (selected, scores, tensor_bits) =
-                    if acting.feature_identity_v1().generation == FreshLineageGenerationV1::V4 {
-                        let (selected, scores, tensor) = acting
-                            .select_with_training_tensor_offset_v4(
-                                &session,
-                                episode.london_keep_offset,
-                            )?;
-                        // FlatV8 rows also record their pairing relation.
-                        let bits = if acting.feature_identity_v1().feature_contract_digest
-                            == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8
-                        {
-                            TensorBitsV1::from_tensor_v8(
-                                &tensor.common,
-                                acting.last_scored_pairing_v8()?,
-                            )
-                        } else {
-                            TensorBitsV1::from_tensor(&tensor.common)
-                        };
-                        (selected, scores, bits)
+                let (selected, scores, tensor_bits) = if acting.feature_identity_v1().generation
+                    == FreshLineageGenerationV1::V4
+                {
+                    let (selected, scores, tensor) = acting.select_with_training_tensor_offset_v4(
+                        &session,
+                        episode.london_keep_offset,
+                    )?;
+                    // FlatV8 rows also record their pairing relation.
+                    let bits = if acting.feature_identity_v1().feature_contract_digest
+                        == crate::native_flat_tensorizer_v8::FEATURE_CONTRACT_DIGEST_V8
+                    {
+                        TensorBitsV1::from_tensor_v8(
+                            &tensor.common,
+                            acting.last_scored_pairing_v8()?,
+                        )
                     } else {
-                        let (selected, scores, tensor) =
-                            acting.select_with_training_tensor_v3(&session)?;
-                        (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                        TensorBitsV1::from_tensor(&tensor.common)
                     };
+                    (selected, scores, bits)
+                } else {
+                    let (selected, scores, tensor) =
+                        acting.select_with_training_tensor_v3(&session)?;
+                    (selected, scores, TensorBitsV1::from_tensor(&tensor.common))
+                };
                 let logits = bits(&scores.logits);
                 let played = match (hook.as_deref_mut(), pending) {
                     (Some(hook), Some(pending)) => {
@@ -4633,12 +4633,17 @@ fn execute_update_inner_v1(
     // carried by every trajectory of the batch (its episodes are one
     // iteration of a schedule), and only on the plain CPU GAE update.
     let london_keep_offset = batch_london_keep_offset_v1(
-        episodes.iter().map(|trajectory| trajectory.episode.london_keep_offset),
+        episodes
+            .iter()
+            .map(|trajectory| trajectory.episode.london_keep_offset),
     )?;
     if london_keep_offset.is_some() {
         ensure(
             matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
-                && matches!(loss_selection, ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. })
+                && matches!(
+                    loss_selection,
+                    ExpandedLossSelectionV1::GaeAdvantageValueV1 { .. }
+                )
                 && line_b.is_none()
                 && e_supported.is_none()
                 && soft_q.is_none()

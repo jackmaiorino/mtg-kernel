@@ -815,7 +815,8 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         // Read once: the offset of this step's batch, or None (every existing
         // step). Only the plain GAE objective takes it.
         let london_keep_offset = self.london_keep_offset;
-        if london_keep_offset.is_some() && (line_b.is_some() || exploration.is_some() || imitation) {
+        if london_keep_offset.is_some() && (line_b.is_some() || exploration.is_some() || imitation)
+        {
             return Err(NativePolicyTrainErrorV1::LondonKeepOffset {
                 code: "london-keep-offset-requires-plain-gae",
             });
@@ -888,15 +889,19 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 // respect to the raw logits keeps its softmax form. None
                 // reads the raw logits, as before.
                 let offset_logits = match london_keep_offset {
-                    Some(offset) => crate::expanded_deck_training_v1::london_keep_offset_v1::offset_logits_v1(
-                        tape.logits_v1(),
-                        encoded.state,
-                        encoded.action_features,
-                        offset,
-                    )
-                    .map_err(|_| NativePolicyTrainErrorV1::LondonKeepOffset {
-                        code: "london-keep-offset-malformed-decision",
-                    })?,
+                    Some(offset) => {
+                        crate::expanded_deck_training_v1::london_keep_offset_v1::offset_logits_v1(
+                            tape.logits_v1(),
+                            encoded.state,
+                            encoded.action_features,
+                            offset,
+                        )
+                        .map_err(|_| {
+                            NativePolicyTrainErrorV1::LondonKeepOffset {
+                                code: "london-keep-offset-malformed-decision",
+                            }
+                        })?
+                    }
                     None => None,
                 };
                 let (selected_log_probability, log_probabilities) = selected_log_softmax_math_v1(
