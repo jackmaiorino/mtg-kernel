@@ -11,6 +11,8 @@
 mod device;
 pub(crate) mod net8;
 pub(crate) mod net8_learner;
+pub(crate) mod s_learner;
+pub(crate) mod s_transformer;
 pub(crate) mod service;
 #[cfg(test)]
 mod tests;
@@ -28,7 +30,7 @@ pub(crate) fn fault_trigger_v1(kind: &str) -> Option<u64> {
 }
 
 /// Sets the process's forward kernels (`"v1"` or `"v2"`, the default) and how
-/// a host thread waits for the GPU (`"spin"`, the default, or `"block"`).
+/// a host thread waits for the GPU (`"block"`, the default, or `"spin"`).
 /// Call before installing a service or learner. Neither changes a result bit.
 pub fn configure_v1(kernels: &str, wait: &str) -> Result<(), String> {
     let kernels = match kernels {
@@ -67,6 +69,7 @@ pub fn inference_receipt_v1() -> Option<serde_json::Value> {
 struct InstalledLearnerV1 {
     device: ExactDeviceV1,
     buffers: net8_learner::LearnerBuffersV1,
+    s_buffers: s_learner::SLearnerBuffersV1,
     updates: u64,
     substeps: u64,
     busy_seconds: f64,
@@ -79,15 +82,16 @@ struct InstalledLearnerV1 {
 static LEARNER: std::sync::OnceLock<std::sync::Mutex<InstalledLearnerV1>> =
     std::sync::OnceLock::new();
 
-/// Opens device `ordinal` for the learner backward. The GAE train step then
-/// takes its gradients from it (`native_policy_train_step_v1::
-/// gpu_exact_backward_v1`): the same bits, so this changes timing only.
+/// Opens device `ordinal` for the learner backward. Both Net-8 and S GAE /
+/// auxiliary train steps then take their gradients from it: the same bits, so
+/// this changes timing only.
 pub fn install_learner_v1(ordinal: usize) -> Result<(), String> {
     let device = ExactDeviceV1::open_v1(ordinal)?;
     LEARNER
         .set(std::sync::Mutex::new(InstalledLearnerV1 {
             device,
             buffers: Default::default(),
+            s_buffers: Default::default(),
             updates: 0,
             substeps: 0,
             busy_seconds: 0.0,
@@ -133,6 +137,48 @@ pub(crate) fn learner_gradients_v1(
     learner.substeps += substeps.len() as u64;
     learner.busy_seconds += started.elapsed().as_secs_f64();
     Ok(Some(gradients))
+}
+
+pub(crate) fn s_learner_gradient_v1<T, F>(
+    model: &crate::s_transformer_v1::SModelV1,
+    inputs: &[crate::s_transformer_v1::SInputV1<'_>],
+    loss_head: F,
+) -> Result<Option<(T, Vec<f32>)>, String>
+where
+    F: FnOnce(
+        &[crate::s_transformer_v1::SOutputV1],
+        &mut Vec<f32>,
+        &mut Vec<f32>,
+    ) -> Result<T, String>,
+{
+    let learner = LEARNER.get().ok_or("no GPU learner installed")?;
+    let mut learner = learner.lock().unwrap_or_else(|p| p.into_inner());
+    let started = std::time::Instant::now();
+    #[cfg(feature = "gpu-exact-fault-injection-v1")]
+    if fault_trigger_v1("learner") == Some(learner.updates + learner.cpu_fallbacks + 1) {
+        learner.device.inject_fault_v1();
+    }
+    let InstalledLearnerV1 {
+        device, s_buffers, ..
+    } = &mut *learner;
+    let out = match s_learner::s_learner_gradient_v1(device, s_buffers, model, inputs, loss_head) {
+        Ok(out) => out,
+        Err(error) if net8_learner::is_resource_error_v1(&error) => {
+            learner.cpu_fallbacks += 1;
+            return Ok(None);
+        }
+        Err(error) if error.starts_with(net8::DEVICE_ERROR_PREFIX_V1) => {
+            learner.fatal_error = Some(error.clone());
+            return Err(error);
+        }
+        Err(error) => {
+            return Err(error);
+        }
+    };
+    learner.updates += 1;
+    learner.substeps += inputs.len() as u64;
+    learner.busy_seconds += started.elapsed().as_secs_f64();
+    Ok(Some(out))
 }
 
 /// The installed learner's device identity and counters, if one is installed.

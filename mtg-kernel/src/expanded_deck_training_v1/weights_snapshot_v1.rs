@@ -47,7 +47,7 @@ fn parameters_sha256_v1(parameters: &[ParameterBitsV1]) -> Result<String, String
 /// A sealed checkpoint (`record_envelope_v1`) is opened first; the snapshot
 /// itself is always written unsealed.
 pub fn weights_snapshot_v1(input: &PinnedFileV1, output: &Path) -> Result<Value, String> {
-    let sealed = read_pinned_bytes(input)?;
+    let sealed = read_pinned_shared_v1(input)?;
     let bytes = super::record_envelope_v1::open_v1(&sealed, super::MAX_FILE_BYTES)?;
     ensure(
         decode_weights_snapshot_v1(&bytes).is_err(),
@@ -114,7 +114,8 @@ fn s_record_state_v1(bytes: &[u8]) -> Result<(SLearnerCheckpointV1, STrainStateV
         record.schema == S_LEARNER_CHECKPOINT_SCHEMA_V1 && record.architecture == S_ARCHITECTURE_V1,
         "unknown S checkpoint record schema or architecture",
     )?;
-    let container = read_pinned_bytes(&record.state)?;
+    let container_raw = read_pinned_shared_v1(&record.state)?;
+    let container = super::record_envelope_v1::open_v1(&container_raw, super::MAX_FILE_BYTES)?;
     let state = decode_checkpoint_v1(&container)?;
     ensure(
         state.state_sha256_v1() == record.state_sha256 && state.adam_step_v1() == record.adam_step,
@@ -217,7 +218,11 @@ fn s_materialize_v1(
 /// shapes in layout order. Python tools read S layouts through this, never by
 /// parsing a container.
 pub fn s_container_document_v1(input: &PinnedFileV1) -> Result<Value, String> {
-    let state = decode_checkpoint_v1(&read_pinned_bytes(input)?)?;
+    let raw = read_pinned_shared_v1(input)?;
+    let state = decode_checkpoint_v1(&super::record_envelope_v1::open_v1(
+        &raw,
+        super::MAX_FILE_BYTES,
+    )?)?;
     let model = state.model_v1();
     let parameters: Vec<Value> = model
         .layout_v1()
@@ -243,7 +248,7 @@ pub fn materialize_weights_snapshot_v1(
     snapshot: &PinnedFileV1,
     output: &Path,
 ) -> Result<Value, String> {
-    let bytes = read_pinned_bytes(snapshot)?;
+    let bytes = read_pinned_shared_v1(snapshot)?;
     ensure(
         is_container_v1(&bytes),
         "a weights snapshot is a checkpoint container",
@@ -251,6 +256,10 @@ pub fn materialize_weights_snapshot_v1(
     if template.s_learner.is_some() {
         return s_materialize_v1(template, snapshot, &bytes, output);
     }
+    ensure(
+        template.w_learner.is_none(),
+        "weights snapshots of a wide (net-8w128) learner are not available",
+    )?;
     let mut saved = decode_v1(&bytes)?;
     let schema = saved
         .schema
@@ -355,6 +364,7 @@ mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let decks = [list("Affinity"), list("Terror")];
         let episode = ExpandedEpisodeV1 {

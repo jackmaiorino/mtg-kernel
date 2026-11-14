@@ -98,8 +98,10 @@ mod line_b_auxiliary_v1;
 pub(crate) use archive_distillation_v1::rules_pathway_v1::{
     RulesPathwayStateBitsV1, RulesPathwayV1,
 };
-pub(crate) use archive_distillation_v1::training_forward_v1;
 pub use archive_distillation_v1::ArchiveDistillationUpdateScopeV1;
+pub(crate) use archive_distillation_v1::{
+    input_major_weights_v1, training_forward_input_major_v1, training_forward_v1,
+};
 pub(crate) use archive_distillation_v1::{
     one_hot_target_v1, ExternalAuxiliaryInputV1, ExternalAuxiliaryRowV1,
 };
@@ -4869,6 +4871,26 @@ fn forward_with_tape_dims_v1<D: NetDimsV1>(
     math: TrainingMathV1,
 ) -> Result<DecisionTapeV1, NativePolicyTrainErrorV1> {
     forward_with_tape_input_major_dims_v1::<D>(parameters, None, config, encoded, math)
+}
+
+/// Tests only: the wide train step's tape forward of `encoded` under the
+/// platform libm, as (logits, value). The update's replay demands that the
+/// wide play policy's forward equals it bit for bit.
+#[cfg(test)]
+pub(crate) fn wide_tape_scores_for_test_v1(
+    model: &NativePolicyValueNetWideV1,
+    config: crate::native_policy_value_net_v1::NativePolicyValueModelConfigV1,
+    encoded: NativeEncodedDecisionViewV1<'_>,
+) -> (Vec<f32>, f32) {
+    let parameters = model.parameter_snapshot_wide_v1();
+    let tape = forward_with_tape_dims_v1::<Net8W128DimsV1>(
+        &parameters,
+        config,
+        encoded,
+        TrainingMathV1::PlatformLibm,
+    )
+    .unwrap();
+    (tape.logits_v1().to_vec(), tape.value_v1())
 }
 
 /// `forward_with_tape`, with the hidden-width layers' rows on the vectorized

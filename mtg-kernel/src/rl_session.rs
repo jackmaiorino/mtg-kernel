@@ -879,16 +879,21 @@ pub(crate) use flat_action_v3::{
     shuffle_trigger_source_into_library_v1,
 };
 pub use flat_action_v3::{FlatActionDecisionBindingV3, FlatActionDecisionSliceV3};
+#[cfg(all(test, feature = "limited-fdn-fixtures"))]
+pub(crate) use flat_action_v4::choose_trigger_mode_fixture_state_v1;
 pub(crate) use flat_action_v4::future_chance_seed_v3;
 #[cfg(test)]
 pub(crate) use flat_action_v4::search_library_fixture_v3;
+pub(crate) use flat_action_v4::PreparedV4SearchRootV1;
 pub(crate) use flat_action_v4::SlotFilterV1;
 pub(crate) use flat_action_v4::V4BoundaryEncodingFailureV1;
+pub(crate) use flat_action_v4::V4BoundaryScratchV1;
 pub(crate) use flat_action_v4::V4SearchActionTokenV1;
 pub(crate) use flat_action_v4::V4SearchSampleMode;
 pub(crate) use flat_action_v4::V4SearchStateErrorV1;
 #[cfg(test)]
 pub(crate) use flat_action_v4::{
+    ceased_token_order_triggers_shared_source_state_v1,
     hidden_order_triggers_shared_source_state_v1, hidden_order_triggers_state_v1,
 };
 pub use flat_action_v5::{FlatActionDecisionBindingV5, FlatActionDecisionSliceV5};
@@ -1954,6 +1959,13 @@ fn known_opponent_hand_canonical_ordinal_v1(
         .position(|&(_, _, _, _, id, zcc)| id == target && zcc == target_zone_change_count)
 }
 
+/// Frozen V3 action-object lookup. Permanent fail-closed V3 residuals left
+/// untouched per the V3 fork-not-mutate discipline (#674): hidden
+/// `OrderTriggers` / `ChooseTriggerMode` sources fail with
+/// `HiddenActionReference`, and ceased-token pending-trigger sources fail
+/// with `InvalidActionReference` (`pending_trigger_frozen_source_components_v1`
+/// only covers hidden library `ChooseTargets` on `pending_triggers[0]`). V4
+/// resolves all of those through `flat_action_v4`.
 fn flat_visible_action_object_components_v1(
     state: &crate::state::GameState,
     actor: PlayerId,

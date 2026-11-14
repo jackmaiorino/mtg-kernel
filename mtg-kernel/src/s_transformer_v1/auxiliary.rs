@@ -194,6 +194,7 @@ pub(crate) struct SGradientsV1 {
 
 impl SModelV1 {
     /// Validates `input` and computes [`SGradientsV1`] at these parameters.
+    #[cfg(test)]
     pub(crate) fn auxiliary_gradients_v1(
         &self,
         groups: &[SGroupV1<'_>],
@@ -201,6 +202,20 @@ impl SModelV1 {
         input: &SAuxiliaryInputV1<'_>,
         work: &mut SWorkV1,
     ) -> Result<SGradientsV1, String> {
+        self.auxiliary_gradients_with_workers_v1(groups, value_coefficient, input, work, 1)
+    }
+
+    /// Validates `input` and computes [`SGradientsV1`] with up to `workers`
+    /// CPU workers while preserving serial reduction order bit for bit.
+    pub(crate) fn auxiliary_gradients_with_workers_v1(
+        &self,
+        groups: &[SGroupV1<'_>],
+        value_coefficient: f32,
+        input: &SAuxiliaryInputV1<'_>,
+        work: &mut SWorkV1,
+        workers: usize,
+    ) -> Result<SGradientsV1, String> {
+        crate::expanded_deck_training_v1::validate_preparation_workers_v1(workers)?;
         if (input.rows.is_empty() && !input.step_telemetry)
             || input.denominator < input.rows.len()
             || input.denominator == 0
@@ -219,40 +234,173 @@ impl SModelV1 {
         let mask = policy_mask_v1(input, groups)?;
         let total = self.layout.total;
         let mut ordinary = vec![0.0f32; total];
-        let loss = self.gae_loss_gradient_masked_v1(
-            groups,
-            value_coefficient,
-            mask.as_ref(),
-            &mut ordinary,
-            work,
-        )?;
+        let loss = if workers == 1 {
+            self.gae_loss_gradient_masked_v1(
+                groups,
+                value_coefficient,
+                mask.as_ref(),
+                &mut ordinary,
+                work,
+            )?
+        } else {
+            self.gae_loss_gradient_masked_parallel_v1(
+                groups,
+                value_coefficient,
+                mask.as_ref(),
+                &mut ordinary,
+                workers,
+                work,
+            )?
+        };
         let scale = input.coefficient / input.denominator as f64;
         let mut auxiliary = vec![0.0f32; total];
         let mut divergences = Vec::with_capacity(input.rows.len());
         let mut auxiliary_loss = 0.0_f64;
-        for (index, row) in input.rows.iter().enumerate() {
-            self.forward_into_v1(row.input, &mut work.tape)?;
-            let logits: Vec<f64> = work.tape.logits.iter().map(|&z| f64::from(z)).collect();
-            if logits.len() < 2 {
-                return Err(format!("S auxiliary row {index} is a forced row"));
+        #[cfg(feature = "gpu-exact-v1")]
+        let gpu_aux_done = if !input.rows.is_empty() && crate::gpu_exact_v1::learner_installed_v1()
+        {
+            let mut aux_inputs = Vec::with_capacity(input.rows.len());
+            for row in &input.rows {
+                row.input.validate_v1(&self.layout.config)?;
+                aux_inputs.push(row.input);
             }
-            let value = line_b_divergence_v1(input.direction, &logits, row.target)
-                .map_err(|e| format!("S auxiliary row {index}: {e:?}"))?;
-            let d_logits: Vec<f32> = value
-                .logit_gradient
-                .iter()
-                .map(|g| (scale * g) as f32)
-                .collect();
-            self.backward_v1(
-                row.input,
-                &work.tape,
-                &d_logits,
-                0.0,
-                &mut auxiliary,
-                &mut work.back,
-            )?;
-            auxiliary_loss += scale * value.divergence;
-            divergences.push(Some(value.divergence));
+            if let Some(((divs, aux_loss), gpu_aux)) = crate::gpu_exact_v1::s_learner_gradient_v1(
+                self,
+                &aux_inputs,
+                |outputs, d_logits_all, d_dz_all| {
+                    let mut divs = Vec::with_capacity(input.rows.len());
+                    let mut aux_loss = 0.0_f64;
+                    for (index, (row, out)) in input.rows.iter().zip(outputs).enumerate() {
+                        let logits: Vec<f64> = out.logits.iter().map(|&z| f64::from(z)).collect();
+                        if logits.len() < 2 {
+                            return Err(format!("S auxiliary row {index} is a forced row"));
+                        }
+                        let value = line_b_divergence_v1(input.direction, &logits, row.target)
+                            .map_err(|e| format!("S auxiliary row {index}: {e:?}"))?;
+                        d_logits_all
+                            .extend(value.logit_gradient.iter().map(|g| (scale * g) as f32));
+                        d_dz_all.push(0.0);
+                        aux_loss += scale * value.divergence;
+                        divs.push(Some(value.divergence));
+                    }
+                    Ok((divs, aux_loss))
+                },
+            )? {
+                divergences = divs;
+                auxiliary_loss = aux_loss;
+                auxiliary = gpu_aux;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+        #[cfg(not(feature = "gpu-exact-v1"))]
+        let gpu_aux_done = false;
+
+        if !gpu_aux_done {
+            if workers == 1 || input.rows.len() < 2 {
+                for (index, row) in input.rows.iter().enumerate() {
+                    self.forward_into_v1(row.input, &mut work.tape)?;
+                    let logits: Vec<f64> = work.tape.logits.iter().map(|&z| f64::from(z)).collect();
+                    if logits.len() < 2 {
+                        return Err(format!("S auxiliary row {index} is a forced row"));
+                    }
+                    let value = line_b_divergence_v1(input.direction, &logits, row.target)
+                        .map_err(|e| format!("S auxiliary row {index}: {e:?}"))?;
+                    let d_logits: Vec<f32> = value
+                        .logit_gradient
+                        .iter()
+                        .map(|g| (scale * g) as f32)
+                        .collect();
+                    self.backward_v1(
+                        row.input,
+                        &work.tape,
+                        &d_logits,
+                        0.0,
+                        &mut auxiliary,
+                        &mut work.back,
+                    )?;
+                    auxiliary_loss += scale * value.divergence;
+                    divergences.push(Some(value.divergence));
+                }
+            } else {
+                type AuxRowOutcomeV1 = Result<(f64, parallel::SGradientTermsV1), String>;
+                let row_workers = workers.min(input.rows.len());
+                let next_row = std::sync::atomic::AtomicUsize::new(0);
+                let slots: Vec<std::sync::Mutex<Option<AuxRowOutcomeV1>>> = (0..input.rows.len())
+                    .map(|_| std::sync::Mutex::new(None))
+                    .collect();
+                let compute_rows = |local_work: &mut SWorkV1| loop {
+                    let index = next_row.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(row) = input.rows.get(index) else {
+                        break;
+                    };
+                    let outcome = (|| -> Result<(f64, parallel::SGradientTermsV1), String> {
+                        self.forward_into_v1(row.input, &mut local_work.tape)?;
+                        let logits: Vec<f64> = local_work
+                            .tape
+                            .logits
+                            .iter()
+                            .map(|&z| f64::from(z))
+                            .collect();
+                        if logits.len() < 2 {
+                            return Err(format!("S auxiliary row {index} is a forced row"));
+                        }
+                        let value = line_b_divergence_v1(input.direction, &logits, row.target)
+                            .map_err(|e| format!("S auxiliary row {index}: {e:?}"))?;
+                        let d_logits: Vec<f32> = value
+                            .logit_gradient
+                            .iter()
+                            .map(|g| (scale * g) as f32)
+                            .collect();
+                        let mut terms = parallel::SGradientTermsV1::default();
+                        self.backward_into_v1(
+                            row.input,
+                            &local_work.tape,
+                            &d_logits,
+                            0.0,
+                            &mut parallel::SGradientSinkV1::Record(&mut terms),
+                            &mut local_work.back,
+                        )?;
+                        Ok((value.divergence, terms))
+                    })();
+                    *slots[index]
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(outcome);
+                };
+                std::thread::scope(|scope| {
+                    let mut handles = Vec::with_capacity(row_workers - 1);
+                    for _ in 1..row_workers {
+                        handles.push(scope.spawn(|| {
+                            let mut helper_work = SWorkV1::default();
+                            compute_rows(&mut helper_work);
+                        }));
+                    }
+                    compute_rows(work);
+                    let mut panic = None;
+                    for handle in handles {
+                        if let Err(payload) = handle.join() {
+                            panic.get_or_insert(payload);
+                        }
+                    }
+                    if let Some(payload) = panic {
+                        std::panic::resume_unwind(payload);
+                    }
+                });
+                let mut recorded_terms = Vec::with_capacity(input.rows.len());
+                for slot in slots {
+                    let (divergence, terms) = slot
+                        .into_inner()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .expect("every S auxiliary row ran")?;
+                    auxiliary_loss += scale * divergence;
+                    divergences.push(Some(divergence));
+                    recorded_terms.push(terms);
+                }
+                parallel::replay_terms_v1(&self.layout, &mut auxiliary, &recorded_terms, workers)?;
+            }
         }
         let auxiliary_bias_residual = auxiliary[self.layout.pol2.b];
         for range in self.layout.gauge_ranges_v1() {
@@ -288,6 +436,27 @@ impl STrainStateV1 {
         input: &SAuxiliaryInputV1<'_>,
         work: &mut SWorkV1,
     ) -> Result<(SStepV1, SAuxiliaryResultV1), String> {
+        self.train_step_gae_auxiliary_with_workers_v1(
+            groups,
+            value_coefficient,
+            learning_rate,
+            input,
+            work,
+            1,
+        )
+    }
+
+    /// [`Self::train_step_gae_auxiliary_v1`] with up to `workers` CPU workers,
+    /// preserving serial reduction order and receipts bit for bit.
+    pub fn train_step_gae_auxiliary_with_workers_v1(
+        &mut self,
+        groups: &[SGroupV1<'_>],
+        value_coefficient: f32,
+        learning_rate: f32,
+        input: &SAuxiliaryInputV1<'_>,
+        work: &mut SWorkV1,
+        workers: usize,
+    ) -> Result<(SStepV1, SAuxiliaryResultV1), String> {
         let SGradientsV1 {
             loss,
             ordinary: mut grad,
@@ -296,9 +465,13 @@ impl STrainStateV1 {
             auxiliary_loss,
             mask,
             auxiliary_bias_residual,
-        } = self
-            .model
-            .auxiliary_gradients_v1(groups, value_coefficient, input, work)?;
+        } = self.model.auxiliary_gradients_with_workers_v1(
+            groups,
+            value_coefficient,
+            input,
+            work,
+            workers,
+        )?;
         let active = input.coefficient > 0.0 && !input.rows.is_empty();
         let gradient_components = components_v1(&self.model.layout, &auxiliary, &grad);
         let auxiliary_head_l2 = head_l2_v1(&self.model.layout, &auxiliary);

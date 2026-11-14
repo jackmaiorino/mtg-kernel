@@ -827,7 +827,7 @@ pub(crate) fn child_key(parent: &Key, edge: &[u8], c: &Canon) -> Key {
 pub(crate) struct Node {
     pub(crate) parent: Key,
     pub(crate) edge: Vec<u8>,
-    pub(crate) canon: Canon,
+    pub(crate) canon: std::sync::Arc<Canon>,
     /// Seeded order of the menu (untried choice and tie-breaks).
     pub(crate) perm: Vec<usize>,
     /// Completed simulations through this node (every action is legal at
@@ -947,6 +947,17 @@ impl Node {
         parent: Key,
         edge: Vec<u8>,
         canon: Canon,
+        depth: u32,
+        perm: Vec<usize>,
+    ) -> Self {
+        Self::with_perm_arc(parent, edge, std::sync::Arc::new(canon), depth, perm)
+    }
+
+    /// [`Self::with_perm`] sharing an existing `Arc<Canon>` without cloning.
+    pub(crate) fn with_perm_arc(
+        parent: Key,
+        edge: Vec<u8>,
+        canon: std::sync::Arc<Canon>,
         depth: u32,
         perm: Vec<usize>,
     ) -> Self {
@@ -1133,6 +1144,13 @@ impl Node {
             && self.canon.obs == canon.obs
             && self.canon.edges == canon.edges
     }
+
+    fn same_arc(&self, parent: &Key, edge: &[u8], canon: &std::sync::Arc<Canon>) -> bool {
+        self.parent == *parent
+            && self.edge == edge
+            && (std::sync::Arc::ptr_eq(&self.canon, canon)
+                || (self.canon.obs == canon.obs && self.canon.edges == canon.edges))
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1156,6 +1174,20 @@ impl Tree {
     ) -> Result<Found<'_>, PlayErr> {
         match self.nodes.get(key) {
             Some(n) if n.same(parent, edge, canon) => Ok(Found::Hit(n)),
+            Some(_) => Err(PlayErr::Fault("node key collision".into())),
+            None => Ok(Found::Miss),
+        }
+    }
+
+    pub(crate) fn find_arc(
+        &self,
+        key: &Key,
+        parent: &Key,
+        edge: &[u8],
+        canon: &std::sync::Arc<Canon>,
+    ) -> Result<Found<'_>, PlayErr> {
+        match self.nodes.get(key) {
+            Some(n) if n.same_arc(parent, edge, canon) => Ok(Found::Hit(n)),
             Some(_) => Err(PlayErr::Fault("node key collision".into())),
             None => Ok(Found::Miss),
         }

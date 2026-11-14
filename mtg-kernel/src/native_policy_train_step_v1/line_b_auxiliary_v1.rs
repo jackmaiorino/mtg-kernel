@@ -122,10 +122,9 @@ pub(super) fn line_b_auxiliary_terms_v1(
     }
     let scale = input.coefficient / count as f64;
     let mut seen = std::collections::BTreeSet::new();
-    let mut gradients: Vec<Vec<f32>> = parameters
-        .iter()
-        .map(|parameter| vec![0.0; parameter.values.len()])
-        .collect();
+    let mut gradients =
+        accumulate_transposed_v1::sequential_gradients_dims_v1::<Net8DimsV1>(parameters);
+    let mut sink = accumulate_transposed_v1::AccumulateTransposedV1::new_v1(&mut gradients);
     let mut workspace = ReverseWorkspaceV1::default();
     let mut rows = Vec::new();
     let mut divergences = Vec::with_capacity(count);
@@ -152,9 +151,9 @@ pub(super) fn line_b_auxiliary_terms_v1(
             .map_err(|_| invalid("line-b-auxiliary-divergence"))?;
         let exact: Vec<f64> = value.logit_gradient.iter().map(|g| scale * g).collect();
         let d_logits: Vec<f32> = exact.iter().map(|&g| g as f32).collect();
-        reverse_decision(
+        reverse_decision_into_dims_v1::<Net8DimsV1>(
             parameters,
-            &mut gradients,
+            &mut sink,
             &selected.tape,
             &d_logits,
             0.0,
@@ -166,7 +165,7 @@ pub(super) fn line_b_auxiliary_terms_v1(
     }
     Ok(LineBAuxiliaryTermsV1 {
         active: input.coefficient > 0.0 && !rows.is_empty(),
-        gradients,
+        gradients: gradients.into_gradients_v1(),
         rows,
         divergences,
         loss,

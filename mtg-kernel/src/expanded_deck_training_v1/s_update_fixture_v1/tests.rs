@@ -62,6 +62,7 @@ fn fixture_serial_inputs_v1(
         ex1: None,
         training_math: TrainingMathV1::PlatformLibm,
         record_format: CheckpointRecordFormatV1::default(),
+        record_envelope: RecordEnvelopeV1::None,
         started: Instant::now(),
     }
 }

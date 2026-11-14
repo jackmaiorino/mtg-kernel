@@ -69,6 +69,7 @@ fn native_audit_admits_flat_v7_and_v8_trajectories_only_against_their_own_identi
             },
             checkpoint,
             s_learner: None,
+            w_learner: None,
         };
     let collect = |source: &ExpandedModelSourceV1, label: &str, seed: u64| -> PinnedFileV1 {
         let collected = execute_v1(ExpandedTrainingCommandV1::Collect {

@@ -97,16 +97,19 @@ def write(path, doc):
 
 
 def sha(path):
-    h = hashlib.sha256()
     with open(path, 'rb') as f:
+        if hasattr(hashlib, 'file_digest'):
+            return hashlib.file_digest(f, 'sha256').hexdigest()
+        h = hashlib.sha256()
         for block in iter(lambda: f.read(1 << 20), b''):
             h.update(block)
     return h.hexdigest()
 
 
 def state_pin(update_doc):
-    """The S container an update published (`update.json`'s `s_learner.state`), or None for net-8."""
-    return (update_doc.get('s_learner') or {}).get('state')
+    """The S or wide container an update published (`update.json`'s `s_learner.state` or `w_learner.state`, the
+    wide net-8w128 learner's, which retention treats exactly as S's), or None for net-8."""
+    return (update_doc.get('s_learner') or update_doc.get('w_learner') or {}).get('state')
 
 
 def checkpoint_parts(pin, state=None):

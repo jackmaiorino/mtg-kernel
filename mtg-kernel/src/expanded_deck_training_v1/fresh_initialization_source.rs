@@ -376,6 +376,7 @@ pub(super) fn read_actual_in_v1(
     cap: usize,
 ) -> Result<Vec<u8>, String> {
     actual_pin(pin)?;
+    let started = std::time::Instant::now();
     let file = File::open(&pin.path).map_err(|e| e.to_string())?;
     let metadata = file.metadata().map_err(|e| e.to_string())?;
     require(
@@ -390,6 +391,7 @@ pub(super) fn read_actual_in_v1(
     file.take(cap as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
+    super::opponent_cache_diagnostics_v1::note_file_read_v1(bytes.len(), started);
     // Bytes equal to bytes this process already verified against this pin
     // have its digest (`verified_bytes_cache_v1`); anything else is hashed as
     // before.
@@ -913,11 +915,7 @@ mod tests {
 
     #[test]
     fn fresh_v4_manifest_is_admitted_and_activates_fresh_successor() {
-        let dir = std::env::temp_dir().join(format!(
-            "fresh-v4-source-{}-{}",
-            std::process::id(),
-            "admitted"
-        ));
+        let dir = crate::test_temp_dir_v1::TempTestDir::new_v1("fresh-v4-source-admitted");
         let source = write_synthetic_fresh_source_v1(&dir, FRESH_FEATURE_IDENTITY_V4);
         let features = FrozenPlayObservationTransferV3 {
             expected_feature_contract_digest: FRESH_FEATURE_IDENTITY_V4
@@ -948,11 +946,7 @@ mod tests {
 
     #[test]
     fn fresh_v3_manifest_still_admitted_and_a_v4_declared_manifest_is_rejected_by_v3_only_fields() {
-        let dir = std::env::temp_dir().join(format!(
-            "fresh-v3-source-{}-{}",
-            std::process::id(),
-            "admitted"
-        ));
+        let dir = crate::test_temp_dir_v1::TempTestDir::new_v1("fresh-v3-source-admitted");
         let source = write_synthetic_fresh_source_v1(&dir, FRESH_FEATURE_IDENTITY_V3);
         let features = FrozenPlayObservationTransferV3 {
             expected_feature_contract_digest: FRESH_FEATURE_IDENTITY_V3
@@ -967,14 +961,9 @@ mod tests {
         // A mixed tuple (V4 contract+source pins, but a V3-declared
         // features/descriptor pair) must be rejected, never accepted by
         // checking each field independently against "V3 or V4".
-        let mixed_dir = std::env::temp_dir().join(format!(
-            "fresh-mixed-source-{}-{}",
-            std::process::id(),
-            "rejected"
-        ));
+        let mixed_dir = crate::test_temp_dir_v1::TempTestDir::new_v1("fresh-mixed-source-rejected");
         let mut mixed_identity = FRESH_FEATURE_IDENTITY_V4;
         mixed_identity.feature_encoding_digest = FRESH_FEATURE_IDENTITY_V3.feature_encoding_digest;
-        std::fs::create_dir_all(&mixed_dir).unwrap();
         // validate_metadata's whole-tuple classifier rejects this target
         // before any file is even read; parse the manifest bytes directly.
         let bad_target = serde_json::json!({"registry":{"path":"C:/synthetic/cards.json",

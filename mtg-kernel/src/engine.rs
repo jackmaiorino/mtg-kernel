@@ -18033,6 +18033,66 @@ fn pending_trigger_modes(
     )
 }
 
+/// Pure state check matching [`advance_until_decision`] / [`step`] precedence
+/// for whether the active decision is `Decision::ChooseTriggerMode` for
+/// `pending_triggers[0]`. Used by `frozen_pending_trigger_semantic_v4` to
+/// distinguish `ActionSemanticV1::ChooseSpellMode` emitted for a modal pending
+/// trigger from the identical semantic variant emitted during `pending_cast`
+/// (`Decision::ChooseSpellMode`).
+pub(crate) fn pending_trigger_choose_mode_active_v1(state: &GameState) -> bool {
+    if crate::graveyard_order_v1::owns_operation(state)
+        || crate::graveyard_order_v1::paused(state)
+        || crate::linked_aura_operation_v1::has_pending(state)
+        || crate::twinflame_tyrant_v1::combat::has_pending(state)
+        || check_game_over(state).is_some()
+        || state.engine.halted.is_some()
+        || crate::london_mulligan_v1::has_pending(state)
+        || crate::eternal_opening_v1::owns_action(state)
+        || state.leyline_opening_v1.is_some()
+        || (!crate::eternal_opening_v1::enabled(state)
+            && crate::leyline_axe_v1::requires_initial_advance(state).unwrap_or(true))
+        || (!state.engine.time_stop_v1.is_empty() && !time_stop_v1::at_priority(state))
+        || (!state.engine.ordinary_cleanup_v1.is_empty()
+            && !ordinary_cleanup_v1::at_priority(state))
+        || state.pending_legend_rule_v1.is_some()
+        || crate::attack_target_v1::has_pending(state)
+        || crate::combat_damage_v1::has_pending_assignment(state)
+        || !matches!(muldrotha_v1::decision(state), Ok(None))
+        || state.engine.pending_land_play.is_some()
+        || state.engine.pending_spell_copy.is_some()
+        || state.engine.pending_effect.is_some()
+        || state.engine.pending_discard.is_some()
+        || state.engine.pending_cast.is_some()
+        || state.engine.pending_activation.is_some()
+        || state.engine.pending_optional_cost.is_some()
+        || state.engine.pending_optional_cost_sacrifice.is_some()
+    {
+        return false;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_cards_v1::e3::entry_choice_decision(state).is_some() {
+        return false;
+    }
+    let Some(first) = state.engine.pending_triggers.first() else {
+        return false;
+    };
+    let group_len = state
+        .engine
+        .pending_triggers
+        .iter()
+        .take_while(|trigger| trigger.controller == first.controller)
+        .count();
+    if !state.engine.pending_triggers[..group_len]
+        .iter()
+        .all(|trigger| trigger.placement_ordered)
+        || validate_pending_trigger(state, first).is_err()
+        || counter_distribution_v1::waiting(first)
+    {
+        return false;
+    }
+    pending_trigger_modes(state, first).is_some()
+}
+
 fn legal_pending_trigger_modes(
     state: &GameState,
     pending: &PendingTrigger,

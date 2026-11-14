@@ -16,6 +16,7 @@ pub mod s_learner_v1;
 pub mod s_update_fixture_v1;
 pub mod search_targets_v1;
 pub mod soft_q_teacher_v1;
+pub mod w_learner_v1;
 use e_supported_teacher_v1::ESupportedTeacherOptionsV1;
 use loaded_source_profile_v1::LoadRoleV1;
 use search_targets_v1::SearchTargetsOptionsV1;
@@ -126,6 +127,9 @@ mod line_b_teacher_operator_v1;
 mod line_b_teacher_packet_v1;
 mod loaded_source_cache_v1;
 pub(crate) mod loaded_source_profile_v1;
+pub(crate) mod opponent_cache_diagnostics_v1;
+#[cfg(test)]
+pub(crate) mod pool_fixture_v1;
 pub mod portable_chain_v1;
 pub mod record_envelope_v1;
 mod trajectory_parse_ahead_v1;
@@ -420,6 +424,12 @@ pub struct ExpandedModelSourceV1 {
     /// record. Omitted when absent, so every existing source keeps its bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub s_learner: Option<Box<s_learner_v1::SLearnerSourceV1>>,
+    /// The wide net-8 learner (`w_learner_v1`, net-8w128): as `s_learner`,
+    /// the play import is only the FlatV4 shell the wide net plays on, and
+    /// `checkpoint` pins a wide checkpoint record. Omitted when absent, so
+    /// every existing source keeps its bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub w_learner: Option<Box<w_learner_v1::WLearnerSourceV1>>,
 }
 
 /// Inference identity after exact current-feature model/optimizer validation.
@@ -508,6 +518,9 @@ fn load_expanded_inference_any_math_v1(
     if source.s_learner.is_some() {
         return s_learner_v1::load_inference_v1(source);
     }
+    if source.w_learner.is_some() {
+        return w_learner_v1::load_inference_v1(source);
+    }
     // Inference alone admits the explicit BO3 objective. Legacy initialization
     // and update dispatch keep rejecting its descriptor/checkpoint schemas.
     let bytes = read_pinned_bytes(&source.play_import)?;
@@ -570,6 +583,9 @@ pub(crate) fn load_expanded_update_inference_v1(
     };
     if source.s_learner.is_some() {
         return s_learner_v1::load_update_inference_v1(source, &inputs);
+    }
+    if source.w_learner.is_some() {
+        return w_learner_v1::load_update_inference_v1(source, &inputs);
     }
     let bytes = read_pinned_bytes(&source.play_import)?;
     let (policy, state, _) = initialize_from_source_bytes_v1(source, &bytes, Some(&inputs))?;
@@ -765,20 +781,34 @@ impl OpponentCacheV1 {
     }
 
     fn insert(&mut self, entry: LoadedOpponentV1) {
+        let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
         if let Some(index) = self
             .entries
             .iter()
             .position(|old| old.behavior.source == entry.behavior.source)
         {
-            self.entries.remove(index);
+            let old = self.entries.remove(index);
+            stats.released_v1(opponent_cache_diagnostics_v1::policy_bytes_v1(&old.policy));
         }
         if self.entries.len() == OPPONENT_CACHE_CAPACITY_V1 {
-            self.entries.remove(0);
+            self.evict_oldest_v1();
         }
+        stats.held_v1(opponent_cache_diagnostics_v1::policy_bytes_v1(
+            &entry.policy,
+        ));
         self.entries.push(entry);
     }
 
+    fn evict_oldest_v1(&mut self) {
+        let old = self.entries.remove(0);
+        let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
+        stats.evictions.add(1);
+        stats.released_v1(opponent_cache_diagnostics_v1::policy_bytes_v1(&old.policy));
+    }
+
     fn load(&mut self, source: &ExpandedModelSourceV1) -> Result<&mut LoadedOpponentV1, String> {
+        let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
+        let started = std::time::Instant::now();
         if let Some(index) = self
             .entries
             .iter()
@@ -788,11 +818,19 @@ impl OpponentCacheV1 {
             // independently resets physical-seat sampling before any action.
             let entry = self.entries.remove(index);
             self.entries.push(entry);
+            stats.hits.add(1);
+            stats.hit_nanos.add_elapsed(started);
         } else {
             if self.entries.len() == OPPONENT_CACHE_CAPACITY_V1 {
-                self.entries.remove(0);
+                self.evict_oldest_v1();
             }
-            let mut opponent = if self.verified_sources.contains(source) {
+            let verified = self.verified_sources.contains(source);
+            if verified {
+                stats.misses_verified.add(1);
+            } else {
+                stats.misses_unverified.add(1);
+            }
+            let mut opponent = if verified {
                 ordered_update_preparation::load_opponent_cached_v1(source, false)?.0
             } else {
                 // Unrecognized import schemas retain their original complete
@@ -810,11 +848,23 @@ impl OpponentCacheV1 {
                 }
             };
             bind_opponent_math_v1(source, &mut opponent.policy, self.training_math)?;
+            stats.miss_nanos.add_elapsed(started);
             self.insert(opponent);
         }
         self.entries
             .last_mut()
             .ok_or_else(|| "opponent cache is empty".into())
+    }
+}
+
+impl Drop for OpponentCacheV1 {
+    fn drop(&mut self) {
+        let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
+        for entry in &self.entries {
+            stats.released_v1(opponent_cache_diagnostics_v1::policy_bytes_v1(
+                &entry.policy,
+            ));
+        }
     }
 }
 
@@ -828,6 +878,7 @@ impl OpponentCacheV1 {
 fn verify_collection_opponent_sources_v1(
     episodes: &[ExpandedEpisodeV1],
 ) -> Result<Vec<ExpandedModelSourceV1>, String> {
+    let mark = opponent_cache_diagnostics_v1::WorkMarkV1::now_v1();
     let mut verified = Vec::new();
     let mut checked = Vec::new();
     for source in episodes
@@ -838,8 +889,9 @@ fn verify_collection_opponent_sources_v1(
             continue;
         }
         checked.push(source.clone());
-        // An S source keeps its own full load (`s_learner_v1`) every time.
-        if source.s_learner.is_some() {
+        // An S or wide source keeps its own full load (`s_learner_v1`,
+        // `w_learner_v1`) every time.
+        if source.s_learner.is_some() || source.w_learner.is_some() {
             continue;
         }
         let bytes = read_pinned_shared_v1(&source.play_import)?;
@@ -874,6 +926,11 @@ fn verify_collection_opponent_sources_v1(
         }
         verified.push(source.clone());
     }
+    let boundary = &opponent_cache_diagnostics_v1::counters_v1().boundary;
+    boundary.checks.add(1);
+    boundary.sources.add_usize(checked.len());
+    boundary.cacheable_sources.add_usize(verified.len());
+    mark.finish_v1(&boundary.split);
     Ok(verified)
 }
 
@@ -890,7 +947,7 @@ pub(super) type VerifiedFilesV1 = Vec<(PathBuf, Vec<u8>)>;
 pub(super) fn opponent_cache_files_v1(
     source: &ExpandedModelSourceV1,
 ) -> Result<Option<VerifiedFilesV1>, String> {
-    if source.s_learner.is_some() {
+    if source.s_learner.is_some() || source.w_learner.is_some() {
         return Ok(None);
     }
     let bytes = read_pinned_bytes(&source.play_import)?;
@@ -1789,6 +1846,10 @@ fn initialize_from_source_bytes_v1(
         source.s_learner.is_none(),
         s_learner_v1::S_LEARNER_NET8_REFUSAL_V1,
     )?;
+    ensure(
+        source.w_learner.is_none(),
+        w_learner_v1::W_LEARNER_NET8_REFUSAL_V1,
+    )?;
     if flat_v8_requested_v1(source)? {
         // A FlatV8 source (the V8 inclusion contract). Its checkpoint is a V8
         // one: the first is made by the function-preserving V8 conversion
@@ -1973,6 +2034,10 @@ pub(crate) fn validate_ordinary_source_descriptor_v1(
         s_learner_v1::S_LEARNER_NET8_REFUSAL_V1,
     )?;
     ensure(
+        source.w_learner.is_none(),
+        w_learner_v1::W_LEARNER_NET8_REFUSAL_V1,
+    )?;
+    ensure(
         source.checkpoint.is_some(),
         "ordinary parent checkpoint is required",
     )?;
@@ -2108,6 +2173,10 @@ pub fn inspect_fresh_initialization_v1(
     ensure(
         source.s_learner.is_none(),
         s_learner_v1::S_LEARNER_NET8_REFUSAL_V1,
+    )?;
+    ensure(
+        source.w_learner.is_none(),
+        w_learner_v1::W_LEARNER_NET8_REFUSAL_V1,
     )?;
     ensure(
         source.checkpoint.is_none(),
@@ -3745,6 +3814,15 @@ pub enum ExpandedTrainingCommandV1 {
         value_coefficient: f32,
         loss_selection: ExpandedLossSelectionV1,
         ex1: ex1_update_v1::Ex1UpdateOptionsV1,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preparation_workers: Option<usize>,
+        #[serde(
+            default = "default_max_prepared_tensor_mebibytes",
+            skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
+        )]
+        max_prepared_tensor_mebibytes: usize,
+        #[serde(default, skip_serializing_if = "RecordEnvelopeV1::is_none")]
+        record_envelope: RecordEnvelopeV1,
         output_directory: PathBuf,
     },
     /// SQ1's target diagnostic (design section 6.1): construction and
@@ -3943,28 +4021,46 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             value_coefficient,
             loss_selection,
             ex1,
+            preparation_workers,
+            max_prepared_tensor_mebibytes,
+            record_envelope,
             output_directory,
-        } => execute_update_inner_v1(
-            source,
-            trajectories,
-            learning_rate,
-            value_coefficient,
-            ExpandedUpdateBackendV1::Cpu,
-            UpdateBackwardExecutionV1::Sequential,
-            loss_selection,
-            output_directory,
-            None,
-            DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
-            None,
-            None,
-            None,
-            None,
-            Some(ex1),
-            TrainingMathV1::PlatformLibm,
-            CheckpointRecordFormatV1::V1,
-            RecordEnvelopeV1::None,
-            None,
-        ),
+        } => {
+            if let Some(workers) = preparation_workers {
+                validate_preparation_workers_v1(workers)?;
+                ensure(
+                    workers >= 2,
+                    "use serial Ex1Update (preparation_workers omitted) for 1 worker",
+                )?;
+            } else {
+                ensure(
+                    max_prepared_tensor_mebibytes == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+                    "max_prepared_tensor_mebibytes applies to prepared updates only",
+                )?;
+            }
+            validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
+            execute_update_inner_v1(
+                source,
+                trajectories,
+                learning_rate,
+                value_coefficient,
+                ExpandedUpdateBackendV1::Cpu,
+                UpdateBackwardExecutionV1::Sequential,
+                loss_selection,
+                output_directory,
+                preparation_workers,
+                max_prepared_tensor_mebibytes,
+                None,
+                None,
+                None,
+                None,
+                Some(ex1),
+                TrainingMathV1::PlatformLibm,
+                CheckpointRecordFormatV1::V1,
+                record_envelope,
+                None,
+            )
+        }
         ExpandedTrainingCommandV1::SoftQDiagnostic {
             parent,
             prior_deck_indices,
@@ -4114,6 +4210,12 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             }
             let (mut policy, learner, state_hash) = if source.s_learner.is_some() {
                 s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
+            } else if source.w_learner.is_some() {
+                ensure(
+                    ex1.is_none(),
+                    "a wide learner refuses EX1 and W5 search collection",
+                )?;
+                w_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
             } else {
                 let (mut policy, mut state, transfer) =
                     loaded_source_profile_v1::scoped_v1(LoadRoleV1::CollectLearner, || {
@@ -4655,12 +4757,35 @@ fn execute_update_inner_v1(
         !output_directory.exists(),
         "output directory already exists",
     )?;
+    if source.w_learner.is_some() {
+        // The wide update writes its own record and container; an envelope
+        // seals the container, as it seals net-8's checkpoint.
+        return w_learner_v1::execute_w_update_v1(w_learner_v1::WUpdateInputsV1 {
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            update_backend,
+            backward_execution,
+            loss_selection,
+            output_directory,
+            preparation_workers,
+            max_prepared_tensor_mebibytes,
+            unsupported: w_learner_v1::WUnsupportedOptionsV1 {
+                line_b: line_b.is_some(),
+                e_supported: e_supported.is_some(),
+                soft_q: soft_q.is_some(),
+                search_targets: search_targets.is_some(),
+                ex1: ex1.is_some(),
+                verified_replay: verified_replay.is_some(),
+            },
+            training_math,
+            record_format,
+            record_envelope,
+            started: update_started,
+        });
+    }
     if source.s_learner.is_some() {
-        // The S update writes its own records; it takes no envelope.
-        ensure(
-            record_envelope.is_none(),
-            "a record envelope is not available with an S learner update",
-        )?;
         return s_learner_v1::execute_s_update_v1(s_learner_v1::SUpdateInputsV1 {
             source,
             trajectories,
@@ -4682,6 +4807,7 @@ fn execute_update_inner_v1(
             ex1,
             training_math,
             record_format,
+            record_envelope,
             started: update_started,
         });
     }
@@ -5282,7 +5408,7 @@ fn execute_update_inner_v1(
                         policy_mask,
                     );
                     let (result, auxiliary) = state
-                        .train_step_gae_external_auxiliary_v1(
+                        .train_step_gae_external_auxiliary_workers_v1(
                             generation,
                             &groups,
                             &gae.value_targets,
@@ -5290,6 +5416,7 @@ fn execute_update_inner_v1(
                             value_coefficient,
                             learning_rate,
                             None,
+                            preparation_workers.unwrap_or(1),
                             &input,
                         )
                         .map_err(err)?;
@@ -5333,7 +5460,7 @@ fn execute_update_inner_v1(
                     let options = search_targets.as_ref().expect("teacher implies options");
                     let input = search_targets_v1::auxiliary_input_v1(rows, options, generation);
                     let (result, auxiliary) = state
-                        .train_step_gae_external_auxiliary_v1(
+                        .train_step_gae_external_auxiliary_workers_v1(
                             generation,
                             &groups,
                             &gae.value_targets,
@@ -5341,6 +5468,7 @@ fn execute_update_inner_v1(
                             value_coefficient,
                             learning_rate,
                             None,
+                            preparation_workers.unwrap_or(1),
                             &input,
                         )
                         .map_err(err)?;
@@ -5366,7 +5494,7 @@ fn execute_update_inner_v1(
                 (ExpandedUpdateBackendV1::Cpu, _) if sq_teacher.is_some() => {
                     let (_, input) = sq_teacher.as_ref().expect("guarded");
                     let (result, auxiliary) = state
-                        .train_step_gae_soft_targets_v1(
+                        .train_step_gae_soft_targets_workers_v1(
                             generation,
                             &groups,
                             &gae.value_targets,
@@ -5374,6 +5502,7 @@ fn execute_update_inner_v1(
                             value_coefficient,
                             learning_rate,
                             None,
+                            preparation_workers.unwrap_or(1),
                             input,
                         )
                         .map_err(err)?;
@@ -5383,7 +5512,7 @@ fn execute_update_inner_v1(
                 (ExpandedUpdateBackendV1::Cpu, _) if e_teacher.is_some() => {
                     let (_, input) = e_teacher.as_ref().expect("guarded");
                     let (result, auxiliary) = state
-                        .train_step_gae_e_supported_v1(
+                        .train_step_gae_e_supported_workers_v1(
                             generation,
                             &groups,
                             &gae.value_targets,
@@ -5391,6 +5520,7 @@ fn execute_update_inner_v1(
                             value_coefficient,
                             learning_rate,
                             None,
+                            preparation_workers.unwrap_or(1),
                             input,
                         )
                         .map_err(err)?;
@@ -5405,7 +5535,7 @@ fn execute_update_inner_v1(
                         unreachable!("guarded by the arm")
                     };
                     let (result, auxiliary) = state
-                        .train_step_gae_feature_transfer_line_b_v1(
+                        .train_step_gae_feature_transfer_line_b_workers_v1(
                             generation,
                             &groups,
                             &gae.value_targets,
@@ -5418,6 +5548,7 @@ fn execute_update_inner_v1(
                                     Some(fixed_partition_backward_worker_limit_v1())
                                 }
                             },
+                            preparation_workers.unwrap_or(1),
                             input,
                         )
                         .map_err(err)?;
@@ -5990,7 +6121,11 @@ fn read_pinned<T: for<'de> Deserialize<'de>>(pin: &PinnedFileV1) -> Result<T, St
 /// A pinned checkpoint, from either format, decoded directly (design 4.1,
 /// the direct-decode interface).
 fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String> {
-    checkpoint_container_v1::parse_checkpoint_v1(&read_pinned_shared_v1(pin)?)
+    let bytes = read_pinned_shared_v1(pin)?;
+    let started = std::time::Instant::now();
+    let checkpoint = checkpoint_container_v1::parse_checkpoint_v1(&bytes);
+    opponent_cache_diagnostics_v1::note_checkpoint_decode_v1(bytes.len(), started);
+    checkpoint
 }
 
 /// Metadata fields of a pinned checkpoint, parsed from a v1 document or a
@@ -6064,6 +6199,7 @@ fn read_pinned_bytes_in_v1(
     cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
     pin: &PinnedFileV1,
 ) -> Result<Vec<u8>, String> {
+    let started = std::time::Instant::now();
     let metadata = fs::metadata(&pin.path).map_err(err)?;
     ensure(
         metadata.is_file() && metadata.len() <= MAX_FILE_BYTES,
@@ -6075,6 +6211,7 @@ fn read_pinned_bytes_in_v1(
         return Ok(held.as_ref().clone());
     }
     let bytes = fs::read(&pin.path).map_err(err)?;
+    opponent_cache_diagnostics_v1::note_file_read_v1(bytes.len(), started);
     // Bytes equal to bytes this process already verified against this pin
     // have its digest (`verified_bytes_cache_v1`); anything else is hashed as
     // before.
@@ -6442,10 +6579,38 @@ pub(crate) mod tests {
                 behavior,
             }
         };
+        // This test thread's counters (`opponent_cache_diagnostics_v1`).
+        let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
+        let count = || {
+            [
+                stats.hits.get(),
+                stats.misses_verified.get(),
+                stats.misses_unverified.get(),
+                stats.inserts.get(),
+                stats.evictions.get(),
+                stats.live_entries.get(),
+            ]
+        };
+        let before = count();
+        let bytes_before = stats.live_policy_bytes.get();
+        let counted = |expected: [u64; 6]| {
+            let now = count();
+            let rose: Vec<u64> = (0..6).map(|index| now[index] - before[index]).collect();
+            assert_eq!(rose, expected, "hits, misses, inserts, evictions, live");
+        };
         let mut cache = OpponentCacheV1::default();
         for index in 0..OPPONENT_CACHE_CAPACITY_V1 {
             cache.insert(entry(index));
         }
+        let held = OPPONENT_CACHE_CAPACITY_V1 as u64;
+        counted([0, 0, 0, held, 0, held]);
+        let policy_bytes = opponent_cache_diagnostics_v1::policy_bytes_v1(&cache.entries[0].policy);
+        assert!(policy_bytes > 0);
+        assert_eq!(
+            stats.live_policy_bytes.get() - bytes_before,
+            held * policy_bytes as u64,
+            "every entry holds its own copy"
+        );
         let first = cache.entries[0].behavior.source.clone();
         let second = cache.entries[1].behavior.source.clone();
         // No file exists for these fixture pins: a cache miss would fail.
@@ -6458,6 +6623,7 @@ pub(crate) mod tests {
         assert!(!cache.contains(&evicted));
         assert!(cache.contains(&first));
         assert!(cache.contains(&second));
+        counted([3, 0, 0, held + 1, 1, held]);
         let mut changed = first.clone();
         changed.play_import.sha256 = "b".repeat(64);
         assert!(!cache.contains(&changed));
@@ -6469,19 +6635,17 @@ pub(crate) mod tests {
         });
         assert!(!cache.contains(&changed));
         assert!(cache.load(&changed).is_err());
+        // Each miss is counted before its load, which fails here; the first
+        // dropped the oldest entry before loading, as a full cache does.
+        counted([3, 0, 2, held + 1, 2, held - 1]);
+        drop(cache);
+        counted([3, 0, 2, held + 1, 2, 0]);
+        assert_eq!(stats.live_policy_bytes.get(), bytes_before);
     }
 
     #[test]
     fn collection_cache_boundary_rejects_same_path_mutation_of_all_pins() {
-        let root = std::env::temp_dir().join(format!(
-            "collection-cache-pins-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-        ));
-        fs::create_dir(&root).unwrap();
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("collection-cache-pins");
         let write_pin = |name: &str, bytes: &[u8]| {
             let path = root.join(name);
             fs::write(&path, bytes).unwrap();
@@ -6527,7 +6691,6 @@ pub(crate) mod tests {
             verify_collection_opponent_sources_v1(&episodes).unwrap(),
             vec![behavior.source]
         );
-        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -7029,6 +7192,7 @@ pub(crate) mod tests {
                 sha256: "b".repeat(64),
             }),
             s_learner: None,
+            w_learner: None,
         };
         ExpandedSeatBehaviorV1 {
             identity: inference_identity_v1(&source, policy, &test_state(policy)).unwrap(),
@@ -7591,6 +7755,7 @@ pub(crate) mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let error = match load_expanded_inference_v1(&source) {
             Ok(_) => panic!("mismatched source pin accepted"),
@@ -7818,6 +7983,7 @@ pub(crate) mod tests {
                 sha256: "e66cbb478196b24a1c47123a0bda3bae505307c8e505a13bfec4f5037c4c9e9a".into(),
             }),
             s_learner: None,
+            w_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -7827,6 +7993,7 @@ pub(crate) mod tests {
             feature_transfer,
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -7965,6 +8132,7 @@ pub(crate) mod tests {
                 sha256: "502ca59eba7552626be4ca36a55c7eb33f2d8cf8c52390046c12320c0bcb9b5f".into(),
             }),
             s_learner: None,
+            w_learner: None,
         };
         let learner_source = shared_source.clone();
         let opponent_source = shared_source;
@@ -8096,6 +8264,7 @@ pub(crate) mod tests {
                 sha256: "4f3cfdaed698e5d6cad84299072d468e36c339d6f0f11414e536015e7c3397b9".into(),
             }),
             s_learner: None,
+            w_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -8105,6 +8274,7 @@ pub(crate) mod tests {
             feature_transfer,
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -8216,6 +8386,7 @@ pub(crate) mod tests {
                 sha256: "0a8f4228d22184c65a7e225f7425a9b6ccbb1b36617fc3d2c67ebe83b09ac464".into(),
             }),
             s_learner: None,
+            w_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -8225,6 +8396,7 @@ pub(crate) mod tests {
             feature_transfer,
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -8356,6 +8528,7 @@ pub(crate) mod tests {
                 sha256: "eba59f2ad70ce5e132fde3e6dc527dcd36705c02f73218c8f94747d2a1bc1ad3".into(),
             }),
             s_learner: None,
+            w_learner: None,
         };
         let learner_source = shared_source.clone();
         let opponent_source = shared_source;
@@ -8489,6 +8662,7 @@ pub(crate) mod tests {
                 sha256: "7ab89dea50edbe10a546849a1dd71a39c8781264c0d82871008fd1c748a717c3".into(),
             }),
             s_learner: None,
+            w_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -8504,6 +8678,7 @@ pub(crate) mod tests {
                 sha256: "8519bd678cd9f4a09056176ae3821374476fabfa5100d0e078f4993028543d80".into(),
             }),
             s_learner: None,
+            w_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -8624,6 +8799,7 @@ pub(crate) mod tests {
                 sha256: "1ba4135e286529be44cabe35357423fb794965854e9ec5f8b6f0eca8ff425d0e".into(),
             }),
             s_learner: None,
+            w_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -8639,6 +8815,7 @@ pub(crate) mod tests {
                 sha256: "97ac8aa60017c46d3e9c45688ca19e7fdf67a923a67d3c9d3a661563546c9299".into(),
             }),
             s_learner: None,
+            w_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -8772,6 +8949,7 @@ pub(crate) mod tests {
                 sha256: "382b5d3c259baa81ddfede7b76296ccbcf5b4746e8e4d6c107119689c065b1e3".into(),
             }),
             s_learner: None,
+            w_learner: None,
         };
         let opponent_source = ExpandedModelSourceV1 {
             play_import: PinnedFileV1 {
@@ -8787,6 +8965,7 @@ pub(crate) mod tests {
                 sha256: "a5c66d7c17f6cfd7a8491ca6cdf747dc821474d70046ce8b344299177a8ec941".into(),
             }),
             s_learner: None,
+            w_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -8926,6 +9105,7 @@ pub(crate) mod tests {
                 sha256: "1917db9d1a132b9180ff638e991a7f2570f74577933cb10ce199125426da42c1".into(),
             }),
             s_learner: None,
+            w_learner: None,
         };
         // Seat 0 (Burn), the opponent: this episode's `opponent.kind` is
         // "initial", i.e. the run config's own `initial_source` checkpoint
@@ -8945,6 +9125,7 @@ pub(crate) mod tests {
                 sha256: "7af505e551efa5f524bc969a96f6fd00e0ab19d0e24570268a1fff1ae1906cc1".into(),
             }),
             s_learner: None,
+            w_learner: None,
         };
         let (mut policy, learner_identity) = load_expanded_inference_v1(&learner_source).unwrap();
         let learner = ExpandedSeatBehaviorV1 {
@@ -9793,18 +9974,9 @@ pub(crate) mod tests {
         }
     }
 
-    fn write_ledger(label: &str, ledger: &NonNaturalLedgerV1) -> PinnedFileV1 {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let directory = std::env::temp_dir().join(format!(
-            "ledger-overrides-{label}-{}-{nonce}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&directory).unwrap();
+    fn write_ledger(root: &Path, label: &str, ledger: &NonNaturalLedgerV1) -> PinnedFileV1 {
         let bytes = serde_json::to_vec(ledger).unwrap();
-        let path = directory.join("non-natural.json");
+        let path = root.join(format!("{label}-non-natural.json"));
         fs::write(&path, &bytes).unwrap();
         PinnedFileV1 {
             path,
@@ -9814,8 +9986,10 @@ pub(crate) mod tests {
 
     #[test]
     fn ledgered_retry_seed_overrides_follow_the_derived_seed_chain_in_any_entry_order() {
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("ledger-overrides-follow");
         let episodes = ledger_fixture_episodes();
         let empty = write_ledger(
+            &root,
             "empty",
             &NonNaturalLedgerV1 {
                 schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
@@ -9838,7 +10012,7 @@ pub(crate) mod tests {
                 ledger_entry(&episodes[0], 0, 1, episodes[0].seed),
             ],
         };
-        let pin = write_ledger("chain", &ledger);
+        let pin = write_ledger(&root, "chain", &ledger);
         assert_eq!(
             ledgered_retry_seed_overrides_v1(&pin, &episodes).unwrap(),
             vec![
@@ -9850,9 +10024,11 @@ pub(crate) mod tests {
 
     #[test]
     fn ledgered_retry_seed_overrides_reject_ledgers_that_do_not_re_derive_from_the_schedule() {
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("ledger-overrides-reject");
         let episodes = ledger_fixture_episodes();
         let write = |label: &str, entries: Vec<NonNaturalLedgerEntryV1>| {
             write_ledger(
+                &root,
                 label,
                 &NonNaturalLedgerV1 {
                     schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
@@ -9927,6 +10103,7 @@ pub(crate) mod tests {
         reject("seat", vec![seat], "does not match the scheduled episode");
 
         let wrong_schema = write_ledger(
+            &root,
             "schema",
             &NonNaturalLedgerV1 {
                 schema: "something-else/v9".into(),
@@ -9937,6 +10114,7 @@ pub(crate) mod tests {
             .unwrap_err()
             .contains("schema differs"));
         let mut tampered = write_ledger(
+            &root,
             "sha",
             &NonNaturalLedgerV1 {
                 schema: NON_NATURAL_LEDGER_SCHEMA_V1.into(),
@@ -9990,8 +10168,7 @@ pub(crate) mod tests {
     #[test]
     fn execute_v1_collect_writes_ledger_records_its_hash_and_enforces_the_fraction_cap() {
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3;
-        let root =
-            std::env::temp_dir().join(format!("expanded-collect-tolerant-{}", std::process::id()));
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("expanded-collect-tolerant");
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -10012,6 +10189,7 @@ pub(crate) mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let episodes: Vec<_> = (0..4u64)
             .map(|index| {
@@ -10848,9 +11026,8 @@ pub(crate) mod tests {
         training_math: TrainingMathV1,
     ) -> Result<(String, String, String), String> {
         let opening = declared.is_some_and(|(_, opening)| opening);
-        let root = std::env::temp_dir().join(format!(
-            "ordinary-two-iteration-{label}-{}",
-            std::process::id()
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1(&format!(
+            "ordinary-two-iteration-{label}"
         ));
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
@@ -10875,6 +11052,7 @@ pub(crate) mod tests {
             feature_transfer,
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let mut final_contract = String::new();
         let mut final_encoding = String::new();
@@ -11230,8 +11408,7 @@ pub(crate) mod tests {
     fn portable_math_binds_trajectories_and_checkpoints_to_their_math() {
         use TrainingMathV1::{PlatformLibm, PortableV1};
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-        let root =
-            std::env::temp_dir().join(format!("portable-math-binding-{}", std::process::id()));
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("portable-math-binding");
         let descriptor =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -11252,6 +11429,7 @@ pub(crate) mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let decks = [list("Affinity"), list("Terror")];
         let collect = |learner: &ExpandedModelSourceV1,
@@ -11654,9 +11832,8 @@ pub(crate) mod tests {
     fn assert_line_b_mask_fixture_v1(backend_label: &str, update_backend: ExpandedUpdateBackendV1) {
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
         let run = |label: &str, line_b: Option<LineBUpdateOptionsV1>, updates: u64| {
-            let root = std::env::temp_dir().join(format!(
-                "line-b-mask-{backend_label}-{label}-{}",
-                std::process::id()
+            let root = crate::test_temp_dir_v1::TempTestDir::new_v1(&format!(
+                "line-b-mask-{backend_label}-{label}"
             ));
             let source_struct =
                 fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
@@ -11682,6 +11859,7 @@ pub(crate) mod tests {
                 },
                 checkpoint: None,
                 s_learner: None,
+                w_learner: None,
             };
             let initial_source = source.clone();
             let decks = [list("Affinity"), list("Terror")];
@@ -11736,7 +11914,7 @@ pub(crate) mod tests {
                 source.checkpoint = Some(pin);
                 outputs.push((checkpoint, receipt));
             }
-            (initial_source, source, outputs)
+            (root, initial_source, source, outputs)
         };
         let bits_of = |tensors: &[NativeNamedParameterV1]| -> Vec<Vec<u32>> {
             tensors.iter().map(|t| bits(&t.values)).collect()
@@ -11748,7 +11926,7 @@ pub(crate) mod tests {
             optimizer_mask: OptimizerMaskV1::LineBHeadOnlyV1,
             teacher: None,
         };
-        let (initial_source, final_source, masked) = run("masked", Some(options), 4);
+        let (_masked_root, initial_source, final_source, masked) = run("masked", Some(options), 4);
         let (initial_policy, initial_state) = initialize(&initial_source).unwrap();
         let initial = initial_state.snapshot_v1().unwrap();
         let mask = HeadOnlyMaskV1::for_snapshot_v1(&initial).unwrap();
@@ -11804,7 +11982,7 @@ pub(crate) mod tests {
                 .actual_model_identity_v1()
                 .embedding_table_sha256
         );
-        let (_, _, unmasked) = run("unmasked", None, 2);
+        let (_unmasked_root, _, _, unmasked) = run("unmasked", None, 2);
         assert!(unmasked
             .iter()
             .all(|(_, receipt)| receipt.get("line_b").is_none()));
@@ -12401,10 +12579,8 @@ pub(crate) mod tests {
     fn assert_line_b_teacher_update_v1(label: &str, update_backend: ExpandedUpdateBackendV1) {
         use crate::line_b_teacher_target_v1::LineBDivergenceV1;
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-        let root = std::env::temp_dir().join(format!(
-            "line-b-teacher-update-{label}-{}",
-            std::process::id()
-        ));
+        let root =
+            crate::test_temp_dir_v1::TempTestDir::new_v1(&format!("line-b-teacher-update-{label}"));
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -12425,6 +12601,7 @@ pub(crate) mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let decks = [list("Affinity"), list("Terror")];
         let episode = ExpandedEpisodeV1 {
@@ -12879,7 +13056,7 @@ pub(crate) mod tests {
     fn e_supported_real_update_binds_packet_replays_and_preserves_zero_treatment() {
         use e_supported_teacher_v1::{ESupportedSlotV1, ESupportedTeacherOptionsV1};
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-        let root = std::env::temp_dir().join(format!("e-supported-update-{}", std::process::id()));
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("e-supported-update");
         let descriptor =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -12900,6 +13077,7 @@ pub(crate) mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let decks = [list("Affinity"), list("Terror")];
         let episode = ExpandedEpisodeV1 {
@@ -13026,9 +13204,7 @@ pub(crate) mod tests {
     fn e_teacher_diagnostic_replays_binds_teacher_root_and_couples_identical_choices() {
         let started = std::time::Instant::now();
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V4;
-        let root =
-            std::env::temp_dir().join(format!("e-teacher-diagnostic-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("e-teacher-diagnostic");
         let descriptor =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
                 &root.join("source"),
@@ -13049,6 +13225,7 @@ pub(crate) mod tests {
             },
             checkpoint: None,
             s_learner: None,
+            w_learner: None,
         };
         let decks = [list("Affinity"), list("Terror")];
         let episode = ExpandedEpisodeV1 {
@@ -13154,7 +13331,6 @@ pub(crate) mod tests {
             first["totals"],
             started.elapsed().as_secs_f64()
         );
-        let _ = fs::remove_dir_all(&root);
     }
 
     /// Issue #433: the named profiles carrying the loss-terminal rule, and
