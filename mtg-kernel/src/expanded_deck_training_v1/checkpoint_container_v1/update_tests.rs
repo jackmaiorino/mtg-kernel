@@ -51,12 +51,11 @@ fn fixture(
     feature_identity: crate::sideboard_play_policy_v1::FreshFeatureIdentityV1,
     tag: &str,
 ) -> (
-    PathBuf,
+    crate::test_temp_dir_v1::TempTestDir,
     ExpandedModelSourceV1,
     impl Fn(&ExpandedModelSourceV1, &str) -> Vec<PinnedFileV1>,
 ) {
-    let root = std::env::temp_dir().join(format!("{tag}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+    let root = crate::test_temp_dir_v1::TempTestDir::new_v1(tag);
     let descriptor = fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
         &root.join("source"),
         feature_identity,
@@ -97,7 +96,7 @@ fn fixture(
         opening: None,
         mulligan_modes: None,
     };
-    let collect_root = root.clone();
+    let collect_root = root.to_path_buf();
     let collect = move |source: &ExpandedModelSourceV1, label: &str| -> Vec<PinnedFileV1> {
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -277,7 +276,6 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
         export_v1(&fs::read(&next_pin_v2.path).unwrap()).unwrap(),
         fs::read(&cross_pin.path).unwrap()
     );
-    let _ = fs::remove_dir_all(&root);
 }
 
 /// A real update of a kind outside the gate (the V3 fresh identity): the
@@ -320,7 +318,6 @@ fn the_default_keeps_v1_outside_the_gate_and_explicit_v2_is_refused() {
     .unwrap_err();
     assert!(refused.contains("keeps record_format v1"), "{refused}");
     assert!(!root.join("v2").join("checkpoint.json").exists());
-    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]

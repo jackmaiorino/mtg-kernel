@@ -559,6 +559,8 @@ pub mod saved_input_scalar_diagnostic;
 // panicking with NotFound, while staying strict on the science host.
 #[cfg(test)]
 pub(crate) mod native_test_support_local_evidence_v1;
+#[cfg(test)]
+pub(crate) mod test_temp_dir_v1;
 // Pure in-memory bridge from already-validated Store authorities and exact
 // train-state bytes to a private, immutable native inference model.
 pub mod native_checkpoint_inference_v1;
