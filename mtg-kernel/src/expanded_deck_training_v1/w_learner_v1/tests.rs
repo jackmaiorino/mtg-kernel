@@ -349,7 +349,7 @@ fn wide_learner_end_to_end_v1() {
     fs::write(&bogus, b"MTGW128\0 not a container").unwrap();
     let bogus_pin = PinnedFileV1 {
         path: bogus.clone(),
-        sha256: sha(&fs::read(&bogus).unwrap()),
+        sha256: crate::expanded_deck_training_v1::sha(&fs::read(&bogus).unwrap()),
     };
     let mut bogus_record = record.clone();
     bogus_record.initial_sha256 = bogus_pin.sha256.clone();
@@ -359,7 +359,7 @@ fn wide_learner_end_to_end_v1() {
     let mut bogus_source = next.clone();
     bogus_source.checkpoint = Some(PinnedFileV1 {
         path: bogus_record_path,
-        sha256: sha(&bogus_record_bytes),
+        sha256: crate::expanded_deck_training_v1::sha(&bogus_record_bytes),
     });
     bogus_source.w_learner.as_mut().unwrap().initial = bogus_pin;
     let refused = load_inference_v1(&bogus_source).err().unwrap();
