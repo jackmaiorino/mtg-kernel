@@ -7876,7 +7876,7 @@ pub fn log_initiative_trigger(
         .objects
         .try_get(source.source)
         .ok_or("Initiative designation source no longer exists")?;
-    if live.card_def != source.card_def
+    if !crate::engine::source_card_def_matches(state, source, live.card_def)
         || live.owner != source.owner
         || live.zone_change_count < source.zone_change_count
         || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)
