@@ -2791,6 +2791,8 @@ impl FrozenPlayPolicyV1 {
         let scores = cached_s_forward_v1(
             &s_model,
             &fresh.tensor,
+            #[cfg(feature = "gpu-exact-v1")]
+            &mut self.gpu_exact,
             self.inference_cache.as_ref(),
             &mut self.inference_key,
             self.inference_probe.as_mut(),
@@ -2834,6 +2836,8 @@ impl FrozenPlayPolicyV1 {
         )?;
         self.s_model = Some(model);
         self.row_cache = Default::default();
+        #[cfg(feature = "gpu-exact-v1")]
+        self.gpu_exact.clear();
         Ok(())
     }
 
@@ -3349,8 +3353,9 @@ fn cached_w_forward_v1(
 /// parameter digest, the V4 path, a fixed activation byte since S has one
 /// arithmetic) and the same hit, miss and probe accounting.
 fn cached_s_forward_v1(
-    model: &crate::s_transformer_v1::SModelV1,
+    model: &std::sync::Arc<crate::s_transformer_v1::SModelV1>,
     tensor: &NativeFlatDecisionTensorV4,
+    #[cfg(feature = "gpu-exact-v1")] gpu_exact: &mut crate::gpu_exact_v1::service::PolicySlotV1,
     cache: Option<&crate::inference_cache_v1::PolicyCacheV1>,
     key: &mut Vec<u8>,
     probe: Option<&mut crate::inference_cache_v1::ProbeV1>,
@@ -3377,7 +3382,23 @@ fn cached_s_forward_v1(
         guard.count_forward();
         outcome = CallOutcomeV1::Miss;
     }
-    let (logits, value) = model.score_tensor_v1(&tensor.common)?;
+    #[cfg(feature = "gpu-exact-v1")]
+    let gpu = probe
+        .is_none()
+        .then(|| {
+            crate::gpu_exact_v1::service::collector_s_forward_v1(
+                gpu_exact,
+                model,
+                crate::s_transformer_v1::SInputV1::of_tensor_v1(&tensor.common),
+            )
+        })
+        .flatten();
+    #[cfg(not(feature = "gpu-exact-v1"))]
+    let gpu: Option<Result<(Vec<f32>, f32), String>> = None;
+    let (logits, value) = match gpu {
+        Some(output) => output?,
+        None => model.score_tensor_v1(&tensor.common)?,
+    };
     if let (Some(c), Some(hash)) = (cache, hash) {
         if logits.iter().all(|x| x.is_finite()) && value.is_finite() {
             c.cache
