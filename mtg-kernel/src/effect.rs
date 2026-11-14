@@ -8744,7 +8744,17 @@ fn returning_aura_hosts_in_zone(
                         state,
                         object,
                         Keywords::PROTECTION_FROM_MONOCOLORED,
-                    )))
+                    ))
+                && !(cfg!(feature = "eternal-fixtures")
+                    && (crate::eternal_pauper_e6b_v1::protection_removes_attachment(
+                        state,
+                        aura.object,
+                        object,
+                    ) || crate::eternal_e5a_v1::statics::object_protected_from(
+                        state,
+                        object,
+                        aura.object,
+                    ))))
             .then_some(EffectObjectBinding {
                 object,
                 expected_zone: Zone::Battlefield,
@@ -21141,6 +21151,10 @@ fn execute_in_departure_scope_v1(
             if target_index.is_some_and(|index| !ctx.target_incarnation_matches(index, state))
                 || state.objects.get(object_id).zone != Zone::Battlefield
                 || !crate::engine::object_has_type(state, object_id, CardType::Creature)
+                || (cfg!(feature = "eternal-fixtures")
+                    && crate::eternal_sideboard_s1n_v1::prevents_minus1_minus1_counters_on(
+                        state, object_id,
+                    ))
             {
                 return;
             }

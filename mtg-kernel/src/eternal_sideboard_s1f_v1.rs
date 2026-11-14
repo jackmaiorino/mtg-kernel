@@ -375,7 +375,9 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
             s1f_state(state).enchanted.push((host, player));
             player
         });
-        if active_named(state, object, OVERENCUMBERED) {
+        if active_named(state, object, OVERENCUMBERED)
+            && !crate::eternal_vintage_e7b_v1::statics::entry_triggers_suppressed(state, object)
+        {
             let source = AbilitySourceContractV4::capture(state, object);
             crate::eternal_premodern_p1a_v1::queue_trigger(
                 state,

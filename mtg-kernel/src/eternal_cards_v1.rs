@@ -250,6 +250,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_sideboard_s1g_v1::S1gStateV1::is_empty"
     )]
     pub s1g: crate::eternal_sideboard_s1g_v1::S1gStateV1,
+    /// Sideboard wave S1n's state (`eternal_sideboard_s1n_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_sideboard_s1n_v1::S1nStateV1::is_empty"
+    )]
+    pub s1n: crate::eternal_sideboard_s1n_v1::S1nStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -526,6 +532,9 @@ pub enum EternalOpV1 {
     /// A leaf owned by Premodern sideboard wave P3h's module. Appended to
     /// preserve existing stack and continuation hash discriminants.
     P3hV1(crate::eternal_premodern_p3h_v1::P3hOpV1),
+    /// A leaf owned by sideboard wave S1n's module. Appended to preserve
+    /// existing stack and continuation hash discriminants.
+    S1nV1(crate::eternal_sideboard_s1n_v1::S1nOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -600,6 +609,7 @@ impl EternalOpV1 {
             EternalOpV1::S1fV1(op) => op.contains_player_choice(),
             EternalOpV1::S1gV1(op) => op.contains_player_choice(),
             EternalOpV1::P3hV1(op) => op.contains_player_choice(),
+            EternalOpV1::S1nV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -1201,6 +1211,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::S1lV1(op) => crate::eternal_sideboard_s1l_v1::execute(op, ctx, state),
         EternalOpV1::S1mV1(op) => crate::eternal_sideboard_s1m_v1::execute(op, ctx, state),
         EternalOpV1::P3hV1(op) => crate::eternal_premodern_p3h_v1::execute(op, ctx, state),
+        EternalOpV1::S1nV1(op) => crate::eternal_sideboard_s1n_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1831,17 +1842,25 @@ pub(crate) fn apply_entry_counters(
                 }
             }
         }
-        MOONSHADOW => match crate::doubling_season_v48::entry_amount(state, input, controller, 6)
-            .and_then(|count| i16::try_from(count).map_err(|error| error.to_string()))
-        {
-            Ok(count) => state.objects.get_mut(object).counters.minus1_minus1 = count,
-            Err(_) => {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    object,
-                ))
+        MOONSHADOW => {
+            if input.map_or_else(
+                || crate::eternal_sideboard_s1n_v1::controls_darksteel_angel(state, controller),
+                |captured| captured.entry_prevents_minus1_minus1_v1,
+            ) {
+                return;
             }
-        },
+            match crate::doubling_season_v48::entry_amount(state, input, controller, 6)
+                .and_then(|count| i16::try_from(count).map_err(|error| error.to_string()))
+            {
+                Ok(count) => state.objects.get_mut(object).counters.minus1_minus1 = count,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        object,
+                    ))
+                }
+            }
+        }
         _ => crate::eternal_legacy_e7a_v1::apply_entry_counters(state, object),
     }
 }
@@ -2137,6 +2156,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_sideboard_s1f_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1g_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1d_v1::begin_turn(state, player);
+    crate::eternal_sideboard_s1n_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks

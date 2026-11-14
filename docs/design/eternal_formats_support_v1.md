@@ -2344,3 +2344,73 @@ follows each card's current Oracle text, checked against XMage and rules 113.7a,
   replacements, departed-source Circle of Protection: Red prevention and Echo LKI), and plays two
   40-card decks built around the P3h cards through public schema-5 sessions in both seats under
   ranked and seeded random policies with replay checks.
+
+### S1n: Vintage Scam, Legacy Bant Control, Jeskai Control and LED Dredge sideboards
+
+Wave S1n closes four single-card sideboard gaps across Vintage and Legacy, adds Vintage Paradoxical
+Outcome's Darksteel Angel, and promotes Pauper's Martyr of Sands from Partial to Full:
+
+- `vintage-scam` (1.0% of the Vintage snapshot) completes its 75 with Apostle's Blessing, raising
+  Vintage Full 75 share from 93.1% to 94.1% (and adding Apostle's Blessing to Pauper Infect and
+  Kiln Fiend).
+- `legacy-bant-control` (0.1%), `legacy-jeskai-control` (1.2%) and `legacy-led-dredge` (1.0%)
+  complete their 75s with Doorkeeper Thrull, From the Ashes and Kiora's Dismissal, raising Legacy
+  Full 75 share from 81.5% to 83.8% (`PLAYABLE_75` grows from 120 to 124 decks).
+- `vintage-paradoxical-outcome` (3.4%) gets Darksteel Angel as Full, leaving only Hullbreacher
+  (Partial) outside Full in its 75.
+- `Martyr of Sands` (2.0% of Pauper sideboards) is promoted from Partial to Full in
+  `data/eternal_v1/cards_v1.json` (raising Pauper Full cards from 390 to 392) now that wave S1h's
+  `MartyrRevealPaidV1` event-history checks and S1n's public-session consumer game cover its hand
+  reveal and sacrifice cost end to end.
+
+S1n is built in `src/eternal_sideboard_s1n_v1.rs`, `src/eternal_sideboard_s1n_v1/targets.rs` and
+`build_eternal_s1n_v1.rs`, the new tail of the eternal recipe chains after P3h, and adds
+`Subtype::Thrull = 440` (`CreatureTypeV60::Thrull`) to the creature-type roster. Behavior follows
+each card's current Oracle text, checked against XMage and rules 101.4, 601.2b-c, 608.2b, 614.16,
+701.8, 701.19, 702.16 and 704.5m-n:
+
+- Apostle's Blessing, {1}{W/P}, Instant: "Target artifact or creature you control gains protection
+  from artifacts or from the color of your choice until end of turn." Cast cost uses `{1}` plus
+  `CostComponent::Phyrexian(ManaColor::W)` (paying `{W}` or 2 life when at least 2 life is
+  available), targeting `StandardTargetV1::ControlledArtifactOrCreatureV1`. Resolution offers six
+  `Choice` branches (`S1nProtectionV1::Artifacts` or `Color(W|U|B|R|G)`) after target revalidation
+  and records a turn-scoped `BlessingV1` on the target's battlefield incarnation. Color grants join
+  `eternal_legacy_e9a_v1::statics::protection_mask`; artifact protection joins
+  `eternal_e5a_v1::statics::object_protected_from` / `protects_from_departed_types`, departed
+  ability-source target legality in `engine::legal_targets_unrestricted_v1`, historical source-type
+  damage prevention in `fixed_source_damage_v3`, Aura/Equipment unattachment SBA in
+  `eternal_pauper_e6b_v1::protection_removes_attachment` (704.5m-n), and returning-Aura host
+  filtering in `effect::returning_aura_hosts_in_zone` and Replenish.
+- Doorkeeper Thrull, {1}{W}, Creature - Thrull 1/2: "Flash, flying. Artifacts and creatures
+  entering don't cause abilities to trigger." Joins `eternal_vintage_e7b_v1::statics::entry_triggers_suppressed`
+  alongside Karn, Argent Defender (plus S1f's Overencumbered entry trigger), suppressing triggered
+  abilities caused by artifacts or creatures entering (including simultaneous entry with the Thrull
+  itself and token creation, 603.6d / 614.16a) while leaving non-artifact non-creature permanent
+  entry triggers and as-enters replacement effects untouched.
+- Darksteel Angel, {9}, Artifact Creature - Angel 4/4: "Flying, indestructible. You can't lose the
+  game and your opponents can't win the game. Creatures you control can't have -1/-1 counters put
+  on them." While controlled on the battlefield with printed abilities active, joins
+  `game_outcome_protection_v1::cannot_lose` (which `cannot_win` and `eternal_cards_v1::e3::win_game`
+  also consult) without enabling FDN's `game_outcome_protection_v1` CardDef surface, and blocks
+  `-1/-1` counter placement on creatures its controller controls across
+  `EffectOp::AddMinusOneMinusOneCounter`, `standard_creatures_v1`'s counter-transfer placement and
+  Moonshadow's entry counters (`ReplacementInputV48::entry_prevents_minus1_minus1_v1`).
+- From the Ashes, {3}{R}, Sorcery: "Destroy all nonbasic lands. For each land destroyed this way,
+  its controller may search their library for a basic land card and put it onto the battlefield.
+  Then each player who searched their library this way shuffles." `S1nOpV1::FromTheAshesV1`
+  simultaneously destroys every non-indestructible nonbasic land (checking effective `Supertype::Basic`
+  so Blood Moon lands remain nonbasic, and honoring regeneration shields per 701.8), counts lands
+  whose battlefield incarnations actually departed per controller, and in APNAP order (101.4)
+  stages a two-option `Choice` per affected player between searching up to `k` basic land cards
+  onto the battlefield untapped (shuffling iff they chose to search, even on fail-to-find) and
+  declining without shuffling.
+- Kiora's Dismissal, {U}, Instant: "Strive - This spell costs {U} more to cast for each target
+  beyond the first. Return any number of target enchantments to their owners' hands." Targets
+  `StandardTargetV1::AnyNumberEnchantmentsV1` (`0..=64`), adds `targets.len() - 1` `{U}` strive
+  costs in `spell_costs_v1::selected_spell_mana_costs_v1` (preserving strive surcharges under
+  Omniscience's free base cast), filters unpayable extra target picks and Flagbearer obligations in
+  `engine::kioras_dismissal_cast_targets`, and simultaneously returns each still-legal target
+  enchantment on resolution (`S1nOpV1::KiorasDismissalV1`, 608.2b).
+- Consumers: `tests/eternal/eternal_sideboard_s1n_v1.rs` covers all five S1n cards and Martyr of
+  Sands in both seats, and plays two 40-card decks built around all six cards through public
+  schema-5 sessions in both seats under ranked and seeded random policies with replay checks.

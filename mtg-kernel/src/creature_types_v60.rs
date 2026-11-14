@@ -630,6 +630,7 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         Subtype::Minion => Some(CreatureTypeV60::Minion),
         Subtype::Junk => None,
         Subtype::Spacecraft => None,
+        Subtype::Thrull => Some(CreatureTypeV60::Thrull),
     }
 }
 

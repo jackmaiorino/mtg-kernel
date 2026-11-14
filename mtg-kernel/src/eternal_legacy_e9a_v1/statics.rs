@@ -461,7 +461,10 @@ pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
         | crate::eternal_premodern_p3c_v1::statics::protection_mask(state, host);
     // Absolute Law's protection for all creatures (Premodern wave P3e).
     let law = crate::eternal_premodern_p3e_v1::protection_mask(state, host);
-    printed | law | granted_protection_mask(state, host)
+    printed
+        | law
+        | granted_protection_mask(state, host)
+        | crate::eternal_sideboard_s1n_v1::protection_mask(state, host)
 }
 
 /// Sejiri Steppe's protection until end of turn, as a mask.

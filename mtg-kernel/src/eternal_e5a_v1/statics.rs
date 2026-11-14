@@ -160,8 +160,13 @@ pub(crate) fn player_protected_from(state: &GameState, player: PlayerId, source:
 }
 
 /// Serra's Emissary: "... and creatures you control have protection from
-/// the chosen card type."
+/// the chosen card type", plus Apostle's Blessing's protection from artifacts.
 pub(crate) fn object_protected_from(state: &GameState, object: ObjectId, source: ObjectId) -> bool {
+    if crate::eternal_sideboard_s1n_v1::has_protection_from_artifacts(state, object)
+        && source_has_type(state, source, CardType::Artifact)
+    {
+        return true;
+    }
     if read_state(state).is_none_or(|e5a| e5a.emissary_types.is_empty()) {
         return false;
     }
@@ -173,12 +178,20 @@ pub(crate) fn object_protected_from(state: &GameState, object: ObjectId, source:
         && protected_from(state, live.controller, source)
 }
 
-/// Serra's Emissary protection against an original departed source.
+/// Serra's Emissary and Apostle's Blessing protection against an original
+/// departed source.
 pub(crate) fn protects_from_departed_types(
     state: &GameState,
     target: Target,
     types: crate::source_type_hexproof_v1::SourceTypesV1,
 ) -> bool {
+    if let Target::Object(object) = target {
+        if crate::eternal_sideboard_s1n_v1::has_protection_from_artifacts(state, object)
+            && types.contains(CardType::Artifact)
+        {
+            return true;
+        }
+    }
     let player = match target {
         Target::Player(player) => player,
         Target::Object(object)

@@ -23,7 +23,7 @@ mod native;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 120] = [
+const PLAYABLE_75: [(&str, &str); 124] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -134,6 +134,9 @@ const PLAYABLE_75: [(&str, &str); 120] = [
     ("legacy", "legacy-azorius-control"),
     ("legacy", "legacy-mystic-forge-combo"),
     ("legacy", "legacy-red-stompy"),
+    ("legacy", "legacy-jeskai-control"),
+    ("legacy", "legacy-led-dredge"),
+    ("legacy", "legacy-bant-control"),
     ("vintage", "vintage-esper-lurrus-control"),
     ("vintage", "vintage-dimir-lurrus-control"),
     ("vintage", "vintage-lurrus-po"),
@@ -161,6 +164,7 @@ const PLAYABLE_75: [(&str, &str); 120] = [
     ("vintage", "vintage-sphere-shops"),
     ("vintage", "vintage-blue-tempo"),
     ("vintage", "vintage-mono-white-initiative"),
+    ("vintage", "vintage-scam"),
     ("premodern", "premodern-sligh-rdw"),
     ("premodern", "premodern-goblins"),
     ("premodern", "premodern-rg-aggro"),
@@ -1125,6 +1129,43 @@ fn premodern_other_control_plays_best_of_three_with_random_sideboarding() {
         assert_eq!(record.transcripts, replay.transcripts);
         assert_eq!(record.winner, replay.winner);
         assert!(record.sideboarded_games > 0);
+    }
+}
+
+#[test]
+fn s1n_completed_75_decks_play_best_of_three_with_random_sideboarding() {
+    let decks = registered_snapshot_decks();
+    let find = |archetype: &str| -> EternalRegisteredDeckV1 {
+        decks
+            .iter()
+            .find(|(_, deck)| deck.deck_id() == archetype)
+            .map(|(_, deck)| deck.clone())
+            .unwrap()
+    };
+    for (first, second, base_seed) in [
+        (
+            "legacy-bant-control",
+            "legacy-jeskai-control",
+            0x5331_4e20_u64,
+        ),
+        ("legacy-led-dredge", "legacy-dimir-tempo", 0x5331_4e30),
+        ("vintage-scam", "vintage-blue-tempo", 0x5331_4e40),
+    ] {
+        let first = find(first);
+        let second = find(second);
+        let native = needs_native_opening(&first) || needs_native_opening(&second);
+        let pair = if native {
+            [natively(&first), natively(&second)]
+        } else {
+            [first, second]
+        };
+        for seed in [base_seed, base_seed + 1] {
+            let record = play_match(pair.clone(), seed, native);
+            let replay = play_match(pair.clone(), seed, native);
+            assert_eq!(record.transcripts, replay.transcripts);
+            assert_eq!(record.winner, replay.winner);
+            assert!(record.sideboarded_games > 0);
+        }
     }
 }
 

@@ -233,10 +233,16 @@ fn apply_counter_transfer(
     if live.counters.fellowship < 0 || live.counters.stash < 0 {
         return None;
     }
-    let minus_one = live
-        .counters
-        .minus1_minus1
-        .checked_add(placed_i16(counters.minus1_minus1)?)?;
+    let minus_one = if counters.minus1_minus1 > 0
+        && cfg!(feature = "eternal-fixtures")
+        && crate::eternal_sideboard_s1n_v1::prevents_minus1_minus1_counters_on(state, target)
+    {
+        live.counters.minus1_minus1
+    } else {
+        live.counters
+            .minus1_minus1
+            .checked_add(placed_i16(counters.minus1_minus1)?)?
+    };
     let minus_toughness = live
         .counters
         .minus0_minus1
