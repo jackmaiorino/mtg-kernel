@@ -15,7 +15,10 @@ import sys
 import time
 
 
-SOURCE = "84460551a3fe40d5bd1804c1dbf394896c08b1a9"
+SOURCE = "951576e0aed053a43937d03632d2bfa488f5c0a9"
+# The w128 backport before its wide-state I/O fix, built only for the fix's equality check.
+PRE_FIX_SOURCE = "411feed252dc842fcbf647c106dab16fe739305b"
+SOURCES = (SOURCE, PRE_FIX_SOURCE)
 IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
 GIB = 2**30
 FREE_FLOOR = 60 * GIB + GIB // 2
@@ -338,7 +341,7 @@ def interrupted(_signum, _frame):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work-root", required=True, type=Path)
-    parser.add_argument("--source-commit", required=True, choices=[SOURCE])
+    parser.add_argument("--source-commit", required=True, choices=list(SOURCES))
     parser.add_argument("--wall-seconds", type=int, default=MAX_WALL)
     args = parser.parse_args(argv)
     try:
