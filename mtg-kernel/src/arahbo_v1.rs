@@ -659,6 +659,98 @@ pub(crate) fn is_history(event: &CommittedEvent) -> bool {
             | CommittedEvent::ArahboCounterInputV1 { .. }
     )
 }
+const ARAHBO_CAPTURE_PROOF_STRIDE: usize = 64;
+
+const ARAHBO_CAPTURE_WATCHED_KINDS: [EventKindV1; 7] = [
+    EventKindV1::ArahboTokenCaptureV1,
+    EventKindV1::ArahboTokenCollectedV1,
+    EventKindV1::ArahboTokenPublishedV1,
+    EventKindV1::ArahboTokenCompletedV1,
+    EventKindV1::ArahboTokenRemovedV1,
+    EventKindV1::ArahboCounterInputV1,
+    EventKindV1::TimeStopJournalV1,
+];
+
+#[derive(Clone)]
+struct ArahboCapturesProofV1 {
+    closed_captures: Vec<u64>,
+    sources: Vec<AbilitySourceContractV4>,
+    closed_items: Vec<crate::ids::StackItemId>,
+    disposed_items: Vec<StackItem>,
+    had_resolving_token: bool,
+}
+
+fn validate_arahbo_captures_from_proof(
+    state: &GameState,
+    from: usize,
+    summary: &std::sync::Arc<ArahboCapturesProofV1>,
+) -> Result<(), String> {
+    if state
+        .engine
+        .event_log
+        .iter()
+        .any(|event| matches!(event, CommittedEvent::ArahboTokenCaptureV1 { .. }))
+    {
+        return validate_captures_full(state, false);
+    }
+    for &source in &summary.sources {
+        if crate::engine::validate_historical_ability_source_contract(state, source).is_err() {
+            return validate_captures_full(state, false);
+        }
+    }
+    if state
+        .engine
+        .pending_triggers
+        .iter()
+        .chain(state.legend_pending_v1.iter().flatten())
+        .chain(
+            state
+                .pending_legend_rule_v1
+                .iter()
+                .flat_map(|pending| pending.waiting_triggers()),
+        )
+        .chain(
+            state
+                .standard_v1
+                .iter()
+                .filter_map(|s| s.resolution_play.as_ref())
+                .flat_map(|p| p.deferred_triggers.iter()),
+        )
+        .any(|pending| {
+            capture_index(&pending.effect)
+                .is_some_and(|idx| summary.closed_captures.binary_search(&idx).is_ok())
+        })
+    {
+        return validate_captures_full(state, false);
+    }
+    if state
+        .stack
+        .iter()
+        .any(|row| summary.closed_items.contains(&row.v4.stack_item_id))
+    {
+        return validate_captures_full(state, false);
+    }
+    for item in &summary.disposed_items {
+        if !crate::engine::time_stop_v1::disposed(state, item).unwrap_or(false) {
+            return validate_captures_full(state, false);
+        }
+    }
+    if summary.had_resolving_token
+        && crate::doubling_season_v48::validate_token_journals(state).is_err()
+    {
+        return validate_captures_full(state, false);
+    }
+    let len = state.engine.event_history.len();
+    if len.saturating_sub(from) >= ARAHBO_CAPTURE_PROOF_STRIDE {
+        state.engine.event_history.set_proof_memo_v1(
+            ProvedV1::ArahboCaptures,
+            len,
+            std::sync::Arc::clone(summary),
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
     if state.engine.event_log.iter().any(is_history) {
@@ -679,6 +771,55 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         }
         None => validate_observations(state)?,
     }
+    validate_captures(state)?;
+    let from = proof.map_or(0, |(from, _)| from);
+    if crate::entry_observations_v1::recordable(history, from, &catalog()) {
+        history.set_proof_v1(ProvedV1::ArahboObservations, history.len(), 0);
+    }
+    Ok(())
+}
+
+fn validate_captures(state: &GameState) -> Result<(), String> {
+    let history = &state.engine.event_history;
+    if !history.has_any(&[EventKindV1::ArahboTokenCaptureV1]) {
+        for event in &state.engine.event_log {
+            if let CommittedEvent::ArahboTokenCaptureV1 { capture } = event {
+                if capture_at(state, capture.history_index).ok() != Some(capture) {
+                    return Err("Arahbo mutable log contains a forged capture".into());
+                }
+            }
+        }
+        return Ok(());
+    }
+    if let Some((from, summary)) =
+        history.proof_memo_v1::<ArahboCapturesProofV1>(ProvedV1::ArahboCaptures)
+    {
+        if history
+            .range_v2(from..)
+            .iter()
+            .any(|event| ARAHBO_CAPTURE_WATCHED_KINDS.contains(&event.kind_v1()))
+        {
+            return validate_captures_full(state, true);
+        }
+        let proved = validate_arahbo_captures_from_proof(state, from, &summary);
+        #[cfg(test)]
+        crate::event_history_v1::proof_tests_v1::assert_same(
+            ProvedV1::ArahboCaptures,
+            &proved,
+            &validate_captures_full(state, false),
+        );
+        return proved;
+    }
+    validate_captures_full(state, true)
+}
+
+fn validate_captures_full(state: &GameState, record_proof: bool) -> Result<(), String> {
+    let mut all_closed = true;
+    let mut closed_captures = Vec::new();
+    let mut sources = Vec::new();
+    let mut closed_items = Vec::new();
+    let mut disposed_items = Vec::new();
+    let mut had_resolving_token = false;
     for (at, event) in state
         .engine
         .event_history
@@ -744,6 +885,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             if logged != 1 || !pending.is_empty() || !publications.is_empty() {
                 return Err("Arahbo uncollected capture lost its sole log owner".into());
             }
+            all_closed = false;
             continue;
         }
         if collected != 1 || logged != 0 || publications.len() > 1 {
@@ -753,6 +895,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             if pending.len() != 1 {
                 return Err("Arahbo collected token lost its mandatory pending owner".into());
             }
+            all_closed = false;
             continue;
         };
         if collections[0] >= published_at {
@@ -803,6 +946,18 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             {
                 return Err("Arahbo live token was dropped or changed".into());
             }
+            if disposed {
+                closed_captures.push(index);
+                if !sources.contains(&capture.source) {
+                    sources.push(capture.source);
+                }
+                if !closed_items.contains(&item.v4.stack_item_id) {
+                    closed_items.push(item.v4.stack_item_id);
+                }
+                disposed_items.push(item.clone());
+            } else {
+                all_closed = false;
+            }
         } else {
             let [(completed, removal, token)] = completions.as_slice() else {
                 return Err("Arahbo token completed more than once".into());
@@ -841,6 +996,9 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 }
             }
             let should_token = **kind == RemovalKindV1::Resolving;
+            if should_token {
+                had_resolving_token = true;
+            }
             let definition = cat_token_definition()?;
             let expected = if should_token {
                 crate::doubling_season_v48::expected_tokens(
@@ -868,6 +1026,13 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                 (false, None) => {}
                 _ => return Err("Arahbo completion skipped or forged the actual token".into()),
             }
+            closed_captures.push(index);
+            if !sources.contains(&capture.source) {
+                sources.push(capture.source);
+            }
+            if !closed_items.contains(&item.v4.stack_item_id) {
+                closed_items.push(item.v4.stack_item_id);
+            }
         }
     }
     for event in &state.engine.event_log {
@@ -877,9 +1042,18 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
         }
     }
-    let from = proof.map_or(0, |(from, _)| from);
-    if crate::entry_observations_v1::recordable(history, from, &catalog()) {
-        history.set_proof_v1(ProvedV1::ArahboObservations, history.len(), 0);
+    if record_proof && all_closed {
+        state.engine.event_history.set_proof_memo_v1(
+            ProvedV1::ArahboCaptures,
+            state.engine.event_history.len(),
+            std::sync::Arc::new(ArahboCapturesProofV1 {
+                closed_captures,
+                sources,
+                closed_items,
+                disposed_items,
+                had_resolving_token,
+            }),
+        );
     }
     Ok(())
 }

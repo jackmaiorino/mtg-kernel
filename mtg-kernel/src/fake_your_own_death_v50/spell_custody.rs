@@ -348,11 +348,7 @@ pub(crate) fn publish_spell(state: &mut GameState, id: StackItemId) -> Result<()
 pub(super) fn validate_copy_publication(state: &GameState, item: &StackItem) -> Result<(), String> {
     if item.is_copy {
         let (creation, original) = copy_creation(state, item.v4.stack_item_id)?;
-        let inputs = state
-            .engine
-            .event_history
-            .iter()
-            .enumerate()
+        let inputs = rows(state)
             .filter_map(|(i, e)| match journal(e) {
                 Some(JournalV50::CopyTargetInput {
                     creation: c,
@@ -382,11 +378,7 @@ pub(super) fn copy_creation(
     state: &GameState,
     id: StackItemId,
 ) -> Result<(u64, &StackItem), String> {
-    let originals = state
-        .engine
-        .event_history
-        .iter()
-        .enumerate()
+    let originals = rows(state)
         .filter_map(|(i, e)| match journal(e) {
             Some(JournalV50::CopyCreated { item }) if item.v4.stack_item_id == id => {
                 Some((i as u64, item.as_ref()))
@@ -660,14 +652,122 @@ fn expired_before(state: &GameState, installation: u64, end: usize) -> bool {
     })
 }
 
+const FAKE_PROOF_STRIDE: usize = 64;
+
+#[derive(Clone)]
+struct FakeGrantEntryV50 {
+    grant: PrimitiveGrantV50,
+    turn: u32,
+    active_player: PlayerId,
+    expired: bool,
+}
+
+#[derive(Clone)]
+struct FakeYourOwnDeathProofV50 {
+    grants: Vec<FakeGrantEntryV50>,
+    closed_trigger_items: Vec<StackItemId>,
+    season_sources: Vec<crate::state::AbilitySourceContractV4>,
+}
+
+fn validate_fake_from_proof(
+    state: &GameState,
+    from: usize,
+    proof: &std::sync::Arc<FakeYourOwnDeathProofV50>,
+) -> Result<(), String> {
+    if super::return_aura::pending(state).is_some()
+        || crate::linked_aura_operation_v1::locally_owned(state)
+        || state.engine.event_log.iter().any(|e| journal(e).is_some())
+        || super::death_custody::held_triggers(state)
+            .any(|p| super::death_custody::has_fake_capture_effect(&p.effect))
+    {
+        return validate_retained_grant_history_full(state, false);
+    }
+    for item in &state.stack {
+        if super::death_custody::has_fake_binding(item)
+            || proof.closed_trigger_items.contains(&item.v4.stack_item_id)
+        {
+            return validate_retained_grant_history_full(state, false);
+        }
+    }
+    for entry in &proof.grants {
+        let Ok(retained) = entry.grant.temporary_modifier_retained(state) else {
+            return validate_retained_grant_history_full(state, false);
+        };
+        if retained == entry.expired
+            || (!entry.expired
+                && (entry.turn != state.turn_key_v1()
+                    || entry.active_player != state.active_player))
+        {
+            return validate_retained_grant_history_full(state, false);
+        }
+    }
+    for source in &proof.season_sources {
+        if crate::engine::validate_historical_ability_source_contract(state, *source).is_err() {
+            return validate_retained_grant_history_full(state, false);
+        }
+    }
+    let len = state.engine.event_history.len();
+    if len.saturating_sub(from) >= FAKE_PROOF_STRIDE {
+        state.engine.event_history.set_proof_memo_v1(
+            crate::event_history_v1::ProvedV1::FakeYourOwnDeath,
+            len,
+            std::sync::Arc::clone(proof),
+        );
+    }
+    Ok(())
+}
+
 /// Engine ingress checks these prepared grant/death facts before automatic
 /// work or an actor action. This is not a whole printing/consumer validator.
 pub(crate) fn validate_retained_grant_history(state: &GameState) -> Result<(), String> {
     if row_events(state).any(|event| journal(event).is_some()) {
-        validate_grant_lifetime(state)?;
-        super::death_custody::validate_retained_owners(state)?;
+        let history = &state.engine.event_history;
+        if let Some((from, proof)) = history.proof_memo_v1::<FakeYourOwnDeathProofV50>(
+            crate::event_history_v1::ProvedV1::FakeYourOwnDeath,
+        ) {
+            if history.range_v2(from..).iter().any(|event| {
+                matches!(
+                    event.kind_v1(),
+                    crate::event_history_v1::EventKindV1::FakeJournalV50
+                        | crate::event_history_v1::EventKindV1::TimeStopJournalV1
+                )
+            }) {
+                return validate_retained_grant_history_full(state, true);
+            }
+            let proved = validate_fake_from_proof(state, from, &proof);
+            #[cfg(test)]
+            crate::event_history_v1::proof_tests_v1::assert_same(
+                crate::event_history_v1::ProvedV1::FakeYourOwnDeath,
+                &proved,
+                &validate_retained_grant_history_full(state, false),
+            );
+            return proved;
+        }
+        return validate_retained_grant_history_full(state, true);
     } else if super::death_custody::has_unowned_roots(state) {
         super::death_custody::validate_retained_owners(state)?;
+    }
+    Ok(())
+}
+
+fn validate_retained_grant_history_full(
+    state: &GameState,
+    record_proof: bool,
+) -> Result<(), String> {
+    let (grants, season_sources) = validate_grant_lifetime_inner(state)?;
+    let closed_trigger_items = super::death_custody::validate_retained_owners_with_closed(state)?;
+    if record_proof {
+        if let Some(closed_trigger_items) = closed_trigger_items {
+            state.engine.event_history.set_proof_memo_v1(
+                crate::event_history_v1::ProvedV1::FakeYourOwnDeath,
+                state.engine.event_history.len(),
+                std::sync::Arc::new(FakeYourOwnDeathProofV50 {
+                    grants,
+                    closed_trigger_items,
+                    season_sources,
+                }),
+            );
+        }
     }
     Ok(())
 }
@@ -675,8 +775,20 @@ pub(crate) fn validate_retained_grant_history(state: &GameState) -> Result<(), S
 /// Validates retained installation lifetime independently from whether its
 /// creature currently has the granted death ability. No trigger admission.
 pub fn validate_grant_lifetime(state: &GameState) -> Result<(), String> {
+    validate_grant_lifetime_inner(state).map(|_| ())
+}
+
+fn validate_grant_lifetime_inner(
+    state: &GameState,
+) -> Result<
+    (
+        Vec<FakeGrantEntryV50>,
+        Vec<crate::state::AbilitySourceContractV4>,
+    ),
+    String,
+> {
     validate_death_captures(state)?;
-    super::death_custody::validate_collection(state)?;
+    let season_sources = super::death_custody::validate_collection_with_seasons(state)?;
     for (index, event) in rows(state) {
         match journal(event) {
             Some(JournalV50::CleanupEntered {
@@ -717,6 +829,7 @@ pub fn validate_grant_lifetime(state: &GameState) -> Result<(), String> {
             _ => {}
         }
     }
+    let mut grants = Vec::new();
     for (index, grant, turn, active_player) in
         installations_before(state, state.engine.event_history.len())
     {
@@ -728,8 +841,14 @@ pub fn validate_grant_lifetime(state: &GameState) -> Result<(), String> {
                 "Fake retained grant lost original modifier or authenticated expiry".into(),
             );
         }
+        grants.push(FakeGrantEntryV50 {
+            grant,
+            turn,
+            active_player,
+            expired,
+        });
     }
-    Ok(())
+    Ok((grants, season_sources))
 }
 
 pub(crate) struct CleanupOwnerV50 {
@@ -807,12 +926,7 @@ pub(crate) fn capture_death(
     state: &GameState,
     event: &ProposedEvent,
 ) -> Result<Vec<CommittedEvent>, String> {
-    if !state
-        .engine
-        .event_history
-        .iter()
-        .any(|e| matches!(journal(e), Some(JournalV50::Installed { .. })))
-    {
+    if !row_events(state).any(|e| matches!(journal(e), Some(JournalV50::Installed { .. }))) {
         return Ok(Vec::new());
     }
     validate_grant_lifetime(state)?;

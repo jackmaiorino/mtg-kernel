@@ -653,10 +653,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::authority_public_capture_v1::validate_facts(state)?;
     validate_observed_entries(state)
         .map_err(|_| "opponent entry observer authority is incomplete")?;
-    for event in state
+    for (_, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::AuthorityEntryCaptureV1])
+        .of_kinds_v2(&[EventKindV1::AuthorityEntryCaptureV1])
     {
         let CommittedEvent::AuthorityEntryCaptureV1 { capture } = event else {
             continue;
@@ -667,9 +667,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let collected = state
             .engine
             .event_history
-            .scan_for_v1(&[EventKindV1::AuthorityEntryCollectedV1])
-            .iter()
-            .filter(|event| {
+            .of_kinds_v2(&[EventKindV1::AuthorityEntryCollectedV1])
+            .filter(|(_, event)| {
                 matches!(event,
             CommittedEvent::AuthorityEntryCollectedV1 { capture_history_index }
                 if *capture_history_index == capture.history_index)
@@ -691,9 +690,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let completed = state
             .engine
             .event_history
-            .scan_for_v1(&[EventKindV1::AuthorityEntryCompletedV1])
-            .iter()
-            .filter(|event| {
+            .of_kinds_v2(&[EventKindV1::AuthorityEntryCompletedV1])
+            .filter(|(_, event)| {
                 matches!(event,
             CommittedEvent::AuthorityEntryCompletedV1 { capture_history_index, .. }
             if *capture_history_index == capture.history_index)
@@ -702,9 +700,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let operations = state
             .engine
             .event_history
-            .scan_for_v1(&[EventKindV1::AuthorityEntryOperationV1])
-            .iter()
-            .filter(|event| {
+            .of_kinds_v2(&[EventKindV1::AuthorityEntryOperationV1])
+            .filter(|(_, event)| {
                 matches!(event,
             CommittedEvent::AuthorityEntryOperationV1 { capture_history_index, .. }
             if *capture_history_index == capture.history_index)
@@ -729,9 +726,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let publications = state
             .engine
             .event_history
-            .scan_for_v1(&[EventKindV1::AuthorityEntryPublishedV1])
-            .iter()
-            .filter(|event| {
+            .of_kinds_v2(&[EventKindV1::AuthorityEntryPublishedV1])
+            .filter(|(_, event)| {
                 matches!(event,
             CommittedEvent::AuthorityEntryPublishedV1 { capture_history_index, .. }
             if *capture_history_index == capture.history_index)
@@ -743,10 +739,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             .event_history
             .has_any(&[EventKindV1::TimeStopJournalV1])
         {
-            for event in state
+            for (_, event) in state
                 .engine
                 .event_history
-                .scan_for_v1(&[EventKindV1::AuthorityEntryPublishedV1])
+                .of_kinds_v2(&[EventKindV1::AuthorityEntryPublishedV1])
             {
                 if let CommittedEvent::AuthorityEntryPublishedV1 {
                     capture_history_index,
@@ -770,7 +766,11 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             return Err("opponent entry trigger lost or replayed its dispatch ownership".into());
         }
     }
-    for (completion_index, event) in state.engine.event_history.iter().enumerate() {
+    for (completion_index, event) in state.engine.event_history.of_kinds_v2(&[
+        EventKindV1::AuthorityEntryCompletedV1,
+        EventKindV1::AuthorityEntryOperationV1,
+        EventKindV1::AuthorityEntryPublishedV1,
+    ]) {
         if let CommittedEvent::AuthorityEntryCompletedV1 {
             capture_history_index,
             stack_item_id,

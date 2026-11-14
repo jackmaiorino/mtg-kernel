@@ -276,11 +276,101 @@ pub(crate) fn finish(state: &mut GameState, item: &StackItem) {
     }
 }
 
+const SOURCE_POWER_KINDS: [EventKindV1; 3] = [
+    EventKindV1::SourcePowerActivationCommittedV1,
+    EventKindV1::SourceDamageBeforeLeavingV1,
+    EventKindV1::SourcePowerActivationFinishedV1,
+];
+const SOURCE_POWER_WATCHED_KINDS: [EventKindV1; 4] = [
+    EventKindV1::SourcePowerActivationCommittedV1,
+    EventKindV1::SourceDamageBeforeLeavingV1,
+    EventKindV1::SourcePowerActivationFinishedV1,
+    EventKindV1::TimeStopJournalV1,
+];
+const PROOF_STRIDE: usize = 64;
+
+pub(crate) struct SourcePowerProofV1 {
+    closed_items: Vec<StackItemId>,
+}
+
+fn is_source_power_log_event(event: &CommittedEvent) -> bool {
+    matches!(
+        event,
+        CommittedEvent::SourcePowerActivationCommittedV1 { .. }
+            | CommittedEvent::SourceDamageBeforeLeavingV1 { .. }
+            | CommittedEvent::SourcePowerActivationFinishedV1 { .. }
+    )
+}
+
 pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     crate::gorehorn_damage_v1::validate_state(state)?;
     crate::equipment_damage_source_v4::validate_state(state)?;
     crate::zul_ashur_v1::validate_state(state)?;
     crate::fixed_source_damage_v3::validate_state(state)?;
+    let history = &state.engine.event_history;
+    if !history.has_any(&SOURCE_POWER_KINDS) {
+        return validate_own_full(state, false);
+    }
+    if let Some((from, summary)) = history.proof_memo_v1::<SourcePowerProofV1>(
+        crate::event_history_v1::ProvedV1::SourcePowerActivation,
+    ) {
+        if history
+            .range_v2(from..)
+            .iter()
+            .any(|event| SOURCE_POWER_WATCHED_KINDS.contains(&event.kind_v1()))
+        {
+            return validate_own_full(state, true);
+        }
+        let proved = validate_own_from_proof(state, from, &summary);
+        #[cfg(test)]
+        crate::event_history_v1::proof_tests_v1::assert_same(
+            crate::event_history_v1::ProvedV1::SourcePowerActivation,
+            &proved,
+            &validate_own_full(state, false),
+        );
+        return proved;
+    }
+    validate_own_full(state, true)
+}
+
+fn validate_own_from_proof(
+    state: &GameState,
+    from: usize,
+    summary: &std::sync::Arc<SourcePowerProofV1>,
+) -> Result<(), String> {
+    for item in &state.stack {
+        if crate::gorehorn_damage_v1::validate_item(state, item).is_err()
+            || crate::equipment_damage_source_v4::validate_item(state, item).is_err()
+            || crate::fixed_source_damage_v3::validate_item(state, item).is_err()
+            || is_program(item.inline_effect.as_ref())
+            || selected_definition_uses_program(item)
+            || summary.closed_items.contains(&item.v4.stack_item_id)
+        {
+            return validate_own_full(state, false);
+        }
+        if bombardment::selected(state, item) {
+            if bombardment::departed_source(state, item).is_err() {
+                return validate_own_full(state, false);
+            }
+        } else if !item.v4.bombardment_lki_v1.is_empty() {
+            return validate_own_full(state, false);
+        }
+    }
+    if state.engine.event_log.iter().any(is_source_power_log_event) {
+        return validate_own_full(state, false);
+    }
+    let len = state.engine.event_history.len();
+    if len.saturating_sub(from) >= PROOF_STRIDE {
+        state.engine.event_history.set_proof_memo_v1(
+            crate::event_history_v1::ProvedV1::SourcePowerActivation,
+            len,
+            std::sync::Arc::clone(summary),
+        );
+    }
+    Ok(())
+}
+
+fn validate_own_full(state: &GameState, record_proof: bool) -> Result<(), String> {
     // The operation owns a mandatory payment receipt. Receipt presence cannot
     // decide whether its live activation is validated: deletion must refuse
     // before any action mutates priority, mana, targets or continuation state.
@@ -292,14 +382,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             return Err("Bombardment LKI marker belongs to a different native ability".into());
         }
     }
-    if state.engine.event_log.iter().any(|event| {
-        matches!(
-            event,
-            CommittedEvent::SourcePowerActivationCommittedV1 { .. }
-                | CommittedEvent::SourceDamageBeforeLeavingV1 { .. }
-                | CommittedEvent::SourcePowerActivationFinishedV1 { .. }
-        )
-    }) {
+    if state.engine.event_log.iter().any(is_source_power_log_event) {
         return Err("historical activation authority appeared in transient event log".into());
     }
     // Each payment's completions by position, from one pass of the completions.
@@ -314,6 +397,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         }
     }
     let mut seen = Vec::new();
+    let mut has_open = false;
     for (receipt_index, event) in state
         .engine
         .event_history
@@ -341,15 +425,34 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             .collect::<Vec<_>>();
         let disposed = crate::engine::time_stop_v1::disposed(state, item)?;
         match (finishes, live.as_slice(), disposed) {
-            (0, [candidate], false) => validate_item(state, candidate)?,
+            (0, [candidate], false) => {
+                validate_item(state, candidate)?;
+                has_open = true;
+            }
             (1, [], false) => {}
-            (0, [], true) => {}
+            (0, [], true) => {
+                has_open = true;
+            }
             _ => return Err("source-power activation ownership was erased or replayed".into()),
         }
     }
     if state.engine.event_history.of_kinds_v2(&[EventKindV1::SourcePowerActivationFinishedV1]).map(|(_, event)| event).any(|event|matches!(event,
         CommittedEvent::SourcePowerActivationFinishedV1 {stack_item_id} if !seen.contains(stack_item_id))) {
         return Err("source-power completion has no committed payment".into());
+    }
+    if record_proof
+        && !has_open
+        && !seen.is_empty()
+        && !state
+            .engine
+            .event_history
+            .has_any(&[EventKindV1::TimeStopJournalV1])
+    {
+        state.engine.event_history.set_proof_memo_v1(
+            crate::event_history_v1::ProvedV1::SourcePowerActivation,
+            state.engine.event_history.len(),
+            std::sync::Arc::new(SourcePowerProofV1 { closed_items: seen }),
+        );
     }
     Ok(())
 }

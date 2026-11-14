@@ -928,7 +928,7 @@ impl Clone for ChainV2 {
 pub(crate) type PrefixMemoV1 = (usize, Arc<dyn Any + Send + Sync>);
 
 /// The validators that keep proofs with the history
-/// ([`EventHistoryV1::proof_v1`]).
+/// ([`EventHistoryV1::proof_v1`] and [`EventHistoryV1::proof_memo_v1`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ProvedV1 {
     /// Arahbo's entry, observation and capture-count checks.
@@ -938,9 +938,27 @@ pub(crate) enum ProvedV1 {
     /// The color departure checks that read only the history and the
     /// snapshots.
     ColorDepartures,
+    /// Thousand-Year Storm's cast, collection, publication and copy checks.
+    ThousandYearStorm,
+    /// Source-power activation's closed-row history checks.
+    SourcePowerActivation,
+    /// Fixed source damage's closed-row history checks.
+    FixedSourceDamage,
+    /// Inspiration resolution's closed-receipt history checks.
+    InspirationResolution,
+    /// Cerberus capture's closed-row and observed end-step history checks.
+    CerberusCapture,
+    /// Crystal prevention's closed-chain and Twinflame history checks.
+    CrystalPrevention,
+    /// Fake Your Own Death's closed grant, death and return-aura checks.
+    FakeYourOwnDeath,
+    /// Arahbo's closed token-capture history checks.
+    ArahboCaptures,
+    /// High Society Hunter custody's closed-capture history checks.
+    HighSocietyHunterCustody,
 }
 
-const PROVED_V1: usize = 3;
+const PROVED_V1: usize = 12;
 
 /// Each validator keeps its latest proofs...
 const PROOFS_RECENT_V1: usize = 8;
@@ -949,23 +967,30 @@ const PROOFS_RECENT_V1: usize = 8;
 /// its end.
 const PROOFS_STRIDE_V1: usize = 64;
 
+#[derive(Clone)]
+struct ProofEntryV1 {
+    covered: usize,
+    data: u64,
+    memo: Option<Arc<dyn Any + Send + Sync>>,
+}
+
 /// For each validator, the history lengths at which its history-only checks
-/// passed, each with its data, shortest first.
+/// passed, each with its plain-value summary or scalar data, shortest first.
 #[derive(Clone, Default)]
-struct ProofsV1([Vec<(usize, u64)>; PROVED_V1]);
+struct ProofsV1([Vec<ProofEntryV1>; PROVED_V1]);
 
 impl ProofsV1 {
     fn longest(&self) -> usize {
         self.0
             .iter()
-            .filter_map(|proofs| proofs.last().map(|(covered, _)| *covered))
+            .filter_map(|proofs| proofs.last().map(|entry| entry.covered))
             .max()
             .unwrap_or(0)
     }
 
     fn keep(&mut self, len: usize) {
         for proofs in &mut self.0 {
-            let kept = proofs.partition_point(|(covered, _)| *covered <= len);
+            let kept = proofs.partition_point(|entry| entry.covered <= len);
             proofs.truncate(kept);
         }
     }
@@ -974,18 +999,18 @@ impl ProofsV1 {
     fn covers(&self, validator: ProvedV1, covered: usize) -> bool {
         self.0[validator as usize]
             .last()
-            .is_some_and(|(last, _)| *last >= covered)
+            .is_some_and(|last| last.covered >= covered)
     }
 
-    fn record(&mut self, validator: ProvedV1, covered: usize, data: u64) {
+    fn record(&mut self, validator: ProvedV1, entry: ProofEntryV1) {
         let proofs = &mut self.0[validator as usize];
-        proofs.push((covered, data));
+        proofs.push(entry);
         let recent = proofs.len().saturating_sub(PROOFS_RECENT_V1);
         let mut index = 0;
         let mut block = None;
-        proofs.retain(|(covered, _)| {
-            let first_in_block = block != Some(covered / PROOFS_STRIDE_V1);
-            block = Some(covered / PROOFS_STRIDE_V1);
+        proofs.retain(|entry| {
+            let first_in_block = block != Some(entry.covered / PROOFS_STRIDE_V1);
+            block = Some(entry.covered / PROOFS_STRIDE_V1);
             index += 1;
             index > recent || first_in_block
         });
@@ -1021,17 +1046,31 @@ impl PrefixSlotV1 {
     fn proof(&self, validator: ProvedV1, len: usize) -> Option<(usize, u64)> {
         let slot = self.0.lock().ok()?;
         let proofs = &slot.proofs.as_ref()?.0[validator as usize];
-        let end = proofs.partition_point(|(covered, _)| *covered <= len);
-        end.checked_sub(1).map(|at| proofs[at])
+        let end = proofs.partition_point(|entry| entry.covered <= len);
+        let entry = &proofs[end.checked_sub(1)?];
+        Some((entry.covered, entry.data))
+    }
+
+    fn proof_memo<T: Send + Sync + 'static>(
+        &self,
+        validator: ProvedV1,
+        len: usize,
+    ) -> Option<(usize, Arc<T>)> {
+        let slot = self.0.lock().ok()?;
+        let proofs = &slot.proofs.as_ref()?.0[validator as usize];
+        let end = proofs.partition_point(|entry| entry.covered <= len);
+        let entry = &proofs[end.checked_sub(1)?];
+        let memo = Arc::clone(entry.memo.as_ref()?).downcast::<T>().ok()?;
+        Some((entry.covered, memo))
     }
 
     /// Records a proof unless one at least as long is kept. Copies the
     /// proofs only when a clone shares them.
-    fn record(&self, validator: ProvedV1, covered: usize, data: u64) {
+    fn record(&self, validator: ProvedV1, entry: ProofEntryV1) {
         if let Ok(mut slot) = self.0.lock() {
             let proofs = slot.proofs.get_or_insert_with(Default::default);
-            if !proofs.covers(validator, covered) {
-                Arc::make_mut(proofs).record(validator, covered, data);
+            if !proofs.covers(validator, entry.covered) {
+                Arc::make_mut(proofs).record(validator, entry);
             }
         }
     }
@@ -1513,7 +1552,51 @@ impl EventHistoryV1 {
             return;
         }
         if covered <= self.events.len() {
-            self.prefix.record(validator, covered, data);
+            self.prefix.record(
+                validator,
+                ProofEntryV1 {
+                    covered,
+                    data,
+                    memo: None,
+                },
+            );
+        }
+    }
+
+    /// The longest typed proof summary `validator` recorded about an unchanged
+    /// prefix of these events: `(covered, memo)`.
+    pub(crate) fn proof_memo_v1<T: Send + Sync + 'static>(
+        &self,
+        validator: ProvedV1,
+    ) -> Option<(usize, Arc<T>)> {
+        #[cfg(test)]
+        if proof_tests_v1::off() {
+            return None;
+        }
+        self.prefix.proof_memo(validator, self.events.len())
+    }
+
+    /// Records a typed proof summary for the first `covered` events. `memo`
+    /// must hold plain value data only and never `GameState` or `EventHistoryV1`.
+    pub(crate) fn set_proof_memo_v1<T: Send + Sync + 'static>(
+        &self,
+        validator: ProvedV1,
+        covered: usize,
+        memo: Arc<T>,
+    ) {
+        #[cfg(test)]
+        if proof_tests_v1::off() {
+            return;
+        }
+        if covered <= self.events.len() {
+            self.prefix.record(
+                validator,
+                ProofEntryV1 {
+                    covered,
+                    data: 0,
+                    memo: Some(memo),
+                },
+            );
         }
     }
 
@@ -1819,12 +1902,7 @@ pub(crate) mod proof_tests_v1 {
         f()
     }
 
-    /// Validations on this thread that used a proof. Only the tests built
-    /// with the Limited fixtures count them.
-    #[cfg(all(
-        feature = "limited-fdn-fixtures",
-        not(feature = "standard-magezero-fixtures")
-    ))]
+    /// Validations on this thread that used a proof.
     pub(crate) fn uses() -> u64 {
         USES.with(Cell::get)
     }

@@ -1136,7 +1136,15 @@ pub(crate) fn record_token_creation(
     validate_token_journals(state)
 }
 
+struct TokenJournalsValidKeyV48;
+
 pub(crate) fn validate_token_journals(state: &GameState) -> Result<(), String> {
+    crate::borrow_memo_v1::cached::<TokenJournalsValidKeyV48, (), _>(state, (), || {
+        validate_token_journals_uncached(state)
+    })
+}
+
+fn validate_token_journals_uncached(state: &GameState) -> Result<(), String> {
     crate::soul_counters_v1::validate(state)?;
     crate::season_token_attachment_v48::validate_journals(state)?;
     validate_bait_transfers(state)?;

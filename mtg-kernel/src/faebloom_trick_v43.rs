@@ -792,9 +792,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
     for (index, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::FaebloomJournalV43])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::FaebloomJournalV43])
     {
         let CommittedEvent::FaebloomJournalV43 { journal } = event else {
             continue;
