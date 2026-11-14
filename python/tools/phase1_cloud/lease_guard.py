@@ -4,10 +4,13 @@ No provider action on import. DELETE is confined to the exact runtime Pod ID.
 This is not a provider-enforced TTL: failed container boot, host failure and
 unreachable provider control plane require an independent external guard.
 
+Provider surface: Runpod REST API v2 (https://api.runpod.io/v2; REST v1 retired
+2026-11-15, see https://docs.runpod.io/api-reference-v2/migrate-from-v1). The
+account balance read stays on GraphQL, which v2 has no equivalent for.
+
 Release rules:
-- a missing or malformed costPerHr/adjustedCostPerHr, or max(costPerHr,
-  adjustedCostPerHr) above the lease ceiling, is an invalid allocation and is
-  released at once (pod_rate, verify_pod);
+- a missing or malformed v2 `cost`, or a `cost` above the lease ceiling, is an
+  invalid allocation and is released at once (pod_rate, verify_pod);
 - from DELETE_MARGIN_SECONDS before the deadline, and after any latched release
   or guard failure, every loop DELETEs the runtime ID first; DELETE is never
   gated on a GET, an identity match or a receipt write (release_after_failure);
@@ -63,26 +66,100 @@ def validate(lease):
 ABSENT_CONFIRM_SECONDS = 30
 DELETE_MARGIN_SECONDS = 600       # the resident guard starts deleting 10 min before the deadline
 
+# Runpod REST API v2. This module is embedded in the Pod (prepare_lease) with
+# only common.py beside it, so the v2 surface the guards share lives here.
+API_V2 = 'https://api.runpod.io/v2'
+PODS_URL = API_V2 + '/pods'
+GRAPHQL_URL = 'https://api.runpod.io/graphql'   # account balance only: v2 has no equivalent
+
 
 def pod_rate(pod):
-    """max(costPerHr, adjustedCostPerHr) as a finite positive number, else ValueError.
+    """The v2 Pod's hourly compute rate (`cost`) as a finite positive number, else ValueError.
 
-    A missing or malformed costPerHr, or a malformed adjustedCostPerHr, is a guard
-    failure (the caller releases at once); it never blocks deadline handling.
+    v2 reports one rate, `cost`; v1's adjustedCostPerHr was removed with savings
+    plans. A missing or malformed cost is a guard failure (the caller releases at
+    once); it never blocks deadline handling. A numeric string parses, as v1 rates did.
     """
-    def parse(value, required):
-        if value is None and not required:
-            return 0.0
-        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
-            raise ValueError('provider rate malformed')
+    value = pod.get('cost')
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError('provider rate malformed')
+    try:
         rate = float(value)
-        if not math.isfinite(rate) or rate < 0:
-            raise ValueError('provider rate malformed')
-        return rate
-    rate = max(parse(pod.get('costPerHr'), True), parse(pod.get('adjustedCostPerHr'), False))
+    except ValueError:
+        raise ValueError('provider rate malformed') from None
+    if not math.isfinite(rate) or rate < 0:
+        raise ValueError('provider rate malformed')
     if rate <= 0:
         raise ValueError('provider rate unavailable')
     return rate
+
+
+def pod_network_volume_ids(pod):
+    """The v2 Pod's network volume IDs (mounts.network[].volumeId), else ValueError.
+
+    Missing mounts or an absent network list is an empty list (a Pod without a
+    network volume); any other shape is malformed, never a match.
+    """
+    mounts = pod.get('mounts')
+    if mounts is None:
+        return []
+    if not isinstance(mounts, dict):
+        raise ValueError('provider mounts malformed')
+    network = mounts.get('network')
+    if network is None:
+        return []
+    if not isinstance(network, list):
+        raise ValueError('provider network mounts malformed')
+    ids = []
+    for entry in network:
+        if not (isinstance(entry, dict) and isinstance(entry.get('volumeId'), str) and entry['volumeId']):
+            raise ValueError('provider network mount malformed')
+        ids.append(entry['volumeId'])
+    return ids
+
+
+MAX_LIST_PAGES = 100   # a census that needs more pages than this is malformed, never complete
+
+
+def pod_ssh_direct(pod):
+    """(host, port) of the v2 Pod's direct SSH mapping (ssh.direct), or None when unpublished.
+
+    v2 replaces v1's publicIp/portMappings['22'] with ssh.direct {host, port}; it is
+    null until 22/tcp has a public mapping, and is only meaningful while RUNNING.
+    """
+    ssh = pod.get('ssh') if isinstance(pod, dict) else None
+    direct = ssh.get('direct') if isinstance(ssh, dict) else None
+    if not isinstance(direct, dict) or (isinstance(pod, dict) and pod.get('status') != 'RUNNING'):
+        return None
+    host, port = direct.get('host'), direct.get('port')
+    if not (isinstance(host, str) and re.fullmatch(r'[A-Za-z0-9.:-]+', host)
+            and type(port) is int and 1 <= port <= 65535):
+        return None
+    return host, port
+
+
+def list_all(fetch_page, key):
+    """Every item of a paginated v2 list response, walking pagination.nextCursor.
+
+    fetch_page(cursor) returns one decoded page. Raises ValueError unless every
+    page is well formed (a `key` list and a pagination block) and the walk ends
+    with hasNextPage false: a partial census is never a complete one.
+    """
+    items = []; cursor = None
+    for _ in range(MAX_LIST_PAGES):
+        page = fetch_page(cursor)
+        if not (isinstance(page, dict) and isinstance(page.get(key), list)):
+            raise ValueError('list response malformed')
+        pagination = page.get('pagination')
+        if not (isinstance(pagination, dict) and type(pagination.get('hasNextPage')) is bool):
+            raise ValueError('list pagination malformed')
+        items.extend(page[key])
+        if not pagination['hasNextPage']:
+            return items
+        cursor = pagination.get('nextCursor')
+        if not (isinstance(cursor, str) and cursor):
+            raise ValueError('list pagination cursor malformed')
+    raise ValueError('list pagination did not end')
 
 
 class AbsenceConfirmer:
@@ -136,7 +213,7 @@ class Provider:
 
     def call(self, method):
         require(method in ('GET', 'DELETE'), 'guard method rejected')
-        req = urllib.request.Request('https://rest.runpod.io/v1/pods/' + self.pod_id,
+        req = urllib.request.Request(PODS_URL + '/' + self.pod_id,
             method=method, headers={'Authorization': 'Bearer ' + self.key,
                                    'User-Agent': 'Mozilla/5.0 g115-lease-guard/1'})
         try:
@@ -158,9 +235,10 @@ class Provider:
 
     def funds(self):
         # Explicit read-only GraphQL query, matching the established local helper.
+        # v2 has no account-balance read (migration guide: "Keep using the GraphQL API").
         # The API key appears only in Authorization, never a URL or artifact.
         body=json.dumps({'query':'query Phase1GuardFunds { myself { clientBalance currentSpendPerHr underBalance } }'}).encode()
-        req=urllib.request.Request('https://api.runpod.io/graphql',data=body,method='POST',
+        req=urllib.request.Request(GRAPHQL_URL,data=body,method='POST',
             headers={'Authorization':'Bearer '+self.key,'Content-Type':'application/json',
                      'User-Agent':'Mozilla/5.0 g115-lease-guard/1'})
         try:
@@ -211,10 +289,12 @@ def verify_pod_identity(pod, lease, runtime_id):
 
 def verify_pod(pod, lease, runtime_id):
     verify_pod_identity(pod,lease,runtime_id)
-    require(pod.get('cpuFlavorId') == 'cpu3c' and pod.get('vcpuCount') == lease.get('vcpu_count', 32),
+    # v2 nests the CPU allocation under `cpu` (absent on GPU Pods) and the volume under mounts.network.
+    cpu = pod.get('cpu')
+    require(isinstance(cpu, dict) and cpu.get('id') == 'cpu3c'
+            and type(cpu.get('vcpuCount')) is int and cpu['vcpuCount'] == lease.get('vcpu_count', 32),
             'CPU allocation differs')
-    volume_id = pod.get('networkVolumeId') or (pod.get('networkVolume') or {}).get('id')
-    require(volume_id == lease['network_volume_id'], 'network volume differs')
+    require(pod_network_volume_ids(pod) == [lease['network_volume_id']], 'network volume differs')
     rate = pod_rate(pod)
     # Explicit ceiling: an allocation priced above the lease's ceiling is invalid (released at once).
     require(rate <= lease['rate_ceiling_usd_hour'], 'provider rate above ceiling')

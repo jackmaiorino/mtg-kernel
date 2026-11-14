@@ -35,10 +35,11 @@ def prepared_output(temporary, allow_mutable_image=False, **spec_changes):
 
 
 def pod_response(**changes):
-    return {'id': 'pod123', 'name': lease()['name'], 'desiredStatus': 'RUNNING',
-            'costPerHr': 1.28, 'dataCenterId': 'EU-RO-1',
-            'networkVolumeId': lease()['network_volume_id'],
-            'imageName': IMAGE_REFERENCE} | changes
+    return {'id': 'pod123', 'name': lease()['name'], 'status': 'RUNNING',
+            'cost': 1.28, 'dataCenterId': 'EU-RO-1',
+            'cpu': {'id': 'cpu3c', 'vcpuCount': 32, 'memory': 64},
+            'mounts': {'network': [{'volumeId': lease()['network_volume_id'], 'path': '/workspace'}]},
+            'image': IMAGE_REFERENCE} | changes
 
 
 def funded(**funds):
@@ -128,7 +129,7 @@ class ImagePinTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary)
             template = read(output / 'create-request-template.json')
-            self.assertEqual(template['imageName'], IMAGE_REFERENCE)
+            self.assertEqual(template['image'], IMAGE_REFERENCE)
 
     def test_prepare_refuses_a_mutable_tag_without_the_allow_flag(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -139,7 +140,7 @@ class ImagePinTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary, allow_mutable_image=True, image_name='python:3.12-slim-bookworm')
             template = read(output / 'create-request-template.json')
-            self.assertEqual(template['imageName'], 'python:3.12-slim-bookworm')
+            self.assertEqual(template['image'], 'python:3.12-slim-bookworm')
 
     def test_execute_re_refuses_a_mutable_tag_even_when_prepare_allowed_it(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -155,7 +156,7 @@ class ImagePinTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary, allow_mutable_image=True, image_name='python:3.12-slim-bookworm')
             snapshot = snapshot_path(temporary)
-            api = funded(); api.create.return_value = pod_response(imageName='python:3.12-slim-bookworm')
+            api = funded(); api.create.return_value = pod_response(image='python:3.12-slim-bookworm')
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume', api=api, now=NOW,
                                   allow_mutable_image=True)
@@ -227,7 +228,7 @@ class FundingSnapshotGateTests(unittest.TestCase):
 
 
 class SanitizedSuccessTests(unittest.TestCase):
-    def test_execute_writes_only_the_six_sanitized_fields_and_never_the_raw_body(self):
+    def test_execute_writes_only_the_sanitized_fields_and_never_the_raw_body(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = prepared_output(temporary)
             snapshot = snapshot_path(temporary)
@@ -237,7 +238,7 @@ class SanitizedSuccessTests(unittest.TestCase):
                 result = pl.execute_create(pl.prepared_template(output), output, snapshot, 'testvolume',
                                            api=api, now=NOW)
             self.assertEqual(result, {'schema': pl.CREATED_SCHEMA, 'created_epoch': NOW,
-                'id': 'pod123', 'name': lease()['name'], 'desired_status': 'RUNNING',
+                'id': 'pod123', 'name': lease()['name'], 'status': 'RUNNING',
                 'cost_per_hour_usd': 1.28, 'data_center_id': 'EU-RO-1', 'data_center_id_reported': True,
                 'volume_id': lease()['network_volume_id']})
             saved_text = (output / 'created-pod.json').read_text()
@@ -371,7 +372,7 @@ class RetainFirstTests(unittest.TestCase):
 
     def test_sanitization_failure_keeps_the_valid_id(self):
         with tempfile.TemporaryDirectory() as temporary:
-            output = self.run_create(temporary, pod_response(costPerHr='bad'))
+            output = self.run_create(temporary, pod_response(cost='bad'))
             self.assertEqual(read(output / 'known-pods' / 'pod123.json')['role'], 'receipt')
             self.assertEqual(read(output / 'create-pod-failure.json')['pod_id'], 'pod123')
             self.assertEqual(read(output / 'create-ambiguous.json')['pod_id'], 'pod123')

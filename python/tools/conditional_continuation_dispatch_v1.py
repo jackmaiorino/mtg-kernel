@@ -56,10 +56,14 @@ def fleet():
                  reason='No paid compute authority', credential_available=bool(os.environ.get('RUNPOD_API_KEY')))
     if cloud['credential_available']:
         try:
-            request = urllib.request.Request('https://rest.runpod.io/v1/pods',
+            # Runpod REST v2: the list is wrapped ({"pods": [...]}) and paginated; this
+            # read-only inventory reports the first page's count and whether more exist.
+            request = urllib.request.Request('https://api.runpod.io/v2/pods',
                 headers={'Authorization':'Bearer '+os.environ['RUNPOD_API_KEY']})
             with urllib.request.urlopen(request, timeout=20) as response:
-                cloud.update(http_status=response.status, pod_count=len(json.load(response)))
+                page = json.load(response)
+                cloud.update(http_status=response.status, pod_count=len(page['pods']),
+                             pod_count_more_pages=bool((page.get('pagination') or {}).get('hasNextPage')))
         except urllib.error.HTTPError as exc:
             cloud['http_status'] = exc.code
         except Exception as exc:

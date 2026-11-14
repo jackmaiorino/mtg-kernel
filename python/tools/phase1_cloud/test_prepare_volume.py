@@ -35,28 +35,29 @@ def spec(**changes):
 
 def volume(**changes):
     return {'id': 'agv6w2qcg7', 'name': 'phase1-volume-qualification-test',
-            'size': 2, 'dataCenterId': 'EU-RO-1'} | changes
+            'size': 10, 'dataCenter': 'EU-RO-1', 'type': 'STANDARD'} | changes
 
 
 class TemplateTests(unittest.TestCase):
     def test_template_targets_documented_endpoint_and_shape(self):
-        template = pv.build_template('phase1-volume-test', 5)
+        template = pv.build_template('phase1-volume-test', 12)
         self.assertEqual(template['method'], 'POST')
-        self.assertEqual(template['url'], 'https://rest.runpod.io/v1/networkvolumes')
-        self.assertEqual(template['body'], {'name': 'phase1-volume-test', 'size': 5,
-                                             'dataCenterId': 'EU-RO-1'})
+        self.assertEqual(template['url'], 'https://api.runpod.io/v2/network-volumes')
+        self.assertEqual(template['body'], {'name': 'phase1-volume-test', 'size': 12,
+                                             'dataCenter': 'EU-RO-1'})
 
     def test_template_targets_same_data_center_as_prepare_lease(self):
-        template = pv.build_template('phase1-volume-test', 5)
-        self.assertEqual(template['body']['dataCenterId'], pv.DATA_CENTER_ID)
+        template = pv.build_template('phase1-volume-test', 12)
+        self.assertEqual(template['body']['dataCenter'], pv.DATA_CENTER_ID)
         self.assertEqual(pv.DATA_CENTER_ID, 'EU-RO-1')
         with self.assertRaisesRegex(ValueError, 'same data center'):
-            pv.build_template('phase1-volume-test', 5, data_center_id='US-KS-2')
+            pv.build_template('phase1-volume-test', 12, data_center_id='US-KS-2')
 
     def test_template_rejects_invalid_name_or_out_of_bound_size(self):
         with self.assertRaisesRegex(ValueError, 'invalid exact volume name'):
-            pv.build_template('has spaces', 5)
-        for bad_size in (0, -1, pv.VOLUME_SIZE_GB_CAP + 1, 5.5, True):
+            pv.build_template('has spaces', 12)
+        # v2 rejects volumes under 10 GB, so 1 to 9 are out of bound too.
+        for bad_size in (0, -1, 1, 9, pv.VOLUME_SIZE_GB_CAP + 1, 10.5, True):
             with self.subTest(bad_size=bad_size), self.assertRaises(ValueError):
                 pv.build_template('phase1-volume-test', bad_size)
 
@@ -73,19 +74,19 @@ class TemplateTests(unittest.TestCase):
                 pv.prepare(spec(size_gb=251, size_reason='too big'), Path(temporary) / 'big', now=NOW)
 
     def test_template_accepts_boundary_sizes(self):
-        pv.build_template('phase1-volume-test', 1)
+        pv.build_template('phase1-volume-test', pv.V2_MIN_VOLUME_GB)
         pv.build_template('phase1-volume-test', pv.VOLUME_SIZE_GB_CAP)
 
     def test_prepare_writes_template_and_pinned_receipt(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / 'prepared'
-            result = pv.prepare(spec(size_gb=3), output, now=NOW)
-            self.assertEqual(result['size_gb'], 3)
+            result = pv.prepare(spec(size_gb=13), output, now=NOW)
+            self.assertEqual(result['size_gb'], 13)
             self.assertFalse(result['size_default_used'])
             self.assertFalse(result['allocated'])
             saved = read(output / 'create-request-template.json')
             self.assertEqual(saved['body']['name'], 'phase1-volume-qualification-test')
-            self.assertEqual(saved['body']['size'], 3)
+            self.assertEqual(saved['body']['size'], 13)
             self.assertEqual(result['create_request_template']['path'],
                               str(output / 'create-request-template.json'))
 
@@ -113,9 +114,12 @@ class SizeBoundTests(unittest.TestCase):
     def test_default_size_matches_documented_formula(self):
         expected_bytes = pv.PACKAGE_KINDS_PER_LEASE * pv.RECOVERY_HEADROOM_MULTIPLIER * pv.PACKAGE_BYTES_ESTIMATE
         import math
-        expected_gb = max(1, min(math.ceil(expected_bytes / 1_000_000_000), pv.VOLUME_SIZE_GB_CAP))
+        expected_gb = max(pv.V2_MIN_VOLUME_GB,
+                          min(math.ceil(expected_bytes / 1_000_000_000), pv.VOLUME_SIZE_GB_CAP))
         self.assertEqual(pv.default_size_gb(), expected_gb)
-        self.assertEqual(pv.default_size_gb(), 2)
+        # The formula gives 2 GB; v2's 10 GB minimum floors it.
+        self.assertEqual(math.ceil(expected_bytes / 1_000_000_000), 2)
+        self.assertEqual(pv.default_size_gb(), 10)
 
     def test_default_size_is_derived_from_about_230mb_per_package(self):
         # FRESH-CLOUD-RESULTS-001.md: 1,391,298,940 exported bytes / 6 hot roots.
@@ -189,11 +193,13 @@ class SanitizedVerifyTests(unittest.TestCase):
         raw = volume(createdAt='2026-09-15T00:00:00Z', dataCenter={'id': 'EU-RO-1'}, extraField='drop-me')
         sanitized = pv.sanitize_volume(raw)
         self.assertEqual(sanitized, {'id': 'agv6w2qcg7', 'name': 'phase1-volume-qualification-test',
-                                      'size_gb': 2, 'data_center_id': 'EU-RO-1'})
+                                      'size_gb': 10, 'data_center_id': 'EU-RO-1'})
 
     def test_sanitize_rejects_missing_or_malformed_fields(self):
         with self.assertRaises(ValueError):
-            pv.sanitize_volume({'id': 'x', 'name': 'y', 'dataCenterId': 'EU-RO-1'})
+            pv.sanitize_volume({'id': 'x', 'name': 'y', 'dataCenter': 'EU-RO-1'})
+        with self.assertRaises(ValueError):
+            pv.sanitize_volume({'id': 'x', 'name': 'y', 'size': 10, 'dataCenterId': 'EU-RO-1'})
         with self.assertRaises(ValueError):
             pv.sanitize_volume(volume(size='2'))
         with self.assertRaises(ValueError):
@@ -232,7 +238,7 @@ class SanitizedVerifyTests(unittest.TestCase):
     def test_verify_flags_a_data_center_other_than_prepare_lease_without_raising(self):
         with tempfile.TemporaryDirectory() as temporary:
             snapshot = snapshot_path(temporary)
-            api = Mock(); api.get.return_value = volume(dataCenterId='US-KS-2')
+            api = Mock(); api.get.return_value = volume(dataCenter='US-KS-2')
             with patch.dict('os.environ', {'RUNPOD_API_KEY': 'fake-sensitive-key'}):
                 result = pv.verify_volume('agv6w2qcg7', temporary, snapshot, api=api, now=NOW)
             self.assertFalse(result['matches_prepare_lease_data_center'])

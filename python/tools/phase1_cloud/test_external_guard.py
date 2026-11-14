@@ -22,7 +22,7 @@ NAME = lease()['name']
 
 
 def pod(pid='pod1', **changes):
-    return {'id': pid, 'name': NAME, 'costPerHr': 0.96, **changes}
+    return {'id': pid, 'name': NAME, 'cost': 0.96, **changes}
 
 
 def wait_for(path, seconds=5.0):
@@ -111,7 +111,7 @@ class ExternalGuardTests(Base):
         self.assertEqual(world.deletes[0], 'pod1')
 
     def test_adopts_a_single_exact_name_pod_and_never_touches_other_names(self):
-        world = World([pod(), {'id': 'other', 'name': 'someone-else', 'costPerHr': 0.5}])
+        world = World([pod(), {'id': 'other', 'name': 'someone-else', 'cost': 0.5}])
         self.once(world)
         self.assertEqual(read(self.root / 'external-discovered-pod.json')['id'], 'pod1')
         self.clock.t = 2000.   # startup allowance over: the adopted Pod is released, the other never
@@ -183,28 +183,28 @@ class DuplicateTests(Base):
 
 
 class PriceTests(Base):
-    """#335 item 2: price parsing never blocks release; ceiling and adjustedCostPerHr apply."""
+    """#335 item 2: price parsing never blocks release; the ceiling applies to the v2 cost."""
 
     def test_malformed_price_deletes_at_once(self):
         for bad in ('n/a', None, float('nan'), -1, True, {'x': 1}):
             with self.subTest(bad=bad):
-                world = World([pod(costPerHr=bad)]); self.record(); self.started()
+                world = World([pod(cost=bad)]); self.record(); self.started()
                 self.assertEqual(self.once(world)['reason'], 'price_malformed')
                 self.assertEqual(world.deletes, ['pod1'])
 
     def test_missing_price_deletes(self):
-        missing = pod(); del missing['costPerHr']
+        missing = pod(); del missing['cost']
         world = World([missing]); self.record(); self.started()
         self.assertEqual(self.once(world)['reason'], 'price_malformed')
         self.assertEqual(world.deletes, ['pod1'])
 
-    def test_adjusted_price_above_ceiling_deletes(self):
-        world = World([pod(adjustedCostPerHr=1.5)]); self.record(); self.started()
+    def test_price_above_ceiling_deletes(self):
+        world = World([pod(cost=1.5)]); self.record(); self.started()
         self.assertEqual(self.once(world)['reason'], 'rate_above_ceiling')
         self.assertEqual(world.deletes, ['pod1'])
 
     def test_deadline_before_price_parsing(self):
-        world = World([pod(costPerHr='garbage')]); self.record(); self.started()
+        world = World([pod(cost='garbage')]); self.record(); self.started()
         self.clock.t = lease()['deadline_epoch'] + 5
         self.assertEqual(self.once(world)['reason'], 'deadline')
         self.assertEqual(world.deletes[0], 'pod1')
@@ -825,7 +825,7 @@ with guard.LeaseClient(folder, sys.argv[3], 'fake') as client:
 ''')
         self.assertEqual(eg.returned_post_id(self.root), 'foreign')
         self.assertEqual(eg.known_pods(self.root), {})
-        world = World([{'id': 'foreign', 'name': 'other-name', 'costPerHr': 0.96}])
+        world = World([{'id': 'foreign', 'name': 'other-name', 'cost': 0.96}])
         self.assertEqual(self.loop(world), 'returned')
         self.assertIn(('GET', 'foreign'), world.log)
         self.assertIn(('DELETE', 'foreign'), world.log)
@@ -1028,7 +1028,7 @@ with guard.LeaseClient(folder, sys.argv[3], 'fake') as client:
         world = World([])
 
         def poster(body):                                 # a valid ID under an unexpected name
-            world.pods['w'] = {'id': 'w', 'name': 'someone-else', 'costPerHr': 0.5}
+            world.pods['w'] = {'id': 'w', 'name': 'someone-else', 'cost': 0.5}
             return dict(world.pods['w'])
         with self.assertRaises(eg.AlertError), no_network(), self.failing_completion_probe(), self.lease_client(world) as client:
             client.post({'name': NAME}, poster=poster)    # the fault persists through the exit
@@ -1287,7 +1287,7 @@ with guard.LeaseClient(folder, sys.argv[3], 'fake') as client:
         real = eg.LeaseClient.record_reads_back; failing = [False]
 
         def poster(body):                                 # a Pod above the rate ceiling
-            world.pods['p'] = pod('p', costPerHr=9.0)
+            world.pods['p'] = pod('p', cost=9.0)
             return dict(world.pods['p'])
 
         def reads_back(client, pod_id):
@@ -1382,7 +1382,7 @@ class StudyTagTests(Base):
 
     def test_tag_prefixed_pod_of_another_lease_is_never_a_target(self):
         write(self.root / 'lease/lease.json', lease() | {'study_tag': 'phase1-qual'}, replace=True)
-        other = {'id': 'other', 'name': 'phase1-qual-other-lease', 'costPerHr': 0.96}
+        other = {'id': 'other', 'name': 'phase1-qual-other-lease', 'cost': 0.96}
         world = World([other])
         self.clock.t = lease()['deadline_epoch'] + 5
         self.assertEqual(self.loop(world), 'returned')
@@ -1467,7 +1467,7 @@ class InvariantTests(Base):
         # finding 4 (I3): price checks and release apply to the retained create result
         eg.remember(self.root, 'pod1', 'receipt', 1100.)
         self.started()
-        world = World([pod('pod1', costPerHr=5.0)])
+        world = World([pod('pod1', cost=5.0)])
         status = self.once(world)
         self.assertEqual(status['pod_id'], 'pod1')
         self.assertEqual(status['reason'], 'rate_above_ceiling')
@@ -1483,7 +1483,7 @@ class InvariantTests(Base):
         write(self.root / 'lease/create-attempt.json', {})
         write(self.root / 'lease/create-ambiguous.json', {'pod_id': 'pod1'})
         self.started()
-        world = World([pod('pod1', costPerHr='bad')])
+        world = World([pod('pod1', cost='bad')])
         world.census = lambda current: []                           # census omits the Pod
         status = self.once(world)
         self.assertEqual(status['pod_id'], 'pod1')

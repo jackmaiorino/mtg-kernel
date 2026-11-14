@@ -7,18 +7,20 @@ in the Authorization header of the single live request. Never save or print a
 request or response containing the actual key value, and never persist a raw
 provider response: only sanitize_volume's four fields are written to disk.
 
-RunPod API reference relied on (retrieved 2026-09-15T15:44:06Z from
-https://docs.runpod.io/llms.txt and the pages it links):
+Runpod API reference relied on (REST API v2, retrieved 2026-11-14 from
+https://api.runpod.io/v2/openapi.json and
+https://docs.runpod.io/api-reference-v2/migrate-from-v1; REST v1 retired
+2026-11-15):
 
-  POST https://rest.runpod.io/v1/networkvolumes
-    request body (https://docs.runpod.io/api-reference/network-volumes/POST/networkvolumes):
-      name (string, required), size (integer GB, required, 0-4000),
-      dataCenterId (string, required, e.g. "EU-RO-1")
-    response body: id (string), name (string), size (integer GB), dataCenterId (string)
+  POST https://api.runpod.io/v2/network-volumes
+    request body (CreateNetworkVolumeRequest, unknown fields rejected):
+      name (string, required), size (integer GB, required, 10-4096),
+      dataCenter (string, required, e.g. "EU-RO-1"; v1's dataCenterId),
+      type (optional storage tier; omitted: the data center's default)
+    response body (NetworkVolume, 201): id, name, size (integer GB), dataCenter, type
 
-  GET https://rest.runpod.io/v1/networkvolumes/{networkVolumeId}
-    (https://docs.runpod.io/api-reference/network-volumes/GET/networkvolumes/networkVolumeId)
-    response body (NetworkVolume): id, name, size (integer GB), dataCenterId
+  GET https://api.runpod.io/v2/network-volumes/{id}
+    response body (NetworkVolume): id, name, size (integer GB), dataCenter, type
 
   Pricing (retrieved 2026-09-15T15:44:06Z from https://docs.runpod.io/pricing):
     network volume storage $0.07/GB/month under 1TB, $0.05/GB/month at or over 1TB;
@@ -41,6 +43,7 @@ import urllib.error
 import urllib.request
 from common import (encoded, pin, read, require, write, FUNDING_SNAPSHOT_MAX_AGE_SECONDS,
                     funding_snapshot_age_seconds, require_fresh_funding_snapshot)
+from lease_guard import API_V2
 from prepare_lease import KEY_PLACEHOLDER
 
 SPEC_SCHEMA = 'phase1-cloud-volume-preparation/v1'
@@ -48,7 +51,7 @@ RESULT_SCHEMA = 'phase1-cloud-volume-preparation-result/v1'
 CREATED_SCHEMA = 'phase1-cloud-volume-created/v1'
 VERIFY_SCHEMA = 'phase1-cloud-volume-verification/v1'
 
-VOLUMES_URL = 'https://rest.runpod.io/v1/networkvolumes'
+VOLUMES_URL = API_V2 + '/network-volumes'
 USER_AGENT = 'phase1-volume-prepare/1'
 VOLUME_NAME_PATTERN = '[a-zA-Z0-9-]+'
 VOLUME_ID_PATTERN = '[A-Za-z0-9]+'
@@ -87,8 +90,12 @@ PACKAGE_KINDS_PER_LEASE = 2
 # above, so headroom also covers iteration growth within one lease.
 RECOVERY_HEADROOM_MULTIPLIER = 4
 
-# Hard ceiling regardless of any requested or computed size. RunPod's own
-# documented range is 0-4000 GB; this qualification tool never asks for more
+# Runpod REST v2 rejects a network volume below 10 GB (v1 accepted 0-4000), so
+# every size this tool requests is at least this.
+V2_MIN_VOLUME_GB = 10
+
+# Hard ceiling regardless of any requested or computed size. Runpod's own
+# documented v2 range is 10-4096 GB; this qualification tool never asks for more
 # than 50 GB, matching the project's qualification-scope ceilings elsewhere
 # (lease_guard.validate: total_cap_usd <= 200).
 VOLUME_SIZE_GB_CAP = 50
@@ -109,11 +116,11 @@ SIZING_BASIS = {
 
 def default_size_gb():
     """Smallest whole GB that fits PACKAGE_KINDS_PER_LEASE staged packages with
-    RECOVERY_HEADROOM_MULTIPLIER headroom, floored at 1 GB and capped at
-    VOLUME_SIZE_GB_CAP."""
+    RECOVERY_HEADROOM_MULTIPLIER headroom, floored at the v2 minimum
+    (V2_MIN_VOLUME_GB) and capped at VOLUME_SIZE_GB_CAP."""
     bytes_needed = PACKAGE_KINDS_PER_LEASE * RECOVERY_HEADROOM_MULTIPLIER * PACKAGE_BYTES_ESTIMATE
     size_gb = math.ceil(bytes_needed / 1_000_000_000)
-    return max(1, min(size_gb, VOLUME_SIZE_GB_CAP))
+    return max(V2_MIN_VOLUME_GB, min(size_gb, VOLUME_SIZE_GB_CAP))
 
 
 # ---- Cost note --------------------------------------------------------------
@@ -129,13 +136,13 @@ HOURS_PER_MONTH = 30 * 24
 PRICING_DOC_URL = 'https://docs.runpod.io/pricing'
 PRICING_RETRIEVED_UTC = '2026-09-15T15:44:06Z'
 API_REFERENCE = {
-    'retrieved_utc': '2026-09-15T15:44:06Z',
+    'retrieved_utc': '2026-11-14T12:10:00Z',
     'create': {'method': 'POST', 'url': VOLUMES_URL,
-               'documented_fields': ['name', 'size', 'dataCenterId'],
-               'doc_url': 'https://docs.runpod.io/api-reference/network-volumes/POST/networkvolumes'},
-    'get': {'method': 'GET', 'url': VOLUMES_URL + '/{networkVolumeId}',
-            'documented_fields': ['id', 'name', 'size', 'dataCenterId'],
-            'doc_url': 'https://docs.runpod.io/api-reference/network-volumes/GET/networkvolumes/networkVolumeId'},
+               'documented_fields': ['name', 'size', 'dataCenter'],
+               'doc_url': 'https://docs.runpod.io/api-reference-v2/network-volumes/create-a-network-volume'},
+    'get': {'method': 'GET', 'url': VOLUMES_URL + '/{id}',
+            'documented_fields': ['id', 'name', 'size', 'dataCenter', 'type'],
+            'doc_url': 'https://api.runpod.io/v2/openapi.json'},
     'pricing': {'doc_url': PRICING_DOC_URL,
                 'storage_usd_per_gb_month_under_1tb': STORAGE_USD_PER_GB_MONTH_UNDER_1TB,
                 'storage_usd_per_gb_month_over_1tb': STORAGE_USD_PER_GB_MONTH_OVER_1TB},
@@ -169,14 +176,14 @@ def build_template(name, size_gb, data_center_id=DATA_CENTER_ID, cap_gb=VOLUME_S
     require(re.fullmatch(VOLUME_NAME_PATTERN, name), 'invalid exact volume name')
     require(cap_gb in (VOLUME_SIZE_GB_CAP, STUDY_VOLUME_SIZE_GB_CAP), 'unknown volume size cap')
     require(isinstance(size_gb, int) and not isinstance(size_gb, bool)
-            and 1 <= size_gb <= cap_gb,
+            and V2_MIN_VOLUME_GB <= size_gb <= cap_gb,
             'volume size must be a whole number of gigabytes within the qualification cap')
     require(data_center_id == DATA_CENTER_ID,
             'volume must target the same data center as prepare_lease.py (EU-RO-1)')
     return {'method': 'POST', 'url': VOLUMES_URL,
             'headers': {'Authorization': 'Bearer ' + KEY_PLACEHOLDER,
                         'Content-Type': 'application/json', 'User-Agent': USER_AGENT},
-            'body': {'name': name, 'size': size_gb, 'dataCenterId': data_center_id}}
+            'body': {'name': name, 'size': size_gb, 'dataCenter': data_center_id}}
 
 
 def prepare(spec, output, now=None):
@@ -234,8 +241,8 @@ class Provider:
         require(re.fullmatch(VOLUME_NAME_PATTERN, name), 'invalid exact volume name')
         require(cap_gb in (VOLUME_SIZE_GB_CAP, STUDY_VOLUME_SIZE_GB_CAP), 'unknown volume size cap')
         require(isinstance(size_gb, int) and not isinstance(size_gb, bool)
-                and 1 <= size_gb <= cap_gb, 'volume size out of qualification bound')
-        body = json.dumps({'name': name, 'size': size_gb, 'dataCenterId': data_center_id}).encode()
+                and V2_MIN_VOLUME_GB <= size_gb <= cap_gb, 'volume size out of qualification bound')
+        body = json.dumps({'name': name, 'size': size_gb, 'dataCenter': data_center_id}).encode()
         request = urllib.request.Request(VOLUMES_URL, data=body, method='POST',
             headers={'Authorization': 'Bearer ' + self.key, 'Content-Type': 'application/json',
                      'User-Agent': USER_AGENT})
@@ -262,17 +269,17 @@ class Provider:
 
 
 def sanitize_volume(raw):
-    """Keep only the four documented fields. The raw provider response is
-    never written to disk or printed."""
+    """Keep only the four documented fields of a v2 NetworkVolume. The raw
+    provider response is never written to disk or printed."""
     require(isinstance(raw, dict), 'volume response malformed')
-    for field in ('id', 'name', 'size', 'dataCenterId'):
+    for field in ('id', 'name', 'size', 'dataCenter'):
         require(field in raw, 'volume response missing ' + field)
     require(isinstance(raw['id'], str) and isinstance(raw['name'], str)
-            and isinstance(raw['dataCenterId'], str), 'invalid volume field types')
+            and isinstance(raw['dataCenter'], str), 'invalid volume field types')
     require(isinstance(raw['size'], int) and not isinstance(raw['size'], bool) and raw['size'] >= 0,
             'invalid volume size in response')
     return {'id': raw['id'], 'name': raw['name'], 'size_gb': raw['size'],
-            'data_center_id': raw['dataCenterId']}
+            'data_center_id': raw['dataCenter']}
 
 
 def _require_execute_key():
@@ -295,7 +302,7 @@ def execute_create(template, output, funding_snapshot_path, api=None, now=None):
     preparation = Path(output) / 'preparation.json'
     reason = read(preparation).get('size_reason') if preparation.exists() else None
     api = api or Provider(key)
-    raw = api.create(body['name'], body['size'], body['dataCenterId'],
+    raw = api.create(body['name'], body['size'], body['dataCenter'],
                      cap_gb=STUDY_VOLUME_SIZE_GB_CAP if reason else VOLUME_SIZE_GB_CAP)
     sanitized = sanitize_volume(raw)
     result = {'schema': CREATED_SCHEMA, 'created_epoch': now, 'requested': body,
