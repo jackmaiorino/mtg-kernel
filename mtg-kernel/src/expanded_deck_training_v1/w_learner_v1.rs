@@ -406,7 +406,6 @@ pub(super) struct WUnsupportedOptionsV1 {
     pub(super) soft_q: bool,
     pub(super) search_targets: bool,
     pub(super) ex1: bool,
-    pub(super) verified_replay: bool,
 }
 
 /// The update command's inputs.
@@ -442,7 +441,6 @@ fn refuse_unsupported_v1(inputs: &WUpdateInputsV1) -> Result<(f32, f32), String>
         "a wide learner refuses E, SQ1 and TP1 search-target supervision",
     )?;
     ensure(!u.ex1, "a wide learner refuses EX1 and W5 search updates")?;
-    ensure(!u.verified_replay, "a wide learner refuses verified replay")?;
     ensure(
         inputs.training_math.is_platform_libm(),
         "a wide learner runs under the platform libm only",

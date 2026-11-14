@@ -4465,7 +4465,6 @@ fn execute_update_inner_v1(
                 soft_q: soft_q.is_some(),
                 search_targets: search_targets.is_some(),
                 ex1: ex1.is_some(),
-                verified_replay: verified_replay.is_some(),
             },
             training_math,
             record_format,

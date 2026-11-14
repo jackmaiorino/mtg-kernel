@@ -3,7 +3,87 @@
 //! the GAE update, checkpoint readback, determinism, and the refusals.
 
 use super::*;
-use crate::expanded_deck_training_v1::s_update_fixture_v1;
+// Backport (source c5719e1cf): main's `s_update_fixture_v1` module came after
+// this source; the three helpers these tests use are restated here as main
+// defines them (test-only).
+mod s_update_fixture_v1 {
+    use crate::expanded_deck_training_v1::*;
+    use std::path::Path;
+    use crate::sideboard_play_policy_v1::{
+        FrozenPlayObservationTransferV3, FRESH_FEATURE_IDENTITY_V4,
+    };
+
+    pub(super) fn loss_selection_v1() -> ExpandedLossSelectionV1 {
+        ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+        }
+    }
+
+    pub(super) fn net8_source_v1(root: &Path) -> Result<ExpandedModelSourceV1, String> {
+        let identity = FRESH_FEATURE_IDENTITY_V4;
+        let descriptor =
+            super::super::super::fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("net8"),
+                identity,
+                |_| {},
+            );
+        let bytes = serde_json::to_vec(&descriptor).map_err(|e| e.to_string())?;
+        let path = root.join("net8-descriptor.json");
+        fs::write(&path, &bytes).map_err(|e| e.to_string())?;
+        Ok(ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path,
+                sha256: sha(&bytes),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: identity.feature_contract_digest.into(),
+                expected_feature_encoding_digest: identity.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+            s_learner: None,
+            w_learner: None,
+        })
+    }
+
+    fn deck_list_v1(id: &str) -> Result<ExpandedDeckListV1, String> {
+        let registration = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id)
+            .map_err(|error| format!("checked-in Pauper deck {id}: {error:?}"))?;
+        let cards = registration.registered_configuration();
+        Ok(ExpandedDeckListV1 {
+            label: id.into(),
+            mainboard: cards.mainboard().to_vec(),
+            sideboard: cards.sideboard().to_vec(),
+        })
+    }
+
+    pub(super) fn episode_v1(
+        id: &str,
+        seed: u64,
+        opponent: Option<ExpandedModelSourceV1>,
+    ) -> Result<ExpandedEpisodeV1, String> {
+        let decks = [deck_list_v1("Affinity")?, deck_list_v1("Terror")?];
+        Ok(ExpandedEpisodeV1 {
+            id: id.into(),
+            seed,
+            starting_player: 0,
+            learner_seat: 0,
+            opponent,
+            opponent_kind: None,
+            opponent_search: None,
+            registered: decks.clone(),
+            selected: decks,
+            postboard: false,
+            max_physical_decisions: 100_000,
+            max_policy_steps: 1_000_000,
+            runtime_rules: None,
+            reset: None,
+            opening: None,
+            mulligan_modes: None,
+        })
+    }
+}
 use crate::expanded_deck_training_v1::{
     execute_v1, read_pinned, ExpandedEpisodeV1, ExpandedTrainingCommandV1,
 };
