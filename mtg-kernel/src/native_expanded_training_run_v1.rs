@@ -14,9 +14,7 @@ use crate::expanded_deck_training_v1::ex1_update_v1::{
     continuation_identity as ex1_continuation_identity_v1, Ex1UpdateOptionsV1, W5UpdateOptionsV1,
 };
 use crate::expanded_deck_training_v1::loaded_source_profile_v1::{scoped_v1, LoadRoleV1};
-use crate::expanded_deck_training_v1::no_state_digest_v1::{
-    is_converted_source_v1, policy_contract_record_v1,
-};
+use crate::expanded_deck_training_v1::no_state_digest_v1::is_converted_source_v1;
 use crate::expanded_deck_training_v1::search_targets_v1::{
     continuation_identity as search_targets_continuation_identity_v1, SearchTargetsOpponentV1,
     SearchTargetsOptionsV1,
@@ -26,11 +24,12 @@ use crate::expanded_deck_training_v1::soft_q_teacher_v1::{
 };
 use crate::expanded_deck_training_v1::verified_bytes_cache_v1;
 use crate::expanded_deck_training_v1::{
-    execute_v1, line_b_frozen_sha256_v1, load_expanded_inference_bound_v1,
-    load_expanded_update_inference_v1, take_collection_fields_v1, CollectionSamplerV1,
-    CollectionTrajectoryFieldsV1, ExpandedEpisodeV1, ExpandedInferenceIdentityV1,
-    ExpandedLossSelectionV1, ExpandedModelSourceV1, ExpandedTrainingCommandV1,
-    ExpandedUpdateBackendV1, LineBUpdateOptionsV1, PinnedFileV1, UpdateBackwardExecutionV1,
+    execute_collect_with_carried_v1, execute_update_with_carried_v1, line_b_frozen_sha256_v1,
+    load_expanded_inference_bound_v1, load_expanded_update_inference_v1, load_initial_for_run_v1,
+    take_collection_fields_v1, CarriedLearnerV1, CollectionSamplerV1, CollectionTrajectoryFieldsV1,
+    ExpandedEpisodeV1, ExpandedInferenceIdentityV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
+    ExpandedTrainingCommandV1, ExpandedUpdateBackendV1, LineBUpdateOptionsV1,
+    PendingCarriedLearnerV1, PinnedFileV1, UpdateBackwardExecutionV1,
     DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
 };
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
@@ -1713,25 +1712,29 @@ struct ConvertedInitialV1 {
     identity: ExpandedInferenceIdentityV1,
     record: Value,
     contract_digest: String,
+    carried: Option<CarriedLearnerV1>,
 }
 
 /// Never inlined: the loaded policy stays out of the driver's frame.
 #[inline(never)]
 fn load_converted_initial_v1(
     config: &NativeExpandedTrainingRunV1,
+    want_carried: bool,
 ) -> Result<ConvertedInitialV1, String> {
-    let (policy, identity) = scoped_v1(LoadRoleV1::RunInitial, || {
-        load_expanded_inference_bound_v1(&config.initial_source, config.training_math)
+    let loaded = scoped_v1(LoadRoleV1::RunInitial, || {
+        load_initial_for_run_v1(&config.initial_source, config.training_math, want_carried)
     })?;
-    let record = policy_contract_record_v1(&policy)?
+    let record = loaded
+        .input_contract_record
+        .ok_or("a converted initial source loaded without its contract")?;
+    let contract_digest = loaded
+        .contract_digest
         .ok_or("a converted initial source loaded without its contract")?;
     Ok(ConvertedInitialV1 {
-        identity,
-        record: value(&record)?,
-        contract_digest: policy
-            .input_contract_v1()
-            .ok_or("a converted initial source loaded without its contract")?
-            .to_owned(),
+        identity: loaded.identity,
+        record,
+        contract_digest,
+        carried: loaded.carried,
     })
 }
 
@@ -1807,8 +1810,10 @@ pub fn run_native_expanded_training_v1(
     // A converted (no-state-digest) run loads its initial source before the
     // plan, which records its validated effective identity and contract. An
     // unconverted run keeps its plan bytes and loads afterwards, as before.
+    let want_initial_carried = !root.join("iterations/000000/complete.json").exists()
+        && !root.join("completion.json").exists();
     let converted_initial = is_converted_source_v1(&config.initial_source)
-        .then(|| load_converted_initial_v1(config))
+        .then(|| load_converted_initial_v1(config, want_initial_carried))
         .transpose()?;
     let input_contract = converted_initial
         .as_ref()
@@ -1849,13 +1854,21 @@ pub fn run_native_expanded_training_v1(
     }
     let iterations_root = root.join("iterations");
     fs::create_dir_all(&iterations_root).map_err(err)?;
-    let (mut current_identity, initial_contract) = match converted_initial {
-        Some(initial) => (initial.identity, Some(initial.contract_digest)),
+    let (mut current_identity, initial_contract, mut carried) = match converted_initial {
+        Some(initial) => (
+            initial.identity,
+            Some(initial.contract_digest),
+            initial.carried,
+        ),
         None => {
-            let (_, identity) = scoped_v1(LoadRoleV1::RunInitial, || {
-                load_expanded_inference_bound_v1(&config.initial_source, config.training_math)
+            let loaded = scoped_v1(LoadRoleV1::RunInitial, || {
+                load_initial_for_run_v1(
+                    &config.initial_source,
+                    config.training_math,
+                    want_initial_carried,
+                )
             })?;
-            (identity, None)
+            (loaded.identity, None, loaded.carried)
         }
     };
     // Validate the complete fixed roster before spending episode compute.
@@ -1961,6 +1974,7 @@ pub fn run_native_expanded_training_v1(
             ) {
                 stopped_at_ledger = usec >= stop;
             }
+            carried = None;
             current = next;
             current_identity = after;
             history.push(current.clone());
@@ -1971,6 +1985,7 @@ pub fn run_native_expanded_training_v1(
         if stopped_at_ledger || max_new_iterations.is_some_and(|limit| newly_completed >= limit) {
             break;
         }
+        let mut pending_carried: Option<PendingCarriedLearnerV1> = None;
         // Invocation telemetry stays outside immutable iteration receipts. It
         // measures wall time, including verification, and never claims CPU use.
         let iteration_started = Instant::now();
@@ -2096,7 +2111,7 @@ pub fn run_native_expanded_training_v1(
             publish(&attempt, "collect-command.json", &collect_command)?;
             if collection_pin.is_none() {
                 let started = Instant::now();
-                execute_v1(collect_command)?;
+                execute_collect_with_carried_v1(collect_command, carried.as_ref())?;
                 collection_execution_seconds += started.elapsed().as_secs_f64();
                 collection_pin = Some(pin(&attempt.join("collect/collection.json"))?);
             }
@@ -2150,10 +2165,16 @@ pub fn run_native_expanded_training_v1(
                 ),
             };
             publish(&attempt, "update-command.json", &update_command)?;
+            let want_next_carried = index + 1 < config.iterations.len()
+                && max_new_iterations.is_none_or(|limit| newly_completed + 1 < limit);
             let started = Instant::now();
-            execute_v1(update_command)?;
+            let (_, next_carried) =
+                execute_update_with_carried_v1(update_command, carried.take(), want_next_carried)?;
             update_execution_seconds += started.elapsed().as_secs_f64();
+            pending_carried = next_carried;
             update_pin = Some(pin(&attempt.join("update/update.json"))?);
+        } else {
+            drop(carried.take());
         }
         let collection = collection_pin.unwrap();
         let update = update_pin.unwrap();
@@ -2226,18 +2247,26 @@ pub fn run_native_expanded_training_v1(
             receipt["soft_q"] = json!({"packet":sq["packet"],"scheduled":sq["scheduled"],
                 "available":sq["available"]});
         }
+        #[cfg(test)]
+        if take_fail_before_complete_for_test_v1(index) {
+            return Err("failpoint: before complete.json".into());
+        }
         receipts.push(publish(&directory, "complete.json", &receipt)?);
+        carried = pending_carried.and_then(|pending| pending.commit_v1(&next, &after));
         current = next;
         current_identity = after;
         history.push(current.clone());
         newly_completed += 1;
         cache_diagnostics_v1::append_iteration_v1(index, true)?;
+        #[cfg(test)]
+        run_after_iteration_commit_for_test_v1(index, carried.is_some());
         // W5 resume to R_i: stop after the first boundary at or past it.
         if ledger
             .as_ref()
             .is_some_and(|r| r.stop_at_usec.is_some_and(|stop| r.usec >= stop))
         {
             stopped_at_ledger = true;
+            carried = None;
         }
         println!(
             "{}",
@@ -2279,6 +2308,44 @@ pub fn run_native_expanded_training_v1(
     }
     drop(lock);
     Ok(result)
+}
+
+#[cfg(test)]
+type AfterIterationCommitHookV1 = Box<dyn FnMut(usize, bool)>;
+
+#[cfg(test)]
+thread_local! {
+    static FAIL_BEFORE_COMPLETE_FOR_TEST_V1: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+    static AFTER_ITERATION_COMMIT_FOR_TEST_V1: std::cell::RefCell<
+        Option<AfterIterationCommitHookV1>,
+    > = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn arm_fail_before_complete_for_test_v1(iteration: usize) {
+    FAIL_BEFORE_COMPLETE_FOR_TEST_V1.with(|slot| slot.set(Some(iteration)));
+}
+
+#[cfg(test)]
+fn take_fail_before_complete_for_test_v1(iteration: usize) -> bool {
+    FAIL_BEFORE_COMPLETE_FOR_TEST_V1.with(|slot| {
+        if slot.get() == Some(iteration) {
+            slot.set(None);
+            true
+        } else {
+            false
+        }
+    })
+}
+
+#[cfg(test)]
+fn run_after_iteration_commit_for_test_v1(iteration: usize, has_carried: bool) {
+    AFTER_ITERATION_COMMIT_FOR_TEST_V1.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().as_mut() {
+            hook(iteration, has_carried);
+        }
+    });
 }
 
 #[cfg(test)]
@@ -4822,6 +4889,357 @@ mod tests {
             }
         }
         fs::remove_dir_all(&reference_directory).unwrap();
+    }
+
+    #[test]
+    fn carried_state_warm_continuation_matches_cold_process_resume_and_discards_uncommitted_state()
+    {
+        use crate::expanded_deck_training_v1::loaded_source_profile_v1::{
+            counts_v1, reset_for_test_v1, LoadRoleV1,
+        };
+
+        const CHILD_ENV: &str = "MTG_TEST_CARRIED_SUBPROCESS_V1";
+        if let Ok(spec_path) = std::env::var(CHILD_ENV) {
+            let spec: Value = serde_json::from_slice(&fs::read(&spec_path).unwrap()).unwrap();
+            let config_path = PathBuf::from(spec["config"].as_str().unwrap());
+            let config: NativeExpandedTrainingRunV1 =
+                serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+            let mode = spec["mode"].as_str().unwrap();
+            reset_for_test_v1();
+            match mode {
+                "warm_full" => {
+                    let result = run_native_expanded_training_v1(&config, None).unwrap();
+                    assert_eq!(result["complete"], true);
+                    assert_eq!(result["completed_iterations"], 2);
+                    let collect = counts_v1(LoadRoleV1::CollectLearner);
+                    let learner = counts_v1(LoadRoleV1::UpdateLearner);
+                    assert_eq!(collect.carried_policy_views, 2);
+                    assert_eq!(learner.carried_state_handoffs, 2);
+                    assert_eq!(learner.served_state_bytes, 0);
+                }
+                "pause_iter0" => {
+                    let result = run_native_expanded_training_v1(&config, Some(1)).unwrap();
+                    assert_eq!(result["complete"], false);
+                    assert_eq!(result["completed_iterations"], 1);
+                    assert_eq!(
+                        counts_v1(LoadRoleV1::CollectLearner).carried_policy_views,
+                        1
+                    );
+                    assert_eq!(
+                        counts_v1(LoadRoleV1::UpdateLearner).carried_state_handoffs,
+                        1
+                    );
+                }
+                "crash_after_checkpoint" => {
+                    crate::expanded_deck_training_v1::arm_crash_point_for_test_v1();
+                    let error = run_native_expanded_training_v1(&config, None).unwrap_err();
+                    assert!(
+                        error.contains("checkpoint is published, update.json is not"),
+                        "{error}"
+                    );
+                    assert!(config
+                        .output_directory
+                        .join("iterations/000000/attempt-000000/update/checkpoint.json")
+                        .is_file());
+                    assert!(!config
+                        .output_directory
+                        .join("iterations/000000/attempt-000000/update/update.json")
+                        .exists());
+                    assert!(!config
+                        .output_directory
+                        .join("iterations/000000/complete.json")
+                        .exists());
+                }
+                "crash_before_complete_json" => {
+                    arm_fail_before_complete_for_test_v1(0);
+                    let error = run_native_expanded_training_v1(&config, None).unwrap_err();
+                    assert_eq!(error, "failpoint: before complete.json");
+                    assert!(config
+                        .output_directory
+                        .join("iterations/000000/attempt-000000/update/update.json")
+                        .is_file());
+                    assert!(!config
+                        .output_directory
+                        .join("iterations/000000/complete.json")
+                        .exists());
+                }
+                "cold_resume" => {
+                    let result = run_native_expanded_training_v1(&config, None).unwrap();
+                    assert_eq!(result["complete"], true);
+                    assert_eq!(result["completed_iterations"], 2);
+                }
+                other => panic!("unknown child mode {other}"),
+            }
+            return;
+        }
+
+        fn strip_accounted_fields_v1(value: &mut Value) {
+            match value {
+                Value::Object(map) => {
+                    let has_path =
+                        map.contains_key("path") && map.len() == 2 && map.contains_key("sha256");
+                    let keys: Vec<String> = map.keys().cloned().collect();
+                    for key in keys {
+                        if (key.ends_with("_seconds") || key.ends_with("_ns"))
+                            && map[&key].is_number()
+                        {
+                            map.insert(key, json!(0.0));
+                        } else if key == "sha256" && has_path {
+                            let path_str = map["path"].as_str().unwrap_or("");
+                            if path_str.ends_with("collection.json")
+                                || path_str.ends_with("update.json")
+                                || path_str.ends_with("complete.json")
+                            {
+                                map.insert(key, json!("<accounted-timed-pin>"));
+                            }
+                        } else if let Some(child) = map.get_mut(&key) {
+                            strip_accounted_fields_v1(child);
+                        }
+                    }
+                }
+                Value::Array(items) => {
+                    for item in items {
+                        strip_accounted_fields_v1(item);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        fn assert_trees_match_up_to_timing_v1(reference: &Path, candidate: &Path, label: &str) {
+            let ref_files = files_under_v1(reference);
+            let cand_files = files_under_v1(candidate);
+            let ref_keys: Vec<_> = ref_files.keys().collect();
+            let cand_keys: Vec<_> = cand_files.keys().collect();
+            assert_eq!(ref_keys, cand_keys, "{label}: file set differs");
+            let timed = [
+                "collection.json",
+                "update.json",
+                "update-input.json",
+                "complete.json",
+                "completion.json",
+            ];
+            for (rel, ref_bytes) in &ref_files {
+                let name = rel.file_name().unwrap().to_str().unwrap();
+                if name == "run.lock" {
+                    continue;
+                }
+                let cand_bytes = &cand_files[rel];
+                if !timed.contains(&name) {
+                    assert_eq!(
+                        cand_bytes,
+                        ref_bytes,
+                        "{label}: {} differs byte-for-byte",
+                        rel.display()
+                    );
+                } else {
+                    let mut ref_json: Value = serde_json::from_slice(ref_bytes).unwrap();
+                    let mut cand_json: Value = serde_json::from_slice(cand_bytes).unwrap();
+                    strip_accounted_fields_v1(&mut ref_json);
+                    strip_accounted_fields_v1(&mut cand_json);
+                    assert_eq!(
+                        cand_json,
+                        ref_json,
+                        "{label}: {} differs beyond timing fields",
+                        rel.display()
+                    );
+                }
+            }
+        }
+
+        let (root, config) = real_two_iteration_config_v1(
+            "carried-subprocess",
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.9,
+                entropy_coefficient: 0.0,
+            },
+            ExpandedUpdateBackendV1::Cpu,
+        );
+        config.validate_v1().unwrap();
+        let config_path = root.join("config.json");
+        fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let run_dir = config.output_directory.clone();
+        let _ = fs::remove_dir_all(&run_dir);
+
+        let exe = std::env::current_exe().unwrap();
+        let mut step_counter = 0usize;
+        let mut run_child = |mode: &str| {
+            let spec_path = root.join(format!("child-spec-{step_counter}.json"));
+            step_counter += 1;
+            fs::write(
+                &spec_path,
+                serde_json::to_vec(&json!({"mode": mode, "config": config_path})).unwrap(),
+            )
+            .unwrap();
+            let output = std::process::Command::new(&exe)
+                .env(CHILD_ENV, &spec_path)
+                .args([
+                    "--exact",
+                    "native_expanded_training_run_v1::tests::carried_state_warm_continuation_matches_cold_process_resume_and_discards_uncommitted_state",
+                    "--nocapture",
+                ])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "child mode {mode} failed:\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+
+        // 1. Reference: uninterrupted warm run in a fresh process.
+        run_child("warm_full");
+        let reference_dir = root.join("reference-warm");
+        fs::rename(&run_dir, &reference_dir).unwrap();
+        let ref_completion: Value =
+            read_json(&reference_dir.join("completion.json"), SMALL_CAP).unwrap();
+
+        // 2. Clean boundary pause (`max_new_iterations = Some(1)`) + fresh-process cold resume.
+        run_child("pause_iter0");
+        run_child("cold_resume");
+        let paused_dir = root.join("paused-cold-resume");
+        fs::rename(&run_dir, &paused_dir).unwrap();
+        assert_trees_match_up_to_timing_v1(&reference_dir, &paused_dir, "pause_iter0+cold_resume");
+
+        // 3. Crash before `complete.json` (after `update.json` and readback) + fresh-process cold resume.
+        run_child("crash_before_complete_json");
+        run_child("cold_resume");
+        let before_complete_dir = root.join("before-complete-cold-resume");
+        fs::rename(&run_dir, &before_complete_dir).unwrap();
+        assert_trees_match_up_to_timing_v1(
+            &reference_dir,
+            &before_complete_dir,
+            "crash_before_complete+cold_resume",
+        );
+
+        // 4. Crash after `checkpoint.json` before `update.json` + fresh-process cold resume.
+        run_child("crash_after_checkpoint");
+        run_child("cold_resume");
+        let after_ckpt_dir = root.join("after-ckpt-cold-resume");
+        fs::rename(&run_dir, &after_ckpt_dir).unwrap();
+        let ckpt_completion: Value =
+            read_json(&after_ckpt_dir.join("completion.json"), SMALL_CAP).unwrap();
+        assert_eq!(
+            ckpt_completion["actual_identity"]["state_sha256"],
+            ref_completion["actual_identity"]["state_sha256"]
+        );
+        assert_eq!(
+            ckpt_completion["actual_identity"]["adam_step"],
+            ref_completion["actual_identity"]["adam_step"]
+        );
+        // Iteration 0's restarted checkpoint (attempt-000001) equals the uninterrupted checkpoint byte-for-byte.
+        assert_eq!(
+            fs::read(
+                after_ckpt_dir.join("iterations/000000/attempt-000001/update/checkpoint.json")
+            )
+            .unwrap(),
+            fs::read(reference_dir.join("iterations/000000/attempt-000000/update/checkpoint.json"))
+                .unwrap()
+        );
+
+        // 5. Same-process failure before `complete.json` drops uncommitted `PendingCarriedLearnerV1`;
+        //    resuming in the same process recovers from persisted `update.json` (`carried = None`)
+        //    and reaches the identical tree.
+        reset_for_test_v1();
+        arm_fail_before_complete_for_test_v1(0);
+        assert_eq!(
+            run_native_expanded_training_v1(&config, None).unwrap_err(),
+            "failpoint: before complete.json"
+        );
+        reset_for_test_v1();
+        let in_proc_resumed = run_native_expanded_training_v1(&config, None).unwrap();
+        assert_eq!(in_proc_resumed["complete"], true);
+        assert_eq!(
+            counts_v1(LoadRoleV1::UpdateLearner).carried_state_handoffs,
+            0,
+            "recovering an already-published update.json clears carried state so iteration 1 loads cleanly from disk"
+        );
+        assert_trees_match_up_to_timing_v1(&reference_dir, &run_dir, "in_proc_fail+resume");
+    }
+
+    #[test]
+    fn strict_rereads_refuse_corrupted_on_disk_artifacts_despite_carried_state() {
+        let (_root, config) = real_two_iteration_config_v1(
+            "strict-reread-carried",
+            ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.9,
+                entropy_coefficient: 0.0,
+            },
+            ExpandedUpdateBackendV1::Cpu,
+        );
+        assert_eq!(config.verified_reads, VerifiedReadsV1::Reread);
+        let descriptor: serde_json::Value =
+            serde_json::from_slice(&fs::read(&config.initial_source.play_import.path).unwrap())
+                .unwrap();
+        let parameters_path = PathBuf::from(descriptor["parameters"]["path"].as_str().unwrap());
+        let play_import_path = config.initial_source.play_import.path.clone();
+
+        for (label, expected_substring) in [
+            ("checkpoint", "input file SHA differs"),
+            ("parameters", "fresh input bytes differ"),
+            ("play_import", "input file SHA differs"),
+        ] {
+            let mut case_config = config.clone();
+            case_config.output_directory = config
+                .output_directory
+                .with_file_name(format!("run-{label}"));
+            let run_dir = case_config.output_directory.clone();
+            let params_for_hook = parameters_path.clone();
+            let import_for_hook = play_import_path.clone();
+            let saved_bytes = std::rc::Rc::new(std::cell::RefCell::new(None::<(PathBuf, Vec<u8>)>));
+            let saved_for_hook = saved_bytes.clone();
+            let target_kind = label.to_owned();
+
+            AFTER_ITERATION_COMMIT_FOR_TEST_V1.with(|slot| {
+                *slot.borrow_mut() = Some(Box::new(move |iteration, has_carried| {
+                    if iteration == 0 {
+                        assert!(
+                            has_carried,
+                            "iteration 0 must commit CarriedLearnerV1 in memory"
+                        );
+                        let target = match target_kind.as_str() {
+                            "checkpoint" => run_dir
+                                .join("iterations/000000/attempt-000000/update/checkpoint.json"),
+                            "parameters" => params_for_hook.clone(),
+                            "play_import" => import_for_hook.clone(),
+                            _ => unreachable!(),
+                        };
+                        let original = fs::read(&target).unwrap();
+                        let mut corrupted = original.clone();
+                        let mid = corrupted.len() / 2;
+                        corrupted[mid] ^= 0x01;
+                        fs::write(&target, &corrupted).unwrap();
+                        *saved_for_hook.borrow_mut() = Some((target, original));
+                    }
+                }));
+            });
+
+            let result = run_native_expanded_training_v1(&case_config, None);
+            AFTER_ITERATION_COMMIT_FOR_TEST_V1.with(|slot| {
+                *slot.borrow_mut() = None;
+            });
+            let (corrupted_path, original_bytes) = saved_bytes
+                .borrow_mut()
+                .take()
+                .expect("iteration 0 commit hook must have fired");
+            fs::write(&corrupted_path, &original_bytes).unwrap();
+
+            let error = result.unwrap_err();
+            assert!(
+                error.contains(expected_substring),
+                "{label}: expected '{expected_substring}', got '{error}'"
+            );
+            assert!(
+                !case_config
+                    .output_directory
+                    .join("iterations/000001/complete.json")
+                    .exists(),
+                "{label}: iteration 1 must fail closed before complete.json"
+            );
+        }
     }
 
     #[test]

@@ -17,7 +17,9 @@ import argparse
 import copy
 import hashlib
 import json
+import math
 import statistics
+import struct
 import subprocess
 import sys
 import tempfile
@@ -124,10 +126,126 @@ def seed(parts):
     return int.from_bytes(hashlib.sha256(text.encode()).digest()[:8], "little") & MASK
 
 
+KEEP_OFFSET_SHAPES = ("linear-v1",)
+KEEP_OFFSET_KEYS = frozenset({"b0", "end_update", "shape"})
+KEEP_OFFSET_MAX = 1.0e6  # the trainer's london_keep_offset_v1::MAX_OFFSET_V1
+KEEP_OFFSET_MAX_END = 1 << 53  # (T - u) stays exact in binary64
+KEEP_OFFSET_OPENING = "london-v1"  # the one opening protocol the offset belongs to
+KEEP_OFFSET_MODES = ("learned", "keep_seven")
+# Run options the trainer refuses together with an offset ("london_keep_offset trains only on the plain CPU GAE
+# update"): a base that sets any of them would collect games and then fail at its first update.
+KEEP_OFFSET_REFUSED_OPTIONS = ("line_b", "e_supported", "soft_q", "search_targets", "ex1")
+
+
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _float32(value):
+    """`value` rounded once to the nearest IEEE binary32, as the Python float equal to it."""
+    return struct.unpack("<f", struct.pack("<f", value))[0]
+
+
+def validate_keep_offset(keep_offset, base=None):
+    """The checked, normalized keep offset `{"b0": float, "end_update": int, "shape": "linear-v1"}` (a new dict).
+    Raises ValueError for anything that is not exactly that form: a non-mapping, missing or unknown keys, b0 not a
+    finite number in (0, 1e6], end_update not an int in [1, 2^53] (a bool is neither), or an unknown shape.
+
+    With `base` (an OH1/OH2 base), also raises unless the base is one the trainer can train with an offset (see
+    `check_london_base`): every episode of every iteration has the London opening and its mulligan modes (the
+    trainer refuses an update batch that mixes offset and no offset), no episode already carries a
+    `london_keep_offset` (the schedule is the only writer of that field), and the update is the plain CPU GAE one
+    (no line_b, e_supported, soft_q, search_targets or ex1 block)."""
+    if not isinstance(keep_offset, dict):
+        raise ValueError("keep_offset must be an object {b0, end_update, shape}")
+    unknown = sorted(str(k) for k in set(keep_offset) - KEEP_OFFSET_KEYS)
+    if unknown:
+        raise ValueError(f"keep_offset has unknown keys {unknown}")
+    missing = sorted(KEEP_OFFSET_KEYS - set(keep_offset))
+    if missing:
+        raise ValueError(f"keep_offset lacks {missing}")
+    b0, end, shape = keep_offset["b0"], keep_offset["end_update"], keep_offset["shape"]
+    # The range test comes first: it is exact for any int, while isfinite(10**400) overflows instead of refusing.
+    if not (_is_number(b0) and 0 < b0 <= KEEP_OFFSET_MAX and math.isfinite(b0)):
+        raise ValueError(f"keep_offset b0 must be a finite number in (0, {KEEP_OFFSET_MAX:g}], got {b0!r}")
+    if not (type(end) is int and 1 <= end <= KEEP_OFFSET_MAX_END):
+        raise ValueError(f"keep_offset end_update must be an integer in [1, 2^53], got {end!r}")
+    if shape not in KEEP_OFFSET_SHAPES:
+        raise ValueError(f"keep_offset shape must be one of {KEEP_OFFSET_SHAPES}, got {shape!r}")
+    if base is not None:
+        check_london_base(base)
+    return {"b0": float(b0), "end_update": end, "shape": shape}
+
+
+def check_london_base(base):
+    """Raises ValueError unless `base` can carry a keep offset: the trainer reads one offset per update batch (one
+    iteration), refusing a batch that mixes offset and no offset, so EVERY episode of EVERY iteration needs the
+    London opening (`london-v1`) with its `mulligan_modes` (the learner seat's mode is `learned`), none may carry a
+    `london_keep_offset` already, a reset start or a search opponent, and the base's loss and update backend must be
+    the plain CPU GAE update the offset trains on (an absent loss_selection is the trainer's other default loss)."""
+    for i, item in enumerate(base["iterations"]):
+        for j, entry in enumerate(item["episodes"]):
+            episode = entry["episode"]
+            where = f"iteration {i} episode {j}"
+            if "london_keep_offset" in episode:
+                raise ValueError(f"{where} already carries london_keep_offset; the keep_offset schedule writes it")
+            if episode.get("opening") is None:
+                raise ValueError(f"keep_offset needs an opening on every episode of the base ({where} has none)")
+            if episode["opening"] != KEEP_OFFSET_OPENING:
+                raise ValueError(f"{where}: opening {episode['opening']!r} is not {KEEP_OFFSET_OPENING!r}")
+            modes, seat = episode.get("mulligan_modes"), episode.get("learner_seat")
+            if not (isinstance(modes, list) and len(modes) == 2 and all(m in KEEP_OFFSET_MODES for m in modes)):
+                raise ValueError(f"{where}: an opening needs mulligan_modes, two of {KEEP_OFFSET_MODES}, got {modes!r}")
+            if not (type(seat) is int and seat in (0, 1) and modes[seat] == "learned"):
+                raise ValueError(f"{where}: the learner seat {seat!r} needs the learned mulligan mode, got {modes!r}")
+            for key in ("reset", "opponent_search"):
+                if episode.get(key) is not None:
+                    raise ValueError(f"{where}: an opening is refused with {key}")
+    loss, backend = base.get("loss_selection"), base.get("update_backend", {"kind": "cpu"})
+    if not (isinstance(loss, dict) and loss.get("kind") == "gae_advantage_value_v1"):
+        raise ValueError("keep_offset trains only on the gae_advantage_value_v1 loss (the base's loss_selection)")
+    if not (isinstance(backend, dict) and backend.get("kind") == "cpu"):
+        raise ValueError("keep_offset trains only on the CPU update backend (the base's update_backend)")
+    for key in KEEP_OFFSET_REFUSED_OPTIONS:
+        if base.get(key) is not None:
+            raise ValueError(f"keep_offset trains only on the plain CPU GAE update: the base's {key} is refused")
+
+
+def keep_offset_value(keep_offset, u):
+    """The `london_keep_offset` an opening episode carries at fork update `u`, or None from `end_update` on (no
+    field at all). b(u) = float32(float64(b0) * (T - u) / T), computed in binary64 and rounded once to the nearest
+    binary32, returned as the Python float equal to it (so it round-trips through struct 'f' unchanged). `u` counts
+    updates from the fork point: the chain tools number a chain's updates from 0 at its first segment, whatever
+    update its parent had reached, so no start offset exists. Raises ValueError for a negative or non-integer `u`,
+    or for a value the trainer would refuse (not finite and positive after rounding, or above 1e6)."""
+    keep_offset = validate_keep_offset(keep_offset)
+    if type(u) is not int or u < 0:
+        raise ValueError(f"keep_offset update must be a non-negative integer, got {u!r}")
+    end = keep_offset["end_update"]
+    if u >= end:
+        return None
+    value = _float32(keep_offset["b0"] * (end - u) / end)
+    if not (math.isfinite(value) and 0.0 < value <= KEEP_OFFSET_MAX):
+        raise ValueError(f"keep_offset value {value!r} at update {u} is outside the trainer's accepted range "
+                         "(finite, positive, at most 1e6 in binary32)")
+    return value
+
+
 def build_config(base, dose, root, run, namespace, offset, updates, workers, coefficient=None, kappa=None,
-                 prep_workers=None):
+                 prep_workers=None, keep_offset=None):
     """An RT1 run config from an OH1/OH2 base and a dose record: the base's schedule from global update `offset`,
-    episode ids and deal seeds keyed by (namespace, run, update, slot), and EX1 when `coefficient` is given."""
+    episode ids and deal seeds keyed by (namespace, run, update, slot), and EX1 when `coefficient` is given.
+
+    `keep_offset` (`{"b0", "end_update", "shape": "linear-v1"}`, see `keep_offset_value`) stamps every episode that
+    has an `opening` with `london_keep_offset = b(u)` for the iteration's global update u = offset + i, while
+    u < end_update, and no such key from there on. A chain's global update counts from 0 at the fork point (its
+    first segment's offset), so u is the fork update. Without it every episode is left exactly as the base has it."""
+    if keep_offset is not None:
+        keep_offset = validate_keep_offset(keep_offset, base)
+        if offset < 0:
+            raise ValueError(f"keep_offset needs a non-negative global update offset, got {offset}")
+        if coefficient is not None:
+            raise ValueError("keep_offset is refused with an EX1 coefficient (the trainer refuses the offset with ex1)")
     source = dose["source"]
     # An S source starting from its initial train state (W5's XS parent, S0) has no checkpoint; its pin is
     # `s_learner.initial` (s_learner_v1.rs). A fresh net-8 start (a dose record that says `"fresh": true`, e.g. a
@@ -152,6 +270,10 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
             episode = entry["episode"]
             episode["id"] = f"{namespace}-{run}-u{update}-j{j}-s{episode['learner_seat']}"
             episode["seed"] = seed([namespace, run, update, j])
+            if keep_offset is not None and episode.get("opening") is not None:
+                value = keep_offset_value(keep_offset, update)
+                if value is not None:
+                    episode["london_keep_offset"] = value
         iterations.append(item)
     cfg = {k: copy.deepcopy(v) for k, v in base.items() if k != "iterations"}
     cfg["initial_source"] = source

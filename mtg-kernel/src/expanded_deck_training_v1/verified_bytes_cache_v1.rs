@@ -220,6 +220,126 @@ impl VerifiedBytesCacheV1 {
         matches
     }
 
+    /// [`Self::digest_matches_v1`] for a caller that only needs the check:
+    /// streams `reader` through a fixed 64 KiB stack buffer capped at `cap`
+    /// bytes, comparing against held bytes when present and hashing otherwise,
+    /// without allocating a whole-file `Vec<u8>`.
+    pub(crate) fn stream_digest_matches_v1<R: std::io::Read>(
+        &self,
+        mut reader: R,
+        cap: u64,
+        open_nanos: u64,
+        path: &Path,
+        sha256: &str,
+    ) -> std::io::Result<bool> {
+        use sha2::{Digest, Sha256};
+        const HEX_LUT: &[u8; 16] = b"0123456789abcdef";
+        let lookup_started = Instant::now();
+        let held = self.held_v1(path, sha256);
+        let mut compare_nanos = nanos_since_v1(lookup_started);
+        let mut hash_nanos = 0u64;
+        let mut read_nanos = open_nanos;
+        let mut hasher = if held.is_none() {
+            let started = Instant::now();
+            let hasher = Sha256::new();
+            hash_nanos = hash_nanos.saturating_add(nanos_since_v1(started));
+            Some(hasher)
+        } else {
+            None
+        };
+        let mut offset = 0usize;
+        let mut total = 0u64;
+        let mut buffer = [0u8; 64 * 1024];
+        loop {
+            let read_started = Instant::now();
+            let count = reader.read(&mut buffer)?;
+            read_nanos = read_nanos.saturating_add(nanos_since_v1(read_started));
+            if count == 0 {
+                break;
+            }
+            total = total.saturating_add(count as u64);
+            if total > cap {
+                super::opponent_cache_diagnostics_v1::note_file_read_nanos_v1(
+                    total as usize,
+                    read_nanos,
+                );
+                self.stats.compare_nanos.add(compare_nanos);
+                add_thread_work_v1(WorkV1::Verify, compare_nanos);
+                if hash_nanos > 0 {
+                    self.stats.hash_nanos.add(hash_nanos);
+                    add_thread_work_v1(WorkV1::Verify, hash_nanos);
+                }
+                return Ok(false);
+            }
+            let chunk = &buffer[..count];
+            if let Some(hasher) = &mut hasher {
+                let started = Instant::now();
+                hasher.update(chunk);
+                hash_nanos = hash_nanos.saturating_add(nanos_since_v1(started));
+            } else if let Some(held) = &held {
+                let started = Instant::now();
+                let chunk_matches = offset
+                    .checked_add(count)
+                    .is_some_and(|end| end <= held.len() && &held[offset..end] == chunk);
+                compare_nanos = compare_nanos.saturating_add(nanos_since_v1(started));
+                if chunk_matches {
+                    offset += count;
+                } else {
+                    let started = Instant::now();
+                    let mut fallback = Sha256::new();
+                    fallback.update(&held[..offset]);
+                    fallback.update(chunk);
+                    hash_nanos = hash_nanos.saturating_add(nanos_since_v1(started));
+                    hasher = Some(fallback);
+                }
+            }
+        }
+        super::opponent_cache_diagnostics_v1::note_file_read_nanos_v1(total as usize, read_nanos);
+        self.stats.compare_nanos.add(compare_nanos);
+        add_thread_work_v1(WorkV1::Verify, compare_nanos);
+        let hasher = match (hasher, &held) {
+            (None, Some(held)) if offset == held.len() => {
+                self.stats.compared_hits.add(1);
+                self.stats.compared_hit_bytes.add_usize(offset);
+                return Ok(true);
+            }
+            (None, Some(held)) => {
+                let started = Instant::now();
+                let mut fallback = Sha256::new();
+                fallback.update(&held[..offset]);
+                hash_nanos = hash_nanos.saturating_add(nanos_since_v1(started));
+                fallback
+            }
+            (Some(hasher), _) => hasher,
+            (None, None) => unreachable!("unheld stream starts with a hasher"),
+        };
+        match (self.budget, &held) {
+            (0, _) => self.stats.misses_disabled.add(1),
+            (_, None) => self.stats.misses_absent.add(1),
+            (_, Some(_)) => self.stats.misses_differ.add(1),
+        }
+        #[cfg(test)]
+        self.hashed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let started = Instant::now();
+        let raw = hasher.finalize();
+        let mut hex = [0u8; 64];
+        for (index, &byte) in raw.iter().enumerate() {
+            hex[2 * index] = HEX_LUT[(byte >> 4) as usize];
+            hex[2 * index + 1] = HEX_LUT[(byte & 0x0f) as usize];
+        }
+        let matches = sha256.as_bytes() == hex;
+        hash_nanos = hash_nanos.saturating_add(nanos_since_v1(started));
+        self.stats.hashed.add(1);
+        self.stats.hashed_bytes.add_usize(total as usize);
+        self.stats.hash_nanos.add(hash_nanos);
+        add_thread_work_v1(WorkV1::Verify, hash_nanos);
+        if !matches {
+            self.stats.hash_mismatches.add(1);
+        }
+        Ok(matches)
+    }
+
     /// The bytes held for `path` under `sha256`, whose SHA-256 is `sha256`.
     /// Turns resident reads on for this cache (module docs). Irreversible.
     pub(crate) fn enable_resident_v1(&self) {
