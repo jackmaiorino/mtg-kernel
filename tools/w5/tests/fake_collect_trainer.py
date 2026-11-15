@@ -8,7 +8,7 @@ The simulated policy (everything is a pure function of the episode seed, the sea
 paired lines agree exactly): a `learned` seat sees a hand of quality q in [0, 1) at each count (q is the first hand's
 for count 0, a fresh draw after a mulligan) and its mulligan-minus-keep gap at count k is `gaps[k] - slope * (q - 0.5)`
 plus noise; the lean the episode carries (`london_keep_offset`, a number or a list of 7 by own count) is subtracted
-from the mulligan logit when it chooses. A `keep_seven` seat keeps seven and is never asked. The learner's win chance is
+from the mulligan logit when it chooses. A `keep_seven` seat keeps seven and is never asked; as in the real trainer, the learner seat must be `learned`. The learner's win chance is
 `0.5 + 0.3 (q_final - 0.5) - 0.02 * taken`, drawn with a uniform shared by every line of the same seed. Knobs live in the
 config's `fake` block: gaps (7), slope, noise, value_per_card, bottom_scale.
 """
@@ -123,6 +123,11 @@ def main():
     collect = it / 'attempt-000000' / 'collect'
     collect.mkdir(parents=True)
     trajs = []
+    for entry in cfg['iterations'][0]['episodes']:
+        ep = entry['episode']
+        if ep['mulligan_modes'][ep['learner_seat']] != 'learned':  # the real trainer's opening validation
+            print("the learner seat's mulligans are learned; keep_seven is for declared frozen opponents", file=sys.stderr)
+            return 4
     for n, entry in enumerate(cfg['iterations'][0]['episodes']):
         data = json.dumps(play(entry['episode'], cfg), separators=(',', ':')).encode()
         path = collect / f'episode-{n:04d}.json'

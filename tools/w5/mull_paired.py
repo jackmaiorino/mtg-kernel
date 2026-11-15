@@ -9,8 +9,10 @@ play). Two stages, the same seeds throughout:
    with each seven). The deals where the learner mulliganed at least once are the affected deals.
 2. **Pairs.** Each affected deal is played twice on the same seed, the same decks, seats and starting player: the state's
    own line again (which must reproduce the screen game: counted), and the learner forced to keep its seven
-   (`--force keep_seven`: the learner seat's mulligan mode is `keep_seven`; or `--force offset`: the learner stays
-   `learned` with a lean of 1e6 so that it never mulligans). The paired difference is the learner's terminal reward
+   (`--force offset`, the default: the learner stays `learned` with a lean of 1e6 so that it never mulligans; or
+   `--force keep_seven`: the learner seat's mulligan mode is `keep_seven`, which the trainer refuses (its opening
+   validation: "the learner seat's mulligans are learned; keep_seven is for declared frozen opponents"), so it is
+   not the default). The paired difference is the learner's terminal reward
    with its own line minus its terminal reward with the forced keep. The two lines share the opening deal; later draws
    differ once a mulligan has changed how many cards were drawn.
 
@@ -20,7 +22,7 @@ own line. It also counts the screened deals, the affected share, own-line replay
 forced games that did not keep seven.
 
   mull_paired.py run --trainer BIN --base BASE.json --dose STATE_DOSE.json --out-dir DIR
-        [--deals N] [--namespace NS] [--force keep_seven|offset] [--decks A,B,...] [--chunk-size N] [--workers N]
+        [--deals N] [--namespace NS] [--force offset|keep_seven] [--decks A,B,...] [--chunk-size N] [--workers N]
   mull_paired.py analyze --pairs DIR/pairs.jsonl [--out report.json]
 """
 import argparse
@@ -162,7 +164,7 @@ def main(argv=None):
         r.add_argument(k, required=True)
     r.add_argument('--deals', type=int, default=4000)
     r.add_argument('--namespace', default='paired/read')
-    r.add_argument('--force', choices=('keep_seven', 'offset'), default='keep_seven')
+    r.add_argument('--force', choices=('offset', 'keep_seven'), default='offset')
     r.add_argument('--decks')
     r.add_argument('--chunk-size', type=int, default=27)
     r.add_argument('--workers', type=int, default=2)

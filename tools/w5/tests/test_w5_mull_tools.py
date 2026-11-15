@@ -1,7 +1,7 @@
 """The London mulligan measurement tools (tools/w5/mull_probe.py, mull_calibrate.py, mull_start_replication.py,
 mull_fixedhand.py, mull_paired.py), against a stand-in trainer (fake_collect_trainer.py) and a stand-in scorer
 (fake_scorer.py) that follow the real trajectory, collection and scorer layouts. What only the real trainer can show
-(the trainer's own handling of a keep_seven learner, the pregame mode and the vector) is not exercised here."""
+(the real trainer's handling of the vector, the pregame mode and a lean of 1e6 on a learned seat) is not exercised here."""
 import contextlib
 import io
 import json
@@ -494,7 +494,7 @@ class FixedHand(Fixture):
 
 
 class Paired(Fixture):
-    def run_pair(self, force='keep_seven', deals=162, **fake_knobs):
+    def run_pair(self, force='offset', deals=162, **fake_knobs):
         knobs = dict({'gaps': [0.0, -20.0, -20.0, -20.0, -20.0, -20.0, -20.0], 'slope': 8.0, 'noise': 0.0}, **fake_knobs)
         out = self.t / f'pair-{force}'
         argv = ['run', '--trainer', TRAINER, '--base', str(self.base(**knobs)), '--dose', str(self.dose_path), '--out-dir',
@@ -527,20 +527,21 @@ class Paired(Fixture):
         self.assertGreater(iv['mean'], 0)          # on the stand-in, mulliganing bad hands into fresh ones helps
         self.assertIn('lower > 0', text)
 
-    def test_both_ways_to_force_a_keep_give_the_same_pairs(self):
-        a, (code_a, _, err_a) = self.run_pair('keep_seven')
-        b, (code_b, _, err_b) = self.run_pair('offset')
-        self.assertEqual((code_a, code_b), (0, 0), err_a + err_b)
-        ra, rb = (json.loads((d / 'report.json').read_text()) for d in (a, b))
-        self.assertEqual(ra['paired_difference_own_minus_forced_keep'], rb['paired_difference_own_minus_forced_keep'])
+    def test_the_default_forces_the_keep_with_a_lean_and_the_learner_stays_learned(self):
+        b, (code_b, _, err_b) = self.run_pair()
+        self.assertEqual(code_b, 0, err_b)
         cfg = json.loads(sorted((b / 'keep' / 'run').glob('*.config.json'))[0].read_text())
         eps = [e['episode'] for e in cfg['iterations'][0]['episodes']]
         self.assertTrue(all(e['london_keep_offset'] == 1.0e6 for e in eps))
         self.assertTrue(all(e['mulligan_modes'][e['learner_seat']] == 'learned' for e in eps))
-        cfg = json.loads(sorted((a / 'keep' / 'run').glob('*.config.json'))[0].read_text())
-        eps = [e['episode'] for e in cfg['iterations'][0]['episodes']]
-        self.assertTrue(all(e['mulligan_modes'] == ['keep_seven', 'keep_seven'] for e in eps))
-        self.assertFalse(any('london_keep_offset' in e for e in eps))
+        for name in ('screen', 'own'):          # the own line carries no lean at all
+            cfg = json.loads(sorted((b / name / 'run').glob('*.config.json'))[0].read_text())
+            self.assertFalse(any('london_keep_offset' in e['episode'] for e in cfg['iterations'][0]['episodes']))
+
+    def test_a_keep_seven_learner_seat_is_what_the_trainer_refuses(self):
+        # the trainer's opening validation refuses it, so the tool must not default to it (the stand-in refuses too)
+        with self.assertRaises(RuntimeError):
+            self.run_pair('keep_seven')
 
     def test_same_seed_ids_differ_and_decks_seats_and_starts_are_shared(self):
         out, _ = self.run_pair()

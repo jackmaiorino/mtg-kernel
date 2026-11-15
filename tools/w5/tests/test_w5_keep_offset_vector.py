@@ -96,6 +96,13 @@ class VectorValue(unittest.TestCase):
         for ok in (with_b0([1e6] * 7), with_b0([0.0] * 6 + [1e-30])):
             qual.validate_keep_offset(ok)
 
+    def test_a_negative_zero_entry_is_a_positive_zero(self):
+        import math
+        spec = qual.validate_keep_offset(dict(VEC, b0=[-0.0, 3.0, -0.0, 0.0, 0.0, 0.0, 0.0]))
+        self.assertTrue(all(math.copysign(1.0, x) > 0 for x in spec['b0']))
+        stamped = qual.keep_offset_value(dict(VEC, b0=[-0.0, 3.0, -0.0, 0.0, 0.0, 0.0, 0.0]), 2)
+        self.assertTrue(all(math.copysign(1.0, x) > 0 for x in stamped))
+
     def test_a_nonzero_entry_that_would_round_to_zero_is_refused_where_it_does(self):
         tiny = {'b0': [1e-44, 5.0, 0, 0, 0, 0, 0], 'end_update': 10 ** 6, 'shape': 'linear-v1'}
         self.assertEqual(qual.keep_offset_value(tiny, 0)[0], f32(1e-44))

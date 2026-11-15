@@ -182,7 +182,7 @@ def validate_keep_offset(keep_offset, base=None):
                                  f"got {entry!r}")
         if not any(entry > 0 for entry in b0):
             raise ValueError("keep_offset b0 needs at least one entry above 0")
-        b0 = [float(entry) for entry in b0]
+        b0 = [float(entry) + 0.0 for entry in b0]  # + 0.0 turns -0.0 into 0.0 (the trainer refuses a negative zero)
     elif _is_number(b0) and 0 < b0 <= KEEP_OFFSET_MAX and math.isfinite(b0):
         b0 = float(b0)
     else:
