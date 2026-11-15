@@ -868,6 +868,10 @@ fn kioras_dismissal_strive_payability_omniscience_and_partial_fizzle_in_both_sea
         let dismissal = put(&mut state, actor, DISMISSAL, Zone::Hand);
         pool(&mut state, actor, &[ManaColor::U], 0);
         cast(&mut state, dismissal);
+        choose_more(&mut state, Target::Object(seal_d));
+        choose_more(&mut state, Target::Object(seal_e));
+        assert!(!finish_targets(&mut state).contains(&Target::Object(seal_f)));
+        // With {U} floating, Omniscience still offers paying the mana cost.
         match next(&mut state) {
             Decision::ChooseEffectOption { option_count, .. } => {
                 assert_eq!(option_count, 2);
@@ -875,9 +879,6 @@ fn kioras_dismissal_strive_payability_omniscience_and_partial_fizzle_in_both_sea
             }
             other => panic!("expected the free-cast choice, got {other:?}"),
         }
-        choose_more(&mut state, Target::Object(seal_d));
-        choose_more(&mut state, Target::Object(seal_e));
-        assert!(!finish_targets(&mut state).contains(&Target::Object(seal_f)));
         assert_eq!(priority(&mut state).0, actor);
         assert_eq!(blue(&state, actor), 0, "the strive {{U}}");
         settled(&mut state);

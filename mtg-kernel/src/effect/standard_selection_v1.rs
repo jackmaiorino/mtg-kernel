@@ -220,6 +220,13 @@ pub(super) fn begin(
 ) -> Result<(), String> {
     let player = pending.ctx.resolve_player(rule.player, state);
     let original_candidates = candidates(state, player, rule, pending.ctx.ability_source_contract)?;
+    // S365DIAG
+    if rule.filter == ObjectSelectionFilterV1::CastableArtifactInstantOrSorceryV1 {
+        eprintln!(
+            "S365DIAG begin candidates={original_candidates:?} stack={}",
+            state.stack.len()
+        );
+    }
     let available = u16::try_from(original_candidates.len()).unwrap_or(u16::MAX);
     pending.choice = Some(PendingEffectChoice::SelectTargets {
         player,
@@ -278,6 +285,10 @@ pub(super) fn validate_prompt(
             }
         || max != u16::from(rule.max).min(available)
     {
+        // S365DIAG
+        eprintln!(
+            "S365DIAG prompt current={current:?} original={original:?} chooser={chooser:?} player={player:?} min={min} max={max} path={path:?} canonical={canonical_path:?} selected={selected:?}"
+        );
         return Err("object selection prompt metadata changed".into());
     }
     let all = selected
