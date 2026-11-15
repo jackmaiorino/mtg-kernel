@@ -53,6 +53,7 @@ fn episode(opening: bool) -> ExpandedEpisodeV1 {
         reset: None,
         opening: opening.then_some(PauperOpeningV1::LondonV1),
         mulligan_modes: opening.then_some([Learned, Learned]),
+        london_keep_offset: None,
     }
 }
 
@@ -319,4 +320,138 @@ fn flat_v7_records_resolve_to_the_v4_generation_and_bind_only_v7_policies() {
     assert!(v7_record.require_policy_contract_v1(&v4).is_err());
     assert!(v4_record.require_policy_contract_v1(&v4).is_ok());
     assert!(v4_record.require_policy_contract_v1(&v7).is_err());
+}
+
+// London keep offset (`london_keep_offset_v1`).
+
+#[test]
+fn keep_offset_is_absent_by_default_and_refused_without_london() {
+    let plain = episode(true);
+    let value = serde_json::to_value(&plain).unwrap();
+    assert!(value.get("london_keep_offset").is_none());
+    let mut offset = episode(true);
+    offset.london_keep_offset = Some(6.5);
+    let value = serde_json::to_value(&offset).unwrap();
+    assert_eq!(value["london_keep_offset"], serde_json::json!(6.5));
+    let parsed: ExpandedEpisodeV1 = serde_json::from_value(value).unwrap();
+    assert_eq!(parsed, offset);
+    assert!(offset.configurations_checked_v1().is_ok());
+    // 15.3 as an f64 is not an f32 value: refused with the rest.
+    for bad in [0.0, -2.0, f64::NAN, f64::INFINITY, 1.0e7, f64::MAX, 15.3] {
+        let mut e = episode(true);
+        e.london_keep_offset = Some(bad);
+        assert!(e.configurations_checked_v1().is_err());
+    }
+    let mut keep_seven = episode(false);
+    keep_seven.london_keep_offset = Some(6.5);
+    let error = keep_seven.configurations_checked_v1().unwrap_err();
+    assert!(error.contains("requires a London opening"), "{error}");
+}
+
+#[test]
+fn keep_offset_json_round_trips_to_the_value_the_run_compares_against() {
+    // A run resumed from saved trajectories compares each saved episode (parsed
+    // JSON) with `serde_json::to_value` of the scheduled one. A non-dyadic
+    // offset must survive that for every value a schedule writes.
+    for b0 in [15.3003f32, 27.5723, 22.1944, 0.1, 1.0e-3, 123456.7] {
+        for step in [1.0f32, 0.9999, 0.5, 0.123456] {
+            let offset = f64::from(b0 * step);
+            let mut e = episode(true);
+            e.london_keep_offset = Some(offset);
+            e.configurations_checked_v1().unwrap();
+            let text = serde_json::to_string(&e).unwrap();
+            let reread: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(reread, serde_json::to_value(&e).unwrap(), "{text}");
+            let parsed: ExpandedEpisodeV1 = serde_json::from_str(&text).unwrap();
+            assert_eq!(parsed, e);
+            assert_eq!(
+                london_keep_offset_v1::offset_f32_v1(offset).unwrap(),
+                b0 * step
+            );
+        }
+    }
+}
+
+#[test]
+fn keep_offset_batches_carry_one_value() {
+    assert_eq!(batch_london_keep_offset_v1([None, None]).unwrap(), None);
+    assert_eq!(
+        batch_london_keep_offset_v1([Some(3.0), Some(3.0)]).unwrap(),
+        Some(3.0)
+    );
+    assert!(batch_london_keep_offset_v1([Some(3.0), None]).is_err());
+    assert!(batch_london_keep_offset_v1([None, Some(3.0)]).is_err());
+    assert!(batch_london_keep_offset_v1([Some(3.0), Some(2.0)]).is_err());
+}
+
+#[test]
+#[ignore = "root-owned native qualification: real complete games"]
+fn keep_offset_steers_announcements_records_raw_logits_and_validates() {
+    let mut policy = FrozenPlayPolicyV1::training_fixture_v4()
+        .into_flat_v7_transfer_v1()
+        .unwrap();
+    let learner = test_behavior(&policy, false);
+    let mut steered = episode(true);
+    // Far beyond any logit gap: every learned announcement keeps.
+    steered.london_keep_offset = Some(1.0e4);
+    let trajectory = collect_episode(&mut policy, &learner, None, &steered).unwrap();
+    let record = trajectory.opening_record.clone().unwrap();
+    for seat in &record.seats {
+        assert_eq!(seat.mulligans_taken, 0, "{record:?}");
+        assert_eq!(seat.exposed_pregame_decisions, 1, "{record:?}");
+    }
+    // Stored logits are the raw scorer output: the replay check reproduces
+    // them, and the announcement rows' mulligan logit is not offset.
+    validate_trajectory(&trajectory).unwrap();
+    for row in &trajectory.decisions[..2] {
+        let tensor = row.tensor.tensor();
+        let raw: Vec<f32> = row.logits.iter().map(|b| f32::from_bits(*b)).collect();
+        let rows = london_keep_offset_v1::mulligan_rows_v1(
+            &tensor.state,
+            &tensor.action_features,
+            raw.len(),
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(
+            raw[rows[0]] > -1.0e3,
+            "raw logit recorded, not the offset one"
+        );
+    }
+    // A moderate offset with the policy's legacy sampler: the announcement
+    // rows are drawn from the unclamped sampler, every other row from the
+    // legacy one, and the trajectory validates (the re-draw agrees) with the
+    // legacy sampler identity unchanged on every row.
+    for seed in [41u64, 42, 43, 44] {
+        let mut moderate = episode(true);
+        moderate.seed = seed;
+        moderate.london_keep_offset = Some(12.0);
+        let mut policy = FrozenPlayPolicyV1::training_fixture_v4()
+            .into_flat_v7_transfer_v1()
+            .unwrap();
+        let collected = collect_episode(&mut policy, &learner, None, &moderate).unwrap();
+        validate_trajectory(&collected).unwrap();
+        assert!(collected.learner_sampler.is_none());
+        assert!(collected.decisions.iter().all(
+            |row| row.sampler_identity.as_deref() != Some(UNCLAMPED_SOFTMAX_SAMPLER_VERSION_V1)
+        ));
+    }
+    // An episode without the offset collects exactly as before: same
+    // trajectory bytes as a collection that never knew the field.
+    let plain = episode(true);
+    let mut again = FrozenPlayPolicyV1::training_fixture_v4()
+        .into_flat_v7_transfer_v1()
+        .unwrap();
+    let first = collect_episode(&mut again, &learner, None, &plain).unwrap();
+    let mut fresh = FrozenPlayPolicyV1::training_fixture_v4()
+        .into_flat_v7_transfer_v1()
+        .unwrap();
+    let second = collect_episode(&mut fresh, &learner, None, &plain).unwrap();
+    assert_eq!(
+        serde_json::to_vec(&first).unwrap(),
+        serde_json::to_vec(&second).unwrap()
+    );
+    assert!(serde_json::to_value(&first).unwrap()["episode"]
+        .get("london_keep_offset")
+        .is_none());
 }

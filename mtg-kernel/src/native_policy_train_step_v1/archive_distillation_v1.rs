@@ -288,6 +288,7 @@ impl NativePolicyValueTrainStateV1 {
     > {
         self.require_platform_math_v1("archive distillation")?;
         self.require_no_input_contract_v1("archive distillation")?;
+        self.require_no_london_keep_offset_v1()?;
         if pathway.is_some() && update_scope != ArchiveDistillationUpdateScopeV1::FullNetwork {
             return Err(invalid("rules-pathway-scope"));
         }

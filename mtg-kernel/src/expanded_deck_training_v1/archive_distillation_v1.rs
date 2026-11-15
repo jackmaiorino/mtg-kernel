@@ -1253,7 +1253,8 @@ fn read_parent_trajectory_v1(
             && trajectory.source_import == *policy.identity_v1()
             && trajectory.behavior_state_sha256 == parent_state_sha256
             && trajectory.learner_sampler.is_none()
-            && trajectory.episode.reset.is_none(),
+            && trajectory.episode.reset.is_none()
+            && trajectory.episode.london_keep_offset.is_none(),
         "trajectory is not the parent's own ordinary play",
     )?;
     ensure(

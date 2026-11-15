@@ -2055,6 +2055,18 @@ impl FrozenPlayPolicyV1 {
         &mut self,
         session: &FastActorSessionV1,
     ) -> Result<(u32, FrozenPlayDecisionScoresV1, NativeFlatDecisionTensorV4), String> {
+        self.select_with_training_tensor_offset_v4(session, None)
+    }
+
+    /// [`Self::select_with_training_tensor_v4`] with an optional London keep
+    /// offset (`london_keep_offset_v1`): the draw uses the offset logits, the
+    /// returned scores stay the raw scorer output. `None` is exactly the
+    /// plain selection.
+    pub(crate) fn select_with_training_tensor_offset_v4(
+        &mut self,
+        session: &FastActorSessionV1,
+        london_keep_offset: Option<f32>,
+    ) -> Result<(u32, FrozenPlayDecisionScoresV1, NativeFlatDecisionTensorV4), String> {
         require(
             self.fresh_successor.is_some(),
             "training requires explicit V4 successor features",
@@ -2063,17 +2075,31 @@ impl FrozenPlayPolicyV1 {
             return Err("cannot collect a terminal decision".into());
         };
         let scores = self.score_fast_session_v1(session)?;
-        let selected = self.sample_scores(
-            &scores.logits,
-            decision.acting_player,
-            decision.legal_action_count,
-        )?;
         let tensor = self
             .fresh_successor
             .as_ref()
             .ok_or("missing fresh successor tensor")?
             .tensor
             .clone();
+        let adjusted = match london_keep_offset {
+            Some(offset) => {
+                crate::expanded_deck_training_v1::london_keep_offset_v1::offset_logits_v1(
+                    &scores.logits,
+                    &tensor.common.state,
+                    &tensor.common.action_features,
+                    offset,
+                )?
+            }
+            None => None,
+        };
+        // An adjusted row is drawn from the unclamped sampler so the draw is
+        // the softmax of exactly the logits the update trains on.
+        let selected = self.sample_scores_with_v1(
+            adjusted.as_deref().unwrap_or(&scores.logits),
+            decision.acting_player,
+            decision.legal_action_count,
+            adjusted.is_some(),
+        )?;
         Ok((selected, scores, tensor))
     }
     pub fn embedding_rows_v1(&self) -> &[f32] {
@@ -2726,6 +2752,20 @@ impl FrozenPlayPolicyV1 {
         seat: PlayerSeatV1,
         legal_count: u32,
     ) -> Result<u32, String> {
+        self.sample_scores_with_v1(logits, seat, legal_count, false)
+    }
+
+    /// [`Self::sample_scores`] with `force_unclamped`: draw this row from the
+    /// unclamped softmax sampler whatever the policy's own sampler is (the
+    /// London keep offset's adjusted rows). The seat stream advances by
+    /// exactly one draw either way.
+    fn sample_scores_with_v1(
+        &mut self,
+        logits: &[f32],
+        seat: PlayerSeatV1,
+        legal_count: u32,
+        force_unclamped: bool,
+    ) -> Result<u32, String> {
         require(
             self.sampling_initialized,
             "reset both policy seeds before a game",
@@ -2758,6 +2798,12 @@ impl FrozenPlayPolicyV1 {
                     "sampler_seed_sha256":hash(&seed.to_le_bytes()),
                     "inverse_cdf_draw_sha256":hash(&crate::fast_sampler::splitmix64_first(seed).to_le_bytes())}));
             }
+        }
+        if force_unclamped {
+            let selected = UnclampedSoftmaxScratchV1::default()
+                .sample(logits, seed)
+                .map_err(|e| e.to_string())?;
+            return u32::try_from(selected).map_err(|e| e.to_string());
         }
         if let Some(unclamped) = &mut self.collection_sampler {
             // The seat-stream output is the draw itself: never reseeded.

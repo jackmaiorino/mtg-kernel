@@ -1274,6 +1274,11 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     LineBAuxiliary {
         code: &'static str,
     },
+    /// London keep offset (`london_keep_offset_v1`) refusal: a set offset on
+    /// a loss other than the CPU GAE loss, or a malformed pregame decision.
+    LondonKeepOffset {
+        code: &'static str,
+    },
     EmptyBatch,
     EmptyPhysicalDecision {
         group_index: usize,
@@ -1491,6 +1496,13 @@ pub(crate) struct NativePolicyValueTrainStateDimsV1<D: NetDimsV1> {
     /// and both moments at +0.0 and the state encoder bias free of -0.0, and
     /// every thread of the step's arithmetic verifies the pinned MXCSR.
     no_state_digest_columns: Option<std::ops::Range<usize>>,
+    /// The London keep offset of the next GAE step's batch
+    /// (`expanded_deck_training_v1::london_keep_offset_v1`): subtracted from
+    /// each announcement's mulligan logit inside the log-softmax, never from a
+    /// parameter. Set by the update for one step and cleared after it; not
+    /// part of the state digest, snapshot or checkpoint. None (the default)
+    /// is every existing step, bit for bit.
+    london_keep_offset: Option<f32>,
     /// Test-only: workers dirty their own MXCSR before verifying it.
     #[cfg(test)]
     dirty_worker_mxcsr_for_test: bool,
@@ -1642,6 +1654,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             scorer_bias_anchor_bits,
             training_math: TrainingMathV1::PlatformLibm,
             no_state_digest_columns: None,
+            london_keep_offset: None,
             #[cfg(test)]
             dirty_worker_mxcsr_for_test: false,
         };
@@ -1676,6 +1689,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             scorer_bias_anchor_bits,
             training_math: TrainingMathV1::PlatformLibm,
             no_state_digest_columns: None,
+            london_keep_offset: None,
             #[cfg(test)]
             dirty_worker_mxcsr_for_test: false,
         };
@@ -1685,6 +1699,31 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
 
     pub(crate) fn model_dims_v1(&self) -> &D::Net {
         &self.model
+    }
+
+    /// Sets (or clears) the London keep offset of the next GAE step. Only the
+    /// CPU GAE loss reads it; every other loss refuses a set offset.
+    pub(crate) fn set_london_keep_offset_v1(&mut self, offset: Option<f32>) {
+        self.london_keep_offset = offset;
+    }
+
+    pub(crate) fn london_keep_offset_v1(&self) -> Option<f32> {
+        self.london_keep_offset
+    }
+
+    /// Refuses a learner path that is not the plain CPU GAE step while a London
+    /// keep offset is set, and clears the setting either way: the offset lives
+    /// for one plain GAE step only (`london_keep_offset_v1`).
+    pub(crate) fn require_no_london_keep_offset_v1(
+        &mut self,
+    ) -> Result<(), NativePolicyTrainErrorV1> {
+        if self.london_keep_offset.take().is_some() {
+            Err(NativePolicyTrainErrorV1::LondonKeepOffset {
+                code: "london-keep-offset-requires-plain-gae",
+            })
+        } else {
+            Ok(())
+        }
     }
 
     pub(crate) fn adam_step_dims_v1(&self) -> u64 {
@@ -2340,6 +2379,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
         self.require_no_input_contract_v1("cuda")?;
+        self.require_no_london_keep_offset_v1()?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_feature_transfer_v3(
             self,
             groups,
@@ -2369,6 +2409,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
         self.require_no_input_contract_v1("cuda")?;
+        self.require_no_london_keep_offset_v1()?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_feature_transfer_v4(
             self,
             groups,
@@ -2392,6 +2433,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
         self.require_no_input_contract_v1("cuda")?;
+        self.require_no_london_keep_offset_v1()?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_v3(
             self,
             groups,
@@ -2416,6 +2458,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("cuda")?;
         self.require_no_input_contract_v1("cuda")?;
+        self.require_no_london_keep_offset_v1()?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_v4(
             self,
             groups,
@@ -2450,6 +2493,7 @@ impl NativePolicyValueTrainStateV1 {
     > {
         self.require_platform_math_v1("cuda")?;
         self.require_no_input_contract_v1("cuda")?;
+        self.require_no_london_keep_offset_v1()?;
         crate::experimental_burn_net8_packed_v1::bridge::train_step_cuda_burn_dense_gae_feature_transfer_line_b_v1(
             self,
             matches!(
@@ -2829,6 +2873,8 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         phase_recorder: &mut NativeTrainingPhaseRecorderV1<'_>,
         input_config: NativePolicyValueModelConfigV1,
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+        // The terminal-reinforce loss never takes a London keep offset.
+        self.require_no_london_keep_offset_v1()?;
         // The wide refusal list (design section 2.1), before any forward work.
         if !is_net8_dims_v1::<D>() {
             if groups

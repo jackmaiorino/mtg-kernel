@@ -95,6 +95,7 @@ fn fixture(
         reset: None,
         opening: None,
         mulligan_modes: None,
+        london_keep_offset: None,
     };
     let collect_root = root.clone();
     let collect = move |source: &ExpandedModelSourceV1, label: &str| -> Vec<PinnedFileV1> {

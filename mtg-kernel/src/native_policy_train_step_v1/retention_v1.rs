@@ -206,6 +206,7 @@ impl NativePolicyValueTrainStateV1 {
             .map_err(failure)?;
         self.require_no_input_contract_v1("retained imitation")
             .map_err(failure)?;
+        self.require_no_london_keep_offset_v1().map_err(failure)?;
         if !beta.is_finite() || beta < 0.0 {
             return Err("retention beta must be finite and nonnegative".into());
         }
