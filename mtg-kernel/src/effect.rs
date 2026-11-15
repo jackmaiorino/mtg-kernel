@@ -1162,6 +1162,9 @@ pub enum LibraryCardFilter {
     /// An artifact or enchantment card (Enlightened Tutor). Appended for the
     /// eternal catalog.
     ArtifactOrEnchantmentCardV1,
+    /// A green creature card (Natural Order). Appended for Vintage Cube wave
+    /// C1b.
+    GreenCreatureV1,
 }
 
 impl LibraryCardFilter {
@@ -2843,6 +2846,9 @@ pub enum LibraryLookCount {
     /// item at cast time (Memory Deluge). Clamped to `u8::MAX`.
     ManaSpentToCast,
     ControllerArtifacts,
+    /// Twice the number of lands the effect's player controls (Pillage the
+    /// Bog, Vintage Cube wave C1c). Clamped to `u8::MAX`.
+    ControllerLandsTwiceV1,
 }
 
 /// The fixed-cardinality selection rule of a pick-from-top partition.
@@ -13731,12 +13737,22 @@ fn drive_resumable_in_departure_scope_v1(
                                     "the accepted counter-unless-pay payment became unpayable",
                                 )?;
                         crate::engine::pay_plan(state, player, &plan);
-                    } else if crate::engine::counter_stack_item_by_id(state, target_stack_item)?
-                        .is_none()
-                    {
-                        return Err(
-                            "the declined counter-unless-pay lost its bound spell".to_string()
+                    } else {
+                        let counter_zone = crate::eternal_cube_c1c_v1::counter_destination(
+                            state,
+                            continuation.resolving_item.source,
                         );
+                        if crate::engine::counter_stack_item_by_id_to_zone(
+                            state,
+                            target_stack_item,
+                            counter_zone,
+                        )?
+                        .is_none()
+                        {
+                            return Err(
+                                "the declined counter-unless-pay lost its bound spell".to_string()
+                            );
+                        }
                     }
                 }
                 EffectFrame::ExileChosenGraveyardCard {
@@ -15967,8 +15983,16 @@ fn drive_resumable_in_departure_scope_v1(
                     false,
                 )?;
                 if crate::mana::can_pay(&generic_mana_cost(generic), 0, player, state).is_none() {
-                    crate::engine::counter_stack_item_by_id(state, target_stack_item)?
-                        .ok_or("the unpayable counter-unless-pay target disappeared")?;
+                    let counter_zone = crate::eternal_cube_c1c_v1::counter_destination(
+                        state,
+                        continuation.resolving_item.source,
+                    );
+                    crate::engine::counter_stack_item_by_id_to_zone(
+                        state,
+                        target_stack_item,
+                        counter_zone,
+                    )?
+                    .ok_or("the unpayable counter-unless-pay target disappeared")?;
                     continue;
                 }
                 validate_counter_target_unless_pays_binding(
@@ -16243,6 +16267,9 @@ fn drive_resumable_in_departure_scope_v1(
                     LibraryLookCount::ControllerArtifacts => {
                         controller_artifact_count(state, player)
                     }
+                    LibraryLookCount::ControllerLandsTwiceV1 => {
+                        controller_lands_twice_count(state, player)
+                    }
                 };
                 if begin_library_partition(
                     &mut continuation,
@@ -16277,6 +16304,9 @@ fn drive_resumable_in_departure_scope_v1(
                     }
                     LibraryLookCount::ControllerArtifacts => {
                         controller_artifact_count(state, player)
+                    }
+                    LibraryLookCount::ControllerLandsTwiceV1 => {
+                        controller_lands_twice_count(state, player)
                     }
                 };
                 if rule.selection.is_some_and(|s|s.filter==LibraryPickFilterV1::CreatureOrLandV1) {
@@ -17843,6 +17873,17 @@ fn controller_artifact_count(state: &GameState, player: PlayerId) -> u8 {
     .unwrap_or(u8::MAX)
 }
 
+/// Twice the number of lands `player` controls, clamped to `u8::MAX`
+/// (Pillage the Bog).
+fn controller_lands_twice_count(state: &GameState, player: PlayerId) -> u8 {
+    let lands = state.players[player.index()]
+        .battlefield
+        .iter()
+        .filter(|&&id| crate::engine::object_has_type(state, id, CardType::Land))
+        .count();
+    u8::try_from(lands.saturating_mul(2)).unwrap_or(u8::MAX)
+}
+
 /// Selection rule shared by the typed and fixed-cardinality top-library
 /// partitions. It is recovered from the purpose or frame variant, so it is
 /// never serialized on its own.
@@ -19250,6 +19291,14 @@ fn library_filter_matches(
         LibraryCardFilter::ArtifactOrEnchantmentCardV1 => {
             def.has_type(CardType::Artifact) || def.has_type(CardType::Enchantment)
         }
+        LibraryCardFilter::GreenCreatureV1 => {
+            def.has_type(CardType::Creature)
+                && crate::eternal_legacy_e9a_v1::statics::card_has_color(
+                    state,
+                    binding.object,
+                    crate::mana::ManaColor::G,
+                )
+        }
     })
 }
 
@@ -19309,6 +19358,7 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
             u64::from(subtype.stable_id()),
         ),
         LibraryCardFilter::ArtifactOrEnchantmentCardV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 65),
+        LibraryCardFilter::GreenCreatureV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 66),
     }
 }
 

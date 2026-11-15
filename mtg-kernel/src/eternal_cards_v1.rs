@@ -250,6 +250,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_sideboard_s1g_v1::S1gStateV1::is_empty"
     )]
     pub s1g: crate::eternal_sideboard_s1g_v1::S1gStateV1,
+    /// Vintage Cube wave C1c's state (`eternal_cube_c1c_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c1c_v1::C1cStateV1::is_empty"
+    )]
+    pub c1c: crate::eternal_cube_c1c_v1::C1cStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {

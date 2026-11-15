@@ -1418,6 +1418,8 @@ fn stack_target_contract_shape(
                         | crate::standard_cards_v1::StandardTargetV1::OneToThreeDistinctAnyTargetsV1
                         | crate::standard_cards_v1::StandardTargetV1::DividedTwoDamageAnyTargetsV1
                 ) || filter.slot_kind(target_index) == Some(None)
+                    || crate::eternal_cube_c1c_v1::targets::slot_takes_player(filter, target_index)
+                    || crate::eternal_cube_c1b_v1::targets::slot_takes_player(filter, target_index)
             }
         };
         if !matches_kind {
@@ -4358,6 +4360,42 @@ impl GameState {
         projected.players[owner.index()].library = cards;
         projected.shuffle_library(owner)?;
         let chosen = projected.players[owner.index()].library.first().copied();
+        self.randomness = projected.randomness;
+        Ok(chosen)
+    }
+
+    /// Sample up to `count` distinct cards of `owner`'s hand at random
+    /// (Hymn to Tourach, Mind Twist), without changing any zone order. A
+    /// hand of at most `count` cards yields all of them and consumes no
+    /// randomness; otherwise one checked shuffle of the hand picks the first
+    /// `count`, the same transaction as `random_hand_card_v1`.
+    pub(crate) fn random_hand_cards_v1(
+        &mut self,
+        owner: PlayerId,
+        count: usize,
+    ) -> Result<Vec<ObjectId>, LibraryShuffleError> {
+        let owner = library_shuffle_owner(owner)?;
+        let cards = self.players[owner.index()]
+            .hand
+            .iter()
+            .copied()
+            .filter(|id| {
+                let card = self.objects.get(*id);
+                card.zone == Zone::Hand && card.owner == owner
+            })
+            .collect::<Vec<_>>();
+        if cards.len() <= count {
+            return Ok(cards);
+        }
+        let mut projected = self.clone();
+        projected.players[owner.index()].library = cards;
+        projected.shuffle_library(owner)?;
+        let chosen = projected.players[owner.index()]
+            .library
+            .iter()
+            .copied()
+            .take(count)
+            .collect();
         self.randomness = projected.randomness;
         Ok(chosen)
     }

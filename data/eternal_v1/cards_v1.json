@@ -29352,7 +29352,7 @@
   },
   {
    "name": "Damn",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{B}{B}",
    "mana_value": 2,
    "colors": [
@@ -29381,7 +29381,7 @@
   },
   {
    "name": "Memory Lapse",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}",
    "mana_value": 2,
    "colors": [
@@ -29409,7 +29409,7 @@
   },
   {
    "name": "Miscalculation",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}",
    "mana_value": 2,
    "colors": [
@@ -29437,7 +29437,7 @@
   },
   {
    "name": "Mystic Confluence",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{U}{U}",
    "mana_value": 5,
    "colors": [
@@ -29467,7 +29467,7 @@
   },
   {
    "name": "Occult Epiphany",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{X}{U}",
    "mana_value": 1,
    "colors": [
@@ -29497,7 +29497,7 @@
   },
   {
    "name": "Oust",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{W}",
    "mana_value": 1,
    "colors": [
@@ -29525,7 +29525,7 @@
   },
   {
    "name": "Path to Exile",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{W}",
    "mana_value": 1,
    "colors": [
@@ -29553,7 +29553,7 @@
   },
   {
    "name": "Remand",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}",
    "mana_value": 2,
    "colors": [
@@ -29582,7 +29582,7 @@
   },
   {
    "name": "Reprieve",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{W}",
    "mana_value": 2,
    "colors": [
@@ -29610,7 +29610,7 @@
   },
   {
    "name": "Stern Scolding",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{U}",
    "mana_value": 1,
    "colors": [
@@ -29637,7 +29637,7 @@
   },
   {
    "name": "Time Spiral",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{4}{U}{U}",
    "mana_value": 6,
    "colors": [
@@ -29667,7 +29667,7 @@
   },
   {
    "name": "Timetwister",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{U}",
    "mana_value": 3,
    "colors": [
@@ -29695,7 +29695,7 @@
   },
   {
    "name": "Unexpectedly Absent",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{X}{W}{W}",
    "mana_value": 2,
    "colors": [
@@ -29723,7 +29723,7 @@
   },
   {
    "name": "Winds of Abandon",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{W}",
    "mana_value": 2,
    "colors": [
@@ -29752,7 +29752,7 @@
   },
   {
    "name": "Bloodchief's Thirst",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{B}",
    "mana_value": 1,
    "colors": [
@@ -29780,7 +29780,7 @@
   },
   {
    "name": "Bone Shards",
-   "engine_capability": "no_effect",
+   "engine_capability": "partial",
    "mana_cost": "{B}",
    "mana_value": 1,
    "colors": [
@@ -29810,7 +29810,7 @@
   },
   {
    "name": "Chain of Smog",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{B}",
    "mana_value": 2,
    "colors": [
@@ -29838,7 +29838,7 @@
   },
   {
    "name": "Collective Brutality",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{B}",
    "mana_value": 2,
    "colors": [
@@ -29869,7 +29869,7 @@
   },
   {
    "name": "Damnation",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{B}{B}",
    "mana_value": 4,
    "colors": [
@@ -29898,7 +29898,7 @@
   },
   {
    "name": "Entomb",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{B}",
    "mana_value": 1,
    "colors": [
@@ -29926,7 +29926,7 @@
   },
   {
    "name": "Hymn to Tourach",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{B}{B}",
    "mana_value": 2,
    "colors": [
@@ -29953,7 +29953,7 @@
   },
   {
    "name": "Imperial Seal",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{B}",
    "mana_value": 1,
    "colors": [
@@ -29982,7 +29982,7 @@
   },
   {
    "name": "Infernal Grasp",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{B}",
    "mana_value": 2,
    "colors": [
@@ -30010,7 +30010,7 @@
   },
   {
    "name": "Mind Twist",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{X}{B}",
    "mana_value": 1,
    "colors": [
@@ -30038,7 +30038,7 @@
   },
   {
    "name": "Mutagenic Growth",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{G/P}",
    "mana_value": 1,
    "colors": [
@@ -30066,7 +30066,7 @@
   },
   {
    "name": "Natural Order",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{G}{G}",
    "mana_value": 4,
    "colors": [
@@ -30096,7 +30096,7 @@
   },
   {
    "name": "Night's Whisper",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{B}",
    "mana_value": 2,
    "colors": [
@@ -30124,7 +30124,7 @@
   },
   {
    "name": "Pest Infestation",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{X}{X}{G}",
    "mana_value": 1,
    "colors": [
@@ -30153,7 +30153,7 @@
   },
   {
    "name": "Tamiyo's Safekeeping",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{G}",
    "mana_value": 1,
    "colors": [
@@ -30182,7 +30182,7 @@
   },
   {
    "name": "Dead // Gone",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{R}",
    "mana_value": 4,
    "colors": [
@@ -30211,7 +30211,7 @@
   },
   {
    "name": "Delayed Blast Fireball",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}{R}",
    "mana_value": 3,
    "colors": [
@@ -30239,7 +30239,7 @@
   },
   {
    "name": "Escape to the Wilds",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{R}{G}",
    "mana_value": 5,
    "colors": [
@@ -30268,7 +30268,7 @@
   },
   {
    "name": "Expressive Iteration",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{U}{R}",
    "mana_value": 2,
    "colors": [
@@ -30297,7 +30297,7 @@
   },
   {
    "name": "Fire Covenant",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{B}{R}",
    "mana_value": 3,
    "colors": [
@@ -30326,7 +30326,7 @@
   },
   {
    "name": "Flame Slash",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{R}",
    "mana_value": 1,
    "colors": [
@@ -30353,7 +30353,7 @@
   },
   {
    "name": "Flashback",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{R}",
    "mana_value": 1,
    "colors": [
@@ -30379,7 +30379,7 @@
   },
   {
    "name": "Impractical Joke",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{R}",
    "mana_value": 1,
    "colors": [
@@ -30406,7 +30406,7 @@
   },
   {
    "name": "Kolaghan's Command",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{B}{R}",
    "mana_value": 3,
    "colors": [
@@ -30438,7 +30438,7 @@
   },
   {
    "name": "Lingering Souls",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{W}",
    "mana_value": 3,
    "colors": [
@@ -30466,7 +30466,7 @@
   },
   {
    "name": "Mine Collapse",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{R}",
    "mana_value": 4,
    "colors": [
@@ -30495,7 +30495,7 @@
   },
   {
    "name": "No More Lies",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{W}{U}",
    "mana_value": 2,
    "colors": [
@@ -30524,7 +30524,7 @@
   },
   {
    "name": "Pillage the Bog",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{B}{G}",
    "mana_value": 2,
    "colors": [
@@ -30553,7 +30553,7 @@
   },
   {
    "name": "Sear",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}",
    "mana_value": 2,
    "colors": [
@@ -30580,7 +30580,7 @@
   },
   {
    "name": "Tarfire",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{R}",
    "mana_value": 1,
    "colors": [
@@ -30609,7 +30609,7 @@
   },
   {
    "name": "Traumatic Critique",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{X}{U}{R}",
    "mana_value": 2,
    "colors": [
@@ -30639,7 +30639,7 @@
   },
   {
    "name": "Vicious Rivalry",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{B}{G}",
    "mana_value": 4,
    "colors": [
@@ -30668,7 +30668,7 @@
   },
   {
    "name": "Wheel of Fortune",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{R}",
    "mana_value": 3,
    "colors": [
@@ -30693,6 +30693,98 @@
     "draw_card"
    ],
    "java_file": "Mage.Sets/src/mage/cards/w/WheelOfFortune.java"
+  },
+  {
+   "name": "White Flying Spirit Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Spirit"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "flying"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/SpiritWhiteToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Pest Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "B",
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Pest"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "dies_trigger",
+    "life_gain"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/PestToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Cathar Commando",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Soldier"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "flash",
+    "sacrifice_self",
+    "artifact_enchantment_destruction"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CatharCommando.java"
   }
  ]
 }

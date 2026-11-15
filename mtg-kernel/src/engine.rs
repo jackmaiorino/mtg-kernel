@@ -8356,6 +8356,8 @@ fn alt_cost_condition_met(
         | card_def::AltCostCondition::ImpendingFromHand { .. }
         | card_def::AltCostCondition::DisguiseFromHand => origin_zone == Zone::Hand,
         card_def::AltCostCondition::NotYourTurnV1 => player != state.active_player,
+        // Mine Collapse: "If it's your turn".
+        card_def::AltCostCondition::YourTurnV1 => player == state.active_player,
         // Which card was foretold is checked at the quote boundary
         // (`eternal_pauper_e6a_v1::foretell_quote_allowed`).
         card_def::AltCostCondition::ForetoldV1 => origin_zone == Zone::Exile,
@@ -8537,6 +8539,10 @@ pub(crate) fn permanent_matches_filter(
         PermanentFilter::ForestOrPlainsV1 => {
             has_effective_subtype(state, id, card_def::Subtype::Forest)
                 || has_effective_subtype(state, id, card_def::Subtype::Plains)
+        }
+        PermanentFilter::GreenCreatureV1 => {
+            object_has_type(state, id, CardType::Creature)
+                && object_color_mask(state, id) & (1 << ManaColor::G.pool_index()) != 0
         }
     }
 }
@@ -8866,6 +8872,11 @@ pub(crate) fn forced_cast_x(
     // Sickening Shoal's alternative cost: the exiled black card's mana value
     // is X (eternal wave S1e).
     if let Some(x) = crate::eternal_sideboard_s1e_v1::shoal_forced_x(pending, def, state) {
+        return Some(x);
+    }
+    // Fire Covenant: one damage and one life per target pick (Vintage Cube
+    // wave C1c).
+    if let Some(x) = crate::eternal_cube_c1c_v1::covenant_forced_x(pending, def) {
         return Some(x);
     }
     pending_x_graveyard_exile(pending, def)?;
@@ -9210,6 +9221,7 @@ fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
         | PermanentFilter::Creature
         | PermanentFilter::AnotherWithSubtype(_)
         | PermanentFilter::WithSubtypeV1(_)
+        | PermanentFilter::GreenCreatureV1
         | PermanentFilter::BlueV1 => CostKind::SacrificePermanents,
         PermanentFilter::NonlandV1 | PermanentFilter::AnotherArtifactOrCreatureV1 => {
             CostKind::SacrificePermanents
@@ -9269,6 +9281,12 @@ fn additional_discard_count(def: &card_def::CardDef, pending: &PendingCast) -> O
         def,
         pending.selected_x_v59(),
     ) {
+        return count;
+    }
+    // Collective Brutality's escalate discards (Vintage Cube wave C1b).
+    if let Some(count) =
+        crate::eternal_cube_c1b_v1::additional_discard_count(def, pending.mode_chosen)
+    {
         return count;
     }
     let _ = pending;
@@ -9909,6 +9927,24 @@ fn ordinary_next_cast_targets(
             .into_iter()
             .filter(|&target| {
                 crate::standard_cards_v1::cast_target_allowed(
+                    def,
+                    pending.spell,
+                    pending.controller,
+                    target,
+                    state,
+                )
+            })
+            .collect()
+    } else {
+        candidates
+    };
+    // Pest Infestation's "up to X": a target is offered only while an X
+    // covering it is payable (Vintage Cube wave C1b).
+    let candidates = if crate::eternal_cube_c1b_v1::filters_cast_targets(def) {
+        candidates
+            .into_iter()
+            .filter(|&target| {
+                crate::eternal_cube_c1b_v1::cast_target_allowed(
                     def,
                     pending.spell,
                     pending.controller,
@@ -16651,6 +16687,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                     | PermanentFilter::Token
                     | PermanentFilter::AnotherWithSubtype(_)
                     | PermanentFilter::WithSubtypeV1(_)
+                    | PermanentFilter::GreenCreatureV1
                     | PermanentFilter::BlueV1 => CostKind::SacrificePermanents,
                     PermanentFilter::NonlandV1 | PermanentFilter::AnotherArtifactOrCreatureV1 => {
                         CostKind::SacrificePermanents
@@ -20391,6 +20428,17 @@ pub(crate) fn counter_stack_item_by_id(
     state: &mut GameState,
     stack_item_id: StackItemId,
 ) -> Result<Option<StackItem>, String> {
+    counter_stack_item_by_id_to_zone(state, stack_item_id, Zone::Graveyard)
+}
+
+/// `counter_stack_item_by_id` for a counter that sends the spell to
+/// `counter_zone` instead of its owner's graveyard (No More Lies exiles
+/// it); flashback, copies and replacement effects still apply as usual.
+pub(crate) fn counter_stack_item_by_id_to_zone(
+    state: &mut GameState,
+    stack_item_id: StackItemId,
+    counter_zone: Zone,
+) -> Result<Option<StackItem>, String> {
     crate::drake_hatcher_v1::custody::validate(state)?;
     if crate::drake_hatcher_v1::custody::relevant(state)
         && !crate::linked_aura_operation_v1::locally_owned(state)
@@ -20449,7 +20497,7 @@ pub(crate) fn counter_stack_item_by_id(
     let arahbo_counter_owner = crate::arahbo_v1::before_remove(state, &item)?;
     let garruk_counter_owner = crate::garruks_uprising_v1::before_remove(state, &item)?;
     let mut departure = if item.kind == StackItemKind::Spell {
-        Some(plan_spell_departure(state, &item, Zone::Graveyard)?)
+        Some(plan_spell_departure(state, &item, counter_zone)?)
     } else {
         None
     };

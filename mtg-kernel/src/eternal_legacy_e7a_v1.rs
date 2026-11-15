@@ -1730,7 +1730,7 @@ fn galvanic_relay_effect(ctx: &ExecCtx, state: &mut GameState) {
 
 /// Burning Wish exiles itself as it resolves: marks its stack incarnation
 /// for the departure hook `exiled_instead_of_graveyard`.
-fn mark_self_exile(ctx: &ExecCtx, state: &mut GameState) {
+pub(crate) fn mark_self_exile(ctx: &ExecCtx, state: &mut GameState) {
     let Some(live) = state.objects.try_get(ctx.source) else {
         return;
     };
@@ -2658,6 +2658,9 @@ pub(crate) fn additional_land_plays(state: &GameState, player: PlayerId) -> u8 {
         .into_iter()
         .map(|name| active_permanents(state, name, Some(player)).count())
         .sum::<usize>();
+    // Escape to the Wilds (Vintage Cube wave C1c): "You may play an
+    // additional land this turn."
+    let count = count + usize::from(crate::eternal_cube_c1c_v1::extra_land_plays(state, player));
     u8::try_from(count).unwrap_or(u8::MAX)
 }
 

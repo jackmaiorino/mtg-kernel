@@ -450,6 +450,15 @@ pub enum StandardTargetV1 {
     /// Auramancer (Premodern wave P3h): "target enchantment card from your
     /// graveyard".
     EnchantmentCardInOwnGraveyardV1,
+    /// "Target creature spell with power or toughness 2 or less" (Stern
+    /// Scolding, Vintage Cube wave C1a).
+    CreatureSpellPowerOrToughnessAtMostTwoV1,
+    /// A filter of eternal wave C1c (`eternal_cube_c1c_v1::targets`).
+    C1cV1(crate::eternal_cube_c1c_v1::targets::C1cTargetV1),
+    /// A filter of eternal wave C1a (`eternal_cube_c1a_v1::targets`).
+    C1aV1(crate::eternal_cube_c1a_v1::targets::C1aTargetV1),
+    /// A filter of eternal wave C1b (`eternal_cube_c1b_v1::targets`).
+    C1bV1(crate::eternal_cube_c1b_v1::targets::C1bTargetV1),
 }
 
 impl StandardTargetV1 {
@@ -495,6 +504,15 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p3h_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_cube_c1c_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_cube_c1a_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_cube_c1b_v1::targets::counts(self) {
             return counts;
         }
         match self {
@@ -664,6 +682,7 @@ impl StandardTargetV1 {
             Self::InstantOrSorcerySpellV1
                 | Self::SpellWithSingleTargetV1
                 | Self::TriggeredAbilityOrColorlessSpellV1
+                | Self::CreatureSpellPowerOrToughnessAtMostTwoV1
         ) || crate::eternal_sideboard_s1d_v1::targets::on_stack(self)
             || crate::eternal_vintage_e7b_v1::targets::on_stack(self)
             || crate::eternal_sideboard_s1a_v1::targets::on_stack(self)
@@ -685,6 +704,9 @@ pub(crate) fn target_zone(target: StandardTargetV1) -> Zone {
 /// Stupor's filter takes a spell or a permanent.
 pub(crate) fn target_zone_allows(target: StandardTargetV1, zone: Zone) -> bool {
     zone == target_zone(target)
+        || crate::eternal_cube_c1c_v1::targets::zone_allows(target, zone)
+        || crate::eternal_cube_c1a_v1::targets::zone_allows(target, zone)
+        || crate::eternal_cube_c1b_v1::targets::zone_allows(target, zone)
         || (target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 && zone == Zone::Stack)
         || (matches!(
             target,
@@ -859,6 +881,9 @@ fn stack_spell_matches(
                 || crate::engine::stack_spell_has_type(state, item, CardType::Sorcery)
         }
         StandardTargetV1::SpellWithSingleTargetV1 => item.targets.len() == 1,
+        StandardTargetV1::CreatureSpellPowerOrToughnessAtMostTwoV1 => {
+            crate::eternal_cube_c1a_v1::creature_spell_power_or_toughness_at_most_two(state, item)
+        }
         StandardTargetV1::EnchantmentInstantOrSorcerySpellV1 => {
             crate::eternal_sideboard_s1a_v1::targets::spell_matches(state, item)
         }
@@ -974,6 +999,21 @@ pub(crate) fn legal_targets(
     }
     if let Some(targets) =
         crate::eternal_sideboard_s1c_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
+        crate::eternal_cube_c1c_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) = crate::eternal_cube_c1a_v1::targets::legal_targets(
+        target, controller, source, prefix, state,
+    ) {
+        return targets;
+    }
+    if let Some(targets) =
+        crate::eternal_cube_c1b_v1::targets::legal_targets(target, controller, prefix, state)
     {
         return targets;
     }
@@ -1257,6 +1297,21 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) =
+        crate::eternal_cube_c1c_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
+        crate::eternal_cube_c1a_v1::targets::target_matches(target, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
+        crate::eternal_cube_c1b_v1::targets::target_matches(target, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -1485,6 +1540,14 @@ pub(crate) fn target_matches(
         }
         // Answered by `eternal_premodern_p3h_v1::targets` above.
         StandardTargetV1::EnchantmentCardInOwnGraveyardV1 => false,
+        // A spell on the stack, answered by `stack_spell_matches`.
+        StandardTargetV1::CreatureSpellPowerOrToughnessAtMostTwoV1 => false,
+        // Answered by `eternal_cube_c1c_v1::targets` above.
+        StandardTargetV1::C1cV1(_) => false,
+        // Answered by `eternal_cube_c1a_v1::targets` above.
+        StandardTargetV1::C1aV1(_) => false,
+        // Answered by `eternal_cube_c1b_v1::targets` above.
+        StandardTargetV1::C1bV1(_) => false,
     }
 }
 
@@ -3477,6 +3540,10 @@ pub(crate) fn minimum_x(def: &CardDef, targets: &[Target], state: &GameState) ->
             return minimum;
         }
         if let Some(minimum) = crate::eternal_legacy_e9a_v1::statics::minimum_x(def.name, targets) {
+            return minimum;
+        }
+        // Pest Infestation: "up to X target artifacts and/or enchantments".
+        if let Some(minimum) = crate::eternal_cube_c1b_v1::minimum_x(def.name, targets) {
             return minimum;
         }
         // "Exile X cards from your graveyard" (wave P1a): X is the number

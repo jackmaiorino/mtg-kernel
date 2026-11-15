@@ -1388,6 +1388,13 @@ fn selected_spell_quote_branch_grant_v1(
             }
         }
     }
+    // Collective Brutality's escalate discards depend on the mode (Vintage
+    // Cube wave C1b).
+    if let Some(count) =
+        crate::eternal_cube_c1b_v1::additional_discard_count(definition, Some(mode))
+    {
+        discard_count = usize::from(count.unwrap_or(0));
+    }
     if discard_count != 0 || needs_creature || reveals_hand {
         let mut hand = Vec::new();
         for &object in &state.players[player.index()].hand {
@@ -1718,6 +1725,13 @@ pub(super) fn prepare_final_spell_payment_v1(
         Some(count) => usize::from(count.unwrap_or(0)),
         None => discard_count,
     };
+    // Collective Brutality's escalate discards (Vintage Cube wave C1b).
+    let discard_count =
+        match crate::eternal_cube_c1b_v1::additional_discard_count(definition, pending.mode_chosen)
+        {
+            Some(count) => usize::from(count.unwrap_or(0)),
+            None => discard_count,
+        };
     if discarded.len() != discard_count
         || discarded.iter().enumerate().any(|(index, object)| {
             discarded[..index].contains(object)

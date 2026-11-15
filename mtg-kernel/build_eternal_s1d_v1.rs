@@ -176,6 +176,8 @@ pub(super) fn adventure_for(name: &str) -> &'static str {
     match name {
         "Vandalblast" => "Some(AdventureDef { name: \"Vandalblast Overload\", cost: Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 4, x_count: 0 }, types: &[CardType::Sorcery], target_spec: TargetSpec::None, effect: ability_effect_program_eternal_sideboard_s1d_v1_vandalblast_overload })",
         "Electrickery" => "Some(AdventureDef { name: \"Electrickery Overload\", cost: Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 1, x_count: 0 }, types: &[CardType::Instant], target_spec: TargetSpec::None, effect: ability_effect_program_eternal_sideboard_s1d_v1_electrickery_overload })",
+        // Vintage Cube wave C1a's overload forms.
+        "Damn" | "Winds of Abandon" => super::build_eternal_c1a_v1::overload_for(name),
         _ => "None",
     }
 }
@@ -188,6 +190,7 @@ pub(super) fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRec
         "Electrickery" => Some(program(
             "crate::eternal_sideboard_s1d_v1::electrickery_overload",
         )),
+        "Damn" | "Winds of Abandon" => super::build_eternal_c1a_v1::overload_effect_for(name),
         _ => None,
     }
 }
@@ -196,6 +199,7 @@ pub(super) fn adventure_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Vandalblast" => Some("Vandalblast Overload"),
         "Electrickery" => Some("Electrickery Overload"),
+        "Damn" | "Winds of Abandon" => super::build_eternal_c1a_v1::overload_face_for(name),
         _ => None,
     }
 }

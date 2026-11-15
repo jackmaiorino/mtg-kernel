@@ -440,6 +440,8 @@ pub(crate) fn split_card(name: &str) -> bool {
         || name == crate::eternal_premodern_p2c_v1::LIFE_DEATH
         || crate::eternal_sideboard_s1d_v1::statics::is_overload(name)
         || name == crate::eternal_sideboard_s1a_v1::ROUGH_TUMBLE
+        // Dead // Gone (Vintage Cube wave C1c).
+        || name == "Dead // Gone"
 }
 
 /// The split card spell `item`'s half: `true` for the second.

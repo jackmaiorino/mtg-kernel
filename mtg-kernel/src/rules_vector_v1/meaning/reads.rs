@@ -714,6 +714,11 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
             out.atoms.push(Atom::Opaque);
             ObjF::Permanent
         }
+        LibraryCardFilter::GreenCreatureV1 => {
+            // The color refinement has no facet.
+            out.atoms.push(Atom::Opaque);
+            ObjF::Typed(CardTypeF::Creature)
+        }
     }
 }
 
@@ -752,6 +757,10 @@ pub(crate) fn permanent_filter(filter: PermanentFilter) -> (ObjF, Option<RelF>) 
         }
         // Vocabulary gap: ObjF has no subtype class.
         PermanentFilter::WithSubtypeV1(_) => (ObjF::Permanent, None),
+        PermanentFilter::GreenCreatureV1 => {
+            // Vocabulary gap: ObjF has no color class.
+            (ObjF::Typed(CardTypeF::Creature), None)
+        }
     }
 }
 

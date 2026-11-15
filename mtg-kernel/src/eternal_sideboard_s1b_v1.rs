@@ -795,7 +795,8 @@ pub(crate) fn spell_cost_reduction(
 /// Its X is announced like Sickening Dreams' discard count, up to the life
 /// the caster has, and the life is paid as the cast completes.
 pub(crate) fn pays_life_for_x(def: &CardDef) -> bool {
-    cfg!(feature = "eternal-fixtures") && def.name == TOXIC_DELUGE
+    cfg!(feature = "eternal-fixtures")
+        && (def.name == TOXIC_DELUGE || crate::eternal_cube_c1c_v1::pays_life_for_x(def.name))
 }
 
 /// The most X Toxic Deluge may announce: its caster's life total.

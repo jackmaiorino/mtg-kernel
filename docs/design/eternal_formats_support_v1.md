@@ -2334,3 +2334,126 @@ follows each card's current Oracle text, checked against XMage and rules 113.7a,
   replacements, departed-source Circle of Protection: Red prevention and Echo LKI), and plays two
   40-card decks built around the P3h cards through public schema-5 sessions in both seats under
   ranked and seeded random policies with replay checks.
+
+## Vintage Cube
+
+The Magic Online Vintage Cube (the 540-card list effective 2026-10-07) is tracked in #710 with
+the same wave recipe. The list is `data/cube_v1/mtgo_vintage_cube_20261007.json`;
+`python/tools/cube_coverage_v1.py` counts its cards that are Full in the `eternal-fixtures`
+build, and `data/cube_v1/mtgo_vintage_cube_20261007_gaps.json` records the ones that are not (a
+Python test keeps that record equal to the registries). Baseline: 292 of 540 Full.
+
+### C1: instants and sorceries
+
+Wave C1 adds 47 instants and sorceries, the tokens two of them make, and Cathar Commando: 46 spells
+and Cathar Commando are Full and Bone Shards is Partial, raising the cube to 339 of 540 Full. No C1
+card completes a snapshot deck, so `PLAYABLE` and `PLAYABLE_75` are unchanged. It is built as three
+sub-modules chained after P3h, each with a build file, a runtime module with its own target
+filters, and a test file: C1a (white and blue, `eternal_cube_c1a_v1`), C1b (black and green,
+`eternal_cube_c1b_v1`) and C1c (red and multicolor, `eternal_cube_c1c_v1`), the new tail. Behavior
+follows each card's current Oracle text, checked against XMage where it has the card. Every draw is
+`EffectOp::DrawCards`, so Dredge and the draw replacements apply.
+
+C1a:
+
+- Oust: the creature goes second from the top of its owner's library
+  (`LibraryPlacement::SecondFromTop`) and its controller gains 3 life.
+- Path to Exile: exile, then the creature's controller (named before the exile) searches for
+  up to one basic land card, which enters tapped. Winds of Abandon is the same with a search
+  only for a creature that was exiled; its overload exiles each creature the caster doesn't
+  control as one batch, then each of their controllers searches for that many basic lands.
+- Damn: Avatar of Woe's destroy without regeneration; its overload is Decree of Pain's
+  simultaneous destroy. Both overloads use wave S1d's machinery.
+- Reprieve returns the spell to its owner's hand (it is not a counter, so it also returns a
+  spell that can't be countered). Memory Lapse, Remand and Stern Scolding counter and move the
+  spell to its named zone; Stern Scolding targets with the new
+  `StandardTargetV1::CreatureSpellPowerOrToughnessAtMostTwoV1`.
+- Miscalculation: Mana Leak's pay-or-counter for {2}, and cycling {2}.
+- Mystic Confluence: its ten multisets of three modes are ten modes (Fiery Confluence's
+  layout), each a sequence of its three instances in printed order with every draw a
+  `DrawCards` instruction. One filter takes the spell targets, then the creature targets, and a
+  target may be named twice. Each counter asks the spell's controller to pay {3} unless they
+  can't or the spell can't be countered.
+- Unexpectedly Absent: the new `LibraryPlacement::BeneathTop(X)`; a library with fewer than X
+  cards puts the permanent on the bottom.
+- Occult Epiphany: draw X, a hidden choice of X cards to discard, then a 1/1 white flying
+  Spirit for each card type among them.
+- Timetwister has Echo of Eons' text and program. Time Spiral marks itself to be exiled as it
+  finishes resolving, shuffles both hands and graveyards into their libraries, then each player
+  draws seven through `DrawCards` and its controller untaps up to six lands. Between the two
+  players' draws, `C1aOpV1::StopIfWonV1` drops the rest of the program if a draw won the game
+  (Jace, Wielder of Mysteries); the plain interpreter would run the later instructions.
+
+C1b:
+
+- Damnation is Wrath of God's program, Imperial Seal is Vampiric Tutor's, Entomb searches to the
+  graveyard, Night's Whisper and Infernal Grasp are plain sequences, and Mutagenic Growth is a
+  +2/+2 pump with a Phyrexian mana cost.
+- Hymn to Tourach and Mind Twist discard at random through `GameState::random_hand_cards_v1`,
+  all cards at once.
+- Bloodchief's Thirst: kicker {2}{B} widens its target (`kicked_target_spec`).
+- Bone Shards (Partial): its "sacrifice a creature or discard a card" additional cost has
+  Demand Answers' shape (the discard is the additional cost; the sacrifice is an alternative
+  cost of the same mana that skips the discard). A cast for another alternative cost, such as
+  flashback granted by Snapcaster Mage, therefore cannot choose the sacrifice. Full needs a
+  choice between additional costs (Eaten Alive has a module of its own for that).
+- Chain of Smog: the target player chooses two cards to discard, then may copy the spell for
+  any player (Chain of Vapor's copy). The copy is free, so a policy that always copies never
+  stops; session games play the card under the random policy only.
+- Collective Brutality: escalate as the seven nonempty sets of its three modes, one target slot
+  per chosen targeting mode. Each mode beyond the first adds a discard to the cost, and a set
+  that needs more discards than the hand holds is not offered.
+- Natural Order: sacrifices a green creature (`PermanentFilter::GreenCreatureV1`) and searches
+  for one (`LibraryCardFilter::GreenCreatureV1`, fingerprint 66).
+- Pest Infestation: X is at least the number of targets, and a target is offered only while an
+  X that covers it is payable. Its legal targets are destroyed as one batch, then it creates
+  twice X Pest tokens (a new row and `Subtype::Pest`).
+- Tamiyo's Safekeeping grants hexproof and indestructible until end of turn and gains 2 life.
+- Cathar Commando joins the eternal registry with the FDN recipe it already has.
+
+C1c:
+
+- Flame Slash, Sear and Tarfire are fixed damage; Tarfire is an Instant with the Goblin subtype
+  (the registry has no Kindred type). Traumatic Critique deals X, then draws two and discards one.
+- Wheel of Fortune: each player discards their hand, the active player first, then each draws
+  seven, with the same stop between the draws as Time Spiral.
+- Lingering Souls: two Spirit tokens (the new "White Flying Spirit Token" row, shared with Occult
+  Epiphany) and flashback {1}{B}.
+- No More Lies: pay {3} or the spell is countered and exiled
+  (`engine::counter_stack_item_by_id_to_zone`).
+- Mine Collapse: its alternative cost (sacrifice a Mountain) is offered only on its controller's
+  turn (`AltCostCondition::YourTurnV1`).
+- Kolaghan's Command: "choose two" as its six pairs, resolved in printed order, each mode skipped
+  if its own target is illegal. The target player's discard is the module's own choice, so it can
+  precede the other mode.
+- Dead // Gone: a split card in the Adventure form (Fire // Ice's shape).
+- Delayed Blast Fireball: foretell (Behold the Multiverse's machinery); it deals 5 instead of 2
+  when cast from exile, as one batch to the opponent and their creatures.
+- Flashback: Snapcaster Mage's grant as a spell.
+- Impractical Joke: `EffectOp::DamageCannotBePreventedThisTurn`, then 3 damage to up to one target;
+  with an illegal only target it does nothing.
+- Escape to the Wilds: five impulse-drawn cards playable until the end of the controller's next
+  turn, and one additional land play this turn (`C1cStateV1::extra_land_plays`).
+- Expressive Iteration: two hidden choices (hand, then bottom); the third card is exiled and
+  playable this turn.
+- Fire Covenant and Vicious Rivalry pay X life as an additional cost (Toxic Deluge's hook). Fire
+  Covenant's division is one target pick per damage (Fire // Ice's convention), capped by the
+  caster's life and at 64 picks, and X is the number of picks. Vicious Rivalry destroys each
+  artifact and creature with mana value X or less.
+- Pillage the Bog: looks at twice the controller's land count
+  (`LibraryLookCount::ControllerLandsTwiceV1`), and plot {1}{B}{G}.
+
+Known limits shared with earlier waves, tracked in #710: the registry has no Kindred card type
+(Tarfire counts one type fewer for Tarmogoyf, delirium and Occult Epiphany); an optional search
+that is declined still shuffles (Path to Exile); an unrestricted search may find nothing (Entomb,
+Imperial Seal, as Vampiric Tutor); a granted flashback does not add a second cost to a card that
+has flashback (Flashback, as Snapcaster Mage); "each player draws" from a sorcery cast outside its
+controller's turn draws for the controller first (Wheel of Fortune, Time Spiral); a draw that a
+leaf stages at resolution (Occult Epiphany's X cards) does not offer the choice between two
+competing draw replacements, which is Hullbreacher's Partial branch; and a batch applies
+replacement effects event by event, so a replacement source destroyed in the batch stops applying
+to the events after its own (Pest Infestation naming Rest in Peace first, as every sweeper).
+
+Each sub-module's test file covers every card's printed text in rules tests (costs, both sides of
+each condition, illegal targets) and plays decks of its cards through public schema-5 sessions
+in both seats under ranked and seeded random policies with replay checks.
