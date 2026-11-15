@@ -209,7 +209,12 @@ pub(crate) struct FileReadsV1 {
 
 /// Records one pinned file read of `bytes` bytes that began at `started`.
 pub(crate) fn note_file_read_v1(bytes: usize, started: Instant) {
-    let nanos = nanos_since_v1(started);
+    note_file_read_nanos_v1(bytes, nanos_since_v1(started));
+}
+
+/// [`note_file_read_v1`] for a streaming reader that accumulates read time
+/// separately from chunk verification.
+pub(crate) fn note_file_read_nanos_v1(bytes: usize, nanos: u64) {
     let reads = &counters_v1().file_reads;
     reads.reads.add(1);
     reads.bytes.add_usize(bytes);
@@ -271,14 +276,19 @@ pub(crate) struct ProcessOpponentStatsV1 {
     pub(crate) capture: SplitV1,
     pub(crate) captured_bytes: CountV1,
     /// What became of a full load: kept; not kept, because the cache could
-    /// not reverify its files exactly or its policy cannot be forked.
+    /// not reverify its files exactly, its policy cannot be forked, or its
+    /// byte charge exceeded the cache budget.
     pub(crate) kept: CountV1,
     pub(crate) not_kept_unverifiable: CountV1,
     pub(crate) not_kept_unforkable: CountV1,
-    /// Entries dropped for the bound, with their held file bytes, and
-    /// entries replaced by a concurrent load of the same source.
+    pub(crate) not_kept_budget: CountV1,
+    /// Entries dropped for the entry or byte bound, with their charged bytes
+    /// and any held file bytes, peak live charge, and entries replaced by a
+    /// concurrent load of the same source.
     pub(crate) evictions: CountV1,
+    pub(crate) evicted_charged_bytes: CountV1,
     pub(crate) evicted_file_bytes: CountV1,
+    pub(crate) peak_charged_bytes: CountV1,
     pub(crate) replaced: CountV1,
 }
 
@@ -290,14 +300,17 @@ pub(crate) struct CollectionOpponentStatsV1 {
     pub(crate) hits: CountV1,
     pub(crate) hit_nanos: CountV1,
     /// Loads that missed it: through the process opponent cache (a source
-    /// the boundary verified), or a full load of an unverified source; their
-    /// time includes the process cache's.
+    /// the boundary verified, or a serial replay load that revalidated its
+    /// pins), or a full load of an unverified source; their time includes
+    /// the process cache's.
     pub(crate) misses_verified: CountV1,
+    pub(crate) misses_revalidated: CountV1,
     pub(crate) misses_unverified: CountV1,
     pub(crate) miss_nanos: CountV1,
-    /// Entries inserted (misses and current-self forks), and dropped for the
-    /// bound.
+    /// Entries inserted (misses and current-self forks), refused by the byte
+    /// or entry budget, and dropped for the bounds.
     pub(crate) inserts: CountV1,
+    pub(crate) not_kept_budget: CountV1,
     pub(crate) evictions: CountV1,
     /// Policies held now by every live collection cache, the bytes of
     /// their own copies (`policy_bytes_v1`), and the peaks of both. A
@@ -367,10 +380,16 @@ pub(crate) fn opponent_cache_section_v1() -> Value {
     let boundary = &counters.boundary;
     let held = super::ordered_update_preparation::held_v1();
     let files = file_bytes_v1(&held.holders_v1());
+    let (collection_entry_limit, collection_budget_bytes) =
+        super::configured_collection_opponent_cache_limits_v1();
     json!({
         "process": {
             "entry_limit": held.entry_limit,
-            "entries": held.files.len(),
+            "budget_bytes": held.budget_bytes,
+            "entries": held.entries,
+            "charged_bytes": held.charged_bytes,
+            "peak_charged_bytes": process.peak_charged_bytes.get(),
+            "metadata_bytes": held.metadata_bytes,
             "file_bytes": files.total,
             "unique_file_bytes": files.unique,
             "duplicate_file_bytes": files.total - files.unique,
@@ -402,21 +421,26 @@ pub(crate) fn opponent_cache_section_v1() -> Value {
             "not_kept": {
                 "unverifiable": process.not_kept_unverifiable.get(),
                 "unforkable": process.not_kept_unforkable.get(),
+                "budget": process.not_kept_budget.get(),
             },
             "evictions": process.evictions.get(),
+            "evicted_charged_bytes": process.evicted_charged_bytes.get(),
             "evicted_file_bytes": process.evicted_file_bytes.get(),
             "replaced": process.replaced.get(),
         },
         "collection": {
-            "entry_limit": super::OPPONENT_CACHE_CAPACITY_V1,
+            "entry_limit": collection_entry_limit,
+            "budget_bytes": collection_budget_bytes,
             "hits": collection.hits.get(),
             "hit_seconds": collection.hit_nanos.seconds(),
             "misses": {
                 "verified": collection.misses_verified.get(),
+                "revalidated": collection.misses_revalidated.get(),
                 "unverified": collection.misses_unverified.get(),
             },
             "miss_seconds": collection.miss_nanos.seconds(),
             "inserts": collection.inserts.get(),
+            "not_kept_budget": collection.not_kept_budget.get(),
             "evictions": collection.evictions.get(),
             "live_entries": collection.live_entries.get(),
             "peak_live_entries": collection.peak_live_entries.get(),

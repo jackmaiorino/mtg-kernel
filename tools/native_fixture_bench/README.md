@@ -110,6 +110,17 @@ Each diagnostics line holds this process's cumulative counters, so differences b
 - `io`: pinned file reads by the fresh-source reader and checkpoint decodes. Process-cache hit revalidation uses a separate reader.
 - `process`: peak and current resident memory, on Linux only, and CPU seconds. Elsewhere the memory fields are null, and the driver's own figures cover each sample (`wait4`, or the job object on Windows).
 
+Opponent cache bounds (#599 milestone 3). Both caches are LRU under an entry cap and a byte budget. An entry larger than the budget is served once and not kept. None of these settings enters a run config or identity, and each value is clamped to its maximum:
+
+| Cache | Flag | Variable | Default | Maximum |
+|---|---|---|---:|---:|
+| process, entries | `--opponent-cache-entries` | `MTG_KERNEL_OPPONENT_CACHE_ENTRIES` | 32 | 256 |
+| process, MiB | `--opponent-cache-mib` | `MTG_KERNEL_OPPONENT_CACHE_MIB` | 768 | 16384 |
+| per collection, entries | `--collection-opponent-cache-entries` | `MTG_KERNEL_COLLECTION_OPPONENT_CACHE_ENTRIES` | 8 | 128 |
+| per collection, MiB | `--collection-opponent-cache-mib` | `MTG_KERNEL_COLLECTION_OPPONENT_CACHE_MIB` | 256 | 16384 |
+
+The process cache charges each entry's owned policy bytes and pin metadata, and each shared model once. Its entries keep pins, not file copies, and a revalidating hit streams every pinned file against its SHA-256. Pass the variables to one arm with `--arm-env` to force eviction; outputs must not change.
+
 Outputs in `--out` (absent or empty):
 
 - `bench.json` (`mtg-kernel-native-fixture-bench/v1`) is the manifest. It records:
