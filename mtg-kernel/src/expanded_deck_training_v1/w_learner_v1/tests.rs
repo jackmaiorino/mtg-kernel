@@ -309,9 +309,20 @@ fn wide_learner_end_to_end_v1() {
             gamma: 0.99,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         }
     )
     .is_err());
+    // The terminal pregame advantage is a net-8 London mode: refused here.
+    let terminal = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+        gamma: 1.0,
+        lambda: 0.9,
+        entropy_coefficient: 0.0,
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::TerminalV1,
+    };
+    assert!(validate_update_loss_v1(&next, &terminal)
+        .unwrap_err()
+        .contains("terminal pregame advantage"));
 
     // Determinism: the same update again.
     let again = update(&wide, trajectories.clone(), root.join("w-update-again")).unwrap();

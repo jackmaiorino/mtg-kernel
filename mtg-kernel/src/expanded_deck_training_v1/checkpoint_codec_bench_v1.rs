@@ -829,6 +829,7 @@ fn gae_selection_v1() -> ExpandedLossSelectionV1 {
         gamma: GAMMA_V1,
         lambda: LAMBDA_V1,
         entropy_coefficient: 0.0,
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
     }
 }
 

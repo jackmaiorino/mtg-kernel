@@ -42,6 +42,7 @@ const GAE_V1: ExpandedLossSelectionV1 = ExpandedLossSelectionV1::GaeAdvantageVal
     gamma: 1.0,
     lambda: 0.9,
     entropy_coefficient: 0.0,
+    pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::Gae,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]

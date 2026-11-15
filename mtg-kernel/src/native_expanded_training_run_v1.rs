@@ -2990,6 +2990,7 @@ mod tests {
             gamma: 1.0,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         };
         let (root, mut config) = real_two_iteration_config_v1(
             "batch-bound-ex1-recovery",
@@ -4012,6 +4013,7 @@ mod tests {
             gamma: 1.0,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         };
         gae.validate_v1().unwrap();
         assert_ne!(identity(&legacy).unwrap(), identity(&gae).unwrap());
@@ -4262,6 +4264,7 @@ mod tests {
             gamma: 1.0,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         };
         let transfer = |contract: &str, encoding: &str| {
             crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3 {
@@ -4359,6 +4362,170 @@ mod tests {
         }
     }
 
+    /// A two-iteration FlatV7 run whose every episode has a London opening
+    /// and carries `offset`, under `loss`.
+    fn london_v7_config_v1(
+        label: &str,
+        loss: ExpandedLossSelectionV1,
+        offset: Option<crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1>,
+    ) -> (
+        crate::test_temp_dir_v1::TempTestDir,
+        NativeExpandedTrainingRunV1,
+    ) {
+        use crate::native_flat_tensorizer_v7::{
+            FEATURE_CONTRACT_DIGEST_V7, FEATURE_ENCODING_DIGEST_V7,
+        };
+        use crate::rl_session::pauper_london_v1::{PauperMulliganModeV1, PauperOpeningV1};
+        let (root, mut config) =
+            real_two_iteration_config_v1(label, loss, ExpandedUpdateBackendV1::Cpu);
+        config.initial_source.feature_transfer =
+            crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: FEATURE_CONTRACT_DIGEST_V7.into(),
+                expected_feature_encoding_digest: FEATURE_ENCODING_DIGEST_V7.into(),
+            };
+        for iteration in &mut config.iterations {
+            for scheduled in &mut iteration.episodes {
+                scheduled.episode.opening = Some(PauperOpeningV1::LondonV1);
+                scheduled.episode.mulligan_modes =
+                    Some([PauperMulliganModeV1::Learned, PauperMulliganModeV1::Learned]);
+                scheduled.episode.london_keep_offset = offset;
+            }
+        }
+        (root, config)
+    }
+
+    /// The `update.json` of completed iteration `index` of a run result.
+    fn iteration_update_v1(result: &Value, index: usize) -> Value {
+        let complete_pin: PinnedFileV1 =
+            serde_json::from_value(result["iterations"][index].clone()).unwrap();
+        let complete: Value =
+            serde_json::from_str(&fs::read_to_string(&complete_pin.path).unwrap()).unwrap();
+        let update_pin: PinnedFileV1 = serde_json::from_value(complete["update"].clone()).unwrap();
+        serde_json::from_str(&fs::read_to_string(&update_pin.path).unwrap()).unwrap()
+    }
+
+    fn gae_loss_v1(
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1,
+    ) -> ExpandedLossSelectionV1 {
+        ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma: 1.0,
+            lambda: 0.9,
+            entropy_coefficient: 0.0,
+            pregame_advantage,
+        }
+    }
+
+    /// The per-count lean vector and the terminal pregame advantage through
+    /// the production run: both are accepted on a real London FlatV7 run, the
+    /// mode is in the run manifest and the update receipts (and a default run
+    /// has neither key), and a run cannot resume under the other mode.
+    #[test]
+    fn london_vector_offset_and_terminal_pregame_advantage_reach_a_real_run() {
+        use crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1;
+        use crate::expanded_deck_training_v1::PregameAdvantageV1;
+        let vector = LondonKeepOffsetV1::PerCount([6.5, 5.5, 4.5, 0.0, 2.5, 1.5, 0.5]);
+        let (_terminal_root, terminal) = london_v7_config_v1(
+            "lv-terminal",
+            gae_loss_v1(PregameAdvantageV1::TerminalV1),
+            Some(vector),
+        );
+        terminal.validate_v1().unwrap();
+        run_native_expanded_training_v1(&terminal, Some(1)).unwrap();
+        let result = run_native_expanded_training_v1(&terminal, None).unwrap();
+        let manifest: Value =
+            read_json(&terminal.output_directory.join("run.json"), SMALL_CAP).unwrap();
+        assert_eq!(
+            manifest["loss_selection"]["pregame_advantage"],
+            "terminal_v1"
+        );
+        assert_eq!(
+            manifest["config"]["iterations"][0]["episodes"][0]["episode"]["london_keep_offset"],
+            serde_json::json!([6.5, 5.5, 4.5, 0.0, 2.5, 1.5, 0.5])
+        );
+        for index in 0..2 {
+            let update = iteration_update_v1(&result, index);
+            assert_eq!(update["pregame_advantage"]["mode"], "terminal_v1");
+            assert!(
+                update["pregame_advantage"]["pregame_groups"]
+                    .as_u64()
+                    .unwrap()
+                    >= 1,
+                "{}",
+                update["pregame_advantage"]
+            );
+            assert!(update.get("advantage_statistics").is_some());
+        }
+        // The same run under the default mode: no key anywhere, and it cannot
+        // resume the terminal run's directory (one run, one mode).
+        let mut mixed = terminal.clone();
+        mixed.loss_selection = gae_loss_v1(PregameAdvantageV1::Gae);
+        let error = run_native_expanded_training_v1(&mixed, None).unwrap_err();
+        assert!(
+            error.contains("resume plan or implementation differs"),
+            "{error}"
+        );
+        let (_default_root, default) = london_v7_config_v1(
+            "lv-default",
+            gae_loss_v1(PregameAdvantageV1::Gae),
+            Some(vector),
+        );
+        let result = run_native_expanded_training_v1(&default, None).unwrap();
+        let manifest: Value =
+            read_json(&default.output_directory.join("run.json"), SMALL_CAP).unwrap();
+        assert!(manifest["loss_selection"]
+            .get("pregame_advantage")
+            .is_none());
+        for index in 0..2 {
+            assert!(iteration_update_v1(&result, index)
+                .get("pregame_advantage")
+                .is_none());
+        }
+    }
+
+    /// A scalar offset and seven equal entries are one run: the same
+    /// after-state hash and the same collected actions at every update (the
+    /// episodes differ only in the field's own text).
+    #[test]
+    fn a_scalar_offset_and_seven_equal_entries_run_identically() {
+        use crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1;
+        use crate::expanded_deck_training_v1::PregameAdvantageV1;
+        let after_states_and_actions = |label: &str, offset: LondonKeepOffsetV1| {
+            let (_root, config) =
+                london_v7_config_v1(label, gae_loss_v1(PregameAdvantageV1::Gae), Some(offset));
+            let result = run_native_expanded_training_v1(&config, None).unwrap();
+            (0..2)
+                .map(|index| {
+                    let update = iteration_update_v1(&result, index);
+                    let pins: Vec<PinnedFileV1> =
+                        serde_json::from_value(update["trajectories"].clone()).unwrap();
+                    let selected: Vec<Value> = pins
+                        .iter()
+                        .map(|pin| {
+                            let trajectory: Value =
+                                serde_json::from_str(&fs::read_to_string(&pin.path).unwrap())
+                                    .unwrap();
+                            let decisions = trajectory["decisions"].as_array().unwrap();
+                            assert!(!decisions.is_empty());
+                            Value::Array(decisions.iter().map(|d| d["selected"].clone()).collect())
+                        })
+                        .collect();
+                    (update["after_state_sha256"].clone(), Value::Array(selected))
+                })
+                .collect::<Vec<_>>()
+        };
+        for value in [6.5f64, 1.0e4] {
+            let scalar = after_states_and_actions(
+                &format!("scalar-{value}"),
+                LondonKeepOffsetV1::Scalar(value),
+            );
+            let spread = after_states_and_actions(
+                &format!("spread-{value}"),
+                LondonKeepOffsetV1::PerCount([value; 7]),
+            );
+            assert_eq!(scalar, spread, "offset {value}");
+        }
+    }
+
     #[test]
     fn loss_selection_reaches_a_real_two_iteration_cpu_run_receipt() {
         let (_root, config) = real_two_iteration_config_v1(
@@ -4367,6 +4534,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -4405,6 +4573,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -4488,6 +4657,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -4630,6 +4800,7 @@ mod tests {
             gamma: 1.0,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         };
         let w5_config = |label: &str, closed: u64, stop: Option<u64>| {
             let (root_guard, mut config) =
@@ -4729,6 +4900,7 @@ mod tests {
             gamma: 1.0,
             lambda: 0.95,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         };
         let ex1_opts = Ex1RunOptionsV1 {
             run: "w5/chain-prep-test".into(),
@@ -4796,6 +4968,7 @@ mod tests {
             gamma: 1.0,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         };
         for format in [
             crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
@@ -5194,6 +5367,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -5279,6 +5453,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -5566,6 +5741,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -5680,6 +5856,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -5765,6 +5942,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             ExpandedUpdateBackendV1::Cuda { device_ordinal: 0 },
         );

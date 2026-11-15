@@ -66,22 +66,34 @@ fn readers_receive_exactly_their_own_parse_once() {
 /// the widened value the hand-over holds.)
 #[test]
 fn a_handed_over_keep_offset_episode_equals_the_parse_of_its_file() {
+    use london_keep_offset_v1::LondonKeepOffsetV1;
     let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
     let (mut trajectory, _, _) = replay_fixture(&mut policy, None, 0, &[0, 1]);
-    // Values a schedule writes: float32 start values, decayed in float32.
-    for b0 in [15.3003f32, 27.5723, 22.1944, 0.1, 1.0e-3, 123456.7] {
+    // Values a schedule writes: float32 start values, decayed in float32. As
+    // one number, and as the first of seven with a zero entry among them.
+    let bases = [15.3003f32, 27.5723, 22.1944, 0.1, 1.0e-3, 123456.7];
+    for b0 in bases {
         for step in [1.0f32, 0.9999, 0.5, 0.123456] {
-            trajectory.episode.london_keep_offset = Some(f64::from(b0 * step));
-            let bytes = serde_json::to_vec(&trajectory).unwrap();
-            let handed = CollectionTrajectoryFieldsV1::of_trajectory_v1(&trajectory).unwrap();
-            let document: Value = serde_json::from_slice(&bytes).unwrap();
-            assert_eq!(
-                handed,
-                CollectionTrajectoryFieldsV1::of_document_v1(&document),
-                "{b0} {step}"
-            );
-            let parsed: ExpandedTrajectoryV1 = serde_json::from_slice(&bytes).unwrap();
-            assert_eq!(parsed, trajectory, "{b0} {step}");
+            let mut entries = [0.0f64; 7];
+            for (entry, base) in entries.iter_mut().zip(bases) {
+                *entry = f64::from(base * step);
+            }
+            for offset in [
+                LondonKeepOffsetV1::Scalar(f64::from(b0 * step)),
+                LondonKeepOffsetV1::PerCount(entries),
+            ] {
+                trajectory.episode.london_keep_offset = Some(offset);
+                let bytes = serde_json::to_vec(&trajectory).unwrap();
+                let handed = CollectionTrajectoryFieldsV1::of_trajectory_v1(&trajectory).unwrap();
+                let document: Value = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(
+                    handed,
+                    CollectionTrajectoryFieldsV1::of_document_v1(&document),
+                    "{offset:?}"
+                );
+                let parsed: ExpandedTrajectoryV1 = serde_json::from_slice(&bytes).unwrap();
+                assert_eq!(parsed, trajectory, "{offset:?}");
+            }
         }
     }
     // Without the offset the hand-over is unchanged and has no such member.

@@ -316,6 +316,7 @@ fn assert_verified_replay_refusals_v1(
                 gamma: -0.25,
                 lambda: 1.0,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             };
             assert_eq!(execute_s_update_v1(inputs).unwrap_err(), message);
             assert!(!out.exists());
@@ -436,6 +437,8 @@ fn assert_verified_prepared_refusals_v1(
                     gamma: -0.25,
                     lambda: 1.0,
                     entropy_coefficient: 0.0,
+                    pregame_advantage:
+                        crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
                 };
                 errors.push(execute_s_update_v1(inputs).unwrap_err());
                 assert!(!out.exists());
@@ -454,6 +457,7 @@ fn assert_verified_prepared_refusals_v1(
             gamma: -0.25,
             lambda: 1.0,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         };
         errors.push(execute_s_update_v1(inputs).unwrap_err());
         assert!(!out.exists());
