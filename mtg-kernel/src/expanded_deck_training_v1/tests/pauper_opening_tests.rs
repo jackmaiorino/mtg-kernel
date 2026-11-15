@@ -324,13 +324,21 @@ fn flat_v7_records_resolve_to_the_v4_generation_and_bind_only_v7_policies() {
 
 // London keep offset (`london_keep_offset_v1`).
 
+fn scalar_offset(value: f64) -> london_keep_offset_v1::LondonKeepOffsetV1 {
+    london_keep_offset_v1::LondonKeepOffsetV1::Scalar(value)
+}
+
+fn vector_offset(values: [f64; 7]) -> london_keep_offset_v1::LondonKeepOffsetV1 {
+    london_keep_offset_v1::LondonKeepOffsetV1::PerCount(values)
+}
+
 #[test]
 fn keep_offset_is_absent_by_default_and_refused_without_london() {
     let plain = episode(true);
     let value = serde_json::to_value(&plain).unwrap();
     assert!(value.get("london_keep_offset").is_none());
     let mut offset = episode(true);
-    offset.london_keep_offset = Some(6.5);
+    offset.london_keep_offset = Some(scalar_offset(6.5));
     let value = serde_json::to_value(&offset).unwrap();
     assert_eq!(value["london_keep_offset"], serde_json::json!(6.5));
     let parsed: ExpandedEpisodeV1 = serde_json::from_value(value).unwrap();
@@ -339,11 +347,11 @@ fn keep_offset_is_absent_by_default_and_refused_without_london() {
     // 15.3 as an f64 is not an f32 value: refused with the rest.
     for bad in [0.0, -2.0, f64::NAN, f64::INFINITY, 1.0e7, f64::MAX, 15.3] {
         let mut e = episode(true);
-        e.london_keep_offset = Some(bad);
+        e.london_keep_offset = Some(scalar_offset(bad));
         assert!(e.configurations_checked_v1().is_err());
     }
     let mut keep_seven = episode(false);
-    keep_seven.london_keep_offset = Some(6.5);
+    keep_seven.london_keep_offset = Some(scalar_offset(6.5));
     let error = keep_seven.configurations_checked_v1().unwrap_err();
     assert!(error.contains("requires a London opening"), "{error}");
 }
@@ -357,7 +365,7 @@ fn keep_offset_json_round_trips_to_the_value_the_run_compares_against() {
         for step in [1.0f32, 0.9999, 0.5, 0.123456] {
             let offset = f64::from(b0 * step);
             let mut e = episode(true);
-            e.london_keep_offset = Some(offset);
+            e.london_keep_offset = Some(scalar_offset(offset));
             e.configurations_checked_v1().unwrap();
             let text = serde_json::to_string(&e).unwrap();
             let reread: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -374,14 +382,182 @@ fn keep_offset_json_round_trips_to_the_value_the_run_compares_against() {
 
 #[test]
 fn keep_offset_batches_carry_one_value() {
+    use london_keep_offset_v1::OffsetVectorV1;
     assert_eq!(batch_london_keep_offset_v1([None, None]).unwrap(), None);
+    assert_eq!(batch_london_keep_offset_v1([]).unwrap(), None);
     assert_eq!(
-        batch_london_keep_offset_v1([Some(3.0), Some(3.0)]).unwrap(),
-        Some(3.0)
+        batch_london_keep_offset_v1([Some(scalar_offset(3.0)), Some(scalar_offset(3.0))]).unwrap(),
+        Some(OffsetVectorV1::scalar(3.0))
     );
-    assert!(batch_london_keep_offset_v1([Some(3.0), None]).is_err());
-    assert!(batch_london_keep_offset_v1([None, Some(3.0)]).is_err());
-    assert!(batch_london_keep_offset_v1([Some(3.0), Some(2.0)]).is_err());
+    assert!(batch_london_keep_offset_v1([Some(scalar_offset(3.0)), None]).is_err());
+    assert!(batch_london_keep_offset_v1([None, Some(scalar_offset(3.0))]).is_err());
+    assert!(
+        batch_london_keep_offset_v1([Some(scalar_offset(3.0)), Some(scalar_offset(2.0))]).is_err()
+    );
+    // A scalar and seven equal entries are one value; the same vector twice
+    // agrees; a vector differing in any one entry does not.
+    assert_eq!(
+        batch_london_keep_offset_v1([Some(scalar_offset(3.0)), Some(vector_offset([3.0; 7]))])
+            .unwrap(),
+        Some(OffsetVectorV1::scalar(3.0))
+    );
+    let base = [9.0, 8.0, 0.0, 6.0, 5.0, 4.0, 3.0];
+    assert_eq!(
+        batch_london_keep_offset_v1([Some(vector_offset(base)), Some(vector_offset(base))])
+            .unwrap(),
+        Some(OffsetVectorV1::per_count([
+            9.0, 8.0, 0.0, 6.0, 5.0, 4.0, 3.0
+        ]))
+    );
+    for index in 0..7 {
+        let mut other = base;
+        other[index] += 0.5;
+        assert!(
+            batch_london_keep_offset_v1([Some(vector_offset(base)), Some(vector_offset(other))])
+                .is_err(),
+            "entry {index}"
+        );
+        // A one-bit difference in one entry is a difference.
+        let mut nudged = base;
+        nudged[index] = f64::from(f32::from_bits((base[index] as f32).to_bits() + 1));
+        assert!(
+            batch_london_keep_offset_v1([Some(vector_offset(base)), Some(vector_offset(nudged))])
+                .is_err(),
+            "entry {index} one bit"
+        );
+    }
+    assert!(batch_london_keep_offset_v1([Some(vector_offset(base)), None]).is_err());
+    // A malformed member is an error whichever position it holds.
+    assert!(batch_london_keep_offset_v1([None, Some(vector_offset([0.0; 7]))]).is_err());
+    assert!(batch_london_keep_offset_v1([Some(vector_offset([0.0; 7])), None]).is_err());
+}
+
+#[test]
+fn keep_offset_vector_is_written_read_and_refused_like_the_scalar() {
+    let values = [15.25, 14.0, 0.0, 12.5, 11.0, 0.0, 9.75];
+    let mut e = episode(true);
+    e.london_keep_offset = Some(vector_offset(values));
+    e.configurations_checked_v1().unwrap();
+    let written = serde_json::to_value(&e).unwrap();
+    assert_eq!(written["london_keep_offset"], serde_json::json!(values));
+    let parsed: ExpandedEpisodeV1 = serde_json::from_value(written).unwrap();
+    assert_eq!(parsed, e);
+    // Without a London opening, the vector is refused as the scalar is.
+    let mut keep_seven = episode(false);
+    keep_seven.london_keep_offset = Some(vector_offset(values));
+    let error = keep_seven.configurations_checked_v1().unwrap_err();
+    assert!(error.contains("requires a London opening"), "{error}");
+    // Every entry is checked, zero entries included and all-zero refused.
+    for bad in [
+        [0.0; 7],
+        [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, -1.0],
+        [1.0, 1.0, f64::NAN, 1.0, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0e7, 1.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0, 1.0, 15.3, 1.0, 1.0],
+    ] {
+        let mut e = episode(true);
+        e.london_keep_offset = Some(vector_offset(bad));
+        assert!(e.configurations_checked_v1().is_err(), "{bad:?}");
+    }
+    // A vector of any other length is not a field value.
+    let mut value = serde_json::to_value(episode(true)).unwrap();
+    for length in [0usize, 1, 6, 8] {
+        value["london_keep_offset"] = serde_json::json!(vec![1.0f64; length]);
+        assert!(serde_json::from_value::<ExpandedEpisodeV1>(value.clone()).is_err());
+    }
+}
+
+#[test]
+fn keep_offset_vector_json_round_trips_entry_by_entry() {
+    // The resume comparison, per entry: every entry a schedule writes
+    // (float32(float64(b_k) * (T - u) / T)) is an f64 holding exactly an f32.
+    let bases = [15.3003f32, 27.5723, 0.0, 22.1944, 0.1, 1.0e-3, 123456.7];
+    for step in [1.0f64, 0.99996948, 0.5, 0.123456, 3.0e-5] {
+        let mut entries = [0.0f64; 7];
+        for (entry, base) in entries.iter_mut().zip(bases) {
+            *entry = f64::from((f64::from(base) * step) as f32);
+        }
+        let mut e = episode(true);
+        e.london_keep_offset = Some(vector_offset(entries));
+        e.configurations_checked_v1().unwrap();
+        let text = serde_json::to_string(&e).unwrap();
+        let reread: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(reread, serde_json::to_value(&e).unwrap(), "{text}");
+        let parsed: ExpandedEpisodeV1 = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed, e);
+        let resolved = parsed.london_keep_offset.unwrap().resolve_v1().unwrap();
+        for (bits, entry) in resolved.bits().into_iter().zip(entries) {
+            assert_eq!(f32::from_bits(bits), entry as f32);
+        }
+    }
+}
+
+/// The episode value a linear schedule stamps at fork update `u` (the chains
+/// tools' rule: `float32(float64(b_k) * (T - u) / T)` per entry, no field from
+/// `T` on), written here so the trainer is tested on every value the tools
+/// can produce.
+fn stamped_vector(
+    base: [f64; 7],
+    u: u64,
+    end: u64,
+) -> Option<london_keep_offset_v1::LondonKeepOffsetV1> {
+    (u < end)
+        .then(|| vector_offset(base.map(|b| f64::from((b * (end - u) as f64 / end as f64) as f32))))
+}
+
+#[test]
+fn keep_offset_vector_schedule_values_are_accepted_until_the_end_update_and_absent_after() {
+    let end = 32_768u64;
+    let base = [15.3003, 14.0, 0.0, 12.4375, 11.0, 0.0, 9.1875];
+    let mut previous_first_entry = f32::INFINITY;
+    for u in [
+        0u64,
+        1,
+        2,
+        100,
+        16_384,
+        32_766,
+        end - 1,
+        end,
+        end + 1,
+        40_000,
+    ] {
+        let mut e = episode(true);
+        e.london_keep_offset = stamped_vector(base, u, end);
+        e.configurations_checked_v1().unwrap();
+        let text = serde_json::to_string(&e).unwrap();
+        let reread: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(reread, serde_json::to_value(&e).unwrap(), "u {u}: {text}");
+        let parsed: ExpandedEpisodeV1 = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed, e);
+        if u < end {
+            let resolved = parsed.london_keep_offset.unwrap().resolve_v1().unwrap();
+            let bits = resolved.bits();
+            // The last update before the end still carries a positive entry
+            // everywhere the base is positive, and zero entries stay zero.
+            for (index, base) in base.iter().enumerate() {
+                assert_eq!(
+                    f32::from_bits(bits[index]) > 0.0,
+                    *base > 0.0,
+                    "u {u} entry {index}"
+                );
+            }
+            let first = f32::from_bits(bits[0]);
+            assert!(first < previous_first_entry || u == 0, "u {u}");
+            previous_first_entry = first;
+        } else {
+            // From the end update on the field is absent: not written, so the
+            // episode bytes are those of an episode that never had it.
+            assert!(e.london_keep_offset.is_none());
+            assert!(!text.contains("london_keep_offset"), "u {u}");
+        }
+    }
+    // One value per update: episodes of one update agree, those of two
+    // updates do not.
+    let a = stamped_vector(base, 5, end);
+    let b = stamped_vector(base, 6, end);
+    assert!(batch_london_keep_offset_v1([a, a]).is_ok());
+    assert!(batch_london_keep_offset_v1([a, b]).is_err());
 }
 
 #[test]
@@ -393,7 +569,7 @@ fn keep_offset_steers_announcements_records_raw_logits_and_validates() {
     let learner = test_behavior(&policy, false);
     let mut steered = episode(true);
     // Far beyond any logit gap: every learned announcement keeps.
-    steered.london_keep_offset = Some(1.0e4);
+    steered.london_keep_offset = Some(scalar_offset(1.0e4));
     let trajectory = collect_episode(&mut policy, &learner, None, &steered).unwrap();
     let record = trajectory.opening_record.clone().unwrap();
     for seat in &record.seats {
@@ -425,7 +601,7 @@ fn keep_offset_steers_announcements_records_raw_logits_and_validates() {
     for seed in [41u64, 42, 43, 44] {
         let mut moderate = episode(true);
         moderate.seed = seed;
-        moderate.london_keep_offset = Some(12.0);
+        moderate.london_keep_offset = Some(scalar_offset(12.0));
         let mut policy = FrozenPlayPolicyV1::training_fixture_v4()
             .into_flat_v7_transfer_v1()
             .unwrap();

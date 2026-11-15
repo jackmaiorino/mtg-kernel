@@ -102,6 +102,7 @@ fn native_audit_admits_flat_v7_and_v8_trajectories_only_against_their_own_identi
             gamma: 1.0,
             lambda: 0.95,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         },
         training_math: TrainingMathV1::PlatformLibm,
         record_format: CheckpointRecordFormatV1::V1,

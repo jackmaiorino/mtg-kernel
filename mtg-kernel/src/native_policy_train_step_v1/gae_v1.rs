@@ -896,7 +896,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                             tape.logits_v1(),
                             encoded.state,
                             encoded.action_features,
-                            offset,
+                            &offset,
                         )
                         .map_err(|_| {
                             NativePolicyTrainErrorV1::LondonKeepOffset {

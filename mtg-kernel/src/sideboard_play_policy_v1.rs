@@ -2065,7 +2065,9 @@ impl FrozenPlayPolicyV1 {
     pub(crate) fn select_with_training_tensor_offset_v4(
         &mut self,
         session: &FastActorSessionV1,
-        london_keep_offset: Option<f32>,
+        london_keep_offset: Option<
+            crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1,
+        >,
     ) -> Result<(u32, FrozenPlayDecisionScoresV1, NativeFlatDecisionTensorV4), String> {
         require(
             self.fresh_successor.is_some(),
@@ -2087,7 +2089,7 @@ impl FrozenPlayPolicyV1 {
                     &scores.logits,
                     &tensor.common.state,
                     &tensor.common.action_features,
-                    offset,
+                    &offset,
                 )?
             }
             None => None,

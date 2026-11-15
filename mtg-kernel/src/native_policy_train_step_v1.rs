@@ -1498,11 +1498,12 @@ pub(crate) struct NativePolicyValueTrainStateDimsV1<D: NetDimsV1> {
     no_state_digest_columns: Option<std::ops::Range<usize>>,
     /// The London keep offset of the next GAE step's batch
     /// (`expanded_deck_training_v1::london_keep_offset_v1`): subtracted from
-    /// each announcement's mulligan logit inside the log-softmax, never from a
-    /// parameter. Set by the update for one step and cleared after it; not
+    /// each announcement's mulligan logit (the entry for the acting seat's own
+    /// mulligan count) inside the log-softmax, never from a parameter. Set by the update for one step and cleared after it; not
     /// part of the state digest, snapshot or checkpoint. None (the default)
     /// is every existing step, bit for bit.
-    london_keep_offset: Option<f32>,
+    london_keep_offset:
+        Option<crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1>,
     /// Test-only: workers dirty their own MXCSR before verifying it.
     #[cfg(test)]
     dirty_worker_mxcsr_for_test: bool,
@@ -1703,11 +1704,16 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
 
     /// Sets (or clears) the London keep offset of the next GAE step. Only the
     /// CPU GAE loss reads it; every other loss refuses a set offset.
-    pub(crate) fn set_london_keep_offset_v1(&mut self, offset: Option<f32>) {
+    pub(crate) fn set_london_keep_offset_v1(
+        &mut self,
+        offset: Option<crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1>,
+    ) {
         self.london_keep_offset = offset;
     }
 
-    pub(crate) fn london_keep_offset_v1(&self) -> Option<f32> {
+    pub(crate) fn london_keep_offset_v1(
+        &self,
+    ) -> Option<crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1> {
         self.london_keep_offset
     }
 

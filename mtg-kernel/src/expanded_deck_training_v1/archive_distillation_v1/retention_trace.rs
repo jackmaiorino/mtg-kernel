@@ -413,6 +413,10 @@ pub(in crate::expanded_deck_training_v1) fn retention_trace_v1(
     let ExpandedLossSelectionV1::GaeAdvantageValueV1 { gamma, lambda, .. } = loss else {
         return Err("the trace reads gae_advantage_value runs only".into());
     };
+    ensure(
+        loss.pregame_advantage_v1().is_gae(),
+        "the trace reads ordinary GAE runs only, not the terminal pregame advantage",
+    )?;
     let value_coefficient: f32 =
         serde_json::from_value(manifest["config"]["value_coefficient"].clone()).map_err(err)?;
     let done: Value = read_pinned(&completion)?;

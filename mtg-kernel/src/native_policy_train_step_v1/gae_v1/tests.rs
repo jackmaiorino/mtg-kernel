@@ -1888,6 +1888,8 @@ fn w5_policy_mask_zeroes_masked_substeps_and_renormalizes_the_policy_term() {
 
 // London keep offset (`expanded_deck_training_v1::london_keep_offset_v1`).
 
+use crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1;
+
 fn gae_inputs(groups: &[NativePolicyPhysicalDecisionV1<'_>]) -> (Vec<f32>, Vec<f32>) {
     let value_targets: Vec<f32> = groups
         .iter()
@@ -1903,10 +1905,19 @@ fn gae_inputs(groups: &[NativePolicyPhysicalDecisionV1<'_>]) -> (Vec<f32>, Vec<f
 
 /// The fixture with its first tensor made a London announcement: pregame
 /// stage set, every action row of kind `london_opening`, row 0 the mulligan
-/// row (VALUE flag), the rest keep-like rows.
+/// row (VALUE flag), the rest keep-like rows. The acting seat has taken no
+/// mulligan.
 fn announcement_fixture(model: &NativePolicyValueNetV1) -> Fixture {
+    announcement_fixture_counts(model, 0, 0)
+}
+
+/// [`announcement_fixture`] for an acting seat that has taken `own`
+/// mulligans against a seat that has taken `other` (action columns 63 and 66,
+/// as the tensorizer writes them).
+fn announcement_fixture_counts(model: &NativePolicyValueNetV1, own: u8, other: u8) -> Fixture {
     use crate::expanded_deck_training_v1::london_keep_offset_v1::{
-        LONDON_OPENING_ACTION_COLUMN_V1, MULLIGAN_FLAG_ACTION_COLUMN_V1, PREGAME_STATE_COLUMN_V1,
+        LONDON_OPENING_ACTION_COLUMN_V1, MULLIGAN_FLAG_ACTION_COLUMN_V1,
+        OWN_MULLIGANS_ACTION_COLUMN_V1, PREGAME_STATE_COLUMN_V1,
     };
     let mut fixture = Fixture::capture(model);
     let tensor = &mut fixture.tensors[0].common;
@@ -1917,7 +1928,17 @@ fn announcement_fixture(model: &NativePolicyValueNetV1) -> Fixture {
         tensor.action_features[row * width + LONDON_OPENING_ACTION_COLUMN_V1] = 1.0;
         tensor.action_features[row * width + MULLIGAN_FLAG_ACTION_COLUMN_V1] =
             if row == 0 { 1.0 } else { 0.0 };
+        tensor.action_features[row * width + OWN_MULLIGANS_ACTION_COLUMN_V1] =
+            (f64::from(own) / 16.0) as f32;
+        tensor.action_features[row * width + 66] = (f64::from(other) / 16.0) as f32;
     }
+    refresh_first_group_outputs(model, &mut fixture);
+    fixture
+}
+
+/// Recomputes the first group's recorded logits and value from its (edited)
+/// tensor, as a collection would have recorded them.
+fn refresh_first_group_outputs(model: &NativePolicyValueNetV1, fixture: &mut Fixture) {
     let output = model
         .forward_feature_transfer_v3_mode(
             encoded_decision_view_v3(&fixture.tensors[0]),
@@ -1926,7 +1947,6 @@ fn announcement_fixture(model: &NativePolicyValueNetV1) -> Fixture {
         .unwrap();
     fixture.logits[0] = output.logits.iter().map(|v| v.to_bits()).collect();
     fixture.values[0] = output.value.to_bits();
-    fixture
 }
 
 #[test]
@@ -1938,7 +1958,7 @@ fn london_keep_offset_without_pregame_rows_changes_no_bit() {
     let (targets, advantages) = gae_inputs(&groups);
     let mut plain = base.clone();
     let mut offset = base.clone();
-    offset.set_london_keep_offset_v1(Some(5.0));
+    offset.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(5.0)));
     let a = plain
         .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
         .unwrap();
@@ -1966,7 +1986,7 @@ fn london_keep_offset_trains_on_the_sampled_distribution() {
     let offset = 2.5f32;
     let mut plain = base.clone();
     let mut shifted = base.clone();
-    shifted.set_london_keep_offset_v1(Some(offset));
+    shifted.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(offset)));
     let a = plain
         .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
         .unwrap();
@@ -2013,13 +2033,92 @@ fn london_keep_offset_trains_on_the_sampled_distribution() {
 }
 
 #[test]
+fn london_keep_offset_vector_trains_on_the_entry_for_the_own_count() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let entries = [9.0f32, 7.5, 0.0, 5.25, 4.0, 3.0, 2.0];
+    for (own, other) in [(0u8, 3u8), (1, 0), (2, 5), (3, 3), (6, 1)] {
+        let fixture = announcement_fixture_counts(base.model_v1(), own, other);
+        let steps = fixture.substeps();
+        let groups = groups(&steps);
+        let (targets, advantages) = gae_inputs(&groups);
+        let mut shifted = base.clone();
+        shifted.set_london_keep_offset_v1(Some(OffsetVectorV1::per_count(entries)));
+        let result = shifted
+            .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+            .unwrap();
+        let raw: Vec<f32> = fixture.logits[0]
+            .iter()
+            .map(|b| f32::from_bits(*b))
+            .collect();
+        let mut adjusted = raw.clone();
+        adjusted[0] -= entries[usize::from(own)];
+        let (expected, _) =
+            selected_log_softmax_math_v1(&adjusted, 0, TrainingMathV1::PlatformLibm).unwrap();
+        let announce = result
+            .selected_outputs
+            .iter()
+            .find(|o| o.group_index == 0 && o.substep_index == 0)
+            .unwrap();
+        assert_eq!(
+            announce.selected_log_probability.to_bits(),
+            expected.to_bits(),
+            "own {own} other {other}"
+        );
+        // The same step with a scalar equal to that entry is bit for bit the
+        // same update (for a zero entry, the same as no offset at all).
+        if entries[usize::from(own)] > 0.0 {
+            let mut scalar = base.clone();
+            scalar
+                .set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(entries[usize::from(own)])));
+            scalar
+                .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+                .unwrap();
+            assert_eq!(state_bits(&scalar), state_bits(&shifted), "own {own}");
+        } else {
+            let mut plain = base.clone();
+            plain
+                .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+                .unwrap();
+            assert_eq!(state_bits(&plain), state_bits(&shifted), "own {own}");
+        }
+    }
+}
+
+#[test]
+fn london_keep_offset_refuses_an_announcement_with_a_malformed_own_count() {
+    let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let mut fixture = announcement_fixture_counts(base.model_v1(), 1, 1);
+    // Rows disagree on the own count.
+    let width = fixture.tensors[0].common.action_features.len() / fixture.logits[0].len();
+    fixture.tensors[0].common.action_features[width + 63] = 3.0 / 16.0;
+    refresh_first_group_outputs(base.model_v1(), &mut fixture);
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    let mut shifted = base.clone();
+    shifted.set_london_keep_offset_v1(Some(OffsetVectorV1::per_count([
+        1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0,
+    ])));
+    assert_eq!(
+        shifted
+            .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+            .unwrap_err(),
+        NativePolicyTrainErrorV1::LondonKeepOffset {
+            code: "london-keep-offset-malformed-decision"
+        }
+    );
+    assert_eq!(shifted.london_keep_offset_v1(), None);
+    assert_eq!(state_bits(&shifted), state_bits(&base));
+}
+
+#[test]
 fn london_keep_offset_is_refused_outside_the_plain_gae_loss() {
     let base = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
     let fixture = Fixture::capture(base.model_v1());
     let steps = fixture.substeps();
     let groups = groups(&steps);
     let mut legacy = base.clone();
-    legacy.set_london_keep_offset_v1(Some(1.0));
+    legacy.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(1.0)));
     let error = legacy
         .train_step_feature_transfer_v3(&groups, VC, LR)
         .unwrap_err();
@@ -2043,14 +2142,14 @@ fn london_keep_offset_never_outlives_the_step_that_took_it() {
     let (targets, advantages) = gae_inputs(&groups);
     // Ok: the plain GAE step consumes it.
     let mut ok = base.clone();
-    ok.set_london_keep_offset_v1(Some(2.5));
+    ok.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(2.5)));
     ok.train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
         .unwrap();
     assert_eq!(ok.london_keep_offset_v1(), None);
     // Err on the first early return (a bad learning rate): consumed as well,
     // and the state is untouched.
     let mut early = base.clone();
-    early.set_london_keep_offset_v1(Some(2.5));
+    early.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(2.5)));
     assert!(early
         .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, f32::NAN)
         .is_err());
@@ -2058,7 +2157,7 @@ fn london_keep_offset_never_outlives_the_step_that_took_it() {
     assert_eq!(state_bits(&early), state_bits(&base));
     // Err with mismatched inputs: same.
     let mut mismatched = base.clone();
-    mismatched.set_london_keep_offset_v1(Some(2.5));
+    mismatched.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(2.5)));
     assert!(mismatched
         .train_step_gae_feature_transfer_v3(&groups, &targets[..0], &advantages, VC, LR)
         .is_err());
@@ -2077,7 +2176,7 @@ fn london_keep_offset_is_refused_by_the_other_update_entry_points() {
     };
     // The weighted loss.
     let mut weighted = base.clone();
-    weighted.set_london_keep_offset_v1(Some(1.0));
+    weighted.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(1.0)));
     let weights = vec![0.5f32; groups.len()];
     assert_eq!(
         weighted
@@ -2091,7 +2190,7 @@ fn london_keep_offset_is_refused_by_the_other_update_entry_points() {
     // distillation and retention entry points call it.
     let mut helper = base.clone();
     assert_eq!(helper.require_no_london_keep_offset_v1(), Ok(()));
-    helper.set_london_keep_offset_v1(Some(1.0));
+    helper.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(1.0)));
     assert_eq!(helper.require_no_london_keep_offset_v1(), Err(expected));
     assert_eq!(helper.london_keep_offset_v1(), None);
 }
