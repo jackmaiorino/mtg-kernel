@@ -105,6 +105,10 @@ fn pregame_rows_get_the_terminal_result_minus_their_own_value() {
         gae_pairs_of_values_v1(&batch.values, &batch.returns, &batch.ordinals, 1.0, 0.9).unwrap();
     let default_raw: Vec<f32> = pairs.iter().map(|(advantage, _)| *advantage).collect();
     let (mean, denominator) = mean_and_denominator(&default_raw);
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "one index across six parallel series"
+    )]
     for index in 0..batch.values.len() {
         let expected_default = (default_raw[index] - mean) / denominator;
         assert_eq!(
@@ -328,10 +332,12 @@ fn the_terminal_mode_requires_gamma_exactly_one() {
 /// A learner physical decision whose first tensor has the pregame stage
 /// column set (or clear).
 fn tensor(pregame: bool) -> NativeFlatDecisionTensorV2 {
-    let mut tensor = NativeFlatDecisionTensorV2::default();
-    tensor.state = vec![0.0; 219];
-    tensor.state[london_keep_offset_v1::PREGAME_STATE_COLUMN_V1] = f32::from(u8::from(pregame));
-    tensor
+    let mut state = vec![0.0; 219];
+    state[london_keep_offset_v1::PREGAME_STATE_COLUMN_V1] = f32::from(u8::from(pregame));
+    NativeFlatDecisionTensorV2 {
+        state,
+        ..NativeFlatDecisionTensorV2::default()
+    }
 }
 
 #[test]
