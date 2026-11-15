@@ -1,7 +1,6 @@
 //! Card-database recipes for the eternal catalog's Vintage Cube wave C1c
 //! (red and multicolor instants and sorceries). Wave C1b's tables fall through to these, and
-//! this module is the tail of the recipe chains: its own
-//! defaults are the chains' base values. Runtime programs live in
+//! these fall through to wave C2a's (`build_eternal_c2a_v1.rs`). Runtime programs live in
 //! `src/eternal_cube_c1c_v1.rs`. Every row is keyed by a name that occurs
 //! only in the eternal registry.
 
@@ -26,7 +25,7 @@ const DELAYED_BLAST_FIREBALL: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRec
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
         "Delayed Blast Fireball" => &DELAYED_BLAST_FIREBALL,
-        _ => &[],
+        _ => super::build_eternal_c2a_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -142,7 +141,7 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::None",
             "crate::eternal_cube_c1c_v1::wheel_of_fortune",
         ),
-        _ => return None,
+        _ => return super::build_eternal_c2a_v1::special_for(name),
     })
 }
 
@@ -181,13 +180,13 @@ pub(super) fn additional_modes_for(name: &str) -> &'static str {
 }
 
 /// No C1c card has kicker yet.
-pub(super) fn kicker_cost_for(_name: &str) -> Option<&'static str> {
-    None
+pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
+    super::build_eternal_c2a_v1::kicker_cost_for(name)
 }
 
 /// No C1c card is an Aura or an Equipment yet.
-pub(super) fn attachment_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn attachment_for(name: &str) -> &'static str {
+    super::build_eternal_c2a_v1::attachment_for(name)
 }
 
 /// Lingering Souls: "Flashback {1}{B}".
@@ -200,7 +199,7 @@ pub(super) fn flashback_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
-        _ => "None".to_string(),
+        _ => super::build_eternal_c2a_v1::flashback_for(name),
     }
 }
 
@@ -237,7 +236,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Delayed Blast Fireball" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::R), Pip::Colored(ManaColor::R)], generic: 4, x_count: 0 })], condition: AltCostCondition::ForetoldV1 })",
         "Mine Collapse" => "Some(AltCostDef { components: &[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::WithSubtypeV1(Subtype::Mountain) }], condition: AltCostCondition::YourTurnV1 })",
-        _ => "None",
+        _ => super::build_eternal_c2a_v1::alt_cost_for(name),
     }
 }
 
@@ -245,7 +244,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "White Flying Spirit Token" => &["Keywords::FLYING"],
-        _ => &[],
+        _ => super::build_eternal_c2a_v1::keywords_for(name),
     }
 }
 
@@ -294,6 +293,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "additional_cost:pay_x_life;spell:destroy_all_artifacts_and_creatures_mana_value_x_or_less"
         }
         "Wheel of Fortune" => "spell:each_player_discards_hand_then_draws_7",
-        _ => "none",
+        _ => super::build_eternal_c2a_v1::trigger_recipe_for(name),
     }
 }
