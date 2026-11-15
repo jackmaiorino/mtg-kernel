@@ -459,6 +459,8 @@ pub enum StandardTargetV1 {
     C1aV1(crate::eternal_cube_c1a_v1::targets::C1aTargetV1),
     /// A filter of eternal wave C1b (`eternal_cube_c1b_v1::targets`).
     C1bV1(crate::eternal_cube_c1b_v1::targets::C1bTargetV1),
+    /// A filter of eternal wave C2c (`eternal_cube_c2c_v1::targets`).
+    C2cV1(crate::eternal_cube_c2c_v1::targets::C2cTargetV1),
 }
 
 impl StandardTargetV1 {
@@ -513,6 +515,9 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_cube_c1b_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_cube_c2c_v1::targets::counts(self) {
             return counts;
         }
         match self {
@@ -707,6 +712,7 @@ pub(crate) fn target_zone_allows(target: StandardTargetV1, zone: Zone) -> bool {
         || crate::eternal_cube_c1c_v1::targets::zone_allows(target, zone)
         || crate::eternal_cube_c1a_v1::targets::zone_allows(target, zone)
         || crate::eternal_cube_c1b_v1::targets::zone_allows(target, zone)
+        || crate::eternal_cube_c2c_v1::targets::zone_allows(target, zone)
         || (target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 && zone == Zone::Stack)
         || (matches!(
             target,
@@ -1017,6 +1023,10 @@ pub(crate) fn legal_targets(
     {
         return targets;
     }
+    if let Some(targets) = crate::eternal_cube_c2c_v1::targets::legal_targets(target, prefix, state)
+    {
+        return targets;
+    }
     if target.per_slot() {
         return match target.slot_kind(prefix.len()) {
             Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
@@ -1312,6 +1322,11 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) =
+        crate::eternal_cube_c2c_v1::targets::target_matches(target, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -1548,6 +1563,8 @@ pub(crate) fn target_matches(
         StandardTargetV1::C1aV1(_) => false,
         // Answered by `eternal_cube_c1b_v1::targets` above.
         StandardTargetV1::C1bV1(_) => false,
+        // Answered by `eternal_cube_c2c_v1::targets` above.
+        StandardTargetV1::C2cV1(_) => false,
     }
 }
 

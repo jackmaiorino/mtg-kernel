@@ -30788,7 +30788,7 @@
   },
   {
    "name": "Blood Crypt",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -30812,12 +30812,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "as_enters_pay_life"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/b/BloodCrypt.java"
   },
   {
    "name": "Breeding Pool",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -30833,20 +30837,24 @@
    "toughness": null,
    "is_land": true,
    "produces_mana": [
-    "U",
-    "G"
+    "G",
+    "U"
    ],
    "decks": [
     "vintage-cube"
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "as_enters_pay_life"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/b/BreedingPool.java"
   },
   {
    "name": "Godless Shrine",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -30870,12 +30878,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "as_enters_pay_life"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/g/GodlessShrine.java"
   },
   {
    "name": "Hallowed Fountain",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -30899,12 +30911,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "as_enters_pay_life"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/h/HallowedFountain.java"
   },
   {
    "name": "Overgrown Tomb",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -30928,12 +30944,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "as_enters_pay_life"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/o/OvergrownTomb.java"
   },
   {
    "name": "Sacred Foundry",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -30949,20 +30969,24 @@
    "toughness": null,
    "is_land": true,
    "produces_mana": [
-    "W",
-    "R"
+    "R",
+    "W"
    ],
    "decks": [
     "vintage-cube"
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "as_enters_pay_life"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/SacredFoundry.java"
   },
   {
    "name": "Steam Vents",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -30986,12 +31010,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "as_enters_pay_life"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/SteamVents.java"
   },
   {
    "name": "Stomping Ground",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31015,12 +31043,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "as_enters_pay_life"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/StompingGround.java"
   },
   {
    "name": "Temple Garden",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31036,20 +31068,24 @@
    "toughness": null,
    "is_land": true,
    "produces_mana": [
-    "W",
-    "G"
+    "G",
+    "W"
    ],
    "decks": [
     "vintage-cube"
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "as_enters_pay_life"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/TempleGarden.java"
   },
   {
    "name": "Watery Grave",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31073,12 +31109,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "as_enters_pay_life"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/w/WateryGrave.java"
   },
   {
    "name": "Multiversal Passage",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31096,12 +31136,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "as_enters_choose_basic_land_type",
+    "as_enters_pay_life"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/m/MultiversalPassage.java"
   },
   {
    "name": "Indatha Triome",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31127,12 +31170,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "cycling"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/i/IndathaTriome.java"
   },
   {
    "name": "Ketria Triome",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31149,21 +31196,25 @@
    "toughness": null,
    "is_land": true,
    "produces_mana": [
+    "G",
     "U",
-    "R",
-    "G"
+    "R"
    ],
    "decks": [
     "vintage-cube"
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "cycling"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/k/KetriaTriome.java"
   },
   {
    "name": "Raugrin Triome",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31180,21 +31231,25 @@
    "toughness": null,
    "is_land": true,
    "produces_mana": [
-    "W",
     "U",
-    "R"
+    "R",
+    "W"
    ],
    "decks": [
     "vintage-cube"
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "cycling"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/r/RaugrinTriome.java"
   },
   {
    "name": "Savai Triome",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31211,21 +31266,25 @@
    "toughness": null,
    "is_land": true,
    "produces_mana": [
+    "R",
     "W",
-    "B",
-    "R"
+    "B"
    ],
    "decks": [
     "vintage-cube"
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "cycling"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/SavaiTriome.java"
   },
   {
    "name": "Zagoth Triome",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31242,21 +31301,25 @@
    "toughness": null,
    "is_land": true,
    "produces_mana": [
-    "U",
     "B",
-    "G"
+    "G",
+    "U"
    ],
    "decks": [
     "vintage-cube"
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "cycling"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/z/ZagothTriome.java"
   },
   {
    "name": "Raffine's Tower",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31282,12 +31345,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "cycling"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/r/RaffinesTower.java"
   },
   {
    "name": "Xander's Lounge",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31313,12 +31380,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "cycling"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/x/XandersLounge.java"
   },
   {
    "name": "Blazemire Verge",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31339,12 +31410,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "conditional_mana"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/b/BlazemireVerge.java"
   },
   {
    "name": "Bleachbone Verge",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31357,20 +31432,24 @@
    "toughness": null,
    "is_land": true,
    "produces_mana": [
-    "W",
-    "B"
+    "B",
+    "W"
    ],
    "decks": [
     "vintage-cube"
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "conditional_mana"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/b/BleachboneVerge.java"
   },
   {
    "name": "Botanical Sanctum",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31383,20 +31462,24 @@
    "toughness": null,
    "is_land": true,
    "produces_mana": [
-    "U",
-    "G"
+    "G",
+    "U"
    ],
    "decks": [
     "vintage-cube"
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "enters_tapped_unless"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/b/BotanicalSanctum.java"
   },
   {
    "name": "Commercial District",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31420,12 +31503,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "dual_land",
+    "enters_tapped",
+    "etb_trigger",
+    "surveil"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/c/CommercialDistrict.java"
   },
   {
    "name": "Sunbaked Canyon",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31438,20 +31527,25 @@
    "toughness": null,
    "is_land": true,
    "produces_mana": [
-    "W",
-    "R"
+    "R",
+    "W"
    ],
    "decks": [
     "vintage-cube"
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "pay_life_cost",
+    "activated_ability",
+    "sacrifice_cost",
+    "draw_card"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/SunbakedCanyon.java"
   },
   {
    "name": "Waterlogged Grove",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31464,20 +31558,25 @@
    "toughness": null,
    "is_land": true,
    "produces_mana": [
-    "U",
-    "G"
+    "G",
+    "U"
    ],
    "decks": [
     "vintage-cube"
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "pay_life_cost",
+    "activated_ability",
+    "sacrifice_cost",
+    "draw_card"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/w/WaterloggedGrove.java"
   },
   {
    "name": "Mana Confluence",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31501,12 +31600,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "any_color_mana",
+    "pay_life_cost"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/m/ManaConfluence.java"
   },
   {
    "name": "Library of Alexandria",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31526,12 +31628,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "activated_ability",
+    "tap_ability",
+    "draw_card"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/l/LibraryOfAlexandria.java"
   },
   {
    "name": "Celestial Colonnade",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31552,12 +31659,19 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "land_animation",
+    "activated_ability",
+    "flying",
+    "vigilance"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/c/CelestialColonnade.java"
   },
   {
    "name": "Creeping Tar Pit",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31578,12 +31692,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "land_animation",
+    "activated_ability",
+    "cant_be_blocked"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/c/CreepingTarPit.java"
   },
   {
    "name": "Fabled Passage",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31601,12 +31721,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "fetch_effect",
+    "library_search",
+    "shuffle"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/f/FabledPassage.java"
   },
   {
    "name": "Abandoned Air Temple",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31626,12 +31752,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped_unless",
+    "activated_ability",
+    "tap_ability"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/a/AbandonedAirTemple.java"
   },
   {
    "name": "Shelldock Isle",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -31651,12 +31782,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped",
+    "etb_trigger",
+    "hideaway",
+    "free_cast"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/ShelldockIsle.java"
   },
   {
    "name": "Talisman of Creativity",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}",
    "mana_value": 2,
    "colors": [],
@@ -31669,21 +31806,25 @@
    "toughness": null,
    "is_land": false,
    "produces_mana": [
+    "C",
     "U",
-    "R",
-    "C"
+    "R"
    ],
    "decks": [
     "vintage-cube"
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "colorless_mana",
+    "damage_controller"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/TalismanOfCreativity.java"
   },
   {
    "name": "Talisman of Curiosity",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}",
    "mana_value": 2,
    "colors": [],
@@ -31696,21 +31837,25 @@
    "toughness": null,
    "is_land": false,
    "produces_mana": [
-    "U",
+    "C",
     "G",
-    "C"
+    "U"
    ],
    "decks": [
     "vintage-cube"
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "colorless_mana",
+    "damage_controller"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/TalismanOfCuriosity.java"
   },
   {
    "name": "Talisman of Dominance",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}",
    "mana_value": 2,
    "colors": [],
@@ -31723,21 +31868,25 @@
    "toughness": null,
    "is_land": false,
    "produces_mana": [
+    "C",
     "U",
-    "B",
-    "C"
+    "B"
    ],
    "decks": [
     "vintage-cube"
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "colorless_mana",
+    "damage_controller"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/TalismanOfDominance.java"
   },
   {
    "name": "Talisman of Progress",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}",
    "mana_value": 2,
    "colors": [],
@@ -31750,21 +31899,25 @@
    "toughness": null,
    "is_land": false,
    "produces_mana": [
+    "C",
     "W",
-    "U",
-    "C"
+    "U"
    ],
    "decks": [
     "vintage-cube"
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "colorless_mana",
+    "damage_controller"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/TalismanOfProgress.java"
   },
   {
    "name": "Mind Stone",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}",
    "mana_value": 2,
    "colors": [],
@@ -31784,12 +31937,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "sacrifice_cost",
+    "draw_card"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/m/MindStone.java"
   },
   {
    "name": "Basalt Monolith",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}",
    "mana_value": 3,
    "colors": [],
@@ -31809,12 +31966,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "doesnt_untap",
+    "untap_ability"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/b/BasaltMonolith.java"
   },
   {
    "name": "Candelabra of Tawnos",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}",
    "mana_value": 1,
    "colors": [],
@@ -31832,12 +31993,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "activated_ability",
+    "tap_ability",
+    "untap_lands"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/c/CandelabraOfTawnos.java"
   },
   {
    "name": "Coalition Relic",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}",
    "mana_value": 3,
    "colors": [],
@@ -31861,12 +32026,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "any_color_mana",
+    "charge_counters",
+    "tap_ability",
+    "activated_ability"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/c/CoalitionRelic.java"
   },
   {
    "name": "Fastbond",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{G}",
    "mana_value": 1,
    "colors": [
@@ -31886,12 +32057,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "additional_land_play",
+    "damage"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/f/Fastbond.java"
   },
   {
    "name": "Everflowing Chalice",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{0}",
    "mana_value": 0,
    "colors": [],
@@ -31911,12 +32085,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "multikicker",
+    "charge_counters",
+    "mana_ability"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/e/EverflowingChalice.java"
   },
   {
    "name": "Pentad Prism",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}",
    "mana_value": 2,
    "colors": [],
@@ -31940,7 +32118,11 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "sunburst",
+    "charge_counters",
+    "any_color_mana"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/p/PentadPrism.java"
   }
  ]

@@ -256,6 +256,18 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c1c_v1::C1cStateV1::is_empty"
     )]
     pub c1c: crate::eternal_cube_c1c_v1::C1cStateV1,
+    /// Vintage Cube wave C2a's state (`eternal_cube_c2a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c2a_v1::C2aStateV1::is_empty"
+    )]
+    pub c2a: crate::eternal_cube_c2a_v1::C2aStateV1,
+    /// Vintage Cube wave C2c's state (`eternal_cube_c2c_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c2c_v1::C2cStateV1::is_empty"
+    )]
+    pub c2c: crate::eternal_cube_c2c_v1::C2cStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -1843,6 +1855,9 @@ pub(crate) fn apply_entry_counters(
     crate::eternal_premodern_p2d_v1::apply_entry(state, object);
     crate::eternal_premodern_p1a_v1::statics::apply_entry_counters(state, object);
     crate::eternal_premodern_p2b_v1::statics::apply_entry_counters(state, object);
+    // The shocklands' and Multiversal Passage's as-enters choices (Vintage
+    // Cube wave C2a).
+    crate::eternal_cube_c2a_v1::apply_entry(state, object);
     let Some(name) = definition_name(state, object) else {
         return;
     };
@@ -2071,6 +2086,8 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_sideboard_s1a_v1::delayed_triggers(
         state, events,
     ));
+    // Fastbond's land-play damage (Vintage Cube wave C2c).
+    triggers.extend(crate::eternal_cube_c2c_v1::delayed_triggers(state, events));
     triggers
 }
 

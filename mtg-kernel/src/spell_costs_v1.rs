@@ -656,7 +656,9 @@ pub(super) fn selected_spell_mana_costs_v1(
         improvise: cfg!(feature = "eternal-fixtures")
             && crate::eternal_legacy_e7a_v1::improvise_definition(definition.name),
         // Splice onto Arcane is paid like replicate: once per spliced card.
+        // Multikicker (wave C2c) is paid the same way, once per kick.
         replicate: crate::eternal_cards_v1::replicate_cost(definition.name)
+            .or_else(|| crate::eternal_cube_c2c_v1::multikicker_cost(definition.name))
             .or_else(|| crate::eternal_pauper_e8b_v1::splice_cost(definition)),
         // Painter's Servant colors every spell (eternal wave E9a).
         colorless_eldrazi: definition.colors.is_empty()

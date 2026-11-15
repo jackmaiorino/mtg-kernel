@@ -42,7 +42,30 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     super::build_eternal_c2b_v1::keywords_for(name)
 }
 
-/// Card-database tokens for this wave's abilities.
+/// Card-database tokens for this wave's abilities. Every C2a land is data
+/// driven: the shocklands and Multiversal Passage ask their as-enters life
+/// payment at run time (`eternal_cube_c2a_v1`), the Triomes' cycling, the
+/// Verges' conditional mana and Botanical Sanctum's entry condition come from
+/// `build_support/standard_lands_v1.rs`, and Commercial District's surveil is
+/// `src/trigger.rs`' shared land trigger.
 pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
-    super::build_eternal_c2b_v1::trigger_recipe_for(name)
+    match name {
+        "Blood Crypt" | "Breeding Pool" | "Godless Shrine" | "Hallowed Fountain"
+        | "Overgrown Tomb" | "Sacred Foundry" | "Steam Vents" | "Stomping Ground"
+        | "Temple Garden" | "Watery Grave" => {
+            "as_enters:may_pay_2_life_else_tapped;mana:either_basic_land_type_color"
+        }
+        "Multiversal Passage" => {
+            "as_enters:choose_basic_land_type;as_enters:may_pay_2_life_else_tapped;static:is_chosen_basic_land_type"
+        }
+        "Indatha Triome" | "Ketria Triome" | "Raugrin Triome" | "Savai Triome"
+        | "Zagoth Triome" | "Raffine's Tower" | "Xander's Lounge" => {
+            "enters_tapped;mana:three_basic_land_type_colors;cycling:3"
+        }
+        "Blazemire Verge" => "mana:b;mana:r_if_controls_swamp_or_mountain",
+        "Bleachbone Verge" => "mana:b;mana:w_if_controls_plains_or_swamp",
+        "Botanical Sanctum" => "enters_tapped_unless_two_or_fewer_other_lands;mana:g_or_u",
+        "Commercial District" => "enters_tapped;etb:surveil:1",
+        _ => super::build_eternal_c2b_v1::trigger_recipe_for(name),
+    }
 }

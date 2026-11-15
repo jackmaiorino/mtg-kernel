@@ -2759,6 +2759,9 @@ pub(crate) fn additional_land_plays(state: &GameState, player: PlayerId) -> u8 {
     // Escape to the Wilds (Vintage Cube wave C1c): "You may play an
     // additional land this turn."
     let count = count + usize::from(crate::eternal_cube_c1c_v1::extra_land_plays(state, player));
+    // Fastbond (Vintage Cube wave C2c): "You may play any number of lands on
+    // each of your turns."
+    let count = count + usize::from(crate::eternal_cube_c2c_v1::extra_land_plays(state, player));
     u8::try_from(count).unwrap_or(u8::MAX)
 }
 

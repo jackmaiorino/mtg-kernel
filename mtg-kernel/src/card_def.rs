@@ -2624,6 +2624,11 @@ pub enum ManaAbilityAmountDef {
     /// Exactly these colors at once ("{T}: Add {U}{B}", Dimir Aqueduct).
     /// The primary action color identifies the ability, not one chosen output.
     FixedColorsV1(&'static [ManaColor]),
+    /// One mana for each charge counter on the ability's own source
+    /// ("{T}: Add {C} for each charge counter on this artifact", Everflowing
+    /// Chalice). Appended for the eternal catalog. It reads the source, so
+    /// `rich_mana_ability_amount_for_source_v1` evaluates it.
+    ChargeCountersOnSourceV1,
 }
 
 /// A reusable integer derived from current game state. All consumers sample
@@ -2732,6 +2737,9 @@ pub enum EntersTappedUnlessControllerDef {
     /// (each player's own turn count in this two-player kernel) is at most
     /// this value.
     WithinOwnFirstTurns(u8),
+    /// Abandoned Air Temple: "unless you control a basic land". Appended for
+    /// the eternal catalog (wave C2b).
+    ControlsBasicLandV1,
 }
 
 /// An activation restriction on one additional printed mana ability
@@ -4022,7 +4030,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x4726_f326_9cb1_8b74;
+        const EXPECTED_ETERNAL: u64 = 0xfafc_6ead_0858_6434;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

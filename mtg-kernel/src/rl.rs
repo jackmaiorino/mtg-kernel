@@ -11336,7 +11336,10 @@ fn object_relations_public_v4(
                 || cage.owner != contract.owner
                 || cage.card_def != contract.card_def
                 || cage.zone_change_count < contract.zone_change_count
-                || crate::card_def::CARD_DEFS[contract.card_def as usize].name != "Collector's Cage"
+                || !matches!(
+                    crate::card_def::CARD_DEFS[contract.card_def as usize].name,
+                    "Collector's Cage" | "Shelldock Isle"
+                )
             {
                 return Err(RlContractError(
                     "hideaway relation changed its source incarnation".into(),

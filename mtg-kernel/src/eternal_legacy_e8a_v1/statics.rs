@@ -109,7 +109,10 @@ fn land_type_setter(state: &GameState, object: ObjectId) -> Option<(u64, Subtype
     // Spreading Seas (wave S1d): "Enchanted land is an Island."
     let seas = crate::eternal_sideboard_s1d_v1::statics::island_aura_timestamp(state, object)
         .map(|timestamp| (timestamp, Subtype::Island, ManaColor::U));
-    [islands, mountains, charmed, seas]
+    // Multiversal Passage (Vintage Cube wave C2a): "This land is the chosen
+    // type."
+    let passage = crate::eternal_cube_c2a_v1::land_type_setter(state, object);
+    [islands, mountains, charmed, seas, passage]
         .into_iter()
         .flatten()
         .max_by_key(|(timestamp, _, _)| *timestamp)

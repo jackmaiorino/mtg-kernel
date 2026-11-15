@@ -1216,6 +1216,8 @@ pub(crate) fn begin_main_phase(state: &mut GameState) -> Vec<PendingTrigger> {
     triggers.extend(mana_drains_due(state));
     // Carpet of Flowers (sideboard wave S1a).
     triggers.extend(crate::eternal_sideboard_s1a_v1::begin_main_phase(state));
+    // Coalition Relic (Vintage Cube wave C2c).
+    triggers.extend(crate::eternal_cube_c2c_v1::begin_main_phase(state));
     triggers
 }
 
@@ -1364,7 +1366,7 @@ pub(crate) fn mana_abilities_active(
 pub(crate) fn note_colors_spent(state: &mut GameState, spell: ObjectId, colors: u8) {
     if !matches!(
         definition_name(state, spell),
-        Some(PRISMATIC_ENDING | "Engineered Explosives")
+        Some(PRISMATIC_ENDING | "Engineered Explosives" | "Pentad Prism")
     ) {
         return;
     }

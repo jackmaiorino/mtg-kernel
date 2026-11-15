@@ -11443,7 +11443,25 @@ fn rich_mana_ability_amount(
         | ManaAbilityAmountDef::FixedColorsV1(_) => {
             Err("multi-color mana must use its bundle path".into())
         }
+        ManaAbilityAmountDef::ChargeCountersOnSourceV1 => {
+            Err("a charge-counter mana amount needs its source".into())
+        }
     }
+}
+
+/// `rich_mana_ability_amount` for an ability of `source`, which also reads the
+/// amounts that depend on the source (Everflowing Chalice's charge counters).
+fn rich_mana_ability_amount_for_source_v1(
+    amount: ManaAbilityAmountDef,
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+) -> Result<u8, String> {
+    if amount == ManaAbilityAmountDef::ChargeCountersOnSourceV1 {
+        let counters = state.objects.get(source).counters.charge.max(0);
+        return Ok(u8::try_from(counters).unwrap_or(u8::MAX));
+    }
+    rich_mana_ability_amount(amount, player, state)
 }
 
 fn rich_mana_ability_is_payable(
@@ -11764,6 +11782,7 @@ fn available_mana_ability_choices_unreplaced_into(
     #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_pauper_e8b_v1::mana_ability_blocked(state, source)
         || crate::eternal_premodern_p1a_v1::statics::mana_ability_blocked(state, source)
+        || crate::eternal_cube_c2c_v1::mana_ability_blocked(state, source)
     {
         return;
     }
@@ -11840,7 +11859,9 @@ fn available_mana_ability_choices_unreplaced_into(
                         continue;
                     }
                 } else {
-                    let Ok(amount) = rich_mana_ability_amount(rich.amount, player, state) else {
+                    let Ok(amount) =
+                        rich_mana_ability_amount_for_source_v1(rich.amount, player, source, state)
+                    else {
                         continue;
                     };
                     if state.players[player.index()].mana_pool[color.pool_index()]
@@ -12148,6 +12169,9 @@ fn damped_rich_mana_ability(
                 crate::bloom_tender_mana_v1::colors(state, player).len() >= 2
             }
             ManaAbilityAmountDef::FixedColorsV1(colors) => colors.len() >= 2,
+            // Damping Sphere's lands only; a charge-counter source is an
+            // artifact.
+            ManaAbilityAmountDef::ChargeCountersOnSourceV1 => false,
             amount => rich_mana_ability_amount(amount, player, state).is_ok_and(|n| n >= 2),
         }
 }
@@ -12525,7 +12549,7 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
         let amount = if bundle.is_some() {
             0
         } else {
-            rich_mana_ability_amount(rich.amount, player, state)?
+            rich_mana_ability_amount_for_source_v1(rich.amount, player, source, state)?
         };
 
         // Refuse an unrepresentable result before tapping, sacrificing, paying
@@ -12686,6 +12710,9 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
     crate::standard_cards_v1::record_floating_mana(state, player, source, choice);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_vintage_v1::restrict_produced_mana(state, player, source, choice);
+    // Pentad Prism's cost: the charge counter it removes (wave C2c).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c2c_v1::note_mana_ability_used(state, source);
     #[cfg(feature = "eternal-fixtures")]
     if cost_targets.len() != 2 {
         crate::eternal_e5a_v1::note_tapped_for_mana(state, player, source);
@@ -15810,6 +15837,7 @@ pub(crate) fn validate_pending_cast(
     let replicate = discard_x
         || (!resolution_cast_v1::free_cast(state, pending.spell)
             && (crate::eternal_cards_v1::replicate_cost(def.name).is_some()
+                || crate::eternal_cube_c2c_v1::multikicker_cost(def.name).is_some()
                 || crate::eternal_pauper_e8b_v1::splice_cost(def).is_some()));
     let expected_seed_x: Option<u8> = if !discard_x
         && (resolution_cast_v1::free_cast(state, pending.spell)
@@ -29741,6 +29769,7 @@ fn materialize_begin_cast_with_quote_v1(
                 || (def.cost.x_count == 0
                     && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
                     && crate::eternal_cards_v1::replicate_cost(def.name).is_none()
+                    && crate::eternal_cube_c2c_v1::multikicker_cost(def.name).is_none()
                     && crate::eternal_pauper_e8b_v1::splice_cost(def).is_none()))
         {
             Some(0)

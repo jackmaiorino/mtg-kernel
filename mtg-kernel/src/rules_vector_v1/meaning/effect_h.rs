@@ -197,7 +197,8 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     .amount(AmtF::fixed(1)),
             );
         }
-        EffectOp::PlayHideawayIfThreeDistinctPowers => {
+        EffectOp::PlayHideawayIfThreeDistinctPowers
+        | EffectOp::PlayHideawayIfLibraryTwentyOrFewerV1 => {
             // The fixed vocabulary has no free-play or distinct-power atom.
         }
         EffectOp::CopySpellSnapshot { .. } | EffectOp::IncreaseSpeed { .. } => { /* Runtime player ability, described by StartYourEnginesMaxSpeedDoubleStrike. */

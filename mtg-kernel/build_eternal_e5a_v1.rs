@@ -337,6 +337,8 @@ pub(super) fn conditional_tap_yield_for(name: &str) -> &'static str {
     match name {
         // "{T}: Add {C}{C}{C}."
         "Grim Monolith" => "Some(DynamicValueDef::Fixed(3))",
+        // Vintage Cube wave C2c: "{T}: Add {C}{C}{C}."
+        "Basalt Monolith" => "Some(DynamicValueDef::Fixed(3))",
         // Its two colorless abilities, offered as one adding the larger
         // amount (`eternal_e5a_v1::statics::urzas_workshop_yield`).
         "Urza's Workshop" => "Some(DynamicValueDef::UrzasLandsIfMetalcraftV1)",
@@ -347,6 +349,7 @@ pub(super) fn conditional_tap_yield_for(name: &str) -> &'static str {
 pub(super) fn conditional_tap_yield_program_for(name: &str) -> Option<&'static str> {
     match name {
         "Grim Monolith" => Some("mana_ability_add_grim_monolith"),
+        "Basalt Monolith" => Some("mana_ability_add_basalt_monolith"),
         "Urza's Workshop" => Some("mana_ability_add_urzas_workshop"),
         _ => super::build_eternal_e9a_v1::conditional_tap_yield_program_for(name),
     }

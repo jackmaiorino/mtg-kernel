@@ -1,19 +1,18 @@
 //! Vintage Cube wave C2c: native rules and public-session tests for the
 //! mana artifacts and Fastbond.
 #![cfg(feature = "eternal-fixtures")]
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code)]
 
 use crate::eternal_catalog_v1::{play_observed, Policy};
 use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, TargetSpec,
-    CARD_DEFS,
+    card_id_by_name, CardCapability, CardDef, CardType, Keywords, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
+use mtg_kernel::event::{self, CommittedEvent, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
-use serde_json::Value;
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
@@ -481,5 +480,960 @@ fn c2c_cards_are_full() {
         let card = def(name);
         assert_eq!(card.capability, CardCapability::Full, "{name}");
         assert!(card.is_executable(), "{name}");
+    }
+}
+
+#[test]
+fn c2c_cards_have_their_printed_characteristics() {
+    for (name, cost) in [
+        ("Talisman of Creativity", 2u8),
+        ("Talisman of Curiosity", 2),
+        ("Talisman of Dominance", 2),
+        ("Talisman of Progress", 2),
+        ("Mind Stone", 2),
+        ("Basalt Monolith", 3),
+        ("Candelabra of Tawnos", 1),
+        ("Coalition Relic", 3),
+        ("Everflowing Chalice", 0),
+        ("Pentad Prism", 2),
+    ] {
+        let card = def(name);
+        assert_eq!(card.types, &[CardType::Artifact], "{name}");
+        assert_eq!(card.cost.generic, cost, "{name}");
+        assert!(card.cost.pips.is_empty(), "{name}");
+        assert_eq!(card.mana_value, u16::from(cost), "{name}");
+        assert!(!card.is_land, "{name}");
+    }
+    let fastbond = def("Fastbond");
+    assert_eq!(fastbond.types, &[CardType::Enchantment]);
+    assert_eq!((fastbond.cost.generic, fastbond.cost.pips.len()), (0, 1));
+    assert_eq!(fastbond.mana_value, 1);
+
+    for name in [
+        "Talisman of Creativity",
+        "Talisman of Curiosity",
+        "Talisman of Dominance",
+        "Talisman of Progress",
+    ] {
+        let card = def(name);
+        assert_eq!(card.mana_ability_choices, &[ManaColor::C], "{name}");
+        assert_eq!(card.additional_mana_abilities.len(), 2, "{name}");
+        for ability in card.additional_mana_abilities {
+            assert_eq!(ability.ability.controller_damage, 1, "{name}");
+            assert_eq!(ability.colors.len(), 1, "{name}");
+        }
+    }
+    assert_eq!(def("Mind Stone").activated_abilities.len(), 1);
+    assert_eq!(def("Basalt Monolith").activated_abilities.len(), 1);
+    assert_eq!(def("Candelabra of Tawnos").activated_abilities.len(), 9);
+    assert_eq!(def("Coalition Relic").activated_abilities.len(), 1);
+    assert_eq!(def("Coalition Relic").mana_ability_choices.len(), 5);
+    let prism = def("Pentad Prism");
+    assert!(prism.mana_ability_choices.is_empty());
+    assert_eq!(prism.additional_mana_abilities.len(), 1);
+    assert_eq!(prism.additional_mana_abilities[0].colors.len(), 5);
+    assert!(def("Everflowing Chalice").mana_ability_def.is_some());
+    let kick = mtg_kernel::eternal_cube_c2c_v1::multikicker_cost("Everflowing Chalice")
+        .expect("multikicker cost");
+    assert_eq!((kick.generic, kick.pips.len(), kick.x_count), (2, 0, 0));
+    assert!(mtg_kernel::eternal_cube_c2c_v1::multikicker_cost("Mind Stone").is_none());
+}
+
+// ---- Helpers of this wave ------------------------------------------------------------
+
+/// Plays on to the beginning of P0's next first main phase, where it stops
+/// before any player acts.
+fn to_next_main(state: &mut GameState) {
+    let turn = state.turn;
+    pass_until(state, |state| {
+        state.turn > turn && state.active_player == P0 && state.step == Step::Main1
+    });
+}
+
+fn tap(state: &mut GameState, object: ObjectId) {
+    state.objects.get_mut(object).tapped = true;
+}
+
+fn is_tapped(state: &GameState, object: ObjectId) -> bool {
+    state.objects.get(object).tapped
+}
+
+fn charge(state: &GameState, object: ObjectId) -> i32 {
+    state.objects.get(object).counters.charge
+}
+
+/// How many 1-damage events `source` dealt to `victim` so far.
+fn damage_events(state: &GameState, source: ObjectId, victim: PlayerId) -> usize {
+    state
+        .engine
+        .event_history
+        .iter()
+        .filter(|event| {
+            matches!(
+                event,
+                CommittedEvent::Damage { source: dealer, target: Target::Player(player), amount: 1 }
+                    if *dealer == source && *player == victim
+            )
+        })
+        .count()
+}
+
+/// Whether P0 may play `land` from hand right now.
+fn can_play_land(state: &GameState, land: ObjectId) -> bool {
+    let mut probe = state.clone();
+    next(&mut probe);
+    engine::step(&mut probe, Action::PlayLand(land)).is_ok()
+}
+
+// ---- Talismans -----------------------------------------------------------------------
+
+const TALISMANS: [(&str, [ManaColor; 2]); 4] = [
+    ("Talisman of Creativity", [ManaColor::U, ManaColor::R]),
+    ("Talisman of Curiosity", [ManaColor::G, ManaColor::U]),
+    ("Talisman of Dominance", [ManaColor::U, ManaColor::B]),
+    ("Talisman of Progress", [ManaColor::W, ManaColor::U]),
+];
+
+#[test]
+fn talismans_tap_for_colorless_freely_and_deal_one_damage_for_a_color() {
+    for (name, colors) in TALISMANS {
+        let mut state = plains();
+        let talisman = put(&mut state, P0, name, Zone::Battlefield);
+        next(&mut state);
+        act(
+            &mut state,
+            Action::ActivateManaAbilityChoice(talisman, ManaColor::C),
+        );
+        assert_eq!(mana(&state, P0, ManaColor::C), 1, "{name}");
+        assert_eq!(life(&state, P0), 20, "{name}");
+        assert!(is_tapped(&state, talisman), "{name}");
+        // Tapped, it makes no more mana of any kind.
+        for color in [ManaColor::C, colors[0], colors[1]] {
+            assert!(
+                engine::step(
+                    &mut state,
+                    Action::ActivateManaAbilityChoice(talisman, color)
+                )
+                .is_err(),
+                "{name} tapped"
+            );
+        }
+
+        for color in colors {
+            let mut state = plains();
+            let talisman = put(&mut state, P0, name, Zone::Battlefield);
+            next(&mut state);
+            act(
+                &mut state,
+                Action::ActivateManaAbilityChoice(talisman, color),
+            );
+            assert_eq!(mana(&state, P0, color), 1, "{name}");
+            assert_eq!(mana(&state, P0, ManaColor::C), 0, "{name}");
+            assert_eq!(life(&state, P0), 19, "{name}");
+            assert_eq!(life(&state, P1), 20, "{name}");
+            assert!(is_tapped(&state, talisman), "{name}");
+            assert_eq!(
+                damage_events(&state, talisman, P0),
+                1,
+                "{name}: the Talisman deals the damage"
+            );
+        }
+
+        // A color it does not print is refused.
+        let other = [
+            ManaColor::W,
+            ManaColor::U,
+            ManaColor::B,
+            ManaColor::R,
+            ManaColor::G,
+        ]
+        .into_iter()
+        .find(|color| !colors.contains(color))
+        .unwrap();
+        let mut state = plains();
+        let talisman = put(&mut state, P0, name, Zone::Battlefield);
+        next(&mut state);
+        assert!(
+            engine::step(
+                &mut state,
+                Action::ActivateManaAbilityChoice(talisman, other)
+            )
+            .is_err(),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn talismans_are_cast_for_two_and_pay_a_spell_with_their_colors() {
+    for (name, colors) in TALISMANS {
+        let mut state = plains();
+        let talisman = put(&mut state, P0, name, Zone::Hand);
+        pool(&mut state, P0, &[], 2);
+        cast(&mut state, talisman, &[]);
+        assert_eq!(zone(&state, talisman), Zone::Stack, "{name}");
+        settled(&mut state);
+        assert_eq!(zone(&state, talisman), Zone::Battlefield, "{name}");
+        assert_eq!(mana(&state, P0, ManaColor::C), 0, "{name}");
+
+        // Its red mana pays for Lightning Bolt ({R}), at 1 damage to P0.
+        if colors.contains(&ManaColor::R) {
+            let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+            next(&mut state);
+            act(
+                &mut state,
+                Action::ActivateManaAbilityChoice(talisman, ManaColor::R),
+            );
+            cast(&mut state, bolt, &[Target::Player(P1)]);
+            settled(&mut state);
+            assert_eq!(life(&state, P1), 17, "{name}");
+            assert_eq!(life(&state, P0), 19, "{name}");
+        }
+    }
+}
+
+// ---- Mind Stone ----------------------------------------------------------------------
+
+#[test]
+fn mind_stone_taps_for_colorless_and_cycles_for_one() {
+    let mut state = game(&["Island", "Plains", "Plains"]);
+    let stone = put(&mut state, P0, "Mind Stone", Zone::Hand);
+    pool(&mut state, P0, &[], 2);
+    cast(&mut state, stone, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, stone), Zone::Battlefield);
+    next(&mut state);
+    act(&mut state, Action::ActivateManaAbility(stone));
+    assert_eq!(mana(&state, P0, ManaColor::C), 1);
+    assert!(is_tapped(&state, stone));
+
+    // "{1}, {T}, Sacrifice this artifact: Draw a card."
+    let mut state = game(&["Island", "Plains", "Plains"]);
+    let top = state.players[0].library[0];
+    let stone = put(&mut state, P0, "Mind Stone", Zone::Battlefield);
+    pool(&mut state, P0, &[], 1);
+    activate(&mut state, stone, 0, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, stone), Zone::Graveyard);
+    assert!(hand_contains(&state, P0, top), "drew the top card");
+    assert_eq!(state.players[0].hand.len(), 1);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0, "the {{1}} was paid");
+
+    // Without the {1}, or tapped, it cannot cycle.
+    let mut state = plains();
+    let stone = put(&mut state, P0, "Mind Stone", Zone::Battlefield);
+    assert!(!activatable(&mut state, stone, 0), "no mana for the cost");
+    pool(&mut state, P0, &[], 1);
+    assert!(activatable(&mut state, stone, 0));
+    tap(&mut state, stone);
+    assert!(!activatable(&mut state, stone, 0), "it is tapped");
+}
+
+// ---- Basalt Monolith -----------------------------------------------------------------
+
+#[test]
+fn basalt_monolith_taps_for_three_does_not_untap_and_untaps_for_three() {
+    let mut state = plains();
+    let monolith = put(&mut state, P0, "Basalt Monolith", Zone::Battlefield);
+    let stone = put(&mut state, P0, "Mind Stone", Zone::Battlefield);
+    next(&mut state);
+    act(&mut state, Action::ActivateManaAbility(monolith));
+    assert_eq!(mana(&state, P0, ManaColor::C), 3);
+    assert!(is_tapped(&state, monolith));
+
+    // "{3}: Untap this artifact." works while it is tapped, then it taps
+    // again for three more.
+    activate(&mut state, monolith, 0, &[]);
+    settled(&mut state);
+    assert!(!is_tapped(&state, monolith));
+    assert_eq!(mana(&state, P0, ManaColor::C), 0, "the untap cost {{3}}");
+    act(&mut state, Action::ActivateManaAbility(monolith));
+    assert_eq!(mana(&state, P0, ManaColor::C), 3);
+    assert!(is_tapped(&state, monolith));
+
+    // Through the next untap step it stays tapped, while another artifact
+    // untaps.
+    act(&mut state, Action::ActivateManaAbility(stone));
+    assert!(is_tapped(&state, stone));
+    to_next_main(&mut state);
+    assert!(is_tapped(&state, monolith), "doesn't untap during untap");
+    assert!(!is_tapped(&state, stone), "Mind Stone untaps");
+
+    pool(&mut state, P0, &[], 3);
+    activate(&mut state, monolith, 0, &[]);
+    settled(&mut state);
+    assert!(!is_tapped(&state, monolith));
+}
+
+#[test]
+fn basalt_monolith_untap_costs_exactly_three_and_an_opponents_never_untaps() {
+    let mut state = plains();
+    let monolith = put(&mut state, P0, "Basalt Monolith", Zone::Battlefield);
+    tap(&mut state, monolith);
+    pool(&mut state, P0, &[], 2);
+    assert!(!activatable(&mut state, monolith, 0), "two is not three");
+    pool(&mut state, P0, &[], 1);
+    assert!(activatable(&mut state, monolith, 0));
+
+    // P1's own untap step leaves P1's tapped Monolith tapped too.
+    let mut state = plains();
+    let theirs = put(&mut state, P1, "Basalt Monolith", Zone::Battlefield);
+    tap(&mut state, theirs);
+    to_next_main(&mut state);
+    assert!(is_tapped(&state, theirs), "never untaps, even on its turns");
+}
+
+// ---- Candelabra of Tawnos ------------------------------------------------------------
+
+/// The lands P0 names for a Candelabra ability are named in object order, so
+/// the announcements below list them ascending.
+fn sorted(mut lands: Vec<ObjectId>) -> Vec<Target> {
+    lands.sort_unstable();
+    lands.into_iter().map(Target::Object).collect()
+}
+
+#[test]
+fn candelabra_untaps_x_target_lands_of_either_player_tapped_or_not() {
+    let mut state = plains();
+    let candelabra = put(&mut state, P0, "Candelabra of Tawnos", Zone::Battlefield);
+    let mine: Vec<ObjectId> = (0..3)
+        .map(|_| put(&mut state, P0, "Plains", Zone::Battlefield))
+        .collect();
+    let theirs = put(&mut state, P1, "Plains", Zone::Battlefield);
+    tap(&mut state, mine[0]);
+    tap(&mut state, mine[1]);
+    tap(&mut state, theirs);
+    pool(&mut state, P0, &[], 2);
+    // Targets are announced as the ability is activated.
+    let targets = sorted(vec![mine[0], theirs]);
+    activate(&mut state, candelabra, 2, &targets);
+    assert!(is_tapped(&state, candelabra), "{{T}} is part of the cost");
+    assert!(
+        is_tapped(&state, mine[0]),
+        "nothing untaps before it resolves"
+    );
+    settled(&mut state);
+    assert!(!is_tapped(&state, mine[0]));
+    assert!(!is_tapped(&state, theirs));
+    assert!(is_tapped(&state, mine[1]), "not a target");
+
+    // An untapped land may be targeted too; it just stays untapped.
+    let mut state = plains();
+    let candelabra = put(&mut state, P0, "Candelabra of Tawnos", Zone::Battlefield);
+    let first = put(&mut state, P0, "Plains", Zone::Battlefield);
+    let second = put(&mut state, P1, "Plains", Zone::Battlefield);
+    pool(&mut state, P0, &[], 2);
+    activate(&mut state, candelabra, 2, &sorted(vec![first, second]));
+    settled(&mut state);
+    assert!(is_tapped(&state, candelabra));
+    assert!(!is_tapped(&state, first));
+    assert!(!is_tapped(&state, second));
+}
+
+#[test]
+fn candelabra_needs_exactly_x_distinct_lands_to_be_activated() {
+    // X = 0 needs no land and only taps it.
+    let mut state = plains();
+    let candelabra = put(&mut state, P0, "Candelabra of Tawnos", Zone::Battlefield);
+    assert!(activatable(&mut state, candelabra, 0));
+    assert!(!activatable(&mut state, candelabra, 1), "no land to target");
+    activate(&mut state, candelabra, 0, &[]);
+    settled(&mut state);
+    assert!(is_tapped(&state, candelabra));
+
+    // Two lands: X = 2 is offered, X = 3 is not even with {3} to pay.
+    let mut state = plains();
+    let candelabra = put(&mut state, P0, "Candelabra of Tawnos", Zone::Battlefield);
+    let first = put(&mut state, P0, "Plains", Zone::Battlefield);
+    let second = put(&mut state, P1, "Plains", Zone::Battlefield);
+    pool(&mut state, P0, &[], 3);
+    assert!(activatable(&mut state, candelabra, 1));
+    assert!(activatable(&mut state, candelabra, 2));
+    assert!(!activatable(&mut state, candelabra, 3), "only two lands");
+    assert!(!activatable(&mut state, candelabra, 8), "only two lands");
+    // The announcement takes each land once, and the second pick follows the
+    // first.
+    act(&mut state, Action::ActivateAbility(candelabra, 2));
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert_eq!(legal_targets, vec![Target::Object(first)]);
+        }
+        other => panic!("expected the first land, got {other:?}"),
+    }
+    act(&mut state, Action::ChooseTarget(Target::Object(first)));
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert_eq!(legal_targets, vec![Target::Object(second)]);
+        }
+        other => panic!("expected the second land, got {other:?}"),
+    }
+    act(&mut state, Action::ChooseTarget(Target::Object(second)));
+    settled(&mut state);
+    assert!(is_tapped(&state, candelabra));
+
+    // The cost is X and {T}: too little mana, or a tapped Candelabra, is not
+    // enough.
+    let mut state = plains();
+    let candelabra = put(&mut state, P0, "Candelabra of Tawnos", Zone::Battlefield);
+    for _ in 0..3 {
+        put(&mut state, P0, "Plains", Zone::Battlefield);
+    }
+    for land in state.players[0].battlefield.clone() {
+        if land != candelabra {
+            tap(&mut state, land);
+        }
+    }
+    pool(&mut state, P0, &[], 2);
+    assert!(activatable(&mut state, candelabra, 2));
+    assert!(!activatable(&mut state, candelabra, 3), "X = 3 needs {{3}}");
+    tap(&mut state, candelabra);
+    assert!(!activatable(&mut state, candelabra, 0), "it is tapped");
+    assert!(!activatable(&mut state, candelabra, 2), "it is tapped");
+}
+
+#[test]
+fn candelabra_cannot_target_hexproof_or_shroud_lands() {
+    // An opponent's hexproof land (Valgavoth's Lair) is not a legal target,
+    // so it does not count toward X.
+    let mut state = plains();
+    let candelabra = put(&mut state, P0, "Candelabra of Tawnos", Zone::Battlefield);
+    let plains_a = put(&mut state, P0, "Plains", Zone::Battlefield);
+    let plains_b = put(&mut state, P0, "Plains", Zone::Battlefield);
+    let lair = put(&mut state, P1, "Valgavoth's Lair", Zone::Battlefield);
+    assert!(keyword(&state, lair, Keywords::HEXPROOF));
+    pool(&mut state, P0, &[], 3);
+    assert!(activatable(&mut state, candelabra, 2));
+    assert!(
+        !activatable(&mut state, candelabra, 3),
+        "the Lair is hexproof"
+    );
+    // Naming it is refused as well.
+    act(&mut state, Action::ActivateAbility(candelabra, 2));
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(!legal_targets.contains(&Target::Object(lair)));
+        }
+        other => panic!("expected targets, got {other:?}"),
+    }
+    act(&mut state, Action::ChooseTarget(Target::Object(plains_a)));
+    choose_target(&mut state, Target::Object(plains_b));
+    settled(&mut state);
+
+    // Hexproof does not stop its own controller.
+    let mut state = plains();
+    let candelabra = put(&mut state, P0, "Candelabra of Tawnos", Zone::Battlefield);
+    let own_lair = put(&mut state, P0, "Valgavoth's Lair", Zone::Battlefield);
+    tap(&mut state, own_lair);
+    pool(&mut state, P0, &[], 1);
+    activate(&mut state, candelabra, 1, &[Target::Object(own_lair)]);
+    settled(&mut state);
+    assert!(!is_tapped(&state, own_lair));
+
+    // Shroud (Sterling Grove's, on the Lair) stops everyone, its controller
+    // too.
+    let mut state = plains();
+    let candelabra = put(&mut state, P0, "Candelabra of Tawnos", Zone::Battlefield);
+    let own_lair = put(&mut state, P0, "Valgavoth's Lair", Zone::Battlefield);
+    let grove = put(&mut state, P0, "Sterling Grove", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(grove, Zone::Battlefield),
+    );
+    assert!(keyword(&state, own_lair, Keywords::SHROUD));
+    pool(&mut state, P0, &[], 1);
+    assert!(
+        !activatable(&mut state, candelabra, 1),
+        "the only land has shroud"
+    );
+    let island = put(&mut state, P0, "Island", Zone::Battlefield);
+    act(&mut state, Action::ActivateAbility(candelabra, 1));
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert_eq!(legal_targets, vec![Target::Object(island)]);
+        }
+        other => panic!("expected targets, got {other:?}"),
+    }
+}
+
+#[test]
+fn candelabra_untaps_only_the_targets_that_are_still_legal() {
+    // One of two targets leaves the battlefield in response: the other still
+    // untaps.
+    let mut state = plains();
+    let candelabra = put(&mut state, P0, "Candelabra of Tawnos", Zone::Battlefield);
+    let kept = put(&mut state, P0, "Plains", Zone::Battlefield);
+    let lost = put(&mut state, P1, "Plains", Zone::Battlefield);
+    tap(&mut state, kept);
+    tap(&mut state, lost);
+    pool(&mut state, P0, &[], 2);
+    activate(&mut state, candelabra, 2, &sorted(vec![kept, lost]));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(lost, Zone::Graveyard),
+    );
+    settled(&mut state);
+    assert!(!is_tapped(&state, kept), "the legal target untaps");
+    assert_eq!(zone(&state, lost), Zone::Graveyard);
+
+    // Every target gone: it does nothing, and its costs stay paid.
+    let mut state = plains();
+    let candelabra = put(&mut state, P0, "Candelabra of Tawnos", Zone::Battlefield);
+    let first = put(&mut state, P0, "Plains", Zone::Battlefield);
+    let second = put(&mut state, P1, "Plains", Zone::Battlefield);
+    let other = put(&mut state, P0, "Plains", Zone::Battlefield);
+    tap(&mut state, first);
+    tap(&mut state, second);
+    tap(&mut state, other);
+    pool(&mut state, P0, &[], 2);
+    activate(&mut state, candelabra, 2, &sorted(vec![first, second]));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(first, Zone::Graveyard),
+    );
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(second, Zone::Graveyard),
+    );
+    settled(&mut state);
+    assert!(is_tapped(&state, other), "not a target, so it stays tapped");
+    assert!(is_tapped(&state, candelabra));
+    assert_eq!(mana(&state, P0, ManaColor::C), 0);
+}
+
+#[test]
+fn candelabra_untaps_up_to_eight_target_lands() {
+    let mut state = plains();
+    let candelabra = put(&mut state, P0, "Candelabra of Tawnos", Zone::Battlefield);
+    let lands: Vec<ObjectId> = (0..8)
+        .map(|_| put(&mut state, P0, "Plains", Zone::Battlefield))
+        .collect();
+    for &land in &lands {
+        tap(&mut state, land);
+    }
+    pool(&mut state, P0, &[], 8);
+    assert!(activatable(&mut state, candelabra, 8));
+    activate(&mut state, candelabra, 8, &sorted(lands.clone()));
+    settled(&mut state);
+    assert!(lands.iter().all(|&land| !is_tapped(&state, land)));
+    assert!(is_tapped(&state, candelabra));
+
+    // Seven lands are too few for X = 8.
+    let mut state = plains();
+    let candelabra = put(&mut state, P0, "Candelabra of Tawnos", Zone::Battlefield);
+    for _ in 0..7 {
+        put(&mut state, P0, "Plains", Zone::Battlefield);
+    }
+    pool(&mut state, P0, &[], 8);
+    assert!(activatable(&mut state, candelabra, 7));
+    assert!(!activatable(&mut state, candelabra, 8));
+}
+
+// ---- Coalition Relic -----------------------------------------------------------------
+
+#[test]
+fn coalition_relic_taps_for_one_mana_of_any_color() {
+    for color in [
+        ManaColor::W,
+        ManaColor::U,
+        ManaColor::B,
+        ManaColor::R,
+        ManaColor::G,
+    ] {
+        let mut state = plains();
+        let relic = put(&mut state, P0, "Coalition Relic", Zone::Battlefield);
+        next(&mut state);
+        act(&mut state, Action::ActivateManaAbilityChoice(relic, color));
+        assert_eq!(mana(&state, P0, color), 1);
+        assert!(is_tapped(&state, relic));
+        assert_eq!(charge(&state, relic), 0);
+    }
+}
+
+#[test]
+fn coalition_relic_puts_a_charge_counter_on_itself_by_tapping() {
+    let mut state = plains();
+    let relic = put(&mut state, P0, "Coalition Relic", Zone::Battlefield);
+    activate(&mut state, relic, 0, &[]);
+    settled(&mut state);
+    assert_eq!(charge(&state, relic), 1);
+    assert!(is_tapped(&state, relic));
+    assert!(!activatable(&mut state, relic, 0), "it is tapped");
+}
+
+#[test]
+fn coalition_relic_releases_its_counters_as_colors_you_choose() {
+    let mut state = plains();
+    let relic = put(&mut state, P0, "Coalition Relic", Zone::Battlefield);
+    state.objects.get_mut(relic).counters.charge = 2;
+    to_next_main(&mut state);
+    assert!(!state.stack.is_empty(), "the trigger waits on the stack");
+    // Option i of the color choice is W, U, B, R, G in that order.
+    let mut answers = [2u16, 3].into_iter();
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption { option_count, .. } => {
+            assert_eq!(option_count, 5);
+            Action::ChooseEffectOption(answers.next().expect("two colors"))
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(answers.next(), None, "one choice per counter removed");
+    assert_eq!(charge(&state, relic), 0);
+    assert_eq!(mana(&state, P0, ManaColor::B), 1);
+    assert_eq!(mana(&state, P0, ManaColor::R), 1);
+    assert_eq!(mana(&state, P0, ManaColor::W), 0);
+
+    // The same color may be chosen for each counter.
+    let mut state = plains();
+    let relic = put(&mut state, P0, "Coalition Relic", Zone::Battlefield);
+    state.objects.get_mut(relic).counters.charge = 3;
+    to_next_main(&mut state);
+    settle_option(&mut state, 4);
+    assert_eq!(mana(&state, P0, ManaColor::G), 3);
+    assert_eq!(charge(&state, relic), 0);
+}
+
+#[test]
+fn coalition_relic_with_no_counters_adds_nothing_but_a_counter_put_in_response_counts() {
+    let mut state = plains();
+    put(&mut state, P0, "Coalition Relic", Zone::Battlefield);
+    to_next_main(&mut state);
+    assert!(!state.stack.is_empty(), "it triggers with no counters too");
+    settled(&mut state);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+
+    let mut state = plains();
+    let relic = put(&mut state, P0, "Coalition Relic", Zone::Battlefield);
+    to_next_main(&mut state);
+    assert!(!state.stack.is_empty());
+    // In response, tap it for a counter; the counter resolves first and the
+    // trigger then removes it.
+    activate(&mut state, relic, 0, &[]);
+    settle_option(&mut state, 0);
+    assert_eq!(charge(&state, relic), 0);
+    assert_eq!(mana(&state, P0, ManaColor::W), 1);
+}
+
+#[test]
+fn coalition_relic_triggers_only_for_its_controller_in_the_first_main_phase() {
+    // P1's Relic with counters does nothing on P0's turn.
+    let mut state = plains();
+    let theirs = put(&mut state, P1, "Coalition Relic", Zone::Battlefield);
+    state.objects.get_mut(theirs).counters.charge = 2;
+    to_next_main(&mut state);
+    settled(&mut state);
+    assert_eq!(charge(&state, theirs), 2);
+    assert_eq!(state.players[1].mana_pool, [0; 6]);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+
+    // The beginning of the second main phase does not trigger it.
+    let mut state = plains();
+    let relic = put(&mut state, P0, "Coalition Relic", Zone::Battlefield);
+    state.objects.get_mut(relic).counters.charge = 1;
+    pass_until(&mut state, |state| state.step == Step::Main2);
+    assert_eq!(charge(&state, relic), 1);
+}
+
+// ---- Fastbond ------------------------------------------------------------------------
+
+#[test]
+fn fastbond_is_cast_for_green() {
+    let mut state = plains();
+    let fastbond = put(&mut state, P0, "Fastbond", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    cast(&mut state, fastbond, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, fastbond), Zone::Battlefield);
+}
+
+#[test]
+fn fastbond_lets_you_play_any_number_of_lands_and_hurts_after_the_first() {
+    let mut state = plains();
+    let fastbond = put(&mut state, P0, "Fastbond", Zone::Battlefield);
+    let lands: Vec<ObjectId> = (0..5)
+        .map(|_| put(&mut state, P0, "Plains", Zone::Hand))
+        .collect();
+    for (index, &land) in lands.iter().enumerate() {
+        assert!(can_play_land(&state, land), "land {index} is playable");
+        play_land(&mut state, land);
+        assert_eq!(zone(&state, land), Zone::Battlefield);
+        assert_eq!(
+            life(&state, P0),
+            20 - i32::try_from(index).unwrap(),
+            "the first land is free, each later one costs 1 life"
+        );
+        assert_eq!(damage_events(&state, fastbond, P0), index);
+    }
+    assert_eq!(life(&state, P1), 20);
+}
+
+#[test]
+fn without_fastbond_only_one_land_is_played_and_only_its_controller_gets_more() {
+    let mut state = plains();
+    let first = put(&mut state, P0, "Plains", Zone::Hand);
+    let second = put(&mut state, P0, "Plains", Zone::Hand);
+    assert!(can_play_land(&state, first));
+    play_land(&mut state, first);
+    assert!(!can_play_land(&state, second), "one land a turn");
+
+    // An opponent's Fastbond does not give P0 more land plays.
+    let mut state = plains();
+    put(&mut state, P1, "Fastbond", Zone::Battlefield);
+    let first = put(&mut state, P0, "Plains", Zone::Hand);
+    let second = put(&mut state, P0, "Plains", Zone::Hand);
+    play_land(&mut state, first);
+    assert!(!can_play_land(&state, second), "it is not P0's Fastbond");
+    assert_eq!(life(&state, P0), 20);
+    assert_eq!(life(&state, P1), 20);
+}
+
+#[test]
+fn fastbond_ignores_lands_that_enter_without_being_played() {
+    let mut state = game(&["Forest", "Island", "Plains", "Plains"]);
+    let fastbond = put(&mut state, P0, "Fastbond", Zone::Battlefield);
+    let fetch = put(&mut state, P0, "Misty Rainforest", Zone::Battlefield);
+    let first = put(&mut state, P0, "Plains", Zone::Hand);
+    let second = put(&mut state, P0, "Plains", Zone::Hand);
+    play_land(&mut state, first);
+    assert_eq!(life(&state, P0), 20);
+
+    // "Pay 1 life, Sacrifice this land: Search for a Forest or Island card":
+    // the land it finds is put onto the battlefield, not played.
+    let found = state.players[0].library[0];
+    activate(&mut state, fetch, 0, &[]);
+    let mut chosen = false;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectTargets { legal_targets, .. }
+            if !chosen && legal_targets.contains(&Target::Object(found)) =>
+        {
+            chosen = true;
+            Action::ChooseEffectTarget(Target::Object(found))
+        }
+        other => first_answer(other),
+    });
+    assert!(chosen, "the search offered the land");
+    assert_eq!(zone(&state, found), Zone::Battlefield);
+    assert_eq!(
+        life(&state, P0),
+        19,
+        "only the fetch land's own life payment"
+    );
+    assert_eq!(damage_events(&state, fastbond, P0), 0);
+    assert_eq!(state.players[0].lands_played_this_turn, 1);
+
+    // The next land played is the second one played this turn.
+    play_land(&mut state, second);
+    assert_eq!(life(&state, P0), 18);
+    assert_eq!(damage_events(&state, fastbond, P0), 1);
+}
+
+// ---- Pentad Prism --------------------------------------------------------------------
+
+#[test]
+fn pentad_prism_enters_with_a_counter_for_each_color_of_mana_spent() {
+    for (colored, colorless, expected) in [
+        (vec![ManaColor::W, ManaColor::U], 0u8, 2),
+        (vec![ManaColor::W, ManaColor::W], 0, 1),
+        (vec![ManaColor::R], 1, 1),
+        (Vec::new(), 2, 0),
+    ] {
+        let mut state = plains();
+        let prism = put(&mut state, P0, "Pentad Prism", Zone::Hand);
+        pool(&mut state, P0, &colored, colorless);
+        cast(&mut state, prism, &[]);
+        settled(&mut state);
+        assert_eq!(zone(&state, prism), Zone::Battlefield);
+        assert_eq!(
+            charge(&state, prism),
+            expected,
+            "{colored:?} and {colorless} colorless"
+        );
+    }
+}
+
+#[test]
+fn pentad_prism_removes_a_counter_to_add_one_mana_of_any_color() {
+    for color in [
+        ManaColor::W,
+        ManaColor::U,
+        ManaColor::B,
+        ManaColor::R,
+        ManaColor::G,
+    ] {
+        let mut state = plains();
+        let prism = put(&mut state, P0, "Pentad Prism", Zone::Battlefield);
+        state.objects.get_mut(prism).counters.charge = 2;
+        next(&mut state);
+        act(&mut state, Action::ActivateManaAbilityChoice(prism, color));
+        assert_eq!(mana(&state, P0, color), 1);
+        assert_eq!(charge(&state, prism), 1);
+        assert!(!is_tapped(&state, prism), "there is no {{T}} in the cost");
+        // A second activation in a row, then none left.
+        act(&mut state, Action::ActivateManaAbilityChoice(prism, color));
+        assert_eq!(mana(&state, P0, color), 2);
+        assert_eq!(charge(&state, prism), 0);
+        assert!(
+            engine::step(&mut state, Action::ActivateManaAbilityChoice(prism, color)).is_err(),
+            "no counter to remove"
+        );
+        assert_eq!(mana(&state, P0, color), 2);
+    }
+}
+
+#[test]
+fn pentad_prism_that_was_not_cast_has_no_counters_and_no_mana() {
+    let mut state = plains();
+    let prism = put(&mut state, P0, "Pentad Prism", Zone::Battlefield);
+    next(&mut state);
+    for color in [ManaColor::W, ManaColor::G] {
+        assert!(engine::step(&mut state, Action::ActivateManaAbilityChoice(prism, color)).is_err());
+    }
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+}
+
+// ---- Everflowing Chalice -------------------------------------------------------------
+
+/// P0 casts the Chalice in `chalice`, announcing `kicks` multikicker
+/// payments; returns the number of counts the cast offered.
+fn cast_chalice(state: &mut GameState, chalice: ObjectId, kicks: u16) -> u16 {
+    assert!(castable(state, chalice));
+    act(state, Action::CastSpell(chalice));
+    let counts = match next(state) {
+        Decision::ChooseEffectOption { option_count, .. } => option_count,
+        other => panic!("expected the kick count, got {other:?}"),
+    };
+    act(state, Action::ChooseEffectOption(kicks));
+    counts
+}
+
+#[test]
+fn everflowing_chalice_enters_with_a_counter_for_each_kick() {
+    for kicks in 0..=2u16 {
+        let mut state = plains();
+        let chalice = put(&mut state, P0, "Everflowing Chalice", Zone::Hand);
+        pool(&mut state, P0, &[], 4);
+        let counts = cast_chalice(&mut state, chalice, kicks);
+        assert_eq!(counts, 3, "0, 1 or 2 kicks with four mana");
+        assert_eq!(
+            engine::object_mana_value(&state, chalice),
+            0,
+            "kicks do not change the mana value"
+        );
+        settled(&mut state);
+        assert_eq!(zone(&state, chalice), Zone::Battlefield);
+        assert_eq!(charge(&state, chalice), i32::from(kicks));
+        assert_eq!(
+            mana(&state, P0, ManaColor::C),
+            4 - 2 * u8::try_from(kicks).unwrap(),
+            "each kick costs {{2}}"
+        );
+    }
+}
+
+#[test]
+fn everflowing_chalice_pays_each_kick_from_lands_and_asks_nothing_when_none_is_payable() {
+    // Six lands pay for up to three kicks.
+    let mut state = plains();
+    let lands: Vec<ObjectId> = (0..6)
+        .map(|_| put(&mut state, P0, "Plains", Zone::Battlefield))
+        .collect();
+    let chalice = put(&mut state, P0, "Everflowing Chalice", Zone::Hand);
+    let counts = cast_chalice(&mut state, chalice, 3);
+    assert_eq!(counts, 4);
+    settled(&mut state);
+    assert_eq!(charge(&state, chalice), 3);
+    assert!(lands.iter().all(|&land| is_tapped(&state, land)));
+
+    // Nothing to pay with: it is cast with no kicks and no question.
+    let mut state = plains();
+    let chalice = put(&mut state, P0, "Everflowing Chalice", Zone::Hand);
+    assert!(castable(&mut state, chalice), "its cost is {{0}}");
+    act(&mut state, Action::CastSpell(chalice));
+    settled(&mut state);
+    assert_eq!(zone(&state, chalice), Zone::Battlefield);
+    assert_eq!(charge(&state, chalice), 0);
+
+    // One mana is not enough for a kick either.
+    let mut state = plains();
+    let chalice = put(&mut state, P0, "Everflowing Chalice", Zone::Hand);
+    pool(&mut state, P0, &[], 1);
+    assert!(castable(&mut state, chalice));
+    act(&mut state, Action::CastSpell(chalice));
+    settled(&mut state);
+    assert_eq!(charge(&state, chalice), 0);
+    assert_eq!(mana(&state, P0, ManaColor::C), 1);
+}
+
+#[test]
+fn everflowing_chalice_taps_for_one_colorless_for_each_counter() {
+    for counters in [0, 1, 3] {
+        let mut state = plains();
+        let chalice = put(&mut state, P0, "Everflowing Chalice", Zone::Battlefield);
+        state.objects.get_mut(chalice).counters.charge = counters;
+        next(&mut state);
+        act(&mut state, Action::ActivateManaAbility(chalice));
+        assert_eq!(
+            i32::from(mana(&state, P0, ManaColor::C)),
+            counters,
+            "{counters} counters"
+        );
+        assert!(is_tapped(&state, chalice));
+        assert_eq!(charge(&state, chalice), counters, "counters stay");
+    }
+}
+
+// ---- Public sessions -----------------------------------------------------------------
+
+#[test]
+fn c2c_decks_finish_and_replay_through_public_sessions_both_seats() {
+    let ramp = deck(&[
+        ("Forest", 9),
+        ("Mountain", 5),
+        ("Llanowar Elves", 4),
+        ("Jackal Pup", 4),
+        ("Lightning Bolt", 4),
+        ("Fastbond", 3),
+        ("Talisman of Creativity", 3),
+        ("Talisman of Curiosity", 2),
+        ("Mind Stone", 3),
+        ("Candelabra of Tawnos", 2),
+        ("Basalt Monolith", 1),
+    ]);
+    let rocks = deck(&[
+        ("Swamp", 6),
+        ("Island", 5),
+        ("Plains", 3),
+        ("Hypnotic Specter", 6),
+        ("Talisman of Dominance", 3),
+        ("Talisman of Progress", 3),
+        ("Coalition Relic", 3),
+        ("Pentad Prism", 3),
+        ("Everflowing Chalice", 3),
+        ("Mind Stone", 3),
+        ("Basalt Monolith", 2),
+    ]);
+
+    let mut casts = std::collections::BTreeMap::<u16, usize>::new();
+    for (pair, first_seed) in [
+        ([ramp.clone(), rocks.clone()], 0x4332_4300_u64),
+        ([rocks, ramp], 0x4332_4310),
+    ] {
+        for seed in first_seed..first_seed + 3 {
+            for policy in [Policy::Ranked, Policy::Random(seed + 0x100)] {
+                let game = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
+                let replay = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
+                assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+                for seat in &game.cast_cards {
+                    for (&card, &count) in seat {
+                        *casts.entry(card).or_default() += count;
+                    }
+                }
+            }
+        }
+    }
+    for name in C2C_CARDS {
+        assert!(
+            casts.get(&id(name)).copied().unwrap_or(0) > 0,
+            "{name} was never cast"
+        );
     }
 }

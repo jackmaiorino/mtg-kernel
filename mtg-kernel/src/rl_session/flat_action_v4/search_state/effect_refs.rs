@@ -256,6 +256,7 @@ impl Scan<'_> {
             | Discover { .. }
             | Hideaway { .. }
             | PlayHideawayIfThreeDistinctPowers
+            | PlayHideawayIfLibraryTwentyOrFewerV1
             | IncreaseSpeed { .. }
             | DealDamage { .. }
             | DistributePlusOneCounters { .. }

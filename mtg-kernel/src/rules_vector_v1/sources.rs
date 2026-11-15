@@ -346,6 +346,12 @@ fn mana_ability_facts(def: &ManaAbilityDef, out: &mut Collector) {
             out.atoms.push(Atom::Opaque);
             AmtF::fixed(colors.len() as i64)
         }
+        ManaAbilityAmountDef::ChargeCountersOnSourceV1 => {
+            // The count of counters on the source has no facet in the frozen
+            // vocabulary.
+            out.atoms.push(Atom::Opaque);
+            AmtF::Dynamic
+        }
     };
     out.effect(
         EffectAtom::new(EvF::AddMana)
@@ -1005,6 +1011,10 @@ pub fn card_rules(card_id: u16) -> CardRulesV1 {
                 }
                 crate::card_def::EntersTappedUnlessControllerDef::WithinOwnFirstTurns(_) => {
                     // Vocabulary gap: no turn-number read.
+                    out.atoms.push(Atom::Opaque)
+                }
+                crate::card_def::EntersTappedUnlessControllerDef::ControlsBasicLandV1 => {
+                    // Vocabulary gap: no basic-supertype read.
                     out.atoms.push(Atom::Opaque)
                 }
             }
