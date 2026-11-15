@@ -221,7 +221,9 @@ pub(super) fn begin(
     let player = pending.ctx.resolve_player(rule.player, state);
     let original_candidates = candidates(state, player, rule, pending.ctx.ability_source_contract)?;
     // S365DIAG
-    if rule.filter == ObjectSelectionFilterV1::CastableArtifactInstantOrSorceryV1 {
+    if rule.filter == ObjectSelectionFilterV1::CastableArtifactInstantOrSorceryV1
+        && std::env::var_os("S365_DIAG").is_some()
+    {
         eprintln!(
             "S365DIAG begin candidates={original_candidates:?} stack={}",
             state.stack.len()

@@ -96,6 +96,7 @@ pub(super) fn play(mut state: GameState, seed: u64) -> NativeGame {
             }
             if let (Some(prev), Some(last)) = (&s365_prev, &s365_last) {
                 let mut probe = prev.clone();
+                std::env::set_var("S365_DIAG", "1");
                 eprintln!(
                     "S365DIAG replay {last:?}: {:?}",
                     mtg_kernel::engine::step(&mut probe, last.clone())
@@ -138,6 +139,7 @@ pub(super) fn play(mut state: GameState, seed: u64) -> NativeGame {
                         _ => break,
                     }
                 }
+                std::env::remove_var("S365_DIAG");
             }
         }
         if seed == 583_263_403_901_730 {
