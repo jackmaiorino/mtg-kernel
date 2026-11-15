@@ -5263,6 +5263,9 @@ pub struct RlEpisodeSessionV1 {
     current: Option<CurrentDecisionV1>,
     terminal: Option<RlSessionTerminalV1>,
     scan_menu: ScanMenuV1,
+    /// Human-play London opening (`pauper_london_v1`), the twin of the fast
+    /// session's. None for every other session.
+    pauper_london_v1: Option<Box<pauper_london_v1::PauperLondonSessionV1>>,
     #[cfg(feature = "limited-fdn-fixtures")]
     limited_incremental_trigger_order: bool,
     #[cfg(feature = "limited-fdn-fixtures")]
@@ -5583,6 +5586,7 @@ impl RlEpisodeSessionV1 {
             current: None,
             terminal: None,
             scan_menu: ScanMenuV1::LegalAnswersOnly,
+            pauper_london_v1: None,
             #[cfg(feature = "limited-fdn-fixtures")]
             limited_incremental_trigger_order: false,
             #[cfg(feature = "limited-fdn-fixtures")]
@@ -5994,6 +5998,7 @@ impl RlEpisodeSessionV1 {
             current: None,
             terminal: None,
             scan_menu: ScanMenuV1::LegalAnswersOnly,
+            pauper_london_v1: None,
             #[cfg(feature = "limited-fdn-fixtures")]
             limited_incremental_trigger_order: foundations_combat,
             #[cfg(feature = "limited-fdn-fixtures")]
@@ -6229,6 +6234,7 @@ impl RlEpisodeSessionV1 {
             state,
             surface: PolicySurfaceV5::new_for_session(),
             scan_menu: ScanMenuV1::LegalAnswersOnly,
+            pauper_london_v1: None,
             environment_revision: 0,
             policy_step_count: 0,
             physical_decision_count: 0,
@@ -6278,6 +6284,7 @@ impl RlEpisodeSessionV1 {
                 current: None,
                 terminal: None,
                 scan_menu,
+                pauper_london_v1: None,
                 #[cfg(feature = "limited-fdn-fixtures")]
                 limited_incremental_trigger_order: false,
                 #[cfg(feature = "limited-fdn-fixtures")]
@@ -6624,6 +6631,22 @@ impl RlEpisodeSessionV1 {
         &mut self,
         mut profile: Option<&mut RlPhaseProfileV1>,
     ) {
+        // The session-owned London boundary of the human-play opening
+        // (`pauper_london_v1`), before any engine advance. Absent otherwise.
+        if let Some(london) = self.pauper_london_v1.as_deref_mut() {
+            if let Err(error) = pauper_london_v1::drive_london_pregame_v1(&mut self.state, london) {
+                self.current = None;
+                self.terminal = Some(halted_terminal(
+                    &self.deck_ids,
+                    self.deck_hashes,
+                    self.episode_id,
+                    format!("fail_closed:pauper_london_v1:{error}"),
+                    self.policy_step_count,
+                    self.physical_decision_count,
+                ));
+                return;
+            }
+        }
         if let Err(error) =
             crate::graveyard_return_public_v61::require_legacy_visible(&self.state, None)
         {

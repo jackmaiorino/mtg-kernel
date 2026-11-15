@@ -144,6 +144,28 @@ impl FlatV4LockstepV1 {
         Ok(Self { episode_id, fast })
     }
 
+    /// The human-play London twin of `reset`: both seats learned, London
+    /// before any advance, the same legacy deal as the raw session's
+    /// `RlEpisodeSessionV1::reset_pauper_london_human_v1`.
+    pub(crate) fn reset_london_human(
+        episode_id: u64,
+        env_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+    ) -> Result<Self, FlatV4LockstepErrorV1> {
+        let fast = FastActorSessionV1::reset_pauper_london_human_v1(
+            episode_id,
+            env_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            [crate::rl_session::pauper_london_v1::PauperMulliganModeV1::Learned; 2],
+        )
+        .map_err(|error| FlatV4LockstepErrorV1::Reset(error.message))?;
+        Ok(Self { episode_id, fast })
+    }
+
     pub(crate) fn fast_session(&self) -> &FastActorSessionV1 {
         &self.fast
     }
