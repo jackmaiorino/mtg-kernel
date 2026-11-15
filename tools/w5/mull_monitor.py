@@ -11,15 +11,27 @@ registered decks) and, for an episode with an `opening`, `opening_record` (per s
 iterations complete, so an arm with `mull_monitor: true` (chains.py; scratch arms only) has `reap_iteration` call
 `record_iteration` first: one line per iteration is appended to `<segment>/opening.jsonl` and nothing else is kept.
 
-**Line** (`v` 1, compact JSON, about 0.45 KB per iteration with nine decks, so about 14 KB for a 32-update segment,
-and one inode per segment, whatever the batch size): `it` (the iteration's index in its segment; the global update is the segment's manifest
-offset plus `it`), `n` (episodes with an opening), `off` (the `london_keep_offset` every opening episode carried, null
-when none did; `offs` lists the distinct values, null included, only if the episodes disagreed), `learned` (seats in
+**Line** (`v` 2; `v` 1 lines, written by earlier tools, still read; compact JSON, about 0.9 KB per iteration with nine
+decks, and one inode per segment, whatever the batch size): `it` (the iteration's index in its segment; the global
+update is the segment's manifest offset plus `it`), `n` (episodes with an opening), `off` (the `london_keep_offset`
+every opening episode carried: a number, or with a per-count lean vector the list of 7; null when none did; `offs`
+lists the distinct values, null included, only if the episodes disagreed), `learned` (seats in
 `learned` mode), `kept` (those seats by kept hand size, index 0 to 7), `exp` (their exposed pregame decisions),
 `decks` (the same histogram per registered deck name), `fixed` (seats in `keep_seven` mode), and when nonzero `plain`
 (episodes without an opening), `norec` (opening episodes without a record) and `fixed_not7` (a `keep_seven` seat
-that did not keep seven: never expected). A failed iteration gets `{"v": 1, "it": k, "error": "..."}` instead, and a
+that did not keep seven: never expected). A failed iteration gets `{"v": 2, "it": k, "error": "..."}` instead, and a
 later pass may replace it. The hook is idempotent by `it`, never raises into the reaper and never keeps a file.
+
+**Per-count fields** (new in `v` 2; the number of mulligans the acting seat has already taken is its count k, 0 to 6):
+`dk` (7 ints: announcements answered by learned seats at own count k), `ma` (7 ints: of those, the mulligans), `rk`
+and `rn` (8 floats and 8 ints: the sum of the seat's terminal reward, and the number of seats counted, by kept hand
+size 0 to 7; a seat whose game has no terminal reward is left out of both), and, read from the pregame decision rows
+of the trajectory, `vn` (7 ints: announcements at count k whose row was read), `vk` (7 floats: the sum of the value
+head's estimate at those announcements) and `vr` (7 floats: the sum of the terminal reward of the same seats), so the
+head's pregame price at each count can be set against the realized result. `dk`, `ma`, `rk` and `rn` follow from the
+opening record alone; `vn`, `vk` and `vr` need the rows (action column 63 is the acting seat's own count over 16, never
+column 66, which is the other seat's) and are left out of a line whose rows could not be read (`annbad` counts the
+episodes whose rows did not match their opening record).
 
 **Reading** (`mull_monitor.py CHAIN_DIR`): per segment and in total, from the lines alone. Per learned seat, hand
 sizes follow the London rule (`mulligans_taken` = 7 - `kept_hand_size`); a seat answers one announcement per
@@ -43,10 +55,15 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 LOG_NAME = 'opening.jsonl'
-LINE_VERSION = 1
-SCHEMA = 'w5-mull-monitor/v1'
+LINE_VERSION = 2
+READ_VERSIONS = (1, 2)  # v1 lines (no per-count fields) still read
+SCHEMA = 'w5-mull-monitor/v2'
 SIZES = 8  # a kept hand has 0 to 7 cards
+COUNTS = 7  # the acting seat's own mulligans taken at an announcement: 0 to 6 (a seventh forces a zero-card keep)
 MODES = ('learned', 'keep_seven')
+PREGAME_STATE_COLUMN = 89   # state column: 1.0 on every pregame decision (announcements and put-backs)
+OWN_COUNT_COLUMN = 63       # action column: the acting seat's own mulligans taken over 16 (never column 66)
+KIND_COLUMNS = (15, 69)     # action columns: (1, 1) is the mulligan row, (1, 0) the keep row of an announcement
 _DECODER = json.JSONDecoder()
 
 
@@ -136,24 +153,106 @@ def open_records(files):
     return datas
 
 
+def _tensor_float(x):
+    """A tensor entry or value as a float: the trainer writes float32 values as their bit patterns (integers)."""
+    if isinstance(x, bool) or not isinstance(x, (int, float)):
+        raise ValueError(f'not a tensor number: {x!r}')
+    if isinstance(x, int):
+        if not 0 <= x < 1 << 32:
+            raise ValueError(f'not a float32 bit pattern: {x!r}')
+        return struct.unpack('<f', struct.pack('<I', x))[0]
+    return x
+
+
+def announcement_of(row):
+    """`(actor, own count k, value)` of one pregame decision row if it is a keep-or-mulligan announcement, None for
+    any other pregame row (a put-back). k is read from the own-count column of the action rows (column 63, the acting
+    seat's own mulligans taken over 16, exactly k/16 in float32 for an integer k in 0 to 6; never column 66, the other
+    seat's count), both rows agreeing; anything else raises ValueError. The value is the head's estimate on the row."""
+    logits = row.get('logits')
+    if not (isinstance(logits, list) and len(logits) == 2):
+        return None
+    flat = row['tensor']['action_features']
+    if not isinstance(flat, list) or len(flat) % 2:
+        raise ValueError('an announcement row without two action rows')
+    width = len(flat) // 2
+    if width <= max(OWN_COUNT_COLUMN, *KIND_COLUMNS):
+        raise ValueError('an action row too narrow for the pregame columns')
+    kinds = sorted((_tensor_float(flat[r * width + KIND_COLUMNS[0]]), _tensor_float(flat[r * width + KIND_COLUMNS[1]]))
+                   for r in (0, 1))
+    if kinds != [(1.0, 0.0), (1.0, 1.0)]:
+        return None
+    own = [_tensor_float(flat[r * width + OWN_COUNT_COLUMN]) for r in (0, 1)]
+    k = round(own[0] * 16)
+    if own[0] != own[1] or not 0 <= k < COUNTS or own[0] != struct.unpack('<f', struct.pack('<f', k / 16))[0]:
+        raise ValueError(f'the own-count column of an announcement is {own}, not k/16 for one k in 0..{COUNTS - 1}')
+    actor = row['actor']
+    if type(actor) is not int or actor not in (0, 1):
+        raise ValueError(f'a pregame row of actor {actor!r}')
+    return actor, k, _tensor_float(row['value'])
+
+
+def pregame_announcements(text):
+    """The announcements `(actor, k, value)` of a trajectory's text, in order, read from its leading pregame decision
+    rows only (state column 89 equal to 1.0); the first other row ends the scan, so a trajectory of thousands of
+    rows costs a handful of row parses. None when the decision rows cannot be read."""
+    at = text.find('"decisions":')
+    at = text.find('[', at) if at >= 0 else -1
+    if at < 0:
+        return None
+    at += 1
+    out = []
+    while at < len(text):
+        while at < len(text) and text[at] in ' \t\r\n,':
+            at += 1
+        if at >= len(text) or text[at] == ']':
+            break
+        row, at = _DECODER.raw_decode(text, at)
+        tensor = row.get('tensor') if isinstance(row, dict) else None
+        state = tensor.get('state') if isinstance(tensor, dict) else None
+        if not isinstance(state, list):
+            return None
+        if len(state) <= PREGAME_STATE_COLUMN or _tensor_float(state[PREGAME_STATE_COLUMN]) != 1.0:
+            break
+        found = announcement_of(row)
+        if found is not None:
+            out.append(found)
+    return out
+
+
+def _reward_of(terminal):
+    reward = terminal.get('terminal_reward') if isinstance(terminal, dict) else None
+    ok = isinstance(reward, list) and reward and all(isinstance(r, (int, float)) and not isinstance(r, bool)
+                                                     for r in reward)
+    return [float(r) for r in reward] if ok else None
+
+
 def read_episode(data):
     """What the monitor needs of one trajectory file's bytes (plain or sealed): `{'opening': bool, 'offset': the
-    episode's london_keep_offset or None, 'decks': [deck name per seat], 'seats': the opening record's seats or
-    None}`. A trajectory holds thousands of decision rows, so only the `episode` and `opening_record` members are
-    parsed (found by key, checked for their shape); anything that does not look right falls back to a full parse."""
+    episode's london_keep_offset (a number, a list of 7, or None), 'decks': [deck name per seat], 'seats': the opening
+    record's seats or None, 'reward': the terminal reward per seat or None, 'ann': the pregame announcements
+    (`announcement_of`) or None where they could not be read}`. A trajectory holds thousands of decision rows, so only
+    the `episode`, `opening_record` and `terminal` members and the leading pregame rows are parsed (found by key,
+    checked for their shape); anything that does not look right falls back to a full parse (the announcements then
+    stay None if the rows are unreadable; they are never a reason to refuse the episode)."""
     text = _qual().open_record(data).decode('utf-8')
-    episode, record = None, None
+    episode, record, terminal = None, None, None
     try:
         episode, record = _member(text, 'episode', False), _member(text, 'opening_record', True)
+        terminal = _member(text, 'terminal', True)
     except ValueError:
         episode = None
     if not (isinstance(episode, dict) and isinstance(episode.get('registered'), list) and 'id' in episode and
             'seed' in episode and (record is None or (isinstance(record, dict) and isinstance(record.get('seats'), list)))):
         doc = json.loads(text)
-        episode, record = doc['episode'], doc.get('opening_record')
+        episode, record, terminal = doc['episode'], doc.get('opening_record'), doc.get('terminal')
+    try:
+        ann = pregame_announcements(text) if episode.get('opening') is not None else []
+    except (ValueError, KeyError, TypeError):
+        ann = None
     return {'opening': episode.get('opening') is not None, 'offset': episode.get('london_keep_offset'),
             'decks': [str(r.get('label', '')).split('/')[0] for r in episode['registered']],
-            'seats': None if record is None else record['seats']}
+            'seats': None if record is None else record['seats'], 'reward': _reward_of(terminal), 'ann': ann}
 
 
 def check_seat(seat):
@@ -165,41 +264,89 @@ def check_seat(seat):
         raise ValueError(f'an opening record seat is not a valid London seat: {seat}')
 
 
+def _offset_key(o):
+    """An episode's offset as a comparable value: a number stays, a per-count list becomes a tuple, None stays."""
+    return tuple(o) if isinstance(o, list) else o
+
+
+def _offset_json(o):
+    return list(o) if isinstance(o, tuple) else o
+
+
+def _announcements_match(seats, ann):
+    """Whether the announcement rows are exactly those the opening record implies: per learned seat, one row at each
+    count 0 to min(mulligans taken, 6), in order, and no row of any other seat."""
+    seen = {}
+    for actor, k, _ in ann:
+        seen.setdefault(actor, []).append(k)
+    want = {i: list(range(min(7 - s['kept_hand_size'], COUNTS - 1) + 1)) for i, s in enumerate(seats)
+            if s['mode'] == 'learned'}
+    return seen == want
+
+
 def iteration_line(it, episodes):
-    """The log line (a dict) for iteration `it` from `episodes` (`read_episode` results)."""
+    """The log line (a dict) for iteration `it` from `episodes` (`read_episode` results; the keys `reward` and `ann`
+    may be missing, which leaves their fields at zero)."""
     kept, decks = [0] * SIZES, {}
     learned = exposed = fixed = fixed_not7 = plain = norec = opened = 0
+    dk, ma, vn = [0] * COUNTS, [0] * COUNTS, [0] * COUNTS
+    vk, vr = [0.0] * COUNTS, [0.0] * COUNTS
+    rk, rn = [0.0] * SIZES, [0] * SIZES
+    norew = annbad = 0
     offsets = []
     for e in episodes:
         if not e['opening']:
             plain += 1
             continue
         opened += 1
-        offsets.append(e['offset'])
+        offsets.append(_offset_key(e['offset']))
         if e['seats'] is None:
             norec += 1
             continue
         if len(e['seats']) != len(e['decks']):
             raise ValueError('the opening record and the registered decks disagree on the seat count')
-        for seat, deck in zip(e['seats'], e['decks']):
+        reward = e.get('reward')
+        for i, (seat, deck) in enumerate(zip(e['seats'], e['decks'])):
             check_seat(seat)
             if seat['mode'] == 'learned':
                 learned += 1
                 exposed += seat['exposed_pregame_decisions']
-                kept[seat['kept_hand_size']] += 1
-                decks.setdefault(deck, [0] * SIZES)[seat['kept_hand_size']] += 1
+                size, taken = seat['kept_hand_size'], seat['mulligans_taken']
+                kept[size] += 1
+                decks.setdefault(deck, [0] * SIZES)[size] += 1
+                # a seat answers at counts 0..taken (the keep), unless forced to zero cards: then at 0..6, all mulligans
+                for k in range(min(taken, COUNTS - 1) + 1):
+                    dk[k] += 1
+                for k in range(min(taken, COUNTS)):
+                    ma[k] += 1
+                if reward is not None and i < len(reward):
+                    rk[size] += reward[i]
+                    rn[size] += 1
+                else:
+                    norew += 1
             else:
                 fixed += 1
                 fixed_not7 += seat['kept_hand_size'] != 7
-    values = sorted({o for o in offsets if o is not None})
+        if 'ann' in e:
+            if e['ann'] is None or reward is None or not _announcements_match(e['seats'], e['ann']):
+                annbad += 1
+            else:
+                for actor, k, value in e['ann']:
+                    vn[k] += 1
+                    vk[k] += value
+                    vr[k] += reward[actor]
+    values = sorted({o for o in offsets if o is not None}, key=lambda o: o if isinstance(o, tuple) else (o,))
     mixed = len(values) + (any(o is None for o in offsets)) > 1
-    line = {'v': LINE_VERSION, 'it': it, 'n': opened, 'off': None if mixed or not values else values[0],
-            'learned': learned, 'kept': kept, 'exp': exposed, 'fixed': fixed, 'decks': decks}
-    for key, value in (('plain', plain), ('norec', norec), ('fixed_not7', fixed_not7)):
+    line = {'v': LINE_VERSION, 'it': it, 'n': opened, 'off': None if mixed or not values else _offset_json(values[0]),
+            'learned': learned, 'kept': kept, 'exp': exposed, 'fixed': fixed, 'decks': decks,
+            'dk': dk, 'ma': ma, 'rk': [round(x, 6) for x in rk], 'rn': rn, 'vn': vn,
+            'vk': [round(x, 6) for x in vk], 'vr': [round(x, 6) for x in vr]}
+    for key, value in (('plain', plain), ('norec', norec), ('fixed_not7', fixed_not7), ('norew', norew),
+                       ('annbad', annbad)):
         if value:
             line[key] = value
     if mixed:
-        line['offs'] = values + ([None] if any(o is None for o in offsets) else [])
+        line['offs'] = [_offset_json(o) for o in values] + ([None] if any(o is None for o in offsets) else [])
     return line
 
 
@@ -219,7 +366,7 @@ def read_log(path):
         try:
             doc = json.loads(chunk)
             it = doc['it']
-            if type(it) is not int or doc.get('v') != LINE_VERSION:
+            if type(it) is not int or doc.get('v') not in READ_VERSIONS:
                 raise ValueError('not a monitor line')
         except (ValueError, KeyError, TypeError):
             bad += 1
@@ -315,14 +462,20 @@ def record_all(segment, log_path):
 
 # ---------------------------------------------------------------- reading the logs
 
+COUNT_LISTS = (('dk', COUNTS), ('ma', COUNTS), ('vn', COUNTS), ('vk', COUNTS), ('vr', COUNTS), ('rk', SIZES),
+               ('rn', SIZES))
+
+
 def empty_sums():
-    return {'iterations': 0, 'n': 0, 'plain': 0, 'norec': 0, 'learned': 0, 'kept': [0] * SIZES, 'exp': 0,
-            'fixed': 0, 'fixed_not7': 0, 'decks': {}}
+    sums = {'iterations': 0, 'n': 0, 'plain': 0, 'norec': 0, 'learned': 0, 'kept': [0] * SIZES, 'exp': 0,
+            'fixed': 0, 'fixed_not7': 0, 'decks': {}, 'v2_iterations': 0, 'norew': 0, 'annbad': 0}
+    sums.update({key: [0] * size for key, size in COUNT_LISTS})
+    return sums
 
 
 def add_line(sums, line):
     sums['iterations'] += 1
-    for key in ('n', 'plain', 'norec', 'learned', 'exp', 'fixed', 'fixed_not7'):
+    for key in ('n', 'plain', 'norec', 'learned', 'exp', 'fixed', 'fixed_not7', 'norew', 'annbad'):
         sums[key] += line.get(key, 0)
     for i, c in enumerate(line['kept']):
         sums['kept'][i] += c
@@ -330,10 +483,49 @@ def add_line(sums, line):
         mine = sums['decks'].setdefault(deck, [0] * SIZES)
         for i, c in enumerate(hist):
             mine[i] += c
+    if 'dk' in line:  # a v2 line: the per-count fields (a v1 line has none and adds nothing)
+        sums['v2_iterations'] += 1
+        for key, size in COUNT_LISTS:
+            for i, c in enumerate(line.get(key) or [0] * size):
+                sums[key][i] += c
+
+
+def merge_sums(total, sums):
+    """`sums` (one segment's tally) added into `total`."""
+    total['iterations'] += sums['iterations']
+    for key in ('n', 'plain', 'norec', 'learned', 'exp', 'fixed', 'fixed_not7', 'v2_iterations', 'norew', 'annbad'):
+        total[key] += sums[key]
+    for key, size in (('kept', SIZES),) + COUNT_LISTS:
+        for i in range(size):
+            total[key][i] += sums[key][i]
+    for deck, hist in sums['decks'].items():
+        mine = total['decks'].setdefault(deck, [0] * SIZES)
+        for i, c in enumerate(hist):
+            mine[i] += c
 
 
 def _ratio(a, b):
     return None if not b else round(a / b, 6)
+
+
+def by_count(sums):
+    """Per own count k (mulligans the acting seat has already taken): announcements answered by learned seats, the
+    mulligans among them, the share that mulligan again, announcements per update, and, where the rows were read, the
+    value head's mean estimate against the mean realized terminal reward of the same seats. Only v2 lines count."""
+    n = sums['v2_iterations']
+    out = []
+    for k in range(COUNTS):
+        d, m, v = sums['dk'][k], sums['ma'][k], sums['vn'][k]
+        out.append({'count': k, 'decisions': d, 'mulligans': m, 'mulligan_again_share': _ratio(m, d),
+                    'decisions_per_update': _ratio(d, n), 'value_rows': v, 'mean_value': _ratio(sums['vk'][k], v),
+                    'mean_realized': _ratio(sums['vr'][k], v)})
+    return out
+
+
+def ret_by_size(sums):
+    """Per kept hand size 0 to 7: learned seats counted and their mean terminal reward (v2 lines only)."""
+    return [{'size': s, 'n': sums['rn'][s], 'mean_return': _ratio(sums['rk'][s], sums['rn'][s])}
+            for s in range(SIZES)]
 
 
 def rates(sums):
@@ -359,11 +551,19 @@ def _f32(x):
 
 
 def expected_offset(schedule, update):
-    """The schedule's offset at a global update (None from its end on), or False if it cannot be computed."""
+    """The schedule's offset at a global update (None from its end on; a list of 7 for a per-count schedule), or
+    False if it cannot be computed."""
     try:
         return _qual().keep_offset_value(schedule, update)
     except ValueError:
         return False
+
+
+def _as_f32(off):
+    """A logged offset as the float32 value it was written from (numbers and lists alike; None stays None)."""
+    if off is None:
+        return None
+    return [_f32(x) for x in off] if isinstance(off, list) else _f32(off)
 
 
 def summarize_segment(seg_dir, offset, planned, schedule, per_update):
@@ -380,7 +580,7 @@ def summarize_segment(seg_dir, offset, planned, schedule, per_update):
         update = None if offset is None else offset + it
         mixed += 'offs' in line
         want = expected_offset(schedule, update) if schedule is not None and update is not None else False
-        if want is not False and ('offs' in line or (None if line['off'] is None else _f32(line['off'])) != want):
+        if want is not False and ('offs' in line or _as_f32(line['off']) != want):
             mismatch += 1
         if per_update:
             row = {'update': update, 'segment': seg_dir.name, 'it': it, 'offset': line['off'],
@@ -400,6 +600,9 @@ def summarize_segment(seg_dir, offset, planned, schedule, per_update):
            'fixed_seats': sums['fixed'], 'fixed_seats_not_seven': sums['fixed_not7']}
     out.update(rates(sums))
     out['by_deck'] = by_deck(sums)
+    out['by_count'] = by_count(sums)
+    out['ret_by_size'] = ret_by_size(sums)
+    out['v2_iterations'] = sums['v2_iterations']
     return out, sums, rows
 
 
@@ -407,6 +610,19 @@ def by_deck(sums):
     return {d: {k: v for k, v in _rates(h, sum(h)).items() if k in ('learned_seats', 'mulligan_rate',
                                                                     'zero_card_share', 'mean_kept')}
             for d, h in sorted(sums['decks'].items())}
+
+
+def lean_in_force(schedule, segments):
+    """For a per-count schedule (`b0` a list of 7): the newest logged update, the 7 values its trajectories carried
+    and the 7 the schedule gives there (None from the end update on); None for a scalar or absent schedule."""
+    if not (isinstance(schedule, dict) and isinstance(schedule.get('b0'), list)):
+        return None
+    for s in reversed(segments):
+        if s['last_update'] is not None:
+            want = expected_offset(schedule, s['last_update'])
+            return {'update': s['last_update'], 'logged': s['offset_last'], 'schedule': None if want is False else want,
+                    'equal': None if want is False else _as_f32(s['offset_last']) == want}
+    return None
 
 
 def summarize_chain(chain_dir, per_update=False, last=None):
@@ -427,21 +643,19 @@ def summarize_chain(chain_dir, per_update=False, last=None):
         summary['index'] = s
         segments.append(summary)
         rows += seg_rows
-        total['iterations'] += sums['iterations']
-        for key in ('n', 'plain', 'norec', 'learned', 'exp', 'fixed', 'fixed_not7'):
-            total[key] += sums[key]
-        for i, c in enumerate(sums['kept']):
-            total['kept'][i] += c
-        for deck, hist in sums['decks'].items():
-            mine = total['decks'].setdefault(deck, [0] * SIZES)
-            for i, c in enumerate(hist):
-                mine[i] += c
+        merge_sums(total, sums)
     report = {'schema': SCHEMA, 'chain': man.get('chain', cdir.name), 'arm_name': man.get('arm_name'),
-              'keep_offset_schedule': schedule, 'segments_in_manifest': len(segs),
+              'keep_offset_schedule': schedule, 'pregame_advantage': (man.get('recipe') or {}).get('pregame_advantage'),
+              'segments_in_manifest': len(segs),
               'segments_read': [s['segment'] for s in segments], 'segments': segments,
               'total': dict(iterations_logged=total['iterations'], episodes=total['n'], plain_episodes=total['plain'],
                             fixed_seats=total['fixed'], fixed_seats_not_seven=total['fixed_not7'],
-                            **rates(total), by_deck=by_deck(total))}
+                            v2_iterations=total['v2_iterations'], episodes_without_reward_seats=total['norew'],
+                            episodes_with_unmatched_rows=total['annbad'], by_count=by_count(total),
+                            ret_by_size=ret_by_size(total), **rates(total), by_deck=by_deck(total))}
+    force = lean_in_force(schedule, segments)
+    if force is not None:
+        report['lean_vector_in_force'] = force
     if per_update:
         report['per_update'] = rows
     return report
@@ -470,11 +684,42 @@ def _shares(r):
     return [_pct(s[7]), _pct(s[6]), _pct(s[5]), _pct(s[4]), _pct(low)]
 
 
+def _offcell(x):
+    """A logged offset in the segment table: a number, or entry 0 of a per-count vector marked with a star."""
+    return f'{_num(x[0])}*' if isinstance(x, list) else _num(x)
+
+
+def format_by_count(report):
+    """The per-count table, the kept-size return table and the lean vector in force (v2 lines only)."""
+    t = report['total']
+    if not t.get('v2_iterations'):
+        return ['per count: no v2 lines in the segments read']
+    out = [f'per own count k (mulligans already taken), {t["v2_iterations"]} v2 updates read',
+           table(['k', 'decisions', 'per update', 'mulligans', 'again %', 'value rows', 'mean V', 'mean realized'],
+                 [[r['count'], r['decisions'], _num(r['decisions_per_update']), r['mulligans'],
+                   _pct(r['mulligan_again_share']), r['value_rows'], _num(r['mean_value']), _num(r['mean_realized'])]
+                  for r in t['by_count']]),
+           'terminal return by kept hand size (learned seats)',
+           table(['size', 'seats', 'mean return'], [[r['size'], r['n'], _num(r['mean_return'])]
+                                                    for r in t['ret_by_size']])]
+    if t.get('episodes_with_unmatched_rows') or t.get('episodes_without_reward_seats'):
+        out.append(f'episodes whose pregame rows did not match their record: {t.get("episodes_with_unmatched_rows", 0)};'
+                   f' learned seats without a terminal reward: {t.get("episodes_without_reward_seats", 0)}')
+    force = report.get('lean_vector_in_force')
+    if force:
+        fmt = lambda v: '-' if v is None else '[' + ', '.join(_num(x) for x in v) + ']'  # noqa: E731
+        out.append(f'lean vector in force at update {force["update"]}: logged {fmt(force["logged"])}, '
+                   f'schedule {fmt(force["schedule"])}, equal {force["equal"]}')
+    return out
+
+
 def format_text(report, decks=True):
     head = f'chain {report["chain"]}' + (f' ({report["arm_name"]})' if report.get('arm_name') else '')
     sched = report['keep_offset_schedule']
     head += ('; keep offset b0=%s, end_update=%s, %s' % (sched['b0'], sched['end_update'], sched['shape'])
              if sched else '; no keep offset in the recipe')
+    if report.get('pregame_advantage'):
+        head += f'; pregame advantage {report["pregame_advantage"]}'
     out = [head, f'{len(report["segments"])} of {report["segments_in_manifest"]} segments read, '
            f'{report["total"]["iterations_logged"]} iterations logged']
     cols = ['seg', 'updates', 'iters', 'seats', 'mull/ann %', 'mull@7 %', 'zero %', 'mean kept', 'k7 %', 'k6 %', 'k5 %',
@@ -498,12 +743,13 @@ def format_text(report, decks=True):
         span = '-' if s['last_update'] is None else f'{s["first_update"]}..{s["last_update"]}'
         rows.append([s['segment'], span, s['iterations_logged'], s['learned_seats'], _pct(s['mulligan_rate']),
                      _pct(s['first_mulligan_share']), _pct(s['zero_card_share'], 2), _num(s['mean_kept'])]
-                    + _shares(s) + [f'{_num(s["offset_first"])}..{_num(s["offset_last"])}', '; '.join(notes)])
+                    + _shares(s) + [f'{_offcell(s["offset_first"])}..{_offcell(s["offset_last"])}', '; '.join(notes)])
     t = report['total']
     rows.append(['all', '', t['iterations_logged'], t['learned_seats'], _pct(t['mulligan_rate']),
                  _pct(t['first_mulligan_share']), _pct(t['zero_card_share'], 2), _num(t['mean_kept'])] + _shares(t)
                 + ['', ''])
     out.append(table(cols, rows))
+    out.extend(format_by_count(report))
     if decks and t['by_deck']:
         out.append('by deck (all segments read): seats, mulligan/announcement %, zero-card %, mean kept')
         out.append(table(['deck', 'seats', 'mull/ann %', 'zero %', 'mean kept'],
@@ -515,7 +761,7 @@ def format_text(report, decks=True):
                           'schedule'],
                          [[r['update'], r['segment'], r['learned_seats'], _pct(r['mulligan_rate']),
                            _pct(r['first_mulligan_share']), _pct(r['zero_card_share'], 2), _num(r['mean_kept']),
-                           _num(r['offset']), _num(r['expected_offset'])] for r in report['per_update']]))
+                           _offcell(r['offset']), _offcell(r['expected_offset'])] for r in report['per_update']]))
     return '\n'.join(out)
 
 

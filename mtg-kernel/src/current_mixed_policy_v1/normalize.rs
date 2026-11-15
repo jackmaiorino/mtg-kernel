@@ -1249,6 +1249,7 @@ pub(super) fn encode_eternal(
     let conversion = |error: serde_json::Error| Error::Projection(error.to_string());
     let mut observation = serde_json::to_value(&public.observation).map_err(conversion)?;
     super::public_projection_operands::prepare(&mut observation)?;
+    super::kellan_public_operands::prepare(&mut observation)?;
     let public = serde_json::to_value(public).map_err(conversion)?;
     let actions = actions
         .iter()
