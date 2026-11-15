@@ -187,6 +187,7 @@ pub(super) fn collect_parallel_v1(
     ex1: Option<super::ex1_collect_v1::Ex1CollectOptionsV1>,
     record_envelope: RecordEnvelopeV1,
     output_directory: PathBuf,
+    carried: Option<&super::CarriedLearnerV1>,
 ) -> Result<Value, String> {
     let started = Instant::now();
     validate_collection_workers_v1(workers)?;
@@ -214,30 +215,22 @@ pub(super) fn collect_parallel_v1(
         )?;
         super::w_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
     } else {
-        let (mut policy, mut state, transfer) = super::loaded_source_profile_v1::scoped_v1(
-            super::loaded_source_profile_v1::LoadRoleV1::CollectLearner,
-            || initialize_with_transfer_context(&source),
-        )?;
-        bind_training_math_v1(
+        let (mut policy, identity, transfer) =
+            super::load_collection_policy_and_identity_v1(&source, carried)?;
+        super::bind_collection_training_math_v1(
             &source,
             transfer.as_ref(),
             training_math,
             &mut policy,
-            &mut state,
         )?;
         collection_sampler.apply_to_learner_v1(&mut policy);
         if let Some(context) = &transfer {
             context.validate_batch(&episodes)?;
         }
-        let state_hash = hex(&state.state_sha256_v1().map_err(err)?);
+        let state_hash = identity.state_sha256.clone();
         let learner = ExpandedSeatBehaviorV1 {
             source: source.clone(),
-            identity: inference_identity_with_state_sha256_v1(
-                &source,
-                &policy,
-                &state,
-                state_hash.clone(),
-            ),
+            identity,
         };
         (policy, learner, state_hash)
     };

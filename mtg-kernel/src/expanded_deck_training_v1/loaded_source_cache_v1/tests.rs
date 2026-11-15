@@ -624,3 +624,250 @@ fn a_flat_checkpoint_that_names_another_file_is_never_kept() {
     assert_eq!(flat_matches(), before + 1);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn policy_and_identity_lookups_copy_zero_state_bytes_and_upgrade_cleanly() {
+    use crate::expanded_deck_training_v1::load_expanded_inference_v1;
+    use crate::expanded_deck_training_v1::loaded_source_profile_v1::{
+        counts_v1, reset_for_test_v1, scoped_v1, LoadRoleV1,
+    };
+
+    let root = crate::test_temp_dir_v1::TempTestDir::new_v1("loaded-source-cache-policy-split");
+    let source = fresh_source(&root);
+    let (resumed, saved) = write_checkpoint(&root, &source);
+    let descriptor_bytes = fs::read(&resumed.play_import.path).unwrap();
+
+    clear_for_test_v1();
+    reset_for_test_v1();
+
+    // First inference load populates a policy-only entry: zero kept state bytes.
+    let (first_policy, first_identity) = scoped_v1(LoadRoleV1::Opponent, || {
+        load_expanded_inference_v1(&resumed)
+    })
+    .unwrap();
+    let counts = counts_v1(LoadRoleV1::Opponent);
+    assert_eq!(
+        (
+            counts.cache_misses,
+            counts.cache_kept,
+            counts.kept_state_bytes,
+            counts.served_state_bytes,
+        ),
+        (1, 1, 0, 0)
+    );
+    let policy_bytes = counts.kept_policy_bytes;
+    assert!(policy_bytes > 0);
+
+    // Second inference load hits `serve_policy_v1`: zero served state bytes.
+    let (second_policy, second_identity) = scoped_v1(LoadRoleV1::Opponent, || {
+        load_expanded_inference_v1(&resumed)
+    })
+    .unwrap();
+    assert_eq!(second_identity, first_identity);
+    assert_eq!(
+        second_policy.actual_model_identity_v1(),
+        first_policy.actual_model_identity_v1()
+    );
+    let counts = counts_v1(LoadRoleV1::Opponent);
+    assert_eq!(
+        (
+            counts.cache_hits,
+            counts.policy_served,
+            counts.state_served,
+            counts.identity_served,
+            counts.served_state_bytes,
+            counts.served_policy_bytes,
+        ),
+        (1, 1, 0, 0, 0, policy_bytes)
+    );
+
+    // Update validation hits `serve_identity_v1`: zero policy bytes and zero state bytes.
+    let validated_identity = scoped_v1(LoadRoleV1::UpdateValidation, || {
+        load_expanded_update_inference_v1(
+            &resumed,
+            &saved.trajectories,
+            LEARNING_RATE,
+            VALUE_COEFFICIENT,
+        )
+    })
+    .unwrap();
+    assert_eq!(validated_identity, first_identity);
+    let val_counts = counts_v1(LoadRoleV1::UpdateValidation);
+    assert_eq!(
+        (
+            val_counts.cache_hits,
+            val_counts.identity_served,
+            val_counts.policy_served,
+            val_counts.state_served,
+            val_counts.served_state_bytes,
+            val_counts.served_policy_bytes,
+        ),
+        (1, 1, 0, 0, 0, 0)
+    );
+
+    // State-requiring lookup misses cleanly on a policy-only entry, then upgrades in place.
+    assert!(scoped_v1(LoadRoleV1::UpdateLearner, || {
+        lookup_v1(&resumed, &descriptor_bytes, None)
+    })
+    .unwrap()
+    .is_none());
+    let full = scoped_v1(LoadRoleV1::UpdateLearner, || initialize(&resumed)).unwrap();
+    let hit = scoped_v1(LoadRoleV1::UpdateLearner, || initialize(&resumed)).unwrap();
+    assert_same_load(&hit, &full, &resumed);
+    let learner_counts = counts_v1(LoadRoleV1::UpdateLearner);
+    assert_eq!(learner_counts.state_served, 1);
+    assert!(learner_counts.served_state_bytes > 0);
+
+    // Re-remembering policy-only never downgrades an upgraded entry that already holds state.
+    remember_policy_v1(
+        &resumed,
+        &descriptor_bytes,
+        &full.0,
+        &first_identity,
+        Some(&saved),
+    );
+    assert!(lookup_v1(&resumed, &descriptor_bytes, None)
+        .unwrap()
+        .is_some());
+
+    // FlatV8 and FlatV7 checkpoints obey the exact same policy/identity split.
+    let flat_root = root.join("flat");
+    fs::create_dir_all(&flat_root).unwrap();
+    for (flat_source, trajectories) in flat_sources_v1(&flat_root) {
+        clear_for_test_v1();
+        reset_for_test_v1();
+        let (_, flat_identity) = scoped_v1(LoadRoleV1::Opponent, || {
+            load_expanded_inference_v1(&flat_source)
+        })
+        .unwrap();
+        let (_, flat_identity_hit) = scoped_v1(LoadRoleV1::Opponent, || {
+            load_expanded_inference_v1(&flat_source)
+        })
+        .unwrap();
+        assert_eq!(flat_identity_hit, flat_identity);
+        let opp = counts_v1(LoadRoleV1::Opponent);
+        assert_eq!(
+            (
+                opp.kept_state_bytes,
+                opp.served_state_bytes,
+                opp.policy_served
+            ),
+            (0, 0, 1)
+        );
+        let check_id = scoped_v1(LoadRoleV1::UpdateValidation, || {
+            load_expanded_update_inference_v1(
+                &flat_source,
+                &trajectories,
+                LEARNING_RATE,
+                VALUE_COEFFICIENT,
+            )
+        })
+        .unwrap();
+        assert_eq!(check_id, flat_identity);
+        let val = counts_v1(LoadRoleV1::UpdateValidation);
+        assert_eq!(
+            (
+                val.identity_served,
+                val.served_policy_bytes,
+                val.served_state_bytes
+            ),
+            (1, 0, 0)
+        );
+    }
+}
+
+#[test]
+fn streaming_pin_checks_verify_multi_chunk_files_without_changing_errors() {
+    use crate::expanded_deck_training_v1::fresh_initialization_source::{
+        check_actual_in_v1, read_actual_in_v1,
+    };
+    use crate::expanded_deck_training_v1::verified_bytes_cache_v1::VerifiedBytesCacheV1;
+    use crate::expanded_deck_training_v1::{check_pinned_in_v1, read_pinned_bytes_in_v1};
+
+    let root = crate::test_temp_dir_v1::TempTestDir::new_v1("streaming-pin-checks");
+    let payload: Vec<u8> = (0..205_113usize)
+        .map(|index| ((index.wrapping_mul(37) ^ (index >> 8)) & 0xff) as u8)
+        .collect();
+    let file_path = root.join("multi-chunk.bin");
+    fs::write(&file_path, &payload).unwrap();
+    let pin = PinnedFileV1 {
+        path: file_path.canonicalize().unwrap(),
+        sha256: sha(&payload),
+    };
+    let cap = payload.len() + 16;
+
+    for resident in [false, true] {
+        let cache = VerifiedBytesCacheV1::new_v1(16 * 1024 * 1024, 64);
+        if resident {
+            cache.enable_resident_v1();
+        }
+        // Cold pass hashes by streaming 64 KiB chunks; after a full read
+        // populates the memo, the warm pass streams against memoized bytes.
+        check_pinned_in_v1(&cache, &pin).unwrap();
+        check_actual_in_v1(&cache, &pin, cap).unwrap();
+        assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap(), payload);
+        check_pinned_in_v1(&cache, &pin).unwrap();
+        check_actual_in_v1(&cache, &pin, cap).unwrap();
+        let diag = cache.diagnostics_v1();
+        assert_eq!(diag["hashed"], 3);
+        assert_eq!(diag["compared_hits"], if resident { 0 } else { 2 });
+        assert_eq!(diag["resident_hits"], if resident { 2 } else { 0 });
+
+        if !resident {
+            for offset in [0usize, 65_535, 65_536, 150_000, payload.len() - 1] {
+                let mut mutated = payload.clone();
+                mutated[offset] ^= 0x01;
+                fs::write(&pin.path, &mutated).unwrap();
+                assert_eq!(
+                    check_pinned_in_v1(&cache, &pin).unwrap_err(),
+                    read_pinned_bytes_in_v1(&cache, &pin).unwrap_err(),
+                    "offset {offset}"
+                );
+                assert_eq!(
+                    check_actual_in_v1(&cache, &pin, cap).unwrap_err(),
+                    read_actual_in_v1(&cache, &pin, cap).unwrap_err(),
+                    "actual offset {offset}"
+                );
+            }
+            for variant in [
+                payload[..payload.len() - 1].to_vec(),
+                [&payload[..], &[0xaa]].concat(),
+                vec![0u8; cap + 1],
+            ] {
+                fs::write(&pin.path, &variant).unwrap();
+                assert_eq!(
+                    check_pinned_in_v1(&cache, &pin).unwrap_err(),
+                    read_pinned_bytes_in_v1(&cache, &pin).unwrap_err(),
+                );
+                assert_eq!(
+                    check_actual_in_v1(&cache, &pin, cap).unwrap_err(),
+                    read_actual_in_v1(&cache, &pin, cap).unwrap_err(),
+                );
+            }
+            fs::remove_file(&pin.path).unwrap();
+            assert_eq!(
+                check_pinned_in_v1(&cache, &pin).is_err(),
+                read_pinned_bytes_in_v1(&cache, &pin).is_err(),
+            );
+            assert_eq!(
+                check_actual_in_v1(&cache, &pin, cap).is_err(),
+                read_actual_in_v1(&cache, &pin, cap).is_err(),
+            );
+            let dir_pin = PinnedFileV1 {
+                path: root.path().canonicalize().unwrap(),
+                sha256: pin.sha256.clone(),
+            };
+            assert_eq!(
+                check_pinned_in_v1(&cache, &dir_pin).unwrap_err(),
+                read_pinned_bytes_in_v1(&cache, &dir_pin).unwrap_err(),
+            );
+            assert_eq!(
+                check_actual_in_v1(&cache, &dir_pin, cap).unwrap_err(),
+                read_actual_in_v1(&cache, &dir_pin, cap).unwrap_err(),
+            );
+            fs::write(&pin.path, &payload).unwrap();
+            check_pinned_in_v1(&cache, &pin).unwrap();
+            check_actual_in_v1(&cache, &pin, cap).unwrap();
+        }
+    }
+}
