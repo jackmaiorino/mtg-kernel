@@ -526,6 +526,15 @@ pub enum EternalOpV1 {
     /// A leaf owned by Premodern sideboard wave P3h's module. Appended to
     /// preserve existing stack and continuation hash discriminants.
     P3hV1(crate::eternal_premodern_p3h_v1::P3hOpV1),
+    /// A leaf owned by Vintage Cube wave C1a's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    C1aV1(crate::eternal_cube_c1a_v1::C1aOpV1),
+    /// A leaf owned by Vintage Cube wave C1b's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    C1bV1(crate::eternal_cube_c1b_v1::C1bOpV1),
+    /// A leaf owned by Vintage Cube wave C1c's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    C1cV1(crate::eternal_cube_c1c_v1::C1cOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -600,6 +609,9 @@ impl EternalOpV1 {
             EternalOpV1::S1fV1(op) => op.contains_player_choice(),
             EternalOpV1::S1gV1(op) => op.contains_player_choice(),
             EternalOpV1::P3hV1(op) => op.contains_player_choice(),
+            EternalOpV1::C1aV1(op) => op.contains_player_choice(),
+            EternalOpV1::C1bV1(op) => op.contains_player_choice(),
+            EternalOpV1::C1cV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -955,6 +967,18 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     if let Some(spec) = crate::eternal_premodern_p3h_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }
+    // Vintage Cube wave C1a's printed and queued triggers.
+    if let Some(spec) = crate::eternal_cube_c1a_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Vintage Cube wave C1b's printed and queued triggers.
+    if let Some(spec) = crate::eternal_cube_c1b_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Vintage Cube wave C1c's printed and queued triggers.
+    if let Some(spec) = crate::eternal_cube_c1c_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     // Premodern sideboard wave P3a's queued triggers.
     if let Some(spec) = crate::eternal_premodern_p3a_v1::trigger_target_spec(name, effect) {
         return Some(spec);
@@ -1201,6 +1225,9 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::S1lV1(op) => crate::eternal_sideboard_s1l_v1::execute(op, ctx, state),
         EternalOpV1::S1mV1(op) => crate::eternal_sideboard_s1m_v1::execute(op, ctx, state),
         EternalOpV1::P3hV1(op) => crate::eternal_premodern_p3h_v1::execute(op, ctx, state),
+        EternalOpV1::C1aV1(op) => crate::eternal_cube_c1a_v1::execute(op, ctx, state),
+        EternalOpV1::C1bV1(op) => crate::eternal_cube_c1b_v1::execute(op, ctx, state),
+        EternalOpV1::C1cV1(op) => crate::eternal_cube_c1c_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -2069,6 +2096,9 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         || crate::eternal_premodern_p3d_v1::delayed_effect_matches(name, effect)
         || crate::eternal_premodern_p3f_v1::delayed_effect_matches(name, effect)
         || crate::eternal_premodern_p3h_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_cube_c1a_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_cube_c1b_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_cube_c1c_v1::delayed_effect_matches(name, effect)
         || crate::eternal_sideboard_s1e_v1::delayed_effect_matches(name, effect)
         || crate::eternal_sideboard_s1f_v1::delayed_effect_matches(name, effect)
         || crate::eternal_sideboard_s1g_v1::delayed_effect_matches(name, effect)

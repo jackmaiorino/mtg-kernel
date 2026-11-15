@@ -133,14 +133,15 @@ const AURAMANCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(auramancer_en
 const MONK_REALIST_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(monk_realist_enters)];
 const GHITU_SLINGER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb_trigger(ghitu_slinger_enters)];
 
-/// Triggered abilities of this module's cards, the tail of the trigger tables.
+/// Triggered abilities of this module's cards, falling through to Vintage
+/// Cube wave C1a.
 /// Ghitu Slinger's echo is queued by wave P2d's upkeep hook.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         AURAMANCER => &AURAMANCER_TRIGGERS,
         MONK_REALIST => &MONK_REALIST_TRIGGERS,
         GHITU_SLINGER => &GHITU_SLINGER_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_cube_c1a_v1::triggers_for(name),
     }
 }
 

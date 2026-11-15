@@ -290,6 +290,12 @@ mod equipment_damage_source_v4;
 pub mod eternal_bo3_v1;
 /// Pauper, Legacy and Vintage catalog card programs (`eternal-fixtures`).
 pub mod eternal_cards_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C1a).
+pub mod eternal_cube_c1a_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C1b).
+pub mod eternal_cube_c1b_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C1c).
+pub mod eternal_cube_c1c_v1;
 /// Wave E5a card programs of the eternal catalog (Vintage Raker Shops, Oath
 /// of Druids, Paradoxical Outcome, Blue Tinker and Beseech Storm, Legacy
 /// Mystic Forge).

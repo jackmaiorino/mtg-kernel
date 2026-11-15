@@ -29349,6 +29349,1350 @@
     "direct_damage"
    ],
    "java_file": "Mage.Sets/src/mage/cards/g/GhituSlinger.java"
+  },
+  {
+   "name": "Damn",
+   "engine_capability": "no_effect",
+   "mana_cost": "{B}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "destroy_target",
+    "cant_be_regenerated",
+    "overload"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/Damn.java"
+  },
+  {
+   "name": "Memory Lapse",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "counterspell",
+    "library_top"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MemoryLapse.java"
+  },
+  {
+   "name": "Miscalculation",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "counter_unless_pay",
+    "cycling"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/Miscalculation.java"
+  },
+  {
+   "name": "Mystic Confluence",
+   "engine_capability": "no_effect",
+   "mana_cost": "{3}{U}{U}",
+   "mana_value": 5,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "modal",
+    "counter_unless_pay",
+    "bounce",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MysticConfluence.java"
+  },
+  {
+   "name": "Occult Epiphany",
+   "engine_capability": "no_effect",
+   "mana_cost": "{X}{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "x_cost",
+    "draw_card",
+    "discard",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/OccultEpiphany.java"
+  },
+  {
+   "name": "Oust",
+   "engine_capability": "no_effect",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "library_placement",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/Oust.java"
+  },
+  {
+   "name": "Path to Exile",
+   "engine_capability": "no_effect",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "exile_target",
+    "library_search"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PathToExile.java"
+  },
+  {
+   "name": "Remand",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{U}",
+   "mana_value": 2,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "counterspell",
+    "return_spell_to_hand",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/Remand.java"
+  },
+  {
+   "name": "Reprieve",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "return_spell_to_hand",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/r/Reprieve.java"
+  },
+  {
+   "name": "Stern Scolding",
+   "engine_capability": "no_effect",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "counterspell"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SternScolding.java"
+  },
+  {
+   "name": "Time Spiral",
+   "engine_capability": "no_effect",
+   "mana_cost": "{4}{U}{U}",
+   "mana_value": 6,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "shuffle",
+    "draw_card",
+    "untap",
+    "exile_self"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TimeSpiral.java"
+  },
+  {
+   "name": "Timetwister",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "shuffle",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/Timetwister.java"
+  },
+  {
+   "name": "Unexpectedly Absent",
+   "engine_capability": "no_effect",
+   "mana_cost": "{X}{W}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "x_cost",
+    "library_placement"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UnexpectedlyAbsent.java"
+  },
+  {
+   "name": "Winds of Abandon",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "exile_target",
+    "library_search",
+    "overload"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WindsOfAbandon.java"
+  },
+  {
+   "name": "Bloodchief's Thirst",
+   "engine_capability": "no_effect",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "destroy_target",
+    "kicker"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BloodchiefsThirst.java"
+  },
+  {
+   "name": "Bone Shards",
+   "engine_capability": "no_effect",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "destroy_target",
+    "additional_cost",
+    "sacrifice_cost",
+    "discard_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/b/BoneShards.java"
+  },
+  {
+   "name": "Chain of Smog",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "discard",
+    "copy_spell"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/ChainOfSmog.java"
+  },
+  {
+   "name": "Collective Brutality",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "modal",
+    "escalate",
+    "discard",
+    "life_loss",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CollectiveBrutality.java"
+  },
+  {
+   "name": "Damnation",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{B}{B}",
+   "mana_value": 4,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "destroy_all",
+    "cant_be_regenerated",
+    "board_wipe"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/Damnation.java"
+  },
+  {
+   "name": "Entomb",
+   "engine_capability": "no_effect",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "tutor",
+    "library_search"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/Entomb.java"
+  },
+  {
+   "name": "Hymn to Tourach",
+   "engine_capability": "no_effect",
+   "mana_cost": "{B}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "discard"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/h/HymnToTourach.java"
+  },
+  {
+   "name": "Imperial Seal",
+   "engine_capability": "no_effect",
+   "mana_cost": "{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "tutor",
+    "library_top",
+    "life_loss"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/ImperialSeal.java"
+  },
+  {
+   "name": "Infernal Grasp",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "destroy_target",
+    "life_loss"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/InfernalGrasp.java"
+  },
+  {
+   "name": "Mind Twist",
+   "engine_capability": "no_effect",
+   "mana_cost": "{X}{B}",
+   "mana_value": 1,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "x_cost",
+    "discard"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MindTwist.java"
+  },
+  {
+   "name": "Mutagenic Growth",
+   "engine_capability": "no_effect",
+   "mana_cost": "{G/P}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "phyrexian_mana",
+    "pump"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MutagenicGrowth.java"
+  },
+  {
+   "name": "Natural Order",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{G}{G}",
+   "mana_value": 4,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "additional_cost",
+    "sacrifice_cost",
+    "library_search",
+    "put_onto_battlefield"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/NaturalOrder.java"
+  },
+  {
+   "name": "Night's Whisper",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{B}",
+   "mana_value": 2,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "draw_card",
+    "life_loss"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/NightsWhisper.java"
+  },
+  {
+   "name": "Pest Infestation",
+   "engine_capability": "no_effect",
+   "mana_cost": "{X}{X}{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "x_cost",
+    "destroy_target",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PestInfestation.java"
+  },
+  {
+   "name": "Tamiyo's Safekeeping",
+   "engine_capability": "no_effect",
+   "mana_cost": "{G}",
+   "mana_value": 1,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "hexproof",
+    "indestructible_until_end_of_turn",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TamiyosSafekeeping.java"
+  },
+  {
+   "name": "Dead // Gone",
+   "engine_capability": "no_effect",
+   "mana_cost": "{R}",
+   "mana_value": 4,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "split_card",
+    "damage",
+    "bounce"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DeadGone.java"
+  },
+  {
+   "name": "Delayed Blast Fireball",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{R}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "damage",
+    "foretell"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DelayedBlastFireball.java"
+  },
+  {
+   "name": "Escape to the Wilds",
+   "engine_capability": "no_effect",
+   "mana_cost": "{3}{R}{G}",
+   "mana_value": 5,
+   "colors": [
+    "R",
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "impulse_draw",
+    "extra_land_play"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EscapeToTheWilds.java"
+  },
+  {
+   "name": "Expressive Iteration",
+   "engine_capability": "no_effect",
+   "mana_cost": "{U}{R}",
+   "mana_value": 2,
+   "colors": [
+    "U",
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "library_look",
+    "impulse_draw"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/ExpressiveIteration.java"
+  },
+  {
+   "name": "Fire Covenant",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{B}{R}",
+   "mana_value": 3,
+   "colors": [
+    "B",
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "pay_life_cost",
+    "divided_damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FireCovenant.java"
+  },
+  {
+   "name": "Flame Slash",
+   "engine_capability": "no_effect",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FlameSlash.java"
+  },
+  {
+   "name": "Flashback",
+   "engine_capability": "no_effect",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "grant_flashback"
+   ]
+  },
+  {
+   "name": "Impractical Joke",
+   "engine_capability": "no_effect",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "damage",
+    "damage_cant_be_prevented"
+   ]
+  },
+  {
+   "name": "Kolaghan's Command",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{B}{R}",
+   "mana_value": 3,
+   "colors": [
+    "B",
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "complex",
+   "mechanics": [
+    "modal",
+    "return_from_graveyard",
+    "discard",
+    "destroy_artifact",
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KolaghansCommand.java"
+  },
+  {
+   "name": "Lingering Souls",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "flashback"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/l/LingeringSouls.java"
+  },
+  {
+   "name": "Mine Collapse",
+   "engine_capability": "no_effect",
+   "mana_cost": "{3}{R}",
+   "mana_value": 4,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "damage",
+    "alt_cost",
+    "sacrifice_cost"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MineCollapse.java"
+  },
+  {
+   "name": "No More Lies",
+   "engine_capability": "no_effect",
+   "mana_cost": "{W}{U}",
+   "mana_value": 2,
+   "colors": [
+    "W",
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "counter_unless_pay",
+    "exile"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/NoMoreLies.java"
+  },
+  {
+   "name": "Pillage the Bog",
+   "engine_capability": "no_effect",
+   "mana_cost": "{B}{G}",
+   "mana_value": 2,
+   "colors": [
+    "B",
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "library_look",
+    "plot"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/p/PillageTheBog.java"
+  },
+  {
+   "name": "Sear",
+   "engine_capability": "no_effect",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/Sear.java"
+  },
+  {
+   "name": "Tarfire",
+   "engine_capability": "no_effect",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [
+    "Goblin"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/Tarfire.java"
+  },
+  {
+   "name": "Traumatic Critique",
+   "engine_capability": "no_effect",
+   "mana_cost": "{X}{U}{R}",
+   "mana_value": 2,
+   "colors": [
+    "U",
+    "R"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "x_cost",
+    "damage",
+    "draw_card",
+    "discard"
+   ]
+  },
+  {
+   "name": "Vicious Rivalry",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{B}{G}",
+   "mana_value": 4,
+   "colors": [
+    "B",
+    "G"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "pay_life_cost",
+    "destroy_all",
+    "board_wipe"
+   ]
+  },
+  {
+   "name": "Wheel of Fortune",
+   "engine_capability": "no_effect",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "discard",
+    "draw_card"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/w/WheelOfFortune.java"
   }
  ]
 }
