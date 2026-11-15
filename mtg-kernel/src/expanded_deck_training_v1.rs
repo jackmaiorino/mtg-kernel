@@ -954,7 +954,6 @@ impl OpponentCacheV1 {
         self
     }
 
-    #[cfg(test)]
     fn contains(&self, source: &ExpandedModelSourceV1) -> bool {
         self.entries
             .iter()
@@ -7284,7 +7283,7 @@ pub(super) fn holds_pinned_in_v1(
             let verify_started = std::time::Instant::now();
             let matches = total <= file.len
                 && offset.checked_add(count).is_some_and(|end| {
-                    end <= expected.len() && &expected[offset..end] == &buffer[..count]
+                    end <= expected.len() && expected[offset..end] == buffer[..count]
                 });
             add_thread_work_v1(WorkV1::Verify, nanos_since_v1(verify_started));
             if !matches {
