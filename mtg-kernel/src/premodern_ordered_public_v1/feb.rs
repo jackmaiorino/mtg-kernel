@@ -251,6 +251,13 @@ fn visible_numeric_input(
 }
 
 impl FebSessionV1 {
+    pub(super) fn actor(&self) -> Option<PlayerSeatV1> {
+        match &self.inner.current {
+            Ok(BoundBoundaryV1::Decision(binding)) => Some(binding.actor.into()),
+            _ => None,
+        }
+    }
+
     /// Construct and deal both exact 60-card mainboards, then issue the first
     /// London mulligan decision in native starting-seat order.
     pub fn reset(seed: u64, starting_player: PlayerSeatV1) -> Result<Self, String> {

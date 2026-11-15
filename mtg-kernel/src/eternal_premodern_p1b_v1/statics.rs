@@ -299,7 +299,7 @@ pub(crate) fn activation_paid(state: &mut GameState, source: ObjectId, ability_i
                 Some(TargetSpec::AnySpellOnStack),
             );
         }
-        _ => {}
+        _ => crate::eternal_premodern_p3h_v1::activation_paid(state, source, ability_index),
     }
 }
 

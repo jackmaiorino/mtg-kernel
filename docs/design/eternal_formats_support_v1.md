@@ -2274,3 +2274,63 @@ or shield present when that source left, can't choose it; only an enchantment pu
 battlefield during that window (Academy Rector's dies trigger) could. When two shields would
 prevent the same damage, the protected player doesn't choose which is used up (616.1); that
 matters only if the source's colors change later in the turn.
+
+### P3h: Other Control and Full English Breakfast sideboards
+
+After P3g and Meddling Mage (#661), the Premodern census has two missing sideboard cards in
+Other Control (1% of the field: Overgrown Estate and Decree of Pain), four missing sideboard
+cards in Full English Breakfast (3%: Enlightened Tutor, Auramancer, Monk Realist and Ghitu
+Slinger), and Alter Reality in Replenish (6%). Wave P3h adds the six cards of Other Control and
+Full English Breakfast as Full. Premodern Other Control joins `PLAYABLE_75`, raising the
+Premodern full 75 share from 80.0% to 81.0% (and reducing missing cards across the Premodern
+snapshot from 8 to 2: Alter Reality, which needs layer-3 color-word replacement, and Volrath's
+Shapeshifter, which remains Partial in the Full English Breakfast mainboard).
+
+P3h is built in `src/eternal_premodern_p3h_v1.rs`, `src/eternal_premodern_p3h_v1/targets.rs` and
+`build_eternal_p3h_v1.rs`, the new tail of the recipe and trigger chains after S1m's. Behavior
+follows each card's current Oracle text, checked against XMage and rules 113.7a, 608.2b, 701.8,
+701.19, 702.29 and 702.30:
+
+- Overgrown Estate, {W}{B}{G}, Enchantment: "Sacrifice a land: You gain 3 life." An activated
+  ability on the battlefield whose cost sacrifices a controlled land (`PermanentFilterRecipe::Land`)
+  and whose resolution gains 3 life.
+- Decree of Pain, {6}{B}{B}, Sorcery: "Destroy all creatures. They can't be regenerated. Draw a
+  card for each creature destroyed this way. Cycling {3}{B}{B}. When you cycle this card, all
+  creatures get -2/-2 until end of turn."
+  - Spell (`P3hOpV1::DecreeOfPainV1`): collects every non-indestructible creature on the
+    battlefield, commits one simultaneous zone-change batch to the graveyard (bypassing
+    regeneration shields, as Wrath of God does), and counts how many of those incarnations left
+    the battlefield (701.8). Creature tokens and creatures exiled instead by a replacement effect
+    (Rest in Peace, Leyline of the Void, Dauthi Voidwalker) were still destroyed and count;
+    indestructible creatures and noncreature permanents survive and don't. In ordered-graveyard
+    games (`graveyard_order_v1`), if two or more creatures enter a graveyard together, the draw
+    waits until the owner orders that batch. The leaf runs in the resumable interpreter and stages
+    its draws as a `DrawCards` frame after the batch commits, so a Dredge creature destroyed by
+    Decree of Pain itself can dredge the spell's draws.
+  - Cycling: `Cycling {3}{B}{B}` from hand, and wave P1b's `activation_paid` queues
+    `decree_of_pain_cycled()` (Infest's `-2/-2` boost) whenever the paid cost moved the card out
+    of its owner's hand (702.29c, including when Dauthi Voidwalker exiles the discarded card).
+    Because the trigger goes on top of the cycling ability, `-2/-2` resolves before the cycling
+    draw.
+- Enlightened Tutor, {W}, Instant: "Search your library for an artifact or enchantment card,
+  reveal it, then shuffle and put that card on top." Uses `EffectOp::SearchLibraryCardsToDestination`
+  with the new `LibraryCardFilter::ArtifactOrEnchantmentCardV1` (fingerprint 65) and
+  `LibrarySearchDestinationV1::LibraryTopAfterShuffle` (revealing any found card and allowing
+  fail-to-find per 701.19b).
+- Auramancer, {2}{W}, Creature - Human Wizard 2/2: "When this creature enters, you may return
+  target enchantment card from your graveyard to your hand." Entry trigger targeting the new
+  `StandardTargetV1::EnchantmentCardInOwnGraveyardV1` with a two-option `Choice` (`MoveAllTargets`
+  to hand or no-op); if the targeted card leaves the graveyard before resolution, the trigger
+  fails to resolve (608.2b) without offering the choice.
+- Monk Realist, {1}{W}, Creature - Human Monk Cleric 1/1: "When this creature enters, destroy
+  target enchantment." Mandatory entry trigger targeting `TargetSpec::EnchantmentPermanent`.
+- Ghitu Slinger, {2}{R}, Creature - Human Nomad 2/2: "Echo {2}{R}. When this creature enters, it
+  deals 2 damage to any target." Joins wave P2d's `echo_cost` (`{2}{R}`, including control-change
+  tracking and departed-source echo-cost last-known information) and has a mandatory entry trigger
+  targeting `TargetSpec::AnyTarget` (`EffectOp::DealDamage` for 2, preserving departed-source
+  color for Circle of Protection: Red).
+- Consumers: `tests/eternal/eternal_premodern_p3h_v1.rs` covers all six cards in both seats
+  (including ordered-graveyard batches, Dredge on a creature Decree of Pain destroyed, exile
+  replacements, departed-source Circle of Protection: Red prevention and Echo LKI), and plays two
+  40-card decks built around the P3h cards through public schema-5 sessions in both seats under
+  ranked and seeded random policies with replay checks.
