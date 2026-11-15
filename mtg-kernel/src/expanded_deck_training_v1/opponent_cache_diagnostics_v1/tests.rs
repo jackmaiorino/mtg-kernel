@@ -487,36 +487,34 @@ fn process_and_collection_opponent_caches_enforce_byte_budgets_lru_and_oversized
             .unwrap()
             .1
     );
+    // Each change makes the held entry a miss whose full load reports exactly
+    // the error an uncached load reports.
+    let rejects_like_a_full_load = || {
+        let full = super::super::load_expanded_inference_any_math_v1(&s0)
+            .err()
+            .expect("an uncached load rejects the changed file");
+        let cached = strict_cache
+            .load_v1(&s0, true, LoadRoleV1::Opponent)
+            .err()
+            .expect("the held entry rejects the changed file");
+        assert_eq!(cached, full);
+    };
     let param_path = &s0_files[2];
     let original_params = fs::read(param_path).unwrap();
     let mut same_len_bad = original_params.clone();
     same_len_bad[original_params.len() / 2] ^= 0x01;
     fs::write(param_path, &same_len_bad).unwrap();
-    assert_eq!(
-        strict_cache
-            .load_v1(&s0, true, LoadRoleV1::Opponent)
-            .err()
-            .unwrap(),
-        "fresh input file SHA differs"
-    );
+    rejects_like_a_full_load();
     fs::write(param_path, &original_params[..original_params.len() - 4]).unwrap();
-    assert!(strict_cache
-        .load_v1(&s0, true, LoadRoleV1::Opponent)
-        .is_err());
+    rejects_like_a_full_load();
     let mut longer = original_params.clone();
     longer.extend_from_slice(&[0u8; 16]);
     fs::write(param_path, &longer).unwrap();
-    assert!(strict_cache
-        .load_v1(&s0, true, LoadRoleV1::Opponent)
-        .is_err());
+    rejects_like_a_full_load();
     fs::remove_file(param_path).unwrap();
-    assert!(strict_cache
-        .load_v1(&s0, true, LoadRoleV1::Opponent)
-        .is_err());
+    rejects_like_a_full_load();
     fs::create_dir(param_path).unwrap();
-    assert!(strict_cache
-        .load_v1(&s0, true, LoadRoleV1::Opponent)
-        .is_err());
+    rejects_like_a_full_load();
     fs::remove_dir(param_path).unwrap();
     fs::write(param_path, &original_params).unwrap();
     assert!(
