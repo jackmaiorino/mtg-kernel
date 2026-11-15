@@ -843,9 +843,10 @@ fn pool_serial_and_parallel_runs_reuse_opponent_cache_and_match_bit_for_bit() {
     let root = root.canonicalize().unwrap();
     let cases = manifest["cases"].as_array().unwrap();
     let serial_config = read_config_v1(&cases[1]);
+    // Both runs write to the case's fixed path, as the benchmark driver's
+    // samples do, so every pin and identity can match exactly.
     let mut parallel_config = serial_config.clone();
     parallel_config.preparation_workers = 2;
-    parallel_config.output_directory = root.join("work/pool2-parallel/run");
 
     let counters = opponent_cache_diagnostics_v1::counters_v1();
     let unverified_before = counters.collection_opponent.misses_unverified.get();
@@ -872,30 +873,45 @@ fn pool_serial_and_parallel_runs_reuse_opponent_cache_and_match_bit_for_bit() {
         0
     );
 
+    // Per iteration: the output identity (checkpoint, state and Adam step)
+    // and every trajectory's SHA-256, read before the serial run moves away.
+    let boundaries = |out: &Value| -> Vec<(Value, Vec<String>)> {
+        (0..options.updates)
+            .map(|index| {
+                let pin: PinnedFileV1 =
+                    serde_json::from_value(out["iterations"][index].clone()).unwrap();
+                let complete = read_pin(&pin).unwrap();
+                let collection = read_pin(&parse_pin(&complete, "collection").unwrap()).unwrap();
+                let trajectories = collection["trajectories"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|pin| {
+                        serde_json::from_value::<PinnedFileV1>(pin.clone())
+                            .unwrap()
+                            .sha256
+                    })
+                    .collect();
+                (complete["output_identity"].clone(), trajectories)
+            })
+            .collect()
+    };
+    let serial_boundaries = boundaries(&serial_out);
+    assert_eq!(serial_boundaries.len(), options.updates);
+    assert!(serial_boundaries
+        .iter()
+        .all(|(_, trajectories)| trajectories.len() == options.games));
+    fs::create_dir_all(root.join("work/pool2-serial")).unwrap();
+    fs::rename(
+        &serial_config.output_directory,
+        root.join("work/pool2-serial/run"),
+    )
+    .unwrap();
+
     let parallel_out = run_native_expanded_training_v1(&parallel_config, None).unwrap();
     assert_eq!(parallel_out["complete"], true);
     assert_eq!(serial_out["final_identity"], parallel_out["final_identity"]);
-
-    // Verify per-iteration state_sha256, adam_step, and trajectory payload parity.
-    for index in 0..options.updates {
-        let s_pin: PinnedFileV1 =
-            serde_json::from_value(serial_out["iterations"][index].clone()).unwrap();
-        let p_pin: PinnedFileV1 =
-            serde_json::from_value(parallel_out["iterations"][index].clone()).unwrap();
-        let s_complete = read_pin(&s_pin).unwrap();
-        let p_complete = read_pin(&p_pin).unwrap();
-        assert_eq!(s_complete["output_identity"], p_complete["output_identity"]);
-        let s_col = read_pin(&parse_pin(&s_complete, "collection").unwrap()).unwrap();
-        let p_col = read_pin(&parse_pin(&p_complete, "collection").unwrap()).unwrap();
-        let s_trajs = s_col["trajectories"].as_array().unwrap();
-        let p_trajs = p_col["trajectories"].as_array().unwrap();
-        assert_eq!(s_trajs.len(), p_trajs.len());
-        for (st, pt) in s_trajs.iter().zip(p_trajs.iter()) {
-            let st_pin: PinnedFileV1 = serde_json::from_value(st.clone()).unwrap();
-            let pt_pin: PinnedFileV1 = serde_json::from_value(pt.clone()).unwrap();
-            assert_eq!(st_pin.sha256, pt_pin.sha256);
-        }
-    }
+    assert_eq!(serial_boundaries, boundaries(&parallel_out));
 
     // Same-length mutation of a cached pool checkpoint must fail closed before learning.
     let member_ckpt = PathBuf::from(

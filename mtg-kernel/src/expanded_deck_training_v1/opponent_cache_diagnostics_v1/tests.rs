@@ -300,7 +300,8 @@ fn fresh_source_variant_v1(
     let sub = root.join(label);
     let descriptor =
         write_synthetic_fresh_source_with_parameters_v1(&sub.join("source"), identity, |params| {
-            params[0].values[0] += delta;
+            // Row 0 of the card embedding is the zero padding row.
+            params[0].values[16] += delta;
         });
     let bytes = serde_json::to_vec(&descriptor).unwrap();
     let path = sub.join("descriptor.json");
