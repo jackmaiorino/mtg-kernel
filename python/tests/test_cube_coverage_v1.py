@@ -19,13 +19,14 @@ VINTAGE_CUBE_GAPS = REPO_ROOT / "data/cube_v1/mtgo_vintage_cube_20261007_gaps.js
 
 class CubeCoverageTest(unittest.TestCase):
     def test_classify_prefers_the_eternal_build_then_the_fdn_copy(self):
-        eternal = {"Bolt": "full", "Breacher": "partial", "Both": "partial"}
+        eternal = {"Bolt": "full", "Breacher": "partial", "Both": "partial", "Staged": "no_effect"}
         fdn_full = {"Commando", "Both"}
         self.assertEqual(cube_coverage.classify("Bolt", eternal, fdn_full), "full")
         self.assertEqual(cube_coverage.classify("Breacher", eternal, fdn_full), "partial")
         self.assertEqual(cube_coverage.classify("Commando", eternal, fdn_full), "fdn_only")
         self.assertEqual(cube_coverage.classify("Both", eternal, fdn_full), "fdn_only")
         self.assertEqual(cube_coverage.classify("Balance", eternal, fdn_full), "missing")
+        self.assertEqual(cube_coverage.classify("Staged", eternal, fdn_full), "missing")
 
     def test_coverage_counts_each_group_and_lists_the_gaps(self):
         cube = {"cube": "Fixture Cube", "effective": "2026-10-07", "cards": [

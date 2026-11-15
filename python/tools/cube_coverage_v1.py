@@ -9,7 +9,8 @@ Pauper prefix, the Standard registry and `data/eternal_v1/cards_v1.json`:
 - ``partial``: defined in that build, but not Full.
 - ``fdn_only``: Full only in the FDN registry. Its program exists, so adding
   it to the eternal registry is a copy, not new rules work.
-- ``missing``: no definition in that build and no Full FDN definition.
+- ``missing``: no executable definition in that build (none, or a staged
+  ``no_effect`` row) and no Full FDN definition.
 
 `--check` compares the cards that are not Full with a committed record, so a
 change that adds or loses cube coverage has to update that record.
@@ -47,7 +48,7 @@ def classify(name: str, eternal: dict[str, str], fdn_full: set[str]) -> str:
         return "full"
     if name in fdn_full:
         return "fdn_only"
-    return "missing" if capability is None else "partial"
+    return "missing" if capability in (None, "no_effect") else "partial"
 
 
 def coverage(cube: dict[str, Any], eternal: dict[str, str], fdn_full: set[str]) -> dict[str, Any]:
