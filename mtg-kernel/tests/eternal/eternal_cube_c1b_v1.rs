@@ -2210,14 +2210,11 @@ fn pest_infestation_offers_no_more_targets_than_the_x_it_can_pay_for() {
         other => panic!("{other:?}"),
     };
     act(&mut state, Action::ChooseTarget(first));
-    match next(&mut state) {
-        Decision::ChooseTargets { legal_targets, .. } => {
-            assert!(
-                legal_targets.is_empty(),
-                "a second target needs X = 2: {legal_targets:?}"
-            );
-        }
-        _ => {}
+    if let Decision::ChooseTargets { legal_targets, .. } = next(&mut state) {
+        assert!(
+            legal_targets.is_empty(),
+            "a second target needs X = 2: {legal_targets:?}"
+        );
     }
 }
 
