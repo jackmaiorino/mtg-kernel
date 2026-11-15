@@ -376,6 +376,9 @@ enum ExternalRule {
         power: i16,
         toughness: i16,
     },
+    EntersPreparedWithExileCopy {
+        printing: u16,
+    },
     PreparedCopyCastPermissionFollowsPreparedCreatureControllerUntilCastOrCreatureDeparture,
     AnimateDeadGraveyardAttachmentThenReanimatedCreatureAttachment,
     LandBackFacePlayableFromHand {
@@ -441,6 +444,9 @@ fn external_rules(name: &str) -> Result<Vec<ExternalRule>> {
         "Karn Construct Token" => vec![SelfPowerToughnessPerControlledArtifact {
             power: 1,
             toughness: 1,
+        }],
+        "Carnivorous Cultivator" => vec![EntersPreparedWithExileCopy {
+            printing: card_id_by_name("Enroot").ok_or_else(unsupported)?,
         }],
         "Enroot" => vec![
             PreparedCopyCastPermissionFollowsPreparedCreatureControllerUntilCastOrCreatureDeparture,
@@ -560,6 +566,7 @@ fn trigger_condition(t: crate::trigger::TriggerCondition) -> Result<Value> {
         T::CastSelf => json!("CastSelf"),
         T::LeftBattlefield => json!("LeftBattlefield"),
         T::LeftBattlefieldToGraveyard => json!("LeftBattlefieldToGraveyard"),
+        T::DealsCombatDamageToPlayer => json!("DealsCombatDamageToPlayer"),
         T::BeginningOfUpkeep { controller_only } => {
             json!({"BeginningOfUpkeep": {"controller_only": controller_only}})
         }

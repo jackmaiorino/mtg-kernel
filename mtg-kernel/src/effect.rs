@@ -10230,6 +10230,86 @@ fn definition_has_nonterminal_discard(state: &GameState, pending: &EffectContinu
     false
 }
 
+fn validate_nonterminal_discard_other_stage(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    let err = || "nonterminal discard continuation lost its pending hand answer".to_string();
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        if state.eternal_owned_draw_progress_v1.is_some() {
+            return Ok(());
+        }
+        let eternal_choice = match (&pending.choice, &pending.answered_choice_guard) {
+            (
+                Some(PendingEffectChoice::SelectTargets {
+                    purpose: EffectTargetSelectionPurpose::EternalV1 { choice },
+                    ..
+                }),
+                None,
+            ) => Some((choice.as_ref(), None)),
+            (None, Some(EffectAnsweredChoiceGuard::StandardSelection { frame })) => {
+                if let EffectFrame::EternalSelectionV1 { choice, selected } = frame.as_ref() {
+                    Some((choice.as_ref(), Some(selected.as_slice())))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some((choice, answered_selected)) = eternal_choice {
+            use crate::{
+                eternal_cards_v1::{e3::E3ChoiceKindV1, EternalOpV1 as E},
+                eternal_legacy_e7a_v1::{E7aChoiceV1, E7aOpV1},
+                standard_cards_v1::StandardOpV1 as S,
+            };
+            if choice.kind == E3ChoiceKindV1::E7aV1(E7aChoiceV1::ArchonSacrificeV1) {
+                let root = validated_definition_owned_root_effect(state, pending)?;
+                let EffectOp::Sequence(ops) = root.as_ref() else {
+                    return Err(err());
+                };
+                let [step] = choice.path.as_slice() else {
+                    return Err(err());
+                };
+                let step_index = usize::from(*step);
+                if ops.get(step_index)
+                    != Some(&EffectOp::StandardV1(S::EternalV1(E::E7aV1(
+                        E7aOpV1::ArchonV1,
+                    ))))
+                {
+                    return Err(err());
+                }
+                let expected_remaining = ops
+                    .iter()
+                    .enumerate()
+                    .skip(step_index + 1)
+                    .rev()
+                    .map(|(index, op)| EffectFrame::Program {
+                        op: op.clone(),
+                        path: vec![u16::try_from(index).unwrap_or(u16::MAX)],
+                    })
+                    .collect::<Vec<_>>();
+                if choice.remaining != expected_remaining {
+                    return Err(err());
+                }
+                if let Some(selected) = answered_selected {
+                    if pending.frames.len() != expected_remaining.len() + 1
+                        || pending.frames[..expected_remaining.len()] != expected_remaining
+                        || selected.len() != 1
+                        || !choice.candidates.contains(&selected[0])
+                    {
+                        return Err(err());
+                    }
+                }
+                return Ok(());
+            }
+        }
+    }
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let _ = (state, pending);
+    Err(err())
+}
+
 /// A spell-copy target candidate: objects carry their live incarnation.
 fn standard_copy_target_candidate(state: &GameState, target: Target) -> EffectTargetCandidate {
     EffectTargetCandidate {
@@ -10900,12 +10980,11 @@ fn validate_pending_effect_choice_inner(state: &GameState) -> Result<(), String>
     validate_answered_choice_guard(state, pending)?;
     nonland_copy_v1::validate_boundary(state, pending)?;
     if definition_has_nonterminal_discard(state, pending) {
-        let discard = state
-            .engine
-            .pending_discard
-            .as_ref()
-            .ok_or("nonterminal discard continuation lost its pending hand answer")?;
-        validate_resumable_discard_details(state, pending, discard)?;
+        if let Some(discard) = state.engine.pending_discard.as_ref() {
+            validate_resumable_discard_details(state, pending, discard)?;
+        } else {
+            validate_nonterminal_discard_other_stage(state, pending)?;
+        }
     }
     let Some(choice) = pending.choice.as_ref() else {
         return Ok(());
