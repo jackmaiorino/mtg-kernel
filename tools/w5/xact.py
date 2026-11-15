@@ -66,12 +66,13 @@ def played_action(q, chain, update, seed, slot):
 
 
 def build_config(base, dose_record, root, chain, offset, updates, workers, budget=None, coefficient=None,
-                 dose='primary', ledger_source=None, prep_workers=None, keep_offset=None):
+                 dose='primary', ledger_source=None, prep_workers=None, keep_offset=None, pregame_advantage=None):
     """EX1's qualification construction (episode ids and seeds keyed by the chain), with W5's options.
-    `keep_offset` (qual.build_config) stamps the London keep offset schedule; absent, the config is unchanged."""
+    `keep_offset` (qual.build_config) stamps the London keep offset schedule (a number or a 7-list per count) and
+    `pregame_advantage` the trainer's pregame advantage mode; absent, the config is unchanged."""
     cfg = qual.build_config(base, dose_record, root, chain, 'w5', offset, updates, workers,
                             coefficient if budget is not None else None, DOSES[dose][1], prep_workers=prep_workers,
-                            keep_offset=keep_offset)
+                            keep_offset=keep_offset, pregame_advantage=pregame_advantage)
     if budget is not None:
         cfg['ex1']['w5'] = {'budget': budget}
     if ledger_source is not None:

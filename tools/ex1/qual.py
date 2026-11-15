@@ -132,6 +132,8 @@ KEEP_OFFSET_MAX = 1.0e6  # the trainer's london_keep_offset_v1::MAX_OFFSET_V1
 KEEP_OFFSET_MAX_END = 1 << 53  # (T - u) stays exact in binary64
 KEEP_OFFSET_OPENING = "london-v1"  # the one opening protocol the offset belongs to
 KEEP_OFFSET_MODES = ("learned", "keep_seven")
+KEEP_OFFSET_COUNTS = 7  # a per-count lean vector: entry k applies to an announcement with k mulligans already taken
+PREGAME_ADVANTAGE_MODES = ("terminal_v1",)  # the trainer's loss_selection.pregame_advantage; absent = unchanged GAE
 # Run options the trainer refuses together with an offset ("london_keep_offset trains only on the plain CPU GAE
 # update"): a base that sets any of them would collect games and then fail at its first update.
 KEEP_OFFSET_REFUSED_OPTIONS = ("line_b", "e_supported", "soft_q", "search_targets", "ex1")
@@ -147,9 +149,13 @@ def _float32(value):
 
 
 def validate_keep_offset(keep_offset, base=None):
-    """The checked, normalized keep offset `{"b0": float, "end_update": int, "shape": "linear-v1"}` (a new dict).
-    Raises ValueError for anything that is not exactly that form: a non-mapping, missing or unknown keys, b0 not a
-    finite number in (0, 1e6], end_update not an int in [1, 2^53] (a bool is neither), or an unknown shape.
+    """The checked, normalized keep offset `{"b0": float or [7 floats], "end_update": int, "shape": "linear-v1"}` (a
+    new dict). Raises ValueError for anything that is not exactly that form: a non-mapping, missing or unknown keys,
+    end_update not an int in [1, 2^53] (a bool is neither), or an unknown shape.
+
+    `b0` is either one number (the scalar lean: finite, in (0, 1e6]) or a list of exactly 7 numbers, entry k being the
+    lean of an announcement with k mulligans already taken by the acting seat (each finite, in [0, 1e6], at least one
+    above 0; a zero entry means no lean at that count): the trainer's own validation of the stamped values.
 
     With `base` (an OH1/OH2 base), also raises unless the base is one the trainer can train with an offset (see
     `check_london_base`): every episode of every iteration has the London opening and its mulligan modes (the
@@ -166,15 +172,53 @@ def validate_keep_offset(keep_offset, base=None):
         raise ValueError(f"keep_offset lacks {missing}")
     b0, end, shape = keep_offset["b0"], keep_offset["end_update"], keep_offset["shape"]
     # The range test comes first: it is exact for any int, while isfinite(10**400) overflows instead of refusing.
-    if not (_is_number(b0) and 0 < b0 <= KEEP_OFFSET_MAX and math.isfinite(b0)):
-        raise ValueError(f"keep_offset b0 must be a finite number in (0, {KEEP_OFFSET_MAX:g}], got {b0!r}")
+    if isinstance(b0, list):
+        if len(b0) != KEEP_OFFSET_COUNTS:
+            raise ValueError(f"keep_offset b0 as a list needs exactly {KEEP_OFFSET_COUNTS} entries (one per number of "
+                             f"mulligans taken), got {len(b0)}")
+        for k, entry in enumerate(b0):
+            if not (_is_number(entry) and 0 <= entry <= KEEP_OFFSET_MAX and math.isfinite(entry)):
+                raise ValueError(f"keep_offset b0[{k}] must be a finite number in [0, {KEEP_OFFSET_MAX:g}], "
+                                 f"got {entry!r}")
+        if not any(entry > 0 for entry in b0):
+            raise ValueError("keep_offset b0 needs at least one entry above 0")
+        b0 = [float(entry) for entry in b0]
+    elif _is_number(b0) and 0 < b0 <= KEEP_OFFSET_MAX and math.isfinite(b0):
+        b0 = float(b0)
+    else:
+        raise ValueError(f"keep_offset b0 must be a finite number in (0, {KEEP_OFFSET_MAX:g}] or a list of "
+                         f"{KEEP_OFFSET_COUNTS} numbers in [0, {KEEP_OFFSET_MAX:g}], got {b0!r}")
     if not (type(end) is int and 1 <= end <= KEEP_OFFSET_MAX_END):
         raise ValueError(f"keep_offset end_update must be an integer in [1, 2^53], got {end!r}")
     if shape not in KEEP_OFFSET_SHAPES:
         raise ValueError(f"keep_offset shape must be one of {KEEP_OFFSET_SHAPES}, got {shape!r}")
     if base is not None:
         check_london_base(base)
-    return {"b0": float(b0), "end_update": end, "shape": shape}
+    return {"b0": b0, "end_update": end, "shape": shape}
+
+
+def validate_pregame_advantage(mode, base=None):
+    """`mode` (the arm's `pregame_advantage`: "terminal_v1", or None for the trainer's unchanged GAE advantage),
+    checked. The mode is the trainer's `loss_selection.pregame_advantage`: the advantage and value target of the
+    pregame decisions come from the game's own terminal result, in-game rows unchanged. Raises ValueError for any
+    other string ("gae" is spelled by leaving the key out, so one setting has one spelling). With `base`, also
+    raises unless the trainer can use it: every episode has the London opening (`check_london_base`), the loss is
+    `gae_advantage_value_v1` with gamma exactly 1.0 (the trainer refuses any other gamma), and the base's own
+    loss_selection names no pregame_advantage (the arm is the only writer of the key)."""
+    if mode is None:
+        return None
+    if mode not in PREGAME_ADVANTAGE_MODES:
+        raise ValueError(f"pregame_advantage must be one of {PREGAME_ADVANTAGE_MODES} or absent, got {mode!r}")
+    if base is not None:
+        check_london_base(base)
+        loss = base["loss_selection"]
+        if "pregame_advantage" in loss:
+            raise ValueError("the base's loss_selection already names pregame_advantage; the arm writes it")
+        gamma = loss.get("gamma")
+        if not (_is_number(gamma) and gamma == 1.0):
+            raise ValueError(f"pregame_advantage terminal_v1 needs gamma exactly 1.0 in the base's loss_selection, "
+                             f"got {gamma!r}")
+    return mode
 
 
 def check_london_base(base):
@@ -214,17 +258,27 @@ def check_london_base(base):
 def keep_offset_value(keep_offset, u):
     """The `london_keep_offset` an opening episode carries at fork update `u`, or None from `end_update` on (no
     field at all). b(u) = float32(float64(b0) * (T - u) / T), computed in binary64 and rounded once to the nearest
-    binary32, returned as the Python float equal to it (so it round-trips through struct 'f' unchanged). `u` counts
+    binary32, returned as the Python float equal to it (so it round-trips through struct 'f' unchanged). With a
+    vector `b0` the result is the list of its 7 entries so computed (an entry of 0 stays 0.0). `u` counts
     updates from the fork point: the chain tools number a chain's updates from 0 at its first segment, whatever
     update its parent had reached, so no start offset exists. Raises ValueError for a negative or non-integer `u`,
-    or for a value the trainer would refuse (not finite and positive after rounding, or above 1e6)."""
+    or for a value the trainer would refuse (a scalar not finite and positive after rounding, a vector entry above
+    0 that rounds to 0, or any value above 1e6)."""
     keep_offset = validate_keep_offset(keep_offset)
     if type(u) is not int or u < 0:
         raise ValueError(f"keep_offset update must be a non-negative integer, got {u!r}")
     end = keep_offset["end_update"]
     if u >= end:
         return None
-    value = _float32(keep_offset["b0"] * (end - u) / end)
+    b0 = keep_offset["b0"]
+    if isinstance(b0, list):
+        values = [_float32(entry * (end - u) / end) for entry in b0]
+        for k, (entry, value) in enumerate(zip(b0, values)):
+            if not (math.isfinite(value) and 0.0 <= value <= KEEP_OFFSET_MAX and (value > 0.0 or entry == 0.0)):
+                raise ValueError(f"keep_offset entry {k} value {value!r} at update {u} is outside the trainer's "
+                                 "accepted range (finite, at most 1e6 in binary32, above 0 where its b0 entry is)")
+        return values
+    value = _float32(b0 * (end - u) / end)
     if not (math.isfinite(value) and 0.0 < value <= KEEP_OFFSET_MAX):
         raise ValueError(f"keep_offset value {value!r} at update {u} is outside the trainer's accepted range "
                          "(finite, positive, at most 1e6 in binary32)")
@@ -232,14 +286,22 @@ def keep_offset_value(keep_offset, u):
 
 
 def build_config(base, dose, root, run, namespace, offset, updates, workers, coefficient=None, kappa=None,
-                 prep_workers=None, keep_offset=None):
+                 prep_workers=None, keep_offset=None, pregame_advantage=None):
     """An RT1 run config from an OH1/OH2 base and a dose record: the base's schedule from global update `offset`,
     episode ids and deal seeds keyed by (namespace, run, update, slot), and EX1 when `coefficient` is given.
 
     `keep_offset` (`{"b0", "end_update", "shape": "linear-v1"}`, see `keep_offset_value`) stamps every episode that
     has an `opening` with `london_keep_offset = b(u)` for the iteration's global update u = offset + i, while
-    u < end_update, and no such key from there on. A chain's global update counts from 0 at the fork point (its
-    first segment's offset), so u is the fork update. Without it every episode is left exactly as the base has it."""
+    u < end_update, and no such key from there on (a number, or with a vector b0 the list of 7). A chain's global
+    update counts from 0 at the fork point (its first segment's offset), so u is the fork update. Without it every
+    episode is left exactly as the base has it.
+
+    `pregame_advantage` ("terminal_v1", see `validate_pregame_advantage`) adds that key to the config's
+    `loss_selection`; without it the loss_selection is exactly the base's."""
+    if pregame_advantage is not None:
+        pregame_advantage = validate_pregame_advantage(pregame_advantage, base)
+        if coefficient is not None:
+            raise ValueError("pregame_advantage is refused with an EX1 coefficient (the plain CPU GAE update only)")
     if keep_offset is not None:
         keep_offset = validate_keep_offset(keep_offset, base)
         if offset < 0:
@@ -276,6 +338,8 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
                     episode["london_keep_offset"] = value
         iterations.append(item)
     cfg = {k: copy.deepcopy(v) for k, v in base.items() if k != "iterations"}
+    if pregame_advantage is not None:
+        cfg["loss_selection"] = dict(cfg["loss_selection"], pregame_advantage=pregame_advantage)
     cfg["initial_source"] = source
     cfg["iterations"] = iterations
     cfg["collection_workers"] = workers
