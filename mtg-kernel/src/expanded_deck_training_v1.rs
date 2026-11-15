@@ -285,6 +285,11 @@ pub enum ExpandedLossSelectionV1 {
         gamma: f32,
         lambda: f32,
         entropy_coefficient: f32,
+        /// How the London pregame rows' advantage is formed
+        /// ([`PregameAdvantageV1`]); absent is the default GAE, so every
+        /// existing config, manifest and receipt keeps its bytes.
+        #[serde(default, skip_serializing_if = "PregameAdvantageV1::is_gae")]
+        pregame_advantage: PregameAdvantageV1,
     },
     GaeUniformKlRecoveryV1 {
         gamma: f32,
@@ -295,7 +300,53 @@ pub enum ExpandedLossSelectionV1 {
     },
 }
 
+/// How an update forms the advantage and value target of the London pregame
+/// rows (keep or mulligan announcements and put-back decisions: the learner's
+/// physical decisions whose first tensor has state column 89 set).
+///
+/// `Gae` (the default, never written) is the update's ordinary bootstrapped
+/// GAE for every row. `TerminalV1` keeps that for every in-game row, bit for
+/// bit, and gives each pregame row the advantage `R - V` and the value target
+/// `R`, where `R` is the game's terminal win/loss result for the learner seat
+/// and `V` the row's own value estimate: no bootstrap through the later value
+/// estimates. Nothing in it decays; it is the terminal result alone.
+/// `ExpandedLossSelectionV1::GaeAdvantageValueV1` carries it, so the choice is
+/// part of every command, run manifest and run identity that records the loss
+/// selection.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PregameAdvantageV1 {
+    #[default]
+    Gae,
+    TerminalV1,
+}
+
+impl PregameAdvantageV1 {
+    pub(crate) fn is_gae(&self) -> bool {
+        matches!(self, Self::Gae)
+    }
+
+    /// The receipt string of a non-default mode.
+    pub(crate) fn name_v1(&self) -> &'static str {
+        match self {
+            Self::Gae => "gae",
+            Self::TerminalV1 => "terminal_v1",
+        }
+    }
+}
+
 impl ExpandedLossSelectionV1 {
+    /// The pregame advantage mode this selection names (`Gae` for every loss
+    /// but the plain GAE one).
+    pub(crate) fn pregame_advantage_v1(&self) -> PregameAdvantageV1 {
+        match self {
+            Self::GaeAdvantageValueV1 {
+                pregame_advantage, ..
+            } => *pregame_advantage,
+            _ => PregameAdvantageV1::Gae,
+        }
+    }
+
     pub(crate) fn is_terminal_reinforce_value_v3(&self) -> bool {
         matches!(self, Self::TerminalReinforceValueV3)
     }
@@ -320,10 +371,15 @@ impl ExpandedLossSelectionV1 {
                 gamma,
                 lambda,
                 entropy_coefficient,
+                pregame_advantage,
             } => {
                 ensure(
                     gamma.is_finite() && (0.0..=1.0).contains(gamma),
                     "gae gamma must be finite in 0.0..=1.0",
+                )?;
+                ensure(
+                    pregame_advantage.is_gae() || gamma.to_bits() == 1.0_f32.to_bits(),
+                    "the terminal pregame advantage requires gamma exactly 1.0",
                 )?;
                 ensure(
                     lambda.is_finite() && (0.0..=1.0).contains(lambda),
@@ -1048,14 +1104,16 @@ pub struct ExpandedEpisodeV1 {
     /// Per-physical-seat mulligan modes, present exactly when `opening` is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mulligan_modes: Option<[PauperMulliganModeV1; 2]>,
-    /// Some subtracts this positive logit offset (at most 1e6, an f64 holding
-    /// exactly an f32 value) from the
-    /// mulligan row of every London announcement, in collection, record
-    /// validation and the update (`london_keep_offset_v1`); those rows are
-    /// drawn from the unclamped softmax sampler. Only with `opening`. None keeps
-    /// every prior serialized byte and every behavior.
+    /// Some subtracts a logit offset (each number at most 1e6 and an f64
+    /// holding exactly an f32 value) from the mulligan row of every London
+    /// announcement, in collection, record validation and the update
+    /// (`london_keep_offset_v1`): one positive number for every announcement,
+    /// or seven numbers, one per number of mulligans the acting seat has
+    /// already taken (0 to 6). Those rows are drawn from the unclamped softmax
+    /// sampler. Only with `opening`. None keeps every prior serialized byte
+    /// and every behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub london_keep_offset: Option<f64>,
+    pub london_keep_offset: Option<london_keep_offset_v1::LondonKeepOffsetV1>,
 }
 
 /// Named game-level runtime rules profiles an episode may select.
@@ -1131,7 +1189,7 @@ impl ExpandedEpisodeV1 {
             );
         };
         if let Some(offset) = self.london_keep_offset {
-            london_keep_offset_v1::offset_f32_v1(offset)?;
+            offset.resolve_v1()?;
         }
         ensure(
             self.reset.is_none(),
@@ -2551,7 +2609,7 @@ fn collect_episode_hooked_v1(
                         &session,
                         episode
                             .london_keep_offset
-                            .map(london_keep_offset_v1::offset_f32_v1)
+                            .map(london_keep_offset_v1::LondonKeepOffsetV1::resolve_v1)
                             .transpose()?,
                     )?;
                     // FlatV8 rows also record their pairing relation.
@@ -2607,20 +2665,25 @@ fn collect_episode_hooked_v1(
 }
 
 /// The London keep offset shared by every trajectory of an update batch,
-/// compared by bits; a batch mixing values (or offset and no offset) is
-/// refused.
+/// compared as seven f32 bit patterns (a scalar is seven equal entries); a
+/// batch mixing values (or offset and no offset) is refused.
 fn batch_london_keep_offset_v1(
-    offsets: impl IntoIterator<Item = Option<f64>>,
-) -> Result<Option<f32>, String> {
-    let mut values = offsets.into_iter().map(|offset| offset.map(f64::to_bits));
-    let first = values.next().flatten();
-    ensure(
-        values.all(|value| value == first),
-        "an update batch mixes London keep offsets",
-    )?;
-    first
-        .map(|bits| london_keep_offset_v1::offset_f32_v1(f64::from_bits(bits)))
-        .transpose()
+    offsets: impl IntoIterator<Item = Option<london_keep_offset_v1::LondonKeepOffsetV1>>,
+) -> Result<Option<london_keep_offset_v1::OffsetVectorV1>, String> {
+    let mut values = offsets
+        .into_iter()
+        .map(|offset| offset.map(|offset| offset.resolve_v1()).transpose());
+    let Some(first) = values.next() else {
+        return Ok(None);
+    };
+    let first = first?;
+    for value in values {
+        ensure(
+            value?.map(|offset| offset.bits()) == first.map(|offset| offset.bits()),
+            "an update batch mixes London keep offsets",
+        )?;
+    }
+    Ok(first)
 }
 
 /// One non-natural collection attempt, preserved for audit even though it is
@@ -3285,7 +3348,7 @@ fn validate_episode_records_with_search_v1(
                     // An adjusted row was drawn from the unclamped sampler.
                     match episode
                         .london_keep_offset
-                        .map(london_keep_offset_v1::offset_f32_v1)
+                        .map(london_keep_offset_v1::LondonKeepOffsetV1::resolve_v1)
                         .transpose()?
                     {
                         Some(offset) => {
@@ -3294,7 +3357,7 @@ fn validate_episode_records_with_search_v1(
                                 &raw,
                                 &tensor.state,
                                 &tensor.action_features,
-                                offset,
+                                &offset,
                             )? {
                                 Some(adjusted) => {
                                     use_unclamped = true;
@@ -4010,6 +4073,12 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 ensure(ids.insert(&episode.id), "duplicate episode id")?;
             }
             let (mut policy, learner, state_hash) = if source.s_learner.is_some() {
+                ensure(
+                    episodes
+                        .iter()
+                        .all(|episode| episode.london_keep_offset.is_none()),
+                    "an S learner collection refuses the London keep offset",
+                )?;
                 s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
             } else {
                 let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
@@ -4244,6 +4313,21 @@ struct GaeTargetsV1 {
     value_targets: Vec<f32>,
     advantages: Vec<f32>,
     statistics: AdvantageStatisticsV1,
+    /// Present exactly under `PregameAdvantageV1::TerminalV1`.
+    pregame: Option<PregameAdvantageReceiptV1>,
+}
+
+/// What the terminal pregame advantage changed, for the update receipt (a key
+/// `pregame_advantage`, written only when the mode is on): the mode, how many
+/// learner decisions were pregame rows, and the mean raw (before
+/// normalization) advantage of those rows under the terminal result and under
+/// the default GAE. A mean over no pregame rows is null.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+struct PregameAdvantageReceiptV1 {
+    mode: &'static str,
+    pregame_groups: usize,
+    raw_terminal_mean: Option<f32>,
+    raw_default_mean: Option<f32>,
 }
 
 /// Computes this update's GAE value targets and normalized advantages from
@@ -4294,6 +4378,36 @@ fn compute_gae_targets_of_values_v1(
     gamma: f32,
     lambda: f32,
 ) -> Result<GaeTargetsV1, String> {
+    let advantage_and_target =
+        gae_pairs_of_values_v1(values, terminal_returns, episode_ordinals, gamma, lambda)?;
+    let raw_advantages: Vec<f32> = advantage_and_target
+        .iter()
+        .map(|(advantage, _)| *advantage)
+        .collect();
+    let value_targets: Vec<f32> = advantage_and_target
+        .iter()
+        .map(|(_, value_target)| *value_target)
+        .collect();
+    let (advantages, statistics) =
+        normalize_advantages_v1(&raw_advantages, GAE_ADVANTAGE_NORMALIZATION_EPSILON_V1)?;
+    Ok(GaeTargetsV1 {
+        value_targets,
+        advantages,
+        statistics,
+        pregame: None,
+    })
+}
+
+/// Every group's raw `(advantage, value_target)` under the ordinary GAE, one
+/// episode at a time (the part of [`compute_gae_targets_of_values_v1`] before
+/// the whole-update normalization).
+fn gae_pairs_of_values_v1(
+    values: &[f32],
+    terminal_returns: &[i8],
+    episode_ordinals: &[usize],
+    gamma: f32,
+    lambda: f32,
+) -> Result<Vec<(f32, f32)>, String> {
     ensure(
         values.len() == episode_ordinals.len() && terminal_returns.len() == values.len(),
         "gae group and episode-ordinal counts differ",
@@ -4324,20 +4438,133 @@ fn compute_gae_targets_of_values_v1(
         advantage_and_target[start..end].copy_from_slice(&episode_results);
         start = end;
     }
-    let raw_advantages: Vec<f32> = advantage_and_target
+    Ok(advantage_and_target)
+}
+
+/// [`compute_gae_targets_v1`] under a pregame advantage mode. `Gae` is that
+/// function. `TerminalV1` ([`terminal_pregame_targets_of_values_v1`]) marks
+/// each group a pregame row from its first substep's tensor: state column 89
+/// (the London pregame stage) set, which holds for announcements and
+/// put-back decisions alike.
+fn compute_gae_targets_with_pregame_v1(
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    episode_ordinals: &[usize],
+    gamma: f32,
+    lambda: f32,
+    pregame_advantage: PregameAdvantageV1,
+) -> Result<GaeTargetsV1, String> {
+    if pregame_advantage.is_gae() {
+        return compute_gae_targets_v1(groups, episode_ordinals, gamma, lambda);
+    }
+    ensure(
+        groups.len() == episode_ordinals.len(),
+        "gae group and episode-ordinal counts differ",
+    )?;
+    let mut values = Vec::with_capacity(groups.len());
+    let mut pregame = Vec::with_capacity(groups.len());
+    for (index, group) in groups.iter().enumerate() {
+        let first = group
+            .substeps
+            .first()
+            .ok_or_else(|| format!("gae group {index} has no substeps"))?;
+        values.push(f32::from_bits(first.expected_value_bits));
+        let NativePolicyForwardInputV1::Encoded(encoded) = &first.forward else {
+            return Err("the terminal pregame advantage requires encoded decision input".into());
+        };
+        pregame.push(
+            encoded
+                .state
+                .get(london_keep_offset_v1::PREGAME_STATE_COLUMN_V1)
+                .copied()
+                == Some(1.0),
+        );
+    }
+    let terminal_returns: Vec<i8> = groups.iter().map(|group| group.terminal_return).collect();
+    terminal_pregame_targets_of_values_v1(
+        &values,
+        &terminal_returns,
+        &pregame,
+        episode_ordinals,
+        gamma,
+        lambda,
+    )
+}
+
+/// The terminal pregame advantage (`PregameAdvantageV1::TerminalV1`) on each
+/// group's first-substep value, terminal return and pregame mark.
+///
+/// Every row first gets the ordinary GAE advantage and value target. Each
+/// pregame row is then overwritten with `(R - V, R)`: `R` its game's terminal
+/// result for the learner seat, `V` its own value estimate, nothing
+/// bootstrapped through any later value. The recursion runs backward from the
+/// end of an episode and the pregame rows open it, so no in-game row reads
+/// them: in-game raw advantages and targets stay as the default mode computed
+/// them (a pregame row after an in-game row of its episode is refused, since
+/// that would break this). Mean and std come from the default series (all rows
+/// before the overwrite) and are applied to every row, so in-game rows
+/// normalize bit for bit as in the default mode; the statistics in the receipt
+/// describe the final series. Requires gamma exactly 1.0.
+fn terminal_pregame_targets_of_values_v1(
+    values: &[f32],
+    terminal_returns: &[i8],
+    pregame: &[bool],
+    episode_ordinals: &[usize],
+    gamma: f32,
+    lambda: f32,
+) -> Result<GaeTargetsV1, String> {
+    ensure(
+        gamma.to_bits() == 1.0_f32.to_bits(),
+        "the terminal pregame advantage requires gamma exactly 1.0",
+    )?;
+    ensure(
+        pregame.len() == values.len(),
+        "gae group and pregame-mark counts differ",
+    )?;
+    let default_pairs =
+        gae_pairs_of_values_v1(values, terminal_returns, episode_ordinals, gamma, lambda)?;
+    for index in 1..values.len() {
+        ensure(
+            !(pregame[index]
+                && !pregame[index - 1]
+                && episode_ordinals[index] == episode_ordinals[index - 1]),
+            "a pregame decision follows an in-game decision of its episode",
+        )?;
+    }
+    let mut pairs = default_pairs.clone();
+    let mut pregame_groups = 0usize;
+    let mut terminal_sum = 0.0f32;
+    let mut default_sum = 0.0f32;
+    for index in 0..values.len() {
+        if pregame[index] {
+            let result = f32::from(terminal_returns[index]);
+            pairs[index] = (result - values[index], result);
+            pregame_groups += 1;
+            terminal_sum += pairs[index].0;
+            default_sum += default_pairs[index].0;
+        }
+    }
+    let default_raw: Vec<f32> = default_pairs
         .iter()
         .map(|(advantage, _)| *advantage)
         .collect();
-    let value_targets: Vec<f32> = advantage_and_target
-        .iter()
-        .map(|(_, value_target)| *value_target)
-        .collect();
-    let (advantages, statistics) =
-        normalize_advantages_v1(&raw_advantages, GAE_ADVANTAGE_NORMALIZATION_EPSILON_V1)?;
+    let final_raw: Vec<f32> = pairs.iter().map(|(advantage, _)| *advantage).collect();
+    let value_targets: Vec<f32> = pairs.iter().map(|(_, target)| *target).collect();
+    let (advantages, statistics) = bootstrapped_advantage_v1::normalize_advantages_against_v1(
+        &final_raw,
+        &default_raw,
+        GAE_ADVANTAGE_NORMALIZATION_EPSILON_V1,
+    )?;
+    let mean = |sum: f32| (pregame_groups > 0).then(|| sum / pregame_groups as f32);
     Ok(GaeTargetsV1 {
         value_targets,
         advantages,
         statistics,
+        pregame: Some(PregameAdvantageReceiptV1 {
+            mode: PregameAdvantageV1::TerminalV1.name_v1(),
+            pregame_groups,
+            raw_terminal_mean: mean(terminal_sum),
+            raw_default_mean: mean(default_sum),
+        }),
     })
 }
 
@@ -4670,6 +4897,25 @@ fn execute_update_inner_v1(
         )?;
     }
     state.set_london_keep_offset_v1(london_keep_offset);
+    // The terminal pregame advantage (`PregameAdvantageV1`): the plain CPU GAE
+    // update only, on London episodes only.
+    if !loss_selection.pregame_advantage_v1().is_gae() {
+        ensure(
+            matches!(update_backend, ExpandedUpdateBackendV1::Cpu)
+                && line_b.is_none()
+                && e_supported.is_none()
+                && soft_q.is_none()
+                && search_targets.is_none()
+                && ex1.is_none(),
+            "the terminal pregame advantage trains only on the plain CPU GAE update",
+        )?;
+        ensure(
+            episodes
+                .iter()
+                .all(|trajectory| trajectory.episode.opening.is_some()),
+            "the terminal pregame advantage requires a London opening on every episode",
+        )?;
+    }
     // Rows the search played are authenticated and masked only by a W5
     // update; every other update refuses them.
     ensure(
@@ -4832,8 +5078,19 @@ fn execute_update_inner_v1(
     // stay byte-identical (design section 2/6).
     let gae_targets = match &loss_selection {
         ExpandedLossSelectionV1::TerminalReinforceValueV3 => None,
-        ExpandedLossSelectionV1::GaeAdvantageValueV1 { gamma, lambda, .. }
-        | ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { gamma, lambda, .. } => Some(
+        ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+            gamma,
+            lambda,
+            pregame_advantage,
+            ..
+        } => Some(compute_gae_targets_with_pregame_v1(
+            &groups,
+            &episode_ordinals,
+            *gamma,
+            *lambda,
+            *pregame_advantage,
+        )?),
+        ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { gamma, lambda, .. } => Some(
             compute_gae_targets_v1(&groups, &episode_ordinals, *gamma, *lambda)?,
         ),
     };
@@ -5694,6 +5951,11 @@ fn execute_update_inner_v1(
     // receipts gain zero new keys.
     if let Some(gae) = &gae_targets {
         result["advantage_statistics"] = json!(gae.statistics);
+        // Present only under the terminal pregame advantage, so a default
+        // receipt gains no key.
+        if let Some(pregame) = &gae.pregame {
+            result["pregame_advantage"] = json!(pregame);
+        }
     }
     if let Some(telemetry) = preparation_telemetry {
         result["update_preparation"] = serde_json::to_value(telemetry).map_err(err)?;
@@ -10394,6 +10656,7 @@ pub(crate) mod tests {
                 gamma: 1.0,
                 lambda: 0.95,
                 entropy_coefficient: 0.0,
+                pregame_advantage: PregameAdvantageV1::default(),
             },
             TrainingMathV1::PlatformLibm,
         )
@@ -10954,6 +11217,7 @@ pub(crate) mod tests {
             gamma: 1.0,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: PregameAdvantageV1::default(),
         }
     }
 
@@ -12526,6 +12790,7 @@ pub(crate) mod tests {
     }
 
     mod pauper_opening_tests;
+    mod pregame_advantage_tests;
     mod reset_start_tests;
     mod v8_inclusion_tests;
     mod widening_b512_tests;

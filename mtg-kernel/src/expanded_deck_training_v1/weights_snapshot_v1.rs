@@ -399,6 +399,7 @@ mod tests {
                 gamma: 1.0,
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
             },
             line_b: None,
             training_math: TrainingMathV1::PlatformLibm,

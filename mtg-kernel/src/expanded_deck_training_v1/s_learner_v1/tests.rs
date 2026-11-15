@@ -140,6 +140,7 @@ fn gae() -> ExpandedLossSelectionV1 {
         gamma: 1.0,
         lambda: 0.9,
         entropy_coefficient: 0.0,
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
     }
 }
 
@@ -369,16 +370,28 @@ fn s_learner_end_to_end_v1() {
             gamma: 0.99,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         },
         ExpandedLossSelectionV1::GaeAdvantageValueV1 {
             gamma: 1.0,
             lambda: 0.95,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         },
         ExpandedLossSelectionV1::TerminalReinforceValueV3,
     ] {
         assert!(validate_update_loss_v1(&next, &loss).is_err());
     }
+    // The terminal pregame advantage is a net-8 London mode: refused here.
+    let terminal = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+        gamma: 1.0,
+        lambda: 0.9,
+        entropy_coefficient: 0.0,
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::TerminalV1,
+    };
+    assert!(validate_update_loss_v1(&next, &terminal)
+        .unwrap_err()
+        .contains("terminal pregame advantage"));
     validate_update_loss_v1(&net8, &ExpandedLossSelectionV1::TerminalReinforceValueV3).unwrap();
     // A continuation with other GAE settings is refused.
     assert!(update(
@@ -391,6 +404,7 @@ fn s_learner_end_to_end_v1() {
             gamma: 0.99,
             lambda: 0.9,
             entropy_coefficient: 0.0,
+            pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
         },
         CheckpointRecordFormatV1::V1,
         root.join("other-gamma"),

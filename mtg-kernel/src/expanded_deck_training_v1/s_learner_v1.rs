@@ -294,10 +294,15 @@ pub(crate) fn validate_update_loss_v1(
         gamma,
         lambda,
         entropy_coefficient,
+        pregame_advantage,
     } = loss_selection
     else {
         return Err("an S learner trains only the GAE loss (gae_advantage_value/v1)".into());
     };
+    ensure(
+        pregame_advantage.is_gae(),
+        "an S learner refuses the terminal pregame advantage",
+    )?;
     ensure(
         record.gamma_bits == gamma.to_bits()
             && record.gae_lambda_bits == lambda.to_bits()
@@ -401,10 +406,15 @@ fn refuse_unsupported_v1(inputs: &SUpdateInputsV1) -> Result<(f32, f32), String>
             gamma,
             lambda,
             entropy_coefficient,
+            pregame_advantage,
         } => {
             ensure(
                 entropy_coefficient.to_bits() == 0,
                 "an S learner's GAE loss has no entropy term",
+            )?;
+            ensure(
+                pregame_advantage.is_gae(),
+                "an S learner refuses the terminal pregame advantage",
             )?;
             Ok((gamma, lambda))
         }
@@ -469,6 +479,13 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
     let mut ids = BTreeSet::new();
     for episode in &episodes {
         validate_trajectory(episode)?;
+        // The London keep offset (one number or one per mulligan count) is
+        // applied by the net-8 update only; this update would train without
+        // it, off the distribution the rows were drawn from.
+        ensure(
+            episode.episode.london_keep_offset.is_none(),
+            "an S learner update refuses the London keep offset",
+        )?;
         // Rows the search played are authenticated and masked only by a
         // W5 update.
         ensure(
