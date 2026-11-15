@@ -23,7 +23,9 @@ PRE_FIX_SOURCE = "f933c8b8dfc60945eff683b5125d694231109417"
 LONDON_VECTOR_SOURCE = "587b5aca2a823dc8765c13873bdd10281af63c21"
 # The same change after its test-only lint fixes (the head that gets pinned).
 LONDON_VECTOR_SOURCE_B = "6faa42219a4e67d266019458a2380df5aa5e25f8"
-SOURCES = (SOURCE, PRE_FIX_SOURCE, LONDON_VECTOR_SOURCE, LONDON_VECTOR_SOURCE_B)
+# The merge commit of that change on the release branch (same tree as the head above; this is what gets pinned).
+LONDON_VECTOR_SOURCE_MERGED = "ce3df74f85649bdbb9a9c4971bafefb7346243ed"
+SOURCES = (SOURCE, PRE_FIX_SOURCE, LONDON_VECTOR_SOURCE, LONDON_VECTOR_SOURCE_B, LONDON_VECTOR_SOURCE_MERGED)
 IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
 GIB = 2**30
 FREE_FLOOR = 60 * GIB + GIB // 2
