@@ -171,6 +171,8 @@ fn state_checks() -> Vec<StateCheck> {
         crate::doubling_season_v48::require_legacy_supported,
         crate::doubling_season_v48::requires_successor,
         crate::doubling_season_v48::validate_token_journals,
+        crate::drake_hatcher_v1::custody::relevant,
+        crate::drake_public_v53::capture,
         crate::eaten_public_v46::validate_state,
         crate::effect::crystal_prevention_v1::requires_successor,
         crate::effect::crystal_prevention_v1::validate,

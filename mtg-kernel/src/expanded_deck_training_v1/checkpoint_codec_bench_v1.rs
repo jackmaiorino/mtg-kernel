@@ -1525,13 +1525,8 @@ fn decode_probes_v1(
     let (record, sample) = meter.time_v1(|| record_envelope_v1::open_v1(&file, MAX_FILE_BYTES))?;
     samples.push(("probe_open", sample));
     let v2 = checkpoint_container_v1::is_container_v1(&record);
-    let (decoded, sample) = meter.time_v1(|| {
-        if v2 {
-            checkpoint_container_v1::decode_v1(&record)
-        } else {
-            serde_json::from_slice::<ExpandedCheckpointV1>(&record).map_err(err)
-        }
-    })?;
+    let (decoded, sample) =
+        meter.time_v1(|| checkpoint_container_v1::parse_record_borrowed_v1(&record))?;
     samples.push(("probe_decode", sample));
     if v2 {
         let (_, sample) =
@@ -1561,7 +1556,7 @@ fn decode_probes_v1(
 
 fn measure_ordinary_stages_v1(
     meter: MeterV1<'_>,
-    measured: &OrdinaryStateV1,
+    measured: &mut OrdinaryStateV1,
     config: &MeasureConfigV1,
     deadline: &DeadlineV1,
     ledger: &mut LedgerV1,
@@ -1583,6 +1578,7 @@ fn measure_ordinary_stages_v1(
                 measured.label, cell.name
             ))?;
             evictor.evict_v1()?;
+            measured.state.clear_cached_state_sha256_v1();
             let directory = root.join(format!("{}-{rep:03}", cell.name));
             let published = ordinary_sequence_v1(meter, measured, cell, &directory)?;
             let pin = &published.pin;
@@ -1841,7 +1837,8 @@ fn measure_public_pair_v1(
         samples.push(("v1_parse", sample));
         let (serialized, sample) = meter.time_v1(|| serde_json::to_vec(&parsed).map_err(err))?;
         samples.push(("v1_serialize", sample));
-        let (decoded, sample) = meter.time_v1(|| checkpoint_container_v1::decode_v1(&v2))?;
+        let (decoded, sample) =
+            meter.time_v1(|| checkpoint_container_v1::decode_borrowed_v1(&v2))?;
         samples.push(("v2_decode", sample));
         let (encoded, sample) = meter.time_v1(|| checkpoint_container_v1::encode_v1(&decoded))?;
         samples.push(("v2_encode", sample));
@@ -2092,7 +2089,7 @@ pub fn measure_v1(
         peak_rss.insert("states_loaded", peak_rss_bytes_v1());
         if wants(SectionV1::Stages) {
             let started = Instant::now();
-            for state in &ordinary {
+            for state in &mut ordinary {
                 measure_ordinary_stages_v1(meter, state, config, &deadline, &mut ledger)?;
             }
             section_seconds.insert("stages", started.elapsed().as_secs_f64());

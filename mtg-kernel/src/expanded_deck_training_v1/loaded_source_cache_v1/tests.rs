@@ -326,7 +326,7 @@ fn checkpoints_that_name_another_file_are_not_cached() {
         .is_none());
     assert_eq!(matches(), before);
     // A checkpoint pin without the checkpoint it restored is refused too.
-    remember_v1(&resumed, &descriptor_bytes, &policy, &state, None);
+    remember_v1::<ParameterBitsV1>(&resumed, &descriptor_bytes, &policy, &state, None);
     assert!(lookup_v1(&resumed, &descriptor_bytes, None)
         .unwrap()
         .is_none());

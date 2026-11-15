@@ -216,8 +216,21 @@ fn validate_current_face(state: &GameState, index: usize, face: &FaceV1) -> Resu
     let was_concealed = ["Face-down creature", "Face-down card"].iter().any(|name| {
         crate::card_def::card_id_by_name(name).is_some_and(|id| Some(id) == face.public_card_def)
     });
-    if was_concealed && live.v4.face_down_v1.is_none() && state.engine.event_history[index + 1..].iter().any(|e| matches!(e,
-        E::TurnedFaceUp { object, zone_change_count } if *object == id && *zone_change_count == generation)) {
+    if was_concealed
+        && live.v4.face_down_v1.is_none()
+        && state
+            .engine
+            .event_history
+            .of_kinds_v2(&[crate::event_history_v1::EventKindV1::TurnedFaceUp])
+            .any(|(at, e)| {
+                at > index
+                    && matches!(
+                        e,
+                        E::TurnedFaceUp { object, zone_change_count }
+                            if *object == id && *zone_change_count == generation
+                    )
+            })
+    {
         return Ok(());
     }
     Err("Storm target face differs without a native face change".into())
@@ -228,7 +241,7 @@ pub(crate) fn for_snapshot(state: &GameState, spell: &StackItem) -> Result<Vec<F
         return Err("Storm target faces have no owning profile".into());
     }
     let mut found = None;
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in super::storm_rows(state) {
         let offset = match event {
             E::ThousandYearStormV1 {
                 journal: JournalV1::Cast {
@@ -248,15 +261,14 @@ pub(crate) fn for_snapshot(state: &GameState, spell: &StackItem) -> Result<Vec<F
             journal: JournalV1::Copy { trigger, .. },
         } = event
         {
-            let mut publications =
-                state.engine.event_history[..index]
-                    .iter()
-                    .filter_map(|e| match e {
-                        E::ThousandYearStormV1 {
-                            journal: JournalV1::Published { cast, item },
-                        } if item.v4.stack_item_id == *trigger => Some(*cast),
-                        _ => None,
-                    });
+            let mut publications = super::storm_rows(state)
+                .take_while(|(at, _)| *at < index)
+                .filter_map(|(_, e)| match e {
+                    E::ThousandYearStormV1 {
+                        journal: JournalV1::Published { cast, item },
+                    } if item.v4.stack_item_id == *trigger => Some(*cast),
+                    _ => None,
+                });
             let cast = publications
                 .next()
                 .ok_or("Storm target faces lost original trigger")?;
@@ -342,7 +354,7 @@ pub(crate) fn publish_copy(
 pub(super) fn validate_state(state: &GameState) -> Result<(), String> {
     let mut ids = std::collections::BTreeSet::new();
     let mut sources = std::collections::BTreeSet::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in super::storm_rows(state) {
         if state.thousand_year_storm_consumer_v1 {
             if let E::ThousandYearStormV1 {
                 journal:

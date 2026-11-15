@@ -238,9 +238,8 @@ fn lookup<'a>(
     let mut rows = state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::TwinflameDynamicDamageSampleV38])
-        .iter()
-        .filter_map(|e| match e {
+        .of_kinds_v2(&[EventKindV1::TwinflameDynamicDamageSampleV38])
+        .filter_map(|(_, e)| match e {
             E::TwinflameDynamicDamageSampleV38 { sample }
                 if sample.ctx == *ctx && sample.op == *op && sample.path == path =>
             {
@@ -286,9 +285,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     for (at, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::TwinflameDynamicDamageSampleV38])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::TwinflameDynamicDamageSampleV38])
     {
         let E::TwinflameDynamicDamageSampleV38 { sample } = event else {
             continue;
@@ -331,9 +328,8 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         let owners: Vec<_> = state
             .engine
             .event_history
-            .scan_for_v1(&[EventKindV1::CrystalExecutionV1])
-            .iter()
-            .filter_map(|e| match e {
+            .of_kinds_v2(&[EventKindV1::CrystalExecutionV1])
+            .filter_map(|(_, e)| match e {
                 E::CrystalExecutionV1 { execution }
                     if execution.previous == sample.previous && execution.item == sample.item =>
                 {

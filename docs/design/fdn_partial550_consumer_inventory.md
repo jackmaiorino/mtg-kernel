@@ -21,8 +21,9 @@ to keep it and the sealed learner to score the menu. The same CI passed the
 286-root fair-search check and the other FullPool consumer and Return-profile
 cases. The bounded `-session full-pool` training and fixed-opponent evaluation
 passed on cloud Linux with byte-identical results at one and two workers and on
-resume. The PR records the evidence. Drake Hatcher's per-step cost remains
-#550's separate criterion, tracked in #627.
+resume. The PR records the evidence. With Drake Hatcher removed from
+`KNOWN_SLOW_FULL` in `python/tools/limited_match_v1.py` (#627), #550's
+per-step cost criterion is also met.
 
 The sections below are the record before the merge.
 

@@ -4,33 +4,28 @@
 //!   the library;
 //! - Phyrexian Metamorph copying an initiative granter and later leaving the
 //!   battlefield before VentureAfterTaking, VentureAtUpkeep or CombatTransfer
-//!   resolves;
-//! - Vintage Jewel Shops vs Mono-White Initiative Best-of-Three match seed
-//!   72907925487712 (game seed 583263403901698).
+//!   resolves.
+//!
+//! The Vintage Jewel Shops vs Mono-White Initiative Best-of-Three match seed
+//! 72907925487712 (game seed 583263403901698) replays in `eternal_bo3_v1`.
 
 use super::{act, cast, islands, next, pool, put, settle, P0, P1};
-use crate::eternal_catalog_v1::{snapshot_decks, splitmix64};
-use mtg_kernel::bo3_match::{GameOutcomeV1, MatchPhaseV1, PlayDrawChoiceV1};
-use mtg_kernel::card_def::{card_id_by_name, Keywords, CARD_DEFS};
+use mtg_kernel::card_def::{Keywords, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision};
-use mtg_kernel::eternal_bo3_v1::{
-    EternalBestOfThreeMatchV1, EternalFormatV1, EternalRegisteredDeckV1, RandomSideboardPolicyV1,
-};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
-use mtg_kernel::limited_session_v1::CustomCardCountV1;
 use mtg_kernel::mana::ManaColor;
-use mtg_kernel::policy_surface_v5::{PolicyActionV5, PolicyDecisionV5, PolicySurfaceV5};
-use mtg_kernel::rl::{policy_legal_action_candidates_v5, ActionSemanticV1};
 use mtg_kernel::state::{GameState, Step, Target, UndercityRoomV1, Zone};
-use mtg_kernel::surface::{SurfaceAction, SurfaceDecision};
-
-fn id(name: &str) -> u16 {
-    card_id_by_name(name).unwrap_or_else(|| panic!("{name}"))
-}
 
 fn zone(state: &GameState, object: ObjectId) -> Zone {
     state.objects.get(object).zone
+}
+
+fn room(state: &GameState, player: PlayerId) -> Option<UndercityRoomV1> {
+    state.players[player.index()]
+        .dungeon
+        .room_id
+        .and_then(UndercityRoomV1::from_stable_id)
 }
 
 /// Advances `player` into Undercity room 3 (`Archives` / `Catacombs`) so the
@@ -59,10 +54,7 @@ fn advance_to_fourth_undercity_room(state: &mut GameState, player: PlayerId) {
             }
         }
     }
-    assert_eq!(
-        state.players[player.index()].undercity_room,
-        Some(UndercityRoomV1::Archives)
-    );
+    assert_eq!(room(state, player), Some(UndercityRoomV1::Archives));
 }
 
 #[test]
@@ -117,7 +109,7 @@ fn throne_of_the_dead_three_exiles_under_containment_priest_and_shuffles_without
             top_creature,
             Keywords::HEXPROOF
         ));
-        assert_eq!(state.players[actor.index()].undercity_room, None);
+        assert_eq!(room(&state, actor), None);
     }
 }
 
@@ -161,7 +153,7 @@ fn throne_of_the_dead_three_keeps_card_in_library_under_grafdiggers_cage_and_shu
         assert_eq!(zone(&state, top_creature), Zone::Library);
         assert!(state.players[actor.index()].library.contains(&top_creature));
         assert_eq!(state.objects.get(top_creature).counters.plus1_plus1, 0);
-        assert_eq!(state.players[actor.index()].undercity_room, None);
+        assert_eq!(room(&state, actor), None);
     }
 }
 
@@ -222,17 +214,19 @@ fn departed_phyrexian_metamorph_copy_of_initiative_granter_keeps_venture_and_com
             }
         }
         assert_eq!(state.initiative, Some(actor));
-        assert_eq!(
-            state.players[actor.index()].undercity_room,
-            Some(UndercityRoomV1::SecretEntrance)
-        );
+        assert_eq!(room(&state, actor), Some(UndercityRoomV1::SecretEntrance));
 
         // 2. Advance to opponent's combat: combat damage transfers the
         // initiative (`CombatTransfer`) even though `initiative_source` was the
         // departed Metamorph, and then on opponent's next upkeep `VentureAtUpkeep`
         // also resolves cleanly without `InvalidEffectContinuation`.
-        while state.active_player != opponent || state.step != Step::DeclareAttackers {
+        loop {
             match next(&mut state) {
+                Decision::DeclareAttackers { player, eligible } if player == opponent => {
+                    assert!(eligible.contains(&attacker), "{eligible:?}");
+                    act(&mut state, Action::DeclareAttackers(vec![attacker]));
+                    break;
+                }
                 Decision::DeclareAttackers { .. } => {
                     act(&mut state, Action::DeclareAttackers(vec![]))
                 }
@@ -243,8 +237,6 @@ fn departed_phyrexian_metamorph_copy_of_initiative_granter_keeps_venture_and_com
                 _ => act(&mut state, Action::Pass),
             }
         }
-        let _ = next(&mut state);
-        act(&mut state, Action::DeclareAttackers(vec![attacker]));
         while state.initiative != Some(opponent) || !state.stack.is_empty() {
             match next(&mut state) {
                 Decision::DeclareBlockers { .. } => {
@@ -272,7 +264,7 @@ fn departed_phyrexian_metamorph_copy_of_initiative_granter_keeps_venture_and_com
         assert_eq!(state.initiative, Some(opponent));
 
         // Advance through actor's turn to opponent's upkeep to exercise VentureAtUpkeep!
-        let room_before = state.players[opponent.index()].undercity_room;
+        let room_before = room(&state, opponent);
         while state.active_player != opponent || state.step != Step::Main1 {
             match next(&mut state) {
                 Decision::DeclareAttackers { .. } => {
@@ -304,139 +296,7 @@ fn departed_phyrexian_metamorph_copy_of_initiative_granter_keeps_venture_and_com
                 _ => act(&mut state, Action::Pass),
             }
         }
-        assert_ne!(state.players[opponent.index()].undercity_room, room_before);
+        assert_ne!(room(&state, opponent), room_before);
         assert!(state.engine.halted.is_none());
-    }
-}
-
-fn native_registered_deck(archetype: &str) -> EternalRegisteredDeckV1 {
-    let found = snapshot_decks()
-        .into_iter()
-        .find(|deck| deck.format == "vintage" && deck.archetype == archetype)
-        .unwrap_or_else(|| panic!("missing vintage snapshot {archetype}"));
-    let expand = |rows: &[CustomCardCountV1]| -> Vec<u16> {
-        rows.iter()
-            .flat_map(|row| std::iter::repeat_n(id(&row.name), row.count as usize))
-            .collect()
-    };
-    EternalRegisteredDeckV1::new_with_native_opening_v1(
-        EternalFormatV1::Vintage,
-        found.archetype,
-        expand(&found.deck.cards),
-        expand(&found.sideboard),
-        found.deck.companion.as_deref().map(id),
-    )
-    .unwrap()
-}
-
-fn play_native_game(mut state: GameState, seed: u64) -> Option<PlayerId> {
-    const MAX_LISTED_TRIGGERS: usize = 7;
-    let mut surface = PolicySurfaceV5::new();
-    let mut random = seed;
-    for step in 0..131_072 {
-        let decision = surface
-            .next_decision(&mut state)
-            .unwrap_or_else(|error| panic!("seed={seed} step={step}: {error}"));
-        if let PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::GameOver { winner })) =
-            &decision
-        {
-            return *winner;
-        }
-        assert!(
-            !decision.is_terminal(),
-            "seed={seed} step={step}: {decision:?}"
-        );
-        let action = match &decision {
-            PolicyDecisionV5::Surface(SurfaceDecision::Decision(
-                Decision::ChooseEternalOpeningV1 { legal_cards, .. },
-            )) => {
-                let pick = splitmix64(&mut random) % (legal_cards.len() as u64 + 1);
-                let opened = legal_cards.get(pick as usize).copied();
-                PolicyActionV5::Surface(SurfaceAction::Action(
-                    opened.map_or(Action::FinishEffectSelection, |card| {
-                        Action::ChooseEffectTarget(Target::Object(card))
-                    }),
-                ))
-            }
-            PolicyDecisionV5::Surface(SurfaceDecision::Decision(Decision::OrderTriggers {
-                pending,
-                ..
-            })) if pending.len() > MAX_LISTED_TRIGGERS => PolicyActionV5::Surface(
-                SurfaceAction::Action(Action::OrderTriggers((0..pending.len()).collect())),
-            ),
-            _ => {
-                let candidates = policy_legal_action_candidates_v5(&decision, &surface, &state)
-                    .unwrap_or_else(|error| panic!("seed={seed} step={step}: {error}"));
-                let actor = decision.actor(&state).unwrap();
-                let busy = state
-                    .stack
-                    .iter()
-                    .filter(|item| item.controller == actor)
-                    .count()
-                    >= 2;
-                let open: Vec<_> = candidates
-                    .iter()
-                    .filter(|candidate| {
-                        !busy
-                            || !matches!(
-                                candidate.record.semantic,
-                                ActionSemanticV1::CastSpell { .. }
-                                    | ActionSemanticV1::ActivateAbility { .. }
-                            )
-                    })
-                    .collect();
-                let menu = if open.is_empty() {
-                    candidates.iter().collect::<Vec<_>>()
-                } else {
-                    open
-                };
-                let pick = (splitmix64(&mut random) % menu.len() as u64) as usize;
-                menu[pick].policy_action.clone()
-            }
-        };
-        surface
-            .apply_action(&mut state, action)
-            .unwrap_or_else(|error| panic!("seed={seed} step={step}: {error}"));
-    }
-    panic!("seed={seed}: native game exceeded step limit");
-}
-
-#[test]
-fn vintage_jewel_shops_vs_mono_white_initiative_seed_72907925487712_finishes_cleanly() {
-    let seed = 72_907_925_487_712_u64;
-    let policy = RandomSideboardPolicyV1 {
-        seed,
-        max_exchanges: 5,
-    };
-    let decks = [
-        native_registered_deck("vintage-jewel-shops"),
-        native_registered_deck("vintage-mono-white-initiative"),
-    ];
-    let mut bo3 = EternalBestOfThreeMatchV1::new_v1(decks, PlayerId((seed % 2) as u8)).unwrap();
-    loop {
-        let (game_index, chooser) = match bo3.match_state().phase() {
-            MatchPhaseV1::AwaitingPlayDrawChoice {
-                game_index,
-                chooser,
-            } => (game_index, chooser),
-            MatchPhaseV1::Complete { .. } => break,
-            MatchPhaseV1::AwaitingGameResult { .. } => unreachable!(),
-        };
-        let configurations =
-            [P0, P1].map(|player| policy.configure_v1(bo3.deck(player), player, game_index));
-        let game_seed = seed.wrapping_mul(8).wrapping_add(u64::from(game_index));
-        let (_game, state) = bo3
-            .start_game_with_native_opening_v1(
-                chooser,
-                PlayDrawChoiceV1::Play,
-                configurations,
-                game_seed,
-            )
-            .unwrap();
-        let winner = play_native_game(state, game_seed);
-        let outcome = winner.map_or(GameOutcomeV1::Draw, |player| GameOutcomeV1::Winner {
-            winner: player,
-        });
-        bo3.record_game_result_v1(outcome).unwrap();
     }
 }

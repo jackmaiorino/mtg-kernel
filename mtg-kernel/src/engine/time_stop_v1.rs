@@ -163,9 +163,8 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     if !state
         .engine
         .event_history
-        .scan_for_v1(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1])
-        .iter()
-        .any(|event| matches!(event, CommittedEvent::TimeStopJournalV1 { .. }))
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1])
+        .any(|(_, event)| matches!(event, CommittedEvent::TimeStopJournalV1 { .. }))
     {
         return if state.engine.time_stop_v1.is_empty() {
             Ok(())
@@ -174,7 +173,11 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         };
     }
     let mut expected = StateV1::default();
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1])
+    {
         let Some(saved) = journal(event) else {
             continue;
         };
@@ -267,7 +270,11 @@ pub(crate) fn disposed(state: &GameState, item: &StackItem) -> Result<bool, Stri
         return Ok(false);
     }
     let mut matches = 0usize;
-    for (at, event) in state.engine.event_history.iter().enumerate() {
+    for (at, event) in state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::TimeStopJournalV1])
+    {
         let Some(saved) = journal(event) else {
             continue;
         };

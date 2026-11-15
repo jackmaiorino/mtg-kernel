@@ -465,7 +465,7 @@ pub(crate) fn publish(state: &mut GameState, item: &StackItem) -> Result<(), Str
         || item.v4.ability_source_contract!=Some(source) || !item.targets.is_empty()
         || !item.v4.target_contracts.is_empty() || item.v4.target_spec.is_some()
         || !item.v4.high_society_hunter_started_v45.is_empty() || collected(state,capture).len()!=1
-        || state.engine.event_history.scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45]).iter().any(|e|matches!(e,CommittedEvent::HighSocietyHunterJournalV45{journal} if matches!(journal.as_ref(),JournalV45::Published{capture:old,..} if *old==capture)))
+        || state.engine.event_history.of_kinds_v2(&[EventKindV1::HighSocietyHunterJournalV45]).any(|(_, e)|matches!(e,CommittedEvent::HighSocietyHunterJournalV45{journal} if matches!(journal.as_ref(),JournalV45::Published{capture:old,..} if *old==capture)))
     {return Err("Hunter publication lost original collected untargeted root".into())}
     append(
         state,
@@ -634,17 +634,29 @@ pub(crate) fn linked_paid_incarnation(
     }
     Ok(None)
 }
-fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), String> {
-    let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
-    if state
-        .engine
-        .event_log
-        .iter()
-        .any(|e| matches!(e, CommittedEvent::HighSocietyHunterJournalV45 { .. }))
-    {
-        return Err("Private Hunter custody entered mutable collection log".into());
-    }
-    let waiting = state
+const HUNTER_PROOF_STRIDE: usize = 64;
+
+const HUNTER_CUSTODY_KINDS: [EventKindV1; 5] = [
+    EventKindV1::ControlledCreatureDeathCaptureV1,
+    EventKindV1::ControlledCreatureDeathCaptureCollectedV1,
+    EventKindV1::HighSocietyHunterAttackCaptureV1,
+    EventKindV1::HighSocietyHunterAttackCollectedV1,
+    EventKindV1::HighSocietyHunterJournalV45,
+];
+
+#[derive(Clone)]
+struct HunterCustodyProofV45 {
+    closed_captures: Vec<(u64, bool)>,
+    sources: Vec<AbilitySourceContractV4>,
+    deaths: Vec<(usize, crate::ids::ObjectId)>,
+    closed_items: Vec<crate::ids::StackItemId>,
+    completed_items: Vec<crate::ids::StackItemId>,
+    disposed_items: Vec<StackItem>,
+    had_plus_counter: bool,
+}
+
+fn hunter_waiting(state: &GameState) -> impl Iterator<Item = &PendingTrigger> {
+    state
         .engine
         .pending_triggers
         .iter()
@@ -662,10 +674,183 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
                 .filter_map(|s| s.resolution_play.as_ref())
                 .flat_map(|p| p.deferred_triggers.iter()),
         )
-        .collect::<Vec<&PendingTrigger>>();
+}
+
+fn hunter_tail_invalidates_proof(event: &CommittedEvent, summary: &HunterCustodyProofV45) -> bool {
+    match event {
+        CommittedEvent::HighSocietyHunterAttackCaptureV1 { .. }
+        | CommittedEvent::HighSocietyHunterAttackCollectedV1 { .. }
+        | CommittedEvent::HighSocietyHunterJournalV45 { .. }
+        | CommittedEvent::TimeStopJournalV1 { .. } => true,
+        CommittedEvent::PlusCounterReplacementV48 { .. } => summary.had_plus_counter,
+        CommittedEvent::ControlledCreatureDeathCaptureV1 { source, .. } => {
+            crate::high_society_hunter_v1::owns_definition(source.card_def)
+        }
+        CommittedEvent::ControlledCreatureDeathCaptureCollectedV1 {
+            capture_history_index,
+        } => summary
+            .closed_captures
+            .binary_search_by_key(capture_history_index, |&(c, _)| c)
+            .is_ok(),
+        _ => false,
+    }
+}
+
+fn validate_hunter_from_proof(
+    state: &GameState,
+    from: usize,
+    summary: &std::sync::Arc<HunterCustodyProofV45>,
+) -> Result<(), String> {
+    if state.engine.event_log.iter().any(|e| match e {
+        CommittedEvent::HighSocietyHunterAttackCaptureV1 { .. } => summary
+            .closed_captures
+            .iter()
+            .any(|&(c, attack)| attack && state.engine.event_history.get(c as usize) == Some(e)),
+        CommittedEvent::ControlledCreatureDeathCaptureV1 { source, .. }
+            if crate::high_society_hunter_v1::owns_definition(source.card_def) =>
+        {
+            summary.closed_captures.iter().any(|&(c, attack)| {
+                !attack && state.engine.event_history.get(c as usize) == Some(e)
+            })
+        }
+        _ => false,
+    }) {
+        return validate_inner_full(state, None, false);
+    }
+    for &source in &summary.sources {
+        if crate::engine::validate_historical_ability_source_contract(state, source).is_err() {
+            return validate_inner_full(state, None, false);
+        }
+    }
+    for &(capture_at, died) in &summary.deaths {
+        if state.objects.try_get(died).is_none_or(|o| o.v4.is_token)
+            || crate::creature_death_capture_v1::validated_capture_death(state, capture_at).is_err()
+        {
+            return validate_inner_full(state, None, false);
+        }
+    }
+    if hunter_waiting(state).any(|pending| {
+        binding(&pending.effect).is_some_and(|(c, a)| {
+            match summary
+                .closed_captures
+                .binary_search_by_key(&c, |&(cap, _)| cap)
+            {
+                Err(_) => true,
+                Ok(pos) => summary.closed_captures[pos].1 == a,
+            }
+        })
+    }) {
+        return validate_inner_full(state, None, false);
+    }
+    if state.stack.iter().any(|item| {
+        summary.closed_items.contains(&item.v4.stack_item_id)
+            || selected(item)
+            || !item.v4.high_society_hunter_started_v45.is_empty()
+    }) {
+        return validate_inner_full(state, None, false);
+    }
+    if state.engine.pending_effect.as_ref().is_some_and(|p| {
+        summary
+            .completed_items
+            .contains(&p.resolving_item.v4.stack_item_id)
+    }) {
+        return validate_inner_full(state, None, false);
+    }
+    for item in &summary.disposed_items {
+        if !crate::engine::time_stop_v1::disposed(state, item).unwrap_or(false) {
+            return validate_inner_full(state, None, false);
+        }
+    }
+    let len = state.engine.event_history.len();
+    if len.saturating_sub(from) >= HUNTER_PROOF_STRIDE {
+        state.engine.event_history.set_proof_memo_v1(
+            crate::event_history_v1::ProvedV1::HighSocietyHunterCustody,
+            len,
+            std::sync::Arc::clone(summary),
+        );
+    }
+    Ok(())
+}
+
+fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), String> {
+    let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
+    if state
+        .engine
+        .event_log
+        .iter()
+        .any(|e| matches!(e, CommittedEvent::HighSocietyHunterJournalV45 { .. }))
+    {
+        return Err("Private Hunter custody entered mutable collection log".into());
+    }
+    if owner.is_some() {
+        return validate_inner_full(state, owner, false);
+    }
+    let history = &state.engine.event_history;
+    if !history.has_any(&HUNTER_CUSTODY_KINDS) {
+        if state
+            .stack
+            .iter()
+            .any(|item| selected(item) || !item.v4.high_society_hunter_started_v45.is_empty())
+            || hunter_waiting(state).any(|pending| binding(&pending.effect).is_some())
+        {
+            return validate_inner_full(state, None, false);
+        }
+        return Ok(());
+    }
+    if let Some((from, summary)) = history.proof_memo_v1::<HunterCustodyProofV45>(
+        crate::event_history_v1::ProvedV1::HighSocietyHunterCustody,
+    ) {
+        if history
+            .range_v2(from..)
+            .iter()
+            .any(|event| hunter_tail_invalidates_proof(event, &summary))
+        {
+            return validate_inner_full(state, None, true);
+        }
+        let proved = validate_hunter_from_proof(state, from, &summary);
+        #[cfg(test)]
+        crate::event_history_v1::proof_tests_v1::assert_same(
+            crate::event_history_v1::ProvedV1::HighSocietyHunterCustody,
+            &proved,
+            &validate_inner_full(state, None, false),
+        );
+        return proved;
+    }
+    validate_inner_full(state, None, true)
+}
+
+fn validate_inner_full(
+    state: &GameState,
+    owner: Option<&OwnerV45>,
+    record_proof: bool,
+) -> Result<(), String> {
+    if state
+        .engine
+        .event_log
+        .iter()
+        .any(|e| matches!(e, CommittedEvent::HighSocietyHunterJournalV45 { .. }))
+    {
+        return Err("Private Hunter custody entered mutable collection log".into());
+    }
+    let waiting = hunter_waiting(state).collect::<Vec<&PendingTrigger>>();
     let index = IndexV45::new(state);
+    let mut all_closed = true;
+    let mut closed_captures = Vec::new();
+    let mut sources = Vec::new();
+    let mut deaths = Vec::new();
+    let mut closed_items = Vec::new();
+    let mut completed_items = Vec::new();
+    let mut disposed_items = Vec::new();
+    let mut had_plus_counter = false;
     for &capture in &index.captures {
         let (source, attack) = source_at(state, capture)?;
+        if attack {
+            had_plus_counter = true;
+        } else if let Some(CommittedEvent::ControlledCreatureDeathCaptureV1 { died, .. }) =
+            state.engine.event_history.get(capture as usize)
+        {
+            deaths.push((capture as usize, died.object));
+        }
         let collections = index.collected(capture);
         let fresh = state
             .engine
@@ -682,6 +867,7 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
             if fresh != 1 || !held.is_empty() || !pubs.is_empty() {
                 return Err("Hunter fresh mandatory capture lost its collection owner".into());
             }
+            all_closed = false;
             continue;
         }
         if collections.len() != 1 || collections[0] <= capture as usize || fresh != 0 {
@@ -705,6 +891,7 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
         }
         let [(pub_at, original)] = pubs else {
             if pubs.is_empty() && held.len() == 1 {
+                all_closed = false;
                 continue;
             }
             return Err("Hunter captured root lost mandatory pending/publication owner".into());
@@ -773,6 +960,16 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
                     }
                     validate_operation(state, operation, attack, *input)?;
                 }
+                closed_captures.push((capture, attack));
+                if !sources.contains(&source) {
+                    sources.push(source);
+                }
+                if !closed_items.contains(&original.v4.stack_item_id) {
+                    closed_items.push(original.v4.stack_item_id);
+                }
+                if !completed_items.contains(&item.v4.stack_item_id) {
+                    completed_items.push(item.v4.stack_item_id);
+                }
                 continue;
             }
             if *countered {
@@ -790,8 +987,17 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
             if !live.is_empty() || !removed.is_empty() || owner.is_some() {
                 return Err("Hunter disposed publication has another owner/removal".into());
             }
+            closed_captures.push((capture, attack));
+            if !sources.contains(&source) {
+                sources.push(source);
+            }
+            if !closed_items.contains(&original.v4.stack_item_id) {
+                closed_items.push(original.v4.stack_item_id);
+            }
+            disposed_items.push((*original).clone());
             continue;
         }
+        all_closed = false;
         let authentic = match (live.as_slice(), owner.filter(|o| o.publication == *pub_at)) {
             ([live], None) => unstarted(live) == **original,
             ([], Some(loan)) => unstarted(&loan.original) == **original,
@@ -924,6 +1130,9 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
         } else {
             false
         };
+        if owned_in_progress {
+            all_closed = false;
+        }
         if uses > 1
             || matches!(
                 j,
@@ -933,6 +1142,21 @@ fn validate_inner(state: &GameState, owner: Option<&OwnerV45>) -> Result<(), Str
         {
             return Err("Hunter committed phase duplicated or lost its exact consumer".into());
         }
+    }
+    if record_proof && owner.is_none() && all_closed {
+        state.engine.event_history.set_proof_memo_v1(
+            crate::event_history_v1::ProvedV1::HighSocietyHunterCustody,
+            state.engine.event_history.len(),
+            std::sync::Arc::new(HunterCustodyProofV45 {
+                closed_captures,
+                sources,
+                deaths,
+                closed_items,
+                completed_items,
+                disposed_items,
+                had_plus_counter,
+            }),
+        );
     }
     Ok(())
 }
@@ -1197,11 +1421,8 @@ pub(crate) fn record_answer(
     let menu = state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(at, e)| match e {
+        .of_kinds_v2(&[EventKindV1::HighSocietyHunterJournalV45])
+        .filter_map(|(at, e)| match e {
             CommittedEvent::HighSocietyHunterJournalV45 { journal } => match journal.as_ref() {
                 JournalV45::Menu { pending, .. } if pending.as_ref() == before.as_ref() => {
                     Some(at as u64)
@@ -1210,6 +1431,7 @@ pub(crate) fn record_answer(
             },
             _ => None,
         })
+        .last()
         .ok_or("Hunter selection lost exact independent original menu")?;
     validate_selection(&before, &after)?;
     append(
@@ -1476,11 +1698,8 @@ pub(crate) fn resume_owned(
     let selection = state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::HighSocietyHunterJournalV45])
-        .iter()
-        .enumerate()
-        .rev()
-        .find_map(|(at, e)| match e {
+        .of_kinds_v2(&[EventKindV1::HighSocietyHunterJournalV45])
+        .filter_map(|(at, e)| match e {
             CommittedEvent::HighSocietyHunterJournalV45 { journal } => match journal.as_ref() {
                 JournalV45::SelectionInput { after, .. } if after.as_ref() == &pending => {
                     Some(at as u64)
@@ -1489,6 +1708,7 @@ pub(crate) fn resume_owned(
             },
             _ => None,
         })
+        .last()
         .ok_or("Hunter resumed cost erased independent actual selection input")?;
     let removal = match journal(state, selection)? {
         JournalV45::SelectionInput { menu, .. } => match journal(state, *menu)? {
