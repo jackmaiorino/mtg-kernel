@@ -292,7 +292,9 @@ fn the_loss_selection_carries_the_mode_and_a_default_selection_keeps_its_bytes()
     );
     assert!(
         serde_json::from_value::<ExpandedLossSelectionV1>(serde_json::json!({
-            "kind": "terminal_reinforce_value_v3", "pregame_advantage": "terminal_v1",
+            "kind": "gae_uniform_kl_recovery_v1", "gamma": 1.0, "lambda": 0.9,
+            "initial_adam_step": 32400, "recovery": true, "diagnostics": false,
+            "pregame_advantage": "terminal_v1",
         }))
         .is_err()
     );
