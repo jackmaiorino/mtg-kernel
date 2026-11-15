@@ -42,14 +42,14 @@ fn main() {
     }
     // The human-play London mode is its own process: all three flags, and
     // none of the V4 or infoset ones (that mode owns its model input).
-    if london_human || flat_v7 {
-        if !(london_human && flat_v7 && options.private_v2_support)
-            || options.x_kernel_flat_v4
-            || options.x_kernel_infoset_v1
-        {
-            eprintln!("{SPELLBENCH_FLAG_PAUPER_LONDON_HUMAN_V1} needs {SPELLBENCH_FLAG_X_KERNEL_FLAT_V7} and {SPELLBENCH_FLAG_V2_SUPPORT}, and excludes {SPELLBENCH_FLAG_X_KERNEL_FLAT_V4} and {SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1}");
-            std::process::exit(2);
-        }
+    let london_flags_ok = london_human
+        && flat_v7
+        && options.private_v2_support
+        && !options.x_kernel_flat_v4
+        && !options.x_kernel_infoset_v1;
+    if (london_human || flat_v7) && !london_flags_ok {
+        eprintln!("{SPELLBENCH_FLAG_PAUPER_LONDON_HUMAN_V1} needs {SPELLBENCH_FLAG_X_KERNEL_FLAT_V7} and {SPELLBENCH_FLAG_V2_SUPPORT}, and excludes {SPELLBENCH_FLAG_X_KERNEL_FLAT_V4} and {SPELLBENCH_FLAG_X_KERNEL_INFOSET_V1}");
+        std::process::exit(2);
     }
     let stdin = io::stdin();
     let mut reader = stdin.lock();
