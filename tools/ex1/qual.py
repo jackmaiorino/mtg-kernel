@@ -221,6 +221,21 @@ def validate_pregame_advantage(mode, base=None):
     return mode
 
 
+def validate_pregame_advantage_scale(scale, mode):
+    """`scale` (the arm's `pregame_advantage_scale`, or None), checked: the trainer's loss_selection key, a number s with
+    0 < s <= 1 that multiplies the normalized advantage of the pregame announcement rows in the policy loss only. It
+    exists only with `pregame_advantage` "terminal_v1" (`mode`); absent leaves every config, arm file and recipe
+    identity exactly as it was. Raises ValueError for a non-number (a bool is not one), a non-finite value, a value
+    outside (0, 1], or a scale without the terminal mode."""
+    if scale is None:
+        return None
+    if mode != "terminal_v1":
+        raise ValueError("pregame_advantage_scale needs pregame_advantage terminal_v1")
+    if not _is_number(scale) or isinstance(scale, bool) or not (0.0 < float(scale) <= 1.0):
+        raise ValueError(f"pregame_advantage_scale must be a number in (0, 1], got {scale!r}")
+    return scale
+
+
 def check_london_base(base):
     """Raises ValueError unless `base` can carry a keep offset: the trainer reads one offset per update batch (one
     iteration), refusing a batch that mixes offset and no offset, so EVERY episode of EVERY iteration needs the
@@ -286,7 +301,7 @@ def keep_offset_value(keep_offset, u):
 
 
 def build_config(base, dose, root, run, namespace, offset, updates, workers, coefficient=None, kappa=None,
-                 prep_workers=None, keep_offset=None, pregame_advantage=None):
+                 prep_workers=None, keep_offset=None, pregame_advantage=None, pregame_advantage_scale=None):
     """An RT1 run config from an OH1/OH2 base and a dose record: the base's schedule from global update `offset`,
     episode ids and deal seeds keyed by (namespace, run, update, slot), and EX1 when `coefficient` is given.
 
@@ -297,7 +312,9 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
     episode is left exactly as the base has it.
 
     `pregame_advantage` ("terminal_v1", see `validate_pregame_advantage`) adds that key to the config's
-    `loss_selection`; without it the loss_selection is exactly the base's."""
+    `loss_selection`; without it the loss_selection is exactly the base's. `pregame_advantage_scale`
+    (`validate_pregame_advantage_scale`) adds that key too, only with the terminal mode."""
+    pregame_advantage_scale = validate_pregame_advantage_scale(pregame_advantage_scale, pregame_advantage)
     if pregame_advantage is not None:
         pregame_advantage = validate_pregame_advantage(pregame_advantage, base)
         if coefficient is not None:
@@ -340,6 +357,8 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
     cfg = {k: copy.deepcopy(v) for k, v in base.items() if k != "iterations"}
     if pregame_advantage is not None:
         cfg["loss_selection"] = dict(cfg["loss_selection"], pregame_advantage=pregame_advantage)
+        if pregame_advantage_scale is not None:
+            cfg["loss_selection"]["pregame_advantage_scale"] = pregame_advantage_scale
     cfg["initial_source"] = source
     cfg["iterations"] = iterations
     cfg["collection_workers"] = workers
