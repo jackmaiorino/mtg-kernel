@@ -1,0 +1,319 @@
+{
+  "schema": "actor454-native-results/v1",
+  "pools": {
+    "eternal": {
+      "pool": "eternal",
+      "cohort": "historical60",
+      "runtime": "EternalActorV1/native-Full/environment-v2",
+      "consumer_profile": null,
+      "action_audit": null,
+      "selector": "splitmix64-rejection-uniform/v1;seed=environment_seed^0x454a11;all-current-tree-fixture-logits-checked",
+      "source_commit": "8093d9d49bd594f7fddf1186b43f6f5d03dc1313",
+      "feature": "eternal-fixtures",
+      "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+      "binary_sha256": "232fccd0a746f99cd1b22aadbf290f52245646ee77bc1acaef2d8a3108391c2b",
+      "manifest_sha256": "2a813309bacef09edf0b595a924cbb74c73b2944491fecbf2a0f5116f1955d7d",
+      "feature_identity": "3524ea8e9a2aa07e498334782af8766b45ed9022ac4635591fba81f118c372c4",
+      "unit": {
+        "issue454_passed": 15,
+        "ordinal_audit_passed": 1,
+        "regression_passed": 5,
+        "total_passed": 21,
+        "issue454_tests": [
+          "eternal_actor_choice_v1::tests::issue454_retarget_uses_public_stack_position_for_both_seats",
+          "eternal_actor_choice_v1::tests::issue454_show_and_tell_hides_prior_private_answers_and_saved_frames",
+          "eternal_actor_printed_v1::tests::issue454_reported_mainboards_have_exact_printed_program_operands",
+          "eternal_actor_public_v1::tests::issue454_entry_handlers_publish_choices_and_concealed_sources_refuse_uniformly",
+          "eternal_actor_public_v1::tests::issue454_leave_draw_grant_distinguishes_pending_entry_from_active_permanent",
+          "eternal_actor_public_v1::tests::issue454_needle_refuses_departed_stack_source_before_reading_hidden_definition",
+          "eternal_actor_public_v1::tests::issue454_public_attachment_links_preserve_operands_and_refuse_departure",
+          "eternal_actor_public_v1::tests::issue454_public_cast_fact_ignores_hidden_conditional_ledgers",
+          "eternal_actor_public_v1::tests::issue454_public_choices_distinguish_names_and_types_without_hidden_definitions",
+          "eternal_actor_stack_v1::tests::issue454_bound_counter_uses_public_stack_position_and_not_native_id",
+          "eternal_actor_stack_v1::tests::issue454_pending_program_binds_printed_trigger_without_hidden_hand",
+          "eternal_actor_stack_v1::tests::issue454_stack_program_distinguishes_two_wastescape_cast_triggers",
+          "rl_session::eternal_actor_v1::tests::issue454_eternal_owner_hidden_hand_variants_leave_input_identical",
+          "rl_session::eternal_actor_v1::tests::issue454_eternal_reported_mainboards_use_sealed_scorer_and_learner",
+          "rl_session::eternal_actor_v1::tests::issue454_paid_doomsday_full_selection_range_and_native_apply_both_seats"
+        ],
+        "regression_tests": [
+          "rl_session::eternal_actor_v1::tests::archon_sacrifice_before_nonterminal_discard_continues_both_seats",
+          "rl_session::eternal_actor_v1::tests::exile_play_permission_encodes_without_hidden_hand_leak_both_seats",
+          "eternal_actor_stack_v1::tests::saga_chapters_and_thief_leave_draw_bind_public_stack_programs",
+          "eternal_actor_public_v1::tests::prepare_copy_pending_cast_link_is_captured",
+          "eternal_actor_public_v1::tests::animate_dead_departed_aura_uses_public_trigger_source_without_hidden_hand"
+        ]
+      },
+      "samples": [
+        {
+          "id": "desktop-w1",
+          "workers": 1,
+          "native_seconds": 24.2416405,
+          "completed_games": 4,
+          "primary_sha256": "3023dd11d2c293f95ae76a1c1b3103903b7da99cdc400a7ac56c88e485c961b9",
+          "ordinal_neutral_collisions": 0,
+          "unexplained_ordinal_neutral_collisions": 0
+        },
+        {
+          "id": "desktop-w2",
+          "workers": 2,
+          "native_seconds": 14.8966674,
+          "completed_games": 4,
+          "primary_sha256": "3023dd11d2c293f95ae76a1c1b3103903b7da99cdc400a7ac56c88e485c961b9",
+          "ordinal_neutral_collisions": 0,
+          "unexplained_ordinal_neutral_collisions": 0
+        },
+        {
+          "id": "desktop-w4",
+          "workers": 4,
+          "native_seconds": 11.5063555,
+          "completed_games": 4,
+          "primary_sha256": "3023dd11d2c293f95ae76a1c1b3103903b7da99cdc400a7ac56c88e485c961b9",
+          "ordinal_neutral_collisions": 0,
+          "unexplained_ordinal_neutral_collisions": 0
+        }
+      ],
+      "selected_candidate": "desktop-w4",
+      "panel": {
+        "workers": 4,
+        "native_seconds": 112.2206367,
+        "exit_code": 0,
+        "planned_games": 60,
+        "attempted_games": 60,
+        "completed_games": 60,
+        "terminals": {
+          "natural:natural_game_over": 60
+        },
+        "failures": [],
+        "decisions": 10210,
+        "decisions_by_kind_and_seat": {
+          "AttackerInclusion/P0": 140,
+          "AttackerInclusion/P1": 170,
+          "BlockerInclusion/P0": 70,
+          "BlockerInclusion/P1": 30,
+          "Surface/P0": 4920,
+          "Surface/P1": 4880
+        },
+        "action_kinds": {
+          "activate_ability": 1680,
+          "activate_mana_ability": 19320,
+          "cast_spell": 6010,
+          "choose_attacker_inclusion": 620,
+          "choose_blocker_inclusion": 200,
+          "choose_cast_mode": 60,
+          "choose_cost_target": 340,
+          "choose_effect_boolean": 220,
+          "choose_effect_option": 710,
+          "choose_effect_target": 12070,
+          "choose_kicker": 40,
+          "choose_target": 920,
+          "discard": 320,
+          "finish_effect_selection": 470,
+          "pass": 7620,
+          "play_land": 3870
+        },
+        "ordinal_neutral_collisions": 0,
+        "authenticated_revealed_discard_family_pairs": 0,
+        "unexplained_ordinal_neutral_collisions": 0,
+        "missing_reported_pair_kinds": [],
+        "terminal_panel_accepted": true,
+        "primary_sha256": "694ab358f83f2b7eb5ccada7ac2e83c7f39586c74d221d9f7b051358e8a40f9d"
+      }
+    },
+    "limited": {
+      "pool": "limited",
+      "cohort": "original_limited",
+      "runtime": "FullPoolV1/reveal-minima-v3/Foundations-combat/London/environment-v2",
+      "consumer_profile": "fdn-full-pool-consumer/v1",
+      "action_audit": "ordinal-neutral-with-authenticated-revealed-discard-families/v2",
+      "selector": "splitmix64-rejection-uniform/v1;seed=environment_seed^0x454a11;all-current-tree-fixture-logits-checked",
+      "source_commit": "8093d9d49bd594f7fddf1186b43f6f5d03dc1313",
+      "feature": "limited-fdn-fixtures",
+      "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+      "binary_sha256": "90e3538c1667297eb60cf71dd395051998258fb18ed6bde6654070e8d420e94f",
+      "manifest_sha256": "185021240c8ada58d9f9a8bcac160f896d1e5cc05631e5cde367bbb485f69ede",
+      "feature_identity": "1aaf32f9acf43497d2981667e9e3c52bcb4c78df0e77a38fbc20e5d6ea086735",
+      "unit": {
+        "issue454_passed": 7,
+        "ordinal_audit_passed": 1,
+        "regression_passed": 1,
+        "total_passed": 9,
+        "issue454_tests": [
+          "current_mixed_policy_v1::kaito::tests::actor_coverage::issue454_authenticated_ingress_maps_all_six_typed_action_flags",
+          "current_mixed_policy_v1::kaito::tests::actor_coverage::issue454_original_limited_attacker_and_blocker_include_tensors_differ",
+          "current_mixed_policy_v1::kaito::tests::actor_coverage::issue454_original_limited_krenko_every_action_scores_and_frozen_v4_refuses",
+          "current_mixed_policy_v1::kaito::tests::actor_coverage::issue454_real_actor_training_ingress_rejects_stale_and_foreign_decisions",
+          "current_mixed_policy_v1::kaito::tests::actor_coverage::issue454_six_boolean_operands_are_explicit_and_digest_fields_are_absent",
+          "current_mixed_policy_v1::kaito::tests::actor_coverage::issue454_tree_full_gradient_matches_finite_differences_and_optimizer_resumes_exactly",
+          "current_mixed_policy_v1::kaito::tests::pilfer::probe::issue454_probe_public_families_and_mapped_apply_are_exact_both_seats"
+        ],
+        "regression_tests": [
+          "limited_full_pool_consumer_v1::tests::frozen_286_declared_reset_all_appendices_and_distinct_sealed_profile_both_seats"
+        ]
+      },
+      "samples": [
+        {
+          "id": "desktop-w1",
+          "workers": 1,
+          "native_seconds": 2473.5658189,
+          "completed_games": 4,
+          "primary_sha256": "66dc0187d7d1fda64deeb62557f84d94f16b4af8538c8e57e2775e9f1cf5c5c1",
+          "ordinal_neutral_collisions": 0,
+          "unexplained_ordinal_neutral_collisions": 0
+        },
+        {
+          "id": "desktop-w2",
+          "workers": 2,
+          "native_seconds": 2023.784908,
+          "completed_games": 4,
+          "primary_sha256": "66dc0187d7d1fda64deeb62557f84d94f16b4af8538c8e57e2775e9f1cf5c5c1",
+          "ordinal_neutral_collisions": 0,
+          "unexplained_ordinal_neutral_collisions": 0
+        },
+        {
+          "id": "desktop-w4",
+          "workers": 4,
+          "native_seconds": 1783.2485617,
+          "completed_games": 4,
+          "primary_sha256": "66dc0187d7d1fda64deeb62557f84d94f16b4af8538c8e57e2775e9f1cf5c5c1",
+          "ordinal_neutral_collisions": 0,
+          "unexplained_ordinal_neutral_collisions": 0
+        }
+      ],
+      "selected_candidate": "desktop-w4",
+      "panel": {
+        "workers": 4,
+        "native_seconds": 15654.1338066,
+        "exit_code": 101,
+        "planned_games": 60,
+        "attempted_games": 60,
+        "completed_games": 56,
+        "terminals": {
+          "None:None": 3,
+          "halted:fail_closed": 1,
+          "natural:natural_game_over": 56
+        },
+        "failures": [
+          {
+            "game": "current-actor-limited-original_limited-23",
+            "decks": [
+              "FDN_top_15472_WB",
+              "FDN_top_24789_BGpW"
+            ],
+            "seed": 1592590359,
+            "starting_player": "p1",
+            "decisions": 428,
+            "failure": {
+              "detail": "current_mixed_policy_v1:Projection(\"opponent hand binding requires a public name action\")",
+              "header": {
+                "actor": "p0",
+                "kind": "Surface",
+                "legal_actions": 1,
+                "physical_decision": 428,
+                "step": 428
+              },
+              "stage": "encoding"
+            }
+          },
+          {
+            "game": "current-actor-limited-original_limited-34",
+            "decks": [
+              "FDN_top_24145_RG",
+              "FDN_top_20065_BR"
+            ],
+            "seed": 1592590370,
+            "starting_player": "p0",
+            "decisions": 610,
+            "failure": {
+              "detail": "current_mixed_policy_v1:UnsupportedOperand(\"arena_id\")",
+              "header": {
+                "actor": "p1",
+                "kind": "Surface",
+                "legal_actions": 3,
+                "physical_decision": 598,
+                "step": 610
+              },
+              "stage": "encoding"
+            }
+          },
+          {
+            "game": "current-actor-limited-original_limited-39",
+            "decks": [
+              "FDN_top_28740_RG",
+              "FDN_top_12042_WRpG"
+            ],
+            "seed": 1592590375,
+            "starting_player": "p1",
+            "decisions": 762,
+            "failure": {
+              "detail": "header/action arity differs",
+              "header": {
+                "actor": "p1",
+                "kind": "BlockerInclusion",
+                "legal_actions": 2,
+                "physical_decision": 757,
+                "step": 762
+              },
+              "stage": "encoding"
+            }
+          },
+          {
+            "game": "current-actor-limited-original_limited-56",
+            "decks": [
+              "FDN_top_09703_UB",
+              "FDN_top_06330_WB"
+            ],
+            "seed": 1592590392,
+            "starting_player": "p0",
+            "decisions": 1254,
+            "failure": {
+              "detail": "fail_closed:ravenous_v51_required:Conqueror gain and its actual downstream captures changed",
+              "header": null,
+              "stage": "engine"
+            }
+          }
+        ],
+        "decisions": 59590,
+        "decisions_by_kind_and_seat": {
+          "AttackerInclusion/P0": 929,
+          "AttackerInclusion/P1": 802,
+          "BlockerInclusion/P0": 240,
+          "BlockerInclusion/P1": 140,
+          "Surface/P0": 28832,
+          "Surface/P1": 28647
+        },
+        "action_kinds": {
+          "activate_ability": 1671,
+          "activate_mana_ability": 74061,
+          "cast_spell": 6113,
+          "choose_attacker_inclusion": 3462,
+          "choose_blocker_inclusion": 760,
+          "choose_combat_damage_range": 128,
+          "choose_cost_target": 44,
+          "choose_effect_boolean": 2,
+          "choose_effect_option": 105,
+          "choose_effect_target": 510,
+          "choose_kicker": 16,
+          "choose_london_bottom": 1724,
+          "choose_london_mulligan": 514,
+          "choose_optional_cost_use": 4,
+          "choose_spell_mode": 44,
+          "choose_target": 1412,
+          "discard": 2209,
+          "finish_effect_selection": 104,
+          "finish_target_selection": 74,
+          "order_triggers": 24,
+          "pass": 55828,
+          "play_land": 4050
+        },
+        "ordinal_neutral_collisions": 0,
+        "authenticated_revealed_discard_family_pairs": 0,
+        "unexplained_ordinal_neutral_collisions": 0,
+        "missing_reported_pair_kinds": [],
+        "terminal_panel_accepted": false,
+        "primary_sha256": "c024ed5714adce1a61097d54bd1d5d89ca1344530c4a30202674dd24bd698e19"
+      }
+    }
+  },
+  "source_commit": "8093d9d49bd594f7fddf1186b43f6f5d03dc1313"
+}
