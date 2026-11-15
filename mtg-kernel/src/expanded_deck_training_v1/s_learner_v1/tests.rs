@@ -141,6 +141,7 @@ fn gae() -> ExpandedLossSelectionV1 {
         lambda: 0.9,
         entropy_coefficient: 0.0,
         pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+        pregame_advantage_scale: None,
     }
 }
 
@@ -371,12 +372,14 @@ fn s_learner_end_to_end_v1() {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+            pregame_advantage_scale: None,
         },
         ExpandedLossSelectionV1::GaeAdvantageValueV1 {
             gamma: 1.0,
             lambda: 0.95,
             entropy_coefficient: 0.0,
             pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+            pregame_advantage_scale: None,
         },
         ExpandedLossSelectionV1::TerminalReinforceValueV3,
     ] {
@@ -388,6 +391,7 @@ fn s_learner_end_to_end_v1() {
         lambda: 0.9,
         entropy_coefficient: 0.0,
         pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::TerminalV1,
+        pregame_advantage_scale: None,
     };
     assert!(validate_update_loss_v1(&next, &terminal)
         .unwrap_err()
@@ -405,6 +409,7 @@ fn s_learner_end_to_end_v1() {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+            pregame_advantage_scale: None,
         },
         CheckpointRecordFormatV1::V1,
         root.join("other-gamma"),

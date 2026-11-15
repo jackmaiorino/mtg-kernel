@@ -290,6 +290,14 @@ pub enum ExpandedLossSelectionV1 {
         /// existing config, manifest and receipt keeps its bytes.
         #[serde(default, skip_serializing_if = "PregameAdvantageV1::is_gae")]
         pregame_advantage: PregameAdvantageV1,
+        /// Multiplier `s` (`0 < s <= 1`) on the normalized advantage of the
+        /// pregame ANNOUNCEMENT rows in the policy loss only (see
+        /// `terminal_pregame_targets_scaled_of_values_v1`). Absent (the
+        /// default, never written) leaves every byte of every existing
+        /// config, manifest and receipt unchanged. Valid only with
+        /// `pregame_advantage: terminal_v1`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pregame_advantage_scale: Option<f32>,
     },
     GaeUniformKlRecoveryV1 {
         gamma: f32,
@@ -347,6 +355,19 @@ impl ExpandedLossSelectionV1 {
         }
     }
 
+    /// The pregame announcement advantage scale this selection names (`None`
+    /// for every loss but the plain GAE one, and when absent).
+    #[cfg(test)]
+    pub(crate) fn pregame_advantage_scale_v1(&self) -> Option<f32> {
+        match self {
+            Self::GaeAdvantageValueV1 {
+                pregame_advantage_scale,
+                ..
+            } => *pregame_advantage_scale,
+            _ => None,
+        }
+    }
+
     pub(crate) fn is_terminal_reinforce_value_v3(&self) -> bool {
         matches!(self, Self::TerminalReinforceValueV3)
     }
@@ -372,6 +393,7 @@ impl ExpandedLossSelectionV1 {
                 lambda,
                 entropy_coefficient,
                 pregame_advantage,
+                pregame_advantage_scale,
             } => {
                 ensure(
                     gamma.is_finite() && (0.0..=1.0).contains(gamma),
@@ -385,6 +407,16 @@ impl ExpandedLossSelectionV1 {
                     lambda.is_finite() && (0.0..=1.0).contains(lambda),
                     "gae lambda must be finite in 0.0..=1.0",
                 )?;
+                if let Some(scale) = pregame_advantage_scale {
+                    ensure(
+                        *pregame_advantage == PregameAdvantageV1::TerminalV1,
+                        "pregame_advantage_scale requires pregame_advantage terminal_v1",
+                    )?;
+                    ensure(
+                        scale.is_finite() && *scale > 0.0 && *scale <= 1.0,
+                        "pregame_advantage_scale must be finite and in (0, 1]",
+                    )?;
+                }
                 ensure(
                     *entropy_coefficient == 0.0,
                     "gae entropy_coefficient is schema-reserved for a future change \
@@ -4328,6 +4360,18 @@ struct PregameAdvantageReceiptV1 {
     pregame_groups: usize,
     raw_terminal_mean: Option<f32>,
     raw_default_mean: Option<f32>,
+    /// Present only when `pregame_advantage_scale` is set: the scale, the
+    /// number of announcement rows it multiplied, and the mean normalized
+    /// announcement advantage before and after (null with no announcement
+    /// row).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scale: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scaled_groups: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    announcement_advantage_mean_unscaled: Option<Option<f32>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    announcement_advantage_mean_scaled: Option<Option<f32>>,
 }
 
 /// Computes this update's GAE value targets and normalized advantages from
@@ -4452,6 +4496,7 @@ fn compute_gae_targets_with_pregame_v1(
     gamma: f32,
     lambda: f32,
     pregame_advantage: PregameAdvantageV1,
+    pregame_advantage_scale: Option<f32>,
 ) -> Result<GaeTargetsV1, String> {
     if pregame_advantage.is_gae() {
         return compute_gae_targets_v1(groups, episode_ordinals, gamma, lambda);
@@ -4462,6 +4507,7 @@ fn compute_gae_targets_with_pregame_v1(
     )?;
     let mut values = Vec::with_capacity(groups.len());
     let mut pregame = Vec::with_capacity(groups.len());
+    let mut announcement = Vec::with_capacity(groups.len());
     for (index, group) in groups.iter().enumerate() {
         let first = group
             .substeps
@@ -4478,15 +4524,32 @@ fn compute_gae_targets_with_pregame_v1(
                 .copied()
                 == Some(1.0),
         );
+        // An announcement row: a pregame decision with a mulligan row (a
+        // put-back decision has none). Read only when a scale is set, so an
+        // update without one does exactly what it did before.
+        let is_announcement = match pregame.last() {
+            Some(true) if pregame_advantage_scale.is_some() => {
+                !london_keep_offset_v1::mulligan_rows_v1(
+                    encoded.state,
+                    encoded.action_features,
+                    first.expected_raw_action_logit_bits.len(),
+                )?
+                .is_empty()
+            }
+            _ => false,
+        };
+        announcement.push(is_announcement);
     }
     let terminal_returns: Vec<i8> = groups.iter().map(|group| group.terminal_return).collect();
-    terminal_pregame_targets_of_values_v1(
+    terminal_pregame_targets_scaled_of_values_v1(
         &values,
         &terminal_returns,
         &pregame,
+        &announcement,
         episode_ordinals,
         gamma,
         lambda,
+        pregame_advantage_scale,
     )
 }
 
@@ -4504,6 +4567,7 @@ fn compute_gae_targets_with_pregame_v1(
 /// before the overwrite) and are applied to every row, so in-game rows
 /// normalize bit for bit as in the default mode; the statistics in the receipt
 /// describe the final series. Requires gamma exactly 1.0.
+#[cfg(test)]
 fn terminal_pregame_targets_of_values_v1(
     values: &[f32],
     terminal_returns: &[i8],
@@ -4512,6 +4576,44 @@ fn terminal_pregame_targets_of_values_v1(
     gamma: f32,
     lambda: f32,
 ) -> Result<GaeTargetsV1, String> {
+    terminal_pregame_targets_scaled_of_values_v1(
+        values,
+        terminal_returns,
+        pregame,
+        &vec![false; pregame.len()],
+        episode_ordinals,
+        gamma,
+        lambda,
+        None,
+    )
+}
+
+/// [`terminal_pregame_targets_of_values_v1`] with the optional announcement
+/// advantage scale. After the normalization, each row marked in
+/// `announcement` (a pregame row with a mulligan row; put-back rows are not
+/// marked) has its normalized advantage multiplied by `scale`. The value
+/// targets, the in-game rows and every other row are exactly as without the
+/// scale; the receipt statistics describe the unscaled final series. `None`
+/// is bit-identical to [`terminal_pregame_targets_of_values_v1`] and writes
+/// no new receipt key.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one parallel series per argument, as the unscaled function"
+)]
+fn terminal_pregame_targets_scaled_of_values_v1(
+    values: &[f32],
+    terminal_returns: &[i8],
+    pregame: &[bool],
+    announcement: &[bool],
+    episode_ordinals: &[usize],
+    gamma: f32,
+    lambda: f32,
+    scale: Option<f32>,
+) -> Result<GaeTargetsV1, String> {
+    ensure(
+        announcement.len() == values.len(),
+        "gae group and announcement-mark counts differ",
+    )?;
     ensure(
         gamma.to_bits() == 1.0_f32.to_bits(),
         "the terminal pregame advantage requires gamma exactly 1.0",
@@ -4555,6 +4657,25 @@ fn terminal_pregame_targets_of_values_v1(
         GAE_ADVANTAGE_NORMALIZATION_EPSILON_V1,
     )?;
     let mean = |sum: f32| (pregame_groups > 0).then(|| sum / pregame_groups as f32);
+    let mut advantages = advantages;
+    let (scaled_groups, unscaled_mean, scaled_mean) = match scale {
+        None => (None, None, None),
+        Some(scale) => {
+            let mut count = 0usize;
+            let mut unscaled_sum = 0.0f32;
+            let mut scaled_sum = 0.0f32;
+            for (advantage, marked) in advantages.iter_mut().zip(announcement) {
+                if *marked {
+                    count += 1;
+                    unscaled_sum += *advantage;
+                    *advantage *= scale;
+                    scaled_sum += *advantage;
+                }
+            }
+            let of = |sum: f32| (count > 0).then(|| sum / count as f32);
+            (Some(count), Some(of(unscaled_sum)), Some(of(scaled_sum)))
+        }
+    };
     Ok(GaeTargetsV1 {
         value_targets,
         advantages,
@@ -4564,6 +4685,10 @@ fn terminal_pregame_targets_of_values_v1(
             pregame_groups,
             raw_terminal_mean: mean(terminal_sum),
             raw_default_mean: mean(default_sum),
+            scale,
+            scaled_groups,
+            announcement_advantage_mean_unscaled: unscaled_mean,
+            announcement_advantage_mean_scaled: scaled_mean,
         }),
     })
 }
@@ -5082,6 +5207,7 @@ fn execute_update_inner_v1(
             gamma,
             lambda,
             pregame_advantage,
+            pregame_advantage_scale,
             ..
         } => Some(compute_gae_targets_with_pregame_v1(
             &groups,
@@ -5089,6 +5215,7 @@ fn execute_update_inner_v1(
             *gamma,
             *lambda,
             *pregame_advantage,
+            *pregame_advantage_scale,
         )?),
         ExpandedLossSelectionV1::GaeUniformKlRecoveryV1 { gamma, lambda, .. } => Some(
             compute_gae_targets_v1(&groups, &episode_ordinals, *gamma, *lambda)?,
@@ -10657,6 +10784,7 @@ pub(crate) mod tests {
                 lambda: 0.95,
                 entropy_coefficient: 0.0,
                 pregame_advantage: PregameAdvantageV1::default(),
+                pregame_advantage_scale: None,
             },
             TrainingMathV1::PlatformLibm,
         )
@@ -11218,6 +11346,7 @@ pub(crate) mod tests {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: PregameAdvantageV1::default(),
+            pregame_advantage_scale: None,
         }
     }
 
@@ -12790,6 +12919,7 @@ pub(crate) mod tests {
     }
 
     mod pauper_opening_tests;
+    mod pregame_advantage_scale_tests;
     mod pregame_advantage_tests;
     mod reset_start_tests;
     mod v8_inclusion_tests;

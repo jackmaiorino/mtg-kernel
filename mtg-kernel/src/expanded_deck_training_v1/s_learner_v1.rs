@@ -295,6 +295,7 @@ pub(crate) fn validate_update_loss_v1(
         lambda,
         entropy_coefficient,
         pregame_advantage,
+        pregame_advantage_scale: _,
     } = loss_selection
     else {
         return Err("an S learner trains only the GAE loss (gae_advantage_value/v1)".into());
@@ -407,6 +408,7 @@ fn refuse_unsupported_v1(inputs: &SUpdateInputsV1) -> Result<(f32, f32), String>
             lambda,
             entropy_coefficient,
             pregame_advantage,
+            pregame_advantage_scale: _,
         } => {
             ensure(
                 entropy_coefficient.to_bits() == 0,

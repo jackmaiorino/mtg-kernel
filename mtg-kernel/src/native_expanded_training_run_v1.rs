@@ -3194,6 +3194,7 @@ mod tests {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+            pregame_advantage_scale: None,
         };
         gae.validate_v1().unwrap();
         assert_ne!(identity(&legacy).unwrap(), identity(&gae).unwrap());
@@ -3431,6 +3432,7 @@ mod tests {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+            pregame_advantage_scale: None,
         };
         let transfer = |contract: &str, encoding: &str| {
             crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3 {
@@ -3545,11 +3547,19 @@ mod tests {
     fn gae_loss_v1(
         pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1,
     ) -> ExpandedLossSelectionV1 {
+        gae_loss_scaled_v1(pregame_advantage, None)
+    }
+
+    fn gae_loss_scaled_v1(
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1,
+        pregame_advantage_scale: Option<f32>,
+    ) -> ExpandedLossSelectionV1 {
         ExpandedLossSelectionV1::GaeAdvantageValueV1 {
             gamma: 1.0,
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage,
+            pregame_advantage_scale,
         }
     }
 
@@ -3620,6 +3630,86 @@ mod tests {
         }
     }
 
+    /// The pregame announcement advantage scale through the production run:
+    /// the key is in the run manifest and the update receipts only when set; a
+    /// run cannot resume under another value (or without it); `s = 1.0` trains
+    /// to the same after-states as the key absent; a smaller `s` does not.
+    #[test]
+    fn pregame_advantage_scale_reaches_a_real_run_and_is_part_of_its_identity() {
+        use crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1;
+        use crate::expanded_deck_training_v1::PregameAdvantageV1;
+        let vector = LondonKeepOffsetV1::PerCount([6.5, 5.5, 4.5, 0.0, 2.5, 1.5, 0.5]);
+        let after_states = |result: &Value| -> Vec<Value> {
+            (0..2)
+                .map(|index| iteration_update_v1(result, index)["after_state_sha256"].clone())
+                .collect()
+        };
+        let absent = london_v7_config_v1(
+            "scale-absent",
+            gae_loss_v1(PregameAdvantageV1::TerminalV1),
+            Some(vector),
+        );
+        let absent_result = run_native_expanded_training_v1(&absent, None).unwrap();
+        let manifest: Value =
+            read_json(&absent.output_directory.join("run.json"), SMALL_CAP).unwrap();
+        assert!(manifest["loss_selection"]
+            .get("pregame_advantage_scale")
+            .is_none());
+        for index in 0..2 {
+            let receipt = &iteration_update_v1(&absent_result, index)["pregame_advantage"];
+            assert!(receipt.get("scale").is_none());
+            assert!(receipt.get("scaled_groups").is_none());
+            assert!(receipt.get("announcement_advantage_mean_scaled").is_none());
+        }
+        let one = london_v7_config_v1(
+            "scale-one",
+            gae_loss_scaled_v1(PregameAdvantageV1::TerminalV1, Some(1.0)),
+            Some(vector),
+        );
+        one.validate_v1().unwrap();
+        let one_result = run_native_expanded_training_v1(&one, None).unwrap();
+        assert_eq!(after_states(&one_result), after_states(&absent_result));
+        let quarter = london_v7_config_v1(
+            "scale-quarter",
+            gae_loss_scaled_v1(PregameAdvantageV1::TerminalV1, Some(0.25)),
+            Some(vector),
+        );
+        quarter.validate_v1().unwrap();
+        run_native_expanded_training_v1(&quarter, Some(1)).unwrap();
+        let quarter_result = run_native_expanded_training_v1(&quarter, None).unwrap();
+        let manifest: Value =
+            read_json(&quarter.output_directory.join("run.json"), SMALL_CAP).unwrap();
+        assert_eq!(manifest["loss_selection"]["pregame_advantage_scale"], 0.25);
+        assert_ne!(
+            after_states(&quarter_result)[0],
+            after_states(&absent_result)[0]
+        );
+        for index in 0..2 {
+            let receipt = &iteration_update_v1(&quarter_result, index)["pregame_advantage"];
+            assert_eq!(receipt["scale"], 0.25);
+            let scaled = receipt["scaled_groups"].as_u64().unwrap();
+            assert!(scaled >= 1, "{receipt}");
+            assert!(scaled <= receipt["pregame_groups"].as_u64().unwrap());
+            let unscaled = receipt["announcement_advantage_mean_unscaled"]
+                .as_f64()
+                .unwrap();
+            let scaled_mean = receipt["announcement_advantage_mean_scaled"]
+                .as_f64()
+                .unwrap();
+            assert!((scaled_mean - 0.25 * unscaled).abs() <= 1.0e-6 * (1.0 + unscaled.abs()));
+        }
+        // One run, one scale: another value, or none, cannot resume the directory.
+        for other in [Some(0.5f32), None] {
+            let mut changed = quarter.clone();
+            changed.loss_selection = gae_loss_scaled_v1(PregameAdvantageV1::TerminalV1, other);
+            let error = run_native_expanded_training_v1(&changed, None).unwrap_err();
+            assert!(
+                error.contains("resume plan or implementation differs"),
+                "{error}"
+            );
+        }
+    }
+
     /// A scalar offset and seven equal entries are one run: the same
     /// after-state hash and the same collected actions at every update (the
     /// episodes differ only in the field's own text).
@@ -3673,6 +3763,7 @@ mod tests {
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
                 pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+                pregame_advantage_scale: None,
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -3707,6 +3798,7 @@ mod tests {
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
                 pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+                pregame_advantage_scale: None,
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -3788,6 +3880,7 @@ mod tests {
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
                 pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+                pregame_advantage_scale: None,
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -3926,6 +4019,7 @@ mod tests {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+            pregame_advantage_scale: None,
         };
         let w5_config = |label: &str, closed: u64, stop: Option<u64>| {
             let mut config = real_two_iteration_config_v1(label, gae, ExpandedUpdateBackendV1::Cpu);
@@ -4035,6 +4129,7 @@ mod tests {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+            pregame_advantage_scale: None,
         };
         for format in [
             crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
@@ -4425,6 +4520,7 @@ mod tests {
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
                 pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+                pregame_advantage_scale: None,
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -4511,6 +4607,7 @@ mod tests {
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
                 pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+                pregame_advantage_scale: None,
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -4647,6 +4744,7 @@ mod tests {
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
                 pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+                pregame_advantage_scale: None,
             },
             ExpandedUpdateBackendV1::Cuda { device_ordinal: 0 },
         );

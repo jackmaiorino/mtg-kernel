@@ -245,6 +245,7 @@ fn the_loss_selection_carries_the_mode_and_a_default_selection_keeps_its_bytes()
         lambda: 0.9,
         entropy_coefficient: 0.0,
         pregame_advantage: PregameAdvantageV1::default(),
+        pregame_advantage_scale: None,
     };
     // Written without the key: every earlier config, manifest and receipt
     // keeps its bytes, and an earlier file reads as the default mode.
@@ -275,6 +276,7 @@ fn the_loss_selection_carries_the_mode_and_a_default_selection_keeps_its_bytes()
         lambda: 0.9,
         entropy_coefficient: 0.0,
         pregame_advantage: PregameAdvantageV1::TerminalV1,
+        pregame_advantage_scale: None,
     };
     assert_ne!(terminal, default);
     let written = serde_json::to_value(terminal).unwrap();
@@ -316,6 +318,7 @@ fn the_terminal_mode_requires_gamma_exactly_one() {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: PregameAdvantageV1::TerminalV1,
+            pregame_advantage_scale: None,
         };
         assert!(selection.validate_v1().is_err(), "gamma {gamma}");
         // The same gamma is fine in the default mode.
@@ -324,6 +327,7 @@ fn the_terminal_mode_requires_gamma_exactly_one() {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: PregameAdvantageV1::Gae,
+            pregame_advantage_scale: None,
         };
         default.validate_v1().unwrap();
     }
@@ -380,6 +384,7 @@ fn groups_are_marked_pregame_from_the_first_tensor_stage_column() {
         1.0,
         0.9,
         PregameAdvantageV1::Gae,
+        None,
     )
     .unwrap();
     let plain = compute_gae_targets_v1(&groups, &batch.ordinals, 1.0, 0.9).unwrap();
@@ -393,6 +398,7 @@ fn groups_are_marked_pregame_from_the_first_tensor_stage_column() {
         1.0,
         0.9,
         PregameAdvantageV1::TerminalV1,
+        None,
     )
     .unwrap();
     let direct = terminal_targets(&batch, 0.9);
@@ -407,6 +413,7 @@ fn groups_are_marked_pregame_from_the_first_tensor_stage_column() {
         0.99,
         0.9,
         PregameAdvantageV1::TerminalV1,
+        None,
     )
     .is_err());
 }
