@@ -871,14 +871,8 @@ fn kioras_dismissal_strive_payability_omniscience_and_partial_fizzle_in_both_sea
         choose_more(&mut state, Target::Object(seal_d));
         choose_more(&mut state, Target::Object(seal_e));
         assert!(!finish_targets(&mut state).contains(&Target::Object(seal_f)));
-        // With {U} floating, Omniscience still offers paying the mana cost.
-        match next(&mut state) {
-            Decision::ChooseEffectOption { option_count, .. } => {
-                assert_eq!(option_count, 2);
-                act(&mut state, Action::ChooseEffectOption(1)); // Without paying.
-            }
-            other => panic!("expected the free-cast choice, got {other:?}"),
-        }
+        // Paying the mana cost would need {U}{U}, so the free cast is the
+        // only payable route and the engine takes it without asking.
         assert_eq!(priority(&mut state).0, actor);
         assert_eq!(blue(&state, actor), 0, "the strive {{U}}");
         settled(&mut state);

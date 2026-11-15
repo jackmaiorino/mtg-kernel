@@ -436,20 +436,6 @@ pub(crate) fn can_cast_from_graveyard_v1(
         card.object,
         Some(CastMethodV4::Normal),
     );
-    // S365DIAG
-    let s365 = std::env::var_os("S365_DIAG").is_some();
-    if s365 {
-        eprintln!(
-        "S365DIAG can_cast card={:?} stack={} halted={:?} pending_cast={:?} pool={:?} priority={:?} step={:?}",
-        card,
-        state.stack.len(),
-        projected.engine.halted,
-        projected.engine.pending_cast,
-        projected.players[controller.index()].mana_pool,
-        state.priority_player,
-        state.step
-    );
-    }
     let Some(pending) = projected.engine.pending_cast.as_ref() else {
         return false;
     };
@@ -458,13 +444,7 @@ pub(crate) fn can_cast_from_graveyard_v1(
             continue;
         }
         for form in 0..printed_spell_form_count(def) {
-            let completable = form_completable(&projected, pending, form, kicked);
-            if s365 {
-                eprintln!(
-                    "S365DIAG can_cast form={form} kicked={kicked} completable={completable}"
-                );
-            }
-            if completable {
+            if form_completable(&projected, pending, form, kicked) {
                 return true;
             }
         }

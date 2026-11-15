@@ -1735,24 +1735,43 @@ fn bilbo_may_decline_and_needs_mana_for_the_spell() {
     assert_eq!(state.players[0].hand.len(), 1, "Ponder drew");
 }
 
+/// The trigger offers what is castable while it resolves, off the stack:
+/// Consign to Memory ("Counter target triggered ability or colorless spell")
+/// has no target there, so only Vexing Bauble (its {1} reduced to {0}) is
+/// offered, and the prompt and its answer keep that same list while the
+/// trigger waits on the stack (the match with game seed 583263403901730 once
+/// halted here).
 #[test]
-fn bilbo_casts_an_artifact_reduced_to_zero_from_the_graveyard() {
-    let mut state = islands();
-    put(
-        &mut state,
-        P0,
-        "Bilbo, Thief in the Night",
-        Zone::Battlefield,
-    );
-    let bauble = put(&mut state, P0, "Vexing Bauble", Zone::Graveyard);
-    let candidates = bilbo_attacks(&mut state, &[ManaColor::U], 0);
-    assert_eq!(candidates, vec![Target::Object(bauble)]);
-    act(
-        &mut state,
-        Action::ChooseEffectTarget(Target::Object(bauble)),
-    );
-    finish_bilbo_cast(&mut state, &[]);
-    assert_eq!(state.objects.get(bauble).zone, Zone::Battlefield);
+fn bilbo_offers_what_is_castable_while_his_trigger_resolves() {
+    for choose in [true, false] {
+        let mut state = islands();
+        put(
+            &mut state,
+            P0,
+            "Bilbo, Thief in the Night",
+            Zone::Battlefield,
+        );
+        let bauble = put(&mut state, P0, "Vexing Bauble", Zone::Graveyard);
+        let consign = put(&mut state, P0, "Consign to Memory", Zone::Graveyard);
+        let candidates = bilbo_attacks(&mut state, &[ManaColor::U], 0);
+        assert_eq!(candidates, vec![Target::Object(bauble)]);
+        if choose {
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(bauble)),
+            );
+        } else {
+            act(&mut state, Action::FinishEffectSelection);
+        }
+        finish_bilbo_cast(&mut state, &[]);
+        let expected = if choose {
+            Zone::Battlefield
+        } else {
+            Zone::Graveyard
+        };
+        assert_eq!(state.objects.get(bauble).zone, expected);
+        assert_eq!(state.objects.get(consign).zone, Zone::Graveyard);
+    }
 }
 
 #[test]

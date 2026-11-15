@@ -48,9 +48,6 @@ pub(super) fn play(mut state: GameState, seed: u64) -> NativeGame {
     // A game that loops without ending fails here instead of running until
     // the CI job times out.
     let started = std::time::Instant::now();
-    let mut s365_log: Vec<String> = Vec::new(); // S365DIAG
-    let mut s365_prev: Option<GameState> = None; // S365DIAG
-    let mut s365_last: Option<Action> = None; // S365DIAG
     for step in 0..MAX_STEPS {
         assert!(
             started.elapsed() < std::time::Duration::from_secs(600),
@@ -69,81 +66,6 @@ pub(super) fn play(mut state: GameState, seed: u64) -> NativeGame {
                 cast_cards,
                 opening_entries,
             };
-        }
-        if decision.is_terminal() {
-            // S365DIAG
-            eprintln!("S365DIAG halt seed={seed} step={step} {decision:?}");
-            for line in &s365_log {
-                eprintln!("S365DIAG history {line}");
-            }
-            let mut unhalted = state.clone();
-            unhalted.engine.halted = None;
-            eprintln!(
-                "S365DIAG validate now: {:?}",
-                mtg_kernel::effect::validate_pending_effect_choice(&unhalted)
-            );
-            for player in &state.players {
-                eprintln!("S365DIAG pool {:?}", player.mana_pool);
-                for &id in &player.battlefield {
-                    let object = state.objects.get(id);
-                    eprintln!(
-                        "S365DIAG bf {id} {} ctl={:?} tapped={}",
-                        CARD_DEFS[usize::from(object.card_def)].name,
-                        object.controller,
-                        object.tapped
-                    );
-                }
-            }
-            if let (Some(prev), Some(last)) = (&s365_prev, &s365_last) {
-                let mut probe = prev.clone();
-                std::env::set_var("S365_DIAG", "1");
-                eprintln!(
-                    "S365DIAG replay {last:?}: {:?}",
-                    mtg_kernel::engine::step(&mut probe, last.clone())
-                );
-                for round in 0..12 {
-                    eprintln!(
-                        "S365DIAG replay {round} pending={} stack={} pool={:?} validate={:?}",
-                        probe.engine.pending_effect.is_some(),
-                        probe.stack.len(),
-                        probe
-                            .players
-                            .iter()
-                            .map(|p| p.mana_pool)
-                            .collect::<Vec<_>>(),
-                        mtg_kernel::effect::validate_pending_effect_choice(&probe)
-                    );
-                    let decision = mtg_kernel::engine::advance_until_decision(&mut probe);
-                    eprintln!("S365DIAG replay {round} decision {decision:?}");
-                    match decision {
-                        Decision::CastSpellOrPass { .. } => {
-                            let _ = mtg_kernel::engine::step(&mut probe, Action::Pass);
-                        }
-                        Decision::ChooseEffectTargets { .. } => {
-                            let mut keep = probe.clone();
-                            eprintln!(
-                                "S365DIAG replay choose: {:?}",
-                                mtg_kernel::engine::step(
-                                    &mut keep,
-                                    Action::ChooseEffectTarget(Target::Object(
-                                        mtg_kernel::ids::ObjectId(35)
-                                    ))
-                                )
-                            );
-                            eprintln!(
-                                "S365DIAG replay after choose: {:?}",
-                                mtg_kernel::engine::advance_until_decision(&mut keep)
-                            );
-                            break;
-                        }
-                        _ => break,
-                    }
-                }
-                std::env::remove_var("S365_DIAG");
-            }
-        }
-        if seed == 583_263_403_901_730 {
-            s365_prev = Some(state.clone());
         }
         assert!(
             !decision.is_terminal(),
@@ -210,18 +132,6 @@ pub(super) fn play(mut state: GameState, seed: u64) -> NativeGame {
             }
         };
         transcript.update(format!("{action:?}\n").as_bytes());
-        // S365DIAG
-        if seed == 583_263_403_901_730 {
-            s365_log.push(format!(
-                "step={step} decision={decision:?} action={action:?}"
-            ));
-            if let PolicyActionV5::Surface(SurfaceAction::Action(engine_action)) = &action {
-                s365_last = Some(engine_action.clone());
-            }
-            if s365_log.len() > 16 {
-                s365_log.remove(0);
-            }
-        }
         surface
             .apply(&mut state, action)
             .unwrap_or_else(|error| panic!("seed={seed} step={step}: {error}"));
