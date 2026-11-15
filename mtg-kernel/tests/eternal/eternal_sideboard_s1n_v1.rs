@@ -198,8 +198,83 @@ fn s1n_definitions_and_thrull_subtype_have_printed_characteristics() {
     assert_eq!(def(MARTYR).capability, CardCapability::Full);
 }
 
+// ---- Decision-flow helpers ----------------------------------------------------------
+
+/// The priority holder and the spells and abilities it may cast or activate.
+fn priority(state: &mut GameState) -> (PlayerId, Vec<ObjectId>, Vec<(ObjectId, u8)>) {
+    match next(state) {
+        Decision::CastSpellOrPass {
+            player,
+            castable_spells,
+            activatable_abilities,
+            ..
+        } => (player, castable_spells, activatable_abilities),
+        other => panic!("expected priority, got {other:?}"),
+    }
+}
+
+/// Casts `spell` with the mana already available to its caster.
+fn cast(state: &mut GameState, spell: ObjectId) {
+    assert!(
+        priority(state).1.contains(&spell),
+        "{} not castable",
+        state.objects.get(spell).name
+    );
+    act(state, Action::CastSpell(spell));
+}
+
+/// Activates `source`'s ability `index` with the mana already available.
+fn activate(state: &mut GameState, source: ObjectId, index: u8) {
+    assert!(
+        priority(state).2.contains(&(source, index)),
+        "{} ability {index} not activatable",
+        state.objects.get(source).name
+    );
+    act(state, Action::ActivateAbility(source, index));
+}
+
+/// Answers the pending target prompt with `target`, returning the legal
+/// targets it offered.
+fn choose_target(state: &mut GameState, target: Target) -> Vec<Target> {
+    match next(state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(
+                legal_targets.contains(&target),
+                "{target:?} not in {legal_targets:?}"
+            );
+            act(state, Action::ChooseTarget(target));
+            legal_targets
+        }
+        other => panic!("expected a target prompt, got {other:?}"),
+    }
+}
+
+/// The current priority holder passes, and `player` (its opponent) then
+/// holds priority in the same step.
+fn pass_to(state: &mut GameState, player: PlayerId) {
+    let (holder, _, _) = priority(state);
+    assert_eq!(holder, player.opponent());
+    act(state, Action::Pass);
+    let (holder, _, _) = priority(state);
+    assert_eq!(holder, player);
+}
+
+fn life(state: &GameState, player: PlayerId) -> i32 {
+    state.players[player.index()].life
+}
+
+fn hand_len(state: &GameState, player: PlayerId) -> usize {
+    state.players[player.index()].hand.len()
+}
+
 // ---- Apostle's Blessing -------------------------------------------------------------
 
+/// "Target artifact or creature you control gains protection from artifacts
+/// or from the color of your choice until end of turn." With {1} and no
+/// white mana, its {W/P} costs 2 life (unpayable at 1 life). Protection from
+/// artifacts makes an artifact's ability lose its target (608.2b), drops an
+/// attached Equipment (704.5n) and stops artifact creatures from blocking
+/// (702.16e).
 #[test]
 fn apostles_blessing_phyrexian_life_and_artifact_protection_unattach_and_fizzle_in_both_seats() {
     for actor in [P0, P1] {
@@ -207,94 +282,110 @@ fn apostles_blessing_phyrexian_life_and_artifact_protection_unattach_and_fizzle_
         let mut state = game(actor);
         let inspector = put(&mut state, actor, "Thraben Inspector", Zone::Battlefield);
         let ring = put(&mut state, actor, "Sol Ring", Zone::Battlefield);
-        let opp_bear = put(&mut state, opponent, "Thraben Inspector", Zone::Battlefield);
+        let opp_inspector = put(&mut state, opponent, "Thraben Inspector", Zone::Battlefield);
         let spear = put(&mut state, actor, "Shadowspear", Zone::Battlefield);
         let spellbomb = put(&mut state, opponent, "Aether Spellbomb", Zone::Battlefield);
         let blessing = put(&mut state, actor, BLESSING, Zone::Hand);
 
-        // Attach Shadowspear to our Thraben Inspector first.
+        // Shadowspear's equip {2} (its second ability) onto the Inspector.
         pool(&mut state, actor, &[], 2);
-        let Decision::CastSpellOrPass { .. } = next(&mut state) else {
-            panic!("main phase priority");
-        };
-        act(&mut state, Action::ActivateAbility(spear, 0));
-        let Decision::ChooseTargets { legal_targets, .. } = next(&mut state) else {
-            panic!("equip target");
-        };
-        assert!(legal_targets.contains(&Target::Object(inspector)));
-        act(&mut state, Action::ChooseTarget(Target::Object(inspector)));
+        activate(&mut state, spear, 1);
+        choose_target(&mut state, Target::Object(inspector));
         settled(&mut state);
         assert!(state.objects.get(inspector).attachments.contains(&spear));
 
-        // At 1 life without {W}, Phyrexian life payment is illegal.
+        // {W/P} without white mana: 2 life, so not at 1 life (119.4).
         state.players[actor.index()].life = 1;
         pool(&mut state, actor, &[], 1);
-        let Decision::CastSpellOrPass {
-            castable_spells, ..
-        } = next(&mut state)
-        else {
-            panic!("priority at 1 life");
-        };
         assert!(
-            !castable_spells.contains(&blessing),
-            "1 life without white mana cannot cast Apostle's Blessing"
+            !priority(&mut state).1.contains(&blessing),
+            "1 life and no white mana cannot pay {{W/P}}"
         );
-
-        // Opponent activates Aether Spellbomb targeting Inspector (sacrificing
-        // Spellbomb so it is already in the graveyard on resolution); in
-        // response at 4 life, actor casts Apostle's Blessing paying {1} + 2
-        // life and chooses Artifacts (option 0).
         state.players[actor.index()].life = 4;
+        assert!(priority(&mut state).1.contains(&blessing));
+
+        // The opponent activates Aether Spellbomb ("{U}, Sacrifice: Return
+        // target creature to its owner's hand") at the Inspector, and the
+        // actor answers with Apostle's Blessing for {1} and 2 life.
         pool(&mut state, opponent, &[ManaColor::U], 0);
-        act(&mut state, Action::Pass);
-        act(&mut state, Action::ActivateAbility(spellbomb, 0));
-        act(&mut state, Action::ChooseTarget(Target::Object(inspector)));
+        pass_to(&mut state, opponent);
+        activate(&mut state, spellbomb, 0);
+        choose_target(&mut state, Target::Object(inspector));
         assert_eq!(zone(&state, spellbomb), Zone::Graveyard);
+        pass_to(&mut state, actor);
+        cast(&mut state, blessing);
+        let legal = choose_target(&mut state, Target::Object(inspector));
+        // Artifacts and creatures the actor controls; nothing the opponent
+        // controls.
+        assert!(legal.contains(&Target::Object(ring)));
+        assert!(legal.contains(&Target::Object(spear)));
+        assert!(!legal.contains(&Target::Object(opp_inspector)));
+        assert_eq!(life(&state, actor), 2);
 
-        act(&mut state, Action::Pass);
-        act(&mut state, Action::CastSpell(blessing));
-        let Decision::ChooseTargets { legal_targets, .. } = next(&mut state) else {
-            panic!("blessing target");
-        };
-        // Controlled artifact and creature are both legal; opponent's creature is not.
-        assert!(legal_targets.contains(&Target::Object(inspector)));
-        assert!(legal_targets.contains(&Target::Object(ring)));
-        assert!(!legal_targets.contains(&Target::Object(opp_bear)));
-        act(&mut state, Action::ChooseTarget(Target::Object(inspector)));
-        assert_eq!(state.players[actor.index()].life, 2);
-
-        let Some(Decision::ChooseEffectOption { option_count, .. }) = settle(&mut state) else {
+        let Some(Decision::ChooseEffectOption {
+            player,
+            option_count,
+            ..
+        }) = settle(&mut state)
+        else {
             panic!("protection quality choice");
         };
+        assert_eq!(player, actor);
+        // Artifacts, then white, blue, black, red and green.
         assert_eq!(option_count, 6);
-        act(&mut state, Action::ChooseEffectOption(0)); // Artifacts
+        act(&mut state, Action::ChooseEffectOption(0));
         settled(&mut state);
 
-        // Inspector stayed on the battlefield (departed Aether Spellbomb fizzled),
-        // and Shadowspear fell off as a state-based action (704.5n).
+        // The Spellbomb's ability lost its only target, and Shadowspear fell
+        // off as a state-based action.
         assert_eq!(zone(&state, inspector), Zone::Battlefield);
         assert!(state.objects.get(inspector).attachments.is_empty());
+        assert_eq!(zone(&state, spear), Zone::Battlefield);
 
-        // Artifact creature cannot block Inspector during combat this turn.
+        // An artifact creature can't block the Inspector this turn; a
+        // nonartifact creature can.
         let enforcer = put(&mut state, opponent, "Myr Enforcer", Zone::Battlefield);
-        state.step = Step::DeclareAttackers;
-        state.priority_player = actor;
-        let _ = next(&mut state);
-        act(&mut state, Action::DeclareAttackers(vec![inspector]));
-        act(&mut state, Action::Pass);
-        act(&mut state, Action::Pass);
-        let Decision::DeclareBlockers { legal_blockers, .. } = next(&mut state) else {
-            panic!("declare blockers");
+        loop {
+            match next(&mut state) {
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                Decision::DeclareAttackers { player, eligible } => {
+                    assert_eq!(player, actor);
+                    assert!(eligible.contains(&inspector));
+                    act(&mut state, Action::DeclareAttackers(vec![inspector]));
+                    break;
+                }
+                other => panic!("expected attacks, got {other:?}"),
+            }
+        }
+        let legal_blockers = loop {
+            match next(&mut state) {
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                Decision::DeclareBlockers {
+                    player,
+                    legal_blockers,
+                    ..
+                } => {
+                    assert_eq!(player, opponent);
+                    break legal_blockers;
+                }
+                other => panic!("expected blocks, got {other:?}"),
+            }
         };
+        let (_, blockers) = legal_blockers
+            .iter()
+            .find(|(attacker, _)| *attacker == inspector)
+            .expect("the Inspector attacks");
+        assert!(blockers.contains(&opp_inspector));
         assert!(
-            !legal_blockers
-                .iter()
-                .any(|(attacker, blockers)| *attacker == inspector && blockers.contains(&enforcer)),
-            "artifact creature cannot block creature with protection from artifacts"
+            !blockers.contains(&enforcer),
+            "an artifact creature can't block a creature with protection from artifacts"
         );
     }
 }
 
+/// Protection from a chosen color: with {W} available the spell costs no
+/// life, Lightning Bolt can't target the creature this turn, and the
+/// protection ends with the turn.
 #[test]
 fn apostles_blessing_color_protection_blocks_red_targeting_and_expires_next_turn() {
     for actor in [P0, P1] {
@@ -307,60 +398,57 @@ fn apostles_blessing_color_protection_blocks_red_targeting_and_expires_next_turn
         let bolt_next = put(&mut state, opponent, "Lightning Bolt", Zone::Hand);
 
         pool(&mut state, actor, &[ManaColor::W], 1);
-        let _ = next(&mut state);
-        act(&mut state, Action::CastSpell(blessing));
-        let mut d = next(&mut state);
-        if let Decision::ChooseEffectOption { .. } = d {
-            // Choose {W} mana over paying 2 life when both are payable.
-            act(&mut state, Action::ChooseEffectOption(0));
-            d = next(&mut state);
-        }
-        let Decision::ChooseTargets { legal_targets, .. } = d else {
-            panic!("blessing target");
-        };
-        assert!(legal_targets.contains(&Target::Object(ring)));
-        assert!(legal_targets.contains(&Target::Object(thrull)));
-        act(&mut state, Action::ChooseTarget(Target::Object(thrull)));
-        assert_eq!(state.players[actor.index()].life, 20);
+        cast(&mut state, blessing);
+        let legal = choose_target(&mut state, Target::Object(thrull));
+        assert!(legal.contains(&Target::Object(ring)));
+        assert_eq!(life(&state, actor), 20, "{{W}} paid the {{W/P}}");
+        assert_eq!(
+            state.players[actor.index()].mana_pool[ManaColor::W.pool_index()],
+            0
+        );
 
-        let Some(Decision::ChooseEffectOption { .. }) = settle(&mut state) else {
-            panic!("blessing option");
+        let Some(Decision::ChooseEffectOption { option_count, .. }) = settle(&mut state) else {
+            panic!("protection quality choice");
         };
-        act(&mut state, Action::ChooseEffectOption(4)); // Red
+        assert_eq!(option_count, 6);
+        act(&mut state, Action::ChooseEffectOption(4)); // Red.
         settled(&mut state);
 
-        // Opponent cannot target Thrull with Lightning Bolt this turn.
+        // The opponent's Bolt can't target the Thrull this turn.
         pool(&mut state, opponent, &[ManaColor::R], 0);
-        act(&mut state, Action::Pass);
-        act(&mut state, Action::CastSpell(bolt_now));
-        let Decision::ChooseTargets { legal_targets, .. } = next(&mut state) else {
-            panic!("bolt target");
-        };
-        assert!(!legal_targets.contains(&Target::Object(thrull)));
-        act(&mut state, Action::ChooseTarget(Target::Player(actor)));
+        pass_to(&mut state, opponent);
+        cast(&mut state, bolt_now);
+        let legal = choose_target(&mut state, Target::Player(actor));
+        assert!(!legal.contains(&Target::Object(thrull)));
         settled(&mut state);
+        assert_eq!(life(&state, actor), 17);
         assert_eq!(zone(&state, thrull), Zone::Battlefield);
 
-        // Advance to opponent's turn; protection from red has expired.
-        while state.active_player == actor || state.step != Step::Main1 {
-            match next(&mut state) {
+        // On the opponent's turn the protection has ended.
+        loop {
+            let decision = next(&mut state);
+            if state.active_player == opponent
+                && state.step == Step::Main1
+                && state.stack.is_empty()
+                && matches!(decision, Decision::CastSpellOrPass { player, .. } if player == opponent)
+            {
+                break;
+            }
+            match decision {
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
                 Decision::DeclareAttackers { .. } => {
-                    act(&mut state, Action::DeclareAttackers(vec![]))
+                    act(&mut state, Action::DeclareAttackers(Vec::new()))
                 }
                 Decision::Discard { count, choices, .. } => act(
                     &mut state,
                     Action::Discard(choices[..count as usize].to_vec()),
                 ),
-                _ => act(&mut state, Action::Pass),
+                other => panic!("unexpected decision: {other:?}"),
             }
         }
         pool(&mut state, opponent, &[ManaColor::R], 0);
-        act(&mut state, Action::CastSpell(bolt_next));
-        let Decision::ChooseTargets { legal_targets, .. } = next(&mut state) else {
-            panic!("bolt target next turn");
-        };
-        assert!(legal_targets.contains(&Target::Object(thrull)));
-        act(&mut state, Action::ChooseTarget(Target::Object(thrull)));
+        cast(&mut state, bolt_next);
+        choose_target(&mut state, Target::Object(thrull));
         settled(&mut state);
         assert_eq!(zone(&state, thrull), Zone::Graveyard);
     }
@@ -368,71 +456,77 @@ fn apostles_blessing_color_protection_blocks_red_targeting_and_expires_next_turn
 
 // ---- Doorkeeper Thrull --------------------------------------------------------------
 
+/// "Flash. Flying. Artifacts and creatures entering the battlefield don't
+/// cause abilities to trigger." Entry triggers of creatures and artifacts
+/// (including one entering with the Thrull) don't trigger; a noncreature,
+/// nonartifact permanent's entry trigger and an as-enters replacement still
+/// apply.
 #[test]
 fn doorkeeper_thrull_suppresses_artifact_and_creature_etbs_but_keeps_enchantment_etb_and_entry_replacements(
 ) {
     for actor in [P0, P1] {
         let opponent = actor.opponent();
-        let mut state = game(actor);
-        let land = put(&mut state, opponent, "Mountain", Zone::Battlefield);
+
+        // Flashed in over the opponent's Baleful Strix, the Thrull stops the
+        // Strix's and then Coveted Jewel's draws.
+        let mut state = game(opponent);
         let thrull = put(&mut state, actor, THRULL, Zone::Hand);
         let strix = put(&mut state, opponent, "Baleful Strix", Zone::Hand);
         let jewel = put(&mut state, opponent, "Coveted Jewel", Zone::Hand);
-        let seas = put(&mut state, actor, "Spreading Seas", Zone::Hand);
-        let moonshadow = put(&mut state, actor, "Moonshadow", Zone::Hand);
-
-        state.active_player = opponent;
-        state.priority_player = opponent;
         pool(&mut state, opponent, &[ManaColor::U, ManaColor::B], 6);
-        let _ = next(&mut state);
-        act(&mut state, Action::CastSpell(strix));
-        // Flash Doorkeeper Thrull in response to Baleful Strix.
+        cast(&mut state, strix);
         pool(&mut state, actor, &[ManaColor::W], 1);
-        act(&mut state, Action::Pass);
-        act(&mut state, Action::CastSpell(thrull));
+        pass_to(&mut state, actor);
+        cast(&mut state, thrull);
         settled(&mut state);
-
-        // Strix entered after Thrull resolved, so Strix's ETB draw did not trigger.
         assert_eq!(zone(&state, thrull), Zone::Battlefield);
         assert_eq!(zone(&state, strix), Zone::Battlefield);
-        assert_eq!(state.players[opponent.index()].library.len(), 20);
-
-        // Coveted Jewel (artifact) also enters without drawing 3 cards.
-        act(&mut state, Action::CastSpell(jewel));
+        assert_eq!(hand_len(&state, opponent), 1, "the Strix drew nothing");
+        cast(&mut state, jewel);
         settled(&mut state);
         assert_eq!(zone(&state, jewel), Zone::Battlefield);
-        assert_eq!(state.players[opponent.index()].library.len(), 20);
+        assert_eq!(hand_len(&state, opponent), 0, "the Jewel drew nothing");
 
-        // Simultaneous entry of Doorkeeper Thrull + Baleful Strix also suppresses Strix.
-        let thrull2 = put(&mut state, actor, THRULL, Zone::Hand);
-        let strix2 = put(&mut state, opponent, "Baleful Strix", Zone::Hand);
+        // Control: without the Thrull, the Strix's entry draws a card.
+        let mut state = game(actor);
+        let strix = put(&mut state, opponent, "Baleful Strix", Zone::Hand);
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![ProposedEvent::zone_change(strix, Zone::Battlefield)],
+        );
+        settled(&mut state);
+        assert_eq!(hand_len(&state, opponent), 1);
+
+        // Entering together with the Thrull, the Strix draws nothing.
+        let mut state = game(actor);
+        let thrull = put(&mut state, actor, THRULL, Zone::Hand);
+        let strix = put(&mut state, opponent, "Baleful Strix", Zone::Hand);
         event::propose_and_commit_batch(
             &mut state,
             vec![
-                ProposedEvent::zone_change(thrull2, Zone::Battlefield),
-                ProposedEvent::zone_change(strix2, Zone::Battlefield),
+                ProposedEvent::zone_change(thrull, Zone::Battlefield),
+                ProposedEvent::zone_change(strix, Zone::Battlefield),
             ],
         );
-        assert!(state.engine.pending_triggers.is_empty());
-
-        // Back on actor's main phase: Spreading Seas (non-artifact enchantment)
-        // still triggers its ETB draw, and Moonshadow's as-enters six -1/-1
-        // counters replacement still applies (614.16a).
-        state.active_player = actor;
-        state.priority_player = actor;
-        state.step = Step::Main1;
-        let actor_lib_before = state.players[actor.index()].library.len();
-        pool(&mut state, actor, &[ManaColor::U, ManaColor::B], 1);
-        let _ = next(&mut state);
-        act(&mut state, Action::CastSpell(seas));
-        act(&mut state, Action::ChooseTarget(Target::Object(land)));
         settled(&mut state);
-        assert_eq!(
-            state.players[actor.index()].library.len(),
-            actor_lib_before - 1
-        );
+        assert_eq!(zone(&state, thrull), Zone::Battlefield);
+        assert_eq!(zone(&state, strix), Zone::Battlefield);
+        assert_eq!(hand_len(&state, opponent), 0);
 
-        act(&mut state, Action::CastSpell(moonshadow));
+        // Spreading Seas (an enchantment) still draws, and Moonshadow still
+        // enters with six -1/-1 counters (614.1c).
+        let mut state = game(actor);
+        put(&mut state, actor, THRULL, Zone::Battlefield);
+        let land = put(&mut state, opponent, "Mountain", Zone::Battlefield);
+        let seas = put(&mut state, actor, "Spreading Seas", Zone::Hand);
+        let moonshadow = put(&mut state, actor, "Moonshadow", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U, ManaColor::B], 1);
+        cast(&mut state, seas);
+        choose_target(&mut state, Target::Object(land));
+        settled(&mut state);
+        assert_eq!(zone(&state, seas), Zone::Battlefield);
+        assert_eq!(hand_len(&state, actor), 2, "Moonshadow and the Seas draw");
+        cast(&mut state, moonshadow);
         settled(&mut state);
         assert_eq!(zone(&state, moonshadow), Zone::Battlefield);
         assert_eq!(state.objects.get(moonshadow).counters.minus1_minus1, 6);
@@ -441,73 +535,98 @@ fn doorkeeper_thrull_suppresses_artifact_and_creature_etbs_but_keeps_enchantment
 
 // ---- Darksteel Angel ----------------------------------------------------------------
 
+/// "You can't lose the game and your opponents can't win the game.
+/// Creatures you control can't have -1/-1 counters put on them." Losing its
+/// abilities (Dress Down) lets state-based actions end the game.
 #[test]
 fn darksteel_angel_prevents_loss_opponent_oracle_win_and_minus1_counters_until_disabled() {
     for actor in [P0, P1] {
         let opponent = actor.opponent();
+
+        // Life below zero, ten poison counters and a draw from an empty
+        // library don't make its controller lose.
         let mut state = game(actor);
-        let angel = put(&mut state, actor, ANGEL, Zone::Battlefield);
+        put(&mut state, actor, ANGEL, Zone::Battlefield);
+        state.players[actor.index()].life = -3;
+        state.players[actor.index()].poison_counters = PoisonCountersV1(10);
+        state.players[actor.index()].library.clear();
+        event::propose_and_commit(&mut state, ProposedEvent::draw(actor));
+        let (holder, _, _) = priority(&mut state);
+        assert_eq!(holder, actor);
+        assert!(state.players.iter().all(|player| !player.has_lost));
+
+        // The opponent's Thassa's Oracle over an empty library wins without
+        // the Angel and doesn't win with it.
+        for angel in [false, true] {
+            let mut state = game(opponent);
+            if angel {
+                put(&mut state, actor, ANGEL, Zone::Battlefield);
+            }
+            state.players[opponent.index()].library.clear();
+            let oracle = put(&mut state, opponent, "Thassa's Oracle", Zone::Hand);
+            pool(&mut state, opponent, &[ManaColor::U, ManaColor::U], 0);
+            cast(&mut state, oracle);
+            let outcome = loop {
+                match settle(&mut state) {
+                    None => break None,
+                    Some(Decision::ChooseEffectTargets { .. }) => {
+                        act(&mut state, Action::FinishEffectSelection)
+                    }
+                    Some(Decision::GameOver { winner }) => break Some(winner),
+                    Some(other) => panic!("unexpected decision: {other:?}"),
+                }
+            };
+            if angel {
+                assert_eq!(outcome, None);
+                assert!(state.players.iter().all(|player| !player.has_lost));
+            } else {
+                assert_eq!(outcome, Some(Some(opponent)));
+            }
+        }
+
+        // Fume Spitter ("Sacrifice: Put a -1/-1 counter on target creature")
+        // can't put a counter on the Angel controller's creature, but can on
+        // the opponent's, and Moonshadow enters without its six counters.
+        let mut state = game(actor);
+        put(&mut state, actor, ANGEL, Zone::Battlefield);
         let ally = put(&mut state, actor, "Thraben Inspector", Zone::Battlefield);
         let opp_ally = put(&mut state, opponent, "Thraben Inspector", Zone::Battlefield);
         let spitter_a = put(&mut state, opponent, "Fume Spitter", Zone::Battlefield);
         let spitter_b = put(&mut state, actor, "Fume Spitter", Zone::Battlefield);
         let moonshadow = put(&mut state, actor, "Moonshadow", Zone::Hand);
-
-        // 1. Zero/negative life, 10 poison, and empty-library draw do not make actor lose.
-        state.players[actor.index()].life = -3;
-        state.players[actor.index()].poison_counters = PoisonCountersV1(10);
-        state.players[actor.index()].library.clear();
-        event::propose_and_commit(&mut state, ProposedEvent::draw(actor));
-        let decision = next(&mut state);
-        assert!(
-            !matches!(decision, Decision::GameOver { .. }),
-            "{decision:?}"
-        );
-        assert!(state.players.iter().all(|player| !player.has_lost));
-        assert!(!state.players[actor.index()].drew_from_empty);
-
-        // 2. Opponent's Thassa's Oracle on an empty library cannot win the game.
-        state.players[opponent.index()].library.clear();
-        let oracle = put(&mut state, opponent, "Thassa's Oracle", Zone::Hand);
-        state.active_player = opponent;
-        state.priority_player = opponent;
-        pool(&mut state, opponent, &[ManaColor::U, ManaColor::U], 0);
-        let _ = next(&mut state);
-        act(&mut state, Action::CastSpell(oracle));
+        pass_to(&mut state, opponent);
+        activate(&mut state, spitter_a, 0);
+        choose_target(&mut state, Target::Object(ally));
         settled(&mut state);
-        assert!(state.players.iter().all(|player| !player.has_lost));
-
-        // 3. Controlled creatures cannot get -1/-1 counters (Fume Spitter and
-        // Moonshadow entry), while opponent's creatures still get them.
-        act(&mut state, Action::ActivateAbility(spitter_a, 0));
-        act(&mut state, Action::ChooseTarget(Target::Object(ally)));
-        settled(&mut state);
+        assert_eq!(zone(&state, spitter_a), Zone::Graveyard);
         assert_eq!(state.objects.get(ally).counters.minus1_minus1, 0);
-
-        act(&mut state, Action::Pass);
-        act(&mut state, Action::ActivateAbility(spitter_b, 0));
-        act(&mut state, Action::ChooseTarget(Target::Object(opp_ally)));
+        activate(&mut state, spitter_b, 0);
+        choose_target(&mut state, Target::Object(opp_ally));
         settled(&mut state);
         assert_eq!(state.objects.get(opp_ally).counters.minus1_minus1, 1);
-
-        state.active_player = actor;
-        state.priority_player = actor;
         pool(&mut state, actor, &[ManaColor::B], 0);
-        let _ = next(&mut state);
-        act(&mut state, Action::CastSpell(moonshadow));
+        cast(&mut state, moonshadow);
         settled(&mut state);
         assert_eq!(zone(&state, moonshadow), Zone::Battlefield);
         assert_eq!(state.objects.get(moonshadow).counters.minus1_minus1, 0);
         assert_eq!(engine::effective_power(&state, moonshadow), 7);
 
-        // 4. Dress Down removes Darksteel Angel's abilities: SBA immediately
-        // sees actor at <= 0 life and 10 poison and actor loses.
+        // Dress Down removes the Angel's abilities: the controller at 0 life
+        // with ten poison counters loses at once.
+        let mut state = game(actor);
+        let angel = put(&mut state, actor, ANGEL, Zone::Battlefield);
         let dress_down = put(&mut state, opponent, "Dress Down", Zone::Hand);
+        state.players[actor.index()].life = 0;
+        state.players[actor.index()].poison_counters = PoisonCountersV1(10);
+        assert_eq!(priority(&mut state).0, actor);
+        assert!(!state.players[actor.index()].has_lost);
         pool(&mut state, opponent, &[ManaColor::U], 1);
-        act(&mut state, Action::Pass);
-        act(&mut state, Action::CastSpell(dress_down));
-        act(&mut state, Action::Pass);
-        act(&mut state, Action::Pass);
+        pass_to(&mut state, opponent);
+        cast(&mut state, dress_down);
+        let Some(Decision::GameOver { winner }) = settle(&mut state) else {
+            panic!("the game ends once the Angel loses its abilities");
+        };
+        assert_eq!(winner, Some(opponent));
         assert_eq!(zone(&state, angel), Zone::Battlefield);
         assert!(state.players[actor.index()].has_lost);
         assert!(!state.players[opponent.index()].has_lost);
@@ -616,109 +735,149 @@ fn from_the_ashes_destroys_nonbasics_under_blood_moon_spares_indestructible_and_
 
 // ---- Kiora's Dismissal --------------------------------------------------------------
 
+/// Offers `target` at the pending variable target prompt, which must still
+/// allow finishing.
+fn choose_more(state: &mut GameState, target: Target) -> Vec<Target> {
+    match next(state) {
+        Decision::ChooseTargets {
+            legal_targets,
+            can_finish,
+            ..
+        } => {
+            assert!(can_finish);
+            assert!(
+                legal_targets.contains(&target),
+                "{target:?} not in {legal_targets:?}"
+            );
+            act(state, Action::ChooseTarget(target));
+            legal_targets
+        }
+        other => panic!("expected a target prompt, got {other:?}"),
+    }
+}
+
+/// Finishes the variable target prompt if it is still open, returning the
+/// targets it still offered.
+fn finish_targets(state: &mut GameState) -> Vec<Target> {
+    match next(state) {
+        Decision::ChooseTargets {
+            legal_targets,
+            can_finish,
+            ..
+        } => {
+            assert!(can_finish);
+            act(state, Action::FinishEffectSelection);
+            legal_targets
+        }
+        Decision::CastSpellOrPass { .. } => Vec::new(),
+        other => panic!("expected a target prompt or priority, got {other:?}"),
+    }
+}
+
+fn blue(state: &GameState, player: PlayerId) -> u8 {
+    state.players[player.index()].mana_pool[ManaColor::U.pool_index()]
+}
+
+/// "Strive -- This spell costs {U} more to cast for each target beyond the
+/// first. Return any number of target enchantments to their owners' hands."
+/// Zero targets are legal; a target the caster can't pay for isn't offered;
+/// a target that becomes illegal is left alone while the others return
+/// (608.2b); casting without paying the mana cost (Omniscience) still pays
+/// the strive cost.
 #[test]
 fn kioras_dismissal_strive_payability_omniscience_and_partial_fizzle_in_both_seats() {
     for actor in [P0, P1] {
         let opponent = actor.opponent();
+
+        // With {U}{U}: two targets, and no third.
         let mut state = game(actor);
         let seal_a = put(&mut state, opponent, "Seal of Fire", Zone::Battlefield);
         let seal_b = put(&mut state, opponent, "Seal of Fire", Zone::Battlefield);
         let seal_c = put(&mut state, actor, "Seal of Fire", Zone::Battlefield);
         let dismissal = put(&mut state, actor, DISMISSAL, Zone::Hand);
-
-        // 1. With {U}{U}, actor can choose 0, 1, or 2 targets, and once 2 are
-        // chosen, the 3rd enchantment is filtered out because {U}{U}{U} is unpayable.
         pool(&mut state, actor, &[ManaColor::U, ManaColor::U], 0);
-        let _ = next(&mut state);
-        act(&mut state, Action::CastSpell(dismissal));
-        let Decision::ChooseTargets {
-            legal_targets,
-            can_finish,
-            ..
-        } = next(&mut state)
-        else {
-            panic!("first dismissal target");
-        };
-        assert!(can_finish, "0 targets is legal");
-        assert_eq!(legal_targets.len(), 3);
-        act(&mut state, Action::ChooseTarget(Target::Object(seal_a)));
-
-        let Decision::ChooseTargets {
-            legal_targets,
-            can_finish,
-            ..
-        } = next(&mut state)
-        else {
-            panic!("second dismissal target");
-        };
-        assert!(can_finish, "1 target costs {{U}}");
-        assert_eq!(legal_targets.len(), 2);
-        act(&mut state, Action::ChooseTarget(Target::Object(seal_b)));
-
-        if let Decision::ChooseTargets {
-            legal_targets,
-            can_finish,
-            ..
-        } = next(&mut state)
-        {
-            assert!(can_finish);
-            assert!(
-                !legal_targets.contains(&Target::Object(seal_c)),
-                "3rd target requires {{U}}{{U}}{{U}}"
-            );
-            act(&mut state, Action::FinishEffectSelection);
-        }
+        cast(&mut state, dismissal);
+        let first = choose_more(&mut state, Target::Object(seal_a));
+        assert_eq!(first.len(), 3, "{first:?}");
+        let second = choose_more(&mut state, Target::Object(seal_b));
+        assert_eq!(second.len(), 2, "{second:?}");
+        let third = finish_targets(&mut state);
+        assert!(
+            !third.contains(&Target::Object(seal_c)),
+            "a third target costs {{U}}{{U}}{{U}}"
+        );
+        assert_eq!(blue(&state, actor), 0, "{{U}} plus one strive {{U}}");
         settled(&mut state);
         assert_eq!(zone(&state, seal_a), Zone::Hand);
         assert_eq!(zone(&state, seal_b), Zone::Hand);
         assert_eq!(zone(&state, seal_c), Zone::Battlefield);
-        assert_eq!(
-            state.players[actor.index()].mana_pool[ManaColor::U.pool_index()],
-            0
-        );
 
-        // 2. Partial fizzle (608.2b): target opponent's `seal_d` and actor's
-        // `seal_c`; opponent responds with Veil of Summer, making `seal_d`
-        // illegal (hexproof from blue) while `seal_c` still returns to hand.
+        // With {U}: one target, and the spell may also finish with none.
+        let mut state = game(actor);
+        let seal_a = put(&mut state, opponent, "Seal of Fire", Zone::Battlefield);
+        let seal_b = put(&mut state, opponent, "Seal of Fire", Zone::Battlefield);
+        let dismissal = put(&mut state, actor, DISMISSAL, Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U], 0);
+        cast(&mut state, dismissal);
+        choose_more(&mut state, Target::Object(seal_a));
+        assert!(!finish_targets(&mut state).contains(&Target::Object(seal_b)));
+        settled(&mut state);
+        assert_eq!(zone(&state, seal_a), Zone::Hand);
+        assert_eq!(zone(&state, seal_b), Zone::Battlefield);
+        let dismissal = put(&mut state, actor, DISMISSAL, Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U], 0);
+        cast(&mut state, dismissal);
+        finish_targets(&mut state);
+        settled(&mut state);
+        assert_eq!(zone(&state, dismissal), Zone::Graveyard);
+        assert_eq!(zone(&state, seal_b), Zone::Battlefield);
+
+        // Veil of Summer gives the opponent's Seal hexproof from blue in
+        // response: the actor's own Seal still returns.
+        let mut state = game(actor);
+        let seal_c = put(&mut state, actor, "Seal of Fire", Zone::Battlefield);
         let seal_d = put(&mut state, opponent, "Seal of Fire", Zone::Battlefield);
-        let dismissal2 = put(&mut state, actor, DISMISSAL, Zone::Hand);
+        let dismissal = put(&mut state, actor, DISMISSAL, Zone::Hand);
         let veil = put(&mut state, opponent, "Veil of Summer", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::U, ManaColor::U], 0);
         pool(&mut state, opponent, &[ManaColor::G], 0);
-        act(&mut state, Action::CastSpell(dismissal2));
-        act(&mut state, Action::ChooseTarget(Target::Object(seal_d)));
-        act(&mut state, Action::ChooseTarget(Target::Object(seal_c)));
-        if matches!(next(&mut state), Decision::ChooseTargets { .. }) {
-            act(&mut state, Action::FinishEffectSelection);
-        }
-        act(&mut state, Action::Pass);
-        act(&mut state, Action::CastSpell(veil));
+        cast(&mut state, dismissal);
+        choose_more(&mut state, Target::Object(seal_d));
+        choose_more(&mut state, Target::Object(seal_c));
+        finish_targets(&mut state);
+        pass_to(&mut state, opponent);
+        cast(&mut state, veil);
         settled(&mut state);
+        assert_eq!(zone(&state, veil), Zone::Graveyard);
         assert_eq!(zone(&state, seal_d), Zone::Battlefield);
         assert_eq!(zone(&state, seal_c), Zone::Hand);
+        assert_eq!(zone(&state, dismissal), Zone::Graveyard);
 
-        // 3. Under Omniscience with {U} in pool: 0 or 1 target is free, 2
-        // targets costs {U} (strive surcharge still paid), and 3 targets is unpayable.
-        let _omni = put(&mut state, actor, "Omniscience", Zone::Battlefield);
+        // Under Omniscience with {U}: cast without paying its mana cost, the
+        // second target still costs {U} and a third is unpayable.
+        let mut state = game(actor);
+        put(&mut state, actor, "Omniscience", Zone::Battlefield);
+        let seal_d = put(&mut state, opponent, "Seal of Fire", Zone::Battlefield);
         let seal_e = put(&mut state, opponent, "Seal of Fire", Zone::Battlefield);
         let seal_f = put(&mut state, actor, "Seal of Fire", Zone::Battlefield);
-        let dismissal3 = put(&mut state, actor, DISMISSAL, Zone::Hand);
+        let dismissal = put(&mut state, actor, DISMISSAL, Zone::Hand);
         pool(&mut state, actor, &[ManaColor::U], 0);
-        act(&mut state, Action::CastSpell(dismissal3));
-        if let Decision::ChooseEffectOption { .. } = next(&mut state) {
-            act(&mut state, Action::ChooseEffectOption(1)); // WithoutManaCost
+        cast(&mut state, dismissal);
+        match next(&mut state) {
+            Decision::ChooseEffectOption { option_count, .. } => {
+                assert_eq!(option_count, 2);
+                act(&mut state, Action::ChooseEffectOption(1)); // Without paying.
+            }
+            other => panic!("expected the free-cast choice, got {other:?}"),
         }
-        act(&mut state, Action::ChooseTarget(Target::Object(seal_d)));
-        act(&mut state, Action::ChooseTarget(Target::Object(seal_e)));
-        if let Decision::ChooseTargets { legal_targets, .. } = next(&mut state) {
-            assert!(!legal_targets.contains(&Target::Object(seal_f)));
-            act(&mut state, Action::FinishEffectSelection);
-        }
+        choose_more(&mut state, Target::Object(seal_d));
+        choose_more(&mut state, Target::Object(seal_e));
+        assert!(!finish_targets(&mut state).contains(&Target::Object(seal_f)));
+        assert_eq!(blue(&state, actor), 0, "the strive {{U}}");
         settled(&mut state);
-        assert_eq!(
-            state.players[actor.index()].mana_pool[ManaColor::U.pool_index()],
-            0
-        );
+        assert_eq!(zone(&state, seal_d), Zone::Hand);
+        assert_eq!(zone(&state, seal_e), Zone::Hand);
+        assert_eq!(zone(&state, seal_f), Zone::Battlefield);
     }
 }
 

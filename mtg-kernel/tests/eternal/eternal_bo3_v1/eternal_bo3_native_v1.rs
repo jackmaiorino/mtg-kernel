@@ -48,6 +48,8 @@ pub(super) fn play(mut state: GameState, seed: u64) -> NativeGame {
     // A game that loops without ending fails here instead of running until
     // the CI job times out.
     let started = std::time::Instant::now();
+    let mut s365_log: Vec<String> = Vec::new(); // S365DIAG
+    let mut s365_prev: Option<GameState> = None; // S365DIAG
     for step in 0..MAX_STEPS {
         assert!(
             started.elapsed() < std::time::Duration::from_secs(600),
@@ -66,6 +68,42 @@ pub(super) fn play(mut state: GameState, seed: u64) -> NativeGame {
                 cast_cards,
                 opening_entries,
             };
+        }
+        if decision.is_terminal() {
+            // S365DIAG
+            eprintln!("S365DIAG halt seed={seed} step={step} {decision:?}");
+            for line in &s365_log {
+                eprintln!("S365DIAG history {line}");
+            }
+            if let Some(prev) = &s365_prev {
+                eprintln!("S365DIAG prev stack: {:#?}", prev.stack);
+                eprintln!("S365DIAG prev pending: {:#?}", prev.engine.pending_triggers);
+            }
+            eprintln!("S365DIAG now stack: {:#?}", state.stack);
+            eprintln!("S365DIAG now engine: {:#?}", state.engine);
+            eprintln!(
+                "S365DIAG now step={:?} active={:?} turn={:?}",
+                state.step, state.active_player, state.turn
+            );
+            for (index, object) in state.objects.iter().take(60) {
+                eprintln!(
+                    "S365DIAG obj {index} {} {:?} ctl={:?} own={:?} zcc={}",
+                    CARD_DEFS[usize::from(object.card_def)].name,
+                    object.zone,
+                    object.controller,
+                    object.owner,
+                    object.zone_change_count
+                );
+            }
+            for player in &state.players {
+                eprintln!(
+                    "S365DIAG player life={} bf={:?} gy={:?} hand={:?}",
+                    player.life, player.battlefield, player.graveyard, player.hand
+                );
+            }
+        }
+        if seed == 583_263_403_901_730 {
+            s365_prev = Some(state.clone());
         }
         assert!(
             !decision.is_terminal(),
@@ -132,6 +170,15 @@ pub(super) fn play(mut state: GameState, seed: u64) -> NativeGame {
             }
         };
         transcript.update(format!("{action:?}\n").as_bytes());
+        // S365DIAG
+        if seed == 583_263_403_901_730 {
+            s365_log.push(format!(
+                "step={step} decision={decision:?} action={action:?}"
+            ));
+            if s365_log.len() > 16 {
+                s365_log.remove(0);
+            }
+        }
         surface
             .apply(&mut state, action)
             .unwrap_or_else(|error| panic!("seed={seed} step={step}: {error}"));

@@ -1141,6 +1141,35 @@ fn vintage_jewel_shops_vs_mono_white_initiative_seed_72907925487712_replays() {
     assert_eq!(record.winner, replay.winner);
 }
 
+/// The match whose game two (seed 583263403901730) once halted at step 70
+/// with `InvalidEffectContinuation`. It finishes and replays with the
+/// PLAYABLE_75 pairing.
+#[test]
+fn vintage_mono_white_initiative_vs_esper_lurrus_seed_72907925487716_replays() {
+    let decks = registered_snapshot_decks();
+    let find = |archetype: &str| -> EternalRegisteredDeckV1 {
+        decks
+            .iter()
+            .find(|(_, deck)| deck.deck_id() == archetype)
+            .map(|(_, deck)| deck.clone())
+            .unwrap()
+    };
+    let first = find("vintage-mono-white-initiative");
+    let second = find("vintage-esper-lurrus-control");
+    let native = needs_native_opening(&first) || needs_native_opening(&second);
+    let pair = if native {
+        [natively(&first), natively(&second)]
+    } else {
+        [first, second]
+    };
+    let seed = 72_907_925_487_716_u64;
+    let record = play_match(pair.clone(), seed, native);
+    let replay = play_match(pair, seed, native);
+    assert!(record.games >= 2);
+    assert_eq!(record.transcripts, replay.transcripts);
+    assert_eq!(record.winner, replay.winner);
+}
+
 #[test]
 fn premodern_other_control_plays_best_of_three_with_random_sideboarding() {
     let decks = registered_snapshot_decks();
