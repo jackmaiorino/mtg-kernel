@@ -1396,3 +1396,169 @@ fn score_tensor_matches_forward_bits_and_parallel_auxiliary_matches_serial_bits(
         assert_eq!(par_state, serial_state, "workers {workers}");
     }
 }
+
+#[test]
+fn s_state_and_parameter_digests_preserve_bits_reuse_memo_and_invalidate_on_every_step() {
+    use super::auxiliary::SAuxiliaryInputV1;
+    use sha2::{Digest, Sha256};
+
+    let mut model = SModelV1::init_parity_v1(TINY_V1, 109).unwrap();
+    // Put a negative zero in a non-gauge parameter to prove bit-exact hashing.
+    let mut values = model.values_v1().to_vec();
+    let non_gauge = (0..values.len())
+        .find(|index| {
+            !model
+                .layout_v1()
+                .gauge_ranges_v1()
+                .iter()
+                .any(|range| range.contains(index))
+        })
+        .unwrap();
+    values[non_gauge] = -0.0;
+    model = SModelV1::from_values_v1(TINY_V1, values).unwrap();
+
+    let expected_param_sha = {
+        let mut hasher = Sha256::new();
+        for value in model.values_v1() {
+            hasher.update(value.to_bits().to_le_bytes());
+        }
+        hex_v1(&hasher.finalize())
+    };
+    assert_eq!(model.parameter_sha256_v1(), expected_param_sha);
+
+    let reference_state_sha = |state: &STrainStateV1| -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(S_TRAIN_STATE_SCHEMA_V1.as_bytes());
+        hasher.update(b"\n");
+        hasher.update(
+            serde_json::to_string(&state.model_v1().layout_v1().config)
+                .unwrap()
+                .as_bytes(),
+        );
+        hasher.update(b"\n");
+        hasher.update(state.adam_step_v1().to_le_bytes());
+        for (section, data) in [
+            ("parameters", state.model_v1().values_v1()),
+            ("first_moments", state.first_moments_v1()),
+            ("second_moments", state.second_moments_v1()),
+        ] {
+            hasher.update(section.as_bytes());
+            hasher.update([0u8]);
+            for spec in &state.model_v1().layout_v1().tensors {
+                hasher.update(spec.name.as_bytes());
+                hasher.update([0u8]);
+                for dim in &spec.shape {
+                    hasher.update((*dim as u64).to_le_bytes());
+                }
+                for value in &data[spec.offset..spec.offset + spec.len] {
+                    hasher.update(value.to_bits().to_le_bytes());
+                }
+            }
+        }
+        hex_v1(&hasher.finalize())
+    };
+
+    let cold = STrainStateV1::fresh_optimizer_v1(model.clone());
+    let mut state = STrainStateV1::fresh_optimizer_v1(model);
+    let cold_debug = format!("{cold:?}");
+
+    reset_s_state_hash_compute_count_for_test_v1();
+    let initial = state.state_sha256_v1();
+    assert_eq!(s_state_hash_compute_count_for_test_v1(), 1);
+    assert_eq!(initial, reference_state_sha(&state));
+    assert_eq!(state.state_sha256_v1(), initial);
+    assert_eq!(
+        state.starting_state_sha256_v1(&[("rng", &[1, 2, 3])]).len(),
+        64
+    );
+    let container = encode_checkpoint_v1(&state);
+    let cloned = state.clone();
+    assert_eq!(cloned.state_sha256_v1(), initial);
+    assert_eq!(s_state_hash_compute_count_for_test_v1(), 1);
+    assert_eq!(cold, state);
+    assert_eq!(format!("{state:?}"), cold_debug);
+
+    // Decoding hashes once during verification and caches the verified digest.
+    reset_s_state_hash_compute_count_for_test_v1();
+    let decoded = decode_checkpoint_v1(&container).unwrap();
+    assert_eq!(s_state_hash_compute_count_for_test_v1(), 1);
+    assert_eq!(decoded.state_sha256_v1(), initial);
+    assert_eq!(encode_checkpoint_v1(&decoded), container);
+    assert_eq!(s_state_hash_compute_count_for_test_v1(), 1);
+
+    // Corrupting the state_sha256 inside the S container document is refused.
+    let needle = initial.as_bytes();
+    let pos = container
+        .windows(needle.len())
+        .position(|window| window == needle)
+        .expect("document carries state_sha256");
+    let mut tampered = container.clone();
+    tampered[pos] = if tampered[pos] == b'0' { b'1' } else { b'0' };
+    let err = decode_checkpoint_v1(&tampered).expect_err("tampered digest must fail");
+    assert_eq!(err, "S checkpoint state hash differs from its document");
+
+    // 1. adam_step_with_gradient_v1 invalidates and recomputes.
+    let mut grad = vec![0.0_f32; state.model_v1().layout_v1().total];
+    grad[non_gauge] = 0.25;
+    reset_s_state_hash_compute_count_for_test_v1();
+    state.adam_step_with_gradient_v1(&grad, 1.0e-3).unwrap();
+    assert_eq!(s_state_hash_compute_count_for_test_v1(), 0);
+    let after_adam = state.state_sha256_v1();
+    assert_eq!(s_state_hash_compute_count_for_test_v1(), 1);
+    assert_ne!(after_adam, initial);
+    assert_eq!(after_adam, reference_state_sha(&state));
+    assert_eq!(state.state_sha256_v1(), after_adam);
+    assert_eq!(s_state_hash_compute_count_for_test_v1(), 1);
+
+    // 2. train_step_gae_v1 invalidates, computes after_state_sha256 once, and
+    // subsequent encode_checkpoint_v1 reuses that warm digest.
+    let data = tiny_groups_v1(112, 4);
+    let groups = as_groups_v1(&data);
+    let mut work = SWorkV1::default();
+    reset_s_state_hash_compute_count_for_test_v1();
+    let step = state
+        .train_step_gae_v1(&groups, 0.5, 1.0e-4, &mut work)
+        .unwrap();
+    assert_eq!(s_state_hash_compute_count_for_test_v1(), 1);
+    assert_ne!(step.after_state_sha256, after_adam);
+    assert_eq!(step.after_state_sha256, reference_state_sha(&state));
+    let _ = encode_checkpoint_v1(&state);
+    assert_eq!(state.state_sha256_v1(), step.after_state_sha256);
+    assert_eq!(s_state_hash_compute_count_for_test_v1(), 1);
+
+    // 3. train_step_gae_auxiliary_v1 also invalidates and warms the new digest.
+    let aux_input = SAuxiliaryInputV1 {
+        direction: crate::line_b_teacher_target_v1::LineBDivergenceV1::Forward,
+        coefficient: 0.0,
+        denominator: 1,
+        cap: None,
+        step_telemetry: true,
+        rows: Vec::new(),
+        policy_mask: Vec::new(),
+    };
+    reset_s_state_hash_compute_count_for_test_v1();
+    let (aux_step, _) = state
+        .train_step_gae_auxiliary_v1(&groups, 0.5, 1.0e-4, &aux_input, &mut work)
+        .unwrap();
+    // Note: step_telemetry clones `self`, runs adam_step_with_gradient_v1 on
+    // the clone (without hashing the clone), and hashes `self` once at the end.
+    assert_eq!(s_state_hash_compute_count_for_test_v1(), 1);
+    assert_ne!(aux_step.after_state_sha256, step.after_state_sha256);
+    assert_eq!(aux_step.after_state_sha256, reference_state_sha(&state));
+    let _ = encode_checkpoint_v1(&state);
+    assert_eq!(s_state_hash_compute_count_for_test_v1(), 1);
+
+    // 4. Extreme learning_rate (>= 1.0e10) exercises the rollback-safe
+    // commit_adam_step_v1 path and invalidates the warm digest identically.
+    let mut fallback_grad = vec![0.0_f32; state.model_v1().layout_v1().total];
+    fallback_grad[non_gauge] = 1.0e-12;
+    reset_s_state_hash_compute_count_for_test_v1();
+    state
+        .adam_step_with_gradient_v1(&fallback_grad, 2.0e10)
+        .unwrap();
+    assert_eq!(s_state_hash_compute_count_for_test_v1(), 0);
+    let after_fallback = state.state_sha256_v1();
+    assert_eq!(s_state_hash_compute_count_for_test_v1(), 1);
+    assert_ne!(after_fallback, aux_step.after_state_sha256);
+    assert_eq!(after_fallback, reference_state_sha(&state));
+}

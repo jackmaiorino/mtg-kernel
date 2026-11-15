@@ -465,3 +465,78 @@ fn observation_proofs_give_the_full_checks_errors_for_later_violations() {
         validate_state(&state).unwrap();
     }
 }
+
+#[test]
+fn closed_arahbo_captures_proof_rejects_live_state_tamper_after_cached_cursor() {
+    use crate::event_history_v1::{proof_tests_v1, ProvedV1};
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready(actor);
+        let arahbo = cast(&mut state, actor);
+        let cat = put(&mut state, actor, "Savannah Lions", Zone::Hand);
+        crate::event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(cat, Zone::Battlefield),
+        );
+        let closed_item = published(&mut state);
+        settle(&mut state);
+        assert!(state.stack.is_empty());
+
+        // Establish and then hit the closed ArahboCaptures proof.
+        validate_state(&state).unwrap();
+        assert!(state
+            .engine
+            .event_history
+            .proof_memo_v1::<super::ArahboCapturesProofV1>(ProvedV1::ArahboCaptures)
+            .is_some());
+        let before = proof_tests_v1::uses();
+        validate_state(&state).unwrap();
+        // Hits both ArahboObservations and ArahboCaptures proofs.
+        assert!(proof_tests_v1::uses() >= before + 2);
+
+        // 1. Live stack tamper: reintroduce closed Arahbo token item.
+        let mut stack_tamper = state.clone();
+        stack_tamper.stack.push(closed_item.clone());
+        assert!(validate_state(&stack_tamper).is_err());
+
+        // 2. Live waiting-trigger tamper: resurrect closed capture in pending_triggers.
+        let capture_idx = closed_item
+            .inline_effect
+            .as_ref()
+            .and_then(super::capture_index)
+            .unwrap();
+        let mut pending_tamper = state.clone();
+        pending_tamper
+            .engine
+            .pending_triggers
+            .push(crate::trigger::PendingTrigger {
+                source: arahbo,
+                controller: actor,
+                source_contract: closed_item.v4.ability_source_contract,
+                granted_by: None,
+                effect: EffectOp::ArahboTokenFromCaptureV1 {
+                    capture_history_index: capture_idx,
+                },
+                is_madness_offer: false,
+                kicked: false,
+                target_spec: TargetSpec::None,
+                targets: Vec::new(),
+                target_contracts: Vec::new(),
+                placement_ordered: false,
+                optional_additional_cost_paid: None,
+                paid_cost_refs: Vec::new(),
+            });
+        assert!(validate_state(&pending_tamper).is_err());
+
+        // 3. Live objects tamper: corrupt captured Arahbo source card_def.
+        let mut source_tamper = state.clone();
+        source_tamper.objects.get_mut(arahbo).card_def =
+            crate::card_def::card_id_by_name("Forest").unwrap();
+        assert!(validate_state(&source_tamper).is_err());
+
+        // 4. Live event_log tamper: replay closed ArahboTokenCaptureV1 in mutable log.
+        let capture_event = state.engine.event_history[capture_idx as usize].clone();
+        let mut log_tamper = state.clone();
+        log_tamper.engine.event_log.push(capture_event);
+        assert!(validate_state(&log_tamper).is_err());
+    }
+}

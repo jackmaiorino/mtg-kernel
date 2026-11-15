@@ -1788,3 +1788,68 @@ fn actual_paid_fake_history_coexists_with_paid_heartfire_crystal_historical_sour
         );
     }
 }
+
+#[test]
+fn closed_fake_proof_rejects_live_state_tamper_after_cached_cursor() {
+    use crate::event_history_v1::proof_tests_v1;
+
+    let actor = PlayerId::P0;
+    let (mut state, _, target) = paid(actor, actor);
+    for _ in 0..10 {
+        let decision = engine::advance_until_decision(&mut state);
+        if state.stack.is_empty() && state.engine.pending_triggers.is_empty() {
+            break;
+        }
+        assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+        engine::step(&mut state, Action::Pass).unwrap();
+    }
+    let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+    state.players[actor.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+    engine::advance_until_decision(&mut state);
+    engine::step(&mut state, Action::CastSpell(bolt)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::ChooseTargets { .. }
+    ));
+    engine::step(&mut state, Action::ChooseTarget(Target::Object(target))).unwrap();
+    for _ in 0..20 {
+        let decision = engine::advance_until_decision(&mut state);
+        if state.stack.is_empty() && state.engine.pending_triggers.is_empty() {
+            break;
+        }
+        assert!(
+            matches!(decision, Decision::CastSpellOrPass { .. }),
+            "{decision:?}"
+        );
+        engine::step(&mut state, Action::Pass).unwrap();
+    }
+
+    spell_custody::validate_retained_grant_history(&state).unwrap();
+    let before = proof_tests_v1::uses();
+    spell_custody::validate_retained_grant_history(&state).unwrap();
+    assert_eq!(proof_tests_v1::uses(), before + 1);
+
+    // 1. Live temporary modifier tamper: erase active grant modifier before Cleanup.
+    let mut modifier_tamper = state.clone();
+    modifier_tamper.engine.until_end_of_turn.clear();
+    assert!(spell_custody::validate_retained_grant_history(&modifier_tamper).is_err());
+
+    // 2. Live stack tamper: reintroduce closed death trigger onto stack.
+    let published = spell_custody::row_events(&state)
+        .find_map(|event| match spell_custody::journal(event) {
+            Some(spell_custody::JournalV50::DeathPublished { item, .. }) => {
+                Some(item.as_ref().clone())
+            }
+            _ => None,
+        })
+        .expect("death trigger was published");
+    let mut stack_tamper = state.clone();
+    stack_tamper.stack.push(published);
+    assert!(spell_custody::validate_retained_grant_history(&stack_tamper).is_err());
+
+    // 3. Live event_log tamper: leak private FakeJournalV50 into event_log.
+    let journal_event = spell_custody::row_events(&state).next().unwrap().clone();
+    let mut log_tamper = state.clone();
+    log_tamper.engine.event_log.push(journal_event);
+    assert!(spell_custody::validate_retained_grant_history(&log_tamper).is_err());
+}

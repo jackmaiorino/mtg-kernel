@@ -33,9 +33,8 @@ pub(crate) fn lookup<'a>(
     let mut rows = state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::TwinflameFieryCaptureV38])
-        .iter()
-        .filter_map(|event| match event {
+        .of_kinds_v2(&[EventKindV1::TwinflameFieryCaptureV38])
+        .filter_map(|(_, event)| match event {
             E::TwinflameFieryCaptureV38 { capture }
                 if capture.ctx == *ctx && capture.path == path =>
             {
@@ -152,7 +151,7 @@ pub(crate) fn finish(
     let (previous, item) = owner
         .packet_before(state, ctx, &EffectOp::FieryAnnihilation, path)
         .ok_or("Fiery completion lacks genuine removed owner")?;
-    if state.engine.event_history.scan_for_v1(&[EventKindV1::TwinflameFieryFinishedV38]).iter().any(|e|matches!(e,E::TwinflameFieryFinishedV38{operation} if operation.capture==original.index)){
+    if state.engine.event_history.of_kinds_v2(&[EventKindV1::TwinflameFieryFinishedV38]).any(|(_, e)|matches!(e,E::TwinflameFieryFinishedV38{operation} if operation.capture==original.index)){
         return Err("Fiery completion repeated".into());
     }
     let mut equipment_move = None;
@@ -216,9 +215,8 @@ pub(crate) fn validate_finish(
     let rows: Vec<_> = state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::TwinflameFieryFinishedV38])
-        .iter()
-        .filter_map(|e| match e {
+        .of_kinds_v2(&[EventKindV1::TwinflameFieryFinishedV38])
+        .filter_map(|(_, e)| match e {
             E::TwinflameFieryFinishedV38 { operation } if operation.capture == capture.index => {
                 Some(operation.as_ref())
             }
@@ -243,9 +241,9 @@ pub(crate) fn validate_finish(
         let operations: Vec<_> = state
             .engine
             .event_history
-            .scan_for_v1(&[EventKindV1::CrystalDamageOperationV3])
-            .iter()
-            .filter_map(|e| match e {
+            .of_kinds_v2(&[EventKindV1::CrystalDamageOperationV3])
+            .filter_map(|(_, e)| match e {
+                E::TwinflameFieryCaptureV38 { .. } => None,
                 E::CrystalDamageOperationV3 { operation }
                     if operation.ctx == capture.ctx
                         && operation.op == EffectOp::FieryAnnihilation
@@ -317,9 +315,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     for (index, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::TwinflameFieryCaptureV38])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::TwinflameFieryCaptureV38])
     {
         let E::TwinflameFieryCaptureV38 { capture } = event else {
             continue;
@@ -344,7 +340,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         {
             return Err("Fiery original capture changed owner/context/root/source".into());
         }
-        let executions:Vec<_>=state.engine.event_history.scan_for_v1(&[EventKindV1::CrystalExecutionV1]).iter().filter_map(|e|match e{
+        let executions:Vec<_>=state.engine.event_history.of_kinds_v2(&[EventKindV1::CrystalExecutionV1]).filter_map(|(_, e)|match e{
             E::CrystalExecutionV1{execution} if execution.item==capture.item=>Some(execution.as_ref()),_=>None,
         }).flat_map(|e|e.steps.iter().filter_map(move|s|matches!(&s.frame,EffectFrame::Program{op:EffectOp::FieryAnnihilation,path} if *path==capture.path).then_some((e,s)))).collect();
         let initial: Vec<_> = executions
@@ -357,9 +353,8 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
         let finishes: Vec<_> = state
             .engine
             .event_history
-            .scan_for_v1(&[EventKindV1::TwinflameFieryFinishedV38])
-            .iter()
-            .filter_map(|e| match e {
+            .of_kinds_v2(&[EventKindV1::TwinflameFieryFinishedV38])
+            .filter_map(|(_, e)| match e {
                 E::TwinflameFieryFinishedV38 { operation }
                     if operation.capture == capture.index =>
                 {
@@ -394,9 +389,7 @@ pub(crate) fn validate(state: &GameState) -> Result<(), String> {
     for (at, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::TwinflameFieryFinishedV38])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::TwinflameFieryFinishedV38])
     {
         let E::TwinflameFieryFinishedV38 { operation } = event else {
             continue;

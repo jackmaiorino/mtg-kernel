@@ -240,11 +240,37 @@ pub(crate) fn execute(state: &mut GameState, ctx: &ExecCtx, op: &EffectOp) -> Re
         ctx.controller,
         ctx.ability_source_contract,
     )?;
-    let starts = state.engine.event_history.scan_for_v1(&[EventKindV1::WildwoodTriggerResolvingV1]).iter().enumerate().filter(|(_, event)| matches!(event, CommittedEvent::WildwoodTriggerResolvingV1 { stack_item_id } if *stack_item_id == id)).collect::<Vec<_>>();
+    let starts = state
+        .engine
+        .event_history
+        .of_kinds_v2(&[EventKindV1::WildwoodTriggerResolvingV1])
+        .filter(|(_, event)| {
+            matches!(
+                event,
+                CommittedEvent::WildwoodTriggerResolvingV1 { stack_item_id } if *stack_item_id == id
+            )
+        })
+        .collect::<Vec<_>>();
     if !matches!(starts.as_slice(), [(index, _)] if *index > publication_index)
         || state.stack.iter().any(|live| live.v4.stack_item_id == id)
-        || state.engine.event_history.scan_for_v1(&[EventKindV1::WildwoodTriggerClosedV1, EventKindV1::WildwoodTriggerOperationV1]).iter().any(|event| matches!(event, CommittedEvent::WildwoodTriggerOperationV1 { stack_item_id, .. } | CommittedEvent::WildwoodTriggerClosedV1 { stack_item_id, .. } if *stack_item_id == id))
-    { return Err("Wildwood operation restarted outside owned resolution".into()); }
+        || state
+            .engine
+            .event_history
+            .of_kinds_v2(&[
+                EventKindV1::WildwoodTriggerClosedV1,
+                EventKindV1::WildwoodTriggerOperationV1,
+            ])
+            .any(|(_, event)| {
+                matches!(
+                    event,
+                    CommittedEvent::WildwoodTriggerOperationV1 { stack_item_id, .. }
+                        | CommittedEvent::WildwoodTriggerClosedV1 { stack_item_id, .. }
+                        if *stack_item_id == id
+                )
+            })
+    {
+        return Err("Wildwood operation restarted outside owned resolution".into());
+    }
     let source = ctx
         .ability_source_contract
         .ok_or("Wildwood lost source binding")?;
@@ -370,7 +396,10 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         }
     }
     let mut publications = Vec::new();
-    for (index, event) in state.engine.event_history.iter().enumerate() {
+    for (index, event) in state.engine.event_history.of_kinds_v2(&[
+        EventKindV1::WildwoodCounterCaptureV1,
+        EventKindV1::WildwoodTriggerPublishedV1,
+    ]) {
         if let CommittedEvent::WildwoodCounterCaptureV1 { .. } = event {
             let capture = record(state, index)?;
             for (observer, _) in capture.observers.iter().enumerate() {
@@ -379,7 +408,18 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                     .iter()
                     .filter(|row| key(&row.effect) == Some(wanted))
                     .count();
-                let published_count = state.engine.event_history.iter().filter(|event| matches!(event, CommittedEvent::WildwoodTriggerPublishedV1 { item } if item_key(item) == Some(wanted))).count();
+                let published_count = state
+                    .engine
+                    .event_history
+                    .of_kinds_v2(&[EventKindV1::WildwoodTriggerPublishedV1])
+                    .filter(|(_, event)| {
+                        matches!(
+                            event,
+                            CommittedEvent::WildwoodTriggerPublishedV1 { item }
+                                if item_key(item) == Some(wanted)
+                        )
+                    })
+                    .count();
                 if !matches!((waiting, published_count), (1, 0) | (0, 1)) {
                     return Err(
                         "Wildwood captured occurrence ownership erased or duplicated".into(),
@@ -415,12 +455,22 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             item.controller,
             item.v4.ability_source_contract,
         )?;
-        let starts = state.engine.event_history.iter().enumerate().filter(|(_, e)| matches!(e, CommittedEvent::WildwoodTriggerResolvingV1 { stack_item_id } if *stack_item_id == id)).collect::<Vec<_>>();
+        let starts = state
+            .engine
+            .event_history
+            .of_kinds_v2(&[EventKindV1::WildwoodTriggerResolvingV1])
+            .filter(|(_, e)| {
+                matches!(
+                    e,
+                    CommittedEvent::WildwoodTriggerResolvingV1 { stack_item_id }
+                        if *stack_item_id == id
+                )
+            })
+            .collect::<Vec<_>>();
         let operations = state
             .engine
             .event_history
-            .iter()
-            .enumerate()
+            .of_kinds_v2(&[EventKindV1::WildwoodTriggerOperationV1])
             .filter_map(|(i, e)| match e {
                 CommittedEvent::WildwoodTriggerOperationV1 {
                     stack_item_id,
@@ -432,8 +482,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let closures = state
             .engine
             .event_history
-            .iter()
-            .enumerate()
+            .of_kinds_v2(&[EventKindV1::WildwoodTriggerClosedV1])
             .filter_map(|(i, e)| match e {
                 CommittedEvent::WildwoodTriggerClosedV1 {
                     stack_item_id,
@@ -445,8 +494,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
         let counters = state
             .engine
             .event_history
-            .iter()
-            .enumerate()
+            .of_kinds_v2(&[EventKindV1::WildwoodTriggerCounteredV1])
             .filter_map(|(i, e)| match e {
                 CommittedEvent::WildwoodTriggerCounteredV1 { item: removed }
                     if removed.v4.stack_item_id == id =>
@@ -517,7 +565,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             _ => return Err("Wildwood resolution owner erased or reintroduced".into()),
         }
     }
-    for event in state.engine.event_history.scan_for_v1(&[
+    for (_, event) in state.engine.event_history.of_kinds_v2(&[
         EventKindV1::WildwoodTriggerClosedV1,
         EventKindV1::WildwoodTriggerCounteredV1,
         EventKindV1::WildwoodTriggerOperationV1,
@@ -548,18 +596,33 @@ pub(crate) fn active(state: &GameState) -> Result<Vec<(usize, usize, &CaptureV1)
     for (index, event) in state
         .engine
         .event_history
-        .scan_for_v1(&[EventKindV1::WildwoodCounterCaptureV1])
-        .iter()
-        .enumerate()
+        .of_kinds_v2(&[EventKindV1::WildwoodCounterCaptureV1])
     {
         let CommittedEvent::WildwoodCounterCaptureV1 { capture } = event else {
             continue;
         };
         for observer in 0..capture.observers.len() {
-            let closed = state.engine.event_history.scan_for_v1(&[EventKindV1::WildwoodTriggerPublishedV1]).iter().any(|event| {
-                let CommittedEvent::WildwoodTriggerPublishedV1 { item } = event else { return false; };
-                item_key(item) == Some((index, observer)) && state.engine.event_history.iter().any(|event| matches!(event, CommittedEvent::WildwoodTriggerClosedV1 { stack_item_id, .. } if *stack_item_id == item.v4.stack_item_id))
-            });
+            let closed = state
+                .engine
+                .event_history
+                .of_kinds_v2(&[EventKindV1::WildwoodTriggerPublishedV1])
+                .any(|(_, event)| {
+                    let CommittedEvent::WildwoodTriggerPublishedV1 { item } = event else {
+                        return false;
+                    };
+                    item_key(item) == Some((index, observer))
+                        && state
+                            .engine
+                            .event_history
+                            .of_kinds_v2(&[EventKindV1::WildwoodTriggerClosedV1])
+                            .any(|(_, event)| {
+                                matches!(
+                                    event,
+                                    CommittedEvent::WildwoodTriggerClosedV1 { stack_item_id, .. }
+                                        if *stack_item_id == item.v4.stack_item_id
+                                )
+                            })
+                });
             if !closed {
                 result.push((index, observer, capture.as_ref()));
             }

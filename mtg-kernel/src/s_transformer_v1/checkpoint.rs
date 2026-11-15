@@ -140,8 +140,8 @@ fn document_bytes_v1(state: &STrainStateV1, state_sha256: String) -> Vec<u8> {
     serde_json::to_vec(&DocumentV1 {
         schema: S_TRAIN_STATE_SCHEMA_V1.to_owned(),
         architecture: S_ARCHITECTURE_V1.to_owned(),
-        config: state.model.layout_v1().config,
-        adam_step: state.adam_step,
+        config: state.model_v1().layout_v1().config,
+        adam_step: state.adam_step_v1(),
         state_sha256,
     })
     .expect("document serializes")
@@ -149,7 +149,7 @@ fn document_bytes_v1(state: &STrainStateV1, state_sha256: String) -> Vec<u8> {
 
 /// Encodes a train state as a container.
 pub fn encode_checkpoint_v1(state: &STrainStateV1) -> Vec<u8> {
-    let layout = state.model.layout_v1();
+    let layout = state.model_v1().layout_v1();
     let document = document_bytes_v1(state, state.state_sha256_v1());
     let table = table_of_v1(layout);
     let table_bytes = serde_json::to_vec(&table).expect("table serializes");
@@ -165,9 +165,9 @@ pub fn encode_checkpoint_v1(state: &STrainStateV1) -> Vec<u8> {
     out.extend_from_slice(&table_bytes);
     out.resize(data_start, 0);
     let data = [
-        state.model.values_v1(),
-        state.first.as_slice(),
-        state.second.as_slice(),
+        state.model_v1().values_v1(),
+        state.first_moments_v1(),
+        state.second_moments_v1(),
     ];
     for entry in &table.sections {
         let section = SECTION_NAMES_V1
@@ -282,12 +282,13 @@ fn snapshot_document_v1(
 /// Encodes the weights snapshot of `state`, cut from the S checkpoint
 /// `record` (whose state it is).
 pub fn encode_weights_snapshot_v1(state: &STrainStateV1, record: &Value) -> Vec<u8> {
-    let layout = state.model.layout_v1();
+    let model = state.model_v1();
+    let layout = model.layout_v1();
     let document = snapshot_document_v1(
         layout.config,
-        state.adam_step,
+        state.adam_step_v1(),
         &state.state_sha256_v1(),
-        &state.model.parameter_sha256_v1(),
+        &model.parameter_sha256_v1(),
         record,
     );
     let table = table_of_sections_v1(layout, &SNAPSHOT_SECTIONS_V1);
@@ -296,7 +297,7 @@ pub fn encode_weights_snapshot_v1(state: &STrainStateV1, record: &Value) -> Vec<
         &document,
         &table,
         &SNAPSHOT_SECTIONS_V1,
-        &[state.model.values_v1()],
+        &[model.values_v1()],
     )
 }
 
@@ -416,7 +417,7 @@ pub fn decode_checkpoint_v1(bytes: &[u8]) -> Result<STrainStateV1, String> {
     // One encoding per state: what `encode_checkpoint_v1` writes for it,
     // checked in place, with the hash just computed.
     let document = document_bytes_v1(&state, state_sha256);
-    if !is_frame_of_v1(bytes, &document, &table_of_v1(state.model.layout_v1())) {
+    if !is_frame_of_v1(bytes, &document, &table_of_v1(state.model_v1().layout_v1())) {
         return Err("S checkpoint is not the canonical encoding of its state".into());
     }
     Ok(state)

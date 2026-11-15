@@ -10642,6 +10642,13 @@ fn validate_aberration_continuation_v1(
 }
 
 pub fn validate_pending_effect_choice(state: &GameState) -> Result<(), String> {
+    crate::drake_hatcher_v1::custody::with_validation_replay_keys(
+        state,
+        validate_pending_effect_choice_inner,
+    )
+}
+
+fn validate_pending_effect_choice_inner(state: &GameState) -> Result<(), String> {
     let _memo = crate::borrow_memo_v1::ScopeV1::enter(state);
     kaito_cunning_v75::validate_state(state)?;
     kaito_cunning_v75::validate_pending(state)?;

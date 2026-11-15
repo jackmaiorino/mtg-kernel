@@ -316,11 +316,11 @@ fn phase1_weighted_v3_invalid_weights_bounds_and_state_reject_before_mutation() 
     }
     for kind in 0..3 {
         let mut invalid = state.clone();
-        match kind {
+        invalid.with_fields_mut_for_test_v1(|invalid| match kind {
             0 => invalid.first_moments[0][CARD_EMBEDDING_DIM_V1] = f32::NAN,
             1 => invalid.scorer_bias_anchor_bits ^= 1,
             _ => invalid.adam_step = u64::MAX,
-        }
+        });
         let before = state_bits(&invalid);
         assert!(invalid
             .train_step_weighted_feature_transfer_v3(&groups, &[0.5, 0.5], VC, LR)
