@@ -16,6 +16,12 @@ mod eternal_cube_c2a_v1;
 mod eternal_cube_c2b_v1;
 #[path = "eternal/eternal_cube_c2c_v1.rs"]
 mod eternal_cube_c2c_v1;
+#[path = "eternal/eternal_cube_c3a_v1.rs"]
+mod eternal_cube_c3a_v1;
+#[path = "eternal/eternal_cube_c3b_v1.rs"]
+mod eternal_cube_c3b_v1;
+#[path = "eternal/eternal_cube_c3c_v1.rs"]
+mod eternal_cube_c3c_v1;
 #[path = "eternal/eternal_e9b_v1.rs"]
 mod eternal_e9b_v1;
 #[path = "eternal/eternal_legacy_e2_v1.rs"]

@@ -1,7 +1,6 @@
 //! Card-database recipes for the eternal catalog's Vintage Cube wave C2c
 //! (mana artifacts and Fastbond). Wave C2b's tables fall through to these, and
-//! this module is the tail of the recipe chains: its own
-//! defaults are the chains' base values. Runtime programs live in
+//! these fall through to wave C3a's (`build_eternal_c3a_v1.rs`). Runtime programs live in
 //! `src/eternal_cube_c2c_v1.rs`. Every row is keyed by a name that occurs
 //! only in the eternal registry.
 //!
@@ -119,7 +118,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Basalt Monolith" => &BASALT_MONOLITH,
         "Candelabra of Tawnos" => &CANDELABRA_OF_TAWNOS,
         "Coalition Relic" => &COALITION_RELIC,
-        _ => &[],
+        _ => super::build_eternal_c3a_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -145,34 +144,34 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::None",
             "crate::eternal_cube_c2c_v1::everflowing_chalice",
         ),
-        _ => return None,
+        _ => return super::build_eternal_c3a_v1::special_for(name),
     })
 }
 
 /// No C2c card has kicker (multikicker is `multikicker_cost` of the runtime
 /// module).
-pub(super) fn kicker_cost_for(_name: &str) -> Option<&'static str> {
-    None
+pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
+    super::build_eternal_c3a_v1::kicker_cost_for(name)
 }
 
 /// No C2c card is an Aura or an Equipment yet.
-pub(super) fn attachment_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn attachment_for(name: &str) -> &'static str {
+    super::build_eternal_c3a_v1::attachment_for(name)
 }
 
 /// No C2c card has flashback yet.
-pub(super) fn flashback_for(_name: &str) -> String {
-    "None".to_string()
+pub(super) fn flashback_for(name: &str) -> String {
+    super::build_eternal_c3a_v1::flashback_for(name)
 }
 
 /// No C2c card has an alternative cost yet.
-pub(super) fn alt_cost_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn alt_cost_for(name: &str) -> &'static str {
+    super::build_eternal_c3a_v1::alt_cost_for(name)
 }
 
 /// No C2c card has a printed evergreen keyword yet.
-pub(super) fn keywords_for(_name: &str) -> &'static [&'static str] {
-    &[]
+pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
+    super::build_eternal_c3a_v1::keywords_for(name)
 }
 
 /// Card-database tokens for this wave's abilities.
@@ -197,6 +196,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "multikicker:2;enters_with_charge_counter_per_kick;mana:c_for_each_charge_counter"
         }
         "Pentad Prism" => "sunburst;mana:remove_charge_counter_add_any_color",
-        _ => "none",
+        _ => super::build_eternal_c3a_v1::trigger_recipe_for(name),
     }
 }
