@@ -50,6 +50,7 @@ pub(super) fn play(mut state: GameState, seed: u64) -> NativeGame {
     let started = std::time::Instant::now();
     let mut s365_log: Vec<String> = Vec::new(); // S365DIAG
     let mut s365_prev: Option<GameState> = None; // S365DIAG
+    let mut s365_last: Option<Action> = None; // S365DIAG
     for step in 0..MAX_STEPS {
         assert!(
             started.elapsed() < std::time::Duration::from_secs(600),
@@ -75,31 +76,68 @@ pub(super) fn play(mut state: GameState, seed: u64) -> NativeGame {
             for line in &s365_log {
                 eprintln!("S365DIAG history {line}");
             }
-            if let Some(prev) = &s365_prev {
-                eprintln!("S365DIAG prev stack: {:#?}", prev.stack);
-                eprintln!("S365DIAG prev pending: {:#?}", prev.engine.pending_triggers);
-            }
-            eprintln!("S365DIAG now stack: {:#?}", state.stack);
-            eprintln!("S365DIAG now engine: {:#?}", state.engine);
+            let mut unhalted = state.clone();
+            unhalted.engine.halted = None;
             eprintln!(
-                "S365DIAG now step={:?} active={:?} turn={:?}",
-                state.step, state.active_player, state.turn
+                "S365DIAG validate now: {:?}",
+                mtg_kernel::effect::validate_pending_effect_choice(&unhalted)
             );
-            for (index, object) in state.objects.iter().take(60) {
-                eprintln!(
-                    "S365DIAG obj {index} {} {:?} ctl={:?} own={:?} zcc={}",
-                    CARD_DEFS[usize::from(object.card_def)].name,
-                    object.zone,
-                    object.controller,
-                    object.owner,
-                    object.zone_change_count
-                );
-            }
             for player in &state.players {
+                eprintln!("S365DIAG pool {:?}", player.mana_pool);
+                for &id in &player.battlefield {
+                    let object = state.objects.get(id);
+                    eprintln!(
+                        "S365DIAG bf {id} {} ctl={:?} tapped={}",
+                        CARD_DEFS[usize::from(object.card_def)].name,
+                        object.controller,
+                        object.tapped
+                    );
+                }
+            }
+            if let (Some(prev), Some(last)) = (&s365_prev, &s365_last) {
+                let mut probe = prev.clone();
                 eprintln!(
-                    "S365DIAG player life={} bf={:?} gy={:?} hand={:?}",
-                    player.life, player.battlefield, player.graveyard, player.hand
+                    "S365DIAG replay {last:?}: {:?}",
+                    mtg_kernel::engine::step(&mut probe, last.clone())
                 );
+                for round in 0..12 {
+                    eprintln!(
+                        "S365DIAG replay {round} pending={} stack={} pool={:?} validate={:?}",
+                        probe.engine.pending_effect.is_some(),
+                        probe.stack.len(),
+                        probe
+                            .players
+                            .iter()
+                            .map(|p| p.mana_pool)
+                            .collect::<Vec<_>>(),
+                        mtg_kernel::effect::validate_pending_effect_choice(&probe)
+                    );
+                    let decision = mtg_kernel::engine::advance_until_decision(&mut probe);
+                    eprintln!("S365DIAG replay {round} decision {decision:?}");
+                    match decision {
+                        Decision::CastSpellOrPass { .. } => {
+                            let _ = mtg_kernel::engine::step(&mut probe, Action::Pass);
+                        }
+                        Decision::ChooseEffectTargets { .. } => {
+                            let mut keep = probe.clone();
+                            eprintln!(
+                                "S365DIAG replay choose: {:?}",
+                                mtg_kernel::engine::step(
+                                    &mut keep,
+                                    Action::ChooseEffectTarget(Target::Object(
+                                        mtg_kernel::ids::ObjectId(35)
+                                    ))
+                                )
+                            );
+                            eprintln!(
+                                "S365DIAG replay after choose: {:?}",
+                                mtg_kernel::engine::advance_until_decision(&mut keep)
+                            );
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
             }
         }
         if seed == 583_263_403_901_730 {
@@ -175,6 +213,9 @@ pub(super) fn play(mut state: GameState, seed: u64) -> NativeGame {
             s365_log.push(format!(
                 "step={step} decision={decision:?} action={action:?}"
             ));
+            if let PolicyActionV5::Surface(SurfaceAction::Action(engine_action)) = &action {
+                s365_last = Some(engine_action.clone());
+            }
             if s365_log.len() > 16 {
                 s365_log.remove(0);
             }

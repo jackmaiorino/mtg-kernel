@@ -311,6 +311,8 @@ fn apostles_blessing_phyrexian_life_and_artifact_protection_unattach_and_fizzle_
         pass_to(&mut state, opponent);
         activate(&mut state, spellbomb, 0);
         choose_target(&mut state, Target::Object(inspector));
+        // Costs are paid once the engine completes the activation.
+        assert_eq!(priority(&mut state).0, opponent);
         assert_eq!(zone(&state, spellbomb), Zone::Graveyard);
         pass_to(&mut state, actor);
         cast(&mut state, blessing);
@@ -320,6 +322,7 @@ fn apostles_blessing_phyrexian_life_and_artifact_protection_unattach_and_fizzle_
         assert!(legal.contains(&Target::Object(ring)));
         assert!(legal.contains(&Target::Object(spear)));
         assert!(!legal.contains(&Target::Object(opp_inspector)));
+        assert_eq!(priority(&mut state).0, actor);
         assert_eq!(life(&state, actor), 2);
 
         let Some(Decision::ChooseEffectOption {
@@ -401,6 +404,7 @@ fn apostles_blessing_color_protection_blocks_red_targeting_and_expires_next_turn
         cast(&mut state, blessing);
         let legal = choose_target(&mut state, Target::Object(thrull));
         assert!(legal.contains(&Target::Object(ring)));
+        assert_eq!(priority(&mut state).0, actor);
         assert_eq!(life(&state, actor), 20, "{{W}} paid the {{W/P}}");
         assert_eq!(
             state.players[actor.index()].mana_pool[ManaColor::W.pool_index()],
@@ -806,6 +810,7 @@ fn kioras_dismissal_strive_payability_omniscience_and_partial_fizzle_in_both_sea
             !third.contains(&Target::Object(seal_c)),
             "a third target costs {{U}}{{U}}{{U}}"
         );
+        assert_eq!(priority(&mut state).0, actor);
         assert_eq!(blue(&state, actor), 0, "{{U}} plus one strive {{U}}");
         settled(&mut state);
         assert_eq!(zone(&state, seal_a), Zone::Hand);
@@ -873,6 +878,7 @@ fn kioras_dismissal_strive_payability_omniscience_and_partial_fizzle_in_both_sea
         choose_more(&mut state, Target::Object(seal_d));
         choose_more(&mut state, Target::Object(seal_e));
         assert!(!finish_targets(&mut state).contains(&Target::Object(seal_f)));
+        assert_eq!(priority(&mut state).0, actor);
         assert_eq!(blue(&state, actor), 0, "the strive {{U}}");
         settled(&mut state);
         assert_eq!(zone(&state, seal_d), Zone::Hand);

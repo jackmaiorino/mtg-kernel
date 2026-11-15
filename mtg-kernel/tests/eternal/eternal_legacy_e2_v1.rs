@@ -1736,6 +1736,26 @@ fn bilbo_may_decline_and_needs_mana_for_the_spell() {
 }
 
 #[test]
+fn bilbo_casts_an_artifact_reduced_to_zero_from_the_graveyard() {
+    let mut state = islands();
+    put(
+        &mut state,
+        P0,
+        "Bilbo, Thief in the Night",
+        Zone::Battlefield,
+    );
+    let bauble = put(&mut state, P0, "Vexing Bauble", Zone::Graveyard);
+    let candidates = bilbo_attacks(&mut state, &[ManaColor::U], 0);
+    assert_eq!(candidates, vec![Target::Object(bauble)]);
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(bauble)),
+    );
+    finish_bilbo_cast(&mut state, &[]);
+    assert_eq!(state.objects.get(bauble).zone, Zone::Battlefield);
+}
+
+#[test]
 fn bilbo_casts_an_adventure_but_not_a_creature() {
     let mut state = islands();
     put(
