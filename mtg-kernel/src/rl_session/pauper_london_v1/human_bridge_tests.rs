@@ -503,6 +503,9 @@ fn london_human_numeric_choice_rows_take_the_v4_fill_and_say_so() {
     let mut found = 0;
     'seeds: for seed in 1..16_u64 {
         let (mut raw, mut lockstep) = pair("Elves", seed, 0x10D4_0000 + seed);
+        // As the bridge does with `--private-v2-support`: the neutral-choice mode.
+        raw.enable_spellbench_neutral_choices();
+        lockstep.enable_spellbench_neutral_choices();
         let mut rng = SplitMix64::seed(seed);
         for _ in 0..3_000 {
             let RlSessionResponseV1::Decision(decision) = raw.current_response() else {
