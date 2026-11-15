@@ -5,6 +5,7 @@
 
 use crate::agent_bridge_v1::seat_str_v1;
 use crate::card_def::KERNEL_CARDDB_HASH;
+use crate::flat_policy_v2::FlatScorerActionKindV2;
 use crate::flat_policy_v2::{
     FlatCompletedDungeonV2, FlatContextPathElementV2, FlatEffectSubtypeChangeV2,
     FlatObjectAbilityUseV2, FlatObjectCoreV2, FlatObjectGoadV2, FlatObjectSubtypeV2,
@@ -164,6 +165,12 @@ pub(crate) struct EncodedFlatV7V1 {
     tensor: NativeFlatDecisionTensorV2,
     step: u64,
     acting_seat: &'static str,
+    /// The decision offers a numeric choice (an X value in the bridge's
+    /// neutral-choice mode). The FlatV7 contract refuses such a row (action
+    /// kind column 15 is `london_opening` in V7), so the tensor is the V4
+    /// fill, byte for byte what the rated V4 bridge sends for the same
+    /// decision. No model was trained on such a row in either generation.
+    numeric_choice_v4_fill: bool,
 }
 
 /// `encode_flat_v4_tensor_v1` with the V7 tensorizer: the same encoder and
@@ -223,14 +230,29 @@ pub(crate) fn encode_flat_v7_tensor_v1(
         ),
         &decision.extensions,
     );
+    let numeric = view.extensions().london_pregame.is_none()
+        && view
+            .common()
+            .actions()
+            .iter()
+            .any(|action| action.kind == FlatScorerActionKindV2::ChooseEffectNumber);
     let mut tensor = NativeFlatDecisionTensorV2::default();
-    NativeFlatTensorizerV7::default()
-        .fill(view, &mut tensor)
-        .map_err(|error| FlatV4EncodeErrorV1::Tensorize(format!("{error:?}")))?;
+    if numeric {
+        let mut v4 = NativeFlatDecisionTensorV4::default();
+        NativeFlatTensorizerV4::default()
+            .fill(view, &mut v4)
+            .map_err(|error| FlatV4EncodeErrorV1::Tensorize(format!("{error:?}")))?;
+        tensor = v4.common;
+    } else {
+        NativeFlatTensorizerV7::default()
+            .fill(view, &mut tensor)
+            .map_err(|error| FlatV4EncodeErrorV1::Tensorize(format!("{error:?}")))?;
+    }
     Ok(EncodedFlatV7V1 {
         tensor,
         step: expected.step,
         acting_seat: seat_str_v1(expected.acting_player),
+        numeric_choice_v4_fill: numeric,
     })
 }
 
@@ -257,6 +279,7 @@ pub(crate) fn flat_v7_extension_value_v1(
         "acting_seat": encoded.acting_seat,
         "step": encoded.step,
         "row_candidate_ids": rows,
+        "numeric_choice_v4_fill": encoded.numeric_choice_v4_fill,
         "tensor": serde_json::to_value(tensor_bits_common_v1(&encoded.tensor))
             .expect("tensor bits serialize"),
     }))

@@ -22,7 +22,10 @@ fn pair(
     deck: &str,
     seed: u64,
     episode: u64,
-) -> (RlEpisodeSessionV1, crate::agent_bridge_flat_v4::FlatV4LockstepV1) {
+) -> (
+    RlEpisodeSessionV1,
+    crate::agent_bridge_flat_v4::FlatV4LockstepV1,
+) {
     let decks: SessionDeckIdsV1 = [deck.to_string(), deck.to_string()];
     let raw = RlEpisodeSessionV1::reset_pauper_london_human_v1(
         episode,
@@ -123,7 +126,11 @@ fn london_human_lockstep_follows_whole_games_on_every_catalog_deck() {
             let episode = 0x10D0_0000 + index as u64 * 1_000 + seed;
             let (mut raw, mut lockstep) = pair(deck, seed, episode);
             let played = play(&mut raw, &mut lockstep, Announce::Random, seed, 3_000);
-            assert!(played.steps > 20, "{deck} seed {seed}: {} steps", played.steps);
+            assert!(
+                played.steps > 20,
+                "{deck} seed {seed}: {} steps",
+                played.steps
+            );
             finished += u32::from(played.terminal);
             let record = raw.pauper_opening_record_v1().expect("opening completed");
             assert_eq!(
@@ -136,12 +143,18 @@ fn london_human_lockstep_follows_whole_games_on_every_catalog_deck() {
             assert_eq!(public.phase, "done");
             assert_eq!(
                 public.mulligans_taken,
-                [record.seats[0].mulligans_taken, record.seats[1].mulligans_taken]
+                [
+                    record.seats[0].mulligans_taken,
+                    record.seats[1].mulligans_taken
+                ]
             );
             with_mulligans += u32::from(record.seats.iter().any(|seat| seat.mulligans_taken > 0));
         }
     }
-    assert!(with_mulligans >= 6, "only {with_mulligans} of 24 games mulliganed");
+    assert!(
+        with_mulligans >= 6,
+        "only {with_mulligans} of 24 games mulliganed"
+    );
     assert!(finished >= 6, "only {finished} of 24 games finished");
 }
 
@@ -155,7 +168,10 @@ fn london_human_forced_zero_card_keep_runs_in_lockstep() {
         // decisions per seat (an empty hand keeps without a decision).
         assert_eq!(played.pregame_decisions, [35, 35], "{deck}");
         let record = raw.pauper_opening_record_v1().unwrap();
-        assert!(record.seats.iter().all(|seat| seat.forced_zero_card_keep && seat.kept_hand_size == 0));
+        assert!(record
+            .seats
+            .iter()
+            .all(|seat| seat.forced_zero_card_keep && seat.kept_hand_size == 0));
         assert_eq!(
             Some(record),
             lockstep.fast_session().pauper_opening_record_v1()
@@ -179,7 +195,10 @@ fn london_human_both_keep_game_equals_the_keep_seven_twin() {
                 .find(|id| {
                     matches!(
                         decision.legal_actions[**id as usize].semantic,
-                        ActionSemanticV1::ChooseLondonMulligan { mulligan: false, .. }
+                        ActionSemanticV1::ChooseLondonMulligan {
+                            mulligan: false,
+                            ..
+                        }
                     )
                 })
                 .unwrap();
@@ -255,11 +274,12 @@ fn london_server() -> SpellbenchBridgeServerV1 {
 #[test]
 fn london_human_bridge_speaks_the_london_kinds_and_flat_v7() {
     let mut server = london_server();
-    let hello: Value = serde_json::from_str(
-        &server.handle_line(&request("hello", "hello", json!({}))),
-    )
-    .unwrap();
-    assert_eq!(hello["extensions"], json!(["x_kernel_v5", "x_kernel_flat_v7"]));
+    let hello: Value =
+        serde_json::from_str(&server.handle_line(&request("hello", "hello", json!({})))).unwrap();
+    assert_eq!(
+        hello["extensions"],
+        json!(["x_kernel_v5", "x_kernel_flat_v7"])
+    );
     let mut response: Value =
         serde_json::from_str(&server.handle_line(&reset_request("Burn", "gL", 13))).unwrap();
     let mut rng = SplitMix64::seed(0xBEEF);
@@ -268,7 +288,10 @@ fn london_human_bridge_speaks_the_london_kinds_and_flat_v7() {
     let mut sent_flat = 0_u32;
     while response["response_type"] == "decision" && steps < 4_000 {
         let extensions = response["extensions"].as_object().unwrap();
-        assert!(!extensions.contains_key("x_kernel_flat_v4"), "no V4 payload in London mode");
+        assert!(
+            !extensions.contains_key("x_kernel_flat_v4"),
+            "no V4 payload in London mode"
+        );
         let flat = &extensions["x_kernel_flat_v7"];
         assert_eq!(
             flat["feature_contract_digest"],
@@ -289,7 +312,10 @@ fn london_human_bridge_speaks_the_london_kinds_and_flat_v7() {
             .iter()
             .map(|id| id.as_u64().unwrap() as usize)
             .collect();
-        let kind = candidates[rows[0]]["semantic"]["kind"].as_str().unwrap().to_string();
+        let kind = candidates[rows[0]]["semantic"]["kind"]
+            .as_str()
+            .unwrap()
+            .to_string();
         if phase != "done" {
             assert!(
                 kind == "london_mulligan" || kind == "london_bottom",
@@ -345,7 +371,9 @@ fn london_human_extension_tensor_equals_the_harness_tensor_on_pregame_and_in_gam
             };
             let rows = lockstep.row_candidate_ids(&decision).unwrap();
             let encoded = encode_flat_v7_tensor_v1(lockstep.fast_session(), &mut scratch).unwrap();
-            harness.score_fast_session_v1(lockstep.fast_session()).unwrap();
+            harness
+                .score_fast_session_v1(lockstep.fast_session())
+                .unwrap();
             let theirs = harness.last_scored_training_tensor_v4().unwrap();
             let value = flat_v7_extension_value_v1(&encoded, &rows).unwrap();
             assert_eq!(
@@ -366,8 +394,14 @@ fn london_human_extension_tensor_equals_the_harness_tensor_on_pregame_and_in_gam
             lockstep.mirror_step(&rows, decision.step, pick).unwrap();
         }
     }
-    assert!(checked_pregame >= 6, "pregame decisions checked: {checked_pregame}");
-    assert!(checked_game >= 100, "in-game decisions checked: {checked_game}");
+    assert!(
+        checked_pregame >= 6,
+        "pregame decisions checked: {checked_pregame}"
+    );
+    assert!(
+        checked_game >= 100,
+        "in-game decisions checked: {checked_game}"
+    );
 }
 
 #[test]
@@ -383,12 +417,19 @@ fn london_human_decisions_never_name_the_other_seats_hand() {
     let mut steps = 0;
     while response["response_type"] == "decision" {
         let extensions = response["extensions"].as_object().unwrap();
-        let phase = extensions["x_kernel_v2_support"]["london"]["phase"].as_str().unwrap().to_string();
+        let phase = extensions["x_kernel_v2_support"]["london"]["phase"]
+            .as_str()
+            .unwrap()
+            .to_string();
         if phase == "done" || steps > 80 {
             break;
         }
         // The other seat's hand objects, from the reference session.
-        let actor = if response["acting_seat"] == "p0" { 0 } else { 1 };
+        let actor = if response["acting_seat"] == "p0" {
+            0
+        } else {
+            1
+        };
         let other = 1 - actor;
         let text = response.to_string();
         for card in &raw.game_state().players[other].hand {
@@ -399,9 +440,16 @@ fn london_human_decisions_never_name_the_other_seats_hand() {
             );
         }
         // The other seat's hand is a count in the observation.
-        let observation: Value =
-            serde_json::from_str(extensions["x_kernel_v5"]["observation_json"].as_str().unwrap()).unwrap();
-        assert_eq!(observation["own_hand"].as_array().unwrap().len(), raw.game_state().players[actor].hand.len());
+        let observation: Value = serde_json::from_str(
+            extensions["x_kernel_v5"]["observation_json"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            observation["own_hand"].as_array().unwrap().len(),
+            raw.game_state().players[actor].hand.len()
+        );
         checked += 1;
         let rows: Vec<usize> = extensions["x_kernel_flat_v7"]["row_candidate_ids"]
             .as_array()
@@ -425,10 +473,68 @@ fn london_human_decisions_never_name_the_other_seats_hand() {
         let ref_rows = lockstep.row_candidate_ids(&decision).unwrap();
         let ref_pick = ref_rows[ref_rows.iter().position(|id| *id as usize == pick).unwrap()];
         let chosen = &decision.legal_actions[ref_pick as usize];
-        raw.step(decision.episode_id, decision.step, ref_pick, &chosen.stable_id).unwrap();
-        lockstep.mirror_step(&ref_rows, decision.step, ref_pick).unwrap();
+        raw.step(
+            decision.episode_id,
+            decision.step,
+            ref_pick,
+            &chosen.stable_id,
+        )
+        .unwrap();
+        lockstep
+            .mirror_step(&ref_rows, decision.step, ref_pick)
+            .unwrap();
         response = serde_json::from_str(&server.handle_line(&step)).unwrap();
         steps += 1;
     }
     assert!(checked >= 2, "only {checked} pregame decisions checked");
+}
+
+#[test]
+fn london_human_numeric_choice_rows_take_the_v4_fill_and_say_so() {
+    use crate::agent_bridge_flat_v4_encode::{
+        encode_flat_v7_tensor_v1, flat_v7_extension_value_v1, tensor_bits_common_v1,
+        FlatV4EncodeScratchV1,
+    };
+    // Nyxborn Hydra's X (Elves) is a numeric choice in the bridge's neutral
+    // mode; the FlatV7 contract refuses that row kind, so the bridge sends the
+    // V4 fill (what the rated V4 bridge sends for it) and flags it.
+    let mut v4 = FrozenPlayPolicyV1::training_fixture_v4();
+    let mut scratch = FlatV4EncodeScratchV1::default();
+    let mut found = 0;
+    'seeds: for seed in 1..16_u64 {
+        let (mut raw, mut lockstep) = pair("Elves", seed, 0x10D4_0000 + seed);
+        let mut rng = SplitMix64::seed(seed);
+        for _ in 0..3_000 {
+            let RlSessionResponseV1::Decision(decision) = raw.current_response() else {
+                continue 'seeds;
+            };
+            let rows = lockstep.row_candidate_ids(&decision).unwrap();
+            let numeric = decision
+                .legal_actions
+                .iter()
+                .any(|a| matches!(a.semantic, ActionSemanticV1::ChooseEffectNumber { .. }));
+            if numeric {
+                let encoded =
+                    encode_flat_v7_tensor_v1(lockstep.fast_session(), &mut scratch).unwrap();
+                let value = flat_v7_extension_value_v1(&encoded, &rows).unwrap();
+                assert_eq!(value["numeric_choice_v4_fill"], true);
+                v4.score_fast_session_v1(lockstep.fast_session()).unwrap();
+                let theirs = v4.last_scored_training_tensor_v4().unwrap();
+                assert_eq!(
+                    value["tensor"],
+                    serde_json::to_value(tensor_bits_common_v1(&theirs.common)).unwrap()
+                );
+                found += 1;
+                if found >= 2 {
+                    return;
+                }
+            }
+            let pick = rows[(rng.next_u64() % rows.len() as u64) as usize];
+            let chosen = &decision.legal_actions[pick as usize];
+            raw.step(decision.episode_id, decision.step, pick, &chosen.stable_id)
+                .unwrap();
+            lockstep.mirror_step(&rows, decision.step, pick).unwrap();
+        }
+    }
+    panic!("no Elves game reached a numeric choice");
 }
