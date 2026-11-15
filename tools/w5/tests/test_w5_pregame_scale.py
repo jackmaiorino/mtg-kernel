@@ -31,7 +31,7 @@ class Validation(unittest.TestCase):
             self.assertEqual(qual.validate_pregame_advantage_scale(good, 'terminal_v1'), good)
         self.assertIsNone(qual.validate_pregame_advantage_scale(None, 'terminal_v1'))
         self.assertIsNone(qual.validate_pregame_advantage_scale(None, None))
-        for bad in (0, 0.0, -0.5, 1.0000001, 2, True, False, '0.5', [0.5], float('nan'), float('inf'), object()):
+        for bad in (0, 0.0, -0.5, 1.0000001, 2, True, False, '0.5', [0.5], float('nan'), float('inf'), object(), 1e-50, 1e50, 10**400):
             with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, r'pregame_advantage_scale must be'):
                 qual.validate_pregame_advantage_scale(bad, 'terminal_v1')
         for mode in (None, 'gae'):
@@ -62,6 +62,10 @@ class Configs(unittest.TestCase):
             self.build(base, pregame_advantage_scale=0.25)
         with self.assertRaisesRegex(ValueError, 'must be a number'):
             self.build(base, pregame_advantage='terminal_v1', pregame_advantage_scale=1.5)
+        inherited = opening_base()
+        inherited['loss_selection'] = dict(inherited['loss_selection'], pregame_advantage_scale=0.25)
+        with self.assertRaisesRegex(ValueError, "already names pregame_advantage_scale"):
+            self.build(inherited, pregame_advantage='terminal_v1')
 
     def test_absent_is_byte_identical_to_before(self):
         base = opening_base()

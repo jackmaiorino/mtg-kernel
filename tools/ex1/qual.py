@@ -214,6 +214,8 @@ def validate_pregame_advantage(mode, base=None):
         loss = base["loss_selection"]
         if "pregame_advantage" in loss:
             raise ValueError("the base's loss_selection already names pregame_advantage; the arm writes it")
+        if "pregame_advantage_scale" in loss:
+            raise ValueError("the base's loss_selection already names pregame_advantage_scale; the arm writes it")
         gamma = loss.get("gamma")
         if not (_is_number(gamma) and gamma == 1.0):
             raise ValueError(f"pregame_advantage terminal_v1 needs gamma exactly 1.0 in the base's loss_selection, "
@@ -231,7 +233,13 @@ def validate_pregame_advantage_scale(scale, mode):
         return None
     if mode != "terminal_v1":
         raise ValueError("pregame_advantage_scale needs pregame_advantage terminal_v1")
-    if not _is_number(scale) or isinstance(scale, bool) or not (0.0 < float(scale) <= 1.0):
+    ok = False
+    if _is_number(scale):
+        try:  # the trainer reads the number as an f32: refuse what it would round to 0 or past 1, and what overflows
+            ok = 0.0 < _float32(float(scale)) <= 1.0
+        except OverflowError:
+            ok = False
+    if not ok:
         raise ValueError(f"pregame_advantage_scale must be a number in (0, 1], got {scale!r}")
     return scale
 
