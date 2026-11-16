@@ -378,15 +378,18 @@ fn bounced_token_in_hand_exports_for_both_seats() {
                 exported.state.players[owner.index()].hand.len(),
                 state.players[owner.index()].hand.len()
             );
-            // The token is gone from every hand and library of the export
-            // (an event history reference keeps a tombstone at most).
-            for (id, object) in exported.state.objects.iter() {
-                assert!(
-                    !object.v4.is_token || !matches!(object.zone, Zone::Hand | Zone::Library),
-                    "actor {actor:?}, viewer {viewer:?}: object {} zone {:?}",
-                    id.0,
-                    object.zone
-                );
+            // The token is in no exported hand or library vector. (The
+            // engine keeps `zone == Hand` on a ceased token, so a viewer's own
+            // tracked token object may still carry that zone; the zone
+            // vectors are what the export places.)
+            for player in [PlayerId::P0, PlayerId::P1] {
+                let placed = &exported.state.players[player.index()];
+                for id in placed.hand.iter().chain(&placed.library) {
+                    assert!(
+                        !exported.state.objects.get(*id).v4.is_token,
+                        "actor {actor:?}, viewer {viewer:?}: a token is still placed for {player:?}"
+                    );
+                }
             }
         }
     }
@@ -444,6 +447,22 @@ fn token_in_a_library_exports_for_both_seats() {
                 .filter(|id| exported.state.objects.get(**id).v4.is_token)
                 .count();
             assert_eq!(tokens, 1, "owner {owner:?}, viewer {viewer:?}");
+            // It sits at its native position and is tracked (a `C:` handle),
+            // not a hidden slot.
+            let position = state.players[owner.index()]
+                .library
+                .iter()
+                .position(|id| *id == token)
+                .unwrap();
+            let placed = library[position];
+            assert!(
+                exported.state.objects.get(placed).v4.is_token,
+                "owner {owner:?}, viewer {viewer:?}: token at library position {position}"
+            );
+            assert!(
+                matches!(exported.handles[placed.0 as usize], HandleV1::C { .. }),
+                "owner {owner:?}, viewer {viewer:?}: the token has a tracked handle"
+            );
         }
     }
 }

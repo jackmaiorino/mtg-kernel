@@ -1178,7 +1178,11 @@ impl WalkV1<'_> {
                     // A token or spell copy in the hand is public and tracked
                     // (issue 713): the engine's reveal note names no hidden
                     // card, so it is no hand fact and no reveal-triggered
-                    // refusal of a reference to an earlier incarnation.
+                    // refusal of a reference to an earlier incarnation. The
+                    // search mark is cleared as the ordinary path clears it
+                    // for a reveal outside a search run (the token's own zone
+                    // move already cleared it).
+                    self.search_mark = None;
                     self.settle(&[]);
                     return;
                 }
