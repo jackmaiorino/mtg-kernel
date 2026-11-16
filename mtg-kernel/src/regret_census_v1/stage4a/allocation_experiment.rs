@@ -125,6 +125,7 @@ impl Config {
                 key_memo: None,
                 value_leaf: None,
                 world: None,
+                flat_root: false,
             },
             arm,
             seed,
