@@ -74,7 +74,7 @@ pub(super) fn selected(
         || source.source != item.source
         || source.controller != item.controller
         || Some(source.cast_method) != item.v4.cast_method
-        || def.object_name != "Echo of Eons"
+        || !matches!(def.object_name, "Echo of Eons" | "Timetwister")
         || def.printed_mode_effect(item.mode_chosen) != Some(eternal_legacy_e7a_v1::echo_of_eons())
         || pending.ctx.source != item.source
         || pending.ctx.controller != item.controller

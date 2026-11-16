@@ -1,0 +1,2170 @@
+{
+ "schema": "cube_list/v1",
+ "cube": "Magic Online Vintage Cube",
+ "source": "mtgo.com/vintage-cube-cardlist (updated October 2, 2026)",
+ "effective": "2026-10-07",
+ "captured": "2026-11-15",
+ "note": "Names use the registries' ASCII spelling (Lorien Revealed, Troll of Khazad-dum, Palantir of Orthanc). A card with two faces is listed by its front face, a split card by both halves.",
+ "cards": [
+  {
+   "name": "Aang's Iceberg",
+   "group": "White"
+  },
+  {
+   "name": "Abandoned Air Temple",
+   "group": "White"
+  },
+  {
+   "name": "Adeline, Resplendent Cathar",
+   "group": "White"
+  },
+  {
+   "name": "Ajani, Nacatl Pariah",
+   "group": "White"
+  },
+  {
+   "name": "Auriok Salvagers",
+   "group": "White"
+  },
+  {
+   "name": "Balance",
+   "group": "White"
+  },
+  {
+   "name": "Cathar Commando",
+   "group": "White"
+  },
+  {
+   "name": "Containment Priest",
+   "group": "White"
+  },
+  {
+   "name": "Council's Judgment",
+   "group": "White"
+  },
+  {
+   "name": "Damn",
+   "group": "White"
+  },
+  {
+   "name": "Eagles of the North",
+   "group": "White"
+  },
+  {
+   "name": "Elite Spellbinder",
+   "group": "White"
+  },
+  {
+   "name": "Elspeth, Storm Slayer",
+   "group": "White"
+  },
+  {
+   "name": "Enduring Innocence",
+   "group": "White"
+  },
+  {
+   "name": "Enlightened Tutor",
+   "group": "White"
+  },
+  {
+   "name": "Erode",
+   "group": "White"
+  },
+  {
+   "name": "Flickerwisp",
+   "group": "White"
+  },
+  {
+   "name": "Get Lost",
+   "group": "White"
+  },
+  {
+   "name": "Giver of Runes",
+   "group": "White"
+  },
+  {
+   "name": "Glimmer Lens",
+   "group": "White"
+  },
+  {
+   "name": "Guardian Scalelord",
+   "group": "White"
+  },
+  {
+   "name": "Guide of Souls",
+   "group": "White"
+  },
+  {
+   "name": "Jacked Rabbit",
+   "group": "White"
+  },
+  {
+   "name": "Jennifer Walters",
+   "group": "White"
+  },
+  {
+   "name": "Karakas",
+   "group": "White"
+  },
+  {
+   "name": "Leyline Binding",
+   "group": "White"
+  },
+  {
+   "name": "Lion Sash",
+   "group": "White"
+  },
+  {
+   "name": "Loran of the Third Path",
+   "group": "White"
+  },
+  {
+   "name": "Luminarch Aspirant",
+   "group": "White"
+  },
+  {
+   "name": "Mana Tithe",
+   "group": "White"
+  },
+  {
+   "name": "Mother of Runes",
+   "group": "White"
+  },
+  {
+   "name": "Mox Pearl",
+   "group": "White"
+  },
+  {
+   "name": "Night Nurse, Healer of Heroes",
+   "group": "White"
+  },
+  {
+   "name": "Ocelot Pride",
+   "group": "White"
+  },
+  {
+   "name": "Oust",
+   "group": "White"
+  },
+  {
+   "name": "Overlord of the Mistmoors",
+   "group": "White"
+  },
+  {
+   "name": "Palace Jailer",
+   "group": "White"
+  },
+  {
+   "name": "Parallax Wave",
+   "group": "White"
+  },
+  {
+   "name": "Path to Exile",
+   "group": "White"
+  },
+  {
+   "name": "Phelia, Exuberant Shepherd",
+   "group": "White"
+  },
+  {
+   "name": "Portable Hole",
+   "group": "White"
+  },
+  {
+   "name": "Prismatic Ending",
+   "group": "White"
+  },
+  {
+   "name": "Reprieve",
+   "group": "White"
+  },
+  {
+   "name": "Sage of the Skies",
+   "group": "White"
+  },
+  {
+   "name": "Sanguine Evangelist",
+   "group": "White"
+  },
+  {
+   "name": "Serra Paragon",
+   "group": "White"
+  },
+  {
+   "name": "Skyclave Apparition",
+   "group": "White"
+  },
+  {
+   "name": "Solitude",
+   "group": "White"
+  },
+  {
+   "name": "Staff of the Storyteller",
+   "group": "White"
+  },
+  {
+   "name": "Stoneforge Mystic",
+   "group": "White"
+  },
+  {
+   "name": "Sunfall",
+   "group": "White"
+  },
+  {
+   "name": "Swift Reconfiguration",
+   "group": "White"
+  },
+  {
+   "name": "Swords to Plowshares",
+   "group": "White"
+  },
+  {
+   "name": "The Wandering Emperor",
+   "group": "White"
+  },
+  {
+   "name": "Thraben Inspector",
+   "group": "White"
+  },
+  {
+   "name": "Unexpectedly Absent",
+   "group": "White"
+  },
+  {
+   "name": "Voice of Victory",
+   "group": "White"
+  },
+  {
+   "name": "Winds of Abandon",
+   "group": "White"
+  },
+  {
+   "name": "Witch Enchanter",
+   "group": "White"
+  },
+  {
+   "name": "Abhorrent Oculus",
+   "group": "Blue"
+  },
+  {
+   "name": "Aether Spellbomb",
+   "group": "Blue"
+  },
+  {
+   "name": "Ancestral Recall",
+   "group": "Blue"
+  },
+  {
+   "name": "Astrologian's Planisphere",
+   "group": "Blue"
+  },
+  {
+   "name": "Bilbo, Thief in the Night",
+   "group": "Blue"
+  },
+  {
+   "name": "Boomerang Basics",
+   "group": "Blue"
+  },
+  {
+   "name": "Brain Freeze",
+   "group": "Blue"
+  },
+  {
+   "name": "Brainstorm",
+   "group": "Blue"
+  },
+  {
+   "name": "Brazen Borrower",
+   "group": "Blue"
+  },
+  {
+   "name": "Consider",
+   "group": "Blue"
+  },
+  {
+   "name": "Counterspell",
+   "group": "Blue"
+  },
+  {
+   "name": "Daze",
+   "group": "Blue"
+  },
+  {
+   "name": "Displacer Kitten",
+   "group": "Blue"
+  },
+  {
+   "name": "Echo of Eons",
+   "group": "Blue"
+  },
+  {
+   "name": "Emeritus of Ideation",
+   "group": "Blue"
+  },
+  {
+   "name": "Emry, Lurker of the Loch",
+   "group": "Blue"
+  },
+  {
+   "name": "Faerie Mastermind",
+   "group": "Blue"
+  },
+  {
+   "name": "Flash",
+   "group": "Blue"
+  },
+  {
+   "name": "Force of Negation",
+   "group": "Blue"
+  },
+  {
+   "name": "Force of Will",
+   "group": "Blue"
+  },
+  {
+   "name": "Forensic Gadgeteer",
+   "group": "Blue"
+  },
+  {
+   "name": "Frantic Search",
+   "group": "Blue"
+  },
+  {
+   "name": "Gitaxian Probe",
+   "group": "Blue"
+  },
+  {
+   "name": "Gush",
+   "group": "Blue"
+  },
+  {
+   "name": "Hullbreacher",
+   "group": "Blue"
+  },
+  {
+   "name": "Jace, the Mind Sculptor",
+   "group": "Blue"
+  },
+  {
+   "name": "Jace, Vryn's Prodigy",
+   "group": "Blue"
+  },
+  {
+   "name": "Jace, Wielder of Mysteries",
+   "group": "Blue"
+  },
+  {
+   "name": "Kappa Cannoneer",
+   "group": "Blue"
+  },
+  {
+   "name": "Ledger Shredder",
+   "group": "Blue"
+  },
+  {
+   "name": "Lorien Revealed",
+   "group": "Blue"
+  },
+  {
+   "name": "Lose Focus",
+   "group": "Blue"
+  },
+  {
+   "name": "Malcolm, Alluring Scoundrel",
+   "group": "Blue"
+  },
+  {
+   "name": "Mana Drain",
+   "group": "Blue"
+  },
+  {
+   "name": "Mana Leak",
+   "group": "Blue"
+  },
+  {
+   "name": "Memory Lapse",
+   "group": "Blue"
+  },
+  {
+   "name": "Miscalculation",
+   "group": "Blue"
+  },
+  {
+   "name": "Mox Sapphire",
+   "group": "Blue"
+  },
+  {
+   "name": "Mystic Confluence",
+   "group": "Blue"
+  },
+  {
+   "name": "Mystical Tutor",
+   "group": "Blue"
+  },
+  {
+   "name": "Narset, Parter of Veils",
+   "group": "Blue"
+  },
+  {
+   "name": "Occult Epiphany",
+   "group": "Blue"
+  },
+  {
+   "name": "Otawara, Soaring City",
+   "group": "Blue"
+  },
+  {
+   "name": "Paradoxical Outcome",
+   "group": "Blue"
+  },
+  {
+   "name": "Phantasmal Image",
+   "group": "Blue"
+  },
+  {
+   "name": "Ponder",
+   "group": "Blue"
+  },
+  {
+   "name": "Preordain",
+   "group": "Blue"
+  },
+  {
+   "name": "Proft's Eidetic Memory",
+   "group": "Blue"
+  },
+  {
+   "name": "Quantum Riddler",
+   "group": "Blue"
+  },
+  {
+   "name": "Remand",
+   "group": "Blue"
+  },
+  {
+   "name": "Seasoned Cryomancer",
+   "group": "Blue"
+  },
+  {
+   "name": "Sewer-veillance Cam",
+   "group": "Blue"
+  },
+  {
+   "name": "Shelldock Isle",
+   "group": "Blue"
+  },
+  {
+   "name": "Show and Tell",
+   "group": "Blue"
+  },
+  {
+   "name": "Sink into Stupor",
+   "group": "Blue"
+  },
+  {
+   "name": "Snapcaster Mage",
+   "group": "Blue"
+  },
+  {
+   "name": "Spell Pierce",
+   "group": "Blue"
+  },
+  {
+   "name": "Spellseeker",
+   "group": "Blue"
+  },
+  {
+   "name": "Sphinx of False Conclusions",
+   "group": "Blue"
+  },
+  {
+   "name": "Stern Scolding",
+   "group": "Blue"
+  },
+  {
+   "name": "Stock Up",
+   "group": "Blue"
+  },
+  {
+   "name": "Stormchaser's Talent",
+   "group": "Blue"
+  },
+  {
+   "name": "Subtlety",
+   "group": "Blue"
+  },
+  {
+   "name": "Tamiyo, Inquisitive Student",
+   "group": "Blue"
+  },
+  {
+   "name": "Thassa's Oracle",
+   "group": "Blue"
+  },
+  {
+   "name": "The Wondrous Wasp",
+   "group": "Blue"
+  },
+  {
+   "name": "Thieving Skydiver",
+   "group": "Blue"
+  },
+  {
+   "name": "Thought Scour",
+   "group": "Blue"
+  },
+  {
+   "name": "Thundertrap Trainer",
+   "group": "Blue"
+  },
+  {
+   "name": "Time Spiral",
+   "group": "Blue"
+  },
+  {
+   "name": "Time Walk",
+   "group": "Blue"
+  },
+  {
+   "name": "Timetwister",
+   "group": "Blue"
+  },
+  {
+   "name": "Tinker",
+   "group": "Blue"
+  },
+  {
+   "name": "Tishana's Tidebinder",
+   "group": "Blue"
+  },
+  {
+   "name": "Tolarian Academy",
+   "group": "Blue"
+  },
+  {
+   "name": "Treasure Cruise",
+   "group": "Blue"
+  },
+  {
+   "name": "Upheaval",
+   "group": "Blue"
+  },
+  {
+   "name": "Urza, Lord High Artificer",
+   "group": "Blue"
+  },
+  {
+   "name": "Wan Shi Tong, All-Knowing",
+   "group": "Blue"
+  },
+  {
+   "name": "Wan Shi Tong, Librarian",
+   "group": "Blue"
+  },
+  {
+   "name": "Animate Dead",
+   "group": "Black"
+  },
+  {
+   "name": "Archon of Cruelty",
+   "group": "Black"
+  },
+  {
+   "name": "Barrowgoyf",
+   "group": "Black"
+  },
+  {
+   "name": "Bitter Triumph",
+   "group": "Black"
+  },
+  {
+   "name": "Black Widow, Super Spy",
+   "group": "Black"
+  },
+  {
+   "name": "Bloodchief's Thirst",
+   "group": "Black"
+  },
+  {
+   "name": "Bolas's Citadel",
+   "group": "Black"
+  },
+  {
+   "name": "Bone Shards",
+   "group": "Black"
+  },
+  {
+   "name": "Cabal Ritual",
+   "group": "Black"
+  },
+  {
+   "name": "Caustic Bronco",
+   "group": "Black"
+  },
+  {
+   "name": "Chain of Smog",
+   "group": "Black"
+  },
+  {
+   "name": "Collective Brutality",
+   "group": "Black"
+  },
+  {
+   "name": "Concealing Curtains",
+   "group": "Black"
+  },
+  {
+   "name": "Corpse Dance",
+   "group": "Black"
+  },
+  {
+   "name": "Crabomination",
+   "group": "Black"
+  },
+  {
+   "name": "Cut Down",
+   "group": "Black"
+  },
+  {
+   "name": "Damnation",
+   "group": "Black"
+  },
+  {
+   "name": "Dark Confidant",
+   "group": "Black"
+  },
+  {
+   "name": "Dark Ritual",
+   "group": "Black"
+  },
+  {
+   "name": "Dauthi Voidwalker",
+   "group": "Black"
+  },
+  {
+   "name": "Deep-Cavern Bat",
+   "group": "Black"
+  },
+  {
+   "name": "Demonic Tutor",
+   "group": "Black"
+  },
+  {
+   "name": "Doomsday",
+   "group": "Black"
+  },
+  {
+   "name": "Duress",
+   "group": "Black"
+  },
+  {
+   "name": "Emperor of Bones",
+   "group": "Black"
+  },
+  {
+   "name": "Entomb",
+   "group": "Black"
+  },
+  {
+   "name": "Exhume",
+   "group": "Black"
+  },
+  {
+   "name": "Fatal Push",
+   "group": "Black"
+  },
+  {
+   "name": "Grief",
+   "group": "Black"
+  },
+  {
+   "name": "Griselbrand",
+   "group": "Black"
+  },
+  {
+   "name": "Harvester of Misery",
+   "group": "Black"
+  },
+  {
+   "name": "Hymn to Tourach",
+   "group": "Black"
+  },
+  {
+   "name": "Imperial Seal",
+   "group": "Black"
+  },
+  {
+   "name": "Infernal Grasp",
+   "group": "Black"
+  },
+  {
+   "name": "Inquisition of Kozilek",
+   "group": "Black"
+  },
+  {
+   "name": "Iron-Shield Elf",
+   "group": "Black"
+  },
+  {
+   "name": "Life // Death",
+   "group": "Black"
+  },
+  {
+   "name": "Liliana of the Veil",
+   "group": "Black"
+  },
+  {
+   "name": "Metamorphosis Fanatic",
+   "group": "Black"
+  },
+  {
+   "name": "Mind Twist",
+   "group": "Black"
+  },
+  {
+   "name": "Moonshadow",
+   "group": "Black"
+  },
+  {
+   "name": "Mox Jet",
+   "group": "Black"
+  },
+  {
+   "name": "Necromancy",
+   "group": "Black"
+  },
+  {
+   "name": "Nethergoyf",
+   "group": "Black"
+  },
+  {
+   "name": "Night's Whisper",
+   "group": "Black"
+  },
+  {
+   "name": "Orcish Bowmasters",
+   "group": "Black"
+  },
+  {
+   "name": "Overlord of the Balemurk",
+   "group": "Black"
+  },
+  {
+   "name": "Reanimate",
+   "group": "Black"
+  },
+  {
+   "name": "Recurring Nightmare",
+   "group": "Black"
+  },
+  {
+   "name": "Sanctum Lurker",
+   "group": "Black"
+  },
+  {
+   "name": "Sedgemoor Witch",
+   "group": "Black"
+  },
+  {
+   "name": "Shallow Grave",
+   "group": "Black"
+  },
+  {
+   "name": "Sheoldred, the Apocalypse",
+   "group": "Black"
+  },
+  {
+   "name": "Sheoldred's Edict",
+   "group": "Black"
+  },
+  {
+   "name": "Snuff Out",
+   "group": "Black"
+  },
+  {
+   "name": "Super Shredder",
+   "group": "Black"
+  },
+  {
+   "name": "Tendrils of Agony",
+   "group": "Black"
+  },
+  {
+   "name": "Thoughtseize",
+   "group": "Black"
+  },
+  {
+   "name": "Toxic Deluge",
+   "group": "Black"
+  },
+  {
+   "name": "Troll of Khazad-dum",
+   "group": "Black"
+  },
+  {
+   "name": "Unearth",
+   "group": "Black"
+  },
+  {
+   "name": "Urborg, Tomb of Yawgmoth",
+   "group": "Black"
+  },
+  {
+   "name": "Vampiric Tutor",
+   "group": "Black"
+  },
+  {
+   "name": "Vraska's Final Mercy",
+   "group": "Black"
+  },
+  {
+   "name": "Wishclaw Talisman",
+   "group": "Black"
+  },
+  {
+   "name": "Yawgmoth's Will",
+   "group": "Black"
+  },
+  {
+   "name": "Abrade",
+   "group": "Red"
+  },
+  {
+   "name": "Arena of Glory",
+   "group": "Red"
+  },
+  {
+   "name": "Batroc the Leaper",
+   "group": "Red"
+  },
+  {
+   "name": "Bonecrusher Giant",
+   "group": "Red"
+  },
+  {
+   "name": "Broadside Bombardiers",
+   "group": "Red"
+  },
+  {
+   "name": "Burst Lightning",
+   "group": "Red"
+  },
+  {
+   "name": "Chain Lightning",
+   "group": "Red"
+  },
+  {
+   "name": "Chandra, Torch of Defiance",
+   "group": "Red"
+  },
+  {
+   "name": "Cori-Steel Cutter",
+   "group": "Red"
+  },
+  {
+   "name": "Dead // Gone",
+   "group": "Red"
+  },
+  {
+   "name": "Death-Greeter's Champion",
+   "group": "Red"
+  },
+  {
+   "name": "Delayed Blast Fireball",
+   "group": "Red"
+  },
+  {
+   "name": "Detective's Phoenix",
+   "group": "Red"
+  },
+  {
+   "name": "Dragon's Rage Channeler",
+   "group": "Red"
+  },
+  {
+   "name": "Embereth Shieldbreaker",
+   "group": "Red"
+  },
+  {
+   "name": "Etali, Primal Conqueror",
+   "group": "Red"
+  },
+  {
+   "name": "Fable of the Mirror-Breaker",
+   "group": "Red"
+  },
+  {
+   "name": "Faithless Looting",
+   "group": "Red"
+  },
+  {
+   "name": "Fear of Missing Out",
+   "group": "Red"
+  },
+  {
+   "name": "Fiery Confluence",
+   "group": "Red"
+  },
+  {
+   "name": "Fireblast",
+   "group": "Red"
+  },
+  {
+   "name": "Firebolt",
+   "group": "Red"
+  },
+  {
+   "name": "Flame Slash",
+   "group": "Red"
+  },
+  {
+   "name": "Flashback",
+   "group": "Red"
+  },
+  {
+   "name": "Fury",
+   "group": "Red"
+  },
+  {
+   "name": "Galvanic Discharge",
+   "group": "Red"
+  },
+  {
+   "name": "Gandalf, Goblins' Bane",
+   "group": "Red"
+  },
+  {
+   "name": "Gau, Feral Youth",
+   "group": "Red"
+  },
+  {
+   "name": "Generous Plunderer",
+   "group": "Red"
+  },
+  {
+   "name": "Goblin Bombardment",
+   "group": "Red"
+  },
+  {
+   "name": "Goblin Engineer",
+   "group": "Red"
+  },
+  {
+   "name": "Goblin Welder",
+   "group": "Red"
+  },
+  {
+   "name": "Gut, True Soul Zealot",
+   "group": "Red"
+  },
+  {
+   "name": "Headliner Scarlett",
+   "group": "Red"
+  },
+  {
+   "name": "Impractical Joke",
+   "group": "Red"
+  },
+  {
+   "name": "Inti, Seneschal of the Sun",
+   "group": "Red"
+  },
+  {
+   "name": "Ivora, Insatiable Heir",
+   "group": "Red"
+  },
+  {
+   "name": "Laelia, the Blade Reforged",
+   "group": "Red"
+  },
+  {
+   "name": "Lava Dart",
+   "group": "Red"
+  },
+  {
+   "name": "Legion Extruder",
+   "group": "Red"
+  },
+  {
+   "name": "Lightning Bolt",
+   "group": "Red"
+  },
+  {
+   "name": "Mine Collapse",
+   "group": "Red"
+  },
+  {
+   "name": "Monastery Swiftspear",
+   "group": "Red"
+  },
+  {
+   "name": "Mox Ruby",
+   "group": "Red"
+  },
+  {
+   "name": "Oliphaunt",
+   "group": "Red"
+  },
+  {
+   "name": "Phyrexian Dragon Engine",
+   "group": "Red"
+  },
+  {
+   "name": "Pompous Battlemage",
+   "group": "Red"
+  },
+  {
+   "name": "Pyrite Spellbomb",
+   "group": "Red"
+  },
+  {
+   "name": "Pyrogoyf",
+   "group": "Red"
+  },
+  {
+   "name": "Pyrokinesis",
+   "group": "Red"
+  },
+  {
+   "name": "Ragavan, Nimble Pilferer",
+   "group": "Red"
+  },
+  {
+   "name": "Samut, Hazoret's Champion",
+   "group": "Red"
+  },
+  {
+   "name": "Screaming Nemesis",
+   "group": "Red"
+  },
+  {
+   "name": "Sear",
+   "group": "Red"
+  },
+  {
+   "name": "Seasoned Pyromancer",
+   "group": "Red"
+  },
+  {
+   "name": "Slickshot Show-Off",
+   "group": "Red"
+  },
+  {
+   "name": "Sneak Attack",
+   "group": "Red"
+  },
+  {
+   "name": "Soul-Scar Mage",
+   "group": "Red"
+  },
+  {
+   "name": "Stingcaster Mage",
+   "group": "Red"
+  },
+  {
+   "name": "Suplex",
+   "group": "Red"
+  },
+  {
+   "name": "Tarfire",
+   "group": "Red"
+  },
+  {
+   "name": "Through the Breach",
+   "group": "Red"
+  },
+  {
+   "name": "Underworld Breach",
+   "group": "Red"
+  },
+  {
+   "name": "Unholy Heat",
+   "group": "Red"
+  },
+  {
+   "name": "Voldaren Epicure",
+   "group": "Red"
+  },
+  {
+   "name": "Wheel of Fortune",
+   "group": "Red"
+  },
+  {
+   "name": "Badgermole Cub",
+   "group": "Green"
+  },
+  {
+   "name": "Baloth Prime",
+   "group": "Green"
+  },
+  {
+   "name": "Birds of Paradise",
+   "group": "Green"
+  },
+  {
+   "name": "Boseiju, Who Endures",
+   "group": "Green"
+  },
+  {
+   "name": "Bristly Bill, Spine Sower",
+   "group": "Green"
+  },
+  {
+   "name": "Carnivorous Cultivator",
+   "group": "Green"
+  },
+  {
+   "name": "Crop Rotation",
+   "group": "Green"
+  },
+  {
+   "name": "Delighted Halfling",
+   "group": "Green"
+  },
+  {
+   "name": "Devoted Druid",
+   "group": "Green"
+  },
+  {
+   "name": "Elvish Mystic",
+   "group": "Green"
+  },
+  {
+   "name": "Elvish Reclaimer",
+   "group": "Green"
+  },
+  {
+   "name": "Emeritus of Abundance",
+   "group": "Green"
+  },
+  {
+   "name": "Endurance",
+   "group": "Green"
+  },
+  {
+   "name": "Esika's Chariot",
+   "group": "Green"
+  },
+  {
+   "name": "Fanatic of Rhonas",
+   "group": "Green"
+  },
+  {
+   "name": "Fastbond",
+   "group": "Green"
+  },
+  {
+   "name": "Force of Vigor",
+   "group": "Green"
+  },
+  {
+   "name": "Formidable Speaker",
+   "group": "Green"
+  },
+  {
+   "name": "Gaea's Cradle",
+   "group": "Green"
+  },
+  {
+   "name": "Garruk, Curse Breaker",
+   "group": "Green"
+  },
+  {
+   "name": "Generous Ent",
+   "group": "Green"
+  },
+  {
+   "name": "Green Sun's Zenith",
+   "group": "Green"
+  },
+  {
+   "name": "Haywire Mite",
+   "group": "Green"
+  },
+  {
+   "name": "Hexdrinker",
+   "group": "Green"
+  },
+  {
+   "name": "Icetill Explorer",
+   "group": "Green"
+  },
+  {
+   "name": "Ignoble Hierarch",
+   "group": "Green"
+  },
+  {
+   "name": "Keen-Eyed Curator",
+   "group": "Green"
+  },
+  {
+   "name": "Llanowar Elves",
+   "group": "Green"
+  },
+  {
+   "name": "Malevolent Rumble",
+   "group": "Green"
+  },
+  {
+   "name": "Marwyn, the Preserver",
+   "group": "Green"
+  },
+  {
+   "name": "Mole Man, Moloid Master",
+   "group": "Green"
+  },
+  {
+   "name": "Mox Emerald",
+   "group": "Green"
+  },
+  {
+   "name": "Natural Order",
+   "group": "Green"
+  },
+  {
+   "name": "Nissa, Who Shakes the World",
+   "group": "Green"
+  },
+  {
+   "name": "Noble Hierarch",
+   "group": "Green"
+  },
+  {
+   "name": "Oath of Druids",
+   "group": "Green"
+  },
+  {
+   "name": "Once Upon a Time",
+   "group": "Green"
+  },
+  {
+   "name": "Ouroboroid",
+   "group": "Green"
+  },
+  {
+   "name": "Pest Infestation",
+   "group": "Green"
+  },
+  {
+   "name": "Questing Beast",
+   "group": "Green"
+  },
+  {
+   "name": "Quirion Ranger",
+   "group": "Green"
+  },
+  {
+   "name": "Scythecat Cub",
+   "group": "Green"
+  },
+  {
+   "name": "Sentinel of the Nameless City",
+   "group": "Green"
+  },
+  {
+   "name": "Shifting Woodland",
+   "group": "Green"
+  },
+  {
+   "name": "Six",
+   "group": "Green"
+  },
+  {
+   "name": "Sowing Mycospawn",
+   "group": "Green"
+  },
+  {
+   "name": "Springheart Nantuko",
+   "group": "Green"
+  },
+  {
+   "name": "Sylvan Safekeeper",
+   "group": "Green"
+  },
+  {
+   "name": "Tamiyo's Safekeeping",
+   "group": "Green"
+  },
+  {
+   "name": "Tireless Tracker",
+   "group": "Green"
+  },
+  {
+   "name": "Titania, Protector of Argoth",
+   "group": "Green"
+  },
+  {
+   "name": "Ursine Monstrosity",
+   "group": "Green"
+  },
+  {
+   "name": "Vaultborn Tyrant",
+   "group": "Green"
+  },
+  {
+   "name": "Woodfall Primus",
+   "group": "Green"
+  },
+  {
+   "name": "Worldspine Wurm",
+   "group": "Green"
+  },
+  {
+   "name": "Yavimaya, Cradle of Growth",
+   "group": "Green"
+  },
+  {
+   "name": "Aang, Swift Savior",
+   "group": "Azorius"
+  },
+  {
+   "name": "Celestial Colonnade",
+   "group": "Azorius"
+  },
+  {
+   "name": "Flooded Strand",
+   "group": "Azorius"
+  },
+  {
+   "name": "Fractured Identity",
+   "group": "Azorius"
+  },
+  {
+   "name": "Hallowed Fountain",
+   "group": "Azorius"
+  },
+  {
+   "name": "Meticulous Archive",
+   "group": "Azorius"
+  },
+  {
+   "name": "No More Lies",
+   "group": "Azorius"
+  },
+  {
+   "name": "Seachrome Coast",
+   "group": "Azorius"
+  },
+  {
+   "name": "Shorikai, Genesis Engine",
+   "group": "Azorius"
+  },
+  {
+   "name": "Spider-Woman, Stunning Savior",
+   "group": "Azorius"
+  },
+  {
+   "name": "Talisman of Progress",
+   "group": "Azorius"
+  },
+  {
+   "name": "Teferi, Hero of Dominaria",
+   "group": "Azorius"
+  },
+  {
+   "name": "Teferi, Time Raveler",
+   "group": "Azorius"
+  },
+  {
+   "name": "Tundra",
+   "group": "Azorius"
+  },
+  {
+   "name": "Arid Mesa",
+   "group": "Boros"
+  },
+  {
+   "name": "Elegant Parlor",
+   "group": "Boros"
+  },
+  {
+   "name": "Figure of Destiny",
+   "group": "Boros"
+  },
+  {
+   "name": "Forth Eorlingas!",
+   "group": "Boros"
+  },
+  {
+   "name": "Inspiring Vantage",
+   "group": "Boros"
+  },
+  {
+   "name": "Otharri, Suns' Glory",
+   "group": "Boros"
+  },
+  {
+   "name": "Phlage, Titan of Fire's Fury",
+   "group": "Boros"
+  },
+  {
+   "name": "Plateau",
+   "group": "Boros"
+  },
+  {
+   "name": "Sacred Foundry",
+   "group": "Boros"
+  },
+  {
+   "name": "Sunbaked Canyon",
+   "group": "Boros"
+  },
+  {
+   "name": "Zirda, the Dawnwaker",
+   "group": "Boros"
+  },
+  {
+   "name": "Baleful Strix",
+   "group": "Dimir"
+  },
+  {
+   "name": "Creeping Tar Pit",
+   "group": "Dimir"
+  },
+  {
+   "name": "Darkslick Shores",
+   "group": "Dimir"
+  },
+  {
+   "name": "Fallen Shinobi",
+   "group": "Dimir"
+  },
+  {
+   "name": "Kaito, Bane of Nightmares",
+   "group": "Dimir"
+  },
+  {
+   "name": "Polluted Delta",
+   "group": "Dimir"
+  },
+  {
+   "name": "Psychic Frog",
+   "group": "Dimir"
+  },
+  {
+   "name": "Superior Spider-Man",
+   "group": "Dimir"
+  },
+  {
+   "name": "Talisman of Dominance",
+   "group": "Dimir"
+  },
+  {
+   "name": "Undercity Sewers",
+   "group": "Dimir"
+  },
+  {
+   "name": "Underground Sea",
+   "group": "Dimir"
+  },
+  {
+   "name": "Watery Grave",
+   "group": "Dimir"
+  },
+  {
+   "name": "Alpha Deathclaw",
+   "group": "Golgari"
+  },
+  {
+   "name": "Bayou",
+   "group": "Golgari"
+  },
+  {
+   "name": "Blooming Marsh",
+   "group": "Golgari"
+  },
+  {
+   "name": "Deathrite Shaman",
+   "group": "Golgari"
+  },
+  {
+   "name": "Grist, the Hunger Tide",
+   "group": "Golgari"
+  },
+  {
+   "name": "Overgrown Tomb",
+   "group": "Golgari"
+  },
+  {
+   "name": "Pillage the Bog",
+   "group": "Golgari"
+  },
+  {
+   "name": "Tear Asunder",
+   "group": "Golgari"
+  },
+  {
+   "name": "Underground Mortuary",
+   "group": "Golgari"
+  },
+  {
+   "name": "Verdant Catacombs",
+   "group": "Golgari"
+  },
+  {
+   "name": "Vicious Rivalry",
+   "group": "Golgari"
+  },
+  {
+   "name": "Wastewood Verge",
+   "group": "Golgari"
+  },
+  {
+   "name": "Wight of the Reliquary",
+   "group": "Golgari"
+  },
+  {
+   "name": "Witherbloom Apprentice",
+   "group": "Golgari"
+  },
+  {
+   "name": "Bloodbraid Challenger",
+   "group": "Gruul"
+  },
+  {
+   "name": "Commercial District",
+   "group": "Gruul"
+  },
+  {
+   "name": "Copperline Gorge",
+   "group": "Gruul"
+  },
+  {
+   "name": "Escape to the Wilds",
+   "group": "Gruul"
+  },
+  {
+   "name": "Manamorphose",
+   "group": "Gruul"
+  },
+  {
+   "name": "Minsc & Boo, Timeless Heroes",
+   "group": "Gruul"
+  },
+  {
+   "name": "Orcish Lumberjack",
+   "group": "Gruul"
+  },
+  {
+   "name": "Stomping Ground",
+   "group": "Gruul"
+  },
+  {
+   "name": "Taiga",
+   "group": "Gruul"
+  },
+  {
+   "name": "Thornspire Verge",
+   "group": "Gruul"
+  },
+  {
+   "name": "Vibrance",
+   "group": "Gruul"
+  },
+  {
+   "name": "Wooded Foothills",
+   "group": "Gruul"
+  },
+  {
+   "name": "Wrenn and Six",
+   "group": "Gruul"
+  },
+  {
+   "name": "Dack Fayden",
+   "group": "Izzet"
+  },
+  {
+   "name": "Expressive Iteration",
+   "group": "Izzet"
+  },
+  {
+   "name": "Flame of Anor",
+   "group": "Izzet"
+  },
+  {
+   "name": "Lutri, the Spellchaser",
+   "group": "Izzet"
+  },
+  {
+   "name": "Riverpyre Verge",
+   "group": "Izzet"
+  },
+  {
+   "name": "Saheeli, Sublime Artificer",
+   "group": "Izzet"
+  },
+  {
+   "name": "Scalding Tarn",
+   "group": "Izzet"
+  },
+  {
+   "name": "Spirebluff Canal",
+   "group": "Izzet"
+  },
+  {
+   "name": "Steam Vents",
+   "group": "Izzet"
+  },
+  {
+   "name": "Talisman of Creativity",
+   "group": "Izzet"
+  },
+  {
+   "name": "Third Path Iconoclast",
+   "group": "Izzet"
+  },
+  {
+   "name": "Thundering Falls",
+   "group": "Izzet"
+  },
+  {
+   "name": "Traumatic Critique",
+   "group": "Izzet"
+  },
+  {
+   "name": "Vivi Ornitier",
+   "group": "Izzet"
+  },
+  {
+   "name": "Volcanic Island",
+   "group": "Izzet"
+  },
+  {
+   "name": "Bleachbone Verge",
+   "group": "Orzhov"
+  },
+  {
+   "name": "Cloak and Dagger, Entwined",
+   "group": "Orzhov"
+  },
+  {
+   "name": "Concealed Courtyard",
+   "group": "Orzhov"
+  },
+  {
+   "name": "Godless Shrine",
+   "group": "Orzhov"
+  },
+  {
+   "name": "Lingering Souls",
+   "group": "Orzhov"
+  },
+  {
+   "name": "Lurrus of the Dream-Den",
+   "group": "Orzhov"
+  },
+  {
+   "name": "Marsh Flats",
+   "group": "Orzhov"
+  },
+  {
+   "name": "Scrubland",
+   "group": "Orzhov"
+  },
+  {
+   "name": "Shadowy Backstreet",
+   "group": "Orzhov"
+  },
+  {
+   "name": "Tidehollow Sculler",
+   "group": "Orzhov"
+  },
+  {
+   "name": "Badlands",
+   "group": "Rakdos"
+  },
+  {
+   "name": "Blackcleave Cliffs",
+   "group": "Rakdos"
+  },
+  {
+   "name": "Blazemire Verge",
+   "group": "Rakdos"
+  },
+  {
+   "name": "Blood Crypt",
+   "group": "Rakdos"
+  },
+  {
+   "name": "Bloodstained Mire",
+   "group": "Rakdos"
+  },
+  {
+   "name": "Bloodtithe Harvester",
+   "group": "Rakdos"
+  },
+  {
+   "name": "Carnage Interpreter",
+   "group": "Rakdos"
+  },
+  {
+   "name": "Fire Covenant",
+   "group": "Rakdos"
+  },
+  {
+   "name": "Kolaghan's Command",
+   "group": "Rakdos"
+  },
+  {
+   "name": "Raucous Theater",
+   "group": "Rakdos"
+  },
+  {
+   "name": "Brightglass Gearhulk",
+   "group": "Selesnya"
+  },
+  {
+   "name": "Figure of Fable",
+   "group": "Selesnya"
+  },
+  {
+   "name": "Horizon Canopy",
+   "group": "Selesnya"
+  },
+  {
+   "name": "Knight of the Reliquary",
+   "group": "Selesnya"
+  },
+  {
+   "name": "Lush Portico",
+   "group": "Selesnya"
+  },
+  {
+   "name": "Okoye, Mighty and Adored",
+   "group": "Selesnya"
+  },
+  {
+   "name": "Razorverge Thicket",
+   "group": "Selesnya"
+  },
+  {
+   "name": "Savannah",
+   "group": "Selesnya"
+  },
+  {
+   "name": "Temple Garden",
+   "group": "Selesnya"
+  },
+  {
+   "name": "Torsten, Founder of Benalia",
+   "group": "Selesnya"
+  },
+  {
+   "name": "Windswept Heath",
+   "group": "Selesnya"
+  },
+  {
+   "name": "Absorbing Man",
+   "group": "Simic"
+  },
+  {
+   "name": "Avatar of Burgeoning Echoes",
+   "group": "Simic"
+  },
+  {
+   "name": "Botanical Sanctum",
+   "group": "Simic"
+  },
+  {
+   "name": "Breeding Pool",
+   "group": "Simic"
+  },
+  {
+   "name": "Hedge Maze",
+   "group": "Simic"
+  },
+  {
+   "name": "Misty Rainforest",
+   "group": "Simic"
+  },
+  {
+   "name": "Nadu, Winged Wisdom",
+   "group": "Simic"
+  },
+  {
+   "name": "Oko, Thief of Crowns",
+   "group": "Simic"
+  },
+  {
+   "name": "Talisman of Curiosity",
+   "group": "Simic"
+  },
+  {
+   "name": "Tamiyo, Collector of Tales",
+   "group": "Simic"
+  },
+  {
+   "name": "Tropical Island",
+   "group": "Simic"
+  },
+  {
+   "name": "Uro, Titan of Nature's Wrath",
+   "group": "Simic"
+  },
+  {
+   "name": "Waterlogged Grove",
+   "group": "Simic"
+  },
+  {
+   "name": "Wistfulness",
+   "group": "Simic"
+  },
+  {
+   "name": "Atraxa, Grand Unifier",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Fabled Passage",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Indatha Triome",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Jetmir's Garden",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Ketria Triome",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Mana Confluence",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Multiversal Passage",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Omnath, Locus of Creation",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Prismatic Vista",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Raffine's Tower",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Raugrin Triome",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Relic of Sauron",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Savai Triome",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Spara's Headquarters",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Starting Town",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Talon Gates of Madara",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Thopter Foundry",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Xander's Lounge",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Zagoth Triome",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Ziatora's Proving Ground",
+   "group": "Multicolor"
+  },
+  {
+   "name": "Agatha's Soul Cauldron",
+   "group": "Colorless"
+  },
+  {
+   "name": "Ancient Tomb",
+   "group": "Colorless"
+  },
+  {
+   "name": "Basalt Monolith",
+   "group": "Colorless"
+  },
+  {
+   "name": "Black Lotus",
+   "group": "Colorless"
+  },
+  {
+   "name": "Blightsteel Colossus",
+   "group": "Colorless"
+  },
+  {
+   "name": "Candelabra of Tawnos",
+   "group": "Colorless"
+  },
+  {
+   "name": "Chromatic Star",
+   "group": "Colorless"
+  },
+  {
+   "name": "Chrome Mox",
+   "group": "Colorless"
+  },
+  {
+   "name": "City of Traitors",
+   "group": "Colorless"
+  },
+  {
+   "name": "Coalition Relic",
+   "group": "Colorless"
+  },
+  {
+   "name": "Coveted Jewel",
+   "group": "Colorless"
+  },
+  {
+   "name": "Cryogen Relic",
+   "group": "Colorless"
+  },
+  {
+   "name": "Currency Converter",
+   "group": "Colorless"
+  },
+  {
+   "name": "Dark Depths",
+   "group": "Colorless"
+  },
+  {
+   "name": "Dismember",
+   "group": "Colorless"
+  },
+  {
+   "name": "Emrakul, the Aeons Torn",
+   "group": "Colorless"
+  },
+  {
+   "name": "Engineered Explosives",
+   "group": "Colorless"
+  },
+  {
+   "name": "Everflowing Chalice",
+   "group": "Colorless"
+  },
+  {
+   "name": "Expedition Map",
+   "group": "Colorless"
+  },
+  {
+   "name": "Ginger, Queen of Sweets",
+   "group": "Colorless"
+  },
+  {
+   "name": "Grim Monolith",
+   "group": "Colorless"
+  },
+  {
+   "name": "Grindstone",
+   "group": "Colorless"
+  },
+  {
+   "name": "Iron Man Armor",
+   "group": "Colorless"
+  },
+  {
+   "name": "Kaldra Compleat",
+   "group": "Colorless"
+  },
+  {
+   "name": "Karn, Scion of Urza",
+   "group": "Colorless"
+  },
+  {
+   "name": "Library of Alexandria",
+   "group": "Colorless"
+  },
+  {
+   "name": "Lightning Greaves",
+   "group": "Colorless"
+  },
+  {
+   "name": "Lion's Eye Diamond",
+   "group": "Colorless"
+  },
+  {
+   "name": "Lotus Petal",
+   "group": "Colorless"
+  },
+  {
+   "name": "Mana Crypt",
+   "group": "Colorless"
+  },
+  {
+   "name": "Mana Vault",
+   "group": "Colorless"
+  },
+  {
+   "name": "Manifold Key",
+   "group": "Colorless"
+  },
+  {
+   "name": "Memory Jar",
+   "group": "Colorless"
+  },
+  {
+   "name": "Mind Stone",
+   "group": "Colorless"
+  },
+  {
+   "name": "Mishra's Bauble",
+   "group": "Colorless"
+  },
+  {
+   "name": "Mishra's Workshop",
+   "group": "Colorless"
+  },
+  {
+   "name": "Mox Diamond",
+   "group": "Colorless"
+  },
+  {
+   "name": "Mox Opal",
+   "group": "Colorless"
+  },
+  {
+   "name": "Mutagenic Growth",
+   "group": "Colorless"
+  },
+  {
+   "name": "Myr Battlesphere",
+   "group": "Colorless"
+  },
+  {
+   "name": "Mystic Forge",
+   "group": "Colorless"
+  },
+  {
+   "name": "Nettlecyst",
+   "group": "Colorless"
+  },
+  {
+   "name": "Painter's Servant",
+   "group": "Colorless"
+  },
+  {
+   "name": "Palantir of Orthanc",
+   "group": "Colorless"
+  },
+  {
+   "name": "Pentad Prism",
+   "group": "Colorless"
+  },
+  {
+   "name": "Phyrexian Metamorph",
+   "group": "Colorless"
+  },
+  {
+   "name": "Portal to Phyrexia",
+   "group": "Colorless"
+  },
+  {
+   "name": "Retrofitter Foundry",
+   "group": "Colorless"
+  },
+  {
+   "name": "Sensei's Divining Top",
+   "group": "Colorless"
+  },
+  {
+   "name": "Skateboard",
+   "group": "Colorless"
+  },
+  {
+   "name": "Skullclamp",
+   "group": "Colorless"
+  },
+  {
+   "name": "Smuggler's Copter",
+   "group": "Colorless"
+  },
+  {
+   "name": "Sol Ring",
+   "group": "Colorless"
+  },
+  {
+   "name": "Soul-Guide Lantern",
+   "group": "Colorless"
+  },
+  {
+   "name": "Strip Mine",
+   "group": "Colorless"
+  },
+  {
+   "name": "Sword of the Meek",
+   "group": "Colorless"
+  },
+  {
+   "name": "Tezzeret, Cruel Captain",
+   "group": "Colorless"
+  },
+  {
+   "name": "The Echoverse Fulcrum",
+   "group": "Colorless"
+  },
+  {
+   "name": "The Fantasticar",
+   "group": "Colorless"
+  },
+  {
+   "name": "The Mightstone and Weakstone",
+   "group": "Colorless"
+  },
+  {
+   "name": "The One Ring",
+   "group": "Colorless"
+  },
+  {
+   "name": "Thespian's Stage",
+   "group": "Colorless"
+  },
+  {
+   "name": "Ugin, Eye of the Storms",
+   "group": "Colorless"
+  },
+  {
+   "name": "Umezawa's Jitte",
+   "group": "Colorless"
+  },
+  {
+   "name": "Urza's Bauble",
+   "group": "Colorless"
+  },
+  {
+   "name": "Urza's Saga",
+   "group": "Colorless"
+  },
+  {
+   "name": "Walking Ballista",
+   "group": "Colorless"
+  },
+  {
+   "name": "Wasteland",
+   "group": "Colorless"
+  },
+  {
+   "name": "Zuran Orb",
+   "group": "Colorless"
+  }
+ ]
+}

@@ -1381,6 +1381,12 @@ pub(crate) fn craft_material_type(state: &GameState, source: ObjectId) -> Option
     (definition_name(state, source) == Some(TITHING_BLADE)).then_some(CardType::Creature)
 }
 
+/// Whether the card named `name` has foretell as its hand ability 0: Behold
+/// the Multiverse and Delayed Blast Fireball (Vintage Cube wave C1c).
+fn has_foretell(name: &str) -> bool {
+    name == BEHOLD_THE_MULTIVERSE || name == "Delayed Blast Fireball"
+}
+
 /// Activated abilities this module gates: foretelling only during its
 /// owner's turn.
 pub(crate) fn activation_allowed(
@@ -1389,7 +1395,7 @@ pub(crate) fn activation_allowed(
     name: &str,
     ability_index: usize,
 ) -> bool {
-    if name != BEHOLD_THE_MULTIVERSE || ability_index != 0 {
+    if !has_foretell(name) || ability_index != 0 {
         return true;
     }
     state
@@ -1402,7 +1408,7 @@ pub(crate) fn activation_allowed(
 /// action.
 pub(crate) fn is_foretell_action(state: &GameState, source: ObjectId, index: u8) -> bool {
     index == 0
-        && definition_name(state, source) == Some(BEHOLD_THE_MULTIVERSE)
+        && definition_name(state, source).is_some_and(has_foretell)
         && state
             .objects
             .try_get(source)

@@ -1779,5 +1779,6 @@ pub(crate) fn quote_allowed(
 /// `alternative`) skips its additional cost.
 pub(crate) fn alternative_skips_additional_cost(definition: &CardDef, alternative: bool) -> bool {
     (alternative && definition.name == DEMAND_ANSWERS)
+        || crate::eternal_cube_c1b_v1::alternative_skips_additional_cost(definition, alternative)
         || crate::eternal_legacy_e8a_v1::alternative_skips_additional_cost(definition, alternative)
 }

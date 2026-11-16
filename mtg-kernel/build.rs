@@ -21,6 +21,9 @@
 //! environment, proc-macro, generated, or every dependency byte consumed by
 //! compilation.
 
+mod build_eternal_c1a_v1;
+mod build_eternal_c1b_v1;
+mod build_eternal_c1c_v1;
 mod build_eternal_e5a_v1;
 mod build_eternal_e5b_v1;
 mod build_eternal_e6a_v1;
@@ -7144,6 +7147,8 @@ fn plot_cost_for(name: &str) -> String {
         "Spinewoods Paladin" => cost_src("{3}{G}"),
         "Aloe Alchemist" => cost_src("{1}{G}"),
         "Slickshot Show-Off" => cost_src("{1}{R}"),
+        // Pillage the Bog (Vintage Cube wave C1c): "Plot {1}{B}{G}".
+        "Pillage the Bog" => cost_src("{1}{B}{G}"),
         _ => "None".to_string(),
     }
 }
@@ -10639,6 +10644,8 @@ fn codegen(cards: &[CardJson]) -> String {
         writeln!(out, "        additional_modes: {extra_modes},").unwrap();
         let kicked_target = if c.name == "Tear Asunder" {
             "Some(TargetSpec::NonlandPermanent)"
+        } else if c.name == "Bloodchief's Thirst" {
+            "Some(TargetSpec::CreatureOrPlaneswalker)"
         } else {
             "None"
         };
@@ -11603,6 +11610,7 @@ fn subtype_variant(t: &str) -> &'static str {
         "Junk" => "Subtype::Junk",
         "Spacecraft" => "Subtype::Spacecraft",
         "Thrull" => "Subtype::Thrull",
+        "Pest" => "Subtype::Pest",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",

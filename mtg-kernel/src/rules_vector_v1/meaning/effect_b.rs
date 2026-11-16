@@ -435,7 +435,8 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                 // Vocabulary gap: no cast-payment read; the amount is
                 // state-dependent.
                 crate::effect::LibraryLookCount::ManaSpentToCast
-                | crate::effect::LibraryLookCount::ControllerArtifacts => AmtF::Dynamic,
+                | crate::effect::LibraryLookCount::ControllerArtifacts
+                | crate::effect::LibraryLookCount::ControllerLandsTwiceV1 => AmtF::Dynamic,
             };
             let mut look = EffectAtom::new(EvF::Look)
                 .player(player)

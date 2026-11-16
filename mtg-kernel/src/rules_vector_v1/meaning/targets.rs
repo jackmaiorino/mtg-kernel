@@ -775,7 +775,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::ArtifactOrLandV1 | S::ControlledPermanentV1 => ObjF::Permanent,
         S::PlayerThenUpToTwoOfTheirGraveyardCardsV1 => ObjF::AnyCard,
         S::TwoLandsV1 => typed(CardType::Land),
-        S::S1dV1(_) => ObjF::AnyCard,
+        S::S1dV1(_) | S::C1cV1(_) | S::C1aV1(_) | S::C1bV1(_) => ObjF::AnyCard,
         S::CreatureOrPlaneswalkerManaValueAtMostV1(_) | S::OpponentCreatureOrEnchantmentV1 => {
             ObjF::Permanent
         }
@@ -796,6 +796,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
             typed(CardType::Enchantment)
         }
         S::ControlledArtifactOrCreatureV1 => ObjF::Permanent,
+        S::CreatureSpellPowerOrToughnessAtMostTwoV1 => ObjF::Spell,
     }
 }
 
@@ -857,6 +858,7 @@ pub(super) fn standard_target_origin(
         S::InstantOrSorcerySpellV1
         | S::SpellWithSingleTargetV1
         | S::EnchantmentInstantOrSorcerySpellV1
+        | S::CreatureSpellPowerOrToughnessAtMostTwoV1
         | S::TriggeredAbilityOrColorlessSpellV1 => (Some(ZoneF::Stack), None),
         S::AnotherNonlandPermanent
         | S::UpToEightCreaturesOrPlaneswalkersV74
@@ -877,6 +879,9 @@ pub(super) fn standard_target_origin(
         | S::NonblackCreatureManaValueV1(_)
         | S::DividedTwoCountersCreaturesV1
         | S::S1dV1(_)
+        | S::C1cV1(_)
+        | S::C1aV1(_)
+        | S::C1bV1(_)
         | S::CreatureOrPlaneswalkerManaValueAtMostV1(_)
         | S::CreatureLandOrPlaneswalkerV1
         | S::ArtifactEnchantmentOrFlyingCreatureV1
@@ -963,9 +968,10 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             // Two distinct lands: the count has no facet.
             out.atoms.push(Atom::Opaque);
         }
-        S::S1dV1(_) => {
+        S::S1dV1(_) | S::C1cV1(_) | S::C1aV1(_) | S::C1bV1(_) => {
             // Wave S1d's filters (a power bound, flying, a land you control,
-            // a distinct-type graveyard pair) have no facet.
+            // a distinct-type graveyard pair) and wave C1c's pairs of
+            // differently targeted modes have no facet.
             out.atoms.push(Atom::Opaque);
         }
         S::CreatureOrPlaneswalkerManaValueAtMostV1(maximum) => {
@@ -983,6 +989,7 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         | S::CreaturePowerOrToughnessAtMostOneV1
         | S::UpToTwoArtifactsOrEnchantmentsV1
         | S::NonbasicLandCardInAGraveyardV1
+        | S::CreatureSpellPowerOrToughnessAtMostTwoV1
         | S::EnchantmentInstantOrSorcerySpellV1 => {
             object(out, standard_target_obj(filter), relation, zone);
             // Vocabulary gap: the exact refinement (color, type union or

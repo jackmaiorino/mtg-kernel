@@ -1,13 +1,13 @@
-//! Card-database recipes for the eternal catalog's sideboard wave S1n. This
-//! module is the tail of the recipe chains: wave P3h's tables fall through to
-//! these, and its own defaults are the chains' base values. Runtime programs
+//! Card-database recipes for the eternal catalog's sideboard wave S1n. Wave
+//! P3h's tables fall through to these, and these fall through to Vintage Cube
+//! wave C1a's (`build_eternal_c1a_v1.rs`). Runtime programs
 //! and static hooks live in `src/eternal_sideboard_s1n_v1.rs`. Every row is
 //! keyed by a name that occurs only in the eternal registry.
 
 use super::{ActivatedAbilityRecipe, Special};
 
-pub(super) fn activated_ability_recipes_for(_name: &str) -> &'static [ActivatedAbilityRecipe] {
-    &[]
+pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
+    super::build_eternal_c1a_v1::activated_ability_recipes_for(name)
 }
 
 /// Apostle's Blessing, From the Ashes and Kiora's Dismissal.
@@ -27,29 +27,29 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
                 "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::AnyNumberEnchantmentsV1)",
             program: "crate::eternal_sideboard_s1n_v1::kioras_dismissal",
         }),
-        _ => None,
+        _ => super::build_eternal_c1a_v1::special_for(name),
     }
 }
 
 /// No S1n card has kicker.
-pub(super) fn kicker_cost_for(_name: &str) -> Option<&'static str> {
-    None
+pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
+    super::build_eternal_c1a_v1::kicker_cost_for(name)
 }
 
 /// No S1n card is an Aura or an Equipment.
-pub(super) fn attachment_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn attachment_for(name: &str) -> &'static str {
+    super::build_eternal_c1a_v1::attachment_for(name)
 }
 
 /// No S1n card has flashback.
-pub(super) fn flashback_for(_name: &str) -> String {
-    "None".to_string()
+pub(super) fn flashback_for(name: &str) -> String {
+    super::build_eternal_c1a_v1::flashback_for(name)
 }
 
 /// No S1n card has an alternative cost; Kiora's Dismissal's strive is an
 /// additional cost per target beyond the first (`spell_costs_v1`).
-pub(super) fn alt_cost_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn alt_cost_for(name: &str) -> &'static str {
+    super::build_eternal_c1a_v1::alt_cost_for(name)
 }
 
 /// Printed evergreen keywords on S1n permanents.
@@ -57,7 +57,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "Doorkeeper Thrull" => &["Keywords::FLASH", "Keywords::FLYING"],
         "Darksteel Angel" => &["Keywords::FLYING", "Keywords::INDESTRUCTIBLE"],
-        _ => &[],
+        _ => super::build_eternal_c1a_v1::keywords_for(name),
     }
 }
 
@@ -75,6 +75,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "spell:destroy_all_nonbasic_lands_each_controller_may_search_basic_lands"
         }
         "Kiora's Dismissal" => "strive:U;spell:return_any_number_target_enchantments_to_hand",
-        _ => "none",
+        _ => super::build_eternal_c1a_v1::trigger_recipe_for(name),
     }
 }

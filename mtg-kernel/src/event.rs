@@ -30,6 +30,9 @@ pub enum LibraryPlacement {
     Bottom,
     /// Appended for Braided Quipu.
     ThirdFromTop,
+    /// Just beneath the top `n` cards (Unexpectedly Absent, Vintage Cube
+    /// wave C1a): position `n`, or the bottom of a library of fewer cards.
+    BeneathTop(u16),
 }
 
 /// Which observers learn the identity of a card inserted into a library at
@@ -8137,6 +8140,7 @@ fn materialize_zone_change_v1(
                 LibraryPlacement::SecondFromTop => 1.min(library_len),
                 LibraryPlacement::Bottom => library_len,
                 LibraryPlacement::ThirdFromTop => 2.min(library_len),
+                LibraryPlacement::BeneathTop(top) => usize::from(top).min(library_len),
             };
             // The insertion position is public even when the inserted
             // identity is not. Preserve every still-valid older fact by

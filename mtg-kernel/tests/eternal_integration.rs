@@ -4,6 +4,12 @@
 mod eternal_bo3_v1;
 #[path = "eternal/eternal_catalog_v1.rs"]
 mod eternal_catalog_v1;
+#[path = "eternal/eternal_cube_c1a_v1.rs"]
+mod eternal_cube_c1a_v1;
+#[path = "eternal/eternal_cube_c1b_v1.rs"]
+mod eternal_cube_c1b_v1;
+#[path = "eternal/eternal_cube_c1c_v1.rs"]
+mod eternal_cube_c1c_v1;
 #[path = "eternal/eternal_e9b_v1.rs"]
 mod eternal_e9b_v1;
 #[path = "eternal/eternal_legacy_e2_v1.rs"]

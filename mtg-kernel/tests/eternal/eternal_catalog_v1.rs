@@ -246,10 +246,18 @@ const SNAPSHOTS: [&str; 2] = [
 /// Executable S1 implementations with known missing reachable branches.
 const PARTIAL_S1: [&str; 3] = ["Coalition Honor Guard", "Hullbreacher", "Standard Bearer"];
 
-/// Volrath's Shapeshifter and the S1 cards above are the registry's only
-/// Partial definitions.
+/// Vintage Cube implementations with known missing reachable branches. Bone
+/// Shards: its sacrifice is an alternative cost, so it cannot be chosen when
+/// the spell is cast for another alternative cost (flashback).
+const PARTIAL_CUBE: [&str; 1] = ["Bone Shards"];
+
+/// Volrath's Shapeshifter and the S1 and cube cards above are the registry's
+/// only Partial definitions.
 pub(crate) fn expected_capability(name: &str) -> CardCapability {
-    if name == "Volrath's Shapeshifter" || PARTIAL_S1.contains(&name) {
+    if name == "Volrath's Shapeshifter"
+        || PARTIAL_S1.contains(&name)
+        || PARTIAL_CUBE.contains(&name)
+    {
         CardCapability::Partial
     } else {
         CardCapability::Full

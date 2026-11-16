@@ -48,7 +48,9 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
 pub(super) fn mode2_for(name: &str) -> &'static str {
     match name {
         "Fiery Confluence" => "Some(ModeDef { target_spec: TargetSpec::None, effect: crate::eternal_sideboard_s1m_v1::fiery_confluence_1 })",
-        _ => "None",
+        "Mystic Confluence" => super::build_eternal_c1a_v1::MYSTIC_MODE_2,
+        "Collective Brutality" => super::build_eternal_c1b_v1::BRUTALITY_MODE_2,
+        _ => super::build_eternal_c1c_v1::mode2_for(name),
     }
 }
 
@@ -57,7 +59,9 @@ pub(super) fn mode2_for(name: &str) -> &'static str {
 pub(super) fn mode3_for(name: &str) -> &'static str {
     match name {
         "Fiery Confluence" => "Some(ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::RepeatableArtifactsV1(1)), effect: crate::eternal_sideboard_s1m_v1::fiery_confluence_2 })",
-        _ => "None",
+        "Mystic Confluence" => super::build_eternal_c1a_v1::MYSTIC_MODE_3,
+        "Collective Brutality" => super::build_eternal_c1b_v1::BRUTALITY_MODE_3,
+        _ => super::build_eternal_c1c_v1::mode3_for(name),
     }
 }
 
@@ -66,7 +70,9 @@ pub(super) fn mode3_for(name: &str) -> &'static str {
 pub(super) fn additional_modes_for(name: &str) -> &'static str {
     match name {
         "Fiery Confluence" => "&[ModeDef { target_spec: TargetSpec::None, effect: crate::eternal_sideboard_s1m_v1::fiery_confluence_3 }, ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::RepeatableArtifactsV1(1)), effect: crate::eternal_sideboard_s1m_v1::fiery_confluence_4 }, ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::RepeatableArtifactsV1(2)), effect: crate::eternal_sideboard_s1m_v1::fiery_confluence_5 }, ModeDef { target_spec: TargetSpec::None, effect: crate::eternal_sideboard_s1m_v1::fiery_confluence_6 }, ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::RepeatableArtifactsV1(1)), effect: crate::eternal_sideboard_s1m_v1::fiery_confluence_7 }, ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::RepeatableArtifactsV1(2)), effect: crate::eternal_sideboard_s1m_v1::fiery_confluence_8 }, ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::RepeatableArtifactsV1(3)), effect: crate::eternal_sideboard_s1m_v1::fiery_confluence_9 }]",
-        _ => "&[]",
+        "Mystic Confluence" => super::build_eternal_c1a_v1::MYSTIC_ADDITIONAL_MODES,
+        "Collective Brutality" => super::build_eternal_c1b_v1::BRUTALITY_ADDITIONAL_MODES,
+        _ => super::build_eternal_c1c_v1::additional_modes_for(name),
     }
 }
 

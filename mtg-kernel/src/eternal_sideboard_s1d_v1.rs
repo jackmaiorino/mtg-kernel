@@ -1764,7 +1764,11 @@ pub(crate) mod statics {
 
     /// Overload cards: the second form of the card is its overload cost.
     pub(crate) fn is_overload(name: &str) -> bool {
-        name == VANDALBLAST || name == ELECTRICKERY
+        name == VANDALBLAST
+            || name == ELECTRICKERY
+            // Vintage Cube wave C1a's overload cards.
+            || name == "Damn"
+            || name == "Winds of Abandon"
     }
 
     /// Navigator's Compass: the basic land types `object` has gained until

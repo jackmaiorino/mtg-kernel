@@ -309,6 +309,12 @@ pub enum E3ChoiceKindV1 {
     /// A wave S1g choice (`eternal_sideboard_s1g_v1`). Appended to preserve
     /// existing hashes.
     S1gV1(crate::eternal_sideboard_s1g_v1::S1gChoiceV1),
+    /// A Vintage Cube wave C1a choice (`eternal_cube_c1a_v1`).
+    C1aV1(crate::eternal_cube_c1a_v1::C1aChoiceV1),
+    /// A Vintage Cube wave C1c choice (`eternal_cube_c1c_v1`).
+    C1cV1(crate::eternal_cube_c1c_v1::C1cChoiceV1),
+    /// A Vintage Cube wave C1b choice (`eternal_cube_c1b_v1`).
+    C1bV1(crate::eternal_cube_c1b_v1::C1bChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -386,6 +392,15 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::OutsideGameV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::C1aV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
+        if let E3ChoiceKindV1::C1cV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
+        if let E3ChoiceKindV1::C1bV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -433,6 +448,9 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E9bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::S1cV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::S1gV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::C1aV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::C1cV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::C1bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P1bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P2aV1(kind) => kind.public_purpose(),
@@ -493,6 +511,8 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::E9bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::S1cV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::S1gV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::C1aV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::C1bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P2aV1(kind) => out.extend(kind.referenced_bindings()),
@@ -833,6 +853,28 @@ pub(crate) fn finish_selection(
             choice,
             kind,
             bindings,
+        ),
+        E3ChoiceKindV1::C1aV1(kind) => crate::eternal_cube_c1a_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::C1cV1(kind) => crate::eternal_cube_c1c_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::C1bV1(kind) => crate::eternal_cube_c1b_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+            selected,
         ),
         E3ChoiceKindV1::SurgicalExtractionV1 => crate::eternal_sideboard_s1a_v1::surgical::finish(
             state,
@@ -1210,6 +1252,9 @@ pub(crate) fn drive(
         EternalOpV1::S1nV1(op) => {
             crate::eternal_sideboard_s1n_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::C1aV1(op) => crate::eternal_cube_c1a_v1::drive(state, continuation, op, path),
+        EternalOpV1::C1bV1(op) => crate::eternal_cube_c1b_v1::drive(state, continuation, op, path),
+        EternalOpV1::C1cV1(op) => crate::eternal_cube_c1c_v1::drive(state, continuation, op, path),
         EternalOpV1::DelayedUpkeepDrawV1 => crate::eternal_vintage_e7b_v1::dredge::drive_draws(
             state,
             continuation,
