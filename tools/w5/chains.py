@@ -759,6 +759,10 @@ def make_plan(inputs_path):
         # qual.validate_pregame_announcement_step_scale). Part of the arm's frozen recipe, only with pregame_advantage
         # terminal_v1. Absent (or null): nothing changes. The earlier pre-normalisation key is refused by name.
         require(qual.RETIRED_PREGAME_SCALE_KEY not in spec, f'{a}: ' + qual.retired_pregame_scale_message('the arm'))
+        try:  # whatever the arm's pregame_advantage is: a base that names a scale key itself is refused
+            qual.check_base_names_no_pregame_scale(base_doc)
+        except ValueError as exc:
+            raise Stop(f'{a}: {exc}') from exc
         pregame_announcement_step_scale = spec.get('pregame_announcement_step_scale')
         if pregame_announcement_step_scale is not None:
             try:

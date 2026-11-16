@@ -52,6 +52,18 @@ class Configs(unittest.TestCase):
     def build(self, base, **kwargs):
         return qual.build_config(base, self.dose, self.out, 'r1', 'ns', 0, 3, 2, **kwargs)
 
+    def test_a_base_that_names_a_scale_key_never_builds_a_config(self):
+        for key, pattern in (('pregame_announcement_step_scale', 'already names pregame_announcement_step_scale'),
+                             (qual.RETIRED_PREGAME_SCALE_KEY, 'no trainer takes')):
+            base = opening_base(iterations=2)
+            base['loss_selection'] = dict(base['loss_selection'], **{key: 0.25})
+            for kwargs in ({}, {'pregame_advantage': 'terminal_v1'},
+                           {'pregame_advantage': 'terminal_v1', 'pregame_announcement_step_scale': 0.03}):
+                with self.subTest(key=key, kwargs=kwargs), self.assertRaisesRegex(ValueError, pattern):
+                    self.build(base, **kwargs)
+        # a base without them still builds without an arm mode
+        self.build(opening_base(iterations=2))
+
     def test_the_key_goes_into_loss_selection_only_with_the_mode(self):
         base = opening_base(iterations=2)
         plain = self.build(base, pregame_advantage='terminal_v1')
@@ -152,6 +164,23 @@ class Plans(unittest.TestCase):
         base['loss_selection'] = dict(base['loss_selection'], **{retired: 0.25})
         with self.assertRaisesRegex(ValueError, 'no trainer takes'):
             qual.validate_pregame_advantage('terminal_v1', base)
+
+    def test_a_base_that_names_a_scale_key_is_refused_whatever_the_arm_names(self):
+        # Either key in the base's own loss_selection, with an arm that names no pregame_advantage at all (so the
+        # mode's own base check never runs), a terminal arm, and a scaled arm: the plan refuses each.
+        retired = qual.RETIRED_PREGAME_SCALE_KEY
+        new = 'pregame_announcement_step_scale'
+        for tag, key, pattern in (('new', new, f'already names {new}'), ('old', retired, 'no trainer takes')):
+            doc = opening_base()
+            doc['loss_selection'] = dict(doc['loss_selection'], **{key: 0.25})
+            base = jwrite(self.node.t / f'base-{tag}.json', doc)
+            for label, arm in (('plain', {}), ('terminal', {'keep_offset': VEC, 'pregame_advantage': 'terminal_v1'}),
+                               ('scaled', {'keep_offset': VEC, 'pregame_advantage': 'terminal_v1',
+                                           'pregame_announcement_step_scale': 0.03})):
+                inputs = self.inputs(f'{label}-{tag}', **arm)
+                inputs['arms']['C']['base'] = str(base)
+                with self.subTest(key=key, arm=label), self.assertRaisesRegex(chains.Stop, pattern):
+                    self.plan(inputs)
 
     def test_a_started_chain_refuses_a_changed_scale(self):
         _, plan = self.plan(self.inputs('first', keep_offset=VEC, pregame_advantage='terminal_v1',

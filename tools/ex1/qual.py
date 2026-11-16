@@ -214,10 +214,7 @@ def validate_pregame_advantage(mode, base=None):
         loss = base["loss_selection"]
         if "pregame_advantage" in loss:
             raise ValueError("the base's loss_selection already names pregame_advantage; the arm writes it")
-        if "pregame_announcement_step_scale" in loss:
-            raise ValueError("the base's loss_selection already names pregame_announcement_step_scale; the arm writes it")
-        if RETIRED_PREGAME_SCALE_KEY in loss:
-            raise ValueError(retired_pregame_scale_message("the base's loss_selection"))
+        check_base_names_no_pregame_scale(base)
         gamma = loss.get("gamma")
         if not (_is_number(gamma) and gamma == 1.0):
             raise ValueError(f"pregame_advantage terminal_v1 needs gamma exactly 1.0 in the base's loss_selection, "
@@ -233,6 +230,19 @@ RETIRED_PREGAME_SCALE_KEY = "pregame_advantage" + "_scale"
 def retired_pregame_scale_message(where):
     return (f"{where} names {RETIRED_PREGAME_SCALE_KEY}, which no trainer takes; the key is "
             "pregame_announcement_step_scale (a scale on the announcement rows' optimizer step, 0 < s < 1)")
+
+
+def check_base_names_no_pregame_scale(base):
+    """Raises ValueError when the base's own loss_selection names a pregame scale key (the arm is the only writer of
+    `pregame_announcement_step_scale`; the retired key is never valid). Checked for every config, whatever the arm's
+    pregame_advantage is, so a base that carries one cannot pass it through an arm that names none."""
+    loss = base.get("loss_selection")
+    if not isinstance(loss, dict):
+        return
+    if "pregame_announcement_step_scale" in loss:
+        raise ValueError("the base's loss_selection already names pregame_announcement_step_scale; the arm writes it")
+    if RETIRED_PREGAME_SCALE_KEY in loss:
+        raise ValueError(retired_pregame_scale_message("the base's loss_selection"))
 
 
 def validate_pregame_announcement_step_scale(scale, mode):
@@ -336,6 +346,7 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
     `pregame_advantage` ("terminal_v1", see `validate_pregame_advantage`) adds that key to the config's
     `loss_selection`; without it the loss_selection is exactly the base's. `pregame_announcement_step_scale`
     (`validate_pregame_announcement_step_scale`) adds that key too, only with the terminal mode."""
+    check_base_names_no_pregame_scale(base)
     pregame_announcement_step_scale = validate_pregame_announcement_step_scale(pregame_announcement_step_scale, pregame_advantage)
     if pregame_advantage is not None:
         pregame_advantage = validate_pregame_advantage(pregame_advantage, base)
