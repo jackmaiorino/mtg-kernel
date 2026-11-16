@@ -199,6 +199,21 @@ fn first_answer(decision: Decision) -> Action {
     }
 }
 
+/// Advances until the ability just activated is on the stack with its costs
+/// paid (the engine finishes a pending activation as it next advances).
+fn on_the_stack(state: &mut GameState) {
+    for _ in 0..20 {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } => return,
+            other => {
+                let action = first_answer(other);
+                act(state, action);
+            }
+        }
+    }
+    panic!("the activation did not finish");
+}
+
 /// Settles, answering every choice with `answer`.
 fn settle_with(state: &mut GameState, mut answer: impl FnMut(&GameState, Decision) -> Action) {
     while let Some(decision) = settle(state) {
@@ -1040,6 +1055,7 @@ fn abandoned_air_temple_taps_for_white_and_puts_a_counter_on_each_creature() {
     let theirs = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
     pool(&mut state, P0, &[ManaColor::W], 3);
     activate(&mut state, temple, 0, &[]);
+    on_the_stack(&mut state);
     assert!(state.objects.get(temple).tapped, "{{T}} is a cost");
     // "Each creature you control" is read as the ability resolves.
     let late = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
