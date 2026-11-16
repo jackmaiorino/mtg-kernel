@@ -2416,7 +2416,8 @@ fn pregame_announcement_step_is_a_hand_built_adam_step_from_the_two_buffers() {
                 plain.second_moments[tensor][index],
             );
             let (r, a) = (rest[tensor][index], announcement[tensor][index]);
-            let bound = (1.0 - ADAM_BETA2_V1) * (2.0 * (r + a).abs() * rounding + rounding * rounding)
+            let bound = (1.0 - ADAM_BETA2_V1)
+                * (2.0 * (r + a).abs() * rounding + rounding * rounding)
                 + 1.0e-6 * y.abs();
             assert!(
                 (x - y).abs() <= bound,
