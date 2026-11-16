@@ -1,0 +1,1676 @@
+{
+ "binaries": {
+  "base": {
+   "arm": "base",
+   "build_seconds": 2951.3,
+   "bytes": 64546304,
+   "command": "cargo build --release --locked -j 4 -p mtg-kernel --bin native_expanded_training_run_v1",
+   "commit": "3b487591741b01ef1500324b618c9ffb6f2e2bc1",
+   "sha256": "2930839d58491c0736d521ac3b156f4e06dd4218c743cd467cfbd1cc5e608f91"
+  },
+  "m3": {
+   "arm": "m3v2",
+   "build_seconds": 2698.9,
+   "bytes": 64568832,
+   "commit": "ed3f5e29e8ae6f07e00f1700dbbd446a991baf10",
+   "sha256": "43dc077473d0b49ff848dadfec7a45995fa1ec6f15d89c64090489780a568473"
+  },
+  "m3_pre_fix": {
+   "arm": "m3",
+   "build_seconds": 1928.8,
+   "bytes": 64567808,
+   "command": "cargo build --release --locked -j 4 -p mtg-kernel --bin native_expanded_training_run_v1",
+   "commit": "9953e96ff1c6fca370519d3b98fa86fb804f6047",
+   "sha256": "0c99bab7d0bf33c102ee4b41d53c002be7005965817144a199a9fdb9cc0eadcc"
+  }
+ },
+ "fixtures_sha256": {
+  "parallel_4_workers": "47f461b93a095503be558b78a1e3aafa3f785d3b68128890a66d974c87990e0f",
+  "serial": "f2c4d4116bd690d147e08d60c34439fcb39cb0d1dfff3c6bfbc873801ce68031"
+ },
+ "issue": 599,
+ "runs": {
+  "entries64": {
+   "argv": null,
+   "arm_env": {
+    "m3e64": {
+     "MTG_KERNEL_OPPONENT_CACHE_ENTRIES": "64"
+    }
+   },
+   "arms": [
+    "m3",
+    "m3e64"
+   ],
+   "cases": {
+    "pool64": {
+     "boundaries_equal_to_reference": true,
+     "cold_resume": [],
+     "complete": 4,
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 78,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 24,
+        "unverified": 0,
+        "verified": 24
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 3825764638,
+       "process_budget_bytes": 805306368,
+       "process_charged_bytes": 315069664,
+       "process_entries": 32,
+       "process_evictions": 43,
+       "process_full_loads": 75,
+       "process_hits": {
+        "revalidated": 24,
+        "trusted": 13
+       },
+       "process_misses": {
+        "absent": 75,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 315069664,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 159506880,
+       "verified_copied_bytes": 1266491148
+      },
+      "m3e64": {
+       "checkpoint_decodes": 67,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 24,
+        "unverified": 0,
+        "verified": 24
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 64,
+       "file_read_bytes": 3391872762,
+       "process_budget_bytes": 805306368,
+       "process_charged_bytes": 630139328,
+       "process_entries": 64,
+       "process_evictions": 0,
+       "process_full_loads": 64,
+       "process_hits": {
+        "revalidated": 24,
+        "trusted": 24
+       },
+       "process_misses": {
+        "absent": 64,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 630139328,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 167641309,
+       "verified_copied_bytes": 1103824874
+      }
+     },
+     "distinct_boundary_sets": 1,
+     "driver_parity_ok": true,
+     "final_boundary": {
+      "adam_step": 3,
+      "checkpoint_sha256": "2600a97918d3e8fe4a4311dabe0ed6a7863a598bc060263446b476096df980e0",
+      "iteration": 2,
+      "output_identity_sha256": "1990e221873b3f000b4398121809ed7328cf90490ea2c328028a1b48c9d28d28",
+      "state_sha256": "14b134e1b5c7fdea395f3f1145659f573c41b996fc45d407c31fda881779b318"
+     },
+     "samples": 4
+    }
+   },
+   "note": null,
+   "ok": true,
+   "outputs_sha256": {
+    "bench.json": "ae48ac4f4c9c470208f078c8a8e945bb9c7c20f3758b5f2136845a2597707120",
+    "comparison.json": "ac7173a5639b3b981bad17f3308b5f1b44c78608353dfd126022e28c7e891930",
+    "samples.jsonl": "fbdd4aa7bb750c12a97ee19c065798f31afe6f8b25f08eebfa4fa05ee34d795a"
+   }
+  },
+  "evict": {
+   "argv": null,
+   "arm_env": {
+    "m3evict": {
+     "MTG_KERNEL_COLLECTION_OPPONENT_CACHE_ENTRIES": "1",
+     "MTG_KERNEL_OPPONENT_CACHE_MIB": "12"
+    }
+   },
+   "arms": [
+    "m3",
+    "m3evict"
+   ],
+   "cases": {
+    "fresh": {
+     "boundaries_equal_to_reference": true,
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m3evict",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "complete": 6,
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 3,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 3,
+        "unverified": 0,
+        "verified": 3
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 539418758,
+       "process_budget_bytes": 805306368,
+       "process_charged_bytes": 29537565,
+       "process_entries": 3,
+       "process_evictions": 0,
+       "process_full_loads": 3,
+       "process_hits": {
+        "revalidated": 3,
+        "trusted": 0
+       },
+       "process_misses": {
+        "absent": 3,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 29537565,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 167679638,
+       "verified_copied_bytes": 169598773
+      },
+      "m3evict": {
+       "checkpoint_decodes": 3,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 3,
+        "unverified": 0,
+        "verified": 3
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 539418758,
+       "process_budget_bytes": 12582912,
+       "process_charged_bytes": 9846007,
+       "process_entries": 1,
+       "process_evictions": 2,
+       "process_full_loads": 3,
+       "process_hits": {
+        "revalidated": 3,
+        "trusted": 0
+       },
+       "process_misses": {
+        "absent": 3,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 9846007,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 163274335,
+       "verified_copied_bytes": 169598759
+      }
+     },
+     "distinct_boundary_sets": 1,
+     "driver_parity_ok": true,
+     "final_boundary": {
+      "adam_step": 3,
+      "checkpoint_sha256": "00decd097574b7914645a3d034c2100046af412ce079e7f0993a981c2a1e8caf",
+      "iteration": 2,
+      "output_identity_sha256": "69c11df1e15ebbdb13dc1d2a537469c0281532dd0ad0fad9f68cdd5dcb32ee84",
+      "state_sha256": "449adff0344af54817a93f6092962097149dfa424994d91c361350121619c776"
+     },
+     "samples": 6
+    },
+    "pool18": {
+     "boundaries_equal_to_reference": true,
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m3evict",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "complete": 6,
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 21,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 21,
+        "unverified": 0,
+        "verified": 21
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 1518248757,
+       "process_budget_bytes": 805306368,
+       "process_charged_bytes": 177226686,
+       "process_entries": 18,
+       "process_evictions": 0,
+       "process_full_loads": 18,
+       "process_hits": {
+        "revalidated": 21,
+        "trusted": 21
+       },
+       "process_misses": {
+        "absent": 18,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 177226686,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 159401877,
+       "verified_copied_bytes": 423584041
+      },
+      "m3evict": {
+       "checkpoint_decodes": 65,
+       "collection_evictions": 42,
+       "collection_misses": {
+        "revalidated": 24,
+        "unverified": 0,
+        "verified": 24
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 3372150409,
+       "process_budget_bytes": 12582912,
+       "process_charged_bytes": 9845927,
+       "process_entries": 1,
+       "process_evictions": 64,
+       "process_full_loads": 65,
+       "process_hits": {
+        "revalidated": 0,
+        "trusted": 1
+       },
+       "process_misses": {
+        "absent": 65,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 9845927,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 167595066,
+       "verified_copied_bytes": 719350539
+      }
+     },
+     "distinct_boundary_sets": 1,
+     "driver_parity_ok": true,
+     "final_boundary": {
+      "adam_step": 3,
+      "checkpoint_sha256": "c85e8ad6bc6e0999f8bf1d4c1264b857e2f026918f3522528eab68ac69d84d2b",
+      "iteration": 2,
+      "output_identity_sha256": "065512fb8a901ac9a3fb682f85d8dcf51e4c67d710058305ad5d32d174c78360",
+      "state_sha256": "7d88bed602e5fd79c045365bb8fbc7e3b6dba60d5f35a60659a72305ccfeafcb"
+     },
+     "samples": 6
+    },
+    "pool2": {
+     "boundaries_equal_to_reference": true,
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m3evict",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "complete": 6,
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 5,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 6,
+        "unverified": 0,
+        "verified": 6
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 591297848,
+       "process_budget_bytes": 805306368,
+       "process_charged_bytes": 19691854,
+       "process_entries": 2,
+       "process_evictions": 0,
+       "process_full_loads": 2,
+       "process_hits": {
+        "revalidated": 6,
+        "trusted": 6
+       },
+       "process_misses": {
+        "absent": 2,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 19691854,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 159401802,
+       "verified_copied_bytes": 186978403
+      },
+      "m3evict": {
+       "checkpoint_decodes": 9,
+       "collection_evictions": 28,
+       "collection_misses": {
+        "revalidated": 17,
+        "unverified": 0,
+        "verified": 17
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 1853528760,
+       "process_budget_bytes": 12582912,
+       "process_charged_bytes": 9845927,
+       "process_entries": 1,
+       "process_evictions": 33,
+       "process_full_loads": 34,
+       "process_hits": {
+        "revalidated": 1,
+        "trusted": 1
+       },
+       "process_misses": {
+        "absent": 34,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 9845927,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 159401802,
+       "verified_copied_bytes": 186978402
+      }
+     },
+     "distinct_boundary_sets": 1,
+     "driver_parity_ok": true,
+     "final_boundary": {
+      "adam_step": 3,
+      "checkpoint_sha256": "32a8eab8ed0b63319106df7635d5246dca78bcff008e051144a64a5e4a5937b6",
+      "iteration": 2,
+      "output_identity_sha256": "f87563cac44b6d5ab6d001035037760fcce5b53437366004c303f12859983a06",
+      "state_sha256": "14b134e1b5c7fdea395f3f1145659f573c41b996fc45d407c31fda881779b318"
+     },
+     "samples": 6
+    },
+    "pool64": {
+     "boundaries_equal_to_reference": true,
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m3evict",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "complete": 6,
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 78,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 24,
+        "unverified": 0,
+        "verified": 24
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 3825764638,
+       "process_budget_bytes": 805306368,
+       "process_charged_bytes": 315069664,
+       "process_entries": 32,
+       "process_evictions": 43,
+       "process_full_loads": 75,
+       "process_hits": {
+        "revalidated": 24,
+        "trusted": 13
+       },
+       "process_misses": {
+        "absent": 75,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 315069664,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 165508316,
+       "verified_copied_bytes": 1266491147
+      },
+      "m3evict": {
+       "checkpoint_decodes": 115,
+       "collection_evictions": 42,
+       "collection_misses": {
+        "revalidated": 24,
+        "unverified": 0,
+        "verified": 24
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 5285219130,
+       "process_budget_bytes": 12582912,
+       "process_charged_bytes": 9845927,
+       "process_entries": 1,
+       "process_evictions": 111,
+       "process_full_loads": 112,
+       "process_hits": {
+        "revalidated": 0,
+        "trusted": 0
+       },
+       "process_misses": {
+        "absent": 112,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 9845927,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 167595076,
+       "verified_copied_bytes": 1887591989
+      }
+     },
+     "distinct_boundary_sets": 1,
+     "driver_parity_ok": true,
+     "final_boundary": {
+      "adam_step": 3,
+      "checkpoint_sha256": "2600a97918d3e8fe4a4311dabe0ed6a7863a598bc060263446b476096df980e0",
+      "iteration": 2,
+      "output_identity_sha256": "1990e221873b3f000b4398121809ed7328cf90490ea2c328028a1b48c9d28d28",
+      "state_sha256": "14b134e1b5c7fdea395f3f1145659f573c41b996fc45d407c31fda881779b318"
+     },
+     "samples": 6
+    }
+   },
+   "note": null,
+   "ok": true,
+   "outputs_sha256": {
+    "bench.json": "a923fea4f4f4f52ce6831843bca72914a651ac53224911aa6e32e38a6f4524c7",
+    "comparison.json": "961df87e9d1a8ba0425cc330704378e53f6f4250e270a8e1cf29555356f49bfb",
+    "samples.jsonl": "f0af86045df9aa14f1433b39448fb8124005ddf620288f58c9ef17365cf36782"
+   }
+  },
+  "oversize": {
+   "argv": null,
+   "arm_env": {
+    "m3over": {
+     "MTG_KERNEL_COLLECTION_OPPONENT_CACHE_MIB": "1",
+     "MTG_KERNEL_OPPONENT_CACHE_MIB": "1"
+    }
+   },
+   "arms": [
+    "m3",
+    "m3over"
+   ],
+   "cases": {
+    "fresh": {
+     "boundaries_equal_to_reference": true,
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m3over",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "complete": 6,
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 3,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 3,
+        "unverified": 0,
+        "verified": 3
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 539418758,
+       "process_budget_bytes": 805306368,
+       "process_charged_bytes": 29537565,
+       "process_entries": 3,
+       "process_evictions": 0,
+       "process_full_loads": 3,
+       "process_hits": {
+        "revalidated": 3,
+        "trusted": 0
+       },
+       "process_misses": {
+        "absent": 3,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 29537565,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 166719544,
+       "verified_copied_bytes": 169598762
+      },
+      "m3over": {
+       "checkpoint_decodes": 3,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 24,
+        "unverified": 0,
+        "verified": 24
+       },
+       "collection_not_kept_budget": 48,
+       "entry_limit": 32,
+       "file_read_bytes": 1870903178,
+       "process_budget_bytes": 1048576,
+       "process_charged_bytes": 0,
+       "process_entries": 0,
+       "process_evictions": 0,
+       "process_full_loads": 48,
+       "process_hits": {
+        "revalidated": 0,
+        "trusted": 0
+       },
+       "process_misses": {
+        "absent": 48,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 48,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 0,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 166952062,
+       "verified_copied_bytes": 169598761
+      }
+     },
+     "distinct_boundary_sets": 1,
+     "driver_parity_ok": true,
+     "final_boundary": {
+      "adam_step": 3,
+      "checkpoint_sha256": "00decd097574b7914645a3d034c2100046af412ce079e7f0993a981c2a1e8caf",
+      "iteration": 2,
+      "output_identity_sha256": "69c11df1e15ebbdb13dc1d2a537469c0281532dd0ad0fad9f68cdd5dcb32ee84",
+      "state_sha256": "449adff0344af54817a93f6092962097149dfa424994d91c361350121619c776"
+     },
+     "samples": 6
+    },
+    "pool18": {
+     "boundaries_equal_to_reference": true,
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m3over",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "complete": 6,
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 21,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 21,
+        "unverified": 0,
+        "verified": 21
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 1518248757,
+       "process_budget_bytes": 805306368,
+       "process_charged_bytes": 177226686,
+       "process_entries": 18,
+       "process_evictions": 0,
+       "process_full_loads": 18,
+       "process_hits": {
+        "revalidated": 21,
+        "trusted": 21
+       },
+       "process_misses": {
+        "absent": 18,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 177226686,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 159401875,
+       "verified_copied_bytes": 423584049
+      },
+      "m3over": {
+       "checkpoint_decodes": 65,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 24,
+        "unverified": 0,
+        "verified": 24
+       },
+       "collection_not_kept_budget": 48,
+       "entry_limit": 32,
+       "file_read_bytes": 3411595125,
+       "process_budget_bytes": 1048576,
+       "process_charged_bytes": 0,
+       "process_entries": 0,
+       "process_evictions": 0,
+       "process_full_loads": 66,
+       "process_hits": {
+        "revalidated": 0,
+        "trusted": 0
+       },
+       "process_misses": {
+        "absent": 66,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 66,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 0,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 167595066,
+       "verified_copied_bytes": 719350541
+      }
+     },
+     "distinct_boundary_sets": 1,
+     "driver_parity_ok": true,
+     "final_boundary": {
+      "adam_step": 3,
+      "checkpoint_sha256": "c85e8ad6bc6e0999f8bf1d4c1264b857e2f026918f3522528eab68ac69d84d2b",
+      "iteration": 2,
+      "output_identity_sha256": "065512fb8a901ac9a3fb682f85d8dcf51e4c67d710058305ad5d32d174c78360",
+      "state_sha256": "7d88bed602e5fd79c045365bb8fbc7e3b6dba60d5f35a60659a72305ccfeafcb"
+     },
+     "samples": 6
+    },
+    "pool2": {
+     "boundaries_equal_to_reference": true,
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m3over",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "complete": 6,
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 5,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 6,
+        "unverified": 0,
+        "verified": 6
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 591297848,
+       "process_budget_bytes": 805306368,
+       "process_charged_bytes": 19691854,
+       "process_entries": 2,
+       "process_evictions": 0,
+       "process_full_loads": 2,
+       "process_hits": {
+        "revalidated": 6,
+        "trusted": 6
+       },
+       "process_misses": {
+        "absent": 2,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 19691854,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 159401799,
+       "verified_copied_bytes": 186978407
+      },
+      "m3over": {
+       "checkpoint_decodes": 8,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 24,
+        "unverified": 0,
+        "verified": 24
+       },
+       "collection_not_kept_budget": 48,
+       "entry_limit": 32,
+       "file_read_bytes": 2484644216,
+       "process_budget_bytes": 1048576,
+       "process_charged_bytes": 0,
+       "process_entries": 0,
+       "process_evictions": 0,
+       "process_full_loads": 50,
+       "process_hits": {
+        "revalidated": 0,
+        "trusted": 0
+       },
+       "process_misses": {
+        "absent": 50,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 50,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 0,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 159401802,
+       "verified_copied_bytes": 186978412
+      }
+     },
+     "distinct_boundary_sets": 1,
+     "driver_parity_ok": true,
+     "final_boundary": {
+      "adam_step": 3,
+      "checkpoint_sha256": "32a8eab8ed0b63319106df7635d5246dca78bcff008e051144a64a5e4a5937b6",
+      "iteration": 2,
+      "output_identity_sha256": "f87563cac44b6d5ab6d001035037760fcce5b53437366004c303f12859983a06",
+      "state_sha256": "14b134e1b5c7fdea395f3f1145659f573c41b996fc45d407c31fda881779b318"
+     },
+     "samples": 6
+    },
+    "pool64": {
+     "boundaries_equal_to_reference": true,
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m3over",
+       "first_process_completed": 1,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "complete": 6,
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 78,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 24,
+        "unverified": 0,
+        "verified": 24
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 3825764638,
+       "process_budget_bytes": 805306368,
+       "process_charged_bytes": 315069664,
+       "process_entries": 32,
+       "process_evictions": 43,
+       "process_full_loads": 75,
+       "process_hits": {
+        "revalidated": 24,
+        "trusted": 13
+       },
+       "process_misses": {
+        "absent": 75,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 315069664,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 159506876,
+       "verified_copied_bytes": 1266491144
+      },
+      "m3over": {
+       "checkpoint_decodes": 115,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 24,
+        "unverified": 0,
+        "verified": 24
+       },
+       "collection_not_kept_budget": 48,
+       "entry_limit": 32,
+       "file_read_bytes": 5285219130,
+       "process_budget_bytes": 1048576,
+       "process_charged_bytes": 0,
+       "process_entries": 0,
+       "process_evictions": 0,
+       "process_full_loads": 112,
+       "process_hits": {
+        "revalidated": 0,
+        "trusted": 0
+       },
+       "process_misses": {
+        "absent": 112,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 112,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 0,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 167595075,
+       "verified_copied_bytes": 1887592005
+      }
+     },
+     "distinct_boundary_sets": 1,
+     "driver_parity_ok": true,
+     "final_boundary": {
+      "adam_step": 3,
+      "checkpoint_sha256": "2600a97918d3e8fe4a4311dabe0ed6a7863a598bc060263446b476096df980e0",
+      "iteration": 2,
+      "output_identity_sha256": "1990e221873b3f000b4398121809ed7328cf90490ea2c328028a1b48c9d28d28",
+      "state_sha256": "14b134e1b5c7fdea395f3f1145659f573c41b996fc45d407c31fda881779b318"
+     },
+     "samples": 6
+    }
+   },
+   "note": null,
+   "ok": true,
+   "outputs_sha256": {
+    "bench.json": "7a58a7805b391abc7320654eefaf366f23fec71c4d25bebd5795bc5445246738",
+    "comparison.json": "b6f8e854d8ce54d9fc03ef1d7cfd2fd2033f6fdac02464237a24abc44d9ec036",
+    "samples.jsonl": "1f037fdb1622da881174d0d08364aa0fab46c2322639561d566745df5ef0ba84"
+   }
+  },
+  "parallel_evict": {
+   "argv": null,
+   "arm_env": {
+    "m3evict": {
+     "MTG_KERNEL_COLLECTION_OPPONENT_CACHE_ENTRIES": "1",
+     "MTG_KERNEL_OPPONENT_CACHE_MIB": "12"
+    }
+   },
+   "arms": [
+    "base",
+    "m3evict"
+   ],
+   "cases": {
+    "fresh": {
+     "boundaries_equal_to_reference": true,
+     "cold_resume": [
+      {
+       "arm": "base",
+       "first_process_completed": 1,
+       "status": "mismatch"
+      },
+      {
+       "arm": "m3evict",
+       "first_process_completed": 1,
+       "status": "mismatch"
+      }
+     ],
+     "complete": 6,
+     "counters": {
+      "base": {
+       "checkpoint_decodes": 3,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "unverified": 0,
+        "verified": 0
+       },
+       "collection_not_kept_budget": null,
+       "entry_limit": 32,
+       "file_read_bytes": 450653738,
+       "process_budget_bytes": null,
+       "process_charged_bytes": null,
+       "process_entries": 0,
+       "process_evictions": 0,
+       "process_full_loads": 0,
+       "process_hits": {
+        "revalidated": 0,
+        "trusted": 0
+       },
+       "process_misses": {
+        "absent": 0,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": null,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 163280378,
+       "verified_copied_bytes": 4958404
+      },
+      "m3evict": {
+       "checkpoint_decodes": 3,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "revalidated": 0,
+        "unverified": 0,
+        "verified": 0
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 450653738,
+       "process_budget_bytes": 12582912,
+       "process_charged_bytes": 0,
+       "process_entries": 0,
+       "process_evictions": 0,
+       "process_full_loads": 0,
+       "process_hits": {
+        "revalidated": 0,
+        "trusted": 0
+       },
+       "process_misses": {
+        "absent": 0,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 0,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 161580494,
+       "verified_copied_bytes": 4958389
+      }
+     },
+     "distinct_boundary_sets": 1,
+     "driver_parity_ok": false,
+     "final_boundary": {
+      "adam_step": 3,
+      "checkpoint_sha256": "36aea787fdb30b481a71e7fd78501fc244e8cc42a9bb9865a530d66721242182",
+      "iteration": 2,
+      "output_identity_sha256": "382bdd3cca9f1a9aee9300ba2e33df3b94c548ebf574b9ccde866b83d67b8da4",
+      "state_sha256": "449adff0344af54817a93f6092962097149dfa424994d91c361350121619c776"
+     },
+     "samples": 6
+    },
+    "pool18": {
+     "boundaries_equal_to_reference": true,
+     "cold_resume": [
+      {
+       "arm": "base",
+       "first_process_completed": 1,
+       "status": "mismatch"
+      },
+      {
+       "arm": "m3evict",
+       "first_process_completed": 1,
+       "status": "mismatch"
+      }
+     ],
+     "complete": 6,
+     "counters": {
+      "base": {
+       "checkpoint_decodes": 34,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "unverified": 0,
+        "verified": 23
+       },
+       "collection_not_kept_budget": null,
+       "entry_limit": 32,
+       "file_read_bytes": 1676028789,
+       "process_budget_bytes": null,
+       "process_charged_bytes": null,
+       "process_entries": 13,
+       "process_evictions": 0,
+       "process_full_loads": 13,
+       "process_hits": {
+        "revalidated": 21,
+        "trusted": 10
+       },
+       "process_misses": {
+        "absent": 13,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": null,
+       "process_retained_file_bytes": 256390758,
+       "retained_duplicate_bytes": 152875850,
+       "retained_total_bytes": 420062798,
+       "verified_copied_bytes": 463383423
+      },
+      "m3evict": {
+       "checkpoint_decodes": 62,
+       "collection_evictions": 12,
+       "collection_misses": {
+        "revalidated": 0,
+        "unverified": 0,
+        "verified": 24
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 3214373337,
+       "process_budget_bytes": 12582912,
+       "process_charged_bytes": 9845951,
+       "process_entries": 1,
+       "process_evictions": 60,
+       "process_full_loads": 61,
+       "process_hits": {
+        "revalidated": 0,
+        "trusted": 2
+       },
+       "process_misses": {
+        "absent": 61,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 9845951,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 164572994,
+       "verified_copied_bytes": 552120170
+      }
+     },
+     "distinct_boundary_sets": 1,
+     "driver_parity_ok": false,
+     "final_boundary": {
+      "adam_step": 3,
+      "checkpoint_sha256": "5bad0831b1a1e0247257219fe87832eb2dee2b030b70002236784a46b8afd2b9",
+      "iteration": 2,
+      "output_identity_sha256": "f1b1d5ec5eec36c26a2b50e217ba893aa368ded99c7d49e8f6f7adbcf2123ae5",
+      "state_sha256": "7d88bed602e5fd79c045365bb8fbc7e3b6dba60d5f35a60659a72305ccfeafcb"
+     },
+     "samples": 6
+    },
+    "pool2": {
+     "boundaries_equal_to_reference": true,
+     "cold_resume": [
+      {
+       "arm": "base",
+       "first_process_completed": 1,
+       "status": "mismatch"
+      },
+      {
+       "arm": "m3evict",
+       "first_process_completed": 1,
+       "status": "mismatch"
+      }
+     ],
+     "complete": 6,
+     "counters": {
+      "base": {
+       "checkpoint_decodes": 5,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "unverified": 0,
+        "verified": 16
+       },
+       "collection_not_kept_budget": null,
+       "entry_limit": 32,
+       "file_read_bytes": 709632772,
+       "process_budget_bytes": null,
+       "process_charged_bytes": null,
+       "process_entries": 2,
+       "process_evictions": 0,
+       "process_full_loads": 4,
+       "process_hits": {
+        "revalidated": 6,
+        "trusted": 12
+       },
+       "process_misses": {
+        "absent": 4,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": null,
+       "process_retained_file_bytes": 39444732,
+       "retained_duplicate_bytes": 39444732,
+       "retained_total_bytes": 198850686,
+       "verified_copied_bytes": 34534096
+      },
+      "m3evict": {
+       "checkpoint_decodes": 11,
+       "collection_evictions": 5,
+       "collection_misses": {
+        "revalidated": 0,
+        "unverified": 0,
+        "verified": 17
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 1143524824,
+       "process_budget_bytes": 12582912,
+       "process_charged_bytes": 9845951,
+       "process_entries": 1,
+       "process_evictions": 12,
+       "process_full_loads": 16,
+       "process_hits": {
+        "revalidated": 1,
+        "trusted": 8
+       },
+       "process_misses": {
+        "absent": 16,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 9845951,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 159405954,
+       "verified_copied_bytes": 34534087
+      }
+     },
+     "distinct_boundary_sets": 1,
+     "driver_parity_ok": false,
+     "final_boundary": {
+      "adam_step": 3,
+      "checkpoint_sha256": "a16455830c0a3b70f20676da636d5d7ea1909270fd059689bf48c0f1d2ec530d",
+      "iteration": 2,
+      "output_identity_sha256": "2f32549bd703cb7f25978503a293cbd25b1c69e7b59c89230ce5b742b1b85599",
+      "state_sha256": "14b134e1b5c7fdea395f3f1145659f573c41b996fc45d407c31fda881779b318"
+     },
+     "samples": 6
+    },
+    "pool64": {
+     "boundaries_equal_to_reference": true,
+     "cold_resume": [
+      {
+       "arm": "base",
+       "first_process_completed": 1,
+       "status": "mismatch"
+      },
+      {
+       "arm": "m3evict",
+       "first_process_completed": 1,
+       "status": "mismatch"
+      }
+     ],
+     "complete": 6,
+     "counters": {
+      "base": {
+       "checkpoint_decodes": 90,
+       "collection_evictions": 0,
+       "collection_misses": {
+        "unverified": 0,
+        "verified": 24
+       },
+       "collection_not_kept_budget": null,
+       "entry_limit": 32,
+       "file_read_bytes": 3036872038,
+       "process_budget_bytes": null,
+       "process_charged_bytes": null,
+       "process_entries": 23,
+       "process_evictions": 0,
+       "process_full_loads": 23,
+       "process_hits": {
+        "revalidated": 24,
+        "trusted": 1
+       },
+       "process_misses": {
+        "absent": 23,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": null,
+       "process_retained_file_bytes": 453614418,
+       "retained_duplicate_bytes": 202221070,
+       "retained_total_bytes": 617286476,
+       "verified_copied_bytes": 1335868010
+      },
+      "m3evict": {
+       "checkpoint_decodes": 115,
+       "collection_evictions": 12,
+       "collection_misses": {
+        "revalidated": 0,
+        "unverified": 0,
+        "verified": 24
+       },
+       "collection_not_kept_budget": 0,
+       "entry_limit": 32,
+       "file_read_bytes": 5285221762,
+       "process_budget_bytes": 12582912,
+       "process_charged_bytes": 9845951,
+       "process_entries": 1,
+       "process_evictions": 111,
+       "process_full_loads": 112,
+       "process_hits": {
+        "revalidated": 0,
+        "trusted": 0
+       },
+       "process_misses": {
+        "absent": 112,
+        "check_setting": 0,
+        "revalidation": 0
+       },
+       "process_not_kept": {
+        "budget": 0,
+        "unforkable": 0,
+        "unverifiable": 0
+       },
+       "process_peak_charged_bytes": 9845951,
+       "process_retained_file_bytes": 0,
+       "retained_duplicate_bytes": 0,
+       "retained_total_bytes": 164573002,
+       "verified_copied_bytes": 1631634572
+      }
+     },
+     "distinct_boundary_sets": 1,
+     "driver_parity_ok": false,
+     "final_boundary": {
+      "adam_step": 3,
+      "checkpoint_sha256": "8afe3a2ee2767873b4867a72eec1d12f22f35ddf441432a5acec8051d309ce14",
+      "iteration": 2,
+      "output_identity_sha256": "8bd095aa70cf5b4332ee342ff7bb8e6f57500dc7bf1c3e3e1a336f529eb81a59",
+      "state_sha256": "14b134e1b5c7fdea395f3f1145659f573c41b996fc45d407c31fda881779b318"
+     },
+     "samples": 6
+    }
+   },
+   "note": "4 collection and 4 preparation workers. The driver flags every sample, base against base included, because per-worker scheduling fields (completed_episodes, completed_groups, episode_seconds layout, update_preparation.opponent_cache_hits) and the pins of the files holding them vary with scheduling. Every boundary checkpoint, state and output identity equals the reference.",
+   "ok": false,
+   "outputs_sha256": {
+    "bench.json": "b043bc7df4db24320565d0da0c2ccd0e33515ae176c9108b55e011e86517c2c7",
+    "comparison.json": "1d770db53572a63bd739092320aaaf55bc91b531005192ad62f1947152cc0f66",
+    "samples.jsonl": "799afcae81be51217ed908b067517ed7e3c9868399045da6af4e4a898cb3da5c"
+   }
+  }
+ },
+ "schema": "mtg-kernel-t5-m3-parity-receipt/v1",
+ "serial_vs_parallel_checkpoints": "For every case and iteration, the checkpoint bytes after the 15.9 KB header (the tensor payload: parameters and both Adam moments) are identical between the serial and the 4-worker fixture; the header differs only by the fixture root path.",
+ "stack_probe": {
+  "coarse": [
+   {
+    "arm": "base",
+    "exit_hex": "0x00000000",
+    "stack_kib": 1024
+   },
+   {
+    "arm": "m3",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 1024
+   },
+   {
+    "arm": "m3v2",
+    "exit_hex": "0x00000000",
+    "stack_kib": 1024
+   },
+   {
+    "arm": "base",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 896
+   },
+   {
+    "arm": "m3",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 896
+   },
+   {
+    "arm": "m3v2",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 896
+   },
+   {
+    "arm": "base",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 768
+   },
+   {
+    "arm": "m3",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 768
+   },
+   {
+    "arm": "m3v2",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 768
+   },
+   {
+    "arm": "base",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 640
+   },
+   {
+    "arm": "m3",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 640
+   },
+   {
+    "arm": "m3v2",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 640
+   },
+   {
+    "arm": "base",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 512
+   },
+   {
+    "arm": "m3",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 512
+   },
+   {
+    "arm": "m3v2",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 512
+   },
+   {
+    "arm": "base",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 384
+   },
+   {
+    "arm": "m3",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 384
+   },
+   {
+    "arm": "m3v2",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 384
+   }
+  ],
+  "fine": [
+   {
+    "arm": "base",
+    "case": "pool18",
+    "exit_hex": "0x00000000",
+    "stack_kib": 1008
+   },
+   {
+    "arm": "m3v2",
+    "case": "pool18",
+    "exit_hex": "0x00000000",
+    "stack_kib": 1008
+   },
+   {
+    "arm": "base",
+    "case": "pool18",
+    "exit_hex": "0x00000000",
+    "stack_kib": 992
+   },
+   {
+    "arm": "m3v2",
+    "case": "pool18",
+    "exit_hex": "0x00000000",
+    "stack_kib": 992
+   },
+   {
+    "arm": "base",
+    "case": "pool18",
+    "exit_hex": "0x00000000",
+    "stack_kib": 976
+   },
+   {
+    "arm": "m3v2",
+    "case": "pool18",
+    "exit_hex": "0x00000000",
+    "stack_kib": 976
+   },
+   {
+    "arm": "base",
+    "case": "pool18",
+    "exit_hex": "0x00000000",
+    "stack_kib": 960
+   },
+   {
+    "arm": "m3v2",
+    "case": "pool18",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 960
+   },
+   {
+    "arm": "base",
+    "case": "pool18",
+    "exit_hex": "0x00000000",
+    "stack_kib": 944
+   },
+   {
+    "arm": "m3v2",
+    "case": "pool18",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 944
+   },
+   {
+    "arm": "base",
+    "case": "pool18",
+    "exit_hex": "0x00000000",
+    "stack_kib": 928
+   },
+   {
+    "arm": "m3v2",
+    "case": "pool18",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 928
+   },
+   {
+    "arm": "base",
+    "case": "pool18",
+    "exit_hex": "0x00000000",
+    "stack_kib": 912
+   },
+   {
+    "arm": "m3v2",
+    "case": "pool18",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 912
+   },
+   {
+    "arm": "base",
+    "case": "pool64",
+    "exit_hex": "0x00000000",
+    "stack_kib": 1008
+   },
+   {
+    "arm": "m3v2",
+    "case": "pool64",
+    "exit_hex": "0x00000000",
+    "stack_kib": 1008
+   },
+   {
+    "arm": "base",
+    "case": "pool64",
+    "exit_hex": "0x00000000",
+    "stack_kib": 992
+   },
+   {
+    "arm": "m3v2",
+    "case": "pool64",
+    "exit_hex": "0x00000000",
+    "stack_kib": 992
+   },
+   {
+    "arm": "base",
+    "case": "pool64",
+    "exit_hex": "0x00000000",
+    "stack_kib": 976
+   },
+   {
+    "arm": "m3v2",
+    "case": "pool64",
+    "exit_hex": "0x00000000",
+    "stack_kib": 976
+   },
+   {
+    "arm": "base",
+    "case": "pool64",
+    "exit_hex": "0x00000000",
+    "stack_kib": 960
+   },
+   {
+    "arm": "m3v2",
+    "case": "pool64",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 960
+   },
+   {
+    "arm": "base",
+    "case": "pool64",
+    "exit_hex": "0x00000000",
+    "stack_kib": 944
+   },
+   {
+    "arm": "m3v2",
+    "case": "pool64",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 944
+   },
+   {
+    "arm": "base",
+    "case": "pool64",
+    "exit_hex": "0x00000000",
+    "stack_kib": 928
+   },
+   {
+    "arm": "m3v2",
+    "case": "pool64",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 928
+   },
+   {
+    "arm": "base",
+    "case": "pool64",
+    "exit_hex": "0x00000000",
+    "stack_kib": 912
+   },
+   {
+    "arm": "m3v2",
+    "case": "pool64",
+    "exit_hex": "0xC00000FD",
+    "stack_kib": 912
+   }
+  ],
+  "what": "main-thread stack reserve set with editbin /STACK on probe copies, pool18 and pool64 under MTG_KERNEL_OPPONENT_CACHE_MIB=12 (serial replay misses the process cache)"
+ },
+ "unit_tests": {
+  "commit": "ed3f5e29e8ae6f07e00f1700dbbd446a991baf10",
+  "rc": 0,
+  "results": [
+   "test result: ok. 76 passed; 0 failed; 2 ignored; 0 measured; 3960 filtered out; finished in 58.86s"
+  ]
+ }
+}
