@@ -6666,7 +6666,8 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
             }
             CostComponent::SacrificeSelf
             | CostComponent::ExileSelf
-            | CostComponent::DiscardSelf => {
+            | CostComponent::DiscardSelf
+            | CostComponent::ReturnSelfToOwnersHandV1 => {
                 source_departure_count += 1;
                 saw_source_changing_component = true;
             }
@@ -7050,6 +7051,9 @@ fn can_pay_components(
                         && !has_effective_keyword(state, source, Keywords::HASTE)))
             }
             CostComponent::SacrificeSelf | CostComponent::ExileSelf => true,
+            CostComponent::ReturnSelfToOwnersHandV1 => {
+                state.objects.get(source).zone == Zone::Battlefield
+            }
             CostComponent::DiscardSelf => {
                 let object = state.objects.get(source);
                 object.owner == player
@@ -7821,6 +7825,9 @@ fn commit_cost_components_from_plan_v1(
             CostComponent::SacrificeSelf => commit_sacrifice(state, &[source]),
             CostComponent::ExileSelf => {
                 event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Exile))
+            }
+            CostComponent::ReturnSelfToOwnersHandV1 => {
+                event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Hand))
             }
             CostComponent::DiscardSelf => {
                 // Cycling discards its card (Hollow One counts it; Gempalm
@@ -11848,6 +11855,13 @@ pub(crate) fn mana_ability_condition_holds(
                     state, player, color,
                 )
         }
+        // Fanatic of Rhonas's ferocious ability (Vintage Cube wave C5a).
+        card_def::ManaAbilityConditionDef::ControllerControlsCreatureWithPowerAtLeastV1(power) => {
+            state.players[player.index()].battlefield.iter().any(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    && effective_power(state, id) >= i32::from(power)
+            })
+        }
     }
 }
 
@@ -13210,6 +13224,13 @@ fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     // Crucible of Worlds (wave E7b).
     #[cfg(feature = "eternal-fixtures")]
     for id in crate::eternal_vintage_e7b_v1::statics::extra_land_candidates(state, player) {
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    // Mole Man, Moloid Master (Vintage Cube wave C5b).
+    #[cfg(feature = "eternal-fixtures")]
+    for id in crate::eternal_cube_c5b_v1::extra_land_candidates(state, player) {
         if !out.contains(&id) {
             out.push(id);
         }
@@ -20516,6 +20537,12 @@ fn plan_spell_departure(
             {
                 // Green Sun's Zenith shuffles itself into its owner's library.
                 Zone::Library
+            } else if cfg!(feature = "eternal-fixtures")
+                && requested_zone == Zone::Graveyard
+                && crate::eternal_cube_c5c_v1::returns_to_hand_on_departure(state, item)
+            {
+                // Buyback (Corpse Dance) puts the spell into its owner's hand.
+                Zone::Hand
             } else {
                 requested_zone
             },
@@ -23201,6 +23228,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
 /// the turn can stage the discard first without copying the expiration work.
 fn expire_cleanup_effects_v1(state: &mut GameState) -> Result<(), ()> {
     crate::standard_cards_v1::cleanup(state);
+    // Necromancy's cleanup sacrifice and Shifting Woodland's copy ending
+    // (Vintage Cube wave C5c).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c5c_v1::begin_cleanup(state);
     for player in &mut state.players {
         player.poison_prevention_v1.0 = false;
     }
@@ -24746,6 +24777,12 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
             | crate::eternal_legacy_e9a_v1::statics::granted_keywords(state, id)
             | crate::eternal_premodern_p1b_v1::statics::granted_keywords(state, id)
             | crate::eternal_sideboard_s1m_v1::granted_keywords(state, id);
+        // Carnage Interpreter's menace and Keen-Eyed Curator's trample
+        // (Vintage Cube wave C5a); `has_effective_keyword` reads them through
+        // `eternal_cards_v1::conditional_self_keywords`.
+        if printed_active {
+            found = found | crate::eternal_cube_c5a_v1::conditional_keywords(state, id);
+        }
     }
     if printed_active && obj.zone == Zone::Battlefield {
         if let Some((minimum, keyword)) = static_graveyard_threshold_keyword_for(def.name) {
@@ -30253,6 +30290,16 @@ fn finalize_owned_cast(
         pending.spell,
         payment.restricted_pool_used(),
     );
+    // Delighted Halfling: a legendary spell paid with its mana can't be
+    // countered (Vintage Cube wave C5a).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c5a_v1::note_restricted_payment(
+        state,
+        pending.controller,
+        pending.spell,
+        payment.restricted_pool_used(),
+        &mana_taps,
+    );
     let storm_targets = payment.storm_targets.take();
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
     if let Some((creatures, quoted)) = edict_input {
@@ -31298,7 +31345,10 @@ fn push_paid_activation(
     if ability.cost.iter().any(|component| {
         matches!(
             component,
-            CostComponent::SacrificeSelf | CostComponent::ExileSelf | CostComponent::DiscardSelf
+            CostComponent::SacrificeSelf
+                | CostComponent::ExileSelf
+                | CostComponent::DiscardSelf
+                | CostComponent::ReturnSelfToOwnersHandV1
         )
     }) && !paid_cost_objects.contains(&pending.source)
     {

@@ -317,6 +317,10 @@ pub enum E3ChoiceKindV1 {
     C1bV1(crate::eternal_cube_c1b_v1::C1bChoiceV1),
     /// A Vintage Cube wave C3a choice (`eternal_cube_c3a_v1`).
     C3aV1(crate::eternal_cube_c3a_v1::C3aChoiceV1),
+    /// A Vintage Cube wave C5d choice (`eternal_cube_c5d_v1`).
+    C5dV1(crate::eternal_cube_c5d_v1::C5dChoiceV1),
+    /// A Vintage Cube wave C5b choice (`eternal_cube_c5b_v1`).
+    C5bV1(crate::eternal_cube_c5b_v1::C5bChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -406,6 +410,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::C3aV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::C5dV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -457,6 +464,8 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::C1cV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C1bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C3aV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::C5bV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::C5dV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P1bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P2aV1(kind) => kind.public_purpose(),
@@ -520,6 +529,8 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::C1aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::C1bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::C3aV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::C5bV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::C5dV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P2aV1(kind) => out.extend(kind.referenced_bindings()),
@@ -884,6 +895,20 @@ pub(crate) fn finish_selection(
             selected,
         ),
         E3ChoiceKindV1::C3aV1(kind) => crate::eternal_cube_c3a_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::C5dV1(kind) => crate::eternal_cube_c5d_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::C5bV1(kind) => crate::eternal_cube_c5b_v1::finish_selection(
             state,
             continuation,
             choice,
@@ -2100,6 +2125,16 @@ pub(crate) fn note_spell_payment(
     if paid_with_cavern {
         let spell = link(state, spell);
         e3_mut(state).uncounterable_spells.push(spell);
+    }
+}
+
+/// Marks the spell `spell` on the stack as one that can't be countered, as a
+/// Cavern of Souls does (Delighted Halfling, Vintage Cube wave C5a).
+pub(crate) fn mark_spell_uncounterable(state: &mut GameState, spell: ObjectId) {
+    let spell = link(state, spell);
+    let e3 = e3_mut(state);
+    if !e3.uncounterable_spells.contains(&spell) {
+        e3.uncounterable_spells.push(spell);
     }
 }
 

@@ -3236,6 +3236,9 @@ enum AbilityCostRecipe {
     /// Station's "Tap another untapped creature you control"
     /// (`CostComponent::TapOtherUntappedControlledCreatureV1`).
     TapOtherUntappedControlledCreature,
+    /// Recurring Nightmare's "Return this enchantment to its owner's hand"
+    /// (`CostComponent::ReturnSelfToOwnersHandV1`).
+    ReturnSelfToOwnersHand,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4815,6 +4818,13 @@ fn object_name_for(name: &str) -> &str {
         "Knight Vigilance Token" => "Knight Token",
         "Blue Thopter Token" => "Thopter Token",
         "Green Cat Token" => "Cat Token",
+        "Moloid Token" => "Moloid",
+        "Green Wurm Token" => "Wurm Token",
+        "Green Elemental Token" => "Elemental Token",
+        // Vintage Cube wave C5a: the printed names of its tokens.
+        "Baloth Beast Token" => "Beast Token",
+        "Gingerbrute Token" => "Gingerbrute",
+        "Fanatic of Rhonas Eternalized Token" => "Fanatic of Rhonas",
         _ => build_standard_v1::object_name_for(name)
             .or_else(|| build_eternal_lurrus_v1::object_name_for(name))
             .unwrap_or(name),
@@ -6570,6 +6580,9 @@ fn ability_cost_src(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::TapOtherUntappedControlledCreature => {
             "CostComponent::TapOtherUntappedControlledCreatureV1".to_string()
         }
+        AbilityCostRecipe::ReturnSelfToOwnersHand => {
+            "CostComponent::ReturnSelfToOwnersHandV1".to_string()
+        }
     }
 }
 
@@ -6638,6 +6651,7 @@ fn ability_cost_token(cost: AbilityCostRecipe) -> String {
         AbilityCostRecipe::TapOtherUntappedControlledCreature => {
             "tap_other_untapped_controlled_creature".to_string()
         }
+        AbilityCostRecipe::ReturnSelfToOwnersHand => "return_self_to_owners_hand".to_string(),
     }
 }
 

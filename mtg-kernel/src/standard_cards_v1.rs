@@ -4210,6 +4210,11 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
         let c4c = crate::eternal_cube_c4c_v1::controlled_boost(state, object);
         boost.0 += c4c.0;
         boost.1 += c4c.1;
+        // Carnage Interpreter's +2/+2 and Keen-Eyed Curator's +4/+4 (Vintage
+        // Cube wave C5a).
+        let c5a = crate::eternal_cube_c5a_v1::controlled_boost(state, object);
+        boost.0 += c5a.0;
+        boost.1 += c5a.1;
     }
     boost
 }

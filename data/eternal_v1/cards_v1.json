@@ -34470,7 +34470,7 @@
   },
   {
    "name": "Delighted Halfling",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{G}",
    "mana_value": 1,
    "colors": [
@@ -34488,11 +34488,6 @@
    "toughness": 2,
    "is_land": false,
    "produces_mana": [
-    "W",
-    "U",
-    "B",
-    "R",
-    "G",
     "C"
    ],
    "decks": [
@@ -34500,12 +34495,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "mana_dork",
+    "restricted_mana",
+    "cant_be_countered_grant"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/d/DelightedHalfling.java"
   },
   {
    "name": "Fanatic of Rhonas",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{G}",
    "mana_value": 2,
    "colors": [
@@ -34530,12 +34530,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "mana_dork",
+    "ferocious",
+    "graveyard_activation",
+    "token_creation"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/f/FanaticOfRhonas.java"
   },
   {
    "name": "Carnage Interpreter",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{B/R}{B/R}",
    "mana_value": 3,
    "colors": [
@@ -34559,12 +34565,19 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "etb_trigger",
+    "discard",
+    "investigate",
+    "token_creation",
+    "static_boost",
+    "menace"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/c/CarnageInterpreter.java"
   },
   {
    "name": "Keen-Eyed Curator",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{G}{G}",
    "mana_value": 2,
    "colors": [
@@ -34587,12 +34600,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "activated_ability",
+    "graveyard_exile",
+    "static_boost",
+    "trample"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/k/KeenEyedCurator.java"
   },
   {
    "name": "Baloth Prime",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{G}",
    "mana_value": 4,
    "colors": [
@@ -34614,12 +34632,20 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "enters_tapped",
+    "stun_counters",
+    "sacrifice_trigger",
+    "token_creation",
+    "activated_ability",
+    "sacrifice_cost",
+    "life_gain"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/b/BalothPrime.java"
   },
   {
    "name": "Alpha Deathclaw",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{4}{B}{G}",
    "mana_value": 6,
    "colors": [
@@ -34643,12 +34669,20 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "menace",
+    "trample",
+    "etb_trigger",
+    "monstrosity",
+    "destroy_target",
+    "activated_ability",
+    "counters_plus1"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/a/AlphaDeathclaw.java"
   },
   {
    "name": "Ginger, Queen of Sweets",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{6}",
    "mana_value": 6,
    "colors": [],
@@ -34672,7 +34706,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "monarch",
+    "etb_trigger",
+    "upkeep_trigger",
+    "token_creation",
+    "life_gain",
+    "activated_ability",
+    "sacrifice_cost"
+   ]
   },
   {
    "name": "Orcish Lumberjack",
@@ -34771,7 +34813,7 @@
   },
   {
    "name": "Myr Battlesphere",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{7}",
    "mana_value": 7,
    "colors": [],
@@ -34793,12 +34835,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "etb_trigger",
+    "token_creation",
+    "attack_trigger",
+    "pump",
+    "tap_cost"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/m/MyrBattlesphere.java"
   },
   {
    "name": "Otharri, Suns' Glory",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{R}{W}",
    "mana_value": 5,
    "colors": [
@@ -34823,12 +34871,20 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "flying",
+    "lifelink",
+    "haste",
+    "attack_trigger",
+    "token_creation",
+    "experience_counter",
+    "graveyard_return"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/o/OtharriSunsGlory.java"
   },
   {
    "name": "Mole Man, Moloid Master",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{G}",
    "mana_value": 3,
    "colors": [
@@ -34853,11 +34909,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "graveyard_land_play",
+    "landfall",
+    "token_creation",
+    "mill"
+   ]
   },
   {
    "name": "Titania, Protector of Argoth",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{G}{G}",
    "mana_value": 5,
    "colors": [
@@ -34881,7 +34942,12 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "etb_trigger",
+    "graveyard_return",
+    "landfall",
+    "token_creation"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/TitaniaProtectorOfArgoth.java"
   },
   {
@@ -34915,7 +34981,7 @@
   },
   {
    "name": "Torsten, Founder of Benalia",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{5}{G}{W}",
    "mana_value": 7,
    "colors": [
@@ -34941,12 +35007,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "etb_trigger",
+    "reveal",
+    "library_bottom_random",
+    "dies_trigger",
+    "token_creation"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/TorstenFounderOfBenalia.java"
   },
   {
    "name": "Worldspine Wurm",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{8}{G}{G}{G}",
    "mana_value": 11,
    "colors": [
@@ -34968,12 +35040,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "trample",
+    "dies_trigger",
+    "token_creation",
+    "graveyard_trigger",
+    "shuffle"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/w/WorldspineWurm.java"
   },
   {
    "name": "Corpse Dance",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{B}",
    "mana_value": 3,
    "colors": [
@@ -34993,12 +35071,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "reanimation",
+    "haste",
+    "delayed_exile",
+    "buyback"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/c/CorpseDance.java"
   },
   {
    "name": "Necromancy",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{B}",
    "mana_value": 3,
    "colors": [
@@ -35018,12 +35101,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "flash",
+    "reanimation",
+    "etb_trigger",
+    "leaves_trigger",
+    "delayed_sacrifice"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/n/Necromancy.java"
   },
   {
    "name": "Recurring Nightmare",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{B}",
    "mana_value": 3,
    "colors": [
@@ -35043,12 +35132,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "reanimation",
+    "sacrifice_cost",
+    "activated_ability",
+    "return_to_hand_cost"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/r/RecurringNightmare.java"
   },
   {
    "name": "Aang's Iceberg",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{W}",
    "mana_value": 3,
    "colors": [
@@ -35068,12 +35162,19 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "flash",
+    "etb_trigger",
+    "exile_until_leaves",
+    "waterbend",
+    "activated_ability",
+    "scry"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/a/AangsIceberg.java"
   },
   {
    "name": "Shifting Woodland",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "",
    "mana_value": 0,
    "colors": [],
@@ -35093,12 +35194,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "enters_tapped_unless",
+    "activated_ability",
+    "copy",
+    "delirium"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/ShiftingWoodland.java"
   },
   {
    "name": "Sunfall",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{W}{W}",
    "mana_value": 5,
    "colors": [
@@ -35118,12 +35225,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "board_wipe",
+    "exile",
+    "incubate"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/Sunfall.java"
   },
   {
    "name": "Balance",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{W}",
    "mana_value": 2,
    "colors": [
@@ -35143,12 +35254,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "each_player_choice",
+    "sacrifice",
+    "discard"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/b/Balance.java"
   },
   {
    "name": "Council's Judgment",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{W}{W}",
    "mana_value": 3,
    "colors": [
@@ -35168,12 +35283,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "each_player_choice",
+    "exile"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/c/CouncilsJudgment.java"
   },
   {
    "name": "Memory Jar",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{5}",
    "mana_value": 5,
    "colors": [],
@@ -35191,12 +35309,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "draw_card",
+    "delayed_end_step_return"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/m/MemoryJar.java"
   },
   {
    "name": "Palantir of Orthanc",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}",
    "mana_value": 3,
    "colors": [],
@@ -35216,12 +35339,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "end_step_trigger",
+    "counters",
+    "scry",
+    "draw_card",
+    "mill"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/p/PalantirOfOrthanc.java"
   },
   {
    "name": "Proft's Eidetic Memory",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}",
    "mana_value": 2,
    "colors": [
@@ -35243,12 +35372,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "etb_trigger",
+    "draw_card",
+    "static_ability",
+    "beginning_of_combat",
+    "plus_one_counters"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/p/ProftsEideticMemory.java"
   },
   {
    "name": "Fractured Identity",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{W}{U}",
    "mana_value": 5,
    "colors": [
@@ -35269,8 +35404,220 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "exile_target",
+    "token_copy"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/f/FracturedIdentity.java"
+  },
+  {
+   "name": "Green Wurm Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Wurm"
+   ],
+   "supertypes": [],
+   "power": 5,
+   "toughness": 5,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "trample"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/WurmToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Myr Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Myr"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/MyrToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Moloid Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Minion"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "attack_trigger",
+    "mill"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/MoloidToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Green Elemental Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Elemental"
+   ],
+   "supertypes": [],
+   "power": 5,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/ElementalToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Baloth Beast Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Beast"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/BeastToken2.java",
+   "is_token": true
+  },
+  {
+   "name": "Gingerbrute Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Food",
+    "Golem"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "haste",
+    "haste_blockers_only",
+    "food"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/Gingerbrute.java",
+   "is_token": true
+  },
+  {
+   "name": "Fanatic of Rhonas Eternalized Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Zombie",
+    "Snake",
+    "Druid"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [
+    "G"
+   ],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "mana_ability",
+    "mana_dork",
+    "ferocious",
+    "eternalize"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FanaticOfRhonas.java",
+   "is_token": true
   }
  ]
 }

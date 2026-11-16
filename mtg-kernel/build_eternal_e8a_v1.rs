@@ -383,6 +383,8 @@ pub(super) fn equipment_for(name: &str) -> &'static str {
 pub(super) fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
     match name {
         "Mystic Sanctuary" => "Some(EntersBattlefieldTappedUnlessDef { controller_controls_other_subtype: Subtype::Island, minimum_count: 3 })",
+        // Shifting Woodland (Vintage Cube wave C5c): "unless you control a Forest".
+        "Shifting Woodland" => "Some(EntersBattlefieldTappedUnlessDef { controller_controls_other_subtype: Subtype::Forest, minimum_count: 1 })",
         _ => "None",
     }
 }

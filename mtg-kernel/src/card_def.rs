@@ -2368,6 +2368,11 @@ pub enum CostComponent {
     /// last-known information if it leaves. Activations only. Appended for
     /// the eternal catalog (Legacy sideboard wave S1m).
     TapOtherUntappedControlledCreatureV1,
+    /// "Return this permanent to its owner's hand" as a cost (Recurring
+    /// Nightmare): the source itself moves from the battlefield to its
+    /// owner's hand as the ability is put on the stack. Activations only.
+    /// Appended for the eternal catalog (Vintage Cube wave C5c).
+    ReturnSelfToOwnersHandV1,
 }
 
 impl CostComponent {
@@ -2826,6 +2831,9 @@ pub enum ManaAbilityConditionDef {
     /// Reflecting Pool could produce this type of mana." Appended for the
     /// eternal catalog (Premodern wave P2c).
     ControllerOtherLandCouldProduceV1(ManaColor),
+    /// Fanatic of Rhonas's ferocious ability: "Activate only if you control a
+    /// creature with power N or greater." Appended for Vintage Cube wave C5a.
+    ControllerControlsCreatureWithPowerAtLeastV1(u8),
 }
 
 /// What a restricted mana ability's mana may pay for.

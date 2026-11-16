@@ -257,6 +257,13 @@ pub(super) fn additional_mana_abilities_for(name: &str) -> &'static str {
         // identified by a color its action names that the pair does not make:
         // {W} is {U}{B}, {G} is {U}{R} and {C} is {B}{R}.
         "Relic of Sauron" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::U, ManaColor::B]), controller_damage: 0, max_activations_per_turn: None } }, AdditionalManaAbilityDef { colors: &[ManaColor::G], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::U, ManaColor::R]), controller_damage: 0, max_activations_per_turn: None } }, AdditionalManaAbilityDef { colors: &[ManaColor::C], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::B, ManaColor::R]), controller_damage: 0, max_activations_per_turn: None } }]",
+        // Fanatic of Rhonas and its eternalized token (Vintage Cube wave C5a):
+        // "Ferocious -- {T}: Add {G}{G}{G}{G}. Activate only if you control a
+        // creature with power 4 or greater." The primary ability owns {G}, so
+        // this one is identified by {C}, a color its action names that it does
+        // not make (Relic of Sauron's pairs); its condition is
+        // `standard_lands_v1::fields`.
+        "Fanatic of Rhonas" | "Fanatic of Rhonas Eternalized Token" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::C], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::G, ManaColor::G, ManaColor::G, ManaColor::G]), controller_damage: 0, max_activations_per_turn: None } }]",
         _ => super::build_eternal_e7a_v1::additional_mana_abilities_for(name),
     }
 }

@@ -168,6 +168,9 @@ fn activation_cost(components: &[CostComponent], source: &str) -> Result<String,
             CostComponent::SacrificeSelf => Ok(format!("sacrifice {source}")),
             CostComponent::ExileSelf => Ok(format!("exile {source}")),
             CostComponent::DiscardSelf => Ok(format!("discard {source}")),
+            CostComponent::ReturnSelfToOwnersHandV1 => {
+                Ok(format!("return {source} to its owner's hand"))
+            }
             other => cost_components(std::slice::from_ref(other)),
         })
         .collect::<Result<Vec<_>, _>>()
