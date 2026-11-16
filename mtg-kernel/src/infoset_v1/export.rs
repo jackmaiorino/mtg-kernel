@@ -2,7 +2,7 @@
 
 use super::ledger::{AllocationErrorV1, NameKeyV1, NamesV1};
 use super::pins::{allocate_pins, allocate_pins_independent_v4, PinCapacityV1, PinV1};
-use super::projection::{is_public, project_v1, ProjectionV1, SpanV1};
+use super::projection::{is_public, live_outside_pool_v1, project_v1, ProjectionV1, SpanV1};
 use super::rewrite::{has_tag, tagged_value, ClassV1, RefV1, ResolvedV1, WalkerV1};
 use super::{ExportErrorV1, FaultCodeV1, HandleV1, RefusalCodeV1, INFOSET_SCHEMA_V1};
 use crate::ids::{ObjectId, PlayerId};
@@ -1058,6 +1058,12 @@ fn export_versioned(
     // Step 3: unknown slots per owner, hand then library.
     let mut slots: Vec<SlotV1> = Vec::new();
     let mut opp_hand_tracked: Vec<ObjectId> = Vec::new();
+    // Tokens and spell copies sitting in a hand or library: outside the card
+    // pool, public, tracked by the projection, placed by handle (issue 713).
+    let mut opp_hand_public: Vec<ObjectId> = Vec::new();
+    let mut library_public: Vec<(PlayerId, usize, ObjectId)> = Vec::new();
+    let live_outside_pool =
+        |id: ObjectId, zone: Zone| projection.tracked(id) && live_outside_pool_v1(state, id, zone);
     for owner in [PlayerId::P0, PlayerId::P1] {
         let p = &state.players[owner.index()];
         if owner != v {
@@ -1098,23 +1104,36 @@ fn export_versioned(
                     &mut opp_hand_tracked,
                 );
             }
+            // Issue 713: a token or spell copy in the hand is public and
+            // tracked; it takes a handle, not a hidden slot.
+            let public: Vec<ObjectId> = p
+                .hand
+                .iter()
+                .copied()
+                .filter(|id| !opp_hand_tracked.contains(id) && live_outside_pool(*id, Zone::Hand))
+                .collect();
             let untracked: Vec<ObjectId> = p
                 .hand
                 .iter()
                 .copied()
-                .filter(|id| !opp_hand_tracked.contains(id))
+                .filter(|id| !opp_hand_tracked.contains(id) && !public.contains(id))
                 .collect();
+            let first_slot = opp_hand_tracked.len() + public.len();
+            opp_hand_public = public;
             for (k, native) in untracked.into_iter().enumerate() {
                 slots.push(SlotV1 {
                     owner,
                     zone: Zone::Hand,
-                    index: opp_hand_tracked.len() + k,
+                    index: first_slot + k,
                     native,
                 });
             }
         }
         for (i, &native) in p.library.iter().enumerate() {
-            if !projection.library[owner.index()].contains_key(&(i as u32)) {
+            if live_outside_pool(native, Zone::Library) {
+                // A token or spell copy in a library: placed by handle.
+                library_public.push((owner, i, native));
+            } else if !projection.library[owner.index()].contains_key(&(i as u32)) {
                 slots.push(SlotV1 {
                     owner,
                     zone: Zone::Library,
@@ -2079,10 +2098,18 @@ fn export_versioned(
             for id in &opp_hand_tracked {
                 hand.push(handle_of(id)?);
             }
+            for id in &opp_hand_public {
+                hand.push(handle_of(id)?);
+            }
         }
         let mut library: Vec<Option<u32>> = vec![None; p.library.len()];
         for (pos, id) in &projection.library[owner.index()] {
             library[*pos as usize] = Some(handle_of(id)?);
+        }
+        for (public_owner, pos, id) in &library_public {
+            if *public_owner == owner {
+                library[*pos] = Some(handle_of(id)?);
+            }
         }
         for (i, s) in slots.iter().enumerate() {
             if s.owner != owner {
