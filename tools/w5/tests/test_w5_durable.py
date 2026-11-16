@@ -51,6 +51,25 @@ class DurableWindowTests(unittest.TestCase):
         self.assertAlmostEqual(w['per_arm']['C']['updates_per_hour'], 2304.0)
         self.assertEqual(w['failures'], [])
 
+    def test_launch_in_the_start_millisecond(self):
+        # The ledger stamps a launcher start to the millisecond; the common start is not rounded. After a start of
+        # 1000.0004, a launch at 1000.0007 is stamped 1000.001, and a launch at 1000.00045 is stamped 1000.0: that
+        # stamp reads 0.4 ms below the start although the launch followed it. The window is whole either way, and
+        # at the ledger's resolution the start does not exceed the stamp.
+        start = 1000.0004
+        for launched, stamp in ((1000.0007, 1000.001), (1000.00045, 1000.0)):
+            self.assertGreater(launched, start)
+            self.assertEqual(round(launched, 3), stamp)
+            w = chains.durable_window(start, {
+                'a': chain(8, [commit(0, 1010.0), commit(1, 1020.0)], starts=[(0, stamp)])})
+            self.assertEqual((w['complete'], w['failures']), (True, []))
+            a = w['per_chain']['a']
+            self.assertEqual((w['start_unix'], a['start_unix']), (start, stamp))
+            self.assertAlmostEqual(a['launch_offset_seconds'], stamp - start, places=9)
+            self.assertGreater(a['launch_offset_seconds'], -0.0005)  # at most half a millisecond below zero
+            self.assertLessEqual(round(w['start_unix'], 3), a['start_unix'])
+            self.assertAlmostEqual(w['elapsed_seconds'], 1020.0 - start, places=9)
+
     def test_unequal_targets(self):
         # a's 8 updates end at 1020, b's 12 (three segments) at 1036: 20 updates over 36 s.
         w = chains.durable_window(T0, {
