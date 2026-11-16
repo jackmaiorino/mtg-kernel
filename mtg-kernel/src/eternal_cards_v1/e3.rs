@@ -1207,6 +1207,9 @@ pub(crate) fn drive(
         EternalOpV1::P3hV1(op) => {
             crate::eternal_premodern_p3h_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::S1nV1(op) => {
+            crate::eternal_sideboard_s1n_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::DelayedUpkeepDrawV1 => crate::eternal_vintage_e7b_v1::dredge::drive_draws(
             state,
             continuation,
@@ -1304,8 +1307,12 @@ fn graveyard_card_ids(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
         .collect()
 }
 
-/// "The player wins the game": in a two-player game the opponent loses.
+/// "The player wins the game": in a two-player game the opponent loses,
+/// unless an opponent's effect forbids `player` from winning.
 fn win_game(state: &mut GameState, player: PlayerId) {
+    if crate::game_outcome_protection_v1::cannot_win(state, player) {
+        return;
+    }
     state.players[player.opponent().index()].has_lost = true;
 }
 

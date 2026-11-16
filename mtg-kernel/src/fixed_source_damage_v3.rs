@@ -1001,6 +1001,20 @@ pub(crate) fn legal_targets_with_controller(
                             id,
                             facts.color_mask,
                         ))
+                    || (cfg!(feature = "eternal-fixtures")
+                        && crate::eternal_sideboard_s1n_v1::has_protection_from_artifacts(
+                            state, id,
+                        )
+                        && crate::source_type_hexproof_v1::source_types(
+                            state,
+                            facts.source.source,
+                            facts.source.card_def,
+                            facts.source.zone,
+                            facts.source.zone_change_count,
+                        )
+                        .map_or(true, |types| {
+                            types.contains(crate::card_def::CardType::Artifact)
+                        }))
                     || crate::source_type_hexproof_v1::protects_from_source(
                         state,
                         id,

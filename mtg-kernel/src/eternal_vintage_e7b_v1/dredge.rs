@@ -24,7 +24,7 @@ use crate::eternal_cards_v1::{
 };
 use crate::eternal_vintage_v1::{
     abandon_coveted_jewel_draws, coveted_jewel_changes_hands, coveted_jewel_draw_stage_matches,
-    VintageOpV1,
+    is_coveted_jewel_entry_draw, paradoxical_outcome, VintageOpV1,
 };
 use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
@@ -124,7 +124,12 @@ pub(crate) fn owned_draw_needs_choice(state: &GameState, player: PlayerId, count
 
 /// Whether a synchronous program should run in the resumable interpreter
 /// so the affected player can choose a draw replacement.
-pub(crate) fn forces_resumable(state: &GameState, program: &EffectOp, ctx: &ExecCtx) -> bool {
+pub(crate) fn forces_resumable(
+    state: &GameState,
+    program: &EffectOp,
+    ctx: &ExecCtx,
+    is_copy: bool,
+) -> bool {
     if !cfg!(feature = "eternal-fixtures") {
         return false;
     }
@@ -136,7 +141,24 @@ pub(crate) fn forces_resumable(state: &GameState, program: &EffectOp, ctx: &Exec
     ) {
         return crate::effect::resumable_program_supported(program);
     }
-    let needs_choice = match owned_draws_v1::starting_draws(state, program, ctx) {
+    let starting_draws = match program {
+        EffectOp::DrawCards { player, count }
+            if !is_copy && is_coveted_jewel_entry_draw(ctx, *player, *count) =>
+        {
+            Some((ctx.controller, *count))
+        }
+        op if !is_copy && *op == coveted_jewel_changes_hands() => {
+            Some((ctx.controller.opponent(), 3))
+        }
+        op if !is_copy && *op == paradoxical_outcome() => {
+            // A return can change which Riddlers apply. Route for a possible
+            // second attempt, then check the actual count after the batch.
+            let possible_attempts = if ctx.targets.is_empty() { 0 } else { 2 };
+            Some((ctx.controller, possible_attempts))
+        }
+        _ => owned_draws_v1::starting_draws(state, program, ctx),
+    };
+    let needs_choice = match starting_draws {
         Some((drawer, count)) => owned_draw_needs_choice(state, drawer, count),
         None => {
             draws(program)
@@ -330,6 +352,15 @@ pub(crate) fn validate_coveted_jewel_draw(
         })
     {
         return Err("Coveted Jewel changed its original combat trigger".into());
+    }
+    if owned_draws_v1::has_started(state, item.v4.stack_item_id) {
+        if state.eternal_owned_draw_progress_v1.is_some()
+            && state.coveted_jewel_draw_progress_v1.is_none()
+            && !item.is_copy
+        {
+            return Ok(()); // The shared owned-draw validator checks the native instruction.
+        }
+        return Err("Coveted Jewel already started its original draw".into());
     }
     if state.coveted_jewel_draw_progress_v1.is_none()
         && matches!((&pending.choice, pending.frames.as_slice()),

@@ -24719,7 +24719,7 @@
   },
     {
    "name": "Martyr of Sands",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{W}",
    "mana_value": 1,
    "colors": [
@@ -29349,6 +29349,156 @@
     "direct_damage"
    ],
    "java_file": "Mage.Sets/src/mage/cards/g/GhituSlinger.java"
+  },
+  {
+   "name": "Apostle's Blessing",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W/P}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "pauper-infect-09cfa92b-ebe6-4cfb-be11-6f64e5cb7bf6",
+    "pauper-kiln-fiend",
+    "vintage-scam"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "phyrexian_mana",
+    "protection",
+    "modal_choice"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/ApostlesBlessing.java"
+  },
+  {
+   "name": "Doorkeeper Thrull",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Thrull"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-bant-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "flash",
+    "flying",
+    "static_ability",
+    "trigger_suppression"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DoorkeeperThrull.java"
+  },
+  {
+   "name": "Darksteel Angel",
+   "engine_capability": "full",
+   "mana_cost": "{9}",
+   "mana_value": 9,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Angel"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-paradoxical-outcome"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "flying",
+    "indestructible",
+    "cant_lose_game",
+    "counter_prevention"
+   ]
+  },
+  {
+   "name": "From the Ashes",
+   "engine_capability": "full",
+   "mana_cost": "{3}{R}",
+   "mana_value": 4,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-jeskai-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "destroy_all",
+    "library_search",
+    "shuffle"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FromTheAshes.java"
+  },
+  {
+   "name": "Kiora's Dismissal",
+   "engine_capability": "full",
+   "mana_cost": "{U}",
+   "mana_value": 1,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-led-dredge"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "strive",
+    "bounce"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KiorasDismissal.java"
   }
  ]
 }

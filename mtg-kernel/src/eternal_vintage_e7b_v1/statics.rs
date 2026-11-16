@@ -17,6 +17,7 @@ use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Zone};
 const COLLECTOR_OUPHE: &str = "Collector Ouphe";
 const HOLLOW_ONE: &str = "Hollow One";
 const CRUCIBLE_OF_WORLDS: &str = "Crucible of Worlds";
+const DOORKEEPER_THRULL: &str = "Doorkeeper Thrull";
 const KARN_ARGENT_DEFENDER: &str = "Karn, Argent Defender";
 const LODESTONE_GOLEM: &str = "Lodestone Golem";
 const PHYREXIAN_REVOKER: &str = "Phyrexian Revoker";
@@ -121,9 +122,12 @@ pub(crate) fn entry_triggers_suppressed(state: &GameState, object: ObjectId) -> 
     let artifact = types(CardType::Artifact);
     (creature && active_permanents(state, TORPOR_ORB, None).next().is_some())
         || ((creature || artifact)
-            && active_permanents(state, KARN_ARGENT_DEFENDER, None)
+            && (active_permanents(state, KARN_ARGENT_DEFENDER, None)
                 .next()
-                .is_some())
+                .is_some()
+                || active_permanents(state, DOORKEEPER_THRULL, None)
+                    .next()
+                    .is_some()))
 }
 
 /// Whether `event` is an entry whose triggers Torpor Orb or Karn, Argent

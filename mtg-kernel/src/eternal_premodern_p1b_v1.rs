@@ -1114,6 +1114,11 @@ fn replenish_hosts(
     battlefield(state)
         .filter(|&host| {
             crate::standard_cards_v1::aura_host_legal(def, controller, host, state) == Some(true)
+                && !crate::eternal_pauper_e6b_v1::protection_removes_attachment(
+                    state,
+                    aura.object,
+                    host,
+                )
         })
         .map(|host| bind(state, host))
         .collect()

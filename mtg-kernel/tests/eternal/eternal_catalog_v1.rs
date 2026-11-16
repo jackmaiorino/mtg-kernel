@@ -244,12 +244,7 @@ const SNAPSHOTS: [&str; 2] = [
 ];
 
 /// Executable S1 implementations with known missing reachable branches.
-const PARTIAL_S1: [&str; 4] = [
-    "Coalition Honor Guard",
-    "Hullbreacher",
-    "Martyr of Sands",
-    "Standard Bearer",
-];
+const PARTIAL_S1: [&str; 3] = ["Coalition Honor Guard", "Hullbreacher", "Standard Bearer"];
 
 /// Volrath's Shapeshifter and the S1 cards above are the registry's only
 /// Partial definitions.

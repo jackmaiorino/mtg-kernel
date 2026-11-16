@@ -1608,12 +1608,12 @@ pub fn hamlet_name(state: &GameState, hamlet: ObjectId) -> Option<u16> {
 /// would draw one or more cards, you draw that many cards plus one
 /// instead." One additional attempt per applicable Riddler, for the whole
 /// instruction before any individual draw replacement.
-pub(crate) fn riddler_extra_draws(state: &GameState, player: PlayerId) -> usize {
+pub(crate) fn riddler_extra_draws(state: &GameState, player: PlayerId, hand_len: usize) -> usize {
     static RIDDLER: std::sync::OnceLock<Option<u16>> = std::sync::OnceLock::new();
     let Some(riddler) = *RIDDLER.get_or_init(|| card_id_by_name(QUANTUM_RIDDLER)) else {
         return 0;
     };
-    if state.players[player.index()].hand.len() > 1 {
+    if hand_len > 1 {
         return 0;
     }
     state.players[player.index()]
