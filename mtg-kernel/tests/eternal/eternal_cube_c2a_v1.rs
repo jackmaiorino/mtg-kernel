@@ -783,7 +783,11 @@ fn a_shockland_or_passage_entering_under_blood_moon_has_no_entry_choice() {
     // abilities, so nothing is asked and it enters untapped.
     for name in ["Steam Vents", "Watery Grave", "Multiversal Passage"] {
         let mut state = plains();
-        put(&mut state, P1, "Blood Moon", Zone::Battlefield);
+        // The Moon really enters: its effect is recorded as it does.
+        let moon = put(&mut state, P1, "Blood Moon", Zone::Hand);
+        enter(&mut state, moon);
+        settled(&mut state);
+        assert_eq!(zone(&state, moon), Zone::Battlefield);
         let land = put(&mut state, P0, name, Zone::Hand);
         play(&mut state, land);
         expect_priority(&mut state);
