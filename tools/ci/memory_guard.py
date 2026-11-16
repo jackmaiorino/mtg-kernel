@@ -31,7 +31,13 @@ PROTECTED_NAMES = frozenset({
 })
 # A smaller process is not what exhausted the machine; killing it would not help.
 MIN_VICTIM_KB = 1024 * 1024
-KILLED = "KILLED"
+# Log line markers: a process the guard killed, one it could not kill, and a check that raised.
+KILLED, KILL_FAILED, ERROR = "KILLED", "KILL_FAILED", "ERROR"
+
+
+def read(path: Path) -> str:
+    """A /proc file as text. A process name is arbitrary bytes, so undecodable ones are replaced."""
+    return path.read_text(encoding="utf-8", errors="replace")
 
 
 def parse_meminfo(text: str) -> dict[str, int]:
@@ -73,7 +79,8 @@ def parse_status(text: str) -> tuple[str, int, int] | None:
             fields[name] = rest.strip()
     if "VmRSS" not in fields:
         return None
-    return fields.get("Name", "?"), int(fields["VmRSS"].split()[0]), int(fields.get("VmSwap", "0 kB").split()[0])
+    name = "_".join(fields.get("Name", "").split()) or "?"  # one word, so a log line splits on spaces
+    return name, int(fields["VmRSS"].split()[0]), int(fields.get("VmSwap", "0 kB").split()[0])
 
 
 def processes(proc: Path = Path("/proc")) -> list[tuple[int, str, int, int]]:
@@ -83,9 +90,9 @@ def processes(proc: Path = Path("/proc")) -> list[tuple[int, str, int, int]]:
         if not entry.name.isdigit():
             continue
         try:
-            status = parse_status((entry / "status").read_text())
-        except OSError:
-            continue  # the process ended while we were reading
+            status = parse_status(read(entry / "status"))
+        except (OSError, ValueError):
+            continue  # the process ended while we were reading, or its status is not what we expect
         if status:
             rows.append((int(entry.name), *status))
     return rows
@@ -105,10 +112,10 @@ def largest(rows: list[tuple[int, str, int, int]], count: int = 3) -> str:
     return ",".join(f"{name}:{rss // MIB}+{swap // MIB}" for _, name, rss, swap in top)
 
 
-def record_line(clock: str, meminfo: dict[str, int], low_available: int, high_swap: int, pressure: float,
+def record_line(meminfo: dict[str, int], low_available: int, high_swap: int, pressure: float,
                 rows: list[tuple[int, str, int, int]]) -> str:
     """One record: the interval's lowest available memory and highest swap use, in MiB."""
-    return (f"{clock} available_min={low_available // MIB} swap_used_max={high_swap // MIB} "
+    return (f"available_min={low_available // MIB} swap_used_max={high_swap // MIB} "
             f"memory_total={meminfo.get('MemTotal', 0) // MIB} swap_total={meminfo.get('SwapTotal', 0) // MIB} "
             f"pressure_full10={pressure:.0f} largest_rss+swap={largest(rows)}")
 
@@ -137,53 +144,76 @@ def watch(log: Path, interval: float, record_every: float, memory_floor: float, 
 
     def write(line: str) -> None:
         with log.open("a", encoding="utf-8") as out:
-            out.write(line + "\n")
+            out.write(f"{time.strftime('%H:%M:%S')} {line}\n")
 
-    write(f"{time.strftime('%H:%M:%S')} watching: kill the largest process when available memory is under "
-          f"{memory_floor:g}% and free swap is under {swap_floor:g}%")
-    low_available, high_swap, next_record = None, 0, time.monotonic() + record_every
+    def same_process(pid: int, name: str) -> bool:
+        """The process chosen from the scan is still there under the same name (its pid was not reused)."""
+        try:
+            status = parse_status(read(proc / str(pid) / "status"))
+        except (OSError, ValueError):
+            return False
+        return status is not None and status[0] == name
+
+    write(f"watching: kill the largest process when available memory is under {memory_floor:g}% and free swap "
+          f"is under {swap_floor:g}%")
+    low_available, high_swap, next_record, last_error = None, 0, time.monotonic() + record_every, None
     while rounds is None or rounds > 0:
         rounds = None if rounds is None else rounds - 1
-        meminfo = parse_meminfo(meminfo_path.read_text())
-        available = meminfo.get("MemAvailable", 0)
-        swap_used = meminfo.get("SwapTotal", 0) - meminfo.get("SwapFree", 0)
-        low_available = available if low_available is None else min(low_available, available)
-        high_swap = max(high_swap, swap_used)
-        if starved(meminfo, memory_floor, swap_floor):
-            rows = processes(proc)
-            victim = choose_victim(rows, own_pid)
-            if victim:
-                pid, name, rss, swap = victim
+        pause = interval
+        try:
+            meminfo = parse_meminfo(read(meminfo_path))
+            available = meminfo.get("MemAvailable", 0)
+            swap_used = meminfo.get("SwapTotal", 0) - meminfo.get("SwapFree", 0)
+            low_available = available if low_available is None else min(low_available, available)
+            high_swap = max(high_swap, swap_used)
+            if starved(meminfo, memory_floor, swap_floor):
+                rows = processes(proc)
+                victim = choose_victim(rows, own_pid)
+                if victim and same_process(victim[0], victim[1]):
+                    pid, name, rss, swap = victim
+                    detail = (f"pid={pid} name={name} rss={rss // MIB} swap={swap // MIB} "
+                              f"available={available // MIB} swap_free={meminfo.get('SwapFree', 0) // MIB} "
+                              f"largest_rss+swap={largest(rows, 5)}")
+                    try:
+                        kill(pid, getattr(signal, "SIGKILL", 9))  # before a log write can block on a starved disk
+                    except OSError as error:
+                        write(f"{KILL_FAILED} {detail} error={'_'.join(str(error.strerror).split())}")
+                    else:
+                        write(f"{KILLED} {detail}")
+                    pause = max(interval, 5.0)  # let the kernel return the memory before looking again
+            if time.monotonic() >= next_record:
                 try:
-                    kill(pid, getattr(signal, "SIGKILL", 9))  # before any log write can block on a starved disk
-                    outcome = "killed"
-                except OSError as error:
-                    outcome = f"kill failed ({error.strerror})"
-                write(f"{time.strftime('%H:%M:%S')} {KILLED} pid={pid} name={name} rss={rss // MIB} "
-                      f"swap={swap // MIB} outcome={outcome} available={available // MIB} "
-                      f"swap_free={meminfo.get('SwapFree', 0) // MIB} largest_rss+swap={largest(rows, 5)}")
-                sleep(max(interval, 5.0))  # let the kernel return the memory before looking again
-                continue
-        if time.monotonic() >= next_record:
-            try:
-                pressure = parse_pressure(pressure_path.read_text())
-            except OSError:
-                pressure = 0.0
-            write(record_line(time.strftime("%H:%M:%S"), meminfo, low_available, high_swap, pressure,
-                              processes(proc)))
-            low_available, high_swap, next_record = None, 0, time.monotonic() + record_every
-        sleep(interval)
+                    pressure = parse_pressure(read(pressure_path))
+                except OSError:
+                    pressure = 0.0
+                write(record_line(meminfo, low_available, high_swap, pressure, processes(proc)))
+                low_available, high_swap, next_record = None, 0, time.monotonic() + record_every
+            last_error = None
+        except Exception as error:  # noqa: BLE001 - the guard must outlive anything it cannot read or write
+            text = f"{type(error).__name__}: {error}"
+            if text != last_error:  # a repeating failure is recorded once
+                last_error = text
+                try:
+                    write(f"{ERROR} {text}")
+                except OSError:
+                    pass
+        sleep(pause)
     return 0
 
 
 def summarize(lines: list[str]) -> tuple[list[str], list[str]]:
-    """(summary lines, kill lines) of a watch log."""
-    lowest, highest, totals, kills = None, 0, "", []
+    """(summary lines, the lines of processes the guard killed) of a watch log."""
+    lowest, highest, totals, kills, failed, errors = None, 0, "", [], 0, 0
     for line in lines:
-        if f" {KILLED} " in line:
+        words = line.split()
+        marker = words[1] if len(words) > 1 else ""
+        if marker == KILLED:
             kills.append(line)
-            continue
-        fields = dict(field.split("=", 1) for field in line.split()[1:] if "=" in field)
+        elif marker == KILL_FAILED:
+            failed += 1
+        elif marker == ERROR:
+            errors += 1
+        fields = dict(field.split("=", 1) for field in words[1:] if "=" in field)
         if "available_min" not in fields:
             continue
         available, swap = int(fields["available_min"]), int(fields["swap_used_max"])
@@ -197,6 +227,10 @@ def summarize(lines: list[str]) -> tuple[list[str], list[str]]:
     if kills:
         summary.append(f"Memory guard killed {len(kills)} process(es) because memory and swap ran out; "
                        "the failing step is that process, not a test result.")
+    if failed:
+        summary.append(f"Memory guard could not kill {failed} process(es) it chose (see {KILL_FAILED} above).")
+    if errors:
+        summary.append(f"Memory guard recorded {errors} error(s) of its own (see {ERROR} above).")
     return summary, kills
 
 
