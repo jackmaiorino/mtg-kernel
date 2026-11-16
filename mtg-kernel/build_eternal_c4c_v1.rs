@@ -96,13 +96,13 @@ const GLIMMER_LENS: [ActivatedAbilityRecipe; 1] = [equip(&[ManaCost("{1}{W}")])]
 /// Iron Man Armor: "{2}: If this Equipment isn't a creature, it becomes a 0/0
 /// Construct Hero artifact creature with flying and 'This creature gets +1/+1
 /// for each artifact you control' until end of turn" (Mishra's Factory's
-/// animation; a second activation while it is a creature only renews the
-/// same effect), then "Equip {2}" (its own program: the Armor may be a
+/// animation, behind its own program that does nothing while the Armor is
+/// already a creature), then "Equip {2}" (its own program: the Armor may be a
 /// creature that names itself).
 const IRON_MAN_ARMOR: [ActivatedAbilityRecipe; 2] = [
     instant(
         &[ManaCost("{2}")],
-        AbilityEffectRecipe::AnimateSource,
+        program("crate::eternal_cube_c4c_v1::iron_man_animate"),
         "None",
     ),
     ActivatedAbilityRecipe {
@@ -208,7 +208,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
             "etb:attach_to_target_controlled_creature;equipment:plus_2_plus_1_flying;activated:2_becomes_0_0_construct_hero_artifact_creature_flying_plus_1_plus_1_per_artifact_until_end_of_turn;equip:2"
         }
         "Astrologian's Planisphere" => {
-            "equipment:wizard;granted_trigger:cast_noncreature_spell_or_draw_third_card_each_turn_plus_1_plus_1_counter_on_creature;equip:2"
+            "job_select:create_hero_token_attach_self;equipment:wizard;granted_trigger:cast_noncreature_spell_or_draw_third_card_each_turn_plus_1_plus_1_counter_on_creature;equip:2"
         }
         "Smuggler's Copter" => {
             "vehicle:3_3;flying;attacks_or_blocks:may_draw_1_then_discard_1;crew:1"

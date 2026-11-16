@@ -129,6 +129,11 @@ pub struct C4cStateV1 {
     /// Skullclamps whose host is leaving the battlefield.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub clamp_records: Vec<ClampRecordV1>,
+    /// Creature incarnations that entered the battlefield as 1/1 creatures
+    /// while a Sword of the Meek was in their controller's graveyard (kept
+    /// until the trigger collection that finds them, or until they leave).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sword_entries: Vec<ObjectLinkV4>,
 }
 
 impl C4cStateV1 {
@@ -172,6 +177,10 @@ pub enum C4cOpV1 {
     /// Iron Man Armor's "Equip {2}": attach to target 0, unless the Armor is a
     /// creature (301.5c), when the ability does nothing.
     IronManEquipV1,
+    /// Iron Man Armor's "{2}: If this Equipment isn't a creature, it becomes
+    /// ...": the animation of `CardDef::animation`, unless the Armor already
+    /// is a creature (animated by another effect, or by itself earlier).
+    IronManAnimateV1,
 }
 
 impl C4cOpV1 {
@@ -294,6 +303,12 @@ fn chariot_copy() -> EffectOp {
 /// creature, and 301.5c keeps an Equipment that is a creature from equipping.
 pub fn iron_man_equip() -> EffectOp {
     c4c(C4cOpV1::IronManEquipV1)
+}
+
+/// Iron Man Armor's "{2}: If this Equipment isn't a creature, it becomes a 0/0
+/// Construct Hero artifact creature ..." (checked as the ability resolves).
+pub fn iron_man_animate() -> EffectOp {
+    c4c(C4cOpV1::IronManAnimateV1)
 }
 
 /// Astrologian's Planisphere's granted "put a +1/+1 counter on this
@@ -815,12 +830,67 @@ fn planisphere_triggers(
     }
 }
 
+/// Entry hook, called for every permanent that enters the battlefield, after
+/// its entry counters (both entry sites of `event.rs`, so a creature that
+/// enters with counters is read as it enters): a creature that enters as a 1/1
+/// while a Sword of the Meek is in its controller's graveyard is recorded for
+/// the Sword's trigger, with the power and toughness it has as it enters (a
+/// Germ that enters 0/0 and grows when Nettlecyst attaches was not a 1/1
+/// creature as it entered). Nothing is recorded in a game without a Sword in
+/// a graveyard.
+pub(crate) fn apply_entry(state: &mut GameState, object: ObjectId) {
+    if !cfg!(feature = "eternal-fixtures") {
+        return;
+    }
+    let Some(live) = state.objects.try_get(object) else {
+        return;
+    };
+    if live.zone != Zone::Battlefield {
+        return;
+    }
+    let player = live.controller;
+    if sword_cards_in_graveyard(state, player).is_empty()
+        || !is_creature(state, object)
+        || crate::engine::checked_effective_pt(state, object).ok() != Some((1, 1))
+    {
+        return;
+    }
+    let link = link_of(state, object);
+    let entries = &mut c4c_state(state).sword_entries;
+    if !entries.contains(&link) {
+        entries.push(link);
+    }
+}
+
+/// The Swords of the Meek `player` owns in their graveyard.
+fn sword_cards_in_graveyard(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
+    state.players[player.index()]
+        .graveyard
+        .iter()
+        .copied()
+        .filter(|&card| {
+            let sword = state.objects.get(card);
+            sword.zone == Zone::Graveyard
+                && sword.owner == player
+                && def_name(state, card) == Some(SWORD_OF_THE_MEEK)
+        })
+        .collect()
+}
+
 /// Sword of the Meek: "Whenever a 1/1 creature you control enters, you may
 /// return this card from your graveyard to the battlefield, then attach it to
 /// that creature." One trigger per such creature for each Sword in its
-/// controller's graveyard, looking at the creature's power and toughness as
-/// the collection finds it.
-fn sword_triggers(state: &GameState, events: &[CommittedEvent], out: &mut Vec<PendingTrigger>) {
+/// controller's graveyard. The creature's power and toughness are the ones
+/// `apply_entry` recorded as it entered, not the ones it has by now.
+fn sword_triggers(state: &mut GameState, events: &[CommittedEvent], out: &mut Vec<PendingTrigger>) {
+    let Some(recorded) = state
+        .eternal_v1
+        .as_ref()
+        .map(|eternal| eternal.c4c.sword_entries.clone())
+        .filter(|entries| !entries.is_empty())
+    else {
+        return;
+    };
     let mut entrants: Vec<ObjectId> = Vec::new();
     for event in events {
         match *event {
@@ -837,32 +907,41 @@ fn sword_triggers(state: &GameState, events: &[CommittedEvent], out: &mut Vec<Pe
             _ => {}
         }
     }
+    let mut consumed: Vec<ObjectLinkV4> = Vec::new();
     for entrant in entrants {
         let Some(live) = state.objects.try_get(entrant) else {
             continue;
         };
-        if live.zone != Zone::Battlefield
-            || !is_creature(state, entrant)
-            || crate::engine::checked_effective_pt(state, entrant).ok() != Some((1, 1))
-        {
+        let creature = link_of(state, entrant);
+        if live.zone != Zone::Battlefield || !recorded.contains(&creature) {
+            continue;
+        }
+        consumed.push(creature);
+        if !is_creature(state, entrant) {
             continue;
         }
         let player = live.controller;
-        let creature = link_of(state, entrant);
-        for &card in &state.players[player.index()].graveyard {
-            let sword = state.objects.get(card);
-            if sword.zone == Zone::Graveyard
-                && sword.owner == player
-                && def_name(state, card) == Some(SWORD_OF_THE_MEEK)
-            {
-                out.push(crate::eternal_cards_v1::delayed_trigger(
-                    AbilitySourceContractV4::capture(state, card),
-                    player,
-                    sword_may_return(creature),
-                ));
-            }
+        for card in sword_cards_in_graveyard(state, player) {
+            out.push(crate::eternal_cards_v1::delayed_trigger(
+                AbilitySourceContractV4::capture(state, card),
+                player,
+                sword_may_return(creature),
+            ));
         }
     }
+    // A record is used up by the collection that finds its creature; one
+    // whose creature has left the battlefield is dropped.
+    let live_links: Vec<ObjectLinkV4> = recorded
+        .into_iter()
+        .filter(|link| {
+            !consumed.contains(link)
+                && state.objects.try_get(link.object).is_some_and(|live| {
+                    live.zone == Zone::Battlefield
+                        && live.zone_change_count == link.zone_change_count
+                })
+        })
+        .collect();
+    c4c_state(state).sword_entries = live_links;
 }
 
 // ---- Triggered abilities ------------------------------------------------------------
@@ -1055,6 +1134,11 @@ pub(crate) fn execute(op: &C4cOpV1, ctx: &ExecCtx, state: &mut GameState) {
             zone_change_count,
         } => run_sword_return(ctx, state, *creature, *zone_change_count),
         C4cOpV1::IronManEquipV1 => run_iron_man_equip(ctx, state),
+        C4cOpV1::IronManAnimateV1 => {
+            if !is_creature(state, ctx.source) {
+                crate::effect::execute(&EffectOp::AnimateSource, ctx, state);
+            }
+        }
         C4cOpV1::ChariotCopyV1 => {
             let spec = TargetSpec::StandardV1(StandardTargetV1::C4cV1(
                 targets::C4cTargetV1::ControlledTokenV1,

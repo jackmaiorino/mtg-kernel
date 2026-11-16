@@ -2675,8 +2675,8 @@ C4a:
 
 - Displacer Kitten flickers up to one other nonland permanent its controller controls on each
   noncreature cast. Forensic Gadgeteer investigates on artifact casts and takes {1} of generic off
-  activated abilities of its controller's artifacts, never below one mana and never off mana
-  abilities.
+  activated abilities of its controller's artifacts, mana abilities with a mana cost included,
+  never below one mana.
 - Faerie Mastermind (`OpponentDrawsSecondCardEachTurnV1`) and Ledger Shredder
   (`PlayerCastsSecondSpellEachTurnV1`, connive) read the engine's per-player draw and cast
   counters. The Mastermind's shared draw is controller first, with the stop between the two
@@ -2698,12 +2698,14 @@ C4b:
 - Omnath, Locus of Creation and Scythecat Cub count how many times their landfall ability has
   resolved this turn (`C4bStateV1::resolutions`, keyed by the source incarnation), so a countered
   trigger is not counted.
-- Pompous Battlemage // Improvised Act extends wave E7b's prepared mechanism to a second card. Sage
-  of the Skies copies itself when cast after another spell that turn; the copy of a permanent spell
+- Pompous Battlemage // Improvised Act extends wave E7b's prepared mechanism to a second card; a
+  permanent that enters face down or without its abilities does not enter prepared. Sage of the
+  Skies copies itself when cast after another spell that turn; the copy of a permanent spell
   becomes a token. Ouroboroid uses last-known power recorded as it leaves.
 - Okoye, Mighty and Adored marks its target creature for the turn and grants double strike and
   trample when it attacks the monarch. Screaming Nemesis deals the damage it took to any other
-  target, and a player damaged that way can't gain life for the rest of the game.
+  target (the rule belongs to its own trigger, not to abilities granted to it), and a player
+  damaged that way can't gain life for the rest of the game.
 
 C4c:
 
@@ -2714,8 +2716,10 @@ C4c:
   Equipment and its host leaving together still draw. Umezawa's Jitte gains two charge counters per
   combat damage wave and has three counter-removing abilities. Kaldra Compleat exiles each creature
   its host deals combat damage to.
-- Sword of the Meek returns from the graveyard when a 1/1 creature enters under its owner's
-  control. Iron Man Armor animates and detaches itself when it becomes a creature. Astrologian's
-  Planisphere's triggers belong to its host creature.
+- Sword of the Meek returns from the graveyard when a creature that is 1/1 as it enters comes under
+  its owner's control (the size is recorded at entry, after entry counters, so Nettlecyst's Germ,
+  which enters 0/0, does not count). Iron Man Armor animates and detaches itself when it becomes a creature, and its
+  ability does nothing while it is already one. Astrologian's Planisphere has job select, and its
+  triggers belong to its host creature.
 - Smuggler's Copter (crew 1, loot when it attacks or blocks) and Esika's Chariot (crew 4, two Cat
   tokens, and a token copy when it attacks).

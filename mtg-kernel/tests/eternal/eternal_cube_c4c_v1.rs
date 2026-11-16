@@ -1041,6 +1041,32 @@ fn sword_of_the_meek_still_returns_when_the_creature_is_gone() {
 }
 
 #[test]
+fn sword_of_the_meek_reads_the_power_and_toughness_the_creature_had_as_it_entered() {
+    // Nettlecyst's Germ enters as a 0/0 and only becomes a 1/1 when the living
+    // weapon attaches the Nettlecyst: it did not enter as a 1/1 creature, so
+    // the Sword stays in the graveyard and no choice is offered.
+    let mut state = plains();
+    let sword = put(&mut state, P0, "Sword of the Meek", Zone::Graveyard);
+    let cyst = put(&mut state, P0, "Nettlecyst", Zone::Hand);
+    pool(&mut state, P0, &[], 3);
+    cast(&mut state, cyst, &[]);
+    settled(&mut state);
+    let germ = named(&state, P0, "Phyrexian Germ Token")[0];
+    assert_eq!(attached_to(&state, cyst), Some(germ));
+    assert_eq!(power_toughness(&state, germ), (1, 1), "a 1/1 by now");
+    assert_eq!(zone(&state, sword), Zone::Graveyard);
+
+    // A creature that really enters as a 1/1 still triggers it.
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    cast(&mut state, elves, &[]);
+    settle_option(&mut state, 1);
+    assert_eq!(zone(&state, sword), Zone::Battlefield);
+    assert_eq!(attached_to(&state, sword), Some(elves));
+    assert_eq!(power_toughness(&state, elves), (2, 3));
+}
+
+#[test]
 fn sword_of_the_meek_and_thopter_foundry_loop() {
     // Sacrifice the Sword to Thopter Foundry; the Thopter is a 1/1, so the
     // Sword returns attached to it and can be sacrificed again.
@@ -1606,6 +1632,49 @@ fn iron_man_armor_cant_equip_while_it_is_a_creature() {
     assert!(engine::object_has_type(&state, armor, CardType::Creature));
 }
 
+#[test]
+fn iron_man_armor_animation_does_nothing_while_it_is_already_a_creature() {
+    // A second activation in the same turn changes nothing: the Armor is a
+    // creature, so "if this Equipment isn't a creature" fails.
+    let mut state = plains();
+    let armor = put(&mut state, P0, "Iron Man Armor", Zone::Battlefield);
+    pool(&mut state, P0, &[], 4);
+    activate(&mut state, armor, 0, &[]);
+    settled(&mut state);
+    assert_eq!(mana(&state, P0, ManaColor::C), 2);
+    let stamp = state.objects.get(armor).v4.animation_timestamp;
+    assert!(stamp.is_some(), "animated by its own ability");
+    assert_eq!(power_toughness(&state, armor), (1, 1));
+    activate(&mut state, armor, 0, &[]);
+    settled(&mut state);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0, "the cost is still paid");
+    assert_eq!(state.objects.get(armor).v4.animation_timestamp, stamp);
+    assert_eq!(power_toughness(&state, armor), (1, 1));
+    assert!(keyword(&state, armor, Keywords::FLYING));
+
+    // Already a creature through another effect (Karn, the Great Creator's
+    // +1 makes it a 3/3 artifact creature): the ability replaces nothing, so
+    // it stays a 3/3 without flying, and not a Construct Hero.
+    let mut state = plains();
+    let karn = put(&mut state, P0, "Karn, the Great Creator", Zone::Hand);
+    let other = put(&mut state, P0, "Iron Man Armor", Zone::Battlefield);
+    pool(&mut state, P0, &[], 4);
+    cast(&mut state, karn, &[]);
+    settled(&mut state);
+    activate(&mut state, karn, 0, &[Target::Object(other)]);
+    settled(&mut state);
+    assert!(engine::object_has_type(&state, other, CardType::Creature));
+    assert_eq!(power_toughness(&state, other), (3, 3), "mana value 3");
+    pool(&mut state, P0, &[], 2);
+    activate(&mut state, other, 0, &[]);
+    settled(&mut state);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0, "the cost is still paid");
+    assert_eq!(state.objects.get(other).v4.animation_timestamp, None);
+    assert_eq!(power_toughness(&state, other), (3, 3));
+    assert!(!keyword(&state, other, Keywords::FLYING));
+    assert!(!engine::has_effective_subtype(&state, other, Subtype::Hero));
+}
+
 // ---- Astrologian's Planisphere -------------------------------------------------------
 
 /// A Planisphere equipped to a Llanowar Elves.
@@ -1653,6 +1722,39 @@ fn planisphere_costs_two_and_makes_the_equipped_creature_a_wizard() {
         Subtype::Wizard
     ));
     assert_eq!(power_toughness(&state, elves), (1, 1));
+}
+
+#[test]
+fn planisphere_job_select_makes_a_hero_and_attaches_to_it() {
+    // "Job select (When this Equipment enters, create a 1/1 colorless Hero
+    // creature token, then attach this to it.)" onto an empty battlefield.
+    let mut state = plains();
+    let planisphere = put(&mut state, P0, "Astrologian's Planisphere", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, planisphere, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, planisphere), Zone::Battlefield);
+    let heroes = named(&state, P0, "Hero Token");
+    assert_eq!(heroes.len(), 1, "one Hero token");
+    let hero = heroes[0];
+    assert!(state.objects.get(hero).v4.is_token);
+    assert_eq!(attached_to(&state, planisphere), Some(hero));
+    assert_eq!(power_toughness(&state, hero), (1, 1));
+    assert!(def("Hero Token").colors.is_empty(), "colorless");
+    assert!(engine::has_effective_subtype(&state, hero, Subtype::Hero));
+    assert!(
+        engine::has_effective_subtype(&state, hero, Subtype::Wizard),
+        "the equipped Hero is a Wizard"
+    );
+
+    // The granted trigger works on the Hero.
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    cast(&mut state, bolt, &[Target::Player(P1)]);
+    settled(&mut state);
+    assert_eq!(life(&state, P1), 17);
+    assert_eq!(plus_one_counters(&state, hero), 1);
+    assert_eq!(power_toughness(&state, hero), (2, 2));
 }
 
 #[test]

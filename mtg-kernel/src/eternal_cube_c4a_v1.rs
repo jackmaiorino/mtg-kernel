@@ -383,8 +383,8 @@ fn saddled_this_turn(state: &GameState, link: ObjectLinkV4) -> bool {
 /// than one mana." `cost` is the mana cost of an ability of `source`; each
 /// Forensic Gadgeteer its controller controls takes {1} of generic mana off,
 /// never leaving less than one mana in total. Colored and hybrid pips are
-/// not reduced, and a cost with an X is left alone. A mana ability has no
-/// part in this (it is not an activated ability here).
+/// not reduced, and a cost with an X is left alone. A mana ability with a
+/// mana cost (Energy Refractor's {2}) is reduced the same way.
 pub(crate) fn reduce_artifact_activation(state: &GameState, source: ObjectId, cost: Cost) -> Cost {
     if !cfg!(feature = "eternal-fixtures") || cost.generic == 0 || cost.x_count != 0 {
         return cost;

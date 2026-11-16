@@ -2502,6 +2502,7 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
                     definition_name(state, object),
                     Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE)
                 )
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
             {
                 prepare(state, object);
             }
@@ -2538,11 +2539,14 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
                 }
             }
         }
-        // "Enters prepared" is not a triggered ability.
+        // "Enters prepared" is not a triggered ability. It is a printed
+        // ability, so a face-down permanent (a manifest) or one that has lost
+        // its abilities (Dress Down) does not enter prepared.
         if matches!(
             definition_name(state, object),
             Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE)
-        ) {
+        ) && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
+        {
             prepare(state, object);
         }
         if statics::entry_triggers_suppressed(state, object) {

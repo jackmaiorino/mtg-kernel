@@ -1166,6 +1166,46 @@ fn pompous_battlemage_has_prowess_and_its_copy_leaves_with_it() {
     assert!(exile_copies(&state, "Improvised Act").is_empty());
 }
 
+#[test]
+fn pompous_battlemage_does_not_enter_prepared_without_its_abilities_or_face_down() {
+    // Under Dress Down ("Creatures lose all abilities") it enters unprepared
+    // and no Improvised Act copy is created.
+    let mut state = plains();
+    let dress = put(&mut state, P0, "Dress Down", Zone::Hand);
+    let blanked = put(&mut state, P0, "Pompous Battlemage", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, dress, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, dress), Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    cast(&mut state, blanked, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, blanked), Zone::Battlefield);
+    assert!(
+        exile_copies(&state, "Improvised Act").is_empty(),
+        "no prepare spell copy under Dress Down"
+    );
+
+    // A face-down permanent (Abhorrent Oculus manifests dread at each
+    // opponent's upkeep) has no abilities, so it is not prepared either.
+    let mut state = game(&["Pompous Battlemage"; 20]);
+    put(&mut state, P0, "Abhorrent Oculus", Zone::Battlefield);
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::Main1
+    });
+    let face_down: Vec<ObjectId> = state.players[0]
+        .battlefield
+        .iter()
+        .copied()
+        .filter(|&object| state.objects.get(object).v4.face_down_v1.is_some())
+        .collect();
+    assert_eq!(face_down.len(), 1, "manifested one");
+    assert!(
+        exile_copies(&state, "Improvised Act").is_empty(),
+        "a manifested Battlemage is not prepared and reveals nothing"
+    );
+}
+
 // ---- Sage of the Skies --------------------------------------------------------------------
 
 /// Casts `spell` with `colors` plus `generic` colorless mana and plays on until it resolves.
@@ -1443,6 +1483,67 @@ fn screaming_nemesis_that_survives_the_damage_hits_a_creature_and_locks_no_one()
     settled(&mut state);
     assert_eq!(life(&state, P0), before.0 + 1);
     assert_eq!(life(&state, P1), before.1 + 1);
+}
+
+#[test]
+fn screaming_nemesis_other_target_rule_does_not_apply_to_an_ability_granted_to_it() {
+    // Viridian Longbow: "Equipped creature has '{T}: This creature deals 1
+    // damage to any target.'" The granted ability may target the Nemesis
+    // itself; only the Nemesis's own damage trigger says "any other target".
+    let mut state = plains();
+    let nemesis = put(&mut state, P0, "Screaming Nemesis", Zone::Battlefield);
+    let longbow = put(&mut state, P0, "Viridian Longbow", Zone::Battlefield);
+    pool(&mut state, P0, &[], 3);
+    activate(&mut state, longbow, 0, &[Target::Object(nemesis)]);
+    settled(&mut state);
+    assert_eq!(
+        state
+            .objects
+            .get(longbow)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(nemesis),
+        "equipped"
+    );
+
+    let granted = u8::try_from(def("Screaming Nemesis").activated_abilities.len()).unwrap();
+    assert!(activatable(&mut state, nemesis, granted));
+    act(&mut state, Action::ActivateAbility(nemesis, granted));
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(
+                legal_targets.contains(&Target::Object(nemesis)),
+                "the granted ability may target the Nemesis: {legal_targets:?}"
+            );
+        }
+        other => panic!("expected targets, got {other:?}"),
+    }
+    act(&mut state, Action::ChooseTarget(Target::Object(nemesis)));
+
+    // The ping damages the Nemesis, whose own trigger still never offers it.
+    let mut trigger_offered = Vec::new();
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            trigger_offered = legal_targets.clone();
+            Action::ChooseTarget(Target::Player(P1))
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(state.objects.get(nemesis).damage, 1, "pinged itself");
+    assert!(
+        !trigger_offered.is_empty(),
+        "its own trigger chose a target"
+    );
+    assert!(
+        !trigger_offered.contains(&Target::Object(nemesis)),
+        "its trigger says any other target"
+    );
+    assert_eq!(
+        life(&state, P1),
+        19,
+        "that much damage, to the other target"
+    );
 }
 
 #[test]

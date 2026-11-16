@@ -6514,6 +6514,9 @@ fn materialize_event_v1(
                     state.objects.get_mut(object).counters.plus1_plus1 += amount;
                 }
             }
+            // Sword of the Meek (Vintage Cube wave C4c) reads the power and
+            // toughness a creature enters with, after its entry counters.
+            crate::eternal_cube_c4c_v1::apply_entry(state, object);
             if crate::ajani_full_v42::selected_definition(t.token_def) {
                 crate::planeswalker_v1::after_zone_change(state, object, counter_input.as_ref());
                 crate::ajani_full_v42::lifecycle::initialize_entry(state, object);
@@ -8448,6 +8451,9 @@ fn materialize_zone_change_v1(
             };
             state.objects.get_mut(id).counters.plus1_plus1 = total;
         }
+        // Sword of the Meek (Vintage Cube wave C4c) reads the power and
+        // toughness a creature enters with, after its entry counters.
+        crate::eternal_cube_c4c_v1::apply_entry(state, id);
     }
     crate::planeswalker_v1::after_zone_change(state, id, counter_input);
     if to_zone == Zone::Battlefield {

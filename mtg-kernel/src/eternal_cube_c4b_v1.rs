@@ -299,6 +299,17 @@ pub(crate) fn other_target_only(card_def: u16) -> bool {
             .is_some_and(|def| def.name == SCREAMING_NEMESIS)
 }
 
+/// Whether `effect` is Screaming Nemesis's own damage trigger, the only
+/// ability of it that targets "any other target".
+pub(crate) fn is_nemesis_trigger(effect: &EffectOp) -> bool {
+    matches!(
+        effect,
+        EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::C4bV1(
+            C4bOpV1::NemesisDamageV1 { .. }
+        )))
+    )
+}
+
 /// Screaming Nemesis: "If a player is dealt damage this way, they can't gain
 /// life for the rest of the game." Called from the life-gain commit.
 pub(crate) fn cannot_gain_life(state: &GameState, player: PlayerId) -> bool {

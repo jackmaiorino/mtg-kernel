@@ -971,6 +971,68 @@ fn forensic_gadgeteer_reduces_only_artifacts_you_control() {
     assert!(activatable(&mut state, mastermind, 0));
 }
 
+#[test]
+fn forensic_gadgeteer_reduces_an_artifact_mana_ability_that_has_a_mana_cost() {
+    let any_black = |state: &mut GameState, source: ObjectId| {
+        engine::step(
+            state,
+            Action::ActivateManaAbilityChoice(source, ManaColor::B),
+        )
+    };
+
+    // Without the Gadgeteer Energy Refractor's "{2}: Add one mana of any
+    // color" needs two mana.
+    let mut state = plains();
+    let refractor = put(&mut state, P0, "Energy Refractor", Zone::Battlefield);
+    next(&mut state);
+    pool(&mut state, P0, &[], 1);
+    assert!(any_black(&mut state, refractor).is_err(), "{{2}} with one");
+    pool(&mut state, P0, &[], 1);
+    any_black(&mut state, refractor).expect("{2} with two");
+    assert_eq!(mana(&state, P0, ManaColor::B), 1);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0);
+
+    // With one, a single mana pays it and only that mana is spent.
+    let mut state = plains();
+    put(&mut state, P0, "Forensic Gadgeteer", Zone::Battlefield);
+    let reduced = put(&mut state, P0, "Energy Refractor", Zone::Battlefield);
+    next(&mut state);
+    pool(&mut state, P0, &[], 1);
+    any_black(&mut state, reduced).expect("{1} with the Gadgeteer");
+    assert_eq!(mana(&state, P0, ManaColor::B), 1);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0, "one mana was charged");
+
+    // The reduction never takes the cost below one mana.
+    let mut state = plains();
+    put(&mut state, P0, "Forensic Gadgeteer", Zone::Battlefield);
+    put(&mut state, P0, "Forensic Gadgeteer", Zone::Battlefield);
+    let floor = put(&mut state, P0, "Energy Refractor", Zone::Battlefield);
+    next(&mut state);
+    assert!(any_black(&mut state, floor).is_err(), "never free");
+    pool(&mut state, P0, &[], 1);
+    any_black(&mut state, floor).expect("{1} with two Gadgeteers");
+    assert_eq!(mana(&state, P0, ManaColor::C), 0);
+
+    // An opponent's Gadgeteer does not help.
+    let mut state = plains();
+    put(&mut state, P1, "Forensic Gadgeteer", Zone::Battlefield);
+    let foreign = put(&mut state, P0, "Energy Refractor", Zone::Battlefield);
+    next(&mut state);
+    pool(&mut state, P0, &[], 1);
+    assert!(any_black(&mut state, foreign).is_err(), "{{2}} with one");
+
+    // A mana ability that costs {1} is not reduced (Prophetic Prism).
+    let mut state = plains();
+    put(&mut state, P0, "Forensic Gadgeteer", Zone::Battlefield);
+    let prism = put(&mut state, P0, "Prophetic Prism", Zone::Battlefield);
+    next(&mut state);
+    assert!(any_black(&mut state, prism).is_err(), "{{1}} stays {{1}}");
+    pool(&mut state, P0, &[], 1);
+    any_black(&mut state, prism).expect("{1}");
+    assert_eq!(mana(&state, P0, ManaColor::B), 1);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0);
+}
+
 // ---- Faerie Mastermind ---------------------------------------------------------------
 
 #[test]

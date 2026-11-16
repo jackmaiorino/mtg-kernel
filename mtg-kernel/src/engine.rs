@@ -3909,6 +3909,8 @@ fn triggered_ability_targeting_source(
     }
     let other_than = match effect {
         EffectOp::PutPlusOnePlusOneCounterOnTargetOtherThan { other_than } => Some(*other_than),
+        // Screaming Nemesis's own damage trigger: "any other target".
+        effect if crate::eternal_cube_c4b_v1::is_nemesis_trigger(effect) => Some(source),
         _ => None,
     };
     let dungeon_colors = bound_room.then(|| {
@@ -4133,12 +4135,14 @@ fn legal_targets_for_controller_from_source_unframed(
             &mut legal,
         );
     }
-    // Screaming Nemesis: "any other target" never offers the source itself.
+    // Screaming Nemesis: its own damage trigger ("any other target") never
+    // offers the source itself; an ability granted to it does.
     #[cfg(feature = "eternal-fixtures")]
     if spec == TargetSpec::AnyTarget {
-        if let Some(source) =
-            source.filter(|source| crate::eternal_cube_c4b_v1::other_target_only(source.card_def))
-        {
+        if let Some(source) = source.filter(|source| {
+            source.other_than == Some(source.object)
+                && crate::eternal_cube_c4b_v1::other_target_only(source.card_def)
+        }) {
             legal.retain(|target| *target != Target::Object(source.object));
         }
     }
@@ -12027,7 +12031,11 @@ fn available_mana_ability_choices_unreplaced_into(
                 source,
                 primary_ability_count + index,
                 additional.ability,
-                Some(additional.mana_cost),
+                Some(crate::eternal_cube_c4a_v1::reduce_artifact_activation(
+                    state,
+                    source,
+                    additional.mana_cost,
+                )),
                 state,
             )
         {
@@ -12622,7 +12630,12 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
 
         let mana_plan = additional
             .map(|ability| {
-                mana::can_pay_excluding_source(&ability.mana_cost, 0, player, state, source)
+                let cost = crate::eternal_cube_c4a_v1::reduce_artifact_activation(
+                    state,
+                    source,
+                    ability.mana_cost,
+                );
+                mana::can_pay_excluding_source(&cost, 0, player, state, source)
                     .ok_or_else(|| "additional mana-ability cost became unpayable".to_string())
             })
             .transpose()?;
