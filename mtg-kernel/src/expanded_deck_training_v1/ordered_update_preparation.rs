@@ -358,29 +358,26 @@ pub(super) fn read_trajectories_v1(
 /// (`fork_for_collection_v3`, the path the current model already takes).
 /// Replay still checks every row against the rollout's recorded logits, so a
 /// fork that scored differently would fail the update rather than pass.
-/// Bounded and least-recently-used; entries are immutable once inserted. A
-/// policy that cannot be forked is used directly and never cached, as before.
-/// Converted (`no_state_digest_v1`) and ordinary entries share the bound, so
-/// either kind can evict the other.
+/// Bounded by both entry count and explicit byte budget, least-recently-used;
+/// entries are immutable once inserted. A policy that cannot be forked is used
+/// directly and never cached, as before. Converted (`no_state_digest_v1`) and
+/// ordinary entries share both bounds, so either kind can evict the other.
 ///
-/// An entry keeps every file its full load read, with the bytes verified
-/// against their pins (`opponent_cache_files_v1`). A prepared update's hit
-/// rereads them and compares bytes (`holds_bytes_v1`), so any change is a
-/// miss whose full load reports exactly its own error; a collection's hit
-/// follows the boundary's pin check of the same files
+/// An entry keeps only the verified pin descriptors (`PinnedOpponentFileV1`)
+/// of the files its full load read, never duplicate `Vec<u8>` file copies. A
+/// prepared or serial update's hit stream-verifies every pinned file on disk
+/// (`holds_pinned_v1`, or metadata-checks under opt-in resident reads), so any
+/// change is a miss whose full load reports exactly its own error; a
+/// collection's hit follows the boundary's pin check of the same files
 /// (`verify_collection_opponent_sources_v1`). A source of any other kind, or
 /// whose checkpoint names a further file (a phase-1 archive-distillation
 /// parent), is not kept and loads in full every time.
-///
-/// 32 entries hold a W5 pool roster (17 fixed opponents and the current
-/// model) across iterations; at 8 the roster evicted itself and most pool
-/// episodes paid a full load. An entry holds one policy and every verified
-/// file of its load: for a W5 net-8 opponent, a 15 MB checkpoint container
-/// plus its import inputs (about 30 MB in all; a 20 MB v1 JSON checkpoint or
-/// a converted source, which also keeps its base's files, holds more). The
-/// bound counts entries, not bytes, so 32 large sources can hold 1 to 2 GB;
-/// a run holds only the sources it plays.
-const OPPONENT_CACHE_ENTRIES: usize = 32;
+pub(crate) const DEFAULT_OPPONENT_CACHE_ENTRIES_V1: usize = 32;
+pub(crate) const MAX_OPPONENT_CACHE_ENTRIES_V1: usize = 256;
+pub(crate) const DEFAULT_OPPONENT_CACHE_MIB_V1: usize = 768;
+pub(crate) const MAX_OPPONENT_CACHE_MIB_V1: usize = 16_384;
+const OPPONENT_ENTRY_OVERHEAD_BYTES_V1: usize = 256;
+const OPPONENT_PIN_OVERHEAD_BYTES_V1: usize = 96;
 
 struct CachedOpponentV1 {
     source: ExpandedModelSourceV1,
@@ -390,62 +387,486 @@ struct CachedOpponentV1 {
     /// setting it loaded under; a hit must match the current one, as a full
     /// load would.
     no_state_digest_check: Option<bool>,
-    /// Every file the full load read, with its verified bytes.
-    files: Arc<super::VerifiedFilesV1>,
+    /// Every file the full load read, as verified pin metadata (`0` retained
+    /// raw file bytes).
+    pins: Arc<Vec<super::PinnedOpponentFileV1>>,
 }
 
-static OPPONENT_CACHE: OnceLock<Mutex<VecDeque<CachedOpponentV1>>> = OnceLock::new();
+struct ProcessOpponentCacheStateV1 {
+    entry_limit: usize,
+    budget_bytes: usize,
+    entries: VecDeque<CachedOpponentV1>,
+}
+
+pub(super) struct ProcessOpponentCacheV1 {
+    state: Mutex<ProcessOpponentCacheStateV1>,
+}
+
+static OPPONENT_CACHE: OnceLock<ProcessOpponentCacheV1> = OnceLock::new();
+
+pub(super) fn parse_bounded_env_usize_v1(name: &str, default: usize, max: usize) -> usize {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(default)
+        .min(max)
+}
+
+fn pin_descriptor_bytes_v1(pin: &PinnedFileV1) -> usize {
+    pin.path.as_os_str().len().saturating_add(pin.sha256.len())
+}
+
+pub(super) fn source_descriptor_bytes_v1(source: &ExpandedModelSourceV1) -> usize {
+    pin_descriptor_bytes_v1(&source.play_import)
+        .saturating_add(
+            source
+                .checkpoint
+                .as_ref()
+                .map_or(0, pin_descriptor_bytes_v1),
+        )
+        .saturating_add(
+            source
+                .feature_transfer
+                .expected_feature_contract_digest
+                .len(),
+        )
+        .saturating_add(
+            source
+                .feature_transfer
+                .expected_feature_encoding_digest
+                .len(),
+        )
+}
+
+fn entry_metadata_bytes_v1(entry: &CachedOpponentV1) -> usize {
+    let pins_bytes: usize = entry
+        .pins
+        .iter()
+        .map(|file| {
+            pin_descriptor_bytes_v1(&file.pin).saturating_add(OPPONENT_PIN_OVERHEAD_BYTES_V1)
+        })
+        .sum();
+    OPPONENT_ENTRY_OVERHEAD_BYTES_V1
+        .saturating_add(source_descriptor_bytes_v1(&entry.source))
+        .saturating_add(pins_bytes)
+}
+
+fn pin_payload_bytes_v1(pins: &[super::PinnedOpponentFileV1]) -> u64 {
+    pins.iter().map(|file| file.len).sum()
+}
+
+/// Exact live byte charge of `entries` (plus optional `extra` candidate):
+/// each entry's private policy bytes and pin/source metadata, plus each
+/// distinct shared model's bytes counted once.
+fn live_charge_bytes_v1(
+    entries: &VecDeque<CachedOpponentV1>,
+    extra: Option<&CachedOpponentV1>,
+) -> usize {
+    let mut total = 0usize;
+    let mut models = std::collections::BTreeSet::new();
+    for entry in entries.iter().chain(extra) {
+        total = total
+            .saturating_add(opponent_cache_diagnostics_v1::policy_bytes_v1(
+                &entry.policy,
+            ))
+            .saturating_add(entry_metadata_bytes_v1(entry));
+        let (model_id, model_bytes) = opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy);
+        if models.insert(model_id) {
+            total = total.saturating_add(model_bytes);
+        }
+    }
+    total
+}
+
+impl ProcessOpponentCacheV1 {
+    pub(super) fn new_v1(entry_limit: usize, budget_bytes: usize) -> Self {
+        Self {
+            state: Mutex::new(ProcessOpponentCacheStateV1 {
+                entry_limit,
+                budget_bytes,
+                entries: VecDeque::new(),
+            }),
+        }
+    }
+
+    pub(super) fn global_v1() -> &'static Self {
+        OPPONENT_CACHE.get_or_init(|| {
+            let entry_limit = parse_bounded_env_usize_v1(
+                "MTG_KERNEL_OPPONENT_CACHE_ENTRIES",
+                DEFAULT_OPPONENT_CACHE_ENTRIES_V1,
+                MAX_OPPONENT_CACHE_ENTRIES_V1,
+            );
+            let budget_mib = parse_bounded_env_usize_v1(
+                "MTG_KERNEL_OPPONENT_CACHE_MIB",
+                DEFAULT_OPPONENT_CACHE_MIB_V1,
+                MAX_OPPONENT_CACHE_MIB_V1,
+            );
+            Self::new_v1(entry_limit, budget_mib.saturating_mul(MEBIBYTE))
+        })
+    }
+
+    pub(super) fn configure_v1(&self, entries: Option<usize>, budget_mib: Option<usize>) {
+        let stats = &opponent_cache_diagnostics_v1::counters_v1().process_opponent;
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(limit) = entries {
+            state.entry_limit = limit.min(MAX_OPPONENT_CACHE_ENTRIES_V1);
+        }
+        if let Some(mib) = budget_mib {
+            state.budget_bytes = mib.min(MAX_OPPONENT_CACHE_MIB_V1).saturating_mul(MEBIBYTE);
+        }
+        while state.entries.len() > state.entry_limit
+            || live_charge_bytes_v1(&state.entries, None) > state.budget_bytes
+        {
+            let before_charge = live_charge_bytes_v1(&state.entries, None);
+            let Some(_) = state.entries.pop_front() else {
+                break;
+            };
+            let after_charge = live_charge_bytes_v1(&state.entries, None);
+            stats.evictions.add(1);
+            stats
+                .evicted_charged_bytes
+                .add_usize(before_charge.saturating_sub(after_charge));
+        }
+    }
+
+    pub(super) fn held_v1(&self) -> HeldOpponentsV1 {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut held = HeldOpponentsV1 {
+            entry_limit: state.entry_limit,
+            budget_bytes: state.budget_bytes,
+            entries: state.entries.len(),
+            charged_bytes: 0,
+            metadata_bytes: 0,
+            pins: Vec::with_capacity(state.entries.len()),
+            policy_bytes: 0,
+            models: 0,
+            model_bytes: 0,
+        };
+        let mut models = std::collections::BTreeSet::new();
+        for entry in &state.entries {
+            held.pins.push(Arc::clone(&entry.pins));
+            held.metadata_bytes = held
+                .metadata_bytes
+                .saturating_add(entry_metadata_bytes_v1(entry));
+            held.policy_bytes =
+                held.policy_bytes
+                    .saturating_add(opponent_cache_diagnostics_v1::policy_bytes_v1(
+                        &entry.policy,
+                    ));
+            let (model, bytes) = opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy);
+            if models.insert(model) {
+                held.model_bytes = held.model_bytes.saturating_add(bytes);
+            }
+        }
+        held.models = models.len();
+        held.charged_bytes = held
+            .policy_bytes
+            .saturating_add(held.model_bytes)
+            .saturating_add(held.metadata_bytes);
+        held
+    }
+
+    pub(super) fn holds_source_v1(&self, source: &ExpandedModelSourceV1) -> bool {
+        self.state
+            .lock()
+            .ok()
+            .is_some_and(|state| state.entries.iter().any(|entry| &entry.source == source))
+    }
+
+    /// Load one opponent: a hit forks the cached policy, a miss loads in full
+    /// and offers the result to the cache. The flag reports a hit.
+    ///
+    /// The hit, the full load and the admission are separate frames that are
+    /// never inlined, so a full load runs no deeper than this small frame
+    /// over its caller. Serial replay runs on the main thread, whose stack is
+    /// the platform default (1 MiB on Windows), and calls the same pieces
+    /// itself (`OpponentCacheV1::load`).
+    pub(super) fn load_v1(
+        &self,
+        source: &ExpandedModelSourceV1,
+        revalidate: bool,
+        role: super::loaded_source_profile_v1::LoadRoleV1,
+    ) -> Result<(LoadedOpponentV1, bool), String> {
+        if let Some(hit) = self.lookup_v1(source, revalidate)? {
+            return Ok((hit, true));
+        }
+        let (policy, identity) = full_load_opponent_v1(source, role)?;
+        Ok((self.admit_v1(source, policy, identity)?, false))
+    }
+
+    /// The cache's fork of `source`, or `None` on a miss. `revalidate`: a hit
+    /// must first verify every pinned file of the entry on disk.
+    #[inline(never)]
+    pub(super) fn lookup_v1(
+        &self,
+        source: &ExpandedModelSourceV1,
+        revalidate: bool,
+    ) -> Result<Option<LoadedOpponentV1>, String> {
+        let stats = &opponent_cache_diagnostics_v1::counters_v1().process_opponent;
+        let started = Instant::now();
+        stats.lookups.add(1);
+        let cached = {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| "opponent cache poisoned".to_string())?;
+            let check = no_state_digest_v1::check_enabled_v1();
+            match state.entries.iter().position(|entry| {
+                &entry.source == source
+                    && entry.no_state_digest_check.is_none_or(|kept| kept == check)
+            }) {
+                Some(index) => {
+                    let entry = state.entries.remove(index).ok_or("opponent cache index")?;
+                    let policy = Arc::clone(&entry.policy);
+                    let identity = entry.identity.clone();
+                    let pins = Arc::clone(&entry.pins);
+                    state.entries.push_back(entry);
+                    Some((policy, identity, pins))
+                }
+                None => {
+                    if state.entries.iter().any(|entry| &entry.source == source) {
+                        stats.misses_check_setting.add(1);
+                    } else {
+                        stats.misses_absent.add(1);
+                    }
+                    None
+                }
+            }
+        };
+        // A changed, missing or replaced file makes the hit a miss: the full
+        // load below reports exactly its own error.
+        let held = cached.is_some();
+        let revalidation_started = Instant::now();
+        let cached =
+            cached.filter(|(_, _, pins)| !revalidate || pins.iter().all(super::holds_pinned_v1));
+        if held && revalidate {
+            stats.revalidation_nanos.add_elapsed(revalidation_started);
+        }
+        if held && cached.is_none() {
+            stats.misses_revalidation.add(1);
+        }
+        if let Some((policy, identity, pins)) = cached {
+            // A hit bypasses loading, so the entry's input contract is resolved
+            // again: its receipt and its policy must still agree. The receipt's
+            // model digest is the policy's model digest (the installed contract's,
+            // else the import's), never the effective FlatV7 or FlatV8 identity,
+            // which a transferred opponent's import does not carry.
+            ensure(
+                identity.model.feature_contract_digest == policy.model_feature_contract_digest_v1(),
+                "cached opponent no-state-digest contract differs from its receipt",
+            )?;
+            let fork_started = Instant::now();
+            let fork = policy.fork_for_collection_v3()?;
+            stats.fork_nanos.add_elapsed(fork_started);
+            stats.forks.add(1);
+            stats
+                .forked_policy_bytes
+                .add_usize(opponent_cache_diagnostics_v1::policy_bytes_v1(&fork));
+            if revalidate {
+                stats.hits_revalidated.add(1);
+                stats
+                    .revalidated_payload_bytes
+                    .add(pin_payload_bytes_v1(&pins));
+            } else {
+                stats.hits_trusted.add(1);
+            }
+            let hit = opponent_cache_diagnostics_v1::nanos_since_v1(started);
+            stats.hit_nanos.add(hit);
+            stats.hit_max_nanos.raise(hit);
+            return Ok(Some(LoadedOpponentV1 {
+                policy: fork,
+                behavior: ExpandedSeatBehaviorV1 {
+                    source: source.clone(),
+                    identity,
+                },
+            }));
+        }
+        Ok(None)
+    }
+
+    /// Offer a full load of `source` to the cache and return the policy to
+    /// play: a fork of the kept template, or the loaded policy itself when it
+    /// cannot be forked.
+    #[inline(never)]
+    pub(super) fn admit_v1(
+        &self,
+        source: &ExpandedModelSourceV1,
+        policy: FrozenPlayPolicyV1,
+        identity: ExpandedInferenceIdentityV1,
+    ) -> Result<LoadedOpponentV1, String> {
+        let stats = &opponent_cache_diagnostics_v1::counters_v1().process_opponent;
+        // The tag is the check model the loaded policy actually holds, never a
+        // setting sampled apart from its load.
+        let no_state_digest_check = policy
+            .input_contract_v1()
+            .map(|_| policy.no_state_digest_check_v1());
+        let behavior = ExpandedSeatBehaviorV1 {
+            source: source.clone(),
+            identity: identity.clone(),
+        };
+        // The pins this load read, verified again; a source the cache cannot
+        // re-verify exactly is not kept.
+        let capture = opponent_cache_diagnostics_v1::WorkMarkV1::now_v1();
+        let pins = match super::opponent_cache_pins_v1(source) {
+            Ok(Some(pins)) => Some(Arc::new(pins)),
+            _ => None,
+        };
+        capture.finish_v1(&stats.capture);
+        if let Some(pins) = &pins {
+            stats.captured_bytes.add(pin_payload_bytes_v1(pins));
+        }
+        let fork = policy.fork_for_collection_v3();
+        if let Ok(fork) = &fork {
+            stats.forks.add(1);
+            stats
+                .forked_policy_bytes
+                .add_usize(opponent_cache_diagnostics_v1::policy_bytes_v1(fork));
+        }
+        match (fork, pins) {
+            (Ok(fork), Some(pins)) => {
+                let candidate = CachedOpponentV1 {
+                    source: source.clone(),
+                    policy: Arc::new(policy),
+                    identity,
+                    no_state_digest_check,
+                    pins,
+                };
+                let mut state = self
+                    .state
+                    .lock()
+                    .map_err(|_| "opponent cache poisoned".to_string())?;
+                let standalone_charge = live_charge_bytes_v1(&VecDeque::new(), Some(&candidate));
+                if state.entry_limit == 0 || standalone_charge > state.budget_bytes {
+                    state.entries.retain(|entry| &entry.source != source);
+                    stats.not_kept_budget.add(1);
+                    return Ok(LoadedOpponentV1 {
+                        policy: fork,
+                        behavior,
+                    });
+                }
+                // Concurrent collectors can miss the same source before either
+                // load finishes. Keep one template per descriptor rather than
+                // letting duplicate insertions evict the rest of the roster.
+                if let Some(index) = state
+                    .entries
+                    .iter()
+                    .position(|entry| &entry.source == source)
+                {
+                    state.entries.remove(index);
+                    stats.replaced.add(1);
+                }
+                while state.entries.len() >= state.entry_limit
+                    || live_charge_bytes_v1(&state.entries, Some(&candidate)) > state.budget_bytes
+                {
+                    let before_charge = live_charge_bytes_v1(&state.entries, None);
+                    let Some(_) = state.entries.pop_front() else {
+                        break;
+                    };
+                    let after_charge = live_charge_bytes_v1(&state.entries, None);
+                    stats.evictions.add(1);
+                    stats
+                        .evicted_charged_bytes
+                        .add_usize(before_charge.saturating_sub(after_charge));
+                }
+                state.entries.push_back(candidate);
+                let charged = live_charge_bytes_v1(&state.entries, None);
+                stats.kept.add(1);
+                stats.peak_charged_bytes.raise(charged as u64);
+                Ok(LoadedOpponentV1 {
+                    policy: fork,
+                    behavior,
+                })
+            }
+            (Ok(fork), None) => {
+                stats.not_kept_unverifiable.add(1);
+                // Nothing kept for this descriptor may outlive a load that could
+                // not re-verify it.
+                self.state
+                    .lock()
+                    .map_err(|_| "opponent cache poisoned".to_string())?
+                    .entries
+                    .retain(|entry| &entry.source != source);
+                Ok(LoadedOpponentV1 {
+                    policy: fork,
+                    behavior,
+                })
+            }
+            (Err(_), _) => {
+                stats.not_kept_unforkable.add(1);
+                Ok(LoadedOpponentV1 { policy, behavior })
+            }
+        }
+    }
+}
+
+/// A full load of `source` for the process opponent cache, counted as its
+/// full-load work. Never inlined: the loaded policy stays out of the caller's
+/// frame.
+#[inline(never)]
+pub(super) fn full_load_opponent_v1(
+    source: &ExpandedModelSourceV1,
+    role: super::loaded_source_profile_v1::LoadRoleV1,
+) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
+    let stats = &opponent_cache_diagnostics_v1::counters_v1().process_opponent;
+    let load = opponent_cache_diagnostics_v1::WorkMarkV1::now_v1();
+    let loaded = super::loaded_source_profile_v1::scoped_v1(role, || {
+        load_expanded_inference_any_math_v1(source)
+    })?;
+    load.finish_v1(&stats.full_load);
+    stats.full_loads.add(1);
+    Ok(loaded)
+}
 
 /// What the process opponent cache holds now, for the diagnostics file
-/// (`opponent_cache_diagnostics_v1`): its bound, each entry's files (shared,
-/// not copied), the bytes of its policies' own copies, and its distinct
+/// (`opponent_cache_diagnostics_v1`): its bounds, each entry's pinned
+/// dependencies, the bytes of its policies' own copies, and its distinct
 /// models and their bytes.
 pub(super) struct HeldOpponentsV1 {
     pub(super) entry_limit: usize,
-    pub(super) files: Vec<Arc<super::VerifiedFilesV1>>,
+    pub(super) budget_bytes: usize,
+    pub(super) entries: usize,
+    pub(super) charged_bytes: usize,
+    pub(super) metadata_bytes: usize,
+    pub(super) pins: Vec<Arc<Vec<super::PinnedOpponentFileV1>>>,
     pub(super) policy_bytes: usize,
     pub(super) models: usize,
     pub(super) model_bytes: usize,
 }
 
 impl HeldOpponentsV1 {
-    /// Each entry's files, one holder per entry.
+    /// Retained raw file buffers per entry (`0` once entries keep only pins).
     pub(super) fn holders_v1(&self) -> Vec<&dyn opponent_cache_diagnostics_v1::HeldFilesV1> {
-        self.files
-            .iter()
-            .map(|files| files.as_ref() as &dyn opponent_cache_diagnostics_v1::HeldFilesV1)
-            .collect()
+        Vec::new()
     }
 }
 
 pub(super) fn held_v1() -> HeldOpponentsV1 {
-    let mut held = HeldOpponentsV1 {
-        entry_limit: OPPONENT_CACHE_ENTRIES,
-        files: Vec::new(),
-        policy_bytes: 0,
-        models: 0,
-        model_bytes: 0,
-    };
-    if let Some(cache) = OPPONENT_CACHE.get() {
-        let entries = cache.lock().unwrap_or_else(PoisonError::into_inner);
-        // Every entry lives while the lock is held, so each model's
-        // identity is its own.
-        let mut models = std::collections::BTreeSet::new();
-        for entry in entries.iter() {
-            held.files.push(Arc::clone(&entry.files));
-            held.policy_bytes += opponent_cache_diagnostics_v1::policy_bytes_v1(&entry.policy);
-            let (model, bytes) = opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy);
-            if models.insert(model) {
-                held.model_bytes += bytes;
+    match OPPONENT_CACHE.get() {
+        Some(cache) => cache.held_v1(),
+        None => {
+            let entry_limit = parse_bounded_env_usize_v1(
+                "MTG_KERNEL_OPPONENT_CACHE_ENTRIES",
+                DEFAULT_OPPONENT_CACHE_ENTRIES_V1,
+                MAX_OPPONENT_CACHE_ENTRIES_V1,
+            );
+            let budget_mib = parse_bounded_env_usize_v1(
+                "MTG_KERNEL_OPPONENT_CACHE_MIB",
+                DEFAULT_OPPONENT_CACHE_MIB_V1,
+                MAX_OPPONENT_CACHE_MIB_V1,
+            );
+            HeldOpponentsV1 {
+                entry_limit,
+                budget_bytes: budget_mib.saturating_mul(MEBIBYTE),
+                entries: 0,
+                charged_bytes: 0,
+                metadata_bytes: 0,
+                pins: Vec::new(),
+                policy_bytes: 0,
+                models: 0,
+                model_bytes: 0,
             }
         }
-        held.models = models.len();
     }
-    held
-}
-
-fn file_bytes_v1(files: &super::VerifiedFilesV1) -> usize {
-    files.iter().map(|(_, bytes)| bytes.len()).sum()
 }
 
 /// Whether the cache holds `source`. Its checkpoint, if any, was probed clean
@@ -453,195 +874,58 @@ fn file_bytes_v1(files: &super::VerifiedFilesV1) -> usize {
 pub(super) fn holds_source_v1(source: &ExpandedModelSourceV1) -> bool {
     OPPONENT_CACHE
         .get()
-        .and_then(|cache| cache.lock().ok())
-        .is_some_and(|entries| entries.iter().any(|entry| &entry.source == source))
+        .is_some_and(|cache| cache.holds_source_v1(source))
+}
+
+pub(super) fn configure_process_opponent_cache_v1(
+    entries: Option<usize>,
+    budget_mib: Option<usize>,
+) {
+    if entries.is_none() && budget_mib.is_none() {
+        return;
+    }
+    ProcessOpponentCacheV1::global_v1().configure_v1(entries, budget_mib);
 }
 
 /// Load one opponent, forking it from the cache when its source is cached;
-/// the flag reports a cache hit. `revalidate`: a hit must first find every
-/// file of the entry holding its verified bytes (a prepared update's load);
+/// the flag reports a cache hit. `revalidate`: a hit must first verify every
+/// pinned file of the entry on disk (a prepared or serial update's load);
 /// otherwise the caller verified them (a collection, at its boundary).
 pub(super) fn load_opponent_cached_v1(
     source: &ExpandedModelSourceV1,
     revalidate: bool,
 ) -> Result<(LoadedOpponentV1, bool), String> {
-    let stats = &opponent_cache_diagnostics_v1::counters_v1().process_opponent;
-    let started = Instant::now();
-    stats.lookups.add(1);
-    let cache = OPPONENT_CACHE.get_or_init(|| Mutex::new(VecDeque::new()));
-    let cached = {
-        let mut entries = cache
-            .lock()
-            .map_err(|_| "opponent cache poisoned".to_string())?;
-        let check = no_state_digest_v1::check_enabled_v1();
-        match entries.iter().position(|entry| {
-            &entry.source == source && entry.no_state_digest_check.is_none_or(|kept| kept == check)
-        }) {
-            Some(index) => {
-                let entry = entries.remove(index).ok_or("opponent cache index")?;
-                let policy = Arc::clone(&entry.policy);
-                let identity = entry.identity.clone();
-                let files = Arc::clone(&entry.files);
-                entries.push_back(entry);
-                Some((policy, identity, files))
-            }
-            None => {
-                if entries.iter().any(|entry| &entry.source == source) {
-                    stats.misses_check_setting.add(1);
-                } else {
-                    stats.misses_absent.add(1);
-                }
-                None
-            }
-        }
-    };
-    // A changed, missing or replaced file makes the hit a miss: the full
-    // load below reports exactly its own error.
-    let held = cached.is_some();
-    let revalidation_started = Instant::now();
-    let cached = cached.filter(|(_, _, files)| {
-        !revalidate
-            || files
-                .iter()
-                .all(|(path, bytes)| no_state_digest_v1::holds_bytes_v1(path, bytes))
-    });
-    if held && revalidate {
-        stats.revalidation_nanos.add_elapsed(revalidation_started);
-    }
-    if held && cached.is_none() {
-        stats.misses_revalidation.add(1);
-    }
-    if let Some((policy, identity, files)) = cached {
-        // A hit bypasses loading, so the entry's input contract is resolved
-        // again: its receipt and its policy must still agree. The receipt's
-        // model digest is the policy's model digest (the installed contract's,
-        // else the import's), never the effective FlatV7 or FlatV8 identity,
-        // which a transferred opponent's import does not carry.
-        ensure(
-            identity.model.feature_contract_digest == policy.model_feature_contract_digest_v1(),
-            "cached opponent no-state-digest contract differs from its receipt",
-        )?;
-        let fork_started = Instant::now();
-        let fork = policy.fork_for_collection_v3()?;
-        stats.fork_nanos.add_elapsed(fork_started);
-        stats.forks.add(1);
-        stats
-            .forked_policy_bytes
-            .add_usize(opponent_cache_diagnostics_v1::policy_bytes_v1(&fork));
-        if revalidate {
-            stats.hits_revalidated.add(1);
-            stats
-                .revalidated_payload_bytes
-                .add_usize(file_bytes_v1(&files));
-        } else {
-            stats.hits_trusted.add(1);
-        }
-        let hit = opponent_cache_diagnostics_v1::nanos_since_v1(started);
-        stats.hit_nanos.add(hit);
-        stats.hit_max_nanos.raise(hit);
-        return Ok((
-            LoadedOpponentV1 {
-                policy: fork,
-                behavior: ExpandedSeatBehaviorV1 {
-                    source: source.clone(),
-                    identity,
-                },
-            },
-            true,
-        ));
-    }
-    let load = opponent_cache_diagnostics_v1::WorkMarkV1::now_v1();
-    let (policy, identity) = super::loaded_source_profile_v1::scoped_v1(
+    load_opponent_cached_with_role_v1(
+        source,
+        revalidate,
         super::loaded_source_profile_v1::LoadRoleV1::Opponent,
-        || load_expanded_inference_any_math_v1(source),
-    )?;
-    load.finish_v1(&stats.full_load);
-    stats.full_loads.add(1);
-    // The tag is the check model the loaded policy actually holds, never a
-    // setting sampled apart from its load.
-    let no_state_digest_check = policy
-        .input_contract_v1()
-        .map(|_| policy.no_state_digest_check_v1());
-    let behavior = ExpandedSeatBehaviorV1 {
-        source: source.clone(),
-        identity: identity.clone(),
-    };
-    // The files this load read, verified again; a source the cache cannot
-    // re-verify exactly is not kept.
-    let capture = opponent_cache_diagnostics_v1::WorkMarkV1::now_v1();
-    let files = match super::opponent_cache_files_v1(source) {
-        Ok(Some(files)) => Some(Arc::new(files)),
-        _ => None,
-    };
-    capture.finish_v1(&stats.capture);
-    if let Some(files) = &files {
-        stats.captured_bytes.add_usize(file_bytes_v1(files));
-    }
-    let fork = policy.fork_for_collection_v3();
-    if let Ok(fork) = &fork {
-        stats.forks.add(1);
-        stats
-            .forked_policy_bytes
-            .add_usize(opponent_cache_diagnostics_v1::policy_bytes_v1(fork));
-    }
-    match (fork, files) {
-        (Ok(fork), Some(files)) => {
-            let mut entries = cache
-                .lock()
-                .map_err(|_| "opponent cache poisoned".to_string())?;
-            // Concurrent collectors can miss the same source before either
-            // load finishes. Keep one template per descriptor rather than
-            // letting duplicate insertions evict the rest of the roster.
-            if let Some(index) = entries.iter().position(|entry| &entry.source == source) {
-                entries.remove(index);
-                stats.replaced.add(1);
-            }
-            while entries.len() >= OPPONENT_CACHE_ENTRIES {
-                let Some(evicted) = entries.pop_front() else {
-                    break;
-                };
-                stats.evictions.add(1);
-                stats
-                    .evicted_file_bytes
-                    .add_usize(file_bytes_v1(&evicted.files));
-            }
-            stats.kept.add(1);
-            entries.push_back(CachedOpponentV1 {
-                source: source.clone(),
-                policy: Arc::new(policy),
-                identity,
-                no_state_digest_check,
-                files,
-            });
-            Ok((
-                LoadedOpponentV1 {
-                    policy: fork,
-                    behavior,
-                },
-                false,
-            ))
-        }
-        (Ok(fork), None) => {
-            stats.not_kept_unverifiable.add(1);
-            // Nothing kept for this descriptor may outlive a load that could
-            // not re-verify it.
-            cache
-                .lock()
-                .map_err(|_| "opponent cache poisoned".to_string())?
-                .retain(|entry| &entry.source != source);
-            Ok((
-                LoadedOpponentV1 {
-                    policy: fork,
-                    behavior,
-                },
-                false,
-            ))
-        }
-        (Err(_), _) => {
-            stats.not_kept_unforkable.add(1);
-            Ok((LoadedOpponentV1 { policy, behavior }, false))
-        }
-    }
+    )
+}
+
+pub(super) fn load_opponent_cached_with_role_v1(
+    source: &ExpandedModelSourceV1,
+    revalidate: bool,
+    role: super::loaded_source_profile_v1::LoadRoleV1,
+) -> Result<(LoadedOpponentV1, bool), String> {
+    ProcessOpponentCacheV1::global_v1().load_v1(source, revalidate, role)
+}
+
+/// The process cache's fork of `source`, or `None` on a miss
+/// (`ProcessOpponentCacheV1::lookup_v1`).
+pub(super) fn lookup_opponent_cached_v1(
+    source: &ExpandedModelSourceV1,
+    revalidate: bool,
+) -> Result<Option<LoadedOpponentV1>, String> {
+    ProcessOpponentCacheV1::global_v1().lookup_v1(source, revalidate)
+}
+
+/// Offer a full load to the process cache (`ProcessOpponentCacheV1::admit_v1`).
+pub(super) fn admit_opponent_v1(
+    source: &ExpandedModelSourceV1,
+    policy: FrozenPlayPolicyV1,
+    identity: ExpandedInferenceIdentityV1,
+) -> Result<LoadedOpponentV1, String> {
+    ProcessOpponentCacheV1::global_v1().admit_v1(source, policy, identity)
 }
 
 /// Which replayed rows may take a worker's exact row cache

@@ -1074,12 +1074,12 @@ fn prepared_opponent_hits_reverify_every_file_a_full_load_reads_v1() {
     };
     with_check_for_test_v1(false, || {
         for (source, files) in cases {
-            // The entry keeps exactly the files a full load reads.
-            let mut kept: Vec<PathBuf> = super::super::opponent_cache_files_v1(source)
+            // The entry keeps exactly the pinned files a full load reads.
+            let mut kept: Vec<PathBuf> = super::super::opponent_cache_pins_v1(source)
                 .unwrap()
                 .unwrap()
                 .into_iter()
-                .map(|(path, _)| path)
+                .map(|file| file.pin.path)
                 .collect();
             kept.sort();
             let mut expected = files.clone();
@@ -1148,7 +1148,7 @@ fn archive_distillation_opponents_always_load_in_full_v1() {
     with_check_for_test_v1(false, || {
         let verified = verify_collection_opponent_sources_v1(&episodes).unwrap();
         assert!(verified.is_empty());
-        assert!(super::super::opponent_cache_files_v1(&phase1)
+        assert!(super::super::opponent_cache_pins_v1(&phase1)
             .unwrap()
             .is_none());
         let full = bypassed_for_test_v1(|| load_expanded_inference_any_math_v1(&phase1)).unwrap();

@@ -391,6 +391,23 @@ impl VerifiedBytesCacheV1 {
         Some(bytes)
     }
 
+    /// Held bytes for `path` and `sha256` without counting a memo lookup, for
+    /// another cache's strict file revalidation (`holds_pinned_in_v1`).
+    pub(crate) fn peek_held_v1(&self, path: &Path, sha256: &str) -> Option<Arc<Vec<u8>>> {
+        if self.budget == 0 {
+            return None;
+        }
+        let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
+        let index = held
+            .entries
+            .iter()
+            .position(|entry| entry.sha256 == sha256 && entry.path == path)?;
+        let entry = held.entries.remove(index)?;
+        let bytes = Arc::clone(&entry.bytes);
+        held.entries.push_back(entry);
+        Some(bytes)
+    }
+
     /// Holds `bytes` for `path`; the caller has established that their
     /// SHA-256 is `sha256`. The least recently used entries are dropped until
     /// the new entry fits both bounds, then `bytes` are copied in; an entry
