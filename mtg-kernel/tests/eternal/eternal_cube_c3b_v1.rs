@@ -308,6 +308,7 @@ fn choose_target(state: &mut GameState, target: Target) {
 }
 
 /// The targets `spell` may choose first.
+#[track_caller]
 fn cast_targets(state: &GameState, spell: ObjectId) -> Vec<Target> {
     let mut probe = state.clone();
     assert!(castable(&mut probe, spell));
@@ -1089,7 +1090,11 @@ fn tireless_tracker_ignores_other_sacrifices_and_the_opponents_clues() {
     let tracker = put(&mut state, P0, "Tireless Tracker", Zone::Battlefield);
     let treasure = token(&mut state, P0, "Treasure Token");
     next(&mut state);
-    act(&mut state, Action::ActivateManaAbility(treasure));
+    // A Treasure makes any color, so the color is named.
+    act(
+        &mut state,
+        Action::ActivateManaAbilityChoice(treasure, ManaColor::G),
+    );
     settled(&mut state);
     assert!(named(&state, P0, "Treasure Token").is_empty());
     assert_eq!(counters(&state, tracker), 0, "a Treasure is not a Clue");
@@ -1220,9 +1225,9 @@ fn marwyn_gives_your_lands_hexproof_so_opponents_cannot_target_them() {
     let mut mine = plains();
     put(&mut mine, P0, "Marwyn, the Preserver", Zone::Battlefield);
     let own = put(&mut mine, P0, "Forest", Zone::Battlefield);
-    let rain = put(&mut mine, P0, "Stone Rain", Zone::Hand);
+    let own_rain = put(&mut mine, P0, "Stone Rain", Zone::Hand);
     pool(&mut mine, P0, &[ManaColor::R], 2);
-    assert!(cast_targets(&mine, rain).contains(&Target::Object(own)));
+    assert!(cast_targets(&mine, own_rain).contains(&Target::Object(own)));
 
     // Without Marwyn the land is a legal target again.
     move_to(&mut state, marwyn, Zone::Graveyard);
