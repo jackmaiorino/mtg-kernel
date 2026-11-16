@@ -2270,7 +2270,7 @@ fn pregame_announcement_step_is_a_hand_built_adam_step_from_the_two_buffers() {
     // (the even ones) is an announcement row.
     let steps = many_substeps(&fixture, 12);
     let batch = physical_groups(&steps);
-    let marked = |group: usize| group % 2 == 0;
+    let marked = |group: usize| group.is_multiple_of(2);
     let (targets, advantages) = gae_inputs(&batch);
     let scale = 0.25f32;
 
