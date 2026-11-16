@@ -214,8 +214,10 @@ def validate_pregame_advantage(mode, base=None):
         loss = base["loss_selection"]
         if "pregame_advantage" in loss:
             raise ValueError("the base's loss_selection already names pregame_advantage; the arm writes it")
-        if "pregame_advantage_scale" in loss:
-            raise ValueError("the base's loss_selection already names pregame_advantage_scale; the arm writes it")
+        if "pregame_announcement_step_scale" in loss:
+            raise ValueError("the base's loss_selection already names pregame_announcement_step_scale; the arm writes it")
+        if RETIRED_PREGAME_SCALE_KEY in loss:
+            raise ValueError(retired_pregame_scale_message("the base's loss_selection"))
         gamma = loss.get("gamma")
         if not (_is_number(gamma) and gamma == 1.0):
             raise ValueError(f"pregame_advantage terminal_v1 needs gamma exactly 1.0 in the base's loss_selection, "
@@ -223,24 +225,36 @@ def validate_pregame_advantage(mode, base=None):
     return mode
 
 
-def validate_pregame_advantage_scale(scale, mode):
-    """`scale` (the arm's `pregame_advantage_scale`, or None), checked: the trainer's loss_selection key, a number s with
-    0 < s <= 1 that multiplies the normalized advantage of the pregame announcement rows in the policy loss only. It
-    exists only with `pregame_advantage` "terminal_v1" (`mode`); absent leaves every config, arm file and recipe
-    identity exactly as it was. Raises ValueError for a non-number (a bool is not one), a non-finite value, a value
-    outside (0, 1], or a scale without the terminal mode."""
+# The earlier, pre-normalisation key. The trainer never took it on a release branch; the tools refuse it by name so an
+# arm written for it cannot run unscaled by accident.
+RETIRED_PREGAME_SCALE_KEY = "pregame_advantage" + "_scale"
+
+
+def retired_pregame_scale_message(where):
+    return (f"{where} names {RETIRED_PREGAME_SCALE_KEY}, which no trainer takes; the key is "
+            "pregame_announcement_step_scale (a scale on the announcement rows' optimizer step, 0 < s < 1)")
+
+
+def validate_pregame_announcement_step_scale(scale, mode):
+    """`scale` (the arm's `pregame_announcement_step_scale`, or None), checked: the trainer's loss_selection key, a
+    number s with 0 < s < 1 that scales the pregame announcement rows' part of the optimizer step after Adam's
+    normalisation (their policy gradient is kept in a second buffer a beside the rest r; first moment from r + s a,
+    second moment from (r + a)^2). It exists only with `pregame_advantage` "terminal_v1" (`mode`); absent leaves every
+    config, arm file and recipe identity exactly as it was. Raises ValueError for a non-number (a bool is not one), a
+    non-finite value, a value outside (0, 1) once read as the trainer's f32 (1.0 is refused: absent is the unscaled
+    update), or a scale without the terminal mode."""
     if scale is None:
         return None
     if mode != "terminal_v1":
-        raise ValueError("pregame_advantage_scale needs pregame_advantage terminal_v1")
+        raise ValueError("pregame_announcement_step_scale needs pregame_advantage terminal_v1")
     ok = False
     if _is_number(scale):
-        try:  # the trainer reads the number as an f32: refuse what it would round to 0 or past 1, and what overflows
-            ok = 0.0 < _float32(float(scale)) <= 1.0
+        try:  # the trainer reads the number as an f32: refuse what it would round to 0 or to 1, and what overflows
+            ok = 0.0 < _float32(float(scale)) < 1.0
         except OverflowError:
             ok = False
     if not ok:
-        raise ValueError(f"pregame_advantage_scale must be a number in (0, 1], got {scale!r}")
+        raise ValueError(f"pregame_announcement_step_scale must be a number in (0, 1) exclusive, got {scale!r}")
     return scale
 
 
@@ -309,7 +323,7 @@ def keep_offset_value(keep_offset, u):
 
 
 def build_config(base, dose, root, run, namespace, offset, updates, workers, coefficient=None, kappa=None,
-                 prep_workers=None, keep_offset=None, pregame_advantage=None, pregame_advantage_scale=None):
+                 prep_workers=None, keep_offset=None, pregame_advantage=None, pregame_announcement_step_scale=None):
     """An RT1 run config from an OH1/OH2 base and a dose record: the base's schedule from global update `offset`,
     episode ids and deal seeds keyed by (namespace, run, update, slot), and EX1 when `coefficient` is given.
 
@@ -320,9 +334,9 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
     episode is left exactly as the base has it.
 
     `pregame_advantage` ("terminal_v1", see `validate_pregame_advantage`) adds that key to the config's
-    `loss_selection`; without it the loss_selection is exactly the base's. `pregame_advantage_scale`
-    (`validate_pregame_advantage_scale`) adds that key too, only with the terminal mode."""
-    pregame_advantage_scale = validate_pregame_advantage_scale(pregame_advantage_scale, pregame_advantage)
+    `loss_selection`; without it the loss_selection is exactly the base's. `pregame_announcement_step_scale`
+    (`validate_pregame_announcement_step_scale`) adds that key too, only with the terminal mode."""
+    pregame_announcement_step_scale = validate_pregame_announcement_step_scale(pregame_announcement_step_scale, pregame_advantage)
     if pregame_advantage is not None:
         pregame_advantage = validate_pregame_advantage(pregame_advantage, base)
         if coefficient is not None:
@@ -365,8 +379,8 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
     cfg = {k: copy.deepcopy(v) for k, v in base.items() if k != "iterations"}
     if pregame_advantage is not None:
         cfg["loss_selection"] = dict(cfg["loss_selection"], pregame_advantage=pregame_advantage)
-        if pregame_advantage_scale is not None:
-            cfg["loss_selection"]["pregame_advantage_scale"] = pregame_advantage_scale
+        if pregame_announcement_step_scale is not None:
+            cfg["loss_selection"]["pregame_announcement_step_scale"] = pregame_announcement_step_scale
     cfg["initial_source"] = source
     cfg["iterations"] = iterations
     cfg["collection_workers"] = workers

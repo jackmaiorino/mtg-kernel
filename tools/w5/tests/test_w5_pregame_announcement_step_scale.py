@@ -1,8 +1,9 @@
-"""The pregame announcement advantage scale in the chain tools (tools/ex1/qual.py, tools/w5/xact.py, tools/w5/chains.py,
-tools/w5/mull_monitor.py): the `pregame_advantage_scale` arm key stamped into the config's loss_selection, validated
-(a number in (0, 1], only with `pregame_advantage` terminal_v1), part of the recipe identity only when present, refused
-when it changes on a started chain, and exposed by the monitor as the scaled and unscaled announcement advantage means.
-Configs, arm files, identities and monitor lines are unchanged when it is not used."""
+"""The pregame announcement step scale in the chain tools (tools/ex1/qual.py, tools/w5/xact.py, tools/w5/chains.py,
+tools/w5/mull_monitor.py): the `pregame_announcement_step_scale` arm key stamped into the config's loss_selection,
+validated (a number in (0, 1) exclusive, only with `pregame_advantage` terminal_v1), part of the recipe identity only
+when present, refused when it changes on a started chain, and exposed by the monitor as the routed announcement rows
+and the two gradient buffers' norms. The earlier pre-normalisation key is refused by name. Configs, arm files,
+identities and monitor lines are unchanged when the key is not used."""
 import json
 import sys
 import tempfile
@@ -27,16 +28,17 @@ VEC = {'b0': B0, 'end_update': 8, 'shape': 'linear-v1'}
 
 class Validation(unittest.TestCase):
     def test_accepted_and_refused_values(self):
-        for good in (1.0, 1, 0.5, 0.003, 1e-9):
-            self.assertEqual(qual.validate_pregame_advantage_scale(good, 'terminal_v1'), good)
-        self.assertIsNone(qual.validate_pregame_advantage_scale(None, 'terminal_v1'))
-        self.assertIsNone(qual.validate_pregame_advantage_scale(None, None))
-        for bad in (0, 0.0, -0.5, 1.0000001, 2, True, False, '0.5', [0.5], float('nan'), float('inf'), object(), 1e-50, 1e50, 10**400):
-            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, r'pregame_advantage_scale must be'):
-                qual.validate_pregame_advantage_scale(bad, 'terminal_v1')
+        for good in (0.5, 0.003, 0.03, 0.3, 1e-9, 0.9999999):
+            self.assertEqual(qual.validate_pregame_announcement_step_scale(good, 'terminal_v1'), good)
+        self.assertIsNone(qual.validate_pregame_announcement_step_scale(None, 'terminal_v1'))
+        self.assertIsNone(qual.validate_pregame_announcement_step_scale(None, None))
+        for bad in (0, 0.0, -0.5, 1, 1.0, 0.99999999999, 1.0000001, 2, True, False, '0.5', [0.5], float('nan'),
+                    float('inf'), object(), 1e-50, 1e50, 10**400):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ValueError, r'pregame_announcement_step_scale must be'):
+                qual.validate_pregame_announcement_step_scale(bad, 'terminal_v1')
         for mode in (None, 'gae'):
             with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, 'needs pregame_advantage terminal_v1'):
-                qual.validate_pregame_advantage_scale(0.5, mode)
+                qual.validate_pregame_announcement_step_scale(0.5, mode)
 
 
 class Configs(unittest.TestCase):
@@ -53,34 +55,34 @@ class Configs(unittest.TestCase):
     def test_the_key_goes_into_loss_selection_only_with_the_mode(self):
         base = opening_base(iterations=2)
         plain = self.build(base, pregame_advantage='terminal_v1')
-        scaled = self.build(base, pregame_advantage='terminal_v1', pregame_advantage_scale=0.25)
-        self.assertEqual(scaled['loss_selection'], dict(plain['loss_selection'], pregame_advantage_scale=0.25))
-        self.assertNotIn('pregame_advantage_scale', plain['loss_selection'])
+        scaled = self.build(base, pregame_advantage='terminal_v1', pregame_announcement_step_scale=0.25)
+        self.assertEqual(scaled['loss_selection'], dict(plain['loss_selection'], pregame_announcement_step_scale=0.25))
+        self.assertNotIn('pregame_announcement_step_scale', plain['loss_selection'])
         scaled['loss_selection'] = plain['loss_selection']
         self.assertEqual(scaled, plain)
         with self.assertRaisesRegex(ValueError, 'needs pregame_advantage terminal_v1'):
-            self.build(base, pregame_advantage_scale=0.25)
+            self.build(base, pregame_announcement_step_scale=0.25)
         with self.assertRaisesRegex(ValueError, 'must be a number'):
-            self.build(base, pregame_advantage='terminal_v1', pregame_advantage_scale=1.5)
+            self.build(base, pregame_advantage='terminal_v1', pregame_announcement_step_scale=1.5)
         inherited = opening_base()
-        inherited['loss_selection'] = dict(inherited['loss_selection'], pregame_advantage_scale=0.25)
-        with self.assertRaisesRegex(ValueError, "already names pregame_advantage_scale"):
+        inherited['loss_selection'] = dict(inherited['loss_selection'], pregame_announcement_step_scale=0.25)
+        with self.assertRaisesRegex(ValueError, "already names pregame_announcement_step_scale"):
             self.build(inherited, pregame_advantage='terminal_v1')
 
     def test_absent_is_byte_identical_to_before(self):
         base = opening_base()
         want = legacy_build_config(base, self.dose, self.out, 'r1', 'ns', 0, 3, 2)
-        for kwargs in ({}, {'pregame_advantage_scale': None}):
+        for kwargs in ({}, {'pregame_announcement_step_scale': None}):
             self.assertEqual(json.dumps(self.build(base, **kwargs), indent=1), json.dumps(want, indent=1))
 
     def test_xact_passes_it_through(self):
         base = opening_base()
         cfg = xact.build_config(base, self.dose, self.out, 'ch', 0, 3, 2, keep_offset=VEC,
-                                pregame_advantage='terminal_v1', pregame_advantage_scale=0.1)
-        self.assertEqual(cfg['loss_selection']['pregame_advantage_scale'], 0.1)
+                                pregame_advantage='terminal_v1', pregame_announcement_step_scale=0.1)
+        self.assertEqual(cfg['loss_selection']['pregame_announcement_step_scale'], 0.1)
         plain = xact.build_config(base, self.dose, self.out, 'ch', 0, 3, 2, keep_offset=VEC,
                                   pregame_advantage='terminal_v1')
-        self.assertNotIn('pregame_advantage_scale', plain['loss_selection'])
+        self.assertNotIn('pregame_announcement_step_scale', plain['loss_selection'])
 
 
 class Plans(unittest.TestCase):
@@ -108,48 +110,62 @@ class Plans(unittest.TestCase):
     def test_a_scaled_arm_is_in_the_file_the_identity_and_the_segment_configs(self):
         _, terminal = self.plan(self.inputs('terminal', keep_offset=VEC, pregame_advantage='terminal_v1'))
         _, plan = self.plan(self.inputs('scaled', keep_offset=VEC, pregame_advantage='terminal_v1',
-                                        pregame_advantage_scale=0.25))
+                                        pregame_announcement_step_scale=0.25))
         arm = self.arm(plan)
-        self.assertEqual(arm['pregame_advantage_scale'], 0.25)
+        self.assertEqual(arm['pregame_announcement_step_scale'], 0.25)
         identity = chains.recipe_identity(arm)
-        self.assertEqual(identity['pregame_advantage_scale'], 0.25)
+        self.assertEqual(identity['pregame_announcement_step_scale'], 0.25)
         self.assertEqual(identity, dict(legacy_recipe_identity(arm), keep_offset=VEC, pregame_advantage='terminal_v1',
-                                        pregame_advantage_scale=0.25))
+                                        pregame_announcement_step_scale=0.25))
         self.assertNotEqual(plan['arms']['C']['file']['sha256'], terminal['arms']['C']['file']['sha256'])
         manifest = json.loads(Path(plan['chains']['k1']['manifest']).read_text())
-        self.assertEqual(manifest['recipe']['pregame_advantage_scale'], 0.25)
+        self.assertEqual(manifest['recipe']['pregame_announcement_step_scale'], 0.25)
         cfg = chains.arm_config(arm, 'w5/q1', 0, 2, self.node.t / 'o')
-        self.assertEqual(cfg['loss_selection']['pregame_advantage_scale'], 0.25)
+        self.assertEqual(cfg['loss_selection']['pregame_announcement_step_scale'], 0.25)
         # without the key: no key anywhere, the arm file and the identity keep their bytes, null is no key
         terminal_arm = self.arm(terminal)
-        self.assertNotIn('pregame_advantage_scale', terminal_arm)
-        self.assertNotIn('pregame_advantage_scale', chains.recipe_identity(terminal_arm))
-        self.assertNotIn('pregame_advantage_scale', chains.arm_config(terminal_arm, 'w5/q1', 0, 1,
+        self.assertNotIn('pregame_announcement_step_scale', terminal_arm)
+        self.assertNotIn('pregame_announcement_step_scale', chains.recipe_identity(terminal_arm))
+        self.assertNotIn('pregame_announcement_step_scale', chains.arm_config(terminal_arm, 'w5/q1', 0, 1,
                                                                       self.node.t / 'o')['loss_selection'])
         _, null_plan = self.plan(self.inputs('null', keep_offset=VEC, pregame_advantage='terminal_v1',
-                                             pregame_advantage_scale=None))
+                                             pregame_announcement_step_scale=None))
         self.assertEqual(null_plan['arms']['C']['file']['sha256'], terminal['arms']['C']['file']['sha256'])
 
     def test_plan_refusals(self):
-        for bad in (0, 0.0, -1, 1.5, True, '0.5', [], {}):
+        for bad in (0, 0.0, -1, 1, 1.0, 1.5, True, '0.5', [], {}):
             with self.subTest(bad=bad), self.assertRaises(chains.Stop):
-                self.plan(self.inputs('bad', pregame_advantage='terminal_v1', pregame_advantage_scale=bad))
+                self.plan(self.inputs('bad', pregame_advantage='terminal_v1', pregame_announcement_step_scale=bad))
         with self.assertRaisesRegex(chains.Stop, 'needs pregame_advantage terminal_v1'):
-            self.plan(self.inputs('alone', pregame_advantage_scale=0.5))
+            self.plan(self.inputs('alone', pregame_announcement_step_scale=0.5))
+
+    def test_the_retired_key_is_refused_by_name(self):
+        retired = qual.RETIRED_PREGAME_SCALE_KEY
+        self.assertNotEqual(retired, 'pregame_announcement_step_scale')
+        # in an arm: alone, with a null value, and beside the new key
+        for label, extra in (('old', {retired: 0.25}), ('old-null', {retired: None}),
+                             ('both', {retired: 0.25, 'pregame_announcement_step_scale': 0.25})):
+            with self.subTest(label), self.assertRaisesRegex(chains.Stop, 'no trainer takes'):
+                self.plan(self.inputs(label, keep_offset=VEC, pregame_advantage='terminal_v1', **extra))
+        # in a base's own loss_selection
+        base = opening_base(iterations=2)
+        base['loss_selection'] = dict(base['loss_selection'], **{retired: 0.25})
+        with self.assertRaisesRegex(ValueError, 'no trainer takes'):
+            qual.validate_pregame_advantage('terminal_v1', base)
 
     def test_a_started_chain_refuses_a_changed_scale(self):
         _, plan = self.plan(self.inputs('first', keep_offset=VEC, pregame_advantage='terminal_v1',
-                                        pregame_advantage_scale=0.25))
+                                        pregame_announcement_step_scale=0.25))
         path = Path(plan['chains']['k1']['manifest'])
         man = json.loads(path.read_text())
         man['segments'] = [{'config': 'x', 'offset': 0, 'root': 'y', 'updates': 4}]
         chains.write(path, man)
-        for label, arm in (('other', dict(pregame_advantage_scale=0.5)), ('none', {})):
+        for label, arm in (('other', dict(pregame_announcement_step_scale=0.5)), ('none', {})):
             with self.subTest(label), self.assertRaisesRegex(chains.Stop,
-                                                              r'recipe changed.*pregame_advantage_scale differs'):
+                                                              r'recipe changed.*pregame_announcement_step_scale differs'):
                 self.plan(self.inputs(label, keep_offset=VEC, pregame_advantage='terminal_v1', **arm))
         self.plan(self.inputs('same', keep_offset=VEC, pregame_advantage='terminal_v1',
-                              pregame_advantage_scale=0.25))  # the same recipe resumes
+                              pregame_announcement_step_scale=0.25))  # the same recipe resumes
 
 
 class Monitor(unittest.TestCase):
@@ -162,22 +178,24 @@ class Monitor(unittest.TestCase):
         d = self.t / 'iterations' / name
         d.mkdir(parents=True)
         update = d / 'update.json'
-        update.write_text(json.dumps({'pregame_advantage': receipt} if receipt is not None else {}))
+        doc = {'pregame_advantage': {'mode': 'terminal_v1', 'pregame_groups': 14}}
+        if receipt is not None:
+            doc['pregame_announcement_step'] = receipt
+        update.write_text(json.dumps(doc))
         (d / 'complete.json').write_text(json.dumps({'update': {'path': update.as_posix()}}))
         return d
 
     def test_the_scaled_fields_are_read_only_when_the_receipt_has_them(self):
-        full = {'mode': 'terminal_v1', 'pregame_groups': 14, 'scale': 0.25, 'scaled_groups': 12,
-                'announcement_advantage_mean_unscaled': -0.8, 'announcement_advantage_mean_scaled': -0.2}
+        full = {'scale': 0.25, 'routed_groups': 12, 'announcement_gradient_l2': 0.0123456789,
+                'rest_gradient_l2': 1.23456789}
         self.assertEqual(mm.read_pregame_scale(self.iteration('000001', full)),
-                         {'s': 0.25, 'n': 12, 'mu': -0.8, 'ms': -0.2})
-        empty = dict(full, scaled_groups=0, announcement_advantage_mean_unscaled=None,
-                     announcement_advantage_mean_scaled=None)
+                         {'s': 0.25, 'n': 12, 'ga': 0.0123457, 'gr': 1.23457})
+        empty = dict(full, routed_groups=0, announcement_gradient_l2=0.0)
         self.assertEqual(mm.read_pregame_scale(self.iteration('000002', empty)),
-                         {'s': 0.25, 'n': 0, 'mu': None, 'ms': None})
-        unscaled = {'mode': 'terminal_v1', 'pregame_groups': 14}
-        self.assertIsNone(mm.read_pregame_scale(self.iteration('000003', unscaled)))
-        self.assertIsNone(mm.read_pregame_scale(self.iteration('000004', None)))
+                         {'s': 0.25, 'n': 0, 'ga': 0.0, 'gr': 1.23457})
+        # an unscaled update's receipt has no such member: nothing is read
+        self.assertIsNone(mm.read_pregame_scale(self.iteration('000003', None)))
+        self.assertIsNone(mm.read_pregame_scale(self.iteration('000004', {})))
         self.assertIsNone(mm.read_pregame_scale(self.t / 'iterations' / 'missing'))
 
     def test_the_report_sums_the_means_over_updates_and_an_unscaled_report_has_no_key(self):
@@ -185,8 +203,8 @@ class Monitor(unittest.TestCase):
         seg = cdir / 'seg-00000'
         seg.mkdir(parents=True)
         episodes = [mm.read_episode(with_rows(SEATS, ROWS, offset=qual.keep_offset_value(VECTOR, 0)))]
-        for it, pas in enumerate(({'s': 0.25, 'n': 10, 'mu': -1.0, 'ms': -0.25},
-                                  {'s': 0.25, 'n': 30, 'mu': 0.2, 'ms': 0.05}, None)):
+        for it, pas in enumerate(({'s': 0.25, 'n': 10, 'ga': 0.02, 'gr': 1.0},
+                                  {'s': 0.25, 'n': 30, 'ga': 0.04, 'gr': 2.0}, None)):
             line = mm.iteration_line(it, episodes)
             if pas is not None:
                 line['pas'] = pas
@@ -194,16 +212,16 @@ class Monitor(unittest.TestCase):
         (seg / 'completion.json').write_bytes(b'{}')
         jwrite(cdir / 'chain.json', {'schema': 'w5-chain/v1', 'chain': 'n1', 'arm_name': 'C',
                                      'recipe': {'keep_offset': VECTOR, 'pregame_advantage': 'terminal_v1',
-                                                'pregame_advantage_scale': 0.25},
+                                                'pregame_announcement_step_scale': 0.25},
                                      'segments': [{'config': 'x', 'offset': 0, 'root': (cdir / 'seg-00000').as_posix(),
                                                    'updates': 3}]})
         report = mm.summarize_chain(cdir)
         scale = report['pregame_scale']
         self.assertEqual(scale['scale'], 0.25)
         self.assertEqual((scale['updates'], scale['announcement_rows']), (2, 40))
-        self.assertAlmostEqual(scale['announcement_advantage_mean_unscaled'], (-10 + 6) / 40)
-        self.assertAlmostEqual(scale['announcement_advantage_mean_scaled'], (-2.5 + 1.5) / 40)
-        self.assertIn('pregame advantage scale 0.25', '\n'.join(mm.format_by_count(report)))
+        self.assertAlmostEqual(scale['announcement_gradient_l2_mean'], 0.03)
+        self.assertAlmostEqual(scale['rest_gradient_l2_mean'], 1.5)
+        self.assertIn('pregame announcement step scale 0.25', '\n'.join(mm.format_by_count(report)))
         # no scaled line: no key, no text
         plain = self.t / 'plain'
         pseg = plain / 'seg-00000'
@@ -216,7 +234,7 @@ class Monitor(unittest.TestCase):
                                                     'updates': 1}]})
         report = mm.summarize_chain(plain)
         self.assertNotIn('pregame_scale', report)
-        self.assertNotIn('pregame advantage scale', '\n'.join(mm.format_by_count(report)))
+        self.assertNotIn('pregame announcement step scale', '\n'.join(mm.format_by_count(report)))
 
 
 if __name__ == '__main__':
