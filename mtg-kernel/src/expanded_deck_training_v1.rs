@@ -290,6 +290,18 @@ pub enum ExpandedLossSelectionV1 {
         /// existing config, manifest and receipt keeps its bytes.
         #[serde(default, skip_serializing_if = "PregameAdvantageV1::is_gae")]
         pregame_advantage: PregameAdvantageV1,
+        /// Scale `s` (`0 < s < 1`) on the pregame ANNOUNCEMENT rows' part of
+        /// the optimizer step, applied after Adam's normalisation
+        /// (`native_policy_train_step_v1::pregame_announcement_step_v1`): the
+        /// backward keeps their policy term in a second gradient buffer `a`
+        /// beside the rest `r`, and Adam takes `m = EMA(r + s a)`,
+        /// `v = EMA((r + a)^2)`. Nothing before the optimizer changes. Absent
+        /// (the default, never written) leaves every byte of every existing
+        /// config, manifest and receipt unchanged. Valid only with
+        /// `pregame_advantage: terminal_v1`, on the plain CPU GAE update with
+        /// the sequential backward.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pregame_announcement_step_scale: Option<f32>,
     },
     GaeUniformKlRecoveryV1 {
         gamma: f32,
@@ -347,6 +359,18 @@ impl ExpandedLossSelectionV1 {
         }
     }
 
+    /// The pregame announcement step scale this selection names (`None` for
+    /// every loss but the plain GAE one, and when absent).
+    pub(crate) fn pregame_announcement_step_scale_v1(&self) -> Option<f32> {
+        match self {
+            Self::GaeAdvantageValueV1 {
+                pregame_announcement_step_scale,
+                ..
+            } => *pregame_announcement_step_scale,
+            _ => None,
+        }
+    }
+
     pub(crate) fn is_terminal_reinforce_value_v3(&self) -> bool {
         matches!(self, Self::TerminalReinforceValueV3)
     }
@@ -372,6 +396,7 @@ impl ExpandedLossSelectionV1 {
                 lambda,
                 entropy_coefficient,
                 pregame_advantage,
+                pregame_announcement_step_scale,
             } => {
                 ensure(
                     gamma.is_finite() && (0.0..=1.0).contains(gamma),
@@ -385,6 +410,20 @@ impl ExpandedLossSelectionV1 {
                     lambda.is_finite() && (0.0..=1.0).contains(lambda),
                     "gae lambda must be finite in 0.0..=1.0",
                 )?;
+                if let Some(scale) = pregame_announcement_step_scale {
+                    ensure(
+                        *pregame_advantage == PregameAdvantageV1::TerminalV1,
+                        "pregame_announcement_step_scale requires pregame_advantage terminal_v1",
+                    )?;
+                    // 1.0 is refused: the two-buffer sum is another
+                    // arithmetic than the single buffer, and the key absent is
+                    // the unscaled update. A value that rounds to f32 zero is
+                    // refused by the lower bound.
+                    ensure(
+                        scale.is_finite() && *scale > 0.0 && *scale < 1.0,
+                        "pregame_announcement_step_scale must be finite and in (0, 1) exclusive",
+                    )?;
+                }
                 ensure(
                     *entropy_coefficient == 0.0,
                     "gae entropy_coefficient is schema-reserved for a future change \
@@ -4916,6 +4955,23 @@ fn execute_update_inner_v1(
             "the terminal pregame advantage requires a London opening on every episode",
         )?;
     }
+    // The pregame announcement step scale
+    // (`pregame_announcement_step_v1`): the terminal pregame advantage's
+    // update (so the guard above holds) with the sequential backward, the only
+    // one that routes the second gradient buffer. Set for this update's step
+    // only; None is every existing update.
+    let pregame_announcement_step_scale = loss_selection.pregame_announcement_step_scale_v1();
+    if pregame_announcement_step_scale.is_some() {
+        ensure(
+            !loss_selection.pregame_advantage_v1().is_gae(),
+            "pregame_announcement_step_scale requires pregame_advantage terminal_v1",
+        )?;
+        ensure(
+            backward_execution.is_sequential(),
+            "pregame_announcement_step_scale requires the sequential backward",
+        )?;
+    }
+    state.set_pregame_announcement_step_scale_v1(pregame_announcement_step_scale);
     // Rows the search played are authenticated and masked only by a W5
     // update; every other update refuses them.
     ensure(
@@ -5718,6 +5774,13 @@ fn execute_update_inner_v1(
     };
     // The offset lived for this update's step only.
     state.set_london_keep_offset_v1(None);
+    // So did the pregame announcement step scale; its step left a record.
+    state.set_pregame_announcement_step_scale_v1(None);
+    let pregame_announcement_step = state.take_pregame_announcement_step_record_v1();
+    ensure(
+        pregame_announcement_step.is_some() == pregame_announcement_step_scale.is_some(),
+        "the pregame announcement step scale did not reach the plain GAE step",
+    )?;
     let checkpoint_started = std::time::Instant::now();
     let snapshot = state.snapshot_v1().map_err(err)?;
     let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
@@ -5956,6 +6019,16 @@ fn execute_update_inner_v1(
         if let Some(pregame) = &gae.pregame {
             result["pregame_advantage"] = json!(pregame);
         }
+    }
+    // Present only under the pregame announcement step scale, so every other
+    // receipt gains no key.
+    if let Some(record) = pregame_announcement_step {
+        result["pregame_announcement_step"] = json!({
+            "scale": record.scale,
+            "routed_groups": record.routed_groups,
+            "announcement_gradient_l2": record.announcement_gradient_l2,
+            "rest_gradient_l2": record.rest_gradient_l2,
+        });
     }
     if let Some(telemetry) = preparation_telemetry {
         result["update_preparation"] = serde_json::to_value(telemetry).map_err(err)?;
@@ -10657,6 +10730,7 @@ pub(crate) mod tests {
                 lambda: 0.95,
                 entropy_coefficient: 0.0,
                 pregame_advantage: PregameAdvantageV1::default(),
+                pregame_announcement_step_scale: None,
             },
             TrainingMathV1::PlatformLibm,
         )
@@ -11218,6 +11292,7 @@ pub(crate) mod tests {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: PregameAdvantageV1::default(),
+            pregame_announcement_step_scale: None,
         }
     }
 
@@ -12791,6 +12866,7 @@ pub(crate) mod tests {
 
     mod pauper_opening_tests;
     mod pregame_advantage_tests;
+    mod pregame_announcement_step_tests;
     mod reset_start_tests;
     mod v8_inclusion_tests;
     mod widening_b512_tests;

@@ -141,6 +141,7 @@ fn gae() -> ExpandedLossSelectionV1 {
         lambda: 0.9,
         entropy_coefficient: 0.0,
         pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+        pregame_announcement_step_scale: None,
     }
 }
 
@@ -371,12 +372,14 @@ fn s_learner_end_to_end_v1() {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+            pregame_announcement_step_scale: None,
         },
         ExpandedLossSelectionV1::GaeAdvantageValueV1 {
             gamma: 1.0,
             lambda: 0.95,
             entropy_coefficient: 0.0,
             pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+            pregame_announcement_step_scale: None,
         },
         ExpandedLossSelectionV1::TerminalReinforceValueV3,
     ] {
@@ -388,10 +391,24 @@ fn s_learner_end_to_end_v1() {
         lambda: 0.9,
         entropy_coefficient: 0.0,
         pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::TerminalV1,
+        pregame_announcement_step_scale: None,
     };
     assert!(validate_update_loss_v1(&next, &terminal)
         .unwrap_err()
         .contains("terminal pregame advantage"));
+    // So is the pregame announcement step scale, on its own check (a
+    // selection that names it without the terminal mode is not a valid one,
+    // and is refused here before anything else reads it).
+    let scaled = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+        gamma: 1.0,
+        lambda: 0.9,
+        entropy_coefficient: 0.0,
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+        pregame_announcement_step_scale: Some(0.03),
+    };
+    assert!(validate_update_loss_v1(&next, &scaled)
+        .unwrap_err()
+        .contains("pregame announcement step scale"));
     validate_update_loss_v1(&net8, &ExpandedLossSelectionV1::TerminalReinforceValueV3).unwrap();
     // A continuation with other GAE settings is refused.
     assert!(update(
@@ -405,6 +422,7 @@ fn s_learner_end_to_end_v1() {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+            pregame_announcement_step_scale: None,
         },
         CheckpointRecordFormatV1::V1,
         root.join("other-gamma"),

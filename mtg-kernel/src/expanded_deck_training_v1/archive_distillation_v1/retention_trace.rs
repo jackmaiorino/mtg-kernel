@@ -417,6 +417,10 @@ pub(in crate::expanded_deck_training_v1) fn retention_trace_v1(
         loss.pregame_advantage_v1().is_gae(),
         "the trace reads ordinary GAE runs only, not the terminal pregame advantage",
     )?;
+    ensure(
+        loss.pregame_announcement_step_scale_v1().is_none(),
+        "the trace reads ordinary GAE runs only, not the pregame announcement step scale",
+    )?;
     let value_coefficient: f32 =
         serde_json::from_value(manifest["config"]["value_coefficient"].clone()).map_err(err)?;
     let done: Value = read_pinned(&completion)?;

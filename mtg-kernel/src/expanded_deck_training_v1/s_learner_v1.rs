@@ -295,6 +295,7 @@ pub(crate) fn validate_update_loss_v1(
         lambda,
         entropy_coefficient,
         pregame_advantage,
+        pregame_announcement_step_scale,
     } = loss_selection
     else {
         return Err("an S learner trains only the GAE loss (gae_advantage_value/v1)".into());
@@ -302,6 +303,10 @@ pub(crate) fn validate_update_loss_v1(
     ensure(
         pregame_advantage.is_gae(),
         "an S learner refuses the terminal pregame advantage",
+    )?;
+    ensure(
+        pregame_announcement_step_scale.is_none(),
+        "an S learner refuses the pregame announcement step scale",
     )?;
     ensure(
         record.gamma_bits == gamma.to_bits()
@@ -407,6 +412,7 @@ fn refuse_unsupported_v1(inputs: &SUpdateInputsV1) -> Result<(f32, f32), String>
             lambda,
             entropy_coefficient,
             pregame_advantage,
+            pregame_announcement_step_scale,
         } => {
             ensure(
                 entropy_coefficient.to_bits() == 0,
@@ -415,6 +421,10 @@ fn refuse_unsupported_v1(inputs: &SUpdateInputsV1) -> Result<(f32, f32), String>
             ensure(
                 pregame_advantage.is_gae(),
                 "an S learner refuses the terminal pregame advantage",
+            )?;
+            ensure(
+                pregame_announcement_step_scale.is_none(),
+                "an S learner refuses the pregame announcement step scale",
             )?;
             Ok((gamma, lambda))
         }
