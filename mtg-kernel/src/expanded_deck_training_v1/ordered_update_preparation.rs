@@ -573,12 +573,35 @@ impl ProcessOpponentCacheV1 {
             .is_some_and(|state| state.entries.iter().any(|entry| &entry.source == source))
     }
 
+    /// Load one opponent: a hit forks the cached policy, a miss loads in full
+    /// and offers the result to the cache. The flag reports a hit.
+    ///
+    /// The hit, the full load and the admission are separate frames that are
+    /// never inlined, so a full load runs no deeper than this small frame
+    /// over its caller. Serial replay runs on the main thread, whose stack is
+    /// the platform default (1 MiB on Windows), and calls the same pieces
+    /// itself (`OpponentCacheV1::load`).
     pub(super) fn load_v1(
         &self,
         source: &ExpandedModelSourceV1,
         revalidate: bool,
         role: super::loaded_source_profile_v1::LoadRoleV1,
     ) -> Result<(LoadedOpponentV1, bool), String> {
+        if let Some(hit) = self.lookup_v1(source, revalidate)? {
+            return Ok((hit, true));
+        }
+        let (policy, identity) = full_load_opponent_v1(source, role)?;
+        Ok((self.admit_v1(source, policy, identity)?, false))
+    }
+
+    /// The cache's fork of `source`, or `None` on a miss. `revalidate`: a hit
+    /// must first verify every pinned file of the entry on disk.
+    #[inline(never)]
+    pub(super) fn lookup_v1(
+        &self,
+        source: &ExpandedModelSourceV1,
+        revalidate: bool,
+    ) -> Result<Option<LoadedOpponentV1>, String> {
         let stats = &opponent_cache_diagnostics_v1::counters_v1().process_opponent;
         let started = Instant::now();
         stats.lookups.add(1);
@@ -650,23 +673,28 @@ impl ProcessOpponentCacheV1 {
             let hit = opponent_cache_diagnostics_v1::nanos_since_v1(started);
             stats.hit_nanos.add(hit);
             stats.hit_max_nanos.raise(hit);
-            return Ok((
-                LoadedOpponentV1 {
-                    policy: fork,
-                    behavior: ExpandedSeatBehaviorV1 {
-                        source: source.clone(),
-                        identity,
-                    },
+            return Ok(Some(LoadedOpponentV1 {
+                policy: fork,
+                behavior: ExpandedSeatBehaviorV1 {
+                    source: source.clone(),
+                    identity,
                 },
-                true,
-            ));
+            }));
         }
-        let load = opponent_cache_diagnostics_v1::WorkMarkV1::now_v1();
-        let (policy, identity) = super::loaded_source_profile_v1::scoped_v1(role, || {
-            load_expanded_inference_any_math_v1(source)
-        })?;
-        load.finish_v1(&stats.full_load);
-        stats.full_loads.add(1);
+        Ok(None)
+    }
+
+    /// Offer a full load of `source` to the cache and return the policy to
+    /// play: a fork of the kept template, or the loaded policy itself when it
+    /// cannot be forked.
+    #[inline(never)]
+    pub(super) fn admit_v1(
+        &self,
+        source: &ExpandedModelSourceV1,
+        policy: FrozenPlayPolicyV1,
+        identity: ExpandedInferenceIdentityV1,
+    ) -> Result<LoadedOpponentV1, String> {
+        let stats = &opponent_cache_diagnostics_v1::counters_v1().process_opponent;
         // The tag is the check model the loaded policy actually holds, never a
         // setting sampled apart from its load.
         let no_state_digest_check = policy
@@ -711,13 +739,10 @@ impl ProcessOpponentCacheV1 {
                 if state.entry_limit == 0 || standalone_charge > state.budget_bytes {
                     state.entries.retain(|entry| &entry.source != source);
                     stats.not_kept_budget.add(1);
-                    return Ok((
-                        LoadedOpponentV1 {
-                            policy: fork,
-                            behavior,
-                        },
-                        false,
-                    ));
+                    return Ok(LoadedOpponentV1 {
+                        policy: fork,
+                        behavior,
+                    });
                 }
                 // Concurrent collectors can miss the same source before either
                 // load finishes. Keep one template per descriptor rather than
@@ -747,13 +772,10 @@ impl ProcessOpponentCacheV1 {
                 let charged = live_charge_bytes_v1(&state.entries, None);
                 stats.kept.add(1);
                 stats.peak_charged_bytes.raise(charged as u64);
-                Ok((
-                    LoadedOpponentV1 {
-                        policy: fork,
-                        behavior,
-                    },
-                    false,
-                ))
+                Ok(LoadedOpponentV1 {
+                    policy: fork,
+                    behavior,
+                })
             }
             (Ok(fork), None) => {
                 stats.not_kept_unverifiable.add(1);
@@ -764,20 +786,35 @@ impl ProcessOpponentCacheV1 {
                     .map_err(|_| "opponent cache poisoned".to_string())?
                     .entries
                     .retain(|entry| &entry.source != source);
-                Ok((
-                    LoadedOpponentV1 {
-                        policy: fork,
-                        behavior,
-                    },
-                    false,
-                ))
+                Ok(LoadedOpponentV1 {
+                    policy: fork,
+                    behavior,
+                })
             }
             (Err(_), _) => {
                 stats.not_kept_unforkable.add(1);
-                Ok((LoadedOpponentV1 { policy, behavior }, false))
+                Ok(LoadedOpponentV1 { policy, behavior })
             }
         }
     }
+}
+
+/// A full load of `source` for the process opponent cache, counted as its
+/// full-load work. Never inlined: the loaded policy stays out of the caller's
+/// frame.
+#[inline(never)]
+pub(super) fn full_load_opponent_v1(
+    source: &ExpandedModelSourceV1,
+    role: super::loaded_source_profile_v1::LoadRoleV1,
+) -> Result<(FrozenPlayPolicyV1, ExpandedInferenceIdentityV1), String> {
+    let stats = &opponent_cache_diagnostics_v1::counters_v1().process_opponent;
+    let load = opponent_cache_diagnostics_v1::WorkMarkV1::now_v1();
+    let loaded = super::loaded_source_profile_v1::scoped_v1(role, || {
+        load_expanded_inference_any_math_v1(source)
+    })?;
+    load.finish_v1(&stats.full_load);
+    stats.full_loads.add(1);
+    Ok(loaded)
 }
 
 /// What the process opponent cache holds now, for the diagnostics file
@@ -871,6 +908,24 @@ pub(super) fn load_opponent_cached_with_role_v1(
     role: super::loaded_source_profile_v1::LoadRoleV1,
 ) -> Result<(LoadedOpponentV1, bool), String> {
     ProcessOpponentCacheV1::global_v1().load_v1(source, revalidate, role)
+}
+
+/// The process cache's fork of `source`, or `None` on a miss
+/// (`ProcessOpponentCacheV1::lookup_v1`).
+pub(super) fn lookup_opponent_cached_v1(
+    source: &ExpandedModelSourceV1,
+    revalidate: bool,
+) -> Result<Option<LoadedOpponentV1>, String> {
+    ProcessOpponentCacheV1::global_v1().lookup_v1(source, revalidate)
+}
+
+/// Offer a full load to the process cache (`ProcessOpponentCacheV1::admit_v1`).
+pub(super) fn admit_opponent_v1(
+    source: &ExpandedModelSourceV1,
+    policy: FrozenPlayPolicyV1,
+    identity: ExpandedInferenceIdentityV1,
+) -> Result<LoadedOpponentV1, String> {
+    ProcessOpponentCacheV1::global_v1().admit_v1(source, policy, identity)
 }
 
 /// Which replayed rows may take a worker's exact row cache

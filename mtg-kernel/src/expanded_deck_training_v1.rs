@@ -1040,7 +1040,20 @@ impl OpponentCacheV1 {
             }
             OpponentCacheModeV1::ReplayRevalidated => {
                 stats.misses_revalidated.add(1);
-                ordered_update_preparation::load_opponent_cached_v1(source, true)?.0
+                // Serial replay runs on the main thread. A process-cache miss
+                // loads in full from this frame, as an unverified miss does,
+                // not from inside the process cache's frames, so the load
+                // runs no deeper than before the replay used that cache.
+                match ordered_update_preparation::lookup_opponent_cached_v1(source, true)? {
+                    Some(hit) => hit,
+                    None => {
+                        let (policy, identity) = ordered_update_preparation::full_load_opponent_v1(
+                            source,
+                            LoadRoleV1::Opponent,
+                        )?;
+                        ordered_update_preparation::admit_opponent_v1(source, policy, identity)?
+                    }
+                }
             }
             OpponentCacheModeV1::Unverified | OpponentCacheModeV1::CollectionVerified(_) => {
                 // Unrecognized import schemas retain their original complete
