@@ -792,7 +792,10 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::UpToOneOpponentArtifactCreatureOrPlaneswalkerV1 => ObjF::Permanent,
         S::NoncreaturePermanentV1 => ObjF::Permanent,
         S::RepeatableArtifactsV1(_) => typed(CardType::Artifact),
-        S::EnchantmentCardInOwnGraveyardV1 => typed(CardType::Enchantment),
+        S::EnchantmentCardInOwnGraveyardV1 | S::AnyNumberEnchantmentsV1 => {
+            typed(CardType::Enchantment)
+        }
+        S::ControlledArtifactOrCreatureV1 => ObjF::Permanent,
         S::CreatureSpellPowerOrToughnessAtMostTwoV1 => ObjF::Spell,
     }
 }
@@ -822,6 +825,7 @@ pub(super) fn standard_target_origin(
         | S::AttackingClericRogueWarriorOrWizardV1
         | S::AnyNumberControlledNonlandNontokenPermanentsV1
         | S::ControlledPermanentV1
+        | S::ControlledArtifactOrCreatureV1
         | S::TwoControlledArtifactsCreaturesOrLandsV1 => {
             (Some(ZoneF::Battlefield), Some(RelF::You))
         }
@@ -912,6 +916,7 @@ pub(super) fn standard_target_origin(
         | S::TwoDistinctCreaturesV1
         | S::NoncreaturePermanentV1
         | S::RepeatableArtifactsV1(_)
+        | S::AnyNumberEnchantmentsV1
         | S::CrewedSourceThisTurn => {
             // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
@@ -1398,6 +1403,15 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             out.target(TargetAtom::UpTo);
             // The noncreature refinement has no facet.
             out.atoms.push(Atom::Opaque);
+        }
+        S::ControlledArtifactOrCreatureV1 => {
+            object(out, typed(CardType::Artifact), relation, zone);
+            object(out, creature(), relation, zone);
+        }
+        S::AnyNumberEnchantmentsV1 => {
+            object(out, typed(CardType::Enchantment), relation, zone);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
         }
     }
 }

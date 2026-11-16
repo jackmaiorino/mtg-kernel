@@ -384,6 +384,7 @@ pub mod eternal_sideboard_s1j_v1;
 /// Triumph of Saint Katherine.
 pub mod eternal_sideboard_s1l_v1;
 pub mod eternal_sideboard_s1m_v1;
+pub mod eternal_sideboard_s1n_v1;
 /// Vintage graveyard and tempo card programs of the eternal catalog (wave
 /// E7b).
 pub mod eternal_vintage_e7b_v1;

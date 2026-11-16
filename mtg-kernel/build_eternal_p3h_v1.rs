@@ -1,6 +1,6 @@
 //! Card-database recipes for the eternal catalog's Premodern sideboard wave
 //! P3h. Wave S1m's tables fall through to these, and these fall through to
-//! Vintage Cube wave C1a's (`build_eternal_c1a_v1.rs`).
+//! wave S1n's (`build_eternal_s1n_v1.rs`), the tail of the recipe chains.
 //! Runtime programs live in `src/eternal_premodern_p3h_v1.rs`. Every row is
 //! keyed by a name that occurs only in the eternal registry.
 
@@ -40,7 +40,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
     match name {
         "Overgrown Estate" => &OVERGROWN_ESTATE,
         "Decree of Pain" => &DECREE_OF_PAIN,
-        _ => super::build_eternal_c1a_v1::activated_ability_recipes_for(name),
+        _ => super::build_eternal_s1n_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -57,34 +57,34 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
     match name {
         "Decree of Pain" => Some(spell("crate::eternal_premodern_p3h_v1::decree_of_pain")),
         "Enlightened Tutor" => Some(spell("crate::eternal_premodern_p3h_v1::enlightened_tutor")),
-        _ => super::build_eternal_c1a_v1::special_for(name),
+        _ => super::build_eternal_s1n_v1::special_for(name),
     }
 }
 
 /// No P3h card has kicker.
 pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
-    super::build_eternal_c1a_v1::kicker_cost_for(name)
+    super::build_eternal_s1n_v1::kicker_cost_for(name)
 }
 
 /// No P3h card is an Aura or an Equipment.
 pub(super) fn attachment_for(name: &str) -> &'static str {
-    super::build_eternal_c1a_v1::attachment_for(name)
+    super::build_eternal_s1n_v1::attachment_for(name)
 }
 
 /// No P3h card has flashback.
 pub(super) fn flashback_for(name: &str) -> String {
-    super::build_eternal_c1a_v1::flashback_for(name)
+    super::build_eternal_s1n_v1::flashback_for(name)
 }
 
 /// No P3h card has an alternative cost.
 pub(super) fn alt_cost_for(name: &str) -> &'static str {
-    super::build_eternal_c1a_v1::alt_cost_for(name)
+    super::build_eternal_s1n_v1::alt_cost_for(name)
 }
 
 /// No P3h card has a printed evergreen keyword; Ghitu Slinger's echo is
 /// wave P2d's `echo_cost`.
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
-    super::build_eternal_c1a_v1::keywords_for(name)
+    super::build_eternal_s1n_v1::keywords_for(name)
 }
 
 /// Card-database tokens for this wave's abilities.
@@ -100,6 +100,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Auramancer" => "etb:may_return_target_enchantment_card_from_own_graveyard_to_hand",
         "Monk Realist" => "etb:destroy_target_enchantment",
         "Ghitu Slinger" => "echo:2R;etb:deal_2_damage_any_target",
-        _ => super::build_eternal_c1a_v1::trigger_recipe_for(name),
+        _ => super::build_eternal_s1n_v1::trigger_recipe_for(name),
     }
 }

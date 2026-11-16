@@ -70,6 +70,11 @@ pub fn active(state: &GameState, source: ObjectId) -> bool {
 }
 
 pub fn cannot_lose(state: &GameState, player: PlayerId) -> bool {
+    if cfg!(feature = "eternal-fixtures")
+        && crate::eternal_sideboard_s1n_v1::controls_darksteel_angel(state, player)
+    {
+        return true;
+    }
     if !enabled() {
         return false;
     }
