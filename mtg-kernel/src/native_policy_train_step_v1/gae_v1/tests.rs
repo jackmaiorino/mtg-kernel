@@ -2194,3 +2194,573 @@ fn london_keep_offset_is_refused_by_the_other_update_entry_points() {
     assert_eq!(helper.require_no_london_keep_offset_v1(), Err(expected));
     assert_eq!(helper.london_keep_offset_v1(), None);
 }
+
+// Pregame announcement step scale (`pregame_announcement_step_v1`).
+
+/// One plain GAE step with the pregame announcement step scale installed (or
+/// not), on `workers` forward and backward workers.
+fn announcement_step(
+    state: &mut NativePolicyValueTrainStateV1,
+    groups: &[NativePolicyPhysicalDecisionV1<'_>],
+    targets: &[f32],
+    advantages: &[f32],
+    workers: usize,
+    scale: Option<f32>,
+) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
+    state.set_pregame_announcement_step_scale_v1(scale);
+    state.train_step_gae_feature_transfer_profiled_v1(
+        crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+        groups,
+        targets,
+        advantages,
+        VC,
+        LR,
+        None,
+        workers,
+        &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+    )
+}
+
+fn gradient_values(result: &NativePolicyTrainStepResultV1) -> Vec<Vec<f32>> {
+    result
+        .gradients
+        .iter()
+        .map(|gradient| gradient.values.clone())
+        .collect()
+}
+
+/// Equal as numbers (a zero of either sign is the same zero).
+fn assert_same_numbers(actual: &[Vec<f32>], expected: &[Vec<f32>], what: &str) {
+    assert_eq!(actual.len(), expected.len(), "{what}");
+    for (tensor, (a, e)) in actual.iter().zip(expected).enumerate() {
+        assert_eq!(a.len(), e.len(), "{what} tensor {tensor}");
+        for (index, (x, y)) in a.iter().zip(e).enumerate() {
+            assert!(x == y, "{what} tensor {tensor} element {index}: {x} vs {y}");
+        }
+    }
+}
+
+/// A state whose moments and step counter are past their initial values.
+fn warmed_state() -> NativePolicyValueTrainStateV1 {
+    let mut state = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
+    let fixture = Fixture::capture(state.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    state
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    state
+}
+
+/// The update with the scale is Adam on two buffers: `r` (everything but the
+/// announcement rows' policy term) and `a` (that term), with the first moment
+/// from `r + s a` and the second from `(r + a)^2`. Each buffer equals the
+/// ordinary backward of the matching part of the loss, and nothing before the
+/// optimizer changes.
+#[test]
+#[allow(
+    clippy::needless_range_loop,
+    reason = "one index walks the parameters, both moments and both buffers together"
+)]
+fn pregame_announcement_step_is_a_hand_built_adam_step_from_the_two_buffers() {
+    let start = warmed_state();
+    let fixture = announcement_fixture(start.model_v1());
+    // Twelve groups; a group whose first substep is the announcement tensor
+    // (the even ones) is an announcement row.
+    let steps = many_substeps(&fixture, 12);
+    let batch = physical_groups(&steps);
+    let marked = |group: usize| group.is_multiple_of(2);
+    let (targets, advantages) = gae_inputs(&batch);
+    let scale = 0.25f32;
+
+    let mut scaled = start.clone();
+    let (result, capture) = capture_train_step_for_test_v1(|| {
+        announcement_step(&mut scaled, &batch, &targets, &advantages, 1, Some(scale)).unwrap()
+    });
+    assert_eq!(scaled.pregame_announcement_step_scale_v1(), None);
+    let record = scaled.take_pregame_announcement_step_record_v1().unwrap();
+    assert_eq!(scaled.take_pregame_announcement_step_record_v1(), None);
+    assert_eq!(record.scale.to_bits(), scale.to_bits());
+    assert_eq!(record.routed_groups, 6);
+    assert!(record.announcement_gradient_l2 > 0.0 && record.rest_gradient_l2 > 0.0);
+
+    // The two buffers as Adam saw them (after the gauge projection).
+    assert_eq!(capture.projection.len(), 1);
+    assert_eq!(capture.announcement_projection.len(), 1);
+    let mut rest = capture.projection[0].gradients.clone();
+    let mut announcement = capture.announcement_projection[0].gradients.clone();
+    rest[SCORER_SECOND_BIAS][0] = 0.0;
+    announcement[SCORER_SECOND_BIAS][0] = 0.0;
+    // The step's reported gradient is the rest buffer.
+    assert_eq!(
+        gradient_bits(&result),
+        rest.iter()
+            .flat_map(|tensor| tensor.iter().map(|value| value.to_bits()))
+            .collect::<Vec<_>>()
+    );
+
+    // r: the ordinary update of the same batch with the announcement rows'
+    // advantage at zero (their value term stays).
+    let rest_advantages: Vec<f32> = advantages
+        .iter()
+        .enumerate()
+        .map(|(group, advantage)| if marked(group) { 0.0 } else { *advantage })
+        .collect();
+    let rest_reference = announcement_step(
+        &mut start.clone(),
+        &batch,
+        &targets,
+        &rest_advantages,
+        1,
+        None,
+    )
+    .unwrap();
+    assert_same_numbers(&rest, &gradient_values(&rest_reference), "rest buffer");
+    // a: the ordinary update with every other advantage at zero and every
+    // value target at the recorded value (no value error, so no value term).
+    let announcement_advantages: Vec<f32> = advantages
+        .iter()
+        .enumerate()
+        .map(|(group, advantage)| if marked(group) { *advantage } else { 0.0 })
+        .collect();
+    let recorded_values: Vec<f32> = batch
+        .iter()
+        .map(|group| f32::from_bits(group.substeps[0].expected_value_bits))
+        .collect();
+    let announcement_reference = announcement_step(
+        &mut start.clone(),
+        &batch,
+        &recorded_values,
+        &announcement_advantages,
+        1,
+        None,
+    )
+    .unwrap();
+    assert_same_numbers(
+        &announcement,
+        &gradient_values(&announcement_reference),
+        "announcement buffer",
+    );
+    assert!(announcement.iter().flatten().any(|value| *value != 0.0));
+
+    // Adam by hand from the start state and the two buffers.
+    let step = start.adam_step + 1;
+    assert_eq!(scaled.adam_step, step);
+    let math = TrainingMathV1::PlatformLibm;
+    let exponent = i32::try_from(step).unwrap();
+    let bias1 = 1.0f64 - math.powi_f64_v1(f64::from(ADAM_BETA1_V1), exponent);
+    let bias2 = 1.0f64 - math.powi_f64_v1(f64::from(ADAM_BETA2_V1), exponent);
+    let step_size = (f64::from(LR) / bias1) as f32;
+    let bias2_sqrt = bias2.sqrt() as f32;
+    let before = start.model.parameter_snapshot_v1();
+    let after = scaled.model.parameter_snapshot_v1();
+    let mut moved = 0usize;
+    for tensor in 0..before.len() {
+        for index in 0..before[tensor].values.len() {
+            let (p, m, v) = (
+                after[tensor].values[index],
+                scaled.first_moments[tensor][index],
+                scaled.second_moments[tensor][index],
+            );
+            if tensor == SCORER_SECOND_BIAS {
+                // The gauge: anchored parameter, no moments.
+                assert_eq!(p.to_bits(), scaled.scorer_bias_anchor_bits);
+                assert_eq!((m.to_bits(), v.to_bits()), (0, 0));
+                continue;
+            }
+            let (r, a) = (rest[tensor][index], announcement[tensor][index]);
+            let (p0, m0, v0) = (
+                before[tensor].values[index],
+                start.first_moments[tensor][index],
+                start.second_moments[tensor][index],
+            );
+            let first = m0 + ((r + scale * a) - m0) * (1.0 - ADAM_BETA1_V1);
+            let second = v0 * ADAM_BETA2_V1 + (r + a) * (r + a) * (1.0 - ADAM_BETA2_V1);
+            let parameter =
+                p0 + (-step_size) * first / (second.sqrt() / bias2_sqrt + ADAM_EPSILON_V1);
+            assert_eq!(
+                (p.to_bits(), m.to_bits(), v.to_bits()),
+                (parameter.to_bits(), first.to_bits(), second.to_bits()),
+                "tensor {tensor} element {index}"
+            );
+            moved += usize::from(p.to_bits() != p0.to_bits());
+        }
+    }
+    assert!(moved > 1000, "{moved}");
+
+    // Nothing before the optimizer changes: the loss, its sums and every
+    // selected output are the unscaled update's. The second moment is the
+    // unscaled update's too (two buffers summed against one, so to rounding),
+    // and the parameters are not.
+    let mut plain = start.clone();
+    let unscaled = announcement_step(&mut plain, &batch, &targets, &advantages, 1, None).unwrap();
+    assert_eq!(plain.take_pregame_announcement_step_record_v1(), None);
+    assert_eq!(result.loss.to_bits(), unscaled.loss.to_bits());
+    assert_eq!(result.policy_sum.to_bits(), unscaled.policy_sum.to_bits());
+    assert_eq!(result.value_sum.to_bits(), unscaled.value_sum.to_bits());
+    assert_eq!(result.selected_outputs, unscaled.selected_outputs);
+    assert_eq!(result.physical_terms, unscaled.physical_terms);
+    // (r + a)^2 against the single buffer's g^2: the two sums differ by the
+    // rounding of their many terms, which is relative to the terms (here the
+    // tensor's largest gradient entry), not to the sum r + a.
+    for tensor in 0..rest.len() {
+        let largest = rest[tensor]
+            .iter()
+            .chain(&announcement[tensor])
+            .fold(0.0f32, |largest, value| largest.max(value.abs()));
+        let rounding = 1.0e-4 * largest;
+        for index in 0..rest[tensor].len() {
+            let (x, y) = (
+                scaled.second_moments[tensor][index],
+                plain.second_moments[tensor][index],
+            );
+            let (r, a) = (rest[tensor][index], announcement[tensor][index]);
+            let bound = (1.0 - ADAM_BETA2_V1)
+                * (2.0 * (r + a).abs() * rounding + rounding * rounding)
+                + 1.0e-6 * y.abs();
+            assert!(
+                (x - y).abs() <= bound,
+                "second moment tensor {tensor} element {index}: {x} vs {y} (bound {bound})"
+            );
+        }
+    }
+    assert_ne!(state_bits(&scaled), state_bits(&plain));
+}
+
+/// A batch without an announcement row trains bit for bit as without the
+/// scale, on the sequential and on the exact parallel backward.
+#[test]
+fn pregame_announcement_step_without_announcement_rows_changes_no_bit() {
+    let start = warmed_state();
+    let fixture = Fixture::capture(start.model_v1());
+    for (group_count, workers) in [(12usize, 1usize), (200, 4)] {
+        let steps = many_substeps(&fixture, group_count);
+        let batch = physical_groups(&steps);
+        let (targets, advantages) = gae_inputs(&batch);
+        let mut plain = start.clone();
+        let mut scaled = start.clone();
+        let expected =
+            announcement_step(&mut plain, &batch, &targets, &advantages, workers, None).unwrap();
+        let actual = announcement_step(
+            &mut scaled,
+            &batch,
+            &targets,
+            &advantages,
+            workers,
+            Some(0.03),
+        )
+        .unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+        let record = scaled.take_pregame_announcement_step_record_v1().unwrap();
+        assert_eq!(record.routed_groups, 0);
+        assert_eq!(record.announcement_gradient_l2, 0.0);
+        assert_eq!(state_bits(&scaled), state_bits(&plain));
+        assert_eq!(
+            scaled.state_sha256_v1().unwrap(),
+            plain.state_sha256_v1().unwrap()
+        );
+    }
+}
+
+/// The scaled update keeps every bit across backward workers: the exact
+/// parallel backward routes both buffers exactly as the sequential loop.
+#[test]
+fn pregame_announcement_step_keeps_every_bit_across_backward_workers() {
+    use crate::native_policy_train_step_v1::exact_parallel_backward_v1::{
+        with_exact_backward_hooks_for_test_v1 as with_hooks, ExactBackwardHooksForTestV1,
+    };
+    let start = warmed_state();
+    let fixture = announcement_fixture(start.model_v1());
+    // 399 substeps, about half of them in announcement rows: both passes are
+    // shared by the workers. 99 substeps: the rest pass is shared, the
+    // announcement pass (about 50 substeps) stays on the sequential loop.
+    for (group_count, cases) in [
+        (
+            200usize,
+            vec![(Some(37), 2usize, 2u64), (None, 4, 2), (Some(64), 8, 2)],
+        ),
+        (50, vec![(None, 3, 1)]),
+    ] {
+        let steps = many_substeps(&fixture, group_count);
+        let batch = physical_groups(&steps);
+        let (targets, advantages) = gae_inputs(&batch);
+        let mut sequential = start.clone();
+        let (expected, runs) = with_hooks(ExactBackwardHooksForTestV1::NONE, || {
+            announcement_step(&mut sequential, &batch, &targets, &advantages, 1, Some(0.1)).unwrap()
+        });
+        assert_eq!(runs, 0);
+        let expected_record = sequential
+            .take_pregame_announcement_step_record_v1()
+            .unwrap();
+        assert_eq!(expected_record.routed_groups, group_count / 2);
+        for (block_substeps, workers, parallel_runs) in cases {
+            let hooks = ExactBackwardHooksForTestV1 {
+                block_substeps,
+                ..ExactBackwardHooksForTestV1::NONE
+            };
+            let mut parallel = start.clone();
+            let (actual, runs) = with_hooks(hooks, || {
+                announcement_step(
+                    &mut parallel,
+                    &batch,
+                    &targets,
+                    &advantages,
+                    workers,
+                    Some(0.1),
+                )
+                .unwrap()
+            });
+            assert_eq!(
+                runs, parallel_runs,
+                "{group_count} {block_substeps:?} {workers}"
+            );
+            assert_eq!(gradient_bits(&actual), gradient_bits(&expected));
+            assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
+            assert_eq!(
+                parallel.take_pregame_announcement_step_record_v1().unwrap(),
+                expected_record
+            );
+            assert_eq!(state_bits(&parallel), state_bits(&sequential));
+        }
+    }
+}
+
+/// The fixed-partition backward does not route the second buffer: refused,
+/// with the state untouched and the scale cleared.
+#[test]
+fn pregame_announcement_step_is_refused_on_the_fixed_partition_backward() {
+    let base = warmed_state();
+    let fixture = announcement_fixture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    let mut state = base.clone();
+    state.set_pregame_announcement_step_scale_v1(Some(0.1));
+    let error = state
+        .train_step_gae_feature_transfer_profiled_v1(
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+            &groups,
+            &targets,
+            &advantages,
+            VC,
+            LR,
+            Some(4),
+            1,
+            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+        )
+        .unwrap_err();
+    assert_eq!(
+        error,
+        NativePolicyTrainErrorV1::PregameAnnouncementStep {
+            code: "pregame-announcement-step-requires-sequential-backward"
+        }
+    );
+    assert_eq!(state.pregame_announcement_step_scale_v1(), None);
+    assert_eq!(state.take_pregame_announcement_step_record_v1(), None);
+    assert_eq!(state_bits(&state), state_bits(&base));
+    // Without the scale the same call trains.
+    state
+        .train_step_gae_feature_transfer_profiled_v1(
+            crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+            &groups,
+            &targets,
+            &advantages,
+            VC,
+            LR,
+            Some(4),
+            1,
+            &mut NativeTrainingPhaseRecorderV1::disabled_v1(),
+        )
+        .unwrap();
+}
+
+/// Only the plain GAE objective takes the scale: the recovery loss, the
+/// terminal loss, the weighted loss and every entry point behind the shared
+/// helper refuse it and clear it.
+#[test]
+fn pregame_announcement_step_is_refused_outside_the_plain_gae_loss() {
+    let base = warmed_state();
+    let fixture = announcement_fixture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    let expected = NativePolicyTrainErrorV1::PregameAnnouncementStep {
+        code: "pregame-announcement-step-requires-plain-gae",
+    };
+    // The recovery loss (the GAE core with the exploration term).
+    let mut recovery = base.clone();
+    recovery.set_pregame_announcement_step_scale_v1(Some(0.1));
+    assert_eq!(
+        recovery
+            .train_step_gae_recovery_v1(
+                crate::sideboard_play_policy_v1::FreshLineageGenerationV1::V3,
+                &groups,
+                &targets,
+                &advantages,
+                VC,
+                LR,
+                0.0,
+                1,
+                false,
+            )
+            .unwrap_err(),
+        expected
+    );
+    assert_eq!(recovery.pregame_announcement_step_scale_v1(), None);
+    assert_eq!(state_bits(&recovery), state_bits(&base));
+    // The terminal (v3) loss.
+    let mut legacy = base.clone();
+    legacy.set_pregame_announcement_step_scale_v1(Some(0.1));
+    assert_eq!(
+        legacy
+            .train_step_feature_transfer_v3(&groups, VC, LR)
+            .unwrap_err(),
+        expected
+    );
+    assert_eq!(legacy.pregame_announcement_step_scale_v1(), None);
+    assert_eq!(state_bits(&legacy), state_bits(&base));
+    // The weighted loss.
+    let mut weighted = base.clone();
+    weighted.set_pregame_announcement_step_scale_v1(Some(0.1));
+    let weights = vec![0.5f32; groups.len()];
+    assert_eq!(
+        weighted
+            .train_step_weighted_feature_transfer_v3(&groups, &weights, VC, LR)
+            .unwrap_err(),
+        expected
+    );
+    assert_eq!(weighted.pregame_announcement_step_scale_v1(), None);
+    assert_eq!(state_bits(&weighted), state_bits(&base));
+    // The shared helper, as the CUDA, E-supported, soft-target, archive
+    // distillation and retention entry points call it. A keep offset set at
+    // the same time is reported first, and both are cleared.
+    let mut helper = base.clone();
+    helper.set_pregame_announcement_step_scale_v1(Some(0.1));
+    assert_eq!(helper.require_no_london_keep_offset_v1(), Err(expected));
+    assert_eq!(helper.pregame_announcement_step_scale_v1(), None);
+    assert_eq!(helper.require_no_london_keep_offset_v1(), Ok(()));
+    helper.set_pregame_announcement_step_scale_v1(Some(0.1));
+    helper.set_london_keep_offset_v1(Some(OffsetVectorV1::scalar(1.0)));
+    assert_eq!(
+        helper.require_no_london_keep_offset_v1(),
+        Err(NativePolicyTrainErrorV1::LondonKeepOffset {
+            code: "london-keep-offset-requires-plain-gae"
+        })
+    );
+    assert_eq!(helper.pregame_announcement_step_scale_v1(), None);
+    assert_eq!(helper.london_keep_offset_v1(), None);
+}
+
+/// The scale covers the pinned net-8 update under the platform math only:
+/// the portable math and the no-state-digest contract refuse it.
+#[test]
+fn pregame_announcement_step_is_refused_outside_the_net8_platform_update() {
+    let base = warmed_state();
+    let fixture = announcement_fixture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    let expected = NativePolicyTrainErrorV1::PregameAnnouncementStep {
+        code: "pregame-announcement-step-requires-net8-platform-math",
+    };
+    let mut portable = base.clone();
+    portable.set_training_math_v1(TrainingMathV1::PortableV1);
+    let before = state_bits(&portable);
+    assert_eq!(
+        announcement_step(&mut portable, &groups, &targets, &advantages, 1, Some(0.1)).unwrap_err(),
+        expected
+    );
+    assert_eq!(portable.pregame_announcement_step_scale_v1(), None);
+    assert_eq!(state_bits(&portable), before);
+}
+
+/// A pregame decision with two mulligan rows is not an announcement the
+/// tensorizer writes: the step fails closed.
+#[test]
+fn pregame_announcement_step_refuses_a_malformed_announcement() {
+    use crate::expanded_deck_training_v1::london_keep_offset_v1::MULLIGAN_FLAG_ACTION_COLUMN_V1;
+    let base = warmed_state();
+    let mut fixture = announcement_fixture(base.model_v1());
+    let rows = fixture.logits[0].len();
+    assert!(rows >= 2);
+    let tensor = &mut fixture.tensors[0].common;
+    let width = tensor.action_features.len() / rows;
+    tensor.action_features[width + MULLIGAN_FLAG_ACTION_COLUMN_V1] = 1.0;
+    refresh_first_group_outputs(base.model_v1(), &mut fixture);
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    let mut state = base.clone();
+    assert_eq!(
+        announcement_step(&mut state, &groups, &targets, &advantages, 1, Some(0.1)).unwrap_err(),
+        NativePolicyTrainErrorV1::PregameAnnouncementStep {
+            code: "pregame-announcement-step-malformed-decision"
+        }
+    );
+    assert_eq!(state_bits(&state), state_bits(&base));
+    // Without the scale the decision is not read for announcement rows.
+    announcement_step(&mut state, &groups, &targets, &advantages, 1, None).unwrap();
+}
+
+/// The scale lives for one step: consumed by a step that trains and by one
+/// that fails early, and the record of a scaled step does not outlive the
+/// next step.
+#[test]
+fn pregame_announcement_step_never_outlives_the_step_that_took_it() {
+    let base = warmed_state();
+    let fixture = announcement_fixture(base.model_v1());
+    let steps = fixture.substeps();
+    let groups = groups(&steps);
+    let (targets, advantages) = gae_inputs(&groups);
+    let mut early = base.clone();
+    early.set_pregame_announcement_step_scale_v1(Some(0.1));
+    assert!(early
+        .train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, f32::NAN)
+        .is_err());
+    assert_eq!(early.pregame_announcement_step_scale_v1(), None);
+    assert_eq!(early.take_pregame_announcement_step_record_v1(), None);
+    assert_eq!(state_bits(&early), state_bits(&base));
+    let mut ok = base.clone();
+    ok.set_pregame_announcement_step_scale_v1(Some(0.1));
+    ok.train_step_gae_feature_transfer_v3(&groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    assert_eq!(ok.pregame_announcement_step_scale_v1(), None);
+    // The next step (outputs recorded by the updated model) has no scale and
+    // drops the record.
+    let next_fixture = announcement_fixture(ok.model_v1());
+    let next_steps = next_fixture.substeps();
+    let next_groups = physical_groups(&next_steps);
+    let (targets, advantages) = gae_inputs(&next_groups);
+    ok.train_step_gae_feature_transfer_v3(&next_groups, &targets, &advantages, VC, LR)
+        .unwrap();
+    assert_eq!(ok.take_pregame_announcement_step_record_v1(), None);
+}
+
+/// The exact GPU learner does not route the second buffer: with one installed
+/// the scaled step is refused (no CPU fallback under a set scale).
+#[cfg(feature = "gpu-exact-v1")]
+#[test]
+#[ignore = "needs a CUDA device (MTG_KERNEL_GPU_EXACT_TEST_ORDINAL); run alone"]
+fn pregame_announcement_step_is_refused_with_an_exact_gpu_learner() {
+    let ordinal: usize = std::env::var("MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+        .expect("set MTG_KERNEL_GPU_EXACT_TEST_ORDINAL")
+        .parse()
+        .unwrap();
+    let base = warmed_state();
+    let fixture = announcement_fixture(base.model_v1());
+    let steps = many_substeps(&fixture, 200);
+    let batch = physical_groups(&steps);
+    let (targets, advantages) = gae_inputs(&batch);
+    crate::gpu_exact_v1::install_learner_v1(ordinal).unwrap();
+    let mut state = base.clone();
+    assert_eq!(
+        announcement_step(&mut state, &batch, &targets, &advantages, 4, Some(0.1)).unwrap_err(),
+        NativePolicyTrainErrorV1::PregameAnnouncementStep {
+            code: "pregame-announcement-step-requires-cpu-backward"
+        }
+    );
+    assert_eq!(state.pregame_announcement_step_scale_v1(), None);
+    assert_eq!(state_bits(&state), state_bits(&base));
+}

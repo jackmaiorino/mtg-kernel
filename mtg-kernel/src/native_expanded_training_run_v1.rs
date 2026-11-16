@@ -557,6 +557,24 @@ impl NativeExpandedTrainingRunV1 {
         )?;
         self.update_backend.validate_v1()?;
         self.loss_selection.validate_v1()?;
+        // The pregame announcement step scale runs only where the second
+        // gradient buffer is routed: the plain CPU GAE update with the
+        // sequential backward (the update refuses the rest again).
+        check(
+            self.loss_selection
+                .pregame_announcement_step_scale_v1()
+                .is_none()
+                || (self.update_backend.is_cpu()
+                    && self.update_backward_execution.is_sequential()
+                    && self.line_b.is_none()
+                    && self.e_supported.is_none()
+                    && self.soft_q.is_none()
+                    && self.search_targets.is_none()
+                    && self.ex1.is_none()
+                    && self.initial_source.s_learner.is_none()),
+            "pregame_announcement_step_scale requires the plain CPU GAE update with the sequential \
+             backward, without line (b), E, SQ1, search targets, EX1 or an S learner",
+        )?;
         // The E-supported, SQ1, TP1 Stage B and EX1 updates always write v1
         // checkpoints (outside the v2 writer's scope gate), so a run that
         // demands v2 must not select them (the default keeps v1 there).
@@ -3194,6 +3212,7 @@ mod tests {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+            pregame_announcement_step_scale: None,
         };
         gae.validate_v1().unwrap();
         assert_ne!(identity(&legacy).unwrap(), identity(&gae).unwrap());
@@ -3431,6 +3450,7 @@ mod tests {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+            pregame_announcement_step_scale: None,
         };
         let transfer = |contract: &str, encoding: &str| {
             crate::sideboard_play_policy_v1::FrozenPlayObservationTransferV3 {
@@ -3545,12 +3565,156 @@ mod tests {
     fn gae_loss_v1(
         pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1,
     ) -> ExpandedLossSelectionV1 {
+        gae_loss_step_scale_v1(pregame_advantage, None)
+    }
+
+    fn gae_loss_step_scale_v1(
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1,
+        pregame_announcement_step_scale: Option<f32>,
+    ) -> ExpandedLossSelectionV1 {
         ExpandedLossSelectionV1::GaeAdvantageValueV1 {
             gamma: 1.0,
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage,
+            pregame_announcement_step_scale,
         }
+    }
+
+    /// The pregame announcement step scale through the production run: the
+    /// key is in the run manifest and the update receipts only when set, and
+    /// an absent key leaves both without a byte of it; the scaled run trains
+    /// to other states than the unscaled one and replays itself; a run cannot
+    /// resume under another value, or with the key added or removed.
+    #[test]
+    fn pregame_announcement_step_scale_reaches_a_real_run_and_is_part_of_its_identity() {
+        use crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1;
+        use crate::expanded_deck_training_v1::PregameAdvantageV1;
+        let vector = LondonKeepOffsetV1::PerCount([6.5, 5.5, 4.5, 0.0, 2.5, 1.5, 0.5]);
+        let after_states = |result: &Value| -> Vec<Value> {
+            (0..2)
+                .map(|index| iteration_update_v1(result, index)["after_state_sha256"].clone())
+                .collect()
+        };
+        let absent = london_v7_config_v1(
+            "step-scale-absent",
+            gae_loss_v1(PregameAdvantageV1::TerminalV1),
+            Some(vector),
+        );
+        let absent_result = run_native_expanded_training_v1(&absent, None).unwrap();
+        let manifest_text = fs::read_to_string(absent.output_directory.join("run.json")).unwrap();
+        assert!(!manifest_text.contains("pregame_announcement_step"));
+        for index in 0..2 {
+            let update = iteration_update_v1(&absent_result, index);
+            assert!(update.get("pregame_announcement_step").is_none());
+            assert!(!update.to_string().contains("pregame_announcement_step"));
+        }
+        let scaled = london_v7_config_v1(
+            "step-scale-quarter",
+            gae_loss_step_scale_v1(PregameAdvantageV1::TerminalV1, Some(0.25)),
+            Some(vector),
+        );
+        scaled.validate_v1().unwrap();
+        // One iteration, then a resume of the same directory for the second.
+        run_native_expanded_training_v1(&scaled, Some(1)).unwrap();
+        let scaled_result = run_native_expanded_training_v1(&scaled, None).unwrap();
+        let manifest: Value =
+            read_json(&scaled.output_directory.join("run.json"), SMALL_CAP).unwrap();
+        assert_eq!(
+            manifest["loss_selection"]["pregame_announcement_step_scale"],
+            0.25
+        );
+        let mut routed = 0;
+        for index in 0..2 {
+            let update = iteration_update_v1(&scaled_result, index);
+            let record = &update["pregame_announcement_step"];
+            assert_eq!(record["scale"], 0.25, "{update}");
+            let groups = record["routed_groups"].as_u64().unwrap();
+            assert!(
+                groups
+                    <= update["pregame_advantage"]["pregame_groups"]
+                        .as_u64()
+                        .unwrap()
+            );
+            routed += groups;
+            assert!(record["rest_gradient_l2"].as_f64().unwrap() > 0.0);
+            assert_eq!(
+                record["announcement_gradient_l2"].as_f64().unwrap() > 0.0,
+                groups > 0
+            );
+        }
+        // The fixture's London games open with announcements, so the scale
+        // had rows to act on and the states differ from the unscaled run's.
+        assert!(routed >= 1);
+        assert_ne!(after_states(&scaled_result), after_states(&absent_result));
+        // The same config in another directory replays the scaled run.
+        let mut again = scaled.clone();
+        again.output_directory = scaled
+            .output_directory
+            .parent()
+            .unwrap()
+            .join("step-scale-quarter-again");
+        let again_result = run_native_expanded_training_v1(&again, None).unwrap();
+        assert_eq!(after_states(&again_result), after_states(&scaled_result));
+        // One run, one scale: another value, or none, cannot resume the
+        // directory; nor can the key be added to the unscaled run's.
+        for other in [Some(0.5f32), None] {
+            let mut changed = scaled.clone();
+            changed.loss_selection = gae_loss_step_scale_v1(PregameAdvantageV1::TerminalV1, other);
+            let error = run_native_expanded_training_v1(&changed, None).unwrap_err();
+            assert!(
+                error.contains("resume plan or implementation differs"),
+                "{error}"
+            );
+        }
+        let mut added = absent.clone();
+        added.loss_selection = gae_loss_step_scale_v1(PregameAdvantageV1::TerminalV1, Some(0.25));
+        let error = run_native_expanded_training_v1(&added, None).unwrap_err();
+        assert!(
+            error.contains("resume plan or implementation differs"),
+            "{error}"
+        );
+    }
+
+    /// The scale runs only where the second gradient buffer is routed: a
+    /// config that pairs it with the fixed-partition backward, a CUDA update
+    /// backend or an S learner source is refused before anything runs.
+    #[test]
+    fn pregame_announcement_step_scale_is_refused_off_the_plain_cpu_sequential_update() {
+        use crate::expanded_deck_training_v1::london_keep_offset_v1::LondonKeepOffsetV1;
+        use crate::expanded_deck_training_v1::PregameAdvantageV1;
+        let vector = LondonKeepOffsetV1::PerCount([6.5, 5.5, 4.5, 0.0, 2.5, 1.5, 0.5]);
+        let config = london_v7_config_v1(
+            "step-scale-refusals",
+            gae_loss_step_scale_v1(PregameAdvantageV1::TerminalV1, Some(0.25)),
+            Some(vector),
+        );
+        config.validate_v1().unwrap();
+        let refused = |config: &NativeExpandedTrainingRunV1| {
+            let error = config.validate_v1().unwrap_err();
+            assert!(
+                error.contains("pregame_announcement_step_scale requires"),
+                "{error}"
+            );
+        };
+        let mut fixed_partition = config.clone();
+        fixed_partition.update_backward_execution = UpdateBackwardExecutionV1::FixedPartition4;
+        refused(&fixed_partition);
+        let mut cuda = config.clone();
+        cuda.update_backend = ExpandedUpdateBackendV1::Cuda { device_ordinal: 0 };
+        refused(&cuda);
+        // Without the terminal mode the selection itself is refused.
+        let mut gae = config.clone();
+        gae.loss_selection = gae_loss_step_scale_v1(PregameAdvantageV1::Gae, Some(0.25));
+        let error = gae.validate_v1().unwrap_err();
+        assert!(
+            error.contains("requires pregame_advantage terminal_v1"),
+            "{error}"
+        );
+        // The same configs without the scale keep their own rules.
+        let mut plain = config.clone();
+        plain.loss_selection = gae_loss_v1(PregameAdvantageV1::TerminalV1);
+        plain.validate_v1().unwrap();
     }
 
     /// The per-count lean vector and the terminal pregame advantage through
@@ -3673,6 +3837,7 @@ mod tests {
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
                 pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+                pregame_announcement_step_scale: None,
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -3707,6 +3872,7 @@ mod tests {
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
                 pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+                pregame_announcement_step_scale: None,
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -3788,6 +3954,7 @@ mod tests {
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
                 pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+                pregame_announcement_step_scale: None,
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -3926,6 +4093,7 @@ mod tests {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+            pregame_announcement_step_scale: None,
         };
         let w5_config = |label: &str, closed: u64, stop: Option<u64>| {
             let mut config = real_two_iteration_config_v1(label, gae, ExpandedUpdateBackendV1::Cpu);
@@ -4035,6 +4203,7 @@ mod tests {
             lambda: 0.9,
             entropy_coefficient: 0.0,
             pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+            pregame_announcement_step_scale: None,
         };
         for format in [
             crate::expanded_deck_training_v1::CheckpointRecordFormatV1::V1,
@@ -4425,6 +4594,7 @@ mod tests {
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
                 pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+                pregame_announcement_step_scale: None,
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -4511,6 +4681,7 @@ mod tests {
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
                 pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+                pregame_announcement_step_scale: None,
             },
             ExpandedUpdateBackendV1::Cpu,
         );
@@ -4647,6 +4818,7 @@ mod tests {
                 lambda: 0.9,
                 entropy_coefficient: 0.0,
                 pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+                pregame_announcement_step_scale: None,
             },
             ExpandedUpdateBackendV1::Cuda { device_ordinal: 0 },
         );

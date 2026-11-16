@@ -65,6 +65,7 @@ fn v8_conversion_of_a_trained_checkpoint_preserves_outputs_and_trains() {
         lambda: 0.95,
         entropy_coefficient: 0.0,
         pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+        pregame_announcement_step_scale: None,
     };
     let list = |id: &str| {
         let registered = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();

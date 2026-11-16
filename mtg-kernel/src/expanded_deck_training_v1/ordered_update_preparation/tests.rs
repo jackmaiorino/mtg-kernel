@@ -529,6 +529,7 @@ fn phase1_gae_loss_selection_wire_shape_is_exact() {
         lambda: 0.9,
         entropy_coefficient: 0.0,
         pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+        pregame_announcement_step_scale: None,
     };
     let value = serde_json::to_value(selection).unwrap();
     assert_eq!(

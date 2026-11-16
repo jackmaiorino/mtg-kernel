@@ -19,6 +19,7 @@
 //! the blocks run, and failures are merged in visiting order, a substep's
 //! gauge observation ahead of its backward.
 
+use super::pregame_announcement_step_v1::BackwardPartV1;
 use super::*;
 use std::ops::Range;
 use std::sync::{Mutex, PoisonError};
@@ -171,6 +172,7 @@ pub(super) fn exact_parallel_backward_v1(
     exact_parallel_backward_dims_v1::<Net8DimsV1>(
         parameters,
         groups,
+        BackwardPartV1::All,
         group_count,
         value_coefficient,
         workers,
@@ -179,17 +181,28 @@ pub(super) fn exact_parallel_backward_v1(
     )
 }
 
-/// [`exact_parallel_backward_v1`] at the dims `D`.
+/// [`exact_parallel_backward_v1`] at the dims `D`, for one part of the loss
+/// (`BackwardPartV1`; `All` is every update without the pregame announcement
+/// step scale). A part changes only which groups are visited and the two
+/// loss-root coefficients of a visit, so the pass equals the sequential loop
+/// with the same part bit for bit.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn exact_parallel_backward_dims_v1<D: NetDimsV1>(
     parameters: &[NativeNamedParameterV1],
     groups: &[GroupTapeV1<'_>],
+    part: BackwardPartV1<'_>,
     group_count: f32,
     value_coefficient: f32,
     workers: usize,
     math: TrainingMathV1,
     mxcsr: ThreadMxcsrCheckV1,
 ) -> Option<BackwardResultV1> {
-    let substeps = groups.iter().map(|group| group.tapes.len()).sum::<usize>();
+    let substeps = groups
+        .iter()
+        .enumerate()
+        .filter(|(group_index, _)| part.visits_v1(*group_index))
+        .map(|(_, group)| group.tapes.len())
+        .sum::<usize>();
     let workers = workers.min(substeps / EXACT_BACKWARD_MIN_SUBSTEPS_PER_WORKER_V1);
     #[cfg(test)]
     record_effective_backward_workers_for_test_v1(workers.max(1));
@@ -201,6 +214,7 @@ pub(super) fn exact_parallel_backward_dims_v1<D: NetDimsV1>(
     Some(backward_dims_v1::<D>(
         parameters,
         groups,
+        part,
         group_count,
         value_coefficient,
         workers,
@@ -221,6 +235,7 @@ fn backward_v1(
     backward_dims_v1::<Net8DimsV1>(
         parameters,
         groups,
+        BackwardPartV1::All,
         group_count,
         value_coefficient,
         workers,
@@ -229,9 +244,11 @@ fn backward_v1(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn backward_dims_v1<D: NetDimsV1>(
     parameters: &[NativeNamedParameterV1],
     groups: &[GroupTapeV1<'_>],
+    part: BackwardPartV1<'_>,
     group_count: f32,
     value_coefficient: f32,
     workers: usize,
@@ -239,16 +256,23 @@ fn backward_dims_v1<D: NetDimsV1>(
     mxcsr: ThreadMxcsrCheckV1,
 ) -> BackwardResultV1 {
     let controls = ControlsV1::current_v1();
-    // The sequential arm's coefficients and visiting order.
+    // The sequential arm's coefficients and visiting order, for this part.
     let mut visits = Vec::new();
-    for group in groups.iter().rev() {
-        let d_value = (value_coefficient / group_count) * (2.0 * group.value_error);
+    for (group_index, group) in groups.iter().enumerate().rev() {
+        if !part.visits_v1(group_index) {
+            continue;
+        }
+        let d_value = part.d_value_v1(group, value_coefficient, group_count);
         for (substep_index, selected) in group.tapes.iter().enumerate().rev() {
             visits.push(VisitV1 {
                 index: visits.len(),
                 selected,
-                d_joint_log_probability: group
-                    .d_joint_log_probability_v1(substep_index, group_count),
+                d_joint_log_probability: part.d_joint_log_probability_v1(
+                    group_index,
+                    group,
+                    substep_index,
+                    group_count,
+                ),
                 d_value: if substep_index == 0 { d_value } else { 0.0 },
             });
         }

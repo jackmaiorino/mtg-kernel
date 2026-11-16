@@ -88,6 +88,7 @@ mod gae_v1;
 mod gpu_exact_backward_v1;
 mod head_only_mask_v1;
 mod line_b_auxiliary_v1;
+mod pregame_announcement_step_v1;
 pub(crate) use archive_distillation_v1::rules_pathway_v1::{
     RulesPathwayStateBitsV1, RulesPathwayV1,
 };
@@ -107,6 +108,7 @@ use line_b_auxiliary_v1::LineBPermutationKindV1;
 pub(crate) use line_b_auxiliary_v1::{
     line_b_permuted_input_v1, LineBAuxiliaryInputV1, LineBAuxiliaryResultV1, LineBAuxiliaryRootV1,
 };
+pub(crate) use pregame_announcement_step_v1::PregameAnnouncementStepRecordV1;
 #[cfg(test)]
 mod no_state_digest_tests;
 pub(crate) mod retention_v1;
@@ -148,6 +150,9 @@ struct TrainStepCaptureV1 {
     backward: Vec<LinearBackwardCaptureV1>,
     /// c5: the gradient before the gauge projection.
     projection: Vec<ProjectionCaptureV1>,
+    /// c5 of the announcement buffer (`pregame_announcement_step_v1`), only
+    /// on a step that routed announcement rows.
+    announcement_projection: Vec<ProjectionCaptureV1>,
 }
 
 /// c1: one `linear_forward_into_arena_v1` application.
@@ -1279,6 +1284,13 @@ pub(crate) enum NativePolicyTrainErrorV1 {
     LondonKeepOffset {
         code: &'static str,
     },
+    /// Pregame announcement step scale (`pregame_announcement_step_v1`)
+    /// refusal: a set scale on anything but the plain CPU GAE step with a
+    /// backward that routes the second gradient buffer, or a malformed
+    /// pregame decision.
+    PregameAnnouncementStep {
+        code: &'static str,
+    },
     EmptyBatch,
     EmptyPhysicalDecision {
         group_index: usize,
@@ -1504,6 +1516,14 @@ pub(crate) struct NativePolicyValueTrainStateDimsV1<D: NetDimsV1> {
     /// is every existing step, bit for bit.
     london_keep_offset:
         Option<crate::expanded_deck_training_v1::london_keep_offset_v1::OffsetVectorV1>,
+    /// The pregame announcement step scale of the next GAE step
+    /// (`pregame_announcement_step_v1`). Set by the update for one step and
+    /// cleared by it; not part of the state digest, snapshot or checkpoint.
+    /// None (the default) is every existing step, bit for bit.
+    pregame_announcement_step_scale: Option<f32>,
+    /// What the last scaled step did, for the update receipt; taken by the
+    /// update. Not part of the state digest, snapshot or checkpoint.
+    pregame_announcement_step_record: Option<PregameAnnouncementStepRecordV1>,
     /// Test-only: workers dirty their own MXCSR before verifying it.
     #[cfg(test)]
     dirty_worker_mxcsr_for_test: bool,
@@ -1656,6 +1676,8 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             training_math: TrainingMathV1::PlatformLibm,
             no_state_digest_columns: None,
             london_keep_offset: None,
+            pregame_announcement_step_scale: None,
+            pregame_announcement_step_record: None,
             #[cfg(test)]
             dirty_worker_mxcsr_for_test: false,
         };
@@ -1691,6 +1713,8 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             training_math: TrainingMathV1::PlatformLibm,
             no_state_digest_columns: None,
             london_keep_offset: None,
+            pregame_announcement_step_scale: None,
+            pregame_announcement_step_record: None,
             #[cfg(test)]
             dirty_worker_mxcsr_for_test: false,
         };
@@ -1717,15 +1741,40 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         self.london_keep_offset
     }
 
+    /// Sets (or clears) the pregame announcement step scale of the next GAE
+    /// step (`pregame_announcement_step_v1`). Only the plain CPU GAE step
+    /// reads it; every other learner path refuses a set scale.
+    pub(crate) fn set_pregame_announcement_step_scale_v1(&mut self, scale: Option<f32>) {
+        self.pregame_announcement_step_scale = scale;
+    }
+
+    pub(crate) fn pregame_announcement_step_scale_v1(&self) -> Option<f32> {
+        self.pregame_announcement_step_scale
+    }
+
+    /// The record of the last scaled step, at most once.
+    pub(crate) fn take_pregame_announcement_step_record_v1(
+        &mut self,
+    ) -> Option<PregameAnnouncementStepRecordV1> {
+        self.pregame_announcement_step_record.take()
+    }
+
     /// Refuses a learner path that is not the plain CPU GAE step while a London
     /// keep offset is set, and clears the setting either way: the offset lives
-    /// for one plain GAE step only (`london_keep_offset_v1`).
+    /// for one plain GAE step only (`london_keep_offset_v1`). The pregame
+    /// announcement step scale lives the same way and is refused and cleared
+    /// here too (`pregame_announcement_step_v1`).
     pub(crate) fn require_no_london_keep_offset_v1(
         &mut self,
     ) -> Result<(), NativePolicyTrainErrorV1> {
+        let scale = self.pregame_announcement_step_scale.take();
         if self.london_keep_offset.take().is_some() {
             Err(NativePolicyTrainErrorV1::LondonKeepOffset {
                 code: "london-keep-offset-requires-plain-gae",
+            })
+        } else if scale.is_some() {
+            Err(NativePolicyTrainErrorV1::PregameAnnouncementStep {
+                code: "pregame-announcement-step-requires-plain-gae",
             })
         } else {
             Ok(())
