@@ -969,8 +969,8 @@ const CHARIOT_TRIGGERS: [TriggeredAbilityDef; 2] = [
     trigger(TriggerCondition::Attacks, chariot_copy),
 ];
 
-/// Triggered abilities of this module's cards, the tail of the trigger
-/// tables. Skullclamp's, Umezawa's Jitte's, Sword of the Meek's and
+/// Triggered abilities of this module's cards, falling through to wave
+/// C5a. Skullclamp's, Umezawa's Jitte's, Sword of the Meek's and
 /// Astrologian's Planisphere's abilities, Glimmer Lens's attack trigger and
 /// Smuggler's Copter's block trigger are delayed triggers.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
@@ -980,7 +980,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         IRON_MAN_ARMOR => &IRON_MAN_ARMOR_TRIGGERS,
         SMUGGLERS_COPTER => &COPTER_TRIGGERS,
         ESIKAS_CHARIOT => &CHARIOT_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_cube_c5a_v1::triggers_for(name),
     }
 }
 

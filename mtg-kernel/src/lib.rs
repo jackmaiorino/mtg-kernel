@@ -314,6 +314,14 @@ pub mod eternal_cube_c4a_v1;
 pub mod eternal_cube_c4b_v1;
 /// Vintage Cube card programs of the eternal catalog (wave C4c).
 pub mod eternal_cube_c4c_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C5a).
+pub mod eternal_cube_c5a_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C5b).
+pub mod eternal_cube_c5b_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C5c).
+pub mod eternal_cube_c5c_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C5d).
+pub mod eternal_cube_c5d_v1;
 /// Wave E5a card programs of the eternal catalog (Vintage Raker Shops, Oath
 /// of Druids, Paradoxical Outcome, Blue Tinker and Beseech Storm, Legacy
 /// Mystic Forge).
