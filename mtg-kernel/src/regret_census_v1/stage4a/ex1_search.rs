@@ -243,6 +243,7 @@ impl Ex1SearcherV1 {
         value_leaf: Option<(super::value_leaf::Horizon, u64)>,
         world: super::world::WorldMode,
         seed_root: String,
+        flat_root: bool,
     ) -> Result<(Value, Option<Sd1RootV1>), String> {
         self.clear();
         let seeds = RootSeeds {
@@ -264,6 +265,7 @@ impl Ex1SearcherV1 {
             work_limit: value_leaf.map(|(_, sims)| sims),
             value_leaf: value_leaf.map(|(horizon, _)| super::value_leaf::ValueLeafV1 { horizon }),
             world: Some(world),
+            flat_root,
             ..SearchOptions::default()
         };
         let (sel, tree) = std::thread::scope(|scope| {
@@ -297,6 +299,12 @@ impl Ex1SearcherV1 {
             sd1_root_v1(&tree, decision(s).map(|d| d.legal_action_count as usize))?
         };
         Ok((record, root))
+    }
+
+    /// The searching network's raw value-head output at `s` (a decision), the
+    /// same call a value leaf makes. Measurement only.
+    pub(crate) fn sd1_root_value_v1(&mut self, s: &FastActorSessionV1) -> Result<f32, String> {
+        Ok(self.roles.scorer.score_fast_session_v1(s)?.value)
     }
 
     /// Looks up the current learner decision (two or more legal actions) in
