@@ -180,5 +180,21 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(self.route("windows-2025", "workspace-targets", **event()), "windows-2025")
 
 
+class MatrixTests(unittest.TestCase):
+    def test_a_pull_request_and_its_windows_complement_cover_every_group_once(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        block = text[text.index("\n  rust-test-groups:\n"):text.index("\n  limited-build:\n")]
+        groups = re.findall(r"^          - ([a-z-]+)$", block[:block.index("        exclude:")], re.MULTILINE)
+        exclude = block[block.index("        exclude:"):].splitlines()[0]
+        pull_request, complement = (set(re.findall(r'\{"os":"windows-2025","group":"([a-z-]+)"\}', part))
+                                    for part in exclude.split("'windows-complement'"))
+        self.assertEqual(len(groups), len(set(groups)))
+        self.assertEqual(pull_request | complement, set(groups))
+        self.assertFalse(pull_request & complement)
+        # Windows runs the Eternal catalog on main and in the complement, never in a pull request's own run.
+        self.assertEqual({group for group in groups if group.startswith("eternal")}, {"eternal", "eternal-integration"})
+        self.assertLessEqual({"eternal", "eternal-integration"}, pull_request)
+
+
 if __name__ == "__main__":
     unittest.main()

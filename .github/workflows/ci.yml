@@ -288,10 +288,11 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.rust_relevant == 'true'
     # The limit includes any wait in the self-hosted job-started hook; a
-    # cold Windows build has taken about 45 minutes. The Eternal group
-    # builds three feature sets and replays every playable deck: its hosted
-    # Windows job at 27b28ba2 (2026-11-11) needed more than 120 minutes.
-    timeout-minutes: ${{ matrix.group == 'eternal' && 180 || 120 }}
+    # cold Windows build has taken about 45 minutes. The Eternal groups
+    # build the largest catalog and replay every playable deck: as one job
+    # they needed more than 120 minutes on hosted Windows at 27b28ba2
+    # (2026-11-11) and 136 to 180 minutes by 2026-11-15.
+    timeout-minutes: ${{ startsWith(matrix.group, 'eternal') && 180 || 120 }}
     defaults:
       run:
         shell: bash
@@ -306,6 +307,7 @@ jobs:
           - workspace-targets
           - standard
           - eternal
+          - eternal-integration
           - cuda
           - native-store
           - trace
@@ -317,7 +319,7 @@ jobs:
         # (2026-10-10 to 10-14), so they run on main, tags and manual
         # dispatches, which still cover every group on both systems. A Windows
         # complement dispatch runs exactly the Windows groups excluded here.
-        exclude: ${{ fromJSON((needs.detect-changes.outputs.scope == 'pr' || needs.detect-changes.outputs.scope == 'windows-pr') && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-lib"},{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"}]' || '[]') }}
+        exclude: ${{ fromJSON((needs.detect-changes.outputs.scope == 'pr' || needs.detect-changes.outputs.scope == 'windows-pr') && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"eternal-integration"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-lib"},{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"}]' || '[]') }}
     # Linux groups use GitHub's hosted runners, which are free for this
     # public repository: the WSL runners can't be pinned to cores, so they
     # pause for any host reservation. Windows groups default to GitHub's
@@ -331,13 +333,13 @@ jobs:
     # slowest pull request groups, not every Windows job (2026-11-12: at 6
     # CPUs and BelowNormal, workspace-targets took 54 min there, 113 hosted).
     # The Linux groups named in MTG_CI_LINUX_GROUPS (a JSON list, for example
-    # '["eternal"]') run on MTG_CI_LINUX_RUNNER (JSON runs-on labels, for
-    # example '["self-hosted", "mtg-ci-linux", "heavy"]') for every event
-    # except a pull request from a fork. Both must be set; with either unset
-    # or the list empty every Linux group stays hosted. A self-hosted runner
-    # takes one job at a time and a job cannot move once queued for it, so
-    # name only groups it finishes faster than they arrive, and clear the
-    # list to send new runs back to hosted runners.
+    # '["eternal-integration"]') run on MTG_CI_LINUX_RUNNER (JSON runs-on
+    # labels, for example '["self-hosted", "mtg-ci-linux", "heavy"]') for
+    # every event except a pull request from a fork. Both must be set; with
+    # either unset or the list empty every Linux group stays hosted. A
+    # self-hosted runner takes one job at a time and a job cannot move once
+    # queued for it, so name only groups it finishes faster than they
+    # arrive, and clear the list to send new runs back to hosted runners.
     runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON(vars.MTG_CI_PR_WINDOWS_GROUPS || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
     steps:
       # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
@@ -513,6 +515,12 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # The Eternal catalog runs as two groups. This one builds the library's
+      # test binary (the samples above, the checks and the library filters);
+      # eternal-integration builds the plain library and the integration
+      # suites. The two share only the dependency builds, so running them as
+      # separate jobs repeats almost no compile and each gets a runner's
+      # whole memory.
       - name: Validate the eternal catalog
         if: matrix.group == 'eternal'
         run: |
@@ -529,6 +537,13 @@ jobs:
           cargo clippy --release --locked -p mtg-kernel --lib --features eternal-fixtures -- -D warnings
           cargo clippy --release --locked -p mtg-kernel --all-targets --features eternal-fixtures -- -D warnings
           python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_ has_a_fixed_seat_human_prompt full_text_v1::tests:: graveyard_order_v1::tests:: premodern_ordered_public_v1::
+
+      - name: Run the integration suites on the eternal catalog
+        if: matrix.group == 'eternal-integration'
+        run: |
+          if [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+            export CARGO_BUILD_JOBS=2
+          fi
           python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures
           python python/tools/run_rust_integration_tests.py standard_integration --features eternal-fixtures
 
