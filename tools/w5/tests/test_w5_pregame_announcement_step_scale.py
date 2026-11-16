@@ -167,6 +167,32 @@ class Plans(unittest.TestCase):
         self.plan(self.inputs('same', keep_offset=VEC, pregame_advantage='terminal_v1',
                               pregame_announcement_step_scale=0.25))  # the same recipe resumes
 
+    def test_a_started_chain_refuses_an_added_scale(self):
+        _, plan = self.plan(self.inputs('first', keep_offset=VEC, pregame_advantage='terminal_v1'))
+        path = Path(plan['chains']['k1']['manifest'])
+        man = json.loads(path.read_text())
+        self.assertNotIn('pregame_announcement_step_scale', man['recipe'])
+        man['segments'] = [{'config': 'x', 'offset': 0, 'root': 'y', 'updates': 4}]
+        chains.write(path, man)
+        with self.assertRaisesRegex(chains.Stop, r'recipe changed.*pregame_announcement_step_scale differs'):
+            self.plan(self.inputs('added', keep_offset=VEC, pregame_advantage='terminal_v1',
+                                  pregame_announcement_step_scale=0.25))
+        self.plan(self.inputs('same', keep_offset=VEC, pregame_advantage='terminal_v1'))  # the same recipe resumes
+
+    def test_the_arm_key_reaches_every_segment_config(self):
+        # The arm definition's key is carried into the arm document, the recipe identity and the config of every
+        # segment (the trainer writes its run manifest and update commands from that config's loss_selection).
+        _, plan = self.plan(self.inputs('scaled', keep_offset=VEC, pregame_advantage='terminal_v1',
+                                        pregame_announcement_step_scale=0.03))
+        arm = self.arm(plan)
+        self.assertEqual(arm['pregame_announcement_step_scale'], 0.03)
+        self.assertEqual(chains.recipe_identity(arm)['pregame_announcement_step_scale'], 0.03)
+        for offset, updates in ((0, 2), (2, 2), (6, 4), (8, 2)):  # before, across and after the lean's end at 8
+            cfg = chains.arm_config(arm, 'w5/q1', offset, updates, self.node.t / f'o{offset}')
+            self.assertEqual(cfg['loss_selection']['pregame_announcement_step_scale'], 0.03, offset)
+            self.assertEqual(cfg['loss_selection']['pregame_advantage'], 'terminal_v1', offset)
+            self.assertNotIn(qual.RETIRED_PREGAME_SCALE_KEY, cfg['loss_selection'])
+
 
 class Monitor(unittest.TestCase):
     def setUp(self):
