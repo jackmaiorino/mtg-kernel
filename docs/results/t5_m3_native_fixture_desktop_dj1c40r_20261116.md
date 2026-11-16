@@ -17,7 +17,12 @@ Receipts:
 ## Result
 
 `m3` is faster and smaller than `base` on every pool case, beyond the observed spread,
-with bit-identical outputs.
+with bit-identical outputs. Run startup is slower: `outside_iterations_seconds` regresses
+on `pool18` (1.010 -> 1.125 s, ratio 1.114, spread 0.028, blocks 1.112, 1.119, 1.114) and
+`pool64` (3.239 -> 3.653 s, ratio 1.128, spread 0.025, blocks 1.116, 1.139, 1.124), and is
+inconclusive on `pool2` (1.043). The likely cause is that run start now loads every
+fixed-roster member into the process cache (on `pool64`, 32 of 64 are then evicted).
+Whole-run wall time still improves.
 
 | Case | updates/hour base -> m3 | Ratio | Spread | Block ratios | Peak working set, MiB | Verdict |
 |---|---:|---:|---:|---|---:|---|
@@ -92,17 +97,46 @@ admission steps that replay calls itself. Probe copies with the stack reserve se
 | `m3` | pass | pass | overflow | overflow |
 
 `m3` still needs 48 to 80 KiB more main-thread stack than `base` on this path, leaving
-48 to 64 KiB of the Windows default (`base` leaves 112 to 128 KiB). Linux main threads usually get 8 MiB. Running the
-native driver on a thread with an explicit stack, as `--validate-config` already does,
+48 to 64 KiB of the Windows default (`base` leaves 112 to 128 KiB). Linux main threads
+usually get 8 MiB. Running the native driver on a thread with an explicit stack, as `--validate-config` already does,
 would remove this margin question for both builds.
 
 ## Accounting limit
 
-A collection-cache entry charges only its owned policy bytes; the shared model is charged
-to the process cache. If the process cache evicts a model while a collection fork still
-holds it, that model stays alive uncharged, bounded by the collection entry cap (8 by
-default). Defaults: process cache 32 entries and 768 MiB, collection cache 8 entries and
-256 MiB.
+A collection or replay cache entry charges only its owned policy buffers
+(`collection_entry_charge_v1`), never the shared model. The model is charged to the
+process cache, so it is counted only while the process cache holds it. It is uncharged
+anywhere when:
+
+- the process cache evicts the model while a collection or replay entry still holds it;
+- the process cache refuses the entry for its budget and serves it once (the fork then
+  holds the only reference to the model);
+- the source cannot be re-verified (S and W learner sources, archive-distillation
+  parents, other schemas), so the process cache does not keep it;
+- the collection cache loads in full without the process cache (an unverified source).
+
+In those cases each collection or replay cache can keep up to its entry cap (8 by default)
+of full models while charging only their owned buffers, and there is one such cache per
+collection worker, so the per-collection byte budget does not bound them. This is not a
+regression: `base` had no byte bound at all. Charging the model for entries whose model
+the process cache does not hold is a follow-up. Defaults: process cache 32 entries and
+768 MiB, collection cache 8 entries and 256 MiB.
+
+## Follow-ups not fixed here
+
+- Windows main-thread stack margin on the serial-replay miss path (above).
+- With collection entries 0, or a collection budget below one fork, the current-self fork
+  goes to the transient slot and the next load clears it, so the current source is loaded
+  again for each episode. Outputs should not change, but no test or parity run covers it.
+- The `evicted_file_bytes` diagnostics counter is still emitted but never incremented.
+- Reduce the run-start roster warm-up cost noted under Result.
+
+## Retained artifacts
+
+The bench outputs behind both receipts (`bench.json`, `samples.jsonl`, `comparison.json`
+and the reference run trees) and the `base` and `m3` binaries are not in the repo. They
+are kept under `D:/antigravity-20261112/bench-599` on the maintainer desktop; the receipts
+pin each by SHA-256.
 
 ## Checks and setup
 
