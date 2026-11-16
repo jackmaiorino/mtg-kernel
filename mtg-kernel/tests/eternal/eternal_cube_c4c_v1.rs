@@ -1419,6 +1419,9 @@ fn kaldra_compleat_is_indestructible_and_equips_for_seven() {
     );
     settled(&mut state);
     assert_eq!(zone(&state, kaldra), Zone::Battlefield, "indestructible");
+    // The Elves would pay a seventh mana from their own ability; keep them
+    // tapped so that only the pool counts.
+    state.objects.get_mut(elves).tapped = true;
     pool(&mut state, P0, &[], 6);
     assert!(!activatable(&mut state, kaldra, 0), "equip costs {{7}}");
     pool(&mut state, P0, &[], 1);
@@ -1530,6 +1533,10 @@ fn iron_man_armor_equips_for_two() {
     let armor = put(&mut state, P0, "Iron Man Armor", Zone::Battlefield);
     let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
     let other = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    // Untapped Elves would pay the equip cost from their own ability; keep
+    // them tapped so that only the pool counts.
+    state.objects.get_mut(elves).tapped = true;
+    state.objects.get_mut(other).tapped = true;
     assert!(!activatable(&mut state, armor, 1), "equip costs {{2}}");
     pool(&mut state, P0, &[], 2);
     equip_to(&mut state, armor, 1, elves);

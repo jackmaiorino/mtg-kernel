@@ -5653,6 +5653,10 @@ fn triggers_from_events(
         // blockers are declared, without adding a committed event.
         #[cfg(feature = "eternal-fixtures")]
         new_triggers.extend(crate::eternal_vintage_v1::delayed_triggers(state, events));
+        // Magecraft's copy half sees the copies a resolving storm trigger puts
+        // on the stack without committing any event (Vintage Cube wave C4b).
+        #[cfg(feature = "eternal-fixtures")]
+        new_triggers.extend(crate::eternal_cube_c4b_v1::delayed_triggers(state, events));
         uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
         state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
         return new_triggers;
