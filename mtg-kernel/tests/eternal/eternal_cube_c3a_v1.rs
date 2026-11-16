@@ -333,6 +333,22 @@ fn activate(state: &mut GameState, source: ObjectId, index: u8, targets: &[Targe
     }
 }
 
+/// Advances until the ability or spell just put forward is on the stack with
+/// its costs paid (the engine finishes a pending activation or cast as it
+/// next advances). Answers any other choice with the first legal answer.
+fn on_the_stack(state: &mut GameState) {
+    for _ in 0..20 {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } => return,
+            other => {
+                let action = first_answer(other);
+                act(state, action);
+            }
+        }
+    }
+    panic!("the activation did not finish");
+}
+
 /// Plays on until `stop` holds before a decision: passing priority, not
 /// attacking or blocking, ordering triggers as given and answering any
 /// other choice with `answer` (or the first legal answer).
@@ -838,6 +854,7 @@ fn auriok_salvagers_needs_a_legal_target_and_checks_it_on_resolution() {
     let bauble = put(&mut state, P0, "Mishra's Bauble", Zone::Graveyard);
     pool(&mut state, P0, &[ManaColor::W], 1);
     activate(&mut state, salvagers, 0, &[Target::Object(star)]);
+    on_the_stack(&mut state);
     exile(&mut state, star);
     settled(&mut state);
     assert_eq!(zone(&state, star), Zone::Exile);
@@ -1174,6 +1191,7 @@ fn battle_display_is_a_sorcery_and_does_nothing_without_its_target() {
     let shieldbreaker = put(&mut state, P0, "Embereth Shieldbreaker", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 0);
     cast(&mut state, shieldbreaker, &[Target::Object(ring)]);
+    on_the_stack(&mut state);
     exile(&mut state, ring);
     settled(&mut state);
     assert_eq!(zone(&state, ring), Zone::Exile);
@@ -1291,6 +1309,7 @@ fn formidable_speaker_untaps_another_target_permanent() {
     }
 
     activate(&mut state, speaker, 0, &[Target::Object(forest)]);
+    on_the_stack(&mut state);
     assert!(state.objects.get(speaker).tapped, "{{T}} is a cost");
     settled(&mut state);
     assert!(!state.objects.get(forest).tapped);
@@ -1471,6 +1490,7 @@ fn giver_of_runes_gives_another_creature_protection_from_colorless() {
     }
 
     activate(&mut state, giver, 0, &[Target::Object(pup)]);
+    on_the_stack(&mut state);
     assert!(state.objects.get(giver).tapped, "{{T}} is a cost");
     match settle(&mut state) {
         Some(Decision::ChooseEffectOption { option_count, .. }) => {
@@ -1489,32 +1509,41 @@ fn giver_of_runes_gives_another_creature_protection_from_colorless() {
     );
     damage(&mut state, foe, pup, 1);
     assert_eq!(state.objects.get(pup).damage, 1, "a black source");
-    assert_eq!(zone(&state, pup), Zone::Battlefield);
+    // The state-based actions run on the next advance: the 2/1 dies of it.
+    next(&mut state);
+    assert_eq!(zone(&state, pup), Zone::Graveyard);
 }
 
 #[test]
 fn giver_of_runes_gives_protection_from_a_color_of_your_choice() {
     let mut state = plains();
     let giver = put(&mut state, P0, "Giver of Runes", Zone::Battlefield);
-    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    // A 1/2, so that one point of damage does not kill it when the
+    // state-based actions run on the next advance.
+    let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
     let red = put(&mut state, P1, "Jackal Pup", Zone::Battlefield);
     let golem = put(&mut state, P1, "Phyrexian Dreadnought", Zone::Battlefield);
-    activate(&mut state, giver, 0, &[Target::Object(elves)]);
+    activate(&mut state, giver, 0, &[Target::Object(inspector)]);
     settle_option(&mut state, GIVER_RED);
-    damage(&mut state, red, elves, 1);
-    assert_eq!(state.objects.get(elves).damage, 0, "protection from red");
-    damage(&mut state, golem, elves, 1);
+    damage(&mut state, red, inspector, 1);
     assert_eq!(
-        state.objects.get(elves).damage,
+        state.objects.get(inspector).damage,
+        0,
+        "protection from red"
+    );
+    damage(&mut state, golem, inspector, 1);
+    assert_eq!(
+        state.objects.get(inspector).damage,
         1,
         "colorless damage is dealt"
     );
 
     // The protection ends with the turn (damage wears off with it).
     to_opponents_upkeep(&mut state);
-    assert_eq!(state.objects.get(elves).damage, 0);
-    damage(&mut state, red, elves, 1);
-    assert_eq!(state.objects.get(elves).damage, 1);
+    assert_eq!(zone(&state, inspector), Zone::Battlefield);
+    assert_eq!(state.objects.get(inspector).damage, 0);
+    damage(&mut state, red, inspector, 1);
+    assert_eq!(state.objects.get(inspector).damage, 1);
 }
 
 #[test]
@@ -1602,6 +1631,7 @@ fn harvester_of_misery_discards_for_minus_two_minus_two_on_a_target_creature() {
         other => panic!("expected the target, got {other:?}"),
     }
     activate(&mut state, harvester, 0, &[Target::Object(specter)]);
+    on_the_stack(&mut state);
     assert_eq!(
         zone(&state, harvester),
         Zone::Graveyard,
@@ -1648,6 +1678,7 @@ fn harvester_of_misery_ability_works_only_from_the_hand_and_checks_its_target() 
     let other = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
     pool(&mut state, P0, &[ManaColor::B], 1);
     activate(&mut state, harvester, 0, &[Target::Object(specter)]);
+    on_the_stack(&mut state);
     exile(&mut state, specter);
     settled(&mut state);
     assert_eq!(zone(&state, harvester), Zone::Graveyard);
@@ -1667,6 +1698,7 @@ fn devoted_druid_taps_for_green_and_untaps_by_putting_a_minus_one_counter_on_its
 
     // The counter is a cost, put as the ability is activated.
     activate(&mut state, druid, 0, &[]);
+    on_the_stack(&mut state);
     assert_eq!(state.objects.get(druid).counters.minus1_minus1, 1);
     assert!(
         state.objects.get(druid).tapped,

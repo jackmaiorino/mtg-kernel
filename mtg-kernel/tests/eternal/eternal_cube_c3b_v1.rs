@@ -331,6 +331,22 @@ fn activate(state: &mut GameState, source: ObjectId, index: u8, targets: &[Targe
     }
 }
 
+/// Advances until the ability or spell just put forward is on the stack with
+/// its costs paid (the engine finishes a pending activation or cast as it
+/// next advances). Answers any other choice with the first legal answer.
+fn on_the_stack(state: &mut GameState) {
+    for _ in 0..20 {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } => return,
+            other => {
+                let action = first_answer(other);
+                act(state, action);
+            }
+        }
+    }
+    panic!("the activation did not finish");
+}
+
 /// Plays on until `stop` holds before a decision: passing priority, not
 /// attacking or blocking, ordering triggers as given and answering any
 /// other choice with `answer` (or the first legal answer).
@@ -1254,6 +1270,7 @@ fn marwyns_ability_does_nothing_if_its_land_left_the_graveyard() {
     let forest = put(&mut state, P0, "Forest", Zone::Graveyard);
     pool(&mut state, P0, &[], 2);
     activate(&mut state, marwyn, 0, &[Target::Object(forest)]);
+    on_the_stack(&mut state);
     move_to(&mut state, forest, Zone::Exile);
     settled(&mut state);
     assert_eq!(zone(&state, forest), Zone::Exile);

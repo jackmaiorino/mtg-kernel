@@ -1307,6 +1307,8 @@ fn thopter_foundry_sacrifices_a_nontoken_artifact_for_a_thopter_and_a_life() {
         other => panic!("expected the sacrifice, got {other:?}"),
     }
     act(&mut state, Action::ChooseCostTarget(stone));
+    // The activation is finished (its costs paid) as the game next advances.
+    next(&mut state);
     assert_eq!(zone(&state, stone), Zone::Graveyard, "sacrificed as a cost");
     settled(&mut state);
     assert_eq!(life(&state, P0), 21);
