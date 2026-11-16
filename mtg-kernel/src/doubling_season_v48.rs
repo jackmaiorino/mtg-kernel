@@ -221,6 +221,8 @@ pub struct ReplacementInputV48 {
     /// Already-active entry replacements and prebatch counts, not later entrants.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub subtype_entries_v1: Vec<crate::giada_v1::EntryReplacementV1>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub entry_prevents_minus1_minus1_v1: bool,
 }
 impl std::hash::Hash for ReplacementInputV48 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -232,6 +234,9 @@ impl std::hash::Hash for ReplacementInputV48 {
             "subtype-entry-replacements/v1".hash(state);
             self.subtype_entries_v1.hash(state);
         }
+        if self.entry_prevents_minus1_minus1_v1 {
+            "entry-prevents-minus1-minus1/v1".hash(state);
+        }
     }
 }
 impl ReplacementInputV48 {
@@ -240,6 +245,8 @@ impl ReplacementInputV48 {
             controller,
             seasons: sources(state, controller),
             subtype_entries_v1: Vec::new(),
+            entry_prevents_minus1_minus1_v1: cfg!(feature = "eternal-fixtures")
+                && crate::eternal_sideboard_s1n_v1::controls_darksteel_angel(state, controller),
             entry_talent_doublings: Some(crate::standard_cards_v1::counter_modifier_doublings_v48(
                 state, controller,
             )),

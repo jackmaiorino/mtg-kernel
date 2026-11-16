@@ -747,6 +747,7 @@ fn paradoxical_outcome_draw_replacements_follow_actual_returns_both_seats() {
         state.active_player = drawer;
         state.priority_player = drawer;
         put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        put(&mut state, drawer, "Quantum Riddler", Zone::Battlefield);
         let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
         let ring = put(&mut state, drawer, "Sol Ring", Zone::Battlefield);
         let mox = put(&mut state, drawer, "Mox Jet", Zone::Battlefield);
@@ -802,15 +803,16 @@ fn paradoxical_outcome_draw_replacements_follow_actual_returns_both_seats() {
         assert_eq!(treasure_count(&state, opponent), 0);
 
         let mut forged = serde_json::to_value(&state).unwrap();
-        forged["paradoxical_outcome_draw_progress_v1"]["returned"]["arrivals"]
-            .as_array_mut()
-            .unwrap()
-            .pop()
-            .unwrap();
+        let started_at = forged["eternal_owned_draw_progress_v1"]["started_at"]
+            .as_u64()
+            .unwrap() as usize;
+        let returned_at = started_at - 1;
+        forged["engine"]["event_history"][returned_at]["EternalOwnedDrawV1"]["journal"]
+            ["OutcomeReturnedV1"]["start"] = returned_at.into();
         let forged: GameState = serde_json::from_value(forged).unwrap();
         assert_eq!(
             mtg_kernel::effect::validate_pending_effect_choice(&forged).unwrap_err(),
-            "Paradoxical Outcome changed its actual hand arrivals",
+            "Eternal draw changed its original count",
         );
 
         let mut opening: GameState =
@@ -832,7 +834,7 @@ fn paradoxical_outcome_draw_replacements_follow_actual_returns_both_seats() {
             serde_json::from_slice(&serde_json::to_vec(&skipped).unwrap()).unwrap();
         assert_eq!(
             mtg_kernel::effect::validate_pending_effect_choice(&skipped).unwrap_err(),
-            "Paradoxical Outcome draw changed its progress or remaining effects",
+            "Eternal draw changed its progress or remaining effects",
         );
 
         act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
@@ -845,7 +847,7 @@ fn paradoxical_outcome_draw_replacements_follow_actual_returns_both_seats() {
             assert_eq!(treasure_count(continued, opponent), 1);
             assert!(serde_json::to_value(&*continued)
                 .unwrap()
-                .get("paradoxical_outcome_draw_progress_v1")
+                .get("eternal_owned_draw_progress_v1")
                 .is_none());
         }
         assert_eq!(state.state_hash(), accepted.state_hash());
@@ -861,6 +863,7 @@ fn paradoxical_outcome_with_no_returns_to_its_controller_never_draws_both_seats(
             state.active_player = drawer;
             state.priority_player = drawer;
             put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+            put(&mut state, drawer, "Quantum Riddler", Zone::Battlefield);
             let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
             let borrowed = put(&mut state, drawer, "Sol Ring", Zone::Battlefield);
             state.objects.get_mut(borrowed).owner = opponent;
@@ -891,6 +894,81 @@ fn paradoxical_outcome_with_no_returns_to_its_controller_never_draws_both_seats(
                 .unwrap()
                 .get("paradoxical_outcome_draw_progress_v1")
                 .is_none());
+        }
+    }
+}
+
+#[test]
+fn paid_outcome_riddler_count_survives_dredge_and_stops_on_jace_both_seats() {
+    for drawer in [P0, P1] {
+        for terminal in [false, true] {
+            let opponent = drawer.opponent();
+            let mut state = if terminal {
+                game(&["Island"; 4])
+            } else {
+                islands()
+            };
+            state.active_player = drawer;
+            state.priority_player = drawer;
+            put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+            let jace = put(&mut state, drawer, "Jace, Wielder of Mysteries", Zone::Hand);
+            pool(&mut state, drawer, &[ManaColor::U; 3], 1);
+            cast(&mut state, jace, &[]);
+            settled(&mut state);
+            put(&mut state, drawer, "Quantum Riddler", Zone::Battlefield);
+            let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+            let ring = put(&mut state, drawer, "Sol Ring", Zone::Battlefield);
+            let borrowed = put(&mut state, drawer, "Mox Pearl", Zone::Battlefield);
+            state.objects.get_mut(borrowed).owner = opponent;
+            let outcome = put(&mut state, drawer, "Paradoxical Outcome", Zone::Hand);
+            pool(&mut state, drawer, &[ManaColor::U], 3);
+            cast(
+                &mut state,
+                outcome,
+                &[Target::Object(ring), Target::Object(borrowed)],
+            );
+            if let Decision::ChooseTargets { .. } = next(&mut state) {
+                act(&mut state, Action::FinishEffectSelection);
+            }
+            let first = settle(&mut state).expect("Outcome's first draw");
+            assert_draw_replacement_prompt(&first, drawer, outcome, thug);
+            assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
+            assert_eq!(state.players[drawer.index()].hand, [ring]);
+            assert_eq!(state.players[opponent.index()].hand, [borrowed]);
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+            let mut restored = restore_draw_answer(&state);
+            if terminal {
+                for branch in [&mut state, &mut restored] {
+                    let second = settle(branch).expect("Riddler's extra attempt can win");
+                    assert_draw_replacement_prompt(&second, drawer, outcome, jace);
+                    assert_eq!(branch.players[drawer.index()].hand, [ring, thug]);
+
+                    let mut forged = serde_json::to_value(&*branch).unwrap();
+                    let start = forged["eternal_owned_draw_progress_v1"]["started_at"]
+                        .as_u64()
+                        .unwrap() as usize;
+                    forged["engine"]["event_history"][start]["EternalOwnedDrawV1"]["journal"]
+                        ["StartedWithRiddlerV1"]["extra"] = 2.into();
+                    let forged: GameState = serde_json::from_value(forged).unwrap();
+                    assert_eq!(
+                        mtg_kernel::effect::validate_pending_effect_choice(&forged).unwrap_err(),
+                        "Eternal draw changed its original Riddler adjustment",
+                    );
+
+                    act(branch, Action::ChooseEffectTarget(Target::Object(jace)));
+                    assert!(matches!(
+                        next(branch), Decision::GameOver { winner: Some(player) } if player == drawer
+                    ));
+                    assert_eq!(treasure_count(branch, opponent), 0);
+                }
+            } else {
+                for branch in [&mut state, &mut restored] {
+                    settled(branch);
+                    assert_eq!(branch.players[drawer.index()].hand, [ring, thug]);
+                    assert_eq!(treasure_count(branch, opponent), 1);
+                }
+            }
+            assert_eq!(state.state_hash(), restored.state_hash());
         }
     }
 }
@@ -980,6 +1058,40 @@ fn coveted_jewel_etb_dredge_preserves_the_other_two_draws_both_seats() {
         assert_eq!(state.objects.get(thug).zone, Zone::Hand);
         assert_eq!(treasure_count(&state, opponent), 2);
         assert_eq!(state.players[drawer.index()].draws_this_turn, 0);
+    }
+}
+
+#[test]
+fn paid_coveted_jewel_entry_riddler_adds_one_attempt_both_seats() {
+    for drawer in [P0, P1] {
+        let opponent = drawer.opponent();
+        let mut state = islands();
+        state.active_player = drawer;
+        state.priority_player = drawer;
+        put(&mut state, opponent, "Hullbreacher", Zone::Battlefield);
+        put(&mut state, drawer, "Quantum Riddler", Zone::Battlefield);
+        let jewel = put(&mut state, drawer, "Coveted Jewel", Zone::Hand);
+        let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+        pool(&mut state, drawer, &[], 6);
+        cast(&mut state, jewel, &[]);
+        let first = settle(&mut state).expect("Jewel's first entry draw");
+        assert_draw_replacement_prompt(&first, drawer, jewel, thug);
+        assert_eq!(state.players[drawer.index()].mana_pool, [0; 6]);
+        act(&mut state, Action::FinishEffectSelection);
+        let mut restored = restore_draw_answer(&state);
+        for branch in [&mut state, &mut restored] {
+            for count in 1..4 {
+                let prompt = settle(branch).expect("one of the four adjusted attempts");
+                assert_draw_replacement_prompt(&prompt, drawer, jewel, thug);
+                assert_eq!(treasure_count(branch, opponent), count);
+                act(branch, Action::FinishEffectSelection);
+            }
+            settled(branch);
+            assert_eq!(treasure_count(branch, opponent), 4);
+            assert_eq!(branch.objects.get(thug).zone, Zone::Graveyard);
+            assert!(branch.players[drawer.index()].hand.is_empty());
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
     }
 }
 
@@ -1729,6 +1841,7 @@ fn coveted_jewel_combat_draws_finish_before_transfer_both_seats() {
             pass_until(&mut state, |s| {
                 s.active_player == drawer && s.step == Step::DeclareAttackers
             });
+            put(&mut state, drawer, "Quantum Riddler", Zone::Battlefield);
             let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
             let library = state.players[drawer.index()].library.clone();
             let draws_before = state.players[drawer.index()].draws_this_turn;
@@ -1792,7 +1905,7 @@ fn coveted_jewel_combat_draws_finish_before_transfer_both_seats() {
                 serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
             assert_eq!(
                 mtg_kernel::effect::validate_pending_effect_choice(&forged).unwrap_err(),
-                "Coveted Jewel draw changed its progress or remaining effects",
+                "Eternal draw changed its progress or remaining effects",
             );
 
             act(&mut state, Action::FinishEffectSelection);
@@ -1821,7 +1934,7 @@ fn coveted_jewel_combat_draws_finish_before_transfer_both_seats() {
                     continued.players[drawer.index()].draws_this_turn,
                     draws_before
                 );
-                assert_eq!(treasure_count(continued, defender), 2);
+                assert_eq!(treasure_count(continued, defender), 3);
                 let live = continued.objects.get(jewel);
                 if remove_jewel {
                     assert_eq!((live.zone, live.controller), (Zone::Graveyard, defender));
@@ -1832,12 +1945,74 @@ fn coveted_jewel_combat_draws_finish_before_transfer_both_seats() {
                 }
                 assert!(serde_json::to_value(&*continued)
                     .unwrap()
-                    .get("coveted_jewel_draw_progress_v1")
+                    .get("eternal_owned_draw_progress_v1")
                     .is_none());
             }
             assert_eq!(state.state_hash(), restored.state_hash());
             assert_eq!(state.state_hash(), accepted.state_hash());
         }
+    }
+}
+
+#[test]
+fn paid_coveted_jewel_combat_jace_stops_before_transfer_both_seats() {
+    use mtg_kernel::event::{self, ProposedEvent};
+
+    for drawer in [P0, P1] {
+        let defender = drawer.opponent();
+        let mut state = islands();
+        state.active_player = defender;
+        state.priority_player = defender;
+        put(&mut state, defender, "Hullbreacher", Zone::Battlefield);
+        let jewel = put(&mut state, defender, "Coveted Jewel", Zone::Hand);
+        let attacker = put(&mut state, drawer, "Llanowar Elves", Zone::Battlefield);
+        pool(&mut state, defender, &[], 6);
+        cast(&mut state, jewel, &[]);
+        settled(&mut state);
+        act(
+            &mut state,
+            Action::ActivateManaAbilityChoice(jewel, ManaColor::G),
+        );
+        pass_until(&mut state, |s| {
+            s.active_player == drawer && s.step == Step::Main1
+        });
+        let jace = put(&mut state, drawer, "Jace, Wielder of Mysteries", Zone::Hand);
+        pool(&mut state, drawer, &[ManaColor::U; 3], 1);
+        cast(&mut state, jace, &[]);
+        settled(&mut state);
+        put(&mut state, drawer, "Quantum Riddler", Zone::Battlefield);
+        let mill = state.players[drawer.index()]
+            .library
+            .iter()
+            .map(|&card| ProposedEvent::zone_change(card, Zone::Graveyard))
+            .collect();
+        event::propose_and_commit_batch(&mut state, mill);
+
+        pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+        act(&mut state, Action::DeclareAttackers(vec![attacker]));
+        pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
+        act(&mut state, Action::DeclareBlockers(vec![]));
+        let first = settle(&mut state).expect("Jace competes on Jewel's first draw");
+        assert_draw_replacement_prompt(&first, drawer, jewel, jace);
+        act(&mut state, Action::FinishEffectSelection);
+        let second = settle(&mut state).expect("Jace competes on Jewel's second draw");
+        assert_draw_replacement_prompt(&second, drawer, jewel, jace);
+        act(&mut state, Action::ChooseEffectTarget(Target::Object(jace)));
+        let mut restored = restore_draw_answer(&state);
+        for branch in [&mut state, &mut restored] {
+            assert!(matches!(
+                next(branch), Decision::GameOver { winner: Some(player) } if player == drawer
+            ));
+            assert_eq!(treasure_count(branch, defender), 1);
+            let original = branch.objects.get(jewel);
+            assert_eq!(original.controller, defender);
+            assert!(original.tapped);
+            assert!(serde_json::to_value(&*branch)
+                .unwrap()
+                .get("eternal_owned_draw_progress_v1")
+                .is_none());
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
     }
 }
 

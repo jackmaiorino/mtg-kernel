@@ -12,6 +12,7 @@ use crate::eternal_legacy_e8a_v1::E8aOpV1;
 use crate::eternal_lurrus_v1::{self, LurrusOpV1};
 use crate::eternal_pauper_e8b_v1::{self, E8bOpV1};
 use crate::eternal_vintage_e7b_v1::{dredge, minsc, E7bOpV1};
+use crate::eternal_vintage_v1::{self, paradoxical_outcome_v1 as outcome};
 use crate::event::CommittedEvent;
 use crate::event_history_v1::EventKindV1;
 use crate::ids::{ObjectId, PlayerId, StackItemId};
@@ -80,6 +81,11 @@ enum InstructionV1 {
     Standstill {
         triggered_at: usize,
         drawer: PlayerId,
+    },
+    JewelCombat,
+    Outcome {
+        returned_at: usize,
+        count: u32,
     },
 }
 
@@ -177,8 +183,8 @@ impl InstructionV1 {
             Self::VeilOfSummer => u32::from(
                 super::e3::opponent_cast_blue_or_black_spell_this_turn(state, ctx.controller),
             ),
-            Self::DragonEngine | Self::Standstill { .. } => 3,
-            Self::FixedRoot { count, .. } => count,
+            Self::DragonEngine | Self::Standstill { .. } | Self::JewelCombat => 3,
+            Self::FixedRoot { count, .. } | Self::Outcome { count, .. } => count,
             Self::Minsc { sacrifice } => minsc::count(state, ctx, sacrifice).unwrap_or(0),
             Self::Echo { .. } => 7,
             Self::Bonder { .. } | Self::Portent { .. } => 1,
@@ -200,6 +206,7 @@ impl InstructionV1 {
         match self {
             Self::FlameOfAnor { draw, .. } => PlayerRef::Target(draw),
             Self::FixedRoot { player, .. } => player,
+            Self::JewelCombat => PlayerRef::Opponent,
             Self::Echo { drawer, .. }
             | Self::Bonder { drawer, .. }
             | Self::Standstill { drawer, .. }
@@ -221,6 +228,7 @@ impl InstructionV1 {
             | Self::Echo { drawer, .. }
             | Self::Bonder { drawer, .. }
             | Self::Standstill { drawer, .. } => Some(drawer),
+            Self::JewelCombat => Some(ctx.controller.opponent()),
             _ => Some(ctx.controller),
         }
     }
@@ -410,6 +418,10 @@ pub enum JournalV1 {
     },
     PortentV1(portent::JournalV1),
     StandstillV1(standstill::JournalV1),
+    OutcomeReturnedV1 {
+        item: StackItemId,
+        start: usize,
+    },
 }
 
 impl JournalV1 {
@@ -437,7 +449,8 @@ impl JournalV1 {
             | Self::MinscDamageCompleted { item, .. }
             | Self::EchoShuffledV1 { item, .. }
             | Self::EchoShuffleCommittedV1 { item, .. }
-            | Self::BonderResolutionV1 { item, .. } => Some(item),
+            | Self::BonderResolutionV1 { item, .. }
+            | Self::OutcomeReturnedV1 { item, .. } => Some(item),
             _ => self.room_tail_item(),
         }
     }
@@ -461,7 +474,7 @@ pub(crate) fn record(state: &mut GameState, journal: JournalV1) {
         });
 }
 
-fn has_started(state: &GameState, item: StackItemId) -> bool {
+pub(crate) fn has_started(state: &GameState, item: StackItemId) -> bool {
     state
         .engine
         .event_history
@@ -476,6 +489,16 @@ fn has_started(state: &GameState, item: StackItemId) -> bool {
 fn selected(state: &GameState, pending: &EffectContinuation) -> Option<(InstructionV1, SourceV1)> {
     let item = &pending.resolving_item;
     if let Some(inline) = &item.inline_effect {
+        if *inline == eternal_vintage_v1::coveted_jewel_changes_hands() {
+            let source = item.v4.ability_source_contract?;
+            return (!item.is_copy
+                && item.kind == StackItemKind::TriggeredAbility
+                && source.source == item.source
+                && source.controller == item.controller
+                && source.zone == Zone::Battlefield
+                && CARD_DEFS.get(usize::from(source.card_def))?.object_name == "Coveted Jewel")
+                .then_some((InstructionV1::JewelCombat, SourceV1::Ability(source)));
+        }
         let instruction = match inline {
             EffectOp::Choice { .. } => InstructionV1::DragonEngine,
             _ => InstructionV1::from_program(inline)?,
@@ -632,6 +655,75 @@ fn stage(pending: &mut EffectContinuation, instruction: InstructionV1, ordinal: 
     });
 }
 
+pub(crate) fn begin_jewel_combat(
+    state: &mut GameState,
+    pending: &mut EffectContinuation,
+) -> Result<(), String> {
+    let Some((InstructionV1::JewelCombat, source)) = selected(state, pending) else {
+        return Err("Coveted Jewel lost its original combat trigger".into());
+    };
+    require_new_instruction(state, pending)?;
+    let drawer = pending.ctx.controller.opponent();
+    let count = InstructionV1::JewelCombat.count(state, &pending.ctx);
+    if dredge::owned_draw_needs_choice(state, drawer, count) {
+        let extra = crate::event::draw_instruction_extra(state, drawer, count);
+        start_instruction(
+            state,
+            pending,
+            InstructionV1::JewelCombat,
+            source,
+            count,
+            extra,
+        );
+    } else if draw_uninterrupted(state, drawer, count) {
+        eternal_vintage_v1::finish_coveted_jewel_transfer(&pending.ctx, state);
+    }
+    Ok(())
+}
+
+pub(crate) fn require_new_instruction(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    if state.eternal_owned_draw_progress_v1.is_some()
+        || has_started(state, pending.resolving_item.v4.stack_item_id)
+    {
+        return Err("Eternal draw already started its original instruction".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn begin_outcome(
+    state: &mut GameState,
+    pending: &mut EffectContinuation,
+    source: StackSourceContractV4,
+    returned_from: usize,
+    count: u32,
+) {
+    let drawer = pending.ctx.controller;
+    if !dredge::owned_draw_needs_choice(state, drawer, count) {
+        draw_uninterrupted(state, drawer, count);
+        return;
+    }
+    let returned_at = state.engine.event_history.len();
+    record(
+        state,
+        JournalV1::OutcomeReturnedV1 {
+            item: pending.resolving_item.v4.stack_item_id,
+            start: returned_from,
+        },
+    );
+    let extra = crate::event::draw_instruction_extra(state, drawer, count);
+    start_instruction(
+        state,
+        pending,
+        InstructionV1::Outcome { returned_at, count },
+        SourceV1::Spell(source),
+        count,
+        extra,
+    );
+}
+
 pub(crate) fn begin(
     state: &mut GameState,
     pending: &mut EffectContinuation,
@@ -749,6 +841,8 @@ fn progress(
     let (started, attempts) = journal.start()?;
     let actual = match started.instruction {
         InstructionV1::FixedRoot { .. } => fixed::selected(state, pending),
+        InstructionV1::Outcome { .. } => outcome::physical_spell_source(state, pending)
+            .map(|source| (started.instruction, SourceV1::Spell(source))),
         InstructionV1::Bonder { .. } => {
             bonder::matches_start(state, pending, started, progress.started_at)
                 .then_some((started.instruction, started.source))
@@ -869,6 +963,9 @@ fn finish_instruction(
         InstructionV1::VeilOfSummer => {
             super::e3::apply_veil_protection(state, pending.ctx.controller)
         }
+        InstructionV1::JewelCombat => {
+            eternal_vintage_v1::finish_coveted_jewel_transfer(&pending.ctx, state);
+        }
         InstructionV1::FlameOfAnor {
             artifact,
             creature,
@@ -909,6 +1006,42 @@ fn initial_library_len(state: &GameState, player: PlayerId, start: usize) -> Opt
             }
             _ => Some(len),
         })
+}
+
+// The native individual replacements move cards from library or graveyard,
+// or create Treasure. Triggered abilities wait until this instruction ends.
+fn initial_hand_len(state: &GameState, player: PlayerId, start: usize) -> Option<usize> {
+    state
+        .engine
+        .event_history
+        .get(start..)?
+        .iter()
+        .rev()
+        .try_fold(
+            state.players[player.index()].hand.len(),
+            |len, event| match event {
+                CommittedEvent::Draw {
+                    player: drawer,
+                    object: Some(_),
+                } if *drawer == player => len.checked_sub(1),
+                CommittedEvent::ZoneChange {
+                    object, from, to, ..
+                } if from != to
+                    && (*from == Zone::Hand || *to == Zone::Hand)
+                    && state
+                        .objects
+                        .try_get(*object)
+                        .is_some_and(|card| card.owner == player) =>
+                {
+                    if *to == Zone::Hand {
+                        len.checked_sub(1)
+                    } else {
+                        len.checked_add(1)
+                    }
+                }
+                _ => Some(len),
+            },
+        )
 }
 
 fn validate_native_progress(
@@ -968,19 +1101,43 @@ fn validate_native_progress(
                 _ => None,
             }
         }
+        (InstructionV1::Outcome { returned_at, count }, None)
+            if returned_at.checked_add(1) == Some(progress.started_at) =>
+        {
+            outcome::native_return_count(state, ctx, started.item, returned_at)
+                .filter(|actual| *actual == count)
+        }
+        (InstructionV1::Outcome { .. }, None) => None,
         (instruction, None) => Some(instruction.count(state, ctx)),
     };
     if total != Some(started.total) {
         return Err("Eternal draw changed its original count".into());
     }
-    if progress.completed == 0 {
+    let vintage_instruction = match started.instruction {
+        InstructionV1::JewelCombat | InstructionV1::Outcome { .. } => true,
+        InstructionV1::FixedRoot { player, count, .. } => {
+            eternal_vintage_v1::is_coveted_jewel_entry_draw(ctx, player, count)
+        }
+        _ => false,
+    };
+    if progress.completed == 0 || vintage_instruction {
         let drawer = started
             .instruction
             .drawer(ctx)
             .ok_or("Eternal draw lost its original drawer")?;
-        if attempts - started.total
-            != crate::event::draw_instruction_extra(state, drawer, started.total)
-        {
+        let hand_len = if vintage_instruction {
+            initial_hand_len(state, drawer, tail)
+                .ok_or("Eternal draw lost its original hand size")?
+        } else {
+            state.players[drawer.index()].hand.len()
+        };
+        let extra = crate::event::draw_instruction_extra_at_hand_size(
+            state,
+            drawer,
+            started.total,
+            hand_len,
+        );
+        if attempts - started.total != extra {
             return Err("Eternal draw changed its original Riddler adjustment".into());
         }
     }
@@ -1066,7 +1223,8 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
         if bonder::validate_idle(state, pending)? {
             return Ok(());
         }
-        let named = selected(state, pending);
+        let named = selected(state, pending)
+            .filter(|(instruction, _)| *instruction != InstructionV1::JewelCombat);
         let is_echo = named.is_none() && echo::selected(state, pending).is_some();
         if (named.is_some() || is_echo || fixed::selected(state, pending).is_some())
             && has_started(state, pending.resolving_item.v4.stack_item_id)
@@ -1092,6 +1250,7 @@ pub(crate) fn validate(state: &GameState, pending: &EffectContinuation) -> Resul
         && fixed::selected(state, pending).is_none()
         && echo::selected(state, pending).is_none()
         && bonder::selected(state, pending).is_none()
+        && outcome::physical_spell_source(state, pending).is_none()
     {
         return Err("Eternal draw progress lost its original source".into());
     }

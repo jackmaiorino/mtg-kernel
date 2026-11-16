@@ -1546,8 +1546,14 @@ pub(crate) fn protection_removes_attachment(
 ) -> bool {
     let colors = crate::engine::object_color_mask(state, attachment);
     let controller = state.objects.get(attachment).controller;
-    // Sejiri Steppe's protection removes every attachment of that color.
+    // Sejiri Steppe's and Apostle's Blessing's protection removes every
+    // attachment of that color or card type.
     if crate::eternal_legacy_e9a_v1::statics::protection_mask(state, host) & colors & 0x1f != 0 {
+        return true;
+    }
+    if crate::eternal_sideboard_s1n_v1::has_protection_from_artifacts(state, host)
+        && crate::engine::object_has_type(state, attachment, CardType::Artifact)
+    {
         return true;
     }
     attached_named(state, host, BENEVOLENT_BLESSING).any(|blessing| {

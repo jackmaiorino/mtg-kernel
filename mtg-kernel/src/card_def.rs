@@ -474,9 +474,12 @@ pub enum Subtype {
     /// (Extinguisher Battleship), with stable ids from 420 reserved for that
     /// wave. An artifact type, not a creature type.
     Spacecraft = 420,
+    /// Appended for the eternal catalog's sideboard wave S1n (Doorkeeper
+    /// Thrull), with stable ids from 440 reserved for that wave.
+    Thrull = 440,
     /// Appended for Vintage Cube wave C1b (Pest Infestation's Pest tokens),
-    /// with stable ids from 440 reserved for that wave.
-    Pest = 440,
+    /// with stable ids from 460 reserved for that wave.
+    Pest = 460,
 }
 
 impl Subtype {
@@ -872,6 +875,8 @@ impl Subtype {
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Minion,
         #[cfg(feature = "eternal-fixtures")]
+        Subtype::Thrull,
+        #[cfg(feature = "eternal-fixtures")]
         Subtype::Pest,
     ];
 
@@ -1124,7 +1129,8 @@ impl Subtype {
             381 => Subtype::Minion,
             400 => Subtype::Junk,
             420 => Subtype::Spacecraft,
-            440 => Subtype::Pest,
+            440 => Subtype::Thrull,
+            460 => Subtype::Pest,
             _ => return None,
         })
     }
@@ -1355,6 +1361,7 @@ impl Subtype {
             Subtype::Minion => true,
             Subtype::Junk => false,
             Subtype::Spacecraft => false,
+            Subtype::Thrull => true,
             Subtype::Pest => true,
         }
     }
@@ -1469,6 +1476,7 @@ impl Subtype {
                     | Subtype::Flagbearer
                     | Subtype::Spike
                     | Subtype::Minion
+                    | Subtype::Thrull
                     | Subtype::Pest
             )
         {
@@ -4030,7 +4038,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xfafc_6ead_0858_6434;
+        const EXPECTED_ETERNAL: u64 = 0x6b07_8866_24af_0bbe;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

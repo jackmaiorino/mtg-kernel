@@ -1,5 +1,5 @@
 //! Card-database recipes for the eternal catalog's Vintage Cube wave C1a
-//! (white and blue instants and sorceries). Wave P3h's tables fall through to these, and
+//! (white and blue instants and sorceries). Wave S1n's tables fall through to these, and
 //! these fall through to wave C1b's
 //! (`build_eternal_c1b_v1.rs`). Runtime programs live in
 //! `src/eternal_cube_c1a_v1.rs`. Every row is keyed by a name that occurs

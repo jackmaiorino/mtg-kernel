@@ -328,6 +328,16 @@ fn draw_three() -> EffectOp {
     }
 }
 
+pub(crate) fn is_coveted_jewel_entry_draw(ctx: &ExecCtx, player: PlayerRef, count: u32) -> bool {
+    player == PlayerRef::Controller
+        && count == 3
+        && ctx.ability_source_contract.is_some_and(|source| {
+            CARD_DEFS
+                .get(usize::from(source.card_def))
+                .is_some_and(|def| def.object_name == COVETED_JEWEL)
+        })
+}
+
 pub(crate) fn coveted_jewel_changes_hands() -> EffectOp {
     vintage(VintageOpV1::CovetedJewelChangesHandsV1)
 }
@@ -364,6 +374,9 @@ pub(crate) fn begin_coveted_jewel_draws(
         || state.coveted_jewel_draw_progress_v1.is_some()
     {
         return Err("Coveted Jewel lost its original combat trigger path".into());
+    }
+    if !continuation.resolving_item.is_copy {
+        return crate::eternal_cards_v1::owned_draws_v1::begin_jewel_combat(state, continuation);
     }
     let item = continuation
         .ctx
@@ -691,7 +704,7 @@ fn vintage_state(state: &mut GameState) -> &mut VintageStateV1 {
         .vintage
 }
 
-fn finish_coveted_jewel_transfer(ctx: &ExecCtx, state: &mut GameState) {
+pub(crate) fn finish_coveted_jewel_transfer(ctx: &ExecCtx, state: &mut GameState) {
     if let Some(jewel) = live_ability_source(ctx, state) {
         crate::standard_cards_v1::gain_control(state, jewel, ctx.controller.opponent());
         crate::engine::attempt_untap(state, jewel);
@@ -715,15 +728,13 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         VintageOpV1::CovetedJewelChangesHandsV1 => {
-            crate::effect::execute(
-                &EffectOp::DrawCards {
-                    player: PlayerRef::Opponent,
-                    count: 3,
-                },
-                ctx,
+            if crate::eternal_cards_v1::owned_draws_v1::draw_uninterrupted(
                 state,
-            );
-            finish_coveted_jewel_transfer(ctx, state);
+                ctx.controller.opponent(),
+                3,
+            ) {
+                finish_coveted_jewel_transfer(ctx, state);
+            }
         }
         VintageOpV1::CovetedJewelDrawCompletedV1 { ordinal } => {
             if *ordinal > 2 || !coveted_jewel_progress_matches(state, ctx, *ordinal) {

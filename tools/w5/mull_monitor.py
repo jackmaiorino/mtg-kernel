@@ -417,6 +417,26 @@ def trajectory_files(iteration):
     return sorted((iteration / name / 'collect').glob('episode-*.json'))
 
 
+def read_pregame_scale(iteration):
+    """The scaled-advantage fields of one iteration's update receipt (`pregame_advantage` with a `scale`, written only
+    under the trainer's `pregame_advantage_scale`): `{'s', 'n', 'mu', 'ms'}` (the scale, the announcement rows it
+    multiplied, and the mean normalized announcement advantage before and after), or None (no scale, no receipt, or
+    anything unreadable: the monitor never fails on it)."""
+    try:
+        complete = json.loads((Path(iteration) / 'complete.json').read_text(encoding='utf-8'))
+        update = json.loads(Path(complete['update']['path']).read_text(encoding='utf-8'))
+        receipt = update.get('pregame_advantage') or {}
+        if receipt.get('scale') is None:
+            return None
+        pas = {'s': receipt['scale'], 'n': receipt['scaled_groups']}
+        for key, name in (('mu', 'announcement_advantage_mean_unscaled'), ('ms', 'announcement_advantage_mean_scaled')):
+            value = receipt.get(name)
+            pas[key] = None if value is None else round(value, 6)
+        return pas
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def record_iteration(iteration, log_path):
     """Appends the line of one completed iteration to `log_path`, once. Returns 'recorded', 'skipped' (already in
     the log, or not an iteration directory), 'empty' (no trajectories left: nothing is written), 'error' (an error
@@ -437,6 +457,9 @@ def record_iteration(iteration, log_path):
         if not files:
             return 'empty'
         line = iteration_line(it, [read_episode(data) for data in open_records(files)])
+        pas = read_pregame_scale(iteration)
+        if pas is not None:  # absent otherwise: every line of an unscaled run keeps its bytes
+            line['pas'] = pas
         status = 'recorded'
     except FileNotFoundError:
         return 'empty'
@@ -468,7 +491,8 @@ COUNT_LISTS = (('dk', COUNTS), ('ma', COUNTS), ('vn', COUNTS), ('vk', COUNTS), (
 
 def empty_sums():
     sums = {'iterations': 0, 'n': 0, 'plain': 0, 'norec': 0, 'learned': 0, 'kept': [0] * SIZES, 'exp': 0,
-            'fixed': 0, 'fixed_not7': 0, 'decks': {}, 'v2_iterations': 0, 'norew': 0, 'annbad': 0}
+            'fixed': 0, 'fixed_not7': 0, 'decks': {}, 'v2_iterations': 0, 'norew': 0, 'annbad': 0,
+            'pas_iterations': 0, 'pas_rows': 0, 'pas_mu_x_rows': 0.0, 'pas_ms_x_rows': 0.0}
     sums.update({key: [0] * size for key, size in COUNT_LISTS})
     return sums
 
@@ -483,6 +507,12 @@ def add_line(sums, line):
         mine = sums['decks'].setdefault(deck, [0] * SIZES)
         for i, c in enumerate(hist):
             mine[i] += c
+    pas = line.get('pas')
+    if pas and pas.get('n'):  # a line of an update run under pregame_advantage_scale
+        sums['pas_iterations'] += 1
+        sums['pas_rows'] += pas['n']
+        sums['pas_mu_x_rows'] += (pas.get('mu') or 0.0) * pas['n']
+        sums['pas_ms_x_rows'] += (pas.get('ms') or 0.0) * pas['n']
     if 'dk' in line:  # a v2 line: the per-count fields (a v1 line has none and adds nothing)
         sums['v2_iterations'] += 1
         for key, size in COUNT_LISTS:
@@ -493,7 +523,8 @@ def add_line(sums, line):
 def merge_sums(total, sums):
     """`sums` (one segment's tally) added into `total`."""
     total['iterations'] += sums['iterations']
-    for key in ('n', 'plain', 'norec', 'learned', 'exp', 'fixed', 'fixed_not7', 'v2_iterations', 'norew', 'annbad'):
+    for key in ('n', 'plain', 'norec', 'learned', 'exp', 'fixed', 'fixed_not7', 'v2_iterations', 'norew', 'annbad',
+                'pas_iterations', 'pas_rows', 'pas_mu_x_rows', 'pas_ms_x_rows'):
         total[key] += sums[key]
     for key, size in (('kept', SIZES),) + COUNT_LISTS:
         for i in range(size):
@@ -653,6 +684,12 @@ def summarize_chain(chain_dir, per_update=False, last=None):
                             v2_iterations=total['v2_iterations'], episodes_without_reward_seats=total['norew'],
                             episodes_with_unmatched_rows=total['annbad'], by_count=by_count(total),
                             ret_by_size=ret_by_size(total), **rates(total), by_deck=by_deck(total))}
+    if total['pas_iterations']:  # absent for an unscaled run: its report keeps its keys
+        rows_scaled = total['pas_rows']
+        report['pregame_scale'] = {'scale': (man.get('recipe') or {}).get('pregame_advantage_scale'),
+                                   'updates': total['pas_iterations'], 'announcement_rows': rows_scaled,
+                                   'announcement_advantage_mean_unscaled': total['pas_mu_x_rows'] / rows_scaled,
+                                   'announcement_advantage_mean_scaled': total['pas_ms_x_rows'] / rows_scaled}
     force = lean_in_force(schedule, segments)
     if force is not None:
         report['lean_vector_in_force'] = force
@@ -705,6 +742,11 @@ def format_by_count(report):
     if t.get('episodes_with_unmatched_rows') or t.get('episodes_without_reward_seats'):
         out.append(f'episodes whose pregame rows did not match their record: {t.get("episodes_with_unmatched_rows", 0)};'
                    f' learned seats without a terminal reward: {t.get("episodes_without_reward_seats", 0)}')
+    scale = report.get('pregame_scale')
+    if scale:
+        out.append(f'pregame advantage scale {_num(scale["scale"])}: {scale["announcement_rows"]} announcement rows in '
+                   f'{scale["updates"]} updates, mean normalized advantage {_num(scale["announcement_advantage_mean_unscaled"])}'
+                   f' before and {_num(scale["announcement_advantage_mean_scaled"])} after the scale')
     force = report.get('lean_vector_in_force')
     if force:
         fmt = lambda v: '-' if v is None else '[' + ', '.join(_num(x) for x in v) + ']'  # noqa: E731
