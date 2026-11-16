@@ -31247,7 +31247,12 @@ fn push_paid_activation(
             pending.ability_index,
         );
         // Devoted Druid's -1/-1 counter cost (Vintage Cube wave C3a).
-        crate::eternal_cube_c3a_v1::activation_paid(state, pending.source, pending.ability_index);
+        crate::eternal_cube_c3a_v1::activation_paid(
+            state,
+            pending.source,
+            pending.ability_index,
+            pending.cauldron_grant.0,
+        );
     }
     let ability = &frozen.ability;
     let granted_by = frozen.granted_by;

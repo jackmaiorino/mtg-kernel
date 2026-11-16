@@ -290,16 +290,28 @@ fn grant_colorless_protection(state: &mut GameState, creature: ObjectId) {
 /// "Put a -1/-1 counter on this creature" is paid here, as the ability goes
 /// on the stack. The counter stays when the ability is countered, and when
 /// it kills the Druid the ability still resolves (with nothing to untap).
-pub(crate) fn activation_paid(state: &mut GameState, source: ObjectId, ability_index: u8) {
-    if ability_index != 0 {
-        return;
-    }
+/// When Agatha's Soul Cauldron grants the ability, the creature that
+/// activated it (`source`) pays the counter: the donor card and its local
+/// ability index identify the ability.
+pub(crate) fn activation_paid(
+    state: &mut GameState,
+    source: ObjectId,
+    ability_index: u8,
+    cauldron: Option<crate::cauldron_grants_v1::CauldronGrantV1>,
+) {
     let Some(live) = state.objects.try_get(source) else {
         return;
     };
-    if live.zone != Zone::Battlefield
+    if live.zone != Zone::Battlefield {
+        return;
+    }
+    let (card_def, index) = match cauldron {
+        Some(grant) => (grant.donor.card_def, grant.local_index),
+        None => (live.card_def, u16::from(ability_index)),
+    };
+    if index != 0
         || CARD_DEFS
-            .get(usize::from(live.card_def))
+            .get(usize::from(card_def))
             .is_none_or(|def| def.name != DEVOTED_DRUID)
     {
         return;

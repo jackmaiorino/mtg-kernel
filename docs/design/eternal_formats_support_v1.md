@@ -2605,11 +2605,11 @@ actions rather than the automatic payment planner (Gaea's Cradle).
 
 ### C3: creatures and artifact utilities
 
-Wave C3 adds 31 cards and six tokens, raising the cube to 412 of 540 Full. It is three sub-modules
-chained after C2c: C3a (ten cheap creatures, `eternal_cube_c3a_v1`), C3b (eleven creatures,
-`eternal_cube_c3b_v1`) and C3c (ten artifacts, `eternal_cube_c3c_v1`), the new tail. Guardian
-Scalelord waits for a later wave: its backup ability must grant an attack trigger until end of
-turn.
+Wave C3 adds 31 cards and six tokens: 30 are Full and The Mightstone and Weakstone is Partial,
+raising the cube to 411 of 540 Full. It is three sub-modules chained after C2c: C3a (ten cheap
+creatures, `eternal_cube_c3a_v1`), C3b (eleven creatures, `eternal_cube_c3b_v1`) and C3c (ten
+artifacts, `eternal_cube_c3c_v1`), the new tail. Guardian Scalelord waits for a later wave: its
+backup ability must grant an attack trigger until end of turn.
 
 C3a:
 
@@ -2625,7 +2625,8 @@ C3a:
   an E9a protection record for `ManaColor::C` and read by the shared protection checks (targeting,
   damage, blocking, colorless attachments falling off).
 - Devoted Druid: its -1/-1 counter is a cost, paid in the `activation_paid` hook as the ability
-  goes on the stack (Parallax Wave's convention).
+  goes on the stack (Parallax Wave's convention). A creature that has the ability through Agatha's
+  Soul Cauldron pays it too.
 
 C3b:
 
@@ -2634,8 +2635,9 @@ C3b:
   permanents gives it +1/+1 until end of turn. Noble Hierarch and Ignoble Hierarch are its rows; a
   later exalted card adds one.
 - Samut, Hazoret's Champion and Marwyn, the Preserver grant haste to creatures and hexproof to
-  lands through E9a's `granted_keywords`. Spider-Woman, Stunning Savior makes opponents' artifacts
-  and creatures enter tapped.
+  lands through E9a's `granted_keywords`. Spider-Woman, Stunning Savior makes artifacts and
+  creatures enter tapped when they enter under an opponent's control, face-down permanents
+  included.
 - Walking Ballista: {X}{X}, entering with X counters (Stonecoil Serpent's op), {4} for a counter,
   and a removed counter for 1 damage. Spellseeker searches with
   `LibraryCardFilter::InstantOrSorceryManaValueAtMostV1(2)` (fingerprint 67).
@@ -2657,13 +2659,14 @@ C3c:
   release ability (a Treasure for a land, a Rogue for a nonland card) read that ledger. Staff of
   the Storyteller counts story counters as charge counters and triggers once per resolution that
   created creature tokens.
-- The Mightstone and Weakstone: a modal entry trigger, and `Subtype::Powerstone` (582) mana under
-  `ManaSpendRestrictionDef::PowerstoneV1`, which pays for artifact spells and any activated ability
-  but not for nonartifact spells.
+- The Mightstone and Weakstone (Partial): a modal entry trigger, and `Subtype::Powerstone` (582)
+  mana under `ManaSpendRestrictionDef::PowerstoneV1`, which pays for artifact spells and activated
+  abilities. The other costs that mana may pay (ward, "unless its controller pays" taxes, mana
+  ability costs, special actions) still refuse it, which is why the card is not Full.
 
 ### C4: trigger creatures, Equipment and Vehicles
 
-Wave C4 adds 27 cards, raising the cube to 439 of 540 Full. It is three sub-modules chained after
+Wave C4 adds 27 cards, raising the cube to 438 of 540 Full. It is three sub-modules chained after
 C3c: C4a (eight creatures with cast, draw and copy triggers, `eternal_cube_c4a_v1`), C4b (nine
 creatures with magecraft and per-turn counters, `eternal_cube_c4b_v1`) and C4c (eight Equipment and
 two Vehicles, `eternal_cube_c4c_v1`), the new tail.

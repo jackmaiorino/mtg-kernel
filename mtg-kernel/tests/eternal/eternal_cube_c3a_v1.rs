@@ -1722,6 +1722,61 @@ fn devoted_druid_taps_for_green_and_untaps_by_putting_a_minus_one_counter_on_its
 }
 
 #[test]
+fn a_creature_that_borrows_devoted_druids_untap_ability_pays_its_counter() {
+    // Agatha's Soul Cauldron exiles a Devoted Druid card and puts a +1/+1
+    // counter on Gurmag Angler, which then has the Druid's abilities. The
+    // untap ability's cost puts a -1/-1 counter on the Angler.
+    let mut state = plains();
+    let cauldron = put(&mut state, P0, "Agatha's Soul Cauldron", Zone::Battlefield);
+    let angler = put(&mut state, P0, "Gurmag Angler", Zone::Battlefield);
+    let card = put(&mut state, P1, "Devoted Druid", Zone::Graveyard);
+    next(&mut state);
+    act(&mut state, Action::ActivateAbility(cauldron, 0));
+    let mut wanted = [Target::Object(card), Target::Object(angler)].into_iter();
+    for _ in 0..40 {
+        match next(&mut state) {
+            Decision::ChooseTargets { .. } => {
+                let target = wanted.next().expect("a target");
+                act(&mut state, Action::ChooseTarget(target));
+            }
+            Decision::ChooseEffectTargets { .. } => {
+                let target = wanted.next().expect("a target");
+                act(&mut state, Action::ChooseEffectTarget(target));
+            }
+            Decision::CastSpellOrPass { .. }
+                if state.stack.is_empty() && state.engine.pending_triggers.is_empty() =>
+            {
+                break
+            }
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => {
+                let action = first_answer(other);
+                act(&mut state, action);
+            }
+        }
+    }
+    assert_eq!(zone(&state, card), Zone::Exile);
+    assert_eq!(state.objects.get(angler).counters.plus1_plus1, 1);
+    state.priority_player = P0;
+    let borrowed = priority(&mut state)
+        .1
+        .into_iter()
+        .filter(|&(source, _)| source == angler)
+        .map(|(_, index)| index)
+        .min()
+        .expect("the Angler has the Druid's untap ability");
+    activate(&mut state, angler, borrowed, &[]);
+    on_the_stack(&mut state);
+    // The cost was paid: a -1/-1 counter is on the Angler, or it has already
+    // been removed together with the +1/+1 counter.
+    let counters = state.objects.get(angler).counters;
+    assert!(
+        counters.minus1_minus1 == 1 || counters.plus1_plus1 == 0,
+        "{counters:?}"
+    );
+}
+
+#[test]
 fn devoted_druid_cannot_tap_while_summoning_sick_but_can_untap_itself() {
     let mut state = plains();
     let druid = put(&mut state, P0, "Devoted Druid", Zone::Battlefield);

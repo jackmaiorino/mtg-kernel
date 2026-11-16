@@ -114,6 +114,12 @@ pub(crate) fn apply_entry(state: &mut GameState, object: ObjectId) {
     let Some(def) = CARD_DEFS.get(live.card_def as usize) else {
         return;
     };
+    // A land that a Moon effect already makes a Mountain or an Island as it
+    // enters has lost its abilities, the entry ability among them (614.12):
+    // it enters untapped with no choice.
+    if crate::eternal_legacy_e8a_v1::statics::removal_timestamp(state, object).is_some() {
+        return;
+    }
     if def.name == MULTIVERSAL_PASSAGE {
         let entering = ObjectLinkV4 {
             object,

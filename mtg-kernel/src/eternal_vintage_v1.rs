@@ -1924,10 +1924,6 @@ pub(crate) fn enters_tapped(state: &GameState, object: ObjectId, controller: Pla
     if crate::eternal_premodern_p2a_v1::statics::enters_tapped(state, object, controller) {
         return true;
     }
-    // Spider-Woman, Stunning Savior (Vintage Cube wave C3b).
-    if crate::eternal_cube_c3b_v1::enters_tapped(state, object, controller) {
-        return true;
-    }
     let Some(def) = state
         .objects
         .try_get(object)
