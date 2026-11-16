@@ -838,7 +838,38 @@ pub fn configure_opponent_caches_v1(options: &OpponentCacheRunOptionsV1) -> Resu
     Ok(())
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Collection cache limits for caches this test thread builds, in place of
+    /// the process-wide configuration other tests share.
+    static COLLECTION_OPPONENT_CACHE_LIMITS_FOR_TEST_V1: std::cell::Cell<Option<(usize, usize)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Runs `body` with every collection or replay cache this thread builds
+/// limited to `entries` and `budget_bytes`.
+#[cfg(test)]
+pub(crate) fn with_collection_opponent_cache_limits_for_test_v1<T>(
+    entries: usize,
+    budget_bytes: usize,
+    body: impl FnOnce() -> T,
+) -> T {
+    let previous = COLLECTION_OPPONENT_CACHE_LIMITS_FOR_TEST_V1
+        .with(|limits| limits.replace(Some((entries, budget_bytes))));
+    let result = body();
+    COLLECTION_OPPONENT_CACHE_LIMITS_FOR_TEST_V1.with(|limits| limits.set(previous));
+    result
+}
+
 pub(crate) fn configured_collection_opponent_cache_limits_v1() -> (usize, usize) {
+    #[cfg(test)]
+    {
+        if let Some(limits) =
+            COLLECTION_OPPONENT_CACHE_LIMITS_FOR_TEST_V1.with(std::cell::Cell::get)
+        {
+            return limits;
+        }
+    }
     let overrides = COLLECTION_OPPONENT_CACHE_OVERRIDES_V1
         .get()
         .map(|lock| {
@@ -875,6 +906,10 @@ enum OpponentCacheModeV1 {
     ReplayRevalidated,
 }
 
+/// The bytes a collection or replay cache entry charges for itself: its
+/// policy's own copies, its source descriptor and a fixed overhead. Its
+/// shared model is charged separately, once per cache
+/// (`OpponentCacheV1::model_charge_v1`).
 fn collection_entry_charge_v1(entry: &LoadedOpponentV1) -> usize {
     opponent_cache_diagnostics_v1::policy_bytes_v1(&entry.policy)
         .saturating_add(ordered_update_preparation::source_descriptor_bytes_v1(
@@ -883,14 +918,27 @@ fn collection_entry_charge_v1(entry: &LoadedOpponentV1) -> usize {
         .saturating_add(COLLECTION_ENTRY_OVERHEAD_BYTES_V1)
 }
 
+/// What one entry charges in an otherwise empty collection or replay cache:
+/// its own bytes and its whole model.
+fn collection_entry_standalone_charge_v1(entry: &LoadedOpponentV1) -> usize {
+    collection_entry_charge_v1(entry)
+        .saturating_add(opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy).1)
+}
+
 struct OpponentCacheV1 {
     entries: Vec<LoadedOpponentV1>,
     /// Uncached caller borrow slot when an entry exceeds `budget_bytes` or
-    /// `entry_limit == 0`, cleared at the next load or drop.
+    /// `entry_limit == 0`. A load of the same source serves it again; a load
+    /// of any other source, or drop, clears it.
     transient: Option<LoadedOpponentV1>,
     entry_limit: usize,
     budget_bytes: usize,
+    /// Every entry's own charge plus each distinct model its entries hold,
+    /// once, whether or not the process cache also holds that model.
     charged_bytes: usize,
+    /// The distinct models the entries hold: identity, bytes and how many
+    /// entries hold it.
+    models: Vec<(usize, usize, usize)>,
     mode: OpponentCacheModeV1,
     /// The command's training math, which every loaded opponent plays
     /// under ([`bind_opponent_math_v1`]).
@@ -918,6 +966,7 @@ impl OpponentCacheV1 {
             entry_limit,
             budget_bytes,
             charged_bytes: 0,
+            models: Vec::new(),
             mode: OpponentCacheModeV1::Unverified,
             training_math: TrainingMathV1::PlatformLibm,
         }
@@ -931,6 +980,7 @@ impl OpponentCacheV1 {
             entry_limit,
             budget_bytes,
             charged_bytes: 0,
+            models: Vec::new(),
             mode: OpponentCacheModeV1::CollectionVerified(verified_sources),
             training_math: TrainingMathV1::PlatformLibm,
         }
@@ -944,6 +994,7 @@ impl OpponentCacheV1 {
             entry_limit,
             budget_bytes,
             charged_bytes: 0,
+            models: Vec::new(),
             mode: OpponentCacheModeV1::ReplayRevalidated,
             training_math: TrainingMathV1::PlatformLibm,
         }
@@ -960,33 +1011,83 @@ impl OpponentCacheV1 {
             .any(|entry| entry.behavior.source == *source)
     }
 
+    /// The model bytes `entry` adds to this cache: none when another entry
+    /// already holds its model.
+    fn model_charge_v1(&self, entry: &LoadedOpponentV1) -> usize {
+        let (model, bytes) = opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy);
+        if self.models.iter().any(|held| held.0 == model) {
+            0
+        } else {
+            bytes
+        }
+    }
+
+    /// Charge a kept entry: its own bytes, and its model if no other entry
+    /// holds it.
+    fn charge_v1(&mut self, entry: &LoadedOpponentV1) {
+        let (model, bytes) = opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy);
+        let mut charge = collection_entry_charge_v1(entry);
+        match self.models.iter_mut().find(|held| held.0 == model) {
+            Some(held) => held.2 += 1,
+            None => {
+                self.models.push((model, bytes, 1));
+                charge = charge.saturating_add(bytes);
+            }
+        }
+        self.charged_bytes = self.charged_bytes.saturating_add(charge);
+        opponent_cache_diagnostics_v1::counters_v1()
+            .collection_opponent
+            .charged_v1(charge);
+    }
+
+    /// Release a dropped entry's charge, and its model's once no entry holds
+    /// it.
+    fn uncharge_v1(&mut self, entry: &LoadedOpponentV1) {
+        let (model, _) = opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy);
+        let mut charge = collection_entry_charge_v1(entry);
+        if let Some(index) = self.models.iter().position(|held| held.0 == model) {
+            self.models[index].2 -= 1;
+            if self.models[index].2 == 0 {
+                charge = charge.saturating_add(self.models.swap_remove(index).1);
+            }
+        }
+        self.charged_bytes = self.charged_bytes.saturating_sub(charge);
+        opponent_cache_diagnostics_v1::counters_v1()
+            .collection_opponent
+            .uncharged_v1(charge);
+    }
+
     fn insert(&mut self, entry: LoadedOpponentV1) -> bool {
         let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
-        let charge = collection_entry_charge_v1(&entry);
         if let Some(index) = self
             .entries
             .iter()
             .position(|old| old.behavior.source == entry.behavior.source)
         {
             let old = self.entries.remove(index);
-            self.charged_bytes = self
-                .charged_bytes
-                .saturating_sub(collection_entry_charge_v1(&old));
+            self.uncharge_v1(&old);
             stats.released_v1(opponent_cache_diagnostics_v1::policy_bytes_v1(&old.policy));
         }
-        if self.entry_limit == 0 || charge > self.budget_bytes {
+        if self.entry_limit == 0
+            || collection_entry_standalone_charge_v1(&entry) > self.budget_bytes
+        {
             stats.not_kept_budget.add(1);
             self.transient = Some(entry);
             return false;
         }
+        let own = collection_entry_charge_v1(&entry);
         while self.entries.len() >= self.entry_limit
-            || self.charged_bytes.saturating_add(charge) > self.budget_bytes
+            || self
+                .charged_bytes
+                .saturating_add(own)
+                .saturating_add(self.model_charge_v1(&entry))
+                > self.budget_bytes
         {
             if !self.evict_oldest_v1() {
                 break;
             }
         }
-        self.charged_bytes = self.charged_bytes.saturating_add(charge);
+        self.charge_v1(&entry);
         stats.held_v1(opponent_cache_diagnostics_v1::policy_bytes_v1(
             &entry.policy,
         ));
@@ -999,9 +1100,7 @@ impl OpponentCacheV1 {
             return false;
         }
         let old = self.entries.remove(0);
-        self.charged_bytes = self
-            .charged_bytes
-            .saturating_sub(collection_entry_charge_v1(&old));
+        self.uncharge_v1(&old);
         let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
         stats.evictions.add(1);
         stats.released_v1(opponent_cache_diagnostics_v1::policy_bytes_v1(&old.policy));
@@ -1009,9 +1108,25 @@ impl OpponentCacheV1 {
     }
 
     fn load(&mut self, source: &ExpandedModelSourceV1) -> Result<&mut LoadedOpponentV1, String> {
-        self.transient = None;
         let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
         let started = std::time::Instant::now();
+        // A policy the bounds refused stays in the transient slot until a
+        // load of another source, so a current-self fork inserted for this
+        // episode, or a repeated oversized source, is served without a reload.
+        if self
+            .transient
+            .as_ref()
+            .is_some_and(|held| held.behavior.source == *source)
+        {
+            stats.hits.add(1);
+            stats.transient_hits.add(1);
+            stats.hit_nanos.add_elapsed(started);
+            return self
+                .transient
+                .as_mut()
+                .ok_or_else(|| "transient opponent slot is empty".into());
+        }
+        self.transient = None;
         if let Some(index) = self
             .entries
             .iter()
@@ -1040,10 +1155,10 @@ impl OpponentCacheV1 {
             }
             OpponentCacheModeV1::ReplayRevalidated => {
                 stats.misses_revalidated.add(1);
-                // Serial replay runs on the main thread. A process-cache miss
-                // loads in full from this frame, as an unverified miss does,
-                // not from inside the process cache's frames, so the load
-                // runs no deeper than before the replay used that cache.
+                // Serial replay runs on the caller's thread, which may be a
+                // main thread with a small default stack. A process-cache
+                // miss loads in full from this frame, as an unverified miss
+                // does, not from inside the process cache's frames.
                 match ordered_update_preparation::lookup_opponent_cached_v1(source, true)? {
                     Some(hit) => hit,
                     None => {
@@ -1095,6 +1210,7 @@ impl Drop for OpponentCacheV1 {
                 &entry.policy,
             ));
         }
+        stats.uncharged_v1(self.charged_bytes);
     }
 }
 

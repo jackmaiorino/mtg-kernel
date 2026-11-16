@@ -684,6 +684,102 @@ mod tests {
         );
     }
 
+    /// Current-self episodes on two workers under collection caches that keep
+    /// nothing (0 entries) or whose budget is below one fork: each worker's
+    /// fork goes to the transient slot and is served from there, and every
+    /// trajectory is byte-identical to the default limits'.
+    #[test]
+    fn parallel_current_self_collection_matches_under_zero_and_sub_fork_cache_limits() {
+        let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3;
+        let root = crate::test_temp_dir_v1::TempTestDir::new_v1("expanded-collect-parallel-tiny");
+        let source_struct =
+            fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
+                &root.join("source"),
+                feature_identity,
+                |_parameters| {},
+            );
+        let descriptor_path = root.join("descriptor.json");
+        let descriptor_bytes = serde_json::to_vec(&source_struct).unwrap();
+        fs::write(&descriptor_path, &descriptor_bytes).unwrap();
+        let source = ExpandedModelSourceV1 {
+            play_import: PinnedFileV1 {
+                path: descriptor_path.canonicalize().unwrap(),
+                sha256: sha(&descriptor_bytes),
+            },
+            feature_transfer: FrozenPlayObservationTransferV3 {
+                expected_feature_contract_digest: feature_identity.feature_contract_digest.into(),
+                expected_feature_encoding_digest: feature_identity.feature_encoding_digest.into(),
+            },
+            checkpoint: None,
+            s_learner: None,
+            w_learner: None,
+        };
+        let deck = |id: &str| {
+            let registration =
+                crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
+            let cards = registration.registered_configuration();
+            ExpandedDeckListV1 {
+                label: id.into(),
+                mainboard: cards.mainboard().to_vec(),
+                sideboard: cards.sideboard().to_vec(),
+            }
+        };
+        let decks = [deck("Affinity"), deck("Terror")];
+        let episodes: Vec<_> = (0..4u64)
+            .map(|index| ExpandedEpisodeV1 {
+                id: format!("tiny-cache-{index}"),
+                seed: 2_026_111_600 + index,
+                starting_player: (index % 2) as u8,
+                learner_seat: (index % 2) as u8,
+                opponent: Some(source.clone()),
+                opponent_kind: None,
+                opponent_search: None,
+                registered: decks.clone(),
+                selected: decks.clone(),
+                postboard: false,
+                max_physical_decisions: 100_000,
+                max_policy_steps: 1_000_000,
+                runtime_rules: None,
+                reset: None,
+                opening: None,
+                mulligan_modes: None,
+            })
+            .collect();
+        // A trajectory names its sources, not its output directory, so
+        // collections into separate directories can match byte for byte.
+        let collect = |label: &str| -> Vec<Vec<u8>> {
+            let result = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
+                source: source.clone(),
+                episodes: episodes.clone(),
+                workers: 2,
+                max_non_natural_episode_fraction: 0.0,
+                collection_sampler: CollectionSamplerV1::Legacy,
+                training_math: TrainingMathV1::PlatformLibm,
+                ex1: None,
+                record_envelope: Default::default(),
+                output_directory: root.join(label),
+            })
+            .unwrap();
+            let pins: Vec<PinnedFileV1> =
+                serde_json::from_value(result["trajectories"].clone()).unwrap();
+            pins.iter()
+                .map(|pin| fs::read(&pin.path).unwrap())
+                .collect()
+        };
+        let reference = collect("default");
+        assert_eq!(reference.len(), episodes.len());
+        let zero_entries =
+            super::super::with_collection_opponent_cache_limits_for_test_v1(0, 256 << 20, || {
+                collect("zero-entries")
+            });
+        assert_eq!(zero_entries, reference);
+        let sub_fork_budget =
+            super::super::with_collection_opponent_cache_limits_for_test_v1(8, 1024, || {
+                collect("sub-fork-budget")
+            });
+        assert_eq!(sub_fork_budget, reference);
+    }
+
     /// Mirrors `expanded_deck_training_v1::tests::
     /// execute_v1_collect_writes_ledger_records_its_hash_and_enforces_the_fraction_cap`
     /// through the parallel path specifically: there, ledger entries reach

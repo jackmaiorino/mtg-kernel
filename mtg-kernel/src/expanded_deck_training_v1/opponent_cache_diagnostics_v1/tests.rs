@@ -336,7 +336,10 @@ fn process_and_collection_opponent_caches_enforce_byte_budgets_lru_and_oversized
 
 fn process_and_collection_opponent_caches_enforce_byte_budgets_lru_and_oversized_passthrough_v1() {
     use super::super::loaded_source_profile_v1::LoadRoleV1;
-    use super::super::{collection_entry_charge_v1, OpponentCacheRunOptionsV1, OpponentCacheV1};
+    use super::super::{
+        collection_entry_charge_v1, collection_entry_standalone_charge_v1,
+        OpponentCacheRunOptionsV1, OpponentCacheV1,
+    };
     use ordered_update_preparation::ProcessOpponentCacheV1;
 
     // Validate bounded config options.
@@ -525,9 +528,17 @@ fn process_and_collection_opponent_caches_enforce_byte_budgets_lru_and_oversized
     );
 
     // Collection OpponentCacheV1 enforces both byte-budget LRU eviction and
-    // oversized-entry transient borrows without leaking live_entries.
-    let entry_charge = collection_entry_charge_v1(&first_loaded);
+    // oversized-entry transient borrows without leaking live_entries. Each
+    // entry charges its own bytes and, once per cache, its model.
+    let entry_charge = collection_entry_standalone_charge_v1(&first_loaded);
+    let first_model_bytes = model_bytes_v1(&first_loaded.policy).1;
+    assert!(first_model_bytes > 0);
+    assert_eq!(
+        entry_charge,
+        collection_entry_charge_v1(&first_loaded) + first_model_bytes
+    );
     let live_before = counters.collection_opponent.live_entries.get();
+    let charged_before = counters.collection_opponent.live_charged_bytes.get();
     let col_refused_before = counters.collection_opponent.not_kept_budget.get();
     {
         let mut col = OpponentCacheV1::with_limits_v1(8, 2 * entry_charge + 512);
@@ -553,11 +564,89 @@ fn process_and_collection_opponent_caches_enforce_byte_budgets_lru_and_oversized
         let mut zero_col = OpponentCacheV1::with_limits_v1(0, 256 << 20);
         assert_eq!(zero_col.load(&s0).unwrap().behavior.source, s0);
         assert!(!zero_col.contains(&s0));
+        // Loading the refused source again serves the transient slot: the
+        // same policy, without a reload. Another source replaces it.
+        let transient_before = counters.collection_opponent.transient_hits.get();
+        let misses_before = counters.collection_opponent.misses_unverified.get();
+        let served: *const _ = zero_col.load(&s0).unwrap();
+        let served_again: *const _ = zero_col.load(&s0).unwrap();
+        assert_eq!(served, served_again);
+        assert_eq!(
+            counters.collection_opponent.transient_hits.get() - transient_before,
+            2
+        );
+        assert_eq!(
+            counters.collection_opponent.misses_unverified.get(),
+            misses_before
+        );
+        assert_eq!(zero_col.load(&s1).unwrap().behavior.source, s1);
+        assert_eq!(
+            counters.collection_opponent.misses_unverified.get() - misses_before,
+            1
+        );
+        assert_eq!(zero_col.charged_bytes, 0);
     }
     assert_eq!(counters.collection_opponent.live_entries.get(), live_before);
     assert_eq!(
+        counters.collection_opponent.live_charged_bytes.get(),
+        charged_before
+    );
+    assert_eq!(
         counters.collection_opponent.not_kept_budget.get() - col_refused_before,
-        2
+        3
+    );
+
+    // A policy the process cache refused for its budget and served once: the
+    // collection cache alone holds its model, and charges it, so its byte
+    // budget bounds that model too.
+    let refusing = ProcessOpponentCacheV1::new_v1(8, 0);
+    let (served_once, hit) = refusing.load_v1(&s0, true, LoadRoleV1::Opponent).unwrap();
+    assert!(!hit);
+    assert_eq!(refusing.held_v1().entries, 0);
+    let standalone = collection_entry_standalone_charge_v1(&served_once);
+    assert_eq!(
+        standalone,
+        collection_entry_charge_v1(&served_once) + model_bytes_v1(&served_once.policy).1
+    );
+    {
+        let mut col = OpponentCacheV1::with_limits_v1(8, standalone);
+        assert!(col.insert(served_once));
+        assert_eq!(col.charged_bytes, standalone);
+        assert_eq!(
+            counters.collection_opponent.live_charged_bytes.get() - charged_before,
+            standalone as u64
+        );
+        // One byte less refuses it.
+        let (again, _) = refusing.load_v1(&s0, true, LoadRoleV1::Opponent).unwrap();
+        let mut tight = OpponentCacheV1::with_limits_v1(8, standalone - 1);
+        assert!(!tight.insert(again));
+        assert_eq!(tight.charged_bytes, 0);
+    }
+    // Two entries over one model charge it once, until the last one goes.
+    {
+        let (template, _) = reference.load_v1(&s1, true, LoadRoleV1::Opponent).unwrap();
+        let shared_model = model_bytes_v1(&template.policy).1;
+        let own = collection_entry_charge_v1(&template);
+        let mut col = OpponentCacheV1::with_limits_v1(8, 256 << 20);
+        let twin = super::super::LoadedOpponentV1 {
+            policy: template.policy.fork_for_collection_v3().unwrap(),
+            behavior: super::super::ExpandedSeatBehaviorV1 {
+                source: s2.clone(),
+                identity: template.behavior.identity.clone(),
+            },
+        };
+        let twin_own = collection_entry_charge_v1(&twin);
+        assert!(col.insert(template));
+        assert!(col.insert(twin));
+        assert_eq!(col.charged_bytes, own + twin_own + shared_model);
+        assert!(col.evict_oldest_v1());
+        assert_eq!(col.charged_bytes, twin_own + shared_model);
+        assert!(col.evict_oldest_v1());
+        assert_eq!(col.charged_bytes, 0);
+    }
+    assert_eq!(
+        counters.collection_opponent.live_charged_bytes.get(),
+        charged_before
     );
 
     fs::remove_dir_all(&root).unwrap();

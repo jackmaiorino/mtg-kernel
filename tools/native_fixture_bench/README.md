@@ -104,22 +104,22 @@ A build without support for that variable ignores it.
 Each diagnostics line holds this process's cumulative counters, so differences between lines give one iteration's. The sections are:
 
 - `loaded_source` (#595): loads and copies by caller role;
-- `opponent_cache` (#599) records lookup outcomes, hit, pin revalidation and fork time, full-load work, entries and evictions. `revalidated_payload_bytes` counts held payload covered by successful hit revalidation, including resident checks that skip the byte read. Held policy bytes count owned f32 payloads and shared model f32 payloads. It also reports the summed collection caches and the collection boundary's pin checks.
+- `opponent_cache` (#599) records lookup outcomes, hit, pin revalidation and fork time, full-load work, entries and evictions. `revalidated_payload_bytes` counts held payload covered by successful hit revalidation, including resident checks that skip the byte read. Held policy bytes count owned f32 payloads and shared model f32 payloads. It also reports the summed collection caches, with their transient-slot hits and live and peak charged bytes, and the collection boundary's pin checks.
 - `verified_bytes`: the verified-bytes memo's budget, entries, comparisons, misses by reason, hashes, records, copied bytes and evictions, and with resident reads (#592) the reads it served;
 - `retained_files`: logical file payload bytes across both caches, and how much repeats equal bytes at the same path;
 - `io`: pinned file reads by the fresh-source reader and checkpoint decodes. Process-cache hit revalidation uses a separate reader.
 - `process`: peak and current resident memory, on Linux only, and CPU seconds. Elsewhere the memory fields are null, and the driver's own figures cover each sample (`wait4`, or the job object on Windows).
 
-Opponent cache bounds (#599 milestone 3). Both caches are LRU under an entry cap and a byte budget. An entry larger than the budget is served once and not kept. None of these settings enters a run config or identity. A flag above its maximum is rejected; a variable above its maximum is clamped to it, and a variable that does not parse as a number falls back to the default:
+Opponent cache bounds (#599 milestone 3). Both kinds of cache are LRU under an entry cap and a byte budget: the process cache, and one cache per collector and per serial replay. An entry larger than the budget is served once and not kept; a collector or replay cache keeps that one entry in a transient slot and serves it again until it loads another source. None of these settings enters a run config or identity. A flag above its maximum is rejected; a variable above its maximum is clamped to it, and a variable that does not parse as a number falls back to the default:
 
 | Cache | Flag | Variable | Default | Maximum |
 |---|---|---|---:|---:|
 | process, entries | `--opponent-cache-entries` | `MTG_KERNEL_OPPONENT_CACHE_ENTRIES` | 32 | 256 |
 | process, MiB | `--opponent-cache-mib` | `MTG_KERNEL_OPPONENT_CACHE_MIB` | 768 | 16384 |
-| per collection, entries | `--collection-opponent-cache-entries` | `MTG_KERNEL_COLLECTION_OPPONENT_CACHE_ENTRIES` | 8 | 128 |
-| per collection, MiB | `--collection-opponent-cache-mib` | `MTG_KERNEL_COLLECTION_OPPONENT_CACHE_MIB` | 256 | 16384 |
+| per collector or replay, entries | `--collection-opponent-cache-entries` | `MTG_KERNEL_COLLECTION_OPPONENT_CACHE_ENTRIES` | 8 | 128 |
+| per collector or replay, MiB | `--collection-opponent-cache-mib` | `MTG_KERNEL_COLLECTION_OPPONENT_CACHE_MIB` | 256 | 16384 |
 
-The process cache charges each entry's owned policy bytes and pin metadata, and each shared model once. A collection or replay cache entry charges only its owned policy bytes, never the model, so a model the process cache does not hold (evicted, refused for its budget, an unverifiable source, or an unverified full load) is not charged anywhere; each collection or replay cache can then keep up to its entry cap of such models. Process-cache entries keep pins, not file copies, and a revalidating hit streams every pinned file against its SHA-256. Pass the variables to one arm with `--arm-env` to force eviction; outputs must not change.
+The process cache charges each entry's owned policy bytes and pin metadata, and each shared model once. A collector or replay cache charges each entry's owned policy bytes and source descriptor, and each distinct model its entries hold, once per cache, whether or not the process cache also holds that model. Its budget therefore bounds every model it keeps alive, including one the process cache evicted, refused for its budget, could not re-verify or fork, or never saw (an unverified full load). A model held by both kinds of cache is counted in both, so the sum of the charges can exceed the memory used. The transient slot holds at most one refused entry per cache outside the budget. Process-cache entries keep pins, not file copies, and a revalidating hit streams every pinned file against its SHA-256. Pass the variables to one arm with `--arm-env` to force eviction; outputs must not change.
 
 Outputs in `--out` (absent or empty):
 
