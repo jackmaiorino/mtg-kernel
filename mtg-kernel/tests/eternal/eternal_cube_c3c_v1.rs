@@ -479,7 +479,14 @@ fn deck(rows: &[(&str, u32)]) -> CustomDeckV1 {
 fn c3c_cards_are_full() {
     for name in C3C_CARDS {
         let card = def(name);
-        assert_eq!(card.capability, CardCapability::Full, "{name}");
+        // The Mightstone and Weakstone is Partial: its mana cannot yet pay
+        // ward, taxes, mana ability costs or special actions.
+        let expected = if name == "The Mightstone and Weakstone" {
+            CardCapability::Partial
+        } else {
+            CardCapability::Full
+        };
+        assert_eq!(card.capability, expected, "{name}");
         assert!(card.is_executable(), "{name}");
     }
     for name in [
@@ -2011,7 +2018,7 @@ fn c3c_decks_finish_and_replay_through_public_sessions_both_seats() {
         ("Retrofitter Foundry", 2),
         ("Currency Converter", 2),
         ("The Echoverse Fulcrum", 2),
-        ("The Mightstone and Weakstone", 3),
+        ("Sol Ring", 3),
         ("Relic of Sauron", 2),
         ("Pyrite Spellbomb", 2),
     ]);
@@ -2025,7 +2032,7 @@ fn c3c_decks_finish_and_replay_through_public_sessions_both_seats() {
         ("Lightning Bolt", 3),
         ("Pyrite Spellbomb", 3),
         ("Relic of Sauron", 3),
-        ("The Mightstone and Weakstone", 3),
+        ("Sol Ring", 3),
         ("Currency Converter", 2),
         ("Lightning Greaves", 2),
         ("The Echoverse Fulcrum", 2),
@@ -2050,7 +2057,11 @@ fn c3c_decks_finish_and_replay_through_public_sessions_both_seats() {
             }
         }
     }
-    for name in C3C_CARDS {
+    // The Mightstone and Weakstone is Partial, so no deck may hold it.
+    for name in C3C_CARDS
+        .into_iter()
+        .filter(|name| *name != "The Mightstone and Weakstone")
+    {
         assert!(
             casts.get(&id(name)).copied().unwrap_or(0) > 0,
             "{name} was never cast"

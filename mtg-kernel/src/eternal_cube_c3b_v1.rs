@@ -22,7 +22,7 @@
 //! - Samut, Hazoret's Champion, Marwyn, the Preserver and Spider-Woman:
 //!   continuous effects read through `granted_keywords` (called from wave
 //!   E9a's `statics::granted_keywords`) and `enters_tapped` (called from
-//!   wave E5a/vintage `eternal_vintage_v1::enters_tapped`).
+//!   the two battlefield-entry sites of `event.rs` with the entering controller).
 //! - Spellseeker: Heliod's Pilgrim's search with the new at-most filter
 //!   `LibraryCardFilter::InstantOrSorceryManaValueAtMostV1`.
 //! - Walking Ballista: Stonecoil Serpent's entry program (the engine reads
@@ -415,10 +415,16 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
 }
 
 /// Spider-Woman, Stunning Savior: "Artifacts and creatures your opponents
-/// control enter tapped." Whether `object`, entering under `controller`,
-/// enters tapped (called from `eternal_vintage_v1::enters_tapped`, which
-/// shares Archon of Emeria's owner-as-controller convention).
-pub(crate) fn enters_tapped(state: &GameState, object: ObjectId, controller: PlayerId) -> bool {
+/// control enter tapped." Whether `object`, entering under `controller`
+/// (the player it enters under, who may not be its owner), enters tapped.
+/// A permanent entering face down is a creature. Called from the two
+/// battlefield-entry sites of `event.rs`.
+pub(crate) fn enters_tapped(
+    state: &GameState,
+    object: ObjectId,
+    controller: PlayerId,
+    face_down: bool,
+) -> bool {
     if !cfg!(feature = "eternal-fixtures") {
         return false;
     }
@@ -429,6 +435,6 @@ pub(crate) fn enters_tapped(state: &GameState, object: ObjectId, controller: Pla
         return false;
     };
     let types = def.types_for_face(live.v4.face_index);
-    (types.contains(&CardType::Creature) || types.contains(&CardType::Artifact))
+    (face_down || types.contains(&CardType::Creature) || types.contains(&CardType::Artifact))
         && controls_active(state, controller.opponent(), static_ids()[2], SPIDER_WOMAN)
 }

@@ -1614,6 +1614,33 @@ fn spider_woman_has_flying() {
 }
 
 #[test]
+fn spider_woman_reads_the_controller_a_permanent_enters_under() {
+    let mut state = plains();
+    put(
+        &mut state,
+        P0,
+        "Spider-Woman, Stunning Savior",
+        Zone::Battlefield,
+    );
+    // P0's own creature card enters under the opponent's control: tapped.
+    let stolen = put(&mut state, P0, "Llanowar Elves", Zone::Graveyard);
+    propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change_to_battlefield_under_controller(stolen, P1),
+    );
+    assert_eq!(state.objects.get(stolen).controller, P1);
+    assert!(tapped(&state, stolen), "it entered under an opponent");
+    // The opponent's creature card enters under P0's control: untapped.
+    let taken = put(&mut state, P1, "Llanowar Elves", Zone::Graveyard);
+    propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change_to_battlefield_under_controller(taken, P0),
+    );
+    assert_eq!(state.objects.get(taken).controller, P0);
+    assert!(!tapped(&state, taken), "it entered under your control");
+}
+
+#[test]
 fn spider_woman_makes_opposing_creatures_and_artifacts_enter_tapped() {
     let mut state = plains();
     opponents_turn(&mut state);
