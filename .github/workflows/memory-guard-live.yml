@@ -1,0 +1,73 @@
+name: Memory guard live test
+
+# Starves hosted Linux runners on purpose, with and without the memory guard
+# (tools/ci/memory_guard.py). `exhaust` uses memory until none is left;
+# `thrash` holds more than the runner's memory but less than memory plus
+# swap and keeps touching it. An unguarded runner is expected to be lost.
+'on':
+  pull_request:
+    paths:
+      - tools/ci/memory_guard.py
+      - tools/ci/memory_hog.py
+      - .github/actions/memory-guard/**
+      - .github/workflows/memory-guard-live.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: memory-guard-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  starve:
+    name: Starve a hosted runner (${{ matrix.scenario }}, ${{ matrix.guard && 'guarded' || 'unguarded' }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [exhaust, thrash]
+        guard: [true, false]
+    steps:
+      - name: Add the heavy builds' swap space
+        run: |
+          sudo fallocate -l 12G /mnt/build.swap
+          sudo chmod 600 /mnt/build.swap
+          sudo mkswap /mnt/build.swap
+          sudo swapon /mnt/build.swap
+          free -m
+          df -h / /mnt
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Guard the hosted Linux runner's memory
+        id: memory_guard
+        if: matrix.guard
+        uses: ./.github/actions/memory-guard
+
+      - name: Two processes use more memory than the runner has
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+        run: |
+          set +e
+          date -u +"started %H:%M:%S"
+          python3 tools/ci/memory_hog.py "$SCENARIO" --hold-mib 12288 & first=$!
+          python3 tools/ci/memory_hog.py "$SCENARIO" --hold-mib 12288 & second=$!
+          while kill -0 "$first" 2>/dev/null || kill -0 "$second" 2>/dev/null; do
+            sleep 20
+            date -u +"%H:%M:%S" | tr '\n' ' '
+            free -m | awk 'NR > 1 { printf "%s used %s free %s available %s; ", $1, $3, $4, $7 }'
+            tail -n 1 /proc/pressure/memory
+          done
+          wait "$first"; first_exit=$?
+          wait "$second"; second_exit=$?
+          echo "exit codes: $first_exit $second_exit (137 is a kill)"
+          sudo dmesg | grep -i -E "out of memory|oom-kill|killed process" | tail -n 5 || true
+
+      - name: Report the hosted Linux runner's memory use
+        if: always() && steps.memory_guard.outcome == 'success'
+        uses: ./.github/actions/memory-guard
+        with:
+          mode: report
