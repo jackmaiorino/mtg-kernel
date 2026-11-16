@@ -200,6 +200,29 @@ fn first_answer(decision: Decision) -> Action {
     }
 }
 
+/// Advances until the ability just activated is on the stack with its costs
+/// paid (the engine finishes a pending activation as it next advances).
+fn on_the_stack(state: &mut GameState) {
+    for _ in 0..20 {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } => return,
+            other => {
+                let action = first_answer(other);
+                act(state, action);
+            }
+        }
+    }
+    panic!("the activation did not finish");
+}
+
+/// Answers the as-enters choices of permanents the test put onto the
+/// battlefield directly (Valgavoth's Lair's color), with the first option.
+fn answer_entry_choices(state: &mut GameState) {
+    while let Decision::ChooseEffectOption { .. } = next(state) {
+        act(state, Action::ChooseEffectOption(0));
+    }
+}
+
 /// Settles, answering every choice with `answer`.
 fn settle_with(state: &mut GameState, mut answer: impl FnMut(&GameState, Decision) -> Action) {
     while let Some(decision) = settle(state) {
@@ -807,6 +830,7 @@ fn candelabra_untaps_x_target_lands_of_either_player_tapped_or_not() {
     // Targets are announced as the ability is activated.
     let targets = sorted(vec![mine[0], theirs]);
     activate(&mut state, candelabra, 2, &targets);
+    on_the_stack(&mut state);
     assert!(is_tapped(&state, candelabra), "{{T}} is part of the cost");
     assert!(
         is_tapped(&state, mine[0]),
@@ -900,6 +924,7 @@ fn candelabra_cannot_target_hexproof_or_shroud_lands() {
     let plains_a = put(&mut state, P0, "Plains", Zone::Battlefield);
     let plains_b = put(&mut state, P0, "Plains", Zone::Battlefield);
     let lair = put(&mut state, P1, "Valgavoth's Lair", Zone::Battlefield);
+    answer_entry_choices(&mut state);
     assert!(keyword(&state, lair, Keywords::HEXPROOF));
     pool(&mut state, P0, &[], 3);
     assert!(activatable(&mut state, candelabra, 2));
@@ -923,6 +948,7 @@ fn candelabra_cannot_target_hexproof_or_shroud_lands() {
     let mut state = plains();
     let candelabra = put(&mut state, P0, "Candelabra of Tawnos", Zone::Battlefield);
     let own_lair = put(&mut state, P0, "Valgavoth's Lair", Zone::Battlefield);
+    answer_entry_choices(&mut state);
     tap(&mut state, own_lair);
     pool(&mut state, P0, &[], 1);
     activate(&mut state, candelabra, 1, &[Target::Object(own_lair)]);
@@ -934,6 +960,7 @@ fn candelabra_cannot_target_hexproof_or_shroud_lands() {
     let mut state = plains();
     let candelabra = put(&mut state, P0, "Candelabra of Tawnos", Zone::Battlefield);
     let own_lair = put(&mut state, P0, "Valgavoth's Lair", Zone::Battlefield);
+    answer_entry_choices(&mut state);
     let grove = put(&mut state, P0, "Sterling Grove", Zone::Hand);
     event::propose_and_commit(
         &mut state,
@@ -967,6 +994,7 @@ fn candelabra_untaps_only_the_targets_that_are_still_legal() {
     tap(&mut state, lost);
     pool(&mut state, P0, &[], 2);
     activate(&mut state, candelabra, 2, &sorted(vec![kept, lost]));
+    on_the_stack(&mut state);
     event::propose_and_commit(
         &mut state,
         ProposedEvent::zone_change(lost, Zone::Graveyard),
@@ -986,6 +1014,7 @@ fn candelabra_untaps_only_the_targets_that_are_still_legal() {
     tap(&mut state, other);
     pool(&mut state, P0, &[], 2);
     activate(&mut state, candelabra, 2, &sorted(vec![first, second]));
+    on_the_stack(&mut state);
     event::propose_and_commit(
         &mut state,
         ProposedEvent::zone_change(first, Zone::Graveyard),
@@ -1115,10 +1144,14 @@ fn coalition_relic_with_no_counters_adds_nothing_but_a_counter_put_in_response_c
 
 #[test]
 fn coalition_relic_triggers_only_for_its_controller_in_the_first_main_phase() {
-    // P1's Relic with counters does nothing on P0's turn.
+    // P1's Relic with counters does nothing as P0's first main phase begins
+    // (the game is taken from P1's second main phase to P0's next turn).
     let mut state = plains();
     let theirs = put(&mut state, P1, "Coalition Relic", Zone::Battlefield);
     state.objects.get_mut(theirs).counters.charge = 2;
+    state.active_player = P1;
+    state.priority_player = P1;
+    state.step = Step::Main2;
     to_next_main(&mut state);
     settled(&mut state);
     assert_eq!(charge(&state, theirs), 2);

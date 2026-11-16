@@ -3751,11 +3751,25 @@ fn propose_event_without_linked_aura(
 /// Draw-count replacements see the original instruction before any individual
 /// draw, including an attempt that will be replaced or fail to draw a card.
 pub(crate) fn draw_instruction_extra(state: &GameState, player: PlayerId, count: u32) -> u32 {
+    draw_instruction_extra_at_hand_size(
+        state,
+        player,
+        count,
+        state.players[player.index()].hand.len(),
+    )
+}
+
+pub(crate) fn draw_instruction_extra_at_hand_size(
+    state: &GameState,
+    player: PlayerId,
+    count: u32,
+    hand_len: usize,
+) -> u32 {
     if count == 0 || !cfg!(feature = "eternal-fixtures") {
         return 0;
     }
     u32::try_from(crate::eternal_legacy_e5b_v1::riddler_extra_draws(
-        state, player,
+        state, player, hand_len,
     ))
     .unwrap_or(u32::MAX)
     .min(u32::MAX - count)

@@ -1263,6 +1263,9 @@ pub(crate) fn drive(
         EternalOpV1::P3hV1(op) => {
             crate::eternal_premodern_p3h_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::S1nV1(op) => {
+            crate::eternal_sideboard_s1n_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::C1aV1(op) => crate::eternal_cube_c1a_v1::drive(state, continuation, op, path),
         EternalOpV1::C1bV1(op) => crate::eternal_cube_c1b_v1::drive(state, continuation, op, path),
         EternalOpV1::C1cV1(op) => crate::eternal_cube_c1c_v1::drive(state, continuation, op, path),
@@ -1369,8 +1372,12 @@ fn graveyard_card_ids(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
         .collect()
 }
 
-/// "The player wins the game": in a two-player game the opponent loses.
+/// "The player wins the game": in a two-player game the opponent loses,
+/// unless an opponent's effect forbids `player` from winning.
 fn win_game(state: &mut GameState, player: PlayerId) {
+    if crate::game_outcome_protection_v1::cannot_win(state, player) {
+        return;
+    }
     state.players[player.opponent().index()].has_lost = true;
 }
 

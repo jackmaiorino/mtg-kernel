@@ -40,7 +40,9 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
   number or a list of 7, one lean per number of mulligans the acting seat has already taken), optional
   `pregame_advantage` (`"terminal_v1"`, qual.py: the trainer's loss_selection key, the pregame decisions' advantage
   and value target from the terminal result; C-recipe arms on a London base with gamma 1.0; recipe identity only when
-  present), for a
+  present), optional `pregame_advantage_scale` (a number s, 0 < s <= 1, only with `pregame_advantage`: the trainer's
+  loss_selection key that multiplies the pregame announcement rows' normalized advantage in the policy loss, qual.py;
+  recipe identity only when present, so a started chain refuses a changed value), for a
   scratch arm optional `mull_monitor` (`true`: the reaper appends one line per iteration to
   `<segment>/opening.jsonl` before it deletes the trajectories, for `mull_monitor.py`'s descriptive reading; needs a
   base with openings; not part of the recipe, pinned in the arm's tool shas only when set, so other arm files keep
@@ -456,12 +458,14 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
     parent = read(arm['parent']['path'])
     keep_offset = arm.get('keep_offset')  # absent otherwise: the config is exactly what it was
     pregame_advantage = arm.get('pregame_advantage')  # absent otherwise, as keep_offset
+    pregame_advantage_scale = arm.get('pregame_advantage_scale')  # absent otherwise, as keep_offset
     try:
         cfg = xact.build_config(read(arm['base']['path']), parent, native, seed_root, offset,
                                 updates, arm['workers'], x.get('budget'), x.get('coefficient'),
                                 x.get('dose', 'primary'), ledger_source,
                                 prep_workers=arm.get('preparation_workers'), keep_offset=keep_offset,
-                                pregame_advantage=pregame_advantage)
+                                pregame_advantage=pregame_advantage,
+                                pregame_advantage_scale=pregame_advantage_scale)
     except ValueError as exc:
         if keep_offset is None and pregame_advantage is None:
             raise
@@ -585,6 +589,8 @@ def recipe_identity(arm):
         identity['keep_offset'] = arm['keep_offset']  # absent otherwise: existing manifests unchanged
     if arm.get('pregame_advantage') is not None:
         identity['pregame_advantage'] = arm['pregame_advantage']  # absent otherwise: existing manifests unchanged
+    if arm.get('pregame_advantage_scale') is not None:
+        identity['pregame_advantage_scale'] = arm['pregame_advantage_scale']  # absent otherwise: manifests unchanged
     return identity
 
 
@@ -747,6 +753,15 @@ def make_plan(inputs_path):
                 pregame_advantage = qual.validate_pregame_advantage(pregame_advantage, base_doc)
             except ValueError as exc:
                 raise Stop(f'{a}: {exc}') from exc
+        # pregame_advantage_scale: the trainer's loss_selection.pregame_advantage_scale (a number s, 0 < s <= 1: the
+        # pregame announcement rows' normalized advantage times s in the policy loss; qual.validate_pregame_advantage_scale).
+        # Part of the arm's frozen recipe, only with pregame_advantage terminal_v1. Absent (or null): nothing changes.
+        pregame_advantage_scale = spec.get('pregame_advantage_scale')
+        if pregame_advantage_scale is not None:
+            try:
+                pregame_advantage_scale = qual.validate_pregame_advantage_scale(pregame_advantage_scale, pregame_advantage)
+            except ValueError as exc:
+                raise Stop(f'{a}: {exc}') from exc
         # mull_monitor: the descriptive London opening log (mull_monitor.py), kept by the scratch reaper. Absent (or
         # false): nothing changes, including the arm's tool pins.
         monitor = spec.get('mull_monitor')
@@ -785,6 +800,8 @@ def make_plan(inputs_path):
             doc['keep_offset'] = keep_offset
         if pregame_advantage is not None:  # absent otherwise, as record_envelope
             doc['pregame_advantage'] = pregame_advantage
+        if pregame_advantage_scale is not None:  # absent otherwise, as record_envelope
+            doc['pregame_advantage_scale'] = pregame_advantage_scale
         if monitor:  # absent otherwise, as record_envelope
             doc['mull_monitor'] = True
         text = json.dumps(doc, indent=1, sort_keys=True) + '\n'
@@ -894,7 +911,9 @@ def make_plan(inputs_path):
                     (' (keep_offset differs)' if have['recipe'].get('keep_offset') != header['recipe'].get(
                         'keep_offset') else '') +
                     (' (pregame_advantage differs)' if have['recipe'].get('pregame_advantage') != header[
-                        'recipe'].get('pregame_advantage') else ''))
+                        'recipe'].get('pregame_advantage') else '') +
+                    (' (pregame_advantage_scale differs)' if have['recipe'].get('pregame_advantage_scale') != header[
+                        'recipe'].get('pregame_advantage_scale') else ''))
             require(have.get('r_nom_usec') in (None, r_nom), f'{name}: R_nom is frozen in the manifest')
             have.update(recipe=header['recipe'], arm_file=pin(arm_paths[c['arm']]), r_nom_usec=r_nom)
             write(path, have)

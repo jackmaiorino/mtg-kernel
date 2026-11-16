@@ -570,7 +570,7 @@ New, each built once in the first wave that needs it:
   Top's move, Veil's protection and remaining Ring or Dragon Engine attempts,
   with or without a replacement choice. The Jewel
   combat continuation binds draw progress to the original trigger and transfers
-  only its original battlefield incarnation after the third attempt. Outcome
+  only its original battlefield incarnation after the last attempt. Outcome
   returns its legal targets in one batch and derives draw progress from actual
   original-incarnation arrivals into the spell controller's hand. Both progress
   checks validate continuation consistency. Plunder and Twinned Vision retain
@@ -675,9 +675,19 @@ New, each built once in the first wave that needs it:
   dynamic draw instructions. Named draws and top-level fixed draw instructions
   from physical spells or printed triggers retain the adjusted count across
   replacement choices using native start and completion receipts.
-  Nested or dynamic suspended draws, copies, the Coveted Jewel and Paradoxical
-  Outcome owners, and turn-based draws with replacement choices still need
-  count ownership. The selected Flame, Curie and Riddler cases passed at
+  Coveted Jewel's entry uses the printed fixed-root owner. Its combat trigger
+  and physical Paradoxical Outcome now retain one adjusted count per
+  instruction with the common start and completion receipts. Outcome checks
+  the native return batch before validating the adjustment. A terminal Jace
+  win stops the remaining attempts and skips Jewel's transfer. Earlier saved
+  continuations keep their prior format. Both-seat paid fixtures cover
+  Dredge, Hullbreacher, Jace, restore and tampering. Native qualification is
+  pending. Wizards' Edge of Eternities release notes specify that Riddler
+  adjusts the whole instruction before individual draw replacements
+  (https://magic.wizards.com/en/news/feature/edge-of-eternities-release-notes).
+  Nested or dynamic suspended draws, copies, and turn-based draws with
+  replacement choices still need count ownership. The selected Flame,
+  Curie and Riddler cases passed at
   `4d8cd0bb9`; those passes do not cover the remaining draw owners.
 - S1d, built in `src/eternal_sideboard_s1d_v1.rs` (with a `targets` submodule and
   `statics`) and `build_eternal_s1d_v1.rs`, linked late in the recipe chains (before
@@ -2335,6 +2345,76 @@ follows each card's current Oracle text, checked against XMage and rules 113.7a,
   40-card decks built around the P3h cards through public schema-5 sessions in both seats under
   ranked and seeded random policies with replay checks.
 
+### S1n: Vintage Scam, Legacy Bant Control, Jeskai Control and LED Dredge sideboards
+
+Wave S1n closes four single-card sideboard gaps across Vintage and Legacy, adds Vintage Paradoxical
+Outcome's Darksteel Angel, and promotes Pauper's Martyr of Sands from Partial to Full:
+
+- `vintage-scam` (1.0% of the Vintage snapshot) completes its 75 with Apostle's Blessing, raising
+  Vintage Full 75 share from 93.1% to 94.1% (and adding Apostle's Blessing to Pauper Infect and
+  Kiln Fiend).
+- `legacy-bant-control` (0.1%), `legacy-jeskai-control` (1.2%) and `legacy-led-dredge` (1.0%)
+  complete their 75s with Doorkeeper Thrull, From the Ashes and Kiora's Dismissal, raising Legacy
+  Full 75 share from 81.5% to 83.8% (`PLAYABLE_75` grows from 120 to 124 decks).
+- `vintage-paradoxical-outcome` (3.4%) gets Darksteel Angel as Full, leaving only Hullbreacher
+  (Partial) outside Full in its 75.
+- `Martyr of Sands` (2.0% of Pauper sideboards) is promoted from Partial to Full in
+  `data/eternal_v1/cards_v1.json` (raising Pauper Full cards from 390 to 392) now that wave S1h's
+  `MartyrRevealPaidV1` event-history checks and S1n's public-session consumer game cover its hand
+  reveal and sacrifice cost end to end.
+
+S1n is built in `src/eternal_sideboard_s1n_v1.rs`, `src/eternal_sideboard_s1n_v1/targets.rs` and
+`build_eternal_s1n_v1.rs`, the new tail of the eternal recipe chains after P3h, and adds
+`Subtype::Thrull = 440` (`CreatureTypeV60::Thrull`) to the creature-type roster. Behavior follows
+each card's current Oracle text, checked against XMage and rules 101.4, 601.2b-c, 608.2b, 614.16,
+701.8, 701.19, 702.16 and 704.5m-n:
+
+- Apostle's Blessing, {1}{W/P}, Instant: "Target artifact or creature you control gains protection
+  from artifacts or from the color of your choice until end of turn." Cast cost uses `{1}` plus
+  `CostComponent::Phyrexian(ManaColor::W)` (paying `{W}` or 2 life when at least 2 life is
+  available), targeting `StandardTargetV1::ControlledArtifactOrCreatureV1`. Resolution offers six
+  `Choice` branches (`S1nProtectionV1::Artifacts` or `Color(W|U|B|R|G)`) after target revalidation
+  and records a turn-scoped `BlessingV1` on the target's battlefield incarnation. Color grants join
+  `eternal_legacy_e9a_v1::statics::protection_mask`; artifact protection joins
+  `eternal_e5a_v1::statics::object_protected_from` / `protects_from_departed_types`, departed
+  ability-source target legality in `engine::legal_targets_unrestricted_v1`, historical source-type
+  damage prevention in `fixed_source_damage_v3`, Aura/Equipment unattachment SBA in
+  `eternal_pauper_e6b_v1::protection_removes_attachment` (704.5m-n), and returning-Aura host
+  filtering in `effect::returning_aura_hosts_in_zone` and Replenish.
+- Doorkeeper Thrull, {1}{W}, Creature - Thrull 1/2: "Flash, flying. Artifacts and creatures
+  entering don't cause abilities to trigger." Joins `eternal_vintage_e7b_v1::statics::entry_triggers_suppressed`
+  alongside Karn, Argent Defender (plus S1f's Overencumbered entry trigger), suppressing triggered
+  abilities caused by artifacts or creatures entering (including simultaneous entry with the Thrull
+  itself and token creation, 603.6d / 614.16a) while leaving non-artifact non-creature permanent
+  entry triggers and as-enters replacement effects untouched.
+- Darksteel Angel, {9}, Artifact Creature - Angel 4/4: "Flying, indestructible. You can't lose the
+  game and your opponents can't win the game. Creatures you control can't have -1/-1 counters put
+  on them." While controlled on the battlefield with printed abilities active, joins
+  `game_outcome_protection_v1::cannot_lose` (which `cannot_win` and `eternal_cards_v1::e3::win_game`
+  also consult) without enabling FDN's `game_outcome_protection_v1` CardDef surface, and blocks
+  `-1/-1` counter placement on creatures its controller controls across
+  `EffectOp::AddMinusOneMinusOneCounter`, `standard_creatures_v1`'s counter-transfer placement and
+  Moonshadow's entry counters (`ReplacementInputV48::entry_prevents_minus1_minus1_v1`).
+- From the Ashes, {3}{R}, Sorcery: "Destroy all nonbasic lands. For each land destroyed this way,
+  its controller may search their library for a basic land card and put it onto the battlefield.
+  Then each player who searched their library this way shuffles." `S1nOpV1::FromTheAshesV1`
+  simultaneously destroys every non-indestructible nonbasic land (checking effective `Supertype::Basic`
+  so Blood Moon lands remain nonbasic, and honoring regeneration shields per 701.8), counts lands
+  whose battlefield incarnations actually departed per controller, and in APNAP order (101.4)
+  stages a two-option `Choice` per affected player between searching up to `k` basic land cards
+  onto the battlefield untapped (shuffling iff they chose to search, even on fail-to-find) and
+  declining without shuffling.
+- Kiora's Dismissal, {U}, Instant: "Strive - This spell costs {U} more to cast for each target
+  beyond the first. Return any number of target enchantments to their owners' hands." Targets
+  `StandardTargetV1::AnyNumberEnchantmentsV1` (`0..=64`), adds `targets.len() - 1` `{U}` strive
+  costs in `spell_costs_v1::selected_spell_mana_costs_v1` (preserving strive surcharges under
+  Omniscience's free base cast), filters unpayable extra target picks and Flagbearer obligations in
+  `engine::kioras_dismissal_cast_targets`, and simultaneously returns each still-legal target
+  enchantment on resolution (`S1nOpV1::KiorasDismissalV1`, 608.2b).
+- Consumers: `tests/eternal/eternal_sideboard_s1n_v1.rs` covers all five S1n cards and Martyr of
+  Sands in both seats, and plays two 40-card decks built around all six cards through public
+  schema-5 sessions in both seats under ranked and seeded random policies with replay checks.
+
 ## Vintage Cube
 
 The Magic Online Vintage Cube (the 540-card list effective 2026-10-07) is tracked in #710 with
@@ -2348,7 +2428,7 @@ Python test keeps that record equal to the registries). Baseline: 292 of 540 Ful
 Wave C1 adds 47 instants and sorceries, the tokens two of them make, and Cathar Commando: 46 spells
 and Cathar Commando are Full and Bone Shards is Partial, raising the cube to 339 of 540 Full. No C1
 card completes a snapshot deck, so `PLAYABLE` and `PLAYABLE_75` are unchanged. It is built as three
-sub-modules chained after P3h, each with a build file, a runtime module with its own target
+sub-modules chained after S1n, each with a build file, a runtime module with its own target
 filters, and a test file: C1a (white and blue, `eternal_cube_c1a_v1`), C1b (black and green,
 `eternal_cube_c1b_v1`) and C1c (red and multicolor, `eternal_cube_c1c_v1`), the new tail. Behavior
 follows each card's current Oracle text, checked against XMage where it has the card. Every draw is
@@ -2522,3 +2602,61 @@ Limits shared with earlier cards: a declined life payment taps the land right af
 (Soporific Springs), a hidden land is playable from a resolving effect only as the first land of
 the turn (Collector's Cage), and Pentad Prism and Everflowing Chalice pay through explicit mana
 actions rather than the automatic payment planner (Gaea's Cradle).
+
+### C3: creatures and artifact utilities
+
+Wave C3 adds 31 cards and six tokens, raising the cube to 412 of 540 Full. It is three sub-modules
+chained after C2c: C3a (ten cheap creatures, `eternal_cube_c3a_v1`), C3b (eleven creatures,
+`eternal_cube_c3b_v1`) and C3c (ten artifacts, `eternal_cube_c3c_v1`), the new tail. Guardian
+Scalelord waits for a later wave: its backup ability must grant an attack trigger until end of
+turn.
+
+C3a:
+
+- Auriok Salvagers returns an artifact card with mana value 1 or less (Goblin Engineer's filter).
+  Bloodbraid Challenger has cascade (Boarding Party's triggers), haste and escape. Death-Greeter's
+  Champion has dash (Ragavan's alternative cost and end-step return) and backup with double strike
+  (Saiba Cryptomancer's op).
+- Embereth Shieldbreaker // Battle Display is an Adventure card (Brazen Borrower's shape).
+  Formidable Speaker's "may discard, then search" is the module's own choice. Iron-Shield Elf and
+  Harvester of Misery discard as a cost; Luminarch Aspirant puts its counter at the beginning of
+  combat.
+- Giver of Runes: Mother of Runes' choice with a sixth option, protection from colorless, stored as
+  an E9a protection record for `ManaColor::C` and read by the shared protection checks (targeting,
+  damage, blocking, colorless attachments falling off).
+- Devoted Druid: its -1/-1 counter is a cost, paid in the `activation_paid` hook as the ability
+  goes on the stack (Parallax Wave's convention).
+
+C3b:
+
+- Exalted is `EXALTED_SOURCES`, a name table with each card's instances: when exactly one creature
+  is declared as an attacker, one delayed trigger per instance among the attacking player's
+  permanents gives it +1/+1 until end of turn. Noble Hierarch and Ignoble Hierarch are its rows; a
+  later exalted card adds one.
+- Samut, Hazoret's Champion and Marwyn, the Preserver grant haste to creatures and hexproof to
+  lands through E9a's `granted_keywords`. Spider-Woman, Stunning Savior makes opponents' artifacts
+  and creatures enter tapped.
+- Walking Ballista: {X}{X}, entering with X counters (Stonecoil Serpent's op), {4} for a counter,
+  and a removed counter for 1 damage. Spellseeker searches with
+  `LibraryCardFilter::InstantOrSorceryManaValueAtMostV1(2)` (fingerprint 67).
+- Oliphaunt has mountaincycling and an attack trigger on another creature; Stingcaster Mage is
+  Snapcaster Mage's grant with haste; Third Path Iconoclast makes a Soldier artifact token;
+  Tireless Tracker makes Clues and grows when one is sacrificed.
+
+C3c:
+
+- Lightning Greaves (shroud, haste, equip {0}), Pyrite Spellbomb, The Echoverse Fulcrum, and
+  Shorikai, Genesis Engine (crew 8; draw two, discard one, then a Pilot token, in printed order).
+- Retrofitter Foundry and Thopter Foundry, with Servo, Thopter (colorless and blue) and Construct
+  tokens, `Subtype::Servo` (580), `Thopter` (581) and `PermanentFilter::NontokenArtifactV1`.
+- Relic of Sauron taps for two mana in any combination of blue, black and red: the three same-color
+  pairs are its primary ability, and the three mixed pairs are additional mana abilities keyed by
+  the colors it does not make (white for blue-black, green for blue-red, colorless for black-red),
+  because a mana action is identified by its source and one color.
+- Currency Converter keeps a ledger of the cards exiled with it; its discard trigger and its
+  release ability (a Treasure for a land, a Rogue for a nonland card) read that ledger. Staff of
+  the Storyteller counts story counters as charge counters and triggers once per resolution that
+  created creature tokens.
+- The Mightstone and Weakstone: a modal entry trigger, and `Subtype::Powerstone` (582) mana under
+  `ManaSpendRestrictionDef::PowerstoneV1`, which pays for artifact spells and any activated ability
+  but not for nonartifact spells.

@@ -450,6 +450,11 @@ pub enum StandardTargetV1 {
     /// Auramancer (Premodern wave P3h): "target enchantment card from your
     /// graveyard".
     EnchantmentCardInOwnGraveyardV1,
+    /// Apostle's Blessing (wave S1n): "target artifact or creature you
+    /// control".
+    ControlledArtifactOrCreatureV1,
+    /// Kiora's Dismissal (wave S1n): "any number of target enchantments".
+    AnyNumberEnchantmentsV1,
     /// "Target creature spell with power or toughness 2 or less" (Stern
     /// Scolding, Vintage Cube wave C1a).
     CreatureSpellPowerOrToughnessAtMostTwoV1,
@@ -506,6 +511,9 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_premodern_p3h_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_sideboard_s1n_v1::targets::counts(self) {
             return counts;
         }
         if let Some(counts) = crate::eternal_cube_c1c_v1::targets::counts(self) {
@@ -1004,6 +1012,11 @@ pub(crate) fn legal_targets(
         return targets;
     }
     if let Some(targets) =
+        crate::eternal_sideboard_s1n_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
         crate::eternal_sideboard_s1c_v1::targets::legal_targets(target, controller, prefix, state)
     {
         return targets;
@@ -1303,6 +1316,11 @@ pub(crate) fn target_matches(
         return matches;
     }
     if let Some(matches) =
+        crate::eternal_sideboard_s1n_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
         crate::eternal_sideboard_s1c_v1::targets::target_matches(target, controller, object, state)
     {
         return matches;
@@ -1555,6 +1573,9 @@ pub(crate) fn target_matches(
         }
         // Answered by `eternal_premodern_p3h_v1::targets` above.
         StandardTargetV1::EnchantmentCardInOwnGraveyardV1 => false,
+        // Answered by `eternal_sideboard_s1n_v1::targets` above.
+        StandardTargetV1::ControlledArtifactOrCreatureV1
+        | StandardTargetV1::AnyNumberEnchantmentsV1 => false,
         // A spell on the stack, answered by `stack_spell_matches`.
         StandardTargetV1::CreatureSpellPowerOrToughnessAtMostTwoV1 => false,
         // Answered by `eternal_cube_c1c_v1::targets` above.

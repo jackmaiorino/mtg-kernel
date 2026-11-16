@@ -474,9 +474,12 @@ pub enum Subtype {
     /// (Extinguisher Battleship), with stable ids from 420 reserved for that
     /// wave. An artifact type, not a creature type.
     Spacecraft = 420,
+    /// Appended for the eternal catalog's sideboard wave S1n (Doorkeeper
+    /// Thrull), with stable ids from 440 reserved for that wave.
+    Thrull = 440,
     /// Appended for Vintage Cube wave C1b (Pest Infestation's Pest tokens),
-    /// with stable ids from 440 reserved for that wave.
-    Pest = 440,
+    /// with stable ids from 460 reserved for that wave.
+    Pest = 460,
     /// Appended for Vintage Cube wave C3c (the Servo and Thopter tokens of
     /// Retrofitter Foundry and Thopter Foundry, and The Mightstone and
     /// Weakstone's Powerstone type), with stable ids from 580 reserved for
@@ -879,6 +882,8 @@ impl Subtype {
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Minion,
         #[cfg(feature = "eternal-fixtures")]
+        Subtype::Thrull,
+        #[cfg(feature = "eternal-fixtures")]
         Subtype::Pest,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Servo,
@@ -1135,7 +1140,8 @@ impl Subtype {
             381 => Subtype::Minion,
             400 => Subtype::Junk,
             420 => Subtype::Spacecraft,
-            440 => Subtype::Pest,
+            440 => Subtype::Thrull,
+            460 => Subtype::Pest,
             580 => Subtype::Servo,
             581 => Subtype::Thopter,
             582 => Subtype::Powerstone,
@@ -1369,6 +1375,7 @@ impl Subtype {
             Subtype::Minion => true,
             Subtype::Junk => false,
             Subtype::Spacecraft => false,
+            Subtype::Thrull => true,
             Subtype::Pest => true,
             Subtype::Servo => true,
             Subtype::Thopter => true,
@@ -1486,6 +1493,7 @@ impl Subtype {
                     | Subtype::Flagbearer
                     | Subtype::Spike
                     | Subtype::Minion
+                    | Subtype::Thrull
                     | Subtype::Pest
                     | Subtype::Servo
                     | Subtype::Thopter
@@ -4058,7 +4066,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xdae0_8562_713d_fc17;
+        const EXPECTED_ETERNAL: u64 = 0x2e99_84e4_1b4a_dd76;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

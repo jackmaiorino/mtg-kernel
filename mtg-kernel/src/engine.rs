@@ -4123,6 +4123,7 @@ fn legal_targets_for_controller_from_source_unframed(
     #[cfg(feature = "eternal-fixtures")]
     if !crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(spec)
         && spec != crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC
+        && spec != crate::eternal_sideboard_s1n_v1::KIORAS_DISMISSAL_TARGET
     {
         crate::eternal_sideboard_s1d_v1::statics::restrict_to_flagbearers(
             state,
@@ -5034,7 +5035,17 @@ fn legal_targets_unrestricted_v1(
         ) else {
             return Vec::new();
         };
-        targets.retain(|target| !matches!(target, Target::Object(object) if crate::controlled_creature_grants_v1::protects_from_colors(state, *object, colors)));
+        targets.retain(|target| {
+            !matches!(
+                target,
+                Target::Object(object)
+                    if crate::controlled_creature_grants_v1::protects_from_colors(state, *object, colors)
+                        || (cfg!(feature = "eternal-fixtures")
+                            && crate::eternal_pauper_e6b_v1::protected_from_colors(
+                                state, *object, colors,
+                            ))
+            )
+        });
         // Protection from creatures (Seasoned Dungeoneer).
         #[cfg(feature = "eternal-fixtures")]
         if crate::eternal_vintage_v1::source_is_creature(state, source.object) {
@@ -5046,6 +5057,41 @@ fn legal_targets_unrestricted_v1(
             let types = source.types_override.map_or_else(|| crate::source_type_hexproof_v1::source_types(state, source.object, source.card_def, source.zone, source.zone_change_count), Ok);
             let Ok(types) = types else { return Vec::new(); };
             targets.retain(|target| !matches!(target, Target::Object(id) if crate::source_type_hexproof_v1::active_rule(state, *id, controller).is_some_and(|rule| crate::source_type_hexproof_v1::protects(rule, types))));
+        }
+        #[cfg(feature = "eternal-fixtures")]
+        if targets.iter().any(|target| {
+            matches!(
+                target,
+                Target::Object(id)
+                    if crate::eternal_sideboard_s1n_v1::has_protection_from_artifacts(state, *id)
+            )
+        }) {
+            let types = source.types_override.map_or_else(
+                || {
+                    crate::source_type_hexproof_v1::source_types(
+                        state,
+                        source.object,
+                        source.card_def,
+                        source.zone,
+                        source.zone_change_count,
+                    )
+                },
+                Ok,
+            );
+            let Ok(types) = types else {
+                return Vec::new();
+            };
+            if types.contains(CardType::Artifact) {
+                targets.retain(|target| {
+                    !matches!(
+                        target,
+                        Target::Object(id)
+                            if crate::eternal_sideboard_s1n_v1::has_protection_from_artifacts(
+                                state, *id,
+                            )
+                    )
+                });
+            }
         }
     }
     if let Some(colors) = dungeon_colors.filter(|&colors| colors != 0) {
@@ -9816,6 +9862,10 @@ fn cast_target_choices(
         return shatterskull_cast_targets(def, pending, state, candidates);
     }
     #[cfg(feature = "eternal-fixtures")]
+    if spec == crate::eternal_sideboard_s1n_v1::KIORAS_DISMISSAL_TARGET {
+        return kioras_dismissal_cast_targets(def, pending, state, candidates);
+    }
+    #[cfg(feature = "eternal-fixtures")]
     if crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(spec)
         && crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
             state,
@@ -9900,6 +9950,60 @@ fn shatterskull_cast_targets(
                     || prefix.iter().any(|pick| *pick != prefix[0])
                     || statics::is_flagbearer(state, &prefix[0])
                 {
+                    return false;
+                }
+                prefix.push(bearer);
+                let can_pay = payable(&prefix);
+                prefix.pop();
+                can_pay
+            });
+        prefix.pop();
+        legal
+    });
+    (next, can_finish(chosen))
+}
+
+#[cfg(feature = "eternal-fixtures")]
+fn kioras_dismissal_cast_targets(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    state: &GameState,
+    candidates: impl Fn(&[Target]) -> Vec<Target>,
+) -> (Vec<Target>, bool) {
+    use crate::eternal_sideboard_s1d_v1::statics;
+
+    let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
+    let payable = |picks: &[Target]| {
+        let mut projected = pending.clone();
+        projected.targets_chosen = picks.to_vec();
+        pending_cast_quote_v1(def, &projected, method, false, 0, state).is_some()
+    };
+    let flagbearer = statics::flagbearer_requirement_applies(state, pending.controller)
+        .then(|| {
+            candidates(&[])
+                .into_iter()
+                .find(|t| statics::is_flagbearer(state, t))
+        })
+        .flatten();
+    let can_finish = |picks: &[Target]| {
+        payable(picks)
+            && (picks.is_empty()
+                || flagbearer.is_none()
+                || picks.iter().any(|t| statics::is_flagbearer(state, t)))
+    };
+    let chosen = &pending.targets_chosen;
+    let mut next = candidates(chosen);
+    let mut prefix = chosen.clone();
+    next.retain(|&target| {
+        prefix.push(target);
+        // Strive adds {U} per target beyond the first, so adding more targets
+        // never makes an unpayable prefix payable. When an opponent controls a
+        // legal enchantment Flagbearer, a non-Flagbearer prefix is completable
+        // iff appending that Flagbearer stays within the 64-target bound and is
+        // payable.
+        let legal = can_finish(&prefix)
+            || flagbearer.is_some_and(|bearer| {
+                if prefix.len() >= 64 || prefix.contains(&bearer) {
                     return false;
                 }
                 prefix.push(bearer);
@@ -15721,6 +15825,7 @@ pub(crate) fn validate_pending_cast(
         #[cfg(feature = "eternal-fixtures")]
         if pending.kicked.is_some()
             && (spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC
+                || spec == crate::eternal_sideboard_s1n_v1::KIORAS_DISMISSAL_TARGET
                 || (crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(
                     spec,
                 ) && crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
@@ -20973,7 +21078,12 @@ fn execute_resolving_program(
         && inspiration_owner.is_none()
         && hunter_owner.is_none()
         && native_row.is_none()
-        && crate::eternal_vintage_e7b_v1::dredge::forces_resumable(state, program, ctx);
+        && crate::eternal_vintage_e7b_v1::dredge::forces_resumable(
+            state,
+            program,
+            ctx,
+            item.is_copy,
+        );
     if crystal_owner.is_none() && !effect::contains_player_choice(program) && !dredge {
         if let Some(owner) = native_row {
             if effect::execute_owned_native_row_v1(state, item, ctx, program, owner).is_err() {

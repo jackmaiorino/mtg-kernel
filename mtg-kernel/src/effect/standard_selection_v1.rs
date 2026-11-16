@@ -57,6 +57,7 @@ pub(crate) fn metamorph_copy_candidates(
         player,
         crate::eternal_vintage_v1::metamorph_copy_rule(),
         None,
+        None,
     )
 }
 
@@ -65,6 +66,7 @@ fn candidates(
     player: PlayerId,
     rule: ObjectSelectionRuleV1,
     source: Option<crate::state::AbilitySourceContractV4>,
+    resolving: Option<crate::ids::StackItemId>,
 ) -> Result<Vec<EffectObjectBinding>, String> {
     let exile = rule.filter == ObjectSelectionFilterV1::OwnedFaceUpArtifactCardV1;
     if exile != (rule.zone == Zone::Exile)
@@ -92,6 +94,28 @@ fn candidates(
             "a graveyard cast selects at most one card from the chooser's graveyard".into(),
         );
     }
+    // A graveyard cast is staged while the interpreter holds the resolving
+    // item outside the public stack (`resolution_cast_v1::stage`), and
+    // `begin` sees that stack too. A suspended prompt and its answer see the
+    // item back on the public stack, where it would make a spell that
+    // targets a triggered ability (Consign to Memory) castable only there.
+    // Judge castability on the stack the cast itself will see.
+    let without_parent;
+    let cast_view = match resolving.filter(|&parent| {
+        graveyard_cast
+            && state
+                .stack
+                .iter()
+                .any(|item| item.v4.stack_item_id == parent)
+    }) {
+        Some(parent) => {
+            let mut view = state.clone();
+            view.stack.retain(|item| item.v4.stack_item_id != parent);
+            without_parent = view;
+            &without_parent
+        }
+        None => state,
+    };
     let mut candidates = Vec::new();
     for owner in [PlayerId::P0, PlayerId::P1] {
         if !rule.any_player && owner != player {
@@ -164,7 +188,7 @@ fn candidates(
                     live.zone == Zone::Graveyard
                         && live.owner == owner
                         && crate::engine::resolution_cast_v1::can_cast_from_graveyard_v1(
-                            state,
+                            cast_view,
                             player,
                             EffectObjectBinding {
                                 object: id,
@@ -219,7 +243,13 @@ pub(super) fn begin(
     path: Vec<u16>,
 ) -> Result<(), String> {
     let player = pending.ctx.resolve_player(rule.player, state);
-    let original_candidates = candidates(state, player, rule, pending.ctx.ability_source_contract)?;
+    let original_candidates = candidates(
+        state,
+        player,
+        rule,
+        pending.ctx.ability_source_contract,
+        pending.ctx.stack_item_id,
+    )?;
     let available = u16::try_from(original_candidates.len()).unwrap_or(u16::MAX);
     pending.choice = Some(PendingEffectChoice::SelectTargets {
         player,
@@ -262,7 +292,13 @@ pub(super) fn validate_prompt(
 ) -> Result<(), String> {
     validate_origin(state, pending, rule, path)?;
     let player = pending.ctx.resolve_player(rule.player, state);
-    let current = candidates(state, player, rule, pending.ctx.ability_source_contract)?;
+    let current = candidates(
+        state,
+        player,
+        rule,
+        pending.ctx.ability_source_contract,
+        pending.ctx.stack_item_id,
+    )?;
     let available = u16::try_from(current.len()).unwrap_or(u16::MAX);
     if current != original
         || chooser != player
@@ -302,7 +338,13 @@ pub(super) fn validate_answer(
 ) -> Result<(), String> {
     validate_origin(state, pending, rule, path)?;
     let player = pending.ctx.resolve_player(rule.player, state);
-    if candidates(state, player, rule, pending.ctx.ability_source_contract)? != original
+    if candidates(
+        state,
+        player,
+        rule,
+        pending.ctx.ability_source_contract,
+        pending.ctx.stack_item_id,
+    )? != original
         || selected.len() < usize::from(rule.min).min(original.len())
         || selected.len() > usize::from(rule.max).min(original.len())
     {
@@ -495,7 +537,7 @@ mod instant_or_sorcery_boundary_tests {
                 "Lightning Bolt",
                 Zone::Graveyard,
             );
-            let expected = candidates(&state, actor, rule(), None).unwrap();
+            let expected = candidates(&state, actor, rule(), None, None).unwrap();
             assert_eq!(
                 expected.iter().map(|b| b.object).collect::<Vec<_>>(),
                 vec![instant, sorcery]
@@ -503,7 +545,7 @@ mod instant_or_sorcery_boundary_tests {
             let restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             assert_eq!(
-                candidates(&restored, actor, rule(), None).unwrap(),
+                candidates(&restored, actor, rule(), None, None).unwrap(),
                 expected
             );
             for forgery in 0..4 {
@@ -515,7 +557,7 @@ mod instant_or_sorcery_boundary_tests {
                     _ => altered.objects.get_mut(instant).owner = actor.opponent(),
                 }
                 let before = altered.clone();
-                assert!(candidates(&altered, actor, rule(), None).is_err());
+                assert!(candidates(&altered, actor, rule(), None, None).is_err());
                 assert_eq!(altered, before);
             }
             event::propose_and_commit(
@@ -527,13 +569,13 @@ mod instant_or_sorcery_boundary_tests {
                 event::ProposedEvent::zone_change(instant, Zone::Graveyard),
             );
             assert_ne!(
-                candidates(&state, actor, rule(), None).unwrap(),
+                candidates(&state, actor, rule(), None, None).unwrap(),
                 expected,
                 "returning card is a new incarnation"
             );
             let mut invalid = rule();
             invalid.min = 0;
-            assert!(candidates(&state, actor, invalid, None).is_err());
+            assert!(candidates(&state, actor, invalid, None, None).is_err());
         }
     }
 }

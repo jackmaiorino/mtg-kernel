@@ -766,6 +766,19 @@ pub(super) fn selected_spell_mana_costs_v1(
     if kicked {
         selected.costs.push(definition.kicker_cost?);
     }
+    // Kiora's Dismissal's strive: "{U} more to cast for each target beyond the
+    // first" (wave S1n).
+    #[cfg(feature = "eternal-fixtures")]
+    if definition.name == crate::eternal_sideboard_s1n_v1::KIORAS_DISMISSAL && targets.len() > 1 {
+        const STRIVE_BLUE: Cost = Cost {
+            pips: &[crate::mana::Pip::Colored(crate::mana::ManaColor::U)],
+            generic: 0,
+            x_count: 0,
+        };
+        selected
+            .costs
+            .extend(std::iter::repeat_n(STRIVE_BLUE, targets.len() - 1));
+    }
     if let Some(additional) = additional_cost_for_method_v1(definition, method) {
         let additional = if let Some(mana) = super::mandatory_cast_cost_v1::mana_branch(definition)
         {

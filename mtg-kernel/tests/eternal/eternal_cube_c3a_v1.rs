@@ -19,7 +19,7 @@ const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
 /// The cards of this wave that are finished (Full, with tests below).
-/// Guardian Scalelord is left `no_effect`: see the wave's report.
+/// Guardian Scalelord is not in this wave: it needs a granted until-end-of-turn attack trigger.
 const C3A_CARDS: [&str; 10] = [
     "Auriok Salvagers",
     "Bloodbraid Challenger",

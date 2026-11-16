@@ -630,6 +630,7 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         Subtype::Minion => Some(CreatureTypeV60::Minion),
         Subtype::Junk => None,
         Subtype::Spacecraft => None,
+        Subtype::Thrull => Some(CreatureTypeV60::Thrull),
         Subtype::Pest => Some(CreatureTypeV60::Pest),
         Subtype::Servo => Some(CreatureTypeV60::Servo),
         Subtype::Thopter => Some(CreatureTypeV60::Thopter),
