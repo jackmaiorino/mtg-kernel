@@ -29,6 +29,8 @@ pub enum ProgramOriginV1 {
     SpellMode { mode: u8 },
     PrintedActivation { ability_index: u8 },
     PrintedTrigger { trigger_index: u32 },
+    PrintedSagaChapter { chapter: u8 },
+    GrantedLeaveBattlefieldOpponentDraw,
 }
 
 pub fn capture_v1(
@@ -97,13 +99,7 @@ fn bind_item(
         }
         StackItemKind::TriggeredAbility => {
             let program = item.inline_effect.as_ref().ok_or_else(error)?;
-            let (trigger_index, program) = bind_trigger(state, printing, program)?;
-            (
-                ProgramOriginV1::PrintedTrigger {
-                    trigger_index: trigger_index as u32,
-                },
-                program,
-            )
+            bind_trigger(state, printing, program)?
         }
         _ => return Err(error()),
     };
@@ -206,17 +202,49 @@ fn bind_trigger(
     state: &GameState,
     printing: u16,
     program: &EffectOp,
-) -> Result<(usize, ProgramV1), RlContractError> {
+) -> Result<(ProgramOriginV1, ProgramV1), RlContractError> {
     use crate::{
         eternal_cards_v1::EternalOpV1 as E, eternal_vintage_v1::VintageOpV1 as V,
         standard_cards_v1::StandardOpV1 as S,
     };
+    let def = CARD_DEFS.get(usize::from(printing)).ok_or_else(error)?;
     let triggers = crate::trigger::triggers_for(printing);
     if let Some(index) = triggers
         .iter()
         .position(|trigger| (trigger.effect)() == *program)
     {
-        return Ok((index, ProgramV1::Printed(Box::new(program.clone()))));
+        return Ok((
+            ProgramOriginV1::PrintedTrigger {
+                trigger_index: index as u32,
+            },
+            ProgramV1::Printed(Box::new(program.clone())),
+        ));
+    }
+    if let Some(saga) = def.saga.as_ref() {
+        if let Some(index) = saga
+            .chapter_effects
+            .iter()
+            .position(|chapter| chapter() == *program)
+        {
+            return Ok((
+                ProgramOriginV1::PrintedSagaChapter {
+                    chapter: u8::try_from(index + 1).map_err(|_| error())?,
+                },
+                ProgramV1::Printed(Box::new(program.clone())),
+            ));
+        }
+    }
+    if def.name == "Thief of Existence"
+        && *program
+            == (EffectOp::DrawCards {
+                player: crate::effect::PlayerRef::Target(0),
+                count: 1,
+            })
+    {
+        return Ok((
+            ProgramOriginV1::GrantedLeaveBattlefieldOpponentDraw,
+            ProgramV1::Printed(Box::new(program.clone())),
+        ));
     }
     // Vexing Bauble and Chalice materialize the publicly observed cast into
     // an exact stack incarnation. Publish its stack position, never its raw ID.
@@ -235,7 +263,9 @@ fn bind_trigger(
             .map(|index| u32::try_from(index).map_err(|_| error()))
             .transpose()?;
         return Ok((
-            index,
+            ProgramOriginV1::PrintedTrigger {
+                trigger_index: index as u32,
+            },
             ProgramV1::CounterCapturedCastSpell {
                 target_stack_index,
                 respects_cannot_be_countered: true,
@@ -424,5 +454,37 @@ mod tests {
             outputs.push(projected);
         }
         assert_ne!(outputs[0], outputs[1]);
+    }
+
+    #[test]
+    fn saga_chapters_and_thief_leave_draw_bind_public_stack_programs() {
+        let mut state = ready_state_for(PlayerId::P0);
+        let saga = put(&mut state, PlayerId::P0, "Urza's Saga", Zone::Battlefield);
+        let saga_printing = state.objects.get(saga).card_def;
+        let chapters = &CARD_DEFS[usize::from(saga_printing)]
+            .saga
+            .as_ref()
+            .unwrap()
+            .chapter_effects;
+        assert_eq!(chapters.len(), 3);
+        for (idx, chapter_fn) in chapters.iter().enumerate() {
+            let (origin, program) = bind_trigger(&state, saga_printing, &chapter_fn()).unwrap();
+            assert_eq!(
+                origin,
+                ProgramOriginV1::PrintedSagaChapter {
+                    chapter: (idx + 1) as u8
+                }
+            );
+            assert_eq!(program, ProgramV1::Printed(Box::new(chapter_fn())));
+        }
+
+        let thief_printing = crate::card_def::card_id_by_name("Thief of Existence").unwrap();
+        let draw = EffectOp::DrawCards {
+            player: crate::effect::PlayerRef::Target(0),
+            count: 1,
+        };
+        let (origin, program) = bind_trigger(&state, thief_printing, &draw).unwrap();
+        assert_eq!(origin, ProgramOriginV1::GrantedLeaveBattlefieldOpponentDraw);
+        assert_eq!(program, ProgramV1::Printed(Box::new(draw)));
     }
 }

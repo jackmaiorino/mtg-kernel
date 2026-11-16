@@ -2,6 +2,8 @@
 //! Jewel Shops and Mono-White Initiative.
 #![cfg(feature = "eternal-fixtures")]
 
+#[path = "eternal_vintage_e4_v1/initiative_throne_v1.rs"]
+mod initiative_throne_v1;
 #[path = "eternal_vintage_e4_v1/owned_artifact_draws.rs"]
 mod owned_artifact_draws;
 #[path = "eternal_vintage_e4_v1/owned_veil_dragon_draws.rs"]

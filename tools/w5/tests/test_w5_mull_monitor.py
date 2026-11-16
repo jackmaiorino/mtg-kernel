@@ -44,9 +44,19 @@ def seat(mode='learned', taken=0, exposed=None):
             'forced_zero_card_keep': taken == 7}
 
 
-def summary(seats, decks=('Wildfire', 'Rally'), offset=None, opening=True, record=True):
-    """A `read_episode` result."""
-    return {'opening': opening, 'offset': offset, 'decks': list(decks), 'seats': list(seats) if record else None}
+NO_ROWS = object()
+
+
+def summary(seats, decks=('Wildfire', 'Rally'), offset=None, opening=True, record=True, reward=(1.0, -1.0),
+            ann=NO_ROWS):
+    """A `read_episode` result. `ann` is left out of the dict by default (an episode whose rows were not looked at);
+    None means the pregame rows could not be read, a list the announcements `(actor, k, value)` found (the
+    synthetic trajectories below carry no pregame rows, so read_episode gives the empty list for them)."""
+    out = {'opening': opening, 'offset': offset, 'decks': list(decks), 'seats': list(seats) if record else None,
+           'reward': None if reward is None else list(reward)}
+    if ann is not NO_ROWS:
+        out['ann'] = None if ann is None else list(ann)
+    return out
 
 
 def trajectory(seats, decks=('Wildfire', 'Rally'), offset=None, opening=True, decisions=40, decoy=False,
@@ -153,11 +163,11 @@ class ReadEpisode(unittest.TestCase):
                 with mock.patch.object(mm.json, 'loads', side_effect=AssertionError('full parse')):
                     got = mm.read_episode(data)
                 self.assertEqual(got, summary(seats, offset=kw.get('offset'), opening=kw.get('opening', True),
-                                              record=kw.get('opening', True)))
+                                              record=kw.get('opening', True), ann=[]))
 
     def test_an_earlier_member_of_the_same_name_falls_back_to_a_full_parse(self):
         data = trajectory([seat(taken=3), seat()], decoy=True, offset=2.5)
-        self.assertEqual(mm.read_episode(data), summary([seat(taken=3), seat()], offset=2.5))
+        self.assertEqual(mm.read_episode(data), summary([seat(taken=3), seat()], offset=2.5, ann=[]))
 
     def test_a_sealed_record_is_opened(self):
         raw = trajectory([seat(taken=1), seat()])
@@ -183,9 +193,14 @@ class Lines(unittest.TestCase):
                summary([seat(taken=7), seat('keep_seven')], ('Wildfire', 'Burn'), 6.0),
                summary([], opening=False, record=False)]
         line = mm.iteration_line(5, eps)
-        self.assertEqual(line, {'v': 1, 'it': 5, 'n': 2, 'off': 6.0, 'learned': 3, 'kept': [1, 0, 0, 0, 0, 0, 1, 1],
+        self.assertEqual(line, {'v': 2, 'it': 5, 'n': 2, 'off': 6.0, 'learned': 3, 'kept': [1, 0, 0, 0, 0, 0, 1, 1],
                                 'exp': 1 + 3 + 15, 'fixed': 1, 'plain': 1,
-                                'decks': {'Wildfire': [1, 0, 0, 0, 0, 0, 0, 1], 'Rally': [0, 0, 0, 0, 0, 0, 1, 0]}})
+                                'decks': {'Wildfire': [1, 0, 0, 0, 0, 0, 0, 1], 'Rally': [0, 0, 0, 0, 0, 0, 1, 0]},
+                                # seats: (taken 0), (taken 1), (taken 7); self-play reward [1, -1], the second game
+                                # (seat 0 taken 7, reward 1.0)
+                                'dk': [3, 2, 1, 1, 1, 1, 1], 'ma': [2, 1, 1, 1, 1, 1, 1],
+                                'rk': [1.0, 0, 0, 0, 0, 0, -1.0, 1.0], 'rn': [1, 0, 0, 0, 0, 0, 1, 1],
+                                'vn': [0] * 7, 'vk': [0.0] * 7, 'vr': [0.0] * 7})
         self.assertEqual(json.loads(json.dumps(line)), line)
 
     def test_the_offset_in_force_and_disagreement(self):
@@ -225,7 +240,7 @@ class Lines(unittest.TestCase):
         eps = [summary([seat(taken=k % 4), seat(taken=(k + 1) % 5)], (decks[k % 9], decks[(k + 3) % 9]), 0.123456789)
                for k in range(4000)]
         size = len(json.dumps(mm.iteration_line(31, eps), sort_keys=True, separators=(',', ':'))) + 1
-        self.assertLess(size, 700)
+        self.assertLess(size, 1500)
 
 
 class Rates(unittest.TestCase):

@@ -29162,6 +29162,193 @@
     "destroy_artifact"
    ],
    "java_file": "Mage.Sets/src/mage/cards/f/FieryConfluence.java"
+  },
+  {
+   "name": "Overgrown Estate",
+   "engine_capability": "full",
+   "mana_cost": "{W}{B}{G}",
+   "mana_value": 3,
+   "colors": [
+    "W",
+    "B",
+    "G"
+   ],
+   "types": [
+    "Enchantment"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-other-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "life_gain"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/OvergrownEstate.java"
+  },
+  {
+   "name": "Decree of Pain",
+   "engine_capability": "full",
+   "mana_cost": "{6}{B}{B}",
+   "mana_value": 8,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-other-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "destroy_all",
+    "cant_be_regenerated",
+    "draw_card",
+    "cycling",
+    "cycling_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/d/DecreeOfPain.java"
+  },
+  {
+   "name": "Enlightened Tutor",
+   "engine_capability": "full",
+   "mana_cost": "{W}",
+   "mana_value": 1,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Instant"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "library_search",
+    "reveal",
+    "shuffle",
+    "library_top"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EnlightenedTutor.java"
+  },
+  {
+   "name": "Auramancer",
+   "engine_capability": "full",
+   "mana_cost": "{2}{W}",
+   "mana_value": 3,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "etb_trigger",
+    "graveyard_return"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/a/Auramancer.java"
+  },
+  {
+   "name": "Monk Realist",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Monk",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": true,
+   "complexity": "simple",
+   "mechanics": [
+    "etb_trigger",
+    "destroy_enchantment"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/m/MonkRealist.java"
+  },
+  {
+   "name": "Ghitu Slinger",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Nomad"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "premodern-full-english-breakfast"
+   ],
+   "sideboard_only": true,
+   "complexity": "moderate",
+   "mechanics": [
+    "echo",
+    "etb_trigger",
+    "direct_damage"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GhituSlinger.java"
   }
  ]
 }

@@ -18,6 +18,31 @@ fn issued(
     (numeric, decision)
 }
 
+fn assert_wire_matches_native(owner: &FebSessionV1, viewer: PlayerSeatV1) {
+    let wire = crate::premodern_ordered_public_v1::feb_jsonl::fixture_wire_state(owner);
+    let (numeric, token) = issued(owner, viewer);
+    assert!(token.is_some());
+    assert_eq!(wire["prompt"]["actor"], json!(viewer));
+    assert_eq!(wire["prompt"]["prompt_seq"], numeric.step);
+    let human = owner.human_current(viewer).unwrap().unwrap();
+    assert_eq!(wire["human"], json!(human));
+    assert_eq!(
+        wire["numeric"]["actions"].as_array().unwrap().len(),
+        human.actions.len()
+    );
+    for (wire, native) in wire["numeric"]["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(numeric.actions)
+    {
+        assert_eq!(
+            wire,
+            &json!({"rows": native.rows(), "topology": native.topology()})
+        );
+    }
+}
+
 #[test]
 fn frozen_feb_opening_step_and_same_owner_restore_match_native_both_seats() {
     let deck = resolve_frozen_mainboard_v1().unwrap();
@@ -176,6 +201,8 @@ fn frozen_feb_opening_packet_is_inert_to_opponent_hidden_copy_assignment() {
         owner.human_current(PlayerSeatV1::P0).unwrap(),
         paired.human_current(PlayerSeatV1::P0).unwrap()
     );
+    use crate::premodern_ordered_public_v1::feb_jsonl::fixture_wire_state;
+    assert_eq!(fixture_wire_state(&owner), fixture_wire_state(&paired));
 }
 
 fn choose_label(owner: &mut FebSessionV1, viewer: PlayerSeatV1, starts_with: &str) {
@@ -346,6 +373,7 @@ fn frozen_feb_human_names_and_resolves_paid_cabal_therapy_both_seats() {
             "Choose names starting with W for Cabal Therapy",
             "Name Wall of Roots for Cabal Therapy",
         ] {
+            assert_wire_matches_native(&owner, seat);
             let human = owner.human_current(seat).unwrap().unwrap();
             let (numeric, token) = issued(&owner, seat);
             let token = token.unwrap();
@@ -446,6 +474,7 @@ fn frozen_feb_human_cycles_paid_unearth_both_seats() {
         state.players[player.index()].mana_pool[ManaColor::C.pool_index()] = 2;
         owner.inner.current = bind_next(state, &mut owner.inner.surface, owner.inner.step);
 
+        assert_wire_matches_native(&owner, seat);
         let human = owner.human_current(seat).unwrap().unwrap();
         let ordinal = human
             .actions
@@ -670,6 +699,7 @@ fn frozen_feb_human_resolves_paid_and_declined_guide_echo_both_seats() {
                     },
                 ]
             );
+            assert_wire_matches_native(&owner, seat);
             assert!(owner
                 .human_current(player.opponent().into())
                 .unwrap()
@@ -796,6 +826,7 @@ fn frozen_feb_human_order_exposes_only_presentation_and_sealed_ordinals() {
         owner.inner.current = bind_next(state, &mut owner.inner.surface, owner.inner.step);
 
         let actor_view = owner.human_current(seat).unwrap().unwrap();
+        assert_wire_matches_native(&owner, seat);
         let order = actor_view.ordered.order_choice.as_ref().unwrap();
         assert_eq!(
             order.action_labels,

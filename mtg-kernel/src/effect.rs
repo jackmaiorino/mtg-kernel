@@ -1159,6 +1159,9 @@ pub enum LibraryCardFilter {
     /// A card with this effective subtype, of any card type ("a Wizard
     /// card", wizardcycling). Appended for the eternal catalog.
     CardWithSubtypeV1(Subtype),
+    /// An artifact or enchantment card (Enlightened Tutor). Appended for the
+    /// eternal catalog.
+    ArtifactOrEnchantmentCardV1,
 }
 
 impl LibraryCardFilter {
@@ -8988,11 +8991,8 @@ pub(crate) fn validate_initiative_trigger_binding(
     } else {
         initiative_granter
     };
-    let source_definition_matches = if native_room {
-        crate::engine::source_card_def_matches(state, binding.source, source.card_def)
-    } else {
-        source.card_def == binding.source.card_def
-    };
+    let source_definition_matches =
+        crate::engine::source_card_def_matches(state, binding.source, source.card_def);
     if binding.source.controller != binding.player
         || binding.source.zone != Zone::Battlefield
         || binding.source.attached_to.is_some()
@@ -9293,49 +9293,78 @@ fn apply_undercity_throne_result(
         .map_err(|error| error.to_string())?;
     if let Some(chosen) = chosen {
         let old_generation = chosen.expected_zone_change_count;
+        let history_before = state.engine.event_history.len();
         event::propose_and_commit(
             state,
             event::ProposedEvent::zone_change(chosen.object, Zone::Battlefield),
         );
+        if state.engine.halted.is_some() {
+            return Ok(());
+        }
         let permanent = state.objects.get(chosen.object);
-        if permanent.zone != Zone::Battlefield
-            || permanent.owner != binding.player
-            || permanent.zone_change_count != old_generation.saturating_add(1)
-        {
-            return Err("Throne chosen creature did not enter as its next incarnation".to_string());
+        if permanent.owner != binding.player {
+            return Err("Throne chosen creature changed owner".to_string());
         }
-        let generation = permanent.zone_change_count;
-        if crate::doubling_season_v48::requires_successor(state) {
-            event::add_plus_one_counters(state, chosen.object, binding.player, 3)?;
-        } else {
-            let counters = &mut state.objects.get_mut(chosen.object).counters.plus1_plus1;
-            *counters = counters
-                .checked_add(3)
-                .ok_or("Throne +1/+1 counter overflow")?;
-        }
-        let expires_at_turn = until_players_next_turn_expiry(state, binding.player)?;
-        let timestamp =
-            cfg!(feature = "limited-fdn-fixtures").then(|| crate::engine::next_timestamp(state));
-        state
-            .engine
-            .until_next_turn_keywords
-            .push(crate::engine::UntilNextTurnKeywordEffectV1 {
-                object_id: chosen.object,
-                object_zone_change_count: generation,
-                holder: binding.player,
-                expires_at_turn,
-                keywords: Keywords::HEXPROOF,
-                timestamp,
+        let committed = &state.engine.event_history[history_before..];
+        let next_generation = old_generation.saturating_add(1);
+        if permanent.zone == Zone::Battlefield && permanent.zone_change_count == next_generation {
+            let generation = permanent.zone_change_count;
+            if crate::doubling_season_v48::requires_successor(state) {
+                event::add_plus_one_counters(state, chosen.object, binding.player, 3)?;
+            } else {
+                let counters = &mut state.objects.get_mut(chosen.object).counters.plus1_plus1;
+                *counters = counters
+                    .checked_add(3)
+                    .ok_or("Throne +1/+1 counter overflow")?;
+            }
+            let expires_at_turn = until_players_next_turn_expiry(state, binding.player)?;
+            let timestamp = cfg!(feature = "limited-fdn-fixtures")
+                .then(|| crate::engine::next_timestamp(state));
+            state.engine.until_next_turn_keywords.push(
+                crate::engine::UntilNextTurnKeywordEffectV1 {
+                    object_id: chosen.object,
+                    object_zone_change_count: generation,
+                    holder: binding.player,
+                    expires_at_turn,
+                    keywords: Keywords::HEXPROOF,
+                    timestamp,
+                },
+            );
+            state.engine.until_next_turn_keywords.sort_by_key(|effect| {
+                (
+                    effect.holder,
+                    effect.expires_at_turn,
+                    effect.object_id,
+                    effect.object_zone_change_count,
+                    effect.keywords.0,
+                )
             });
-        state.engine.until_next_turn_keywords.sort_by_key(|effect| {
-            (
-                effect.holder,
-                effect.expires_at_turn,
-                effect.object_id,
-                effect.object_zone_change_count,
-                effect.keywords.0,
-            )
-        });
+        } else {
+            // Containment Priest replaces the uncast creature's entry with
+            // exile (614.6), and Grafdigger's Cage prevents library-to-battlefield
+            // creature entry so the card stays in its library to be shuffled.
+            let replaced_to_exile = permanent.zone == Zone::Exile
+                && permanent.zone_change_count == next_generation
+                && committed.iter().any(|entry| {
+                    matches!(
+                        entry,
+                        event::CommittedEvent::ZoneChange {
+                            object,
+                            from: Zone::Library,
+                            to: Zone::Exile,
+                            ..
+                        } if *object == chosen.object
+                    )
+                });
+            let prevented_in_library = committed.is_empty()
+                && permanent.zone == Zone::Library
+                && permanent.zone_change_count == old_generation;
+            if !replaced_to_exile && !prevented_in_library {
+                return Err(
+                    "Throne chosen creature did not enter as its next incarnation".to_string(),
+                );
+            }
+        }
     }
     state
         .commit_library_shuffle(binding.player, shuffle_token)
@@ -9354,7 +9383,7 @@ fn take_initiative(
         .ok_or("Initiative source object is missing")?;
     if source.zone != Zone::Battlefield
         || source.attached_to.is_some()
-        || live.card_def != source.card_def
+        || !crate::engine::source_card_def_matches(state, source, live.card_def)
         || live.owner != source.owner
         || live.zone_change_count < source.zone_change_count
         || (live.zone_change_count == source.zone_change_count && live.zone != source.zone)
@@ -10201,6 +10230,86 @@ fn definition_has_nonterminal_discard(state: &GameState, pending: &EffectContinu
     false
 }
 
+fn validate_nonterminal_discard_other_stage(
+    state: &GameState,
+    pending: &EffectContinuation,
+) -> Result<(), String> {
+    let err = || "nonterminal discard continuation lost its pending hand answer".to_string();
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        if state.eternal_owned_draw_progress_v1.is_some() {
+            return Ok(());
+        }
+        let eternal_choice = match (&pending.choice, &pending.answered_choice_guard) {
+            (
+                Some(PendingEffectChoice::SelectTargets {
+                    purpose: EffectTargetSelectionPurpose::EternalV1 { choice },
+                    ..
+                }),
+                None,
+            ) => Some((choice.as_ref(), None)),
+            (None, Some(EffectAnsweredChoiceGuard::StandardSelection { frame })) => {
+                if let EffectFrame::EternalSelectionV1 { choice, selected } = frame.as_ref() {
+                    Some((choice.as_ref(), Some(selected.as_slice())))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some((choice, answered_selected)) = eternal_choice {
+            use crate::{
+                eternal_cards_v1::{e3::E3ChoiceKindV1, EternalOpV1 as E},
+                eternal_legacy_e7a_v1::{E7aChoiceV1, E7aOpV1},
+                standard_cards_v1::StandardOpV1 as S,
+            };
+            if choice.kind == E3ChoiceKindV1::E7aV1(E7aChoiceV1::ArchonSacrificeV1) {
+                let root = validated_definition_owned_root_effect(state, pending)?;
+                let EffectOp::Sequence(ops) = root.as_ref() else {
+                    return Err(err());
+                };
+                let [step] = choice.path.as_slice() else {
+                    return Err(err());
+                };
+                let step_index = usize::from(*step);
+                if ops.get(step_index)
+                    != Some(&EffectOp::StandardV1(S::EternalV1(E::E7aV1(
+                        E7aOpV1::ArchonV1,
+                    ))))
+                {
+                    return Err(err());
+                }
+                let expected_remaining = ops
+                    .iter()
+                    .enumerate()
+                    .skip(step_index + 1)
+                    .rev()
+                    .map(|(index, op)| EffectFrame::Program {
+                        op: op.clone(),
+                        path: vec![u16::try_from(index).unwrap_or(u16::MAX)],
+                    })
+                    .collect::<Vec<_>>();
+                if choice.remaining != expected_remaining {
+                    return Err(err());
+                }
+                if let Some(selected) = answered_selected {
+                    if pending.frames.len() != expected_remaining.len() + 1
+                        || pending.frames[..expected_remaining.len()] != expected_remaining
+                        || selected.len() != 1
+                        || !choice.candidates.contains(&selected[0])
+                    {
+                        return Err(err());
+                    }
+                }
+                return Ok(());
+            }
+        }
+    }
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let _ = (state, pending);
+    Err(err())
+}
+
 /// A spell-copy target candidate: objects carry their live incarnation.
 fn standard_copy_target_candidate(state: &GameState, target: Target) -> EffectTargetCandidate {
     EffectTargetCandidate {
@@ -10871,12 +10980,11 @@ fn validate_pending_effect_choice_inner(state: &GameState) -> Result<(), String>
     validate_answered_choice_guard(state, pending)?;
     nonland_copy_v1::validate_boundary(state, pending)?;
     if definition_has_nonterminal_discard(state, pending) {
-        let discard = state
-            .engine
-            .pending_discard
-            .as_ref()
-            .ok_or("nonterminal discard continuation lost its pending hand answer")?;
-        validate_resumable_discard_details(state, pending, discard)?;
+        if let Some(discard) = state.engine.pending_discard.as_ref() {
+            validate_resumable_discard_details(state, pending, discard)?;
+        } else {
+            validate_nonterminal_discard_other_stage(state, pending)?;
+        }
     }
     let Some(choice) = pending.choice.as_ref() else {
         return Ok(());
@@ -19218,6 +19326,9 @@ fn library_filter_matches(
             def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery)
         }
         LibraryCardFilter::CardWithSubtypeV1(subtype) => subtype.is_in_subtype_ids(subtype_ids),
+        LibraryCardFilter::ArtifactOrEnchantmentCardV1 => {
+            def.has_type(CardType::Artifact) || def.has_type(CardType::Enchantment)
+        }
     })
 }
 
@@ -19276,6 +19387,7 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
             fnv1a_u64(0xcbf2_9ce4_8422_2325, 64),
             u64::from(subtype.stable_id()),
         ),
+        LibraryCardFilter::ArtifactOrEnchantmentCardV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 65),
     }
 }
 

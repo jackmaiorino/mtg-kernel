@@ -2304,7 +2304,7 @@ pub(crate) fn delayed_triggers(
     end_step_triggers(state, events);
     curie::collect(state, events);
     dark_depths_triggers(state);
-    prune(state);
+    prune(state, events);
     let Some(eternal) = state.eternal_v1.as_mut() else {
         return Vec::new();
     };
@@ -2506,8 +2506,81 @@ fn dark_depths_triggers(state: &mut GameState) {
     }
 }
 
+pub(crate) fn animate_dead_leaves_source(
+    state: &GameState,
+    aura: ObjectLinkV4,
+) -> Option<AbilitySourceContractV4> {
+    let effect = animate_dead_leaves();
+    let matches_aura = |contract: AbilitySourceContractV4| {
+        contract.source == aura.object
+            && contract.zone == Zone::Battlefield
+            && contract.zone_change_count == aura.zone_change_count
+    };
+    let item_source = |item: &StackItem| {
+        (item.kind == crate::state::StackItemKind::TriggeredAbility
+            && item.inline_effect.as_ref() == Some(&effect))
+        .then_some(item.v4.ability_source_contract)
+        .flatten()
+        .filter(|&contract| matches_aura(contract))
+    };
+    let pending_source = |trigger: &PendingTrigger| {
+        (!trigger.is_madness_offer && trigger.effect == effect)
+            .then_some(trigger.source_contract)
+            .flatten()
+            .filter(|&contract| matches_aura(contract))
+    };
+    state
+        .stack
+        .iter()
+        .find_map(item_source)
+        .or_else(|| {
+            state
+                .engine
+                .pending_effect
+                .as_ref()
+                .and_then(|pending| item_source(&pending.resolving_item))
+        })
+        .or_else(|| {
+            state
+                .engine
+                .pending_triggers
+                .iter()
+                .find_map(pending_source)
+        })
+        .or_else(|| {
+            state
+                .pending_legend_rule_v1
+                .iter()
+                .flat_map(|pending| pending.waiting_triggers())
+                .find_map(pending_source)
+        })
+}
+
+pub(crate) fn note_countered_stack_item(state: &mut GameState, item: &StackItem) {
+    if item.kind != crate::state::StackItemKind::TriggeredAbility {
+        return;
+    }
+    let Some(contract) = item.v4.ability_source_contract else {
+        return;
+    };
+    let aura = ObjectLinkV4 {
+        object: contract.source,
+        zone_change_count: contract.zone_change_count,
+    };
+    if item.inline_effect.as_ref() == Some(&animate_dead_return()) {
+        if read_state(state).is_some_and(|e7a| e7a.animating.iter().any(|(host, _)| *host == aura))
+        {
+            e7a_state(state).animating.retain(|(host, _)| *host != aura);
+        }
+    } else if item.inline_effect.as_ref() == Some(&animate_dead_leaves())
+        && read_state(state).is_some_and(|e7a| e7a.animated.iter().any(|(host, _)| *host == aura))
+    {
+        e7a_state(state).animated.retain(|(host, _)| *host != aura);
+    }
+}
+
 /// Drops records whose objects moved on.
-fn prune(state: &mut GameState) {
+fn prune(state: &mut GameState, events: &[CommittedEvent]) {
     let Some(e7a) = read_state(state) else {
         return;
     };
@@ -2541,7 +2614,30 @@ fn prune(state: &mut GameState) {
         .animating
         .iter()
         .copied()
-        .filter(|(aura, _)| link_live_in(state, *aura, Zone::Battlefield))
+        .filter(|(aura, card)| {
+            link_live_in(state, *aura, Zone::Battlefield)
+                && link_live_in(state, *card, Zone::Graveyard)
+        })
+        .collect::<Vec<_>>();
+    let animated = e7a
+        .animated
+        .iter()
+        .copied()
+        .filter(|(aura, creature)| {
+            link_live_in(state, *creature, Zone::Battlefield)
+                && (link_live_in(state, *aura, Zone::Battlefield)
+                    || events.iter().any(|event| {
+                        matches!(
+                            event,
+                            CommittedEvent::ZoneChange {
+                                object,
+                                from: Zone::Battlefield,
+                                ..
+                            } if *object == aura.object
+                        )
+                    })
+                    || animate_dead_leaves_source(state, *aura).is_some())
+        })
         .collect::<Vec<_>>();
     let self_exiling = e7a
         .self_exiling
@@ -2593,6 +2689,7 @@ fn prune(state: &mut GameState) {
         || stripped.len() != e7a.stripped.len()
         || dress_downs.len() != e7a.dress_downs.len()
         || animating.len() != e7a.animating.len()
+        || animated.len() != e7a.animated.len()
         || self_exiling.len() != e7a.self_exiling.len()
         || relayed.len() != e7a.relayed.len()
         || arena_spells.len() != e7a.arena_spells.len()
@@ -2607,6 +2704,7 @@ fn prune(state: &mut GameState) {
         e7a.stripped = stripped;
         e7a.dress_downs = dress_downs;
         e7a.animating = animating;
+        e7a.animated = animated;
         e7a.self_exiling = self_exiling;
         e7a.relayed = relayed;
         e7a.arena_spells = arena_spells;

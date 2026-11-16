@@ -23,7 +23,7 @@ mod native;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 119] = [
+const PLAYABLE_75: [(&str, &str); 120] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -182,6 +182,7 @@ const PLAYABLE_75: [(&str, &str); 119] = [
     ("premodern", "premodern-landstill-uw-control"),
     ("premodern", "premodern-bw-control"),
     ("premodern", "premodern-grow"),
+    ("premodern", "premodern-other-control"),
 ];
 
 fn id(name: &str) -> u16 {
@@ -1104,6 +1105,55 @@ fn leyline_mainboards_open_with_both_leylines_and_replay_in_native_matches() {
                 .is_some_and(|&entries| entries > 0),
             "no {leyline} entered from an opening hand: {openings:?}"
         );
+    }
+}
+
+/// The match whose game two (seed 583263403901698) once failed when
+/// Containment Priest exiled the creature Throne of the Dead Three put onto
+/// the battlefield. It finishes and replays with the PLAYABLE_75 pairing.
+#[test]
+fn vintage_jewel_shops_vs_mono_white_initiative_seed_72907925487712_replays() {
+    let decks = registered_snapshot_decks();
+    let find = |archetype: &str| -> EternalRegisteredDeckV1 {
+        decks
+            .iter()
+            .find(|(_, deck)| deck.deck_id() == archetype)
+            .map(|(_, deck)| deck.clone())
+            .unwrap()
+    };
+    let first = find("vintage-jewel-shops");
+    let second = find("vintage-mono-white-initiative");
+    let native = needs_native_opening(&first) || needs_native_opening(&second);
+    let pair = if native {
+        [natively(&first), natively(&second)]
+    } else {
+        [first, second]
+    };
+    let seed = 72_907_925_487_712_u64;
+    let record = play_match(pair.clone(), seed, native);
+    let replay = play_match(pair, seed, native);
+    assert!(record.games >= 2);
+    assert_eq!(record.transcripts, replay.transcripts);
+    assert_eq!(record.winner, replay.winner);
+}
+
+#[test]
+fn premodern_other_control_plays_best_of_three_with_random_sideboarding() {
+    let decks = registered_snapshot_decks();
+    let find = |archetype: &str| -> EternalRegisteredDeckV1 {
+        decks
+            .iter()
+            .find(|(_, deck)| deck.deck_id() == archetype)
+            .map(|(_, deck)| deck.clone())
+            .unwrap()
+    };
+    let pair = [find("premodern-other-control"), find("premodern-sligh-rdw")];
+    for seed in [0x5033_4820_u64, 0x5033_4821] {
+        let record = play_match(pair.clone(), seed, false);
+        let replay = play_match(pair.clone(), seed, false);
+        assert_eq!(record.transcripts, replay.transcripts);
+        assert_eq!(record.winner, replay.winner);
+        assert!(record.sideboarded_games > 0);
     }
 }
 

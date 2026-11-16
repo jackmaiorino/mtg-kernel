@@ -314,6 +314,255 @@ mod tests {
             assert_eq!(owner.inner.state.players[player.index()].life, 10);
         }
     }
+
+    #[test]
+    fn archon_sacrifice_before_nonterminal_discard_continues_both_seats() {
+        use crate::{
+            current_tree_learner_v1::ModelV1,
+            state::{GameState, Step, Zone},
+        };
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let cards = mainboard("legacy-reanimator");
+            let mut owner = EternalActorSessionV1::reset_explicit_mainboards(
+                454,
+                0x5eed_0001,
+                (1000, 1000),
+                ["legacy-reanimator".into(), "legacy-reanimator".into()],
+                [cards.clone(), cards.clone()],
+                player,
+            )
+            .unwrap();
+            let mut state = GameState::new_from_libraries_environment_v2_with_starting_player_v1(
+                &cards,
+                &cards,
+                crate::rl::card_name,
+                0x5eed_0001,
+                player,
+            );
+            state.step = Step::Main1;
+            let opponent = player.opponent();
+            let move_from_lib = |st: &mut GameState, seat: PlayerId, name: &str, to: Zone| {
+                let id = crate::card_def::card_id_by_name(name).unwrap();
+                let at = st.players[seat.index()]
+                    .library
+                    .iter()
+                    .position(|&obj| st.objects.get(obj).card_def == id)
+                    .unwrap_or_else(|| panic!("missing {name} in library"));
+                let obj = st.players[seat.index()].library.remove(at);
+                st.objects.get_mut(obj).zone = to;
+                match to {
+                    Zone::Hand => st.players[seat.index()].hand.push(obj),
+                    Zone::Battlefield => st.players[seat.index()].battlefield.push(obj),
+                    Zone::Graveyard => st.players[seat.index()].graveyard.push(obj),
+                    _ => unreachable!(),
+                }
+                obj
+            };
+            let archon = move_from_lib(&mut state, player, "Archon of Cruelty", Zone::Graveyard);
+            let reanimate = move_from_lib(&mut state, player, "Reanimate", Zone::Hand);
+            move_from_lib(&mut state, player, "Underground Sea", Zone::Battlefield);
+            let opp_c1 = move_from_lib(
+                &mut state,
+                opponent,
+                "Atraxa, Grand Unifier",
+                Zone::Battlefield,
+            );
+            let opp_c2 =
+                move_from_lib(&mut state, opponent, "Archon of Cruelty", Zone::Battlefield);
+            move_from_lib(&mut state, opponent, "Reanimate", Zone::Hand);
+            move_from_lib(&mut state, opponent, "Underground Sea", Zone::Hand);
+
+            owner.inner.state = state;
+            owner.inner.surface = PolicySurfaceV5::new_with_priority_mode_v1(
+                crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+                SuppressionAuditMode::Off,
+            );
+            owner.inner.environment_revision = 0;
+            owner.inner.policy_step_count = 0;
+            owner.inner.physical_decision_count = 0;
+            owner.inner.current = None;
+            owner.inner.terminal = None;
+            owner.inner.flat_action_cache_spare = None;
+            owner.inner.flat_action_cache_spare_v2 = None;
+            owner.inner.advance_to_decision_or_terminal();
+
+            let mut tapped_mana = false;
+            let mut saw_sacrifice_choice = false;
+            let mut saw_discard_choice = false;
+            for _ in 0..24 {
+                let FastActorResponseV1::Decision(header) = owner.current_response().unwrap()
+                else {
+                    panic!("unexpected terminal during Archon sequence");
+                };
+                let decision = owner.encode(header).unwrap();
+                let input = owner.training_input_v1(&decision).unwrap();
+                let logits = ModelV1::deterministic_fixture().forward(&input).unwrap();
+                assert_eq!(logits.len(), decision.original.len());
+
+                let actions = decision.probe_actions_v1();
+                if saw_sacrifice_choice
+                    && saw_discard_choice
+                    && owner.inner.state.stack.is_empty()
+                    && owner.inner.state.engine.pending_effect.is_none()
+                {
+                    break;
+                }
+                let index = actions
+                    .iter()
+                    .position(|a| {
+                        matches!(
+                            a,
+                            ActionSemanticV1::CastSpell { source, .. } if source.arena_id == reanimate.0
+                        )
+                    })
+                    .or_else(|| {
+                        (!tapped_mana).then(|| {
+                            actions.iter().position(|a| {
+                                if matches!(a, ActionSemanticV1::ActivateManaAbility { .. }) {
+                                    tapped_mana = true;
+                                    true
+                                } else {
+                                    false
+                                }
+                            })
+                        }).flatten()
+                    })
+                    .or_else(|| {
+                        actions.iter().position(|a| match a {
+                            ActionSemanticV1::ChooseTarget {
+                                target: crate::rl::TargetRefV1::Object { object },
+                                ..
+                            } if object.arena_id == archon.0 => true,
+                            ActionSemanticV1::ChooseEffectTarget {
+                                target: crate::rl::TargetRefV1::Object { object },
+                                ..
+                            } if object.arena_id == opp_c1.0 || object.arena_id == opp_c2.0 => {
+                                saw_sacrifice_choice = true;
+                                true
+                            }
+                            _ => false,
+                        })
+                    })
+                    .or_else(|| {
+                        actions.iter().position(|a| {
+                            if matches!(a, ActionSemanticV1::Discard { .. }) {
+                                saw_discard_choice = true;
+                                true
+                            } else {
+                                false
+                            }
+                        })
+                    })
+                    .or_else(|| {
+                        actions
+                            .iter()
+                            .position(|a| matches!(a, ActionSemanticV1::Pass { .. }))
+                    })
+                    .unwrap_or(0);
+                owner.apply(&decision, index as u32).unwrap();
+            }
+            assert!(
+                saw_sacrifice_choice,
+                "must exercise ArchonSacrificeV1 choice"
+            );
+            assert!(
+                saw_discard_choice,
+                "must exercise subsequent nonterminal DiscardCards"
+            );
+            assert_eq!(owner.inner.state.players[opponent.index()].hand.len(), 1);
+            assert_eq!(owner.inner.state.players[player.index()].life, 15);
+            assert_eq!(owner.inner.state.players[opponent.index()].life, 17);
+        }
+    }
+
+    #[test]
+    fn exile_play_permission_encodes_without_hidden_hand_leak_both_seats() {
+        use crate::{
+            current_tree_learner_v1::ModelV1,
+            engine::{FreeCastV1, PlayOrCast, PlayPermission, PlayPermissionExpiry},
+            state::{GameState, Step, Zone},
+        };
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let cards = mainboard("vintage-red-prison");
+            let mut owner = EternalActorSessionV1::reset_explicit_mainboards(
+                454,
+                0x5eed_0005,
+                (1000, 1000),
+                ["vintage-red-prison".into(), "vintage-red-prison".into()],
+                [cards.clone(), cards.clone()],
+                player,
+            )
+            .unwrap();
+            let mut state = GameState::new_from_libraries_environment_v2_with_starting_player_v1(
+                &cards,
+                &cards,
+                crate::rl::card_name,
+                0x5eed_0005,
+                player,
+            );
+            state.step = Step::Main1;
+            let opponent = player.opponent();
+            let exiled = state.players[player.index()].library.remove(0);
+            state.objects.get_mut(exiled).zone = Zone::Exile;
+            state.objects.get_mut(exiled).zone_change_count = 1;
+            state.exile.push(exiled);
+            let is_land =
+                crate::card_def::CARD_DEFS[usize::from(state.objects.get(exiled).card_def)].is_land;
+            state.engine.exile_play_permissions.push(PlayPermission {
+                without_mana_cost: FreeCastV1::default(),
+                object: exiled,
+                holder: player,
+                zone_change_generation: 1,
+                play_or_cast: if is_land {
+                    PlayOrCast::Play
+                } else {
+                    PlayOrCast::Cast
+                },
+                expiry: PlayPermissionExpiry::EndOfTurn,
+            });
+            let hidden = state.players[opponent.index()].library.remove(0);
+            state.objects.get_mut(hidden).zone = Zone::Hand;
+            state.players[opponent.index()].hand.push(hidden);
+
+            owner.inner.state = state;
+            owner.inner.surface = PolicySurfaceV5::new_with_priority_mode_v1(
+                crate::surface_v2::PriorityModeV1::EngineWindowsV1,
+                SuppressionAuditMode::Off,
+            );
+            owner.inner.environment_revision = 0;
+            owner.inner.policy_step_count = 0;
+            owner.inner.physical_decision_count = 0;
+            owner.inner.current = None;
+            owner.inner.terminal = None;
+            owner.inner.flat_action_cache_spare = None;
+            owner.inner.flat_action_cache_spare_v2 = None;
+            owner.inner.advance_to_decision_or_terminal();
+
+            let FastActorResponseV1::Decision(header) = owner.current_response().unwrap() else {
+                panic!("expected main-phase decision with exile play permission");
+            };
+            let baseline = owner.encode(header).unwrap();
+            let input = owner.training_input_v1(&baseline).unwrap();
+            let logits = ModelV1::deterministic_fixture().forward(&input).unwrap();
+            assert_eq!(logits.len(), baseline.original.len());
+
+            for hidden_name in ["Mountain", "Pyroblast"] {
+                let mut variant = EternalActorSessionV1 {
+                    inner: owner.inner.clone(),
+                    owner: Arc::new(()),
+                    generation: 0,
+                    own_deck_types: owner.own_deck_types.clone(),
+                };
+                let card = variant.inner.state.objects.get_mut(hidden);
+                card.card_def = crate::card_def::card_id_by_name(hidden_name).unwrap();
+                card.name = crate::card_def::CARD_DEFS[usize::from(card.card_def)]
+                    .object_name
+                    .into();
+                card.v4 = crate::state::ObjectStateV4::from_card_def(card.card_def);
+                assert_eq!(variant.encode(header).unwrap().packet, baseline.packet);
+            }
+        }
+    }
 }
 #[derive(Clone)]
 pub struct EternalActorDecisionV1 {
