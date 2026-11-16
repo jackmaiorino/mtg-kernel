@@ -513,6 +513,21 @@ jobs:
           restore-keys: |
             cargo-registry-tests-${{ matrix.os }}-
 
+      # Compiling the library test target peaks at about 18.5 GB resident,
+      # more than the runner's 16 GB. About 11 GB of it is held before code
+      # generation starts, so more codegen units or a lower optimization
+      # level lower the peak by under 1 GB. Without extra swap the job only
+      # sometimes passes and otherwise loses the runner. Same remedy as the
+      # Clippy job above (PR #486).
+      - name: Add swap space for the library test build
+        if: runner.os == 'Linux' && matrix.part == 'tests'
+        run: |
+          sudo fallocate -l 8G /mnt/limited.swap
+          sudo chmod 600 /mnt/limited.swap
+          sudo mkswap /mnt/limited.swap
+          sudo swapon /mnt/limited.swap
+          free -m
+
       - name: Build the shared Limited ${{ matrix.part }}
         run: |
           if [ '${{ matrix.part }}' = tests ]; then
