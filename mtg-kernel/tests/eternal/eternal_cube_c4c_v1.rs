@@ -1954,35 +1954,41 @@ fn esikas_chariot_copies_a_cat_into_a_two_two_cat() {
 #[test]
 fn esikas_chariot_copy_does_nothing_when_its_target_is_gone() {
     let (mut state, chariot, cats, _treasure, _soldier) = chariot_game();
+    pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![chariot]));
+    // The attack trigger copies the first Cat and waits on the stack.
+    run_until(
+        &mut state,
+        |state| !state.stack.is_empty(),
+        |_, decision| match decision {
+            Decision::ChooseTargets {
+                player: P0,
+                legal_targets,
+                ..
+            } if legal_targets.contains(&Target::Object(cats[0])) => {
+                Some(Action::ChooseTarget(Target::Object(cats[0])))
+            }
+            _ => None,
+        },
+    );
+    assert_eq!(state.stack.len(), 1, "the copy trigger");
+    // P0 passes; P1 bolts the Cat in response. The mana is added now: a mana
+    // pool empties as each step ends.
+    act(&mut state, Action::Pass);
     let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
     pool(&mut state, P1, &[ManaColor::R], 0);
-    let mut bolted = false;
-    attack_with(&mut state, vec![chariot], |_, decision| match decision {
-        Decision::ChooseTargets {
-            player: P0,
-            legal_targets,
-            ..
-        } if legal_targets.contains(&Target::Object(cats[0])) => {
-            Some(Action::ChooseTarget(Target::Object(cats[0])))
-        }
-        Decision::CastSpellOrPass {
-            player: P1,
-            castable_spells,
-            ..
-        } if !bolted && castable_spells.contains(&bolt) => {
-            bolted = true;
-            Some(Action::CastSpell(bolt))
-        }
-        Decision::ChooseTargets {
-            player: P1,
-            legal_targets,
-            ..
-        } if legal_targets.contains(&Target::Object(cats[0])) => {
-            Some(Action::ChooseTarget(Target::Object(cats[0])))
-        }
-        _ => None,
-    });
-    assert!(bolted);
+    cast(&mut state, bolt, &[Target::Object(cats[0])]);
+    run_until(
+        &mut state,
+        |state| {
+            state.step == Step::Main2
+                && state.stack.is_empty()
+                && state.engine.pending_triggers.is_empty()
+                && state.engine.pending_effect.is_none()
+        },
+        |_, _| None,
+    );
+    assert_eq!(zone(&state, bolt), Zone::Graveyard, "the Bolt resolved");
     let after = named(&state, P0, "Green Cat Token");
     assert_eq!(after, vec![cats[1]], "the target died, so no copy");
 }
