@@ -1379,6 +1379,9 @@ fn bristly_bill_doubles_the_counters_on_each_creature_you_control() {
     state.objects.get_mut(bill).counters.plus1_plus1 = 1;
     state.objects.get_mut(elves).counters.plus1_plus1 = 3;
     state.objects.get_mut(foe).counters.plus1_plus1 = 2;
+    // The Elves would pay a fifth mana from their own ability; keep them tapped
+    // so that only the pool counts.
+    state.objects.get_mut(elves).tapped = true;
     pool(&mut state, P0, &[ManaColor::G, ManaColor::G], 2);
     assert!(
         !activatable(&mut state, bill, 0),

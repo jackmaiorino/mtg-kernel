@@ -34469,6 +34469,34 @@
    "is_token": true
   },
   {
+   "name": "Rabbit Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Rabbit"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/RabbitToken.java",
+   "is_token": true
+  },
+  {
    "name": "Delighted Halfling",
    "engine_capability": "full",
    "mana_cost": "{G}",
