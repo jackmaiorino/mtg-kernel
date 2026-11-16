@@ -1,0 +1,49 @@
+name: Runner silence probe 2
+
+# Experiment, not for merge. Probe 1 stopped the runner's own processes and
+# left the rest of the machine alive. Here the machine itself goes quiet at
+# a known time (60 seconds after the step starts): every packet dropped, or
+# the hosted agent stopped together with the runner. It shows when GitHub
+# declares such a runner lost.
+'on':
+  pull_request:
+    paths:
+      - .github/workflows/runner-silence-probe-2.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-silence-probe-2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quiet:
+    name: Quiet machine (${{ matrix.case }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [network, agent]
+    steps:
+      - name: Go quiet
+        env:
+          CASE: ${{ matrix.case }}
+        run: |
+          date -u +"began %H:%M:%S UTC"
+          ps -eo pid,ppid,user,comm,etime --sort=pid | grep -E 'Runner|provjob|hosted|agent' || true
+          sleep 45
+          date -u +"going quiet in 15 seconds, at about %H:%M:%S UTC plus 15 ($CASE)"
+          sleep 15
+          if [ "$CASE" = network ]; then
+            # Drop every packet in and out, as on a machine that no longer answers.
+            sudo iptables -I OUTPUT 1 -j DROP
+            sudo iptables -I INPUT 1 -j DROP
+            sudo ip6tables -I OUTPUT 1 -j DROP || true
+            sudo ip6tables -I INPUT 1 -j DROP || true
+          else
+            # Stop the runner and the hosted agent that looks after it.
+            sudo kill -STOP $(pgrep -x Runner.Listener) $(pgrep -x Runner.Worker) $(pgrep -f provjobd | tr '\n' ' ')
+          fi
+          sleep 10800
