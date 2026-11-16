@@ -441,7 +441,7 @@ pub(crate) fn trigger_matches(
                 .is_some_and(|card| CARD_DEFS[usize::from(card.card_def)].has_type(CardType::Land));
             if object == source
                 || !land_card
-                || !definition(state, source).is_some_and(|def| def.name == TITANIA)
+                || definition(state, source).is_none_or(|def| def.name != TITANIA)
             {
                 return false;
             }

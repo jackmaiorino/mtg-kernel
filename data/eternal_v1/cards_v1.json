@@ -34745,101 +34745,6 @@
    ]
   },
   {
-   "name": "Orcish Lumberjack",
-   "engine_capability": "no_effect",
-   "mana_cost": "{R}",
-   "mana_value": 1,
-   "colors": [
-    "R"
-   ],
-   "types": [
-    "Creature"
-   ],
-   "subtypes": [
-    "Orc"
-   ],
-   "supertypes": [],
-   "power": 1,
-   "toughness": 1,
-   "is_land": false,
-   "produces_mana": [
-    "R",
-    "G"
-   ],
-   "decks": [
-    "vintage-cube"
-   ],
-   "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
-   "java_file": "Mage.Sets/src/mage/cards/o/OrcishLumberjack.java"
-  },
-  {
-   "name": "Urza, Lord High Artificer",
-   "engine_capability": "no_effect",
-   "mana_cost": "{2}{U}{U}",
-   "mana_value": 4,
-   "colors": [
-    "U"
-   ],
-   "types": [
-    "Creature"
-   ],
-   "subtypes": [
-    "Human",
-    "Artificer"
-   ],
-   "supertypes": [
-    "Legendary"
-   ],
-   "power": 1,
-   "toughness": 4,
-   "is_land": false,
-   "produces_mana": [
-    "U"
-   ],
-   "decks": [
-    "vintage-cube"
-   ],
-   "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
-   "java_file": "Mage.Sets/src/mage/cards/u/UrzaLordHighArtificer.java"
-  },
-  {
-   "name": "Vivi Ornitier",
-   "engine_capability": "no_effect",
-   "mana_cost": "{1}{U}{R}",
-   "mana_value": 3,
-   "colors": [
-    "U",
-    "R"
-   ],
-   "types": [
-    "Creature"
-   ],
-   "subtypes": [
-    "Wizard"
-   ],
-   "supertypes": [
-    "Legendary"
-   ],
-   "power": 0,
-   "toughness": 3,
-   "is_land": false,
-   "produces_mana": [
-    "U",
-    "R"
-   ],
-   "decks": [
-    "vintage-cube"
-   ],
-   "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
-   "java_file": "Mage.Sets/src/mage/cards/v/ViviOrnitier.java"
-  },
-  {
    "name": "Myr Battlesphere",
    "engine_capability": "full",
    "mana_cost": "{7}",
@@ -34977,35 +34882,6 @@
     "token_creation"
    ],
    "java_file": "Mage.Sets/src/mage/cards/t/TitaniaProtectorOfArgoth.java"
-  },
-  {
-   "name": "Springheart Nantuko",
-   "engine_capability": "no_effect",
-   "mana_cost": "{1}{G}",
-   "mana_value": 2,
-   "colors": [
-    "G"
-   ],
-   "types": [
-    "Enchantment",
-    "Creature"
-   ],
-   "subtypes": [
-    "Insect",
-    "Monk"
-   ],
-   "supertypes": [],
-   "power": 1,
-   "toughness": 1,
-   "is_land": false,
-   "produces_mana": [],
-   "decks": [
-    "vintage-cube"
-   ],
-   "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
-   "java_file": "Mage.Sets/src/mage/cards/s/SpringheartNantuko.java"
   },
   {
    "name": "Torsten, Founder of Benalia",

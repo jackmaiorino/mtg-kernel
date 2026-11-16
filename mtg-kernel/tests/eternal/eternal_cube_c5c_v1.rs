@@ -1,12 +1,11 @@
 //! Vintage Cube wave C5c: native rules and public-session tests for the
 //! reanimation spells and enchantments, a sweeper and a land.
 #![cfg(feature = "eternal-fixtures")]
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code)]
 
 use crate::eternal_catalog_v1::{play_observed, Policy};
 use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, TargetSpec,
-    CARD_DEFS,
+    card_id_by_name, CardCapability, CardDef, CardType, Keywords, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::event::{self, ProposedEvent};

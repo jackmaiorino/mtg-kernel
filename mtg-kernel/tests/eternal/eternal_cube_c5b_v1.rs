@@ -1,12 +1,11 @@
 //! Vintage Cube wave C5b: native rules and public-session tests for the
 //! token makers and mana creatures.
 #![cfg(feature = "eternal-fixtures")]
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code)]
 
 use crate::eternal_catalog_v1::{play_observed, Policy};
 use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, TargetSpec,
-    CARD_DEFS,
+    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::event::{self, ProposedEvent};
@@ -14,7 +13,6 @@ use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, StackItemKind, Step, Target, Zone};
-use serde_json::Value;
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;

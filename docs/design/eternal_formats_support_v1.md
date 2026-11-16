@@ -2723,3 +2723,84 @@ C4c:
   triggers belong to its host creature.
 - Smuggler's Copter (crew 1, loot when it attacks or blocks) and Esika's Chariot (crew 4, two Cat
   tokens, and a token copy when it attacks).
+
+### C5: statics, token makers, reanimation and each-player spells
+
+Wave C5 adds 25 cards and seven tokens, raising the cube to 463 of 540 Full. It is four sub-modules
+chained after C4c: C5a (seven creatures with statics, mana and counter state,
+`eternal_cube_c5a_v1`), C5b (six token makers, `eternal_cube_c5b_v1`), C5c (reanimation spells and
+enchantments, a sweeper and a land, `eternal_cube_c5c_v1`) and C5d (each-player decision spells and
+hidden-zone artifacts, `eternal_cube_c5d_v1`), the new tail. Orcish Lumberjack, Urza, Lord High
+Artificer and Vivi Ornitier wait for extended mana ability definitions, and Springheart Nantuko for
+a bestow cast without X.
+
+C5a:
+
+- Delighted Halfling taps for {C}, or for one mana of any color under
+  `ManaSpendRestrictionDef::LegendarySpell` (Plaza of Heroes' rows); a legendary spell paid with
+  that mana is marked uncounterable (Cavern of Souls' list).
+- Fanatic of Rhonas: ferocious is an additional mana ability that makes {G}{G}{G}{G} under
+  `ManaAbilityConditionDef::ControllerControlsCreatureWithPowerAtLeastV1(4)`. It is keyed by {C},
+  a color it does not make, because the primary ability owns {G} (Relic of Sauron's convention).
+  Eternalize is Sacred Cat's embalm recipe with a 4/4 black Zombie token row that keeps both mana
+  abilities.
+- Carnage Interpreter discards its controller's hand and investigates four times; its +2/+2 and
+  menace are read live while that player has one or fewer cards in hand. Keen-Eyed Curator keeps a
+  ledger of the cards exiled with it and reads its +4/+4 and trample from the card types among
+  those still in exile.
+- Baloth Prime enters tapped with six stun counters and, whenever its controller sacrifices a
+  land, makes a tapped Beast token and untaps, which removes a stun counter instead (122.1g).
+  Alpha Deathclaw's monstrosity is a mark on its incarnation, and its entry and becomes-monstrous
+  triggers are one leaf. Ginger, Queen of Sweets makes its controller the monarch and creates a
+  Gingerbrute token at the beginning of each upkeep while they are the monarch.
+
+C5b:
+
+- Worldspine Wurm makes three Wurm tokens when it dies and shuffles itself into its owner's
+  library when it is put into a graveyard from anywhere
+  (`C5bTriggerV1::PutIntoGraveyardFromAnywhereV1`, which functions from the graveyard).
+- Myr Battlesphere makes four Myr tokens; its attack trigger is the module's own choice of any
+  number of untapped Myr to tap, then the pump and the damage to the player or planeswalker it
+  attacks.
+- Mole Man, Moloid Master lets its controller play lands from their graveyard (a land-play source
+  next to Crucible of Worlds') and makes a Moloid token on landfall. Torsten, Founder of Benalia
+  reveals seven cards for a multiple choice (Atraxa's shape), puts the rest on the bottom in a
+  random order and makes seven Soldier tokens when it dies.
+- Titania, Protector of Argoth returns a land card, and makes a 5/3 Elemental whenever a land its
+  controller controls is put into a graveyard from the battlefield
+  (`C5bTriggerV1::ControlledLandToGraveyardV1`, which also sees a land that leaves together with
+  Titania). Otharri, Suns' Glory keeps experience counters in `C5bStateV1::experience` and makes
+  its Rebel tokens tapped and attacking.
+
+C5c:
+
+- Sunfall exiles every creature as one batch and incubates for the number that left the
+  battlefield. Recurring Nightmare's return to its owner's hand is a cost
+  (`CostComponent::ReturnSelfToOwnersHandV1`).
+- Corpse Dance uses the kicker slot for buyback: a paid cast marks the resolving spell, which goes
+  to its owner's hand instead of the graveyard, and the returned creature's exile at the next end
+  step is the module's own delayed trigger.
+- Necromancy records a cast at a time a sorcery could not be cast and is sacrificed at the next
+  cleanup step. Once its entry trigger has resolved it is an Aura for state-based actions
+  (`invalid_necromancy_aura`).
+- Aang's Iceberg exiles up to one other nonland permanent until it leaves the battlefield;
+  waterbend is four activated abilities, one for each number of permanents tapped to help pay.
+  Shifting Woodland becomes a copy of a permanent card in its controller's graveyard through wave
+  E7a's `become_copy`, ended at cleanup.
+
+C5d:
+
+- Balance is three leaves in printed order (lands, cards in hand, creatures). Each counts anew,
+  lets every player with more than the fewest choose what to keep (active player first, the hand
+  choice private to its chooser) and removes the rest of both players' cards in one batch.
+- Council's Judgment is a series of votes (`C5dChoiceV1::VoteV1`, the caster first) and one exile
+  of every permanent with the most votes. It does not target.
+- Palantir of Orthanc keeps its influence counters in a ledger. The opponent chooses between its
+  controller drawing a card and its controller milling X cards with life loss equal to their total
+  mana value. Proft's Eidetic Memory removes the hand limit and reads the cards drawn this turn
+  when combat begins and again as its trigger resolves.
+- Fractured Identity exiles its target and gives each other player a token copy made from the
+  permanent's copiable values as it last existed; an Aura copy asks its controller what it
+  enchants.
+- Memory Jar exiles both hands face down, visible only to their owners (foretell's hidden exile),
+  and returns them at the beginning of the next end step even when the Jar has left.
