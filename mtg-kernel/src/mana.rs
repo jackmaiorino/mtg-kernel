@@ -1129,6 +1129,9 @@ fn restriction_permits(
         }
         // Chandra, Chill of Compliance's mana pays only noncreature spells.
         crate::card_def::ManaSpendRestrictionDef::NoncreatureSpellV1 => noncreature_spell,
+        // The Mightstone and Weakstone's mana pays an artifact spell here; an
+        // ability payment takes it through `plan_activation_mana_v1`.
+        crate::card_def::ManaSpendRestrictionDef::PowerstoneV1 => artifact_spell,
     }
 }
 
@@ -1797,7 +1800,14 @@ pub(crate) fn plan_activation_mana_v1(
     let has_courtyard = state.players[player.index()].battlefield.iter().any(|id| {
         crate::banner_of_kinship_v1::entry::owns_courtyard(state.objects.get(*id).card_def)
     }) || crate::eternal_e9b_v1::controls_courtyard(state, player);
-    if !eligible
+    // The Mightstone and Weakstone's mana pays for any ability of any source
+    // (Vintage Cube wave C3c).
+    let powerstone = state.players[player.index()]
+        .restricted_mana_pool
+        .0
+        .iter()
+        .any(|unit| unit.restriction == crate::card_def::ManaSpendRestrictionDef::PowerstoneV1);
+    if (!eligible && !powerstone)
         || (state.players[player.index()]
             .restricted_mana_pool
             .0
@@ -1813,11 +1823,13 @@ pub(crate) fn plan_activation_mana_v1(
         .iter()
         .enumerate()
         .filter(|(_, unit)| {
-            unit.restriction == crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility
-                || matches!(unit.restriction,
-                    crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(Some(chosen))
-                    if authenticated_restricted_unit_v60(state, unit)
-                        && crate::creature_types_v60::matches_effective_creature(state, source, chosen) == Ok(true))
+            unit.restriction == crate::card_def::ManaSpendRestrictionDef::PowerstoneV1
+                || (eligible
+                    && (unit.restriction == crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility
+                        || matches!(unit.restriction,
+                            crate::card_def::ManaSpendRestrictionDef::ChosenCreatureTypeV60(Some(chosen))
+                            if authenticated_restricted_unit_v60(state, unit)
+                                && crate::creature_types_v60::matches_effective_creature(state, source, chosen) == Ok(true))))
         })
         .map(|(index, unit)| (index, unit.color))
         .collect::<Vec<_>>();
@@ -1829,7 +1841,7 @@ pub(crate) fn plan_activation_mana_v1(
         .into_iter()
         .filter(|s| !excluded.contains(&s.id))
         .collect::<Vec<_>>();
-    for mana_source in &mut sources {
+    for mana_source in sources.iter_mut().filter(|_| eligible) {
         // The eternal catalog's Secluded Courtyard (wave E9b).
         if crate::eternal_e9b_v1::courtyard_permits_ability(state, mana_source.id, source) {
             for color in [

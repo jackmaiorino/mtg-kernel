@@ -392,6 +392,7 @@ pub(super) fn adventure_for(name: &str) -> &'static str {
     match name {
         "Fire // Ice" => "Some(AdventureDef { name: \"Ice\", cost: Cost { pips: &[Pip::Colored(ManaColor::U)], generic: 1, x_count: 0 }, types: &[CardType::Instant], target_spec: TargetSpec::AnyPermanent, effect: ability_effect_program_eternal_premodern_p1a_v1_ice })",
         "Dead // Gone" => super::build_eternal_c1c_v1::adventure_for(name),
+        "Embereth Shieldbreaker" => super::build_eternal_c3a_v1::adventure_for(name),
         _ => "None",
     }
 }
@@ -400,6 +401,7 @@ pub(super) fn adventure_effect_recipe_for(name: &str) -> Option<AbilityEffectRec
     match name {
         "Fire // Ice" => Some(program("crate::eternal_premodern_p1a_v1::ice")),
         "Dead // Gone" => super::build_eternal_c1c_v1::adventure_effect_recipe_for(name),
+        "Embereth Shieldbreaker" => super::build_eternal_c3a_v1::adventure_effect_recipe_for(name),
         _ => None,
     }
 }
@@ -408,6 +410,7 @@ pub(super) fn adventure_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Fire // Ice" => Some("Ice"),
         "Dead // Gone" => super::build_eternal_c1c_v1::adventure_face_name_for(name),
+        "Embereth Shieldbreaker" => super::build_eternal_c3a_v1::adventure_face_name_for(name),
         _ => None,
     }
 }

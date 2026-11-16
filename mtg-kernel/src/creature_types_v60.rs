@@ -631,6 +631,9 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         Subtype::Junk => None,
         Subtype::Spacecraft => None,
         Subtype::Pest => Some(CreatureTypeV60::Pest),
+        Subtype::Servo => Some(CreatureTypeV60::Servo),
+        Subtype::Thopter => Some(CreatureTypeV60::Thopter),
+        Subtype::Powerstone => None,
     }
 }
 

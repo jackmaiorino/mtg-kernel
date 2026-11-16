@@ -1169,6 +1169,10 @@ pub enum LibraryCardFilter {
     /// A green creature card (Natural Order). Appended for Vintage Cube wave
     /// C1b.
     GreenCreatureV1,
+    /// An instant or sorcery card whose mana value does not exceed the bound
+    /// (Spellseeker: "mana value 2 or less"). Appended for Vintage Cube wave
+    /// C3b.
+    InstantOrSorceryManaValueAtMostV1(u16),
 }
 
 impl LibraryCardFilter {
@@ -19439,6 +19443,10 @@ fn library_filter_matches(
                     crate::mana::ManaColor::G,
                 )
         }
+        LibraryCardFilter::InstantOrSorceryManaValueAtMostV1(maximum) => {
+            (def.has_type(CardType::Instant) || def.has_type(CardType::Sorcery))
+                && def.mana_value <= maximum
+        }
     })
 }
 
@@ -19499,6 +19507,9 @@ fn library_filter_fingerprint(filter: LibraryCardFilter) -> u64 {
         ),
         LibraryCardFilter::ArtifactOrEnchantmentCardV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 65),
         LibraryCardFilter::GreenCreatureV1 => fnv1a_u64(0xcbf2_9ce4_8422_2325, 66),
+        LibraryCardFilter::InstantOrSorceryManaValueAtMostV1(maximum) => {
+            fnv1a_u64(fnv1a_u64(0xcbf2_9ce4_8422_2325, 67), u64::from(maximum))
+        }
     }
 }
 

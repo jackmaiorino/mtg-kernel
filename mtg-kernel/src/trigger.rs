@@ -1287,6 +1287,11 @@ pub fn unselected_trigger_modes(
     if let Some(modes) = crate::eternal_pauper_e6b_v1::trigger_modes(card.name, effect) {
         return Some(modes);
     }
+    // The Mightstone and Weakstone's entry modes (Vintage Cube wave C3c).
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(modes) = crate::eternal_cube_c3c_v1::trigger_modes(card.name, effect) {
+        return Some(modes);
+    }
     if card.name == "Wardens of the Cycle" && *effect == wardens_of_the_cycle_effect() {
         return Some(wardens_of_the_cycle_modes());
     }

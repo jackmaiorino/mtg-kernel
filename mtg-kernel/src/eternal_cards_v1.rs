@@ -268,6 +268,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c2c_v1::C2cStateV1::is_empty"
     )]
     pub c2c: crate::eternal_cube_c2c_v1::C2cStateV1,
+    /// Vintage Cube wave C3c's state (`eternal_cube_c3c_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c3c_v1::C3cStateV1::is_empty"
+    )]
+    pub c3c: crate::eternal_cube_c3c_v1::C3cStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -2115,6 +2121,9 @@ pub(crate) fn delayed_triggers(
     ));
     // Fastbond's land-play damage (Vintage Cube wave C2c).
     triggers.extend(crate::eternal_cube_c2c_v1::delayed_triggers(state, events));
+    // Staff of the Storyteller's and Currency Converter's triggers (Vintage
+    // Cube wave C3c).
+    triggers.extend(crate::eternal_cube_c3c_v1::delayed_triggers(state, events));
     triggers
 }
 
@@ -2204,6 +2213,8 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
 /// Tamiyo +2, for the next trigger collection. Every attacker of the
 /// defending player attacks them or a planeswalker they control.
 pub(crate) fn note_attackers_declared(state: &mut GameState) {
+    // Exalted's triggers (Vintage Cube wave C3b).
+    crate::eternal_cube_c3b_v1::note_attackers_declared(state);
     let active = state.active_player;
     let attackers = state
         .engine

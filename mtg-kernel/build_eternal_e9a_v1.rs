@@ -317,6 +317,15 @@ pub(super) fn escape_for(name: &str) -> String {
                 pips.join(", ")
             )
         }
+        // Bloodbraid Challenger (Vintage Cube wave C3a): "Escape--{3}{R}{G},
+        // Exile three other cards from your graveyard."
+        "Bloodbraid Challenger" => {
+            let (pips, generic, x_count) = super::parse_cost("{3}{R}{G}");
+            format!(
+                "Some(EscapeDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}), CostComponent::ExileOtherCardsFromOwnGraveyard(3)] }})",
+                pips.join(", ")
+            )
+        }
         _ => "None".to_string(),
     }
 }
@@ -325,6 +334,9 @@ pub(super) fn escape_for(name: &str) -> String {
 pub(super) fn equipment_for(name: &str) -> &'static str {
     match name {
         "Shuko" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
+        // Lightning Greaves (Vintage Cube wave C3c): "Equipped creature has
+        // haste and shroud."
+        "Lightning Greaves" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords(Keywords::SHROUD.0 | Keywords::HASTE.0), other_turn_keywords: Keywords(Keywords::SHROUD.0 | Keywords::HASTE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
         _ => "None",
     }
 }

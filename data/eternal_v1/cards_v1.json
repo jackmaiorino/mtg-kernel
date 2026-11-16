@@ -32127,7 +32127,7 @@
   },
   {
    "name": "Auriok Salvagers",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{W}",
    "mana_value": 4,
    "colors": [
@@ -32150,12 +32150,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "activated_ability",
+    "return_from_graveyard"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/a/AuriokSalvagers.java"
   },
   {
    "name": "Bloodbraid Challenger",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{R}{G}",
    "mana_value": 5,
    "colors": [
@@ -32179,12 +32182,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "haste",
+    "cascade",
+    "cast_trigger",
+    "escape"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/b/BloodbraidChallenger.java"
   },
   {
    "name": "Death-Greeter's Champion",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{R}",
    "mana_value": 3,
    "colors": [
@@ -32207,12 +32215,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "double_strike",
+    "dash",
+    "etb_trigger",
+    "add_counters"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/d/DeathGreetersChampion.java"
   },
   {
    "name": "Embereth Shieldbreaker",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}",
    "mana_value": 2,
    "colors": [
@@ -32235,12 +32248,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "adventure",
+    "destroy_artifact"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/e/EmberethShieldbreaker.java"
   },
   {
    "name": "Formidable Speaker",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{G}",
    "mana_value": 3,
    "colors": [
@@ -32263,12 +32279,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "etb_trigger",
+    "discard",
+    "library_search",
+    "activated_ability",
+    "untap_target"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/f/FormidableSpeaker.java"
   },
   {
    "name": "Iron-Shield Elf",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{B}",
    "mana_value": 2,
    "colors": [
@@ -32291,12 +32313,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "activated_ability",
+    "discard_cost",
+    "indestructible_until_end_of_turn",
+    "tap"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/i/IronShieldElf.java"
   },
   {
    "name": "Luminarch Aspirant",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{W}",
    "mana_value": 2,
    "colors": [
@@ -32319,12 +32346,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "beginning_of_combat",
+    "plus_one_counters"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/l/LuminarchAspirant.java"
   },
   {
    "name": "Giver of Runes",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{W}",
    "mana_value": 1,
    "colors": [
@@ -32347,12 +32377,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "activated_ability",
+    "tap_ability",
+    "protection_grant",
+    "color_choice"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/g/GiverOfRunes.java"
   },
   {
    "name": "Harvester of Misery",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{B}{B}",
    "mana_value": 5,
    "colors": [
@@ -32374,12 +32409,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "menace",
+    "etb_trigger",
+    "activated_from_hand",
+    "discard_cost",
+    "pump_negative"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/h/HarvesterOfMisery.java"
   },
   {
    "name": "Devoted Druid",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{G}",
    "mana_value": 2,
    "colors": [
@@ -32404,7 +32445,13 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "tap_ability",
+    "activated_ability",
+    "untap_ability",
+    "minus_counters"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/d/DevotedDruid.java"
   },
   {
@@ -32436,7 +32483,7 @@
   },
   {
    "name": "Oliphaunt",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{5}{R}",
    "mana_value": 6,
    "colors": [
@@ -32458,12 +32505,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "trample",
+    "attack_trigger",
+    "pump_until_end_of_turn",
+    "landcycling"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/o/Oliphaunt.java"
   },
   {
    "name": "Stingcaster Mage",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}",
    "mana_value": 2,
    "colors": [
@@ -32486,11 +32538,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "haste",
+    "etb_trigger",
+    "flashback_grant"
+   ]
   },
   {
    "name": "Third Path Iconoclast",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{U}{R}",
    "mana_value": 2,
    "colors": [
@@ -32514,12 +32570,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "cast_trigger",
+    "token_creation"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/ThirdPathIconoclast.java"
   },
   {
    "name": "Tireless Tracker",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{G}",
    "mana_value": 3,
    "colors": [
@@ -32542,12 +32601,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "landfall",
+    "investigate",
+    "token_creation",
+    "sacrifice_trigger",
+    "add_counters"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/TirelessTracker.java"
   },
   {
    "name": "Samut, Hazoret's Champion",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}",
    "mana_value": 2,
    "colors": [
@@ -32573,11 +32638,13 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "grant_haste"
+   ]
   },
   {
    "name": "Marwyn, the Preserver",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{G}",
    "mana_value": 2,
    "colors": [
@@ -32602,11 +32669,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "grant_hexproof",
+    "activated_ability",
+    "return_from_graveyard"
+   ]
   },
   {
    "name": "Spellseeker",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{U}",
    "mana_value": 3,
    "colors": [
@@ -32629,12 +32700,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "etb_trigger",
+    "tutor",
+    "library_search"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/Spellseeker.java"
   },
   {
    "name": "Walking Ballista",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{X}{X}",
    "mana_value": 0,
    "colors": [],
@@ -32655,12 +32730,19 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "x_cost",
+    "enters_with_counters",
+    "activated_ability",
+    "add_counters",
+    "remove_counter_cost",
+    "damage"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/w/WalkingBallista.java"
   },
   {
    "name": "Noble Hierarch",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{G}",
    "mana_value": 1,
    "colors": [
@@ -32687,12 +32769,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "exalted",
+    "mana_ability",
+    "tap_ability"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/n/NobleHierarch.java"
   },
   {
    "name": "Spider-Woman, Stunning Savior",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{W/U}",
    "mana_value": 2,
    "colors": [
@@ -32719,12 +32805,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "flying",
+    "opponent_permanents_enter_tapped"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/SpiderWomanStunningSavior.java"
   },
   {
    "name": "Ignoble Hierarch",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{G}",
    "mana_value": 1,
    "colors": [
@@ -32751,12 +32840,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "exalted",
+    "mana_ability",
+    "tap_ability"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/i/IgnobleHierarch.java"
   },
   {
    "name": "Lightning Greaves",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}",
    "mana_value": 2,
    "colors": [],
@@ -32776,12 +32869,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "equipment",
+    "keyword_grant",
+    "equip"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/l/LightningGreaves.java"
   },
   {
    "name": "Pyrite Spellbomb",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}",
    "mana_value": 1,
    "colors": [],
@@ -32799,12 +32896,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "burn",
+    "draw"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/p/PyriteSpellbomb.java"
   },
   {
    "name": "Shorikai, Genesis Engine",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{W}{U}",
    "mana_value": 4,
    "colors": [
@@ -32829,12 +32931,19 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "crew",
+    "activated_ability",
+    "tap_ability",
+    "draw_card",
+    "discard",
+    "token_creation"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/ShorikaiGenesisEngine.java"
   },
   {
    "name": "The Echoverse Fulcrum",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}",
    "mana_value": 2,
    "colors": [],
@@ -32854,11 +32963,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "etb_trigger",
+    "draw_card",
+    "discard",
+    "activated_ability",
+    "board_wipe"
+   ]
   },
   {
    "name": "Retrofitter Foundry",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}",
    "mana_value": 1,
    "colors": [],
@@ -32876,12 +32991,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "activated_ability",
+    "tap_ability",
+    "sacrifice_cost",
+    "token_creation",
+    "untap_ability"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/r/RetrofitterFoundry.java"
   },
   {
    "name": "Thopter Foundry",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{W/B}{U}",
    "mana_value": 2,
    "colors": [
@@ -32903,12 +33024,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "activated_ability",
+    "sacrifice_cost",
+    "token_creation",
+    "life_gain"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/ThopterFoundry.java"
   },
   {
    "name": "Relic of Sauron",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{4}",
    "mana_value": 4,
    "colors": [],
@@ -32930,12 +33056,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "mana_ability",
+    "activated_ability",
+    "tap_ability",
+    "draw_card",
+    "discard"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/r/RelicOfSauron.java"
   },
   {
    "name": "Currency Converter",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}",
    "mana_value": 1,
    "colors": [],
@@ -32953,12 +33085,19 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "activated_ability",
+    "tap_ability",
+    "draw_card",
+    "discard",
+    "exile_graveyard_card",
+    "token_creation"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/c/CurrencyConverter.java"
   },
   {
    "name": "Staff of the Storyteller",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{W}",
    "mana_value": 2,
    "colors": [
@@ -32978,19 +33117,28 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "etb_trigger",
+    "token_creation",
+    "activated_ability",
+    "tap_ability",
+    "draw_card",
+    "counters"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/StaffOfTheStoryteller.java"
   },
   {
    "name": "The Mightstone and Weakstone",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{5}",
    "mana_value": 5,
    "colors": [],
    "types": [
     "Artifact"
    ],
-   "subtypes": [],
+   "subtypes": [
+    "Powerstone"
+   ],
    "supertypes": [
     "Legendary"
    ],
@@ -33005,8 +33153,182 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "etb_trigger",
+    "modal",
+    "draw_card",
+    "removal",
+    "mana_ability",
+    "restricted_mana"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/TheMightstoneAndWeakstone.java"
+  },
+  {
+   "name": "Servo Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Servo"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/ServoToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Thopter Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Thopter"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "flying"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/ThopterColorlessToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Blue Thopter Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Thopter"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "flying"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/ThopterToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Construct Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Construct"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/Construct4Token.java",
+   "is_token": true
+  },
+  {
+   "name": "Rogue Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Rogue"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/RogueToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Soldier Artifact Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Soldier"
+   ],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/SoldierArtifactToken.java",
+   "is_token": true
   }
  ]
 }

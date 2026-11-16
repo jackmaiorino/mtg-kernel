@@ -251,6 +251,12 @@ pub(super) fn additional_mana_abilities_for(name: &str) -> &'static str {
         "Prophetic Prism" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
         // Energy Refractor: "{2}: Add one mana of any color." No tap.
         "Energy Refractor" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 2, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::None, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
+        // Relic of Sauron (Vintage Cube wave C3c): the three mixed pairs of
+        // "{T}: Add two mana in any combination of {U}, {B}, and/or {R}" (the
+        // primary ability makes UU, BB or RR). Each pair is a fixed bundle
+        // identified by a color its action names that the pair does not make:
+        // {W} is {U}{B}, {G} is {U}{R} and {C} is {B}{R}.
+        "Relic of Sauron" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::U, ManaColor::B]), controller_damage: 0, max_activations_per_turn: None } }, AdditionalManaAbilityDef { colors: &[ManaColor::G], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::U, ManaColor::R]), controller_damage: 0, max_activations_per_turn: None } }, AdditionalManaAbilityDef { colors: &[ManaColor::C], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::B, ManaColor::R]), controller_damage: 0, max_activations_per_turn: None } }]",
         _ => super::build_eternal_e7a_v1::additional_mana_abilities_for(name),
     }
 }

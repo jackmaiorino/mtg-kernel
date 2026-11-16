@@ -2350,7 +2350,8 @@ fn note_spell_casts(state: &mut GameState, events: &[CommittedEvent]) {
                         casts.push(link);
                     }
                 }
-                Some(RAGAVAN) if alternative => {
+                // Dash: Ragavan and Death-Greeter's Champion (wave C3a).
+                Some(RAGAVAN | "Death-Greeter's Champion") if alternative => {
                     let casts = &mut e7b_state(state).dash_casts;
                     if !casts.contains(&link) {
                         casts.push(link);
