@@ -31,6 +31,12 @@ class FallbackTests(unittest.TestCase):
                 4: fb.ADMISSION_MARKER, 5: None}
         assert [j["id"] for j in fb.admission_timeouts(jobs, logs.get)] == [1]
 
+    def test_a_self_hosted_linux_job_is_never_a_reason_for_the_windows_rerun(self):
+        marker = "hook ... " + fb.ADMISSION_MARKER + ": no CPU slots"
+        jobs = [job(1, "failure", ["self-hosted", "mtg-ci-linux"], name="Rust tests (ubuntu-24.04, eternal-integration)"),
+                job(2, "failure", ["self-hosted", "mtg-ci-windows"], name="Python tests (windows-2025, shard 1)")]
+        assert [j["id"] for j in fb.admission_timeouts(jobs, {1: marker, 2: marker}.get)] == [2]
+
     def test_main_dispatches_one_hosted_rerun_or_nothing(self):
         calls = []
 

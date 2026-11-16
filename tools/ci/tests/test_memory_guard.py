@@ -51,6 +51,22 @@ class ParsingTests(unittest.TestCase):
         self.assertIsNone(guard.parse_status("Name:\tkswapd0\nPid:\t80\n"))
         self.assertEqual(guard.parse_status(status("rustc", 9, 3)), ("rustc", 9 * GIB, 3 * GIB))
 
+    def test_a_process_name_is_one_word_in_the_log(self):
+        self.assertEqual(guard.parse_status(status("Web Content", 2))[0], "Web_Content")
+        self.assertEqual(guard.parse_status("Name:\t\nVmRSS:\t4 kB\n"), ("?", 4, 0))
+
+    def test_a_name_that_is_not_utf8_does_not_stop_the_scan(self):
+        with tempfile.TemporaryDirectory() as folder:
+            proc = fake_proc(Path(folder) / "proc", meminfo(9, 15), {400: status("rustc", 5)})
+            (proc / "401").mkdir()
+            (proc / "401" / "status").write_bytes(b"Name:\tcaf\xc3\nVmRSS:\t2048 kB\nVmSwap:\t0 kB\n")
+            (proc / "402").mkdir()  # a process that ended: no status file
+            (proc / "403").mkdir()
+            (proc / "403" / "status").write_text("Name:\todd\nVmRSS:\tmany kB\n")
+            rows = sorted(guard.processes(proc))
+        self.assertEqual([(pid, rss) for pid, _, rss, _ in rows], [(400, 5 * GIB), (401, 2048)])
+        self.assertTrue(rows[1][1].startswith("caf"))
+
 
 class DecisionTests(unittest.TestCase):
     def test_starved_needs_both_memory_and_swap_under_their_floors(self):
@@ -90,7 +106,7 @@ class WatchTests(unittest.TestCase):
         self.assertEqual([pid for pid, _ in killed], [400])
         self.assertEqual(slept, [5.0])
         (line,) = [line for line in lines if f" {guard.KILLED} " in line]
-        self.assertIn("pid=400 name=rustc rss=9216 swap=14336 outcome=killed available=512 swap_free=256", line)
+        self.assertIn(f" {guard.KILLED} pid=400 name=rustc rss=9216 swap=14336 available=512 swap_free=256 ", line)
         self.assertIn("largest_rss+swap=rustc:9216+14336,systemd:20480+0", line)
 
     def test_a_healthy_runner_is_only_recorded(self):
@@ -110,9 +126,42 @@ class WatchTests(unittest.TestCase):
             log = Path(folder) / "guard.log"
             self.assertEqual(guard.watch(log, 2.0, 3600.0, 8.0, 8.0, proc=proc, kill=refuse, sleep=lambda _: None,
                                          rounds=2), 0)
-            kills = [line for line in log.read_text(encoding="utf-8").splitlines() if f" {guard.KILLED} " in line]
-        self.assertEqual(len(kills), 2)
-        self.assertIn("outcome=kill failed (Operation not permitted)", kills[0])
+            lines = log.read_text(encoding="utf-8").splitlines()
+        failed = [line for line in lines if f" {guard.KILL_FAILED} " in line]
+        self.assertEqual(len(failed), 2)
+        self.assertIn("pid=400 name=rustc", failed[0])
+        self.assertTrue(failed[0].endswith("error=Operation_not_permitted"))
+        summary, kills = guard.summarize(lines)
+        self.assertEqual(kills, [])  # an attempt that failed is not reported as a kill
+        self.assertIn(f"Memory guard could not kill 2 process(es) it chose (see {guard.KILL_FAILED} above).", summary)
+
+    def test_a_process_that_left_between_the_scan_and_the_kill_is_not_signalled(self):
+        with tempfile.TemporaryDirectory() as folder:
+            proc = fake_proc(Path(folder) / "proc", meminfo(0.5, 0.25), {400: status("rustc", 9, 14)})
+            log, killed = Path(folder) / "guard.log", []
+            for chosen in ((999, "rustc", 9 * GIB, 0), (400, "cargo", 9 * GIB, 0)):  # gone, or the pid is reused
+                with patch.object(guard, "choose_victim", lambda rows, own_pid, chosen=chosen: chosen):
+                    guard.watch(log, 2.0, 3600.0, 8.0, 8.0, proc=proc, kill=lambda pid, sig: killed.append(pid),
+                                sleep=lambda _: None, rounds=1)
+            lines = log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(killed, [])
+        self.assertFalse([line for line in lines if guard.KILLED in line or guard.KILL_FAILED in line])
+
+    def test_a_check_that_raises_is_recorded_once_and_the_guard_keeps_watching(self):
+        with tempfile.TemporaryDirectory() as folder:
+            proc = fake_proc(Path(folder) / "proc", meminfo(9, 15), {400: status("rustc", 5)})
+            (proc / "meminfo").unlink()
+            log, slept = Path(folder) / "guard.log", []
+            self.assertEqual(guard.watch(log, 2.0, 0.0, 8.0, 8.0, proc=proc, kill=None, sleep=slept.append, rounds=3), 0)
+            (proc / "meminfo").write_text(meminfo(9, 15))
+            guard.watch(log, 2.0, 0.0, 8.0, 8.0, proc=proc, kill=None, sleep=slept.append, rounds=1)
+            lines = log.read_text(encoding="utf-8").splitlines()
+        errors = [line for line in lines if f" {guard.ERROR} " in line]
+        self.assertEqual(len(errors), 1)
+        self.assertIn("FileNotFoundError", errors[0])
+        self.assertEqual(slept, [2.0, 2.0, 2.0, 2.0])
+        self.assertEqual(len([line for line in lines if "available_min=" in line]), 1)
+        self.assertIn(f"Memory guard recorded 1 error(s) of its own (see {guard.ERROR} above).", guard.summarize(lines)[0])
 
 
 class ReportTests(unittest.TestCase):
@@ -121,7 +170,7 @@ class ReportTests(unittest.TestCase):
               "largest_rss+swap=rustc:5000+0",
               "10:02:00 available_min=310 swap_used_max=14100 memory_total=15701 swap_total=15359 pressure_full10=77 "
               "largest_rss+swap=rustc:9000+9000,rustc:5000+5000"]
-    KILL = f"10:02:30 {guard.KILLED} pid=400 name=rustc rss=9000 swap=9000 outcome=killed available=300 swap_free=100"
+    KILL = f"10:02:30 {guard.KILLED} pid=400 name=rustc rss=9000 swap=9000 available=300 swap_free=100"
 
     def test_the_summary_gives_the_peaks_of_the_record(self):
         summary, kills = guard.summarize(self.RECORD)
