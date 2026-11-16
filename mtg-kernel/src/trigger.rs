@@ -5052,6 +5052,9 @@ fn sba_fixed_point_with_protected_triggers(
         #[cfg(feature = "eternal-fixtures")]
         {
             changed |= crate::eternal_pauper_e6b_v1::unattach_protected_equipment(state);
+            // An Equipment that is also a creature (Iron Man Armor) can't
+            // stay attached (Vintage Cube wave C4c).
+            changed |= crate::eternal_cube_c4c_v1::unattach_animated_equipment(state);
         }
         if !ordered_graveyard {
             let invalid_auras = state

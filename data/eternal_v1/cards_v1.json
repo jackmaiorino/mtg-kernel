@@ -33455,7 +33455,7 @@
   },
   {
    "name": "Displacer Kitten",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{U}",
    "mana_value": 4,
    "colors": [
@@ -33478,12 +33478,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "cast_trigger",
+    "flicker"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/d/DisplacerKitten.java"
   },
   {
    "name": "Faerie Mastermind",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}",
    "mana_value": 2,
    "colors": [
@@ -33506,12 +33509,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "flash",
+    "flying",
+    "opponent_draw_trigger",
+    "activated_ability",
+    "draw"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/f/FaerieMastermind.java"
   },
   {
    "name": "Ledger Shredder",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}",
    "mana_value": 2,
    "colors": [
@@ -33534,12 +33543,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "flying",
+    "cast_trigger",
+    "connive"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/l/LedgerShredder.java"
   },
   {
    "name": "Forensic Gadgeteer",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{U}",
    "mana_value": 3,
    "colors": [
@@ -33549,6 +33562,7 @@
     "Creature"
    ],
    "subtypes": [
+    "Vedalken",
     "Artificer",
     "Detective"
    ],
@@ -33562,12 +33576,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "cast_trigger",
+    "investigate",
+    "token_creation",
+    "cost_reduction"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/f/ForensicGadgeteer.java"
   },
   {
    "name": "Lutri, the Spellchaser",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U/R}{U/R}",
    "mana_value": 3,
    "colors": [
@@ -33593,12 +33612,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "companion",
+    "flash",
+    "etb_trigger",
+    "copy"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/l/LutriTheSpellchaser.java"
   },
   {
    "name": "Caustic Bronco",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{B}",
    "mana_value": 2,
    "colors": [
@@ -33608,7 +33632,9 @@
     "Creature"
    ],
    "subtypes": [
-    "Snake"
+    "Snake",
+    "Horse",
+    "Mount"
    ],
    "supertypes": [],
    "power": 2,
@@ -33620,12 +33646,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "attack_trigger",
+    "saddle",
+    "life_loss"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/c/CausticBronco.java"
   },
   {
    "name": "Jacked Rabbit",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{X}{1}{W}",
    "mana_value": 2,
    "colors": [
@@ -33648,12 +33678,19 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "x_cost",
+    "enters_with_counters",
+    "etb_trigger",
+    "draw",
+    "attack_trigger",
+    "token_creation"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/j/JackedRabbit.java"
   },
   {
    "name": "Bristly Bill, Spine Sower",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{G}",
    "mana_value": 2,
    "colors": [
@@ -33678,12 +33715,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "landfall",
+    "plus_one_counters",
+    "activated_ability"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/b/BristlyBillSpineSower.java"
   },
   {
    "name": "Sedgemoor Witch",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{B}",
    "mana_value": 3,
    "colors": [
@@ -33706,12 +33747,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "menace",
+    "ward",
+    "cast_trigger",
+    "copy_trigger",
+    "token_creation"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/SedgemoorWitch.java"
   },
   {
    "name": "Witherbloom Apprentice",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{B}{G}",
    "mana_value": 2,
    "colors": [
@@ -33735,12 +33782,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "cast_trigger",
+    "copy_trigger",
+    "life_loss",
+    "life_gain"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/w/WitherbloomApprentice.java"
   },
   {
    "name": "Omnath, Locus of Creation",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{R}{G}{W}{U}",
    "mana_value": 4,
    "colors": [
@@ -33767,12 +33819,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "etb_trigger",
+    "draw_card",
+    "landfall",
+    "life_gain",
+    "damage"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/o/OmnathLocusOfCreation.java"
   },
   {
    "name": "Scythecat Cub",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{G}",
    "mana_value": 2,
    "colors": [
@@ -33794,12 +33852,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "trample",
+    "landfall",
+    "plus_one_counters"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/ScythecatCub.java"
   },
   {
    "name": "Pompous Battlemage",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{R}",
    "mana_value": 1,
    "colors": [
@@ -33822,11 +33884,14 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "prowess",
+    "prepared"
+   ]
   },
   {
    "name": "Sage of the Skies",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{W}",
    "mana_value": 3,
    "colors": [
@@ -33849,12 +33914,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "flying",
+    "lifelink",
+    "cast_trigger",
+    "copy_spell"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/SageOfTheSkies.java"
   },
   {
    "name": "Okoye, Mighty and Adored",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{G}{W}",
    "mana_value": 4,
    "colors": [
@@ -33881,11 +33951,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "etb_trigger",
+    "monarch",
+    "plus_one_counters",
+    "attack_trigger"
+   ]
   },
   {
    "name": "Ouroboroid",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{G}{G}",
    "mana_value": 4,
    "colors": [
@@ -33908,12 +33983,15 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "plus_one_counters",
+    "beginning_of_combat_trigger"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/o/Ouroboroid.java"
   },
   {
    "name": "Screaming Nemesis",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{R}",
    "mana_value": 3,
    "colors": [
@@ -33935,12 +34013,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "haste",
+    "dealt_damage_trigger",
+    "damage"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/ScreamingNemesis.java"
   },
   {
    "name": "Skullclamp",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}",
    "mana_value": 1,
    "colors": [],
@@ -33960,12 +34042,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "equipment",
+    "dies_trigger",
+    "draw_card",
+    "static_pump",
+    "equip"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/Skullclamp.java"
   },
   {
    "name": "Sword of the Meek",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}",
    "mana_value": 2,
    "colors": [],
@@ -33985,12 +34073,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "equipment",
+    "static_pump",
+    "graveyard_trigger",
+    "return_from_graveyard",
+    "equip"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/SwordOfTheMeek.java"
   },
   {
    "name": "Umezawa's Jitte",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}",
    "mana_value": 2,
    "colors": [],
@@ -34012,12 +34106,19 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "equipment",
+    "combat_damage_trigger",
+    "counters",
+    "activated_ability",
+    "lifegain",
+    "equip"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/u/UmezawasJitte.java"
   },
   {
    "name": "Nettlecyst",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}",
    "mana_value": 3,
    "colors": [],
@@ -34037,12 +34138,18 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "equipment",
+    "living_weapon",
+    "token_creation",
+    "static_pump",
+    "equip"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/n/Nettlecyst.java"
   },
   {
    "name": "Kaldra Compleat",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{7}",
    "mana_value": 7,
    "colors": [],
@@ -34064,12 +34171,22 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "indestructible",
+    "equipment",
+    "living_weapon",
+    "token_creation",
+    "static_pump",
+    "keyword_grant",
+    "combat_damage_trigger",
+    "exile_target",
+    "equip"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/k/KaldraCompleat.java"
   },
   {
    "name": "Glimmer Lens",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{W}",
    "mana_value": 2,
    "colors": [
@@ -34091,12 +34208,19 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "equipment",
+    "for_mirrodin",
+    "token_creation",
+    "attack_trigger",
+    "draw_card",
+    "equip"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/g/GlimmerLens.java"
   },
   {
    "name": "Iron Man Armor",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}",
    "mana_value": 3,
    "colors": [],
@@ -34116,11 +34240,19 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": [
+    "equipment",
+    "etb_trigger",
+    "etb_attach_controlled_creature",
+    "static_pump",
+    "keyword_grant",
+    "animate",
+    "equip"
+   ]
   },
   {
    "name": "Astrologian's Planisphere",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}",
    "mana_value": 2,
    "colors": [
@@ -34142,12 +34274,21 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "equipment",
+    "static_pump",
+    "type_change",
+    "keyword_grant",
+    "cast_trigger",
+    "draw_trigger",
+    "plus_one_counters",
+    "equip"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/a/AstrologiansPlanisphere.java"
   },
   {
    "name": "Smuggler's Copter",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}",
    "mana_value": 2,
    "colors": [],
@@ -34167,12 +34308,20 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "vehicle",
+    "crew",
+    "flying",
+    "attack_trigger",
+    "block_trigger",
+    "draw_card",
+    "discard"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/s/SmugglersCopter.java"
   },
   {
    "name": "Esika's Chariot",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{G}",
    "mana_value": 4,
    "colors": [
@@ -34196,8 +34345,128 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "vehicle",
+    "crew",
+    "etb_trigger",
+    "attack_trigger",
+    "token_creation",
+    "copy_token"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/e/EsikasChariot.java"
+  },
+  {
+   "name": "Improvised Act",
+   "engine_capability": "full",
+   "mana_cost": "{R}",
+   "mana_value": 1,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "prepare_spell",
+    "discard",
+    "draw_card"
+   ]
+  },
+  {
+   "name": "Phyrexian Germ Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Phyrexian",
+    "Germ"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "living_weapon"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/PhyrexianGermToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Rebel Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Rebel"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation",
+    "for_mirrodin"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/RebelRedToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Green Cat Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Cat"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "token_creation"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/GreenCat2Token.java",
+   "is_token": true
   }
  ]
 }

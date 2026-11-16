@@ -280,6 +280,24 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c3c_v1::C3cStateV1::is_empty"
     )]
     pub c3c: crate::eternal_cube_c3c_v1::C3cStateV1,
+    /// Vintage Cube wave C4c's state (`eternal_cube_c4c_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c4c_v1::C4cStateV1::is_empty"
+    )]
+    pub c4c: crate::eternal_cube_c4c_v1::C4cStateV1,
+    /// Vintage Cube wave C4a's state (`eternal_cube_c4a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c4a_v1::C4aStateV1::is_empty"
+    )]
+    pub c4a: crate::eternal_cube_c4a_v1::C4aStateV1,
+    /// Vintage Cube wave C4b's state (`eternal_cube_c4b_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c4b_v1::C4bStateV1::is_empty"
+    )]
+    pub c4b: crate::eternal_cube_c4b_v1::C4bStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -352,6 +370,11 @@ pub enum EternalTriggerV1 {
     E8bV1(crate::eternal_pauper_e8b_v1::E8bTriggerV1),
     /// A condition owned by wave E8a's module.
     E8aV1(crate::eternal_legacy_e8a_v1::E8aTriggerV1),
+    /// A condition owned by Vintage Cube wave C4a's module.
+    C4aV1(crate::eternal_cube_c4a_v1::C4aTriggerV1),
+    /// A condition owned by Vintage Cube wave C4b's module (Sage of the
+    /// Skies' cast trigger, which functions on the stack).
+    C4bV1(crate::eternal_cube_c4b_v1::C4bTriggerV1),
 }
 
 /// Effect leaves owned by this module, carried as
@@ -630,6 +653,9 @@ pub(crate) fn arrival_condition(condition: crate::trigger::TriggerCondition) -> 
                 }
                 EternalTriggerV1::E8aV1(condition) => {
                     crate::eternal_legacy_e8a_v1::arrival_condition(condition)
+                }
+                EternalTriggerV1::C4aV1(condition) => {
+                    crate::eternal_cube_c4a_v1::arrival_condition(condition)
                 }
                 _ => false,
             },
@@ -2170,6 +2196,13 @@ pub(crate) fn delayed_triggers(
     // Staff of the Storyteller's and Currency Converter's triggers (Vintage
     // Cube wave C3c).
     triggers.extend(crate::eternal_cube_c3c_v1::delayed_triggers(state, events));
+    // Skullclamp's draws, Umezawa's Jitte's and Kaldra Compleat's combat
+    // damage triggers, Glimmer Lens, Astrologian's Planisphere, Sword of the
+    // Meek and Smuggler's Copter's block trigger (Vintage Cube wave C4c).
+    triggers.extend(crate::eternal_cube_c4c_v1::delayed_triggers(state, events));
+    // Magecraft's copy half, Sage of the Skies, Screaming Nemesis and Okoye
+    // (Vintage Cube wave C4b).
+    triggers.extend(crate::eternal_cube_c4b_v1::delayed_triggers(state, events));
     triggers
 }
 
@@ -2412,6 +2445,12 @@ pub(crate) fn trigger_matches(
             );
         }
     }
+    // Wave C4b's condition functions while its source is a spell on the stack.
+    if let EternalTriggerV1::C4bV1(condition) = condition {
+        return crate::eternal_cube_c4b_v1::trigger_matches(
+            condition, events, index, source, state,
+        );
+    }
     let Some(name) = definition_name(state, source) else {
         return false;
     };
@@ -2435,14 +2474,18 @@ pub(crate) fn trigger_matches(
         EternalTriggerV1::E5aV1(condition) => {
             crate::eternal_e5a_v1::trigger_matches(condition, events, index, source, state)
         }
-        EternalTriggerV1::E6bV1(_) | EternalTriggerV1::E7bV1(_) | EternalTriggerV1::E8aV1(_) => {
-            false
-        }
+        EternalTriggerV1::E6bV1(_)
+        | EternalTriggerV1::E7bV1(_)
+        | EternalTriggerV1::E8aV1(_)
+        | EternalTriggerV1::C4bV1(_) => false,
         EternalTriggerV1::E7aV1(condition) => {
             crate::eternal_legacy_e7a_v1::trigger_matches(condition, events, index, source, state)
         }
         EternalTriggerV1::E8bV1(condition) => {
             crate::eternal_pauper_e8b_v1::trigger_matches(condition, events, index, source, state)
+        }
+        EternalTriggerV1::C4aV1(condition) => {
+            crate::eternal_cube_c4a_v1::trigger_matches(condition, events, index, source, state)
         }
         EternalTriggerV1::InstantOrSorceryCardLeavesYourGraveyard => {
             let CommittedEvent::ZoneChange {

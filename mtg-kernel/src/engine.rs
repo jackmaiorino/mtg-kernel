@@ -4133,6 +4133,15 @@ fn legal_targets_for_controller_from_source_unframed(
             &mut legal,
         );
     }
+    // Screaming Nemesis: "any other target" never offers the source itself.
+    #[cfg(feature = "eternal-fixtures")]
+    if spec == TargetSpec::AnyTarget {
+        if let Some(source) =
+            source.filter(|source| crate::eternal_cube_c4b_v1::other_target_only(source.card_def))
+        {
+            legal.retain(|target| *target != Target::Object(source.object));
+        }
+    }
     legal
 }
 
@@ -6339,7 +6348,9 @@ fn reduced_activation_mana_cost(
             .generic
             .saturating_sub(u8::try_from(count).unwrap_or(u8::MAX));
     }
-    reduced
+    // Forensic Gadgeteer (eternal wave C4a): abilities of artifacts cost {1}
+    // less, never below one mana.
+    crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, reduced)
 }
 
 fn activation_mana_payment(
@@ -25703,6 +25714,8 @@ pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start
         let events = state.engine.event_log[event_start..].to_vec();
         crate::eternal_lurrus_v1::note_combat_damage(state, &events);
         crate::eternal_vintage_e7b_v1::note_combat_damage(state, &events);
+        // Umezawa's Jitte's and Kaldra Compleat's combat damage triggers.
+        crate::eternal_cube_c4c_v1::note_combat_damage(state, &events);
     }
     collect_and_queue_triggers(state);
 }
@@ -28980,7 +28993,11 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
                 })
         })
         || (cfg!(feature = "eternal-fixtures")
-            && crate::eternal_pauper_e6b_v1::observes_attacks(state));
+            && (crate::eternal_pauper_e6b_v1::observes_attacks(state)
+                // Glimmer Lens counts every declared attacker.
+                || crate::eternal_cube_c4c_v1::observes_attacks(state)
+                // Okoye watches the creature her trigger chose.
+                || crate::eternal_cube_c4b_v1::observes_attacks(state)));
     for source in state.engine.combat.attackers.clone() {
         let object = state.objects.get(source);
         if cfg!(all(
@@ -29154,6 +29171,9 @@ fn apply_declare_blockers(
     crate::eternal_pauper_e8b_v1::note_blockers_declared(state);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_premodern_p1a_v1::note_blockers_declared(state);
+    // Smuggler's Copter's "whenever this Vehicle blocks".
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c4c_v1::note_blockers_declared(state);
     collect_and_queue_triggers(state);
     reset_priority(state);
     Ok(())

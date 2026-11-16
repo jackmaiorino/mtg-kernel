@@ -384,6 +384,9 @@ impl E7bChoiceV1 {
 const AVATAR_OF_BURGEONING_ECHOES: &str = "Avatar of Burgeoning Echoes";
 const CARNIVOROUS_CULTIVATOR: &str = "Carnivorous Cultivator";
 const ENROOT: &str = "Enroot";
+/// Vintage Cube wave C4b's prepare creature and its spell.
+const POMPOUS_BATTLEMAGE: &str = "Pompous Battlemage";
+const IMPROVISED_ACT: &str = "Improvised Act";
 const CREEPING_CHILL: &str = "Creeping Chill";
 const DACK_FAYDEN: &str = "Dack Fayden";
 const GOLGARI_GRAVE_TROLL: &str = "Golgari Grave-Troll";
@@ -2495,7 +2498,10 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
                 .objects
                 .try_get(object)
                 .is_some_and(|live| live.zone == Zone::Battlefield)
-                && definition_name(state, object) == Some(CARNIVOROUS_CULTIVATOR)
+                && matches!(
+                    definition_name(state, object),
+                    Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE)
+                )
             {
                 prepare(state, object);
             }
@@ -2533,7 +2539,10 @@ fn note_entries(state: &mut GameState, events: &[CommittedEvent]) {
             }
         }
         // "Enters prepared" is not a triggered ability.
-        if definition_name(state, object) == Some(CARNIVOROUS_CULTIVATOR) {
+        if matches!(
+            definition_name(state, object),
+            Some(CARNIVOROUS_CULTIVATOR | POMPOUS_BATTLEMAGE)
+        ) {
             prepare(state, object);
         }
         if statics::entry_triggers_suppressed(state, object) {
@@ -2558,7 +2567,12 @@ fn prepare(state: &mut GameState, creature: ObjectId) {
         return;
     }
     let controller = state.objects.get(creature).controller;
-    let card_def = token_id(ENROOT);
+    let printing = if definition_name(state, creature) == Some(POMPOUS_BATTLEMAGE) {
+        IMPROVISED_ACT
+    } else {
+        ENROOT
+    };
+    let card_def = token_id(printing);
     let copy = state.objects.push(crate::state::GameObject {
         card_def,
         name: CARD_DEFS[usize::from(card_def)].object_name.into(),

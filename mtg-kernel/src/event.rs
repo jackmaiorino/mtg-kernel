@@ -6026,6 +6026,10 @@ fn materialize_event_v1(
                 crate::eternal_sideboard_s1d_v1::statics::note_departure(
                     state, z.object, from, z.to_zone,
                 );
+                // Skullclamp reads its equipped creature before it moves
+                // (Vintage Cube wave C4c).
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cube_c4c_v1::note_departure(state, z.object, from, z.to_zone);
                 crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
                 if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
                     crate::engine::record_different_controller_target_departure(state, z.object);
@@ -6132,6 +6136,7 @@ fn materialize_event_v1(
                     crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
+                    crate::eternal_cube_c4b_v1::note_departure(state, z.object);
                 }
                 if from == Zone::Battlefield
                     && z.to_zone != Zone::Battlefield
@@ -6171,6 +6176,7 @@ fn materialize_event_v1(
                     crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
+                    crate::eternal_cube_c4b_v1::note_departure(state, z.object);
                 }
             }
             materialize_zone_change_v1(
@@ -6265,6 +6271,11 @@ fn materialize_event_v1(
             // gains no life instead." (eternal wave P1a)
             #[cfg(feature = "eternal-fixtures")]
             if crate::eternal_premodern_p1a_v1::statics::prevents_life_gain(state) {
+                return None;
+            }
+            // Screaming Nemesis: a player it dealt damage can't gain life.
+            #[cfg(feature = "eternal-fixtures")]
+            if crate::eternal_cube_c4b_v1::cannot_gain_life(state, g.player) {
                 return None;
             }
             state.players[g.player.index()].life += g.amount;
