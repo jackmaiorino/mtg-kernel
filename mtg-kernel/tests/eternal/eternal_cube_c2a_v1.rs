@@ -778,6 +778,26 @@ fn shocklands_are_not_offered_the_payment_without_two_life() {
 }
 
 #[test]
+fn a_shockland_or_passage_entering_under_blood_moon_has_no_entry_choice() {
+    // Blood Moon makes the entering nonbasic land a Mountain with no
+    // abilities, so nothing is asked and it enters untapped.
+    for name in ["Steam Vents", "Watery Grave", "Multiversal Passage"] {
+        let mut state = plains();
+        put(&mut state, P1, "Blood Moon", Zone::Battlefield);
+        let land = put(&mut state, P0, name, Zone::Hand);
+        play(&mut state, land);
+        expect_priority(&mut state);
+        assert_eq!(zone(&state, land), Zone::Battlefield, "{name}");
+        assert!(!is_tapped(&state, land), "{name}");
+        assert_eq!(life(&state, P0), 20, "{name}");
+        assert!(
+            taps_single(&state, land, ManaColor::R),
+            "{name} is a Mountain"
+        );
+    }
+}
+
+#[test]
 fn a_shockland_that_enters_tapped_for_another_reason_still_asks() {
     for pay in [true, false] {
         let mut state = plains();
