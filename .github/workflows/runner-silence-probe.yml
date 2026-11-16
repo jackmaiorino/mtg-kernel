@@ -1,0 +1,58 @@
+name: Runner silence probe
+
+# Experiment, not for merge. A hosted Linux job freezes its own runner
+# processes at a recorded time, the way a starved runner stops answering.
+# It measures how long GitHub takes to declare the runner lost and what it
+# keeps from the job: annotations sent before the silence, and the log of
+# a step that had finished.
+'on':
+  pull_request:
+    paths:
+      - .github/workflows/runner-silence-probe.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-silence-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  silence:
+    name: Silent runner (${{ matrix.case }})
+    runs-on: ubuntu-24.04
+    # all: the listener and the worker both stop, as on a frozen machine;
+    # the limit is far beyond any expected declaration. worker: only the
+    # worker stops and the listener keeps renewing the job, to see whether
+    # such a job ends only at its limit.
+    timeout-minutes: ${{ matrix.case == 'worker' && 30 || 120 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [all, worker]
+    steps:
+      - name: A step that finishes before the silence
+        run: |
+          echo "::notice title=silence-probe::step 1 finished at $(date -u +%H:%M:%S) UTC"
+          echo "a plain log line of a finished step"
+
+      - name: Go silent
+        env:
+          CASE: ${{ matrix.case }}
+        run: |
+          echo "::notice title=silence-probe::step 2 began at $(date -u +%H:%M:%S) UTC"
+          ps -eo pid,ppid,comm,etime | grep -E 'Runner|provjob|hosted' || true
+          for tick in 1 2 3; do
+            sleep 20
+            echo "::notice title=silence-probe::tick $tick at $(date -u +%H:%M:%S) UTC"
+          done
+          listener=$(pgrep -x Runner.Listener)
+          worker=$(pgrep -x Runner.Worker)
+          echo "::warning title=silence-probe::case $CASE: runner processes stop at $(date -u -d '+30 seconds' +%H:%M:%S) UTC (listener $listener, worker $worker)"
+          sleep 30
+          if [ "$CASE" = worker ]; then
+            sudo kill -STOP $worker
+          else
+            sudo kill -STOP $listener $worker
+          fi
+          sleep 10800
