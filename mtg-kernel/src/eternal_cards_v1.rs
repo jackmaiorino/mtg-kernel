@@ -1719,17 +1719,9 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
 
 /// The number of distinct card types among `cards` (delirium, Nethergoyf).
 /// Cards outside the stack have only their front-face characteristics.
+/// Kindred is a card type, so a Kindred Instant counts as two.
 pub fn card_type_count(state: &GameState, cards: &[ObjectId]) -> usize {
-    const TYPES: [CardType; 7] = [
-        CardType::Land,
-        CardType::Creature,
-        CardType::Instant,
-        CardType::Sorcery,
-        CardType::Artifact,
-        CardType::Enchantment,
-        CardType::Planeswalker,
-    ];
-    TYPES
+    CardType::ALL
         .iter()
         .filter(|&&card_type| {
             cards.iter().any(|&card| {
