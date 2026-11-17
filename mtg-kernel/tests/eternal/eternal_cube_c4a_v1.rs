@@ -1814,6 +1814,33 @@ fn caustic_bronco_is_saddled_only_until_end_of_turn() {
     assert_eq!(life(&state, P0), before - 5, "not saddled any more");
 }
 
+/// Saddle is not crew (702.171a): a Pilot Token "crews Vehicles as though its
+/// power were 2 greater", which does not count toward saddling a Mount.
+#[test]
+fn caustic_bronco_saddle_does_not_count_a_pilot_tokens_crew_bonus() {
+    let mut state = plains();
+    let bronco = put(&mut state, P0, "Caustic Bronco", Zone::Battlefield);
+    token(&mut state, P0, "Pilot Token");
+    put(&mut state, P0, "Mother of Runes", Zone::Battlefield);
+    assert!(!activatable(&mut state, bronco, 0), "power 1 + 1 of 3");
+
+    // The same two creatures crew Esika's Chariot (crew 4): 1 + 2 + 1.
+    let chariot = put(&mut state, P0, "Esika's Chariot", Zone::Battlefield);
+    let crew = def("Esika's Chariot")
+        .activated_abilities
+        .iter()
+        .position(|ability| {
+            ability
+                .cost
+                .iter()
+                .any(|component| matches!(component, CostComponent::Crew(4)))
+        })
+        .expect("crew 4");
+    let crew = u8::try_from(crew).unwrap();
+    assert!(activatable(&mut state, chariot, crew), "1 + 2 + 1 of 4");
+    assert!(!activatable(&mut state, bronco, 0), "still power 2 of 3");
+}
+
 // ---- Public sessions ---------------------------------------------------------------
 
 #[test]

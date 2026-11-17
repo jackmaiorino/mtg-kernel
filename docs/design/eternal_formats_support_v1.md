@@ -2743,7 +2743,8 @@ C4a:
 - Lutri, the Spellchaser: companion with the distinct-names deck condition, and an
   enters-after-cast trigger that copies a target instant or sorcery spell its controller controls,
   with a keep-or-change choice per target. Caustic Bronco: saddle 3 is a crew cost at sorcery
-  speed, recorded for the turn and read by its attack trigger.
+  speed, recorded for the turn and read by its attack trigger. Saddle is not crew, so a Pilot
+  token's "crews Vehicles as though its power were 2 greater" counts only for a Vehicle's crew.
 - New subtypes: Vedalken (600), Horse (601), Mount (602).
 
 C4b:

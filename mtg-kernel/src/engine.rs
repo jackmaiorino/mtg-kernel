@@ -7250,7 +7250,7 @@ fn can_pay_components(
             CostComponent::Crew(required) => {
                 crew_candidates(state, player, source, &[])
                     .iter()
-                    .map(|binding| crew_power(state, binding.object).max(0))
+                    .map(|binding| crew_power(state, binding.object, source).max(0))
                     .sum::<i64>()
                     >= i64::from(*required)
             }
@@ -7424,7 +7424,7 @@ fn validate_cost_component_choices_v1(
                 || !candidates.iter().any(|binding| binding.object == *id)
         }) || object_cost_chosen
             .iter()
-            .map(|&id| crew_power(state, id))
+            .map(|&id| crew_power(state, id, source))
             .sum::<i64>()
             < i64::from(required)
         {
@@ -17415,7 +17415,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                 can_finish: pending
                     .object_cost_chosen
                     .iter()
-                    .map(|binding| crew_power(state, binding.object))
+                    .map(|binding| crew_power(state, binding.object, pending.source))
                     .sum::<i64>()
                     >= i64::from(required),
             });
@@ -17871,7 +17871,7 @@ pub(crate) fn validate_pending_activation(
         let selected_power = pending
             .object_cost_chosen
             .iter()
-            .map(|binding| crew_power(state, binding.object))
+            .map(|binding| crew_power(state, binding.object, pending.source))
             .sum::<i64>();
         if pending.crew_finished && selected_power < i64::from(required) {
             return Err("crew payment is incomplete".into());
@@ -31972,10 +31972,15 @@ fn crew_requirement(components: &[CostComponent]) -> Option<u8> {
         }
     })
 }
-fn crew_power(state: &GameState, object: ObjectId) -> i64 {
+/// The power `object` counts with toward the crew cost of `source`'s ability.
+/// A Pilot Token "crews Vehicles as though its power were 2 greater": the
+/// bonus is for crewing a Vehicle only, not for saddling a Mount (702.171a),
+/// whose saddle cost shares this crew cost.
+fn crew_power(state: &GameState, object: ObjectId, source: ObjectId) -> i64 {
     let bonus = if card_def::CARD_DEFS[state.objects.get(object).card_def as usize].name
         == "Pilot Token"
         && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
+        && has_effective_subtype(state, source, card_def::Subtype::Vehicle)
     {
         2
     } else {
@@ -32020,16 +32025,17 @@ fn crew_candidates(
     };
     let selected_power = selected
         .iter()
-        .map(|b| crew_power(state, b.object))
+        .map(|b| crew_power(state, b.object, source))
         .sum::<i64>();
     let positives = candidates
         .iter()
-        .map(|b| crew_power(state, b.object).max(0))
+        .map(|b| crew_power(state, b.object, source).max(0))
         .sum::<i64>();
     candidates
         .into_iter()
         .filter(|b| {
-            selected_power + positives + crew_power(state, b.object).min(0) >= i64::from(required)
+            selected_power + positives + crew_power(state, b.object, source).min(0)
+                >= i64::from(required)
         })
         .collect()
 }
@@ -32074,7 +32080,7 @@ fn finish_crew(state: &mut GameState) -> Result<(), String> {
     if pending
         .object_cost_chosen
         .iter()
-        .map(|b| crew_power(state, b.object))
+        .map(|b| crew_power(state, b.object, pending.source))
         .sum::<i64>()
         < i64::from(required)
     {
