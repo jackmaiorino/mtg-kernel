@@ -213,8 +213,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
 /// Alternative costs. Leonardo: "Sneak {W}"; Spider-Man: "Web-slinging
 /// {W}"; Lunarch Veteran: "Disturb {1}{W}"; Martyr's Soul: convoke; Ramosian
 /// Rally: "If you control a Plains, you may tap an untapped creature you
-/// control rather than pay this spell's mana cost."; Demand Answers' artifact
-/// sacrifice branch (see `special_for`).
+/// control rather than pay this spell's mana cost."
 pub(super) fn alt_cost_for(name: &str) -> &'static str {
     match name {
         "Leonardo, Big Brother" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 0, x_count: 0 }), CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::UnblockedAttackingCreatureV1)], condition: AltCostCondition::SneakV1 })",
@@ -222,13 +221,14 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
         "Lunarch Veteran" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 1, x_count: 0 })], condition: AltCostCondition::DisturbV1 })",
         "Martyr's Soul" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Colored(ManaColor::W)], generic: 2, x_count: 0 })], condition: AltCostCondition::Always })",
         "Ramosian Rally" => "Some(AltCostDef { components: &[CostComponent::TapUntappedControlledPermanent(PermanentFilterDef::CreatureV1)], condition: AltCostCondition::ControlsPermanentWithSubtype(Subtype::Plains) })",
-        "Demand Answers" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 1, x_count: 0 }), CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Artifact }], condition: AltCostCondition::Always })",
         _ => super::build_eternal_e7a_v1::alt_cost_for(name),
     }
 }
 
-/// Mandatory additional costs. Demand Answers: "discard a card" (its
-/// sacrifice branch is the alternative cost).
+/// Mandatory additional costs. Demand Answers: the discard of its choice
+/// between two additional costs ("sacrifice an artifact or discard a card"),
+/// which opens the cast's discard stage; the chosen mode names the cost
+/// really paid (`eternal_cost_choice_v1`).
 pub(super) fn additional_cost_for(name: &str) -> &'static str {
     match name {
         "Demand Answers" => "Some(&[CostComponent::DiscardCards(1)])",

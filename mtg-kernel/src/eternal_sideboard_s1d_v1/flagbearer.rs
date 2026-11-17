@@ -30,6 +30,8 @@ use crate::eternal_cube_c1a_v1::targets::C1aTargetV1;
 use crate::eternal_cube_c1b_v1::targets::C1bTargetV1;
 use crate::eternal_cube_c1c_v1::targets::C1cTargetV1;
 use crate::eternal_cube_c2c_v1::targets::C2cTargetV1;
+use crate::eternal_cube_c4a_v1::targets::C4aTargetV1;
+use crate::eternal_cube_c4c_v1::targets::C4cTargetV1;
 use crate::eternal_sideboard_s1d_v1::targets::S1dTargetV1;
 use crate::standard_cards_v1::StandardTargetV1;
 use crate::state::{GameState, Target};
@@ -191,6 +193,18 @@ fn standard_shape(filter: StandardTargetV1) -> TargetShape {
         },
         S::C2cV1(filter) => match filter {
             C2cTargetV1::LandsV1(_) => SharedRoster,
+        },
+        // The wave C4 filters are the targets of triggered abilities, which
+        // the obligation never binds: Displacer Kitten's "up to one target
+        // nonland permanent you control", Lutri, the Spellchaser's "target
+        // instant or sorcery spell you control" (its copy's new targets are
+        // not cast either) and Esika's Chariot's token.
+        S::C4aV1(filter) => match filter {
+            C4aTargetV1::UpToOneControlledNonlandPermanentV1
+            | C4aTargetV1::ControlledInstantOrSorcerySpellV1 => Single,
+        },
+        S::C4cV1(filter) => match filter {
+            C4cTargetV1::ControlledTokenV1 => Single,
         },
         S::UpToTwoAnyTargets
         | S::TwoCreaturesV1

@@ -1129,18 +1129,67 @@ fn export_versioned(
                 });
             }
         }
+        // A token or spell copy in a library is placed by handle. It keeps
+        // its native position only while V knows that position (a library
+        // fact, or the one position V's projection allows). Otherwise, as
+        // after a shuffle, it takes the top-most position V cannot rule out
+        // for it among the positions V does not know, and the hidden slots
+        // take the rest in order: the export never shows the true position.
+        // With no such object the open positions are exactly the hidden
+        // slots' native positions, as before.
+        let known = &projection.library[owner.index()];
+        let possible = |id: ObjectId| projection.library_public.get(&id);
+        let mut open: Vec<usize> = Vec::new();
+        let mut hidden: Vec<ObjectId> = Vec::new();
+        let mut floating: Vec<ObjectId> = Vec::new();
         for (i, &native) in p.library.iter().enumerate() {
+            let position = i as u32;
             if live_outside_pool(native, Zone::Library) {
-                // A token or spell copy in a library: placed by handle.
-                library_public.push((owner, i, native));
-            } else if !projection.library[owner.index()].contains_key(&(i as u32)) {
-                slots.push(SlotV1 {
-                    owner,
-                    zone: Zone::Library,
-                    index: i,
-                    native,
-                });
+                let fixed = known.get(&position) == Some(&native)
+                    || possible(native).is_some_and(|s| s.len() == 1 && s.contains(&position));
+                if fixed {
+                    library_public.push((owner, i, native));
+                    continue;
+                }
+                if known.contains_key(&position)
+                    || !possible(native).is_some_and(|s| s.contains(&position))
+                {
+                    return Err(refuse(
+                        RefusalCodeV1::R5,
+                        "a public library object lies outside the positions V allows",
+                    ));
+                }
+                floating.push(native);
+                open.push(i);
+            } else if !known.contains_key(&position) {
+                hidden.push(native);
+                open.push(i);
             }
+        }
+        floating.sort_by_key(|id| {
+            projection
+                .current_span(*id)
+                .map_or((usize::MAX, u32::MAX), |s| (s.start_item, s.start_pos))
+        });
+        for id in floating {
+            let Some(k) = open
+                .iter()
+                .position(|i| possible(id).is_some_and(|s| s.contains(&(*i as u32))))
+            else {
+                return Err(refuse(
+                    RefusalCodeV1::R5,
+                    "no open library position for a public object",
+                ));
+            };
+            library_public.push((owner, open.remove(k), id));
+        }
+        for (index, native) in open.into_iter().zip(hidden) {
+            slots.push(SlotV1 {
+                owner,
+                zone: Zone::Library,
+                index,
+                native,
+            });
         }
     }
 
@@ -1391,7 +1440,10 @@ fn export_versioned(
         is(MutantV1::L8) || is(MutantV1::L11) || is(MutantV1::L12) || is(MutantV1::L14);
     let mut bound_names = Vec::new();
     if let Some(evidence) = &reveal_evidence_v4 {
-        let hand_size = state.players[opp.index()].hand.len();
+        // The minima name hidden hand cards, so they are bounded by the
+        // hidden hand: a token or spell copy in the hand (issue 713) is
+        // public, takes no hidden slot and never counts toward them.
+        let hand_size = state.players[opp.index()].hand.len() - opp_hand_public.len();
         for (def, count) in evidence.knowledge.hand(opp) {
             if count > hand_size - bound_names.len() {
                 return Err(refuse(

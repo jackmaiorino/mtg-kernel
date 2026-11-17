@@ -703,6 +703,62 @@ fn thornscape_white_kicker_has_a_fixed_seat_human_prompt() {
     }
 }
 
+/// #715: Bone Shards' two modes have the same effect, so each label names the
+/// additional cost that mode pays.
+#[cfg(all(test, feature = "eternal-fixtures"))]
+#[test]
+fn bone_shards_cost_choice_has_a_fixed_seat_human_prompt() {
+    use crate::engine::{self, Action, Decision};
+    use crate::ids::PlayerId;
+    use crate::policy_observation_v6::tests::{put, ready_state_for};
+    use crate::policy_surface_v5::PolicySurfaceV5;
+    use crate::rl::{legal_action_candidates_v1, observe_policy_v6};
+    use crate::surface::SurfaceDecision;
+
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ready_state_for(actor);
+        let spell = put(&mut state, actor, "Bone Shards", Zone::Hand);
+        put(&mut state, actor, "Island", Zone::Hand);
+        put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
+        put(
+            &mut state,
+            actor.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        state.players[actor.index()].mana_pool[ManaColor::B.pool_index()] = 1;
+        engine::step(&mut state, Action::CastSpell(spell)).unwrap();
+        let decision = engine::advance_until_decision(&mut state);
+        let Decision::ChooseSpellMode { legal_modes, .. } = &decision else {
+            panic!("{decision:?}");
+        };
+        assert_eq!(legal_modes, &[0, 1]);
+        let actions = legal_action_candidates_v1(&SurfaceDecision::Decision(decision), &state)
+            .unwrap()
+            .into_iter()
+            .map(|row| row.record.semantic)
+            .collect::<Vec<_>>();
+        let observation =
+            observe_policy_v6(&state, &PolicySurfaceV5::new(), actor, 0, 0, 0, 1).unwrap();
+        let (prompt, indices) =
+            super::visible::project_decision(&observation, &actions, actor.into(), 1).unwrap();
+        assert_eq!(indices.len(), 2);
+        let labels = prompt
+            .actions
+            .iter()
+            .map(|action| action.label.as_str())
+            .collect::<Vec<_>>();
+        for cost in ["sacrifice a creature", "discard a card"] {
+            let ending = format!(", {cost} as its additional cost; destroy the chosen object");
+            let matching = labels
+                .iter()
+                .filter(|label| label.starts_with("For Bone Shards [") && label.ends_with(&ending))
+                .count();
+            assert_eq!(matching, 1, "{labels:?}");
+        }
+    }
+}
+
 pub(super) fn label_v8(
     action: &A,
     observation: &crate::policy_observation_v8::ObservationV8,
@@ -2012,11 +2068,20 @@ fn label_common(
                 2 => (def.mode3.as_ref().ok_or(Error::UnsupportedPrompt)?.effect)(),
                 _ => return Err(Error::UnsupportedPrompt),
             };
-            format!(
-                "For {}, {}",
-                handles.name(source)?,
-                describe_effect(&effect)?
-            )
+            // A choice between two additional costs (#715): both modes have
+            // the same effect, so the label names the cost each one pays.
+            match crate::eternal_cost_choice_v1::cost_words(def, *mode_index) {
+                Some(cost) => format!(
+                    "For {}, {cost} as its additional cost; {}",
+                    handles.name(source)?,
+                    describe_effect(&effect)?
+                ),
+                None => format!(
+                    "For {}, {}",
+                    handles.name(source)?,
+                    describe_effect(&effect)?
+                ),
+            }
         }
         A::ChooseEffectOption {
             source,

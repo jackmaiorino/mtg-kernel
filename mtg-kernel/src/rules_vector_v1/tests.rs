@@ -1825,3 +1825,26 @@ fn edict_native_conditional_cost_and_simultaneous_choices_remain_opaque_in_froze
         TargetSpec::None
     );
 }
+
+/// The frozen card type facets have no Kindred member: a Kindred card is
+/// refused, never described by its other card type alone.
+#[test]
+#[should_panic(expected = "the Kindred card type requires its precise successor")]
+fn kindred_card_type_is_refused_by_the_frozen_type_facets() {
+    let _ = CardTypeF::from(CardType::Kindred);
+}
+
+#[test]
+fn earlier_card_types_keep_their_facets() {
+    for (card_type, facet) in [
+        (CardType::Land, CardTypeF::Land),
+        (CardType::Creature, CardTypeF::Creature),
+        (CardType::Instant, CardTypeF::Instant),
+        (CardType::Sorcery, CardTypeF::Sorcery),
+        (CardType::Artifact, CardTypeF::Artifact),
+        (CardType::Enchantment, CardTypeF::Enchantment),
+        (CardType::Planeswalker, CardTypeF::Planeswalker),
+    ] {
+        assert_eq!(CardTypeF::from(card_type), facet);
+    }
+}

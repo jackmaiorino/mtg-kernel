@@ -313,6 +313,13 @@ pub fn fields(name: &str, executable: bool) -> StandardLandFields {
         "Ghitu Encampment" => {
             fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 2, toughness: 1, artifact: false, colors: &[ManaColor::R], subtypes: &[Subtype::Warrior], keywords: Keywords::FIRST_STRIKE })".to_string();
         }
+        // Eternal catalog (Vintage Cube wave C4c): Iron Man Armor's {2}
+        // "becomes a 0/0 Construct Hero artifact creature with flying until
+        // end of turn" (its "+1/+1 for each artifact you control" is
+        // `eternal_cube_c4c_v1::controlled_boost`).
+        "Iron Man Armor" => {
+            fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 0, toughness: 0, artifact: true, colors: &[], subtypes: &[Subtype::Construct, Subtype::Hero], keywords: Keywords::FLYING })".to_string();
+        }
         "Soulstone Sanctuary" => {
             fields.animation = "Some(AnimationDef { until_end_of_turn: false, power: 3, toughness: 3, artifact: false, colors: &[], subtypes: Subtype::CREATURE_TYPES, keywords: Keywords::VIGILANCE })".to_string();
         }
