@@ -11,15 +11,18 @@ import json
 import math
 from pathlib import Path
 import random
+import shutil
 import statistics
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "python/tools"))
 import limited_campaign_eval_v1 as ev
+import limited_training_inventory_v1 as inventory_tool
 
 
 MASK = (1 << 64) - 1
@@ -469,12 +472,47 @@ class RefusalTest(unittest.TestCase):
         with self.assertRaises(ev.EvaluationInputError):
             ev.eval_subgroups(inventory)
 
+    def test_read_jsonl_ignores_line_endings(self):
+        rows = make_rows(STEP0, [("A", "B"), ("draw", "stall")])
+        text = "".join(json.dumps(r) + "\n" for r in rows).encode("utf-8")
+        with tempfile.TemporaryDirectory() as tmp:
+            lf, crlf = Path(tmp) / "lf.jsonl", Path(tmp) / "crlf.jsonl"
+            lf.write_bytes(text)
+            crlf.write_bytes(text.replace(b"\n", b"\r\n"))
+            self.assertEqual(ev.read_jsonl(lf), rows)
+            self.assertEqual(ev.read_jsonl(crlf), rows)
+
     def test_read_jsonl_refuses_a_broken_line(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "games.jsonl"
             path.write_text('{"game":0}\n{"game":1,\n', encoding="utf-8")
             with self.assertRaises(ev.EvaluationInputError):
                 ev.read_jsonl(path)
+
+
+class InventoryPinTest(unittest.TestCase):
+    """The design's `sample_sha256_in_pool_order` pin holds whatever line endings pool.tsv has on disk.
+
+    pool.tsv is `text=auto`: LF in the index and on Linux, CRLF in a Windows checkout."""
+
+    def test_the_pin_holds_on_this_checkout(self):
+        self.assertEqual(inventory_tool.inventory()["sample_sha256_in_pool_order"], ev.SAMPLE_SHA256)
+
+    def test_pool_bytes_are_hashed_with_crlf(self):
+        self.assertEqual(inventory_tool.canonical_pool_bytes(b"a\tb\nc\td\n"), b"a\tb\r\nc\td\r\n")
+        self.assertEqual(inventory_tool.canonical_pool_bytes(b"a\tb\r\nc\td\r\n"), b"a\tb\r\nc\td\r\n")
+        self.assertEqual(inventory_tool.canonical_pool_bytes(b"a\r\nb\nc"), b"a\r\nb\r\nc")
+
+    def test_lf_and_crlf_copies_of_the_sample_give_the_pin(self):
+        source = inventory_tool.SAMPLE
+        lf = (source / "pool.tsv").read_bytes().replace(b"\r\n", b"\n")
+        for name, pool in (("lf", lf), ("crlf", lf.replace(b"\n", b"\r\n"))):
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                sample = Path(tmp) / "draftzero_sample_v1"
+                shutil.copytree(source / "decks", sample / "decks")
+                (sample / "pool.tsv").write_bytes(pool)
+                with mock.patch.object(inventory_tool, "SAMPLE", sample):
+                    self.assertEqual(inventory_tool.inventory()["sample_sha256_in_pool_order"], ev.SAMPLE_SHA256)
 
 
 class ProvenanceTest(unittest.TestCase):
