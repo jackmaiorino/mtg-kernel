@@ -1159,8 +1159,7 @@ Spirits whose incarnations left the battlefield or exile, and Drop of Honey's tr
 once its trigger left the stack.
 
 Known gaps (S1g): no effect removes counters from the Spirits, so their flying counter is not
-a counter other effects can count or remove. A land entering under Alpine Moon keeps an
-enters-tapped ability, as under Blood Moon. Drop of Honey's state trigger is checked as
+a counter other effects can count or remove. Drop of Honey's state trigger is checked as
 triggers are collected, so creatures that all leave and return within one event batch, such
 as a flicker of every creature, don't trigger it (its ruling says they do).
 
@@ -2558,6 +2557,14 @@ C2a:
 - Indatha, Ketria, Raugrin, Savai and Zagoth Triome, Raffine's Tower and Xander's Lounge join the
   `TRIOMES` table (enter tapped, three basic types, cycling {3}); Blazemire Verge and Bleachbone
   Verge join `VERGES`; Botanical Sanctum joins `FASTLANDS`; Commercial District is a surveil land.
+- Entering tapped is decided as the permanent would exist on the battlefield (614.12). A land's
+  own printed rule ("enters tapped", "enters tapped unless") is read before the move and dropped
+  once the land is placed if a Moon effect (Blood Moon, Magus of the Moon, Harbinger of the Seas,
+  Vision Charm, Alpine Moon) already removes its abilities (`event::printed_entry_rule_removed_v1`),
+  as the shocklands and Multiversal Passage skip their choice. The effects of other permanents
+  (Archon of Emeria, Root Maze, Spider-Woman) are checked after placement on the current types and
+  the controller it entered under, so a Mycosynth Lattice or an Opalescence counts; a tap from
+  another source is never undone by the Moon check.
 
 C2b:
 

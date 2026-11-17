@@ -6404,9 +6404,12 @@ fn materialize_event_v1(
                 state.objects.get_mut(object).v4.layer_timestamp = Some(timestamp);
             }
             state.players[t.controller.index()].battlefield.push(object);
+            // The token is already on the battlefield: every entry rule
+            // checks it as it exists there (614.12).
             let enters_tapped = t.entry_tapped
-                || permanent_enters_battlefield_tapped(state, object, t.controller, t.token_def)
-                || crate::eternal_cube_c3b_v1::enters_tapped(state, object, t.controller, false)
+                || (permanent_enters_battlefield_tapped(state, object, t.controller, t.token_def)
+                    && !printed_entry_rule_removed_v1(state, object))
+                || enters_tapped_on_battlefield_v1(state, object, t.controller, false)
                 || authority_observers.map_or_else(
                     || {
                         crate::authority_of_the_consuls_v1::enters_tapped(
@@ -7954,6 +7957,52 @@ pub fn log_monarch_trigger(
     Ok(binding)
 }
 
+/// Whether the entering permanent has lost the abilities of its rules text
+/// as it enters (wave E8a's Moon effects: Blood Moon, Magus of the Moon,
+/// Harbinger of the Seas, Vision Charm, Alpine Moon). Its printed "enters
+/// tapped" rule is one of those abilities, so it no longer applies (614.12,
+/// 305.7). Called once the permanent is on the battlefield with its
+/// controller set, before it gets a timestamp of its own, so only effects
+/// that already existed count. Outside the eternal catalog no such effect
+/// exists.
+fn printed_entry_rule_removed_v1(state: &GameState, object: ObjectId) -> bool {
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        crate::eternal_legacy_e8a_v1::statics::removal_timestamp(state, object).is_some()
+    }
+    #[cfg(not(feature = "eternal-fixtures"))]
+    {
+        let _ = (state, object);
+        false
+    }
+}
+
+/// The "enters tapped" effects of other permanents that read the entering
+/// permanent's types: Archon of Emeria and Root Maze (eternal catalog) and
+/// Spider-Woman, Stunning Savior (Vintage Cube wave C3b). Called once the
+/// permanent is on the battlefield under `controller`, so it is checked as
+/// it exists there, with the continuous effects that already apply to it
+/// (614.12): a Mycosynth Lattice makes it an artifact, an Opalescence makes
+/// an enchantment a creature. A permanent entering face down is a creature.
+fn enters_tapped_on_battlefield_v1(
+    state: &GameState,
+    object: ObjectId,
+    controller: PlayerId,
+    face_down: bool,
+) -> bool {
+    // Archon of Emeria: "Nonbasic lands your opponents control enter
+    // tapped." Root Maze: "Artifacts and lands enter the battlefield
+    // tapped."
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_vintage_v1::enters_tapped(state, object, controller) {
+        return true;
+    }
+    crate::eternal_cube_c3b_v1::enters_tapped(state, object, controller, face_down)
+}
+
+/// A permanent's own printed entry rule: "This enters tapped" and the
+/// "enters tapped unless" conditions of its definition. The effects of
+/// other permanents are `enters_tapped_on_battlefield_v1`.
 fn permanent_enters_battlefield_tapped(
     state: &GameState,
     object: ObjectId,
@@ -7962,12 +8011,6 @@ fn permanent_enters_battlefield_tapped(
 ) -> bool {
     let def = &crate::card_def::CARD_DEFS[usize::from(definition)];
     if def.enters_battlefield_tapped {
-        return true;
-    }
-    // Archon of Emeria: "Nonbasic lands your opponents control enter
-    // tapped."
-    #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_vintage_v1::enters_tapped(state, object, controller) {
         return true;
     }
     if let Some(rule) = def.enters_tapped_unless_controller {
@@ -8184,19 +8227,14 @@ fn materialize_zone_change_v1(
     let entry_flying_grant_timestamp = (to_zone == Zone::Battlefield
         && entering_characteristics.is_some_and(|entry| entry.grant_flying_v1))
     .then(|| crate::engine::next_timestamp(state));
-    let enters_battlefield_tapped = to_zone == Zone::Battlefield
-        && (force_battlefield_tapped
-            || (entering_face_down.is_none()
-                && permanent_enters_battlefield_tapped(state, id, owner, entry_definition))
-            // Spider-Woman, Stunning Savior (Vintage Cube wave C3b) reads the
-            // controller the permanent enters under, and a face-down
-            // permanent is a creature.
-            || crate::eternal_cube_c3b_v1::enters_tapped(
-                state,
-                id,
-                battlefield_controller.unwrap_or(owner),
-                entering_face_down.is_some(),
-            ));
+    // The permanent's own printed entry rule. Whether a Moon effect removes
+    // it, and the "enters tapped" effects of other permanents, are decided
+    // once the permanent is on the battlefield (below).
+    let printed_entry_tapped = to_zone == Zone::Battlefield
+        && entering_face_down.is_none()
+        && permanent_enters_battlefield_tapped(state, id, owner, entry_definition);
+    let enters_battlefield_tapped =
+        to_zone == Zone::Battlefield && (force_battlefield_tapped || printed_entry_tapped);
     {
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;
@@ -8316,10 +8354,23 @@ fn materialize_zone_change_v1(
                 }
             }
         }
+        // 614.12: the entry rules below check the permanent as it exists on
+        // the battlefield, under the controller it entered under. A Moon
+        // effect that already applies removes its printed entry rule (an
+        // entry tapped for another reason stays tapped).
+        let controller = state.objects.get(id).controller;
+        if printed_entry_tapped
+            && !force_battlefield_tapped
+            && printed_entry_rule_removed_v1(state, id)
+        {
+            state.objects.get_mut(id).tapped = false;
+        }
+        if enters_tapped_on_battlefield_v1(state, id, controller, entering_face_down.is_some()) {
+            state.objects.get_mut(id).tapped = true;
+        }
         // Evaluate this new static rule with the actual entering controller
         // and initialized battlefield characteristics, preserving the earlier
         // legacy entry checks and their order.
-        let controller = state.objects.get(id).controller;
         if authority_observers.map_or_else(
             || crate::authority_of_the_consuls_v1::enters_tapped(state, id, controller),
             |observers| {

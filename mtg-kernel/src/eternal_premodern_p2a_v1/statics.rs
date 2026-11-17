@@ -76,19 +76,17 @@ pub(crate) fn prevents_untap_step(state: &GameState, object: ObjectId) -> bool {
 }
 
 /// Root Maze: "Artifacts and lands enter the battlefield tapped." Whether
-/// `object`, entering under `controller`, enters tapped.
+/// `object`, entering under `controller`, enters tapped. Called once the
+/// permanent is on the battlefield: its current types decide (614.12), and
+/// a Root Maze that is itself entering does not apply to its own entry.
 pub(crate) fn enters_tapped(state: &GameState, object: ObjectId, _controller: PlayerId) -> bool {
-    let Some(live) = state.objects.try_get(object) else {
+    if state.objects.try_get(object).is_none() {
         return false;
-    };
-    let Some(def) = CARD_DEFS.get(usize::from(live.card_def)) else {
-        return false;
-    };
-    let types = def.types_for_face(live.v4.face_index);
-    (types.contains(&CardType::Artifact) || types.contains(&CardType::Land))
+    }
+    (crate::engine::object_has_type(state, object, CardType::Artifact)
+        || crate::engine::object_has_type(state, object, CardType::Land))
         && active_with_id(state, static_ids().root_maze, ROOT_MAZE, None)
-            .next()
-            .is_some()
+            .any(|maze| maze != object)
 }
 
 // ---- Contamination ------------------------------------------------------------------
