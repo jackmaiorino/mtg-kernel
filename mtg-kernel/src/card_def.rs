@@ -4141,8 +4141,16 @@ mod tests {
             &[]
         };
         assert_eq!(kindred, expected);
-        for def in CARD_DEFS.iter().filter(|def| def.has_type(CardType::Kindred)) {
-            assert_eq!(def.types, &[CardType::Kindred, CardType::Instant], "{}", def.name);
+        for def in CARD_DEFS
+            .iter()
+            .filter(|def| def.has_type(CardType::Kindred))
+        {
+            assert_eq!(
+                def.types,
+                &[CardType::Kindred, CardType::Instant],
+                "{}",
+                def.name
+            );
             assert!(def.transform_face.is_none(), "{}", def.name);
         }
     }

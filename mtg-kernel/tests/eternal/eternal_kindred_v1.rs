@@ -239,7 +239,11 @@ fn the_printed_kindred_cards_are_kindred_instants_with_a_creature_subtype() {
     for (name, subtype) in KINDRED_CARDS {
         let card = def(name);
         assert_eq!(card.capability, CardCapability::Full, "{name}");
-        assert_eq!(card.types, &[CardType::Kindred, CardType::Instant], "{name}");
+        assert_eq!(
+            card.types,
+            &[CardType::Kindred, CardType::Instant],
+            "{name}"
+        );
         assert!(card.has_type(CardType::Kindred) && card.has_type(CardType::Instant));
         assert!(!card.has_type(CardType::Creature), "{name}");
         assert!(!card.is_land && !card.is_token, "{name}");
@@ -255,7 +259,10 @@ fn the_printed_kindred_cards_are_kindred_instants_with_a_creature_subtype() {
                 "{name} {card_type:?}"
             );
         }
-        assert!(engine::has_effective_subtype(&state, card, subtype), "{name}");
+        assert!(
+            engine::has_effective_subtype(&state, card, subtype),
+            "{name}"
+        );
     }
 }
 
@@ -269,8 +276,16 @@ fn tarfire_in_a_graveyard_adds_two_card_types_to_nethergoyf_and_barrowgoyf() {
     assert_eq!(power_toughness(&state, nethergoyf), (0, 1));
     assert_eq!(power_toughness(&state, barrowgoyf), (0, 1));
     put(&mut state, P0, "Tarfire", Zone::Graveyard);
-    assert_eq!(power_toughness(&state, nethergoyf), (2, 3), "Kindred and Instant");
-    assert_eq!(power_toughness(&state, barrowgoyf), (2, 3), "Kindred and Instant");
+    assert_eq!(
+        power_toughness(&state, nethergoyf),
+        (2, 3),
+        "Kindred and Instant"
+    );
+    assert_eq!(
+        power_toughness(&state, barrowgoyf),
+        (2, 3),
+        "Kindred and Instant"
+    );
     // A second instant adds no type.
     put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
     assert_eq!(power_toughness(&state, nethergoyf), (2, 3));
@@ -350,7 +365,12 @@ fn occult_epiphany_discarding_tarfire_makes_two_spirits() {
 #[test]
 fn tarfire_is_cast_at_instant_speed_countered_and_put_into_a_graveyard() {
     let mut state = islands();
-    let tarfire = opponent_casts(&mut state, "Tarfire", &[ManaColor::R], &[Target::Player(P0)]);
+    let tarfire = opponent_casts(
+        &mut state,
+        "Tarfire",
+        &[ManaColor::R],
+        &[Target::Player(P0)],
+    );
     assert_eq!(zone(&state, tarfire), Zone::Stack);
     let counterspell = put(&mut state, P0, "Counterspell", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 0);
@@ -379,7 +399,12 @@ fn tarfire_is_cast_at_instant_speed_countered_and_put_into_a_graveyard() {
 #[test]
 fn faerie_trickery_counters_tarfire_but_not_another_faerie_trickery() {
     let mut state = islands();
-    let tarfire = opponent_casts(&mut state, "Tarfire", &[ManaColor::R], &[Target::Player(P0)]);
+    let tarfire = opponent_casts(
+        &mut state,
+        "Tarfire",
+        &[ManaColor::R],
+        &[Target::Player(P0)],
+    );
     let trickery = put(&mut state, P0, "Faerie Trickery", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 1);
     cast(&mut state, trickery, &[Target::Object(tarfire)]);
