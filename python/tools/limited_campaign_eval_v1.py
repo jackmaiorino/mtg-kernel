@@ -832,9 +832,10 @@ def evaluate(inputs: list[RunInput], inventory: dict, replicates: int = BOOTSTRA
                           "index_rule": "reject draws at or above floor(2^64 / K) * K, then draw mod K",
                           "percentile_rule": "order statistics floor(alpha/2 (R-1)) and ceil((1-alpha/2)(R-1))",
                           "gate_bound": "the lower of the percentile and BCa lower bounds",
-                          "stream_rule": "every run and each scoring column draws the same replicate-major index "
-                                         "stream, restarted at the seed, so no draw depends on argument or file "
-                                         "order"},
+                          "stream_rule": "every run and each scoring column draws its replicate-major indices from "
+                                         "the same generator stream, restarted at the seed, so no draw depends on "
+                                         "argument or file order; runs with the same pair count draw the same "
+                                         "indices"},
             "inventory": {"sample_sha256_in_pool_order": inventory["sample_sha256_in_pool_order"],
                           "registry_sha256": inventory.get("registry_sha256"),
                           "eval_full_only": classes["full_only"], "eval_over_40": classes["over_40"],
