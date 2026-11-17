@@ -1214,9 +1214,11 @@ fn selected_spell_quote_branch_grant_v1(
         return None;
     }
     // A free cast's X is zero, except Sickening Dreams' X, which counts an
-    // additional cost's discards (Premodern wave P1b).
+    // additional cost's discards (Premodern wave P1b), and a replicate,
+    // multikicker or splice count, which counts additional cost payments.
     if x != 0
         && !crate::eternal_premodern_p1b_v1::statics::announces_discard_x(definition)
+        && !super::announces_additional_cost_count(definition)
         && (super::resolution_cast_v1::free_cast_for(state, source, player)
             || (cfg!(feature = "eternal-fixtures")
                 && method == CastMethodV4::Normal
