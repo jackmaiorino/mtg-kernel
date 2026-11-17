@@ -1,0 +1,406 @@
+{
+ "common": {},
+ "created_utc": "2026-11-17T14:47:48.542803Z",
+ "note": "Floats are rounded to six significant digits; outputs_sha256 pins the raw files.",
+ "receipt_driver_sha256": "ebf86f4c04edddc3e599115d7f1e4160f321c19256d376d1e3e0303a2f15c347",
+ "runs": {
+  "ab4": {
+   "argv": ["run", "--fixture", "D:\\antigravity-20261112\\bench-599\\fixture", "--out", "D:\\antigravity-20261112\\bench-599\\ab4", "--baseline", "m3=D:\\antigravity-20261112\\bench-599\\bins\\m3v2\\native_expanded_training_run_v1.exe", "--candidate", "m4=D:\\antigravity-20261112\\bench-599\\bins\\m4\\native_expanded_training_run_v1.exe", "--cases", "pool18", "--blocks", "2", "--warmup-runs", "1", "--no-cache-diagnostics", "--keep-runs", "reference", "--build-profile", "release, checked-in profile (thin LTO, codegen-units 1)", "--label", "DESKTOP-DJ1C40R, timed reservation P-cores 0-7"],
+   "arms": {
+    "baseline": {
+     "binary": "D:\\antigravity-20261112\\bench-599\\bins\\m3v2\\native_expanded_training_run_v1.exe",
+     "bytes": 64568832,
+     "env": {},
+     "letter": "A",
+     "name": "m3",
+     "run_provenance": [
+      {"git_commit": "ed3f5e29e8ae6f07e00f1700dbbd446a991baf10", "implementation_sha256": "92cc02bee0a625c0a46d664c2963bdb6cbf50f47434df9e2e795addb3d1331aa", "tracked_tree_sha256": "3e337d20cceb6ef32ba52edcc3d6aefaba634989f98ed89e6c101a8fa77dc022"}
+     ],
+     "sha256": "43dc077473d0b49ff848dadfec7a45995fa1ec6f15d89c64090489780a568473"
+    },
+    "candidate": {
+     "binary": "D:\\antigravity-20261112\\bench-599\\bins\\m4\\native_expanded_training_run_v1.exe",
+     "bytes": 64573440,
+     "env": {},
+     "letter": "B",
+     "name": "m4",
+     "run_provenance": [
+      {"git_commit": "95c33b0dda4d1a72c1ff9911154d1a27518bb1e8", "implementation_sha256": "92cc02bee0a625c0a46d664c2963bdb6cbf50f47434df9e2e795addb3d1331aa", "tracked_tree_sha256": "dba61fc30f79d9ec4b5ccdd8800788f01402b80fefded9ab889587769d1f23f9"}
+     ],
+     "sha256": "97e35121d7cdc0d09ca8e38863370e1a660f0c0b4274cce8e2c767e8de44c8e6"
+    }
+   },
+   "binaries_unchanged": true,
+   "build_profile": "release, checked-in profile (thin LTO, codegen-units 1)",
+   "cases": {
+    "pool18": {
+     "boundaries": [
+      {"adam_step": 1, "checkpoint_sha256": "ab133aeadf36e58483619f65f73d6265a782caac3617e4c7c77a6495834dae3c", "iteration": 0, "output_identity_sha256": "46373c434b263f7a34a7eed86539e9b27e8c93693091a60311364207cf5ca01c", "state_sha256": "c7779685fa100f6a8c3a855f399e27525f8dc2f08516026331260741cc6c2c2a"},
+      {"adam_step": 2, "checkpoint_sha256": "9e3638991a6ab4f141a2b3e5770b3dd2401b98cac41fef33a85431b00409ae6a", "iteration": 1, "output_identity_sha256": "2e3a5e49f6407d10e54651e86bf278a232b00065e0c075cde11b815fd6b11638", "state_sha256": "751c5143849a1da2619f7d2fcc0d6bc23c1ddc74f7ed9509dbc4261bc2b62384"},
+      {"adam_step": 3, "checkpoint_sha256": "c85e8ad6bc6e0999f8bf1d4c1264b857e2f026918f3522528eab68ac69d84d2b", "iteration": 2, "output_identity_sha256": "065512fb8a901ac9a3fb682f85d8dcf51e4c67d710058305ad5d32d174c78360", "state_sha256": "7d88bed602e5fd79c045365bb8fbc7e3b6dba60d5f35a60659a72305ccfeafcb"}
+     ],
+     "cold_resume": [],
+     "counters": {},
+     "failures": [],
+     "parity_ok": true,
+     "storage_bytes_by_name": {"checkpoint.json": 44368908, "collect-command.json": 47492, "collection.json": 7808, "complete.json": 10757, "completion.json": 3977, "episode-#.json": 152450037, "run.json": 44868, "run.lock": 0, "update-command.json": 7985, "update-input.json": 702, "update.json": 10489},
+     "timed_samples": {"m3": 4, "m4": 4},
+     "verdicts": [
+      ["max_rss_mib", 1063.99, 1065.44, 1.00136, 0.021052, 0.00136022, [1.00869, 0.990875], "inconclusive", "the median effect is within the observed spread"],
+      ["outside_iterations_seconds", 1.04992, 1.05283, 1.00277, 0.0206009, 0.00276668, [1.0086, 0.998244], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.behavior_replay_seconds", 0.410227, 0.403717, 0.984131, 0.00899697, -0.0158693, [0.985741, 0.984025], "improvement", "the median effect exceeds the observed spread in every block"],
+      ["receipts.checkpoint_io_seconds", 0.395889, 0.402461, 1.0166, 0.0781564, 0.0166007, [0.995574, 1.04076], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.collection_elapsed_seconds", 3.32603, 3.31966, 0.998084, 0.0290716, -0.00191643, [0.997294, 0.99415], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.collection_initialization_seconds", 0.161937, 0.159406, 0.984367, 0.0230004, -0.0156329, [0.983228, 0.981526], "inconclusive", "the median effect is within the observed spread"],
+      ["receipts.input_read_seconds", 0.326456, 0.33224, 1.01772, 0.0167999, 0.0177182, [1.02681, 1.0099], "regression", "the median effect exceeds the observed spread in every block"],
+      ["receipts.learner_update_seconds", 0.294446, 0.297265, 1.00957, 0.00903033, 0.00957221, [1.01128, 1.00981], "regression", "the median effect exceeds the observed spread in every block"],
+      ["receipts.update_elapsed_seconds", 1.4279, 1.4365, 1.00602, 0.0188697, 0.00601683, [1.00311, 1.01106], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.collection_execution_seconds", 3.3583, 3.35288, 0.998386, 0.0298259, -0.00161381, [0.998175, 0.993805], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.collection_validation_seconds", 0.207479, 0.211689, 1.02029, 0.0533553, 0.0202931, [1.00418, 1.05743], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.iteration_wall_seconds", 5.15454, 5.17255, 1.00349, 0.0213734, 0.00349496, [1.0016, 0.999883], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.update_execution_seconds", 1.46287, 1.47206, 1.00628, 0.0175886, 0.00628066, [1.00344, 1.00919], "inconclusive", "the median effect is within the observed spread"],
+      ["scheduler.update_validation_seconds", 0.0129036, 0.0127896, 0.991169, 0.0800397, -0.00883087, [0.970434, 1.00613], "inconclusive", "the median effect is within the observed spread"],
+      ["sys_seconds", 1.11719, 1.29688, 1.16084, 0.240964, 0.160839, [1.19697, 1.17568], "inconclusive", "the median effect is within the observed spread"],
+      ["updates_per_hour", 1740.68, 1734.6, 0.996505, 0.0207067, -0.00349515, [0.997218, 1.00034], "inconclusive", "the median effect is within the observed spread"],
+      ["user_seconds", 4.92969, 4.95312, 1.00475, 0.0883281, 0.00475436, [1.01268, 0.995161], "inconclusive", "the median effect is within the observed spread"],
+      ["wall_seconds", 6.20446, 6.22625, 1.00351, 0.0208616, 0.00351263, [1.00278, 0.999606], "inconclusive", "the median effect is within the observed spread"]
+     ]
+    }
+   },
+   "compared_by_sha256": "ebf86f4c04edddc3e599115d7f1e4160f321c19256d376d1e3e0303a2f15c347",
+   "completed_utc": "2026-11-16T16:53:38.592211Z",
+   "created_utc": "2026-11-16T16:52:32.080579Z",
+   "env": {},
+   "fixture": {
+    "cases": {
+     "pool18": {
+      "config": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\cases\\pool18\\config.json", "sha256": "9adae1787ab2774fb713fcc7cccbf46fdfc0e3a75f1bf22a7729340a78910ab5"},
+      "first_iteration": 0,
+      "initial_source": {
+       "checkpoint": null,
+       "feature_transfer": {"expected_feature_contract_digest": "c4af415a3b0cf1e9c9960dbe2bc2d134c63e9f08206a9a364e113121fea5538b", "expected_feature_encoding_digest": "271c0e5a0fdce75663c897e89a9d7280ab1a3bbb6679bd10ecb5f524991952de"},
+       "play_import": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\descriptor.json", "sha256": "18cd45193201aa8b312732ed9041b4adbdc44a62461ed58bae7e46f56d07a41f"}
+      },
+      "iterations": 3,
+      "pool": {
+       "draws": [
+        ["member-08", "member-03", "member-13", "member-10", "member-06", "member-07", "member-16", "member-03"],
+        ["member-06", "member-05", "member-10", "member-16", "member-10", "member-05", "member-12", "member-07"],
+        ["member-07", "member-13", "member-05", "member-06", "member-17", "member-14", "member-00", "member-09"]
+       ],
+       "members": 18
+      }
+     }
+    },
+    "generator": {"git_clean": "true", "git_commit": "9953e96ff1c6fca370519d3b98fa86fb804f6047", "git_tree": "48efe18e3dc99922bbd9088e44e16f858b189cb4", "test": "native_expanded_training_run_v1::fixture_bench_v1::write_native_fixture_v1", "tracked_tree_sha256": "84026ab7c87d5a6899dbf0cf03566210bced231d9d4eba56e1fa74c35a1022e4"},
+    "options": {
+     "collection_workers": 1,
+     "games": 8,
+     "pool_members": [2, 18, 64],
+     "preparation_workers": 1,
+     "seed": 2026091601,
+     "updates": 3,
+     "warmup_updates": 0
+    },
+    "pool": {
+     "directory": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool",
+     "draw": {"rule": "slot j of update i plays member u64_be(sha256(json([tag, seed_root, i, j]))[0..8]) mod N, of the case's first N; the JSON is compact", "seed_root": "2026091601", "tag": "mtg-kernel-pool-fixture-draw/v1"},
+     "import": "the fresh source's descriptor, shared by every member",
+     "members": [
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-00\\checkpoint.json", "sha256": "7f11e61c519638f662b108fbb16b2583bfe6989eb7c99c4bba1cbb29da4e1294"},
+       "id": "member-00"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-01\\checkpoint.json", "sha256": "ae405bd83f5f8656824fae0872a462bfb36ed5c307ba3ee076963a14c044fee8"},
+       "id": "member-01"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-02\\checkpoint.json", "sha256": "efa5c0100cebce7ff862b05fbf6f92ec397bb6ecc04a0184b23e38469d9d9d73"},
+       "id": "member-02"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-03\\checkpoint.json", "sha256": "7d370d3fca35757f25d74c4c2fc36383512dbf30f6783b54966b54485c67b7a9"},
+       "id": "member-03"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-04\\checkpoint.json", "sha256": "3254793862f24a53c6ea9b0c14f6841f5fb66f7b8668085b7191208414db23ab"},
+       "id": "member-04"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-05\\checkpoint.json", "sha256": "f06db7df613307b3a5438aaff02aaef200acd30da02d2d8bcc629f9cf612838c"},
+       "id": "member-05"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-06\\checkpoint.json", "sha256": "ca3d883828bdca0b3392c5eb2066c1e57e96ee8fc6d985496be20e8bb2e8b29e"},
+       "id": "member-06"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-07\\checkpoint.json", "sha256": "171461968aa82fd72d2ad5d38e0cb7e3994d7da0e983a6d4d6039ebbd2bbabca"},
+       "id": "member-07"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-08\\checkpoint.json", "sha256": "19e249c3c5e4f8efed16219dcacaa4d8db78d3a1578ebfbc0d8b991cd57ce58b"},
+       "id": "member-08"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-09\\checkpoint.json", "sha256": "f2bc7bde4265adae592c89eb307cf530a72414c5fa85bc6ee2ca718cbd64df5a"},
+       "id": "member-09"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-10\\checkpoint.json", "sha256": "e5b69881390e016b337d631ccdc1a0d15c13518d0f0abc501501f5db3142fd1e"},
+       "id": "member-10"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-11\\checkpoint.json", "sha256": "719e39782795f923c7ce2da6c5d16d66799ded0bfeb0e890fa211c5e1f99ebe9"},
+       "id": "member-11"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-12\\checkpoint.json", "sha256": "ec714681b3f525037a7faad3b854552dc64a6662ee21306d5aadcc07b6a7fa6a"},
+       "id": "member-12"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-13\\checkpoint.json", "sha256": "42d4c43cb274a1d4d8ffb290d300608de0baeef9b5f3b776c38d2d747e3a92d6"},
+       "id": "member-13"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-14\\checkpoint.json", "sha256": "53afdc81f3e9df6e20ffb473c156c1ccd24452db57b62fc1a0438f2cad187ba3"},
+       "id": "member-14"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-15\\checkpoint.json", "sha256": "75bb5eefddaba95a1ad2e42b191ad2cc90220f779f0698864d4f5166bb395aa6"},
+       "id": "member-15"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-16\\checkpoint.json", "sha256": "5af99293f6821442d1610b087a19aaf9cdafb5b788a0b20d9c6aaf95493b95a5"},
+       "id": "member-16"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-17\\checkpoint.json", "sha256": "4451bfd8299765b37cd44d8088ba664eeece72e423bf9e20f1a2d63224b5aac2"},
+       "id": "member-17"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-18\\checkpoint.json", "sha256": "0996ec1688e60e35bd5577b589a46bab40f662be9c391075a216a011b8b424f8"},
+       "id": "member-18"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-19\\checkpoint.json", "sha256": "42864c4770c74aaf4bfaa4f2717d335bff63bb61855673fefdad2982852bab1e"},
+       "id": "member-19"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-20\\checkpoint.json", "sha256": "4657bdf62c33a86cfcc0c8c30a7e48a0a5c9a00ef4ef277ba1e401affe397e33"},
+       "id": "member-20"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-21\\checkpoint.json", "sha256": "eb90efd3e30839ebfc8bba677813be120baac9887bb3f803ee642f207882d0a6"},
+       "id": "member-21"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-22\\checkpoint.json", "sha256": "6c502ebe066469f6664dd5960d64104fcad670ccf416905b998d9af019d8d9f1"},
+       "id": "member-22"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-23\\checkpoint.json", "sha256": "afd0cce5d286d462950a9bddbd78d423c479ea9f698a63e637d2495e26619f86"},
+       "id": "member-23"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-24\\checkpoint.json", "sha256": "7126c3c17bb59e7f673465f3edc01d613a26602357fff10bf2d303d203ea69c1"},
+       "id": "member-24"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-25\\checkpoint.json", "sha256": "0286aa0c4cd85428bfeea56c315258c8a13d516202d2de325cc0a721c114ba1b"},
+       "id": "member-25"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-26\\checkpoint.json", "sha256": "68f91a5e3c6c045b4bbfbe41ce0d412e5bf56fce9297699924a6ab65e4348a5d"},
+       "id": "member-26"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-27\\checkpoint.json", "sha256": "db495d36cc246df41f20cf4985b2466675c2d24ca0ef5d24dc7e2fd64e22b36b"},
+       "id": "member-27"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-28\\checkpoint.json", "sha256": "1081c6840d4cfdf80558461fcaacefa462623fdb58e75b175a83298d0d03e615"},
+       "id": "member-28"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-29\\checkpoint.json", "sha256": "fd61c93da58d8eb0e059983d045becdd01019c8dcf892de39a5591a80ea1cea0"},
+       "id": "member-29"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-30\\checkpoint.json", "sha256": "93a5df3dfef5efbf735d610823216a895ae1978a8a1f73319ab1a173a08ebfaa"},
+       "id": "member-30"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-31\\checkpoint.json", "sha256": "90a2f60419e137cf08a7696643f54276bc8585be442c483b4f0f6117d94dfd3b"},
+       "id": "member-31"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-32\\checkpoint.json", "sha256": "17e79e6ee7dd7b382adcd9fc7236abb334f6dce7e5a1f561effa25fd7e224695"},
+       "id": "member-32"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-33\\checkpoint.json", "sha256": "acbc894382272c7d8816f1eb0e2dc4743057cd0e5b9207da964030b98415d4e2"},
+       "id": "member-33"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-34\\checkpoint.json", "sha256": "a7e3d880ddaa91ecf5ebc1654a3a968926164f56a1ba8e123479efb386447e79"},
+       "id": "member-34"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-35\\checkpoint.json", "sha256": "0243b2dd45ad852308a3a9e955b97298e57f717223110f2483f2c5267e99d1ce"},
+       "id": "member-35"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-36\\checkpoint.json", "sha256": "7ecc74b6751b858763e594b382618d81817df375e8f728382021e57768c83bb7"},
+       "id": "member-36"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-37\\checkpoint.json", "sha256": "916e581e4a046a1ffedf026827aaf99e998163aeb617971ea11d9c00e446ca9e"},
+       "id": "member-37"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-38\\checkpoint.json", "sha256": "26cb0934cca7240c6740226e72783d234b9ac601302670a766b3b9d5b4a9f38d"},
+       "id": "member-38"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-39\\checkpoint.json", "sha256": "d07086c70ceb2cb6ffb673e306d68362593d0607d9933d948b7970792d60f0a8"},
+       "id": "member-39"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-40\\checkpoint.json", "sha256": "5ccb88c78e30aa53fce6c38ba802ec475c7d1caabc428f2a9467b3ec393cff63"},
+       "id": "member-40"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-41\\checkpoint.json", "sha256": "80607b0fd84c2b64ee3bf7f58882fb17b0b992dc3cede56643880a21c1eb9ef2"},
+       "id": "member-41"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-42\\checkpoint.json", "sha256": "58259dca2b42e81d57b0dddbf2a8cbd4ab251efe35143421f5dc1dcf1a514707"},
+       "id": "member-42"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-43\\checkpoint.json", "sha256": "dd5695877dd818718b910768b5c725a9848544db00cfeb10662f6124492536ac"},
+       "id": "member-43"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-44\\checkpoint.json", "sha256": "e94e518d5748f4049ecad7b84af3fc1edcfed2936f04434507c43b2777b6ca06"},
+       "id": "member-44"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-45\\checkpoint.json", "sha256": "e46ed3169ceb4b708d54c20713d4e8409ac80ec5373bd6061a83c828ffc43bf8"},
+       "id": "member-45"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-46\\checkpoint.json", "sha256": "2ec7079a50823772816a439f78318a825c0cd5b59c21fcd5fa89b22441a6414f"},
+       "id": "member-46"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-47\\checkpoint.json", "sha256": "4f98a49b432b041595e521b8fcdbbadde03f65fa37928ca0bf89293e84582b71"},
+       "id": "member-47"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-48\\checkpoint.json", "sha256": "b55ea44926c4873781b9dd838b2738455a5fb73ca36741b4ab320a982c1b0762"},
+       "id": "member-48"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-49\\checkpoint.json", "sha256": "8e0b5acab0532db25239c487b7a1efc34639cea8b018f2bf015d4b48d7fc3e1b"},
+       "id": "member-49"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-50\\checkpoint.json", "sha256": "70c0b9e32974befbaf55b05a6a57167f41f287562d04ead98a405fc574f9ab66"},
+       "id": "member-50"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-51\\checkpoint.json", "sha256": "3e8bd34c3e720f524459eb6d9226c2579172935a82ddb9398594d89564a14d68"},
+       "id": "member-51"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-52\\checkpoint.json", "sha256": "cb6d2996801825999172cdd4e454a79bee2fdac5fcb1b9fe70d0cdfadbb4f2db"},
+       "id": "member-52"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-53\\checkpoint.json", "sha256": "12eae2aa3c6807d3f5b81863b3396fb447e60133a794d84fccff605b48207a1f"},
+       "id": "member-53"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-54\\checkpoint.json", "sha256": "e7d27f2a2cb1b71534a1f16618834e4de2a9e642dd5df2f7feea4be99cef282f"},
+       "id": "member-54"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-55\\checkpoint.json", "sha256": "751eb409a4c74a5495d444ea5455b531068ca48c5a9494841254cae0294f346e"},
+       "id": "member-55"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-56\\checkpoint.json", "sha256": "8fad5d5c9ba8d1db983e71024d7c8b92811b0a958cf04a4cb5843eb543758f80"},
+       "id": "member-56"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-57\\checkpoint.json", "sha256": "96a94d9478d1910ff8bb144d40be47fe8b9ccb7894e45af9a2c27ec9c1e00c68"},
+       "id": "member-57"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-58\\checkpoint.json", "sha256": "54e5945bf12565b9de46ba3027f19d2815a83f2de12e8f8359de7c8a88000feb"},
+       "id": "member-58"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-59\\checkpoint.json", "sha256": "84940f0225d3b0cacbd1d4405f88b055df50eefe05cafbf69a921910bcf27b81"},
+       "id": "member-59"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-60\\checkpoint.json", "sha256": "227ce81368b9398303b02dcc4a12fe1dbc41928a5e71913a76f9c0e0a5061021"},
+       "id": "member-60"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-61\\checkpoint.json", "sha256": "0405e1c27d6017a0e84cc2b128c793ba00347e6f7e590fbea163e2f7bbd39d8d"},
+       "id": "member-61"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-62\\checkpoint.json", "sha256": "48f81eb82e58e4c9f94afc01d173435eba92d8f9f139a2546df83e760bf30e41"},
+       "id": "member-62"
+      },
+      {
+       "checkpoint": {"path": "\\\\?\\D:\\antigravity-20261112\\bench-599\\fixture\\pool\\member-63\\checkpoint.json", "sha256": "5f10ad81f9a2323b9c31a39d414fd20368ab2ecd863d20146578098975f39f4e"},
+       "id": "member-63"
+      }
+     ]
+    },
+    "root": "D:\\antigravity-20261112\\bench-599\\fixture",
+    "sha256": "f2c4d4116bd690d147e08d60c34439fcb39cb0d1dfff3c6bfbc873801ce68031",
+    "workload": {
+     "decks": ["Affinity", "Terror"],
+     "learner": "net-8 FlatV4 synthetic fresh source",
+     "learner_seat": 0,
+     "learning_rate": 0.0003000000142492354,
+     "loss_selection": {"entropy_coefficient": 0.0, "gamma": 1.0, "kind": "gae_advantage_value_v1", "lambda": 0.8999999761581421},
+     "opponent": "current",
+     "seed": "seed + iteration * games + game",
+     "starting_player": "game % 2",
+     "value_coefficient": 0.5
+    }
+   },
+   "host": {"affinity_cpus": 8, "cc_on_host": null, "cpu_model": "13th Gen Intel(R) Core(TM) i7-13700K", "hostname": "DESKTOP-DJ1C40R", "kernel": "11", "ld_on_host": null, "logical_cpus": 24, "machine": "AMD64", "memory_total_mib": 130884.2, "platform": "Windows-11-10.0.26300-SP0", "python": "3.14.3", "rustc_on_host": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-pc-windows-msvc\nrelease: 1.94.1\nLLVM version: 21.1.8"},
+   "label": "DESKTOP-DJ1C40R, timed reservation P-cores 0-7",
+   "ok": true,
+   "outputs_sha256": {"bench.json": "f06e9e201c50ac612267d89e6c9422612450e533acedd582adc05c620b5a59fc", "comparison.json": "debde8b8a7eaf1dd37a2dea1eaf5a3a2ec7e96945e0e8d4d3eb044f64e9bb701", "samples.jsonl": "d674059009d055f6eb55b62812f6a24ca049e46b89d42f3d3147c365f81d283b"},
+   "policy": {"cache_diagnostics": false, "keep_runs": "reference", "max_wall_seconds": null, "order": "per case: warm-up runs (A then B, excluded from comparison), then 2 A-B-B-A block(s), then optional cold-resume checks", "page_cache": "not dropped between samples", "process": "every sample is a new process of the arm's binary", "reference": "each case's first completed sample; every later sample's run tree is compared with it", "work_path": "each case writes to its fixed output directory; the driver moves the run under runs/ after each sample"},
+   "rule": "The comparison rule (#594 item 3): fewer than two complete A-B-B-A\nblocks, an effect no larger than the observed run-to-run spread (the\nlarger arm's max minus min over its median), or blocks that disagree in\ndirection is inconclusive; otherwise the candidate/baseline median ratio\nis an improvement or a regression.",
+   "run_driver_sha256": "ebf86f4c04edddc3e599115d7f1e4160f321c19256d376d1e3e0303a2f15c347",
+   "sample_columns": ["ordinal", "case", "kind", "block", "position", "arm", "ok", "error", "first_process_wall_seconds", "max_rss_mib", "outside_iterations_seconds", "receipts.behavior_replay_seconds", "receipts.checkpoint_io_seconds", "receipts.collection_elapsed_seconds", "receipts.collection_initialization_seconds", "receipts.input_read_seconds", "receipts.learner_update_seconds", "receipts.update_elapsed_seconds", "scheduler.collection_execution_seconds", "scheduler.collection_validation_seconds", "scheduler.iteration_wall_seconds", "scheduler.update_execution_seconds", "scheduler.update_validation_seconds", "sys_seconds", "updates_per_hour", "user_seconds", "wall_seconds", "durable_completed_iterations", "storage_bytes", "parity", "identical_files", "files", "accounted"],
+   "samples": [
+    [0, "pool18", "warmup", null, "warmup1", "m3", true, null, null, 1051.17, 1.05081, 0.416622, 0.405081, 3.31356, 0.160124, 0.327996, 0.298796, 1.4485, 3.3462, 0.204973, 5.17068, 1.48622, 0.0128381, 1.15625, 1735.92, 4.85938, 6.22149, 3, 196953023, "reference", null, null, null],
+    [1, "pool18", "warmup", null, "warmup1", "m4", true, null, null, 1063.93, 1.04932, 0.402643, 0.399091, 3.29741, 0.159379, 0.32983, 0.297666, 1.42924, 3.32948, 0.202511, 5.15231, 1.46655, 0.0124292, 1.32812, 1741.48, 4.85938, 6.20163, 3, 196953031, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [2, "pool18", "timed", 0, "A1", "m3", true, null, null, 1046.42, 1.04698, 0.412281, 0.395482, 3.33106, 0.161761, 0.325382, 0.294483, 1.42764, 3.36496, 0.208641, 5.16309, 1.46263, 0.0135729, 1.125, 1739.11, 4.90625, 6.21007, 3, 196953022, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [3, "pool18", "timed", 0, "B1", "m4", true, null, null, 1065.75, 1.06192, 0.403095, 0.390719, 3.30493, 0.160121, 0.335428, 0.297397, 1.42665, 3.338, 0.212624, 5.14906, 1.46295, 0.013031, 1.32812, 1738.86, 5.07812, 6.21098, 3, 196953023, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [4, "pool18", "timed", 0, "B2", "m4", true, null, null, 1065.86, 1.04023, 0.406072, 0.397554, 3.30499, 0.157337, 0.3328, 0.297132, 1.43356, 3.34032, 0.209646, 5.15647, 1.46992, 0.0126824, 1.14062, 1742.86, 4.90625, 6.1967, 3, 196953031, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [5, "pool18", "timed", 0, "A2", "m3", true, null, null, 1066.84, 1.03723, 0.40859, 0.396295, 3.29679, 0.161112, 0.325402, 0.293414, 1.42371, 3.32557, 0.211871, 5.12601, 1.46018, 0.0129239, 0.9375, 1752.32, 4.95312, 6.16324, 3, 196953024, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [6, "pool18", "timed", 1, "A1", "m3", true, null, null, 1063.95, 1.05286, 0.410819, 0.395273, 3.321, 0.162113, 0.327509, 0.294563, 1.42817, 3.35164, 0.206317, 5.14598, 1.46311, 0.0125401, 1.20312, 1742.26, 4.71875, 6.19885, 3, 196953022, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}],
+    [7, "pool18", "timed", 1, "B1", "m4", true, null, null, 1043.43, 1.05644, 0.404339, 0.407368, 3.34089, 0.158691, 0.331679, 0.296033, 1.43943, 3.36995, 0.219743, 5.18863, 1.4742, 0.0127723, 1.45312, 1729.36, 5.0, 6.24508, 3, 196953033, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [8, "pool18", "timed", 1, "B2", "m4", true, null, null, 1065.14, 1.04921, 0.403008, 0.422174, 3.33433, 0.161004, 0.329846, 0.298717, 1.45375, 3.36544, 0.210755, 5.19232, 1.48885, 0.012807, 1.26562, 1730.35, 4.64062, 6.24153, 3, 196953025, "equal_up_to_accounted_fields", 34, 48, {"pin": 12, "provenance": 2, "timing": 21}],
+    [9, "pool18", "timed", 1, "A2", "m3", true, null, null, 1064.04, 1.05649, 0.409635, 0.401782, 3.39349, 0.163599, 0.327533, 0.294409, 1.43337, 3.42574, 0.200801, 5.23618, 1.47295, 0.0128833, 1.10938, 1716.28, 4.96875, 6.29268, 3, 196953033, "equal_up_to_accounted_fields", 35, 48, {"pin": 12, "timing": 21}]
+   ],
+   "verdict_columns": ["metric", "baseline_median", "candidate_median", "ratio", "max_spread_fraction", "effect_fraction", "block_ratios", "verdict", "reason"]
+  }
+ },
+ "schema": "mtg-kernel-native-fixture-receipt/v1"
+}
