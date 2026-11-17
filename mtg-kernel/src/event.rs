@@ -6406,6 +6406,7 @@ fn materialize_event_v1(
             state.players[t.controller.index()].battlefield.push(object);
             let enters_tapped = t.entry_tapped
                 || permanent_enters_battlefield_tapped(state, object, t.controller, t.token_def)
+                || crate::eternal_cube_c3b_v1::enters_tapped(state, object, t.controller, false)
                 || authority_observers.map_or_else(
                     || {
                         crate::authority_of_the_consuls_v1::enters_tapped(
@@ -8186,7 +8187,16 @@ fn materialize_zone_change_v1(
     let enters_battlefield_tapped = to_zone == Zone::Battlefield
         && (force_battlefield_tapped
             || (entering_face_down.is_none()
-                && permanent_enters_battlefield_tapped(state, id, owner, entry_definition)));
+                && permanent_enters_battlefield_tapped(state, id, owner, entry_definition))
+            // Spider-Woman, Stunning Savior (Vintage Cube wave C3b) reads the
+            // controller the permanent enters under, and a face-down
+            // permanent is a creature.
+            || crate::eternal_cube_c3b_v1::enters_tapped(
+                state,
+                id,
+                battlefield_controller.unwrap_or(owner),
+                entering_face_down.is_some(),
+            ));
     {
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;

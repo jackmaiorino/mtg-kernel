@@ -1524,7 +1524,12 @@ pub(crate) fn protected_from_source(state: &GameState, object: ObjectId, source:
 }
 
 pub(crate) fn protected_from_colors(state: &GameState, object: ObjectId, colors: u8) -> bool {
-    colors & 0x1f != 0 && protection_mask(state, object) & colors != 0
+    if colors & 0x1f == 0 {
+        // A colorless source: Giver of Runes' protection from colorless
+        // (Vintage Cube wave C3a).
+        return crate::eternal_cube_c3a_v1::has_colorless_protection(state, object);
+    }
+    protection_mask(state, object) & colors != 0
 }
 
 /// Blocking restrictions: Silhana Ledgewalker "can't be blocked except by
@@ -1554,6 +1559,11 @@ pub(crate) fn protection_removes_attachment(
     if crate::eternal_sideboard_s1n_v1::has_protection_from_artifacts(state, host)
         && crate::engine::object_has_type(state, attachment, CardType::Artifact)
     {
+        return true;
+    }
+    // Giver of Runes' protection from colorless removes every colorless
+    // attachment (Vintage Cube wave C3a).
+    if colors & 0x1f == 0 && crate::eternal_cube_c3a_v1::has_colorless_protection(state, host) {
         return true;
     }
     attached_named(state, host, BENEVOLENT_BLESSING).any(|blessing| {

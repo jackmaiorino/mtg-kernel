@@ -27,6 +27,9 @@ mod build_eternal_c1c_v1;
 mod build_eternal_c2a_v1;
 mod build_eternal_c2b_v1;
 mod build_eternal_c2c_v1;
+mod build_eternal_c3a_v1;
+mod build_eternal_c3b_v1;
+mod build_eternal_c3c_v1;
 mod build_eternal_e5a_v1;
 mod build_eternal_e5b_v1;
 mod build_eternal_e6a_v1;
@@ -3381,6 +3384,12 @@ enum PermanentFilterRecipe {
     /// A controlled Beast, the cost's source included (Ravenous Baloth's
     /// "Sacrifice a Beast").
     Beast,
+    /// A controlled Servo (Retrofitter Foundry's "Sacrifice a Servo").
+    Servo,
+    /// A controlled Thopter (Retrofitter Foundry's "Sacrifice a Thopter").
+    Thopter,
+    /// A controlled nontoken artifact (Thopter Foundry).
+    NontokenArtifact,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -4797,6 +4806,7 @@ fn object_name_for(name: &str) -> &str {
         "Koma's Coil Token" => "Koma's Coil",
         "Scion of the Deep Token" => "Scion of the Deep",
         "Knight Vigilance Token" => "Knight Token",
+        "Blue Thopter Token" => "Thopter Token",
         _ => build_standard_v1::object_name_for(name)
             .or_else(|| build_eternal_lurrus_v1::object_name_for(name))
             .unwrap_or(name),
@@ -6641,6 +6651,9 @@ fn permanent_filter_src(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::ForestOrPlains => "PermanentFilter::ForestOrPlainsV1",
         PermanentFilterRecipe::Goblin => "PermanentFilter::WithSubtypeV1(Subtype::Goblin)",
         PermanentFilterRecipe::Beast => "PermanentFilter::WithSubtypeV1(Subtype::Beast)",
+        PermanentFilterRecipe::Servo => "PermanentFilter::WithSubtypeV1(Subtype::Servo)",
+        PermanentFilterRecipe::Thopter => "PermanentFilter::WithSubtypeV1(Subtype::Thopter)",
+        PermanentFilterRecipe::NontokenArtifact => "PermanentFilter::NontokenArtifactV1",
     }
 }
 
@@ -6660,6 +6673,9 @@ fn permanent_filter_token(filter: PermanentFilterRecipe) -> &'static str {
         PermanentFilterRecipe::ForestOrPlains => "forest_or_plains",
         PermanentFilterRecipe::Goblin => "with_subtype:Goblin",
         PermanentFilterRecipe::Beast => "with_subtype:Beast",
+        PermanentFilterRecipe::Servo => "with_subtype:Servo",
+        PermanentFilterRecipe::Thopter => "with_subtype:Thopter",
+        PermanentFilterRecipe::NontokenArtifact => "nontoken_artifact",
     }
 }
 
@@ -11614,6 +11630,9 @@ fn subtype_variant(t: &str) -> &'static str {
         "Spacecraft" => "Subtype::Spacecraft",
         "Thrull" => "Subtype::Thrull",
         "Pest" => "Subtype::Pest",
+        "Servo" => "Subtype::Servo",
+        "Thopter" => "Subtype::Thopter",
+        "Powerstone" => "Subtype::Powerstone",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",

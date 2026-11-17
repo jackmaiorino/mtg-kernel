@@ -480,6 +480,13 @@ pub enum Subtype {
     /// Appended for Vintage Cube wave C1b (Pest Infestation's Pest tokens),
     /// with stable ids from 460 reserved for that wave.
     Pest = 460,
+    /// Appended for Vintage Cube wave C3c (the Servo and Thopter tokens of
+    /// Retrofitter Foundry and Thopter Foundry, and The Mightstone and
+    /// Weakstone's Powerstone type), with stable ids from 580 reserved for
+    /// that wave. Powerstone is an artifact type, not a creature type.
+    Servo = 580,
+    Thopter = 581,
+    Powerstone = 582,
 }
 
 impl Subtype {
@@ -878,6 +885,10 @@ impl Subtype {
         Subtype::Thrull,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Pest,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Servo,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Thopter,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1131,6 +1142,9 @@ impl Subtype {
             420 => Subtype::Spacecraft,
             440 => Subtype::Thrull,
             460 => Subtype::Pest,
+            580 => Subtype::Servo,
+            581 => Subtype::Thopter,
+            582 => Subtype::Powerstone,
             _ => return None,
         })
     }
@@ -1363,6 +1377,9 @@ impl Subtype {
             Subtype::Spacecraft => false,
             Subtype::Thrull => true,
             Subtype::Pest => true,
+            Subtype::Servo => true,
+            Subtype::Thopter => true,
+            Subtype::Powerstone => false,
         }
     }
 
@@ -1478,6 +1495,8 @@ impl Subtype {
                     | Subtype::Minion
                     | Subtype::Thrull
                     | Subtype::Pest
+                    | Subtype::Servo
+                    | Subtype::Thopter
             )
         {
             return true;
@@ -2099,6 +2118,9 @@ pub enum PermanentFilter {
     /// A controlled green creature (Natural Order's "sacrifice a green
     /// creature"). Appended for Vintage Cube wave C1b.
     GreenCreatureV1,
+    /// A controlled artifact that is not a token (Thopter Foundry's
+    /// "Sacrifice a nontoken artifact"). Appended for Vintage Cube wave C3c.
+    NontokenArtifactV1,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
@@ -2796,6 +2818,12 @@ pub enum ManaSpendRestrictionDef {
     /// "Spend this mana only to cast a noncreature spell" (Chandra, Chill of
     /// Compliance). Appended for the eternal catalog.
     NoncreatureSpellV1,
+    /// "This mana can't be spent to cast nonartifact spells" (The Mightstone
+    /// and Weakstone): it may cast artifact spells and pay for any ability.
+    /// A spell payment accepts it only for an artifact spell; an ability
+    /// payment (`mana::plan_activation_mana_v1`) accepts it for any source.
+    /// Appended for Vintage Cube wave C3c.
+    PowerstoneV1,
 }
 
 /// A `{T}: Add one mana of a listed color` ability whose mana carries a
@@ -4038,7 +4066,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x4b26_6940_9693_50d2;
+        const EXPECTED_ETERNAL: u64 = 0x0a94_18fe_98a8_0f86;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

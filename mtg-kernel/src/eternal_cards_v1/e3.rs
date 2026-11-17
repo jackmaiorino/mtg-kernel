@@ -315,6 +315,8 @@ pub enum E3ChoiceKindV1 {
     C1cV1(crate::eternal_cube_c1c_v1::C1cChoiceV1),
     /// A Vintage Cube wave C1b choice (`eternal_cube_c1b_v1`).
     C1bV1(crate::eternal_cube_c1b_v1::C1bChoiceV1),
+    /// A Vintage Cube wave C3a choice (`eternal_cube_c3a_v1`).
+    C3aV1(crate::eternal_cube_c3a_v1::C3aChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -401,6 +403,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::C1bV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::C3aV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -451,6 +456,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::C1aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C1cV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C1bV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::C3aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P1bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P2aV1(kind) => kind.public_purpose(),
@@ -513,6 +519,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::S1gV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::C1aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::C1bV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::C3aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P2aV1(kind) => out.extend(kind.referenced_bindings()),
@@ -875,6 +882,13 @@ pub(crate) fn finish_selection(
             kind,
             bindings,
             selected,
+        ),
+        E3ChoiceKindV1::C3aV1(kind) => crate::eternal_cube_c3a_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
         ),
         E3ChoiceKindV1::SurgicalExtractionV1 => crate::eternal_sideboard_s1a_v1::surgical::finish(
             state,
@@ -1258,6 +1272,9 @@ pub(crate) fn drive(
         EternalOpV1::C2aV1(op) => crate::eternal_cube_c2a_v1::drive(state, continuation, op, path),
         EternalOpV1::C2bV1(op) => crate::eternal_cube_c2b_v1::drive(state, continuation, op, path),
         EternalOpV1::C2cV1(op) => crate::eternal_cube_c2c_v1::drive(state, continuation, op, path),
+        EternalOpV1::C3aV1(op) => crate::eternal_cube_c3a_v1::drive(state, continuation, op, path),
+        EternalOpV1::C3bV1(op) => crate::eternal_cube_c3b_v1::drive(state, continuation, op, path),
+        EternalOpV1::C3cV1(op) => crate::eternal_cube_c3c_v1::drive(state, continuation, op, path),
         EternalOpV1::DelayedUpkeepDrawV1 => crate::eternal_vintage_e7b_v1::dredge::drive_draws(
             state,
             continuation,

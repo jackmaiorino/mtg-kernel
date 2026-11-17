@@ -7815,6 +7815,8 @@ fn commit_cost_components_from_plan_v1(
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_sideboard_s1b_v1::note_discard(state, source);
                 #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cube_c3c_v1::note_discard(state, source);
+                #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_premodern_p1a_v1::note_cycled(state, source);
                 event::propose_and_commit(
                     state,
@@ -8590,6 +8592,9 @@ pub(crate) fn permanent_matches_filter(
             object_has_type(state, id, CardType::Creature)
                 && object_color_mask(state, id) & (1 << ManaColor::G.pool_index()) != 0
         }
+        PermanentFilter::NontokenArtifactV1 => {
+            object_has_type(state, id, CardType::Artifact) && !state.objects.get(id).v4.is_token
+        }
     }
 }
 
@@ -9259,9 +9264,9 @@ fn tappable_controlled_permanents(
 
 fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
     match filter {
-        PermanentFilter::Artifact | PermanentFilter::AnotherArtifact => {
-            CostKind::SacrificeArtifacts
-        }
+        PermanentFilter::Artifact
+        | PermanentFilter::AnotherArtifact
+        | PermanentFilter::NontokenArtifactV1 => CostKind::SacrificeArtifacts,
         PermanentFilter::ArtifactOrCreature
         | PermanentFilter::Token
         | PermanentFilter::Creature
@@ -12814,6 +12819,9 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
     crate::standard_cards_v1::record_floating_mana(state, player, source, choice);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_vintage_v1::restrict_produced_mana(state, player, source, choice);
+    // The Mightstone and Weakstone's restricted mana (wave C3c).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c3c_v1::restrict_produced_mana(state, player, source, choice);
     // Pentad Prism's cost: the charge counter it removes (wave C2c).
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cube_c2c_v1::note_mana_ability_used(state, source);
@@ -14552,6 +14560,7 @@ pub(crate) fn commit_discarded_cards(state: &mut GameState, chosen: &[ObjectId])
     for &id in chosen {
         crate::eternal_vintage_e7b_v1::statics::note_discard(state, id);
         crate::eternal_sideboard_s1b_v1::note_discard(state, id);
+        crate::eternal_cube_c3c_v1::note_discard(state, id);
     }
     // All cards belong to one discard instruction. Capture original hand
     // incarnations and replacement destinations before moving any member.
@@ -16813,9 +16822,9 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 source: pending.spell,
                 cost_kind: match filter {
                     PermanentFilter::Creature => CostKind::SacrificeCreatures,
-                    PermanentFilter::Artifact | PermanentFilter::AnotherArtifact => {
-                        CostKind::SacrificeArtifacts
-                    }
+                    PermanentFilter::Artifact
+                    | PermanentFilter::AnotherArtifact
+                    | PermanentFilter::NontokenArtifactV1 => CostKind::SacrificeArtifacts,
                     PermanentFilter::ArtifactOrCreature
                     | PermanentFilter::Token
                     | PermanentFilter::AnotherWithSubtype(_)
@@ -31216,6 +31225,13 @@ fn push_paid_activation(
             state,
             pending.source,
             pending.ability_index,
+        );
+        // Devoted Druid's -1/-1 counter cost (Vintage Cube wave C3a).
+        crate::eternal_cube_c3a_v1::activation_paid(
+            state,
+            pending.source,
+            pending.ability_index,
+            pending.cauldron_grant.0,
         );
     }
     let ability = &frozen.ability;

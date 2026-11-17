@@ -172,7 +172,9 @@ pub(crate) fn grants_haste(state: &GameState, object: ObjectId) -> bool {
 /// The keywords this module grants `object`.
 pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords {
     // Goblin Warchief's haste and Mystic Enforcer's flying (wave P1a).
-    let premodern = crate::eternal_premodern_p1a_v1::statics::granted_keywords(state, object);
+    let premodern = crate::eternal_premodern_p1a_v1::statics::granted_keywords(state, object)
+        // Samut's haste and Marwyn's hexproof (wave C3b).
+        | crate::eternal_cube_c3b_v1::granted_keywords(state, object);
     if grants_haste(state, object) {
         Keywords::HASTE | premodern
     } else {
