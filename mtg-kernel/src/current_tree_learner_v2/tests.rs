@@ -68,6 +68,19 @@ fn decisions(base: u64, count: u64) -> Vec<OwnedDecision> {
     (0..count).map(|i| decision(base + i)).collect()
 }
 
+/// Decisions whose flag columns differ between actions. In [`decision`] each
+/// action of a decision carries the same flags (the pinned digests use it), so
+/// there the flag weights are invariant under the softmax.
+fn varied_decisions(base: u64, count: u64) -> Vec<OwnedDecision> {
+    let mut owned = decisions(base, count);
+    for (offset, decision) in (base..).zip(&mut owned) {
+        for (i, flags) in (0..).zip(&mut decision.flags) {
+            *flags = std::array::from_fn(|f| (offset + i + f as u64).is_multiple_of(2));
+        }
+    }
+    owned
+}
+
 fn trajectory(
     pair_index: u64,
     leg: u8,
@@ -243,7 +256,7 @@ fn examples(owned: &[OwnedDecision]) -> Vec<ExampleV2<'_>> {
 }
 
 fn finite_difference_check<const H: usize>(value_coefficient: f64, entropy_coefficient: f64) {
-    let owned = decisions(3, 5);
+    let owned = varied_decisions(3, 5);
     let model = random_model::<H>(0x5eed + H as u64);
     let batch = examples(&owned);
     let (_, gradient) = model
@@ -291,7 +304,7 @@ fn finite_differences_match_every_parameter_block() {
 
 #[test]
 fn every_block_but_the_softmax_invariant_ones_receives_gradient() {
-    let owned = decisions(3, 5);
+    let owned = varied_decisions(3, 5);
     let model = random_model::<32>(17);
     let (_, gradient) = model
         .loss_and_gradient(&examples(&owned), 0.5, 0.01)
@@ -312,7 +325,7 @@ fn every_block_but_the_softmax_invariant_ones_receives_gradient() {
 
 #[test]
 fn entropy_term_alone_matches_its_closed_form() {
-    let owned = decisions(5, 1);
+    let owned = varied_decisions(5, 1);
     let model = random_model::<16>(23);
     let example = [ExampleV2 {
         view: owned[0].view(),
