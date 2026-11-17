@@ -16,8 +16,9 @@ Receipts:
 
 ## Result
 
-`m3` is faster and smaller than `base` on every pool case, beyond the observed spread,
-with bit-identical outputs. Run startup is slower: `outside_iterations_seconds` regresses
+`m3` is faster than `base` on every pool case, beyond the observed spread, and smaller on
+`pool18` and `pool64` (the `pool2` peak working set is inconclusive), with bit-identical
+outputs. Run startup is slower: `outside_iterations_seconds` regresses
 on `pool18` (1.010 -> 1.125 s, ratio 1.114, spread 0.028, blocks 1.112, 1.119, 1.114) and
 `pool64` (3.239 -> 3.653 s, ratio 1.128, spread 0.025, blocks 1.116, 1.139, 1.124), and is
 inconclusive on `pool2` (1.043). The likely cause is that run start now loads every

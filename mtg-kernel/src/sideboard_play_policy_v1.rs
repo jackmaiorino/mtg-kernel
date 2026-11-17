@@ -1465,7 +1465,9 @@ impl FrozenPlayPolicyV1 {
     /// The model this policy shares with its duplicates and forks: its
     /// allocation's address, which tells live shared models apart, and the
     /// `f32` values it holds (`opponent_cache_diagnostics_v1` counts each
-    /// held model once).
+    /// held model once). This is the net-8 model only: a native S model or
+    /// wide net installed on the policy (`s_model`, `w_model`) is counted
+    /// neither here nor in `owned_f32_len_v1`, so no opponent cache charges it.
     pub(crate) fn shared_model_f32_v1(&self) -> (usize, usize) {
         (
             std::sync::Arc::as_ptr(&self.model) as usize,
