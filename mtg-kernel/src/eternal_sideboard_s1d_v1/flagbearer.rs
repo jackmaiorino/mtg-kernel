@@ -23,6 +23,15 @@
 //! filter enum with no wildcard arm, so a new target shape does not compile
 //! until it is classified here, and the test below checks the classes
 //! against the slot counts of every printed spell form and activated ability.
+//! That test checks counts only: the shared-roster and independent-slot
+//! rules rely on their class descriptions, so a shape whose rosters depend on
+//! which objects were picked belongs in `DependentSlots`, which is searched.
+//!
+//! The rules probe hypothetical prefixes through the engine's candidate
+//! function, so every per-card cast filter must judge the prefix it is given:
+//! Pest Infestation's payable-X filter takes the length of the prefix being
+//! extended (also the free-cast completion search's own prefix in
+//! `resolution_cast_v1`), never the targets the pending cast holds.
 
 use super::statics::is_flagbearer;
 use crate::card_def::TargetSpec;

@@ -2453,8 +2453,9 @@ New pieces:
   count of rosters that earlier picks do not change), dependent slots (at most three slots whose
   rosters differ or depend on earlier picks), a leading permanent slot (only the first slot can
   name a permanent), and no permanent slot. The classification is an exhaustive match over
-  `TargetSpec`, `StandardTargetV1` and each wave's filter enum (S1d, C1a, C1b, C1c, C2c) with no
-  wildcard arm, so a new target shape does not compile until it is classified; a library test
+  `TargetSpec`, `StandardTargetV1` and each wave's filter enum (S1d, C1a, C1b, C1c, C2c, C4a,
+  C4c) with no wildcard arm, so a new target shape does not compile until it is classified; a
+  library test
   checks the classes against the slot counts of every printed spell form, kicked form and
   activated ability, and of the specs built from mode choices (Collective Brutality's masks,
   Mystic and Eldrazi Confluence, Fiery Confluence, the C2c lands).
@@ -2478,8 +2479,10 @@ Guard: every shared path above runs its Flagbearer rule only when
 `statics::flagbearer_requirement_applies` holds for the chooser (an opponent controls a Standard
 Bearer or Coalition Honor Guard with its abilities active), and only in `eternal-fixtures`
 builds. Otherwise each returns exactly what it returned before: the removed general-path
-restriction was a no-op without that condition, and the default Pauper, FDN and Standard builds
-compile none of it.
+restriction was a no-op without that condition. The default Pauper, FDN and Standard builds
+compile the new module and the new Pest Infestation filter signature but run none of it: the
+module is reached only from `eternal-fixtures` code, and Pest Infestation is not in their
+registries.
 
 Limits: the shared-roster and independent-slot rules assume what their class says; a card filter
 or cost that depended on which object was picked (rather than how many) would need the exact
@@ -2490,7 +2493,9 @@ both seats (Collective Brutality's shrink and drain and all three modes, Searing
 Infestation with an artifact Standard Bearer at X 1 and X 2, Dominate's filter, Journey to
 Nowhere's trigger, Grapeshot's storm copy, Misdirection's new target, a mode that avoids
 targeting, Agony Warp's two slots, either player's Flagbearer, Mogg Fanatic's activation and a
-Bearer without its ability under Dress Down), and a white Flagbearer deck plays a red burn deck
+Bearer without its ability under Dress Down, a Phyrexian Metamorph copy of a Bearer as the
+binding object and the target, Mystic Confluence's three bounces and Fire Covenant's last payable
+pick), and a white Flagbearer deck plays a red burn deck
 through public schema-5 sessions in both seats under ranked and seeded random policies with
 replay checks. The S1d Flagbearer fixtures run unchanged.
 
