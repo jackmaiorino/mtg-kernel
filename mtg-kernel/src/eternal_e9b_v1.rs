@@ -1991,30 +1991,49 @@ pub(crate) fn replace_zone_change(
     change: &mut event::ZoneChangeProposed,
     record: bool,
 ) {
-    if change.to_zone != Zone::Graveyard || !is_card(state, change.object) {
-        return;
-    }
-    let Some(live) = state.objects.try_get(change.object) else {
-        return;
-    };
-    let owner = live.owner;
-    let generation = live.zone_change_count;
-    let voided = battlefield(state).any(|object| {
-        active_named(state, object, DAUTHI_VOIDWALKER)
-            && state.objects.get(object).controller != owner
-            && object != change.object
-    });
-    if !voided {
+    if !voids(state, change) {
         return;
     }
     change.to_zone = Zone::Exile;
     if record {
-        let link = ObjectLinkV4 {
-            object: change.object,
-            zone_change_count: generation.saturating_add(1),
-        };
-        e9b_state(state).void_cards.push(link);
+        record_void(state, change.object);
     }
+}
+
+/// Whether Dauthi Voidwalker's replacement applies to `change` in `state`:
+/// a card that would be put into a graveyard while an opponent of its owner
+/// controls a Dauthi Voidwalker other than the card itself.
+pub(crate) fn voids(state: &GameState, change: &event::ZoneChangeProposed) -> bool {
+    if change.to_zone != Zone::Graveyard || !is_card(state, change.object) {
+        return false;
+    }
+    let Some(live) = state.objects.try_get(change.object) else {
+        return false;
+    };
+    let owner = live.owner;
+    battlefield(state).any(|object| {
+        active_named(state, object, DAUTHI_VOIDWALKER)
+            && state.objects.get(object).controller != owner
+            && object != change.object
+    })
+}
+
+/// Records the void counter of `card`, which is about to be exiled by
+/// Dauthi Voidwalker's replacement: the counter belongs to the exiled
+/// incarnation it is about to become.
+pub(crate) fn record_void(state: &mut GameState, card: ObjectId) {
+    let Some(generation) = state
+        .objects
+        .try_get(card)
+        .map(|live| live.zone_change_count)
+    else {
+        return;
+    };
+    let link = ObjectLinkV4 {
+        object: card,
+        zone_change_count: generation.saturating_add(1),
+    };
+    e9b_state(state).void_cards.push(link);
 }
 
 /// Whether `card` is an exiled card with a void counter on it.

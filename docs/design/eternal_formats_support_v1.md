@@ -2529,9 +2529,17 @@ Imperial Seal, as Vampiric Tutor); a granted flashback does not add a second cos
 has flashback (Flashback, as Snapcaster Mage); "each player draws" from a sorcery cast outside its
 controller's turn draws for the controller first (Wheel of Fortune, Time Spiral); a draw that a
 leaf stages at resolution (Occult Epiphany's X cards) does not offer the choice between two
-competing draw replacements, which is Hullbreacher's Partial branch; and a batch applies
-replacement effects event by event, so a replacement source destroyed in the batch stops applying
-to the events after its own (Pest Infestation naming Rest in Peace first, as every sweeper).
+competing draw replacements, which is Hullbreacher's Partial branch.
+
+A batch is one event for replacement effects (614.1, 614.6): the name-keyed graveyard
+replacements (Rest in Peace, Leyline of the Void, Dauthi Voidwalker, with Yawgmoth's Will, Suplex,
+Lunarch Veteran and unearth before them in the same order as for a single event) are decided for
+every member before any member moves (`event::pre_apply_batch_zone_replacements_v1`), for an
+effect batch, a sacrifice group and a state-based death group alike. A Rest in Peace or Dauthi
+Voidwalker destroyed in the batch still exiles the other members (Pest Infestation, every
+sweeper, Pestilence). Containment Priest's entry replacement is still applied as each member
+enters, so a Priest entering earlier in one entry batch exiles a later nontoken creature of the
+same batch.
 
 Each sub-module's test file covers every card's printed text in rules tests (costs, both sides of
 each condition, illegal targets) and plays decks of its cards through public schema-5 sessions

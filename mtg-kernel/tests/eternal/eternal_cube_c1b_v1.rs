@@ -2120,26 +2120,31 @@ fn pest_infestation_destroys_up_to_x_targets_and_creates_twice_x_pests() {
 #[test]
 fn pest_infestation_destroys_its_targets_as_one_batch() {
     // Sol Ring and Rest in Peace are destroyed together, and Rest in Peace's
-    // replacement effect exiles both. (The engine's batch applies
-    // replacement effects event by event, so with Rest in Peace named first
-    // the Ring would reach the graveyard: the same limit every sweeper has.)
-    let mut state = forests();
-    let ring = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
-    let rest = put(&mut state, P1, "Rest in Peace", Zone::Battlefield);
-    let infestation = put(&mut state, P0, "Pest Infestation", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::G], 4);
-    act(&mut state, Action::CastSpell(infestation));
-    run_plan(
-        &mut state,
-        &Plan {
-            targets: vec![Target::Object(ring), Target::Object(rest)],
-            x: Some(2),
-            ..Plan::default()
-        },
-    );
-    assert_eq!(zone(&state, ring), Zone::Exile);
-    assert_eq!(zone(&state, rest), Zone::Exile);
-    assert_eq!(pests(&state, P0).len(), 4);
+    // replacement effect exiles both, whichever is named first: the batch
+    // is one event, and the replacement exists immediately before it.
+    for rest_first in [false, true] {
+        let mut state = forests();
+        let ring = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
+        let rest = put(&mut state, P1, "Rest in Peace", Zone::Battlefield);
+        let infestation = put(&mut state, P0, "Pest Infestation", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::G], 4);
+        act(&mut state, Action::CastSpell(infestation));
+        let mut targets = vec![Target::Object(ring), Target::Object(rest)];
+        if rest_first {
+            targets.reverse();
+        }
+        run_plan(
+            &mut state,
+            &Plan {
+                targets,
+                x: Some(2),
+                ..Plan::default()
+            },
+        );
+        assert_eq!(zone(&state, ring), Zone::Exile, "rest_first={rest_first}");
+        assert_eq!(zone(&state, rest), Zone::Exile, "rest_first={rest_first}");
+        assert_eq!(pests(&state, P0).len(), 4);
+    }
 }
 
 #[test]
