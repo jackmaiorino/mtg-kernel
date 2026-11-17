@@ -665,30 +665,83 @@ fn ceased_library_token_leaves_the_library_count() {
         let (mut state, lists) = token_game(owner, owner);
         ceased_library_token(&mut state, owner);
         let scried = scry_top_to_bottom(&mut state, owner);
-        let length = state.players[owner.index()].library.len();
-        assert_eq!(state.players[owner.index()].library[length - 1], scried);
-        for (mode, export) in &EXPORT_MODES {
-            for viewer in [owner, owner.opponent()] {
-                let at = format!("{mode}, owner {owner:?}, viewer {viewer:?}");
-                let exported = export(&token_input(&state, viewer, &lists))
-                    .unwrap_or_else(|error| panic!("{at}: {error:?}"));
-                let library = &exported.state.players[owner.index()].library;
-                assert_eq!(library.len(), length, "{at}");
+        check_scried_to_the_bottom(&state, &lists, owner, scried, "a scry after the cease");
+    }
+}
+
+/// Exports `state` under every mode for both viewers and checks that no
+/// export refuses, that `owner`'s exported library has its native length and
+/// no token, and that the owner knows a card at the last position, where
+/// `scried` (a card the owner scried to the bottom) natively sits.
+fn check_scried_to_the_bottom(
+    state: &crate::state::GameState,
+    lists: &[Vec<u16>; 2],
+    owner: PlayerId,
+    scried: crate::ids::ObjectId,
+    phase: &str,
+) {
+    let length = state.players[owner.index()].library.len();
+    assert_eq!(state.players[owner.index()].library[length - 1], scried);
+    for (mode, export) in &EXPORT_MODES {
+        for viewer in [owner, owner.opponent()] {
+            let at = format!("{mode}, owner {owner:?}, viewer {viewer:?}, {phase}");
+            let exported = export(&token_input(state, viewer, lists))
+                .unwrap_or_else(|error| panic!("{at}: {error:?}"));
+            let library = &exported.state.players[owner.index()].library;
+            assert_eq!(library.len(), length, "{at}");
+            assert!(
+                library
+                    .iter()
+                    .all(|id| !exported.state.objects.get(*id).v4.is_token),
+                "{at}: no token is placed"
+            );
+            if viewer == owner {
+                let rows = exported.state.known_library_cards(owner, owner);
                 assert!(
-                    library
-                        .iter()
-                        .all(|id| !exported.state.objects.get(*id).v4.is_token),
-                    "{at}: no token is placed"
+                    rows.iter().any(|row| row.position as usize == length - 1),
+                    "{at}: the scried card is known at the bottom"
                 );
-                if viewer == owner {
-                    let rows = exported.state.known_library_cards(owner, owner);
-                    assert!(
-                        rows.iter().any(|row| row.position as usize == length - 1),
-                        "{at}: the scried card is known at the bottom"
-                    );
-                }
             }
         }
+    }
+}
+
+/// Issue 744: an ordinary removal from a library (a card leaves it with its
+/// own zone change) while a token sits there is claimed by that event, so the
+/// token stays counted until it ceases. The owner then scries 2, keeping the
+/// token on top and putting the other card on the bottom, and the token
+/// ceases: the owner's fact for the bottom card must sit at the true last
+/// position. If the ordinary removal took the token out of the count, the
+/// scry would read a library one card short and the fact would be one
+/// position too high.
+#[test]
+fn an_ordinary_library_removal_keeps_the_token_counted_until_it_ceases() {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+
+    for owner in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, lists) = token_game(owner, owner);
+        let token = create_token(&mut state, owner);
+        propose_and_commit(&mut state, ProposedEvent::zone_change(token, Zone::Library));
+        assert_eq!(state.players[owner.index()].library[0], token);
+        let card = state.players[owner.index()].library[2];
+        propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(card, Zone::Graveyard),
+        );
+        let second = state.players[owner.index()].library[1];
+        let bound = |id: crate::ids::ObjectId| crate::state::ObjectLinkV4 {
+            object: id,
+            zone_change_count: state.objects.get(id).zone_change_count,
+        };
+        let prefix = [bound(token), bound(second)];
+        state
+            .apply_scry_result(owner, &prefix, &[token], &[second])
+            .unwrap();
+        crate::trigger::sba_fixed_point(&mut state);
+        assert!(!state.players[owner.index()].library.contains(&token));
+        let phase = "an ordinary removal, a scry of 2, then the cease";
+        check_scried_to_the_bottom(&state, &lists, owner, second, phase);
     }
 }
 
