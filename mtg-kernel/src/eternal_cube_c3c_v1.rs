@@ -275,8 +275,8 @@ fn converter_may_exile(card: ObjectId, zone_change_count: u32) -> EffectOp {
 
 /// The Mightstone and Weakstone: "This mana can't be spent to cast nonartifact
 /// spells." The two mana its ability just added become restricted units, which
-/// artifact spells and any ability may spend (`ManaSpendRestrictionDef::
-/// PowerstoneV1`).
+/// artifact spells and every payment that is not part of casting a spell may
+/// spend (`ManaSpendRestrictionDef::PowerstoneV1`).
 pub(crate) fn restrict_produced_mana(
     state: &mut GameState,
     player: PlayerId,

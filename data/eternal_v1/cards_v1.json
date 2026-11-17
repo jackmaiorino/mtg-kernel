@@ -7488,6 +7488,7 @@
    "mana_value": 2,
    "colors": [],
    "types": [
+    "Kindred",
     "Instant"
    ],
    "subtypes": [
@@ -24846,6 +24847,7 @@
     "U"
    ],
    "types": [
+    "Kindred",
     "Instant"
    ],
    "subtypes": [
@@ -30737,6 +30739,7 @@
     "R"
    ],
    "types": [
+    "Kindred",
     "Instant"
    ],
    "subtypes": [
@@ -33252,7 +33255,7 @@
   },
   {
    "name": "The Mightstone and Weakstone",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{5}",
    "mana_value": 5,
    "colors": [],

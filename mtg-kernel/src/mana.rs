@@ -397,15 +397,73 @@ pub(crate) fn life_payment_affordable(life_paid: i32, life: i32) -> bool {
     life_paid == 0 || life_paid <= life
 }
 
+/// Rule 106.6: The Mightstone and Weakstone's mana "can't be spent to cast
+/// nonartifact spells", so it pays every other cost: a ward or "unless its
+/// controller pays" payment, a mana ability's cost, an upkeep, echo or other
+/// resolution-time payment, and a special action's cost (foretell, plot, a
+/// companion's {3}, turning a permanent face up). A tax or cost increase on
+/// casting a nonartifact spell is part of that spell's total cost (601.2f),
+/// so the spell planners still refuse the mana there (`restriction_permits`).
+fn noncast_payment_admits_v1(unit: &RestrictedManaUnitV1) -> bool {
+    unit.restriction == crate::card_def::ManaSpendRestrictionDef::PowerstoneV1
+}
+
+/// Runs `plan` for a payment that is not part of casting a spell. The
+/// restricted units `noncast_payment_admits_v1` admits join a projected
+/// ordinary pool, as `plan_activation_mana_v1` admits ability mana, and the
+/// returned plan spends them before ordinary mana of the same color (the
+/// convention of `separate_restricted_spending`), so the payment committer
+/// removes exactly those units. Without such units this is `plan` itself.
+pub(crate) fn plan_noncast_payment_v1(
+    state: &GameState,
+    player: PlayerId,
+    plan: impl FnOnce(&GameState) -> Option<PaymentPlan>,
+) -> Option<PaymentPlan> {
+    let admitted = state.players[player.index()]
+        .restricted_mana_pool
+        .0
+        .iter()
+        .enumerate()
+        .filter(|(_, unit)| noncast_payment_admits_v1(unit))
+        .map(|(index, unit)| (index, unit.color))
+        .collect::<Vec<_>>();
+    if admitted.is_empty() {
+        return plan(state);
+    }
+    let mut projected = state.clone();
+    for &(_, color) in &admitted {
+        let floating = &mut projected.players[player.index()].mana_pool[color.pool_index()];
+        let Some(more) = floating.checked_add(1) else {
+            // A full pool lane leaves no room to represent the units; the
+            // ordinary pool alone is planned.
+            return plan(state);
+        };
+        *floating = more;
+    }
+    let mut payment = plan(&projected)?;
+    for (index, color) in admitted {
+        let used = &mut payment.pool_used[color.pool_index()];
+        if *used > 0 {
+            *used -= 1;
+            payment.restricted_pool_used.push(index);
+        }
+    }
+    // The payment committer removes indices in reverse order.
+    payment.restricted_pool_used.sort_unstable();
+    Some(payment)
+}
+
 /// Gathers `player`'s floating pool and untapped mana sources from `state`
-/// and calls `solve`.
+/// and calls `solve`, for a payment that is not part of casting a spell
+/// (ward, "unless its controller pays", plot, a resolution-time payment):
+/// `can_pay_excluding_sources` with nothing reserved.
 pub fn can_pay(
     cost: &Cost,
     x_value: u8,
     player: PlayerId,
     state: &GameState,
 ) -> Option<PaymentPlan> {
-    can_pay_spell(cost, x_value, player, state, false)
+    can_pay_excluding_sources(cost, x_value, player, state, &[])
 }
 
 /// `can_pay` for the total cost of a spell. While `creature_spell` holds,
@@ -464,12 +522,31 @@ pub fn can_pay_owned(
     state: &GameState,
 ) -> Option<PaymentPlan> {
     let sources = gather_sources(player, state);
-    can_pay_owned_from_sources(pips, generic, player, state, &sources)
+    can_pay_owned_from_sources(pips, generic, player, state, &sources, false)
 }
 
 /// The resolution bridge may append explicitly activated one-shot sources.
 /// A plan containing them must never be handed directly to the tap-only payer.
+/// `nonartifact_cast` holds when the payment is the mana cost of casting a
+/// nonartifact spell from a resolving effect (a miracle cost); otherwise the
+/// payment is not part of casting a spell (`plan_noncast_payment_v1`).
 pub(crate) fn can_pay_owned_from_sources(
+    pips: &[Pip],
+    generic: u8,
+    player: PlayerId,
+    state: &GameState,
+    sources: &[ManaSource],
+    nonartifact_cast: bool,
+) -> Option<PaymentPlan> {
+    if nonartifact_cast {
+        return plan_owned_from_sources_v1(pips, generic, player, state, sources);
+    }
+    plan_noncast_payment_v1(state, player, |state| {
+        plan_owned_from_sources_v1(pips, generic, player, state, sources)
+    })
+}
+
+fn plan_owned_from_sources_v1(
     pips: &[Pip],
     generic: u8,
     player: PlayerId,
@@ -1129,8 +1206,9 @@ fn restriction_permits(
         }
         // Chandra, Chill of Compliance's mana pays only noncreature spells.
         crate::card_def::ManaSpendRestrictionDef::NoncreatureSpellV1 => noncreature_spell,
-        // The Mightstone and Weakstone's mana pays an artifact spell here; an
-        // ability payment takes it through `plan_activation_mana_v1`.
+        // The Mightstone and Weakstone's mana pays an artifact spell here;
+        // every payment that is not part of casting a spell takes it through
+        // `plan_noncast_payment_v1` or `plan_activation_mana_v1`.
         crate::card_def::ManaSpendRestrictionDef::PowerstoneV1 => artifact_spell,
     }
 }
@@ -1294,8 +1372,23 @@ fn gather_sources_for_spell_restrictions_v1(
 
 /// Solves a mana cost while reserving permanents for other components of the
 /// same cost. Heap Gate uses this to reserve both itself and the other Gate
-/// that must remain untapped until the complete cost is paid.
+/// that must remain untapped until the complete cost is paid. Every caller
+/// pays a cost that is not part of casting a spell (a mana ability's cost,
+/// turning a permanent face up, an ability's convoke remainder, the
+/// payments of `can_pay`), so `plan_noncast_payment_v1` admits its mana.
 pub fn can_pay_excluding_sources(
+    cost: &Cost,
+    x_value: u8,
+    player: PlayerId,
+    state: &GameState,
+    excluded: &[ObjectId],
+) -> Option<PaymentPlan> {
+    plan_noncast_payment_v1(state, player, |state| {
+        plan_excluding_sources_v1(cost, x_value, player, state, excluded)
+    })
+}
+
+fn plan_excluding_sources_v1(
     cost: &Cost,
     x_value: u8,
     player: PlayerId,
@@ -1801,12 +1894,12 @@ pub(crate) fn plan_activation_mana_v1(
         crate::banner_of_kinship_v1::entry::owns_courtyard(state.objects.get(*id).card_def)
     }) || crate::eternal_e9b_v1::controls_courtyard(state, player);
     // The Mightstone and Weakstone's mana pays for any ability of any source
-    // (Vintage Cube wave C3c).
+    // (Vintage Cube wave C3c), as it pays every other noncast payment.
     let powerstone = state.players[player.index()]
         .restricted_mana_pool
         .0
         .iter()
-        .any(|unit| unit.restriction == crate::card_def::ManaSpendRestrictionDef::PowerstoneV1);
+        .any(noncast_payment_admits_v1);
     if (!eligible && !powerstone)
         || (state.players[player.index()]
             .restricted_mana_pool
@@ -1823,7 +1916,7 @@ pub(crate) fn plan_activation_mana_v1(
         .iter()
         .enumerate()
         .filter(|(_, unit)| {
-            unit.restriction == crate::card_def::ManaSpendRestrictionDef::PowerstoneV1
+            noncast_payment_admits_v1(unit)
                 || (eligible
                     && (unit.restriction == crate::card_def::ManaSpendRestrictionDef::CreatureSpellOrCreatureAbility
                         || matches!(unit.restriction,

@@ -246,8 +246,8 @@ New, each built once in the first wave that needs it:
   Ugin's search). Oath of Druids and Forbidden Orchard are hook-queued triggers;
   Urza's Workshop's two colorless abilities are one with the larger yield.
   Extrapolate the Impossible, like Karn's wish, reads S3's outside-the-game zone (empty
-  in a best-of-one mainboard game). Kozilek's Command is an Eldrazi instant; the Kindred card
-  type is not modeled.
+  in a best-of-one mainboard game). Kozilek's Command is a Kindred Eldrazi instant (the
+  Kindred type arrived later, with #716; see "Kindred card type" under Vintage Cube).
 - E8b, built in `src/eternal_pauper_e8b_v1.rs` and `build_eternal_e8b_v1.rs`: splice
   onto Arcane is announced like replicate's count (the spliced Desperate Rituals in hand,
   capped by that count), paid as one {1}{R} per splice, revealed to the opponent, and
@@ -2493,8 +2493,9 @@ C1b:
 
 C1c:
 
-- Flame Slash, Sear and Tarfire are fixed damage; Tarfire is an Instant with the Goblin subtype
-  (the registry has no Kindred type). Traumatic Critique deals X, then draws two and discards one.
+- Flame Slash, Sear and Tarfire are fixed damage; Tarfire is a Kindred Instant with the Goblin
+  subtype (the Kindred type arrived with #716). Traumatic Critique deals X, then draws two and
+  discards one.
 - Wheel of Fortune: each player discards their hand, the active player first, then each draws
   seven, with the same stop between the draws as Time Spiral.
 - Lingering Souls: two Spirit tokens (the new "White Flying Spirit Token" row, shared with Occult
@@ -2523,8 +2524,7 @@ C1c:
 - Pillage the Bog: looks at twice the controller's land count
   (`LibraryLookCount::ControllerLandsTwiceV1`), and plot {1}{B}{G}.
 
-Known limits shared with earlier waves, tracked in #710: the registry has no Kindred card type
-(Tarfire counts one type fewer for Tarmogoyf, delirium and Occult Epiphany); an optional search
+Known limits shared with earlier waves, tracked in #710: an optional search
 that is declined still shuffles (Path to Exile); an unrestricted search may find nothing (Entomb,
 Imperial Seal, as Vampiric Tutor); a granted flashback does not add a second cost to a card that
 has flashback (Flashback, as Snapcaster Mage); "each player draws" from a sorcery cast outside its
@@ -2635,11 +2635,12 @@ actions rather than the automatic payment planner (Gaea's Cradle).
 
 ### C3: creatures and artifact utilities
 
-Wave C3 adds 31 cards and six tokens: 30 are Full and The Mightstone and Weakstone is Partial,
-raising the cube to 411 of 540 Full. It is three sub-modules chained after C2c: C3a (ten cheap
-creatures, `eternal_cube_c3a_v1`), C3b (eleven creatures, `eternal_cube_c3b_v1`) and C3c (ten
-artifacts, `eternal_cube_c3c_v1`), the new tail. Guardian Scalelord waits for a later wave: its
-backup ability must grant an attack trigger until end of turn.
+Wave C3 adds 31 cards and six tokens: 30 were Full and The Mightstone and Weakstone Partial (it
+became Full with #726), raising the cube to 411 of 540 Full. It is three sub-modules chained after
+C2c: C3a (ten cheap creatures, `eternal_cube_c3a_v1`), C3b (eleven creatures,
+`eternal_cube_c3b_v1`) and C3c (ten artifacts, `eternal_cube_c3c_v1`), the new tail. Guardian
+Scalelord waits for a later wave: its backup ability must grant an attack trigger until end of
+turn.
 
 C3a:
 
@@ -2689,10 +2690,27 @@ C3c:
   release ability (a Treasure for a land, a Rogue for a nonland card) read that ledger. Staff of
   the Storyteller counts story counters as charge counters and triggers once per resolution that
   created creature tokens.
-- The Mightstone and Weakstone (Partial): a modal entry trigger, and `Subtype::Powerstone` (582)
-  mana under `ManaSpendRestrictionDef::PowerstoneV1`, which pays for artifact spells and activated
-  abilities. The other costs that mana may pay (ward, "unless its controller pays" taxes, mana
-  ability costs, special actions) still refuse it, which is why the card is not Full.
+- The Mightstone and Weakstone: a modal entry trigger, and `Subtype::Powerstone` (582) mana under
+  `ManaSpendRestrictionDef::PowerstoneV1`. That mana "can't be spent to cast nonartifact spells"
+  (106.6), so it pays every other cost. The spell planners admit it only for an artifact spell
+  (`mana::restriction_permits`), so a tax or cost increase on casting a nonartifact spell, which is
+  part of that spell's total cost (601.2f), still refuses it. Every payment that is not part of
+  casting a spell admits it through `mana::plan_noncast_payment_v1`: the restricted units join a
+  projected ordinary pool, as `plan_activation_mana_v1` admits ability mana, and the plan spends
+  them before ordinary mana of the same color. That covers `mana::can_pay` (ward and "unless its
+  controller pays" taxes, plot, upkeep and other resolution payments),
+  `can_pay_excluding_sources` (mana ability costs, turning a permanent face up, an ability's
+  convoke remainder), the resolution bridge `engine::pay_effect_mana` (foretell, a companion's
+  {3}, suspend, echo) and Shanna's pay-and-draw. A miracle cost is a cost of casting the card, so
+  it is paid through `engine::pay_effect_cast_mana`, which admits the mana only for an artifact.
+
+Limits: the stone is not an automatic payment source (like Pentad Prism), so its mana is spent
+only after an explicit mana action floats it. The other restricted classes (creature, legendary,
+subtype, chosen type, artifact spell, colorless Eldrazi and noncreature spell mana) keep their
+existing payment paths; whether each may also pay a ward, tax or special action is not decided
+here.
+
+With #726 merged after #715 the cube stands at 440 of 540 Full.
 
 ### C4: trigger creatures, Equipment and Vehicles
 
@@ -2753,3 +2771,36 @@ C4c:
   triggers belong to its host creature.
 - Smuggler's Copter (crew 1, loot when it attacks or blocks) and Esika's Chariot (crew 4, two Cat
   tokens, and a token copy when it attacks).
+
+### Kindred card type
+
+`CardType::Kindred` (#716) is appended to the card type enum, so every earlier variant keeps its
+discriminant and serialized name, and `CardType::ALL` lists all eight types in that order. The
+registry has three printed Kindred cards, each a Kindred Instant: Tarfire (Goblin), Kozilek's
+Command (Eldrazi) and Faerie Trickery (Faerie). No Pauper, FDN or Standard card is Kindred, so
+those catalog hashes are unchanged; the eternal catalog hash moves with the three rows, and the
+build rejects a Kindred row without another card type (308.1).
+
+Kindred counts as a card type and changes nothing else. Delirium, Nethergoyf and Barrowgoyf count
+types through `CardType::ALL`, and Occult Epiphany and Atraxa read the printed types, so Tarfire in
+a graveyard adds two types and Occult Epiphany discarding it makes two Spirits. The cards are cast,
+countered and put into a graveyard as instants, and Kindred is not a permanent type (110.4b).
+Their subtypes are creature types (308.3), which the engine already reads on any spell (the
+Goblin Warchief and Eye of Ugin cost reductions, Faerie Trickery's "non-Faerie spell", so one
+Faerie Trickery cannot counter another), while Cavern of Souls pays only for creature spells and
+Goblin Lackey puts only permanent cards onto the battlefield. Serra's Emissary does
+not offer Kindred, so its menu keeps seven options: every Kindred card here is also an instant,
+so naming Instant covers them.
+
+Readers of card types outside the rules keep their output for every earlier card. Policy
+observation v5's six type bits (`CardTypeFlagsV2`, also read by the flat policies, the native
+tensorizers and the human views) have no Kindred bit, as they have no Planeswalker bit, so a
+Kindred instant sets only its instant bit, exactly as before, and the card's identity is
+reported beside it. `SourceTypesV1`'s seven fixed bits also leave Kindred out; no hexproof or
+protection in the catalog names it. The public forms that list an object's types (Elenda,
+Drake Hatcher, Niv-Mizzet, the optional-trigger forms, Phoenix and the Premodern ordered
+graveyard) take their list from `CardType::ALL`, whose first seven entries are their former
+literal list, so a Kindred object lists Kindred and every other object is unchanged; the Python
+Limited validators accept only the seven earlier names, so they refuse a Kindred form.
+`rules_vector_v1` has no Kindred facet and refuses a Kindred card. The eternal printed-program
+encoder admits only its named card pool, which has no Kindred card.

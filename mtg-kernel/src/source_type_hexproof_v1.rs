@@ -18,6 +18,8 @@ const TYPES: [CardType; 7] = [
 
 /// A set of effective card types. Bits follow this module's explicit TYPES
 /// table, independently of enum discriminants. Unknown bits are rejected.
+/// A type outside the table (Kindred) has no bit and is left out: no
+/// hexproof or protection in the catalog names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SourceTypesV1(u8);
