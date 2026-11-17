@@ -85,8 +85,7 @@ pub(crate) fn enters_tapped(state: &GameState, object: ObjectId, _controller: Pl
     }
     (crate::engine::object_has_type(state, object, CardType::Artifact)
         || crate::engine::object_has_type(state, object, CardType::Land))
-        && active_with_id(state, static_ids().root_maze, ROOT_MAZE, None)
-            .any(|maze| maze != object)
+        && active_with_id(state, static_ids().root_maze, ROOT_MAZE, None).any(|maze| maze != object)
 }
 
 // ---- Contamination ------------------------------------------------------------------

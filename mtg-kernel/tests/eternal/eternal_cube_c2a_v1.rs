@@ -823,11 +823,7 @@ fn a_land_that_enters_tapped_enters_untapped_under_blood_moon() {
     // rules-text abilities (305.7), and the land is checked as it would
     // exist on the battlefield (614.12): its printed "enters tapped" and its
     // "enters tapped unless" rule are gone, so it enters untapped.
-    for name in [
-        "Raugrin Triome",
-        "Commercial District",
-        "Botanical Sanctum",
-    ] {
+    for name in ["Raugrin Triome", "Commercial District", "Botanical Sanctum"] {
         for moon_first in [false, true] {
             let mut state = plains();
             // Three other lands: Botanical Sanctum would enter tapped.
