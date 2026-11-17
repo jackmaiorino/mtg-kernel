@@ -814,7 +814,7 @@ fn path_to_exile_search_may_find_nothing_and_finds_only_basic_lands() {
 #[test]
 fn path_to_exile_shuffles_only_when_its_controller_chooses_to_search() {
     // A player who chooses not to search does not shuffle; a player who
-    // searches and finds nothing still does (701.19). Library order is the
+    // searches and finds nothing still does (701.23). Library order is the
     // observable: sixteen distinct cards keep it after no shuffle.
     for (library, search) in [
         ("Plains", false),

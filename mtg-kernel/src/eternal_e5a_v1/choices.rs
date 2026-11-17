@@ -230,7 +230,7 @@ pub(crate) fn drive(
             let bargained = continuation.ctx.optional_additional_cost_paid
                 == Some(OptionalAdditionalCostDef::Bargain);
             // "Search your library for a card": a nonempty library always
-            // has one to find (701.19b).
+            // has one to find (701.23d).
             offer(
                 continuation,
                 E5aChoiceV1::BeseechSearchV1 { bargained },
@@ -249,7 +249,7 @@ pub(crate) fn drive(
                 return Ok(false);
             }
             // "Search your library for a card": a nonempty library always
-            // has one to find (701.19b).
+            // has one to find (701.23d).
             offer(
                 continuation,
                 E5aChoiceV1::VampiricSearchV1,

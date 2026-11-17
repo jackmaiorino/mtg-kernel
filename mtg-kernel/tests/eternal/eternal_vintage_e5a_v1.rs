@@ -707,7 +707,7 @@ fn vampiric_tutor_puts_the_card_on_top_known_only_to_its_controller() {
 #[test]
 fn vampiric_tutor_and_beseech_the_mirror_must_find_a_card_in_a_nonempty_library() {
     // "Search your library for a card": a library with a card in it always
-    // has one to find (701.19b), so the search cannot finish with nothing.
+    // has one to find (701.23d), so the search cannot finish with nothing.
     let mut state = islands();
     let tutor = put(&mut state, P0, "Vampiric Tutor", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::B], 0);
@@ -1107,6 +1107,12 @@ fn a_resumable_program_stops_once_a_draw_wins_the_game() {
         Decision::GameOver { winner: Some(P0) }
     );
     assert!(state.players[1].has_lost);
+    // The game-over check would hide a continuation still waiting at P1's
+    // dredge choice; none must be left.
+    assert!(
+        state.engine.pending_effect.is_none(),
+        "no dredge choice for a draw that never happens"
+    );
     assert_eq!(state.players[1].hand.len(), hand);
     assert_eq!(state.players[1].library.len(), library);
 }

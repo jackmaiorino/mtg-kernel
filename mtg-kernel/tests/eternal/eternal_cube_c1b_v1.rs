@@ -709,7 +709,7 @@ fn entomb_puts_the_chosen_card_into_the_graveyard_at_instant_speed() {
 }
 
 /// The search prompt of a resolving "search your library for a card": a
-/// nonempty library always has a card to find (701.19b), so it cannot finish
+/// nonempty library always has a card to find (701.23d), so it cannot finish
 /// before one is chosen.
 fn assert_must_find_a_card(state: &mut GameState) {
     match settle(state) {

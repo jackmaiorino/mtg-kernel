@@ -18804,9 +18804,9 @@ fn stage_duress_discard_choice(
 }
 
 /// The fewest cards a multi-card library search must find. A search for
-/// cards with a stated quality may find nothing (701.19b); a search for "a
+/// cards with a stated quality may find nothing (CR701.23b); a search for "a
 /// card" (`LibraryCardFilter::AnyCard`, Entomb) must find as many as it can,
-/// up to its maximum.
+/// up to its maximum (CR701.23d).
 fn search_minimum(filter: LibraryCardFilter, max_targets: u16, library_len: usize) -> u16 {
     if filter == LibraryCardFilter::AnyCard {
         max_targets.min(u16::try_from(library_len).unwrap_or(u16::MAX))
