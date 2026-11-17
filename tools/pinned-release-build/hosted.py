@@ -24,8 +24,9 @@ KEEP_OFFSET_SOURCE = "d61e3aed86f981b162c052e89a1e7ee1a1746d89"
 # The London per-count keep-offset and terminal pregame advantage backport (PR #707 into release/mull-c5719e1cf),
 # built by explicit dispatch (`source_commit`); the default source is unchanged.
 LONDON_VECTOR_SOURCE = "587b5aca2a823dc8765c13873bdd10281af63c21"
-# The same change after its test-only lint fixes (the head that gets pinned).
-LONDON_VECTOR_SOURCE_B = "6faa42219a4e67d266019458a2380df5aa5e25f8"
+# The same change after its test-only lint fixes: the reviewed head of PR #707, whose tree (a6fe30b52) equals
+# the tree of the merge commit below.
+LONDON_VECTOR_SOURCE_B ="6faa42219a4e67d266019458a2380df5aa5e25f8"
 # The merge commit of that change on the release branch (same tree as the head above; this is what gets pinned).
 LONDON_VECTOR_SOURCE_MERGED = "ce3df74f85649bdbb9a9c4971bafefb7346243ed"
 # The merge commit of PR 729 (pregame announcement step scale) on release/mull-c5719e1cf: this is what gets pinned for arm Q.
