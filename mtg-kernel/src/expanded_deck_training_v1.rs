@@ -10750,6 +10750,7 @@ pub(crate) mod tests {
             search_seeds: vec![0],
             budget,
             value_leaf: None,
+            flat_root: false,
         };
         let options = |arms: Vec<ex1_collect_v1::Sd1ArmOptionsV1>, half_rollouts: u64| {
             ex1_collect_v1::Ex1CollectOptionsV1 {
@@ -10769,6 +10770,7 @@ pub(crate) mod tests {
                             arms,
                             half_rollouts,
                             coverage_max: 16,
+                            root_value: false,
                         }),
                     }),
                 }),

@@ -1233,6 +1233,7 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
     }
     validate_rollout_mode(&cfg.mode, std::env::var_os(ROLLOUT_OPPONENT).is_some())?;
     validate_world_mode(&cfg.mode, std::env::var_os(world::WORLD_ENV).is_some())?;
+    validate_flat_root_mode(&cfg.mode, std::env::var_os(FLAT_ROOT_ENV).is_some())?;
     let rollout = refresh::parse_rollout_opponent(std::env::var(ROLLOUT_OPPONENT), &sh.labels)?;
     let rollout_label = rollout.map(|r| sh.labels[r].clone());
     if cfg.mode == "s4a-utility-root" {
@@ -1546,9 +1547,14 @@ fn run_bank_mode(cfg: &CensusConfigV1, policy: &FrozenPlayPolicyV1) -> Result<()
                 world::WORLD_ENV
             ));
         }
+        let flat_root = parse_flat_root(std::env::var(FLAT_ROOT_ENV))?;
+        if plain && flat_root {
+            return Err(format!("{FLAT_ROOT_ENV} requires BUDGET_ARM=search-v1"));
+        }
         let extras = refresh::BudgetExtras {
             rollout,
             world,
+            flat_root,
             ..extras
         };
         let first = cfg.first_game as usize;
@@ -1784,7 +1790,30 @@ pub(super) fn validate_executor_mode(mode: &str) -> Result<(), String> {
     }
     validate_rollout_mode(mode, std::env::var_os(ROLLOUT_OPPONENT).is_some())?;
     validate_world_mode(mode, std::env::var_os(world::WORLD_ENV).is_some())?;
+    validate_flat_root_mode(mode, std::env::var_os(FLAT_ROOT_ENV).is_some())?;
     refresh::ExecutionMode::parse(mode, std::env::var("S4A_EXECUTOR")).map(|_| ())
+}
+
+/// Opt-in flat-root searches (`root_allocation::SearchOptions::flat_root`,
+/// collab LANES/searchpm-20261116): honoured by the searched budget player
+/// only, like the diagnostic world switch; every other mode refuses it.
+const FLAT_ROOT_ENV: &str = "S4A_FLAT_ROOT";
+
+fn validate_flat_root_mode(mode: &str, set: bool) -> Result<(), String> {
+    if set && mode != "s4a-budget" {
+        return Err(format!("{FLAT_ROOT_ENV} is supported only for s4a-budget"));
+    }
+    Ok(())
+}
+
+/// Strict parsing of `S4A_FLAT_ROOT=0|1`; unset is off.
+fn parse_flat_root(value: Result<String, std::env::VarError>) -> Result<bool, String> {
+    match value.as_deref() {
+        Ok("1") => Ok(true),
+        Ok("0") | Err(std::env::VarError::NotPresent) => Ok(false),
+        Ok(other) => Err(format!("{FLAT_ROOT_ENV} must be 0 or 1, not {other}")),
+        Err(error) => Err(format!("invalid {FLAT_ROOT_ENV}: {error}")),
+    }
 }
 
 /// Opt-in rollout opponent (`refresh::BudgetExtras::rollout`): the label of
