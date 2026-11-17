@@ -1364,6 +1364,42 @@ fn okoye_grants_nothing_when_the_creature_does_not_attack_the_monarch() {
 }
 
 #[test]
+fn okoye_mark_ends_with_the_turn_even_within_the_same_round() {
+    // Okoye's controller is the monarch and marks the opponent's creature.
+    // "This turn" is over when that creature attacks the monarch in its own
+    // controller's turn of the same round.
+    let mut state = plains();
+    // Okoye is cast, so the monarchy has the source the end step draw needs.
+    let okoye = put(&mut state, P0, "Okoye, Mighty and Adored", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G, ManaColor::W], 2);
+    cast(&mut state, okoye, &[]);
+    settled(&mut state);
+    assert_eq!(state.monarch, Some(P0));
+    let theirs = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    to_declare_attackers(&mut state, theirs);
+    act(&mut state, Action::DeclareAttackers(Vec::new()));
+    assert_eq!(counters(&state, theirs), 1, "the counter is put on it");
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::DeclareAttackers
+    });
+    assert_eq!(state.monarch, Some(P0));
+    act(&mut state, Action::DeclareAttackers(vec![theirs]));
+    run_until(
+        &mut state,
+        |state| {
+            state.step == Step::Main2
+                && state.stack.is_empty()
+                && state.engine.pending_triggers.is_empty()
+                && state.engine.pending_effect.is_none()
+        },
+        |_, _| None,
+    );
+    assert!(!keyword(&state, theirs, Keywords::DOUBLE_STRIKE));
+    assert!(!keyword(&state, theirs, Keywords::TRAMPLE));
+    assert_eq!(life(&state, P0), 18, "one damage step of a 2/2");
+}
+
+#[test]
 fn okoye_grants_nothing_to_a_creature_that_attacks_a_planeswalker_of_the_monarch() {
     let mut state = plains();
     put(

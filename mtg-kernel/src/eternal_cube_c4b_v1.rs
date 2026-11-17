@@ -51,6 +51,7 @@ use crate::effect::{
     EffectContinuation, EffectObjectBinding, EffectOp, ExecCtx, PlayerRef, TargetRef,
 };
 use crate::eternal_cards_v1::{EternalOpV1, EternalTriggerV1};
+use crate::eternal_legacy_e9a_v1::TurnV1;
 use crate::event::{self, CommittedEvent};
 use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::mana::ManaColor;
@@ -122,7 +123,9 @@ pub struct ResolutionCountV1 {
 pub struct OkoyeMarkV1 {
     pub creature: ObjectId,
     pub zone_change_count: u32,
-    pub turn: u32,
+    /// The turn the mark lasts for (its key and its active player: the key
+    /// alone counts rounds, and the chosen creature may be an opponent's).
+    pub turn: TurnV1,
     pub controller: PlayerId,
     pub source: AbilitySourceContractV4,
 }
@@ -133,7 +136,7 @@ pub struct OkoyeMarkV1 {
 pub struct DepartedPowerV1 {
     pub source: ObjectId,
     pub zone_change_count: u32,
-    pub turn: u32,
+    pub turn: TurnV1,
     pub power: i32,
 }
 
@@ -342,7 +345,7 @@ pub(crate) fn note_departure(state: &mut GameState, object: ObjectId) {
     let entry = DepartedPowerV1 {
         source: object,
         zone_change_count: live.zone_change_count,
-        turn: state.turn_key_v1(),
+        turn: TurnV1::now(state),
         power: crate::engine::effective_power(state, object),
     };
     let departed = &mut c4b_state(state).departed_power;
@@ -413,7 +416,7 @@ pub(crate) fn delayed_triggers(
 
 /// Forgets what only mattered earlier in the turn.
 fn prune(state: &mut GameState) {
-    let turn = state.turn_key_v1();
+    let turn = TurnV1::now(state);
     let Some(eternal) = state.eternal_v1.as_mut() else {
         return;
     };
@@ -596,7 +599,7 @@ fn okoye_triggers(state: &GameState, events: &[CommittedEvent], out: &mut Vec<Pe
     let Some(c4b) = read_state(state).filter(|c4b| !c4b.okoye_marks.is_empty()) else {
         return;
     };
-    let turn = state.turn_key_v1();
+    let turn = TurnV1::now(state);
     for event in events {
         let CommittedEvent::DeclaredAttacker {
             source,
@@ -956,7 +959,7 @@ fn run_okoye_combat(ctx: &ExecCtx, state: &mut GameState) {
     let mark = OkoyeMarkV1 {
         creature,
         zone_change_count,
-        turn: state.turn_key_v1(),
+        turn: TurnV1::now(state),
         controller: ctx.controller,
         source,
     };

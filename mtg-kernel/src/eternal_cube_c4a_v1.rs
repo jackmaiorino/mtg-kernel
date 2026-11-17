@@ -72,10 +72,10 @@ pub struct C4aStateV1 {
     /// battlefield incarnation that entered (Ravenous' "if X is 5 or more").
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ravenous_entries: Vec<ObjectLinkV4>,
-    /// Mounts that became saddled, by incarnation, and the turn they became
-    /// saddled until the end of ("until end of turn").
+    /// Mounts that became saddled, by incarnation, and the turn (key and
+    /// active player) they became saddled until the end of.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub saddled: Vec<(ObjectLinkV4, u32)>,
+    pub saddled: Vec<(ObjectLinkV4, crate::eternal_legacy_e9a_v1::TurnV1)>,
 }
 
 impl C4aStateV1 {
@@ -368,7 +368,7 @@ fn reveal_top_card_to_hand(
 /// Whether the Mount incarnation `link` is saddled this turn, as the ability
 /// that asks last knew it (a Mount that left still counts).
 fn saddled_this_turn(state: &GameState, link: ObjectLinkV4) -> bool {
-    let turn = state.turn_key_v1();
+    let turn = crate::eternal_legacy_e9a_v1::TurnV1::now(state);
     read_state(state).is_some_and(|c4a| {
         c4a.saddled
             .iter()
@@ -684,7 +684,7 @@ pub(crate) fn execute(op: &C4aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             let link = live_link(state, mount);
-            let turn = state.turn_key_v1();
+            let turn = crate::eternal_legacy_e9a_v1::TurnV1::now(state);
             let saddled = &mut c4a_state(state).saddled;
             saddled.retain(|(_, saddled_turn)| *saddled_turn == turn);
             if !saddled.iter().any(|(old, _)| *old == link) {
