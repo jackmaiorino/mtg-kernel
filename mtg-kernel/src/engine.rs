@@ -7414,6 +7414,7 @@ fn validate_cost_component_choices_v1(
                     CostComponent::SacrificeSelf
                         | CostComponent::ExileSelf
                         | CostComponent::DiscardSelf
+                        | CostComponent::ReturnSelfToOwnersHandV1
                 )
             });
         if object_cost_chosen.len() != needed
@@ -7480,6 +7481,7 @@ fn validate_cost_component_choices_v1(
                         CostComponent::SacrificeSelf
                             | CostComponent::ExileSelf
                             | CostComponent::DiscardSelf
+                            | CostComponent::ReturnSelfToOwnersHandV1
                     )
                 }));
         if object_cost_chosen.len() != needed || duplicate || invalid || aliases_source_departure {
@@ -7518,6 +7520,7 @@ fn validate_cost_component_choices_v1(
                         CostComponent::SacrificeSelf
                             | CostComponent::ExileSelf
                             | CostComponent::DiscardSelf
+                            | CostComponent::ReturnSelfToOwnersHandV1
                     )
                 }));
         if invalid {
@@ -25392,6 +25395,12 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     #[cfg(feature = "standard-magezero-fixtures")]
     if crate::standard_cards_v1::is_everflame(state, id) {
         subtype_ids.push(card_def::Subtype::Equipment.stable_id());
+    }
+    // Necromancy, once its entry trigger has resolved: "it becomes an Aura"
+    // (Vintage Cube wave C5c).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_cube_c5c_v1::is_necromancy_aura(state, id) {
+        subtype_ids.push(card_def::Subtype::Aura.stable_id());
     }
     // Yavimaya, Cradle of Growth: "Each land is a Forest in addition to its
     // other land types."

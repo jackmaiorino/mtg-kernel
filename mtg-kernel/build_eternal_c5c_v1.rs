@@ -16,7 +16,9 @@
 use super::{
     AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, PermanentFilterRecipe, Special,
 };
-use AbilityCostRecipe::{ManaCost, ReturnSelfToOwnersHand, SacrificeControlled, TapControlled};
+use AbilityCostRecipe::{
+    ManaCost, ReturnSelfToOwnersHand, SacrificeOtherControlledCreatures, TapControlled,
+};
 
 /// An activated ability from the battlefield, at instant speed.
 const fn instant(
@@ -54,15 +56,11 @@ const fn program(path: &'static str) -> AbilityEffectRecipe {
 
 /// Recurring Nightmare: "Sacrifice a creature, Return this enchantment to its
 /// owner's hand: Return target creature card from your graveyard to the
-/// battlefield. Activate only as a sorcery."
+/// battlefield. Activate only as a sorcery." Both costs are paid, so the
+/// creature sacrificed is never the Nightmare itself (an Opalescence can
+/// make it one): the sacrifice is of another creature.
 const RECURRING_NIGHTMARE: [ActivatedAbilityRecipe; 1] = [sorcery(
-    &[
-        SacrificeControlled {
-            count: 1,
-            filter: PermanentFilterRecipe::Creature,
-        },
-        ReturnSelfToOwnersHand,
-    ],
+    &[SacrificeOtherControlledCreatures(1), ReturnSelfToOwnersHand],
     program("crate::eternal_cube_c5c_v1::nightmare_return"),
     "CreatureCardInOwnGraveyard",
 )];

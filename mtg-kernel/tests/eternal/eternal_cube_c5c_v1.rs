@@ -894,6 +894,10 @@ fn necromancy_returns_a_creature_from_any_graveyard_attached_and_it_stays() {
     assert_eq!(zone(&state, pup), Zone::Graveyard);
     let attached = state.objects.get(necromancy).v4.attached_to;
     assert_eq!(attached.map(|link| link.object), Some(angler), "attached");
+    assert!(
+        engine::has_effective_subtype(&state, necromancy, mtg_kernel::card_def::Subtype::Aura),
+        "it became an Aura"
+    );
 
     // Cast in a main phase with an empty stack: it is not sacrificed.
     pass_until(&mut state, |state| state.active_player == P1);
@@ -974,6 +978,11 @@ fn necromancy_with_a_vanished_target_stays_as_an_enchantment_and_with_no_target_
     assert_eq!(zone(&state, pup), Zone::Graveyard, "nothing else returned");
     assert_eq!(zone(&state, necromancy), Zone::Battlefield);
     assert!(state.objects.get(necromancy).v4.attached_to.is_none());
+    assert!(!engine::has_effective_subtype(
+        &state,
+        necromancy,
+        mtg_kernel::card_def::Subtype::Aura
+    ));
     // Not an Aura: it stays through the whole turn.
     pass_until(&mut state, |state| state.active_player == P1);
     assert_eq!(zone(&state, necromancy), Zone::Battlefield);
@@ -1069,6 +1078,31 @@ fn recurring_nightmare_needs_a_creature_to_sacrifice() {
     // The opponent's creature cannot be sacrificed.
     put(&mut state, P1, "Jackal Pup", Zone::Battlefield);
     assert!(!activatable(&mut state, nightmare, 0), "theirs");
+    put(&mut state, P0, "Jackal Pup", Zone::Battlefield);
+    assert!(activatable(&mut state, nightmare, 0));
+}
+
+#[test]
+fn recurring_nightmare_cannot_be_the_creature_it_sacrifices() {
+    // Opalescence: "Each other non-Aura enchantment is a creature." The
+    // Nightmare can't pay both of its costs with itself.
+    let mut state = plains();
+    let nightmare = put(&mut state, P0, "Recurring Nightmare", Zone::Battlefield);
+    put(&mut state, P0, "Gurmag Angler", Zone::Graveyard);
+    let opalescence = put(&mut state, P0, "Opalescence", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W, ManaColor::W], 2);
+    cast(&mut state, opalescence, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, opalescence), Zone::Battlefield);
+    assert!(engine::object_has_type(
+        &state,
+        nightmare,
+        CardType::Creature
+    ));
+    assert!(
+        !activatable(&mut state, nightmare, 0),
+        "itself is the only creature"
+    );
     put(&mut state, P0, "Jackal Pup", Zone::Battlefield);
     assert!(activatable(&mut state, nightmare, 0));
 }

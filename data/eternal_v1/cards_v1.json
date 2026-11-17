@@ -35459,8 +35459,8 @@
   {
    "name": "Gingerbrute Token",
    "engine_capability": "full",
-   "mana_cost": "",
-   "mana_value": 0,
+   "mana_cost": "{1}",
+   "mana_value": 1,
    "colors": [],
    "types": [
     "Artifact",

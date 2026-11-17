@@ -36,13 +36,15 @@
 //!   "four or more card types among cards exiled with this creature" is read
 //!   live from the ledger, counting only cards still in exile.
 //! - Baloth Prime: enters tapped (registry flag) with six stun counters
-//!   (`apply_entry`, Moonshadow's entry counters). "Whenever you sacrifice a
+//!   (`apply_entry`, Moonshadow's entry counters; none when it enters without
+//!   its abilities). "Whenever you sacrifice a
 //!   land" is `delayed_triggers` over the committed `Sacrificed` events. The
 //!   untap goes through the engine's untap, so a stun counter is removed
 //!   instead (122.1g), whatever untaps it.
 //! - Alpha Deathclaw: Monstrosity keeps a per-incarnation "monstrous" mark in
 //!   `C5aStateV1`, puts the counters on through the counter replacement path
-//!   and queues the "becomes monstrous" trigger; its entry trigger and that
+//!   and queues the "becomes monstrous" trigger for the creature's controller
+//!   at that moment, if it still has its abilities; its entry trigger and that
 //!   trigger are the same program and each chooses its own target.
 //! - Ginger, Queen of Sweets: the entry trigger is Thorn of the Black Rose's
 //!   monarch; "if you're the monarch" at each upkeep is checked as the trigger
@@ -518,10 +520,18 @@ fn monstrosity_effect(ctx: &ExecCtx, state: &mut GameState) {
     monstrous.push(me);
     c5a_state(state).monstrous = monstrous;
     let _ = event::add_plus_one_counters(state, source, ctx.controller, 4);
+    // "When this creature ... becomes monstrous" is the creature's own
+    // triggered ability. A creature that has lost its abilities has none, and
+    // the player who controls the creature as it becomes monstrous controls
+    // the trigger, whoever activated the ability.
+    if !active_front_face(state, source) {
+        return;
+    }
+    let controller = state.objects.get(source).controller;
     crate::eternal_premodern_p1a_v1::queue_trigger(
         state,
         AbilitySourceContractV4::capture(state, source),
-        ctx.controller,
+        controller,
         deathclaw_destroy(),
         Some(TargetSpec::AnyPermanent),
     );
@@ -605,7 +615,12 @@ pub(crate) fn apply_entry(
     {
         return;
     }
-    let controller = live.controller;
+    // The entry replacement is a printed ability: a Baloth Prime that enters
+    // without its abilities (Dress Down) gets no stun counters.
+    if !crate::continuous_characteristics_v1::printed_abilities_active(state, object) {
+        return;
+    }
+    let controller = state.objects.get(object).controller;
     match crate::doubling_season_v48::entry_amount(state, input, controller, 6)
         .and_then(|count| i16::try_from(count).map_err(|error| error.to_string()))
     {

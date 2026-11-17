@@ -1017,7 +1017,7 @@ fn torsten_library() -> Vec<&'static str> {
         "Forest",
         "Counterspell",
         "Thraben Inspector",
-        "Giant Growth",
+        "Shock",
     ];
     library.extend(["Plains"; 13]);
     library
@@ -1047,7 +1047,7 @@ fn torsten_puts_chosen_creatures_and_lands_in_hand_and_the_rest_on_the_bottom() 
             "Lightning Bolt",
             "Counterspell",
             "Thraben Inspector",
-            "Giant Growth"
+            "Shock"
         ])
     );
 }
@@ -1107,7 +1107,7 @@ fn torsten_may_take_every_creature_and_land() {
     assert!(library[..13].iter().all(|&name| name == "Plains"));
     assert_eq!(
         sorted(library[13..].to_vec()),
-        sorted(vec!["Lightning Bolt", "Counterspell", "Giant Growth"])
+        sorted(vec!["Lightning Bolt", "Counterspell", "Shock"])
     );
 }
 
@@ -1128,10 +1128,10 @@ fn torsten_with_no_creature_or_land_among_the_seven_asks_nothing() {
     let mut library = vec![
         "Lightning Bolt",
         "Counterspell",
-        "Giant Growth",
+        "Shock",
         "Lightning Bolt",
         "Counterspell",
-        "Giant Growth",
+        "Shock",
         "Lightning Bolt",
     ];
     library.extend(["Plains"; 13]);
@@ -1312,6 +1312,33 @@ fn titania_sees_a_land_that_dies_together_with_it() {
 }
 
 #[test]
+fn titania_without_its_abilities_does_not_see_a_land_that_dies_together_with_it() {
+    // Dress Down: "Creatures lose all abilities."
+    let mut state = plains();
+    let titania = put(
+        &mut state,
+        P0,
+        "Titania, Protector of Argoth",
+        Zone::Battlefield,
+    );
+    let forest = put(&mut state, P0, "Forest", Zone::Battlefield);
+    let dress = put(&mut state, P0, "Dress Down", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, dress, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, dress), Zone::Battlefield);
+    event::propose_and_commit_batch(
+        &mut state,
+        vec![
+            ProposedEvent::zone_change(titania, Zone::Graveyard),
+            ProposedEvent::zone_change(forest, Zone::Graveyard),
+        ],
+    );
+    settled(&mut state);
+    assert!(named(&state, P0, "Green Elemental Token").is_empty());
+}
+
+#[test]
 fn titania_ignores_lands_that_leave_any_other_way_and_other_permanents() {
     let mut state = plains();
     put(
@@ -1488,7 +1515,7 @@ fn c5b_decks_finish_and_replay_through_public_sessions_both_seats() {
         ("Titania, Protector of Argoth", 3),
         ("Otharri, Suns' Glory", 4),
         ("Thraben Inspector", 4),
-        ("Giant Growth", 3),
+        ("Shock", 3),
         ("Lightning Bolt", 4),
     ]);
 

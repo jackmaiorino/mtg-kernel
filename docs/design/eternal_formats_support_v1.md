@@ -2748,11 +2748,13 @@ C5a:
   menace are read live while that player has one or fewer cards in hand. Keen-Eyed Curator keeps a
   ledger of the cards exiled with it and reads its +4/+4 and trample from the card types among
   those still in exile.
-- Baloth Prime enters tapped with six stun counters and, whenever its controller sacrifices a
-  land, makes a tapped Beast token and untaps, which removes a stun counter instead (122.1g).
-  Alpha Deathclaw's monstrosity is a mark on its incarnation, and its entry and becomes-monstrous
-  triggers are one leaf. Ginger, Queen of Sweets makes its controller the monarch and creates a
-  Gingerbrute token at the beginning of each upkeep while they are the monarch.
+- Baloth Prime enters tapped with six stun counters (none when it enters without its abilities)
+  and, whenever its controller sacrifices a land, makes a tapped Beast token and untaps, which
+  removes a stun counter instead (122.1g). Alpha Deathclaw's monstrosity is a mark on its
+  incarnation, and its entry and becomes-monstrous triggers are one leaf; the second is queued
+  for the creature's controller as it becomes monstrous, if it still has its abilities. Ginger,
+  Queen of Sweets makes its controller the monarch and creates a Gingerbrute token (a {1}
+  artifact creature) at the beginning of each upkeep while they are the monarch.
 
 C5b:
 
@@ -2769,20 +2771,21 @@ C5b:
 - Titania, Protector of Argoth returns a land card, and makes a 5/3 Elemental whenever a land its
   controller controls is put into a graveyard from the battlefield
   (`C5bTriggerV1::ControlledLandToGraveyardV1`, which also sees a land that leaves together with
-  Titania). Otharri, Suns' Glory keeps experience counters in `C5bStateV1::experience` and makes
-  its Rebel tokens tapped and attacking.
+  Titania, unless Titania had lost its abilities). Otharri, Suns' Glory keeps experience counters
+  in `C5bStateV1::experience` and makes its Rebel tokens tapped and attacking.
 
 C5c:
 
 - Sunfall exiles every creature as one batch and incubates for the number that left the
   battlefield. Recurring Nightmare's return to its owner's hand is a cost
-  (`CostComponent::ReturnSelfToOwnersHandV1`).
+  (`CostComponent::ReturnSelfToOwnersHandV1`); both costs are always paid, so the creature it
+  sacrifices is another creature.
 - Corpse Dance uses the kicker slot for buyback: a paid cast marks the resolving spell, which goes
   to its owner's hand instead of the graveyard, and the returned creature's exile at the next end
   step is the module's own delayed trigger.
 - Necromancy records a cast at a time a sorcery could not be cast and is sacrificed at the next
-  cleanup step. Once its entry trigger has resolved it is an Aura for state-based actions
-  (`invalid_necromancy_aura`).
+  cleanup step. Once its entry trigger has resolved it is an Aura, in its subtypes
+  (`is_necromancy_aura`) and for state-based actions (`invalid_necromancy_aura`).
 - Aang's Iceberg exiles up to one other nonland permanent until it leaves the battlefield;
   waterbend is four activated abilities, one for each number of permanents tapped to help pay.
   Shifting Woodland becomes a copy of a permanent card in its controller's graveyard through wave

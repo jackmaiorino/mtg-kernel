@@ -1216,6 +1216,24 @@ fn baloth_prime_enters_tapped_with_six_stun_counters() {
 }
 
 #[test]
+fn baloth_prime_enters_without_stun_counters_when_it_has_no_abilities() {
+    // Dress Down: "Creatures lose all abilities." The entry replacement is
+    // one of them.
+    let mut state = plains();
+    let dress = put(&mut state, P0, "Dress Down", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, dress, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, dress), Zone::Battlefield);
+    let baloth = put(&mut state, P0, "Baloth Prime", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 3);
+    cast(&mut state, baloth, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, baloth), Zone::Battlefield);
+    assert_eq!(stun(&state, baloth), 0);
+}
+
+#[test]
 fn baloth_prime_loses_one_stun_counter_at_each_untap_step_instead_of_untapping() {
     let mut state = plains();
     let baloth = put(&mut state, P0, "Baloth Prime", Zone::Battlefield);
@@ -1376,6 +1394,60 @@ fn alpha_deathclaw_monstrosity_adds_four_counters_once_and_destroys_a_permanent(
     );
 }
 
+#[test]
+fn alpha_deathclaw_monstrous_trigger_belongs_to_its_controller_as_it_resolves() {
+    // The opponent takes control of the Deathclaw with the monstrosity
+    // ability on the stack: the counters still go on, and the new controller
+    // controls the trigger and chooses its target.
+    let mut state = plains();
+    let claw = put(&mut state, P0, "Alpha Deathclaw", Zone::Battlefield);
+    let mine = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let theirs = put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::G], 5);
+    activate(&mut state, claw, 0, &[]);
+    on_the_stack(&mut state);
+    state.players[P0.index()]
+        .battlefield
+        .retain(|&object| object != claw);
+    state.players[P1.index()].battlefield.push(claw);
+    state.objects.get_mut(claw).controller = P1;
+    let mut chooser = None;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseTargets {
+            player,
+            legal_targets,
+            ..
+        } => {
+            chooser = Some(player);
+            assert!(legal_targets.contains(&Target::Object(mine)));
+            Action::ChooseTarget(Target::Object(mine))
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(chooser, Some(P1), "the new controller chooses");
+    assert_eq!(plus_counters(&state, claw), 4);
+    assert_eq!(zone(&state, mine), Zone::Graveyard);
+    assert_eq!(zone(&state, theirs), Zone::Battlefield);
+}
+
+#[test]
+fn alpha_deathclaw_without_its_abilities_becomes_monstrous_and_destroys_nothing() {
+    // Dress Down resolves with the monstrosity ability on the stack.
+    let mut state = plains();
+    let claw = put(&mut state, P0, "Alpha Deathclaw", Zone::Battlefield);
+    let victim = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::G], 5);
+    activate(&mut state, claw, 0, &[]);
+    on_the_stack(&mut state);
+    let dress = put(&mut state, P0, "Dress Down", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, dress, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, dress), Zone::Battlefield);
+    assert_eq!(plus_counters(&state, claw), 4, "the ability still resolved");
+    assert_eq!(zone(&state, victim), Zone::Battlefield, "no trigger");
+}
+
 // ---- Ginger, Queen of Sweets ---------------------------------------------------------
 
 #[test]
@@ -1480,6 +1552,7 @@ fn the_gingerbrute_token_is_a_hasty_food_golem_with_evasion_and_a_sacrifice_abil
     assert!(keyword(&state, brute, Keywords::HASTE));
     assert!(engine::object_has_type(&state, brute, CardType::Artifact));
     assert!(engine::object_has_type(&state, brute, CardType::Creature));
+    assert_eq!(engine::object_mana_value(&state, brute), 1, "a {{1}} token");
     // "{1}: can't be blocked this turn except by creatures with haste."
     pool(&mut state, P0, &[], 1);
     activate(&mut state, brute, 0, &[]);

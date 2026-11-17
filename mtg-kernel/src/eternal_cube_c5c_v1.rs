@@ -364,6 +364,17 @@ pub(crate) fn activation_allowed(
     crate::eternal_cards_v1::controller_has_delirium(controller, state)
 }
 
+/// Necromancy once its entry trigger has resolved: "it becomes an Aura". Read
+/// by the engine's effective subtypes while that incarnation is on the
+/// battlefield.
+pub(crate) fn is_necromancy_aura(state: &GameState, id: ObjectId) -> bool {
+    read_state(state).is_some_and(|c5c| {
+        c5c.necromancies
+            .iter()
+            .any(|(aura, _)| aura.object == id && link_live_in(state, *aura, Zone::Battlefield))
+    })
+}
+
 /// 704.5m for Necromancy once it became an Aura: whether it goes to its
 /// owner's graveyard because it is not attached to the creature it put onto
 /// the battlefield, or that creature is no longer a legal host. `None` for

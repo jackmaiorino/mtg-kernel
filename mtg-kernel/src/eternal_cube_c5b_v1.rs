@@ -457,17 +457,41 @@ pub(crate) fn trigger_matches(
                 }
                 live.controller
             } else {
-                let Some(controller) = events.iter().find_map(|event| match *event {
-                    CommittedEvent::ZoneChange {
-                        object: leaver,
-                        from: Zone::Battlefield,
-                        controller_before: before,
-                        ..
-                    } if leaver == source => Some(before),
-                    _ => None,
-                }) else {
+                let Some((position, controller)) =
+                    events
+                        .iter()
+                        .enumerate()
+                        .find_map(|(position, event)| match *event {
+                            CommittedEvent::ZoneChange {
+                                object: leaver,
+                                from: Zone::Battlefield,
+                                controller_before: before,
+                                ..
+                            } if leaver == source => Some((position, before)),
+                            _ => None,
+                        })
+                else {
                     return false;
                 };
+                // A Titania that had lost its abilities as it left (Dress
+                // Down) has no trigger: the engine marks that just before
+                // the move.
+                let abilities_removed = events[..position]
+                    .iter()
+                    .rev()
+                    .take_while(|event| !matches!(event, CommittedEvent::ZoneChange { .. }))
+                    .any(|event| {
+                        matches!(
+                            event,
+                            CommittedEvent::PrintedAbilitiesRemovedBeforeZoneChange {
+                                object: marked,
+                                ..
+                            } if *marked == source
+                        )
+                    });
+                if abilities_removed {
+                    return false;
+                }
                 // The trigger is controlled by the card's current controller.
                 if controller != live.controller {
                     return false;
