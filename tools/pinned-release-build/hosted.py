@@ -18,7 +18,28 @@ import time
 SOURCE = "a30c3769f1ef3a7b569ab52814688141969d877f"
 # The w128 backport before its checkpoint-write change (the a266eb4d launch pin), for that change's equality check.
 PRE_FIX_SOURCE = "f933c8b8dfc60945eff683b5125d694231109417"
-SOURCES = (SOURCE, PRE_FIX_SOURCE)
+# The London keep-offset backport (PR #700 into release/mull-c5719e1cf): the production source c5719e1cf plus
+# only the opt-in pregame keep offset. Built by explicit dispatch (`source_commit`); the default source is unchanged.
+KEEP_OFFSET_SOURCE = "d61e3aed86f981b162c052e89a1e7ee1a1746d89"
+# The London per-count keep-offset and terminal pregame advantage backport (PR #707 into release/mull-c5719e1cf),
+# built by explicit dispatch (`source_commit`); the default source is unchanged.
+LONDON_VECTOR_SOURCE = "587b5aca2a823dc8765c13873bdd10281af63c21"
+# The same change after its test-only lint fixes: the reviewed head of PR #707, whose tree (a6fe30b52) equals
+# the tree of the merge commit below.
+LONDON_VECTOR_SOURCE_B = "6faa42219a4e67d266019458a2380df5aa5e25f8"
+# The merge commit of that change on the release branch (same tree as the head above; this is what gets pinned).
+LONDON_VECTOR_SOURCE_MERGED = "ce3df74f85649bdbb9a9c4971bafefb7346243ed"
+# The merge commit of PR 729 (pregame announcement step scale) on release/mull-c5719e1cf: this is what gets pinned for arm Q.
+ANNOUNCE_STEP_SOURCE_MERGED = "b6516e6f578109194c496768222ca97cdf5f0191"
+SOURCES = (
+    SOURCE,
+    PRE_FIX_SOURCE,
+    KEEP_OFFSET_SOURCE,
+    LONDON_VECTOR_SOURCE,
+    LONDON_VECTOR_SOURCE_B,
+    LONDON_VECTOR_SOURCE_MERGED,
+    ANNOUNCE_STEP_SOURCE_MERGED,
+)
 IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
 GIB = 2**30
 FREE_FLOOR = 60 * GIB + GIB // 2

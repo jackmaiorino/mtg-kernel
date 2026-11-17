@@ -155,6 +155,8 @@ pub(super) struct GuideRun {
     pub(super) executor: ExecutionMode,
     /// SD1's world lifecycle in every search (`BudgetExtras::world`).
     pub(super) world: super::world::WorldMode,
+    /// Flat-root searches (`BudgetExtras::flat_root`).
+    pub(super) flat_root: bool,
 }
 
 impl GuideRun {
@@ -167,6 +169,7 @@ impl GuideRun {
         executor: ExecutionMode::Persistent,
         node_stats: false,
         world: super::world::WorldMode::Fresh,
+        flat_root: false,
     };
 }
 
@@ -189,6 +192,10 @@ pub(super) struct BudgetExtras {
     /// by the runner after parsing; `parse` leaves it `Fresh`). Diagnostic
     /// only: `true-v1` reads the realized hidden state.
     pub(super) world: super::world::WorldMode,
+    /// Flat-root searches in every search of the game (`S4A_FLAT_ROOT=1`,
+    /// set by the runner after parsing; `parse` leaves it false; collab
+    /// LANES/searchpm-20261116, measurement only).
+    pub(super) flat_root: bool,
 }
 
 /// Row field naming the rollout opponent's label, present only when
@@ -279,6 +286,7 @@ impl BudgetExtras {
             node_stats,
             rollout: None,
             world: super::world::WorldMode::Fresh,
+            flat_root: false,
         })
     }
 
@@ -464,6 +472,7 @@ struct Searches<'a> {
     bestline: Option<u64>,
     keys: KeyStats,
     world: super::world::WorldMode,
+    flat_root: bool,
 }
 
 impl Searches<'_> {
@@ -513,6 +522,7 @@ impl Searches<'_> {
         // `Fresh` is exactly the default search.
         let options = super::root_allocation::SearchOptions {
             world: Some(self.world),
+            flat_root: self.flat_root,
             ..super::root_allocation::SearchOptions::default()
         };
         let (sel, tree) = self.roles.select_e_options(
@@ -701,6 +711,7 @@ fn guide_inner(
         bestline: run.bestline,
         keys: KeyStats::default(),
         world: run.world,
+        flat_root: run.flat_root,
     };
     let (first, kept) = if run.opening {
         // From an ordinary opening: the initial search waits for the first
@@ -1112,6 +1123,7 @@ pub(super) fn budget_case_with_executor(
             executor,
             node_stats: extras.node_stats,
             world: extras.world,
+            flat_root: extras.flat_root,
         },
     )?;
     let mut row = json!({"kind":"budget_game","schema":"search-total-budget-v1/game","id":src.id,
@@ -1127,6 +1139,9 @@ pub(super) fn budget_case_with_executor(
     }
     if extras.world != super::world::WorldMode::Fresh {
         row["world"] = json!(extras.world.label());
+    }
+    if extras.flat_root {
+        row["flat_root"] = json!(true);
     }
     // Present only when merging was on, so default rows are unchanged.
     if interchange {
@@ -1781,6 +1796,7 @@ pub(super) mod tests {
                             executor: ExecutionMode::Persistent,
                             node_stats: false,
                             world: super::super::world::WorldMode::Fresh,
+                            flat_root: false,
                         },
                     )
                     .unwrap()

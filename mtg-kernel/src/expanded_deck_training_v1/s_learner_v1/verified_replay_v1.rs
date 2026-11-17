@@ -76,7 +76,8 @@ pub(super) fn gradient_v1(
         work.shorten_first_gradient_for_test_v1();
     }
     attempt.peak_retained_tape_bytes = work.peak_retained_tape_bytes_v1();
-    let mut opponents = OpponentCacheV1::default().with_training_math_v1(options.training_math);
+    let mut opponents =
+        OpponentCacheV1::for_replay_v1().with_training_math_v1(options.training_math);
     let mut gae = None;
     let mut group = 0;
     let mut policy_substeps = 0;

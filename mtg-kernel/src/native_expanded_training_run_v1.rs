@@ -25,12 +25,12 @@ use crate::expanded_deck_training_v1::soft_q_teacher_v1::{
 use crate::expanded_deck_training_v1::verified_bytes_cache_v1;
 use crate::expanded_deck_training_v1::{
     execute_collect_with_carried_v1, execute_update_with_carried_v1, line_b_frozen_sha256_v1,
-    load_expanded_inference_bound_v1, load_expanded_update_inference_v1, load_initial_for_run_v1,
-    take_collection_fields_v1, CarriedLearnerV1, CollectionSamplerV1, CollectionTrajectoryFieldsV1,
-    ExpandedEpisodeV1, ExpandedInferenceIdentityV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
-    ExpandedTrainingCommandV1, ExpandedUpdateBackendV1, LineBUpdateOptionsV1,
-    PendingCarriedLearnerV1, PinnedFileV1, UpdateBackwardExecutionV1,
-    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+    load_expanded_update_inference_v1, load_fixed_roster_opponent_contract_v1,
+    load_initial_for_run_v1, take_collection_fields_v1, CarriedLearnerV1, CollectionSamplerV1,
+    CollectionTrajectoryFieldsV1, ExpandedEpisodeV1, ExpandedInferenceIdentityV1,
+    ExpandedLossSelectionV1, ExpandedModelSourceV1, ExpandedTrainingCommandV1,
+    ExpandedUpdateBackendV1, LineBUpdateOptionsV1, PendingCarriedLearnerV1, PinnedFileV1,
+    UpdateBackwardExecutionV1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
 };
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
 use crate::sideboard::RegisteredDeckV1;
@@ -1738,17 +1738,15 @@ fn load_converted_initial_v1(
     })
 }
 
-/// A fixed opponent's full load and its converted digest, if any. Never
-/// inlined: the loaded policy stays out of the driver's frame.
+/// A fixed opponent's validated load and its converted digest, if any, warming
+/// the process opponent cache so collection and update phases reuse its model.
+/// Never inlined: the loaded policy stays out of the driver's frame.
 #[inline(never)]
 fn load_opponent_contract_v1(
     source: &ExpandedModelSourceV1,
     training_math: TrainingMathV1,
 ) -> Result<Option<String>, String> {
-    let (policy, _) = scoped_v1(LoadRoleV1::RunFixedOpponent, || {
-        load_expanded_inference_bound_v1(source, training_math)
-    })?;
-    Ok(policy.input_contract_v1().map(str::to_owned))
+    load_fixed_roster_opponent_contract_v1(source, training_math)
 }
 
 /// The FlatV7 or FlatV8 identity a source declares in its feature transfer,

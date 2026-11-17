@@ -216,12 +216,17 @@ impl Ex1EpisodeHookV1 {
                     vl,
                     world,
                     seed_root.clone(),
+                    arm.flat_root,
                 )?;
                 let cpu_s = crate::regret_census_v1::stage4a::process_cpu::seconds()? - started;
                 self.searcher.clear();
                 let mut row = json!({"arm":arm.label,"world":arm.world,"search_seed":search_seed,
                     "seed_root":seed_root,"status":if root.is_some() {"ok"} else {"failed"},
                     "cpu_s":cpu_s,"search":record});
+                // Present only when set, so existing arm rows are unchanged.
+                if arm.flat_root {
+                    row["flat_root"] = json!(true);
+                }
                 let frozen = root.as_ref().and_then(|r| r.frozen_live);
                 if frozen.is_none() {
                     // The executor's plain fallback plays p's draw (no
@@ -268,6 +273,10 @@ impl Ex1EpisodeHookV1 {
         let mut out = json!({"reached":true,"schema":SD1_CAPTURE_VERSION_V1,"step":d.step,
             "physical_decision_id":d.physical_decision_id,"width":width,
             "policy":{"logit_bits":logit_bits},"features":features,"arms":arms_out});
+        // Present only when asked for, so existing records are unchanged.
+        if sd1.root_value {
+            out["root_value"] = json!(f64::from(self.searcher.sd1_root_value_v1(session)?));
+        }
         if sd1.half_rollouts == 0 {
             return Ok(out);
         }

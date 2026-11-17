@@ -824,3 +824,114 @@ fn pool_cases_play_their_drawn_members_and_count_the_opponent_loads() {
     assert!(after[5] - before[5] >= 2);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn pool_serial_and_parallel_runs_reuse_opponent_cache_and_match_bit_for_bit() {
+    use crate::expanded_deck_training_v1::opponent_cache_diagnostics_v1;
+    let root = temporary_root_v1("pool-serial-parallel-parity");
+    let options = FixtureOptionsV1 {
+        root: root.clone(),
+        seed: 2_026_091_611,
+        updates: 2,
+        games: 4,
+        warmup_updates: 0,
+        collection_workers: 2,
+        preparation_workers: 1,
+        pool_members: vec![2],
+    };
+    let manifest = write_fixture_v1(&options).unwrap();
+    let root = root.canonicalize().unwrap();
+    let cases = manifest["cases"].as_array().unwrap();
+    let serial_config = read_config_v1(&cases[1]);
+    // Both runs write to the case's fixed path, as the benchmark driver's
+    // samples do, so every pin and identity can match exactly.
+    let mut parallel_config = serial_config.clone();
+    parallel_config.preparation_workers = 2;
+
+    let counters = opponent_cache_diagnostics_v1::counters_v1();
+    let unverified_before = counters.collection_opponent.misses_unverified.get();
+    let revalidated_before = counters.collection_opponent.misses_revalidated.get();
+    let proc_reval_before = counters.process_opponent.hits_revalidated.get();
+
+    let serial_out = run_native_expanded_training_v1(&serial_config, None).unwrap();
+    assert_eq!(serial_out["complete"], true);
+    assert_eq!(
+        counters.collection_opponent.misses_unverified.get() - unverified_before,
+        0,
+        "serial Update must not bypass the process opponent cache via unverified loads"
+    );
+    assert!(
+        counters.collection_opponent.misses_revalidated.get() - revalidated_before >= 2,
+        "serial Update must serve opponent loads through revalidated cache misses"
+    );
+    assert!(
+        counters.process_opponent.hits_revalidated.get() - proc_reval_before >= 2,
+        "serial Update must hit the process opponent cache with pin revalidation"
+    );
+    assert_eq!(
+        opponent_cache_diagnostics_v1::retained_files_section_v1()["opponent_cache_bytes"],
+        0
+    );
+
+    // Per iteration: the output identity (checkpoint, state and Adam step)
+    // and every trajectory's SHA-256, read before the serial run moves away.
+    let boundaries = |out: &Value| -> Vec<(Value, Vec<String>)> {
+        (0..options.updates)
+            .map(|index| {
+                let pin: PinnedFileV1 =
+                    serde_json::from_value(out["iterations"][index].clone()).unwrap();
+                let complete = read_pin(&pin).unwrap();
+                let collection = read_pin(&parse_pin(&complete, "collection").unwrap()).unwrap();
+                let trajectories = collection["trajectories"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|pin| {
+                        serde_json::from_value::<PinnedFileV1>(pin.clone())
+                            .unwrap()
+                            .sha256
+                    })
+                    .collect();
+                (complete["output_identity"].clone(), trajectories)
+            })
+            .collect()
+    };
+    let serial_boundaries = boundaries(&serial_out);
+    assert_eq!(serial_boundaries.len(), options.updates);
+    assert!(serial_boundaries
+        .iter()
+        .all(|(_, trajectories)| trajectories.len() == options.games));
+    fs::create_dir_all(root.join("work/pool2-serial")).unwrap();
+    fs::rename(
+        &serial_config.output_directory,
+        root.join("work/pool2-serial/run"),
+    )
+    .unwrap();
+
+    let parallel_out = run_native_expanded_training_v1(&parallel_config, None).unwrap();
+    assert_eq!(parallel_out["complete"], true);
+    assert_eq!(serial_out["final_identity"], parallel_out["final_identity"]);
+    assert_eq!(serial_boundaries, boundaries(&parallel_out));
+
+    // Same-length mutation of a cached pool checkpoint must fail closed before learning.
+    let member_ckpt = PathBuf::from(
+        manifest["pool"]["members"][0]["checkpoint"]["path"]
+            .as_str()
+            .unwrap(),
+    );
+    let original_ckpt = fs::read(&member_ckpt).unwrap();
+    let mut corrupted = original_ckpt.clone();
+    let mid = corrupted.len() / 2;
+    corrupted[mid] ^= 0xff;
+    fs::write(&member_ckpt, &corrupted).unwrap();
+    let mut tampered_config = serial_config;
+    tampered_config.output_directory = root.join("work/pool2-tampered/run");
+    let err_msg = run_native_expanded_training_v1(&tampered_config, None).unwrap_err();
+    assert!(
+        err_msg.contains("input file SHA differs"),
+        "unexpected error: {err_msg}"
+    );
+    fs::write(&member_ckpt, &original_ckpt).unwrap();
+
+    fs::remove_dir_all(root).unwrap();
+}

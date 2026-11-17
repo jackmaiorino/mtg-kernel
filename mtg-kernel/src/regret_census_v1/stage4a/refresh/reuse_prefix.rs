@@ -322,6 +322,7 @@ pub(super) fn execute(
             executor: ExecutionMode::Persistent,
             node_stats: false,
             world: super::super::world::WorldMode::Fresh,
+            flat_root: false,
         },
         Some(&mut control),
         #[cfg(feature = "viewer-recording-v1")]

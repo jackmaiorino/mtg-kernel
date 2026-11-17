@@ -646,6 +646,24 @@ fn project_versioned(
     }
 }
 
+/// A token or spell copy that still sits in its owner's `zone` list (hand or
+/// library) in `state`. Such an object is outside the deck's card pool: V sees
+/// it (it came from a public zone) and the engine removes it at the next
+/// state-based sweep, with no event. Once it has ceased the zone list no
+/// longer holds it and this is false.
+pub(crate) fn live_outside_pool_v1(state: &GameState, id: ObjectId, zone: Zone) -> bool {
+    let o = state.objects.get(id);
+    if !(o.v4.is_token || o.spell_copy_origin.is_some()) {
+        return false;
+    }
+    let p = &state.players[o.owner.index()];
+    match zone {
+        Zone::Hand => p.hand.contains(&id),
+        Zone::Library => p.library.contains(&id),
+        _ => false,
+    }
+}
+
 impl WalkV1<'_> {
     fn opp(&self) -> PlayerId {
         self.viewer.opponent()
@@ -672,10 +690,18 @@ impl WalkV1<'_> {
             // ends when it enters the opponent's hand and a new one starts
             // when it leaves; in the hand V holds name-level facts only. V's
             // own hand is unchanged.
-            Some(Zone::Hand) => o.owner == Some(self.viewer),
+            //
+            // A token or spell copy physically sitting in a hand or library
+            // list is public and about to cease to exist (111.8, 707.10; the
+            // next state-based sweep removes it without an event). It is not
+            // part of the card pool, so it stays tracked there (issue 713).
+            Some(Zone::Hand) => {
+                o.owner == Some(self.viewer) || live_outside_pool_v1(self.state, id, Zone::Hand)
+            }
             Some(Zone::Library) => {
                 let owner = self.owner(id);
                 self.library[owner.index()].values().any(|&x| x == id)
+                    || live_outside_pool_v1(self.state, id, Zone::Library)
             }
             Some(_) => true,
         }
@@ -1219,6 +1245,18 @@ impl WalkV1<'_> {
                     return;
                 }
                 let id = *object;
+                if live_outside_pool_v1(self.state, id, Zone::Hand) {
+                    // A token or spell copy in the hand is public and tracked
+                    // (issue 713): the engine's reveal note names no hidden
+                    // card, so it is no hand fact and no reveal-triggered
+                    // refusal of a reference to an earlier incarnation. The
+                    // search mark is cleared as the ordinary path clears it
+                    // for a reveal outside a search run (the token's own zone
+                    // move already cleared it).
+                    self.search_mark = None;
+                    self.settle(&[]);
+                    return;
+                }
                 let card_def = self.card_def(id);
                 // Amendment 43.8 revision b (lead ruling 15): reveals are read
                 // by name only. No reveal is provably not an aborted cast's,

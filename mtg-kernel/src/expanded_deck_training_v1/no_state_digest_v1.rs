@@ -1398,7 +1398,6 @@ pub fn convert_no_state_digest_v1(
 mod base_cache_v1;
 #[cfg(test)]
 pub(super) use base_cache_v1::holds_bytes_in_v1;
-pub(super) use base_cache_v1::holds_bytes_v1;
 
 #[cfg(test)]
 mod training_tests;

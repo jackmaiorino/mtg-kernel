@@ -4,7 +4,7 @@ A job that a self-hosted runner accepted cannot move to another runner. Its job-
 (collab tools/ci-runners/ci_job_slots.py) waits for host_slots CPU admission at most
 MTG_CI_ADMISSION_TIMEOUT seconds; on timeout it fails the job before any step, printing
 ADMISSION_MARKER. This script runs in a hosted job after the self-hosted-capable jobs. It finds the
-failed self-hosted jobs of this run whose log carries the marker and, if there are any, dispatches
+failed self-hosted Windows jobs of this run whose log carries the marker and, if there are any, dispatches
 this workflow on the same branch with `windows_runner` set to GitHub's hosted Windows image and
 `fallback_scope` set to the Windows part of this run's group set (env SCOPE), so only Windows groups
 run again there, never the Linux jobs this run already covered. Real test failures (no marker) are never rerun. A dispatched run
@@ -24,6 +24,9 @@ import urllib.request
 
 ADMISSION_MARKER = "MTG_CI_ADMISSION_TIMEOUT"
 HOSTED_WINDOWS = '"windows-2025"'
+# Every job that can run on a self-hosted Windows runner carries its matrix system in its name. The rerun
+# covers Windows groups only, so a self-hosted Linux job is never a reason for one.
+WINDOWS_JOB = "(windows-"
 WORKFLOW = "ci.yml"
 RETRYABLE_HTTP_STATUS = frozenset({404, 408, 429, 500, 502, 503, 504})
 # This run's group set -> the Windows-only set a hosted rerun covers. Unknown sets rerun every
@@ -36,11 +39,12 @@ def fallback_scope(scope: str | None) -> str:
 
 
 def admission_timeouts(jobs: list[dict], logs) -> list[dict]:
-    """The failed self-hosted jobs whose log shows the admission timeout marker. `logs(job_id)` returns the
-    job's log text (or None when it cannot be read: such a job is not rerun, since its cause is unknown)."""
+    """The failed self-hosted Windows jobs whose log shows the admission timeout marker. `logs(job_id)` returns
+    the job's log text (or None when it cannot be read: such a job is not rerun, since its cause is unknown)."""
     out = []
     for job in jobs:
-        if job.get("conclusion") != "failure" or "self-hosted" not in (job.get("labels") or []):
+        if (job.get("conclusion") != "failure" or "self-hosted" not in (job.get("labels") or [])
+                or WINDOWS_JOB not in (job.get("name") or "")):
             continue
         text = logs(job["id"])
         if text is not None and ADMISSION_MARKER in text:

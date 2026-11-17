@@ -186,12 +186,30 @@ jobs:
       # whole-crate checks run at about 8.8 and 6.5 GB at once, and main
       # itself (a7f3f92) was killed there with 8 MB left. With 8 GB of swap
       # it passes, using about 5.6 GB of it (PR #486).
+      #
+      # The swap this step adds is compressed memory (zram), not a swap
+      # file, and so it is in the other three swap steps of this workflow.
+      # GitHub's hosted Linux runners come from two clouds, and on the AWS
+      # ones a swap file that takes in more than a few GB stops every write
+      # to the disk: the runner never answers again and the job is failed
+      # 45 minutes later as "lost communication", with no log. With zram
+      # the same builds finished on both clouds (measured 2026-11-16,
+      # PR #736). 24G bounds the pages the device takes in. What it costs
+      # in memory depends on how well they compress: rustc's went in at
+      # about 4 to 1 (14.6 GB of pages in 3.5 GB). An AWS runner starts
+      # with a small zram swap on the same device, so the step turns that
+      # off and sets the device up again. An Azure runner keeps its own
+      # 3 GB boot swap file behind the device.
       - name: Add swap space for the whole-crate checks
         run: |
-          sudo fallocate -l 8G /mnt/lint.swap
-          sudo chmod 600 /mnt/lint.swap
-          sudo mkswap /mnt/lint.swap
-          sudo swapon /mnt/lint.swap
+          sudo modprobe zram
+          if grep -q '^/dev/zram0 ' /proc/swaps; then sudo swapoff /dev/zram0; fi
+          echo 1 | sudo tee /sys/block/zram0/reset > /dev/null
+          echo zstd | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
+          echo 24G | sudo tee /sys/block/zram0/disksize > /dev/null
+          sudo mkswap /dev/zram0
+          sudo swapon -p 100 /dev/zram0
+          cat /proc/swaps
           free -m
 
       - name: Install pinned Rust in a fresh toolchain directory
@@ -288,10 +306,11 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.rust_relevant == 'true'
     # The limit includes any wait in the self-hosted job-started hook; a
-    # cold Windows build has taken about 45 minutes. The Eternal group
-    # builds three feature sets and replays every playable deck: its hosted
-    # Windows job at 27b28ba2 (2026-11-11) needed more than 120 minutes.
-    timeout-minutes: ${{ matrix.group == 'eternal' && 180 || 120 }}
+    # cold Windows build has taken about 45 minutes. The Eternal groups
+    # build the largest catalog and replay every playable deck: as one job
+    # they needed more than 120 minutes on hosted Windows at 27b28ba2
+    # (2026-11-11) and 136 to 180 minutes by 2026-11-15.
+    timeout-minutes: ${{ startsWith(matrix.group, 'eternal') && 180 || 120 }}
     defaults:
       run:
         shell: bash
@@ -306,6 +325,7 @@ jobs:
           - workspace-targets
           - standard
           - eternal
+          - eternal-integration
           - cuda
           - native-store
           - trace
@@ -317,7 +337,7 @@ jobs:
         # (2026-10-10 to 10-14), so they run on main, tags and manual
         # dispatches, which still cover every group on both systems. A Windows
         # complement dispatch runs exactly the Windows groups excluded here.
-        exclude: ${{ fromJSON((needs.detect-changes.outputs.scope == 'pr' || needs.detect-changes.outputs.scope == 'windows-pr') && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-lib"},{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"}]' || '[]') }}
+        exclude: ${{ fromJSON((needs.detect-changes.outputs.scope == 'pr' || needs.detect-changes.outputs.scope == 'windows-pr') && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"eternal-integration"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-lib"},{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"}]' || '[]') }}
     # Linux groups use GitHub's hosted runners, which are free for this
     # public repository: the WSL runners can't be pinned to cores, so they
     # pause for any host reservation. Windows groups default to GitHub's
@@ -330,19 +350,34 @@ jobs:
     # MTG_CI_PR_WINDOWS_RUNNER instead: a few desktop runners can carry the
     # slowest pull request groups, not every Windows job (2026-11-12: at 6
     # CPUs and BelowNormal, workspace-targets took 54 min there, 113 hosted).
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON(vars.MTG_CI_PR_WINDOWS_GROUPS || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
+    # The Linux groups named in MTG_CI_LINUX_GROUPS (a JSON list, for example
+    # '["eternal-integration"]') run on MTG_CI_LINUX_RUNNER (JSON runs-on
+    # labels, for example '["self-hosted", "mtg-ci-linux", "heavy"]') for
+    # every event except a pull request from a fork. Both must be set; with
+    # either unset or the list empty every Linux group stays hosted. A
+    # self-hosted runner takes one job at a time and a job cannot move once
+    # queued for it, so name only groups it finishes faster than they
+    # arrive, and clear the list to send new runs back to hosted runners.
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON(vars.MTG_CI_PR_WINDOWS_GROUPS || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
     steps:
       # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
       # heavy feature builds finished at two and four Cargo jobs (probe of
       # 2026-11-11: Limited library tests 20 min at two jobs, over 42 min
-      # at one), so the builds below use two jobs instead of one.
+      # at one), so the builds below use two jobs instead of one. The swap
+      # this step adds is now compressed memory (zram), not that swap file:
+      # see the note at the first swap step of this workflow (job
+      # rust-quality).
       - name: Add swap space for the heavy builds
         if: runner.environment == 'github-hosted' && runner.os == 'Linux'
         run: |
-          sudo fallocate -l 12G /mnt/build.swap
-          sudo chmod 600 /mnt/build.swap
-          sudo mkswap /mnt/build.swap
-          sudo swapon /mnt/build.swap
+          sudo modprobe zram
+          if grep -q '^/dev/zram0 ' /proc/swaps; then sudo swapoff /dev/zram0; fi
+          echo 1 | sudo tee /sys/block/zram0/reset > /dev/null
+          echo zstd | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
+          echo 24G | sudo tee /sys/block/zram0/disksize > /dev/null
+          sudo mkswap /dev/zram0
+          sudo swapon -p 100 /dev/zram0
+          cat /proc/swaps
           free -m
 
       - name: Limit affected hosted builds to two Cargo jobs
@@ -370,6 +405,10 @@ jobs:
 
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Guard the hosted Linux runner's memory
+        id: memory_guard
+        uses: ./.github/actions/memory-guard
 
       - name: Prepare the self-hosted runner
         if: runner.environment == 'self-hosted'
@@ -434,8 +473,11 @@ jobs:
             printf 'CARGO_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
             # With a persistent target directory, incremental compilation
             # rebuilds only the changed parts of the mtg-kernel crate. It
-            # does not change program semantics.
-            echo 'CARGO_PROFILE_RELEASE_INCREMENTAL=true' >> "$GITHUB_ENV"
+            # does not change program semantics. It holds more memory, so a
+            # runner with little of it sets MTG_CI_INCREMENTAL=false.
+            if [ "${MTG_CI_INCREMENTAL:-true}" != false ]; then
+              echo 'CARGO_PROFILE_RELEASE_INCREMENTAL=true' >> "$GITHUB_ENV"
+            fi
           fi
 
       - name: Cache cargo registry
@@ -469,7 +511,7 @@ jobs:
         if: matrix.group == 'eternal'
         run: |
           set -euo pipefail
-          if [ "$RUNNER_OS" = Linux ]; then
+          if [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
             export CARGO_BUILD_JOBS=2
           fi
           samples="$PWD/feb-native-event-samples"
@@ -498,21 +540,45 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # The Eternal catalog runs as two groups. This one builds the library's
+      # test binary (the samples above, the checks and the library filters);
+      # eternal-integration builds the plain library and the integration
+      # suites. The two share only the dependency builds, so running them as
+      # separate jobs repeats almost no compile and each gets a runner's
+      # whole memory.
       - name: Validate the eternal catalog
         if: matrix.group == 'eternal'
         run: |
           # Bound concurrent compiler work after repeated hosted Linux
           # shutdowns while compiling the large feature catalogs.
-          if [ "$RUNNER_OS" = Linux ]; then
+          if [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
             export CARGO_BUILD_JOBS=2
           fi
+          # One whole-crate check at a time. --all-targets checks the library
+          # and its test build side by side; the test build holds about 11 GB
+          # before code generation and the library nearly as much, on a 16 GB
+          # runner. Checking the library first leaves the second command only
+          # the test build and the small targets.
+          cargo clippy --release --locked -p mtg-kernel --lib --features eternal-fixtures -- -D warnings
           cargo clippy --release --locked -p mtg-kernel --all-targets --features eternal-fixtures -- -D warnings
           python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_ has_a_fixed_seat_human_prompt full_text_v1::tests:: graveyard_order_v1::tests:: premodern_ordered_public_v1::
+
+      - name: Run the integration suites on the eternal catalog
+        if: matrix.group == 'eternal-integration'
+        run: |
+          if [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
+            export CARGO_BUILD_JOBS=2
+          fi
           python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures
           python python/tools/run_rust_integration_tests.py standard_integration --features eternal-fixtures
 
-      # The library tests and all other targets compile disjoint units, so
-      # the two halves of the workspace suite run as parallel jobs.
+      # The library tests and all other targets are disjoint, so the two
+      # halves of the workspace suite run as parallel jobs. Until 2026-11-16
+      # the targets half also built and ran the library's unit tests. On
+      # hosted Linux that compiled the library and its test build side by
+      # side (the test build alone peaks near 18.5 GB, on a runner with 16 GB
+      # and 15 GB of swap), and the runner was lost 38 minutes in, three
+      # times in two days.
       - name: Run Rust release tests
         if: startsWith(matrix.group, 'workspace-')
         run: |
@@ -520,7 +586,7 @@ jobs:
           # non-library target with full parallelism (shutdown signal, exit
           # 143, from 2026-10-27), and with the FDN catalog also at two units
           # at a time, so that half builds two units at a time with swap.
-          if [ "$MATRIX_GROUP" = workspace-targets ] && [ "$MATRIX_OS" = ubuntu-24.04 ]; then
+          if [ "$MATRIX_GROUP" = workspace-targets ] && [ "$MATRIX_OS" = ubuntu-24.04 ] && [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
             export CARGO_BUILD_JOBS=2
           fi
           python python/tools/run_rust_workspace_tests.py --part "${MATRIX_GROUP#workspace-}" --no-fail-fast
@@ -531,6 +597,9 @@ jobs:
       - name: Check opt-in gameplay decision tracing
         if: matrix.group == 'trace'
         run: |
+          # One whole-crate check at a time, as in the Eternal group: this
+          # group's runner was lost 38 minutes in on 2026-11-15.
+          cargo clippy --release --locked -p mtg-kernel --lib --features gameplay-decision-trace-v1 -- -D warnings
           cargo clippy --release --locked -p mtg-kernel --all-targets --features gameplay-decision-trace-v1 -- -D warnings
           cargo test --release --locked -p mtg-kernel --features gameplay-decision-trace-v1 --lib gameplay_trace
 
@@ -600,6 +669,12 @@ jobs:
           scope: tests-${{ matrix.group }}
           mode: save
 
+      - name: Report the hosted Linux runner's memory use
+        if: always() && steps.memory_guard.outcome == 'success'
+        uses: ./.github/actions/memory-guard
+        with:
+          mode: report
+
   # Every Limited group uses one feature set. One job per system builds the
   # library tests and the Limited process binaries once, as two parallel
   # parts, instead of each of 22 groups compiling them again.
@@ -627,14 +702,21 @@ jobs:
       # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
       # heavy feature builds finished at two and four Cargo jobs (probe of
       # 2026-11-11: Limited library tests 20 min at two jobs, over 42 min
-      # at one), so the builds below use two jobs instead of one.
+      # at one), so the builds below use two jobs instead of one. The swap
+      # this step adds is now compressed memory (zram), not that swap file:
+      # see the note at the first swap step of this workflow (job
+      # rust-quality).
       - name: Add swap space for the heavy builds
         if: runner.environment == 'github-hosted' && runner.os == 'Linux'
         run: |
-          sudo fallocate -l 12G /mnt/build.swap
-          sudo chmod 600 /mnt/build.swap
-          sudo mkswap /mnt/build.swap
-          sudo swapon /mnt/build.swap
+          sudo modprobe zram
+          if grep -q '^/dev/zram0 ' /proc/swaps; then sudo swapoff /dev/zram0; fi
+          echo 1 | sudo tee /sys/block/zram0/reset > /dev/null
+          echo zstd | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
+          echo 24G | sudo tee /sys/block/zram0/disksize > /dev/null
+          sudo mkswap /dev/zram0
+          sudo swapon -p 100 /dev/zram0
+          cat /proc/swaps
           free -m
 
       # Windows can resolve `bash` to the WSL launcher in System32 first;
@@ -658,6 +740,10 @@ jobs:
 
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Guard the hosted Linux runner's memory
+        id: memory_guard
+        uses: ./.github/actions/memory-guard
 
       - name: Install pinned Rust in a fresh toolchain directory
         env:
@@ -714,6 +800,12 @@ jobs:
           retention-days: 1
           compression-level: 1
 
+      - name: Report the hosted Linux runner's memory use
+        if: always() && steps.memory_guard.outcome == 'success'
+        uses: ./.github/actions/memory-guard
+        with:
+          mode: report
+
   # The Limited groups start from the shared build above.
   rust-limited-groups:
     name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})
@@ -757,15 +849,21 @@ jobs:
     steps:
       # The Limited-only shards compile the default-feature library test binary
       # via default_library_names() to diff its inventory against the Limited
-      # build. Give hosted Linux shards the same 12 GB swap space as the other
-      # heavy Rust builds so rustc does not exhaust the 16 GB VM memory limit.
+      # build. Give hosted Linux shards the same swap space as the other
+      # heavy Rust builds so rustc does not exhaust the 16 GB VM memory limit
+      # (the step adds compressed memory, not a swap file: see the note at
+      # the first swap step of this workflow, job rust-quality).
       - name: Add swap space for Limited-only default-library builds
         if: runner.environment == 'github-hosted' && runner.os == 'Linux' && startsWith(matrix.group, 'limited-only')
         run: |
-          sudo fallocate -l 12G /mnt/build.swap
-          sudo chmod 600 /mnt/build.swap
-          sudo mkswap /mnt/build.swap
-          sudo swapon /mnt/build.swap
+          sudo modprobe zram
+          if grep -q '^/dev/zram0 ' /proc/swaps; then sudo swapoff /dev/zram0; fi
+          echo 1 | sudo tee /sys/block/zram0/reset > /dev/null
+          echo zstd | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
+          echo 24G | sudo tee /sys/block/zram0/disksize > /dev/null
+          sudo mkswap /dev/zram0
+          sudo swapon -p 100 /dev/zram0
+          cat /proc/swaps
           free -m
 
       # Windows can resolve `bash` to the WSL launcher in System32 first;
@@ -789,6 +887,10 @@ jobs:
 
       - name: Check out repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      - name: Guard the hosted Linux runner's memory
+        id: memory_guard
+        uses: ./.github/actions/memory-guard
 
       - name: Prepare the self-hosted runner
         if: runner.environment == 'self-hosted'
@@ -1089,6 +1191,12 @@ jobs:
             shard=1
           fi
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 2 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml
+
+      - name: Report the hosted Linux runner's memory use
+        if: always() && steps.memory_guard.outcome == 'success'
+        uses: ./.github/actions/memory-guard
+        with:
+          mode: report
 
   rust-tests:
     name: Rust tests (${{ matrix.os }})

@@ -127,6 +127,11 @@ pub struct Sd1CaptureOptionsV1 {
     /// otherwise the union of the arms' supported actions and picks plus the
     /// top `coverage_max` by p.
     pub coverage_max: u64,
+    /// Opt-in: record the searching network's raw value-head output at the
+    /// placed decision as `root_value` (collab LANES/searchpm-20261116).
+    /// Omitted: the record is unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub root_value: bool,
 }
 
 /// One SD1 arm: a rollout search at `budget` raw selection transitions, or
@@ -142,6 +147,11 @@ pub struct Sd1ArmOptionsV1 {
     pub budget: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value_leaf: Option<Sd1ValueLeafArmV1>,
+    /// Opt-in flat root (`SearchOptions::flat_root`): the tree is the root
+    /// alone and every later focal choice is the rollout policy's. Omitted:
+    /// the arm is E unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flat_root: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

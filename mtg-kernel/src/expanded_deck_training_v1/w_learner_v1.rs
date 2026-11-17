@@ -571,7 +571,8 @@ pub(super) fn execute_w_update_v1(inputs: WUpdateInputsV1) -> Result<Value, Stri
         (prepared.groups, Some(prepared.telemetry))
     } else {
         let mut tensor_groups = Vec::new();
-        let mut opponent_cache = OpponentCacheV1::default().with_training_math_v1(training_math);
+        let mut opponent_cache =
+            OpponentCacheV1::for_replay_v1().with_training_math_v1(training_math);
         for (episode_ordinal, episode) in episodes.iter().enumerate() {
             let opponent = episode
                 .episode
