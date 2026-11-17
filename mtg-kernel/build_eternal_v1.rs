@@ -533,6 +533,13 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
         "Lion's Eye Diamond" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1, amount: ManaAbilityAmountDef::Fixed(3), controller_damage: 0, max_activations_per_turn: None })",
         // "{T}: Add {C}{C}."
         "City of Traitors" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
+        // Relic of Sauron (Vintage Cube wave C3c): "{T}: Add two mana in any
+        // combination of {U}, {B}, and/or {R}." The primary ability is two
+        // mana of the one color chosen (UU, BB, RR); the three mixed pairs
+        // are additional abilities (`additional_mana_abilities_for`, wave E6a).
+        // The Mightstone and Weakstone: "{T}: Add {C}{C}." The runtime turns
+        // the two mana into restricted units (`eternal_cube_c3c_v1`).
+        "Relic of Sauron" | "The Mightstone and Weakstone" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
         _ => super::build_eternal_vintage_v1::mana_ability_def_for(name),
     }
 }

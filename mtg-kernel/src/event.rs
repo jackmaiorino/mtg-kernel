@@ -6026,6 +6026,10 @@ fn materialize_event_v1(
                 crate::eternal_sideboard_s1d_v1::statics::note_departure(
                     state, z.object, from, z.to_zone,
                 );
+                // Skullclamp reads its equipped creature before it moves
+                // (Vintage Cube wave C4c).
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cube_c4c_v1::note_departure(state, z.object, from, z.to_zone);
                 crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
                 if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
                     crate::engine::record_different_controller_target_departure(state, z.object);
@@ -6132,6 +6136,7 @@ fn materialize_event_v1(
                     crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
+                    crate::eternal_cube_c4b_v1::note_departure(state, z.object);
                 }
                 if from == Zone::Battlefield
                     && z.to_zone != Zone::Battlefield
@@ -6171,6 +6176,7 @@ fn materialize_event_v1(
                     crate::eternal_vintage_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::end_copy_before_departure(state, z.object);
                     crate::eternal_legacy_e7a_v1::release_unlinked_exiles(state, z.object);
+                    crate::eternal_cube_c4b_v1::note_departure(state, z.object);
                 }
             }
             materialize_zone_change_v1(
@@ -6265,6 +6271,11 @@ fn materialize_event_v1(
             // gains no life instead." (eternal wave P1a)
             #[cfg(feature = "eternal-fixtures")]
             if crate::eternal_premodern_p1a_v1::statics::prevents_life_gain(state) {
+                return None;
+            }
+            // Screaming Nemesis: a player it dealt damage can't gain life.
+            #[cfg(feature = "eternal-fixtures")]
+            if crate::eternal_cube_c4b_v1::cannot_gain_life(state, g.player) {
                 return None;
             }
             state.players[g.player.index()].life += g.amount;
@@ -6406,6 +6417,7 @@ fn materialize_event_v1(
             state.players[t.controller.index()].battlefield.push(object);
             let enters_tapped = t.entry_tapped
                 || permanent_enters_battlefield_tapped(state, object, t.controller, t.token_def)
+                || crate::eternal_cube_c3b_v1::enters_tapped(state, object, t.controller, false)
                 || authority_observers.map_or_else(
                     || {
                         crate::authority_of_the_consuls_v1::enters_tapped(
@@ -6502,6 +6514,9 @@ fn materialize_event_v1(
                     state.objects.get_mut(object).counters.plus1_plus1 += amount;
                 }
             }
+            // Sword of the Meek (Vintage Cube wave C4c) reads the power and
+            // toughness a creature enters with, after its entry counters.
+            crate::eternal_cube_c4c_v1::apply_entry(state, object);
             if crate::ajani_full_v42::selected_definition(t.token_def) {
                 crate::planeswalker_v1::after_zone_change(state, object, counter_input.as_ref());
                 crate::ajani_full_v42::lifecycle::initialize_entry(state, object);
@@ -8186,7 +8201,16 @@ fn materialize_zone_change_v1(
     let enters_battlefield_tapped = to_zone == Zone::Battlefield
         && (force_battlefield_tapped
             || (entering_face_down.is_none()
-                && permanent_enters_battlefield_tapped(state, id, owner, entry_definition)));
+                && permanent_enters_battlefield_tapped(state, id, owner, entry_definition))
+            // Spider-Woman, Stunning Savior (Vintage Cube wave C3b) reads the
+            // controller the permanent enters under, and a face-down
+            // permanent is a creature.
+            || crate::eternal_cube_c3b_v1::enters_tapped(
+                state,
+                id,
+                battlefield_controller.unwrap_or(owner),
+                entering_face_down.is_some(),
+            ));
     {
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;
@@ -8427,6 +8451,9 @@ fn materialize_zone_change_v1(
             };
             state.objects.get_mut(id).counters.plus1_plus1 = total;
         }
+        // Sword of the Meek (Vintage Cube wave C4c) reads the power and
+        // toughness a creature enters with, after its entry counters.
+        crate::eternal_cube_c4c_v1::apply_entry(state, id);
     }
     crate::planeswalker_v1::after_zone_change(state, id, counter_input);
     if to_zone == Zone::Battlefield {

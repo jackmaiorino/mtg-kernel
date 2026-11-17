@@ -403,7 +403,7 @@ pub(super) fn object_name_for(name: &str) -> Option<&'static str> {
 /// A prepare spell (Carnivorous Cultivator's Enroot): a registry card that is
 /// in no deck, since only copies of it are cast.
 pub(super) fn is_prepare_spell(name: &str) -> bool {
-    name == "Enroot"
+    matches!(name, "Enroot" | "Improvised Act")
 }
 
 /// Card-database tokens for the triggered abilities in
