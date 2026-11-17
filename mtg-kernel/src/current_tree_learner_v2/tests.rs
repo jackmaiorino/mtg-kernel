@@ -132,12 +132,20 @@ fn blocks(hidden: usize) -> Vec<(&'static str, usize, usize)> {
         ("recurrent", layout.recurrent(), layout.bias()),
         ("encoder bias", layout.bias(), layout.head()),
         ("head state", layout.head(), layout.head() + hidden),
-        ("head action", layout.head() + hidden, layout.head() + 2 * hidden),
+        (
+            "head action",
+            layout.head() + hidden,
+            layout.head() + 2 * hidden,
+        ),
         ("head bilinear", layout.head() + 2 * hidden, layout.flags()),
         ("flags", layout.flags(), layout.policy_bias()),
         ("policy bias", layout.policy_bias(), layout.value_weights()),
         ("value weights", layout.value_weights(), layout.value_bias()),
-        ("value bias", layout.value_bias(), parameter_count_v2(hidden)),
+        (
+            "value bias",
+            layout.value_bias(),
+            parameter_count_v2(hidden),
+        ),
     ]
 }
 
@@ -149,14 +157,10 @@ fn contracts_parameter_counts_and_identities() {
     assert_eq!(ModelV2H16::PARAMETER_COUNT, 664);
     assert_eq!(Layout { hidden: 32 }.value_bias() + 1, 1_832);
     assert_eq!(Layout { hidden: 16 }.value_bias() + 1, 664);
-    assert!(CONTRACT_V2.starts_with(
-        "current-tree-learner/v2/f64/input20/hidden32/flags6/value1/gae-adam"
-    ));
+    assert!(CONTRACT_V2
+        .starts_with("current-tree-learner/v2/f64/input20/hidden32/flags6/value1/gae-adam"));
     assert!(CONTRACT_V2.ends_with("/libm-free-v1"));
-    assert_eq!(
-        CONTRACT_V2_H16,
-        CONTRACT_V2.replace("hidden32", "hidden16")
-    );
+    assert_eq!(CONTRACT_V2_H16, CONTRACT_V2.replace("hidden32", "hidden16"));
     assert_eq!(ModelV2::CONTRACT, CONTRACT_V2);
     assert_eq!(ModelV2H16::CONTRACT, CONTRACT_V2_H16);
     let wide = feature_identity_v2();
@@ -188,7 +192,10 @@ fn deterministic_initialization_is_fixed_finite_with_a_zero_value_head() {
             } else {
                 0.
             };
-            assert!(value.is_finite() && value.abs() <= bound * (1. + 1e-12), "{index}");
+            assert!(
+                value.is_finite() && value.abs() <= bound * (1. + 1e-12),
+                "{index}"
+            );
             if bound == 0. {
                 assert_eq!(value.to_bits(), 0, "{index}");
             }
@@ -425,7 +432,9 @@ fn libm_free_functions_track_the_platform_functions() {
         close(tanh_v2(x), x.tanh(), "tanh");
         x += 0.0371;
     }
-    for x in [1e-300, 1e-12, 1e-6, 0.01, 0.3, 0.5493, 1., 9., 17.99, 18., 30.] {
+    for x in [
+        1e-300, 1e-12, 1e-6, 0.01, 0.3, 0.5493, 1., 9., 17.99, 18., 30.,
+    ] {
         close(tanh_v2(x), x.tanh(), "tanh");
         close(tanh_v2(-x), -x.tanh(), "tanh");
     }
@@ -444,7 +453,9 @@ fn libm_free_functions_track_the_platform_functions() {
         x *= 1.37;
     }
     assert_eq!(ln_v2(1.), 0.);
-    for x in [1e-300, 2.5e-310, 5e-324, 1e-10, 0.5, 2., 3., 10., 1e10, 1e300] {
+    for x in [
+        1e-300, 2.5e-310, 5e-324, 1e-10, 0.5, 2., 3., 10., 1e10, 1e300,
+    ] {
         close(sqrt_v2(x), x.sqrt(), "sqrt");
     }
     assert_eq!(sqrt_v2(4.), 2.);

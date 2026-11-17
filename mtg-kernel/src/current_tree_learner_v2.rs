@@ -575,10 +575,7 @@ pub fn scale_only_standardize_v2(advantages: &[f64]) -> Result<(Vec<f64>, f64)> 
     }
     let sigma = sqrt_v2(squares / count);
     let denominator = sigma + 1e-8;
-    Ok((
-        advantages.iter().map(|a| a / denominator).collect(),
-        sigma,
-    ))
+    Ok((advantages.iter().map(|a| a / denominator).collect(), sigma))
 }
 
 /// Global L2 clip: when the norm exceeds `max_norm`, every component is
