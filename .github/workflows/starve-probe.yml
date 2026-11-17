@@ -1,0 +1,91 @@
+name: Starve probe
+
+# Experiment, not for merge. Hosted Linux runners are given more memory
+# use than they have, the way two large compiles side by side do, with the
+# swap file the heavy CI jobs use, or with compressed in-memory swap (zram)
+# ahead of it. Each job keeps a comment on the pull request up to date with
+# its readings, so they outlive a runner that stops answering.
+'on':
+  pull_request:
+    paths:
+      - .github/workflows/starve-probe.yml
+      - tools/ci/starve.py
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: starve-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  starve:
+    name: Starve (${{ matrix.swap }}, ${{ matrix.rep }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 14
+    strategy:
+      fail-fast: false
+      matrix:
+        swap: [file, zram]
+        rep: [1, 2, 3]
+    steps:
+      - name: Swap file, as the heavy CI jobs have it
+        run: |
+          sudo fallocate -l 12G /mnt/build.swap
+          sudo chmod 600 /mnt/build.swap
+          sudo mkswap /mnt/build.swap
+          sudo swapon /mnt/build.swap
+
+      - name: Compressed in-memory swap ahead of the file
+        if: matrix.swap == 'zram'
+        run: |
+          sudo modprobe zram
+          echo zstd | sudo tee /sys/block/zram0/comp_algorithm
+          echo 16G | sudo tee /sys/block/zram0/disksize
+          sudo mkswap /dev/zram0
+          sudo swapon -p 100 /dev/zram0
+
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          sparse-checkout: tools/ci
+
+      - name: Readings that outlive the runner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          CASE: ${{ matrix.swap }}-${{ matrix.rep }}
+        run: |
+          umask 077
+          printf '%s' "$GH_TOKEN" > "$RUNNER_TEMP/starve-token"
+          nohup sudo python3 tools/ci/starve.py watch --label "$CASE" --token-file "$RUNNER_TEMP/starve-token" \
+            --repo "$GITHUB_REPOSITORY" --pr "$PR" --run "$GITHUB_RUN_ID" --log "$RUNNER_TEMP/starve-watch.log" \
+            > "$RUNNER_TEMP/starve-watch.out" 2>&1 < /dev/null &
+          sleep 4
+          cat "$RUNNER_TEMP/starve-watch.out"
+          tail -n 2 "$RUNNER_TEMP/starve-watch.log" || true
+
+      - name: Two processes take more memory than the machine has
+        run: |
+          set +e
+          free -m
+          cat /proc/swaps
+          date -u +"started %H:%M:%S UTC"
+          python3 tools/ci/starve.py hog --fill third --hold-mib 12288 --rate-mib 150 --thrash-seconds 240 & first=$!
+          python3 tools/ci/starve.py hog --fill third --hold-mib 12288 --rate-mib 150 --thrash-seconds 240 & second=$!
+          wait "$first"; first_exit=$?
+          wait "$second"; second_exit=$?
+          date -u +"ended %H:%M:%S UTC"
+          echo "exit codes: $first_exit $second_exit (137 is a kill)"
+          free -m
+          cat /proc/swaps
+          if [ -e /sys/block/zram0/mm_stat ]; then cat /sys/block/zram0/mm_stat; fi
+          sudo dmesg | grep -i -E "out of memory|oom-kill|killed process|blocked for more|hung" | tail -n 8 || true
+
+      - name: Readings, last lines
+        if: always()
+        run: |
+          cat "$RUNNER_TEMP/starve-watch.out" || true
+          tail -n 60 "$RUNNER_TEMP/starve-watch.log" || true
