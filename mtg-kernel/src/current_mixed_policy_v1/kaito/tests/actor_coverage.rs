@@ -591,3 +591,209 @@ fn issue552_signed_terminal_gradient_and_optimizer_resume() {
     restored.update_terminal(&[example(-1)]).unwrap();
     assert_eq!(positive.snapshot(), restored.snapshot());
 }
+
+/// The panel's FullPool owner around an initial scene.
+fn full_pool_owner(mut state: GameState) -> KaitoSession {
+    use crate::policy_surface_v5::LimitedAppendixV1;
+    FastActorSessionV1::enable_limited_native_modes_v1(&mut state, LimitedAppendixV1::FullPool);
+    state.reveal_knowledge_v4 = Some(Default::default());
+    state.reveal_meaning_v3.enable();
+    KaitoSession::from_session(FastActorSessionV1::from_kaito_v75_fixture_state_scoped(
+        state,
+        LimitedAppendixV1::FullPool,
+    ))
+    .unwrap()
+}
+
+/// Encodes and scores the current decision; an encoder refusal fails the test
+/// with the refusal itself.
+fn scored(own: &KaitoSession) -> (crate::rl_session::FastActorDecisionV1, KaitoDecision) {
+    let FastActorResponseV1::Decision(h) = own.current_response() else {
+        panic!("operand fixture ended: {:?}", own.current_response());
+    };
+    let decision = own
+        .encode(h)
+        .unwrap_or_else(|error| panic!("decision at step {} refused: {error}", h.step));
+    let logits = NativeModel::deterministic_fixture()
+        .unwrap()
+        .forward(decision.packet())
+        .unwrap();
+    assert_eq!(logits.len(), decision.packet().actions().len());
+    assert!(logits.iter().all(|score| score.is_finite()));
+    (h, decision)
+}
+
+fn choose(own: &mut KaitoSession, pick: impl Fn(&A) -> bool) {
+    let (_, decision) = scored(own);
+    let index = decision
+        .backend
+        .actions()
+        .iter()
+        .position(pick)
+        .unwrap_or_else(|| panic!("missing action: {:?}", decision.backend.actions()));
+    own.apply(&decision, index as u32).unwrap();
+}
+
+fn pass(action: &A) -> bool {
+    matches!(action, A::Pass { .. })
+}
+
+#[test]
+fn issue454_game34_resolved_krenko_token_incarnations_encode_for_both_viewers_both_seats() {
+    use crate::krenko_public_v1::{facts_v1, LifecycleV1};
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let (state, krenko, _) = scene(player);
+        let mut own = full_pool_owner(state);
+        choose(&mut own, |action| {
+            matches!(action, A::ActivateAbility { source, ability_index: 0, .. }
+                if source.arena_id == krenko.0)
+        });
+        for _ in 0..8 {
+            let facts = facts_v1(own.fixture_state()).unwrap();
+            if facts
+                .activations
+                .iter()
+                .any(|row| row.lifecycle == LifecycleV1::Resolved)
+            {
+                break;
+            }
+            choose(&mut own, pass);
+        }
+        let facts = facts_v1(own.fixture_state()).unwrap();
+        let [activation] = facts.activations.as_slice() else {
+            panic!("one actual Krenko activation expected: {facts:?}");
+        };
+        assert_eq!(activation.lifecycle, LifecycleV1::Resolved);
+        assert!(!activation.created_tokens.is_empty());
+        for token in &activation.created_tokens {
+            let object = own.fixture_state().objects.get(ObjectId(token.arena_id));
+            assert_eq!(object.zone, Zone::Battlefield);
+            assert_eq!(object.zone_change_count, token.zone_change_count);
+        }
+        // The converter turns each created token into the incarnation relation
+        // that normalization binds to the token's battlefield reference.
+        let mut value = serde_json::to_value(&facts).unwrap();
+        super::super::super::krenko_public_operands::prepare(&mut value).unwrap();
+        assert_eq!(
+            value["activations"][0]["created_tokens"],
+            Value::Array(
+                activation
+                    .created_tokens
+                    .iter()
+                    .map(|token| {
+                        serde_json::json!({"object": token.arena_id,
+                            "generation": token.zone_change_count})
+                    })
+                    .collect()
+            )
+        );
+        // Game 34's stop: the first decision after a resolved activation
+        // refused with UnsupportedOperand("arena_id"). Both viewers encode now.
+        let (h, _) = scored(&own);
+        assert_eq!(h.acting_player, player.into());
+        choose(&mut own, pass);
+        let (h, _) = scored(&own);
+        assert_eq!(h.acting_player, player.opponent().into());
+    }
+}
+
+fn take_to_hand(state: &mut GameState, player: PlayerId, name: &str) -> ObjectId {
+    let card = crate::card_def::card_id_by_name(name).unwrap();
+    let index = state.players[player.index()]
+        .library
+        .iter()
+        .position(|&id| state.objects.get(id).card_def == card)
+        .unwrap();
+    // Initial scene only: move an existing registered object, never add a card.
+    let id = state.players[player.index()].library.remove(index);
+    state.objects.get_mut(id).zone = Zone::Hand;
+    state.players[player.index()].hand.push(id);
+    id
+}
+
+#[test]
+fn issue454_targeted_ajani_activation_incarnations_encode_for_both_viewers_both_seats() {
+    use crate::ajani_public_v42::{facts, StageV42};
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let wrpg = deck(include_str!(
+            "../../../../../data/limited/draftzero_sample_v1/decks/FDN_top_12042_WRpG.json"
+        ));
+        let rg = deck(include_str!(
+            "../../../../../data/limited/draftzero_sample_v1/decks/FDN_top_28740_RG.json"
+        ));
+        let decks = if player == PlayerId::P0 {
+            [wrpg, rg]
+        } else {
+            [rg, wrpg]
+        };
+        let mut state = GameState::new_from_libraries_with_starting_player_v1(
+            &decks[0],
+            &decks[1],
+            crate::rl::card_name,
+            454_12042,
+            player,
+        );
+        state.step = Step::Main1;
+        let ajani = take_to_hand(&mut state, player, "Ajani, Caller of the Pride");
+        let goblin = take_to_battlefield(&mut state, player.opponent(), "Courageous Goblin");
+        state.players[player.index()].mana_pool[crate::mana::ManaColor::W.pool_index()] = 3;
+        let mut own = full_pool_owner(state);
+        choose(&mut own, |action| {
+            matches!(action, A::CastSpell { source, .. } if source.arena_id == ajani.0)
+        });
+        for _ in 0..8 {
+            let state = own.fixture_state();
+            if state.stack.is_empty() && state.objects.get(ajani).zone == Zone::Battlefield {
+                break;
+            }
+            choose(&mut own, pass);
+        }
+        choose(&mut own, |action| {
+            matches!(action, A::ActivateAbility { source, ability_index: 0, .. }
+                if source.arena_id == ajani.0)
+        });
+        let targets_goblin = |action: &A| match action {
+            A::ChooseTarget {
+                target: crate::rl::TargetRefV1::Object { object },
+                ..
+            }
+            | A::ChooseEffectTarget {
+                target: crate::rl::TargetRefV1::Object { object },
+                ..
+            } => object.arena_id == goblin.0,
+            _ => false,
+        };
+        choose(&mut own, targets_goblin);
+        for _ in 0..8 {
+            let rows = facts(own.fixture_state()).unwrap().activations;
+            if rows.iter().any(|row| row.stage == StageV42::Resolved) {
+                break;
+            }
+            choose(&mut own, |action| {
+                pass(action)
+                    || matches!(
+                        action,
+                        A::FinishTargetSelection { .. } | A::FinishEffectSelection { .. }
+                    )
+            });
+        }
+        let rows = facts(own.fixture_state()).unwrap().activations;
+        let [activation] = rows.as_slice() else {
+            panic!("one actual Ajani activation expected: {rows:?}");
+        };
+        assert_eq!(activation.stage, StageV42::Resolved);
+        let target = activation.target.expect("targeted Ajani activation");
+        assert_eq!(target.arena_id, goblin.0);
+        assert_eq!(
+            own.fixture_state().objects.get(goblin).counters.plus1_plus1,
+            1
+        );
+        // Every decision above already carried the target incarnation; the
+        // two below show both viewers after resolution.
+        let (h, _) = scored(&own);
+        assert_eq!(h.acting_player, player.into());
+        choose(&mut own, pass);
+        let (h, _) = scored(&own);
+        assert_eq!(h.acting_player, player.opponent().into());
+    }
+}
