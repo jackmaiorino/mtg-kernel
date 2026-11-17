@@ -455,6 +455,167 @@ fn stronghold_gambit_metamorph_enters_uncopied_or_refuses_its_copy_menu() {
     }
 }
 
+/// The second chooser's menu and policy observation are the same whatever the
+/// first player picked, and the first pick is not known to the opponent before
+/// the reveal. After the reveal, the chosen card that stays in hand is known
+/// to its owner's opponent and the one that entered is on the battlefield; the
+/// unchosen card stays private.
+#[test]
+fn stronghold_gambit_second_chooser_learns_nothing_before_the_reveal_in_both_seats() {
+    use mtg_kernel::policy_surface_v5::PolicySurfaceV5;
+    use mtg_kernel::rl::observe_policy_v5;
+
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let run = |pick: usize| {
+            let mut state = game(actor);
+            mtg_kernel::rl::enable_public_shroud_v1(&mut state);
+            let hand = [
+                put(&mut state, actor, "Griselbrand", Zone::Hand),
+                put(&mut state, actor, "Golgari Thug", Zone::Hand),
+            ];
+            let rootwalla = put(&mut state, opponent, "Basking Rootwalla", Zone::Hand);
+            let bolt = put(&mut state, opponent, "Lightning Bolt", Zone::Hand);
+            cast_gambit(&mut state, actor);
+            assert!(settle(&mut state).is_some());
+            gambit_pick(&mut state, actor, hand[pick]);
+            let menu = format!("{:?}", next(&mut state));
+            let observation = format!(
+                "{:?}",
+                observe_policy_v5(&state, &PolicySurfaceV5::new(), opponent, 0, 0, 0, 1).unwrap()
+            );
+            assert!(state.known_hand_cards(opponent, actor).is_empty());
+            gambit_pick(&mut state, opponent, rootwalla);
+            settled(&mut state);
+            assert_eq!(zone(&state, rootwalla), Zone::Battlefield);
+            assert_eq!(zone(&state, hand[pick]), Zone::Hand);
+            let known = state
+                .known_hand_cards(opponent, actor)
+                .iter()
+                .map(|entry| entry.object)
+                .collect::<Vec<_>>();
+            assert_eq!(known, vec![hand[pick]]);
+            assert!(!state
+                .known_hand_cards(actor, opponent)
+                .iter()
+                .any(|entry| entry.object == bolt));
+            (menu, observation)
+        };
+        let (menu_a, observation_a) = run(0);
+        let (menu_b, observation_b) = run(1);
+        assert_eq!(menu_a, menu_b);
+        assert_eq!(observation_a, observation_b);
+    }
+}
+
+/// Answers the pending Meddling Mage name menu with `name` (its first letter,
+/// then the name).
+fn choose_mage_name(state: &mut GameState, player: PlayerId, name: &str) {
+    let Decision::ChooseMeddlingMageNameV1 {
+        player: chooser,
+        group: None,
+        options,
+        ..
+    } = next(state)
+    else {
+        panic!("expected the catalog name groups")
+    };
+    assert_eq!(chooser, player);
+    let letter = name[..1].to_ascii_uppercase();
+    let group = options.iter().position(|option| option == &letter).unwrap();
+    act(state, Action::ChooseEffectOption(group as u16));
+    let Decision::ChooseMeddlingMageNameV1 {
+        player: chooser,
+        group: Some(_),
+        options,
+        ..
+    } = next(state)
+    else {
+        panic!("expected the names of the selected group")
+    };
+    assert_eq!(chooser, player);
+    let index = options.iter().position(|option| option == name).unwrap();
+    act(state, Action::ChooseEffectOption(index as u16));
+}
+
+/// Containment Priest and Meddling Mage (whose name is chosen before it
+/// enters, pausing the entry) both enter by Stronghold Gambit, in either
+/// order of the batch: the Priest does not exile the Mage, and the Mage's
+/// name stops that spell. A Priest already on the battlefield exiles a Mage
+/// entering this way.
+#[test]
+fn stronghold_gambit_priest_and_meddling_mage_enter_together_in_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        for priest_first in [true, false] {
+            let mut state = game(actor);
+            let (priest_owner, mage_owner) = if priest_first {
+                (actor, opponent)
+            } else {
+                (opponent, actor)
+            };
+            let priest = put(&mut state, priest_owner, "Containment Priest", Zone::Hand);
+            let mage = put(&mut state, mage_owner, "Meddling Mage", Zone::Hand);
+            cast_gambit(&mut state, actor);
+            assert!(settle(&mut state).is_some());
+            let (first, second) = if priest_first {
+                (priest, mage)
+            } else {
+                (mage, priest)
+            };
+            gambit_pick(&mut state, actor, first);
+            gambit_pick(&mut state, opponent, second);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseMeddlingMageNameV1 { player, .. }) if player == mage_owner
+            ));
+            choose_mage_name(&mut state, mage_owner, "Lightning Bolt");
+            settled(&mut state);
+            assert_eq!(zone(&state, priest), Zone::Battlefield);
+            assert_eq!(zone(&state, mage), Zone::Battlefield);
+            state.priority_player = priest_owner;
+            let bolt = put(&mut state, priest_owner, "Lightning Bolt", Zone::Hand);
+            pool(&mut state, priest_owner, &[ManaColor::R], 0);
+            assert!(!priority(&mut state).1.contains(&bolt), "the named spell");
+        }
+
+        let mut state = game(actor);
+        put(
+            &mut state,
+            opponent,
+            "Containment Priest",
+            Zone::Battlefield,
+        );
+        let mage = put(&mut state, actor, "Meddling Mage", Zone::Hand);
+        cast_gambit(&mut state, actor);
+        assert!(settle(&mut state).is_some());
+        gambit_pick(&mut state, actor, mage);
+        settled(&mut state);
+        assert_eq!(zone(&state, mage), Zone::Exile);
+    }
+}
+
+/// A Metamorph that a Containment Priest already on the battlefield would
+/// exile never enters, so no copy choice arises and the game goes on.
+#[test]
+fn stronghold_gambit_metamorph_exiled_by_a_priest_needs_no_copy_choice_in_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor);
+        put(&mut state, actor, "Containment Priest", Zone::Battlefield);
+        put(&mut state, actor, "Golgari Thug", Zone::Battlefield);
+        let griselbrand = put(&mut state, actor, "Griselbrand", Zone::Hand);
+        let metamorph = put(&mut state, opponent, "Phyrexian Metamorph", Zone::Hand);
+        cast_gambit(&mut state, actor);
+        assert!(settle(&mut state).is_some());
+        gambit_pick(&mut state, actor, griselbrand);
+        gambit_pick(&mut state, opponent, metamorph);
+        settled(&mut state);
+        assert_eq!(zone(&state, metamorph), Zone::Exile);
+        assert_eq!(zone(&state, griselbrand), Zone::Hand);
+    }
+}
+
 // ---- Eowyn, Fearless Knight ---------------------------------------------------------
 
 /// Casts Eowyn for `actor` and answers her enters trigger with `target`,
@@ -628,6 +789,43 @@ fn eowyn_rechecks_power_on_resolution_with_last_known_power_in_both_seats() {
     }
 }
 
+/// The legendary creatures gain protection from exactly the exiled
+/// creature's colors: after a mono-black creature is exiled, a black spell
+/// cannot target them and a white one can; after a colorless creature is
+/// exiled, both can.
+#[test]
+fn eowyn_grants_protection_from_exactly_the_exiled_colors_in_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        for (exiled, black_protected) in [("Griselbrand", true), ("Phyrexian Dreadnought", false)] {
+            let mut state = game(actor);
+            let target = put(&mut state, opponent, exiled, Zone::Battlefield);
+            let ragavan = put(
+                &mut state,
+                actor,
+                "Ragavan, Nimble Pilferer",
+                Zone::Battlefield,
+            );
+            let inspector = put(&mut state, actor, "Thraben Inspector", Zone::Battlefield);
+            cast_eowyn(&mut state, actor, target);
+            settled(&mut state);
+            assert_eq!(zone(&state, target), Zone::Exile);
+
+            state.priority_player = opponent;
+            let push = put(&mut state, opponent, "Fatal Push", Zone::Hand);
+            pool(&mut state, opponent, &[ManaColor::B], 0);
+            cast(&mut state, push);
+            let legal = choose_target(&mut state, Target::Object(inspector));
+            settled(&mut state);
+            assert_eq!(legal.contains(&Target::Object(ragavan)), !black_protected);
+
+            let legal = swords_targets(&mut state, opponent, ragavan);
+            assert!(legal.contains(&Target::Object(ragavan)));
+            assert_eq!(zone(&state, ragavan), Zone::Exile);
+        }
+    }
+}
+
 // ---- Unlicensed Hearse --------------------------------------------------------------
 
 /// Crews `vehicle` (ability `index`) with `members`.
@@ -774,6 +972,62 @@ fn unlicensed_hearse_zero_zero_dies_summoning_sickness_and_blink_reset_in_both_s
     }
 }
 
+/// A Phyrexian Metamorph that entered as a copy of Unlicensed Hearse has the
+/// Hearse's abilities, and its power and toughness count the cards exiled
+/// with the copy itself.
+#[test]
+fn phyrexian_metamorph_copying_unlicensed_hearse_counts_its_own_exiled_cards() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor);
+        let hearse = put(&mut state, opponent, HEARSE, Zone::Battlefield);
+        let bolt = put(&mut state, opponent, "Lightning Bolt", Zone::Graveyard);
+        let seal = put(&mut state, opponent, "Seal of Fire", Zone::Graveyard);
+        let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U], 3);
+        cast(&mut state, metamorph);
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+                assert!(legal_targets.contains(&Target::Object(hearse)));
+                act(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(hearse)),
+                );
+            }
+            other => panic!("expected the copy choice, got {other:?}"),
+        }
+        if let Some(Decision::ChooseEffectTargets {
+            can_finish: true, ..
+        }) = settle(&mut state)
+        {
+            act(&mut state, Action::FinishEffectSelection);
+        }
+        settled(&mut state);
+        assert_eq!(zone(&state, metamorph), Zone::Battlefield);
+        assert_eq!(engine::effective_name(&state, metamorph), HEARSE);
+        assert_eq!(power(&state, metamorph), 0);
+
+        activate(&mut state, metamorph, 0);
+        hearse_targets(&mut state, &[bolt, seal]);
+        settled(&mut state);
+        assert_eq!(zone(&state, bolt), Zone::Exile);
+        assert_eq!(zone(&state, seal), Zone::Exile);
+        assert_eq!(power(&state, hearse), 0);
+        let first = put(&mut state, actor, "Basking Rootwalla", Zone::Battlefield);
+        let second = put(&mut state, actor, "Basking Rootwalla", Zone::Battlefield);
+        crew(&mut state, metamorph, 1, &[first, second]);
+        assert!(engine::object_has_type(
+            &state,
+            metamorph,
+            CardType::Creature
+        ));
+        assert_eq!(
+            (power(&state, metamorph), toughness(&state, metamorph)),
+            (2, 2)
+        );
+    }
+}
+
 // ---- Outland Liberator --------------------------------------------------------------
 
 /// Passes priority (declaring no attackers or blockers) until `until`.
@@ -916,6 +1170,45 @@ fn outland_liberator_turns_into_frenzied_trapbreaker_at_night_and_back_in_both_s
     }
 }
 
+/// By day the front face, Outland Liberator, attacks with no trigger: only
+/// Frenzied Trapbreaker has "Whenever this creature attacks".
+#[test]
+fn outland_liberator_front_face_attacks_without_a_trigger_in_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor);
+        let liberator = put(&mut state, actor, LIBERATOR, Zone::Battlefield);
+        let ring = put(&mut state, opponent, "Sol Ring", Zone::Battlefield);
+        mtg_kernel::trigger::sba_fixed_point(&mut state);
+        assert_eq!(state.day_night_v1, Some(DayNightV1::Day));
+        assert_eq!(state.objects.get(liberator).v4.face_index, 0);
+        let mut attacked = false;
+        for _ in 0..200 {
+            match next(&mut state) {
+                Decision::DeclareAttackers { player, eligible } if player == actor && !attacked => {
+                    assert!(eligible.contains(&liberator));
+                    act(&mut state, Action::DeclareAttackers(vec![liberator]));
+                    attacked = true;
+                }
+                Decision::CastSpellOrPass { .. } if attacked && state.step == Step::Main2 => break,
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                Decision::DeclareBlockers { .. } => {
+                    act(&mut state, Action::DeclareBlockers(vec![]))
+                }
+                Decision::OrderTriggers { pending, .. } => act(
+                    &mut state,
+                    Action::OrderTriggers((0..pending.len()).collect()),
+                ),
+                other => panic!("no trigger expected, got {other:?}"),
+            }
+        }
+        assert!(attacked);
+        assert_eq!(state.step, Step::Main2);
+        assert_eq!(state.objects.get(liberator).v4.face_index, 0);
+        assert_eq!(zone(&state, ring), Zone::Battlefield);
+    }
+}
+
 // ---- S1o Public-Session Consumer Games ----------------------------------------------
 
 #[derive(Default)]
@@ -1000,6 +1293,10 @@ fn s1o_decks_finish_and_replay_through_public_sessions() {
     assert!(cast_totals[2] > 0, "no Outland Liberator cast");
     assert!(cast_totals[3] > 0, "no Unlicensed Hearse cast");
     assert!(totals.gambit_picks > 0, "no Stronghold Gambit hand choice");
+    assert!(
+        totals.liberator_activations > 0,
+        "no Outland Liberator activation"
+    );
     assert!(
         totals.hearse_activations > 0,
         "no Unlicensed Hearse activation"
