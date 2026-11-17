@@ -8,6 +8,7 @@ use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
+use mtg_kernel::eternal_lurrus_v1::add_companions;
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
@@ -479,14 +480,7 @@ fn deck(rows: &[(&str, u32)]) -> CustomDeckV1 {
 fn c3c_cards_are_full() {
     for name in C3C_CARDS {
         let card = def(name);
-        // The Mightstone and Weakstone is Partial: its mana cannot yet pay
-        // ward, taxes, mana ability costs or special actions.
-        let expected = if name == "The Mightstone and Weakstone" {
-            CardCapability::Partial
-        } else {
-            CardCapability::Full
-        };
-        assert_eq!(card.capability, expected, "{name}");
+        assert_eq!(card.capability, CardCapability::Full, "{name}");
         assert!(card.is_executable(), "{name}");
     }
     for name in [
@@ -2001,6 +1995,176 @@ fn mightstone_and_weakstone_mana_pays_for_any_activated_ability() {
     assert_eq!(named(&state, P0, "Servo Token").len(), 1);
 }
 
+/// P0's The Mightstone and Weakstone on the battlefield, tapped for its two
+/// restricted {C}, with P0 holding priority.
+fn powerstone_mana(state: &mut GameState) -> ObjectId {
+    let name = "The Mightstone and Weakstone";
+    let stone = put(state, P0, name, Zone::Battlefield);
+    next(state);
+    act(state, Action::ActivateManaAbility(stone));
+    assert_eq!(restricted(state, P0), 2);
+    stone
+}
+
+/// How many restricted mana units `player` has floating.
+fn restricted(state: &GameState, player: PlayerId) -> usize {
+    state.players[player.index()].restricted_mana_pool.0.len()
+}
+
+/// Settles, choosing to pay whenever `payer` is asked whether to pay, and
+/// otherwise answering with the first legal answer.
+fn settle_paying(state: &mut GameState, payer: PlayerId) {
+    settle_with(state, |_, decision| match decision {
+        Decision::ChooseEffectBoolean { player, .. } => {
+            assert_eq!(player, payer);
+            Action::ChooseEffectBoolean(true)
+        }
+        other => first_answer(other),
+    });
+}
+
+#[test]
+fn mightstone_and_weakstone_mana_pays_ward_for_a_nonartifact_spell() {
+    // Ward {2} is not part of casting Lightning Bolt (702.21a), so the
+    // restricted units pay it though they cannot pay for the Bolt itself.
+    let mut state = plains();
+    let automaton = put(&mut state, P1, "Patchwork Automaton", Zone::Battlefield);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    powerstone_mana(&mut state);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    cast(&mut state, bolt, &[Target::Object(automaton)]);
+    assert_eq!(restricted(&state, P0), 2, "the Bolt spent only its {{R}}");
+    settle_paying(&mut state, P0);
+    assert_eq!(zone(&state, bolt), Zone::Graveyard);
+    assert_eq!(
+        zone(&state, automaton),
+        Zone::Graveyard,
+        "ward was paid and the Bolt resolved"
+    );
+    assert_eq!(restricted(&state, P0), 0, "the units paid the ward");
+}
+
+#[test]
+fn mightstone_and_weakstone_mana_pays_a_counter_unless_its_controller_pays_tax() {
+    let mut state = plains();
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    let leak = put(&mut state, P1, "Mana Leak", Zone::Hand);
+    powerstone_mana(&mut state);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast(&mut state, bolt, &[Target::Player(P1)]);
+    assert!(matches!(
+        next(&mut state),
+        Decision::CastSpellOrPass { player: P0, .. }
+    ));
+    act(&mut state, Action::Pass);
+    pool(&mut state, P1, &[ManaColor::U], 1);
+    cast(&mut state, leak, &[Target::Object(bolt)]);
+    // Mana Leak's {3}: the two restricted units and the floating {C}.
+    settle_paying(&mut state, P0);
+    assert_eq!(zone(&state, leak), Zone::Graveyard);
+    assert_eq!(life(&state, P1), 17, "P0 paid and the Bolt resolved");
+    assert_eq!(restricted(&state, P0), 0);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0);
+}
+
+#[test]
+fn mightstone_and_weakstone_mana_pays_a_mana_abilitys_cost() {
+    // Prophetic Prism: "{1}, {T}: Add one mana of any color."
+    let mut state = plains();
+    let prism = put(&mut state, P0, "Prophetic Prism", Zone::Battlefield);
+    powerstone_mana(&mut state);
+    act(
+        &mut state,
+        Action::ActivateManaAbilityChoice(prism, ManaColor::G),
+    );
+    assert!(is_tapped(&state, prism));
+    assert_eq!(mana(&state, P0, ManaColor::G), 1);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0);
+    assert_eq!(restricted(&state, P0), 1, "one unit paid the {{1}}");
+}
+
+#[test]
+fn mightstone_and_weakstone_mana_pays_a_plot_cost() {
+    let mut state = plains();
+    let pillage = put(&mut state, P0, "Pillage the Bog", Zone::Hand);
+    powerstone_mana(&mut state);
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::G], 0);
+    match next(&mut state) {
+        Decision::CastSpellOrPass { plot_actions, .. } => {
+            assert!(plot_actions.contains(&pillage), "Plot {{1}}{{B}}{{G}}");
+        }
+        other => panic!("expected priority, got {other:?}"),
+    }
+    act(&mut state, Action::PlotSpell(pillage));
+    assert_eq!(zone(&state, pillage), Zone::Exile);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+    assert_eq!(restricted(&state, P0), 1, "one unit paid the {{1}}");
+}
+
+#[test]
+fn mightstone_and_weakstone_mana_pays_to_foretell() {
+    let mut state = plains();
+    let behold = put(&mut state, P0, "Behold the Multiverse", Zone::Hand);
+    assert!(!activatable(&mut state, behold, 0), "no mana yet");
+    powerstone_mana(&mut state);
+    assert!(
+        activatable(&mut state, behold, 0),
+        "{{2}} from the restricted units"
+    );
+    act(&mut state, Action::ActivateAbility(behold, 0));
+    assert!(state.stack.is_empty(), "a special action");
+    assert_eq!(zone(&state, behold), Zone::Exile);
+    assert_eq!(restricted(&state, P0), 0);
+}
+
+#[test]
+fn mightstone_and_weakstone_mana_pays_a_companions_three() {
+    let mut state = plains();
+    add_companions(&mut state, [Some(id("Lurrus of the Dream-Den")), None]);
+    let lurrus = *state.exile.last().unwrap();
+    powerstone_mana(&mut state);
+    assert!(
+        !activatable(&mut state, lurrus, 0),
+        "{{3}} is not yet payable"
+    );
+    pool(&mut state, P0, &[], 1);
+    assert!(activatable(&mut state, lurrus, 0));
+    act(&mut state, Action::ActivateAbility(lurrus, 0));
+    assert_eq!(zone(&state, lurrus), Zone::Hand);
+    assert_eq!(restricted(&state, P0), 0);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+}
+
+#[test]
+fn mightstone_and_weakstone_mana_never_pays_a_tax_on_a_nonartifact_spell() {
+    // Sphere of Resistance: "Spells cost {1} more to cast." The {1} is part
+    // of the Bolt's total cost (601.2f), so the restricted units cannot pay it.
+    let mut state = plains();
+    put(&mut state, P1, "Sphere of Resistance", Zone::Battlefield);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    powerstone_mana(&mut state);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    assert!(!castable(&mut state, bolt), "{{1}}{{R}} under the Sphere");
+    pool(&mut state, P0, &[], 1);
+    cast(&mut state, bolt, &[Target::Player(P1)]);
+    settled(&mut state);
+    assert_eq!(life(&state, P1), 17);
+    assert_eq!(restricted(&state, P0), 2, "ordinary mana paid the tax");
+    assert_eq!(mana(&state, P0, ManaColor::C), 0);
+
+    // An artifact spell's total, tax included, is theirs to pay.
+    let mut state = plains();
+    put(&mut state, P1, "Sphere of Resistance", Zone::Battlefield);
+    let mind_stone = put(&mut state, P0, "Mind Stone", Zone::Hand);
+    powerstone_mana(&mut state);
+    pool(&mut state, P0, &[], 1);
+    cast(&mut state, mind_stone, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, mind_stone), Zone::Battlefield);
+    assert_eq!(restricted(&state, P0), 0);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0);
+}
+
 // ---- Public sessions -----------------------------------------------------------------
 
 #[test]
@@ -2021,6 +2185,7 @@ fn c3c_decks_finish_and_replay_through_public_sessions_both_seats() {
         ("Sol Ring", 3),
         ("Relic of Sauron", 2),
         ("Pyrite Spellbomb", 2),
+        ("The Mightstone and Weakstone", 2),
     ]);
     let black_red = deck(&[
         ("Swamp", 6),
@@ -2037,6 +2202,7 @@ fn c3c_decks_finish_and_replay_through_public_sessions_both_seats() {
         ("Lightning Greaves", 2),
         ("The Echoverse Fulcrum", 2),
         ("Retrofitter Foundry", 2),
+        ("The Mightstone and Weakstone", 2),
     ]);
 
     let mut casts = std::collections::BTreeMap::<u16, usize>::new();
@@ -2057,11 +2223,7 @@ fn c3c_decks_finish_and_replay_through_public_sessions_both_seats() {
             }
         }
     }
-    // The Mightstone and Weakstone is Partial, so no deck may hold it.
-    for name in C3C_CARDS
-        .into_iter()
-        .filter(|name| *name != "The Mightstone and Weakstone")
-    {
+    for name in C3C_CARDS {
         assert!(
             casts.get(&id(name)).copied().unwrap_or(0) > 0,
             "{name} was never cast"

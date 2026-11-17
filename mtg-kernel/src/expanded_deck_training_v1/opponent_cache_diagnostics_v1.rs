@@ -289,12 +289,12 @@ pub(crate) struct ProcessOpponentStatsV1 {
     pub(crate) not_kept_unverifiable: CountV1,
     pub(crate) not_kept_unforkable: CountV1,
     pub(crate) not_kept_budget: CountV1,
-    /// Entries dropped for the entry or byte bound, with their charged bytes
-    /// and any held file bytes, peak live charge, and entries replaced by a
-    /// concurrent load of the same source.
+    /// Entries dropped for the entry or byte bound, with their charged bytes,
+    /// peak live charge, and entries replaced by a concurrent load of the
+    /// same source. Entries hold pins, not file copies, so an eviction frees
+    /// no file bytes.
     pub(crate) evictions: CountV1,
     pub(crate) evicted_charged_bytes: CountV1,
-    pub(crate) evicted_file_bytes: CountV1,
     pub(crate) peak_charged_bytes: CountV1,
     pub(crate) replaced: CountV1,
 }
@@ -303,9 +303,11 @@ pub(crate) struct ProcessOpponentStatsV1 {
 /// one: each collector's, and the S learner's and the replay's.
 #[derive(Default)]
 pub(crate) struct CollectionOpponentStatsV1 {
-    /// Loads served by the collector's own entry, and their time.
+    /// Loads served by the collector's own entry, and their time; of them,
+    /// those served by the transient slot (a policy the bounds refused).
     pub(crate) hits: CountV1,
     pub(crate) hit_nanos: CountV1,
+    pub(crate) transient_hits: CountV1,
     /// Loads that missed it: through the process opponent cache (a source
     /// the boundary verified, or a serial replay load that revalidated its
     /// pins), or a full load of an unverified source; their time includes
@@ -320,14 +322,17 @@ pub(crate) struct CollectionOpponentStatsV1 {
     pub(crate) not_kept_budget: CountV1,
     pub(crate) evictions: CountV1,
     /// Policies held now by every live collection cache, the bytes of
-    /// their own copies (`policy_bytes_v1`), and the peaks of both. A
-    /// policy's model is not counted: a fork shares its model with the
-    /// process cache's entry, counted there, and only a source loaded in
-    /// full (`misses_unverified`) holds a model of its own.
+    /// their own copies (`policy_bytes_v1`), and the peaks of both.
     pub(crate) live_entries: CountV1,
     pub(crate) peak_live_entries: CountV1,
     pub(crate) live_policy_bytes: CountV1,
     pub(crate) peak_live_policy_bytes: CountV1,
+    /// What every live collection cache charges against its budget now, and
+    /// the peak: each entry's own bytes plus each distinct model a cache
+    /// holds, once per cache, whether or not the process cache also holds
+    /// it (so a model both hold is counted in both).
+    pub(crate) live_charged_bytes: CountV1,
+    pub(crate) peak_live_charged_bytes: CountV1,
 }
 
 impl CollectionOpponentStatsV1 {
@@ -344,6 +349,17 @@ impl CollectionOpponentStatsV1 {
     pub(crate) fn released_v1(&self, bytes: usize) {
         self.live_entries.sub(1);
         self.live_policy_bytes.sub(bytes as u64);
+    }
+
+    /// `bytes` more charged by a collection cache.
+    pub(crate) fn charged_v1(&self, bytes: usize) {
+        self.peak_live_charged_bytes
+            .raise(self.live_charged_bytes.incremented_to(bytes as u64));
+    }
+
+    /// `bytes` of a collection cache's charge released.
+    pub(crate) fn uncharged_v1(&self, bytes: usize) {
+        self.live_charged_bytes.sub(bytes as u64);
     }
 }
 
@@ -432,7 +448,6 @@ pub(crate) fn opponent_cache_section_v1() -> Value {
             },
             "evictions": process.evictions.get(),
             "evicted_charged_bytes": process.evicted_charged_bytes.get(),
-            "evicted_file_bytes": process.evicted_file_bytes.get(),
             "replaced": process.replaced.get(),
         },
         "collection": {
@@ -440,6 +455,7 @@ pub(crate) fn opponent_cache_section_v1() -> Value {
             "budget_bytes": collection_budget_bytes,
             "hits": collection.hits.get(),
             "hit_seconds": collection.hit_nanos.seconds(),
+            "transient_hits": collection.transient_hits.get(),
             "misses": {
                 "verified": collection.misses_verified.get(),
                 "revalidated": collection.misses_revalidated.get(),
@@ -453,6 +469,8 @@ pub(crate) fn opponent_cache_section_v1() -> Value {
             "peak_live_entries": collection.peak_live_entries.get(),
             "live_policy_bytes": collection.live_policy_bytes.get(),
             "peak_live_policy_bytes": collection.peak_live_policy_bytes.get(),
+            "live_charged_bytes": collection.live_charged_bytes.get(),
+            "peak_live_charged_bytes": collection.peak_live_charged_bytes.get(),
         },
         "boundary": {
             "checks": boundary.checks.get(),

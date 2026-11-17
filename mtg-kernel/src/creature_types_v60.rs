@@ -635,6 +635,11 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         Subtype::Servo => Some(CreatureTypeV60::Servo),
         Subtype::Thopter => Some(CreatureTypeV60::Thopter),
         Subtype::Powerstone => None,
+        Subtype::Germ => Some(CreatureTypeV60::Germ),
+        Subtype::Rebel => Some(CreatureTypeV60::Rebel),
+        Subtype::Vedalken => Some(CreatureTypeV60::Vedalken),
+        Subtype::Horse => Some(CreatureTypeV60::Horse),
+        Subtype::Mount => Some(CreatureTypeV60::Mount),
     }
 }
 

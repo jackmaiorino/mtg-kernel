@@ -245,111 +245,179 @@ fn paid_ninjutsu_keeps_the_waiting_hand_source_pristine_for_opponent_infoset() {
     }
 }
 
+/// One export mode under test: v1 with default options, v2, v3 or reveal v4.
+type ExportModeV1 = fn(&ExportInputV1<'_>) -> Result<InfosetV1, ExportErrorV1>;
+
+fn export_v1_default(input: &ExportInputV1<'_>) -> Result<InfosetV1, ExportErrorV1> {
+    export_v1(input, ExportOptionsV1::default())
+}
+
+/// Every export mode, by name.
+const EXPORT_MODES: [(&str, ExportModeV1); 4] = [
+    ("v1", export_v1_default),
+    ("v2", export_v2),
+    ("v3", export_v3),
+    ("reveal_v4", export_reveal_v4),
+];
+
+/// The export input of `viewer` at `state`, without decision marks.
+fn token_input<'a>(
+    state: &'a crate::state::GameState,
+    viewer: PlayerId,
+    lists: &'a [Vec<u16>; 2],
+) -> ExportInputV1<'a> {
+    ExportInputV1 {
+        state,
+        journal: state.observation_journal.notes(),
+        viewer,
+        decklists: [&lists[0], &lists[1]],
+        marks: None,
+    }
+}
+
+/// A two-player game whose `owner` holds Faerie Miscreant, Spellstutter
+/// Sprite and Snap and whose other player holds Snap and two Islands, with
+/// `starting` taking the first turn and the reveal journal on (reveal v4
+/// reads it).
+fn token_game(owner: PlayerId, starting: PlayerId) -> (crate::state::GameState, [Vec<u16>; 2]) {
+    use crate::card_def::{card_id_by_name, CARD_DEFS};
+    let ids = |names: [&str; 3]| -> Vec<u16> {
+        names
+            .iter()
+            .map(|name| card_id_by_name(name).unwrap())
+            .collect()
+    };
+    let mut lists = [
+        ids(["Snap", "Island", "Island"]),
+        ids(["Snap", "Island", "Island"]),
+    ];
+    lists[owner.index()] = ids(["Faerie Miscreant", "Spellstutter Sprite", "Snap"]);
+    let mut state = crate::state::GameState::new_from_libraries_with_starting_player_v1(
+        &lists[0],
+        &lists[1],
+        |id| CARD_DEFS[usize::from(id)].name.to_string(),
+        1,
+        starting,
+    );
+    state.reveal_meaning_v3.enable();
+    (state, lists)
+}
+
+/// Creates a Human Soldier token for `owner` on the battlefield.
+fn create_token(state: &mut crate::state::GameState, owner: PlayerId) -> crate::ids::ObjectId {
+    use crate::card_def::card_id_by_name;
+    use crate::event::{propose_and_commit, ProposedEvent};
+    let token_def = card_id_by_name("Human Soldier Token").unwrap();
+    propose_and_commit(state, ProposedEvent::create_token(token_def, owner));
+    let token = *state.players[owner.index()].battlefield.last().unwrap();
+    assert!(state.objects.get(token).v4.is_token);
+    token
+}
+
 /// Issue 713: Snap returns an opposing token to its owner's hand and its land
 /// untap then poses a decision before the next state-based sweep removes the
-/// token. Both seats export that decision.
-#[test]
-fn bounced_token_in_hand_exports_for_both_seats() {
-    use crate::card_def::{card_id_by_name, CARD_DEFS};
+/// token. Returns the state at that decision, the decklists and the token.
+fn bounced_token_state(
+    actor: PlayerId,
+) -> (crate::state::GameState, [Vec<u16>; 2], crate::ids::ObjectId) {
     use crate::engine::{advance_until_decision, step, Action, Decision};
     use crate::event::{propose_and_commit, ProposedEvent};
     use crate::mana::ManaColor;
-    use crate::state::{GameState, Target, Zone};
+    use crate::state::{Target, Zone};
+
+    let owner = actor.opponent();
+    let (mut state, lists) = token_game(owner, actor);
+    let snap = state.players[actor.index()].library[0];
+    let land = state.players[actor.index()].library[1];
+    propose_and_commit(&mut state, ProposedEvent::draw(actor));
+    propose_and_commit(&mut state, ProposedEvent::draw(owner));
+    propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change_to_battlefield_tapped(land),
+    );
+    let token = create_token(&mut state, owner);
+    assert!(state.objects.get(land).tapped);
+
+    let first = advance_until_decision(&mut state);
+    assert!(
+        matches!(&first, Decision::CastSpellOrPass { player, .. } if *player == actor),
+        "{first:?}"
+    );
+    // Snap is cast from the pool: the land stays tapped for its untap.
+    state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 2;
+    step(&mut state, Action::CastSpell(snap)).unwrap();
+    let mut guard = 0;
+    loop {
+        guard += 1;
+        assert!(guard < 12, "Snap never reached its land-untap choice");
+        match advance_until_decision(&mut state) {
+            Decision::ChooseTargets {
+                player,
+                legal_targets,
+                ..
+            } if player == actor => {
+                assert!(legal_targets.contains(&Target::Object(token)));
+                step(&mut state, Action::ChooseTarget(Target::Object(token))).unwrap();
+            }
+            Decision::ChooseEffectTargets { player, .. } if player == actor => break,
+            Decision::CastSpellOrPass { .. } => step(&mut state, Action::Pass).unwrap(),
+            other => panic!("unexpected decision before the land untap: {other:?}"),
+        }
+    }
+    // The token sits in its owner's hand; no sweep has removed it yet.
+    assert_eq!(state.objects.get(token).zone, Zone::Hand);
+    assert!(state.players[owner.index()].hand.contains(&token));
+    (state, lists, token)
+}
+
+/// Exports the bounced-token decision of [`bounced_token_state`] under
+/// `export` for both seats as the Snap player and both viewers, then the
+/// next decision after the state-based sweep.
+fn check_bounced_token(mode: &str, export: ExportModeV1) {
+    use crate::engine::{advance_until_decision, step, Action, Decision};
 
     for actor in [PlayerId::P0, PlayerId::P1] {
         let owner = actor.opponent();
-        let actor_cards = ["Snap", "Island", "Island"].map(|name| card_id_by_name(name).unwrap());
-        let owner_cards = ["Faerie Miscreant", "Spellstutter Sprite", "Snap"]
-            .map(|name| card_id_by_name(name).unwrap());
-        let lists = [PlayerId::P0, PlayerId::P1].map(|player| {
-            if player == actor {
-                actor_cards.as_slice()
-            } else {
-                owner_cards.as_slice()
-            }
-        });
-        let mut state = GameState::new_from_libraries_with_starting_player_v1(
-            lists[0],
-            lists[1],
-            |id| CARD_DEFS[usize::from(id)].name.to_string(),
-            1,
-            actor,
-        );
-        let snap = state.players[actor.index()].library[0];
-        let land = state.players[actor.index()].library[1];
-        propose_and_commit(&mut state, ProposedEvent::draw(actor));
-        propose_and_commit(&mut state, ProposedEvent::draw(owner));
-        propose_and_commit(
-            &mut state,
-            ProposedEvent::zone_change_to_battlefield_tapped(land),
-        );
-        let token_def = card_id_by_name("Human Soldier Token").unwrap();
-        propose_and_commit(&mut state, ProposedEvent::create_token(token_def, owner));
-        let token = *state.players[owner.index()].battlefield.last().unwrap();
-        assert!(state.objects.get(token).v4.is_token);
-        assert!(state.objects.get(land).tapped);
-
-        let first = advance_until_decision(&mut state);
-        assert!(
-            matches!(&first, Decision::CastSpellOrPass { player, .. } if *player == actor),
-            "{first:?}"
-        );
-        // Snap is cast from the pool: the land stays tapped for its untap.
-        state.players[actor.index()].mana_pool[ManaColor::U.pool_index()] = 2;
-        step(&mut state, Action::CastSpell(snap)).unwrap();
-        let mut guard = 0;
-        loop {
-            guard += 1;
-            assert!(guard < 12, "Snap never reached its land-untap choice");
-            match advance_until_decision(&mut state) {
-                Decision::ChooseTargets {
-                    player,
-                    legal_targets,
-                    ..
-                } if player == actor => {
-                    assert!(legal_targets.contains(&Target::Object(token)));
-                    step(&mut state, Action::ChooseTarget(Target::Object(token))).unwrap();
-                }
-                Decision::ChooseEffectTargets { player, .. } if player == actor => break,
-                Decision::CastSpellOrPass { .. } => step(&mut state, Action::Pass).unwrap(),
-                other => panic!("unexpected decision before the land untap: {other:?}"),
-            }
-        }
-        // The token sits in its owner's hand; no sweep has removed it yet.
-        assert_eq!(state.objects.get(token).zone, Zone::Hand);
-        assert!(state.players[owner.index()].hand.contains(&token));
-
+        let (mut state, lists, token) = bounced_token_state(actor);
         for viewer in [actor, owner] {
-            let result = export_v1(
-                &ExportInputV1 {
-                    state: &state,
-                    journal: state.observation_journal.notes(),
-                    viewer,
-                    decklists: lists,
-                    marks: None,
-                },
-                ExportOptionsV1::default(),
-            );
-            let exported = result
-                .unwrap_or_else(|error| panic!("actor {actor:?}, viewer {viewer:?}: {error:?}"));
+            let at = format!("{mode}, actor {actor:?}, viewer {viewer:?}");
+            let exported = export(&token_input(&state, viewer, &lists))
+                .unwrap_or_else(|error| panic!("{at}: {error:?}"));
             let hand = &exported.state.players[owner.index()].hand;
             assert_eq!(
                 hand.len(),
                 state.players[owner.index()].hand.len(),
-                "actor {actor:?}, viewer {viewer:?}: the exported hand keeps its size"
+                "{at}: the exported hand keeps its size"
             );
             let tokens_in_hand = hand
                 .iter()
                 .filter(|id| exported.state.objects.get(**id).v4.is_token)
                 .count();
-            assert_eq!(
-                tokens_in_hand, 1,
-                "actor {actor:?}, viewer {viewer:?}: the token is placed by handle"
+            assert_eq!(tokens_in_hand, 1, "{at}: the token is placed by handle");
+            let placed = *hand
+                .iter()
+                .find(|id| exported.state.objects.get(**id).v4.is_token)
+                .unwrap();
+            assert!(
+                matches!(exported.handles[placed.0 as usize], HandleV1::C { .. }),
+                "{at}: the token has a tracked handle"
             );
+            assert_eq!(
+                exported.state.objects.get(placed).card_def,
+                state.objects.get(token).card_def,
+                "{at}"
+            );
+            if viewer != owner {
+                // No hand knowledge row names the public token.
+                for row in exported.state.known_hand_cards(viewer, owner) {
+                    assert!(!exported.state.objects.get(row.object).v4.is_token, "{at}");
+                }
+            }
             for player in [PlayerId::P0, PlayerId::P1] {
                 assert_eq!(
                     exported.state.players[player.index()].library.len(),
-                    state.players[player.index()].library.len()
+                    state.players[player.index()].library.len(),
+                    "{at}"
                 );
             }
         }
@@ -363,20 +431,13 @@ fn bounced_token_in_hand_exports_for_both_seats() {
         ));
         assert!(!state.players[owner.index()].hand.contains(&token));
         for viewer in [actor, owner] {
-            let exported = export_v1(
-                &ExportInputV1 {
-                    state: &state,
-                    journal: state.observation_journal.notes(),
-                    viewer,
-                    decklists: lists,
-                    marks: None,
-                },
-                ExportOptionsV1::default(),
-            )
-            .unwrap_or_else(|error| panic!("actor {actor:?}, viewer {viewer:?}: {error:?}"));
+            let at = format!("{mode}, actor {actor:?}, viewer {viewer:?}, after the sweep");
+            let exported = export(&token_input(&state, viewer, &lists))
+                .unwrap_or_else(|error| panic!("{at}: {error:?}"));
             assert_eq!(
                 exported.state.players[owner.index()].hand.len(),
-                state.players[owner.index()].hand.len()
+                state.players[owner.index()].hand.len(),
+                "{at}"
             );
             // The token is in no exported hand or library vector. (The
             // engine keeps `zone == Hand` on a ceased token, so a viewer's own
@@ -387,7 +448,7 @@ fn bounced_token_in_hand_exports_for_both_seats() {
                 for id in placed.hand.iter().chain(&placed.library) {
                     assert!(
                         !exported.state.objects.get(*id).v4.is_token,
-                        "actor {actor:?}, viewer {viewer:?}: a token is still placed for {player:?}"
+                        "{at}: a token is still placed for {player:?}"
                     );
                 }
             }
@@ -395,75 +456,220 @@ fn bounced_token_in_hand_exports_for_both_seats() {
     }
 }
 
+/// Issue 713: Snap returns an opposing token to its owner's hand and its land
+/// untap then poses a decision before the next state-based sweep removes the
+/// token. Both seats export that decision.
+#[test]
+fn bounced_token_in_hand_exports_for_both_seats() {
+    check_bounced_token("v1", export_v1_default);
+}
+
+/// Issue 713 under the other export modes: they share the tracking and the
+/// placement of v1, after v2's event-time visibility checks.
+#[test]
+fn bounced_token_in_hand_exports_in_every_later_mode() {
+    for (mode, export) in &EXPORT_MODES[1..] {
+        check_bounced_token(mode, *export);
+    }
+}
+
+/// A token of `owner` put on top of `owner`'s library, where no state-based
+/// sweep has removed it yet. Returns the state, the decklists and the token.
+fn library_token_state(
+    owner: PlayerId,
+) -> (crate::state::GameState, [Vec<u16>; 2], crate::ids::ObjectId) {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+
+    let (mut state, lists) = token_game(owner, owner);
+    let token = create_token(&mut state, owner);
+    propose_and_commit(&mut state, ProposedEvent::zone_change(token, Zone::Library));
+    assert!(state.players[owner.index()].library.contains(&token));
+    assert_eq!(state.objects.get(token).zone, Zone::Library);
+    (state, lists, token)
+}
+
+/// The exported library of `owner` and the position in it of the one token,
+/// after checking that it is the only token there and has a tracked handle.
+fn library_token_position(exported: &InfosetV1, owner: PlayerId, at: &str) -> usize {
+    let library = &exported.state.players[owner.index()].library;
+    let positions: Vec<usize> = (0..library.len())
+        .filter(|&i| exported.state.objects.get(library[i]).v4.is_token)
+        .collect();
+    assert_eq!(positions.len(), 1, "{at}: one token in the library");
+    assert!(
+        matches!(
+            exported.handles[library[positions[0]].0 as usize],
+            HandleV1::C { .. }
+        ),
+        "{at}: the token has a tracked handle"
+    );
+    positions[0]
+}
+
 /// Issue 713, library side: a token that sits in a library list is placed by
-/// handle in both seats' exports, at its position, and takes no hidden slot.
+/// handle in both seats' exports, at its position (V saw where it went), and
+/// takes no hidden slot.
+fn check_library_token(mode: &str, export: ExportModeV1) {
+    for owner in [PlayerId::P0, PlayerId::P1] {
+        let (state, lists, token) = library_token_state(owner);
+        let position = state.players[owner.index()]
+            .library
+            .iter()
+            .position(|id| *id == token)
+            .unwrap();
+        for viewer in [owner, owner.opponent()] {
+            let at = format!("{mode}, owner {owner:?}, viewer {viewer:?}");
+            let exported = export(&token_input(&state, viewer, &lists))
+                .unwrap_or_else(|error| panic!("{at}: {error:?}"));
+            assert_eq!(
+                exported.state.players[owner.index()].library.len(),
+                state.players[owner.index()].library.len(),
+                "{at}"
+            );
+            assert_eq!(
+                library_token_position(&exported, owner, &at),
+                position,
+                "{at}: the token keeps its known position"
+            );
+        }
+    }
+}
+
 #[test]
 fn token_in_a_library_exports_for_both_seats() {
-    use crate::card_def::{card_id_by_name, CARD_DEFS};
+    check_library_token("v1", export_v1_default);
+}
+
+#[test]
+fn token_in_a_library_exports_in_every_later_mode() {
+    for (mode, export) in &EXPORT_MODES[1..] {
+        check_library_token(mode, *export);
+    }
+}
+
+/// Issue 713, library position: the token's library is shuffled before the
+/// sweep, so neither viewer can know where the shuffle put it. Every mode
+/// places it at the top-most position the viewer cannot rule out, whatever
+/// its true position, and two worlds that differ only in that position
+/// export the same bytes. A card then put on top of the library, at a public
+/// position, moves the token down one. No engine path is known to shuffle a
+/// library that holds a token, so the test builds the state directly.
+#[test]
+fn shuffled_library_token_exports_no_true_position() {
     use crate::event::{propose_and_commit, ProposedEvent};
-    use crate::state::{GameState, Zone};
+    use crate::state::Zone;
 
     for owner in [PlayerId::P0, PlayerId::P1] {
-        let viewer_cards = ["Snap", "Island", "Island"].map(|name| card_id_by_name(name).unwrap());
-        let owner_cards = ["Faerie Miscreant", "Spellstutter Sprite", "Snap"]
-            .map(|name| card_id_by_name(name).unwrap());
-        let lists = [PlayerId::P0, PlayerId::P1].map(|player| {
-            if player == owner {
-                owner_cards.as_slice()
-            } else {
-                viewer_cards.as_slice()
-            }
-        });
-        let mut state = GameState::new_from_libraries_with_starting_player_v1(
-            lists[0],
-            lists[1],
-            |id| CARD_DEFS[usize::from(id)].name.to_string(),
-            1,
-            owner,
+        let (mut state, lists, token) = library_token_state(owner);
+        // A real card leaves the library in public view, to return later.
+        let card = *state.players[owner.index()]
+            .library
+            .iter()
+            .find(|id| **id != token)
+            .unwrap();
+        propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(card, Zone::Graveyard),
         );
-        let token_def = card_id_by_name("Human Soldier Token").unwrap();
-        propose_and_commit(&mut state, ProposedEvent::create_token(token_def, owner));
-        let token = *state.players[owner.index()].battlefield.last().unwrap();
-        propose_and_commit(&mut state, ProposedEvent::zone_change(token, Zone::Library));
-        assert!(state.players[owner.index()].library.contains(&token));
-        assert_eq!(state.objects.get(token).zone, Zone::Library);
-
-        for viewer in [owner, owner.opponent()] {
-            let exported = export_v1(
-                &ExportInputV1 {
-                    state: &state,
-                    journal: state.observation_journal.notes(),
-                    viewer,
-                    decklists: lists,
-                    marks: None,
-                },
-                ExportOptionsV1::default(),
-            )
-            .unwrap_or_else(|error| panic!("owner {owner:?}, viewer {viewer:?}: {error:?}"));
-            let library = &exported.state.players[owner.index()].library;
-            assert_eq!(library.len(), state.players[owner.index()].library.len());
-            let tokens = library
-                .iter()
-                .filter(|id| exported.state.objects.get(**id).v4.is_token)
-                .count();
-            assert_eq!(tokens, 1, "owner {owner:?}, viewer {viewer:?}");
-            // It sits at its native position and is tracked (a `C:` handle),
-            // not a hidden slot.
-            let position = state.players[owner.index()]
+        state.shuffle_library(owner).unwrap();
+        let position = |s: &crate::state::GameState| {
+            s.players[owner.index()]
                 .library
                 .iter()
                 .position(|id| *id == token)
-                .unwrap();
-            let placed = library[position];
-            assert!(
-                exported.state.objects.get(placed).v4.is_token,
-                "owner {owner:?}, viewer {viewer:?}: token at library position {position}"
-            );
-            assert!(
-                matches!(exported.handles[placed.0 as usize], HandleV1::C { .. }),
-                "owner {owner:?}, viewer {viewer:?}: the token has a tracked handle"
-            );
+                .unwrap()
+        };
+        // The other world: the shuffle put the token elsewhere.
+        let mut other = state.clone();
+        let true_position = position(&other);
+        let swap_with = if true_position == 0 { 1 } else { 0 };
+        other.players[owner.index()]
+            .library
+            .swap(true_position, swap_with);
+        assert_ne!(position(&state), position(&other));
+
+        let check = |worlds: [&crate::state::GameState; 2], expected: usize, phase: &str| {
+            for (mode, export) in &EXPORT_MODES {
+                for viewer in [owner, owner.opponent()] {
+                    let at = format!("{mode}, owner {owner:?}, viewer {viewer:?}, {phase}");
+                    let [a, b] = worlds.map(|world| {
+                        export(&token_input(world, viewer, &lists))
+                            .unwrap_or_else(|error| panic!("{at}: {error:?}"))
+                    });
+                    assert_eq!(library_token_position(&a, owner, &at), expected, "{at}");
+                    assert_eq!(library_token_position(&b, owner, &at), expected, "{at}");
+                    assert_eq!(
+                        a.bytes, b.bytes,
+                        "{at}: the export does not show where the shuffle put the token"
+                    );
+                }
+            }
+        };
+        check([&state, &other], 0, "after the shuffle");
+
+        for world in [&mut state, &mut other] {
+            propose_and_commit(world, ProposedEvent::zone_change(card, Zone::Library));
+            assert_eq!(world.players[owner.index()].library[0], card);
         }
+        assert_ne!(position(&state), position(&other));
+        check([&state, &other], 1, "after a card is put on top");
+    }
+}
+
+/// Issue 713, reveal v4: the reveal minima name hidden hand cards, so they
+/// are bounded by the hidden hand. A token in the hand is public and takes
+/// no hidden slot, so it does not count toward the bound.
+#[test]
+fn reveal_v4_minima_are_bounded_by_the_hidden_hand_beside_a_token() {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+
+    for owner in [PlayerId::P0, PlayerId::P1] {
+        let viewer = owner.opponent();
+        let world = |draws: usize, token: bool| {
+            let (mut state, lists) = token_game(owner, owner);
+            for _ in 0..draws {
+                propose_and_commit(&mut state, ProposedEvent::draw(owner));
+            }
+            for k in 0..draws {
+                let shown = state.players[owner.index()].hand[k];
+                state.reveal_hand_card(viewer, owner, shown).unwrap();
+            }
+            if token {
+                let token = create_token(&mut state, owner);
+                propose_and_commit(&mut state, ProposedEvent::zone_change(token, Zone::Hand));
+                assert!(state.players[owner.index()].hand.contains(&token));
+            }
+            (state, lists)
+        };
+        // Two revealed hidden cards beside the token: the minima fill the
+        // hidden hand exactly and the export names both.
+        let (state, lists) = world(2, true);
+        let at = format!("owner {owner:?}");
+        let exported = export_reveal_v4(&token_input(&state, viewer, &lists))
+            .unwrap_or_else(|error| panic!("{at}: {error:?}"));
+        assert_eq!(exported.state.players[owner.index()].hand.len(), 3, "{at}");
+        assert_eq!(
+            exported.state.known_hand_cards(viewer, owner).len(),
+            2,
+            "{at}"
+        );
+        // Minima of three names (another transcript) against two hidden
+        // cards and the token: the bound refuses as soon as it reads them.
+        let (named, _) = world(3, false);
+        let result = export_reveal_v4_from_journal(
+            &token_input(&state, viewer, &lists),
+            &named.reveal_meaning_v3,
+        );
+        assert_eq!(
+            result.err(),
+            Some(ExportErrorV1::Refused {
+                code: RefusalCodeV1::R8,
+                detail: "reveal minima exceed the public hand size".to_string(),
+            }),
+            "{at}"
+        );
     }
 }
 
