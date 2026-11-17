@@ -222,5 +222,19 @@ need the new location. The SHA-256 in the two JSON receipts identify each file u
 - Untimed runs and the stack probe: 4-core below-normal claims (cores 20-23), `--blocks 1
   --warmup-runs 0 --cold-resume`; clippy, the unit tests and the build: 4-core claims (cores
   12-15).
-@@MAC@@
+- On a Mac Studio (`aarch64-apple-darwin`, not a CI platform), 2026-11-17, default features,
+  covering the commits after `95c33b0dd` (the Rust sources are those of `84c5d50a9`):
+  `cargo test --release --locked -p mtg-kernel --lib` with filters `opponent_cache`
+  (11 tests, including `a_policy_that_cannot_be_forked_is_charged_for_its_model`),
+  `collection_cache_boundary_rejects_same_path_mutation_of_all_pins` (1),
+  `verified_bytes_cache_v1::tests` (14),
+  `phase1_preparation_rejects_stale_and_corrupted_opponent_before_learning` (1),
+  `archive_distillation_bases_always_load_in_full` (1) and
+  `parallel_current_self_collection_matches_under_zero_and_sub_fork_cache_limits` (1): 29
+  passed, 0 failed. `cargo fmt --all -- --check`: no difference.
+  `cargo clippy --release --locked -p mtg-kernel --all-targets -- -D warnings` fails there on
+  the same lint errors (6 in the library, 4 in its unit tests: `sha512_multi_v1.rs` and a
+  `gae_v1` test, unused or dead code on that platform) at `95c33b0dd` and at `84c5d50a9`,
+  and on nothing else; it stops at the library,
+  so its other targets were not linted there. CI on Linux and Windows lints them.
 - Not measured here: full-node memory and durable throughput (T6, #600).
