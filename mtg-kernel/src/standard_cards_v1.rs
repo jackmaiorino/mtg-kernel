@@ -466,6 +466,10 @@ pub enum StandardTargetV1 {
     C1bV1(crate::eternal_cube_c1b_v1::targets::C1bTargetV1),
     /// A filter of eternal wave C2c (`eternal_cube_c2c_v1::targets`).
     C2cV1(crate::eternal_cube_c2c_v1::targets::C2cTargetV1),
+    /// A filter of eternal wave C4c (`eternal_cube_c4c_v1::targets`).
+    C4cV1(crate::eternal_cube_c4c_v1::targets::C4cTargetV1),
+    /// A filter of eternal wave C4a (`eternal_cube_c4a_v1::targets`).
+    C4aV1(crate::eternal_cube_c4a_v1::targets::C4aTargetV1),
     /// A filter of eternal wave S1o (`eternal_sideboard_s1o_v1::targets`).
     S1oV1(crate::eternal_sideboard_s1o_v1::targets::S1oTargetV1),
 }
@@ -528,6 +532,12 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_cube_c2c_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_cube_c4c_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_cube_c4a_v1::targets::counts(self) {
             return counts;
         }
         if let Some(counts) = crate::eternal_sideboard_s1o_v1::targets::counts(self) {
@@ -727,6 +737,8 @@ pub(crate) fn target_zone_allows(target: StandardTargetV1, zone: Zone) -> bool {
         || crate::eternal_cube_c1a_v1::targets::zone_allows(target, zone)
         || crate::eternal_cube_c1b_v1::targets::zone_allows(target, zone)
         || crate::eternal_cube_c2c_v1::targets::zone_allows(target, zone)
+        || crate::eternal_cube_c4c_v1::targets::zone_allows(target, zone)
+        || crate::eternal_cube_c4a_v1::targets::zone_allows(target, zone)
         || (target == StandardTargetV1::OpponentSpellOrNonlandPermanentV1 && zone == Zone::Stack)
         || (matches!(
             target,
@@ -1046,6 +1058,16 @@ pub(crate) fn legal_targets(
     {
         return targets;
     }
+    if let Some(targets) =
+        crate::eternal_cube_c4c_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
+    if let Some(targets) =
+        crate::eternal_cube_c4a_v1::targets::legal_targets(target, controller, prefix, state)
+    {
+        return targets;
+    }
     if let Some(targets) = crate::eternal_sideboard_s1o_v1::targets::legal_targets(
         target, controller, source, prefix, state,
     ) {
@@ -1357,6 +1379,16 @@ pub(crate) fn target_matches(
         return matches;
     }
     if let Some(matches) =
+        crate::eternal_cube_c4c_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
+        crate::eternal_cube_c4a_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
+    if let Some(matches) =
         crate::eternal_sideboard_s1o_v1::targets::target_matches(target, controller, object, state)
     {
         return matches;
@@ -1602,6 +1634,10 @@ pub(crate) fn target_matches(
         StandardTargetV1::C1bV1(_) => false,
         // Answered by `eternal_cube_c2c_v1::targets` above.
         StandardTargetV1::C2cV1(_) => false,
+        // Answered by `eternal_cube_c4c_v1::targets` above.
+        StandardTargetV1::C4cV1(_) => false,
+        // Answered by `eternal_cube_c4a_v1::targets` above.
+        StandardTargetV1::C4aV1(_) => false,
         // Answered by `eternal_sideboard_s1o_v1::targets` above.
         StandardTargetV1::S1oV1(_) => false,
     }
@@ -4188,6 +4224,10 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
         let e9a = crate::eternal_legacy_e9a_v1::statics::controlled_boost(state, object);
         boost.0 += e9a.0;
         boost.1 += e9a.1;
+        // Nettlecyst, and an animated Iron Man Armor (Vintage Cube wave C4c).
+        let c4c = crate::eternal_cube_c4c_v1::controlled_boost(state, object);
+        boost.0 += c4c.0;
+        boost.1 += c4c.1;
     }
     boost
 }

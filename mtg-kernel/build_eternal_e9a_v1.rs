@@ -337,6 +337,19 @@ pub(super) fn equipment_for(name: &str) -> &'static str {
         // Lightning Greaves (Vintage Cube wave C3c): "Equipped creature has
         // haste and shroud."
         "Lightning Greaves" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords(Keywords::SHROUD.0 | Keywords::HASTE.0), other_turn_keywords: Keywords(Keywords::SHROUD.0 | Keywords::HASTE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
+        // Vintage Cube wave C4c. Skullclamp: "Equipped creature gets +1/-1."
+        // Sword of the Meek: "+1/+2." Umezawa's Jitte, Nettlecyst (its bonus
+        // is `eternal_cube_c4c_v1::controlled_boost`) and Glimmer Lens give
+        // no fixed statistics. Kaldra Compleat: "+5/+5 and has first strike,
+        // trample, indestructible, haste". Iron Man Armor: "+2/+1 and has
+        // flying". Astrologian's Planisphere: "is a Wizard in addition to its
+        // other types".
+        "Skullclamp" => "Some(EquipmentDef { power_delta: 1, toughness_delta: -1, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
+        "Sword of the Meek" => "Some(EquipmentDef { power_delta: 1, toughness_delta: 2, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
+        "Umezawa's Jitte" | "Nettlecyst" | "Glimmer Lens" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: None, controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
+        "Kaldra Compleat" => "Some(EquipmentDef { power_delta: 5, toughness_delta: 5, add_subtype: None, controller_turn_keywords: Keywords(Keywords::FIRST_STRIKE.0 | Keywords::TRAMPLE.0 | Keywords::INDESTRUCTIBLE.0 | Keywords::HASTE.0), other_turn_keywords: Keywords(Keywords::FIRST_STRIKE.0 | Keywords::TRAMPLE.0 | Keywords::INDESTRUCTIBLE.0 | Keywords::HASTE.0), noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
+        "Iron Man Armor" => "Some(EquipmentDef { power_delta: 2, toughness_delta: 1, add_subtype: None, controller_turn_keywords: Keywords::FLYING, other_turn_keywords: Keywords::FLYING, noncreature_spell_damage_to_each_opponent: 0, job_select: false, granted_activated_ability: None, pt_controller_turn_only: false })",
+        "Astrologian's Planisphere" => "Some(EquipmentDef { power_delta: 0, toughness_delta: 0, add_subtype: Some(Subtype::Wizard), controller_turn_keywords: Keywords::NONE, other_turn_keywords: Keywords::NONE, noncreature_spell_damage_to_each_opponent: 0, job_select: true, granted_activated_ability: None, pt_controller_turn_only: false })",
         _ => "None",
     }
 }

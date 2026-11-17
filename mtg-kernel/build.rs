@@ -6,6 +6,7 @@
 //!   codegen understands)
 //! - duplicate card names
 //! - a card with empty deck coverage (`"decks": []`)
+//! - a Kindred card with no other card type
 //!
 //! `u16` ids are assigned in JSON array order (stable: the file is a
 //! checked-in fixed pool, not regenerated per build). Executability and
@@ -30,6 +31,9 @@ mod build_eternal_c2c_v1;
 mod build_eternal_c3a_v1;
 mod build_eternal_c3b_v1;
 mod build_eternal_c3c_v1;
+mod build_eternal_c4a_v1;
+mod build_eternal_c4b_v1;
+mod build_eternal_c4c_v1;
 mod build_eternal_e5a_v1;
 mod build_eternal_e5b_v1;
 mod build_eternal_e6a_v1;
@@ -2048,6 +2052,14 @@ fn main() {
         }
         if c.decks.is_empty() && !c.is_token && !build_eternal_e7b_v1::is_prepare_spell(&c.name) {
             panic!("cards_v1.json: card {:?} has empty deck coverage", c.name);
+        }
+        // 308.1: a kindred card always has another card type, whose rules
+        // its casting and resolution follow.
+        if !c.types.is_empty() && c.types.iter().all(|card_type| card_type == "Kindred") {
+            panic!(
+                "cards_v1.json: Kindred card {:?} needs another card type",
+                c.name
+            );
         }
         if c.is_token
             && c.engine_capability != EngineCapabilityJson::Full
@@ -4808,6 +4820,7 @@ fn object_name_for(name: &str) -> &str {
         "Scion of the Deep Token" => "Scion of the Deep",
         "Knight Vigilance Token" => "Knight Token",
         "Blue Thopter Token" => "Thopter Token",
+        "Green Cat Token" => "Cat Token",
         _ => build_standard_v1::object_name_for(name)
             .or_else(|| build_eternal_lurrus_v1::object_name_for(name))
             .unwrap_or(name),
@@ -11400,6 +11413,7 @@ fn card_type_variant(t: &str) -> &'static str {
         "Artifact" => "Artifact",
         "Enchantment" => "Enchantment",
         "Planeswalker" => "Planeswalker",
+        "Kindred" => "Kindred",
         other => panic!("cards_v1.json: unknown card type {other:?}"),
     }
 }
@@ -11634,6 +11648,11 @@ fn subtype_variant(t: &str) -> &'static str {
         "Servo" => "Subtype::Servo",
         "Thopter" => "Subtype::Thopter",
         "Powerstone" => "Subtype::Powerstone",
+        "Germ" => "Subtype::Germ",
+        "Rebel" => "Subtype::Rebel",
+        "Vedalken" => "Subtype::Vedalken",
+        "Horse" => "Subtype::Horse",
+        "Mount" => "Subtype::Mount",
         "Oko" => "Subtype::Oko",
         "Ugin" => "Subtype::Ugin",
         "Cave" => "Subtype::Cave",

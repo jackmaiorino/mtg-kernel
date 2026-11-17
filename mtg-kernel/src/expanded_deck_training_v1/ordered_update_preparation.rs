@@ -578,8 +578,8 @@ impl ProcessOpponentCacheV1 {
     ///
     /// The hit, the full load and the admission are separate frames that are
     /// never inlined, so a full load runs no deeper than this small frame
-    /// over its caller. Serial replay runs on the main thread, whose stack is
-    /// the platform default (1 MiB on Windows), and calls the same pieces
+    /// over its caller. Serial replay, which may run on a main thread with
+    /// the platform's default stack (1 MiB on Windows), calls the same pieces
     /// itself (`OpponentCacheV1::load`).
     pub(super) fn load_v1(
         &self,

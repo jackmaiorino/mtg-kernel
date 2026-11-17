@@ -18,11 +18,31 @@ fn main() {
     unsafe { mtg_kernel::retain_freed_memory_v1() };
     mtg_kernel::opt_out_of_power_throttling_v1();
     mtg_kernel::set_default_digest_memo_mib_v1(16);
-    if let Err(error) = run() {
-        eprintln!("native expanded training: {error}");
-        std::process::exit(1);
+    // The driver runs on its own thread with an explicit stack, so its depth
+    // does not depend on the platform's main-thread default (1 MiB on
+    // Windows, where serial replay's opponent loads ran within about 64 KiB
+    // of it). A panic is re-raised on the main thread, which exits as before.
+    let driver = std::thread::Builder::new()
+        .name("native-expanded-training".into())
+        .stack_size(DRIVER_STACK_BYTES)
+        .spawn(run)
+        .unwrap_or_else(|error| {
+            eprintln!("native expanded training: driver thread: {error}");
+            std::process::exit(1);
+        });
+    match driver.join() {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            eprintln!("native expanded training: {error}");
+            std::process::exit(1);
+        }
+        Err(panic) => std::panic::resume_unwind(panic),
     }
 }
+
+/// The driver thread's stack: 16 MiB, as `--validate-config` uses.
+const DRIVER_STACK_BYTES: usize = 16 * 1024 * 1024;
+
 fn run() -> Result<(), String> {
     match std::env::args_os()
         .nth(1)

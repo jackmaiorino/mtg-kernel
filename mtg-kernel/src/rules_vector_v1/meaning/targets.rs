@@ -775,9 +775,14 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::ArtifactOrLandV1 | S::ControlledPermanentV1 => ObjF::Permanent,
         S::PlayerThenUpToTwoOfTheirGraveyardCardsV1 => ObjF::AnyCard,
         S::TwoLandsV1 => typed(CardType::Land),
-        S::S1dV1(_) | S::C1cV1(_) | S::C1aV1(_) | S::C1bV1(_) | S::C2cV1(_) | S::S1oV1(_) => {
-            ObjF::AnyCard
-        }
+        S::C4cV1(_) => ObjF::Permanent,
+        S::S1dV1(_)
+        | S::C1cV1(_)
+        | S::C1aV1(_)
+        | S::C1bV1(_)
+        | S::C2cV1(_)
+        | S::C4aV1(_)
+        | S::S1oV1(_) => ObjF::AnyCard,
         S::CreatureOrPlaneswalkerManaValueAtMostV1(_) | S::OpponentCreatureOrEnchantmentV1 => {
             ObjF::Permanent
         }
@@ -819,6 +824,7 @@ pub(super) fn standard_target_origin(
         | S::PlayerThenUpToThreeOfTheirGraveyardCardsV1
         | S::PlayerThenUpToTwoOfTheirGraveyardCardsV1 => (Some(ZoneF::Graveyard), None),
         S::UpToOnePermanentCardDiedThisTurnV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
+        S::C4cV1(_) => (Some(ZoneF::Battlefield), Some(RelF::You)),
         S::ControlledArtifact
         | S::AnotherNonlegendaryControlledCreature
         | S::UpToOneControlledCreatureV1
@@ -885,6 +891,7 @@ pub(super) fn standard_target_origin(
         | S::C1aV1(_)
         | S::C1bV1(_)
         | S::C2cV1(_)
+        | S::C4aV1(_)
         | S::S1oV1(_)
         | S::CreatureOrPlaneswalkerManaValueAtMostV1(_)
         | S::CreatureLandOrPlaneswalkerV1
@@ -966,13 +973,24 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             // Vocabulary gap: an artifact-or-land union has no facet.
             out.atoms.push(Atom::Opaque);
         }
+        S::C4cV1(_) => {
+            // "Token you control": the token predicate has no facet.
+            object(out, standard_target_obj(filter), relation, zone);
+            out.atoms.push(Atom::Opaque);
+        }
         S::TwoLandsV1 => {
             object(out, standard_target_obj(filter), relation, zone);
             out.target(TargetAtom::MultipleTargets);
             // Two distinct lands: the count has no facet.
             out.atoms.push(Atom::Opaque);
         }
-        S::S1dV1(_) | S::C1cV1(_) | S::C1aV1(_) | S::C1bV1(_) | S::C2cV1(_) | S::S1oV1(_) => {
+        S::S1dV1(_)
+        | S::C1cV1(_)
+        | S::C1aV1(_)
+        | S::C1bV1(_)
+        | S::C2cV1(_)
+        | S::C4aV1(_)
+        | S::S1oV1(_) => {
             // Wave S1d's filters (a power bound, flying, a land you control,
             // a distinct-type graveyard pair), wave C1c's pairs of
             // differently targeted modes and wave S1o's source-relative power

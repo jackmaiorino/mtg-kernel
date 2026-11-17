@@ -16,8 +16,9 @@ Receipts:
 
 ## Result
 
-`m3` is faster and smaller than `base` on every pool case, beyond the observed spread,
-with bit-identical outputs. Run startup is slower: `outside_iterations_seconds` regresses
+`m3` is faster than `base` on every pool case, beyond the observed spread, and smaller on
+`pool18` and `pool64` (the `pool2` peak working set is inconclusive), with bit-identical
+outputs. Run startup is slower: `outside_iterations_seconds` regresses
 on `pool18` (1.010 -> 1.125 s, ratio 1.114, spread 0.028, blocks 1.112, 1.119, 1.114) and
 `pool64` (3.239 -> 3.653 s, ratio 1.128, spread 0.025, blocks 1.116, 1.139, 1.124), and is
 inconclusive on `pool2` (1.043). The likely cause is that run start now loads every
@@ -121,6 +122,9 @@ collection worker, so the per-collection byte budget does not bound them. This i
 regression: `base` had no byte bound at all. Charging the model for entries whose model
 the process cache does not hold is a follow-up. Defaults: process cache 32 entries and
 768 MiB, collection cache 8 entries and 256 MiB.
+
+The follow-up charges these models; what stays outside every charge after it is listed in
+the [addendum](t5_m3_addendum_native_fixture_desktop_dj1c40r_20261116.md).
 
 ## Follow-ups not fixed here
 

@@ -275,8 +275,8 @@ fn converter_may_exile(card: ObjectId, zone_change_count: u32) -> EffectOp {
 
 /// The Mightstone and Weakstone: "This mana can't be spent to cast nonartifact
 /// spells." The two mana its ability just added become restricted units, which
-/// artifact spells and any ability may spend (`ManaSpendRestrictionDef::
-/// PowerstoneV1`).
+/// artifact spells and every payment that is not part of casting a spell may
+/// spend (`ManaSpendRestrictionDef::PowerstoneV1`).
 pub(crate) fn restrict_produced_mana(
     state: &mut GameState,
     player: PlayerId,
@@ -436,15 +436,15 @@ const STAFF_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(TriggerCondition::Etb,
 const MIGHTSTONE_TRIGGERS: [TriggeredAbilityDef; 1] =
     [trigger(TriggerCondition::Etb, mightstone_entry)];
 
-/// Triggered abilities of this module's cards, the tail of the trigger
-/// tables. Staff of the Storyteller's story counters and Currency Converter's
+/// Triggered abilities of this module's cards, falling through to wave
+/// C4a. Staff of the Storyteller's story counters and Currency Converter's
 /// discard trigger are delayed triggers.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         ECHOVERSE_FULCRUM => &FULCRUM_TRIGGERS,
         STAFF_OF_THE_STORYTELLER => &STAFF_TRIGGERS,
         MIGHTSTONE => &MIGHTSTONE_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_cube_c4a_v1::triggers_for(name),
     }
 }
 

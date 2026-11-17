@@ -13,7 +13,7 @@ use super::ledger::SurvivorTreeV1;
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{GameState, ObservationNoteKindV1, ObservationNoteV1, Zone};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) fn is_public(zone: Zone) -> bool {
     !matches!(zone, Zone::Hand | Zone::Library)
@@ -131,6 +131,12 @@ pub(crate) struct ProjectionV1 {
     pub objects: Vec<ObjectTrackSummaryV1>,
     /// V's library knowledge per owner: position from the top to object.
     pub library: [BTreeMap<u32, ObjectId>; 2],
+    /// Issue 713: for each token or spell copy V saw enter a library, the
+    /// positions from the top V cannot rule out for it, carried through the
+    /// same public notes as `library`. A single position is one V knows;
+    /// after a shuffle every position is possible, so the export must not
+    /// place the object at its true position.
+    pub library_public: BTreeMap<ObjectId, BTreeSet<u32>>,
     /// Name-level facts about the opponent's hand (amendment 43.8), in the
     /// order V learned them.
     pub hand_facts: Vec<HandFactV1>,
@@ -335,6 +341,7 @@ struct WalkV1<'a> {
     viewer: PlayerId,
     objs: Vec<ObjectTrackV1>,
     library: [BTreeMap<u32, ObjectId>; 2],
+    library_public: BTreeMap<ObjectId, BTreeSet<u32>>,
     hand: Vec<HandFactV1>,
     seams: Vec<(usize, u16)>,
     departures: Vec<(usize, u16)>,
@@ -431,6 +438,7 @@ fn project_versioned(
         viewer,
         objs,
         library: [BTreeMap::new(), BTreeMap::new()],
+        library_public: BTreeMap::new(),
         hand: Vec::new(),
         seams: Vec::new(),
         departures: Vec::new(),
@@ -624,6 +632,7 @@ fn project_versioned(
             })
             .collect(),
         library: w.library,
+        library_public: w.library_public,
         hand_facts: w.hand,
         seams: w.seams,
         departures: w.departures,
@@ -887,6 +896,170 @@ impl WalkV1<'_> {
         let o = &mut self.objs[id.0 as usize];
         o.zone = Some(zone);
         o.moves += 1;
+        if zone != Zone::Library {
+            self.library_public.remove(&id);
+        }
+    }
+
+    /// Issue 713: a move into or out of `owner`'s library. A token or spell
+    /// copy that enters it is at the position its insertion note names, or
+    /// anywhere in the library when no note names one. A move with no
+    /// position note shifts every other public object's position in that
+    /// library by at most one, in a direction V cannot tell.
+    fn library_public_move(
+        &mut self,
+        id: ObjectId,
+        owner: PlayerId,
+        out: bool,
+        into: bool,
+        positions: &[&ObservationNoteV1],
+    ) {
+        let noted = |insertion: bool| -> Vec<u32> {
+            positions
+                .iter()
+                .filter_map(|n| match n.kind {
+                    ObservationNoteKindV1::LibraryInsertion { owner: o, position }
+                        if insertion && o == owner =>
+                    {
+                        Some(position)
+                    }
+                    ObservationNoteKindV1::LibraryRemoval { owner: o, position }
+                        if !insertion && o == owner =>
+                    {
+                        Some(position)
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let inserted = noted(true);
+        let unnoted_in = into && inserted.is_empty();
+        let unnoted_out = out && noted(false).is_empty();
+        if unnoted_in || unnoted_out {
+            for (other, set) in self.library_public.iter_mut() {
+                if *other == id || self.objs[other.0 as usize].owner != Some(owner) {
+                    continue;
+                }
+                *set = set
+                    .iter()
+                    .flat_map(|&x| {
+                        let up = unnoted_in.then_some(x + 1);
+                        let down = if unnoted_out { x.checked_sub(1) } else { None };
+                        std::iter::once(x).chain(up).chain(down)
+                    })
+                    .collect();
+            }
+        }
+        let o = self.state.objects.get(id);
+        if into && (o.v4.is_token || o.spell_copy_origin.is_some()) {
+            let possible = match inserted.as_slice() {
+                [position] => BTreeSet::from([*position]),
+                _ => (0..self.library_count(owner)).collect(),
+            };
+            self.library_public.insert(id, possible);
+        }
+    }
+
+    /// Issue 713: carries the positions V cannot rule out for each token or
+    /// spell copy in a library through one note, by the rules `note` applies
+    /// to `library`. A shuffle makes every position possible; a reorder or
+    /// a scry V does not see makes every position it touched possible; a
+    /// look, reorder or scry V sees fixes or excludes positions; a removal
+    /// or an insertion at a public position shifts them.
+    fn note_library_public(&mut self, kind: &ObservationNoteKindV1) {
+        use ObservationNoteKindV1 as K;
+        let owner = match kind {
+            K::LibraryRandomized { owner }
+            | K::LibraryLooked { owner, .. }
+            | K::LibraryReordered { owner, .. }
+            | K::LibraryScried { owner, .. }
+            | K::LibraryRemoval { owner, .. }
+            | K::LibraryInsertion { owner, .. } => *owner,
+            K::HandCardRevealed { .. } => return,
+        };
+        if self.library_public.is_empty() {
+            return;
+        }
+        let viewer = self.viewer;
+        let length = self.library_count(owner);
+        for (id, set) in self.library_public.iter_mut() {
+            if self.objs[id.0 as usize].owner != Some(owner) {
+                continue;
+            }
+            let id = *id;
+            let old = std::mem::take(set);
+            *set = match kind {
+                K::LibraryRandomized { .. } => (0..length).collect(),
+                K::LibraryLooked {
+                    observer,
+                    positions,
+                    ..
+                } => {
+                    if *observer != viewer {
+                        old
+                    } else if let Some((p, _)) = positions.iter().find(|(_, o)| *o == id) {
+                        BTreeSet::from([*p])
+                    } else {
+                        old.into_iter()
+                            .filter(|x| positions.iter().all(|(p, _)| p != x))
+                            .collect()
+                    }
+                }
+                K::LibraryReordered {
+                    ordered,
+                    revealed_to,
+                    ..
+                } => {
+                    let len = ordered.len() as u32;
+                    if revealed_to.contains(&viewer) {
+                        match ordered.iter().position(|o| *o == id) {
+                            Some(k) => BTreeSet::from([k as u32]),
+                            None => old.into_iter().filter(|x| *x >= len).collect(),
+                        }
+                    } else if old.iter().any(|x| *x < len) {
+                        old.into_iter().chain(0..len).collect()
+                    } else {
+                        old
+                    }
+                }
+                K::LibraryScried {
+                    retained_top,
+                    ordered_bottom,
+                    ..
+                } => {
+                    let top = retained_top.len() as u32;
+                    let bottom = ordered_bottom.len() as u32;
+                    let prefix = top + bottom;
+                    let first_bottom = length.saturating_sub(bottom);
+                    let mut new: BTreeSet<u32> = old
+                        .iter()
+                        .filter(|x| **x >= prefix)
+                        .map(|x| x - bottom)
+                        .collect();
+                    if owner == viewer {
+                        if let Some(k) = retained_top.iter().position(|o| *o == id) {
+                            new = BTreeSet::from([k as u32]);
+                        } else if let Some(k) = ordered_bottom.iter().position(|o| *o == id) {
+                            new = BTreeSet::from([first_bottom + k as u32]);
+                        }
+                    } else if old.iter().any(|x| *x < prefix) {
+                        new.extend(0..top);
+                        new.extend(first_bottom..length);
+                    }
+                    new
+                }
+                K::LibraryRemoval { position, .. } => old
+                    .into_iter()
+                    .filter(|x| x != position)
+                    .map(|x| if x > *position { x - 1 } else { x })
+                    .collect(),
+                K::LibraryInsertion { position, .. } => old
+                    .into_iter()
+                    .map(|x| if x >= *position { x + 1 } else { x })
+                    .collect(),
+                K::HandCardRevealed { .. } => old,
+            };
+        }
     }
 
     fn event(&mut self, event: &CommittedEvent, index: usize, positions: &[&ObservationNoteV1]) {
@@ -955,6 +1128,9 @@ impl WalkV1<'_> {
                 let was = self.objs[id.0 as usize].tracked;
                 let from_library = self.objs[id.0 as usize].zone == Some(Zone::Library);
                 self.moved(id, Zone::Hand);
+                if from_library {
+                    self.library_public_move(id, *player, true, false, positions);
+                }
                 self.library_to_hand(id, *player);
                 let named = *player == self.viewer;
                 if !named && !was && from_library {
@@ -995,6 +1171,15 @@ impl WalkV1<'_> {
                 let informative = owner == self.opp()
                     && (!self.hand.is_empty() || !self.survivors.is_empty() || self.r8_latch);
                 self.moved(id, *to);
+                if *from == Zone::Library || *to == Zone::Library {
+                    self.library_public_move(
+                        id,
+                        owner,
+                        *from == Zone::Library,
+                        *to == Zone::Library,
+                        positions,
+                    );
+                }
                 let public = is_public(*from) || is_public(*to);
                 let named = (public || owner == self.viewer) && !self.objs[id.0 as usize].hidden_v2;
                 if !token_or_copy {
@@ -1096,6 +1281,7 @@ impl WalkV1<'_> {
 
     fn note(&mut self, note: &ObservationNoteV1) {
         let viewer = self.viewer;
+        self.note_library_public(&note.kind);
         match &note.kind {
             ObservationNoteKindV1::LibraryRandomized { owner } => {
                 self.search_mark = None;
