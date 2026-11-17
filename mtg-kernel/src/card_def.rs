@@ -487,6 +487,18 @@ pub enum Subtype {
     Servo = 580,
     Thopter = 581,
     Powerstone = 582,
+    /// Appended for Vintage Cube wave C4c (the Phyrexian Germ token of
+    /// Nettlecyst and Kaldra Compleat and the Rebel token of Glimmer Lens),
+    /// with stable ids 620 and 621. Both are creature types.
+    Germ = 620,
+    Rebel = 621,
+    /// Appended for Vintage Cube wave C4a (Forensic Gadgeteer's Vedalken and
+    /// Caustic Bronco's Horse and Mount), with stable ids 600 to 602. All
+    /// three are creature types (Mount since the Outlaws of Thunder Junction
+    /// set).
+    Vedalken = 600,
+    Horse = 601,
+    Mount = 602,
 }
 
 impl Subtype {
@@ -889,6 +901,16 @@ impl Subtype {
         Subtype::Servo,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Thopter,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Germ,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Rebel,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Vedalken,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Horse,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Mount,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1145,6 +1167,11 @@ impl Subtype {
             580 => Subtype::Servo,
             581 => Subtype::Thopter,
             582 => Subtype::Powerstone,
+            620 => Subtype::Germ,
+            621 => Subtype::Rebel,
+            600 => Subtype::Vedalken,
+            601 => Subtype::Horse,
+            602 => Subtype::Mount,
             _ => return None,
         })
     }
@@ -1380,6 +1407,11 @@ impl Subtype {
             Subtype::Servo => true,
             Subtype::Thopter => true,
             Subtype::Powerstone => false,
+            Subtype::Germ => true,
+            Subtype::Rebel => true,
+            Subtype::Vedalken => true,
+            Subtype::Horse => true,
+            Subtype::Mount => true,
         }
     }
 
@@ -1497,6 +1529,11 @@ impl Subtype {
                     | Subtype::Pest
                     | Subtype::Servo
                     | Subtype::Thopter
+                    | Subtype::Germ
+                    | Subtype::Rebel
+                    | Subtype::Vedalken
+                    | Subtype::Horse
+                    | Subtype::Mount
             )
         {
             return true;
@@ -4066,7 +4103,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x0a94_18fe_98a8_0f86;
+        const EXPECTED_ETERNAL: u64 = 0xe5bb_16a7_aa4f_d866;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"

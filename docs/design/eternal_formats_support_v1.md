@@ -2663,3 +2663,63 @@ C3c:
   mana under `ManaSpendRestrictionDef::PowerstoneV1`, which pays for artifact spells and activated
   abilities. The other costs that mana may pay (ward, "unless its controller pays" taxes, mana
   ability costs, special actions) still refuse it, which is why the card is not Full.
+
+### C4: trigger creatures, Equipment and Vehicles
+
+Wave C4 adds 27 cards, raising the cube to 438 of 540 Full. It is three sub-modules chained after
+C3c: C4a (eight creatures with cast, draw and copy triggers, `eternal_cube_c4a_v1`), C4b (nine
+creatures with magecraft and per-turn counters, `eternal_cube_c4b_v1`) and C4c (eight Equipment and
+two Vehicles, `eternal_cube_c4c_v1`), the new tail.
+
+C4a:
+
+- Displacer Kitten flickers up to one other nonland permanent its controller controls on each
+  noncreature cast. Forensic Gadgeteer investigates on artifact casts and takes {1} of generic off
+  activated abilities of its controller's artifacts, mana abilities with a mana cost included,
+  never below one mana.
+- Faerie Mastermind (`OpponentDrawsSecondCardEachTurnV1`) and Ledger Shredder
+  (`PlayerCastsSecondSpellEachTurnV1`, connive) read the engine's per-player draw and cast
+  counters. The Mastermind's shared draw is controller first, with the stop between the two
+  players' draws.
+- Jacked Rabbit enters with X counters, draws when cast with X of 5 or more, and makes Rabbit
+  tokens equal to its power when it attacks. Bristly Bill, Spine Sower puts a counter on a creature
+  on landfall and doubles the counters on its controller's creatures.
+- Lutri, the Spellchaser: companion with the distinct-names deck condition, and an
+  enters-after-cast trigger that copies a target instant or sorcery spell its controller controls,
+  with a keep-or-change choice per target. Caustic Bronco: saddle 3 is a crew cost at sorcery
+  speed, recorded for the turn and read by its attack trigger.
+- New subtypes: Vedalken (600), Horse (601), Mount (602).
+
+C4b:
+
+- Sedgemoor Witch and Witherbloom Apprentice: magecraft. The cast half is a printed trigger; the
+  copy half is found at trigger collection by scanning the stack for instant and sorcery copies not
+  yet reported. The Witch has ward (pay 3 life) and makes Pest tokens.
+- Omnath, Locus of Creation and Scythecat Cub count how many times their landfall ability has
+  resolved this turn (`C4bStateV1::resolutions`, keyed by the source incarnation), so a countered
+  trigger is not counted.
+- Pompous Battlemage // Improvised Act extends wave E7b's prepared mechanism to a second card; a
+  permanent that enters face down or without its abilities does not enter prepared. Sage of the
+  Skies copies itself when cast after another spell that turn; the copy of a permanent spell
+  becomes a token. Ouroboroid uses last-known power recorded as it leaves.
+- Okoye, Mighty and Adored marks its target creature for the turn and grants double strike and
+  trample when it attacks the monarch. Screaming Nemesis deals the damage it took to any other
+  target (the rule belongs to its own trigger, not to abilities granted to it), and a player
+  damaged that way can't gain life for the rest of the game.
+
+C4c:
+
+- Living weapon (Nettlecyst, Kaldra Compleat) and For Mirrodin! (Glimmer Lens) create their token
+  and attach the Equipment in one resolution (`CreateTokenAndAttachSource`), with Phyrexian Germ
+  (`Subtype::Germ`, 620) and Rebel (`Subtype::Rebel`, 621) token rows.
+- Skullclamp draws two when the equipped creature dies, recorded as the creature leaves so the
+  Equipment and its host leaving together still draw. Umezawa's Jitte gains two charge counters per
+  combat damage wave and has three counter-removing abilities. Kaldra Compleat exiles each creature
+  its host deals combat damage to.
+- Sword of the Meek returns from the graveyard when a creature that is 1/1 as it enters comes under
+  its owner's control (the size is recorded at entry, after entry counters, so Nettlecyst's Germ,
+  which enters 0/0, does not count). Iron Man Armor animates and detaches itself when it becomes a creature, and its
+  ability does nothing while it is already one. Astrologian's Planisphere has job select, and its
+  triggers belong to its host creature.
+- Smuggler's Copter (crew 1, loot when it attacks or blocks) and Esika's Chariot (crew 4, two Cat
+  tokens, and a token copy when it attacks).

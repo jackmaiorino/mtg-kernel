@@ -313,6 +313,16 @@ pub fn companion_condition_met(companion: u16, deck: &[u16]) -> Option<bool> {
         // least twenty cards more than the minimum deck size", sixty for
         // these constructed formats.
         "Yorion, Sky Nomad" => Some(deck.len() >= 80),
+        // Lutri, the Spellchaser (wave C4a): "Each nonland card in your
+        // starting deck has a different name." Lands, however many, are free.
+        "Lutri, the Spellchaser" => {
+            let mut seen = std::collections::HashSet::new();
+            Some(deck.iter().all(|&id| {
+                CARD_DEFS
+                    .get(usize::from(id))
+                    .is_some_and(|card| card.is_land || seen.insert(card.name))
+            }))
+        }
         _ => None,
     }
 }
