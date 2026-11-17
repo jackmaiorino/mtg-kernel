@@ -4117,23 +4117,11 @@ fn legal_targets_for_controller_from_source_unframed(
     source: Option<TargetingSource>,
     state: &GameState,
 ) -> Vec<Target> {
-    #[allow(unused_mut)]
-    let mut legal = legal_targets_unrestricted_v1(spec, targets_chosen, controller, source, state);
-    // Standard Bearer and Coalition Honor Guard: Flagbearers must be chosen.
-    #[cfg(feature = "eternal-fixtures")]
-    if !crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(spec)
-        && spec != crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC
-        && spec != crate::eternal_sideboard_s1n_v1::KIORAS_DISMISSAL_TARGET
-    {
-        crate::eternal_sideboard_s1d_v1::statics::restrict_to_flagbearers(
-            state,
-            controller,
-            targets_chosen,
-            target_count(spec) as usize,
-            &mut legal,
-        );
-    }
-    legal
+    // The Flagbearer obligation (Standard Bearer, Coalition Honor Guard)
+    // binds the whole announcement of a cast or activation, so it applies to
+    // the final roster in `cast_target_choices` and
+    // `activation_target_choices`, not here.
+    legal_targets_unrestricted_v1(spec, targets_chosen, controller, source, state)
 }
 
 fn legal_targets_unrestricted_v1(
@@ -5715,22 +5703,21 @@ fn activation_target_choices(
     let min = usize::from(target_min_count(ability.target_spec));
     let candidates =
         |prefix: &[Target]| ordinary_next_activation_targets(source, ability, prefix, state);
+    // Standard Bearer and Coalition Honor Guard: the obligation applies only
+    // while an opponent of the activating controller controls one of them.
     #[cfg(feature = "eternal-fixtures")]
-    {
-        use crate::eternal_sideboard_s1d_v1::statics;
-        let max = usize::from(target_count(ability.target_spec));
-        if statics::uses_flagbearer_count_completion(ability.target_spec)
-            && statics::flagbearer_requirement_applies(state, state.objects.get(source).controller)
-        {
-            return statics::optional_flagbearer_targets(
-                state,
-                ability.target_spec,
-                targets_chosen,
-                min,
-                max,
-                candidates,
-            );
-        }
+    if crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
+        state,
+        state.objects.get(source).controller,
+    ) {
+        return crate::eternal_sideboard_s1d_v1::flagbearer::target_choices(
+            state,
+            ability.target_spec,
+            targets_chosen,
+            min,
+            Some(usize::from(target_count(ability.target_spec))),
+            candidates,
+        );
     }
     (candidates(targets_chosen), targets_chosen.len() >= min)
 }
@@ -9853,41 +9840,39 @@ fn cast_target_choices(
     spec: TargetSpec,
     state: &GameState,
 ) -> (Vec<Target>, bool) {
+    cast_target_choices_after(def, pending, spec, &pending.targets_chosen, state)
+}
+
+/// The targets offered after `chosen`, a prefix of the pending cast's
+/// targets, and whether the selection may finish there.
+fn cast_target_choices_after(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    spec: TargetSpec,
+    chosen: &[Target],
+    state: &GameState,
+) -> (Vec<Target>, bool) {
     let (min, max) = cast_target_bounds(spec, pending.kicked == Some(true));
-    let chosen = &pending.targets_chosen;
     let candidates =
         |prefix: &[Target]| ordinary_next_cast_targets(def, pending, spec, prefix, state);
     #[cfg(feature = "eternal-fixtures")]
     if spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC {
-        return shatterskull_cast_targets(def, pending, state, candidates);
+        return shatterskull_cast_targets(def, pending, chosen, state, candidates);
     }
     #[cfg(feature = "eternal-fixtures")]
     if spec == crate::eternal_sideboard_s1n_v1::KIORAS_DISMISSAL_TARGET {
-        return kioras_dismissal_cast_targets(def, pending, state, candidates);
+        return kioras_dismissal_cast_targets(def, pending, chosen, state, candidates);
     }
+    // Standard Bearer and Coalition Honor Guard: the obligation applies only
+    // while an opponent of the caster controls one of them.
     #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(spec)
-        && crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
-            state,
-            pending.controller,
-        )
-    {
-        use crate::eternal_sideboard_s1d_v1::statics;
-        if let Some(max) = max {
-            return statics::optional_flagbearer_targets(state, spec, chosen, min, max, candidates);
-        }
-        // KickerControlledCreatures has an unbounded set of distinct targets
-        // from the same independent legal roster. A non-Flagbearer pick
-        // leaves every unselected Flagbearer available.
-        let legal = candidates(chosen);
-        let can_finish = chosen.is_empty()
-            || chosen
-                .iter()
-                .any(|target| statics::is_flagbearer(state, target))
-            || !legal
-                .iter()
-                .any(|target| statics::is_flagbearer(state, target));
-        return (legal, can_finish);
+    if crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
+        state,
+        pending.controller,
+    ) {
+        return crate::eternal_sideboard_s1d_v1::flagbearer::target_choices(
+            state, spec, chosen, min, max, candidates,
+        );
     }
     #[cfg(not(feature = "eternal-fixtures"))]
     let _ = max;
@@ -9898,6 +9883,7 @@ fn cast_target_choices(
 fn shatterskull_cast_targets(
     def: &card_def::CardDef,
     pending: &PendingCast,
+    chosen: &[Target],
     state: &GameState,
     candidates: impl Fn(&[Target]) -> Vec<Target>,
 ) -> (Vec<Target>, bool) {
@@ -9936,9 +9922,8 @@ fn shatterskull_cast_targets(
             || (flagbearer.is_none() || picks.iter().any(|t| statics::is_flagbearer(state, t)))
                 && payable(picks)
     };
-    let chosen = &pending.targets_chosen;
     let mut next = candidates(chosen);
-    let mut prefix = chosen.clone();
+    let mut prefix = chosen.to_vec();
     next.retain(|&target| {
         prefix.push(target);
         // The only useful completion of an unsatisfied Flagbearer obligation
@@ -9967,6 +9952,7 @@ fn shatterskull_cast_targets(
 fn kioras_dismissal_cast_targets(
     def: &card_def::CardDef,
     pending: &PendingCast,
+    chosen: &[Target],
     state: &GameState,
     candidates: impl Fn(&[Target]) -> Vec<Target>,
 ) -> (Vec<Target>, bool) {
@@ -9991,9 +9977,8 @@ fn kioras_dismissal_cast_targets(
                 || flagbearer.is_none()
                 || picks.iter().any(|t| statics::is_flagbearer(state, t)))
     };
-    let chosen = &pending.targets_chosen;
     let mut next = candidates(chosen);
-    let mut prefix = chosen.clone();
+    let mut prefix = chosen.to_vec();
     next.retain(|&target| {
         prefix.push(target);
         // Strive adds {U} per target beyond the first, so adding more targets
@@ -10057,6 +10042,7 @@ fn ordinary_next_cast_targets(
                     def,
                     pending.spell,
                     pending.controller,
+                    chosen.len(),
                     target,
                     state,
                 )
@@ -15806,17 +15792,31 @@ pub(crate) fn validate_pending_cast(
                 );
             }
         } else {
+            // Standard Bearer and Coalition Honor Guard: while the caster is
+            // bound and still choosing, each target must be one the bound
+            // menu offered. A complete selection is checked below.
+            #[cfg(feature = "eternal-fixtures")]
+            let flagbearer_bound = !pending_cast_targeting_is_complete(pending, spec)
+                && crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
+                    state,
+                    pending.controller,
+                );
+            #[cfg(not(feature = "eternal-fixtures"))]
+            let flagbearer_bound = false;
             let mut prefix = Vec::new();
             for &target in &pending.targets_chosen {
-                if !completable_next_targets_for_controller_and_source(
-                    spec,
-                    &prefix,
-                    pending.controller,
-                    targeting_source_for_object(state, pending.spell),
-                    state,
-                )
-                .contains(&target)
-                {
+                let offered = if flagbearer_bound {
+                    cast_target_choices_after(def, pending, spec, &prefix, state).0
+                } else {
+                    completable_next_targets_for_controller_and_source(
+                        spec,
+                        &prefix,
+                        pending.controller,
+                        targeting_source_for_object(state, pending.spell),
+                        state,
+                    )
+                };
+                if !offered.contains(&target) {
                     return Err("pending cast carries an illegal target prefix".to_string());
                 }
                 prefix.push(target);
@@ -15826,12 +15826,10 @@ pub(crate) fn validate_pending_cast(
         if pending.kicked.is_some()
             && (spec == crate::eternal_legacy_e9a_v1::targets::SHATTERSKULL_TARGET_SPEC
                 || spec == crate::eternal_sideboard_s1n_v1::KIORAS_DISMISSAL_TARGET
-                || (crate::eternal_sideboard_s1d_v1::statics::uses_flagbearer_count_completion(
-                    spec,
-                ) && crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
+                || crate::eternal_sideboard_s1d_v1::statics::flagbearer_requirement_applies(
                     state,
                     pending.controller,
-                )))
+                ))
         {
             let (legal, can_finish) = cast_target_choices(def, pending, spec, state);
             if !can_finish

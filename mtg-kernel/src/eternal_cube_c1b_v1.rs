@@ -350,21 +350,18 @@ pub(crate) fn filters_cast_targets(def: &CardDef) -> bool {
     def.name == PEST_INFESTATION
 }
 
-/// Pest Infestation: one more target is legal only when an X covering all
-/// the targets so far and this one is payable.
+/// Pest Infestation: one more target after `chosen` targets is legal only
+/// when an X covering all of them and this one is payable. `chosen` is the
+/// prefix being extended, which a completion search may take beyond the
+/// targets the pending cast holds.
 pub(crate) fn cast_target_allowed(
     def: &CardDef,
     source: ObjectId,
     controller: PlayerId,
+    chosen: usize,
     target: Target,
     state: &GameState,
 ) -> bool {
-    let chosen = state
-        .engine
-        .pending_cast
-        .as_ref()
-        .filter(|pending| pending.spell == source)
-        .map_or(0, |pending| pending.targets_chosen.len());
     let minimum = u16::try_from(chosen.saturating_add(1)).unwrap_or(u16::MAX);
     crate::engine::x_target_is_payable(def, source, controller, target, minimum, state)
 }
