@@ -6519,8 +6519,14 @@ fn effect_mana_plan(
             yield_per_tap: 1,
         });
     }
-    let plan =
-        mana::can_pay_owned_from_sources(&pips, generic, player, state, &sources, nonartifact_cast)?;
+    let plan = mana::can_pay_owned_from_sources(
+        &pips,
+        generic,
+        player,
+        state,
+        &sources,
+        nonartifact_cast,
+    )?;
     let mut ordinary = plan.clone();
     ordinary.taps.clear();
     let mut treasures = Vec::new();
