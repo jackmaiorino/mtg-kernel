@@ -2367,6 +2367,57 @@ fn seasoned_dungeoneer_protects_an_attacking_warrior_from_creatures_and_explores
     assert_eq!(state.objects.get(top).zone, Zone::Hand, "the land explored");
 }
 
+#[test]
+fn seasoned_dungeoneers_protection_ends_with_its_controllers_turn() {
+    let mut state = islands();
+    let dungeoneer = put(&mut state, P0, "Seasoned Dungeoneer", Zone::Battlefield);
+    let round = state.turn;
+    // P0 attacks with the Dungeoneer, which gains protection from creatures
+    // until end of turn; then the game plays on to P1's turn of the round.
+    for _ in 0..400 {
+        let decision = next(&mut state);
+        if state.active_player == P1 && state.step == Step::Main1 {
+            break;
+        }
+        let action = match decision {
+            Decision::DeclareAttackers { player: P0, .. } => {
+                Action::DeclareAttackers(vec![dungeoneer])
+            }
+            Decision::DeclareAttackers { .. } => Action::DeclareAttackers(vec![]),
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert_eq!(legal_targets, vec![Target::Object(dungeoneer)]);
+                Action::ChooseTarget(legal_targets[0])
+            }
+            Decision::DeclareBlockers { .. } => Action::DeclareBlockers(vec![]),
+            Decision::CastSpellOrPass { .. } => Action::Pass,
+            Decision::OrderTriggers { pending, .. } => {
+                Action::OrderTriggers((0..pending.len()).collect())
+            }
+            Decision::ChooseEffectBoolean { .. } => Action::ChooseEffectBoolean(false),
+            Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(0),
+            Decision::Discard { count, choices, .. } => {
+                Action::Discard(choices.into_iter().take(count as usize).collect())
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        };
+        act(&mut state, action);
+    }
+    assert_eq!(state.turn, round, "the same round");
+    assert_eq!(state.players[1].life, 17, "P0's attack connected");
+
+    // In P1's turn a creature's ability may target the Dungeoneer again.
+    let bowmasters = put(&mut state, P1, "Orcish Bowmasters", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::B], 1);
+    cast(&mut state, bowmasters, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseTargets { legal_targets, .. }) => assert!(
+            legal_targets.contains(&Target::Object(dungeoneer)),
+            "{legal_targets:?}"
+        ),
+        other => panic!("expected the Bowmasters target, got {other:?}"),
+    }
+}
+
 // ---- Batch three: planeswalkers -------------------------------------------
 
 fn loyalty(state: &GameState, planeswalker: ObjectId) -> Option<u32> {

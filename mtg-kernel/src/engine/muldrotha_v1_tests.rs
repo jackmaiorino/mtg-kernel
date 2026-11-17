@@ -468,6 +468,40 @@ fn current_generation_source_controller_changes_and_next_turn_reset_both_seats()
     }
 }
 #[test]
+fn budget_spent_in_one_turn_is_unused_in_the_other_players_turn_of_the_round_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(p, "Forest");
+        let n = p.opponent();
+        let m = paid(&mut s, p);
+        cast(&mut s, p, "Llanowar Elves", m, CardType::Creature, 1);
+        finish(&mut s);
+        // Explicit native control-change boundary, same source incarnation.
+        s.players[p.index()].battlefield.retain(|x| *x != m);
+        s.players[n.index()].battlefield.push(m);
+        s.objects.get_mut(m).controller = n;
+        validate_state(&s).unwrap();
+        // Drive actual turn work to the other player's turn of the same round.
+        let round = s.turn;
+        for _ in 0..160 {
+            let d = next(&mut s);
+            if s.active_player == n && matches!(s.step, Step::Main1) {
+                break;
+            }
+            pass(&mut s, d);
+        }
+        assert_eq!(s.active_player, n);
+        assert_eq!(s.turn, round, "the same round");
+        let elf = put(&mut s, n, "Llanowar Elves", Zone::Graveyard);
+        assert!(permissions(&s, elf, n)
+            .iter()
+            .any(|q| q.source.source == m && q.permanent_type == CardType::Creature));
+        pay(&mut s, n, elf, Some((m, CardType::Creature)), None);
+        finish(&mut s);
+        assert_eq!(s.objects.get(elf).zone, Zone::Battlefield);
+        validate_state(&s).unwrap();
+    }
+}
+#[test]
 fn genuinely_paid_new_muldrotha_has_independent_budget_through_real_legend_choice_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         let mut s = ready(p, "Forest");
