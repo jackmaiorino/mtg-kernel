@@ -796,6 +796,54 @@ impl KaitoSessionV75 {
             self.inner.physical_decision_count(),
         )
     }
+    /// Test-only input of the actor probe's inclusion-step arity rule. For a
+    /// current attacker or blocker inclusion step it returns the complete
+    /// native answer menu that the header counts and the scan feasibility of
+    /// `[include: false, include: true]`, recomputed now from the native state
+    /// and surface rather than read from the projection's own filter. Any
+    /// other decision returns `None`. Nothing here changes the session.
+    #[cfg(test)]
+    pub(crate) fn probe_scan_answers_v1(
+        &self,
+        decision: &KaitoDecisionV75,
+    ) -> Result<Option<ProbeScanAnswersV1>, RlContractError> {
+        let fresh = self.validated_current(decision)?;
+        let current = self
+            .inner
+            .current
+            .as_ref()
+            .ok_or_else(|| RlContractError("V75 current absent".into()))?;
+        if !matches!(
+            current.origin_decision,
+            crate::policy_surface_v5::PolicyDecisionV5::AttackerInclusion { .. }
+                | crate::policy_surface_v5::PolicyDecisionV5::BlockerInclusion { .. }
+        ) {
+            return Ok(None);
+        }
+        let feasible = self
+            .inner
+            .surface
+            .feasible_scan_answers(&self.inner.state, &current.origin_decision)
+            .map_err(RlContractError)?;
+        Ok(Some(ProbeScanAnswersV1 {
+            original: fresh
+                .original
+                .iter()
+                .map(|candidate| candidate.semantic.clone())
+                .collect(),
+            feasible,
+        }))
+    }
+}
+
+/// Test-only native inclusion-step answers for the actor probe's arity rule.
+#[cfg(test)]
+pub(crate) struct ProbeScanAnswersV1 {
+    /// The complete native menu, in native order; its length is the header's
+    /// `legal_action_count`.
+    pub(crate) original: Vec<ActionSemanticV1>,
+    /// Whether `[include: false, include: true]` each keep a legal completion.
+    pub(crate) feasible: [bool; 2],
 }
 
 #[cfg(all(

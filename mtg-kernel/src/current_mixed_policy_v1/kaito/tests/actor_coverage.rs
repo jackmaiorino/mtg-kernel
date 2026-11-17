@@ -797,3 +797,31 @@ fn issue454_targeted_ajani_activation_incarnations_encode_for_both_viewers_both_
         assert_eq!(h.acting_player, player.opponent().into());
     }
 }
+
+#[test]
+fn issue454_game23_witness_names_every_object_the_opponent_hand_guard_matches() {
+    let swamp = crate::card_def::card_id_by_name("Swamp").unwrap();
+    let value = serde_json::json!({
+        "observation": {"rows": [
+            {"arena_id": 9, "card_db_id": swamp, "owner": "p1", "controller": "p1",
+                "zone": "Hand", "zone_change_count": 0},
+            {"arena_id": 10, "card_db_id": swamp, "owner": "p1", "zone": "Battlefield"},
+        ]},
+        "candidates": [{"action": {"target": {"arena_id": 4, "owner": "p0", "zone": "Hand"}}}],
+    });
+    let opponent = Value::from("p1");
+    let mut matches = Vec::new();
+    super::super::opponent_hand_matches(&value, &opponent, "", &mut matches);
+    assert_eq!(
+        matches,
+        vec![format!(
+            "/observation/rows/0 arena_id=9 card_db_id=Some({swamp}) card=Some(\"Swamp\")"
+        )]
+    );
+    assert!(super::super::opponent_hand_binding(&value, &opponent));
+    assert!(!super::super::opponent_hand_binding(
+        &value,
+        &Value::from("p2")
+    ));
+    assert!(super::super::take_opponent_hand_witness_v1().is_empty());
+}

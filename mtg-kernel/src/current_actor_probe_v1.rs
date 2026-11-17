@@ -12,13 +12,25 @@ use crate::{
         TerminalSafeCodeV2,
     },
     rl_session::{
-        EternalActorSessionV1, FastActorDecisionV1, FastActorResponseV1, RlSessionTerminalV1,
+        EternalActorSessionV1, FastActorDecisionKindV1, FastActorDecisionV1, FastActorResponseV1,
+        RlSessionTerminalV1,
     },
     state::SplitMix64,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, time::Instant};
+
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod conqueror_witness;
+#[cfg(all(
+    feature = "limited-fdn-fixtures",
+    not(feature = "standard-magezero-fixtures")
+))]
+mod tests;
 
 const SCHEMA: &str = "current-actor-coverage-probe/v1";
 const SCHEMA_V2: &str = "current-actor-coverage-probe/v2";
@@ -103,6 +115,18 @@ struct Failure {
     stage: Stage,
     detail: String,
     header: Option<Header>,
+    /// Diagnostic witness for a single-game rerun, never part of acceptance:
+    /// where the opponent-hand guard matched (JSON pointer and card), or the
+    /// first event where a halted game's Conqueror gain replay differs.
+    witness: Vec<String>,
+}
+/// Native inclusion answers the public menu omitted because their scan
+/// answer has no legal completion, counted per decision kind. Each one is
+/// recomputed and checked by `dropped_infeasible_scan_answers`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+struct InfeasibleScanAnswersV1 {
+    attacker_inclusion: u64,
+    blocker_inclusion: u64,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 struct GameResult {
@@ -120,6 +144,7 @@ struct GameResult {
     equal_ordinal_neutral_ingress_distinct_actions: u64,
     authenticated_revealed_discard_family_pairs: u64,
     collision_examples: Vec<[u32; 2]>,
+    infeasible_scan_answers_dropped: InfeasibleScanAnswersV1,
     terminal: Option<RlSessionTerminalV1>,
     failure: Option<Failure>,
     actor_trace_sha256: String,
@@ -141,6 +166,7 @@ impl GameResult {
             equal_ordinal_neutral_ingress_distinct_actions: 0,
             authenticated_revealed_discard_family_pairs: 0,
             collision_examples: Vec::new(),
+            infeasible_scan_answers_dropped: InfeasibleScanAnswersV1::default(),
             terminal: None,
             failure: None,
             actor_trace_sha256: String::new(),
@@ -151,8 +177,81 @@ impl GameResult {
             stage,
             detail: detail.to_string(),
             header: header.map(Header::from),
+            witness: Vec::new(),
         });
     }
+    fn witness(&mut self, lines: Vec<String>) {
+        if let Some(failure) = &mut self.failure {
+            failure.witness = lines;
+        }
+    }
+}
+
+/// The lead's rule for game 39: on an attacker or blocker inclusion step the
+/// public menu may be shorter than the header's native count only when the
+/// dropped originals are exactly the infeasible scan answers, recomputed
+/// here from the native menu and the freshly computed scan feasibility. Any
+/// other arity difference stays a stop. Returns the number of dropped
+/// answers; the header count and the session contract are not changed.
+fn dropped_infeasible_scan_answers(
+    header: &FastActorDecisionV1,
+    public: &[ActionSemanticV1],
+    scan: Option<&crate::rl_session::kaito_v75::ProbeScanAnswersV1>,
+) -> Result<u64, String> {
+    let expected = header.legal_action_count as usize;
+    let differs = |why: &str| {
+        Err(format!(
+            "header/action arity differs: header {expected}, public {}: {why}",
+            public.len()
+        ))
+    };
+    if public.is_empty() {
+        return differs("empty public menu");
+    }
+    if public.len() == expected {
+        return Ok(0);
+    }
+    let attacker = match header.decision_kind {
+        FastActorDecisionKindV1::AttackerInclusion => true,
+        FastActorDecisionKindV1::BlockerInclusion => false,
+        FastActorDecisionKindV1::Surface => return differs("not an inclusion step"),
+    };
+    if public.len() > expected {
+        return differs("public menu longer than the native menu");
+    }
+    let Some(scan) = scan else {
+        return differs("no recomputed scan answers");
+    };
+    if scan.original.len() != expected {
+        return differs("native menu differs from the header count");
+    }
+    let mut next = 0;
+    let mut dropped = 0;
+    for (index, original) in scan.original.iter().enumerate() {
+        let include = match original {
+            ActionSemanticV1::ChooseAttackerInclusion { include, .. } if attacker => *include,
+            ActionSemanticV1::ChooseBlockerInclusion { include, .. } if !attacker => *include,
+            _ => return differs("native answer outside the step's inclusion family"),
+        };
+        if scan.original[..index].contains(original) {
+            return differs("repeated native answer");
+        }
+        let feasible = scan.feasible[usize::from(include)];
+        if public.get(next) == Some(original) {
+            if !feasible {
+                return differs("public menu kept an infeasible answer");
+            }
+            next += 1;
+        } else if feasible {
+            return differs("public menu dropped a feasible answer");
+        } else {
+            dropped += 1;
+        }
+    }
+    if next != public.len() {
+        return differs("public action outside the native menu");
+    }
+    Ok(dropped)
 }
 
 fn resolve(deck: &Deck, expected: usize) -> Result<Vec<u16>, String> {
@@ -413,6 +512,39 @@ impl Owner {
             }
         }
     }
+    /// Recomputed native inclusion answers, only for a Limited inclusion step
+    /// whose public menu is shorter than its header.
+    fn scan_answers(
+        &self,
+        decision: &Decision,
+        header: &FastActorDecisionV1,
+        public: usize,
+    ) -> Result<Option<crate::rl_session::kaito_v75::ProbeScanAnswersV1>, String> {
+        match (self, decision) {
+            (Self::Limited(s), Decision::Limited(d))
+                if header.decision_kind != FastActorDecisionKindV1::Surface
+                    && public < header.legal_action_count as usize =>
+            {
+                s.probe_scan_answers_v1(d).map_err(|e| e.to_string())
+            }
+            _ => Ok(None),
+        }
+    }
+    /// Witness lines for a halted terminal: the Conqueror replay difference
+    /// when the halt names Conqueror custody, read from the native world.
+    fn halted_witness(&self, reason: &str) -> Vec<String> {
+        if !reason.contains("Conqueror") {
+            return Vec::new();
+        }
+        #[cfg(all(
+            feature = "limited-fdn-fixtures",
+            not(feature = "standard-magezero-fixtures")
+        ))]
+        if let Self::Limited(s) = self {
+            return conqueror_witness::witness(s.probe_native_state_v1());
+        }
+        vec!["no native Conqueror witness in this build or pool".into()]
+    }
     fn apply(&mut self, decision: &Decision, selected: u32) -> Result<(), (Stage, String)> {
         match (self, decision) {
             (Self::Limited(s), Decision::Limited(d)) => s.probe_apply_v1(d, selected),
@@ -490,6 +622,8 @@ fn play(manifest: &Manifest, game: &Game) -> GameResult {
         }
     };
     let model = ModelV1::deterministic_fixture();
+    // Drop any witness a previous game left on this worker thread.
+    crate::current_mixed_policy_v1::take_opponent_hand_witness_v1();
     let mut rng = SplitMix64::seed(game.seed ^ 0x454a11);
     let mut trace = Sha256::new();
     loop {
@@ -514,6 +648,7 @@ fn play(manifest: &Manifest, game: &Game) -> GameResult {
                         &t.terminal_reason,
                         None,
                     );
+                    row.witness(owner.halted_witness(&t.terminal_reason));
                 }
                 row.terminal = Some(t);
                 break;
@@ -530,12 +665,25 @@ fn play(manifest: &Manifest, game: &Game) -> GameResult {
             Ok(v) => v,
             Err(e) => {
                 row.fail(Stage::Encoding, e, Some(header));
+                row.witness(crate::current_mixed_policy_v1::take_opponent_hand_witness_v1());
                 break;
             }
         };
-        if actions.len() != header.legal_action_count as usize || actions.is_empty() {
-            row.fail(Stage::Encoding, "header/action arity differs", Some(header));
-            break;
+        let dropped = match owner
+            .scan_answers(&decision, &header, actions.len())
+            .and_then(|scan| dropped_infeasible_scan_answers(&header, &actions, scan.as_ref()))
+        {
+            Ok(n) => n,
+            Err(e) => {
+                row.fail(Stage::Encoding, e, Some(header));
+                break;
+            }
+        };
+        let counts = &mut row.infeasible_scan_answers_dropped;
+        match header.decision_kind {
+            FastActorDecisionKindV1::AttackerInclusion => counts.attacker_inclusion += dropped,
+            FastActorDecisionKindV1::BlockerInclusion => counts.blocker_inclusion += dropped,
+            FastActorDecisionKindV1::Surface => {}
         }
         if let Err(e) = audit(&input, &actions, &families, &mut row) {
             row.fail(Stage::ActionAudit, e, Some(header));
@@ -572,6 +720,7 @@ fn play(manifest: &Manifest, game: &Game) -> GameResult {
             .or_default() += 1;
         if let Err((stage, e)) = owner.apply(&decision, selected) {
             row.fail(stage, e, Some(header));
+            row.witness(crate::current_mixed_policy_v1::take_opponent_hand_witness_v1());
             break;
         }
     }
@@ -706,6 +855,16 @@ fn reported_pool_digest_free_terminal_probe() {
         .iter()
         .map(|g| g.authenticated_revealed_discard_family_pairs)
         .sum();
+    let infeasible = InfeasibleScanAnswersV1 {
+        attacker_inclusion: games
+            .iter()
+            .map(|g| g.infeasible_scan_answers_dropped.attacker_inclusion)
+            .sum(),
+        blocker_inclusion: games
+            .iter()
+            .map(|g| g.infeasible_scan_answers_dropped.blocker_inclusion)
+            .sum(),
+    };
     assert!(manifest.schema == SCHEMA_V2 || explained == 0);
     let unexplained = collisions
         .checked_sub(explained)
@@ -750,6 +909,7 @@ fn reported_pool_digest_free_terminal_probe() {
         "workers":workers,"seconds":started.elapsed().as_secs_f64(),"planned_games":60,"attempted_games":count,
         "completed_games":completed,"ordinal_neutral_collisions":collisions,
         "authenticated_revealed_discard_family_pairs":explained,"unexplained_ordinal_neutral_collisions":unexplained,
+        "infeasible_scan_answers_dropped":infeasible,
         "deck_inventory":inventory, "missing_reported_pair_kinds":missing,
         "terminal_panel_accepted":count==60 && completed==60 && unexplained==0 && missing.is_empty(),
         "primary_sha256":format!("{:x}",Sha256::digest(&primary)),"games":games});
