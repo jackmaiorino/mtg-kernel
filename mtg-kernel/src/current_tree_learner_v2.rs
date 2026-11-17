@@ -401,10 +401,11 @@ impl<const H: usize> TreeModelV2<H> {
         }
     }
 
-    /// The composite loss of design Section 3.2 and its gradient:
-    /// `(1 / N) sum_n [-A_n log pi(a_n | s_n) + c_v (V(s_n) - target_n)^2 / 2
-    /// - c_ent H(pi(. | s_n))]`, where the entropy is taken over the
-    /// decision's full legal menu. Examples are reduced in slice order.
+    /// The composite loss of design Section 3.2 and its gradient, the mean
+    /// over the examples of `-A_n log pi(a_n | s_n)` plus
+    /// `c_v (V(s_n) - target_n)^2 / 2` minus `c_ent H(pi(. | s_n))`, where the
+    /// entropy is taken over the decision's full legal menu. Examples are
+    /// reduced in slice order.
     fn loss_and_gradient(
         &self,
         examples: &[ExampleV2<'_>],

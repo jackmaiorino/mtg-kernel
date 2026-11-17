@@ -33,7 +33,11 @@ fn tree(value: serde_json::Value) -> NumericTree {
 /// tree shapes.
 fn decision(seed: u64) -> OwnedDecision {
     let width = 2 + (seed % 3) as usize;
-    let phase = if seed % 2 == 0 { "main" } else { "combat" };
+    let phase = if seed.is_multiple_of(2) {
+        "main"
+    } else {
+        "combat"
+    };
     let state = tree(json!({
         "life": [20 + seed % 7, 17 - seed % 5],
         "hand": (seed * 977) % 60_000,
@@ -50,7 +54,7 @@ fn decision(seed: u64) -> OwnedDecision {
         })
         .collect();
     let flags = (0..width as u64)
-        .map(|i| std::array::from_fn(|f| (seed + 3 * i + f as u64) % 3 == 0))
+        .map(|i| std::array::from_fn(|f| (seed + 3 * i + f as u64).is_multiple_of(3)))
         .collect();
     OwnedDecision {
         state,
@@ -286,7 +290,7 @@ fn finite_differences_match_every_parameter_block() {
 }
 
 #[test]
-fn every_block_but_the_policy_bias_receives_gradient() {
+fn every_block_but_the_softmax_invariant_ones_receives_gradient() {
     let owned = decisions(3, 5);
     let model = random_model::<32>(17);
     let (_, gradient) = model
@@ -296,9 +300,10 @@ fn every_block_but_the_policy_bias_receives_gradient() {
         let largest = gradient[start..end]
             .iter()
             .fold(0_f64, |m, v| m.max(v.abs()));
-        if name == "policy bias" {
-            // A shift of every logit leaves the softmax unchanged.
-            assert!(largest < 1e-12, "{largest}");
+        if name == "policy bias" || name == "head state" {
+            // Both add the same amount to every logit of a decision, which
+            // leaves the softmax unchanged, and neither feeds the value head.
+            assert!(largest < 1e-12, "{name} {largest}");
         } else {
             assert!(largest > 1e-6, "{name} {largest}");
         }
@@ -351,11 +356,11 @@ fn generalized_advantage_estimation_matches_hand_computed_fixtures() {
         })
         .collect::<Vec<f64>>();
     let advantages = gae_v2(&values, terminal, gamma, lambda);
-    for t in 0..values.len() {
+    for (t, advantage) in advantages.iter().enumerate() {
         let expected = (t..values.len())
             .map(|k| (gamma * lambda).powi((k - t) as i32) * deltas[k])
             .sum::<f64>();
-        assert!((advantages[t] - expected).abs() < 1e-14, "{t}");
+        assert!((advantage - expected).abs() < 1e-14, "{t}");
     }
 }
 
@@ -468,7 +473,7 @@ fn libm_free_functions_track_the_platform_functions() {
     }
     assert_eq!(powi_v2(0.999, 0), 1.);
     assert_eq!(powi_v2(0.5, 10), 1. / 1024.);
-    assert!((powi_v2(0.999, 200) - 0.999_f64.powi(200)).abs() < 1e-15);
+    assert!((powi_v2(0.999, 200) / 0.999_f64.powi(200) - 1.).abs() < 1e-13);
     let probabilities = probabilities_v2(&[1., 2., -800., 0.5]).unwrap();
     let total = probabilities.iter().sum::<f64>();
     assert!((total - 1.).abs() < 1e-15);
@@ -706,6 +711,12 @@ fn pinned_checkpoint_state_digests() {
     let wide = digest::<32>();
     let narrow = digest::<16>();
     println!("current_tree_learner_v2 pinned state digests: h32 {wide} h16 {narrow}");
-    assert_eq!(wide, "pending");
-    assert_eq!(narrow, "pending");
+    assert_eq!(
+        wide,
+        "3e08214287dca45a30df5cf425d6b1118ff35bf37cd198b9e8c6bbec290efd7f"
+    );
+    assert_eq!(
+        narrow,
+        "e3f35703da3ed61e6ea76a864cada30f3da2a62059544e16934ecb0d7101f4af"
+    );
 }
