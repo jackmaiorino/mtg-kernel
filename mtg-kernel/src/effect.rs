@@ -12112,9 +12112,9 @@ fn validate_pending_effect_choice_inner(state: &GameState) -> Result<(), String>
                         return Err("multi-card library-search player or path changed".to_string());
                     }
                     let minimum = match purpose {
-                        EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. } => {
-                            search_minimum(*filter, *purpose_max, original_library.len())
-                        }
+                        EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {
+                            ..
+                        } => search_minimum(*filter, *purpose_max, original_library.len()),
                         _ => 0,
                     };
                     if *filter_fingerprint != library_filter_fingerprint(*filter)

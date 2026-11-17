@@ -840,9 +840,7 @@ fn path_to_exile_shuffles_only_when_its_controller_chooses_to_search() {
         if let (true, Some(decision)) = (search, settle(&mut state)) {
             match decision {
                 Decision::ChooseEffectTargets {
-                    player,
-                    can_finish,
-                    ..
+                    player, can_finish, ..
                 } => assert!(player == P1 && can_finish, "{library}: may find nothing"),
                 other => panic!("expected the search, got {other:?}"),
             }
