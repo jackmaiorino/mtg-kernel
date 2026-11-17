@@ -466,6 +466,8 @@ pub enum StandardTargetV1 {
     C1bV1(crate::eternal_cube_c1b_v1::targets::C1bTargetV1),
     /// A filter of eternal wave C2c (`eternal_cube_c2c_v1::targets`).
     C2cV1(crate::eternal_cube_c2c_v1::targets::C2cTargetV1),
+    /// A filter of eternal wave S1o (`eternal_sideboard_s1o_v1::targets`).
+    S1oV1(crate::eternal_sideboard_s1o_v1::targets::S1oTargetV1),
 }
 
 impl StandardTargetV1 {
@@ -526,6 +528,9 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_cube_c2c_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_sideboard_s1o_v1::targets::counts(self) {
             return counts;
         }
         match self {
@@ -674,6 +679,7 @@ impl StandardTargetV1 {
             || crate::eternal_legacy_e9a_v1::targets::in_graveyard(self)
             || crate::eternal_sideboard_s1a_v1::targets::in_graveyard(self)
             || crate::eternal_premodern_p3h_v1::targets::in_graveyard(self)
+            || crate::eternal_sideboard_s1o_v1::targets::in_graveyard(self)
     }
 
     /// Wave E7a's filters (`eternal_legacy_e7a_v1`).
@@ -1040,6 +1046,11 @@ pub(crate) fn legal_targets(
     {
         return targets;
     }
+    if let Some(targets) = crate::eternal_sideboard_s1o_v1::targets::legal_targets(
+        target, controller, source, prefix, state,
+    ) {
+        return targets;
+    }
     if target.per_slot() {
         return match target.slot_kind(prefix.len()) {
             Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
@@ -1345,6 +1356,11 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) =
+        crate::eternal_sideboard_s1o_v1::targets::target_matches(target, controller, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -1586,6 +1602,8 @@ pub(crate) fn target_matches(
         StandardTargetV1::C1bV1(_) => false,
         // Answered by `eternal_cube_c2c_v1::targets` above.
         StandardTargetV1::C2cV1(_) => false,
+        // Answered by `eternal_sideboard_s1o_v1::targets` above.
+        StandardTargetV1::S1oV1(_) => false,
     }
 }
 

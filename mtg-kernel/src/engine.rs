@@ -18381,6 +18381,7 @@ pub(crate) fn validate_pending_trigger(
                     | TargetSpec::AnotherAttackingCreature
                     | TargetSpec::UpToOneOtherControlledPermanent
                     | TargetSpec::UpToTwoOtherControlledCreatures
+                    | crate::eternal_sideboard_s1o_v1::EOWYN_TARGET
             ) {
             completable_next_targets_for_controller_and_source(
                 expected,

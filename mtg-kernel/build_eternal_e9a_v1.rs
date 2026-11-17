@@ -385,7 +385,7 @@ pub(super) fn transform_face_for(name: &str) -> &'static str {
     match name {
         "Shatterskull Smashing" => "Some(TransformFaceDef { name: \"Shatterskull, the Hammer Pass\", types: &[CardType::Land], subtypes: &[], colors: &[], power: None, toughness: None, keywords: Keywords::NONE })",
         "Sundering Eruption" => "Some(TransformFaceDef { name: \"Volcanic Fissure\", types: &[CardType::Land], subtypes: &[], colors: &[], power: None, toughness: None, keywords: Keywords::NONE })",
-        _ => "None",
+        _ => super::build_eternal_s1o_v1::transform_face_for(name),
     }
 }
 
@@ -393,7 +393,7 @@ pub(super) fn transform_face_name_for(name: &str) -> Option<&'static str> {
     match name {
         "Shatterskull Smashing" => Some("Shatterskull, the Hammer Pass"),
         "Sundering Eruption" => Some("Volcanic Fissure"),
-        _ => None,
+        _ => super::build_eternal_s1o_v1::transform_face_name_for(name),
     }
 }
 
