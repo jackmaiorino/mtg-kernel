@@ -141,7 +141,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         AURAMANCER => &AURAMANCER_TRIGGERS,
         MONK_REALIST => &MONK_REALIST_TRIGGERS,
         GHITU_SLINGER => &GHITU_SLINGER_TRIGGERS,
-        _ => crate::eternal_cube_c1a_v1::triggers_for(name),
+        _ => crate::eternal_sideboard_s1o_v1::triggers_for(name),
     }
 }
 

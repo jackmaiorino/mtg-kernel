@@ -271,9 +271,12 @@ pub(crate) fn evidence_plan(
 
 /// Daybound (front face) / nightbound (back face) transforming cards.
 fn is_daybound(card_def: u16) -> bool {
-    CARD_DEFS
-        .get(usize::from(card_def))
-        .is_some_and(|def| matches!(def.name, "Brutal Cathar" | "Graveyard Trespasser"))
+    CARD_DEFS.get(usize::from(card_def)).is_some_and(|def| {
+        matches!(
+            def.name,
+            "Brutal Cathar" | "Graveyard Trespasser" | "Outland Liberator"
+        )
+    })
 }
 
 /// 726.2: as a turn begins, day becomes night if the previous turn's active

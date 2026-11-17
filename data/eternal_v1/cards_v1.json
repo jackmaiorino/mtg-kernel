@@ -34498,6 +34498,135 @@
    ],
    "java_file": "Mage/src/main/java/mage/game/permanent/token/RabbitToken.java",
    "is_token": true
+  },
+  {
+   "name": "Stronghold Gambit",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Sorcery"
+   ],
+   "subtypes": [],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-rakdos-reanimator"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "hidden_choice",
+    "reveal",
+    "put_onto_battlefield"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/StrongholdGambit.java"
+  },
+  {
+   "name": "Eowyn, Fearless Knight",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}{W}",
+   "mana_value": 4,
+   "colors": [
+    "R",
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Knight"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 3,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-naya-initiative"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "haste",
+    "etb_trigger",
+    "exile",
+    "protection"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/e/EowynFearlessKnight.java"
+  },
+  {
+   "name": "Unlicensed Hearse",
+   "engine_capability": "full",
+   "mana_cost": "{2}",
+   "mana_value": 2,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [
+    "Vehicle"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-dimir-control"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "crew",
+    "tap_ability",
+    "graveyard_hate",
+    "characteristic_defining_ability"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UnlicensedHearse.java"
+  },
+  {
+   "name": "Outland Liberator",
+   "engine_capability": "full",
+   "mana_cost": "{1}{G}",
+   "mana_value": 2,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Werewolf"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-selesnya-depths"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "daybound",
+    "nightbound",
+    "transform",
+    "activated_ability",
+    "attack_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/o/OutlandLiberator.java"
   }
  ]
 }

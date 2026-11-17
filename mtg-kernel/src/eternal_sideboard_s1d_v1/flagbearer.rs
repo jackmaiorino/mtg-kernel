@@ -42,6 +42,7 @@ use crate::eternal_cube_c2c_v1::targets::C2cTargetV1;
 use crate::eternal_cube_c4a_v1::targets::C4aTargetV1;
 use crate::eternal_cube_c4c_v1::targets::C4cTargetV1;
 use crate::eternal_sideboard_s1d_v1::targets::S1dTargetV1;
+use crate::eternal_sideboard_s1o_v1::targets::S1oTargetV1;
 use crate::standard_cards_v1::StandardTargetV1;
 use crate::state::{GameState, Target};
 
@@ -214,6 +215,16 @@ fn standard_shape(filter: StandardTargetV1) -> TargetShape {
         },
         S::C4cV1(filter) => match filter {
             C4cTargetV1::ControlledTokenV1 => Single,
+        },
+        S::S1oV1(filter) => match filter {
+            // Eowyn, Fearless Knight's enters trigger: "target creature an
+            // opponent controls with greater power", one slot (and a
+            // triggered ability, which the obligation never binds).
+            S1oTargetV1::OpponentCreatureGreaterPowerV1 => Single,
+            // Unlicensed Hearse's activated ability: "up to two target cards
+            // from a single graveyard". A card in a graveyard is never a
+            // Flagbearer on the battlefield.
+            S1oTargetV1::UpToTwoCardsFromOneGraveyardV1 => NoPermanentSlot,
         },
         S::UpToTwoAnyTargets
         | S::TwoCreaturesV1
