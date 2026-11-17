@@ -1038,6 +1038,79 @@ fn scrawling_crawler_makes_each_player_draw_and_punishes_opponent_draws() {
     assert_eq!(state.players[0].life, 20);
 }
 
+/// P0's first main phase with P0's library empty and P1's holding
+/// `p1_library` Islands; Scrawling Crawler and Jace, Wielder of Mysteries
+/// on P0's side.
+fn crawler_with_jace(p1_library: usize) -> GameState {
+    let island = id("Island");
+    let mut state = GameState::new_from_libraries(
+        &[],
+        &vec![island; p1_library],
+        |id| CARD_DEFS[id as usize].object_name.into(),
+        0x4535_4141,
+    );
+    state.active_player = P0;
+    state.priority_player = P0;
+    state.step = Step::Main1;
+    put(&mut state, P0, "Scrawling Crawler", Zone::Battlefield);
+    put(
+        &mut state,
+        P0,
+        "Jace, Wielder of Mysteries",
+        Zone::Battlefield,
+    );
+    state
+}
+
+/// Passes until a player has lost, then returns the next decision.
+fn decision_after_a_loss(state: &mut GameState) -> Decision {
+    pass_until(state, |s| s.players.iter().any(|p| p.has_lost));
+    next(state)
+}
+
+#[test]
+fn scrawling_crawler_stops_once_the_first_draw_wins_the_game() {
+    // Both players control Jace, Wielder of Mysteries and both libraries are
+    // empty at P0's upkeep. P0 draws first and wins the game instead; the
+    // game is over at once (104.1), so P1's draw, which P1's Jace would
+    // also have turned into a win, never happens.
+    let mut state = crawler_with_jace(1);
+    put(
+        &mut state,
+        P1,
+        "Jace, Wielder of Mysteries",
+        Zone::Battlefield,
+    );
+    to_main(&mut state, P1);
+    assert!(state.players[1].library.is_empty(), "P1 drew its last card");
+    let hand = state.players[1].hand.len();
+    assert_eq!(
+        decision_after_a_loss(&mut state),
+        Decision::GameOver { winner: Some(P0) }
+    );
+    assert!(!state.players[0].has_lost);
+    assert_eq!(state.players[1].hand.len(), hand);
+}
+
+#[test]
+fn a_resumable_program_stops_once_a_draw_wins_the_game() {
+    // A dredge card in P1's graveyard moves the trigger to the resumable
+    // interpreter. P0's draw from an empty library wins with Jace; P1 is
+    // not asked whether to dredge the draw that no longer happens.
+    let mut state = crawler_with_jace(6);
+    to_main(&mut state, P1);
+    put(&mut state, P1, "Golgari Thug", Zone::Graveyard);
+    let (hand, library) = (state.players[1].hand.len(), state.players[1].library.len());
+    assert!(library >= 4, "the Thug can dredge");
+    assert_eq!(
+        decision_after_a_loss(&mut state),
+        Decision::GameOver { winner: Some(P0) }
+    );
+    assert!(state.players[1].has_lost);
+    assert_eq!(state.players[1].hand.len(), hand);
+    assert_eq!(state.players[1].library.len(), library);
+}
+
 #[test]
 fn the_endstone_draws_for_spells_and_lands_and_sets_life_at_the_end_step() {
     let mut state = islands();

@@ -2461,7 +2461,8 @@ C1a:
   finishes resolving, shuffles both hands and graveyards into their libraries, then each player
   draws seven through `DrawCards` and its controller untaps up to six lands. Between the two
   players' draws, `C1aOpV1::StopIfWonV1` drops the rest of the program if a draw won the game
-  (Jace, Wielder of Mysteries); the plain interpreter would run the later instructions.
+  (Jace, Wielder of Mysteries). Both interpreters now stop on their own after such a win (see
+  the program stop below), so this local stop is kept but no longer needed.
 
 C1b:
 
@@ -2549,6 +2550,16 @@ Conventions fixed under #717:
   `LibraryCardFilter::AnyCard` must find its maximum, or every card of a smaller library, and
   Vampiric Tutor, Imperial Seal and Beseech the Mirror must find one card. The prompt, the answer
   and the coordinator all check the minimum.
+- Program stop after a win. When a player wins the game during a resolution (Jace, Wielder of
+  Mysteries replacing a draw), the game is over at once (104.1, 104.2a): in the eternal build the
+  plain interpreter's `Sequence` and the resumable interpreter's frame loop stop before the next
+  instruction (`owned_draws_v1::program_stops_after_win`), dropping the resolution's Coveted Jewel
+  and Paradoxical Outcome draw records as a Jace choice that wins already did. A player who can't
+  lose keeps the program running, and an owned draw instruction stops itself through its journal.
+  A loss for drawing from an empty library without Jace is a state-based action (704.5b), not an
+  effect, so "each player draws" still lets both players draw. Scrawling Crawler's "each player
+  draws" is the shape that needed it; the local stops of Time Spiral, Wheel of Fortune and the
+  owned draws stay.
 
 Each sub-module's test file covers every card's printed text in rules tests (costs, both sides of
 each condition, illegal targets) and plays decks of its cards through public schema-5 sessions

@@ -13324,6 +13324,17 @@ fn drive_resumable_in_departure_scope_v1(
         if state.engine.halted.is_some() {
             return Err("effect continuation halted".into());
         }
+        if crate::eternal_cards_v1::owned_draws_v1::program_stops_after_win(state) {
+            // A player won the game during this resolution (104.1, 104.2a):
+            // the rest of the program, this frame included, does not
+            // happen. Draw records of this resolution are dropped as when a
+            // Jace choice wins (`dredge::finish_jace_or_hullbreacher`).
+            continuation.frames.clear();
+            continuation.answered_choice_guard = None;
+            crate::eternal_vintage_v1::abandon_coveted_jewel_draws(state, &continuation.ctx);
+            crate::eternal_vintage_v1::paradoxical_outcome_v1::abandon(state, &continuation.ctx);
+            break;
+        }
         if matches!(
             frame,
             EffectFrame::ExilePlay { .. } | EffectFrame::ExileBatchSelect { .. }
@@ -21116,7 +21127,11 @@ fn execute_in_departure_scope_v1(
         EffectOp::Sequence(ops) => {
             for inner in ops {
                 execute_native_child_v1(inner, ctx, state, native_row);
-                if state.engine.halted.is_some() {
+                // A player who won the game ends it at once (104.1): the
+                // later instructions do not happen.
+                if state.engine.halted.is_some()
+                    || crate::eternal_cards_v1::owned_draws_v1::program_stops_after_win(state)
+                {
                     break;
                 }
             }
