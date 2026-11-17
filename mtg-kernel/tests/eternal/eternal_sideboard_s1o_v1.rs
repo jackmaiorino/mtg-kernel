@@ -302,8 +302,9 @@ fn flagbearers_bind_searing_blazes_player_to_a_flagbearers_controller_both_seats
 
 /// `actor`'s first main phase with `actor`'s Liquimetal Coating having made
 /// the opponent's Standard Bearer an artifact, the opponent's Sol Ring and
-/// Pest Infestation in `actor`'s hand.
-fn pest_table(actor: PlayerId) -> (GameState, ObjectId, Target, Target) {
+/// Pest Infestation in `actor`'s hand. Returns the state, the spell, the
+/// Bearer, the Sol Ring and the Coating.
+fn pest_table(actor: PlayerId) -> (GameState, ObjectId, Target, Target, Target) {
     let opponent = actor.opponent();
     let mut state = game(actor, "Forest");
     let bearer = put(&mut state, opponent, BEARER, Zone::Battlefield);
@@ -323,6 +324,7 @@ fn pest_table(actor: PlayerId) -> (GameState, ObjectId, Target, Target) {
         infestation,
         Target::Object(bearer),
         Target::Object(ring),
+        Target::Object(coating),
     )
 }
 
@@ -331,7 +333,7 @@ fn flagbearers_bind_pest_infestations_payable_targets_both_seats() {
     for actor in [P0, P1] {
         // {G} and two more: X is at most 1, so a single target must be the
         // artifact Flagbearer, and zero targets stays legal.
-        let (mut state, infestation, bearer, ring) = pest_table(actor);
+        let (mut state, infestation, bearer, ring, _) = pest_table(actor);
         pool(&mut state, actor, &[ManaColor::G], 2);
         announce(&mut state, infestation, None);
         assert_eq!(offered(&mut state), (vec![bearer], true));
@@ -352,12 +354,12 @@ fn flagbearers_bind_pest_infestations_payable_targets_both_seats() {
 
         // {G} and four more: X may be 2, so the Sol Ring may come first, but
         // then the selection cannot finish without the Flagbearer.
-        let (mut state, infestation, bearer, ring) = pest_table(actor);
+        let (mut state, infestation, bearer, ring, coating) = pest_table(actor);
         pool(&mut state, actor, &[ManaColor::G], 4);
         announce(&mut state, infestation, None);
         let (legal, can_finish) = offered(&mut state);
         assert!(can_finish);
-        assert!(same_set(legal, vec![bearer, ring]));
+        assert!(same_set(legal, vec![bearer, ring, coating]));
         choose_target(&mut state, ring);
         assert_eq!(offered(&mut state), (vec![bearer], false));
         let hash = state.state_hash();
@@ -634,6 +636,9 @@ fn flagbearers_without_their_ability_bind_nothing_both_seats() {
         let opponent = actor.opponent();
         let mut state = game(actor, "Island");
         put(&mut state, opponent, BEARER, Zone::Battlefield);
+        // Each player controls a creature, so either may be Searing
+        // Blaze's player.
+        put(&mut state, actor, "Llanowar Elves", Zone::Battlefield);
         let dress = put(&mut state, actor, "Dress Down", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::U], 1);
         announce(&mut state, dress, None);
