@@ -503,14 +503,18 @@ fn e8a_cards_are_full_with_their_printed_characteristics() {
             .map(|alt| alt.condition),
         Some(AltCostCondition::ImpendingFromHand { time_counters: 5 })
     );
-    for name in ["Solitude", "Bitter Triumph", "Hogaak, Arisen Necropolis"] {
+    for name in ["Solitude", "Hogaak, Arisen Necropolis"] {
         assert_eq!(
             def(name).alt_cost.map(|alt| alt.condition),
             Some(AltCostCondition::Always),
             "{name}"
         );
     }
-    assert!(def("Bitter Triumph").additional_cost.is_some());
+    // Its two additional costs are its two modes (#715), not an alternative cost.
+    let triumph = def("Bitter Triumph");
+    assert!(triumph.additional_cost.is_some());
+    assert!(triumph.alt_cost.is_none());
+    assert!(triumph.mode2.is_some() && triumph.mode3.is_none());
     assert!(def("Thought Monitor").generic_cost_reduction.is_some());
     assert!(def("Mystic Sanctuary").subtypes.contains(&Subtype::Island));
     let swamp = def("Snow-Covered Swamp");
@@ -724,11 +728,19 @@ fn bitter_triumph_costs_a_discard_or_three_life() {
     let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::B], 1);
     cast(&mut state, triumph, &[]);
+    // Both costs are payable, so the caster is asked which one: mode 0 is
+    // the discard and mode 1 the life payment.
+    let mut modes = Vec::new();
     settle_with(&mut state, |_, decision| match decision {
-        Decision::ChooseCastMode { .. } => Action::ChooseCastMode(CastMode::Normal),
+        Decision::ChooseSpellMode { legal_modes, .. } => {
+            modes = legal_modes;
+            Action::ChooseSpellMode(0)
+        }
+        Decision::ChooseCastMode { .. } => panic!("the life payment is not an alternative cost"),
         Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Object(angler)),
         other => first_answer(other),
     });
+    assert_eq!(modes, vec![0, 1]);
     assert_eq!(zone(&state, angler), Zone::Graveyard);
     assert_eq!(zone(&state, bolt), Zone::Graveyard, "discarded");
     assert_eq!(state.players[0].life, 20);
@@ -740,14 +752,75 @@ fn bitter_triumph_costs_a_discard_or_three_life() {
     pool(&mut state, P0, &[ManaColor::B], 1);
     cast(&mut state, triumph, &[]);
     settle_with(&mut state, |_, decision| match decision {
-        Decision::ChooseCastMode { .. } => Action::ChooseCastMode(CastMode::Alternative),
+        Decision::ChooseSpellMode { .. } => Action::ChooseSpellMode(1),
         Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Object(angler)),
-        Decision::Discard { .. } => panic!("the life payment replaces the discard"),
+        Decision::Discard { .. } => panic!("the life is paid instead of the discard"),
         other => first_answer(other),
     });
     assert_eq!(zone(&state, angler), Zone::Graveyard);
     assert!(hand_contains(&state, P0, bolt));
     assert_eq!(state.players[0].life, 17);
+
+    // With no other card in hand only the life payment is payable, and
+    // nothing is asked.
+    let mut state = islands();
+    let angler = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
+    let triumph = put(&mut state, P0, "Bitter Triumph", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 1);
+    cast(&mut state, triumph, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseSpellMode { .. } => panic!("only the life payment is payable"),
+        Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Object(angler)),
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, angler), Zone::Graveyard);
+    assert_eq!(state.players[0].life, 17);
+
+    // With no other card and less than 3 life, neither cost is payable.
+    let mut state = islands();
+    put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
+    let triumph = put(&mut state, P0, "Bitter Triumph", Zone::Hand);
+    state.players[0].life = 2;
+    pool(&mut state, P0, &[ManaColor::B], 1);
+    assert!(!castable(&mut state, triumph));
+}
+
+/// #715: cast by a flashback that Snapcaster Mage grants, with no card in
+/// hand, the life payment pays the additional cost.
+#[test]
+fn bitter_triumph_cast_by_a_granted_flashback_may_pay_three_life() {
+    let mut state = islands();
+    let angler = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
+    let triumph = put(&mut state, P0, "Bitter Triumph", Zone::Graveyard);
+    let snapcaster = put(&mut state, P0, "Snapcaster Mage", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, snapcaster, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(triumph)) =>
+        {
+            Action::ChooseEffectTarget(Target::Object(triumph))
+        }
+        Decision::ChooseTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(triumph)) =>
+        {
+            Action::ChooseTarget(Target::Object(triumph))
+        }
+        other => first_answer(other),
+    });
+    assert!(state.players[0].hand.is_empty(), "nothing to discard");
+    pool(&mut state, P0, &[ManaColor::B], 1);
+    assert!(castable(&mut state, triumph), "by paying 3 life");
+    cast(&mut state, triumph, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseSpellMode { .. } => panic!("only the life payment is payable"),
+        Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Object(angler)),
+        Decision::Discard { .. } => panic!("there is no card to discard"),
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, angler), Zone::Graveyard, "destroyed");
+    assert_eq!(state.players[0].life, 17, "paid 3 life");
+    assert_eq!(zone(&state, triumph), Zone::Exile, "flashback exiles it");
 }
 
 #[test]

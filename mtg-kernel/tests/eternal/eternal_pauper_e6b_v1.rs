@@ -7,7 +7,7 @@ use mtg_kernel::card_def::{
     card_id_by_name, AltCostCondition, CardCapability, CardDef, Keywords, Subtype, Supertype,
     TargetSpec, CARD_DEFS,
 };
-use mtg_kernel::engine::{self, Action, CastMode, Decision, OptionalCostChoice};
+use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
@@ -531,8 +531,11 @@ fn e6b_cards_are_full_with_their_printed_characteristics() {
     assert!(phantom.keywords.has(Keywords::FLYING));
     assert!(def("Battle Screech").flashback.is_some());
     assert!(def("Pursue the Past").flashback.is_some());
-    assert!(def("Demand Answers").additional_cost.is_some());
-    assert!(def("Demand Answers").alt_cost.is_some());
+    // Its two additional costs are its two modes (#715), not an alternative cost.
+    let demand = def("Demand Answers");
+    assert!(demand.additional_cost.is_some());
+    assert!(demand.alt_cost.is_none());
+    assert!(demand.mode2.is_some() && demand.mode3.is_none());
     assert!(def("Martyr's Soul").alt_cost.is_some(), "convoke");
     assert!(def("Ramosian Rally").alt_cost.is_some());
     assert!(def("Salt Road Packbeast").generic_cost_reduction.is_some());
@@ -944,19 +947,38 @@ fn demand_answers_may_sacrifice_an_artifact_instead_of_discarding() {
     let demand = put(&mut state, P0, "Demand Answers", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 1);
     cast(&mut state, demand, &[]);
+    // Both costs are payable, so the caster is asked which one: mode 0 is
+    // the sacrifice and mode 1 the discard.
     let mut modes = Vec::new();
     settle_with(&mut state, |_, decision| match decision {
-        Decision::ChooseCastMode { options, .. } => {
-            modes = options;
-            Action::ChooseCastMode(CastMode::Alternative)
+        Decision::ChooseSpellMode { legal_modes, .. } => {
+            modes = legal_modes;
+            Action::ChooseSpellMode(0)
         }
-        Decision::Discard { .. } => panic!("the sacrifice replaces the discard"),
+        Decision::ChooseCastMode { .. } => panic!("the sacrifice is not an alternative cost"),
+        Decision::Discard { .. } => panic!("the sacrifice is paid instead of the discard"),
         other => first_answer(other),
     });
-    assert!(modes.contains(&CastMode::Normal) && modes.contains(&CastMode::Alternative));
+    assert_eq!(modes, vec![0, 1]);
     assert_eq!(zone(&state, blood), Zone::Graveyard);
     assert!(hand_contains(&state, P0, keep));
     assert_eq!(state.players[0].hand.len(), 3);
+
+    // The other answer discards and keeps the artifact.
+    let mut state = plains();
+    let blood = put(&mut state, P0, "Blood Token", Zone::Battlefield);
+    let spare = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    let demand = put(&mut state, P0, "Demand Answers", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast(&mut state, demand, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseSpellMode { .. } => Action::ChooseSpellMode(1),
+        Decision::ChooseCostTargets { .. } => panic!("the discard is paid, not the sacrifice"),
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, blood), Zone::Battlefield);
+    assert_eq!(zone(&state, spare), Zone::Graveyard);
+    assert_eq!(state.players[0].hand.len(), 2, "drew two");
 
     // With an empty hand, only the sacrifice is payable.
     let mut state = plains();
@@ -973,6 +995,32 @@ fn demand_answers_may_sacrifice_an_artifact_instead_of_discarding() {
     let demand = put(&mut state, P0, "Demand Answers", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 1);
     assert!(!castable(&mut state, demand));
+}
+
+/// #715: cast by a flashback that Snapcaster Mage grants, with no card in
+/// hand and an artifact, the sacrifice pays the additional cost.
+#[test]
+fn demand_answers_cast_by_a_granted_flashback_may_sacrifice_an_artifact() {
+    let mut state = plains();
+    let clue = put(&mut state, P0, "Clue Token", Zone::Battlefield);
+    let demand = put(&mut state, P0, "Demand Answers", Zone::Graveyard);
+    let snapcaster = put(&mut state, P0, "Snapcaster Mage", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, snapcaster, &[]);
+    settle_choosing(&mut state, demand);
+    assert_eq!(zone(&state, snapcaster), Zone::Battlefield);
+    assert!(state.players[0].hand.is_empty(), "nothing to discard");
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    assert!(castable(&mut state, demand), "by sacrificing the Clue");
+    cast(&mut state, demand, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseSpellMode { .. } => panic!("only the sacrifice is payable"),
+        Decision::Discard { .. } => panic!("there is no card to discard"),
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, clue), Zone::Graveyard, "sacrificed");
+    assert_eq!(zone(&state, demand), Zone::Exile, "flashback exiles it");
+    assert_eq!(state.players[0].hand.len(), 2, "drew two");
 }
 
 #[test]
