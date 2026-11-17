@@ -211,9 +211,14 @@ filled from `state.engine.halted` (the source's public card reference when the s
 public object, otherwise `None`); the frozen owner never returns it, and the private
 `decision::BoundBoundaryV1::Halted` keeps its shape. A halted game is never a completed game:
 no terminal is reported, the best-of-three driver records no game result, and every harness
-that sees a halt fails the game. Schema 5 never meets this halt: the deck is either refused at
-reset or refused at its first observation of a face-up Shapeshifter (section 3.7), before any
-donor can matter.
+that sees a halt fails the game. The snapshot FEB deck never meets this halt in schema 5: it is
+either refused at reset or refused at its first observation of a face-up Shapeshifter (section
+3.7), and all of its donors are supported. Under section 3.7's option (a), a custom schema 5
+deck can: a Shapeshifter that enters while its controller's top card is an unsupported creature
+halts the engine at that entry, before any observation is built, and the session ends with the
+terminal reason `engine_halted:FullTextDonorOutsideSetV1:source:N` (`rl_session.rs`, the
+`Decision::Halted` arm of `advance_to_decision_or_terminal_profiled`). Under option (b) no
+schema 5 deck holds a Shapeshifter, so it cannot happen.
 
 Why no supported game reaches it. A card goes only to its owner's graveyard (400.3), and the
 Shapeshifter reads only its controller's graveyard, so every donor is a creature card from the
@@ -414,7 +419,11 @@ pass unless one is changed. The lead chooses (section 9, question 3):
   `terminal_reason` beginning `fail_closed:observation:` (`rl_session.rs`, the observation arm
   of `advance_to_decision_or_terminal_profiled`). It never reports `natural_game_over`, so no
   completed game is ever wrong; a client sees a game that started and then failed closed.
-  Every schema 5 byte is unchanged.
+  That is the path of the snapshot FEB deck, whose donors are all supported. A custom schema 5
+  deck whose Shapeshifter enters on an unsupported donor halts at that entry instead, with the
+  terminal reason `engine_halted:FullTextDonorOutsideSetV1:source:N` (section 2.3): a new
+  mechanic name in a schema 5 terminal reason, though again never a completed game. No other
+  schema 5 byte changes.
 - (b) Refuse at reset. Append `DeckPreflightError::RequiresOrderedGraveyardOwnerV1` to
   `card_def::preflight_fully_supported_deck`, beside `RequiresNativeOpening`. The change is in
   `card_def.rs`, not in `limited_session_v1.rs`. The reset reply for a Shapeshifter deck stays
@@ -424,8 +433,11 @@ pass unless one is changed. The lead chooses (section 9, question 3):
   (`rl_session.rs`, `rl.rs`, `runtime_decks.rs`), which then refuse a Shapeshifter deck the same
   way.
 
-The ruling's wording, "schema 5 untouched", favors (a) literally: (a) changes no schema 5 byte,
-while (b) changes one error message for a deck schema 5 cannot play either way. (b) follows the
+The ruling's wording, "schema 5 untouched", favors (a) literally: (a) changes no schema 5 reply
+for any deck that can be played today, though it adds one terminal reason value for a custom
+Shapeshifter deck; (b) changes one error message for a deck schema 5 cannot play either way.
+Under (b) every deck that passes the preflight has no Shapeshifter, so neither the observation
+refusal nor the donor halt can occur in schema 5. (b) follows the
 Leyline precedent and refuses before any play. Proposed: (b), stated to the lead as the one
 schema 5 message that changes.
 
@@ -498,11 +510,13 @@ Shape, in a new core module `mtg-kernel/src/text_color_change_v1.rs` (the counte
 TextColorChangeV1 { object: ObjectLinkV4, from: ManaColor, to: ManaColor, timestamp: u64 }
 TextColorCaptureV1 { item: StackItemId, read: Vec<(ManaColor, ManaColor)> }
 TokenColorV1 { token: ObjectLinkV4, color_mask: u8 }
+AnimationColorV1 { land: ObjectLinkV4, animation_timestamp: u64, color_mask: u8 }
 TextColorChangesV1 {
-  changes: Vec<TextColorChangeV1>,   // live changes on objects
-  captures: Vec<TextColorCaptureV1>, // printed to read word, per stack item
-  token_colors: Vec<TokenColorV1>,   // created tokens whose printed color changed
-}                                    // at least one list nonempty while present
+  changes: Vec<TextColorChangeV1>,          // live changes on objects
+  captures: Vec<TextColorCaptureV1>,        // printed to read word, per stack item
+  token_colors: Vec<TokenColorV1>,          // created tokens whose printed color changed
+  animation_colors: Vec<AnimationColorV1>,  // land animations whose color changed
+}                                           // at least one list nonempty while present
 text_color(state, object, printed: ManaColor) -> ManaColor
 text_color_mask(state, object, printed_mask: u8) -> u8
 captured_color(state, item: StackItemId, printed: ManaColor) -> ManaColor
@@ -528,7 +542,7 @@ Acolyte's grant op, the token ops, `circle_choose`). Everything new lives in the
 - Save and restore: part of the state snapshot, restored exactly; an empty record is `None`.
 - End: when the object changes zones the link goes stale and the entry is removed at that
   zone change, except that a permanent spell's entries move to the permanent's new
-  incarnation as it resolves onto the battlefield (400.7a). When the last entry of all three
+  incarnation as it resolves onto the battlefield (400.7a). When the last entry of all four
   lists goes, the field returns to `None`. Phasing (zone `Command` with the same incarnation,
   `eternal_e5a_v1::phasing`), control changes and face-down to face-up keep it.
 - Copies: never copied (707.2). A token or permanent copy is a new object with no entry.
@@ -555,8 +569,30 @@ Acolyte's grant op, the token ops, `circle_choose`). Everything new lives in the
 - Token colors: a token created by a site whose word changed gets a `token_colors` entry
   holding its printed color mask, read at the printed-color fallback of
   `engine::unpainted_object_color_mask`; the entry ends when the token leaves the battlefield.
+- Animation colors: Treetop Village's and Ghitu Encampment's animations last until end of
+  turn, and `continuous_characteristics_v1::animation` reads the colors from the definition's
+  `animation` again on every query, keyed by `object.v4.animation_timestamp`. A capture removed
+  with the stack item would lose the changed color, and reading the land's live text would let
+  a later change recolor an effect that already resolved (611.2c fixes it at resolution). So
+  when the ability resolves with a captured color different from the printed one, it writes an
+  `animation_colors` entry keyed by the land's link and its `animation_timestamp`;
+  `continuous_characteristics_v1::animation` uses that entry's color mask while the timestamp
+  matches, and the entry is removed at cleanup with the animation, or when the land changes
+  zones. An unchanged land writes nothing.
+- The other effects in the audited table whose color matters after their stack item is gone
+  need no further record. Tokens keep their color in `token_colors`. Crimson Acolyte's grant
+  writes its color into wave E9a's protection record at resolution
+  (`eternal_premodern_p3a_v1.rs`, the Acolyte arm of `execute`). Circle of Protection: Red's
+  shield stores its `CircleColorV1` in `CopShieldV1::color` at resolution
+  (`eternal_sideboard_s1d_v1::create_shield`), and the prevention check reads that field. Every
+  other row is a static read live from its permanent's text (protection masks, Absolute Law,
+  Light of Day, Sphere of Law, Chill, Gloom), a trigger condition read live when the event
+  happens (Warmth, Quirion Dryad), or a spell or ability whose word is used only during its own
+  resolution (the Blasts, Snuff Out, Anarchy, Plaguebearer, Dystopia, Verdant Force's and the
+  other token makers' creation). No row grants a landwalk or creates a delayed trigger.
 - `CircleColorV1` (`eternal_sideboard_s1d_v1.rs`) gains appended variants for white, black and
-  green only, so its existing values serialize and hash as before.
+  green only, so its existing values serialize and hash as before; a non-red shield made from
+  a changed Circle carries the new value in the existing `CopShieldV1::color` field.
 
 ### 4.3 The card
 
@@ -596,7 +632,7 @@ stack (section 4.2).
 | 6 | Akroma, Angel of Wrath | black, red | `eternal_premodern_p2c_v1/statics.rs::protection_mask` (physical and full-text branches) | either or both words; also on a Shapeshifter with Akroma's text |
 | 7 | Karmic Guide | black | same function | same; also on a Shapeshifter |
 | 8 | Crimson Acolyte | red (printed protection) | `eternal_premodern_p3a_v1/statics.rs` (Crimson Acolyte mask) | same |
-| 9 | Crimson Acolyte | red (its {W} grant) | `eternal_premodern_p3a_v1.rs` grant op, `build_eternal_p3a_v1.rs` | capture; the granted protection's color |
+| 9 | Crimson Acolyte | red (its {W} grant) | `eternal_premodern_p3a_v1.rs` grant op, `build_eternal_p3a_v1.rs` | capture; at resolution the color goes into the E9a protection record, which keeps it for the turn |
 | 10 | Ihsan's Shade | white | `eternal_premodern_p3c_v1/statics.rs::protection_mask` | protection follows |
 | 11 | Absolute Law | red | `eternal_premodern_p3e_v1.rs::protection_mask` | each Law grants its own color; evaluated per Law, not "any Law" |
 | 12 | Light of Day | black | `eternal_sideboard_s1c_v1.rs::statics::banned_by_light_of_day` | each Light of Day bans its own color; `any_active` becomes per instance |
@@ -606,7 +642,7 @@ stack (section 4.2).
 | 16 | Gloom | white (enchantment activations) | `p3b/statics.rs` activation tax, called from `engine.rs` | {3} per Gloom whose color the enchantment has |
 | 17 | Warmth | red | `eternal_premodern_p3a_v1.rs` Warmth trigger (`active_permanents(state, WARMTH, ...)`) | each Warmth triggers on its own color |
 | 18 | Dystopia | green, white | `eternal_premodern_p3b_v1.rs` upkeep trigger and the color mask in `effect.rs` (the "any of these colors" filter) | capture at trigger; either or both words |
-| 19 | Circle of Protection: Red | red | `eternal_premodern_p3g_v1.rs::circle_of_protection_red`, `eternal_sideboard_s1d_v1::circle_choose(CircleColorV1::Red)` | capture; `CircleColorV1` has Blue and Red only and gains appended White, Black and Green variants |
+| 19 | Circle of Protection: Red | red | `eternal_premodern_p3g_v1.rs::circle_of_protection_red`, `eternal_sideboard_s1d_v1::circle_choose(CircleColorV1::Red)` | capture; `CircleColorV1` has Blue and Red only and gains appended White, Black and Green variants; the shield keeps the color in `CopShieldV1::color` |
 | 20 | Quirion Dryad | white, blue, black, red | `eternal_premodern_p1b_v1.rs` Dryad trigger filter | the trigger's color set follows the words |
 | 21 | Blue Elemental Blast | red (both modes) | `TargetSpec::RedSpellOnStack`, `TargetSpec::RedPermanent` (`card_def.rs`), the resolution legality recheck in `engine.rs` | a change on the stack can make the chosen target illegal; targets are enumerated before any change can exist, so only the recheck reads it |
 | 22 | Red Elemental Blast | blue (both modes) | `TargetSpec::BlueSpellOnStack`, `TargetSpec::BluePermanent`, same recheck | same; the main defensive use |
@@ -624,7 +660,7 @@ stack (section 4.2).
 | 34 | Verdant Force | green | `eternal_premodern_p2c_v1.rs` upkeep trigger, Saproling token | capture at each trigger |
 | 35 | Zombie Infestation | black | the generic token creation in `effect.rs` for the recipe `CreateToken("Zombie Token")` of `build_eternal_p2a_v1.rs` | capture at activation |
 | 36 | Phyrexian Processor | black | `eternal_premodern_p3f_v1.rs` Minion token | capture at activation |
-| 37 | Treetop Village | green | the animation colors of `build_support/standard_lands_v1.rs`, mapped at run time in `continuous_characteristics_v1::animation` | capture at activation |
+| 37 | Treetop Village | green | the animation colors of `build_support/standard_lands_v1.rs`, mapped at run time in `continuous_characteristics_v1::animation` | capture at activation; an `animation_colors` entry keeps the color until cleanup |
 | 38 | Ghitu Encampment | red | same | same |
 
 That is 36 cards and 38 sites (Crimson Acolyte and Gloom have two each). The code that
@@ -702,11 +738,18 @@ Modelled on S1k (`docs/design/limited_public_shroud_v1.md`, the S1k section of
 ### 4.6 The condition: games without the card stay byte-identical
 
 The general argument: a game without Alter Reality never writes `text_color_changes_v1` (no
-change, no capture, no token color), never draws `next_timestamp` for it, and never offers its
+change, no capture, no token or animation color), never draws `next_timestamp` for it, and never offers its
 action; the field is `None`, skipped in serde and not hashed, and no existing struct, op
 variant or enum value changes shape (section 4.2). So its state bytes, state hash,
-observations and legal actions are those of main, in every build. The pinned goldens in the
-tree, and how each is held:
+observations and legal actions are those of main, in every build. The main families of
+pinned goldens, and how each is held, are below. The general argument covers every other
+golden in the tree as well: the further golden tests under `mtg-kernel/src` (among them
+`trace.rs`, `surface.rs`, `private_physical_trajectory_v1.rs`,
+`native_full_episode_trajectory_v2.rs`, `async_flat_scored_rollout_v1.rs`, `flat_policy_v2.rs`,
+`native_flat_tensorizer_v2/action_reference_tests.rs` and `streaming_tests.rs`,
+`native_ladder_opponent_v1.rs`, `native_opponent_sampler_v1.rs`) and under
+`mtg-kernel/tests/pauper` (`brainstorm.rs`, `fast_sampler.rs`, `flat_policy_v1.rs`) run in builds
+where nothing new is ever written.
 
 | Pinned golden | Build that runs it | Held by |
 | --- | --- | --- |
@@ -826,6 +869,9 @@ Replenish against FEB, so those matches could halt.
       serializes as on main; a capture is written only for a changed source, read at
       resolution, removed when the item leaves the stack, and kept across snapshot and restore;
       a copy of a captured item halts.
+- [ ] Animation colors: a Treetop Village animated after a change to "blue" stays a blue Ape
+      when the land is changed again the same turn, loses the entry at cleanup, and an
+      unchanged land writes no entry; the same for Ghitu Encampment.
 - [ ] Volrath interaction (section 4.7), for the reading the lead chooses.
 - [ ] Games: a one-copy sideboard card is cast too rarely, so, as S1k did, a blue-white deck
       with four Alter Realities in its mainboard plays a deck of color-word cards through
@@ -875,7 +921,12 @@ none. All of it waits behind the chain steps and issue #657's pieces.
    Windows Eternal job; the catalog and best-of-three transcript SHA-256s in CI are identical
    to main's (section 3.7).
 2. **B1: registered ordered owner.** Files: `premodern_ordered_public_v1/feb.rs`
-   (`reset_registered_v1`, `REGISTERED_PROFILE_V1`, `FebCurrentV1::RegisteredHaltV1`) and
+   (`reset_registered_v1`, `REGISTERED_PROFILE_V1`, `FebCurrentV1::RegisteredHaltV1`),
+   `feb_jsonl.rs` (the frozen transport's match on `FebCurrentV1` in `Projection::read` ends
+   with a wildcard that maps anything else to `unsupported_numeric_projection`; B1 adds an
+   explicit `RegisteredHaltV1` arm mapping it to the existing `native_halt` state, so a
+   registered halt can never be reported as unsupported; the frozen owner never returns the
+   variant, so the frozen wire is unchanged) and
    `decision.rs` (`bind_next` and `view` call the observe entry of the owner's profile),
    `premodern_ordered_public_v1.rs` (registered scene), `rl.rs` (the text mode
    `PremodernOrderedRegisteredV1Artifact`, its gates of section 3.2, and the observe entry
@@ -891,7 +942,11 @@ none. All of it waits behind the chain steps and issue #657's pieces.
    and replay. Replenish's own 75 cannot register before C2, since Alter Reality is missing.
 3. **B2: Shapeshifter Full.** Files: `data/eternal_v1/cards_v1.json` (row), `feb.rs` (the
    capability line), `card_def.rs` (re-pin), `tests/eternal/eternal_catalog_v1.rs` (`PLAYABLE`,
-   `expected_capability`, routing), `tests/eternal/eternal_bo3_v1.rs` (`PLAYABLE_75`, routing),
+   `expected_capability`, and routing in both loops of
+   `playable_snapshot_decks_finish_and_replay_through_public_sessions`: the schema 5 preflight
+   loop over every `PLAYABLE` deck (around lines 1168 to 1176) skips Shapeshifter decks, which
+   would fail it under (b) and fail the schema 5 `play` path under (a), and the pair loop sends
+   their pairs to the ordered driver), `tests/eternal/eternal_bo3_v1.rs` (`PLAYABLE_75`, routing),
    `eternal_formats_support_v1.md` (a pointer to this document and the census), this document's
    status. One chain slot. Acceptance: section 5.1 complete; census as in section 6.
 4. **C1: color-word record and sites.** Files: `text_color_change_v1.rs`, `state.rs` (field,
@@ -919,8 +974,11 @@ both merged and the census on main shows 305 of 305 Full.
 ## 8. Risks and limits after both cards are Full
 
 - The refusals are real: a custom registration with a control effect and a creature outside
-  the donor set, a Shapeshifter entering with Meddling Mage's text, or Alter Reality on a card
-  outside the 305 halts the game. Snapshot games never reach them.
+  the donor set, a Shapeshifter entering with Meddling Mage's text, Alter Reality on a card
+  outside the 305, or a copy of a stack item that holds a captured color halts the game.
+  Snapshot games never reach them. The last is a refusal beyond the audited table: no card in
+  the Premodern pool copies an ability, but a custom schema 5 deck that pairs Alter Reality with
+  an ability copier from another format can reach it.
 - The registered owner's Human view labels only the meanings its renderer knows; the other
   rows stay `unsupported`, and qualification uses numeric ordinals.
 - The registered owner is in process only unless section 9, question 5 is answered otherwise.
@@ -951,7 +1009,9 @@ both merged and the census on main shows 305 of 305 Full.
    best-of-three match could halt.
 3. Schema 5 and a Shapeshifter deck once the card is Full (section 3.7): (a) change nothing;
    a FEB reset is admitted and the game ends `fail_closed` at its first observation of a
-   face-up Shapeshifter, never as a completed game; or (b) append
+   face-up Shapeshifter, and a custom deck whose Shapeshifter enters on an unsupported donor
+   ends at that entry with the new terminal reason
+   `engine_halted:FullTextDonorOutsideSetV1:source:N`; neither is ever a completed game; or (b) append
    `DeckPreflightError::RequiresOrderedGraveyardOwnerV1` to `card_def.rs`'s preflight, which the
    schema 5 reset already calls (`rl_session.rs`, near line 6091); the reset is refused with
    the same code `unsupported_deck` and a new message, and no other schema 5 reply changes.
@@ -975,8 +1035,9 @@ both merged and the census on main shows 305 of 305 Full.
    ruling's reading (it acts only on the printed text, which has none) (sections 4.1 and 4.7).
    Proposed: the 613.8 reading. The Comprehensive Rules are the authority and 613.8a's three
    conditions hold for the two effects; the 2004 ruling predates the 2008 ruling that makes the
-   Shapeshifter's ability a text-changing effect, and was written for effects such as granted
-   abilities, not for a second text-changing effect in layer 3. If the lead prefers the 2004
+   Shapeshifter's ability a text-changing effect, and in my reading appears to address effects
+   such as granted abilities rather than a second text-changing effect in layer 3; no ruling
+   or judge answer found settles it. If the lead prefers the 2004
    reading, the design's other branch in section 4.7 applies; a typed halt is the fallback if
    neither is to be settled in code.
 
