@@ -79,18 +79,22 @@ host's actual sacrifice and captures its damage characteristics before the
 host leaves. Ravenous Rats uses the native targeted discard program with the
 existing immediate and final-batch entry suppression rules. Wall of Blossoms'
 donated draw and Academy Rector's donated death trigger remain outside this
-set. Mainboard qualification also requires terminal play and replay evidence
-from the actual snapshot list. Ordinary copy compatibility needs exact-head
-gameplay evidence.
+set. The ruled donor set for Full, and the typed refusal of every other donor,
+are in [premodern_shapeshifter_alter_reality_v1.md](premodern_shapeshifter_alter_reality_v1.md).
+Mainboard qualification also requires terminal play and replay evidence
+from the actual snapshot list. No card in the Premodern pool copies a
+permanent, so copies of the Shapeshifter are outside that contract.
 
 The in-process `premodern_ordered_public_v1::feb` owner resets both seats
 from the frozen 60-card mainboard in snapshot row order and uses native
 London mulligans and priority. Numeric views use local reference aliases.
 The Human view includes the actor's native menu and an explicit unsupported
 row for action meanings outside the current renderer. Same-owner snapshots
-restore the pending menu and invalidate old decision tokens. The owner is
-an in-process milestone. Transport and complete consumer qualification remain
-open.
+restore the pending menu and invalidate old decision tokens. Its JSONL
+transport landed with #698 ([premodern_feb_jsonl_v1.md](premodern_feb_jsonl_v1.md)).
+Complete consumer qualification, the owner widened to any two registered
+Premodern decks with best of three, remains open and is specified in
+[premodern_shapeshifter_alter_reality_v1.md](premodern_shapeshifter_alter_reality_v1.md).
 
 The terminal fixture uses the frozen mirror at seed `20261108` with each
 starting seat and the catalog harness's 65,536 physical-action cap. The
@@ -137,9 +141,10 @@ The unchanged frozen terminal/replay fixture passed for both starting seats,
 as did paid Cabal naming and exact discard order, all retained donor and
 producer cases, both history guards and every-kind consumers. Catalog
 fingerprint for that packet is `b7272db8a877989e`. This establishes the scoped in-process
-terminal and replay result. Transport, further donor compatibility, hosted
-checks and default-branch integration remain open. Volrath remains Partial
-and the FEB mainboard remains outside PLAYABLE.
+terminal and replay result. Hosted checks and default-branch integration
+followed with #615 and transport with #698. Further donor compatibility and
+the widened consumer remain open (see the document linked above). Volrath
+remains Partial and the FEB mainboard remains outside PLAYABLE.
 
 The subsequent source adds actor-only Human labels for Unearth's exact printed
 hand-cycling recipe and the original physical or donated Guide echo options.
@@ -149,7 +154,8 @@ decision, sealed token and ordinal still execute the original bound action.
 Both-seat fixtures cover paid cycling, physical and donated echo, paid
 Palinchron bounce above echo, donor departure, restore, stale tokens and
 forged source or reordered-option refusal. Source review and pinned formatting
-passed; these new fixtures have not run.
+passed; these fixtures now run in the CI Eternal library filter
+(`premodern_ordered_public_v1::`) on every pull request.
 
 The native echo repair takes the physical payment from the validated captured
 source definition, so a departed Guide still costs {3}{W}{W} and a departed
@@ -160,5 +166,7 @@ belongs to another controller. This follows rules 113.7a, 118.12a, 702.30a,
 paid Snap above Riders echo and native Legacy's Allure control transfer above
 Guide echo; they check payment, decline/unpayable resolution, restored and
 returned incarnations, and the absence of false sacrifice events. Source
-review found both inherited defects resolved. These repairs still require
-native execution and do not establish transport or complete donor coverage.
+review found both inherited defects resolved. These fixtures now run in the
+CI Eternal jobs (the library filter and the `eternal_integration` suite) on
+every pull request. Transport landed with #698; complete donor coverage is
+specified in the document linked above.
