@@ -48,7 +48,10 @@ fn issue454_scan_arity_rule_accepts_only_exactly_the_recomputed_infeasible_answe
     let native = vec![block(false), block(true)];
     let blocker = header(Kind::BlockerInclusion, 2);
     // Equal arity needs no recomputation and drops nothing.
-    assert_eq!(dropped_infeasible_scan_answers(&blocker, &native, None), Ok(0));
+    assert_eq!(
+        dropped_infeasible_scan_answers(&blocker, &native, None),
+        Ok(0)
+    );
     // The one accepted case: the dropped original is exactly the infeasible answer.
     let infeasible_include = scan(native.clone(), [true, false]);
     assert_eq!(
@@ -62,7 +65,11 @@ fn issue454_scan_arity_rule_accepts_only_exactly_the_recomputed_infeasible_answe
     );
     let stops = [
         // A feasible answer was dropped.
-        (blocker, vec![block(false)], Some(scan(native.clone(), [true, true]))),
+        (
+            blocker,
+            vec![block(false)],
+            Some(scan(native.clone(), [true, true])),
+        ),
         // The kept answer is itself infeasible.
         (blocker, vec![block(true)], Some(infeasible_include)),
         // No recomputed answers.
@@ -99,7 +106,11 @@ fn issue454_scan_arity_rule_accepts_only_exactly_the_recomputed_infeasible_answe
             native.clone(),
             Some(scan(vec![block(false)], [true, false])),
         ),
-        (blocker, Vec::new(), Some(scan(native.clone(), [true, false]))),
+        (
+            blocker,
+            Vec::new(),
+            Some(scan(native.clone(), [true, false])),
+        ),
         // Repeated native answers.
         (
             blocker,
@@ -204,7 +215,10 @@ fn first_filtered_step(mut owner: Owner, kind: Kind) -> u64 {
             .unwrap();
         if dropped > 0 {
             assert_eq!(header.decision_kind, kind);
-            assert_eq!(actions.len() as u64 + dropped, u64::from(header.legal_action_count));
+            assert_eq!(
+                actions.len() as u64 + dropped,
+                u64::from(header.legal_action_count)
+            );
             return dropped;
         }
         let selected = actions
@@ -254,10 +268,7 @@ fn issue454_conqueror_witness_reports_the_first_differing_replayed_event_both_se
     use crate::event::{CommittedEvent, ProposedEvent};
     for actor in [PlayerId::P0, PlayerId::P1] {
         let (mut state, _) = paid(actor);
-        crate::event::propose_and_commit(
-            &mut state,
-            ProposedEvent::life_loss(actor.opponent(), 4),
-        );
+        crate::event::propose_and_commit(&mut state, ProposedEvent::life_loss(actor.opponent(), 4));
         finish(&mut state);
         let lines = conqueror_witness::witness(&state);
         assert_eq!(

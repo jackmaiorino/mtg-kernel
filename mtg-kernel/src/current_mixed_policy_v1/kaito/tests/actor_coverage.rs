@@ -738,9 +738,10 @@ fn issue454_targeted_ajani_activation_incarnations_encode_for_both_viewers_both_
         let goblin = take_to_battlefield(&mut state, player.opponent(), "Courageous Goblin");
         state.players[player.index()].mana_pool[crate::mana::ManaColor::W.pool_index()] = 3;
         let mut own = full_pool_owner(state);
-        choose(&mut own, |action| {
-            matches!(action, A::CastSpell { source, .. } if source.arena_id == ajani.0)
-        });
+        choose(
+            &mut own,
+            |action| matches!(action, A::CastSpell { source, .. } if source.arena_id == ajani.0),
+        );
         for _ in 0..8 {
             let state = own.fixture_state();
             if state.stack.is_empty() && state.objects.get(ajani).zone == Zone::Battlefield {
