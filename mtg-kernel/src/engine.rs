@@ -10605,14 +10605,24 @@ fn thornscape_white_kicker_payable(
     .is_some()
 }
 
+/// Whether the cast announces a count of additional cost payments in the X
+/// slot (replicate, multikicker, splice onto Arcane). The count is announced
+/// whether or not the mana cost is paid.
+fn announces_additional_cost_count(def: &card_def::CardDef) -> bool {
+    crate::eternal_cards_v1::replicate_cost(def.name).is_some()
+        || crate::eternal_cube_c2c_v1::multikicker_cost(def.name).is_some()
+        || crate::eternal_pauper_e8b_v1::splice_cost(def).is_some()
+}
+
 /// Records the pay-or-skip answer of a hand cast under a free-cast
 /// permission. Skipping the mana cost makes X zero, except Sickening
-/// Dreams' X, which counts an additional cost's discards.
+/// Dreams' X, which counts an additional cost's discards, and a replicate,
+/// multikicker or splice count, which counts additional cost payments.
 fn set_hand_free_cast(state: &mut GameState, choice: HandFreeCastV1) {
     let discard_x = state.engine.pending_cast.as_ref().is_some_and(|pending| {
-        crate::eternal_premodern_p1b_v1::statics::announces_discard_x(
-            &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize],
-        )
+        let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+        crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
+            || announces_additional_cost_count(def)
     });
     let pending = state
         .engine
@@ -15945,19 +15955,15 @@ pub(crate) fn validate_pending_cast(
 
     let selected_cost =
         active_spec.and_then(|_| pending_cast_selected_mana_cost(def, pending, state));
-    // Replicate's payment count is announced and validated like X, and so
-    // is Sickening Dreams' "discard X cards", even for a free cast.
-    let discard_x = crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def);
-    let replicate = discard_x
-        || (!resolution_cast_v1::free_cast(state, pending.spell)
-            && (crate::eternal_cards_v1::replicate_cost(def.name).is_some()
-                || crate::eternal_cube_c2c_v1::multikicker_cost(def.name).is_some()
-                || crate::eternal_pauper_e8b_v1::splice_cost(def).is_some()));
-    let expected_seed_x: Option<u8> = if !discard_x
+    // Replicate's, multikicker's and splice's payment counts are announced
+    // and validated like X, and so is Sickening Dreams' "discard X cards",
+    // even for a free cast.
+    let replicate = crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
+        || announces_additional_cost_count(def);
+    let expected_seed_x: Option<u8> = if !replicate
         && (resolution_cast_v1::free_cast(state, pending.spell)
             || (def.cost.x_count == 0
-                && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
-                && !replicate))
+                && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)))
     {
         Some(0)
     } else {
@@ -29879,17 +29885,17 @@ fn materialize_begin_cast_with_quote_v1(
         optional_additional_cost_paid,
         optional_additional_cost_chosen: vec![],
         optional_additional_cost_selection_finished: false,
-        // Replicate's payment count is announced like X (601.2b).
-        // Sickening Dreams' "discard X cards" announces X even when the spell
-        // is cast without paying its mana cost.
+        // Replicate's payment count is announced like X (601.2b), and so are
+        // multikicker's and splice's. They count additional costs, which are
+        // still paid when the spell is cast without paying its mana cost
+        // (118.9d, 601.2f); only X in the mana cost is then 0 (107.3b).
+        // Sickening Dreams' "discard X cards" likewise announces X.
         x_value: if !crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
+            && !announces_additional_cost_count(def)
             && (without_mana_cost
                 || citadel_cast
                 || (def.cost.x_count == 0
-                    && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
-                    && crate::eternal_cards_v1::replicate_cost(def.name).is_none()
-                    && crate::eternal_cube_c2c_v1::multikicker_cost(def.name).is_none()
-                    && crate::eternal_pauper_e8b_v1::splice_cost(def).is_none()))
+                    && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)))
         {
             Some(0)
         } else {

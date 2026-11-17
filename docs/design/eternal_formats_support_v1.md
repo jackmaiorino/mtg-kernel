@@ -2596,7 +2596,10 @@ C2c:
 - Everflowing Chalice: multikicker {2} through `eternal_cube_c2c_v1::multikicker_cost`, a
   name-keyed table any later multikicker card joins. The kick count is announced like replicate's,
   added to the payment once per kick and read by the program as its X; the Chalice taps for {C} for
-  each charge counter (`ManaAbilityAmountDef::ChargeCountersOnSourceV1`).
+  each charge counter (`ManaAbilityAmountDef::ChargeCountersOnSourceV1`). Kicks, replicate and
+  splice are additional costs, so their count is still announced and paid when the spell is cast
+  without paying its mana cost (cascade, Omniscience, Bolas's Citadel); only an X in the mana cost
+  is then 0.
 
 Limits shared with earlier cards: a declined life payment taps the land right after it enters
 (Soporific Springs), a hidden land is playable from a resolving effect only as the first land of
