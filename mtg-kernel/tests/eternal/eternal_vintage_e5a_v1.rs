@@ -1053,13 +1053,18 @@ fn crawler_with_jace(p1_library: usize) -> GameState {
     state.priority_player = P0;
     state.step = Step::Main1;
     put(&mut state, P0, "Scrawling Crawler", Zone::Battlefield);
-    put(
-        &mut state,
-        P0,
-        "Jace, Wielder of Mysteries",
-        Zone::Battlefield,
-    );
+    jace_enters(&mut state, P0);
     state
+}
+
+/// Jace, Wielder of Mysteries enters under `player`'s control with its
+/// loyalty.
+fn jace_enters(state: &mut GameState, player: PlayerId) {
+    let jace = put(state, player, "Jace, Wielder of Mysteries", Zone::Hand);
+    mtg_kernel::event::propose_and_commit(
+        state,
+        mtg_kernel::event::ProposedEvent::zone_change(jace, Zone::Battlefield),
+    );
 }
 
 /// Passes until a player has lost, then returns the next decision.
@@ -1075,12 +1080,7 @@ fn scrawling_crawler_stops_once_the_first_draw_wins_the_game() {
     // game is over at once (104.1), so P1's draw, which P1's Jace would
     // also have turned into a win, never happens.
     let mut state = crawler_with_jace(1);
-    put(
-        &mut state,
-        P1,
-        "Jace, Wielder of Mysteries",
-        Zone::Battlefield,
-    );
+    jace_enters(&mut state, P1);
     to_main(&mut state, P1);
     assert!(state.players[1].library.is_empty(), "P1 drew its last card");
     let hand = state.players[1].hand.len();
