@@ -187,17 +187,19 @@ jobs:
       # itself (a7f3f92) was killed there with 8 MB left. With 8 GB of swap
       # it passes, using about 5.6 GB of it (PR #486).
       #
-      # The swap is compressed memory (zram), not a swap file, here and in
-      # the other three swap steps of this workflow. GitHub's hosted Linux
-      # runners come from two clouds, and on the AWS ones a swap file that
-      # takes in more than a few GB stops every write to the disk: the
-      # runner never answers again and the job is failed 45 minutes later
-      # as "lost communication", with no log. With zram the same builds
-      # finished on both clouds, with rustc's pages held at about 4 to 1
-      # (measured 2026-11-16, PR #736). 24G is the most the device takes
-      # in, about 6 GB of real memory at that ratio, not memory set aside.
-      # An AWS runner starts with a small zram swap on the same device, so
-      # the step turns that off and sets the device up again.
+      # The swap this step adds is compressed memory (zram), not a swap
+      # file, and so it is in the other three swap steps of this workflow.
+      # GitHub's hosted Linux runners come from two clouds, and on the AWS
+      # ones a swap file that takes in more than a few GB stops every write
+      # to the disk: the runner never answers again and the job is failed
+      # 45 minutes later as "lost communication", with no log. With zram
+      # the same builds finished on both clouds (measured 2026-11-16,
+      # PR #736). 24G bounds the pages the device takes in. What it costs
+      # in memory depends on how well they compress: rustc's went in at
+      # about 4 to 1 (14.6 GB of pages in 3.5 GB). An AWS runner starts
+      # with a small zram swap on the same device, so the step turns that
+      # off and sets the device up again. An Azure runner keeps its own
+      # 3 GB boot swap file behind the device.
       - name: Add swap space for the whole-crate checks
         run: |
           sudo modprobe zram
@@ -352,8 +354,9 @@ jobs:
       # heavy feature builds finished at two and four Cargo jobs (probe of
       # 2026-11-11: Limited library tests 20 min at two jobs, over 42 min
       # at one), so the builds below use two jobs instead of one. The swap
-      # is now compressed memory, not that swap file: see the note at the
-      # first swap step of this workflow (job rust-quality).
+      # this step adds is now compressed memory (zram), not that swap file:
+      # see the note at the first swap step of this workflow (job
+      # rust-quality).
       - name: Add swap space for the heavy builds
         if: runner.environment == 'github-hosted' && runner.os == 'Linux'
         run: |
@@ -650,8 +653,9 @@ jobs:
       # heavy feature builds finished at two and four Cargo jobs (probe of
       # 2026-11-11: Limited library tests 20 min at two jobs, over 42 min
       # at one), so the builds below use two jobs instead of one. The swap
-      # is now compressed memory, not that swap file: see the note at the
-      # first swap step of this workflow (job rust-quality).
+      # this step adds is now compressed memory (zram), not that swap file:
+      # see the note at the first swap step of this workflow (job
+      # rust-quality).
       - name: Add swap space for the heavy builds
         if: runner.environment == 'github-hosted' && runner.os == 'Linux'
         run: |
@@ -787,8 +791,8 @@ jobs:
       # via default_library_names() to diff its inventory against the Limited
       # build. Give hosted Linux shards the same swap space as the other
       # heavy Rust builds so rustc does not exhaust the 16 GB VM memory limit
-      # (compressed memory, not a swap file: see the note at the first swap
-      # step of this workflow, job rust-quality).
+      # (the step adds compressed memory, not a swap file: see the note at
+      # the first swap step of this workflow, job rust-quality).
       - name: Add swap space for Limited-only default-library builds
         if: runner.environment == 'github-hosted' && runner.os == 'Linux' && startsWith(matrix.group, 'limited-only')
         run: |
