@@ -1,0 +1,83 @@
+name: Runner facts probe
+
+# Experiment, not for merge. Reads what a hosted Linux runner is made of
+# (memory, swap, disk, kernel settings) and whether compressed in-memory
+# swap (zram) can be switched on there. Read-only apart from a 4 GB
+# scratch file on /mnt that is removed again.
+'on':
+  pull_request:
+    paths:
+      - .github/workflows/runner-facts-probe.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-facts-probe-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  facts:
+    name: Hosted runner facts and zram
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Machine
+        run: |
+          set +e
+          uname -a
+          nproc
+          free -m
+          cat /proc/swaps
+          lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,ROTA,MODEL
+          df -h / /mnt /tmp
+          mount | grep -E ' on / | on /mnt '
+          echo "swappiness $(cat /proc/sys/vm/swappiness) overcommit $(cat /proc/sys/vm/overcommit_memory) min_free_kbytes $(cat /proc/sys/vm/min_free_kbytes) watermark_scale $(cat /proc/sys/vm/watermark_scale_factor) page-cluster $(cat /proc/sys/vm/page-cluster)"
+          cat /sys/kernel/mm/transparent_hugepage/enabled
+          echo "oomd: $(systemctl is-active systemd-oomd) earlyoom: $(systemctl is-active earlyoom)"
+          cat /proc/self/cgroup
+          cg="/sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)"
+          for f in memory.max memory.high memory.swap.max memory.oom.group; do echo "$f: $(cat "$cg/$f" 2>/dev/null)"; done
+          unit=$(systemctl status $$ 2>/dev/null | sed -n '1p' | awk '{print $2}')
+          echo "unit: $unit"
+          systemctl show -p OOMPolicy -p MemoryMax -p MemoryHigh -p ManagedOOMMemoryPressure "$unit" 2>&1 | head -6
+          ps -eo pid,ppid,user,rss,comm --sort=-rss | head -14
+          grep -H . /sys/block/*/queue/scheduler 2>/dev/null | head -5
+          sudo dmesg | tail -15
+
+      - name: Cloud facts
+        run: |
+          set +e
+          curl -s -m 5 -H Metadata:true "http://169.254.169.254/metadata/instance/compute?api-version=2021-02-01" > /tmp/imds.json
+          python3 - <<'PY'
+          import json
+          try:
+              d = json.load(open("/tmp/imds.json"))
+              print({k: d.get(k) for k in ("vmSize", "location", "sku", "offer", "priority", "evictionPolicy")})
+              print(d.get("storageProfile", {}).get("osDisk"))
+          except Exception as error:
+              print("no instance metadata:", error)
+          PY
+
+      - name: zram
+        run: |
+          set +e
+          modinfo zram 2>&1 | head -4
+          if sudo modprobe zram; then echo "zram module loaded"; else echo "zram module NOT available"; fi
+          ls /sys/block | tr '\n' ' '; echo
+          if [ -e /sys/block/zram0 ]; then
+            cat /sys/block/zram0/comp_algorithm
+            echo zstd | sudo tee /sys/block/zram0/comp_algorithm
+            echo 12G | sudo tee /sys/block/zram0/disksize
+            sudo mkswap /dev/zram0 && sudo swapon -p 100 /dev/zram0
+            cat /proc/swaps
+            free -m
+          fi
+          apt-cache policy "linux-modules-extra-$(uname -r)" 2>/dev/null | head -4
+
+      - name: Speed of the disk the build's swap file sits on
+        run: |
+          set +e
+          sudo dd if=/dev/zero of=/mnt/ddtest bs=1M count=4096 oflag=direct 2>&1 | tail -1
+          sudo dd if=/mnt/ddtest of=/dev/null bs=1M iflag=direct 2>&1 | tail -1
+          sudo rm -f /mnt/ddtest
