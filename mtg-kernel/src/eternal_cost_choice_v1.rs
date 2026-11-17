@@ -64,7 +64,7 @@ pub(crate) fn components(definition: &CardDef, mode: u8) -> Option<&'static [Cos
 
 /// Whether `group` is one of `definition`'s two additional costs.
 pub(crate) fn is_its_cost(definition: &CardDef, group: &[CostComponent]) -> bool {
-    costs(definition.name).is_some_and(|both| both.iter().any(|cost| *cost == group))
+    costs(definition.name).is_some_and(|both| both.contains(&group))
 }
 
 /// The additional cost `mode` of `definition` pays, in the words a human
