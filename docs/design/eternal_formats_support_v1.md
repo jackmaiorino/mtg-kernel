@@ -2617,7 +2617,12 @@ backup ability must grant an attack trigger until end of turn.
 C3a:
 
 - Auriok Salvagers returns an artifact card with mana value 1 or less (Goblin Engineer's filter).
-  Bloodbraid Challenger has cascade (Boarding Party's triggers), haste and escape. Death-Greeter's
+  Bloodbraid Challenger has cascade (Boarding Party's triggers), haste and escape. Cascade's cast
+  checks the exiled card's mana value, not the cast spell's: an Adventure half that costs more than
+  its card would be offered at the cascade spell's value. No eternal card reaches this (Brazen
+  Borrower's and Embereth Shieldbreaker's Adventures cost less, and a split card's halves cost less
+  than the whole); the one engine card that does is the Standard card Imodane's Recruiter, whose
+  Train Troops (5) Bloodbraid Challenger would offer, so the check is left as it is. Death-Greeter's
   Champion has dash (Ragavan's alternative cost and end-step return) and backup with double strike
   (Saiba Cryptomancer's op).
 - Embereth Shieldbreaker // Battle Display is an Adventure card (Brazen Borrower's shape).
