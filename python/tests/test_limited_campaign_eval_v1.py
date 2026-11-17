@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import csv
+import hashlib
 import io
 from fractions import Fraction
 from itertools import product
@@ -65,12 +67,18 @@ def make_summary(opponent: str, rows: list[dict], candidate: str = "u_final", wo
     _, _, seed = ev.OPPONENTS[opponent]
     count = lambda r: sum(row["result"] == r for row in rows)  # noqa: E731
     pairs = len(rows) // 2
-    return {"schema": ev.MATCH_SCHEMA, "engine": "mtg-kernel", "card_db_hash": "00ff", "a": CANDIDATE_SPEC[candidate],
-            "b": SPECS_B[opponent], "split": "eval", "seed": seed, "first_pair": 0, "pairs": pairs, "legs": 2,
-            "playable_decks": 40, "playable_decks_sha256": "ab", "belief_overlap": 0, "belief_decks": None,
-            "games": 2 * pairs, "a_wins": count("A"), "b_wins": count("B"), "draws": count("draw"),
-            "stalls": count("stall"), "errors": count("error"), "wall_s": 12.5 * workers,
-            "games_per_hour": 99.0 / workers, "workers": workers, "full_validation": False, "session": "FullPoolV1"}
+    summary = {"schema": ev.MATCH_SCHEMA, "engine": "mtg-kernel", "card_db_hash": "00ff",
+               "a": CANDIDATE_SPEC[candidate], "b": SPECS_B[opponent], "split": "eval", "seed": seed,
+               "first_pair": 0, "pairs": pairs, "legs": 2, "playable_decks": 40,
+               "playable_decks_sha256": PLAYABLE_SHA256[0], "belief_overlap": 0, "belief_decks": None,
+               "games": 2 * pairs, "a_wins": count("A"), "b_wins": count("B"), "draws": count("draw"),
+               "stalls": count("stall"), "errors": count("error"), "wall_s": 12.5 * workers,
+               "games_per_hour": 99.0 / workers, "workers": workers, "full_validation": False,
+               "session": "FullPoolV1", "max_turns": 100, "max_decisions": 4_000}
+    if opponent in (HEURISTIC, FAIR):
+        summary.update(belief_decks=40, world_contract="limited-closedlist-full-pool/v1",
+                       game_deck_contents_sha256="game-decks", belief_deck_contents_sha256="belief-decks")
+    return summary
 
 
 def make_run(opponent: str, results: list[tuple[str, str]], candidate: str = "u_final") -> ev.RunInput:
@@ -98,11 +106,16 @@ def full_inputs(strength: dict = STRONG, candidate: str = "u_final") -> list[ev.
 
 INVENTORY: dict = {}
 EVAL_NAMES: list[str] = []
+PLAYABLE_SHA256: list[str] = []
 
 
 def setUpModule() -> None:
     INVENTORY.update(ev.load_inventory(None))
     EVAL_NAMES.extend(ev.eval_subgroups(INVENTORY)["decks"])
+    # What the driver records: the eval deck names in pool.tsv order, each followed by a newline.
+    pool = (REPO_ROOT / "data/limited/draftzero_sample_v1/pool.tsv").read_text(encoding="utf-8")
+    names = [row["deck"] for row in csv.DictReader(pool.splitlines(), delimiter="\t") if row["split"] == "eval"]
+    PLAYABLE_SHA256.append(hashlib.sha256("".join(f"{name}\n" for name in names).encode("utf-8")).hexdigest())
 
 
 class GeneratorTest(unittest.TestCase):
@@ -404,6 +417,8 @@ class EvaluationTest(unittest.TestCase):
         inputs = full_inputs() + full_inputs(EVEN, candidate="u_best_dev")
         result = self.evaluate(inputs)
         self.assertEqual(result["multiplicity"]["candidates_evaluated"], 2)
+        self.assertEqual((result["multiplicity"]["better_of_two_alpha"], result["multiplicity"]["second_of_two_alpha"]),
+                         ("1/40", "1/20"))
         alphas = {c: {t["alpha"] for t in e["tests"].values()} for c, e in result["candidates"].items()}
         self.assertEqual(alphas, {"u_final": {"1/40"}, "u_best_dev": {"1/20"}})
         self.assertEqual(result["candidates"]["u_final"]["highest_gate_passed"], "E3")
@@ -460,6 +475,72 @@ class RefusalTest(unittest.TestCase):
             path.write_text('{"game":0}\n{"game":1,\n', encoding="utf-8")
             with self.assertRaises(ev.EvaluationInputError):
                 ev.read_jsonl(path)
+
+
+class ProvenanceTest(unittest.TestCase):
+    """Runs that are not the design's by limits, deck order, build or belief corpus."""
+
+    def e0(self, mutate) -> dict:
+        inputs = full_inputs()
+        mutate(inputs)
+        return ev.evaluate(inputs, INVENTORY, replicates=R)["gate_e0"]
+
+    def test_pool_order_digest_is_the_drivers(self):
+        self.assertEqual(PLAYABLE_SHA256[0], "22909e69757023950f26333105bad7b95810a5ec809a2a4760dbd9848a143b0c")
+        self.assertEqual(ev.eval_subgroups(INVENTORY)["playable_decks_sha256"], PLAYABLE_SHA256[0])
+        self.assertTrue(self.e0(lambda inputs: None)["pass"])
+
+    def test_unrecorded_limits_fail_e0(self):
+        def drop(inputs):
+            for summary in (inputs[0].summary, inputs[0].replay_summary):
+                del summary["max_turns"], summary["max_decisions"]
+        gate = self.e0(drop)
+        self.assertFalse(gate["pass"])
+        self.assertEqual(gate["failed_runs"], ["u_final vs step_0: limits_not_recorded"])
+        with self.assertRaises(ev.EvaluationInputError):
+            self.e0(lambda inputs: inputs[1].summary.update(max_decisions=20_000))
+
+    def test_deck_order_must_be_the_design_pool_order(self):
+        def reorder(inputs):
+            for summary in (inputs[2].summary, inputs[2].replay_summary):
+                summary["playable_decks_sha256"] = "0" * 64
+        gate = self.e0(reorder)
+        self.assertIn("u_final vs heuristic: playable_decks_not_in_design_order", gate["failed_runs"])
+        self.assertFalse(gate["pass"])
+
+    def test_replay_from_another_build_fails_e0(self):
+        for key, value in (("card_db_hash", "11ee"), ("engine", "other"), ("full_validation", True),
+                           ("game_deck_contents_sha256", "other-decks")):
+            gate = self.e0(lambda inputs: inputs[3].replay_summary.update({key: value}))
+            self.assertEqual(gate["failed_runs"], ["u_final vs fair_search: replay_build_differs"], key)
+
+    def test_runs_from_different_builds_fail_e0(self):
+        def other_build(inputs):
+            for summary in (inputs[1].summary, inputs[1].replay_summary):
+                summary["card_db_hash"] = "11ee"
+        gate = self.e0(other_build)
+        self.assertEqual((gate["failed_runs"], gate["build_mismatches_across_runs"]), ([], ["card_db_hash"]))
+        self.assertFalse(gate["pass"])
+
+        def other_belief(inputs):
+            for summary in (inputs[3].summary, inputs[3].replay_summary):
+                summary["belief_deck_contents_sha256"] = "other-belief"
+        self.assertEqual(self.e0(other_belief)["build_mismatches_across_runs"], ["belief_deck_contents_sha256"])
+
+    def test_belief_corpus_of_the_search_opponents(self):
+        for index, value in ((2, 5), (3, None), (2, 41)):
+            with self.assertRaises(ev.EvaluationInputError) as caught:
+                self.e0(lambda inputs: inputs[index].summary.update(belief_decks=value))
+            self.assertIn("belief_decks", str(caught.exception))
+        self.assertTrue(self.e0(lambda inputs: inputs[0].summary.update(belief_decks=None))["pass"])
+
+    def test_card_file_pins(self):
+        inventory = copy.deepcopy(INVENTORY)
+        inventory["registry_sha256"]["data/cards_v1.json"] = "0" * 64
+        with self.assertRaises(ev.EvaluationInputError) as caught:
+            ev.eval_subgroups(inventory)
+        self.assertIn("card-file", str(caught.exception))
+        self.assertEqual(INVENTORY["registry_sha256"], ev.REGISTRY_SHA256)
 
 
 class CommandTest(unittest.TestCase):

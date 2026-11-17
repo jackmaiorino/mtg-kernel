@@ -14,9 +14,11 @@ count (the replay), which Gate E0 compares on pairs 0..4.
         --run u_final initial-weights/step-0 step0/games.jsonl step0-replay/games.jsonl \\
         --run u_final uniform-legal/v1 ... --out eval/evaluation.json
 
-`evaluation.json` is canonical: sorted keys, no wall-time or worker-count fields and no input paths,
-so the same records give the same bytes whatever their order, host timing or worker count. Timing,
-worker counts and paths go to the sidecar `evaluation.timing.json`. The exit code is 0 when the
+`evaluation.json` is canonical: sorted keys, no wall-time or worker-count fields and no paths of the
+games files, so the same records give the same bytes whatever their order, host timing or worker count.
+Timing, worker counts and the games paths go to the sidecar `evaluation.timing.json`. Checkpoints are
+identified by the path in their policy spec (`learner-checkpoint:<path>`), which does reach the canonical
+file through the specs and the rows; a checkpoint digest is not yet in the driver's records. The exit code is 0 when the
 records were evaluated (whatever the gates say) and 2 when they were refused.
 """
 from __future__ import annotations
@@ -77,6 +79,17 @@ REPLAY_PAIRS = range(0, 4)
 
 # Section 1.2 and 4.3: the eval split and its audit subgroups.
 SAMPLE_SHA256 = "c7e9c271e15150c245aeabf5f2d10d73fbc41aa1586645101c64198d5562d23b"
+REGISTRY_SHA256 = {
+    "data/cards_v1.json": "ef738001c373076039f211582f5fd07b11903788e70641ec7e23c84ba4f69b14",
+    "data/limited/fdn_v1/cards_v1.json": "91dcd869bb339450d0adc3e8cfa1a8320f560e53c337f21fb263a7a059839e13",
+}
+# Section 4.2: the heuristic and the search opponent sample worlds from the 40-deck train corpus.
+BELIEF_ROLES = ("heuristic", "fair_search")
+BELIEF_DECKS = 40
+# Summary fields that identify the build and the decks; a run and its replay, and all runs of one
+# evaluation, must agree on each (the last two only where the driver writes them).
+BUILD_KEYS = ("engine", "card_db_hash", "session", "full_validation", "playable_decks_sha256")
+DECK_CONTENT_KEYS = ("game_deck_contents_sha256", "belief_deck_contents_sha256")
 EVAL_DECKS = 40
 EVAL_FULL_ONLY = 19
 OVER_40_DECKS = ("FDN_top_03718_UR", "FDN_top_21511_WUR", "FDN_top_24789_BGpW")
@@ -95,9 +108,9 @@ SUMMARY_CANONICAL_KEYS = frozenset({
     "b_wins", "draws", "stalls", "errors", "full_validation", "session", "world_contract",
     "game_deck_contents_sha256", "belief_deck_contents_sha256", "max_turns", "max_decisions"})
 SUMMARY_TIMING_KEYS = frozenset({"wall_s", "games_per_hour", "workers"})
-SUMMARY_REQUIRED = ("schema", "a", "b", "split", "seed", "first_pair", "pairs", "legs", "playable_decks",
-                    "belief_overlap", "games", "a_wins", "b_wins", "draws", "stalls", "errors", "session",
-                    "workers")
+SUMMARY_REQUIRED = ("schema", "engine", "card_db_hash", "a", "b", "split", "seed", "first_pair", "pairs", "legs",
+                    "playable_decks", "playable_decks_sha256", "belief_overlap", "belief_decks", "games",
+                    "a_wins", "b_wins", "draws", "stalls", "errors", "full_validation", "session", "workers")
 
 
 class EvaluationInputError(ValueError):
@@ -302,7 +315,7 @@ def bootstrap(totals: list[int], alphas: tuple[Fraction, ...], replicates: int =
     k = len(totals)
     indices = bootstrap_indices(k, replicates, seed)
     sums = [sum(totals[i] for i in indices[r * k:(r + 1) * k]) for r in range(replicates)]
-    digest = hashlib.sha256(",".join(map(str, sums)).encode("ascii")).hexdigest()
+    digest = hashlib.sha256((",".join(map(str, sums)) + "\n").encode("ascii")).hexdigest()
     ordered = sorted(sums)
     observed = sum(totals)
     below = sum(s < observed for s in sums)
@@ -387,7 +400,12 @@ def eval_subgroups(inventory: dict) -> dict:
         raise EvaluationInputError("inventory schema is not limited-training-deck-inventory/v1")
     if inventory.get("sample_sha256_in_pool_order") != SAMPLE_SHA256:
         raise EvaluationInputError("inventory sample_sha256_in_pool_order differs from the design's pin")
+    if inventory.get("registry_sha256") != REGISTRY_SHA256:
+        raise EvaluationInputError("inventory card-file SHA-256 values differ from the design's pins")
     decks = [d for d in inventory["decks"] if d["split"] == "eval"]
+    # The driver deals pair p from the playable eval decks in pool order and records the SHA-256 of
+    # their names, each followed by a newline; the inventory lists the decks in pool order.
+    pool_order = hashlib.sha256("".join(f"{d['deck']}\n" for d in decks).encode("utf-8")).hexdigest()
     full = sorted(d["deck"] for d in decks if d["declared_full_only"])
     over_40 = sorted(d["deck"] for d in decks if d["cards"] > 40)
     drake = sorted(d["deck"] for d in decks if d["contains_drake_hatcher"])
@@ -395,7 +413,8 @@ def eval_subgroups(inventory: dict) -> dict:
         raise EvaluationInputError(f"eval split has {len(decks)} decks, {len(full)} Full-only; design says 40, 19")
     if tuple(over_40) != OVER_40_DECKS or tuple(drake) != DRAKE_DECKS:
         raise EvaluationInputError("eval over-40 or Drake Hatcher decks differ from the design's lists")
-    return {"decks": sorted(d["deck"] for d in decks), "full_only": full, "over_40": over_40, "drake": drake}
+    return {"decks": sorted(d["deck"] for d in decks), "full_only": full, "over_40": over_40, "drake": drake,
+            "playable_decks_sha256": pool_order}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -443,7 +462,8 @@ def check_specs(summary: dict, label: str, spec_b_ok) -> None:
         raise EvaluationInputError(f"{label}: policy B {summary.get('b')!r} is not this opponent's spec")
 
 
-def check_summary(summary: dict, label: str, *, seed: int, pairs: int, spec_b_ok, games: list[dict]) -> None:
+def check_summary(summary: dict, label: str, *, seed: int, pairs: int, spec_b_ok, games: list[dict],
+                  role: str) -> None:
     missing = [k for k in SUMMARY_REQUIRED if k not in summary]
     if missing:
         raise EvaluationInputError(f"{label}: summary lacks {missing}")
@@ -463,6 +483,9 @@ def check_summary(summary: dict, label: str, *, seed: int, pairs: int, spec_b_ok
         raise EvaluationInputError(f"{label}: summary workers is not a positive count")
     if not _is_int(summary["belief_overlap"]) or summary["belief_overlap"] < 0:
         raise EvaluationInputError(f"{label}: summary belief_overlap is not a count")
+    if role in BELIEF_ROLES and (summary["belief_decks"] != BELIEF_DECKS or not _is_int(summary["belief_decks"])):
+        raise EvaluationInputError(
+            f"{label}: belief_decks is {summary['belief_decks']!r}, the design's corpus has {BELIEF_DECKS} decks")
     tallies = {"a_wins": "A", "b_wins": "B", "draws": "draw", "stalls": "stall", "errors": "error"}
     for key, result in tallies.items():
         count = sum(g["result"] == result for g in games)
@@ -602,7 +625,7 @@ def analyze_run(run: RunInput, classes: dict, replicates: int, seed: int) -> dic
     spec_a, spec_b = str(run.summary.get("a")), str(run.summary.get("b"))
     games = check_rows(run.rows, label, seed=run_seed, pairs=pairs, spec_a=spec_a, spec_b=spec_b,
                        eval_decks=eval_decks)
-    check_summary(run.summary, label, seed=run_seed, pairs=pairs, spec_b_ok=rule, games=games)
+    check_summary(run.summary, label, seed=run_seed, pairs=pairs, spec_b_ok=rule, games=games, role=role)
 
     # Replay: the same command at another worker count, at least pairs 0..4.
     replay_label = f"{label} (replay)"
@@ -612,7 +635,7 @@ def analyze_run(run: RunInput, classes: dict, replicates: int, seed: int) -> dic
     replay_games = check_rows(run.replay_rows, replay_label, seed=run_seed, pairs=replay_pairs,
                               spec_a=spec_a, spec_b=spec_b, eval_decks=eval_decks)
     check_summary(run.replay_summary, replay_label, seed=run_seed, pairs=replay_pairs, spec_b_ok=rule,
-                  games=replay_games)
+                  games=replay_games, role=role)
     if (run.replay_summary["a"], run.replay_summary["b"]) != (spec_a, spec_b):
         raise EvaluationInputError(f"{replay_label}: policies differ from the main run")
     main_lines = [canonical_row(g) for g in games if g["pair"] in REPLAY_PAIRS]
@@ -631,6 +654,10 @@ def analyze_run(run: RunInput, classes: dict, replicates: int, seed: int) -> dic
                  "belief_overlap": run.summary["belief_overlap"], "stalls": counts["stall"],
                  "stall_rate": float(stall_rate), "stall_rate_exact": _fraction_text(stall_rate),
                  "limits_recorded": "max_turns" in run.summary and "max_decisions" in run.summary,
+                 "playable_decks_in_design_order": run.summary["playable_decks_sha256"]
+                 == classes["playable_decks_sha256"],
+                 "replay_build_differs": [k for k in BUILD_KEYS + DECK_CONTENT_KEYS
+                                          if run.summary.get(k) != run.replay_summary.get(k)],
                  "replay": replay}
     failures = []
     if counts["error"]:
@@ -645,6 +672,12 @@ def analyze_run(run: RunInput, classes: dict, replicates: int, seed: int) -> dic
         failures.append("replay_not_identical")
     if not replay["worker_counts_differ"]:
         failures.append("replay_same_worker_count")
+    if not integrity["limits_recorded"]:
+        failures.append("limits_not_recorded")
+    if not integrity["playable_decks_in_design_order"]:
+        failures.append("playable_decks_not_in_design_order")
+    if integrity["replay_build_differs"]:
+        failures.append("replay_build_differs")
     integrity["failures"] = failures
     integrity["pass"] = not failures
 
@@ -761,7 +794,15 @@ def evaluate(inputs: list[RunInput], inventory: dict, replicates: int = BOOTSTRA
     absent = [f"{c} vs {role}" for c, role in expected if role not in runs[c]]
     failed = [f"{c} vs {role}: {', '.join(runs[c][role]['integrity']['failures'])}"
               for c, role in expected if role in runs[c] and not runs[c][role]["integrity"]["pass"]]
-    e0 = {"pass": not absent and not failed, "absent_runs": absent, "failed_runs": failed}
+    all_runs = [runs[c][role] for c, role in expected if role in runs[c]]
+    build_mismatches = []
+    for key in BUILD_KEYS + DECK_CONTENT_KEYS:
+        values = {json.dumps(r["summary"].get(key), sort_keys=True) for r in all_runs
+                  if key in BUILD_KEYS or r["summary"].get(key) is not None}
+        if len(values) > 1:
+            build_mismatches.append(key)
+    e0 = {"pass": not absent and not failed and not build_mismatches, "absent_runs": absent,
+          "failed_runs": failed, "build_mismatches_across_runs": build_mismatches}
 
     candidates: dict[str, dict] = {}
     gates_by_column = {}
@@ -791,8 +832,11 @@ def evaluate(inputs: list[RunInput], inventory: dict, replicates: int = BOOTSTRA
                           "registry_sha256": inventory.get("registry_sha256"),
                           "eval_full_only": classes["full_only"], "eval_over_40": classes["over_40"],
                           "eval_drake_hatcher": classes["drake"]},
-            "multiplicity": {"candidates_evaluated": len(runs),
-                             "alpha": _fraction_text(ALPHA if len(runs) == 1 else HOLM_ALPHA)},
+            "multiplicity": ({"candidates_evaluated": 1, "alpha": _fraction_text(ALPHA)} if len(runs) == 1 else
+                             {"candidates_evaluated": 2, "better_of_two_alpha": _fraction_text(HOLM_ALPHA),
+                              "second_of_two_alpha": _fraction_text(ALPHA),
+                              "rule": "Holm step-down per opponent test: the higher held-out mean is tested "
+                                      "first; the other only after it passed"}),
             "gate_e0": e0, "candidates": candidates}
 
 
