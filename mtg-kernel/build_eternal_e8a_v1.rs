@@ -270,8 +270,8 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::None",
             "crate::eternal_legacy_e8a_v1::ad_nauseam",
         ),
-        // Its discard-or-life additional cost is its two modes
-        // (`build_eternal_v1::mode2_for`, `eternal_cost_choice_v1`).
+        // Its discard-or-life additional cost is `additional_cost_for` and
+        // `alt_cost_for` below.
         "Bitter Triumph" => spell(
             "TargetSpec::CreatureOrPlaneswalker",
             "crate::eternal_legacy_e8a_v1::destroy_target",
@@ -328,7 +328,9 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
 /// (its sacrifice is wave E7b's evoked entry trigger); Overlord of the
 /// Balemurk: "Impending 5--{1}{B}"; Once Upon a Time: "If this spell is the
 /// first spell you've cast this game, you may cast it without paying its
-/// mana cost."; Hogaak,
+/// mana cost."; Bitter Triumph's "pay 3 life" branch of its additional
+/// cost, which replaces the discard
+/// (`eternal_legacy_e8a_v1::alternative_skips_additional_cost`); Hogaak,
 /// Arisen Necropolis: "You can't spend mana to cast this spell. Convoke,
 /// delve": its mana cost is paid only by convoking creatures and, for the
 /// generic rest, delving graveyard cards (`eternal_legacy_e8a_v1::hogaak`).
@@ -337,15 +339,15 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
         "Solitude" => "Some(AltCostDef { components: &[CostComponent::ExileCardFromHandWithColorV1(ManaColor::W)], condition: AltCostCondition::Always })",
         "Overlord of the Balemurk" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::B)], generic: 1, x_count: 0 })], condition: AltCostCondition::ImpendingFromHand { time_counters: 5 } })",
         "Once Upon a Time" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[], generic: 0, x_count: 0 })], condition: AltCostCondition::FirstSpellThisGameV1 })",
+        "Bitter Triumph" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::B)], generic: 1, x_count: 0 }), CostComponent::PayLife(3)], condition: AltCostCondition::Always })",
         "Hogaak, Arisen Necropolis" => "Some(AltCostDef { components: &[CostComponent::ConvokeMana(Cost { pips: &[Pip::Hybrid(ManaColor::B, ManaColor::G), Pip::Hybrid(ManaColor::B, ManaColor::G)], generic: 5, x_count: 0 })], condition: AltCostCondition::Always })",
         _ => super::build_eternal_s1c_v1::alt_cost_for(name),
     }
 }
 
 /// Mandatory additional costs. Bitter Triumph: "As an additional cost to
-/// cast this spell, discard a card or pay 3 life." The discard here opens
-/// the cast's discard stage; the chosen mode names the cost really paid
-/// (`eternal_cost_choice_v1`).
+/// cast this spell, discard a card or pay 3 life." The discard is this
+/// cost; paying life is the alternative cost above.
 pub(super) fn additional_cost_for(name: &str) -> &'static str {
     match name {
         "Bitter Triumph" => "Some(&[CostComponent::DiscardCards(1)])",

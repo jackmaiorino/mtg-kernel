@@ -9297,7 +9297,7 @@ fn controlled_permanent_sacrifice_needed(
     {
         return Some((1, PermanentFilter::Creature));
     }
-    // An alternative cost that sacrifices permanents (Demand Answers).
+    // An alternative cost that sacrifices permanents (Mine Collapse).
     #[cfg(feature = "eternal-fixtures")]
     if pending.cast_mode == Some(CastMode::Alternative) {
         if let Some(sacrifice) = def
@@ -9317,11 +9317,16 @@ fn controlled_permanent_sacrifice_needed(
 }
 
 /// The number of cards `def`'s additional cost discards in `pending`'s
-/// cast. A card with a choice between two additional costs discards only
-/// in the mode whose cost is the discard (`eternal_cost_choice_v1`).
+/// cast. Bitter Triumph's alternative cost replaces its discard. A card
+/// with a choice between two additional costs discards only in the mode
+/// whose cost is the discard (`eternal_cost_choice_v1`).
 fn additional_discard_count(def: &card_def::CardDef, pending: &PendingCast) -> Option<u8> {
     #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_pauper_e8b_v1::skips_additional_cost(def, pending.is_flashback) {
+    if crate::eternal_legacy_e8a_v1::alternative_skips_additional_cost(
+        def,
+        pending.cast_mode == Some(CastMode::Alternative),
+    ) || crate::eternal_pauper_e8b_v1::skips_additional_cost(def, pending.is_flashback)
+    {
         return None;
     }
     if let Some(count) =

@@ -205,7 +205,8 @@ impl SelectedSpellManaCostsV1 {
             _ => None,
         };
         // A card with a choice between additional costs (#715) has one of two
-        // groups here; the selected group below is the chosen mode's.
+        // groups here; the selected group below is the chosen mode's, and it
+        // must be one of the card's two costs.
         let additional_cost = additional_cost_for_method_v1(definition, method, 0);
         let retrace = self.retrace.then_some(RETRACE_COST);
         let additional_slot = self
@@ -215,12 +216,18 @@ impl SelectedSpellManaCostsV1 {
         let original_groups = base
             .into_iter()
             .chain(additional_cost.map(|group| {
-                if super::mandatory_cast_cost_v1::mana_branch(definition).is_some()
-                    || crate::eternal_cost_choice_v1::applies(definition)
-                {
-                    additional_slot
-                        .and_then(|slot| self.component_groups.get(slot))
-                        .copied()
+                let selected = additional_slot
+                    .and_then(|slot| self.component_groups.get(slot))
+                    .copied();
+                if super::mandatory_cast_cost_v1::mana_branch(definition).is_some() {
+                    selected.unwrap_or(group)
+                } else if crate::eternal_cost_choice_v1::applies(definition) {
+                    // Any other selected group falls back to the first cost,
+                    // which then differs from the selection and refuses it.
+                    selected
+                        .filter(|selected| {
+                            crate::eternal_cost_choice_v1::is_its_cost(definition, selected)
+                        })
                         .unwrap_or(group)
                 } else {
                     group
@@ -812,16 +819,20 @@ pub(super) fn selected_spell_mana_costs_v1(
 const RETRACE_COST: &[CostComponent] = &[CostComponent::DiscardLandCardsV1(1)];
 
 /// A definition's mandatory additional cost for a cast by `method` in spell
-/// mode `mode`. A card with a choice between two additional costs (Bone
-/// Shards, Demand Answers, Bitter Triumph) pays the one its mode names
-/// (`eternal_cost_choice_v1`), however it is cast.
+/// mode `mode`. Bitter Triumph's alternative cost replaces its discard
+/// (`eternal_legacy_e8a_v1::alternative_skips_additional_cost`). A card
+/// with a choice between two additional costs (Bone Shards, Demand Answers)
+/// pays the one its mode names (`eternal_cost_choice_v1`).
 fn additional_cost_for_method_v1(
     definition: &card_def::CardDef,
     method: CastMethodV4,
     mode: u8,
 ) -> Option<&'static [CostComponent]> {
     #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_pauper_e8b_v1::skips_additional_cost(
+    if crate::eternal_legacy_e8a_v1::alternative_skips_additional_cost(
+        definition,
+        method == CastMethodV4::Alternative,
+    ) || crate::eternal_pauper_e8b_v1::skips_additional_cost(
         definition,
         method == CastMethodV4::Flashback,
     ) {
