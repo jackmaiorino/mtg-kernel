@@ -146,6 +146,13 @@ pub fn opt_out_of_power_throttling_v1() -> bool {
     }
 }
 
+/// Settles the platform vector `tanh8` proof once for this process, reading or
+/// writing the proof witness under `MTG_KERNEL_VECTOR_TANH_DIR` / cache home.
+/// Computed float bits are identical with or without calling this upfront.
+pub fn settle_vector_tanh_v1() {
+    vector_tanh_v1::prepare_v1();
+}
+
 #[cfg(all(
     feature = "native-training-store-v2-production",
     target_os = "windows",
