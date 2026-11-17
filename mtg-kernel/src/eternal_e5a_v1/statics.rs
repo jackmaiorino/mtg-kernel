@@ -57,7 +57,9 @@ pub(crate) fn urzas_workshop_yield(state: &GameState, controller: PlayerId) -> i
 // ---- Serra's Emissary -----------------------------------------------------------
 
 /// The card types Serra's Emissary may name, by index (205.2a's card types
-/// that cards in this catalog have).
+/// that cards in this catalog have). Kindred is not offered: every Kindred
+/// card in the catalog is also an instant, so naming Instant protects from
+/// all of them and more, and the menu keeps its seven options.
 pub(crate) const PROTECTION_TYPES: [CardType; 7] = [
     CardType::Artifact,
     CardType::Creature,

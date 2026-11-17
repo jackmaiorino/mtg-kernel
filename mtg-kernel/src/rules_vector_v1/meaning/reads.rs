@@ -719,6 +719,12 @@ pub(crate) fn library_card_filter(filter: LibraryCardFilter, out: &mut Collector
             out.atoms.push(Atom::Opaque);
             ObjF::Typed(CardTypeF::Creature)
         }
+        LibraryCardFilter::InstantOrSorceryManaValueAtMostV1(maximum) => {
+            let _ = maximum;
+            // The vocabulary lacks a disjunction of types and a mana-value bound.
+            out.atoms.push(Atom::Opaque);
+            ObjF::AnyCard
+        }
     }
 }
 
@@ -761,6 +767,8 @@ pub(crate) fn permanent_filter(filter: PermanentFilter) -> (ObjF, Option<RelF>) 
             // Vocabulary gap: ObjF has no color class.
             (ObjF::Typed(CardTypeF::Creature), None)
         }
+        // Vocabulary gap: ObjF has no nontoken refinement of a type class.
+        PermanentFilter::NontokenArtifactV1 => (ObjF::Typed(CardTypeF::Artifact), None),
     }
 }
 

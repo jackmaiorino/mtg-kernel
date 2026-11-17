@@ -246,10 +246,10 @@ const SNAPSHOTS: [&str; 2] = [
 /// Executable S1 implementations with known missing reachable branches.
 const PARTIAL_S1: [&str; 3] = ["Coalition Honor Guard", "Hullbreacher", "Standard Bearer"];
 
-/// Vintage Cube implementations with known missing reachable branches. Bone
-/// Shards: its sacrifice is an alternative cost, so it cannot be chosen when
-/// the spell is cast for another alternative cost (flashback).
-const PARTIAL_CUBE: [&str; 1] = ["Bone Shards"];
+/// Vintage Cube implementations with known missing reachable branches: none.
+/// Bone Shards became Full with the choice between additional costs (#715),
+/// The Mightstone and Weakstone with the Powerstone payments (#726).
+const PARTIAL_CUBE: [&str; 0] = [];
 
 /// Volrath's Shapeshifter and the S1 and cube cards above are the registry's
 /// only Partial definitions.

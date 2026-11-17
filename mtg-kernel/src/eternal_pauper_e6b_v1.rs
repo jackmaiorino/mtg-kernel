@@ -185,7 +185,6 @@ const BENEVOLENT_BLESSING: &str = "Benevolent Blessing";
 const BOROS_GARRISON: &str = "Boros Garrison";
 const CARTOUCHE_OF_SOLIDARITY: &str = "Cartouche of Solidarity";
 const DAWNBRINGER_CLERIC: &str = "Dawnbringer Cleric";
-const DEMAND_ANSWERS: &str = "Demand Answers";
 const EAGLES_OF_THE_NORTH: &str = "Eagles of the North";
 const ETHEREAL_ARMOR: &str = "Ethereal Armor";
 const FORTRESS_KIN_GUARD: &str = "Fortress Kin-Guard";
@@ -1524,7 +1523,12 @@ pub(crate) fn protected_from_source(state: &GameState, object: ObjectId, source:
 }
 
 pub(crate) fn protected_from_colors(state: &GameState, object: ObjectId, colors: u8) -> bool {
-    colors & 0x1f != 0 && protection_mask(state, object) & colors != 0
+    if colors & 0x1f == 0 {
+        // A colorless source: Giver of Runes' protection from colorless
+        // (Vintage Cube wave C3a).
+        return crate::eternal_cube_c3a_v1::has_colorless_protection(state, object);
+    }
+    protection_mask(state, object) & colors != 0
 }
 
 /// Blocking restrictions: Silhana Ledgewalker "can't be blocked except by
@@ -1554,6 +1558,11 @@ pub(crate) fn protection_removes_attachment(
     if crate::eternal_sideboard_s1n_v1::has_protection_from_artifacts(state, host)
         && crate::engine::object_has_type(state, attachment, CardType::Artifact)
     {
+        return true;
+    }
+    // Giver of Runes' protection from colorless removes every colorless
+    // attachment (Vintage Cube wave C3a).
+    if colors & 0x1f == 0 && crate::eternal_cube_c3a_v1::has_colorless_protection(state, host) {
         return true;
     }
     attached_named(state, host, BENEVOLENT_BLESSING).any(|blessing| {
@@ -1772,13 +1781,4 @@ pub(crate) fn quote_allowed(
         }
         _ => true,
     }
-}
-
-/// Demand Answers' sacrifice branch is its alternative cost, which replaces
-/// the discard: whether a cast of `definition` (for its alternative cost if
-/// `alternative`) skips its additional cost.
-pub(crate) fn alternative_skips_additional_cost(definition: &CardDef, alternative: bool) -> bool {
-    (alternative && definition.name == DEMAND_ANSWERS)
-        || crate::eternal_cube_c1b_v1::alternative_skips_additional_cost(definition, alternative)
-        || crate::eternal_legacy_e8a_v1::alternative_skips_additional_cost(definition, alternative)
 }

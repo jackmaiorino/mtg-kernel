@@ -533,6 +533,13 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
         "Lion's Eye Diamond" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::DiscardHandAndSacrificeSelfV1, amount: ManaAbilityAmountDef::Fixed(3), controller_damage: 0, max_activations_per_turn: None })",
         // "{T}: Add {C}{C}."
         "City of Traitors" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
+        // Relic of Sauron (Vintage Cube wave C3c): "{T}: Add two mana in any
+        // combination of {U}, {B}, and/or {R}." The primary ability is two
+        // mana of the one color chosen (UU, BB, RR); the three mixed pairs
+        // are additional abilities (`additional_mana_abilities_for`, wave E6a).
+        // The Mightstone and Weakstone: "{T}: Add {C}{C}." The runtime turns
+        // the two mana into restricted units (`eternal_cube_c3c_v1`).
+        "Relic of Sauron" | "The Mightstone and Weakstone" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Fixed(2), controller_damage: 0, max_activations_per_turn: None })",
         _ => super::build_eternal_vintage_v1::mana_ability_def_for(name),
     }
 }
@@ -553,9 +560,13 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 }
 
 /// Prismari Charm's second mode: "Prismari Charm deals 1 damage to each of
-/// one or two targets."
+/// one or two targets." Bone Shards and Demand Answers: the second of their
+/// two additional costs, with the card's own target shape and program
+/// (`eternal_cost_choice_v1`, #715).
 pub(super) fn mode2_for(name: &str) -> &'static str {
     match name {
+        "Bone Shards" => "Some(ModeDef { target_spec: TargetSpec::CreatureOrPlaneswalker, effect: crate::eternal_cost_choice_v1::bone_shards_second_cost })",
+        "Demand Answers" => "Some(ModeDef { target_spec: TargetSpec::None, effect: crate::eternal_cost_choice_v1::demand_answers_second_cost })",
         "Prismari Charm" => "Some(ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::OneOrTwoAnyTargetsV1), effect: crate::eternal_cards_v1::prismari_charm_damage })",
         _ => super::build_eternal_lurrus_v1::mode2_for(name),
     }

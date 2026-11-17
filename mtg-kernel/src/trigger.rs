@@ -1287,6 +1287,11 @@ pub fn unselected_trigger_modes(
     if let Some(modes) = crate::eternal_pauper_e6b_v1::trigger_modes(card.name, effect) {
         return Some(modes);
     }
+    // The Mightstone and Weakstone's entry modes (Vintage Cube wave C3c).
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(modes) = crate::eternal_cube_c3c_v1::trigger_modes(card.name, effect) {
+        return Some(modes);
+    }
     if card.name == "Wardens of the Cycle" && *effect == wardens_of_the_cycle_effect() {
         return Some(wardens_of_the_cycle_modes());
     }
@@ -5047,6 +5052,9 @@ fn sba_fixed_point_with_protected_triggers(
         #[cfg(feature = "eternal-fixtures")]
         {
             changed |= crate::eternal_pauper_e6b_v1::unattach_protected_equipment(state);
+            // An Equipment that is also a creature (Iron Man Armor) can't
+            // stay attached (Vintage Cube wave C4c).
+            changed |= crate::eternal_cube_c4c_v1::unattach_animated_equipment(state);
         }
         if !ordered_graveyard {
             let invalid_auras = state
@@ -5645,6 +5653,10 @@ fn triggers_from_events(
         // blockers are declared, without adding a committed event.
         #[cfg(feature = "eternal-fixtures")]
         new_triggers.extend(crate::eternal_vintage_v1::delayed_triggers(state, events));
+        // Magecraft's copy half sees the copies a resolving storm trigger puts
+        // on the stack without committing any event (Vintage Cube wave C4b).
+        #[cfg(feature = "eternal-fixtures")]
+        new_triggers.extend(crate::eternal_cube_c4b_v1::delayed_triggers(state, events));
         uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
         state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
         return new_triggers;

@@ -290,6 +290,9 @@ mod equipment_damage_source_v4;
 pub mod eternal_bo3_v1;
 /// Pauper, Legacy and Vintage catalog card programs (`eternal-fixtures`).
 pub mod eternal_cards_v1;
+/// A choice between two additional costs, carried as a spell's two modes
+/// (Bone Shards, Demand Answers).
+pub mod eternal_cost_choice_v1;
 /// Vintage Cube card programs of the eternal catalog (wave C1a).
 pub mod eternal_cube_c1a_v1;
 /// Vintage Cube card programs of the eternal catalog (wave C1b).
@@ -302,6 +305,18 @@ pub mod eternal_cube_c2a_v1;
 pub mod eternal_cube_c2b_v1;
 /// Vintage Cube card programs of the eternal catalog (wave C2c).
 pub mod eternal_cube_c2c_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C3a).
+pub mod eternal_cube_c3a_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C3b).
+pub mod eternal_cube_c3b_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C3c).
+pub mod eternal_cube_c3c_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C4a).
+pub mod eternal_cube_c4a_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C4b).
+pub mod eternal_cube_c4b_v1;
+/// Vintage Cube card programs of the eternal catalog (wave C4c).
+pub mod eternal_cube_c4c_v1;
 /// Wave E5a card programs of the eternal catalog (Vintage Raker Shops, Oath
 /// of Druids, Paradoxical Outcome, Blue Tinker and Beseech Storm, Legacy
 /// Mystic Forge).
