@@ -168,9 +168,17 @@ mod tests {
             let card = def(name);
             assert_eq!(additional_discard_count(card, None), Some(None), "{name}");
             assert_eq!(sacrifice(card, None), None, "{name}");
-            assert_eq!(additional_discard_count(card, Some(0)), Some(None), "{name}");
+            assert_eq!(
+                additional_discard_count(card, Some(0)),
+                Some(None),
+                "{name}"
+            );
             assert!(sacrifice(card, Some(0)).is_some(), "{name}");
-            assert_eq!(additional_discard_count(card, Some(1)), Some(Some(1)), "{name}");
+            assert_eq!(
+                additional_discard_count(card, Some(1)),
+                Some(Some(1)),
+                "{name}"
+            );
             assert_eq!(sacrifice(card, Some(1)), None, "{name}");
         }
         let triumph = def("Bitter Triumph");

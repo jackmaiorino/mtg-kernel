@@ -752,9 +752,7 @@ fn bone_shards_cost_choice_has_a_fixed_seat_human_prompt() {
             let ending = format!(", {cost} as its additional cost; destroy the chosen object");
             let matching = labels
                 .iter()
-                .filter(|label| {
-                    label.starts_with("For Bone Shards [") && label.ends_with(&ending)
-                })
+                .filter(|label| label.starts_with("For Bone Shards [") && label.ends_with(&ending))
                 .count();
             assert_eq!(matching, 1, "{labels:?}");
         }

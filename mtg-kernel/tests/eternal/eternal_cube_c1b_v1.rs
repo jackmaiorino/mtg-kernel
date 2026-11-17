@@ -1680,7 +1680,10 @@ fn bone_shards_cast_free_by_omniscience_with_mana_available_chooses_either_cost(
             }
             other => first_answer(other),
         });
-        assert!(asked.contains(&"free") && asked.contains(&"mode"), "{asked:?}");
+        assert!(
+            asked.contains(&"free") && asked.contains(&"mode"),
+            "{asked:?}"
+        );
         let sacrificed = mode == 0;
         assert_eq!(zone(&state, elves) == Zone::Graveyard, sacrificed, "{mode}");
         assert_eq!(
