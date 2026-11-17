@@ -796,6 +796,65 @@ fn flagbearers_bind_fire_covenants_last_payable_pick_both_seats() {
     }
 }
 
+// ---- The second part's target shapes ---------------------------------------------
+
+#[test]
+fn flagbearers_never_bind_unlicensed_hearses_graveyard_targets_both_seats() {
+    // "{T}: Exile up to two target cards from a single graveyard": no card
+    // in a graveyard is a Flagbearer on the battlefield, so an opposing
+    // Standard Bearer changes nothing.
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor, "Island");
+        let bearer = put(&mut state, opponent, BEARER, Zone::Battlefield);
+        let hearse = put(&mut state, actor, "Unlicensed Hearse", Zone::Battlefield);
+        let bolt = Target::Object(put(&mut state, opponent, "Lightning Bolt", Zone::Graveyard));
+        let seal = Target::Object(put(&mut state, opponent, "Seal of Fire", Zone::Graveyard));
+        let island = Target::Object(put(&mut state, actor, "Island", Zone::Graveyard));
+        act(&mut state, Action::ActivateAbility(hearse, 0));
+        let (legal, can_finish) = offered(&mut state);
+        assert!(can_finish, "zero targets stay legal");
+        assert!(same_set(legal, vec![bolt, seal, island]));
+        choose_target(&mut state, bolt);
+        assert_eq!(offered(&mut state), (vec![seal], true));
+        act(&mut state, Action::FinishEffectSelection);
+        settled(&mut state);
+        let Target::Object(bolt) = bolt else {
+            unreachable!()
+        };
+        assert_eq!(zone(&state, bolt), Zone::Exile);
+        assert_eq!(zone(&state, bearer), Zone::Battlefield);
+    }
+}
+
+#[test]
+fn flagbearers_never_bind_eowyns_enters_trigger_both_seats() {
+    // "When Eowyn enters, exile target creature an opponent controls with
+    // greater power": a triggered ability, and a Standard Bearer's power 1 is
+    // not greater than Eowyn's 3 in any case.
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor, "Plains");
+        let bearer = put(&mut state, opponent, BEARER, Zone::Battlefield);
+        let big = put(&mut state, opponent, "Griselbrand", Zone::Battlefield);
+        let eowyn = put(&mut state, actor, "Eowyn, Fearless Knight", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R, ManaColor::W], 2);
+        announce(&mut state, eowyn, None);
+        let mut trigger_targets = Vec::new();
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                trigger_targets = legal_targets;
+                Action::ChooseTarget(Target::Object(big))
+            }
+            other => first_answer(other),
+        });
+        assert_eq!(trigger_targets, [Target::Object(big)]);
+        assert_eq!(zone(&state, big), Zone::Exile);
+        assert_eq!(zone(&state, bearer), Zone::Battlefield);
+        assert_eq!(zone(&state, eowyn), Zone::Battlefield);
+    }
+}
+
 // ---- Public-session consumer games -----------------------------------------------
 
 fn deck(rows: &[(&str, u32)]) -> CustomDeckV1 {
