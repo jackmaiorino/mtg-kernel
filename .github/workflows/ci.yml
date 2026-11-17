@@ -186,12 +186,28 @@ jobs:
       # whole-crate checks run at about 8.8 and 6.5 GB at once, and main
       # itself (a7f3f92) was killed there with 8 MB left. With 8 GB of swap
       # it passes, using about 5.6 GB of it (PR #486).
+      #
+      # The swap is compressed memory (zram), not a swap file, here and in
+      # the other three swap steps of this workflow. GitHub's hosted Linux
+      # runners come from two clouds, and on the AWS ones a swap file that
+      # takes in more than a few GB stops every write to the disk: the
+      # runner never answers again and the job is failed 45 minutes later
+      # as "lost communication", with no log. With zram the same builds
+      # finished on both clouds, with rustc's pages held at about 4 to 1
+      # (measured 2026-11-16, PR #736). 24G is the most the device takes
+      # in, about 6 GB of real memory at that ratio, not memory set aside.
+      # An AWS runner starts with a small zram swap on the same device, so
+      # the step turns that off and sets the device up again.
       - name: Add swap space for the whole-crate checks
         run: |
-          sudo fallocate -l 8G /mnt/lint.swap
-          sudo chmod 600 /mnt/lint.swap
-          sudo mkswap /mnt/lint.swap
-          sudo swapon /mnt/lint.swap
+          sudo modprobe zram
+          if grep -q '^/dev/zram0 ' /proc/swaps; then sudo swapoff /dev/zram0; fi
+          echo 1 | sudo tee /sys/block/zram0/reset > /dev/null
+          echo zstd | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
+          echo 24G | sudo tee /sys/block/zram0/disksize > /dev/null
+          sudo mkswap /dev/zram0
+          sudo swapon -p 100 /dev/zram0
+          cat /proc/swaps
           free -m
 
       - name: Install pinned Rust in a fresh toolchain directory
@@ -335,14 +351,20 @@ jobs:
       # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
       # heavy feature builds finished at two and four Cargo jobs (probe of
       # 2026-11-11: Limited library tests 20 min at two jobs, over 42 min
-      # at one), so the builds below use two jobs instead of one.
+      # at one), so the builds below use two jobs instead of one. The swap
+      # is now compressed memory, not that swap file: see the note at the
+      # first swap step of this workflow (job rust-quality).
       - name: Add swap space for the heavy builds
         if: runner.environment == 'github-hosted' && runner.os == 'Linux'
         run: |
-          sudo fallocate -l 12G /mnt/build.swap
-          sudo chmod 600 /mnt/build.swap
-          sudo mkswap /mnt/build.swap
-          sudo swapon /mnt/build.swap
+          sudo modprobe zram
+          if grep -q '^/dev/zram0 ' /proc/swaps; then sudo swapoff /dev/zram0; fi
+          echo 1 | sudo tee /sys/block/zram0/reset > /dev/null
+          echo zstd | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
+          echo 24G | sudo tee /sys/block/zram0/disksize > /dev/null
+          sudo mkswap /dev/zram0
+          sudo swapon -p 100 /dev/zram0
+          cat /proc/swaps
           free -m
 
       - name: Limit affected hosted builds to two Cargo jobs
@@ -627,14 +649,20 @@ jobs:
       # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
       # heavy feature builds finished at two and four Cargo jobs (probe of
       # 2026-11-11: Limited library tests 20 min at two jobs, over 42 min
-      # at one), so the builds below use two jobs instead of one.
+      # at one), so the builds below use two jobs instead of one. The swap
+      # is now compressed memory, not that swap file: see the note at the
+      # first swap step of this workflow (job rust-quality).
       - name: Add swap space for the heavy builds
         if: runner.environment == 'github-hosted' && runner.os == 'Linux'
         run: |
-          sudo fallocate -l 12G /mnt/build.swap
-          sudo chmod 600 /mnt/build.swap
-          sudo mkswap /mnt/build.swap
-          sudo swapon /mnt/build.swap
+          sudo modprobe zram
+          if grep -q '^/dev/zram0 ' /proc/swaps; then sudo swapoff /dev/zram0; fi
+          echo 1 | sudo tee /sys/block/zram0/reset > /dev/null
+          echo zstd | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
+          echo 24G | sudo tee /sys/block/zram0/disksize > /dev/null
+          sudo mkswap /dev/zram0
+          sudo swapon -p 100 /dev/zram0
+          cat /proc/swaps
           free -m
 
       # Windows can resolve `bash` to the WSL launcher in System32 first;
@@ -757,15 +785,21 @@ jobs:
     steps:
       # The Limited-only shards compile the default-feature library test binary
       # via default_library_names() to diff its inventory against the Limited
-      # build. Give hosted Linux shards the same 12 GB swap space as the other
-      # heavy Rust builds so rustc does not exhaust the 16 GB VM memory limit.
+      # build. Give hosted Linux shards the same swap space as the other
+      # heavy Rust builds so rustc does not exhaust the 16 GB VM memory limit
+      # (compressed memory, not a swap file: see the note at the first swap
+      # step of this workflow, job rust-quality).
       - name: Add swap space for Limited-only default-library builds
         if: runner.environment == 'github-hosted' && runner.os == 'Linux' && startsWith(matrix.group, 'limited-only')
         run: |
-          sudo fallocate -l 12G /mnt/build.swap
-          sudo chmod 600 /mnt/build.swap
-          sudo mkswap /mnt/build.swap
-          sudo swapon /mnt/build.swap
+          sudo modprobe zram
+          if grep -q '^/dev/zram0 ' /proc/swaps; then sudo swapoff /dev/zram0; fi
+          echo 1 | sudo tee /sys/block/zram0/reset > /dev/null
+          echo zstd | sudo tee /sys/block/zram0/comp_algorithm > /dev/null
+          echo 24G | sudo tee /sys/block/zram0/disksize > /dev/null
+          sudo mkswap /dev/zram0
+          sudo swapon -p 100 /dev/zram0
+          cat /proc/swaps
           free -m
 
       # Windows can resolve `bash` to the WSL launcher in System32 first;
