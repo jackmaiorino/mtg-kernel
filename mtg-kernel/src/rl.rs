@@ -259,6 +259,9 @@ pub struct KnownLibraryCardV4 {
     pub card: CardPrivateV1,
 }
 
+/// Six fixed type bits. A type without a bit is left out: a planeswalker
+/// sets none, and a Kindred instant sets only `instant`, as it did before the
+/// registry had a Kindred type. The card's identity is reported beside them.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CardTypeFlagsV2 {
     pub land: bool,

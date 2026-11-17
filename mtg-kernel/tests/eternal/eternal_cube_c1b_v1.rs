@@ -484,14 +484,7 @@ fn deck(rows: &[(&str, u32)]) -> CustomDeckV1 {
 fn c1b_cards_are_full() {
     for name in C1B_CARDS {
         let card = def(name);
-        // Bone Shards is Partial: its sacrifice is an alternative cost, which
-        // a flashback cast cannot choose.
-        let expected = if name == "Bone Shards" {
-            CardCapability::Partial
-        } else {
-            CardCapability::Full
-        };
-        assert_eq!(card.capability, expected, "{name}");
+        assert_eq!(card.capability, CardCapability::Full, "{name}");
         assert!(card.is_executable(), "{name}");
     }
 }
@@ -610,8 +603,15 @@ fn c1b_second_half_has_its_printed_characteristics() {
         assert!(!card.is_token, "{name}");
     }
     assert!(def("Bloodchief's Thirst").kicker_cost.is_some());
-    assert!(def("Bone Shards").additional_cost.is_some());
-    assert!(def("Bone Shards").alt_cost.is_some());
+    // Its two additional costs are its two modes (#715), not an alternative cost.
+    let shards = def("Bone Shards");
+    assert!(shards.additional_cost.is_some());
+    assert!(shards.alt_cost.is_none());
+    assert!(shards.mode2.is_some() && shards.mode3.is_none());
+    assert_eq!(
+        shards.mode2.as_ref().map(|mode| mode.target_spec),
+        Some(shards.target_spec)
+    );
     assert!(def("Natural Order").additional_cost.is_some());
     let brutality = def("Collective Brutality");
     assert!(brutality.additional_cost.is_some());
@@ -1494,23 +1494,52 @@ fn bone_shards_may_sacrifice_a_creature_instead_of_discarding() {
     let keep = put(&mut state, P0, "Island", Zone::Hand);
     let shards = put(&mut state, P0, "Bone Shards", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::B], 0);
+    // Both costs are payable, so the caster is asked which one (mode 0 is
+    // the sacrifice, mode 1 the discard), before targets and payment.
     let log = cast_plan(
         &mut state,
         shards,
         &Plan {
             targets: vec![Target::Object(big)],
-            alternative: true,
+            mode: Some(0),
             sacrifice: Some(elves),
             ..Plan::default()
         },
     );
-    assert!(log.contains(&"ChooseCastMode".to_owned()), "{log:?}");
+    assert_eq!(log.first().map(String::as_str), Some("ChooseSpellMode"));
+    assert!(!log.contains(&"ChooseCastMode".to_owned()), "{log:?}");
     assert!(
         !log.contains(&"Discard".to_owned()),
-        "the sacrifice replaces the discard"
+        "the sacrifice is paid instead of the discard"
     );
     assert_eq!(zone(&state, elves), Zone::Graveyard);
     assert_eq!(zone(&state, keep), Zone::Hand);
+    assert_eq!(zone(&state, big), Zone::Graveyard);
+
+    // The other answer discards and keeps the creature. With two other
+    // cards in hand the discard is a choice of its own.
+    let mut state = swamps();
+    let big = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let spare = put(&mut state, P0, "Island", Zone::Hand);
+    let other = put(&mut state, P0, "Sol Ring", Zone::Hand);
+    let shards = put(&mut state, P0, "Bone Shards", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    let log = cast_plan(
+        &mut state,
+        shards,
+        &Plan {
+            targets: vec![Target::Object(big)],
+            mode: Some(1),
+            discard: vec![spare],
+            ..Plan::default()
+        },
+    );
+    assert!(log.contains(&"Discard".to_owned()), "{log:?}");
+    assert!(!log.contains(&"ChooseCostTargets".to_owned()), "{log:?}");
+    assert_eq!(zone(&state, elves), Zone::Battlefield);
+    assert_eq!(zone(&state, spare), Zone::Graveyard);
+    assert_eq!(zone(&state, other), Zone::Hand);
     assert_eq!(zone(&state, big), Zone::Graveyard);
 
     // With no other card, only the sacrifice is payable.
@@ -1536,6 +1565,237 @@ fn bone_shards_may_sacrifice_a_creature_instead_of_discarding() {
     let shards = put(&mut state, P0, "Bone Shards", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::B], 0);
     assert!(!castable(&mut state, shards));
+}
+
+/// Gives `card` (in P0's graveyard) flashback with the Flashback sorcery,
+/// which leaves P0's hand empty unless the test added other cards.
+fn grant_flashback(state: &mut GameState, card: ObjectId) {
+    let flashback = put(state, P0, "Flashback", Zone::Hand);
+    pool(state, P0, &[ManaColor::R], 0);
+    cast(state, flashback, &[Target::Object(card)]);
+    settled(state);
+    assert_eq!(zone(state, flashback), Zone::Graveyard);
+}
+
+/// #715: a cast for another alternative cost still chooses between the two
+/// additional costs. With flashback, no card in hand and a creature, the
+/// cast is legal by sacrificing the creature.
+#[test]
+fn bone_shards_cast_by_a_granted_flashback_may_sacrifice_a_creature() {
+    let mut state = swamps();
+    let big = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let shards = put(&mut state, P0, "Bone Shards", Zone::Graveyard);
+    grant_flashback(&mut state, shards);
+    assert!(state.players[0].hand.is_empty(), "nothing to discard");
+    assert!(!castable(&mut state, shards), "{{B}} is not in the pool");
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    let log = cast_plan(
+        &mut state,
+        shards,
+        &Plan {
+            targets: vec![Target::Object(big)],
+            sacrifice: Some(elves),
+            ..Plan::default()
+        },
+    );
+    assert!(
+        !log.contains(&"ChooseSpellMode".to_owned()),
+        "only the sacrifice is payable, so nothing is asked: {log:?}"
+    );
+    assert!(!log.contains(&"Discard".to_owned()), "{log:?}");
+    assert_eq!(zone(&state, elves), Zone::Graveyard, "sacrificed");
+    assert_eq!(zone(&state, big), Zone::Graveyard, "destroyed");
+    assert_eq!(zone(&state, shards), Zone::Exile, "flashback exiles it");
+}
+
+#[test]
+fn bone_shards_cast_by_a_granted_flashback_chooses_either_cost() {
+    for mode in [0, 1] {
+        let mut state = swamps();
+        let big = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
+        let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+        let shards = put(&mut state, P0, "Bone Shards", Zone::Graveyard);
+        grant_flashback(&mut state, shards);
+        let spare = put(&mut state, P0, "Island", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::B], 0);
+        let log = cast_plan(
+            &mut state,
+            shards,
+            &Plan {
+                targets: vec![Target::Object(big)],
+                mode: Some(mode),
+                sacrifice: Some(elves),
+                discard: vec![spare],
+                ..Plan::default()
+            },
+        );
+        assert!(log.contains(&"ChooseSpellMode".to_owned()), "{log:?}");
+        let sacrificed = mode == 0;
+        assert_eq!(zone(&state, elves) == Zone::Graveyard, sacrificed, "{mode}");
+        assert_eq!(
+            zone(&state, spare) == Zone::Graveyard,
+            !sacrificed,
+            "{mode}"
+        );
+        assert_eq!(zone(&state, big), Zone::Graveyard);
+        assert_eq!(zone(&state, shards), Zone::Exile);
+    }
+
+    // By flashback with neither a creature nor a card in hand, no cost is
+    // payable and the card is not castable.
+    let mut state = swamps();
+    put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
+    let shards = put(&mut state, P0, "Bone Shards", Zone::Graveyard);
+    grant_flashback(&mut state, shards);
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    assert!(!castable(&mut state, shards));
+}
+
+/// #715: a cast without paying the mana cost (Omniscience, no mana in the
+/// pool) still chooses between the two additional costs and pays only the
+/// chosen one.
+#[test]
+fn bone_shards_cast_by_omniscience_chooses_either_cost() {
+    for mode in [0, 1] {
+        let mut state = swamps();
+        put(&mut state, P0, "Omniscience", Zone::Battlefield);
+        let big = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
+        let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+        let spare = put(&mut state, P0, "Island", Zone::Hand);
+        let shards = put(&mut state, P0, "Bone Shards", Zone::Hand);
+        let log = cast_plan(
+            &mut state,
+            shards,
+            &Plan {
+                targets: vec![Target::Object(big)],
+                mode: Some(mode),
+                sacrifice: Some(elves),
+                discard: vec![spare],
+                ..Plan::default()
+            },
+        );
+        assert!(log.contains(&"ChooseSpellMode".to_owned()), "{log:?}");
+        assert!(
+            !log.contains(&"ChooseEffectOption".to_owned()),
+            "no mana, so paying the mana cost is not offered: {log:?}"
+        );
+        let sacrificed = mode == 0;
+        assert_eq!(zone(&state, elves) == Zone::Graveyard, sacrificed, "{mode}");
+        assert_eq!(
+            zone(&state, spare) == Zone::Graveyard,
+            !sacrificed,
+            "{mode}"
+        );
+        assert_eq!(zone(&state, big), Zone::Graveyard);
+        assert_eq!(zone(&state, shards), Zone::Graveyard);
+    }
+}
+
+/// #715: with {B} in the pool Omniscience also offers paying the mana cost.
+/// Declining it (the cast stays free) still chooses either additional cost,
+/// and the {B} stays in the pool.
+#[test]
+fn bone_shards_cast_free_by_omniscience_with_mana_available_chooses_either_cost() {
+    for mode in [0, 1] {
+        let mut state = swamps();
+        put(&mut state, P0, "Omniscience", Zone::Battlefield);
+        let big = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
+        let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+        let spare = put(&mut state, P0, "Island", Zone::Hand);
+        let shards = put(&mut state, P0, "Bone Shards", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::B], 0);
+        assert!(castable(&mut state, shards));
+        act(&mut state, Action::CastSpell(shards));
+        let mut asked = Vec::new();
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectOption { option_count, .. } => {
+                assert_eq!(option_count, 2);
+                asked.push("free");
+                // Option 0 pays the mana cost, option 1 casts it free.
+                Action::ChooseEffectOption(1)
+            }
+            Decision::ChooseSpellMode { legal_modes, .. } => {
+                assert_eq!(legal_modes, vec![0, 1]);
+                asked.push("mode");
+                Action::ChooseSpellMode(mode)
+            }
+            Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Object(big)),
+            Decision::ChooseCostTargets { candidates, .. } => {
+                assert!(candidates.contains(&elves), "{candidates:?}");
+                Action::ChooseCostTarget(elves)
+            }
+            Decision::Discard { choices, .. } => {
+                assert!(choices.contains(&spare), "{choices:?}");
+                Action::Discard(vec![spare])
+            }
+            other => first_answer(other),
+        });
+        assert!(
+            asked.contains(&"free") && asked.contains(&"mode"),
+            "{asked:?}"
+        );
+        let sacrificed = mode == 0;
+        assert_eq!(zone(&state, elves) == Zone::Graveyard, sacrificed, "{mode}");
+        assert_eq!(
+            zone(&state, spare) == Zone::Graveyard,
+            !sacrificed,
+            "{mode}"
+        );
+        assert_eq!(zone(&state, big), Zone::Graveyard);
+        assert_eq!(mana(&state, P0, ManaColor::B), 1, "cast free: {mode}");
+    }
+}
+
+/// #715: a copy of Bone Shards cast in its second mode (Chandra, Hope's
+/// Beacon copies it) pays no cost and resolves with the card's target rules:
+/// one card is discarded for two destroyed creatures.
+#[test]
+fn a_copy_of_bone_shards_cast_by_discarding_pays_no_cost() {
+    let mut state = swamps();
+    // A real entry, so Chandra has her loyalty.
+    let chandra = put(&mut state, P0, "Chandra, Hope's Beacon", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(chandra, Zone::Battlefield),
+    );
+    let first = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
+    let second = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let spare = put(&mut state, P0, "Island", Zone::Hand);
+    let other = put(&mut state, P0, "Sol Ring", Zone::Hand);
+    let shards = put(&mut state, P0, "Bone Shards", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    let log = cast_plan(
+        &mut state,
+        shards,
+        &Plan {
+            targets: vec![Target::Object(first)],
+            picks: vec![Target::Object(second)],
+            mode: Some(1),
+            discard: vec![spare],
+            ..Plan::default()
+        },
+    );
+    assert_eq!(log.first().map(String::as_str), Some("ChooseSpellMode"));
+    assert_eq!(
+        log.iter().filter(|kind| *kind == "Discard").count(),
+        1,
+        "{log:?}"
+    );
+    assert!(!log.contains(&"ChooseCostTargets".to_owned()), "{log:?}");
+    let copies = state
+        .objects
+        .iter()
+        .filter_map(|(_, object)| object.spell_copy_origin.map(|origin| origin.parent))
+        .collect::<Vec<_>>();
+    assert_eq!(copies, vec![shards], "Chandra copied it once");
+    assert_eq!(zone(&state, first), Zone::Graveyard, "the first target");
+    assert_eq!(zone(&state, second), Zone::Graveyard, "the copy's target");
+    assert_eq!(zone(&state, spare), Zone::Graveyard, "the one discard");
+    assert_eq!(zone(&state, other), Zone::Hand, "the copy discards nothing");
+    assert_eq!(zone(&state, elves), Zone::Battlefield);
+    assert_eq!(zone(&state, chandra), Zone::Battlefield);
 }
 
 #[test]
@@ -2565,7 +2825,7 @@ fn c1b_decks_finish_and_replay_through_public_sessions_both_seats() {
         ("Night's Whisper", 3),
         ("Mutagenic Growth", 2),
         ("Bloodchief's Thirst", 3),
-        ("Cast Down", 3),
+        ("Bone Shards", 3),
         ("Chain of Smog", 3),
         ("Collective Brutality", 4),
     ]);
@@ -2582,7 +2842,7 @@ fn c1b_decks_finish_and_replay_through_public_sessions_both_seats() {
         ("Infernal Grasp", 2),
         ("Night's Whisper", 2),
         ("Bloodchief's Thirst", 2),
-        ("Cast Down", 2),
+        ("Bone Shards", 2),
         ("Chain of Smog", 2),
         ("Collective Brutality", 2),
         ("Sol Ring", 2),
@@ -2604,7 +2864,7 @@ fn c1b_decks_finish_and_replay_through_public_sessions_both_seats() {
         ("Mind Twist", 2),
         ("Night's Whisper", 3),
         ("Bloodchief's Thirst", 3),
-        ("Cast Down", 3),
+        ("Bone Shards", 3),
         ("Chain of Smog", 3),
         ("Collective Brutality", 3),
         ("Dark Ritual", 3),
@@ -2663,8 +2923,7 @@ fn c1b_decks_finish_and_replay_through_public_sessions_both_seats() {
             }
         }
     }
-    // Bone Shards is Partial, so no deck may hold it.
-    for card in C1B_CARDS.into_iter().filter(|card| *card != "Bone Shards") {
+    for card in C1B_CARDS {
         assert!(
             totals.casts.get(card).copied().unwrap_or(0) > 0,
             "{card} never cast"

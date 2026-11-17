@@ -268,18 +268,10 @@ fn form(state: &GameState, object: ObjectId) -> Result<Option<FullTextFormV1>, S
     let text_donor = text
         .map(|text| rl::card_ref(state, text.donor().object).map_err(|error| error.to_string()))
         .transpose()?;
-    let types: Vec<_> = [
-        CardType::Land,
-        CardType::Creature,
-        CardType::Instant,
-        CardType::Sorcery,
-        CardType::Artifact,
-        CardType::Enchantment,
-        CardType::Planeswalker,
-    ]
-    .into_iter()
-    .filter(|kind| engine::object_has_type(state, object, *kind))
-    .collect();
+    let types: Vec<_> = CardType::ALL
+        .into_iter()
+        .filter(|kind| engine::object_has_type(state, object, *kind))
+        .collect();
     let power_toughness = if types.contains(&CardType::Creature) {
         Some(engine::checked_effective_pt(state, object)?)
     } else {

@@ -162,18 +162,10 @@ fn checked_native_prefix(state: &GameState, id: ObjectId) -> Result<(), RlContra
 fn current(state: &GameState, id: ObjectId) -> CurrentV56 {
     let o = state.objects.get(id);
     let active = crate::continuous_characteristics_v1::printed_abilities_active(state, id);
-    let types = [
-        CardType::Land,
-        CardType::Creature,
-        CardType::Instant,
-        CardType::Sorcery,
-        CardType::Artifact,
-        CardType::Enchantment,
-        CardType::Planeswalker,
-    ]
-    .into_iter()
-    .filter(|t| crate::engine::object_has_type(state, id, *t))
-    .collect::<Vec<_>>();
+    let types = CardType::ALL
+        .into_iter()
+        .filter(|t| crate::engine::object_has_type(state, id, *t))
+        .collect::<Vec<_>>();
     let creature = types.contains(&CardType::Creature);
     CurrentV56 {
         source: reference(state, AbilitySourceContractV4::capture(state, id)),
