@@ -246,8 +246,8 @@ New, each built once in the first wave that needs it:
   Ugin's search). Oath of Druids and Forbidden Orchard are hook-queued triggers;
   Urza's Workshop's two colorless abilities are one with the larger yield.
   Extrapolate the Impossible, like Karn's wish, reads S3's outside-the-game zone (empty
-  in a best-of-one mainboard game). Kozilek's Command is an Eldrazi instant; the Kindred card
-  type is not modeled.
+  in a best-of-one mainboard game). Kozilek's Command is a Kindred Eldrazi instant (the
+  Kindred type arrived later, with #716; see "Kindred card type" under Vintage Cube).
 - E8b, built in `src/eternal_pauper_e8b_v1.rs` and `build_eternal_e8b_v1.rs`: splice
   onto Arcane is announced like replicate's count (the spliced Desperate Rituals in hand,
   capped by that count), paid as one {1}{R} per splice, revealed to the opponent, and
@@ -288,8 +288,9 @@ New, each built once in the first wave that needs it:
   whose only cost is the disturb cost; the spell enters transformed, and Luminous Phantom
   is exiled instead of going to a graveyard). `CostComponent::TapUntappedControlledPermanentsV1`
   pays Battle Screech's flashback; Demand Answers' "sacrifice an artifact or discard a
-  card" is its discard additional cost, or an alternative cost of the same mana plus the
-  sacrifice that skips the discard. Connive and Malevolent Rumble's reveal use
+  card" is a choice between two additional costs, carried as its two modes (see "Choice
+  between additional costs" under Vintage Cube; before #715 the sacrifice was an alternative
+  cost). Connive and Malevolent Rumble's reveal use
   `E3ChoiceKindV1::E6bV1`; endure is an option list; Dawnbringer Cleric is a modal entry
   trigger; Greatsword of Tyr's attack trigger, Idyllic Grange's "enters untapped" and
   Martyr's Soul's "no tapped lands" are E6b trigger conditions. New target shapes: a
@@ -2471,11 +2472,10 @@ C1b:
 - Hymn to Tourach and Mind Twist discard at random through `GameState::random_hand_cards_v1`,
   all cards at once.
 - Bloodchief's Thirst: kicker {2}{B} widens its target (`kicked_target_spec`).
-- Bone Shards (Partial): its "sacrifice a creature or discard a card" additional cost has
-  Demand Answers' shape (the discard is the additional cost; the sacrifice is an alternative
-  cost of the same mana that skips the discard). A cast for another alternative cost, such as
-  flashback granted by Snapcaster Mage, therefore cannot choose the sacrifice. Full needs a
-  choice between additional costs (Eaten Alive has a module of its own for that).
+- Bone Shards: its "sacrifice a creature or discard a card" additional cost is a choice between
+  two additional costs, carried as the spell's two modes (see "Choice between additional costs"
+  below). Wave C1 registered it Partial with Demand Answers' earlier shape, where the sacrifice
+  was an alternative cost; #715 made it Full.
 - Chain of Smog: the target player chooses two cards to discard, then may copy the spell for
   any player (Chain of Vapor's copy). The copy is free, so a policy that always copies never
   stops; session games play the card under the random policy only.
@@ -2492,8 +2492,9 @@ C1b:
 
 C1c:
 
-- Flame Slash, Sear and Tarfire are fixed damage; Tarfire is an Instant with the Goblin subtype
-  (the registry has no Kindred type). Traumatic Critique deals X, then draws two and discards one.
+- Flame Slash, Sear and Tarfire are fixed damage; Tarfire is a Kindred Instant with the Goblin
+  subtype (the Kindred type arrived with #716). Traumatic Critique deals X, then draws two and
+  discards one.
 - Wheel of Fortune: each player discards their hand, the active player first, then each draws
   seven, with the same stop between the draws as Time Spiral.
 - Lingering Souls: two Spirit tokens (the new "White Flying Spirit Token" row, shared with Occult
@@ -2522,8 +2523,7 @@ C1c:
 - Pillage the Bog: looks at twice the controller's land count
   (`LibraryLookCount::ControllerLandsTwiceV1`), and plot {1}{B}{G}.
 
-Known limits shared with earlier waves, tracked in #710: the registry has no Kindred card type
-(Tarfire counts one type fewer for Tarmogoyf, delirium and Occult Epiphany); an optional search
+Known limits shared with earlier waves, tracked in #710: an optional search
 that is declined still shuffles (Path to Exile); an unrestricted search may find nothing (Entomb,
 Imperial Seal, as Vampiric Tutor); a granted flashback does not add a second cost to a card that
 has flashback (Flashback, as Snapcaster Mage); "each player draws" from a sorcery cast outside its
@@ -2544,6 +2544,36 @@ same batch.
 Each sub-module's test file covers every card's printed text in rules tests (costs, both sides of
 each condition, illegal targets) and plays decks of its cards through public schema-5 sessions
 in both seats under ranked and seeded random policies with replay checks.
+
+### Choice between additional costs (#715)
+
+Bone Shards ("sacrifice a creature or discard a card") and Demand Answers ("sacrifice an artifact
+or discard a card") each offer two additional costs. The caster announces which one they pay
+together with the spell's other choices, before targets and before any payment (601.2b). That is
+where and how a mode is chosen, so `eternal_cost_choice_v1` carries the choice as the spell's two
+modes: mode 0 pays the first printed cost and mode 1 the second, both with the card's one target
+shape and program. A mode whose cost cannot be paid is not offered, and with one payable cost
+nothing is asked. A human prompt names the cost each mode pays.
+
+Before #715 the second cost of each card was an alternative cost of the same mana that skipped the
+discard. A cast for another alternative cost could then not choose it: with flashback granted by
+Snapcaster Mage, no card in hand and a creature, Bone Shards was refused although sacrificing the
+creature pays for it. The same held for a cast without paying the mana cost. With the two modes
+the choice holds for a cast for the mana cost, for a granted flashback and for a cast without
+paying the mana cost, and Bone Shards is Full. Two limits are shared with the other cards that
+have additional costs: a granted escape (Underworld Breach) refuses every card with an additional
+cost, and a retrace cast (Wrenn and Six's emblem) cannot use a sacrifice cost, because a cast
+cannot stage two object choices. Each card's `additional_cost` stays its discard, which opens the
+cast's discard stage; the chosen mode names the cost that is really paid.
+
+Bitter Triumph ("discard a card or pay 3 life") has the same printed shape but keeps its earlier
+registration: the discard is its additional cost and paying 3 life an alternative cost of the same
+mana that skips the discard. The Eternal actor's printed contract for the reported mainboards
+(`eternal_actor_printed_v1`) describes that shape, so changing it is a change of that contract.
+Its known limit stays: a cast for another alternative cost (a granted flashback, a cast without
+paying the mana cost) cannot pay 3 life instead of discarding.
+
+Merged after wave C4, this change brings the cube to 439 of 540 Full.
 
 ### C2: lands and mana
 
@@ -2620,11 +2650,12 @@ actions rather than the automatic payment planner (Gaea's Cradle).
 
 ### C3: creatures and artifact utilities
 
-Wave C3 adds 31 cards and six tokens: 30 are Full and The Mightstone and Weakstone is Partial,
-raising the cube to 411 of 540 Full. It is three sub-modules chained after C2c: C3a (ten cheap
-creatures, `eternal_cube_c3a_v1`), C3b (eleven creatures, `eternal_cube_c3b_v1`) and C3c (ten
-artifacts, `eternal_cube_c3c_v1`), the new tail. Guardian Scalelord waits for a later wave: its
-backup ability must grant an attack trigger until end of turn.
+Wave C3 adds 31 cards and six tokens: 30 were Full and The Mightstone and Weakstone Partial (it
+became Full with #726), raising the cube to 411 of 540 Full. It is three sub-modules chained after
+C2c: C3a (ten cheap creatures, `eternal_cube_c3a_v1`), C3b (eleven creatures,
+`eternal_cube_c3b_v1`) and C3c (ten artifacts, `eternal_cube_c3c_v1`), the new tail. Guardian
+Scalelord waits for a later wave: its backup ability must grant an attack trigger until end of
+turn.
 
 C3a:
 
@@ -2674,7 +2705,117 @@ C3c:
   release ability (a Treasure for a land, a Rogue for a nonland card) read that ledger. Staff of
   the Storyteller counts story counters as charge counters and triggers once per resolution that
   created creature tokens.
-- The Mightstone and Weakstone (Partial): a modal entry trigger, and `Subtype::Powerstone` (582)
-  mana under `ManaSpendRestrictionDef::PowerstoneV1`, which pays for artifact spells and activated
-  abilities. The other costs that mana may pay (ward, "unless its controller pays" taxes, mana
-  ability costs, special actions) still refuse it, which is why the card is not Full.
+- The Mightstone and Weakstone: a modal entry trigger, and `Subtype::Powerstone` (582) mana under
+  `ManaSpendRestrictionDef::PowerstoneV1`. That mana "can't be spent to cast nonartifact spells"
+  (106.6), so it pays every other cost. The spell planners admit it only for an artifact spell
+  (`mana::restriction_permits`), so a tax or cost increase on casting a nonartifact spell, which is
+  part of that spell's total cost (601.2f), still refuses it. Every payment that is not part of
+  casting a spell admits it through `mana::plan_noncast_payment_v1`: the restricted units join a
+  projected ordinary pool, as `plan_activation_mana_v1` admits ability mana, and the plan spends
+  them before ordinary mana of the same color. That covers `mana::can_pay` (ward and "unless its
+  controller pays" taxes, plot, upkeep and other resolution payments),
+  `can_pay_excluding_sources` (mana ability costs, turning a permanent face up, an ability's
+  convoke remainder), the resolution bridge `engine::pay_effect_mana` (foretell, a companion's
+  {3}, suspend, echo) and Shanna's pay-and-draw. A miracle cost is a cost of casting the card, so
+  it is paid through `engine::pay_effect_cast_mana`, which admits the mana only for an artifact.
+
+Limits: the stone is not an automatic payment source (like Pentad Prism), so its mana is spent
+only after an explicit mana action floats it. The other restricted classes (creature, legendary,
+subtype, chosen type, artifact spell, colorless Eldrazi and noncreature spell mana) keep their
+existing payment paths; whether each may also pay a ward, tax or special action is not decided
+here.
+
+With #726 merged after #715 the cube stands at 440 of 540 Full.
+
+### C4: trigger creatures, Equipment and Vehicles
+
+Wave C4 adds 27 cards, raising the cube to 438 of 540 Full. It is three sub-modules chained after
+C3c: C4a (eight creatures with cast, draw and copy triggers, `eternal_cube_c4a_v1`), C4b (nine
+creatures with magecraft and per-turn counters, `eternal_cube_c4b_v1`) and C4c (eight Equipment and
+two Vehicles, `eternal_cube_c4c_v1`), the new tail.
+
+C4a:
+
+- Displacer Kitten flickers up to one other nonland permanent its controller controls on each
+  noncreature cast. Forensic Gadgeteer investigates on artifact casts and takes {1} of generic off
+  activated abilities of its controller's artifacts, mana abilities with a mana cost included,
+  never below one mana.
+- Faerie Mastermind (`OpponentDrawsSecondCardEachTurnV1`) and Ledger Shredder
+  (`PlayerCastsSecondSpellEachTurnV1`, connive) read the engine's per-player draw and cast
+  counters. The Mastermind's shared draw is controller first, with the stop between the two
+  players' draws.
+- Jacked Rabbit enters with X counters, draws when cast with X of 5 or more, and makes Rabbit
+  tokens equal to its power when it attacks. Bristly Bill, Spine Sower puts a counter on a creature
+  on landfall and doubles the counters on its controller's creatures.
+- Lutri, the Spellchaser: companion with the distinct-names deck condition, and an
+  enters-after-cast trigger that copies a target instant or sorcery spell its controller controls,
+  with a keep-or-change choice per target. Caustic Bronco: saddle 3 is a crew cost at sorcery
+  speed, recorded for the turn and read by its attack trigger.
+- New subtypes: Vedalken (600), Horse (601), Mount (602).
+
+C4b:
+
+- Sedgemoor Witch and Witherbloom Apprentice: magecraft. The cast half is a printed trigger; the
+  copy half is found at trigger collection by scanning the stack for instant and sorcery copies not
+  yet reported. The Witch has ward (pay 3 life) and makes Pest tokens.
+- Omnath, Locus of Creation and Scythecat Cub count how many times their landfall ability has
+  resolved this turn (`C4bStateV1::resolutions`, keyed by the source incarnation), so a countered
+  trigger is not counted.
+- Pompous Battlemage // Improvised Act extends wave E7b's prepared mechanism to a second card; a
+  permanent that enters face down or without its abilities does not enter prepared. Sage of the
+  Skies copies itself when cast after another spell that turn; the copy of a permanent spell
+  becomes a token. Ouroboroid uses last-known power recorded as it leaves.
+- Okoye, Mighty and Adored marks its target creature for the turn and grants double strike and
+  trample when it attacks the monarch. Screaming Nemesis deals the damage it took to any other
+  target (the rule belongs to its own trigger, not to abilities granted to it), and a player
+  damaged that way can't gain life for the rest of the game.
+
+C4c:
+
+- Living weapon (Nettlecyst, Kaldra Compleat) and For Mirrodin! (Glimmer Lens) create their token
+  and attach the Equipment in one resolution (`CreateTokenAndAttachSource`), with Phyrexian Germ
+  (`Subtype::Germ`, 620) and Rebel (`Subtype::Rebel`, 621) token rows.
+- Skullclamp draws two when the equipped creature dies, recorded as the creature leaves so the
+  Equipment and its host leaving together still draw. Umezawa's Jitte gains two charge counters per
+  combat damage wave and has three counter-removing abilities. Kaldra Compleat exiles each creature
+  its host deals combat damage to.
+- Sword of the Meek returns from the graveyard when a creature that is 1/1 as it enters comes under
+  its owner's control (the size is recorded at entry, after entry counters, so Nettlecyst's Germ,
+  which enters 0/0, does not count). Iron Man Armor animates and detaches itself when it becomes a creature, and its
+  ability does nothing while it is already one. Astrologian's Planisphere has job select, and its
+  triggers belong to its host creature.
+- Smuggler's Copter (crew 1, loot when it attacks or blocks) and Esika's Chariot (crew 4, two Cat
+  tokens, and a token copy when it attacks).
+
+### Kindred card type
+
+`CardType::Kindred` (#716) is appended to the card type enum, so every earlier variant keeps its
+discriminant and serialized name, and `CardType::ALL` lists all eight types in that order. The
+registry has three printed Kindred cards, each a Kindred Instant: Tarfire (Goblin), Kozilek's
+Command (Eldrazi) and Faerie Trickery (Faerie). No Pauper, FDN or Standard card is Kindred, so
+those catalog hashes are unchanged; the eternal catalog hash moves with the three rows, and the
+build rejects a Kindred row without another card type (308.1).
+
+Kindred counts as a card type and changes nothing else. Delirium, Nethergoyf and Barrowgoyf count
+types through `CardType::ALL`, and Occult Epiphany and Atraxa read the printed types, so Tarfire in
+a graveyard adds two types and Occult Epiphany discarding it makes two Spirits. The cards are cast,
+countered and put into a graveyard as instants, and Kindred is not a permanent type (110.4b).
+Their subtypes are creature types (308.3), which the engine already reads on any spell (the
+Goblin Warchief and Eye of Ugin cost reductions, Faerie Trickery's "non-Faerie spell", so one
+Faerie Trickery cannot counter another), while Cavern of Souls pays only for creature spells and
+Goblin Lackey puts only permanent cards onto the battlefield. Serra's Emissary does
+not offer Kindred, so its menu keeps seven options: every Kindred card here is also an instant,
+so naming Instant covers them.
+
+Readers of card types outside the rules keep their output for every earlier card. Policy
+observation v5's six type bits (`CardTypeFlagsV2`, also read by the flat policies, the native
+tensorizers and the human views) have no Kindred bit, as they have no Planeswalker bit, so a
+Kindred instant sets only its instant bit, exactly as before, and the card's identity is
+reported beside it. `SourceTypesV1`'s seven fixed bits also leave Kindred out; no hexproof or
+protection in the catalog names it. The public forms that list an object's types (Elenda,
+Drake Hatcher, Niv-Mizzet, the optional-trigger forms, Phoenix and the Premodern ordered
+graveyard) take their list from `CardType::ALL`, whose first seven entries are their former
+literal list, so a Kindred object lists Kindred and every other object is unchanged; the Python
+Limited validators accept only the seven earlier names, so they refuse a Kindred form.
+`rules_vector_v1` has no Kindred facet and refuses a Kindred card. The eternal printed-program
+encoder admits only its named card pool, which has no Kindred card.

@@ -3909,6 +3909,8 @@ fn triggered_ability_targeting_source(
     }
     let other_than = match effect {
         EffectOp::PutPlusOnePlusOneCounterOnTargetOtherThan { other_than } => Some(*other_than),
+        // Screaming Nemesis's own damage trigger: "any other target".
+        effect if crate::eternal_cube_c4b_v1::is_nemesis_trigger(effect) => Some(source),
         _ => None,
     };
     let dungeon_colors = bound_room.then(|| {
@@ -4132,6 +4134,17 @@ fn legal_targets_for_controller_from_source_unframed(
             target_count(spec) as usize,
             &mut legal,
         );
+    }
+    // Screaming Nemesis: its own damage trigger ("any other target") never
+    // offers the source itself; an ability granted to it does.
+    #[cfg(feature = "eternal-fixtures")]
+    if spec == TargetSpec::AnyTarget {
+        if let Some(source) = source.filter(|source| {
+            source.other_than == Some(source.object)
+                && crate::eternal_cube_c4b_v1::other_target_only(source.card_def)
+        }) {
+            legal.retain(|target| *target != Target::Object(source.object));
+        }
     }
     legal
 }
@@ -6339,7 +6352,9 @@ fn reduced_activation_mana_cost(
             .generic
             .saturating_sub(u8::try_from(count).unwrap_or(u8::MAX));
     }
-    reduced
+    // Forensic Gadgeteer (eternal wave C4a): abilities of artifacts cost {1}
+    // less, never below one mana.
+    crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, reduced)
 }
 
 fn activation_mana_payment(
@@ -6458,25 +6473,30 @@ struct EffectManaPlan {
     treasures: Vec<(ObjectId, mana::ManaColor)>,
 }
 
+/// `nonartifact_cast` holds when the payment is the mana cost of casting a
+/// nonartifact spell (a miracle cost); see `mana::can_pay_owned_from_sources`.
 fn effect_mana_plan(
     player: PlayerId,
     colored: &[mana::ManaColor],
     generic: u8,
     state: &GameState,
+    nonartifact_cast: bool,
 ) -> Option<EffectManaPlan> {
     let pips = colored
         .iter()
         .copied()
         .map(mana::Pip::Colored)
         .collect::<Vec<_>>();
+    let mut sources = mana::gather_sources(player, state);
     // Preserve every predecessor plan when floating mana/repeatable taps suffice.
-    if let Some(ordinary) = mana::can_pay_owned(&pips, generic, player, state) {
+    if let Some(ordinary) =
+        mana::can_pay_owned_from_sources(&pips, generic, player, state, &sources, nonartifact_cast)
+    {
         return Some(EffectManaPlan {
             ordinary,
             treasures: vec![],
         });
     }
-    let mut sources = mana::gather_sources(player, state);
     let mut treasure_ids = Vec::new();
     for &id in &state.players[player.index()].battlefield {
         if sources.iter().any(|source| source.id == id) {
@@ -6514,7 +6534,14 @@ fn effect_mana_plan(
             yield_per_tap: 1,
         });
     }
-    let plan = mana::can_pay_owned_from_sources(&pips, generic, player, state, &sources)?;
+    let plan = mana::can_pay_owned_from_sources(
+        &pips,
+        generic,
+        player,
+        state,
+        &sources,
+        nonartifact_cast,
+    )?;
     let mut ordinary = plan.clone();
     ordinary.taps.clear();
     let mut treasures = Vec::new();
@@ -6537,7 +6564,21 @@ pub(crate) fn can_pay_effect_mana(
     generic: u8,
     state: &GameState,
 ) -> bool {
-    effect_mana_plan(player, colored, generic, state).is_some()
+    effect_mana_plan(player, colored, generic, state, false).is_some()
+}
+
+/// `can_pay_effect_mana` for the mana cost of casting a spell from a
+/// resolving effect (a miracle cost): mana that can't be spent to cast
+/// nonartifact spells pays it only when `artifact_spell` holds.
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+pub(crate) fn can_pay_effect_cast_mana(
+    player: PlayerId,
+    colored: &[mana::ManaColor],
+    generic: u8,
+    state: &GameState,
+    artifact_spell: bool,
+) -> bool {
+    effect_mana_plan(player, colored, generic, state, !artifact_spell).is_some()
 }
 
 /// Commits the exact deterministic plan preflighted by
@@ -6548,7 +6589,29 @@ pub(crate) fn pay_effect_mana(
     generic: u8,
     state: &mut GameState,
 ) -> bool {
-    let Some(plan) = effect_mana_plan(player, colored, generic, state) else {
+    pay_effect_mana_v1(player, colored, generic, state, false)
+}
+
+/// Commits the plan preflighted by `can_pay_effect_cast_mana`.
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+pub(crate) fn pay_effect_cast_mana(
+    player: PlayerId,
+    colored: &[mana::ManaColor],
+    generic: u8,
+    state: &mut GameState,
+    artifact_spell: bool,
+) -> bool {
+    pay_effect_mana_v1(player, colored, generic, state, !artifact_spell)
+}
+
+fn pay_effect_mana_v1(
+    player: PlayerId,
+    colored: &[mana::ManaColor],
+    generic: u8,
+    state: &mut GameState,
+    nonartifact_cast: bool,
+) -> bool {
+    let Some(plan) = effect_mana_plan(player, colored, generic, state, nonartifact_cast) else {
         return false;
     };
     for (id, color) in plan.treasures {
@@ -9302,7 +9365,7 @@ fn controlled_permanent_sacrifice_needed(
     {
         return Some((1, PermanentFilter::Creature));
     }
-    // An alternative cost that sacrifices permanents (Demand Answers).
+    // An alternative cost that sacrifices permanents (Mine Collapse).
     #[cfg(feature = "eternal-fixtures")]
     if pending.cast_mode == Some(CastMode::Alternative) {
         if let Some(sacrifice) = def
@@ -9312,20 +9375,32 @@ fn controlled_permanent_sacrifice_needed(
             return Some(sacrifice);
         }
     }
+    // A choice between two additional costs (#715): the chosen mode's
+    // sacrifice, if that mode sacrifices.
+    if crate::eternal_cost_choice_v1::applies(def) {
+        return crate::eternal_cost_choice_v1::sacrifice(def, pending.mode_chosen);
+    }
     def.additional_cost
         .and_then(controlled_permanent_sacrifice_in)
 }
 
 /// The number of cards `def`'s additional cost discards in `pending`'s
-/// cast. Demand Answers' alternative cost replaces its discard.
+/// cast. Bitter Triumph's alternative cost replaces its discard. A card
+/// with a choice between two additional costs discards only in the mode
+/// whose cost is the discard (`eternal_cost_choice_v1`).
 fn additional_discard_count(def: &card_def::CardDef, pending: &PendingCast) -> Option<u8> {
     #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_pauper_e6b_v1::alternative_skips_additional_cost(
+    if crate::eternal_legacy_e8a_v1::alternative_skips_additional_cost(
         def,
         pending.cast_mode == Some(CastMode::Alternative),
     ) || crate::eternal_pauper_e8b_v1::skips_additional_cost(def, pending.is_flashback)
     {
         return None;
+    }
+    if let Some(count) =
+        crate::eternal_cost_choice_v1::additional_discard_count(def, pending.mode_chosen)
+    {
+        return count;
     }
     // Sickening Dreams: "discard X cards" (Premodern wave P1b).
     if let Some(count) = crate::eternal_premodern_p1b_v1::statics::additional_discard_count(
@@ -11036,21 +11111,33 @@ fn is_castable_now(
     }
 
     match cast_method {
-        CastMethodV4::Flashback => spell_costs_v1::selected_spell_quote_v1(
-            def,
-            id,
-            state.objects.get(id).zone,
-            cast_method,
-            false,
-            0,
-            0,
-            &[],
-            &[],
-            player,
-            state,
-            &[],
-        )
-        .is_some(),
+        CastMethodV4::Flashback => {
+            // A card with a choice between two additional costs (#715) is
+            // castable while either cost is payable; every other card is
+            // quoted in its first mode, as before.
+            let modes: &[u8] = if crate::eternal_cost_choice_v1::applies(def) {
+                &[0, 1]
+            } else {
+                &[0]
+            };
+            modes.iter().any(|&mode| {
+                spell_costs_v1::selected_spell_quote_v1(
+                    def,
+                    id,
+                    state.objects.get(id).zone,
+                    cast_method,
+                    false,
+                    mode,
+                    0,
+                    &[],
+                    &[],
+                    player,
+                    state,
+                    &[],
+                )
+                .is_some()
+            })
+        }
         CastMethodV4::Escape => {
             (def.escape.is_some() || crate::eternal_lurrus_v1::granted_escape_cost(def).is_some())
                 && def.additional_cost.is_none()
@@ -12016,7 +12103,11 @@ fn available_mana_ability_choices_unreplaced_into(
                 source,
                 primary_ability_count + index,
                 additional.ability,
-                Some(additional.mana_cost),
+                Some(crate::eternal_cube_c4a_v1::reduce_artifact_activation(
+                    state,
+                    source,
+                    additional.mana_cost,
+                )),
                 state,
             )
         {
@@ -12611,7 +12702,12 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
 
         let mana_plan = additional
             .map(|ability| {
-                mana::can_pay_excluding_source(&ability.mana_cost, 0, player, state, source)
+                let cost = crate::eternal_cube_c4a_v1::reduce_artifact_activation(
+                    state,
+                    source,
+                    ability.mana_cost,
+                );
+                mana::can_pay_excluding_source(&cost, 0, player, state, source)
                     .ok_or_else(|| "additional mana-ability cost became unpayable".to_string())
             })
             .transpose()?;
@@ -25703,6 +25799,8 @@ pub(crate) fn finish_combat_damage_events_v38(state: &mut GameState, event_start
         let events = state.engine.event_log[event_start..].to_vec();
         crate::eternal_lurrus_v1::note_combat_damage(state, &events);
         crate::eternal_vintage_e7b_v1::note_combat_damage(state, &events);
+        // Umezawa's Jitte's and Kaldra Compleat's combat damage triggers.
+        crate::eternal_cube_c4c_v1::note_combat_damage(state, &events);
     }
     collect_and_queue_triggers(state);
 }
@@ -28980,7 +29078,11 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
                 })
         })
         || (cfg!(feature = "eternal-fixtures")
-            && crate::eternal_pauper_e6b_v1::observes_attacks(state));
+            && (crate::eternal_pauper_e6b_v1::observes_attacks(state)
+                // Glimmer Lens counts every declared attacker.
+                || crate::eternal_cube_c4c_v1::observes_attacks(state)
+                // Okoye watches the creature her trigger chose.
+                || crate::eternal_cube_c4b_v1::observes_attacks(state)));
     for source in state.engine.combat.attackers.clone() {
         let object = state.objects.get(source);
         if cfg!(all(
@@ -29154,6 +29256,9 @@ fn apply_declare_blockers(
     crate::eternal_pauper_e8b_v1::note_blockers_declared(state);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_premodern_p1a_v1::note_blockers_declared(state);
+    // Smuggler's Copter's "whenever this Vehicle blocks".
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c4c_v1::note_blockers_declared(state);
     collect_and_queue_triggers(state);
     reset_priority(state);
     Ok(())

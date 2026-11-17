@@ -362,18 +362,10 @@ fn form(state: &GameState, id: ObjectId) -> Result<FormV53, RlContractError> {
             .map(str::to_owned)
             .collect(),
         mana_value: crate::engine::object_mana_value(state, id),
-        types: [
-            CardType::Land,
-            CardType::Creature,
-            CardType::Instant,
-            CardType::Sorcery,
-            CardType::Artifact,
-            CardType::Enchantment,
-            CardType::Planeswalker,
-        ]
-        .into_iter()
-        .filter(|kind| crate::engine::object_has_type(state, id, *kind))
-        .collect(),
+        types: CardType::ALL
+            .into_iter()
+            .filter(|kind| crate::engine::object_has_type(state, id, *kind))
+            .collect(),
         supertypes: crate::engine::effective_supertypes(state, id)
             .iter()
             .map(|kind| match kind {
