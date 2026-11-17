@@ -1161,6 +1161,54 @@ fn opalescence_animates_the_other_non_aura_enchantments() {
 }
 
 #[test]
+fn dread_return_sacrificing_rest_in_peace_under_opalescence_exiles_all_three() {
+    // Opalescence makes Rest in Peace a creature, so Dread Return's flashback
+    // can sacrifice it with two other creatures. The three sacrifices are one
+    // event (614.1, 614.6): Rest in Peace's replacement exists immediately
+    // before it and exiles all three, itself included, whichever is chosen
+    // first.
+    for seat in [P0, P1] {
+        for rest_first in [true, false] {
+            let mut state = islands();
+            state.active_player = seat;
+            state.priority_player = seat;
+            let opalescence = put(&mut state, seat, "Opalescence", Zone::Hand);
+            enter(&mut state, opalescence);
+            settled(&mut state);
+            let rest = put(&mut state, seat, "Rest in Peace", Zone::Battlefield);
+            assert!(is_creature(&state, rest));
+            let first = put(&mut state, seat, "Llanowar Elves", Zone::Battlefield);
+            let second = put(&mut state, seat, "Llanowar Elves", Zone::Battlefield);
+            let dread = put(&mut state, seat, "Dread Return", Zone::Graveyard);
+            let giant = put(&mut state, seat, "Lotleth Giant", Zone::Graveyard);
+            let mut chosen = vec![rest, first, second];
+            if !rest_first {
+                chosen.rotate_left(1);
+            }
+            act(&mut state, Action::CastSpell(dread));
+            choose_target(&mut state, Target::Object(giant));
+            for &member in &chosen {
+                match next(&mut state) {
+                    Decision::ChooseCostTargets { candidates, .. } => {
+                        assert!(candidates.contains(&member));
+                        act(&mut state, Action::ChooseCostTarget(member));
+                    }
+                    other => panic!("expected the flashback sacrifice, got {other:?}"),
+                }
+            }
+            let case = format!("{seat:?} rest_first={rest_first}");
+            for member in chosen {
+                assert_eq!(zone(&state, member), Zone::Exile, "{case}");
+            }
+            // Lotleth Giant's entry trigger targets an opponent.
+            settle_picking(&mut state, 0, None);
+            assert_eq!(zone(&state, giant), Zone::Battlefield, "{case}");
+            assert_eq!(zone(&state, dread), Zone::Exile, "{case}");
+        }
+    }
+}
+
+#[test]
 fn opalescence_ignores_a_permanent_that_stopped_being_an_enchantment() {
     let mut state = islands();
     let first = put(&mut state, P0, "Opalescence", Zone::Hand);

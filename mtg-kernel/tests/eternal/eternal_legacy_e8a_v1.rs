@@ -1040,10 +1040,13 @@ fn emperor_of_bones_exiles_at_combat_and_reanimates_when_it_adapts() {
 
 #[test]
 fn a_finality_counter_exiles_before_dauthi_voidwalker_whichever_way_it_dies() {
-    // A creature with a finality counter that would die is exiled by it, a
-    // general replacement the engine applies first (616.1), so an opposing
-    // Dauthi Voidwalker's replacement no longer applies: no void counter.
-    // Dying to state-based actions and being destroyed by a spell agree.
+    // A creature with a finality counter that would die is exiled by it. The
+    // engine applies that general replacement first and offers no choice of
+    // order, although under 616.1 the creature's controller, who also
+    // controls the Dauthi Voidwalker, would choose. So the Voidwalker's
+    // replacement (the card's owner is its opponent) no longer applies: no
+    // void counter. Dying to state-based actions and being destroyed by a
+    // spell agree.
     for (seat, other) in [(P0, P1), (P1, P0)] {
         for by_spell in [false, true] {
             let mut state = islands();
