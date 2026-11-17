@@ -288,8 +288,9 @@ New, each built once in the first wave that needs it:
   whose only cost is the disturb cost; the spell enters transformed, and Luminous Phantom
   is exiled instead of going to a graveyard). `CostComponent::TapUntappedControlledPermanentsV1`
   pays Battle Screech's flashback; Demand Answers' "sacrifice an artifact or discard a
-  card" is its discard additional cost, or an alternative cost of the same mana plus the
-  sacrifice that skips the discard. Connive and Malevolent Rumble's reveal use
+  card" is a choice between two additional costs, carried as its two modes (see "Choice
+  between additional costs" under Vintage Cube; before #715 the sacrifice was an alternative
+  cost). Connive and Malevolent Rumble's reveal use
   `E3ChoiceKindV1::E6bV1`; endure is an option list; Dawnbringer Cleric is a modal entry
   trigger; Greatsword of Tyr's attack trigger, Idyllic Grange's "enters untapped" and
   Martyr's Soul's "no tapped lands" are E6b trigger conditions. New target shapes: a
@@ -2472,11 +2473,10 @@ C1b:
 - Hymn to Tourach and Mind Twist discard at random through `GameState::random_hand_cards_v1`,
   all cards at once.
 - Bloodchief's Thirst: kicker {2}{B} widens its target (`kicked_target_spec`).
-- Bone Shards (Partial): its "sacrifice a creature or discard a card" additional cost has
-  Demand Answers' shape (the discard is the additional cost; the sacrifice is an alternative
-  cost of the same mana that skips the discard). A cast for another alternative cost, such as
-  flashback granted by Snapcaster Mage, therefore cannot choose the sacrifice. Full needs a
-  choice between additional costs (Eaten Alive has a module of its own for that).
+- Bone Shards: its "sacrifice a creature or discard a card" additional cost is a choice between
+  two additional costs, carried as the spell's two modes (see "Choice between additional costs"
+  below). Wave C1 registered it Partial with Demand Answers' earlier shape, where the sacrifice
+  was an alternative cost; #715 made it Full.
 - Chain of Smog: the target player chooses two cards to discard, then may copy the spell for
   any player (Chain of Vapor's copy). The copy is free, so a policy that always copies never
   stops; session games play the card under the random policy only.
@@ -2537,6 +2537,25 @@ to the events after its own (Pest Infestation naming Rest in Peace first, as eve
 Each sub-module's test file covers every card's printed text in rules tests (costs, both sides of
 each condition, illegal targets) and plays decks of its cards through public schema-5 sessions
 in both seats under ranked and seeded random policies with replay checks.
+
+### Choice between additional costs (#715)
+
+Bone Shards ("sacrifice a creature or discard a card"), Demand Answers ("sacrifice an artifact or
+discard a card") and Bitter Triumph ("discard a card or pay 3 life") each offer two additional
+costs. The caster announces which one they pay together with the spell's other choices, before
+targets and before any payment (601.2b), and the choice holds however the spell is cast. That is
+where and how a mode is chosen, so `eternal_cost_choice_v1` carries the choice as the spell's two
+modes: mode 0 pays the first printed cost and mode 1 the second, both with the card's one target
+shape and program. A mode whose cost cannot be paid is not offered, and with one payable cost
+nothing is asked.
+
+Before #715 the second cost of each card was an alternative cost of the same mana that skipped the
+discard. A cast for another alternative cost could then not choose it: with flashback granted by
+Snapcaster Mage, no card in hand and a creature, Bone Shards was refused although sacrificing the
+creature pays for it. The same held for a cast without paying the mana cost. With the two modes
+all three cards pay either cost on every cast route, and Bone Shards is Full (382 of 540 cube
+cards on main at the time of the change). Each card's `additional_cost` stays its discard, which
+opens the cast's discard stage; the chosen mode names the cost that is really paid.
 
 ### C2: lands and mana
 
