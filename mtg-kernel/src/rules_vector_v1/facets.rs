@@ -109,6 +109,9 @@ impl From<CardType> for CardTypeF {
             CardType::Artifact => CardTypeF::Artifact,
             CardType::Enchantment => CardTypeF::Enchantment,
             CardType::Planeswalker => CardTypeF::Planeswalker,
+            // The frozen v1 vocabulary has no Kindred facet, so a Kindred
+            // card is refused, never described by its other type alone.
+            CardType::Kindred => panic!("the Kindred card type requires its precise successor"),
         }
     }
 }
