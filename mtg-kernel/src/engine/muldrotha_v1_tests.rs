@@ -65,6 +65,17 @@ fn pass(s: &mut GameState, d: Decision) {
     };
     step(s, a).unwrap();
 }
+/// Drives actual turn work until `player`'s first main phase begins.
+pub(crate) fn to_first_main(s: &mut GameState, player: PlayerId) {
+    for _ in 0..160 {
+        let d = next(s);
+        if s.active_player == player && matches!(s.step, Step::Main1) {
+            return;
+        }
+        pass(s, d);
+    }
+    panic!("{player:?}'s first main phase never began");
+}
 pub(crate) fn priority(s: &mut GameState, p: PlayerId) {
     for _ in 0..64 {
         let d = next(s);
@@ -482,19 +493,18 @@ fn budget_spent_in_one_turn_is_unused_in_the_other_players_turn_of_the_round_bot
         validate_state(&s).unwrap();
         // Drive actual turn work to the other player's turn of the same round.
         let round = s.turn;
-        for _ in 0..160 {
-            let d = next(&mut s);
-            if s.active_player == n && matches!(s.step, Step::Main1) {
-                break;
-            }
-            pass(&mut s, d);
-        }
+        to_first_main(&mut s, n);
         assert_eq!(s.active_player, n);
         assert_eq!(s.turn, round, "the same round");
         let elf = put(&mut s, n, "Llanowar Elves", Zone::Graveyard);
         assert!(permissions(&s, elf, n)
             .iter()
             .any(|q| q.source.source == m && q.permanent_type == CardType::Creature));
+        // The frozen V71 public facts still label the budget by round, as
+        // before: the one case where they differ from the rules by design.
+        let facts = crate::muldrotha_public_v71::capture(&s, n).unwrap();
+        assert_eq!(facts.budgets.len(), 1);
+        assert_eq!(facts.budgets[0].spent, [CardType::Creature]);
         pay(&mut s, n, elf, Some((m, CardType::Creature)), None);
         finish(&mut s);
         assert_eq!(s.objects.get(elf).zone, Zone::Battlefield);

@@ -107,3 +107,26 @@ fn paid_final_forms_preserve_enchantment_bestow_and_creature_adventure_both_seat
         }
     }
 }
+
+#[test]
+fn spent_budget_keeps_its_round_label_in_the_other_players_turn_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = native::ready(p, "Island");
+        let n = p.opponent();
+        let source = native::paid(&mut s, p);
+        let card = put(&mut s, p, "Llanowar Elves", Zone::Graveyard);
+        native::pay(&mut s, p, card, Some((source, CardType::Creature)), None);
+        native::finish(&mut s);
+        let round = s.turn;
+        native::to_first_main(&mut s, n);
+        assert_eq!(s.turn, round, "the same round");
+        // The frozen V71 facts report the budget as spent for the whole round
+        // (`spent_in_round`), exactly as before #741, for both viewers.
+        for viewer in [p, n] {
+            let f = capture(&s, viewer).unwrap();
+            assert_eq!(f.budgets.len(), 1);
+            assert_eq!(f.budgets[0].spent, [CardType::Creature]);
+            assert!(!f.budgets[0].active_own_turn);
+        }
+    }
+}

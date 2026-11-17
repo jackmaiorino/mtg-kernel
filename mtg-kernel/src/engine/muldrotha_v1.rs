@@ -255,6 +255,21 @@ fn spent(state: &GameState, permission: PermissionV1, turn: (u32, PlayerId)) -> 
             && played.permission.permanent_type == permission.permanent_type)
     })
 }
+/// Whether `permission` was used in any turn of round key `round`. Only the
+/// public facts read this: the frozen V71 and V72 observation contracts
+/// (Muldrotha, Tinybones compatibility, the human prompt) report a budget as
+/// spent for the whole round, so they stay byte-identical. That label differs
+/// from the rules answer only for a Muldrotha whose control changed within the
+/// round; the next feature contract version corrects it (#740).
+fn spent_in_round(state: &GameState, permission: PermissionV1, round: u32) -> bool {
+    state.engine.event_history.iter().any(|event| {
+        matches!(event,
+        CommittedEvent::MuldrothaPlayedV1 { played }
+        if played.turn == round && played.permission.source.source == permission.source.source
+            && played.permission.source.zone_change_count == permission.source.zone_change_count
+            && played.permission.permanent_type == permission.permanent_type)
+    })
+}
 pub(super) fn permissions(
     state: &GameState,
     card: ObjectId,
@@ -1044,13 +1059,13 @@ fn public_facts_counter_scope_v72(
         let mut unused = Vec::new();
         let mut used = Vec::new();
         for permanent_type in TYPES {
-            if spent(
+            if spent_in_round(
                 state,
                 PermissionV1 {
                     source,
                     permanent_type,
                 },
-                state.turn_id_v1(),
+                state.turn_key_v1(),
             ) {
                 used.push(permanent_type)
             } else {
