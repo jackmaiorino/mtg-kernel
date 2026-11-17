@@ -861,6 +861,36 @@ pub(crate) fn with_collection_opponent_cache_limits_for_test_v1<T>(
     result
 }
 
+/// A count of transient-slot serves shared across threads (tests only).
+#[cfg(test)]
+type TransientHitsForTestV1 = std::sync::Arc<std::sync::atomic::AtomicU64>;
+
+#[cfg(test)]
+thread_local! {
+    /// The counter of transient-slot serves that collection or replay caches
+    /// this test thread builds share, wherever they are used.
+    static TRANSIENT_HITS_FOR_TEST_V1: std::cell::RefCell<Option<TransientHitsForTestV1>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn transient_hits_counter_for_test_v1() -> Option<TransientHitsForTestV1> {
+    TRANSIENT_HITS_FOR_TEST_V1.with(|counter| counter.borrow().clone())
+}
+
+/// Runs `body` and returns its result with the number of loads served from
+/// the transient slot of every collection or replay cache this thread builds
+/// meanwhile, including caches moved to collector threads. The diagnostics
+/// counters cannot show those: in tests they are per thread.
+#[cfg(test)]
+pub(crate) fn count_collection_transient_hits_for_test_v1<T>(body: impl FnOnce() -> T) -> (T, u64) {
+    let counter = TransientHitsForTestV1::default();
+    let previous = TRANSIENT_HITS_FOR_TEST_V1.with(|slot| slot.replace(Some(counter.clone())));
+    let result = body();
+    TRANSIENT_HITS_FOR_TEST_V1.with(|slot| *slot.borrow_mut() = previous);
+    (result, counter.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 pub(crate) fn configured_collection_opponent_cache_limits_v1() -> (usize, usize) {
     #[cfg(test)]
     {
@@ -927,9 +957,12 @@ fn collection_entry_standalone_charge_v1(entry: &LoadedOpponentV1) -> usize {
 
 struct OpponentCacheV1 {
     entries: Vec<LoadedOpponentV1>,
-    /// Uncached caller borrow slot when an entry exceeds `budget_bytes` or
-    /// `entry_limit == 0`. A load of the same source serves it again; a load
-    /// of any other source, or drop, clears it.
+    /// Uncached caller borrow slot: the last entry `insert` refused because it
+    /// exceeds `budget_bytes` or `entry_limit == 0`. A load of its source
+    /// serves it again, as a kept entry is served, without a revalidation or
+    /// reload. The next refused entry replaces it; a kept entry of its source,
+    /// a load of any other source, or drop clears it. A kept entry of another
+    /// source leaves it in place.
     transient: Option<LoadedOpponentV1>,
     entry_limit: usize,
     budget_bytes: usize,
@@ -943,6 +976,11 @@ struct OpponentCacheV1 {
     /// The command's training math, which every loaded opponent plays
     /// under ([`bind_opponent_math_v1`]).
     training_math: TrainingMathV1,
+    /// The counter of transient-slot serves of the test thread that built
+    /// this cache, if it counts them
+    /// ([`count_collection_transient_hits_for_test_v1`]).
+    #[cfg(test)]
+    transient_hits_for_test: Option<TransientHitsForTestV1>,
 }
 
 impl Default for OpponentCacheV1 {
@@ -969,6 +1007,8 @@ impl OpponentCacheV1 {
             models: Vec::new(),
             mode: OpponentCacheModeV1::Unverified,
             training_math: TrainingMathV1::PlatformLibm,
+            #[cfg(test)]
+            transient_hits_for_test: transient_hits_counter_for_test_v1(),
         }
     }
 
@@ -983,6 +1023,8 @@ impl OpponentCacheV1 {
             models: Vec::new(),
             mode: OpponentCacheModeV1::CollectionVerified(verified_sources),
             training_math: TrainingMathV1::PlatformLibm,
+            #[cfg(test)]
+            transient_hits_for_test: transient_hits_counter_for_test_v1(),
         }
     }
 
@@ -997,6 +1039,8 @@ impl OpponentCacheV1 {
             models: Vec::new(),
             mode: OpponentCacheModeV1::ReplayRevalidated,
             training_math: TrainingMathV1::PlatformLibm,
+            #[cfg(test)]
+            transient_hits_for_test: transient_hits_counter_for_test_v1(),
         }
     }
 
@@ -1075,6 +1119,15 @@ impl OpponentCacheV1 {
             self.transient = Some(entry);
             return false;
         }
+        // A refused policy of this source in the transient slot is stale now:
+        // `load` looks there first and would serve it instead of this entry.
+        if self
+            .transient
+            .as_ref()
+            .is_some_and(|held| held.behavior.source == entry.behavior.source)
+        {
+            self.transient = None;
+        }
         let own = collection_entry_charge_v1(&entry);
         while self.entries.len() >= self.entry_limit
             || self
@@ -1121,6 +1174,12 @@ impl OpponentCacheV1 {
             stats.hits.add(1);
             stats.transient_hits.add(1);
             stats.hit_nanos.add_elapsed(started);
+            #[cfg(test)]
+            {
+                if let Some(count) = &self.transient_hits_for_test {
+                    count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
             return self
                 .transient
                 .as_mut()

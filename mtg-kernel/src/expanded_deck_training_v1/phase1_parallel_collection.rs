@@ -766,18 +766,27 @@ mod tests {
                 .map(|pin| fs::read(&pin.path).unwrap())
                 .collect()
         };
-        let reference = collect("default");
+        // The collector caches are built on this thread and used on the
+        // workers'; the shared count of their transient-slot serves shows the
+        // limits reached them: each episode's fork is refused and then served
+        // from the slot.
+        let limited = |entries: usize, budget_bytes: usize, label: &str| {
+            super::super::with_collection_opponent_cache_limits_for_test_v1(
+                entries,
+                budget_bytes,
+                || super::super::count_collection_transient_hits_for_test_v1(|| collect(label)),
+            )
+        };
+        let (reference, reference_transient_hits) =
+            super::super::count_collection_transient_hits_for_test_v1(|| collect("default"));
         assert_eq!(reference.len(), episodes.len());
-        let zero_entries =
-            super::super::with_collection_opponent_cache_limits_for_test_v1(0, 256 << 20, || {
-                collect("zero-entries")
-            });
+        assert_eq!(reference_transient_hits, 0);
+        let (zero_entries, zero_entries_transient_hits) = limited(0, 256 << 20, "zero-entries");
         assert_eq!(zero_entries, reference);
-        let sub_fork_budget =
-            super::super::with_collection_opponent_cache_limits_for_test_v1(8, 1024, || {
-                collect("sub-fork-budget")
-            });
+        assert_eq!(zero_entries_transient_hits, episodes.len() as u64);
+        let (sub_fork_budget, sub_fork_transient_hits) = limited(8, 1024, "sub-fork-budget");
         assert_eq!(sub_fork_budget, reference);
+        assert_eq!(sub_fork_transient_hits, episodes.len() as u64);
     }
 
     /// Mirrors `expanded_deck_training_v1::tests::

@@ -737,6 +737,74 @@ fn a_policy_that_cannot_be_forked_is_charged_for_its_model_v1() {
     fs::remove_dir_all(&root).unwrap();
 }
 
+/// A kept entry of the source the transient slot holds supersedes the refused
+/// policy there: the next load serves the kept entry, not the stale one.
+#[test]
+fn a_kept_entry_supersedes_the_transient_slot_of_its_source() {
+    on_large_stack_v1(a_kept_entry_supersedes_the_transient_slot_of_its_source_v1);
+}
+
+fn a_kept_entry_supersedes_the_transient_slot_of_its_source_v1() {
+    use super::super::loaded_source_profile_v1::LoadRoleV1;
+    use super::super::{
+        collection_entry_standalone_charge_v1, ExpandedSeatBehaviorV1, LoadedOpponentV1,
+        OpponentCacheV1,
+    };
+    use ordered_update_preparation::full_load_opponent_v1;
+
+    let root = std::env::temp_dir().join(format!(
+        "opponent-cache-transient-superseded-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let (source, _) = fresh_source_v1(&root);
+    let (policy, identity) = full_load_opponent_v1(&source, LoadRoleV1::Opponent).unwrap();
+    let fork = policy.fork_for_collection_v3().unwrap();
+    let refused = LoadedOpponentV1 {
+        policy,
+        behavior: ExpandedSeatBehaviorV1 {
+            source: source.clone(),
+            identity: identity.clone(),
+        },
+    };
+    let kept = LoadedOpponentV1 {
+        policy: fork,
+        behavior: ExpandedSeatBehaviorV1 {
+            source: source.clone(),
+            identity,
+        },
+    };
+    let standalone = collection_entry_standalone_charge_v1(&kept);
+    assert_eq!(collection_entry_standalone_charge_v1(&refused), standalone);
+    let counters = counters_v1();
+    {
+        // A budget one byte below the entry's charge refuses it into the
+        // transient slot.
+        let mut col = OpponentCacheV1::with_limits_v1(8, standalone - 1);
+        assert!(!col.insert(refused));
+        assert!(col.transient.is_some());
+        // With room for it, an entry of the same source is kept and the
+        // refused policy leaves the slot.
+        col.budget_bytes = standalone;
+        assert!(col.insert(kept));
+        assert!(col.contains(&source));
+        assert!(col.transient.is_none());
+        let transient_before = counters.collection_opponent.transient_hits.get();
+        let hits_before = counters.collection_opponent.hits.get();
+        let served: *const LoadedOpponentV1 = col.load(&source).unwrap();
+        let kept_entry: *const LoadedOpponentV1 = col.entries.last().unwrap();
+        assert_eq!(served, kept_entry);
+        assert_eq!(counters.collection_opponent.transient_hits.get(), transient_before);
+        assert_eq!(counters.collection_opponent.hits.get() - hits_before, 1);
+    }
+    fs::remove_dir_all(&root).unwrap();
+}
+
 #[test]
 fn the_process_opponent_cache_counts_checkpoint_decodes() {
     on_large_stack_v1(the_process_opponent_cache_counts_checkpoint_decodes_v1);
