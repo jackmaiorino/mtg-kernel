@@ -553,9 +553,14 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 }
 
 /// Prismari Charm's second mode: "Prismari Charm deals 1 damage to each of
-/// one or two targets."
+/// one or two targets." Bone Shards, Demand Answers and Bitter Triumph: the
+/// second of their two additional costs, with the card's own target shape
+/// and program (`eternal_cost_choice_v1`, #715).
 pub(super) fn mode2_for(name: &str) -> &'static str {
     match name {
+        "Bone Shards" => "Some(ModeDef { target_spec: TargetSpec::CreatureOrPlaneswalker, effect: crate::eternal_cost_choice_v1::bone_shards_second_cost })",
+        "Demand Answers" => "Some(ModeDef { target_spec: TargetSpec::None, effect: crate::eternal_cost_choice_v1::demand_answers_second_cost })",
+        "Bitter Triumph" => "Some(ModeDef { target_spec: TargetSpec::CreatureOrPlaneswalker, effect: crate::eternal_cost_choice_v1::bitter_triumph_second_cost })",
         "Prismari Charm" => "Some(ModeDef { target_spec: TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::OneOrTwoAnyTargetsV1), effect: crate::eternal_cards_v1::prismari_charm_damage })",
         _ => super::build_eternal_lurrus_v1::mode2_for(name),
     }

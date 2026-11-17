@@ -9307,20 +9307,27 @@ fn controlled_permanent_sacrifice_needed(
             return Some(sacrifice);
         }
     }
+    // A choice between two additional costs (#715): the chosen mode's
+    // sacrifice, if that mode sacrifices.
+    if crate::eternal_cost_choice_v1::applies(def) {
+        return crate::eternal_cost_choice_v1::sacrifice(def, pending.mode_chosen);
+    }
     def.additional_cost
         .and_then(controlled_permanent_sacrifice_in)
 }
 
 /// The number of cards `def`'s additional cost discards in `pending`'s
-/// cast. Demand Answers' alternative cost replaces its discard.
+/// cast. A card with a choice between two additional costs discards only
+/// in the mode whose cost is the discard (`eternal_cost_choice_v1`).
 fn additional_discard_count(def: &card_def::CardDef, pending: &PendingCast) -> Option<u8> {
     #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_pauper_e6b_v1::alternative_skips_additional_cost(
-        def,
-        pending.cast_mode == Some(CastMode::Alternative),
-    ) || crate::eternal_pauper_e8b_v1::skips_additional_cost(def, pending.is_flashback)
-    {
+    if crate::eternal_pauper_e8b_v1::skips_additional_cost(def, pending.is_flashback) {
         return None;
+    }
+    if let Some(count) =
+        crate::eternal_cost_choice_v1::additional_discard_count(def, pending.mode_chosen)
+    {
+        return count;
     }
     // Sickening Dreams: "discard X cards" (Premodern wave P1b).
     if let Some(count) = crate::eternal_premodern_p1b_v1::statics::additional_discard_count(
@@ -11031,21 +11038,33 @@ fn is_castable_now(
     }
 
     match cast_method {
-        CastMethodV4::Flashback => spell_costs_v1::selected_spell_quote_v1(
-            def,
-            id,
-            state.objects.get(id).zone,
-            cast_method,
-            false,
-            0,
-            0,
-            &[],
-            &[],
-            player,
-            state,
-            &[],
-        )
-        .is_some(),
+        CastMethodV4::Flashback => {
+            // A card with a choice between two additional costs (#715) is
+            // castable while either cost is payable; every other card is
+            // quoted in its first mode, as before.
+            let modes: &[u8] = if crate::eternal_cost_choice_v1::applies(def) {
+                &[0, 1]
+            } else {
+                &[0]
+            };
+            modes.iter().any(|&mode| {
+                spell_costs_v1::selected_spell_quote_v1(
+                    def,
+                    id,
+                    state.objects.get(id).zone,
+                    cast_method,
+                    false,
+                    mode,
+                    0,
+                    &[],
+                    &[],
+                    player,
+                    state,
+                    &[],
+                )
+                .is_some()
+            })
+        }
         CastMethodV4::Escape => {
             (def.escape.is_some() || crate::eternal_lurrus_v1::granted_escape_cost(def).is_some())
                 && def.additional_cost.is_none()

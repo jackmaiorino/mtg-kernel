@@ -33,8 +33,8 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::StandardV1(crate::standard_cards_v1::StandardTargetV1::CreatureOrPlaneswalkerManaValueAtMostV1(2))",
             "crate::eternal_cube_c1b_v1::bloodchiefs_thirst",
         )),
-        // Its sacrifice-or-discard additional cost is `additional_cost_for`
-        // and `alt_cost_for` below (the Demand Answers shape).
+        // Its sacrifice-or-discard additional cost is its two modes
+        // (`build_eternal_v1::mode2_for`, `eternal_cost_choice_v1`).
         "Bone Shards" => Some(spell(
             "TargetSpec::CreatureOrPlaneswalker",
             "crate::eternal_cube_c1b_v1::bone_shards",
@@ -116,19 +116,17 @@ pub(super) fn flashback_for(name: &str) -> String {
     super::build_eternal_c1c_v1::flashback_for(name)
 }
 
-/// Bone Shards: "As an additional cost to cast this spell, sacrifice a
-/// creature or discard a card." Discarding is the additional cost
-/// (`additional_cost_for`), and the sacrifice is the alternative cost of the
-/// same mana, which then skips the discard (Demand Answers' shape).
+/// No C1b card has an alternative cost. Bone Shards' "sacrifice a creature
+/// or discard a card" is a choice between two additional costs, carried as
+/// its two modes (`eternal_cost_choice_v1`).
 pub(super) fn alt_cost_for(name: &str) -> &'static str {
-    match name {
-        "Bone Shards" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::B)], generic: 0, x_count: 0 }), CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Creature }], condition: AltCostCondition::Always })",
-        _ => super::build_eternal_c1c_v1::alt_cost_for(name),
-    }
+    super::build_eternal_c1c_v1::alt_cost_for(name)
 }
 
-/// Mandatory additional costs. Bone Shards: "discard a card" (its sacrifice
-/// branch is the alternative cost). Collective Brutality: its escalate cost,
+/// Mandatory additional costs. Bone Shards: the discard of its choice
+/// between two additional costs, which opens the cast's discard stage; the
+/// chosen mode names the cost really paid (`eternal_cost_choice_v1`).
+/// Collective Brutality: its escalate cost,
 /// "discard a card" for each mode beyond the first; the marker discard here
 /// is replaced by the mode's own count
 /// (`eternal_cube_c1b_v1::additional_discard_count`). Natural Order:

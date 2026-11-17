@@ -2554,12 +2554,6 @@ pub(crate) fn first_spell_this_game(state: &GameState, player: PlayerId) -> bool
     !read_state(state).is_some_and(|e8a| e8a.spells_cast[player.index()])
 }
 
-/// Bitter Triumph's "pay 3 life" branch is its alternative cost, which
-/// replaces the discard.
-pub(crate) fn alternative_skips_additional_cost(definition: &CardDef, alternative: bool) -> bool {
-    alternative && definition.name == "Bitter Triumph"
-}
-
 /// Cloak and Dagger: the cards it exiled return once it leaves the
 /// battlefield (`left_zone_change_count` is its battlefield incarnation).
 /// Called from the zone-change commit, so the return is immediate.

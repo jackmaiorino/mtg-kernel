@@ -23,7 +23,6 @@ use crate::state::{GameState, Target, Zone};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
-const BONE_SHARDS: &str = "Bone Shards";
 const COLLECTIVE_BRUTALITY: &str = "Collective Brutality";
 const PEST_INFESTATION: &str = "Pest Infestation";
 const PEST_TOKEN: &str = "Pest Token";
@@ -205,8 +204,8 @@ pub fn bloodchiefs_thirst() -> EffectOp {
     destroy_target()
 }
 
-/// Bone Shards: "Destroy target creature or planeswalker." Its additional
-/// cost is the card's own (`additional_cost` and `alt_cost`).
+/// Bone Shards: "Destroy target creature or planeswalker." Its choice
+/// between two additional costs is its two modes (`eternal_cost_choice_v1`).
 pub fn bone_shards() -> EffectOp {
     destroy_target()
 }
@@ -316,14 +315,6 @@ pub fn tamiyos_safekeeping() -> EffectOp {
 }
 
 // ---- Costs ----------------------------------------------------------------------------
-
-/// Bone Shards' sacrifice branch is its alternative cost, which replaces
-/// the discard: whether a cast of `definition` (for its alternative cost if
-/// `alternative`) skips its additional cost (the shape of
-/// `eternal_pauper_e6b_v1::alternative_skips_additional_cost`).
-pub(crate) fn alternative_skips_additional_cost(definition: &CardDef, alternative: bool) -> bool {
-    alternative && definition.name == BONE_SHARDS
-}
 
 /// The cards escalate makes `mode` of Collective Brutality discard: one for
 /// each chosen mode beyond the first. Mode `m` chooses the modes of the
