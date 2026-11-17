@@ -8,6 +8,7 @@
 use crate::eternal_catalog_v1::{play_observed, Policy};
 use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
+use mtg_kernel::event::{propose_and_commit, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
 use mtg_kernel::mana::ManaColor;
@@ -650,6 +651,142 @@ fn flagbearers_without_their_ability_bind_nothing_both_seats() {
             offered(&mut state).0,
             [Target::Player(P0), Target::Player(P1)]
         );
+    }
+}
+
+#[test]
+fn a_phyrexian_metamorph_copy_of_a_flagbearer_binds_and_is_the_target_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(opponent, "Island");
+        let bearer = put(&mut state, opponent, BEARER, Zone::Battlefield);
+        let elves = put(&mut state, opponent, "Llanowar Elves", Zone::Battlefield);
+        let metamorph = put(&mut state, opponent, "Phyrexian Metamorph", Zone::Hand);
+        pool(&mut state, opponent, &[ManaColor::U], 3);
+        announce(&mut state, metamorph, None);
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Object(bearer)) =>
+            {
+                Action::ChooseEffectTarget(Target::Object(bearer))
+            }
+            other => first_answer(other),
+        });
+        assert_eq!(state.objects.get(metamorph).card_def, id(BEARER));
+        // Only the copy is left to bind the caster and to be targeted.
+        propose_and_commit(&mut state, ProposedEvent::zone_change(bearer, Zone::Graveyard));
+        state.priority_player = actor;
+        let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R], 0);
+        announce(&mut state, bolt, None);
+        assert_eq!(offered(&mut state).0, [Target::Object(metamorph)]);
+        choose_target(&mut state, Target::Object(metamorph));
+        settled(&mut state);
+        assert_eq!(zone(&state, metamorph), Zone::Graveyard);
+        assert_eq!(zone(&state, elves), Zone::Battlefield);
+    }
+}
+
+#[test]
+fn flagbearers_under_dress_down_bind_nothing_and_any_flagbearer_counts_after_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor, "Island");
+        let bearer = put(&mut state, opponent, BEARER, Zone::Battlefield);
+        let guard = put(&mut state, actor, GUARD, Zone::Battlefield);
+        put(&mut state, opponent, "Llanowar Elves", Zone::Battlefield);
+        let dress = put(&mut state, actor, "Dress Down", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U], 1);
+        announce(&mut state, dress, None);
+        settled(&mut state);
+        // Both Flagbearers lost their abilities: nothing is bound.
+        let mut probe = state.clone();
+        let blaze = put(&mut probe, actor, "Searing Blaze", Zone::Hand);
+        pool(&mut probe, actor, &[ManaColor::R, ManaColor::R], 0);
+        announce(&mut probe, blaze, None);
+        assert_eq!(
+            offered(&mut probe).0,
+            [Target::Player(P0), Target::Player(P1)]
+        );
+        // With Dress Down gone and a second opposing Standard Bearer, either
+        // player's Flagbearer satisfies the obligation.
+        propose_and_commit(&mut state, ProposedEvent::zone_change(dress, Zone::Graveyard));
+        let second = put(&mut state, opponent, BEARER, Zone::Battlefield);
+        let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R], 0);
+        announce(&mut state, bolt, None);
+        assert!(same_set(
+            offered(&mut state).0,
+            [bearer, guard, second].map(Target::Object).to_vec()
+        ));
+    }
+}
+
+#[test]
+fn flagbearers_bind_the_last_of_mystic_confluences_three_bounces_both_seats() {
+    // Mode 6: three "return target creature to its owner's hand" slots, each
+    // of which may name what another named.
+    const BOUNCE_BOUNCE_BOUNCE: u8 = 6;
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor, "Island");
+        let bearer = Target::Object(put(&mut state, opponent, BEARER, Zone::Battlefield));
+        let elves = Target::Object(put(
+            &mut state,
+            opponent,
+            "Llanowar Elves",
+            Zone::Battlefield,
+        ));
+        let mystic = put(&mut state, actor, "Mystic Confluence", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U, ManaColor::U], 3);
+        announce(&mut state, mystic, Some(BOUNCE_BOUNCE_BOUNCE));
+        for _ in 0..2 {
+            assert!(same_set(offered(&mut state).0, vec![bearer, elves]));
+            choose_target(&mut state, elves);
+        }
+        assert_eq!(offered(&mut state).0, [bearer]);
+        choose_target(&mut state, bearer);
+        settled(&mut state);
+        let (Target::Object(bearer), Target::Object(elves)) = (bearer, elves) else {
+            unreachable!()
+        };
+        assert_eq!(zone(&state, bearer), Zone::Hand);
+        assert_eq!(zone(&state, elves), Zone::Hand);
+    }
+}
+
+#[test]
+fn flagbearers_bind_fire_covenants_last_payable_pick_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor, "Swamp");
+        state.players[actor.index()].life = 3;
+        let bearer = Target::Object(put(&mut state, opponent, BEARER, Zone::Battlefield));
+        let elves = Target::Object(put(
+            &mut state,
+            opponent,
+            "Llanowar Elves",
+            Zone::Battlefield,
+        ));
+        let covenant = put(&mut state, actor, "Fire Covenant", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::B, ManaColor::R], 1);
+        announce(&mut state, covenant, None);
+        // Zero picks stays legal, and three life allows three picks.
+        let (legal, can_finish) = offered(&mut state);
+        assert!(can_finish);
+        assert!(same_set(legal, vec![bearer, elves]));
+        choose_target(&mut state, elves);
+        let (legal, can_finish) = offered(&mut state);
+        assert!(!can_finish);
+        assert!(same_set(legal, vec![bearer, elves]));
+        choose_target(&mut state, elves);
+        assert_eq!(offered(&mut state), (vec![bearer], false));
+        let hash = state.state_hash();
+        assert!(engine::step(&mut state, Action::FinishEffectSelection).is_err());
+        assert!(engine::step(&mut state, Action::ChooseTarget(elves)).is_err());
+        assert_eq!(state.state_hash(), hash);
+        choose_target(&mut state, bearer);
+        assert_eq!(offered(&mut state), (Vec::new(), true));
     }
 }
 
