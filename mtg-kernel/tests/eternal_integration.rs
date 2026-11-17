@@ -18,6 +18,8 @@ mod eternal_cube_c2b_v1;
 mod eternal_cube_c2c_v1;
 #[path = "eternal/eternal_e9b_v1.rs"]
 mod eternal_e9b_v1;
+#[path = "eternal/eternal_kindred_v1.rs"]
+mod eternal_kindred_v1;
 #[path = "eternal/eternal_legacy_e2_v1.rs"]
 mod eternal_legacy_e2_v1;
 #[path = "eternal/eternal_legacy_e3_v1.rs"]
