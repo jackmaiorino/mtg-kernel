@@ -1601,6 +1601,149 @@ fn bone_shards_cast_by_a_granted_flashback_chooses_either_cost() {
     assert!(!castable(&mut state, shards));
 }
 
+/// #715: a cast without paying the mana cost (Omniscience, no mana in the
+/// pool) still chooses between the two additional costs and pays only the
+/// chosen one.
+#[test]
+fn bone_shards_cast_by_omniscience_chooses_either_cost() {
+    for mode in [0, 1] {
+        let mut state = swamps();
+        put(&mut state, P0, "Omniscience", Zone::Battlefield);
+        let big = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
+        let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+        let spare = put(&mut state, P0, "Island", Zone::Hand);
+        let shards = put(&mut state, P0, "Bone Shards", Zone::Hand);
+        let log = cast_plan(
+            &mut state,
+            shards,
+            &Plan {
+                targets: vec![Target::Object(big)],
+                mode: Some(mode),
+                sacrifice: Some(elves),
+                discard: vec![spare],
+                ..Plan::default()
+            },
+        );
+        assert!(log.contains(&"ChooseSpellMode".to_owned()), "{log:?}");
+        assert!(
+            !log.contains(&"ChooseEffectOption".to_owned()),
+            "no mana, so paying the mana cost is not offered: {log:?}"
+        );
+        let sacrificed = mode == 0;
+        assert_eq!(zone(&state, elves) == Zone::Graveyard, sacrificed, "{mode}");
+        assert_eq!(
+            zone(&state, spare) == Zone::Graveyard,
+            !sacrificed,
+            "{mode}"
+        );
+        assert_eq!(zone(&state, big), Zone::Graveyard);
+        assert_eq!(zone(&state, shards), Zone::Graveyard);
+    }
+}
+
+/// #715: with {B} in the pool Omniscience also offers paying the mana cost.
+/// Declining it (the cast stays free) still chooses either additional cost,
+/// and the {B} stays in the pool.
+#[test]
+fn bone_shards_cast_free_by_omniscience_with_mana_available_chooses_either_cost() {
+    for mode in [0, 1] {
+        let mut state = swamps();
+        put(&mut state, P0, "Omniscience", Zone::Battlefield);
+        let big = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
+        let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+        let spare = put(&mut state, P0, "Island", Zone::Hand);
+        let shards = put(&mut state, P0, "Bone Shards", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::B], 0);
+        assert!(castable(&mut state, shards));
+        act(&mut state, Action::CastSpell(shards));
+        let mut asked = Vec::new();
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectOption { option_count, .. } => {
+                assert_eq!(option_count, 2);
+                asked.push("free");
+                // Option 0 pays the mana cost, option 1 casts it free.
+                Action::ChooseEffectOption(1)
+            }
+            Decision::ChooseSpellMode { legal_modes, .. } => {
+                assert_eq!(legal_modes, vec![0, 1]);
+                asked.push("mode");
+                Action::ChooseSpellMode(mode)
+            }
+            Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Object(big)),
+            Decision::ChooseCostTargets { candidates, .. } => {
+                assert!(candidates.contains(&elves), "{candidates:?}");
+                Action::ChooseCostTarget(elves)
+            }
+            Decision::Discard { choices, .. } => {
+                assert!(choices.contains(&spare), "{choices:?}");
+                Action::Discard(vec![spare])
+            }
+            other => first_answer(other),
+        });
+        assert!(asked.contains(&"free") && asked.contains(&"mode"), "{asked:?}");
+        let sacrificed = mode == 0;
+        assert_eq!(zone(&state, elves) == Zone::Graveyard, sacrificed, "{mode}");
+        assert_eq!(
+            zone(&state, spare) == Zone::Graveyard,
+            !sacrificed,
+            "{mode}"
+        );
+        assert_eq!(zone(&state, big), Zone::Graveyard);
+        assert_eq!(mana(&state, P0, ManaColor::B), 1, "cast free: {mode}");
+    }
+}
+
+/// #715: a copy of Bone Shards cast in its second mode (Chandra, Hope's
+/// Beacon copies it) pays no cost and resolves with the card's target rules:
+/// one card is discarded for two destroyed creatures.
+#[test]
+fn a_copy_of_bone_shards_cast_by_discarding_pays_no_cost() {
+    let mut state = swamps();
+    // A real entry, so Chandra has her loyalty.
+    let chandra = put(&mut state, P0, "Chandra, Hope's Beacon", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(chandra, Zone::Battlefield),
+    );
+    let first = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
+    let second = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let spare = put(&mut state, P0, "Island", Zone::Hand);
+    let other = put(&mut state, P0, "Sol Ring", Zone::Hand);
+    let shards = put(&mut state, P0, "Bone Shards", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    let log = cast_plan(
+        &mut state,
+        shards,
+        &Plan {
+            targets: vec![Target::Object(first)],
+            picks: vec![Target::Object(second)],
+            mode: Some(1),
+            discard: vec![spare],
+            ..Plan::default()
+        },
+    );
+    assert_eq!(log.first().map(String::as_str), Some("ChooseSpellMode"));
+    assert_eq!(
+        log.iter().filter(|kind| *kind == "Discard").count(),
+        1,
+        "{log:?}"
+    );
+    assert!(!log.contains(&"ChooseCostTargets".to_owned()), "{log:?}");
+    let copies = state
+        .objects
+        .iter()
+        .filter_map(|(_, object)| object.spell_copy_origin.map(|origin| origin.parent))
+        .collect::<Vec<_>>();
+    assert_eq!(copies, vec![shards], "Chandra copied it once");
+    assert_eq!(zone(&state, first), Zone::Graveyard, "the first target");
+    assert_eq!(zone(&state, second), Zone::Graveyard, "the copy's target");
+    assert_eq!(zone(&state, spare), Zone::Graveyard, "the one discard");
+    assert_eq!(zone(&state, other), Zone::Hand, "the copy discards nothing");
+    assert_eq!(zone(&state, elves), Zone::Battlefield);
+    assert_eq!(zone(&state, chandra), Zone::Battlefield);
+}
+
 #[test]
 fn bone_shards_destroys_a_planeswalker_and_still_pays_when_it_fizzles() {
     let mut state = swamps();

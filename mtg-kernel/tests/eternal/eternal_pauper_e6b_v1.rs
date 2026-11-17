@@ -1023,6 +1023,88 @@ fn demand_answers_cast_by_a_granted_flashback_may_sacrifice_an_artifact() {
     assert_eq!(state.players[0].hand.len(), 2, "drew two");
 }
 
+/// Answers Demand Answers' cost choice with `mode`, sacrificing `artifact`
+/// or discarding `spare`, and returns the modes offered.
+fn settle_demand_answers(
+    state: &mut GameState,
+    mode: u8,
+    artifact: ObjectId,
+    spare: ObjectId,
+) -> Vec<u8> {
+    let mut modes = Vec::new();
+    settle_with(state, |_, decision| match decision {
+        Decision::ChooseSpellMode { legal_modes, .. } => {
+            modes = legal_modes;
+            Action::ChooseSpellMode(mode)
+        }
+        Decision::ChooseEffectOption { .. } => panic!("no mana, so nothing else is offered"),
+        Decision::ChooseCostTargets { candidates, .. } => {
+            assert!(candidates.contains(&artifact), "{candidates:?}");
+            Action::ChooseCostTarget(artifact)
+        }
+        Decision::Discard { choices, .. } => {
+            assert!(choices.contains(&spare), "{choices:?}");
+            Action::Discard(vec![spare])
+        }
+        other => first_answer(other),
+    });
+    modes
+}
+
+/// Checks that only the cost of `mode` was paid: the artifact for mode 0,
+/// the spare card for mode 1, and that Demand Answers drew two.
+fn assert_demand_answers_paid(state: &GameState, mode: u8, artifact: ObjectId, spare: ObjectId) {
+    let sacrificed = mode == 0;
+    assert_eq!(
+        zone(state, artifact) == Zone::Graveyard,
+        sacrificed,
+        "{mode}"
+    );
+    assert_eq!(zone(state, spare) == Zone::Graveyard, !sacrificed, "{mode}");
+    let kept = usize::from(sacrificed);
+    assert_eq!(state.players[0].hand.len(), 2 + kept, "drew two: {mode}");
+}
+
+/// #715: cast by a granted flashback with both costs payable, the caster
+/// chooses either one.
+#[test]
+fn demand_answers_cast_by_a_granted_flashback_chooses_either_cost() {
+    for mode in [0, 1] {
+        let mut state = plains();
+        let clue = put(&mut state, P0, "Clue Token", Zone::Battlefield);
+        let demand = put(&mut state, P0, "Demand Answers", Zone::Graveyard);
+        let snapcaster = put(&mut state, P0, "Snapcaster Mage", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::U], 1);
+        cast(&mut state, snapcaster, &[]);
+        settle_choosing(&mut state, demand);
+        let spare = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::R], 1);
+        cast(&mut state, demand, &[]);
+        let modes = settle_demand_answers(&mut state, mode, clue, spare);
+        assert_eq!(modes, vec![0, 1]);
+        assert_demand_answers_paid(&state, mode, clue, spare);
+        assert_eq!(zone(&state, demand), Zone::Exile, "flashback exiles it");
+    }
+}
+
+/// #715: a cast without paying the mana cost (Omniscience, no mana in the
+/// pool) still chooses between the two additional costs.
+#[test]
+fn demand_answers_cast_by_omniscience_chooses_either_cost() {
+    for mode in [0, 1] {
+        let mut state = plains();
+        put(&mut state, P0, "Omniscience", Zone::Battlefield);
+        let clue = put(&mut state, P0, "Clue Token", Zone::Battlefield);
+        let spare = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+        let demand = put(&mut state, P0, "Demand Answers", Zone::Hand);
+        cast(&mut state, demand, &[]);
+        let modes = settle_demand_answers(&mut state, mode, clue, spare);
+        assert_eq!(modes, vec![0, 1]);
+        assert_demand_answers_paid(&state, mode, clue, spare);
+        assert_eq!(zone(&state, demand), Zone::Graveyard);
+    }
+}
+
 #[test]
 fn leonardo_gets_plus_one_power_for_each_other_creature() {
     let mut state = plains();
