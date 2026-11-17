@@ -2540,22 +2540,31 @@ in both seats under ranked and seeded random policies with replay checks.
 
 ### Choice between additional costs (#715)
 
-Bone Shards ("sacrifice a creature or discard a card"), Demand Answers ("sacrifice an artifact or
-discard a card") and Bitter Triumph ("discard a card or pay 3 life") each offer two additional
-costs. The caster announces which one they pay together with the spell's other choices, before
-targets and before any payment (601.2b), and the choice holds however the spell is cast. That is
+Bone Shards ("sacrifice a creature or discard a card") and Demand Answers ("sacrifice an artifact
+or discard a card") each offer two additional costs. The caster announces which one they pay
+together with the spell's other choices, before targets and before any payment (601.2b). That is
 where and how a mode is chosen, so `eternal_cost_choice_v1` carries the choice as the spell's two
 modes: mode 0 pays the first printed cost and mode 1 the second, both with the card's one target
 shape and program. A mode whose cost cannot be paid is not offered, and with one payable cost
-nothing is asked.
+nothing is asked. A human prompt names the cost each mode pays.
 
 Before #715 the second cost of each card was an alternative cost of the same mana that skipped the
 discard. A cast for another alternative cost could then not choose it: with flashback granted by
 Snapcaster Mage, no card in hand and a creature, Bone Shards was refused although sacrificing the
 creature pays for it. The same held for a cast without paying the mana cost. With the two modes
-all three cards pay either cost on every cast route, and Bone Shards is Full (382 of 540 cube
-cards on main at the time of the change). Each card's `additional_cost` stays its discard, which
-opens the cast's discard stage; the chosen mode names the cost that is really paid.
+the choice holds for a cast for the mana cost, for a granted flashback and for a cast without
+paying the mana cost, and Bone Shards is Full. Two limits are shared with the other cards that
+have additional costs: a granted escape (Underworld Breach) refuses every card with an additional
+cost, and a retrace cast (Wrenn and Six's emblem) cannot use a sacrifice cost, because a cast
+cannot stage two object choices. Each card's `additional_cost` stays its discard, which opens the
+cast's discard stage; the chosen mode names the cost that is really paid.
+
+Bitter Triumph ("discard a card or pay 3 life") has the same printed shape but keeps its earlier
+registration: the discard is its additional cost and paying 3 life an alternative cost of the same
+mana that skips the discard. The Eternal actor's printed contract for the reported mainboards
+(`eternal_actor_printed_v1`) describes that shape, so changing it is a change of that contract.
+Its known limit stays: a cast for another alternative cost (a granted flashback, a cast without
+paying the mana cost) cannot pay 3 life instead of discarding.
 
 ### C2: lands and mana
 
