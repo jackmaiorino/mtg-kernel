@@ -2443,10 +2443,14 @@ Oracle text and rulings (Scryfall, read 2026-11-17) and rules 101.4, 113.7a, 302
   creature cards among them with the lowest printed mana value (all of them on a tie) are put onto
   the battlefield under their owners' control in one batch; the rest stay in hand. As with Show
   and Tell's paid route, the destinations are decided from the battlefield before any entrant
-  moves (`eternal_sideboard_s1a_v1::statics::replace_zone_change` asks
-  `gambit_entry_prepared`), so Containment Priest exiles an entrant only if it was already on the
-  battlefield, not when it enters in the same batch. A Phyrexian Metamorph with nothing to copy
-  enters as itself.
+  moves, so Containment Priest exiles an entrant only if it was already on the battlefield, not
+  when it enters in the same batch. A batch moves its members one at a time and Containment
+  Priest's replacement is applied as each one moves, so the entrants sent to the battlefield are
+  recorded in the wave's state (`S1oStateV1::gambit_entries`, absent from snapshots and hashes
+  while empty) and `eternal_sideboard_s1a_v1::statics::replace_zone_change` leaves them alone. The
+  record stays while an entrant waits in hand for an as-enters choice (Meddling Mage's name) and
+  is dropped once the entrants have moved. A Phyrexian Metamorph with nothing to copy enters as
+  itself; one that a Priest already on the battlefield exiles needs no copy choice.
 - Eowyn, Fearless Knight, {2}{R}{W}, Legendary Creature - Human Knight 3/4 (the snapshot and the
   registry spell the name without the accent): "Haste. When Eowyn enters, exile target creature an
   opponent controls with greater power. Legendary creatures you control gain protection from each
@@ -2485,7 +2489,9 @@ Limits:
   creature is on the battlefield would let its owner choose a copy as it enters. The native
   pre-entry copy owner serves only paid Show and Tell, Reanimate and Aether Vial, so the engine
   halts that game (`InvalidEffectContinuation`) before revealing, as copied Show and Tell refuses
-  every Metamorph. No Legacy list in the snapshot plays Metamorph.
+  every Metamorph. The check runs after the replacement effects, so a Metamorph that a Priest
+  already on the battlefield would exile does not halt. No Legacy list in the snapshot plays
+  Metamorph.
 - The day or night designation is not a field of the policy observations; the face is (as for
   Brutal Cathar in Standard sessions).
 - `legacy-selesnya-depths` waits for Keen-Eyed Curator (#710).
@@ -2493,8 +2499,12 @@ Limits:
 Verification: `tests/eternal/eternal_sideboard_s1o_v1.rs` covers every printed branch above in
 both seats (lower, equal and greater power, a power change and Eowyn leaving before resolution,
 two graveyards, zero targets, the 0/0 crewed Hearse, blink, both faces, night and day turns,
-casting at night, Priest in and before the batch, a noncreature pick, an empty hand, Metamorph)
-and plays a red-white deck with Eowyn and Gambit against a green deck with Liberator and Hearse
+casting at night, the front face attacking without a trigger, Priest in and before the batch,
+Priest and Meddling Mage entering together in either order, a noncreature pick, an empty hand,
+Metamorph uncopied, exiled or refused, a Metamorph copy of the Hearse counting its own exiled
+cards, protection from exactly the exiled colors and none for a colorless creature, and the
+second chooser's menu and policy observation not depending on the first pick, with the chosen
+cards public after the reveal) and plays a red-white deck with Eowyn and Gambit against a green deck with Liberator and Hearse
 through public schema-5 sessions in both seats under ranked and seeded random policies with replay
 checks. `tests/eternal/eternal_bo3_v1.rs` plays the three completed lists in seeded best-of-three
 matches with random sideboarding.

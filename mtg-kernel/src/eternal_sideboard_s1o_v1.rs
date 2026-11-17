@@ -46,7 +46,6 @@ use crate::standard_cards_v1::{StandardOpV1, StandardTargetV1};
 use crate::state::{GameState, ObjectLinkV4, Target, Zone};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
 use targets::S1oTargetV1;
 
@@ -86,11 +85,18 @@ pub struct HearseExileV1 {
 pub struct S1oStateV1 {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hearse_exiles: Vec<HearseExileV1>,
+    /// The hand incarnations Stronghold Gambit is putting onto the
+    /// battlefield, whose destinations were decided from the battlefield
+    /// before any of them moved. Kept while they wait in hand (an entry that
+    /// pauses for an as-enters choice, such as Meddling Mage's name), pruned
+    /// once they have moved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gambit_entries: Vec<ObjectLinkV4>,
 }
 
 impl S1oStateV1 {
     pub(crate) fn is_empty(&self) -> bool {
-        self.hearse_exiles.is_empty()
+        self.hearse_exiles.is_empty() && self.gambit_entries.is_empty()
     }
 }
 
@@ -99,6 +105,7 @@ impl Hash for S1oStateV1 {
         if !self.is_empty() {
             b"eternal-s1o/v1".hash(state);
             self.hearse_exiles.hash(state);
+            self.gambit_entries.hash(state);
         }
     }
 }
@@ -316,35 +323,40 @@ pub(crate) fn begin_turn(state: &mut GameState, _player: PlayerId) {
     }
 }
 
-thread_local! {
-    /// The hand incarnations Stronghold Gambit is putting onto the
-    /// battlefield in the batch being committed, whose destinations were
-    /// already decided from the common pre-entry battlefield. Empty outside
-    /// that batch.
-    static GAMBIT_ENTRIES: RefCell<Vec<(ObjectId, u32)>> = const { RefCell::new(Vec::new()) };
-}
-
-/// Clears the prepared Gambit entries when the batch ends, however it ends.
-struct GambitEntriesGuard;
-
-impl Drop for GambitEntriesGuard {
-    fn drop(&mut self) {
-        GAMBIT_ENTRIES.with(|entries| entries.borrow_mut().clear());
-    }
-}
-
 /// Whether `object` is a Stronghold Gambit entrant whose battlefield
 /// destination was already decided before any entrant moved, so a
-/// Containment Priest entering in the same batch does not exile it (614.12):
-/// read by `eternal_sideboard_s1a_v1::statics::replace_zone_change`.
+/// Containment Priest entering earlier in the same batch does not exile it
+/// (614.12). A batch moves its members one at a time, and the Priest's
+/// replacement is applied as each member moves, so without this record the
+/// second entrant would see a Priest that entered first. Read by
+/// `eternal_sideboard_s1a_v1::statics::replace_zone_change`.
 pub(crate) fn gambit_entry_prepared(state: &GameState, object: ObjectId) -> bool {
-    GAMBIT_ENTRIES.with(|entries| {
-        let entries = entries.borrow();
-        !entries.is_empty()
+    read_state(state).is_some_and(|s1o| {
+        !s1o.gambit_entries.is_empty()
             && state.objects.try_get(object).is_some_and(|live| {
-                live.zone == Zone::Hand && entries.contains(&(object, live.zone_change_count))
+                live.zone == Zone::Hand
+                    && s1o.gambit_entries.contains(&ObjectLinkV4 {
+                        object,
+                        zone_change_count: live.zone_change_count,
+                    })
             })
     })
+}
+
+/// Replaces the prepared Gambit entries, keeping only those still waiting in
+/// hand, and drops the record when none is left.
+fn set_gambit_entries(state: &mut GameState, entries: Vec<ObjectLinkV4>) {
+    let entries = entries
+        .into_iter()
+        .filter(|&link| link_live_in(state, link, Zone::Hand))
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        if let Some(eternal) = state.eternal_v1.as_mut() {
+            eternal.s1o.gambit_entries.clear();
+        }
+    } else {
+        s1o_state(state).gambit_entries = entries;
+    }
 }
 
 // ---- Stronghold Gambit --------------------------------------------------------------
@@ -447,20 +459,9 @@ fn finish_gambit(
         .map(|binding| binding.object)
         .filter(|&object| creature(state, object) && Some(mana_value(state, object)) == lowest)
         .collect::<Vec<_>>();
-    for &object in &entrants {
-        if metamorph_copy_offered(state, object)? {
-            halt(state, ctx.source);
-            return Ok(());
-        }
-    }
-    for binding in &chosen {
-        let owner = state.objects.get(binding.object).owner;
-        // spellbench-public-reveal: Stronghold Gambit reveals every chosen card once both players have chosen.
-        state.reveal_hand_card(owner.opponent(), owner, binding.object)?;
-    }
-    if entrants.is_empty() {
-        return Ok(());
-    }
+    // Every destination is decided from the battlefield as it is now, before
+    // any entrant moves (Containment Priest already there exiles them).
+    set_gambit_entries(state, Vec::new());
     let mut proposals = Vec::with_capacity(entrants.len());
     let mut prepared = Vec::new();
     for &object in &entrants {
@@ -471,13 +472,29 @@ fn finish_gambit(
         };
         crate::eternal_sideboard_s1a_v1::statics::replace_zone_change(state, &mut proposal);
         if proposal.to_zone == Zone::Battlefield {
-            prepared.push((object, state.objects.get(object).zone_change_count));
+            // A Metamorph that would enter with something to copy needs its
+            // owner's as-enters copy choice, which this route does not model.
+            if metamorph_copy_offered(state, object)? {
+                halt(state, ctx.source);
+                return Ok(());
+            }
+            prepared.push(live_link(state, object));
         }
         proposals.push(ProposedEvent::ZoneChange(proposal));
     }
-    let _guard = GambitEntriesGuard;
-    GAMBIT_ENTRIES.with(|entries| *entries.borrow_mut() = prepared);
+    for binding in &chosen {
+        let owner = state.objects.get(binding.object).owner;
+        // spellbench-public-reveal: Stronghold Gambit reveals every chosen card once both players have chosen.
+        state.reveal_hand_card(owner.opponent(), owner, binding.object)?;
+    }
+    if proposals.is_empty() {
+        return Ok(());
+    }
+    set_gambit_entries(state, prepared.clone());
     event::propose_and_commit_batch(state, proposals);
+    // Entrants that moved leave the record; an entry still waiting in hand
+    // for an as-enters choice keeps it.
+    set_gambit_entries(state, prepared);
     Ok(())
 }
 
