@@ -961,18 +961,12 @@ fn fanatic_of_rhonas_taps_for_green() {
     let mut state = plains();
     let fanatic = put(&mut state, P0, "Fanatic of Rhonas", Zone::Battlefield);
     next(&mut state);
-    act(
-        &mut state,
-        Action::ActivateManaAbilityChoice(fanatic, ManaColor::G),
-    );
+    // Without ferocious it has one mana ability, so no color is chosen.
+    act(&mut state, Action::ActivateManaAbility(fanatic));
     assert_eq!(mana(&state, P0, ManaColor::G), 1);
     assert!(tapped(&state, fanatic));
     assert!(
-        engine::step(
-            &mut state,
-            Action::ActivateManaAbilityChoice(fanatic, ManaColor::G)
-        )
-        .is_err(),
+        engine::step(&mut state, Action::ActivateManaAbility(fanatic)).is_err(),
         "it is tapped"
     );
 }

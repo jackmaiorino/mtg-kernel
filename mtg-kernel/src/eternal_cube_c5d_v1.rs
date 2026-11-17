@@ -109,9 +109,10 @@ pub struct JarRecordV1 {
     /// The exile incarnations of the cards exiled this way, both players'.
     pub cards: Vec<ObjectLinkV4>,
     /// The turn whose end step was already under way when the ability
-    /// resolved: that end step does not return the cards.
+    /// resolved: that end step does not return the cards. The turn key
+    /// counts rounds, so the active player is part of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub created_in_end_step: Option<u32>,
+    pub created_in_end_step: Option<(u32, PlayerId)>,
     /// The end step trigger is on its way to the stack.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub queued: bool,
@@ -1055,7 +1056,8 @@ fn run_jar_exile(ctx: &ExecCtx, state: &mut GameState) {
             return;
         }
     }
-    let created_in_end_step = (state.step == Step::End).then(|| state.turn_key_v1());
+    let created_in_end_step =
+        (state.step == Step::End).then(|| (state.turn_key_v1(), state.active_player));
     let ledger = c5d_state(state);
     let serial = ledger.next_jar_serial;
     ledger.next_jar_serial = serial.saturating_add(1);
@@ -1216,7 +1218,7 @@ pub(crate) fn delayed_triggers(
     {
         return Vec::new();
     }
-    let turn = state.turn_key_v1();
+    let turn = (state.turn_key_v1(), state.active_player);
     let Some(ledger) = read_state(state).filter(|ledger| !ledger.jars.is_empty()) else {
         return Vec::new();
     };

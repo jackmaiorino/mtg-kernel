@@ -1519,10 +1519,28 @@ fn c5b_decks_finish_and_replay_through_public_sessions_both_seats() {
         ("Lightning Bolt", 4),
     ]);
 
+    // Worldspine Wurm costs eleven: a deck of fast mana gets it cast.
+    let wurm_ramp = deck(&[
+        ("Forest", 16),
+        ("Ancient Tomb", 4),
+        ("Sol Ring", 4),
+        ("Mana Crypt", 4),
+        ("Mana Vault", 4),
+        ("Grim Monolith", 4),
+        ("Basalt Monolith", 4),
+        ("Mind Stone", 4),
+        ("Llanowar Elves", 4),
+        ("Birds of Paradise", 4),
+        ("Worldspine Wurm", 4),
+        ("Myr Battlesphere", 4),
+    ]);
+
     let mut casts = std::collections::BTreeMap::<u16, usize>::new();
     for (pair, first_seed) in [
         ([ramp_heavy.clone(), tempo.clone()], 0x4335_4200_u64),
-        ([tempo, ramp_heavy], 0x4335_4210),
+        ([tempo.clone(), ramp_heavy], 0x4335_4210),
+        ([wurm_ramp.clone(), tempo.clone()], 0x4335_4220),
+        ([tempo, wurm_ramp], 0x4335_4230),
     ] {
         for seed in first_seed..first_seed + 3 {
             for policy in [Policy::Ranked, Policy::Random(seed + 0x100)] {
