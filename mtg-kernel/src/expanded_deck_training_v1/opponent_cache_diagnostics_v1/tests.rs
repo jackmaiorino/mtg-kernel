@@ -799,7 +799,10 @@ fn a_kept_entry_supersedes_the_transient_slot_of_its_source_v1() {
         let served: *const LoadedOpponentV1 = col.load(&source).unwrap();
         let kept_entry: *const LoadedOpponentV1 = col.entries.last().unwrap();
         assert_eq!(served, kept_entry);
-        assert_eq!(counters.collection_opponent.transient_hits.get(), transient_before);
+        assert_eq!(
+            counters.collection_opponent.transient_hits.get(),
+            transient_before
+        );
         assert_eq!(counters.collection_opponent.hits.get() - hits_before, 1);
     }
     fs::remove_dir_all(&root).unwrap();
