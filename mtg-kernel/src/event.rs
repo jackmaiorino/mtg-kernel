@@ -6642,6 +6642,29 @@ fn batch_graveyard_replacement_v1(
     if change.to_zone != Zone::Graveyard {
         return None;
     }
+    // A finality counter and an exile-if-it-would-die shield (Fiery
+    // Annihilation) are general replacements that the engine applies first,
+    // as its controller's choice (616.1). The state-based death group commits
+    // directly and applies them only at the member's commit, so a member they
+    // apply to is left to that path, which then runs the hooks below on its
+    // own as for a single event.
+    let finality = state.objects.try_get(change.object).is_some_and(|live| {
+        live.zone == Zone::Battlefield
+            && live
+                .v4
+                .creature_upgrade
+                .as_ref()
+                .is_some_and(|upgrade| upgrade.finality > 0)
+    });
+    let shielded = state.engine.active_replacements.iter().any(|replacement| {
+        matches!(
+            replacement.kind,
+            ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
+        ) && replacement_applies(replacement, event, state)
+    });
+    if finality || shielded {
+        return None;
+    }
     let mut z = change.clone();
     crate::standard_keywords_v1::unearth_exile_instead(state, &mut z);
     crate::eternal_e5a_v1::permissions::replace_zone_change(state, &mut z);

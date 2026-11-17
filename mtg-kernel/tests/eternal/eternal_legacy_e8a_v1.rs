@@ -1039,6 +1039,50 @@ fn emperor_of_bones_exiles_at_combat_and_reanimates_when_it_adapts() {
 }
 
 #[test]
+fn a_finality_counter_exiles_before_dauthi_voidwalker_whichever_way_it_dies() {
+    // A creature with a finality counter that would die is exiled by it, a
+    // general replacement the engine applies first (616.1), so an opposing
+    // Dauthi Voidwalker's replacement no longer applies: no void counter.
+    // Dying to state-based actions and being destroyed by a spell agree.
+    for (seat, other) in [(P0, P1), (P1, P0)] {
+        for by_spell in [false, true] {
+            let mut state = islands();
+            if seat == P1 {
+                opponents_main_phase(&mut state);
+            }
+            let emperor = put(&mut state, seat, "Emperor of Bones", Zone::Battlefield);
+            put(&mut state, seat, "Dauthi Voidwalker", Zone::Battlefield);
+            let pestilence = put(&mut state, seat, "Pestilence", Zone::Battlefield);
+            let elves = put(&mut state, other, "Llanowar Elves", Zone::Graveyard);
+            pass_until(&mut state, |state| state.step == Step::BeginCombat);
+            settle_picking(&mut state, 0, Some(elves));
+            assert_eq!(zone(&state, elves), Zone::Exile);
+            pool(&mut state, seat, &[ManaColor::B], 1);
+            activate(&mut state, emperor, 0, &[]);
+            settle_picking(&mut state, 0, Some(elves));
+            assert_eq!(zone(&state, elves), Zone::Battlefield);
+            assert_eq!(state.objects.get(elves).controller, seat);
+            let case = format!("{seat:?} by_spell={by_spell}");
+            if by_spell {
+                let push = put(&mut state, seat, "Fatal Push", Zone::Hand);
+                pool(&mut state, seat, &[ManaColor::B], 0);
+                cast(&mut state, push, &[Target::Object(elves)]);
+            } else {
+                // One damage: the Elves die alone to state-based actions.
+                pool(&mut state, seat, &[ManaColor::B], 0);
+                activate(&mut state, pestilence, 0, &[]);
+            }
+            settled(&mut state);
+            assert_eq!(zone(&state, elves), Zone::Exile, "{case}");
+            assert!(
+                !mtg_kernel::eternal_e9b_v1::has_void_counter(&state, elves),
+                "{case}"
+            );
+        }
+    }
+}
+
+#[test]
 fn flickerwisp_returns_its_target_at_the_next_end_step() {
     let mut state = islands();
     let angler = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
