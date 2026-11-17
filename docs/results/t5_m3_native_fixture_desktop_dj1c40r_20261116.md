@@ -123,6 +123,9 @@ regression: `base` had no byte bound at all. Charging the model for entries whos
 the process cache does not hold is a follow-up. Defaults: process cache 32 entries and
 768 MiB, collection cache 8 entries and 256 MiB.
 
+The follow-up charges these models; what stays outside every charge after it is listed in
+the [addendum](t5_m3_addendum_native_fixture_desktop_dj1c40r_20261116.md).
+
 ## Follow-ups not fixed here
 
 - Windows main-thread stack margin on the serial-replay miss path (above).
