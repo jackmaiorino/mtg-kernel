@@ -6458,25 +6458,30 @@ struct EffectManaPlan {
     treasures: Vec<(ObjectId, mana::ManaColor)>,
 }
 
+/// `nonartifact_cast` holds when the payment is the mana cost of casting a
+/// nonartifact spell (a miracle cost); see `mana::can_pay_owned_from_sources`.
 fn effect_mana_plan(
     player: PlayerId,
     colored: &[mana::ManaColor],
     generic: u8,
     state: &GameState,
+    nonartifact_cast: bool,
 ) -> Option<EffectManaPlan> {
     let pips = colored
         .iter()
         .copied()
         .map(mana::Pip::Colored)
         .collect::<Vec<_>>();
+    let mut sources = mana::gather_sources(player, state);
     // Preserve every predecessor plan when floating mana/repeatable taps suffice.
-    if let Some(ordinary) = mana::can_pay_owned(&pips, generic, player, state) {
+    if let Some(ordinary) =
+        mana::can_pay_owned_from_sources(&pips, generic, player, state, &sources, nonartifact_cast)
+    {
         return Some(EffectManaPlan {
             ordinary,
             treasures: vec![],
         });
     }
-    let mut sources = mana::gather_sources(player, state);
     let mut treasure_ids = Vec::new();
     for &id in &state.players[player.index()].battlefield {
         if sources.iter().any(|source| source.id == id) {
@@ -6514,7 +6519,8 @@ fn effect_mana_plan(
             yield_per_tap: 1,
         });
     }
-    let plan = mana::can_pay_owned_from_sources(&pips, generic, player, state, &sources)?;
+    let plan =
+        mana::can_pay_owned_from_sources(&pips, generic, player, state, &sources, nonartifact_cast)?;
     let mut ordinary = plan.clone();
     ordinary.taps.clear();
     let mut treasures = Vec::new();
@@ -6537,7 +6543,21 @@ pub(crate) fn can_pay_effect_mana(
     generic: u8,
     state: &GameState,
 ) -> bool {
-    effect_mana_plan(player, colored, generic, state).is_some()
+    effect_mana_plan(player, colored, generic, state, false).is_some()
+}
+
+/// `can_pay_effect_mana` for the mana cost of casting a spell from a
+/// resolving effect (a miracle cost): mana that can't be spent to cast
+/// nonartifact spells pays it only when `artifact_spell` holds.
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+pub(crate) fn can_pay_effect_cast_mana(
+    player: PlayerId,
+    colored: &[mana::ManaColor],
+    generic: u8,
+    state: &GameState,
+    artifact_spell: bool,
+) -> bool {
+    effect_mana_plan(player, colored, generic, state, !artifact_spell).is_some()
 }
 
 /// Commits the exact deterministic plan preflighted by
@@ -6548,7 +6568,29 @@ pub(crate) fn pay_effect_mana(
     generic: u8,
     state: &mut GameState,
 ) -> bool {
-    let Some(plan) = effect_mana_plan(player, colored, generic, state) else {
+    pay_effect_mana_v1(player, colored, generic, state, false)
+}
+
+/// Commits the plan preflighted by `can_pay_effect_cast_mana`.
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+pub(crate) fn pay_effect_cast_mana(
+    player: PlayerId,
+    colored: &[mana::ManaColor],
+    generic: u8,
+    state: &mut GameState,
+    artifact_spell: bool,
+) -> bool {
+    pay_effect_mana_v1(player, colored, generic, state, !artifact_spell)
+}
+
+fn pay_effect_mana_v1(
+    player: PlayerId,
+    colored: &[mana::ManaColor],
+    generic: u8,
+    state: &mut GameState,
+    nonartifact_cast: bool,
+) -> bool {
+    let Some(plan) = effect_mana_plan(player, colored, generic, state, nonartifact_cast) else {
         return false;
     };
     for (id, color) in plan.treasures {

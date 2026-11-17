@@ -2819,9 +2819,10 @@ pub enum ManaSpendRestrictionDef {
     /// Compliance). Appended for the eternal catalog.
     NoncreatureSpellV1,
     /// "This mana can't be spent to cast nonartifact spells" (The Mightstone
-    /// and Weakstone): it may cast artifact spells and pay for any ability.
-    /// A spell payment accepts it only for an artifact spell; an ability
-    /// payment (`mana::plan_activation_mana_v1`) accepts it for any source.
+    /// and Weakstone): it may cast artifact spells and pay every cost that is
+    /// not part of casting a spell. A spell payment accepts it only for an
+    /// artifact spell; an ability payment (`mana::plan_activation_mana_v1`)
+    /// and every other payment (`mana::plan_noncast_payment_v1`) accept it.
     /// Appended for Vintage Cube wave C3c.
     PowerstoneV1,
 }
