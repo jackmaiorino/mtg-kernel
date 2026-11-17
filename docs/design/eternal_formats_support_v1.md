@@ -2635,11 +2635,12 @@ actions rather than the automatic payment planner (Gaea's Cradle).
 
 ### C3: creatures and artifact utilities
 
-Wave C3 adds 31 cards and six tokens: 30 are Full and The Mightstone and Weakstone is Partial,
-raising the cube to 411 of 540 Full. It is three sub-modules chained after C2c: C3a (ten cheap
-creatures, `eternal_cube_c3a_v1`), C3b (eleven creatures, `eternal_cube_c3b_v1`) and C3c (ten
-artifacts, `eternal_cube_c3c_v1`), the new tail. Guardian Scalelord waits for a later wave: its
-backup ability must grant an attack trigger until end of turn.
+Wave C3 adds 31 cards and six tokens: 30 were Full and The Mightstone and Weakstone Partial (it
+became Full with #726), raising the cube to 411 of 540 Full. It is three sub-modules chained after
+C2c: C3a (ten cheap creatures, `eternal_cube_c3a_v1`), C3b (eleven creatures,
+`eternal_cube_c3b_v1`) and C3c (ten artifacts, `eternal_cube_c3c_v1`), the new tail. Guardian
+Scalelord waits for a later wave: its backup ability must grant an attack trigger until end of
+turn.
 
 C3a:
 
@@ -2689,10 +2690,27 @@ C3c:
   release ability (a Treasure for a land, a Rogue for a nonland card) read that ledger. Staff of
   the Storyteller counts story counters as charge counters and triggers once per resolution that
   created creature tokens.
-- The Mightstone and Weakstone (Partial): a modal entry trigger, and `Subtype::Powerstone` (582)
-  mana under `ManaSpendRestrictionDef::PowerstoneV1`, which pays for artifact spells and activated
-  abilities. The other costs that mana may pay (ward, "unless its controller pays" taxes, mana
-  ability costs, special actions) still refuse it, which is why the card is not Full.
+- The Mightstone and Weakstone: a modal entry trigger, and `Subtype::Powerstone` (582) mana under
+  `ManaSpendRestrictionDef::PowerstoneV1`. That mana "can't be spent to cast nonartifact spells"
+  (106.6), so it pays every other cost. The spell planners admit it only for an artifact spell
+  (`mana::restriction_permits`), so a tax or cost increase on casting a nonartifact spell, which is
+  part of that spell's total cost (601.2f), still refuses it. Every payment that is not part of
+  casting a spell admits it through `mana::plan_noncast_payment_v1`: the restricted units join a
+  projected ordinary pool, as `plan_activation_mana_v1` admits ability mana, and the plan spends
+  them before ordinary mana of the same color. That covers `mana::can_pay` (ward and "unless its
+  controller pays" taxes, plot, upkeep and other resolution payments),
+  `can_pay_excluding_sources` (mana ability costs, turning a permanent face up, an ability's
+  convoke remainder), the resolution bridge `engine::pay_effect_mana` (foretell, a companion's
+  {3}, suspend, echo) and Shanna's pay-and-draw. A miracle cost is a cost of casting the card, so
+  it is paid through `engine::pay_effect_cast_mana`, which admits the mana only for an artifact.
+
+Limits: the stone is not an automatic payment source (like Pentad Prism), so its mana is spent
+only after an explicit mana action floats it. The other restricted classes (creature, legendary,
+subtype, chosen type, artifact spell, colorless Eldrazi and noncreature spell mana) keep their
+existing payment paths; whether each may also pay a ward, tax or special action is not decided
+here.
+
+With #726 merged after #715 the cube stands at 440 of 540 Full.
 
 ### C4: trigger creatures, Equipment and Vehicles
 
