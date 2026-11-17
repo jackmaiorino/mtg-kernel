@@ -17,6 +17,7 @@ import http.client
 import json
 import os
 import random
+import re
 import sys
 import time
 
@@ -103,13 +104,18 @@ def vmstat() -> dict[str, int]:
     return out
 
 
+WHOLE_DISK = re.compile(r"^(sd[a-z]+|nvme[0-9]+n[0-9]+|xvd[a-z]+|vd[a-z]+)$")
+
+
 def disk() -> tuple[int, int, int, int]:
-    """(reads, writes, in flight, ms doing I/O) of sda."""
+    """(reads, writes, in flight, ms doing I/O) summed over the whole disks (sda on Azure, nvme0n1 on AWS)."""
+    total = [0, 0, 0, 0]
     for line in read("/proc/diskstats").splitlines():
         words = line.split()
-        if len(words) > 13 and words[2] == "sda":
-            return int(words[3]), int(words[7]), int(words[11]), int(words[12])
-    return 0, 0, 0, 0
+        if len(words) > 13 and WHOLE_DISK.match(words[2]):
+            for i, col in enumerate((3, 7, 11, 12)):
+                total[i] += int(words[col])
+    return total[0], total[1], total[2], total[3]
 
 
 def swaps() -> str:
@@ -218,9 +224,10 @@ def watch(args) -> int:
     comment = Comment(args.token_file, args.repo, args.pr)
     run = args.run
     head = (f"starve probe `{args.label}` run {run} on {os.uname().nodename}, started {time.strftime('%H:%M:%S', time.gmtime())} UTC. "
+            f"Machine: {args.note}. "
             "Columns: seconds, MemAvailable and Dirty+Writeback in MiB, swap used per device in MiB, memory and io pressure "
             "(some/full avg10), per second: pages swapped out and in, major faults, direct-reclaim stalls; sda writes and reads per "
-            "second, requests in flight, percent busy; largest processes (MiB).")
+            "second, requests in flight, percent busy (all whole disks); largest processes (MiB).")
     lines: list[str] = []
     log = open(args.log, "a", encoding="utf-8")
     started = time.monotonic()
@@ -237,7 +244,7 @@ def watch(args) -> int:
         ios, iof = pressure("io")
         line = (f"{now - started:6.0f}s avail={mem.get('MemAvailable', 0):5d} dirty={mem.get('Dirty', 0) + mem.get('Writeback', 0):4d} "
                 f"swap[{swaps()}] mem={ms:.0f}/{mf:.0f} io={ios:.0f}/{iof:.0f} out={rate.get('pswpout', 0):.0f} in={rate.get('pswpin', 0):.0f} "
-                f"maj={rate.get('pgmajfault', 0):.0f} stall={stalls:.0f} sda w={(d[1] - last_d[1]) / dt:.0f} r={(d[0] - last_d[0]) / dt:.0f} "
+                f"maj={rate.get('pgmajfault', 0):.0f} stall={stalls:.0f} disk w={(d[1] - last_d[1]) / dt:.0f} r={(d[0] - last_d[0]) / dt:.0f} "
                 f"q={d[2]} busy={busy:.0f}%{zram()} oom={v.get('oom_kill', 0)} top={top()}")
         if kmsg is not None:
             try:
@@ -280,6 +287,7 @@ def main(argv: list[str] | None = None) -> int:
     w.add_argument("--repo", default="")
     w.add_argument("--pr", default="")
     w.add_argument("--run", default="?")
+    w.add_argument("--note", default="")
     args = parser.parse_args(argv)
     return hog(args) if args.command == "hog" else watch(args)
 
