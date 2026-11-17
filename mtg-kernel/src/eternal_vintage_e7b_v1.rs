@@ -617,13 +617,17 @@ pub fn assassins_trophy() -> EffectOp {
         e7b(E7bOpV1::DestroyTargetV1),
         // The permanent's controller is the caster's opponent: the spell
         // targets a permanent an opponent controls, so it would have no
-        // legal target otherwise. The search is private to that player.
-        EffectOp::SearchLibraryCardsToDestination {
-            player: PlayerRef::Opponent,
-            filter: LibraryCardFilter::BasicLand,
-            max_targets: 1,
-            destination: LibrarySearchDestinationV1::Battlefield { tapped: false },
-        },
+        // legal target otherwise. That player chooses whether to search,
+        // and the search is private to them.
+        crate::eternal_cards_v1::may_search(
+            PlayerRef::Opponent,
+            EffectOp::SearchLibraryCardsToDestination {
+                player: PlayerRef::Opponent,
+                filter: LibraryCardFilter::BasicLand,
+                max_targets: 1,
+                destination: LibrarySearchDestinationV1::Battlefield { tapped: false },
+            },
+        ),
     ])
 }
 
@@ -1040,10 +1044,13 @@ fn uro_enters_or_attacks() -> EffectOp {
 /// Golos: "you may search your library for a land card, put that card onto
 /// the battlefield tapped, then shuffle."
 fn golos_search() -> EffectOp {
-    EffectOp::SearchLibraryToBattlefieldTapped {
-        player: PlayerRef::Controller,
-        filter: LibraryCardFilter::AnyLand,
-    }
+    crate::eternal_cards_v1::may_search(
+        PlayerRef::Controller,
+        EffectOp::SearchLibraryToBattlefieldTapped {
+            player: PlayerRef::Controller,
+            filter: LibraryCardFilter::AnyLand,
+        },
+    )
 }
 
 /// Minsc & Boo: "you may create Boo, a legendary 1/1 red Hamster creature

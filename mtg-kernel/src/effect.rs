@@ -6885,6 +6885,10 @@ fn complete_resumable_target_selection(
             if objects.len() > usize::from(max_targets) {
                 return Err("multi-card library search exceeded its maximum".to_string());
             }
+            let minimum = search_minimum(filter, max_targets, original_library.len());
+            if objects.len() < usize::from(minimum) {
+                return Err("multi-card library search found fewer than its minimum".to_string());
+            }
             continuation
                 .frames
                 .push(EffectFrame::SearchLibraryCardsToDestination {
@@ -12107,10 +12111,16 @@ fn validate_pending_effect_choice_inner(state: &GameState) -> Result<(), String>
                     if chooser != library_player || path != canonical_path {
                         return Err("multi-card library-search player or path changed".to_string());
                     }
+                    let minimum = match purpose {
+                        EffectTargetSelectionPurpose::SearchLibraryCardsToDestination { .. } => {
+                            search_minimum(*filter, *purpose_max, original_library.len())
+                        }
+                        _ => 0,
+                    };
                     if *filter_fingerprint != library_filter_fingerprint(*filter)
                         || *purpose_max == 0
                         || *max_targets != *purpose_max
-                        || *min_targets != 0
+                        || *min_targets != minimum
                         || *ordered
                             != matches!(
                                 purpose,
@@ -14627,8 +14637,10 @@ fn drive_resumable_in_departure_scope_v1(
                             "multi-card library-search coordinator metadata changed".to_string()
                         );
                     }
+                    let minimum = search_minimum(filter, max_targets, original_library.len());
                     if filter_fingerprint != library_filter_fingerprint(filter)
                         || selected.len() > usize::from(max_targets)
+                        || selected.len() < usize::from(minimum)
                         || (destination == LibrarySearchDestinationV1::LibraryTopAfterShuffle
                             && selected.len() > 1)
                     {
@@ -18780,6 +18792,18 @@ fn stage_duress_discard_choice(
     });
 }
 
+/// The fewest cards a multi-card library search must find. A search for
+/// cards with a stated quality may find nothing (701.19b); a search for "a
+/// card" (`LibraryCardFilter::AnyCard`, Entomb) must find as many as it can,
+/// up to its maximum.
+fn search_minimum(filter: LibraryCardFilter, max_targets: u16, library_len: usize) -> u16 {
+    if filter == LibraryCardFilter::AnyCard {
+        max_targets.min(u16::try_from(library_len).unwrap_or(u16::MAX))
+    } else {
+        0
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn stage_library_search_to_destination_choice(
     continuation: &mut EffectContinuation,
@@ -18791,6 +18815,7 @@ fn stage_library_search_to_destination_choice(
     destination: LibrarySearchDestinationV1,
     canonical_path: Vec<u16>,
 ) {
+    let min_targets = search_minimum(filter, max_targets, original_library.len());
     continuation.choice = Some(PendingEffectChoice::SelectTargets {
         player,
         path: canonical_path.clone(),
@@ -18802,7 +18827,7 @@ fn stage_library_search_to_destination_choice(
                 expected_object: Some(binding),
             })
             .collect(),
-        min_targets: 0,
+        min_targets,
         max_targets,
         ordered: destination == LibrarySearchDestinationV1::FirstBattlefieldTappedRestHand,
         purpose: EffectTargetSelectionPurpose::SearchLibraryCardsToDestination {

@@ -895,6 +895,10 @@ fn heliods_pilgrim_finds_an_aura() {
     pool(&mut state, P0, &[ManaColor::W], 2);
     cast(&mut state, pilgrim, &[]);
     settle_with(&mut state, |_, decision| match decision {
+        // Search.
+        Decision::ChooseEffectOption {
+            option_count: 2, ..
+        } => Action::ChooseEffectOption(1),
         Decision::ChooseEffectTargets { legal_targets, .. }
             if legal_targets.contains(&Target::Object(rancor)) =>
         {

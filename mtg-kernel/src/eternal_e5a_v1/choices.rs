@@ -14,13 +14,13 @@ use serde::{Deserialize, Serialize};
 /// What a wave E5a resolution choice decides.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum E5aChoiceV1 {
-    /// Beseech the Mirror's search: up to one library card. `bargained` is
+    /// Beseech the Mirror's search: one library card. `bargained` is
     /// whether the spell was bargained as it was cast.
     BeseechSearchV1 { bargained: bool },
     /// Beseech the Mirror: whether to cast the found card without paying
     /// its mana cost. The interpreter casts an answered card.
     BeseechCastV1,
-    /// Vampiric Tutor's search: up to one library card.
+    /// Vampiric Tutor's search: one library card.
     VampiricSearchV1,
     /// Flash: up to one creature card from the hand.
     FlashPutV1,
@@ -229,12 +229,14 @@ pub(crate) fn drive(
             }
             let bargained = continuation.ctx.optional_additional_cost_paid
                 == Some(OptionalAdditionalCostDef::Bargain);
+            // "Search your library for a card": a nonempty library always
+            // has one to find (701.19b).
             offer(
                 continuation,
                 E5aChoiceV1::BeseechSearchV1 { bargained },
                 player,
                 cards,
-                0,
+                1,
                 1,
                 path,
             );
@@ -246,12 +248,14 @@ pub(crate) fn drive(
                 shuffle(state, player)?;
                 return Ok(false);
             }
+            // "Search your library for a card": a nonempty library always
+            // has one to find (701.19b).
             offer(
                 continuation,
                 E5aChoiceV1::VampiricSearchV1,
                 player,
                 cards,
-                0,
+                1,
                 1,
                 path,
             );

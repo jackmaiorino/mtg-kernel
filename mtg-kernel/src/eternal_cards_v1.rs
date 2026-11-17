@@ -819,6 +819,18 @@ pub(crate) fn delayed_upkeep_draw() -> EffectOp {
     eternal(EternalOpV1::DelayedUpkeepDrawV1)
 }
 
+/// "`searcher` may search their library ...": `searcher` chooses between
+/// doing nothing (the first option) and `search`. A player who declines
+/// neither searches nor shuffles; a player who searches may still find
+/// nothing when the search names a quality (701.19b) and then shuffles, so
+/// both answers stay open even with no matching card in the library.
+pub(crate) fn may_search(searcher: PlayerRef, search: EffectOp) -> EffectOp {
+    EffectOp::Choice {
+        controller: searcher,
+        options: vec![EffectOp::Sequence(Vec::new()), search],
+    }
+}
+
 /// "Whenever Bilbo attacks, you may cast an artifact, instant, or sorcery
 /// spell from your graveyard." The cast happens during the resolution and
 /// pays its costs; `exiled_instead_of_graveyard` applies the rest.

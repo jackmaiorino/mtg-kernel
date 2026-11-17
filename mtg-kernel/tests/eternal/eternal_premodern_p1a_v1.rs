@@ -1499,10 +1499,31 @@ fn goblin_matron_finds_a_goblin() {
     let mut state = game(&["Island", "Mogg Fanatic", "Island", "Island"]);
     let matron = put(&mut state, P0, "Goblin Matron", Zone::Hand);
     enter(&mut state, matron);
-    settle_taking(&mut state);
+    settle_with(&mut state, |_, decision| match decision {
+        // Search.
+        Decision::ChooseEffectOption {
+            option_count: 2, ..
+        } => Action::ChooseEffectOption(1),
+        Decision::ChooseEffectTargets {
+            legal_targets,
+            selected_count: 0,
+            ..
+        } if !legal_targets.is_empty() => Action::ChooseEffectTarget(legal_targets[0]),
+        other => first_answer(other),
+    });
     let hand = &state.players[0].hand;
     assert_eq!(hand.len(), 1);
     assert_eq!(name_of(&state, hand[0]), "Mogg Fanatic");
+
+    // Declining searches nothing and does not shuffle.
+    let mut state = game(&["Island", "Mogg Fanatic", "Island", "Island"]);
+    let before = state.players[0].library.clone();
+    let matron = put(&mut state, P0, "Goblin Matron", Zone::Hand);
+    enter(&mut state, matron);
+    // The first answer declines.
+    settle_with(&mut state, |_, decision| first_answer(decision));
+    assert!(state.players[0].hand.is_empty());
+    assert_eq!(state.players[0].library, before);
 }
 
 #[test]

@@ -705,6 +705,60 @@ fn vampiric_tutor_puts_the_card_on_top_known_only_to_its_controller() {
 }
 
 #[test]
+fn vampiric_tutor_and_beseech_the_mirror_must_find_a_card_in_a_nonempty_library() {
+    // "Search your library for a card": a library with a card in it always
+    // has one to find (701.19b), so the search cannot finish with nothing.
+    let mut state = islands();
+    let tutor = put(&mut state, P0, "Vampiric Tutor", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    cast(&mut state, tutor, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets {
+            player,
+            min_targets,
+            can_finish,
+            ..
+        }) => {
+            assert_eq!(player, P0);
+            assert_eq!(min_targets, 1);
+            assert!(!can_finish);
+        }
+        other => panic!("expected Vampiric Tutor's search, got {other:?}"),
+    }
+    assert!(engine::step(&mut state, Action::FinishEffectSelection).is_err());
+    settle_first(&mut state);
+    assert_eq!(state.players[0].life, 18);
+
+    let mut state = islands();
+    let beseech = put(&mut state, P0, "Beseech the Mirror", Zone::Hand);
+    let ritual = put(&mut state, P0, "Dark Ritual", Zone::Library);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::B, ManaColor::B, ManaColor::B],
+        1,
+    );
+    act(&mut state, Action::CastSpell(beseech));
+    let mut searched = false;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectTargets {
+            legal_targets,
+            min_targets,
+            can_finish,
+            ..
+        } if legal_targets.contains(&Target::Object(ritual)) => {
+            assert_eq!(min_targets, 1);
+            assert!(!can_finish, "Beseech the Mirror's search must find a card");
+            searched = true;
+            Action::ChooseEffectTarget(Target::Object(ritual))
+        }
+        other => first_answer(other),
+    });
+    assert!(searched);
+    assert_eq!(zone(&state, ritual), Zone::Hand);
+}
+
+#[test]
 fn beseech_the_mirror_finds_a_card_and_casts_it_free_when_bargained() {
     // Not bargained: the card goes to the hand.
     let mut state = islands();

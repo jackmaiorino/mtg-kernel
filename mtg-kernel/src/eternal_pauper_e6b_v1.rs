@@ -636,10 +636,13 @@ fn endure_one() -> EffectOp {
 /// Heliod's Pilgrim: "you may search your library for an Aura card, reveal
 /// it, put it into your hand, then shuffle."
 fn search_aura() -> EffectOp {
-    EffectOp::SearchLibraryToHand {
-        player: PlayerRef::Controller,
-        filter: LibraryCardFilter::CardWithAnySubtypeV1([Subtype::Aura, Subtype::Aura]),
-    }
+    crate::eternal_cards_v1::may_search(
+        PlayerRef::Controller,
+        EffectOp::SearchLibraryToHand {
+            player: PlayerRef::Controller,
+            filter: LibraryCardFilter::CardWithAnySubtypeV1([Subtype::Aura, Subtype::Aura]),
+        },
+    )
 }
 
 fn martyr_counters() -> EffectOp {
