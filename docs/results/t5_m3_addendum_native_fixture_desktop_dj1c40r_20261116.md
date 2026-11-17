@@ -31,9 +31,12 @@ Receipts:
 ## What this evidence covers
 
 - Every native run is of the binary built from `95c33b0dd` exactly. The later commits on the
-  branch add a unit test with its test-only helper, one comment and documents; the code the
-  run binary executes is unchanged. Unit tests on a Mac and CI cover those commits (see
-  Checks), not these runs.
+  branch contain one runtime change: a collector or replay cache that keeps an entry of the
+  source its transient slot holds now clears the slot, which `load` would otherwise serve
+  first (review note 1 of #742; no caller does this today, so no native output can change).
+  The rest is unit tests with their test-only helpers, comments and documents. That runtime
+  change is covered by the unit test `a_kept_entry_supersedes_the_transient_slot_of_its_source`,
+  the Mac run and CI (see Checks), not by these runs.
 - Every opponent of the fixture is a source the process cache can verify and fork. In every
   arm and case of the three counter runs, `not_kept.unverifiable`, `not_kept.unforkable` and
   the collection caches' `misses.unverified` are 0. The native runs therefore exercise the
@@ -125,11 +128,16 @@ whose comparison it holds (`ab4`, `counters4`, `evict4`, `over4`).
   eviction (`par-evict4`) and against `m4` with 0 entries per collector cache (`par-zero4`):
   24 samples each. The driver exits 1 and marks all 20 compared samples of each run
   `mismatch`, as it does on this fixture for `base` against `base`: it has no rule for the
-  per-worker scheduling fields (Milestone 3 receipt). The pipeline checked each run's
-  `samples.jsonl` and found every sample complete, with boundaries equal to its reference's
-  and no extra file. The copies this receipt was written from hold these two runs' manifests
-  and log lines but not their `samples.jsonl` or `comparison.json`, so that check is quoted
-  from the pipeline log, not recomputed, and their counters are not reported here.
+  per-worker scheduling fields (Milestone 3 receipt). The pipeline then checked each run's
+  `samples.jsonl` and logged, exactly:
+  `2026-11-16T16:49:37Z par-evict4: parallel driver rc=1, all complete and boundaries equal: True`
+  and
+  `2026-11-16T16:52:28Z par-zero4: parallel driver rc=1, all complete and boundaries equal: True`.
+  Its script (`pipeline_m4.py`, not in the repo) counts a sample against that line if it is
+  incomplete, or if its boundaries differ or it has an extra file; the log line itself does
+  not name the extra-file rule. The copies this receipt was written from hold these two runs'
+  manifests and log lines but not their `samples.jsonl` or `comparison.json`, so that check
+  is quoted from the pipeline log, not recomputed, and their counters are not reported here.
 
 ## Stack depth on Windows
 
@@ -170,7 +178,10 @@ makes one.
 
 What stays outside every charge:
 
-- The transient slot: at most one refused entry per collector or replay cache.
+- The transient slot: at most one refused entry per collector or replay cache. A load of its
+  source is served from it without a revalidation or reload, as a kept entry is at the
+  default budget, so under 0 entries or a tiny budget a repeated source is no longer
+  re-verified or loaded in full on each load.
 - The native S model or wide net of an S or wide source. The process cache never keeps such
   a source. A collector or replay cache charges its policy's own copies and net-8 model, but
   not the S model or wide net installed on that policy. Charging it is a follow-up; no run or
@@ -180,6 +191,11 @@ What stays outside every charge:
 - A policy between its load and its insertion: a miss loads before the bounds evict.
 - Not a cache: an update with preparation workers holds one policy per distinct opponent of
   the update, at most 32, for the length of the preparation, under no byte budget.
+
+The per-collector byte budget now also pays for each model, so a larger model leaves room
+for fewer entries under the same default (256 MiB). A fixture entry charges 9,845,009 bytes
+and 8 fit easily; a larger production model may keep fewer than 8 and cause more
+process-cache traffic. That is not measured here, and outputs do not depend on it.
 
 ## Follow-ups of the Milestone 3 receipt
 
