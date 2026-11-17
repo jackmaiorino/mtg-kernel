@@ -29930,7 +29930,7 @@
   },
   {
    "name": "Bone Shards",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{B}",
    "mana_value": 1,
    "colors": [
