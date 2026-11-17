@@ -1357,13 +1357,12 @@ pub(crate) fn begin_main_phase(state: &mut GameState) -> Vec<PendingTrigger> {
 }
 
 /// The beginning of `active`'s turn ends this module's turn-bound records.
+///
+/// Sand Scout's uses carry the turn key, which both turns of a round share,
+/// so a new turn ends them all.
 pub(crate) fn begin_turn(state: &mut GameState, _active: PlayerId) {
-    let turn = state.turn_key_v1();
     if let Some(eternal) = state.eternal_v1.as_mut() {
-        eternal
-            .e5b
-            .sand_scout_turns
-            .retain(|(_, used_turn)| *used_turn == turn);
+        eternal.e5b.sand_scout_turns.clear();
     }
 }
 

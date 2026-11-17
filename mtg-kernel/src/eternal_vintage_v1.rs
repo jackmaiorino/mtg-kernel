@@ -1252,6 +1252,10 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
             .vintage
             .karn_animated
             .retain(|(_, controller)| *controller != player);
+        // Seasoned Dungeoneer's protection lasts until end of turn. Its
+        // records carry the turn key, which both turns of a round share, so
+        // a new turn ends them all.
+        eternal.vintage.protected_from_creatures.clear();
     }
 }
 

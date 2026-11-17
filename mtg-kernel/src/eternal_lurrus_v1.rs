@@ -429,17 +429,7 @@ pub(crate) fn lurrus_permission(
     let Some(live) = state.objects.try_get(object) else {
         return false;
     };
-    let Some(def) = CARD_DEFS.get(live.card_def as usize) else {
-        return false;
-    };
-    if live.owner != holder
-        || live.v4.is_token
-        || live.spell_copy_origin.is_some()
-        || def.is_token
-        || def.is_land
-        || !is_permanent_card(def)
-        || def.mana_value > 2
-    {
+    if !lurrus_card(state, object, holder) {
         return false;
     }
     let card = ObjectLinkV4 {
@@ -465,8 +455,29 @@ pub(crate) fn lurrus_permission(
         && unused_lurrus(state, holder).is_some()
 }
 
+/// Whether `object` is a card Lurrus of the Dream-Den lets `holder` cast: a
+/// nontoken permanent card with mana value 2 or less that `holder` owns.
+fn lurrus_card(state: &GameState, object: ObjectId, holder: PlayerId) -> bool {
+    let Some(live) = state.objects.try_get(object) else {
+        return false;
+    };
+    let Some(def) = CARD_DEFS.get(live.card_def as usize) else {
+        return false;
+    };
+    live.owner == holder
+        && !live.v4.is_token
+        && live.spell_copy_origin.is_none()
+        && !def.is_token
+        && !def.is_land
+        && is_permanent_card(def)
+        && def.mana_value <= 2
+}
+
 /// Records the Lurrus permission a graveyard cast just used, unless another
-/// permission (Case of the Uneaten Feast) covered it.
+/// permission (Case of the Uneaten Feast) covered it. Lurrus grants only a
+/// permanent spell with mana value 2 or less in its controller's own turn, so
+/// any other graveyard cast (retrace, or a cast in another player's turn) is
+/// never charged to it.
 pub(crate) fn note_graveyard_permission_cast(
     state: &mut GameState,
     spell: ObjectId,
@@ -479,6 +490,8 @@ pub(crate) fn note_graveyard_permission_cast(
         controller,
         origin_zone_change_count,
     ) || crate::eternal_e5a_v1::permissions::will_permission(state, spell, controller)
+        || state.active_player != controller
+        || !lurrus_card(state, spell, controller)
     {
         return;
     }
@@ -1252,6 +1265,8 @@ fn mana_drains_due(state: &mut GameState) -> Vec<PendingTrigger> {
 }
 
 /// The beginning of `active`'s turn ends this module's turn-bound records.
+/// Lurrus' graveyard casts carry only the turn key, which both turns of a
+/// round share, so a new turn ends them all.
 pub(crate) fn begin_turn(state: &mut GameState, active: PlayerId) {
     let turn = state.turn_key_v1();
     if let Some(eternal) = state.eternal_v1.as_mut() {
@@ -1262,7 +1277,7 @@ pub(crate) fn begin_turn(state: &mut GameState, active: PlayerId) {
         lurrus
             .monarch_watches
             .retain(|watch| watch.turn == turn && watch.active == active);
-        lurrus.lurrus_casts.retain(|cast| cast.turn == turn);
+        lurrus.lurrus_casts.clear();
     }
 }
 
