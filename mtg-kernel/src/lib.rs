@@ -1092,6 +1092,7 @@ pub mod season_token_attachment_v48;
 mod current_actor_probe_v1;
 pub mod current_mixed_policy_v1;
 pub mod current_tree_learner_v1;
+pub mod current_tree_learner_v2;
 pub mod eternal_actor_choice_v1;
 pub mod eternal_actor_printed_v1;
 pub mod eternal_actor_public_v1;
