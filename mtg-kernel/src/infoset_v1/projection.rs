@@ -1619,11 +1619,11 @@ impl WalkV1<'_> {
         };
         let ceased = (0..self.objs.len() as u32).map(ObjectId).find(|&id| {
             let o = &self.objs[id.0 as usize];
+            if !(o.exists && o.zone == Some(Zone::Library) && o.owner == Some(owner)) {
+                return false;
+            }
             let native = self.state.objects.get(id);
-            o.exists
-                && o.zone == Some(Zone::Library)
-                && o.owner == Some(owner)
-                && (native.v4.is_token || native.spell_copy_origin.is_some())
+            (native.v4.is_token || native.spell_copy_origin.is_some())
                 && native.zone == Zone::Library
                 && native.zone_change_count == o.moves
                 && !self.state.players[owner.index()].library.contains(&id)
