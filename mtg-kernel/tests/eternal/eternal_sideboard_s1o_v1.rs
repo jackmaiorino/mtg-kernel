@@ -194,24 +194,6 @@ fn choose_target(state: &mut GameState, target: Target) -> Vec<Target> {
     }
 }
 
-/// Finishes the variable target prompt if it is still open, returning the
-/// targets it still offered.
-fn finish_targets(state: &mut GameState) -> Vec<Target> {
-    match next(state) {
-        Decision::ChooseTargets {
-            legal_targets,
-            can_finish,
-            ..
-        } => {
-            assert!(can_finish);
-            act(state, Action::FinishEffectSelection);
-            legal_targets
-        }
-        Decision::CastSpellOrPass { .. } => Vec::new(),
-        other => panic!("expected a target prompt or priority, got {other:?}"),
-    }
-}
-
 fn power(state: &GameState, object: ObjectId) -> i32 {
     engine::effective_power(state, object)
 }
@@ -489,6 +471,14 @@ fn cast_eowyn(state: &mut GameState, actor: PlayerId, target: ObjectId) -> (Obje
     (eowyn, legal_targets)
 }
 
+/// Advances until the chosen trigger is on the stack and its controller
+/// holds priority.
+fn stacked(state: &mut GameState) {
+    priority(state);
+    assert_eq!(state.stack.len(), 1);
+    assert!(state.engine.pending_triggers.is_empty());
+}
+
 /// The creatures the opponent's Swords to Plowshares may target.
 fn swords_targets(state: &mut GameState, opponent: PlayerId, target: ObjectId) -> Vec<Target> {
     state.priority_player = opponent;
@@ -583,6 +573,7 @@ fn eowyn_rechecks_power_on_resolution_with_last_known_power_in_both_seats() {
             Zone::Battlefield,
         );
         let (eowyn, _) = cast_eowyn(&mut state, actor, atraxa);
+        stacked(&mut state);
         state.objects.get_mut(eowyn).counters.plus1_plus1 = 5;
         settled(&mut state);
         assert_eq!(zone(&state, atraxa), Zone::Battlefield);
@@ -606,6 +597,7 @@ fn eowyn_rechecks_power_on_resolution_with_last_known_power_in_both_seats() {
         );
         let inspector = put(&mut state, actor, "Thraben Inspector", Zone::Battlefield);
         let (eowyn, _) = cast_eowyn(&mut state, actor, atraxa);
+        stacked(&mut state);
         event::propose_and_commit(
             &mut state,
             ProposedEvent::zone_change(eowyn, Zone::Graveyard),
@@ -625,6 +617,7 @@ fn eowyn_rechecks_power_on_resolution_with_last_known_power_in_both_seats() {
             Zone::Battlefield,
         );
         let (eowyn, _) = cast_eowyn(&mut state, actor, atraxa);
+        stacked(&mut state);
         state.objects.get_mut(eowyn).counters.plus1_plus1 = 5;
         event::propose_and_commit(
             &mut state,
@@ -659,6 +652,36 @@ fn crew(state: &mut GameState, vehicle: ObjectId, index: u8, members: &[ObjectId
     settled(state);
 }
 
+/// Answers the Hearse's optional target prompt with `picks`, then finishes it
+/// if it is still open. Returns the cards offered before each pick.
+fn hearse_targets(state: &mut GameState, picks: &[ObjectId]) -> Vec<Vec<Target>> {
+    let mut offered = Vec::new();
+    for &pick in picks {
+        match next(state) {
+            Decision::ChooseEffectTargets {
+                legal_targets,
+                can_finish,
+                max_targets,
+                ..
+            } => {
+                assert!(can_finish, "up to two");
+                assert_eq!(max_targets, 2);
+                assert!(legal_targets.contains(&Target::Object(pick)));
+                offered.push(legal_targets);
+                act(state, Action::ChooseEffectTarget(Target::Object(pick)));
+            }
+            other => panic!("expected the Hearse's targets, got {other:?}"),
+        }
+    }
+    if let Decision::ChooseEffectTargets {
+        can_finish: true, ..
+    } = next(state)
+    {
+        act(state, Action::FinishEffectSelection);
+    }
+    offered
+}
+
 /// "{T}: Exile up to two target cards from a single graveyard." The second
 /// target must come from the first one's graveyard. "Unlicensed Hearse's
 /// power and toughness are each equal to the number of cards exiled with
@@ -676,22 +699,9 @@ fn unlicensed_hearse_exiles_from_one_graveyard_grows_and_crews_in_both_seats() {
         assert!(!engine::object_has_type(&state, hearse, CardType::Creature));
 
         activate(&mut state, hearse, 0);
-        let first = match next(&mut state) {
-            Decision::ChooseTargets {
-                legal_targets,
-                can_finish,
-                ..
-            } => {
-                assert!(can_finish, "up to two");
-                legal_targets
-            }
-            other => panic!("expected the Hearse's targets, got {other:?}"),
-        };
-        assert_eq!(set(&first), objects(&[bolt, seal, island]));
-        act(&mut state, Action::ChooseTarget(Target::Object(bolt)));
-        let second = choose_target(&mut state, Target::Object(seal));
-        assert_eq!(set(&second), objects(&[seal]));
-        finish_targets(&mut state);
+        let offered = hearse_targets(&mut state, &[bolt, seal]);
+        assert_eq!(set(&offered[0]), objects(&[bolt, seal, island]));
+        assert_eq!(set(&offered[1]), objects(&[seal]));
         settled(&mut state);
         assert_eq!(zone(&state, bolt), Zone::Exile);
         assert_eq!(zone(&state, seal), Zone::Exile);
@@ -711,7 +721,7 @@ fn unlicensed_hearse_exiles_from_one_graveyard_grows_and_crews_in_both_seats() {
         let hearse = put(&mut state, actor, HEARSE, Zone::Battlefield);
         put(&mut state, opponent, "Lightning Bolt", Zone::Graveyard);
         activate(&mut state, hearse, 0);
-        finish_targets(&mut state);
+        hearse_targets(&mut state, &[]);
         settled(&mut state);
         assert!(state.objects.get(hearse).tapped);
         assert_eq!(power(&state, hearse), 0);
@@ -740,8 +750,7 @@ fn unlicensed_hearse_zero_zero_dies_summoning_sickness_and_blink_reset_in_both_s
         let bolt = put(&mut state, opponent, "Lightning Bolt", Zone::Graveyard);
         assert!(activatable(&mut state, hearse, 0));
         activate(&mut state, hearse, 0);
-        act(&mut state, Action::ChooseTarget(Target::Object(bolt)));
-        finish_targets(&mut state);
+        hearse_targets(&mut state, &[bolt]);
         settled(&mut state);
         assert_eq!(power(&state, hearse), 1);
         state.objects.get_mut(hearse).tapped = false;
