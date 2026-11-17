@@ -674,7 +674,10 @@ fn a_phyrexian_metamorph_copy_of_a_flagbearer_binds_and_is_the_target_both_seats
         });
         assert_eq!(state.objects.get(metamorph).card_def, id(BEARER));
         // Only the copy is left to bind the caster and to be targeted.
-        propose_and_commit(&mut state, ProposedEvent::zone_change(bearer, Zone::Graveyard));
+        propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(bearer, Zone::Graveyard),
+        );
         state.priority_player = actor;
         let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::R], 0);
@@ -710,7 +713,10 @@ fn flagbearers_under_dress_down_bind_nothing_and_any_flagbearer_counts_after_bot
         );
         // With Dress Down gone and a second opposing Standard Bearer, either
         // player's Flagbearer satisfies the obligation.
-        propose_and_commit(&mut state, ProposedEvent::zone_change(dress, Zone::Graveyard));
+        propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(dress, Zone::Graveyard),
+        );
         let second = put(&mut state, opponent, BEARER, Zone::Battlefield);
         let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::R], 0);
