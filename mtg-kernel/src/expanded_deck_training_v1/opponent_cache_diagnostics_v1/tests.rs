@@ -652,6 +652,91 @@ fn process_and_collection_opponent_caches_enforce_byte_budgets_lru_and_oversized
     fs::remove_dir_all(&root).unwrap();
 }
 
+/// The process cache keeps nothing for a policy it cannot fork and serves the
+/// loaded policy itself (`not_kept_unforkable`). The collection or replay
+/// cache that keeps that policy alone holds its model, and charges it.
+#[test]
+fn a_policy_that_cannot_be_forked_is_charged_for_its_model() {
+    on_large_stack_v1(a_policy_that_cannot_be_forked_is_charged_for_its_model_v1);
+}
+
+fn a_policy_that_cannot_be_forked_is_charged_for_its_model_v1() {
+    use super::super::loaded_source_profile_v1::LoadRoleV1;
+    use super::super::{
+        collection_entry_charge_v1, collection_entry_standalone_charge_v1, OpponentCacheV1,
+    };
+    use ordered_update_preparation::{full_load_opponent_v1, ProcessOpponentCacheV1};
+
+    let root = std::env::temp_dir().join(format!(
+        "opponent-cache-unforkable-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let (source, _) = fresh_source_v1(&root);
+    let counters = counters_v1();
+    let process = ProcessOpponentCacheV1::new_v1(8, 256 << 20);
+    // No loader of this module returns a policy that cannot be forked, so one
+    // is made from a full load by dropping its successor features, and is
+    // then offered to the process cache as a miss offers its full load.
+    let admit_unforkable = || {
+        let (policy, identity) = full_load_opponent_v1(&source, LoadRoleV1::Opponent).unwrap();
+        let policy = policy.without_successor_features_for_test_v1();
+        assert!(policy.fork_for_collection_v3().is_err());
+        process.admit_v1(&source, policy, identity).unwrap()
+    };
+    let unforkable_before = counters.process_opponent.not_kept_unforkable.get();
+    let kept_before = counters.process_opponent.kept.get();
+    let served = admit_unforkable();
+    assert_eq!(
+        counters.process_opponent.not_kept_unforkable.get() - unforkable_before,
+        1
+    );
+    assert_eq!(counters.process_opponent.kept.get(), kept_before);
+    assert_eq!(process.held_v1().entries, 0);
+    assert_eq!(process.held_v1().charged_bytes, 0);
+    // What it serves is the loaded policy, not a fork of it.
+    assert_eq!(served.behavior.source, source);
+    assert!(served.policy.fork_for_collection_v3().is_err());
+    let model_bytes = model_bytes_v1(&served.policy).1;
+    assert!(model_bytes > 0);
+    let own_bytes = collection_entry_charge_v1(&served);
+    let standalone = collection_entry_standalone_charge_v1(&served);
+    assert_eq!(standalone, own_bytes + model_bytes);
+    let charged_before = counters.collection_opponent.live_charged_bytes.get();
+    let refused_before = counters.collection_opponent.not_kept_budget.get();
+    {
+        // A budget of exactly the entry and its model keeps it, charged in
+        // full.
+        let mut col = OpponentCacheV1::with_limits_v1(8, standalone);
+        assert!(col.insert(served));
+        assert!(col.contains(&source));
+        assert_eq!(col.charged_bytes, standalone);
+        assert_eq!(
+            counters.collection_opponent.live_charged_bytes.get() - charged_before,
+            standalone as u64
+        );
+        // One byte less refuses it: the model counts against the budget.
+        let mut tight = OpponentCacheV1::with_limits_v1(8, standalone - 1);
+        assert!(!tight.insert(admit_unforkable()));
+        assert!(!tight.contains(&source));
+        assert_eq!(tight.charged_bytes, 0);
+    }
+    assert_eq!(
+        counters.collection_opponent.not_kept_budget.get() - refused_before,
+        1
+    );
+    assert_eq!(
+        counters.collection_opponent.live_charged_bytes.get(),
+        charged_before
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
 #[test]
 fn the_process_opponent_cache_counts_checkpoint_decodes() {
     on_large_stack_v1(the_process_opponent_cache_counts_checkpoint_decodes_v1);

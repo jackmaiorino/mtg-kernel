@@ -1346,6 +1346,16 @@ impl FrozenPlayPolicyV1 {
         })
     }
 
+    /// This policy without its successor features, as `load_v1` alone returns
+    /// one, so `fork_for_collection_v3` refuses it. For tests of how a caller
+    /// treats a policy that cannot be forked.
+    #[cfg(test)]
+    pub(crate) fn without_successor_features_for_test_v1(mut self) -> Self {
+        self.successor = None;
+        self.fresh_successor = None;
+        self
+    }
+
     /// The explicit V4-to-V7 same-shape transfer (FlatV7, design
     /// docs/design/pauper_london_mulligans_v1.md, sections 5 and 6), as V3 to
     /// V4 was: the installed V4 parameters unchanged, scored under the V7
