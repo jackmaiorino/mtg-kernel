@@ -77,9 +77,20 @@ and keywords and drops everything else, which is why the card is Partial:
 ### 2.2 The supported donor set
 
 A donor is a creature card that can be the top card of the graveyard of the player who
-controls a face-up Shapeshifter. The set below is closed. `full_text_v1` gains a constant
-`SUPPORTED_DONORS_V1` with these names and a predicate `donor_supported(definition)`; every
-other creature card is refused (section 2.3).
+controls a face-up Shapeshifter. The set is exactly the ruling's: the FEB mirror donors, the
+five FEB sideboard creatures, and the donors reachable through the two Premodern control
+effects. `full_text_v1` gains a constant `SUPPORTED_DONORS_V1` with these names and a
+predicate `donor_supported(definition)`; every other creature card is refused (section 2.3).
+
+The FEB mirror donors are the 13 creature cards of the FEB mainboard: Akroma, Angel of Wrath;
+Battlefield Scrounger; Birds of Paradise; Elvish Spirit Guide; Hermit Druid; Karmic Guide;
+Palinchron; Phyrexian Devourer; Psychatog; Squee, Goblin Nabob; Triskelion; Volrath's
+Shapeshifter; Wall of Roots. They are complete today: every ability each has on the
+battlefield is donated by an existing program (rows below marked "none"). Reading "the two
+Premodern control effects" as "the donors those effects reach" adds Psychatog (already a
+mirror donor) and Meddling Mage; that reading is put to the lead in section 9, question 2.
+Mogg Fanatic and Ravenous Rats have donated programs on main but are outside the ruled set,
+so they are refused; section 9, question 1 asks whether to amend the ruling to keep them.
 
 | Donor | Where it can come from | What it donates | Program today | Work |
 | --- | --- | --- | --- | --- |
@@ -101,9 +112,15 @@ other creature card is refused (section 2.3).
 | Uktabi Orangutan | FEB sideboard | entry: destroy target artifact | `eternal_premodern_p3c_v1` `UKTABI_ORANGUTAN_TRIGGERS` | new entry kind |
 | Ghitu Slinger | FEB sideboard | echo {2}{R}; entry: 2 damage to any target | `p3h::ghitu_slinger_enters`, `p2d::echo_cost` | new entry kind; generalize the donated echo |
 | Xantid Swarm | FEB sideboard | flying; attack trigger: defending player can't cast spells this turn | `eternal_premodern_p3b_v1` `XANTID_SWARM_TRIGGERS` | new attack kind |
-| Meddling Mage | Replenish sideboard (through Legacy's Allure) | its "as enters" name choice, which never happens for a Shapeshifter already on the battlefield | none needed | a test; refusal on entry (below) |
-| Mogg Fanatic | not reachable from the snapshot lists | sacrifice for damage | `MoggFanaticSacrificeForDamage` | none (section 9, question 1) |
-| Ravenous Rats | not reachable from the snapshot lists | entry discard | `RavenousRatsEntered` | none (section 9, question 1) |
+| Meddling Mage | Replenish sideboard (through Legacy's Allure) | its "as enters" name choice, which never happens for a Shapeshifter already on the battlefield | none needed | a test; refusal on entry (below); in the set under the reading of question 2 |
+
+Refused under the ruling as written (section 9, question 1): Mogg Fanatic (Sligh, Goblins,
+RG Aggro, Mono-Red Control) and Ravenous Rats (The Rock). No snapshot deck that plays them can
+control a Shapeshifter, so refusing them costs no snapshot game. It does cost qualified
+behavior: `MoggFanaticSacrificeForDamage` and the Rats entry kinds become unreachable, and
+three fixtures of `full_text_v1/registered.rs`
+(`volrath_native_paid_fanatic_uses_original_damage_source_both_seats` and the two Rats tests)
+turn into refusal fixtures.
 
 New programs, each following the existing pattern exactly:
 
@@ -118,13 +135,12 @@ New programs, each following the existing pattern exactly:
   Auramancer's return and Monk Realist's destruction can change the top card of the
   Shapeshifter controller's graveyard; the trigger is already frozen (113.7a), and the new top
   is audited like any other change (section 2.3).
-- Donated echo: `KarmicGuideEcho { upkeep, control }` becomes the model for a general
-  `DonatedEcho { upkeep, control }` whose cost comes from the captured donor definition
-  through `p2d::echo_cost`. Today `P2dOpV1::DonatedGuideEchoPayV1` hard-codes Karmic Guide's
-  cost (`eternal_premodern_p2d_v1.rs`, the `DonatedGuideEchoPayV1` arm of `execute`); it
-  takes the captured donor's cost instead, so a departed Slinger donor still costs {2}{R}
-  (113.7a, 702.30a). `queue_upkeep_triggers` queues it for any donor with an echo cost. The
-  existing Guide variant stays readable for restored states.
+- Donated echo: Karmic Guide keeps `KarmicGuideEcho { upkeep, control }`, its program
+  meaning `FullTextProgramV1::KarmicGuideEcho` and `P2dOpV1::DonatedGuideEchoPayV1`, so the
+  frozen mirror's states and views do not change. An appended `DonatedEcho { upkeep, control }`
+  kind, with an appended pay op, is queued by `queue_upkeep_triggers` only for other donors
+  with an echo cost (Ghitu Slinger). Its cost comes from the captured donor definition through
+  `p2d::echo_cost`, so a departed Slinger donor still costs {2}{R} (113.7a, 702.30a).
 - Attack kind `XantidSwarmAttacked { attack }`: captured when the host is declared as an
   attacker while its text is Xantid Swarm's, frozen like the entry kinds, resolving through
   the physical program of `XANTID_SWARM_TRIGGERS`.
@@ -170,21 +186,34 @@ a Shapeshifter look at a top card:
 | A Shapeshifter phases in | Vision Charm phases out a Shapeshifter with Triskelion's text (an artifact) | `eternal_e5a_v1::phasing`, where a permanent phases in |
 | A Shapeshifter becomes a copy target or a copy becomes a Shapeshifter | none in the Premodern pool | covered by the backstop below |
 
-Backstop: `refused_donor` is also added to the validation chain at the top of
-`engine::advance_until_decision_historical` (beside `eternal_opening_v1::validate` and
-`leyline_axe_v1::validate`). That guarantees no decision is ever offered while an unsupported
-donor is in place, whatever path changed the top. The event sites above make the halt fire at
-the event that caused it, so a refused donor never acts in a partial resolution that is later
-observed. The scan costs one battlefield pass per check and returns at once when no
-Shapeshifter is on the battlefield.
+Backstop: `refused_donor` runs first in `engine::advance_until_decision`, before its
+`graveyard_order_v1::owns_operation` branch, so it covers decisions returned by
+`graveyard_order_v1::advance` (a pending owner order) as well as the historical path. Placed
+inside `advance_until_decision_historical` it would miss the pending-order decision, which
+`advance` returns after `validate_pending` alone. At that boundary the check is harmless: the
+visible state is the checkpoint taken before the batch commits (the module doc of
+`graveyard_order_v1.rs`: only the checkpoint at the order boundary becomes visible), and
+`batch_text_top` returns the scene's `before` top while a runner is live, a top that was
+already audited. When a pending order is restored without a runner, `batch_text_top` returns
+`None` and `graveyard_text_top` reads the physical graveyard list of that checkpoint, again
+the pre-batch top. The final top is audited when the order completes. A test restores a
+pending order with an unsupported donor arriving in the batch and checks that the order menu
+is offered and the halt fires only after the order completes. The backstop guarantees that no
+decision is ever offered while an unsupported donor is in place, whatever path changed the
+top; the event sites above make the halt fire at the event that caused it. The scan costs one
+battlefield pass and returns at once when no Shapeshifter is on the battlefield.
 
 What a session reports when it fires: the frozen FEB owner returns
-`FebCurrentV1::NativeHalt` and its JSONL route `{"state_type": "native_halt"}`, unchanged. The
-registered owner (section 3) reports the halt with its mechanic and the host's public card
-reference. A halted game is never a completed game: no terminal is reported, the
-best-of-three driver records no game result, and every harness that sees a halt fails the
-game. Schema 5 never sees it, because the schema 5 session refuses a Shapeshifter deck at
-reset (section 3.6).
+`FebCurrentV1::NativeHalt` and its JSONL route `{"state_type": "native_halt"}`
+(`feb_jsonl.rs`), both unchanged. A registered owner returns an appended
+`FebCurrentV1::RegisteredHaltV1 { mechanic: UnsupportedMechanic, source: Option<CardStableRefV1> }`,
+filled from `state.engine.halted` (the source's public card reference when the source is a
+public object, otherwise `None`); the frozen owner never returns it, and the private
+`decision::BoundBoundaryV1::Halted` keeps its shape. A halted game is never a completed game:
+no terminal is reported, the best-of-three driver records no game result, and every harness
+that sees a halt fails the game. Schema 5 never meets this halt: the deck is either refused at
+reset or refused at its first observation of a face-up Shapeshifter (section 3.7), before any
+donor can matter.
 
 Why no supported game reaches it. A card goes only to its owner's graveyard (400.3), and the
 Shapeshifter reads only its controller's graveyard, so every donor is a creature card from the
@@ -201,9 +230,12 @@ control effects in the pool. From the deck lists in
 | `premodern-replenish` | Legacy's Allure (1, mainboard) | Meddling Mage (4, sideboard) |
 | the other 21 decks | nothing | not donors |
 
-Every name in the right column is in the supported set, and the Mage case is the "already on
-the battlefield" one. So the refusal is reachable only from a custom registration, never from
-a game between snapshot decks.
+Every name in the right column is in the supported set (Meddling Mage under the reading of
+section 9, question 2), and the Mage case is the "already on the battlefield" one. So the
+refusal is reachable only from a custom registration, never from a game between snapshot
+decks. If the lead rejects that reading, a Replenish game that steals a Shapeshifter with
+Legacy's Allure and then puts Meddling Mage on top of its own graveyard halts; that is the
+cost of question 2's other answer.
 
 ## 3. The public consumer: the registered ordered owner
 
@@ -250,9 +282,25 @@ does with every registry wave; clients already pass the current hash.
   implementer lists every `text_mode` branch in `build_observation_common_v2_fishing_v39_conqueror_v49_fake_v50`
   and `build_observation_v2` in the pull request and states which side each takes. This is
   needed: the frozen scene refuses shroud (`refuse_unrepresented_shroud_in_mode`) and Meddling
-  Mage names (`meddling_mage_entry::requires_successor`), so Enchantress (Argothian
-  Enchantress, Sterling Grove), White Weenie (True Believer) and the Mage decks would halt as
-  unsupported in a widened game without it.
+  Mage names (`meddling_mage_entry::requires_successor`, which scans the event history, so any
+  state after a Mage has entered is refused), so Enchantress (Argothian Enchantress, Sterling
+  Grove), White Weenie (True Believer) and the Mage decks would end as `UnsupportedDecision` in
+  a widened game without it. The gates that today test `text_mode ==
+  ObservationTextModeV2::PublicShroudV5Artifact` each take `PublicShroudV5Artifact |
+  PremodernOrderedRegisteredV1Artifact`: the `public_shroud` field and the
+  `meddling_mage_names` field of the projection, the `refuse_unrepresented_shroud_in_mode`
+  calls, and the Mage refusal choice (`requires_copy_successor` instead of
+  `requires_successor`); after section 4, the `text_color_changes` field too. The
+  `full_text_v1::refuse_legacy` skip, which today tests `!= PremodernOrderedV1Artifact`, skips
+  for both ordered modes. Schema 5 output is unchanged because its own mode takes the same
+  branch as before at every gate.
+- An observe entry for the registered profile, `rl::observe_premodern_ordered_registered_v1`,
+  beside `rl::observe_premodern_ordered_v1` (which stays fixed to `PremodernOrderedV1Artifact`
+  for the frozen owner). The owner records its profile, and `decision::bind_next` and
+  `decision::view` call the observe entry of that profile. The legal actions need no work: the
+  owner's menu comes from `rl::legal_action_candidates_v1`, which already maps
+  `Decision::ChooseMeddlingMageNameV1` to `ActionSemanticV1::ChooseMeddlingMageNameV1`
+  answered by `ChooseEffectOption` (`rl.rs`, the `ChooseMeddlingMageNameV1` arm near line 7394).
 
 ### 3.3 Registration and validation
 
@@ -262,7 +310,7 @@ one, and the S1i pattern carries over:
 - `EternalRegisteredDeckV1::new_with_ordered_graveyard_v1(format, deck_id, mainboard,
   sideboard, companion)`. It requires `EternalFormatV1::Premodern`, every card Full and not a
   token, the usual bounds and copy limit, no companion (the Premodern snapshot has none) and
-  no native-opening card. Section 9, question 2 proposes also requiring every card to be in
+  no native-opening card. Section 9, question 4 proposes also requiring every card to be in
   the 305-card Premodern snapshot pool.
 - `register` refuses a card for which `full_text_v1::owns_definition` holds unless the
   profile is on, with an appended `EternalBo3ErrorV1::OrderedGraveyardSetup { reason }`.
@@ -305,7 +353,7 @@ the V2 privacy rules (`premodern_ordered_public_v1.rs` test
 `paired_hidden_worlds_preserve_public_order_and_both_native_presentations` is the model for a
 registered-profile twin). The Human view keeps the frozen renderer with its explicit
 `unsupported` row for meanings it cannot label; numeric ordinals are the qualifying
-submission (section 9, question 6).
+submission (section 9, question 7).
 
 ### 3.6 Routing and refusals
 
@@ -314,44 +362,92 @@ holds a card for which `full_text_v1::owns_definition` holds, that is a Volrath'
 Shapeshifter. The ruling's "ordered-graveyard reader" (`engine::graveyard_order_readers_present`)
 also covers Delve, but no card in the Premodern pool has Delve (Gurmag Angler, Murktide
 Regent, Treasure Cruise, Dig Through Time and Hogaak are the registry's Delve cards), so Delve
-games stay on schema 5 as today (section 9, question 5).
+games stay on schema 5 as today (section 9, question 6).
 
 - `PLAYABLE` (`tests/eternal/eternal_catalog_v1.rs`, 137 entries) gains
-  `premodern-full-english-breakfast`, inserted immediately before `premodern-reanimator` so
-  that both of its neighbours are Premodern: the pairs become Madness Threshold against FEB and
-  FEB against Reanimator. Such a pair registers both snapshot 75s with the ordered profile and
-  plays game one only, with ranked and seeded random policies, through a new in-process driver
+  `premodern-full-english-breakfast`. Its position in that list does not matter:
+  `playable_snapshot_decks_finish_and_replay_through_public_sessions` filters
+  `snapshot_decks()` by the list, pairs each deck with the next in snapshot order and seeds
+  each pair with `0x4554_4552_0000 + index`. The new pairs are Replenish against FEB and FEB
+  against Stasis; Replenish against Stasis goes away; Stasis against Reanimator and the
+  wrap-around pair Reanimator against `pauper-mono-red-madness` move to new seeds (the
+  Premodern snapshot is the last of `SNAPSHOTS`). A pair with a Shapeshifter registers both
+  snapshot 75s with the ordered profile and plays game one only, with ranked and seeded random
+  policies, through a new in-process driver
   (`tests/eternal/eternal_bo3_v1/eternal_bo3_ordered_v1.rs`), and must reach a natural terminal
-  and replay to the same transcript and state hash. Other pairs are unchanged.
+  and replay to the same transcript and state hash. In B2 Replenish's 75 cannot register yet
+  if C2 has not landed (Alter Reality is missing); the pair registers Replenish's mainboard
+  with an empty sideboard for game one, which is all `PLAYABLE` plays.
 - `PLAYABLE_75` (`tests/eternal/eternal_bo3_v1.rs`, 124 entries) gains FEB (and Replenish,
   section 4). Matches pair in snapshot order within the format, so once both cards are Full
   the new pairs are Replenish against FEB and FEB against Stasis; if the Shapeshifter is Full
-  first, they are Enchantress against FEB and FEB against Stasis. A match where either deck
-  holds a Shapeshifter registers both decks with the ordered profile and plays every game
-  through the same driver.
-- The schema 5 session refuses a Shapeshifter deck at reset:
-  `card_def::preflight_fully_supported_deck` gains an appended
-  `DeckPreflightError::RequiresOrderedGraveyardOwnerV1`, as Leylines have
-  `RequiresNativeOpening`. Today the same deck is refused there as `NotFullySupported`; the
-  reply's error code is unchanged and only its message names the owner (section 9,
-  question 3).
+  first, they are Enchantress against FEB and FEB against Stasis. The match seed counter of
+  `playable_75_decks_play_best_of_three_with_random_sideboarding` runs across formats in
+  `BTreeMap` order (legacy, pauper, premodern, vintage), so every later Premodern match and
+  every Vintage match moves to a new seed. A match where either deck holds a Shapeshifter
+  registers both decks with the ordered profile and plays every game through the same driver.
+- Schema 5 and a Shapeshifter deck: section 3.7 and section 9, question 3.
 
 Refusals of the registered owner: a registration outside section 3.3 (typed
 `EternalBo3ErrorV1`); a mismatched profile; a state its text mode cannot represent
 (`FebCurrentV1::UnsupportedDecision`, as today); a native halt, including the donor refusal
-(`NativeHalt` with mechanic and host); a foreign or stale decision token or snapshot (as
-today).
+(`FebCurrentV1::RegisteredHaltV1` with mechanic and source, section 2.3); a foreign or stale
+decision token or snapshot (as today).
 
 ### 3.7 Schema 5 is untouched
 
-The widening adds no field, action or reply to schema 5. Evidence the pull requests must
-show: their diffs touch `limited_session_v1.rs`, `PublicObservationProjectionV5` and the
-schema 5 action builders not at all (B1, B2), apart from the preflight variant above;
-`tests/eternal/eternal_public_shroud_v1.rs`, `tests/limited_session_v1.rs`,
-`tests/london_mulligans_v1.rs` and `src/limited_prepared_session_v5/tests.rs` pass unchanged;
-and the 137 catalog games of `playable_snapshot_decks_finish_and_replay_through_public_sessions`
-that do not involve FEB print the same transcript SHA-256s before and after (from the CI
-logs), since their pairs and seeds are unchanged.
+How schema 5 meets a Shapeshifter deck. A schema 5 reset (`LimitedJsonlServerV1`, the
+`reset` arm in `limited_session_v1.rs`) checks each row itself (`card.is_token ||
+!card.has_full_support()`, near line 148, and near line 212 for cards outside the game), then
+builds the session with
+`RlEpisodeSessionV1::reset_with_custom_decks_companions_london_and_shroud_v1`
+(`rl_session.rs` near line 6076), which calls `card_def::preflight_fully_supported_deck` for
+both decks (near line 6091) and maps any error to `RlSessionErrorCode::UnsupportedDeck`. That
+preflight is what refuses a Leyline deck at reset today (`RequiresNativeOpening`). Today FEB is
+refused by the row check, because the Shapeshifter is Partial. Once it is Full (B2), both checks
+pass unless one is changed. The lead chooses (section 9, question 3):
+
+- (a) Change nothing in schema 5. A FEB reset is admitted. The game runs until the first
+  observation built while a face-up Shapeshifter is on the battlefield (or after any
+  full-text event): `full_text_v1::refuse_legacy` fails the observation, and the session ends
+  with a halted terminal, `terminal_outcome` `halted`, `terminal_code` `fail_closed`, and a
+  `terminal_reason` beginning `fail_closed:observation:` (`rl_session.rs`, the observation arm
+  of `advance_to_decision_or_terminal_profiled`). It never reports `natural_game_over`, so no
+  completed game is ever wrong; a client sees a game that started and then failed closed.
+  Every schema 5 byte is unchanged.
+- (b) Refuse at reset. Append `DeckPreflightError::RequiresOrderedGraveyardOwnerV1` to
+  `card_def::preflight_fully_supported_deck`, beside `RequiresNativeOpening`. The change is in
+  `card_def.rs`, not in `limited_session_v1.rs`. The reset reply for a Shapeshifter deck stays
+  an error with code `unsupported_deck`, as today; only its message changes, from the row
+  check's "is a token or lacks full engine support" to the preflight's text naming the ordered
+  owner. Every other reply is unchanged. The preflight is shared with other session resets
+  (`rl_session.rs`, `rl.rs`, `runtime_decks.rs`), which then refuse a Shapeshifter deck the same
+  way.
+
+The ruling's wording, "schema 5 untouched", favors (a) literally: (a) changes no schema 5 byte,
+while (b) changes one error message for a deck schema 5 cannot play either way. (b) follows the
+Leyline precedent and refuses before any play. Proposed: (b), stated to the lead as the one
+schema 5 message that changes.
+
+Evidence for "schema 5 untouched", which can hold:
+
+- The schema 5 contract: no field, action or reply is added by A, B1 or B2. Their diffs touch
+  `limited_session_v1.rs` not at all, and `rl.rs` only in the mode gates of section 3.2, which
+  give `PublicShroudV5Artifact` the same branch as before. `card_def.rs` changes only by (b)'s
+  variant, if chosen.
+- The schema 5 tests pass unchanged: `tests/eternal/eternal_public_shroud_v1.rs`,
+  `tests/limited_session_v1.rs`, `tests/london_mulligans_v1.rs`,
+  `src/limited_prepared_session_v5/tests.rs`.
+- Byte identity of schema 5 games: A and B1 change no registry row, so `KERNEL_CARDDB_HASH`
+  (carried in every schema 5 reply as `card_db_hash` and folded into each deck identity), the
+  catalog lists, pairs and seeds are all unchanged by them. Every transcript SHA-256 printed by
+  `playable_snapshot_decks_finish_and_replay_through_public_sessions` and by the best-of-three
+  test must therefore be identical before and after A and before and after B1; the pull
+  request quotes both CI logs. These transcripts are not pinned goldens; the comparison is
+  evidence that the code changes leave schema 5 games alone.
+- B2 changes every transcript, through the catalog hash in every reply and through the new
+  pairs and seeds above. That is data, not schema 5 behavior, and touches no pinned golden
+  (section 4.6 names them). No comparison across B2 is offered.
 
 ## 4. Alter Reality
 
@@ -368,10 +464,17 @@ The registry has no rules text; the implementer cross-checks XMage's
   mana symbol. "Nonblack" uses "black" as a color word and changes. Basic land type words
   (swampwalk, Plainscycling, "Island") are not color words.
 - 613.1c: layer 3. 613.7: two changes on one object apply in timestamp order ("black" to
-  "green", then "green" to "red", turns both original black and green words red). 613.8: a
-  change depends on Volrath's full text, which replaces the words it acts on, so the full text
-  applies first whatever the timestamps; a change on a Shapeshifter acts on its current
-  donated text.
+  "green", then "green" to "red", turns both original black and green words red).
+- A change on a Shapeshifter is not settled. Under 613.8a both effects are in layer 3, neither
+  comes from a characteristic-defining ability, and applying the full-text effect changes the
+  words the color change acts on, so the color change depends on it and applies after it
+  (613.8b): the change would act on the current donated text. Against that, Alter Reality's
+  2004-10-04 ruling says: "It will not change any effects that are on the permanent." Volrath's
+  Shapeshifter's 2008-08-01 ruling calls its characteristic-setting ability a text-changing
+  effect, so the donated text is itself an effect on the permanent, and the 2004 ruling would
+  leave it unchanged (the change then touches only the Shapeshifter's printed text, which has
+  no color word). The two readings differ only while the top card is Akroma or Karmic Guide.
+  Section 9, question 8 puts this to the lead; section 4.7 gives both designs.
 - 608.2: both words are chosen as the spell resolves; target legality is checked then
   (608.2b).
 - 400.7a: a change to a permanent spell continues on the permanent it becomes. Otherwise a
@@ -393,14 +496,28 @@ Shape, in a new core module `mtg-kernel/src/text_color_change_v1.rs` (the counte
 
 ```text
 TextColorChangeV1 { object: ObjectLinkV4, from: ManaColor, to: ManaColor, timestamp: u64 }
-TextColorChangesV1(Vec<TextColorChangeV1>)   // nonempty while present
+TextColorCaptureV1 { item: StackItemId, read: Vec<(ManaColor, ManaColor)> }
+TokenColorV1 { token: ObjectLinkV4, color_mask: u8 }
+TextColorChangesV1 {
+  changes: Vec<TextColorChangeV1>,   // live changes on objects
+  captures: Vec<TextColorCaptureV1>, // printed to read word, per stack item
+  token_colors: Vec<TokenColorV1>,   // created tokens whose printed color changed
+}                                    // at least one list nonempty while present
 text_color(state, object, printed: ManaColor) -> ManaColor
 text_color_mask(state, object, printed_mask: u8) -> u8
+captured_color(state, item: StackItemId, printed: ManaColor) -> ManaColor
 ```
 
 `text_color` folds the object's live changes in timestamp order. `text_color_mask` maps each
-color bit through `text_color`. Timestamps come from `engine::next_timestamp`, called only when
-Alter Reality resolves.
+color bit through `text_color`. `captured_color` returns the word an ability read when it was
+put on the stack, or `printed` when the item has no capture. Timestamps come from
+`engine::next_timestamp`, called only when Alter Reality resolves.
+
+No existing struct, op variant or enum changes shape, and enums gain only appended variants.
+`StackItem` and `trigger::PendingTrigger` derive `Hash` and are hashed with the state, so a
+captured color is never stored in them, nor as a new parameter of an existing op (Crimson
+Acolyte's grant op, the token ops, `circle_choose`). Everything new lives in the one optional
+`GameState` field below.
 
 - Storage: its own field on `GameState`, `text_color_changes_v1: Option<TextColorChangesV1>`,
   serialized with `skip_serializing_if = "Option::is_none"` and hashed in
@@ -411,19 +528,35 @@ Alter Reality resolves.
 - Save and restore: part of the state snapshot, restored exactly; an empty record is `None`.
 - End: when the object changes zones the link goes stale and the entry is removed at that
   zone change, except that a permanent spell's entries move to the permanent's new
-  incarnation as it resolves onto the battlefield (400.7a). When the last entry goes, the
-  field returns to `None`. Phasing (zone `Command` with the same incarnation,
+  incarnation as it resolves onto the battlefield (400.7a). When the last entry of all three
+  lists goes, the field returns to `None`. Phasing (zone `Command` with the same incarnation,
   `eternal_e5a_v1::phasing`), control changes and face-down to face-up keep it.
 - Copies: never copied (707.2). A token or permanent copy is a new object with no entry.
 - Face-down targets: the change is recorded publicly and applies when the permanent is turned
   face up. The decision whether a target is in the audited table (section 4.4) never reads a
   face-down identity: a face-down permanent is accepted, and the audit runs when it is turned
-  face up. The pool's morph creatures (Exalted Angel, Bane of the Living) have no color word.
+  face up. The pool's morph creatures (Exalted Angel, Bane of the Living, Birchlore Rangers,
+  Nantuko Vigilante) have no color word.
 - Abilities: a site that reads a word for an ability (Plaguebearer's target, Crimson Acolyte's
-  grant, Circle of Protection: Red's choice, the token makers' triggers and activations, the
-  two land animations) captures `text_color` of its source when the ability is put on the
-  stack and stores the captured color with the stack item or its pending trigger, so a later
-  change to the source does not reach it (113.7a).
+  grant, Circle of Protection: Red's choice, Dystopia's and Verdant Force's upkeep triggers,
+  the token makers' triggers and activations, the two land animations) reads it through
+  `captured_color`, so a later change to the source does not reach it (113.7a). The capture is
+  written as the item is put on the stack, keyed by its `StackItemId` (`item.v4.stack_item_id`,
+  allocated once per stack item and never reused), and only when the source has a live change
+  at that moment; an ability of an unchanged source has no capture and reads its printed word,
+  so games without the card write nothing. A triggered ability is captured when it is put on
+  the stack, not when it triggers: no player receives priority in between, and the only source
+  of a change, Alter Reality's own resolution, commits no event that could trigger. The key
+  survives snapshot and restore with the field. The capture is removed when its item leaves
+  the stack (resolved, countered, or removed), after the resolution has read it. A copy of a
+  stack item gets a new `StackItemId` and no capture; no card in the Premodern pool copies an
+  ability, and a copy of an item that has a capture halts with
+  `TextColorChangeOutsideAuditV1` rather than guess.
+- Token colors: a token created by a site whose word changed gets a `token_colors` entry
+  holding its printed color mask, read at the printed-color fallback of
+  `engine::unpainted_object_color_mask`; the entry ends when the token leaves the battlefield.
+- `CircleColorV1` (`eternal_sideboard_s1d_v1.rs`) gains appended variants for white, black and
+  green only, so its existing values serialize and hash as before.
 
 ### 4.3 The card
 
@@ -473,12 +606,12 @@ stack (section 4.2).
 | 16 | Gloom | white (enchantment activations) | `p3b/statics.rs` activation tax, called from `engine.rs` | {3} per Gloom whose color the enchantment has |
 | 17 | Warmth | red | `eternal_premodern_p3a_v1.rs` Warmth trigger (`active_permanents(state, WARMTH, ...)`) | each Warmth triggers on its own color |
 | 18 | Dystopia | green, white | `eternal_premodern_p3b_v1.rs` upkeep trigger and the color mask in `effect.rs` (the "any of these colors" filter) | capture at trigger; either or both words |
-| 19 | Circle of Protection: Red | red | `eternal_premodern_p3g_v1.rs::circle_of_protection_red`, `eternal_sideboard_s1d_v1::circle_choose(CircleColorV1::Red)` | capture; `CircleColorV1` has Blue and Red only and gains a general color |
+| 19 | Circle of Protection: Red | red | `eternal_premodern_p3g_v1.rs::circle_of_protection_red`, `eternal_sideboard_s1d_v1::circle_choose(CircleColorV1::Red)` | capture; `CircleColorV1` has Blue and Red only and gains appended White, Black and Green variants |
 | 20 | Quirion Dryad | white, blue, black, red | `eternal_premodern_p1b_v1.rs` Dryad trigger filter | the trigger's color set follows the words |
 | 21 | Blue Elemental Blast | red (both modes) | `TargetSpec::RedSpellOnStack`, `TargetSpec::RedPermanent` (`card_def.rs`), the resolution legality recheck in `engine.rs` | a change on the stack can make the chosen target illegal; targets are enumerated before any change can exist, so only the recheck reads it |
 | 22 | Red Elemental Blast | blue (both modes) | `TargetSpec::BlueSpellOnStack`, `TargetSpec::BluePermanent`, same recheck | same; the main defensive use |
-| 23 | Pyroblast | blue (both modes) | `EffectCond::TargetIsColor(0, U)` in `effect.rs` | resolves and does nothing to an object without the new color |
-| 24 | Hydroblast | red (both modes) | `EffectCond::TargetIsColor(0, R)` | same |
+| 23 | Pyroblast | blue (both modes) | `EffectCond::TargetIsColor(0, U)`, written in the recipe in `card_def.rs` and evaluated in `effect.rs` (the `TargetIsColor` arm of the condition evaluator) | resolves and does nothing to an object without the new color |
+| 24 | Hydroblast | red (both modes) | `EffectCond::TargetIsColor(0, R)`, same two places | same |
 | 25 | Snuff Out | black ("nonblack") | `TargetSpec::NonblackCreature` recheck in `engine.rs` | the target may become illegal on the stack |
 | 26 | Plaguebearer | black ("nonblack") | `eternal_premodern_p3b_v1/targets.rs` (`NonblackCreatureManaValueV1`) | capture at activation; enumeration and recheck use it |
 | 27 | Anarchy | white | `eternal_premodern_p3a_v1.rs` `P3aOpV1::AnarchyV1` | on the stack: destroys permanents of the new color |
@@ -489,18 +622,24 @@ stack (section 4.2).
 | 32 | Deranged Hermit | green | `p2b` entry trigger, Squirrel tokens | capture at trigger |
 | 33 | Caller of the Claw | green | `p2b` entry trigger, Bear tokens | capture at trigger |
 | 34 | Verdant Force | green | `eternal_premodern_p2c_v1.rs` upkeep trigger, Saproling token | capture at each trigger |
-| 35 | Zombie Infestation | black | `build_eternal_p2a_v1.rs` recipe `CreateToken("Zombie Token")` | capture at activation |
+| 35 | Zombie Infestation | black | the generic token creation in `effect.rs` for the recipe `CreateToken("Zombie Token")` of `build_eternal_p2a_v1.rs` | capture at activation |
 | 36 | Phyrexian Processor | black | `eternal_premodern_p3f_v1.rs` Minion token | capture at activation |
-| 37 | Treetop Village | green | `build_support/standard_lands_v1.rs` animation colors, read through `continuous_characteristics_v1::animation` | capture at activation |
+| 37 | Treetop Village | green | the animation colors of `build_support/standard_lands_v1.rs`, mapped at run time in `continuous_characteristics_v1::animation` | capture at activation |
 | 38 | Ghitu Encampment | red | same | same |
 
-That is 36 cards and 38 sites (Crimson Acolyte and Gloom have two each), in 16 module
-families: 11 Premodern wave modules (P1a, P1b, P2a's build table, P2b, P2c, P2d, P3a, P3b,
-P3c, P3e, P3f), two sideboard wave modules (S1c, S1d with P3g), the core engine, effect and
-card definition files (including `spell_costs_v1.rs`), and the land build table. A token's
-color is set as it is created through a base-color entry read at the printed-color fallback
-of `engine::unpainted_object_color_mask`, so later layer-5 setters (Wild Mongrel, Painter's
-Servant, Mycosynth Lattice) still override it.
+That is 36 cards and 38 sites (Crimson Acolyte and Gloom have two each). The code that
+changes lives in 16 modules: 13 card modules (`eternal_premodern_p1a_v1`, `_p1b_v1`, `_p2b_v1`,
+`_p2c_v1`, `_p2d_v1`, `_p3a_v1`, `_p3b_v1`, `_p3c_v1`, `_p3e_v1`, `_p3f_v1`, `_p3g_v1`,
+`eternal_sideboard_s1c_v1`, `eternal_sideboard_s1d_v1`, each with its `statics` or `targets`
+submodule where the site is there), and `engine.rs` (the Blast and Snuff Out rechecks, Gloom's
+activation tax caller), `effect.rs` (Dystopia's color filter, `TargetIsColor`, the generic
+token creation that Zombie Infestation's recipe compiles to, the token base color) and
+`continuous_characteristics_v1.rs` (the land animation colors). The build tables
+(`build_eternal_p2a_v1.rs`, `build_eternal_p3a_v1.rs`, `build_support/standard_lands_v1.rs`)
+and the recipes in `card_def.rs` are read, never changed (section 7, C1). `spell_costs_v1.rs`
+calls the Chill and Gloom taxes unchanged. A token's color is set as it is created through a
+`token_colors` entry read at the printed-color fallback of `engine::unpainted_object_color_mask`,
+so later layer-5 setters (Wild Mongrel, Painter's Servant, Mycosynth Lattice) still override it.
 
 Supported as a recorded change with no effect (the word is in a cost paid from hand or
 graveyard before Alter Reality can target the spell): Unmask, Contagion, Pyrokinesis
@@ -510,10 +649,11 @@ cost.
 Supported as a recorded change with no effect: the 264 cards with no color word, and the pool's
 tokens. Examples worth stating because they look otherwise: Black Vise, Circle of Protection:
 Red's name, Red and Blue Elemental Blast's names (proper names); Iridescent Angel and Mother of
-Runes ("all colors", "the color of your choice"); Avatar of Woe (fear); Funeral Charm, Snuff
-Out's alternative cost, Choke, Daze, Gush, Thwart, Foil, Mogg Salvage, Fireblast, Lava Dart,
-Quirion Ranger, Anger, Tainted Field and Tainted Wood, Eternal Dragon and Tranquil Thicket
-(land types); Lurking Skirge (its current text has no color word).
+Runes ("protection from each color", "the color of your choice"); Avatar of Woe (fear);
+Funeral Charm, Snuff Out's alternative cost, Choke, Daze, Gush, Thwart, Foil, Mogg Salvage,
+Fireblast, Lava Dart, Quirion Ranger, Anger, Tainted Field and Tainted Wood, Eternal Dragon and
+the five fetch lands (Flooded Strand, Polluted Delta, Bloodstained Mire, Windswept Heath,
+Wooded Foothills) (land types); Lurking Skirge (its current text has no color word).
 
 Refusal: any target whose face-up definition is outside the 305 cards and their tokens halts
 the game at resolution with an appended `UnsupportedMechanic::TextColorChangeOutsideAuditV1`
@@ -541,9 +681,9 @@ Modelled on S1k (`docs/design/limited_public_shroud_v1.md`, the S1k section of
   battlefield permanent or stack spell (a face-down permanent's public reference, never its
   identity). Order: seat 0's battlefield then seat 1's in public battlefield order, then the
   stack bottom to top; one object's entries in timestamp order, which is their meaning
-  (613.7). Present only under the public shroud contract (as `meddling_mage_names` is, through
-  `ObservationTextModeV2::PublicShroudV5Artifact`) and only when the list is nonempty; absent
-  otherwise.
+  (613.7). Gated like `meddling_mage_names`: built only when `text_mode` is
+  `PublicShroudV5Artifact` (schema 5) or `PremodernOrderedRegisteredV1Artifact` (the registered
+  owner, section 3.2), and present only when the list is nonempty; absent otherwise.
 - Action meaning: appended `ActionSemanticV1::ChooseTextColorWordV1 { actor, source, target,
   stage, from, color, option_index, option_count }`, serialized `choose_text_color_word_v1`.
   `source` is the resolving Alter Reality, `target` its `TargetRefV1`, `stage` is `from` or
@@ -551,27 +691,67 @@ Modelled on S1k (`docs/design/limited_public_shroud_v1.md`, the S1k section of
   It answers with `ChooseEffectOption(option_index)`. Stage `from` offers the five colors in
   WUBRG order; stage `to` the four others in the same order.
 - Every other consumer refuses a state with a record or a pending text-word choice, as for
-  shroud and Meddling Mage: schema 4 and earlier observation versions, flat encoders and
-  action slices, infoset export, search, the Spellbench bridge. The registered ordered owner
-  (section 3) carries the field through its V5 projection, so Replenish against FEB works.
+  shroud and Meddling Mage: schema 4 and earlier observation versions (including the frozen
+  ordered mode `PremodernOrderedV1Artifact`), flat encoders and action slices, infoset export,
+  search, the Spellbench bridge. The new semantic is handled wherever S1k's
+  `ChooseMeddlingMageNameV1` is: the Human labels (`human_bo3_v1/labels.rs`, which refuse it as
+  they refused the Mage semantic), `agent_bridge_v1.rs` and the two `rl_session.rs` matches
+  over action semantics. The registered ordered owner carries the field through its V5
+  projection, so Replenish against FEB works.
 
 ### 4.6 The condition: games without the card stay byte-identical
 
-| Pin family | Why it cannot move | Test that proves it |
+The general argument: a game without Alter Reality never writes `text_color_changes_v1` (no
+change, no capture, no token color), never draws `next_timestamp` for it, and never offers its
+action; the field is `None`, skipped in serde and not hashed, and no existing struct, op
+variant or enum value changes shape (section 4.2). So its state bytes, state hash,
+observations and legal actions are those of main, in every build. The pinned goldens in the
+tree, and how each is held:
+
+| Pinned golden | Build that runs it | Held by |
 | --- | --- | --- |
-| Schema 5 observation goldens and hashes | the field is absent unless a change applies, and `visible_projection_hash` covers serialized bytes | a new test asserts that a schema 5 observation of a game without the card has no `text_color_changes` key; `tests/eternal/eternal_public_shroud_v1.rs`, `tests/limited_session_v1.rs`, `tests/london_mulligans_v1.rs`, `src/limited_prepared_session_v5/tests.rs` pass unchanged |
-| Session transcripts | the catalog's single games play mainboards (Alter Reality is sideboard only) and keep their pairs and seeds; best-of-three matches without Replenish never see it | the C2 pull request quotes the transcript SHA-256 lines of the catalog and best-of-three runs before and after: identical for every pair and match not involving Replenish |
-| State hashes and snapshot bytes | `text_color_changes_v1` is `None` and skipped, hashed only when present; no existing struct gains a field; `next_timestamp` is drawn only by the card | the pinned state goldens pass unchanged: `environment_randomization_v2/reset_physical_trajectory_goldens_v1.rs`, `native_full_episode_trajectory_v1_goldens.rs`, `rl_session.rs` `environment_hashes_are_diagnostic_dispatched_with_exact_goldens` and `flat_action_core_matches_hand_authored_all_kind_golden`; a unit test checks a state whose only change was removed hashes like one that never had it |
-| Catalog hash rules | the default and FDN catalogs gain nothing; appended enum variants keep existing fingerprint codes | `card_def.rs` `card_db_hash_v34_is_frozen` and `card_db_hash_full_pool_provisional_fdn_is_frozen` unchanged; `card_db_hash_eternal_v1_is_frozen` is re-pinned once, by the row (PR C2), with the value the build prints |
+| `card_def.rs` `card_db_hash_v34_is_frozen`, `card_db_hash_full_pool_provisional_fdn_is_frozen` | default, FDN | no row or recipe in those catalogs changes; pass unchanged |
+| `card_def.rs` `card_db_hash_eternal_v1_is_frozen` | Eternal | a catalog pin, not a game golden: re-pinned once by C2's row, unchanged by C1 (section 7) |
+| `state.rs` `legacy_randomization_bytes_are_sealed` | default | the general argument; passes unchanged |
+| `environment_randomization_v2/reset_physical_trajectory_goldens_v1.rs`, `native_full_episode_trajectory_v1_goldens.rs`, `native_full_episode_trajectory_v2_goldens.rs` | default | same |
+| `rl_session.rs` `environment_hashes_are_diagnostic_dispatched_with_exact_goldens`, `flat_action_core_matches_hand_authored_all_kind_golden` | default | same |
+| `tests/pauper/async_rollout_v2_legacy_golden.rs` | Pauper integration | same |
+| the flat tensorizer goldens (`native_flat_tensorizer_v2.rs`, `native_flat_tensorizer_v2_cost_tests_v1.rs`) and the `policy_surface_v5.rs` goldens | default | same |
+| schema 5 behavior: `tests/eternal/eternal_public_shroud_v1.rs`, `tests/limited_session_v1.rs`, `tests/london_mulligans_v1.rs`, `src/limited_prepared_session_v5/tests.rs` | default and Eternal | the field is absent while empty; the mode gates give schema 5 its old branch; pass unchanged |
+
+No stored transcript or state hash of an Eternal catalog game exists (`tests/eternal`,
+`src/premodern_ordered_public_v1` and `src/eternal_bo3_v1.rs` hold none); those games check
+self-replay only. Three tests prove the argument directly in C1: a schema 5 observation of a
+game without the card has no `text_color_changes` key; a state with an item on the stack, a
+pending trigger and no record hashes and serializes exactly as on main (the state built by the
+same seeded steps on the base commit, its hash recorded in the test); and a state whose only
+change was removed hashes like one that never had one. And because C1 changes no registry row,
+recipe or catalog hash (section 7), every catalog and best-of-three transcript SHA-256 printed
+in CI must be identical before and after C1, with the same pairs and seeds; the C1 pull request
+quotes both logs. C2 then changes every transcript through the catalog hash carried in each
+schema 5 reply and folded into each deck identity, and through `PLAYABLE_75`'s new pairs and
+shifted seeds (section 3.6). Those transcripts are unpinned, so this does not touch the
+ruling's condition, and no comparison across C2 is offered.
 
 ### 4.7 Volrath and Alter Reality together
 
-Replenish (Alter Reality in the sideboard, Legacy's Allure in the mainboard) meets FEB in
-best of three. A change on a Shapeshifter acts on its current donated text (613.8), so
-"black" to "green" on a Shapeshifter with Akroma's text gives protection from green and red;
-when the top becomes Karmic Guide it has protection from green; with a noncreature top it has
-no color word. A change made to a Shapeshifter spell carries over as it enters (400.7a). The
-test for this lands with whichever of B2 and C2 merges second.
+Replenish (Alter Reality in the sideboard, Legacy's Allure in the mainboard) meets FEB in best
+of three, so a change can land on a Shapeshifter in a snapshot game. The two readings of
+section 4.1 give two designs; section 9, question 8 asks the lead to choose.
+
+- Dependency reading (613.8): `text_color_mask` applies to the host's current text, after
+  full text. "Black" to "green" on a Shapeshifter with Akroma's text gives protection from
+  green and red; with Karmic Guide on top, protection from green; with a noncreature top, no
+  color word. The site is the full-text branch of `p2c::statics::protection_mask`.
+- Ruling reading (2004): the change applies only to the Shapeshifter's printed text, which has
+  no color word, so it never changes the donated protection; the full-text branch ignores the
+  record.
+
+Either way a change made to a Shapeshifter spell carries over as it enters (400.7a), and the
+test for the chosen reading lands with whichever of B2 and C2 merges second. If the lead wants
+neither reading settled in code, the fallback is a typed halt (`TextColorChangeOutsideAuditV1`)
+whenever a Shapeshifter with a change has Akroma or Karmic Guide on top; that is reachable in
+Replenish against FEB, so those matches could halt.
 
 ## 5. Tests that gate Full
 
@@ -594,11 +774,25 @@ test for this lands with whichever of B2 and C2 merges second.
       text at entry. The Masticore branch of
       `volrath_native_registration_retains_paid_discard_with_no_or_unsupported_text_both_seats`
       becomes a refusal case.
-- [ ] The frozen tests of section 3.1 pass unchanged.
+- [ ] Pending order and the backstop: a pending owner order, also after a restore without a
+      runner, with an unsupported donor among the arrivals offers the order menu and halts
+      only once the order completes.
+- [ ] Mogg Fanatic and Ravenous Rats: under the ruling as written, the three fixtures that use
+      them as donors become refusal fixtures (or stay as they are if question 1 amends the
+      ruling).
+- [ ] The frozen tests of section 3.1 pass unchanged, plus a new pin of the mirror's view
+      sequence: the SHA-256 of the frozen JSONL wire states (numeric and Human views, prompt
+      by prompt) of the seed `20261108` fixture in both starting seats, recorded on main before
+      PR A and asserted by every later step. It is what catches a change to Karmic Guide's echo
+      or any other mirror view.
 - [ ] Registered owner: a twin of the hidden-world privacy test; step, snapshot, restore and
-      stale tokens; shroud and Meddling Mage names in its scene; halt reporting.
-- [ ] Registration: the ordered profile's admissions and refusals, the profile mismatch, and
-      the schema 5 preflight refusal of a Shapeshifter deck.
+      stale tokens; shroud in its scene; a registered game in which a Meddling Mage is cast,
+      its name chosen through the owner's menu, and the name shown in its scene;
+      `RegisteredHaltV1` reporting.
+- [ ] Registration: the ordered profile's admissions and refusals and the profile mismatch.
+      Schema 5 and a Shapeshifter deck, by the answer to question 3: (a) a schema 5 FEB game
+      ends `fail_closed` at its first observation of a face-up Shapeshifter and never reports
+      `natural_game_over`; or (b) a schema 5 FEB reset is refused with `unsupported_deck`.
 - [ ] Games: FEB in `PLAYABLE` (both pairs, ranked and random, terminal and replay) and in
       `PLAYABLE_75` (both matches, random sideboarding, every game terminal and replayed).
 - [ ] CI: the Eternal library filter (`.github/workflows/ci.yml`, the
@@ -628,7 +822,11 @@ test for this lands with whichever of B2 and C2 merges second.
 - [ ] The audit table test: every snapshot card is listed or audited as having none.
 - [ ] Schema 5: the field's presence, order and absence; the `choose_text_color_word_v1`
       actions; schema 4 and the flat encoders refuse; section 4.6's tests.
-- [ ] Volrath interaction (section 4.7).
+- [ ] Storage: a state with an item on the stack, a pending trigger and no record hashes and
+      serializes as on main; a capture is written only for a changed source, read at
+      resolution, removed when the item leaves the stack, and kept across snapshot and restore;
+      a copy of a captured item halts.
+- [ ] Volrath interaction (section 4.7), for the reading the lead chooses.
 - [ ] Games: a one-copy sideboard card is cast too rarely, so, as S1k did, a blue-white deck
       with four Alter Realities in its mainboard plays a deck of color-word cards through
       schema 5 sessions in both seats with ranked and seeded random actions, terminal and
@@ -655,7 +853,7 @@ two cards counted as Full gives:
 | Both | 305 | 90.0% | 90.0% |
 
 By deck: `premodern-full-english-breakfast` (3.0%) gains both its mainboard and its full 75
-with the Shapeshifter (its four other sideboard cards are Full since P3h);
+with the Shapeshifter (every other card of its 75 is already Full);
 `premodern-replenish` (6.0%) gains its full 75 with Alter Reality (its mainboard is already
 playable). Every other Premodern deck is already playable with a full 75. The session lists
 follow: `PLAYABLE` goes from 23 to 24 Premodern decks, `PLAYABLE_75` from 22 to 24.
@@ -671,16 +869,24 @@ none. All of it waits behind the chain steps and issue #657's pieces.
    meanings), `eternal_premodern_p2d_v1.rs` (donated echo cost), `engine.rs` (the appended
    mechanic and the backstop), `event.rs`, `graveyard_order_v1.rs`, `eternal_e5a_v1/phasing.rs`
    (check sites), `full_text_v1/registered.rs` and `tests.rs`, `volrath_full_text_v1.md`.
-   No registry row; no chain slot. Acceptance: section 5.1's donor and refusal fixtures and
-   the frozen tests pass on CI and the hosted Windows Eternal job.
-2. **B1: registered ordered owner.** Files: `premodern_ordered_public_v1/feb.rs` and
-   `decision.rs`, `premodern_ordered_public_v1.rs` (registered scene), `rl.rs` (text mode),
-   `eternal_bo3_v1.rs` (profile, errors, `start_game_with_ordered_graveyard_v1`), `card_def.rs`
-   (preflight variant), `tests/eternal/eternal_bo3_v1/eternal_bo3_ordered_v1.rs` (driver),
+   Before any of it, a first commit adds the frozen mirror's view-sequence pin (section 5.1)
+   recorded on main. No registry row; no chain slot. Acceptance: section 5.1's donor and
+   refusal fixtures and the frozen tests, the view pin among them, pass on CI and the hosted
+   Windows Eternal job; the catalog and best-of-three transcript SHA-256s in CI are identical
+   to main's (section 3.7).
+2. **B1: registered ordered owner.** Files: `premodern_ordered_public_v1/feb.rs`
+   (`reset_registered_v1`, `REGISTERED_PROFILE_V1`, `FebCurrentV1::RegisteredHaltV1`) and
+   `decision.rs` (`bind_next` and `view` call the observe entry of the owner's profile),
+   `premodern_ordered_public_v1.rs` (registered scene), `rl.rs` (the text mode
+   `PremodernOrderedRegisteredV1Artifact`, its gates of section 3.2, and the observe entry
+   `observe_premodern_ordered_registered_v1`), `eternal_bo3_v1.rs` (profile, errors,
+   `start_game_with_ordered_graveyard_v1`), `card_def.rs` (the preflight variant, only if
+   question 3 is answered (b)), `tests/eternal/eternal_bo3_v1/eternal_bo3_ordered_v1.rs` (driver),
    owner tests. The Shapeshifter stays Partial, so the owner's own tests register it through a
    test-only admission of the frozen FEB 75 (as the frozen owner admits a Partial card today).
    No row; no chain slot. Acceptance: the registered-owner, registration and frozen tests of
-   section 5.1; schema 5 evidence of section 3.7; registered FEB matches against Psychatog
+   section 5.1; schema 5 evidence of section 3.7 (transcripts identical to main's); registered
+   FEB matches against Psychatog
    (Dominate) and against a test deck with Legacy's Allure and Meddling Mage play to terminal
    and replay. Replenish's own 75 cannot register before C2, since Alter Reality is missing.
 3. **B2: Shapeshifter Full.** Files: `data/eternal_v1/cards_v1.json` (row), `feb.rs` (the
@@ -689,14 +895,22 @@ none. All of it waits behind the chain steps and issue #657's pieces.
    `eternal_formats_support_v1.md` (a pointer to this document and the census), this document's
    status. One chain slot. Acceptance: section 5.1 complete; census as in section 6.
 4. **C1: color-word record and sites.** Files: `text_color_change_v1.rs`, `state.rs` (field,
-   hash, serde), the 16 module families of section 4.4, `rl.rs` (field, semantic, refusals),
-   `effect.rs` (choice purpose). No card, no row, no chain slot; tests write records directly.
-   Acceptance: section 5.2's site, refusal and condition tests.
+   hash, serde), the 16 modules of section 4.4, `rl.rs` (field, semantic, gates, refusals),
+   `effect.rs` (choice purpose), the consumers of section 4.5. No card and no row; tests write
+   records directly. C1 changes no build-time recipe or canonical field: no
+   `build_eternal_*.rs` table, no `build_support/standard_lands_v1.rs` field (Treetop
+   Village's and Ghitu Encampment's `colors` stay as they are) and no recipe in `card_def.rs`;
+   every changed color is read at run time through `text_color` and `captured_color`. That
+   keeps `KERNEL_CARDDB_HASH`, the FNV hash of one canonical line per card built from those
+   fields, unchanged, so C1 takes no chain slot, and `card_db_hash_eternal_v1_is_frozen`
+   passing unchanged is the check. If C1 had to change any of those fields it would re-pin
+   the hash and become a chain step. Acceptance: section 5.2's site, storage, refusal and
+   condition tests; transcripts identical to main's (section 4.6).
 5. **C2: Alter Reality Full.** Files: `build_eternal_p3i_v1.rs` and
    `eternal_premodern_p3i_v1.rs` (wave P3i), the row, `card_def.rs` (re-pin),
    `tests/eternal/eternal_premodern_p3i_v1.rs`, `tests/eternal/eternal_bo3_v1.rs`
    (`PLAYABLE_75`), `eternal_formats_support_v1.md`. One chain slot. Acceptance: section 5.2
-   complete, the transcript evidence of section 4.6, census as in section 6.
+   complete, census as in section 6.
 
 C1 and C2 are independent of A, B1 and B2 except for the interaction test of section 4.7,
 which lands with whichever of B2 and C2 merges second. Issue #460 closes when B2 and C2 are
@@ -709,7 +923,7 @@ both merged and the census on main shows 305 of 305 Full.
   outside the 305 halts the game. Snapshot games never reach them.
 - The registered owner's Human view labels only the meanings its renderer knows; the other
   rows stay `unsupported`, and qualification uses numeric ordinals.
-- The registered owner is in process only unless section 9, question 4 is answered otherwise.
+- The registered owner is in process only unless section 9, question 5 is answered otherwise.
 - Flat encoders, search, infoset export and earlier observation versions still refuse these
   games, so they are not training-ready inputs.
 - The observation shows Alter Reality's change once it is recorded, not during the two-stage
@@ -722,24 +936,49 @@ both merged and the census on main shows 305 of 305 Full.
 
 ## 9. Open questions for the lead
 
-1. Mogg Fanatic and Ravenous Rats have qualified donated programs but are not in the ruled
-   set, and no snapshot deck can put them under a Shapeshifter. Proposed: keep them supported
-   (refusing them removes tested paths for no gain).
-2. "Registered Premodern deck" admits any Full card today (`EternalFormatV1::copy_limit`'s
+1. Mogg Fanatic and Ravenous Rats are outside the ruled donor set, so the design refuses them.
+   No snapshot deck that plays them (Sligh, Goblins, RG Aggro and Mono-Red Control for the
+   Fanatic, The Rock for the Rats) can control a Shapeshifter, so either answer leaves every
+   snapshot game the same. Refusing them makes two qualified donated programs unreachable and
+   turns three fixtures into refusal fixtures. Proposed: amend ruling 1 to keep them supported;
+   if not amended, the design stands as written.
+2. The ruled set names "the two Premodern control effects (Dominate, Legacy's Allure)". The
+   design reads that as the donors those effects reach: Psychatog (already a mirror donor)
+   through Dominate, and Meddling Mage through Legacy's Allure (only the "already on the
+   battlefield" case; a Shapeshifter entering with Mage text is refused). Proposed: confirm
+   that reading. Without it, a Replenish game that steals a Shapeshifter with Legacy's Allure
+   and then puts a sideboard Meddling Mage on top of its own graveyard halts, so a snapshot
+   best-of-three match could halt.
+3. Schema 5 and a Shapeshifter deck once the card is Full (section 3.7): (a) change nothing;
+   a FEB reset is admitted and the game ends `fail_closed` at its first observation of a
+   face-up Shapeshifter, never as a completed game; or (b) append
+   `DeckPreflightError::RequiresOrderedGraveyardOwnerV1` to `card_def.rs`'s preflight, which the
+   schema 5 reset already calls (`rl_session.rs`, near line 6091); the reset is refused with
+   the same code `unsupported_deck` and a new message, and no other schema 5 reply changes.
+   The wording "schema 5 untouched" favors (a) literally. Proposed: (b), named to the lead as
+   the one schema 5 error message that changes, because it refuses before any play, follows
+   the Leyline precedent in the same function, and touches no field, action or code.
+4. "Registered Premodern deck" admits any Full card today (`EternalFormatV1::copy_limit`'s
    doc: format legality is not checked). Proposed: the ordered profile also requires every
    card to be in the 305-card Premodern pool, with a typed registration error. That makes copy
    effects and cross-format donors impossible by construction; the runtime refusal stays.
-3. The schema 5 preflight gains `RequiresOrderedGraveyardOwnerV1` (the S1i Leyline
-   precedent); it only renames the refusal a Shapeshifter deck already gets. Proposed: accept
-   it as consistent with "schema 5 untouched".
-4. A JSONL route for registered games. Proposed: not part of Full; the in-process owner and
+5. A JSONL route for registered games. Proposed: not part of Full; the in-process owner and
    driver are the qualifying consumer, as S1i's native best-of-three games are; a follow-up
    issue adds a `reset_registered_v1` request beside the frozen reset.
-5. The routing rule reads "ordered-graveyard reader" as the full-text reader only. Proposed:
+6. The routing rule reads "ordered-graveyard reader" as the full-text reader only. Proposed:
    yes, since no Premodern card has Delve and Delve games keep schema 5.
-6. The registered profile turns on Foundations combat, London mulligans and the public shroud
+7. The registered profile turns on Foundations combat, London mulligans and the public shroud
    flag to match the other decks' catalog games, and qualifies on numeric submissions.
    Proposed: yes to both.
+8. Alter Reality on a Shapeshifter whose donated text holds a color word (Akroma, Karmic
+   Guide): the 613.8 dependency reading (the change acts on the donated text) or the 2004
+   ruling's reading (it acts only on the printed text, which has none) (sections 4.1 and 4.7).
+   Proposed: the 613.8 reading. The Comprehensive Rules are the authority and 613.8a's three
+   conditions hold for the two effects; the 2004 ruling predates the 2008 ruling that makes the
+   Shapeshifter's ability a text-changing effect, and was written for effects such as granted
+   abilities, not for a second text-changing effect in layer 3. If the lead prefers the 2004
+   reading, the design's other branch in section 4.7 applies; a typed halt is the fallback if
+   neither is to be settled in code.
 
 ## 10. How the research note was checked
 
@@ -762,10 +1001,11 @@ here was re-read on `fd9ff09a`. Corrections:
   host; the gap is an untested path, not a missing ability, and no Premodern card copies a
   permanent.
 - Dominate is in Psychatog's sideboard only; Legacy's Allure is in Replenish's mainboard.
-- The site count is 38 in 16 module families, not about 30 in 10.
+- The site count is 38, in 16 modules, not about 30 in 10.
 - Not in the note: `feb.rs::mainboard` requires the Shapeshifter to be Partial, and
   `expected_capability` pins it Partial; both change with the flip. The frozen scene's text
   mode refuses shroud and Meddling Mage names, and the frozen owner plays without Foundations
-  combat. Once the card is Full, the schema 5 preflight would admit FEB and the session would
-  refuse it mid-game without the new preflight variant. `EternalStateV1` derives `Hash`, so
-  the color record cannot live there without moving state hashes.
+  combat. Once the card is Full, a schema 5 FEB reset passes both the session's row check and
+  the preflight, and the game is refused at its first observation of a face-up Shapeshifter
+  (section 3.7). `EternalStateV1`, `StackItem` and `PendingTrigger` derive `Hash`, so neither
+  the color record nor its captures can live in them without moving state hashes.
