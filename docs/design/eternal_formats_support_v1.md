@@ -2616,7 +2616,7 @@ Kindred counts as a card type and changes nothing else. Delirium, Nethergoyf and
 types through `CardType::ALL`, and Occult Epiphany and Atraxa read the printed types, so Tarfire in
 a graveyard adds two types and Occult Epiphany discarding it makes two Spirits. The cards are cast,
 countered and put into a graveyard as instants, and Kindred is not a permanent type (110.4b).
-Their subtypes are creature types (308.3), which the engine already read on any spell (the
+Their subtypes are creature types (308.3), which the engine already reads on any spell (the
 Goblin Warchief and Eye of Ugin cost reductions, Faerie Trickery's "non-Faerie spell", so one
 Faerie Trickery cannot counter another), while Cavern of Souls pays only for creature spells and
 Goblin Lackey puts only permanent cards onto the battlefield. Serra's Emissary does
