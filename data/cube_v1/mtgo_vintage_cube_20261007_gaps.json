@@ -4,8 +4,7 @@
  "note": "Cube cards that are not Full in the eternal-fixtures build. python/tests/test_cube_coverage_v1.py keeps this record equal to the registries, so each card wave removes its cards here.",
  "partial": [
   "Bone Shards",
-  "Hullbreacher",
-  "The Mightstone and Weakstone"
+  "Hullbreacher"
  ],
  "fdn_only": [],
  "missing": [

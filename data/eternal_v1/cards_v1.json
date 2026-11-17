@@ -33252,7 +33252,7 @@
   },
   {
    "name": "The Mightstone and Weakstone",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{5}",
    "mana_value": 5,
    "colors": [],

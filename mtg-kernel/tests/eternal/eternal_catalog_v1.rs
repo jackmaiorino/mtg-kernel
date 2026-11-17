@@ -248,11 +248,8 @@ const PARTIAL_S1: [&str; 3] = ["Coalition Honor Guard", "Hullbreacher", "Standar
 
 /// Vintage Cube implementations with known missing reachable branches. Bone
 /// Shards: its sacrifice is an alternative cost, so it cannot be chosen when
-/// the spell is cast for another alternative cost (flashback). The
-/// Mightstone and Weakstone: its mana pays for artifact spells and activated
-/// abilities, but not yet for the other costs it may pay (ward, "unless
-/// its controller pays" taxes, mana ability costs, special actions).
-const PARTIAL_CUBE: [&str; 2] = ["Bone Shards", "The Mightstone and Weakstone"];
+/// the spell is cast for another alternative cost (flashback).
+const PARTIAL_CUBE: [&str; 1] = ["Bone Shards"];
 
 /// Volrath's Shapeshifter and the S1 and cube cards above are the registry's
 /// only Partial definitions.
