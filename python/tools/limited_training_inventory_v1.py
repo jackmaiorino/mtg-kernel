@@ -1,4 +1,8 @@
-"""Audit the original DraftZero deck sizes and declared Full-only preflight."""
+"""Audit the original DraftZero deck sizes and declared Full-only preflight.
+
+`sample_sha256_in_pool_order` is pinned over the CRLF form of pool.tsv, and every platform hashes that
+form, whatever line endings the checkout gave the file (see `canonical_pool_bytes`).
+"""
 
 from collections import Counter
 import csv

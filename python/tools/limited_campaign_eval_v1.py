@@ -815,7 +815,11 @@ def evaluate(inputs: list[RunInput], inventory: dict, replicates: int = BOOTSTRA
         highest = ([name for name in GATE_TESTS if gates[name]["pass"]] or ["none"])[-1]
         entry = {"checkpoint_spec": next(iter(specs[candidate])), "runs": runs[candidate],
                  "tests": tests, "gates": gates, "highest_gate_passed": highest,
-                 "stall_sensitivity": {"tests": sens_tests, "gates": sens_gates}}
+                 "stall_sensitivity": {"tests": sens_tests, "gates": sens_gates},
+                 # Section 4.3 and the lead's ruling: the sensitivity column is not a gate, but claim text
+                 # must state it when that column fails; these are the gates where the two columns disagree.
+                 "gates_differing_under_stall_sensitivity": [
+                     name for name in GATE_TESTS if gates[name]["pass"] != sens_gates[name]["pass"]]}
         fair = runs[candidate].get("fair_search")
         if gates["E1"]["pass"] and gates["E2"]["pass"] and not gates["E3"]["pass"] and fair is not None:
             entry["fair_search_report"] = {"mean": fair["primary"]["mean"],
@@ -827,7 +831,10 @@ def evaluate(inputs: list[RunInput], inventory: dict, replicates: int = BOOTSTRA
                           "replicates": replicates,
                           "index_rule": "reject draws at or above floor(2^64 / K) * K, then draw mod K",
                           "percentile_rule": "order statistics floor(alpha/2 (R-1)) and ceil((1-alpha/2)(R-1))",
-                          "gate_bound": "the lower of the percentile and BCa lower bounds"},
+                          "gate_bound": "the lower of the percentile and BCa lower bounds",
+                          "stream_rule": "every run and each scoring column draws the same replicate-major index "
+                                         "stream, restarted at the seed, so no draw depends on argument or file "
+                                         "order"},
             "inventory": {"sample_sha256_in_pool_order": inventory["sample_sha256_in_pool_order"],
                           "registry_sha256": inventory.get("registry_sha256"),
                           "eval_full_only": classes["full_only"], "eval_over_40": classes["over_40"],

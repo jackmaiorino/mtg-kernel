@@ -333,6 +333,17 @@ class EvaluationTest(unittest.TestCase):
         self.assertEqual(run["counts"], {"games": 400, "win": 395, "draw": 1, "loss": 1, "stall": 3, "error": 0})
         self.assertEqual(run["wilson_descriptive"]["wins_over_decisive_games"]["trials"], 396)
 
+    def test_gates_where_the_stall_sensitivity_column_differs(self):
+        # 58 won pairs, 38 lost pairs and 4 pairs of a stall and a win: E3 passes in the primary column
+        # (stall = draw) and fails when stalls count as losses; one more won pair passes both.
+        for wins, expected in ((58, ["E3"]), (59, [])):
+            inputs = full_inputs()
+            inputs[3] = make_run(FAIR, [("A", "A")] * wins + [("B", "B")] * (96 - wins) + [("stall", "A")] * 4)
+            candidate = self.evaluate(inputs)["candidates"]["u_final"]
+            self.assertEqual(candidate["gates_differing_under_stall_sensitivity"], expected)
+            self.assertTrue(candidate["gates"]["E3"]["pass"])
+            self.assertEqual(candidate["stall_sensitivity"]["gates"]["E3"]["pass"], not expected)
+
     def test_e0_conditions(self):
         def e0(mutate) -> dict:
             inputs = full_inputs()
@@ -398,6 +409,15 @@ class EvaluationTest(unittest.TestCase):
             self.assertNotIn(volatile, text)
         data = json.loads(text)
         self.assertEqual(text, json.dumps(data, sort_keys=True, indent=2) + "\n")
+        self.assertIn("restarted at the seed", data["bootstrap"]["stream_rule"])
+        # Two candidates: interleaved argument order and shuffled files give the same bytes too.
+        both = full_inputs() + full_inputs(EVEN, candidate="u_best_dev")
+        mixed = full_inputs() + full_inputs(EVEN, candidate="u_best_dev")
+        for run in mixed:
+            rng.shuffle(run.rows)
+        mixed = mixed[1::2] + mixed[-2::-2]
+        self.assertEqual(len({(run.candidate, run.opponent) for run in mixed}), 8)
+        self.assertEqual(ev.canonical_bytes(self.evaluate(both)), ev.canonical_bytes(self.evaluate(mixed)))
 
     def test_subgroup_audit(self):
         run = self.evaluate(full_inputs())["candidates"]["u_final"]["runs"]["step_0"]
