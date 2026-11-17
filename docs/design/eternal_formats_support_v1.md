@@ -2732,7 +2732,8 @@ C4a:
 - Displacer Kitten flickers up to one other nonland permanent its controller controls on each
   noncreature cast. Forensic Gadgeteer investigates on artifact casts and takes {1} of generic off
   activated abilities of its controller's artifacts, mana abilities with a mana cost included,
-  never below one mana.
+  never below one mana. The floor is checked against the total cost, after activation taxes
+  (Anointed Peacekeeper, Gloom), so a taxed ability with no mana cost of its own is reduced too.
 - Faerie Mastermind (`OpponentDrawsSecondCardEachTurnV1`) and Ledger Shredder
   (`PlayerCastsSecondSpellEachTurnV1`, connive) read the engine's per-player draw and cast
   counters. The Mastermind's shared draw is controller first, with the stop between the two

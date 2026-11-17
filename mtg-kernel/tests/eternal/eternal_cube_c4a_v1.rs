@@ -1051,12 +1051,18 @@ fn peacekeeper_naming(state: &mut GameState, name: &str) {
     match settle(state) {
         Some(Decision::ChooseEffectOption { player, .. }) => {
             assert_eq!(player, P0);
-            act(state, Action::ChooseEffectOption(u16::try_from(group).unwrap()));
+            act(
+                state,
+                Action::ChooseEffectOption(u16::try_from(group).unwrap()),
+            );
         }
         other => panic!("expected the letter, got {other:?}"),
     }
     if let Some(Decision::ChooseEffectOption { .. }) = settle(state) {
-        act(state, Action::ChooseEffectOption(u16::try_from(index).unwrap()));
+        act(
+            state,
+            Action::ChooseEffectOption(u16::try_from(index).unwrap()),
+        );
     }
     settled(state);
     assert_eq!(zone(state, keeper), Zone::Battlefield);
