@@ -93,6 +93,17 @@ Derived from the missing cards of each wave's decks. Already in the engine and r
 extra turns, initiative and dungeons, monarch, Phyrexian mana, delve, planeswalkers,
 Sagas, transform, temporary control, flashback, affinity, ninjutsu, kicker, madness.
 
+Turn identity (#741): `GameState::turn_key_v1()` and `state.turn` count rounds, so both
+players' turns of one round share them, and raw `state.turn` also stays the same through an
+extra turn. A record that means "this turn" (a once-each-turn budget, an "until end of turn"
+effect, a draw-step marker) is keyed by `GameState::turn_id_v1()`, the turn key together with
+the active player, or is cleared when each turn begins (the modules' `begin_turn`, run in
+every untap step), never by the round number alone. Moon-Circuit Hacker's "unless it entered
+this turn" reads the per-turn `entered_battlefield_this_turn` flag in builds with the Standard
+catalog. The Pauper build keeps its round comparison unchanged; the two agree whenever Hacker
+entered in its controller's own turn, and the Pauper pool has no way to make it enter in the
+opponent's turn.
+
 New, each built once in the first wave that needs it:
 
 - E1: energy counters; replicate; cast-from-graveyard conditions (Plunder the Trollshaws);
