@@ -1582,7 +1582,11 @@ fn bone_shards_cast_by_a_granted_flashback_chooses_either_cost() {
         assert!(log.contains(&"ChooseSpellMode".to_owned()), "{log:?}");
         let sacrificed = mode == 0;
         assert_eq!(zone(&state, elves) == Zone::Graveyard, sacrificed, "{mode}");
-        assert_eq!(zone(&state, spare) == Zone::Graveyard, !sacrificed, "{mode}");
+        assert_eq!(
+            zone(&state, spare) == Zone::Graveyard,
+            !sacrificed,
+            "{mode}"
+        );
         assert_eq!(zone(&state, big), Zone::Graveyard);
         assert_eq!(zone(&state, shards), Zone::Exile);
     }

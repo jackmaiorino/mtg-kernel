@@ -1772,4 +1772,3 @@ pub(crate) fn quote_allowed(
         _ => true,
     }
 }
-
