@@ -6404,9 +6404,7 @@ fn activation_mana_payment(
     };
     // Forensic Gadgeteer (eternal wave C4a): abilities of artifacts cost {1}
     // less, never below one mana.
-    printed.map(|cost| {
-        crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, cost)
-    })
+    printed.map(|cost| crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, cost))
 }
 
 pub(crate) fn x_target_is_payable(
