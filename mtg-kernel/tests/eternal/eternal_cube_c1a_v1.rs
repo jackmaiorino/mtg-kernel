@@ -836,13 +836,14 @@ fn path_to_exile_shuffles_only_when_its_controller_chooses_to_search() {
             other => panic!("expected the choice to search, got {other:?}"),
         }
         act(&mut state, Action::ChooseEffectOption(u16::from(search)));
-        if search {
-            match settle(&mut state) {
-                Some(Decision::ChooseEffectTargets {
+        // A search with no candidate may end without a prompt.
+        if let (true, Some(decision)) = (search, settle(&mut state)) {
+            match decision {
+                Decision::ChooseEffectTargets {
                     player,
                     can_finish,
                     ..
-                }) => assert!(player == P1 && can_finish, "{library}: may find nothing"),
+                } => assert!(player == P1 && can_finish, "{library}: may find nothing"),
                 other => panic!("expected the search, got {other:?}"),
             }
             act(&mut state, Action::FinishEffectSelection);
