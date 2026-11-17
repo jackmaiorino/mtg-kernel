@@ -270,7 +270,10 @@ fn s1o_definitions_have_printed_characteristics() {
     assert_eq!(liberator.mana_value, 2);
     assert_eq!(liberator.power, Some(2));
     assert_eq!(liberator.toughness, Some(2));
-    let back = liberator.transform_face.expect("Frenzied Trapbreaker");
+    let back = liberator
+        .transform_face
+        .as_ref()
+        .expect("Frenzied Trapbreaker");
     assert_eq!(back.name, "Frenzied Trapbreaker");
     assert_eq!(back.types, &[CardType::Creature]);
     assert_eq!(back.subtypes, &[Subtype::Werewolf]);

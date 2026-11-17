@@ -50,7 +50,6 @@ use std::cell::RefCell;
 use std::hash::{Hash, Hasher};
 use targets::S1oTargetV1;
 
-pub(crate) const STRONGHOLD_GAMBIT: &str = "Stronghold Gambit";
 pub(crate) const EOWYN: &str = "Eowyn, Fearless Knight";
 pub(crate) const UNLICENSED_HEARSE: &str = "Unlicensed Hearse";
 pub(crate) const OUTLAND_LIBERATOR: &str = "Outland Liberator";
