@@ -24,6 +24,9 @@
 mod build_eternal_c1a_v1;
 mod build_eternal_c1b_v1;
 mod build_eternal_c1c_v1;
+mod build_eternal_c2a_v1;
+mod build_eternal_c2b_v1;
+mod build_eternal_c2c_v1;
 mod build_eternal_e5a_v1;
 mod build_eternal_e5b_v1;
 mod build_eternal_e6a_v1;

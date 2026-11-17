@@ -352,6 +352,8 @@ pub(crate) fn note_land_played(state: &mut GameState, player: PlayerId) {
     for stone in stones {
         queue_trigger(state, stone, player, E5aOpV1::EndstoneDrawV1);
     }
+    // Fastbond (Vintage Cube wave C2c): "Whenever you play a land".
+    crate::eternal_cube_c2c_v1::note_land_played(state, player);
 }
 
 /// Whether `player`'s opponent controls more creatures than `player`.

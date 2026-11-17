@@ -390,7 +390,10 @@ pub(super) fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
 /// Lands whose mana ability the runtime grants: Valgavoth's Lair adds the
 /// color chosen as it entered (`eternal_legacy_e8a_v1::statics`).
 pub(super) fn static_only_land(name: &str) -> bool {
-    name == "Valgavoth's Lair" || super::build_eternal_p1b_v1::static_only_land(name)
+    name == "Valgavoth's Lair"
+        // Multiversal Passage (Vintage Cube wave C2a): the chosen type grants it.
+        || name == "Multiversal Passage"
+        || super::build_eternal_p1b_v1::static_only_land(name)
 }
 
 /// Card-database tokens for the triggered abilities in

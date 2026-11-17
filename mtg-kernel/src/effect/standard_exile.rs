@@ -239,13 +239,35 @@ pub(super) fn offer_hideaway_play(
     pending: &mut EffectContinuation,
     path: Vec<u16>,
 ) -> Result<bool, String> {
-    check_root(
+    offer_hideaway_play_for(
         state,
         pending,
-        &path,
+        path,
         EffectOp::PlayHideawayIfThreeDistinctPowers,
-    )?;
-    if !three_powers(state, pending.ctx.controller) {
+    )
+}
+/// Shelldock Isle's condition: "a library has twenty or fewer cards in it".
+fn any_library_twenty_or_fewer(state: &GameState) -> bool {
+    state
+        .players
+        .iter()
+        .any(|player| player.library.len() <= 20)
+}
+/// Whether the play condition of the hideaway play `op` holds.
+fn hideaway_play_condition(state: &GameState, controller: PlayerId, op: &EffectOp) -> bool {
+    match op {
+        EffectOp::PlayHideawayIfLibraryTwentyOrFewerV1 => any_library_twenty_or_fewer(state),
+        _ => three_powers(state, controller),
+    }
+}
+pub(super) fn offer_hideaway_play_for(
+    state: &mut GameState,
+    pending: &mut EffectContinuation,
+    path: Vec<u16>,
+    op: EffectOp,
+) -> Result<bool, String> {
+    check_root(state, pending, &path, op.clone())?;
+    if !hideaway_play_condition(state, pending.ctx.controller, &op) {
         return Ok(false);
     }
     let choice = ExilePlayChoice {
@@ -327,16 +349,23 @@ pub(super) fn validate_play(
             }
         }
     } else {
-        check_root(
-            state,
-            pending,
-            &choice.path,
-            EffectOp::PlayHideawayIfThreeDistinctPowers,
-        )?;
+        let root = validated_definition_owned_root_effect(state, pending)?;
+        let op = match effect_op_at_path(&root, &choice.path) {
+            Some(found)
+                if matches!(
+                    found,
+                    EffectOp::PlayHideawayIfThreeDistinctPowers
+                        | EffectOp::PlayHideawayIfLibraryTwentyOrFewerV1
+                ) =>
+            {
+                found.clone()
+            }
+            _ => return Err("exile continuation changed definition-owned root".into()),
+        };
         if !choice.original_library.is_empty()
             || !choice.rejected.is_empty()
             || choice.card != linked_card(state, pending)?
-            || !three_powers(state, pending.ctx.controller)
+            || !hideaway_play_condition(state, pending.ctx.controller, &op)
         {
             return Err("hideaway linked card or powers changed".into());
         }

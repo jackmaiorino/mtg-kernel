@@ -2537,3 +2537,68 @@ to the events after its own (Pest Infestation naming Rest in Peace first, as eve
 Each sub-module's test file covers every card's printed text in rules tests (costs, both sides of
 each condition, illegal targets) and plays decks of its cards through public schema-5 sessions
 in both seats under ranked and seeded random policies with replay checks.
+
+### C2: lands and mana
+
+Wave C2 adds 42 lands and mana cards, raising the cube to 381 of 540 Full. It is three sub-modules
+chained after C1c: C2a (22 lands with an entry choice or a typed tap, `eternal_cube_c2a_v1`), C2b
+(nine utility lands, `eternal_cube_c2b_v1`) and C2c (ten mana artifacts and Fastbond,
+`eternal_cube_c2c_v1`), the new tail.
+
+C2a:
+
+- The ten shocklands: "As this land enters, you may pay 2 life. If you don't, it enters tapped."
+  They use Soporific Springs' as-enters life payment, now parameterized by its life cost
+  (`e3::entry_life_cost`: 2 for these lands, 3 for the modal land faces). The choice is offered
+  however the land enters the battlefield; a controller with less than 2 life is not asked and the
+  land enters tapped. Each has two basic land types, so fetchlands find it.
+- Multiversal Passage: a five-way basic land type choice as it enters, then the same life payment.
+  The chosen type is a record of that incarnation and joins wave E8a's land-type setter chain, so
+  it gives the subtype, the mana color and "controls a Swamp" checks.
+- Indatha, Ketria, Raugrin, Savai and Zagoth Triome, Raffine's Tower and Xander's Lounge join the
+  `TRIOMES` table (enter tapped, three basic types, cycling {3}); Blazemire Verge and Bleachbone
+  Verge join `VERGES`; Botanical Sanctum joins `FASTLANDS`; Commercial District is a surveil land.
+
+C2b:
+
+- Sunbaked Canyon and Waterlogged Grove have Horizon Canopy's shape. Mana Confluence pays 1 life as
+  the cost of its mana ability, down to 0 life.
+- Library of Alexandria: its draw is an activated ability allowed only with exactly seven cards in
+  hand, checked on activation.
+- Celestial Colonnade and Creeping Tar Pit enter tapped and animate until end of turn (Ghitu
+  Encampment's `AnimationDef`): a 4/4 with flying and vigilance, and a 3/2 that can't be blocked.
+- Fabled Passage: the new `LibrarySearchDestinationV1::BattlefieldTappedUntapWithFourLandsV1` puts
+  the basic land onto the battlefield tapped, shuffles, then untaps it if its controller controls
+  four or more lands.
+- Abandoned Air Temple: enters tapped unless its controller controls a basic land
+  (`EntersTappedUnlessControllerDef::ControlsBasicLandV1`), and its activated ability puts a +1/+1
+  counter on each creature its controller controls.
+- Shelldock Isle: hideaway 4 (Collector's Cage's machinery) and
+  `EffectOp::PlayHideawayIfLibraryTwentyOrFewerV1`, which reads either player's library. The hidden
+  card stays hidden from the opponent.
+
+C2c:
+
+- Talisman of Creativity, Curiosity, Dominance and Progress join the `PAINLANDS` table: {C}, or one
+  of two colors with 1 damage to their controller.
+- Mind Stone has Horizon Canopy's sacrifice-and-draw recipe. Basalt Monolith taps for {C}{C}{C},
+  does not untap during the untap step and untaps for {3} (Grim Monolith's rows).
+- Candelabra of Tawnos: X is enumerated as abilities 0 to 8 (Blast Zone's convention), and ability
+  X targets exactly X distinct lands on activation (`C2cTargetV1::LandsV1`), untapping the ones
+  still legal at resolution.
+- Coalition Relic: a charge counter ability, and at the beginning of its controller's first main
+  phase it removes its charge counters and adds one mana of any color for each, one color choice
+  per counter.
+- Fastbond: any number of land plays, and 1 damage to its controller for each land played after the
+  first each turn. Lands put onto the battlefield by effects do not count.
+- Pentad Prism: sunburst (Engineered Explosives' record of colors spent) and a mana ability whose
+  cost removes a charge counter.
+- Everflowing Chalice: multikicker {2} through `eternal_cube_c2c_v1::multikicker_cost`, a
+  name-keyed table any later multikicker card joins. The kick count is announced like replicate's,
+  added to the payment once per kick and read by the program as its X; the Chalice taps for {C} for
+  each charge counter (`ManaAbilityAmountDef::ChargeCountersOnSourceV1`).
+
+Limits shared with earlier cards: a declined life payment taps the land right after it enters
+(Soporific Springs), a hidden land is playable from a resolving effect only as the first land of
+the turn (Collector's Cage), and Pentad Prism and Everflowing Chalice pay through explicit mana
+actions rather than the automatic payment planner (Gaea's Cradle).

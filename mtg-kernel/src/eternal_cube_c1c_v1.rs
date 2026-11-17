@@ -444,10 +444,10 @@ pub(crate) fn counter_destination(state: &GameState, counter_source: ObjectId) -
 
 // ---- Triggered abilities ------------------------------------------------------------
 
-/// Triggered abilities of this module's cards, the tail of the trigger
-/// tables.
-pub(crate) fn triggers_for(_name: &str) -> &'static [TriggeredAbilityDef] {
-    &[]
+/// Triggered abilities of this module's cards, falling through to wave
+/// C2a.
+pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
+    crate::eternal_cube_c2a_v1::triggers_for(name)
 }
 
 /// Target specs of this module's printed and queued triggered abilities.

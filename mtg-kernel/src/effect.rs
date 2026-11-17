@@ -1082,6 +1082,10 @@ pub enum LibrarySearchDestinationV1 {
     /// Into the owner's graveyard, then shuffle (Enroot). Appended for the
     /// eternal catalog.
     GraveyardV1,
+    /// Onto the battlefield tapped, then shuffle, then untap each card put
+    /// there if the searching player controls four or more lands (Fabled
+    /// Passage). Appended for the eternal catalog (wave C2b).
+    BattlefieldTappedUntapWithFourLandsV1,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2836,6 +2840,11 @@ pub enum EffectOp {
         kind: u8,
         origin: Option<u64>,
     },
+    /// Shelldock Isle: "You may play the exiled card without paying its mana
+    /// cost if a library has twenty or fewer cards in it." The linked
+    /// hideaway card is offered like `PlayHideawayIfThreeDistinctPowers`'s,
+    /// with this condition read at resolution (eternal catalog wave C2b).
+    PlayHideawayIfLibraryTwentyOrFewerV1,
 }
 
 /// How many cards a pick-from-top effect looks at.
@@ -4398,6 +4407,7 @@ pub fn contains_player_choice(op: &EffectOp) -> bool {
         | EffectOp::Discover { .. }
         | EffectOp::Hideaway { .. }
         | EffectOp::PlayHideawayIfThreeDistinctPowers
+        | EffectOp::PlayHideawayIfLibraryTwentyOrFewerV1
         | EffectOp::ExileUntilThenCastV1 { .. }
         | EffectOp::ExileTopEachPlayerThenCastV1
         | EffectOp::DiscardUpToThenDraw { .. }
@@ -14710,6 +14720,46 @@ fn drive_resumable_in_departure_scope_v1(
                                 .commit_library_shuffle(player, shuffle_token)
                                 .map_err(|error| error.to_string())?;
                         }
+                        LibrarySearchDestinationV1::BattlefieldTappedUntapWithFourLandsV1 => {
+                            for &binding in &selected {
+                                validate_effect_object_binding(state, binding)?;
+                            }
+                            let events = selected
+                                .iter()
+                                .map(|binding| {
+                                    event::ProposedEvent::zone_change_to_battlefield_tapped(
+                                        binding.object,
+                                    )
+                                })
+                                .collect();
+                            event::propose_and_commit_batch(state, events);
+                            state
+                                .commit_library_shuffle(player, shuffle_token)
+                                .map_err(|error| error.to_string())?;
+                            // "Then if you control four or more lands, untap
+                            // that land." The land that was sacrificed as a
+                            // cost is already gone; the found land counts.
+                            let lands = state.players[player.index()]
+                                .battlefield
+                                .iter()
+                                .filter(|&&object| {
+                                    state.objects.get(object).controller == player
+                                        && crate::engine::object_has_type(
+                                            state,
+                                            object,
+                                            CardType::Land,
+                                        )
+                                })
+                                .count();
+                            if lands >= 4 {
+                                for binding in &selected {
+                                    let live = state.objects.get(binding.object);
+                                    if live.zone == Zone::Battlefield {
+                                        crate::engine::attempt_untap(state, binding.object);
+                                    }
+                                }
+                            }
+                        }
                         LibrarySearchDestinationV1::GraveyardV1 => {
                             for &binding in &selected {
                                 validate_effect_object_binding(state, binding)?;
@@ -15785,6 +15835,17 @@ fn drive_resumable_in_departure_scope_v1(
             }
             EffectOp::PlayHideawayIfThreeDistinctPowers => {
                 if standard_exile::offer_hideaway_play(state, &mut continuation, path)? {
+                    state.engine.pending_effect = Some(continuation);
+                    return Ok(ResumableProgress::Suspended);
+                }
+            }
+            EffectOp::PlayHideawayIfLibraryTwentyOrFewerV1 => {
+                if standard_exile::offer_hideaway_play_for(
+                    state,
+                    &mut continuation,
+                    path,
+                    EffectOp::PlayHideawayIfLibraryTwentyOrFewerV1,
+                )? {
                     state.engine.pending_effect = Some(continuation);
                     return Ok(ResumableProgress::Suspended);
                 }
@@ -21782,6 +21843,7 @@ fn execute_in_departure_scope_v1(
         | EffectOp::Discover { .. }
         | EffectOp::Hideaway { .. }
         | EffectOp::PlayHideawayIfThreeDistinctPowers
+        | EffectOp::PlayHideawayIfLibraryTwentyOrFewerV1
         | EffectOp::ExileUntilThenCastV1 { .. }
         | EffectOp::ExileTopEachPlayerThenCastV1
         | EffectOp::DiscardUpToThenDraw { .. }

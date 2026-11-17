@@ -1255,6 +1255,9 @@ pub(crate) fn drive(
         EternalOpV1::C1aV1(op) => crate::eternal_cube_c1a_v1::drive(state, continuation, op, path),
         EternalOpV1::C1bV1(op) => crate::eternal_cube_c1b_v1::drive(state, continuation, op, path),
         EternalOpV1::C1cV1(op) => crate::eternal_cube_c1c_v1::drive(state, continuation, op, path),
+        EternalOpV1::C2aV1(op) => crate::eternal_cube_c2a_v1::drive(state, continuation, op, path),
+        EternalOpV1::C2bV1(op) => crate::eternal_cube_c2b_v1::drive(state, continuation, op, path),
+        EternalOpV1::C2cV1(op) => crate::eternal_cube_c2c_v1::drive(state, continuation, op, path),
         EternalOpV1::DelayedUpkeepDrawV1 => crate::eternal_vintage_e7b_v1::dredge::drive_draws(
             state,
             continuation,
@@ -1836,8 +1839,10 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     }
     if let Some(entering) = live_springs_entry(state) {
         let player = state.objects.get(entering.object).controller;
-        // Option 1 pays 3 life, which a player with less cannot pay (119.4).
-        let option_count = if state.players[player.index()].life >= 3 {
+        // Option 1 pays the entry life cost (3 for the land faces, 2 for the
+        // shocklands), which a player with less cannot pay (119.4).
+        let cost = entry_life_cost(state, entering.object);
+        let option_count = if state.players[player.index()].life >= cost {
             2
         } else {
             1
@@ -1892,6 +1897,10 @@ pub(crate) fn entry_choice_decision(state: &GameState) -> Option<crate::engine::
     if let Some(decision) = crate::eternal_sideboard_s1g_v1::entry_choice_decision(state) {
         return Some(decision);
     }
+    // Multiversal Passage's basic land type (Vintage Cube wave C2a).
+    if let Some(decision) = crate::eternal_cube_c2a_v1::entry_choice_decision(state) {
+        return Some(decision);
+    }
     let cavern = cavern_needing_type(state)?;
     let player = state.objects.get(cavern).controller;
     Some(crate::engine::Decision::ChooseEffectOption {
@@ -1922,6 +1931,35 @@ fn live_springs_entry(state: &GameState) -> Option<ObjectLinkV4> {
         .find(|&entering| link_live(state, entering, Zone::Battlefield))
 }
 
+/// The life an "as this enters, you may pay N life. If you don't, it enters
+/// tapped" land asks for: 2 for the shocklands and Multiversal Passage
+/// (Vintage Cube wave C2a), 3 for the modal land faces.
+fn entry_life_cost(state: &GameState, object: ObjectId) -> i32 {
+    state
+        .objects
+        .try_get(object)
+        .and_then(|live| CARD_DEFS.get(live.card_def as usize))
+        .and_then(|def| crate::eternal_cube_c2a_v1::as_enters_life_cost(def.name))
+        .unwrap_or(3)
+}
+
+/// Starts the as-enters life payment of a land that just entered the
+/// battlefield (the shocklands and Multiversal Passage). A controller with
+/// too little life to pay cannot be offered the choice: the land simply
+/// enters tapped.
+pub(crate) fn note_life_entry(state: &mut GameState, object: ObjectId) {
+    let player = state.objects.get(object).controller;
+    if state.players[player.index()].life >= entry_life_cost(state, object) {
+        let entering = link(state, object);
+        let list = &mut e3_mut(state).springs_entering;
+        if !list.contains(&entering) {
+            list.push(entering);
+        }
+    } else {
+        state.objects.get_mut(object).tapped = true;
+    }
+}
+
 /// Whether an as-enters choice is pending.
 pub(crate) fn entry_choice_pending(state: &GameState) -> bool {
     entry_choice_decision(state).is_some()
@@ -1938,8 +1976,9 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
     }
     if let Some(entering) = live_springs_entry(state) {
         let player = state.objects.get(entering.object).controller;
-        if option == 1 && state.players[player.index()].life < 3 {
-            return Err("the land face needs 3 life to pay".to_string());
+        let cost = entry_life_cost(state, entering.object);
+        if option == 1 && state.players[player.index()].life < cost {
+            return Err(format!("the land needs {cost} life to pay"));
         }
         if option > 1 {
             return Err("the land face's life payment has two options".to_string());
@@ -1958,9 +1997,11 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
         e3_mut(state).springs_entering = still_entering;
         if option == 0 {
             // "If you don't, it enters tapped."
-            event::propose_and_commit(state, ProposedEvent::tap(entering.object));
+            if !state.objects.get(entering.object).tapped {
+                event::propose_and_commit(state, ProposedEvent::tap(entering.object));
+            }
         } else {
-            event::propose_and_commit(state, ProposedEvent::life_loss(player, 3));
+            event::propose_and_commit(state, ProposedEvent::life_loss(player, cost));
         }
         return Ok(());
     }
@@ -1995,6 +2036,9 @@ pub(crate) fn answer_entry_choice(state: &mut GameState, option: u16) -> Result<
         return Ok(());
     }
     if crate::eternal_sideboard_s1g_v1::answer_entry_choice(state, option)? {
+        return Ok(());
+    }
+    if crate::eternal_cube_c2a_v1::answer_entry_choice(state, option)? {
         return Ok(());
     }
     let cavern = cavern_needing_type(state).ok_or("no as-enters choice is pending")?;

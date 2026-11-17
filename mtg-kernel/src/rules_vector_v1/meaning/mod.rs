@@ -355,6 +355,7 @@ pub(crate) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
         | EffectOp::Discover { .. }
         | EffectOp::Hideaway { .. }
         | EffectOp::PlayHideawayIfThreeDistinctPowers
+        | EffectOp::PlayHideawayIfLibraryTwentyOrFewerV1
         | EffectOp::CopySpellSnapshot { .. }
         | EffectOp::IncreaseSpeed { .. }
         | EffectOp::CounterUnlessCollectsEvidence { .. }

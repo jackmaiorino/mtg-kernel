@@ -8,7 +8,7 @@ use super::{
 };
 
 /// `{T}: Add {C}` plus a separately printed damage ability per color.
-const PAINLANDS: [(&str, [&str; 2]); 10] = [
+const PAINLANDS: [(&str, [&str; 2]); 14] = [
     ("Adarkar Wastes", ["W", "U"]),
     ("Battlefield Forge", ["R", "W"]),
     ("Brushland", ["G", "W"]),
@@ -19,19 +19,28 @@ const PAINLANDS: [(&str, [&str; 2]); 10] = [
     ("Sulfurous Springs", ["B", "R"]),
     ("Underground River", ["U", "B"]),
     ("Yavimaya Coast", ["G", "U"]),
+    // Vintage Cube wave C2c: the Talismans are artifacts with the painlands'
+    // abilities.
+    ("Talisman of Creativity", ["U", "R"]),
+    ("Talisman of Curiosity", ["G", "U"]),
+    ("Talisman of Dominance", ["U", "B"]),
+    ("Talisman of Progress", ["W", "U"]),
 ];
 
 /// (name, unconditional color, conditional color, either controlled subtype).
-const VERGES: [(&str, &str, &str, [&str; 2]); 6] = [
+const VERGES: [(&str, &str, &str, [&str; 2]); 8] = [
     ("Floodfarm Verge", "W", "U", ["Plains", "Island"]),
     ("Gloomlake Verge", "U", "B", ["Island", "Swamp"]),
     ("Hushwood Verge", "G", "W", ["Forest", "Plains"]),
     ("Riverpyre Verge", "R", "U", ["Island", "Mountain"]),
     ("Thornspire Verge", "R", "G", ["Mountain", "Forest"]),
     ("Wastewood Verge", "G", "B", ["Swamp", "Forest"]),
+    // Vintage Cube wave C2a.
+    ("Blazemire Verge", "B", "R", ["Swamp", "Mountain"]),
+    ("Bleachbone Verge", "B", "W", ["Plains", "Swamp"]),
 ];
 
-const FASTLANDS: [&str; 9] = [
+const FASTLANDS: [&str; 10] = [
     "Blackcleave Cliffs",
     "Blooming Marsh",
     "Concealed Courtyard",
@@ -41,6 +50,8 @@ const FASTLANDS: [&str; 9] = [
     "Razorverge Thicket",
     "Seachrome Coast",
     "Spirebluff Canal",
+    // Vintage Cube wave C2a.
+    "Botanical Sanctum",
 ];
 
 const SLOWLANDS: [&str; 5] = [
@@ -51,10 +62,18 @@ const SLOWLANDS: [&str; 5] = [
     "Rockfall Vale",
 ];
 
-const TRIOMES: [&str; 3] = [
+const TRIOMES: [&str; 10] = [
     "Jetmir's Garden",
     "Spara's Headquarters",
     "Ziatora's Proving Ground",
+    // Vintage Cube wave C2a.
+    "Indatha Triome",
+    "Ketria Triome",
+    "Raugrin Triome",
+    "Savai Triome",
+    "Zagoth Triome",
+    "Raffine's Tower",
+    "Xander's Lounge",
 ];
 
 const ANY_COLOR: &str = "&[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G]";
@@ -213,6 +232,21 @@ pub fn fields(name: &str, executable: bool) -> StandardLandFields {
         "Starting Town" => {
             fields.enters_tapped_unless_controller =
                 "Some(EntersTappedUnlessControllerDef::WithinOwnFirstTurns(3))".to_string();
+        }
+        // Eternal catalog (Vintage Cube wave C2b): Abandoned Air Temple
+        // enters tapped unless its controller controls a basic land;
+        // Celestial Colonnade becomes a 4/4 white and blue Elemental with
+        // flying and vigilance, Creeping Tar Pit a 3/2 blue and black
+        // Elemental that can't be blocked, until end of turn.
+        "Abandoned Air Temple" => {
+            fields.enters_tapped_unless_controller =
+                "Some(EntersTappedUnlessControllerDef::ControlsBasicLandV1)".to_string();
+        }
+        "Celestial Colonnade" => {
+            fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 4, toughness: 4, artifact: false, colors: &[ManaColor::W, ManaColor::U], subtypes: &[Subtype::Elemental], keywords: Keywords(Keywords::FLYING.0 | Keywords::VIGILANCE.0) })".to_string();
+        }
+        "Creeping Tar Pit" => {
+            fields.animation = "Some(AnimationDef { until_end_of_turn: true, power: 3, toughness: 2, artifact: false, colors: &[ManaColor::U, ManaColor::B], subtypes: &[Subtype::Elemental], keywords: Keywords::CANT_BE_BLOCKED })".to_string();
         }
         "Reflecting Pool" => {
             fields.additional_mana_ability_conditions = format!("&[{}]", ["W","U","B","R","G","C"].map(|color| format!("Some(ManaAbilityConditionDef::ControllerOtherLandCouldProduceV1(ManaColor::{color}))")).join(", "));

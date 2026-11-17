@@ -412,6 +412,26 @@ pub(super) fn effect_op(op: &EffectOp, env: &Env, out: &mut Collector) {
                     }
                     out.effect(shuffle(player));
                 }
+                LibrarySearchDestinationV1::BattlefieldTappedUntapWithFourLandsV1 => {
+                    // The selected cards enter the battlefield tapped as one
+                    // batch, the library is shuffled, then they untap if the
+                    // player controls four or more lands.
+                    out.effect(
+                        EffectAtom::moving(Some(ZoneF::Library), ZoneF::Battlefield)
+                            .player(player)
+                            .obj(obj)
+                            .amount(amount),
+                    );
+                    out.effect(
+                        EffectAtom::new(EvF::Tap)
+                            .player(player)
+                            .obj(obj)
+                            .amount(amount),
+                    );
+                    out.effect(shuffle(player));
+                    // Vocabulary gap: the four-lands condition and the
+                    // conditional untap have no facet.
+                }
                 LibrarySearchDestinationV1::GraveyardV1 => {
                     // The selected cards go to the graveyard as one batch,
                     // then the library is shuffled.

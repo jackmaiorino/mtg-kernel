@@ -262,6 +262,18 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c1c_v1::C1cStateV1::is_empty"
     )]
     pub c1c: crate::eternal_cube_c1c_v1::C1cStateV1,
+    /// Vintage Cube wave C2a's state (`eternal_cube_c2a_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c2a_v1::C2aStateV1::is_empty"
+    )]
+    pub c2a: crate::eternal_cube_c2a_v1::C2aStateV1,
+    /// Vintage Cube wave C2c's state (`eternal_cube_c2c_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c2c_v1::C2cStateV1::is_empty"
+    )]
+    pub c2c: crate::eternal_cube_c2c_v1::C2cStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -550,6 +562,15 @@ pub enum EternalOpV1 {
     /// A leaf owned by Vintage Cube wave C1c's module. Appended to
     /// preserve existing stack and continuation hash discriminants.
     C1cV1(crate::eternal_cube_c1c_v1::C1cOpV1),
+    /// A leaf owned by Vintage Cube wave C2a's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    C2aV1(crate::eternal_cube_c2a_v1::C2aOpV1),
+    /// A leaf owned by Vintage Cube wave C2b's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    C2bV1(crate::eternal_cube_c2b_v1::C2bOpV1),
+    /// A leaf owned by Vintage Cube wave C2c's module. Appended to
+    /// preserve existing stack and continuation hash discriminants.
+    C2cV1(crate::eternal_cube_c2c_v1::C2cOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -628,6 +649,9 @@ impl EternalOpV1 {
             EternalOpV1::C1aV1(op) => op.contains_player_choice(),
             EternalOpV1::C1bV1(op) => op.contains_player_choice(),
             EternalOpV1::C1cV1(op) => op.contains_player_choice(),
+            EternalOpV1::C2aV1(op) => op.contains_player_choice(),
+            EternalOpV1::C2bV1(op) => op.contains_player_choice(),
+            EternalOpV1::C2cV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -995,6 +1019,18 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     if let Some(spec) = crate::eternal_cube_c1c_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }
+    // Vintage Cube wave C2a's printed and queued triggers.
+    if let Some(spec) = crate::eternal_cube_c2a_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Vintage Cube wave C2b's printed and queued triggers.
+    if let Some(spec) = crate::eternal_cube_c2b_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Vintage Cube wave C2c's printed and queued triggers.
+    if let Some(spec) = crate::eternal_cube_c2c_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     // Premodern sideboard wave P3a's queued triggers.
     if let Some(spec) = crate::eternal_premodern_p3a_v1::trigger_target_spec(name, effect) {
         return Some(spec);
@@ -1245,6 +1281,9 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::C1aV1(op) => crate::eternal_cube_c1a_v1::execute(op, ctx, state),
         EternalOpV1::C1bV1(op) => crate::eternal_cube_c1b_v1::execute(op, ctx, state),
         EternalOpV1::C1cV1(op) => crate::eternal_cube_c1c_v1::execute(op, ctx, state),
+        EternalOpV1::C2aV1(op) => crate::eternal_cube_c2a_v1::execute(op, ctx, state),
+        EternalOpV1::C2bV1(op) => crate::eternal_cube_c2b_v1::execute(op, ctx, state),
+        EternalOpV1::C2cV1(op) => crate::eternal_cube_c2c_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1827,6 +1866,9 @@ pub(crate) fn apply_entry_counters(
     crate::eternal_premodern_p2d_v1::apply_entry(state, object);
     crate::eternal_premodern_p1a_v1::statics::apply_entry_counters(state, object);
     crate::eternal_premodern_p2b_v1::statics::apply_entry_counters(state, object);
+    // The shocklands' and Multiversal Passage's as-enters choices (Vintage
+    // Cube wave C2a).
+    crate::eternal_cube_c2a_v1::apply_entry(state, object);
     let Some(name) = definition_name(state, object) else {
         return;
     };
@@ -2063,6 +2105,8 @@ pub(crate) fn delayed_triggers(
     triggers.extend(crate::eternal_sideboard_s1a_v1::delayed_triggers(
         state, events,
     ));
+    // Fastbond's land-play damage (Vintage Cube wave C2c).
+    triggers.extend(crate::eternal_cube_c2c_v1::delayed_triggers(state, events));
     triggers
 }
 
@@ -2124,6 +2168,9 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         || crate::eternal_cube_c1a_v1::delayed_effect_matches(name, effect)
         || crate::eternal_cube_c1b_v1::delayed_effect_matches(name, effect)
         || crate::eternal_cube_c1c_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_cube_c2a_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_cube_c2b_v1::delayed_effect_matches(name, effect)
+        || crate::eternal_cube_c2c_v1::delayed_effect_matches(name, effect)
         || crate::eternal_sideboard_s1e_v1::delayed_effect_matches(name, effect)
         || crate::eternal_sideboard_s1f_v1::delayed_effect_matches(name, effect)
         || crate::eternal_sideboard_s1g_v1::delayed_effect_matches(name, effect)

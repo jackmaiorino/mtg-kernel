@@ -3869,6 +3869,7 @@ fn triggers_for_uncached(card_def: u16) -> &'static [TriggeredAbilityDef] {
         | "Hedge Maze"
         | "Thundering Falls"
         | "Raucous Theater"
+        | "Commercial District"
         | "Shadowy Backstreet" => &CONDUIT_PYLONS_TRIGGERS,
         "Humbling Elder" => &HUMBLING_ELDER_TRIGGERS,
         "Meteor Golem" => &METEOR_GOLEM_TRIGGERS,

@@ -7998,6 +7998,22 @@ fn permanent_enters_battlefield_tapped(
                 !(state.active_player == controller
                     && state.own_turn_count_v1(controller) <= u32::from(turns))
             }
+            EntersTappedUnlessControllerDef::ControlsBasicLandV1 => !state.players
+                [controller.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .any(|candidate| {
+                candidate != object
+                    && state.objects.get(candidate).zone == Zone::Battlefield
+                    && crate::engine::object_has_type(
+                        state,
+                        candidate,
+                        crate::card_def::CardType::Land,
+                    )
+                    && crate::engine::effective_supertypes(state, candidate)
+                        .contains(&crate::card_def::Supertype::Basic)
+            }),
         };
     }
     let Some(rule) = def.enters_battlefield_tapped_unless else {

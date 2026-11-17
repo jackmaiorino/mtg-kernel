@@ -304,7 +304,11 @@ pub(super) fn conditional_tap_yield_program_for(name: &str) -> Option<&'static s
 pub(super) fn additional_mana_abilities_for(name: &str) -> &'static str {
     match name {
         "Skycloud Expanse" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W], mana_cost: Cost { pips: &[], generic: 1, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::FixedColorsV1(&[ManaColor::W, ManaColor::U]), controller_damage: 0, max_activations_per_turn: None } }]",
-        _ => "&[]",
+        // Vintage Cube wave C2c, Pentad Prism: "Remove a charge counter from
+        // this artifact: Add one mana of any color." No tap symbol and no mana
+        // cost; the counter is removed by `eternal_cube_c2c_v1`'s hooks.
+        "Pentad Prism" => "&[AdditionalManaAbilityDef { colors: &[ManaColor::W, ManaColor::U, ManaColor::B, ManaColor::R, ManaColor::G], mana_cost: Cost { pips: &[], generic: 0, x_count: 0 }, ability: ManaAbilityDef { cost: ManaAbilityCostDef::None, amount: ManaAbilityAmountDef::Fixed(1), controller_damage: 0, max_activations_per_turn: None } }]",
+        _ => super::build_eternal_c2b_v1::additional_mana_abilities_for(name),
     }
 }
 
@@ -320,7 +324,7 @@ pub(super) fn primary_mana_ability_colors(name: &str) -> Option<Vec<&'static str
 /// Lands whose only mana ability is an additional one: Skycloud Expanse's
 /// paid filter ability.
 pub(super) fn static_only_land(name: &str) -> bool {
-    name == "Skycloud Expanse"
+    name == "Skycloud Expanse" || super::build_eternal_c2b_v1::static_only_land(name)
 }
 
 /// Card-database tokens for the triggered abilities in

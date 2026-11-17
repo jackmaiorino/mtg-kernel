@@ -173,6 +173,9 @@ pub(super) fn madness_cost_for(name: &str) -> Option<&'static str> {
 pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
     match name {
         "Gaea's Cradle" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::Dynamic(DynamicValueDef::ControlledPermanentsWithType(CardType::Creature)), controller_damage: 0, max_activations_per_turn: None })",
+        // Vintage Cube wave C2c, Everflowing Chalice: "{T}: Add {C} for each
+        // charge counter on this artifact."
+        "Everflowing Chalice" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::ChargeCountersOnSourceV1, controller_damage: 0, max_activations_per_turn: None })",
         _ => "None",
     }
 }
