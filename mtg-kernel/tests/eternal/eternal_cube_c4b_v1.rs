@@ -974,6 +974,20 @@ fn omnath_counts_its_resolutions_per_turn_and_per_omnath() {
     settled(&mut state);
     assert_eq!(life(&state, P0), 28, "the first time this turn");
     assert_eq!(mana(&state, P0, ManaColor::R), 0);
+
+    // So does the other player's turn of the same round.
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::Main1
+    });
+    let life_before = life(&state, P0);
+    enter(&mut state, P0, "Plains");
+    settled(&mut state);
+    assert_eq!(
+        life(&state, P0),
+        life_before + 4,
+        "the first time in the opponent's turn"
+    );
+    assert_eq!(mana(&state, P0, ManaColor::R), 0);
 }
 
 // ---- Scythecat Cub -----------------------------------------------------------------

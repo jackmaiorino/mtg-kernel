@@ -109,6 +109,9 @@ pub struct ResolutionCountV1 {
     pub source: ObjectId,
     pub zone_change_count: u32,
     pub turn: u32,
+    /// The active player of that turn: the turn key counts rounds, so both
+    /// players' turns of one round share it.
+    pub active: PlayerId,
     pub count: u8,
 }
 
@@ -354,9 +357,9 @@ pub(crate) fn note_departure(state: &mut GameState, object: ObjectId) {
 /// returns how many have resolved (this one included).
 fn bump_resolution(state: &mut GameState, ctx: &ExecCtx) -> u8 {
     let (source, zone_change_count) = ability_source(state, ctx);
-    let turn = state.turn_key_v1();
+    let (turn, active) = (state.turn_key_v1(), state.active_player);
     let resolutions = &mut c4b_state(state).resolutions;
-    resolutions.retain(|entry| entry.turn == turn);
+    resolutions.retain(|entry| entry.turn == turn && entry.active == active);
     if let Some(entry) = resolutions
         .iter_mut()
         .find(|entry| entry.source == source && entry.zone_change_count == zone_change_count)
@@ -368,6 +371,7 @@ fn bump_resolution(state: &mut GameState, ctx: &ExecCtx) -> u8 {
         source,
         zone_change_count,
         turn,
+        active,
         count: 1,
     });
     1
