@@ -217,8 +217,37 @@ either refused at reset or refused at its first observation of a face-up Shapesh
 deck can: a Shapeshifter that enters while its controller's top card is an unsupported creature
 halts the engine at that entry, before any observation is built, and the session ends with the
 terminal reason `engine_halted:FullTextDonorOutsideSetV1:source:N` (`rl_session.rs`, the
-`Decision::Halted` arm of `advance_to_decision_or_terminal_profiled`). Under option (b) no
-schema 5 deck holds a Shapeshifter, so it cannot happen.
+`Decision::Halted` arm of `advance_to_decision_or_terminal_profiled`). Under option (b) the
+reset refuses a Shapeshifter in either seat's mainboard or cards outside the game, so no schema 5
+game holds one and it cannot happen.
+
+Routes by which a card that was never in a mainboard reaches play. Checked for the Shapeshifter
+and for donors outside the set, in schema 5 and in the registered owner:
+
+- Cards outside the game. The catalog's fetch effects (`eternal_outside_game_v1::OutsideGameOpV1`)
+  are Burning Wish (sorcery cards), Karn, the Great Creator's -2 (artifact cards), learn (Lesson
+  cards) and Extrapolate the Impossible (any two cards with different names; `eternal_e5a_v1`).
+  Only Extrapolate can fetch a creature card, so it is the one route for a Shapeshifter or an
+  unsupported donor: fetched to hand, a creature card can be cast or discarded into its owner's
+  graveyard. Schema 5 receives cards outside the game at reset and checks them only with the
+  row check (`limited_session_v1.rs`, near line 212); `RlEpisodeSessionV1`'s reset runs the
+  preflight over the two mainboards only (`rl_session.rs`, near lines 6090 to 6093). Option (b)
+  therefore adds the same Shapeshifter check over the outside-the-game cards (section 3.7). None
+  of the four fetch cards is in the Premodern pool, so no snapshot deck reaches this route.
+- Sideboard games of best of three. Each later game is a configuration of the registered 75.
+  `EternalRegisteredDeckV1::register` checks both registered zones, so a Shapeshifter in a
+  sideboard needs the ordered profile (section 3.3), and a schema 5 game's mainboard
+  configuration passes the reset preflight like any mainboard.
+- Companions. A companion must be a supported companion card whose condition the mainboard meets
+  (`eternal_lurrus_v1::companion_condition_met`, `CustomDeckV1::resolve_with_companion`); a
+  Shapeshifter or a creature donor that is not a companion is refused.
+- Tokens that copy a card. A token copy of a Shapeshifter needs a Shapeshifter on the
+  battlefield first; tokens are never donors (`graveyard_text_top` skips them).
+- No other effect in the catalog creates a card in a hand, library or graveyard from nothing.
+
+So under (b) a Shapeshifter reaches no schema 5 game. Unsupported donors can still reach a
+graveyard through Extrapolate, but only matter under a Shapeshifter, which is then absent from
+schema 5, and in the registered owner the donor refusal halts at that moment.
 
 Why no supported game reaches it. A card goes only to its owner's graveyard (400.3), and the
 Shapeshifter reads only its controller's graveyard, so every donor is a creature card from the
@@ -425,19 +454,31 @@ pass unless one is changed. The lead chooses (section 9, question 3):
   mechanic name in a schema 5 terminal reason, though again never a completed game. No other
   schema 5 byte changes.
 - (b) Refuse at reset. Append `DeckPreflightError::RequiresOrderedGraveyardOwnerV1` to
-  `card_def::preflight_fully_supported_deck`, beside `RequiresNativeOpening`. The change is in
-  `card_def.rs`, not in `limited_session_v1.rs`. The reset reply for a Shapeshifter deck stays
-  an error with code `unsupported_deck`, as today; only its message changes, from the row
-  check's "is a token or lacks full engine support" to the preflight's text naming the ordered
-  owner. Every other reply is unchanged. The preflight is shared with other session resets
-  (`rl_session.rs`, `rl.rs`, `runtime_decks.rs`), which then refuse a Shapeshifter deck the same
-  way.
+  `card_def::preflight_fully_supported_deck`, beside `RequiresNativeOpening`, and add a
+  function `card_def::preflight_outside_the_game` that returns the same variant for a
+  Shapeshifter (`full_text_v1::owns_definition`) and checks nothing else. In
+  `RlEpisodeSessionV1::reset_with_custom_decks_companions_london_and_shroud_v1`, beside the
+  existing mainboard loop (near lines 6090 to 6093), it runs over each seat's outside-the-game
+  cards when present, mapped to the same `UnsupportedDeck` code. It applies only the new check,
+  not the whole preflight, so a list that passes today's row check (no tokens, every card Full)
+  meets nothing else new. The changes are in `card_def.rs` and `rl_session.rs`, not in
+  `limited_session_v1.rs`. The reset reply for a deck with a Shapeshifter in its mainboard or
+  outside the game stays an error with code `unsupported_deck`, as today; only its message
+  changes, from the row check's "is a token or lacks full engine support" to the new text naming
+  the ordered owner. No input accepted today changes: the only inputs that carry cards outside
+  the game are best-of-three games (each game's sideboard, from `session_outside_the_game`) and
+  custom resets that pass a list, and none can hold a Shapeshifter today, because the row check
+  refuses a Partial card in either list. Every other reply is unchanged. The preflight is
+  shared with other session resets (`rl_session.rs`, `rl.rs`, `runtime_decks.rs`), which then
+  refuse a Shapeshifter mainboard the same way; none of them takes cards outside the game.
+  Under (b) no schema 5 game ever holds a Shapeshifter (section 2.3 checks every other route),
+  so neither the observation refusal nor the donor halt occurs in schema 5.
 
 The ruling's wording, "schema 5 untouched", favors (a) literally: (a) changes no schema 5 reply
-for any deck that can be played today, though it adds one terminal reason value for a custom
-Shapeshifter deck; (b) changes one error message for a deck schema 5 cannot play either way.
-Under (b) every deck that passes the preflight has no Shapeshifter, so neither the observation
-refusal nor the donor halt can occur in schema 5. (b) follows the
+for any deck that can be played today, though it lets a Shapeshifter deck start and then fail
+closed, and adds one terminal reason value for a custom Shapeshifter deck; (b) changes one
+error message, for a deck schema 5 cannot play either way, in a reset that is refused today
+too. (b) follows the
 Leyline precedent and refuses before any play. Proposed: (b), stated to the lead as the one
 schema 5 message that changes.
 
@@ -835,7 +876,11 @@ Replenish against FEB, so those matches could halt.
 - [ ] Registration: the ordered profile's admissions and refusals and the profile mismatch.
       Schema 5 and a Shapeshifter deck, by the answer to question 3: (a) a schema 5 FEB game
       ends `fail_closed` at its first observation of a face-up Shapeshifter and never reports
-      `natural_game_over`; or (b) a schema 5 FEB reset is refused with `unsupported_deck`.
+      `natural_game_over`; or (b) a schema 5 FEB reset is refused with `unsupported_deck`, and
+      so is a reset whose mainboard holds Extrapolate the Impossible and whose cards outside
+      the game hold a Shapeshifter, in either seat; a reset with cards outside the game and no
+      Shapeshifter (a `PLAYABLE_75` game's sideboard) is admitted with the same reply as on
+      main.
 - [ ] Games: FEB in `PLAYABLE` (both pairs, ranked and random, terminal and replay) and in
       `PLAYABLE_75` (both matches, random sideboarding, every game terminal and replayed).
 - [ ] CI: the Eternal library filter (`.github/workflows/ci.yml`, the
@@ -931,8 +976,8 @@ none. All of it waits behind the chain steps and issue #657's pieces.
    `premodern_ordered_public_v1.rs` (registered scene), `rl.rs` (the text mode
    `PremodernOrderedRegisteredV1Artifact`, its gates of section 3.2, and the observe entry
    `observe_premodern_ordered_registered_v1`), `eternal_bo3_v1.rs` (profile, errors,
-   `start_game_with_ordered_graveyard_v1`), `card_def.rs` (the preflight variant, only if
-   question 3 is answered (b)), `tests/eternal/eternal_bo3_v1/eternal_bo3_ordered_v1.rs` (driver),
+   `start_game_with_ordered_graveyard_v1`), `card_def.rs` and `rl_session.rs` (the preflight
+   variant and the outside-the-game check, only if question 3 is answered (b)), `tests/eternal/eternal_bo3_v1/eternal_bo3_ordered_v1.rs` (driver),
    owner tests. The Shapeshifter stays Partial, so the owner's own tests register it through a
    test-only admission of the frozen FEB 75 (as the frozen owner admits a Partial card today).
    No row; no chain slot. Acceptance: the registered-owner, registration and frozen tests of
@@ -1011,10 +1056,15 @@ both merged and the census on main shows 305 of 305 Full.
    a FEB reset is admitted and the game ends `fail_closed` at its first observation of a
    face-up Shapeshifter, and a custom deck whose Shapeshifter enters on an unsupported donor
    ends at that entry with the new terminal reason
-   `engine_halted:FullTextDonorOutsideSetV1:source:N`; neither is ever a completed game; or (b) append
+   `engine_halted:FullTextDonorOutsideSetV1:source:N`; the same holds for a Shapeshifter brought
+   in from outside the game by Extrapolate the Impossible; no schema 5 reply for a deck playable
+   today changes, and neither path is ever a completed game; or (b) append
    `DeckPreflightError::RequiresOrderedGraveyardOwnerV1` to `card_def.rs`'s preflight, which the
-   schema 5 reset already calls (`rl_session.rs`, near line 6091); the reset is refused with
-   the same code `unsupported_deck` and a new message, and no other schema 5 reply changes.
+   schema 5 reset already calls for both mainboards (`rl_session.rs`, near line 6091), and run
+   the same Shapeshifter check over each seat's cards outside the game beside it; a reset with a
+   Shapeshifter in either list is refused with the same code `unsupported_deck` and a new
+   message, no input accepted today changes, no other schema 5 reply changes, and no schema 5
+   game ever holds a Shapeshifter.
    The wording "schema 5 untouched" favors (a) literally. Proposed: (b), named to the lead as
    the one schema 5 error message that changes, because it refuses before any play, follows
    the Leyline precedent in the same function, and touches no field, action or code.
