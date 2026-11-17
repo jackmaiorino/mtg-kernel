@@ -6319,8 +6319,23 @@ fn activation_mana_cost(components: &[CostComponent]) -> Option<&Cost> {
 /// (Eiganjo's channel: `{1}` less per legendary creature its activator
 /// controls). Only generic mana is reduced, never below zero. Activated
 /// ability costs are generated `'static` slices, so the ability is identified
-/// by the identity of its cost slice.
+/// by the identity of its cost slice. Forensic Gadgeteer's floored reduction
+/// is applied last.
 fn reduced_activation_mana_cost(
+    cost: &Cost,
+    components: &[CostComponent],
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+) -> Cost {
+    let reduced = unfloored_activation_mana_cost(cost, components, player, source, state);
+    // Forensic Gadgeteer (eternal wave C4a): abilities of artifacts cost {1}
+    // less, never below one mana.
+    crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, reduced)
+}
+
+/// `cost` net of the reductions that have no floor (Eiganjo's channel).
+fn unfloored_activation_mana_cost(
     cost: &Cost,
     components: &[CostComponent],
     player: PlayerId,
@@ -6354,11 +6369,13 @@ fn reduced_activation_mana_cost(
             .generic
             .saturating_sub(u8::try_from(count).unwrap_or(u8::MAX));
     }
-    // Forensic Gadgeteer (eternal wave C4a): abilities of artifacts cost {1}
-    // less, never below one mana.
-    crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, reduced)
+    reduced
 }
 
+/// The total mana an activation costs: the mana cost, then increases, then
+/// reductions (601.2f). A reduction with a floor (Forensic Gadgeteer's "can't
+/// reduce the mana in that cost to less than one mana") is checked against
+/// that total, so it applies after Anointed Peacekeeper's and Gloom's taxes.
 fn activation_mana_payment(
     components: &[CostComponent],
     player: PlayerId,
@@ -6366,24 +6383,30 @@ fn activation_mana_payment(
     state: &GameState,
 ) -> Option<Cost> {
     let printed = activation_mana_cost(components).map(|cost| {
-        let reduced = reduced_activation_mana_cost(cost, components, player, source, state);
+        let reduced = unfloored_activation_mana_cost(cost, components, player, source, state);
         crate::standard_cards_v1::spend_as_any_color(state, player, source, reduced)
     });
     // Anointed Peacekeeper: abilities of sources with the chosen name cost
     // {2} more to activate. Gloom: abilities of white enchantments cost {3}
     // more (eternal wave P3b).
     #[cfg(feature = "eternal-fixtures")]
-    {
+    let printed = {
         let tax = crate::eternal_vintage_v1::activation_tax(state, source).saturating_add(
             crate::eternal_premodern_p3b_v1::statics::gloom_activation_tax(state, source),
         );
         if tax > 0 {
             let mut cost = printed.unwrap_or(Cost::zero());
             cost.generic = cost.generic.saturating_add(tax);
-            return Some(cost);
+            Some(cost)
+        } else {
+            printed
         }
-    }
-    printed
+    };
+    // Forensic Gadgeteer (eternal wave C4a): abilities of artifacts cost {1}
+    // less, never below one mana.
+    printed.map(|cost| {
+        crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, cost)
+    })
 }
 
 pub(crate) fn x_target_is_payable(

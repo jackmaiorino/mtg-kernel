@@ -1033,6 +1033,76 @@ fn forensic_gadgeteer_reduces_an_artifact_mana_ability_that_has_a_mana_cost() {
     assert_eq!(mana(&state, P0, ManaColor::C), 0);
 }
 
+/// Casts Anointed Peacekeeper for P0 and names `name`: its two-step choice
+/// takes the group of the name's first letter, then the name.
+fn peacekeeper_naming(state: &mut GameState, name: &str) {
+    let keeper = put(state, P0, "Anointed Peacekeeper", Zone::Hand);
+    pool(state, P0, &[ManaColor::W], 2);
+    cast(state, keeper, &[]);
+    let (group, index) = mtg_kernel::eternal_vintage_v1::nameable_definitions()
+        .iter()
+        .enumerate()
+        .find_map(|(group, ids)| {
+            ids.iter()
+                .position(|&id| CARD_DEFS[usize::from(id)].object_name == name)
+                .map(|index| (group, index))
+        })
+        .unwrap_or_else(|| panic!("{name} is not nameable"));
+    match settle(state) {
+        Some(Decision::ChooseEffectOption { player, .. }) => {
+            assert_eq!(player, P0);
+            act(state, Action::ChooseEffectOption(u16::try_from(group).unwrap()));
+        }
+        other => panic!("expected the letter, got {other:?}"),
+    }
+    if let Some(Decision::ChooseEffectOption { .. }) = settle(state) {
+        act(state, Action::ChooseEffectOption(u16::try_from(index).unwrap()));
+    }
+    settled(state);
+    assert_eq!(zone(state, keeper), Zone::Battlefield);
+}
+
+/// The floor is checked against the total cost (601.2f): Anointed
+/// Peacekeeper's {2} tax is added first, then the Gadgeteer takes {1} off.
+#[test]
+fn forensic_gadgeteer_reduces_the_total_after_an_activation_tax() {
+    // Pyrite Spellbomb's "{1}, Sacrifice: Draw a card" named by the
+    // Peacekeeper costs {3}; with the Gadgeteer, {2}.
+    let draw = def("Pyrite Spellbomb")
+        .activated_abilities
+        .iter()
+        .position(|ability| {
+            ability.cost.iter().any(|component| {
+                matches!(component, CostComponent::Mana(cost) if cost.generic == 1 && cost.pips.is_empty())
+            })
+        })
+        .expect("the {1} ability");
+    let draw = u8::try_from(draw).unwrap();
+    let mut state = plains();
+    peacekeeper_naming(&mut state, "Pyrite Spellbomb");
+    let bomb = put(&mut state, P0, "Pyrite Spellbomb", Zone::Battlefield);
+    pool(&mut state, P0, &[], 2);
+    assert!(!activatable(&mut state, bomb, draw), "{{3}} with two mana");
+    put(&mut state, P0, "Forensic Gadgeteer", Zone::Battlefield);
+    assert!(activatable(&mut state, bomb, draw), "{{2}} with two mana");
+    let hand = hand_len(&state, P0);
+    activate(&mut state, bomb, draw, &[]);
+    on_the_stack(&mut state);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0, "{{2}} was paid");
+    settled(&mut state);
+    assert_eq!(hand_len(&state, P0), hand + 1);
+
+    // An ability with no mana cost is taxed to {2}, which the Gadgeteer
+    // reduces to {1}: Mishra's Bauble's "{T}, Sacrifice".
+    let mut state = plains();
+    peacekeeper_naming(&mut state, "Mishra's Bauble");
+    put(&mut state, P0, "Forensic Gadgeteer", Zone::Battlefield);
+    let bauble = put(&mut state, P0, "Mishra's Bauble", Zone::Battlefield);
+    assert!(!activatable(&mut state, bauble, 0), "never free");
+    pool(&mut state, P0, &[], 1);
+    assert!(activatable(&mut state, bauble, 0), "{{1}} with one mana");
+}
+
 // ---- Faerie Mastermind ---------------------------------------------------------------
 
 #[test]
