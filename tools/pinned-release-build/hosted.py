@@ -31,6 +31,12 @@ LONDON_VECTOR_SOURCE_B = "6faa42219a4e67d266019458a2380df5aa5e25f8"
 LONDON_VECTOR_SOURCE_MERGED = "ce3df74f85649bdbb9a9c4971bafefb7346243ed"
 # The merge commit of PR 729 (pregame announcement step scale) on release/mull-c5719e1cf: this is what gets pinned for arm Q.
 ANNOUNCE_STEP_SOURCE_MERGED = "b6516e6f578109194c496768222ca97cdf5f0191"
+# Build-qualification sources of the optimization lane (2026-11-17), built by explicit dispatch from this guard
+# branch only: the two release lines plus the backports of PRs 631, 632 and 646 and the --settle-vector-tanh entry,
+# and main itself as a timing ceiling (never pinned).
+OPT_PACK_MULL_SOURCE = "77908fee6f2f647cf0cfa7a95ceaeefc4dd3e429"
+OPT_PACK_W128_SOURCE = "ffe101d7c5d65f00e5742524f518f37ab70fe0f1"
+OPT_MAIN_CEILING_SOURCE = "fd9ff09ad4785dcbfabeb1238eb2f77b657c29b9"
 SOURCES = (
     SOURCE,
     PRE_FIX_SOURCE,
@@ -39,6 +45,9 @@ SOURCES = (
     LONDON_VECTOR_SOURCE_B,
     LONDON_VECTOR_SOURCE_MERGED,
     ANNOUNCE_STEP_SOURCE_MERGED,
+    OPT_PACK_MULL_SOURCE,
+    OPT_PACK_W128_SOURCE,
+    OPT_MAIN_CEILING_SOURCE,
 )
 IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
 GIB = 2**30
