@@ -239,8 +239,8 @@ need the new location. The SHA-256 in the two JSON receipts identify each file u
   --warmup-runs 0 --cold-resume`; clippy, the unit tests and the build: 4-core claims (cores
   12-15).
 - On a Mac Studio (`aarch64-apple-darwin`, not a CI platform), 2026-11-17, default features,
-  covering the commits after `95c33b0dd` at `1134caad0`, whose Rust sources the last commit
-  does not change: `cargo test --release --locked -p mtg-kernel --lib` with filters
+  covering the commits after `95c33b0dd` at `1134caad0` (the commits after it change only
+  documents and the line layout of one assertion): `cargo test --release --locked -p mtg-kernel --lib` with filters
   `opponent_cache` (12 tests, including `a_policy_that_cannot_be_forked_is_charged_for_its_model`
   and `a_kept_entry_supersedes_the_transient_slot_of_its_source`),
   `collection_cache_boundary_rejects_same_path_mutation_of_all_pins` (1),
@@ -250,8 +250,8 @@ need the new location. The SHA-256 in the two JSON receipts identify each file u
   `parallel_current_self_collection_matches_under_zero_and_sub_fork_cache_limits` (1) and
   `a_kept_entry_supersedes_the_transient_slot_of_its_source` (1): 30 passed, 0 failed. With the
   transient-slot fix removed, `a_kept_entry_supersedes_the_transient_slot_of_its_source` fails
-  (`assertion failed: col.transient.is_none()`). `cargo fmt --all -- --check`: no
-  difference. `cargo clippy --release --locked -p mtg-kernel --all-targets -- -D warnings`
+  (`assertion failed: col.transient.is_none()`). `cargo fmt --all -- --check` at
+  `b8280ed58`: no difference. `cargo clippy --release --locked -p mtg-kernel --all-targets -- -D warnings`
   fails there on the same lint errors (6 in the library, 4 in its unit tests:
   `sha512_multi_v1.rs` and a `gae_v1` test, unused or dead code on that platform) at
   `95c33b0dd`, `84c5d50a9` and `1134caad0`, and on nothing else. Clippy reports every lint of
