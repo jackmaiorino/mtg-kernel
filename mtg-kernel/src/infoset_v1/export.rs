@@ -1391,7 +1391,10 @@ fn export_versioned(
         is(MutantV1::L8) || is(MutantV1::L11) || is(MutantV1::L12) || is(MutantV1::L14);
     let mut bound_names = Vec::new();
     if let Some(evidence) = &reveal_evidence_v4 {
-        let hand_size = state.players[opp.index()].hand.len();
+        // The minima name hidden hand cards, so they are bounded by the
+        // hidden hand: a token or spell copy in the hand (issue 713) is
+        // public, takes no hidden slot and never counts toward them.
+        let hand_size = state.players[opp.index()].hand.len() - opp_hand_public.len();
         for (def, count) in evidence.knowledge.hand(opp) {
             if count > hand_size - bound_names.len() {
                 return Err(refuse(
