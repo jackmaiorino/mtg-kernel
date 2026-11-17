@@ -24443,7 +24443,7 @@
   },
     {
    "name": "Standard Bearer",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{1}{W}",
    "mana_value": 2,
    "colors": [
@@ -24982,7 +24982,7 @@
   },
     {
    "name": "Coalition Honor Guard",
-   "engine_capability": "partial",
+   "engine_capability": "full",
    "mana_cost": "{3}{W}",
    "mana_value": 4,
    "colors": [

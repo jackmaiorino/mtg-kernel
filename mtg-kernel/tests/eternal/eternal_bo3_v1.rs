@@ -23,7 +23,7 @@ mod native;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 124] = [
+const PLAYABLE_75: [(&str, &str); 129] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -85,6 +85,14 @@ const PLAYABLE_75: [(&str, &str); 124] = [
     ("pauper", "pauper-izzet-faeries"),
     ("pauper", "pauper-4c-ephemerate"),
     ("pauper", "tron-c244ab01-c9e3-400d-8db1-6d717616b7e2"),
+    ("pauper", "pauper-white-aggro"),
+    (
+        "pauper",
+        "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c",
+    ),
+    ("pauper", "pauper-snacker-gates"),
+    ("pauper", "pauper-boros-bully"),
+    ("pauper", "pauper-azorius-faeries"),
     ("legacy", "legacy-dimir-tempo"),
     ("legacy", "legacy-izzet-delver"),
     ("legacy", "legacy-doomsday"),
@@ -702,7 +710,7 @@ fn native_opening_match_uses_real_london_keeps_and_preserves_the_profile_both_se
         Err(EternalBo3ErrorV1::NativeOpeningSetup { .. })
     ));
     let mut unrelated = main.clone();
-    unrelated[0] = id("Coalition Honor Guard");
+    unrelated[0] = id("Volrath's Shapeshifter");
     assert!(matches!(
         EternalRegisteredDeckV1::new_with_native_opening_v1(
             format,

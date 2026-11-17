@@ -5,11 +5,14 @@
 //! copies, changed targets, modes and either player's Flagbearer.
 #![cfg(feature = "eternal-fixtures")]
 
+use crate::eternal_catalog_v1::{play_observed, Policy};
 use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::ids::{ObjectId, PlayerId};
+use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use serde_json::Value;
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
@@ -643,4 +646,78 @@ fn flagbearers_without_their_ability_bind_nothing_both_seats() {
             [Target::Player(P0), Target::Player(P1)]
         );
     }
+}
+
+// ---- Public-session consumer games -----------------------------------------------
+
+fn deck(rows: &[(&str, u32)]) -> CustomDeckV1 {
+    CustomDeckV1 {
+        cards: rows
+            .iter()
+            .map(|&(name, count)| CustomCardCountV1 {
+                name: name.to_owned(),
+                count,
+            })
+            .collect(),
+        companion: None,
+    }
+}
+
+/// Whether `action` chooses as a target a Flagbearer that an opponent of
+/// the chooser controls.
+fn targets_opposing_flagbearer(action: &Value) -> bool {
+    let semantic = &action["semantic"];
+    let target = &semantic["target"];
+    target["target_kind"] == "object"
+        && target["object"]["controller"] != semantic["actor"]
+        && target["object"]["card_db_id"]
+            .as_u64()
+            .is_some_and(|id| [BEARER, GUARD].contains(&CARD_DEFS[id as usize].name))
+}
+
+#[test]
+fn flagbearer_decks_finish_and_replay_through_public_sessions() {
+    let white = deck(&[
+        ("Plains", 18),
+        (BEARER, 8),
+        (GUARD, 6),
+        ("Thraben Inspector", 4),
+        ("Journey to Nowhere", 4),
+    ]);
+    let red = deck(&[
+        ("Mountain", 18),
+        ("Lightning Bolt", 10),
+        ("Mogg Fanatic", 8),
+        ("Searing Blaze", 4),
+    ]);
+    let mut flagbearer_casts = 0;
+    let mut flagbearer_targets = 0;
+    for (pair, first_seed) in [
+        ([white.clone(), red.clone()], 0x5331_4f00_u64),
+        ([red, white], 0x5331_4f10),
+    ] {
+        for seed in first_seed..first_seed + 3 {
+            for policy in [
+                Policy::Ranked,
+                Policy::Random(seed + 0x100),
+                Policy::Random(seed + 0x200),
+            ] {
+                let mut targets = 0;
+                let game = play_observed(pair.clone(), None, seed, policy, &mut |_, action| {
+                    targets += usize::from(targets_opposing_flagbearer(action));
+                });
+                let replay = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
+                assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+                flagbearer_targets += targets;
+                flagbearer_casts += game
+                    .cast_cards
+                    .iter()
+                    .flat_map(|cards| [id(BEARER), id(GUARD)].map(|card| cards.get(&card)))
+                    .flatten()
+                    .sum::<usize>();
+            }
+        }
+    }
+    assert!(flagbearer_casts > 0, "no Flagbearer cast");
+    assert!(flagbearer_targets > 0, "no opposing Flagbearer targeted");
 }

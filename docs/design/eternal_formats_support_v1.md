@@ -725,8 +725,9 @@ New, each built once in the first wave that needs it:
   checks whether its announced allocation can include a Flagbearer at a payable
   X. An empty allocation can still finish, and each selected target requires
   at least one damage. Chandra, Flameshaper and the Flagbearers are in separate
-  shipped registries. Native qualification and broader targeting coverage are
-  pending. Vandalblast and Electrickery use the existing graveyard
+  shipped registries. Wave S1o (below) classifies every target shape for the
+  Flagbearer obligation, judges it on the final legal roster and marks both
+  Flagbearers Full. Vandalblast and Electrickery use the existing graveyard
   permission for a paid overload and retain Retrace's land discard. A free-cast
   permission offers the ordinary spell form with its original target requirement.
   Omniscience can still cast the ordinary form for free or let its controller pay
@@ -1225,8 +1226,8 @@ choice, restore, disclosure and transport checks were pending.
 As for every cast, the pending cast menu has no interleaved mana activation, so an overload cost
 is paid with the ordinary mana plan. Martyr of Sands' last pending check, the three event-history
 consumers of every event kind, now runs with its sample in the workspace library group on Linux
-and hosted Windows. It stays Partial for now: the one list that needs it, White Aggro, also needs
-Standard Bearer, whose broader targeting coverage is pending.
+and hosted Windows. It stayed Partial then because the one list that needs it, White Aggro, also
+needed Standard Bearer; wave S1n marked Martyr Full and wave S1o qualifies Standard Bearer.
 
 ### S1i: Leyline qualification
 
@@ -2414,6 +2415,83 @@ each card's current Oracle text, checked against XMage and rules 101.4, 601.2b-c
 - Consumers: `tests/eternal/eternal_sideboard_s1n_v1.rs` covers all five S1n cards and Martyr of
   Sands in both seats, and plays two 40-card decks built around all six cards through public
   schema-5 sessions in both seats under ranked and seeded random policies with replay checks.
+
+### S1o: Flagbearer qualification
+
+After S1n the only non-Full sideboard cards of Pauper's mainboard-playable lists are Standard
+Bearer (White Aggro 2.0%, Mono-White Aggro 1.1%, Boros Bully 0.2%, Azorius Faeries 0.1%) and
+Coalition Honor Guard (Snacker Gates 0.8%), both registered Partial by S1d. S1o qualifies them
+and marks both Full. The Pauper full 75 share goes from 91.0% to 95.2%, the Pauper playable
+share, and the five lists join `PLAYABLE_75` (124 to 129 decks). Legacy (83.8%) and Vintage
+(94.1%) are unchanged.
+
+Both cards share the current Oracle text "While an opponent is choosing targets as part of
+casting a spell they control or activating an ability they control, that player must choose at
+least one Flagbearer on the battlefield if able." The published rulings (2016-06-08) say that
+any player's Flagbearer may be targeted, that triggered abilities need not target one, and that
+changed targets and copies with new targets need not either. Rule 601.2b chooses modes before
+targets and 601.2c announces the number of targets before choosing them, so the caster is never
+forced into a mode or a count that allows a Flagbearer, and the obligation is about the whole
+announced set: one Flagbearer among the targets satisfies it.
+
+What S1d left: the general legal-target path kept only Flagbearers on the last target slot of a
+pending cast or activation, which is sound only when every slot draws from one roster. A
+read of the code found four reachable escapes, each now a failing-then-passing rules test:
+Collective Brutality escalated to shrink and drain (the last slot is an opponent, so the
+creature slot was never restricted), Searing Blaze (choosing a player without a Flagbearer
+emptied the creature slot's obligation), Pest Infestation's wide optional roster (restricted
+only at its 64th slot, so it could always finish early), and per-card cast filters, which ran
+after the restriction (Dominate with an Honor Guard above the payable X offered no target at
+all).
+
+New pieces:
+
+- `eternal_sideboard_s1d_v1::flagbearer` classifies every target spec by how its slots relate:
+  one slot, one shared roster (picks only exclude themselves; the count may be capped by cost or
+  life), divided allocations (one point per pick, repeats allowed), independent slots (a fixed
+  count of rosters that earlier picks do not change), dependent slots (at most three slots whose
+  rosters differ or depend on earlier picks), a leading permanent slot (only the first slot can
+  name a permanent), and no permanent slot. The classification is an exhaustive match over
+  `TargetSpec`, `StandardTargetV1` and each wave's filter enum (S1d, C1a, C1b, C1c, C2c) with no
+  wildcard arm, so a new target shape does not compile until it is classified; a library test
+  checks the classes against the slot counts of every printed spell form, kicked form and
+  activated ability, and of the specs built from mode choices (Collective Brutality's masks,
+  Mystic and Eldrazi Confluence, Fiery Confluence, the C2c lands).
+- Each class has a rule: the exact complete-assignment search (the S1d search, now for every
+  shape with at most two slots and for dependent slots), the shared-roster rule (a pick that is
+  not a Flagbearer stays only while a Flagbearer can still follow it, and finishing is refused
+  when the last slot could have taken one), the independent-slot rule (a slot must take a
+  Flagbearer when no later slot can), and the leading-slot rule.
+- The obligation moved out of `legal_targets_for_controller_from_source` into
+  `engine::cast_target_choices` and `engine::activation_target_choices`, after Pest Infestation's
+  payable-X filter, the X-bounded creature filter (Blue Sun's Twilight, Dominate) and the
+  payability checks. Shatterskull Smashing and Kiora's Dismissal keep their payable-allocation
+  and strive completions. Pest Infestation's filter now reads the length of the prefix being
+  extended instead of the pending cast's targets, so a completion search judges it correctly. The
+  pending-cast validation checks each target against the bound menu while the caster is still
+  choosing and refuses a complete selection that could have named a Flagbearer.
+- Triggered abilities, spell copies and changed targets never used these two functions; with the
+  general-path restriction gone they are free in every case, as the rulings say.
+
+Guard: every shared path above runs its Flagbearer rule only when
+`statics::flagbearer_requirement_applies` holds for the chooser (an opponent controls a Standard
+Bearer or Coalition Honor Guard with its abilities active), and only in `eternal-fixtures`
+builds. Otherwise each returns exactly what it returned before: the removed general-path
+restriction was a no-op without that condition, and the default Pauper, FDN and Standard builds
+compile none of it.
+
+Limits: the shared-roster and independent-slot rules assume what their class says; a card filter
+or cost that depended on which object was picked (rather than how many) would need the exact
+search. The exact search is bounded to three slots. Hullbreacher stays Partial (issue 717).
+
+Verification: `tests/eternal/eternal_sideboard_s1o_v1.rs` plays each escape and each ruling in
+both seats (Collective Brutality's shrink and drain and all three modes, Searing Blaze, Pest
+Infestation with an artifact Standard Bearer at X 1 and X 2, Dominate's filter, Journey to
+Nowhere's trigger, Grapeshot's storm copy, Misdirection's new target, a mode that avoids
+targeting, Agony Warp's two slots, either player's Flagbearer, Mogg Fanatic's activation and a
+Bearer without its ability under Dress Down), and a white Flagbearer deck plays a red burn deck
+through public schema-5 sessions in both seats under ranked and seeded random policies with
+replay checks. The S1d Flagbearer fixtures run unchanged.
 
 ## Vintage Cube
 
