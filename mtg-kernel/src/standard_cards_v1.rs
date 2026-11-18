@@ -2840,6 +2840,10 @@ pub(crate) fn create_token_copy_without_banner_owner(
         if face != 0 && CARD_DEFS[card_def as usize].transform_face.is_some() {
             event::propose_and_commit(state, ProposedEvent::transform_in_place(token, face));
         }
+        // The copy's entry face is part of its creation: Staff of the
+        // Storyteller (Vintage Cube wave C3c) reads its creature status now.
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_cube_c3c_v1::token_face_initialized(state, token);
     }
     created
 }

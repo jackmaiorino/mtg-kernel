@@ -1920,6 +1920,100 @@ fn staff_of_the_storyteller_counts_a_token_copy_of_a_transformed_reflection_both
     }
 }
 
+/// The token `actor` controls with definition `name` (the newest one).
+fn newest_token(state: &GameState, actor: PlayerId, name: &str) -> ObjectId {
+    *state.players[actor.index()]
+        .battlefield
+        .iter()
+        .rev()
+        .find(|&&object| {
+            let live = state.objects.get(object);
+            live.v4.is_token && live.card_def == id(name)
+        })
+        .expect("the token")
+}
+
+#[test]
+fn staff_of_the_storyteller_reads_whether_a_token_is_a_creature_as_it_is_created_both_seats() {
+    // 603.2: "Whenever you create one or more creature tokens" looks at the
+    // token as it is created. The commits stand in for one resolution.
+    for actor in [P0, P1] {
+        // A noncreature token (Fable of the Mirror-Breaker's front face)
+        // that a later operation turns into a creature was not created as
+        // a creature token: the Staff, which left meanwhile, does not
+        // trigger.
+        let mut state = plains();
+        let staff = put(
+            &mut state,
+            actor,
+            "Staff of the Storyteller",
+            Zone::Battlefield,
+        );
+        next(&mut state);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::create_token(id("Fable of the Mirror-Breaker"), actor),
+        );
+        let fable = newest_token(&state, actor, "Fable of the Mirror-Breaker");
+        assert!(!engine::object_has_type(&state, fable, CardType::Creature));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(staff, Zone::Graveyard),
+        );
+        event::propose_and_commit(&mut state, ProposedEvent::transform_in_place(fable, 1));
+        assert!(engine::object_has_type(&state, fable, CardType::Creature));
+        next(&mut state);
+        assert!(
+            !state.stack.iter().any(|item| item.source == staff)
+                && !state
+                    .engine
+                    .pending_triggers
+                    .iter()
+                    .any(|pending| pending.source == staff),
+            "{actor:?}: no creature token was created"
+        );
+
+        // A token copy created with its back face up (Reflection of
+        // Kiki-Jiki) is a creature token as it is created, also when it has
+        // left the battlefield, losing that face, before the collection.
+        let mut state = plains();
+        let staff = put(
+            &mut state,
+            actor,
+            "Staff of the Storyteller",
+            Zone::Battlefield,
+        );
+        next(&mut state);
+        let mut proposal = ProposedEvent::create_token(id("Fable of the Mirror-Breaker"), actor);
+        if let ProposedEvent::CreateToken(token) = &mut proposal {
+            token.entry_face_index = Some(1);
+        }
+        event::propose_and_commit(&mut state, proposal);
+        let reflection = newest_token(&state, actor, "Fable of the Mirror-Breaker");
+        assert!(engine::object_has_type(
+            &state,
+            reflection,
+            CardType::Creature
+        ));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(reflection, Zone::Graveyard),
+        );
+        next(&mut state);
+        assert!(
+            state.stack.iter().any(|item| item.source == staff)
+                || state
+                    .engine
+                    .pending_triggers
+                    .iter()
+                    .any(|pending| pending.source == staff),
+            "{actor:?}: the Reflection token was a creature token"
+        );
+        settled(&mut state);
+        assert_eq!(charge(&state, staff), 1, "{actor:?}");
+    }
+}
+
 /// Innkeeper's Talent at level 3 for P0, levelled through its own abilities.
 fn innkeepers_talent_at_level_three(state: &mut GameState) -> ObjectId {
     let class = put(state, P0, "Innkeeper's Talent", Zone::Battlefield);
