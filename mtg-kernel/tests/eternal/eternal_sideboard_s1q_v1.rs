@@ -483,50 +483,100 @@ fn leveler_unearths_with_haste_without_a_cast_trigger_and_is_exiled_in_both_seat
     }
 }
 
+/// A target that is illegal when the trigger resolves: with its only target
+/// illegal the ability does not resolve (608.2b), so nothing is destroyed and
+/// nobody creates a Powerstone token ("Its controller" names the target's
+/// controller, a part of the effect that needs the illegal target).
+#[test]
+fn leveler_trigger_with_an_illegal_target_gives_no_token_in_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor);
+        let leveler = put(&mut state, actor, LEVELER, Zone::Hand);
+        let ring = put(&mut state, opponent, "Sol Ring", Zone::Battlefield);
+        pool(&mut state, actor, &[], 8);
+        cast(&mut state, leveler);
+        trigger_target(&mut state, Some(ring));
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        // The Ring leaves before the trigger resolves.
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(ring, Zone::Hand));
+        settled(&mut state);
+        assert_eq!(zone(&state, ring), Zone::Hand);
+        assert!(powerstones(&state, P0).is_empty() && powerstones(&state, P1).is_empty());
+        assert_eq!(zone(&state, leveler), Zone::Battlefield);
+    }
+}
+
+/// An unearthed Leveler whose attack trigger names itself: unearth's "If it
+/// would leave the battlefield, exile it instead" exiles it, and its
+/// controller still creates the tapped Powerstone token.
+#[test]
+fn unearthed_leveler_naming_itself_is_exiled_and_its_controller_gets_the_token_in_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = game(actor);
+        let leveler = put(&mut state, actor, LEVELER, Zone::Graveyard);
+        pool(&mut state, actor, &[], 8);
+        activate(&mut state, leveler, 0);
+        settled(&mut state);
+        attack_with(&mut state, leveler);
+        trigger_target(&mut state, Some(leveler));
+        run_until(&mut state, |s| s.step == Step::Main2, |_, _| None);
+        assert_eq!(zone(&state, leveler), Zone::Exile, "exiled instead");
+        let tokens = powerstones(&state, actor);
+        assert_eq!(tokens.len(), 1);
+        assert!(tapped(&state, tokens[0]));
+    }
+}
+
 // ---- Powerstone token ---------------------------------------------------------------
 
 /// "{T}: Add {C}. This mana can't be spent to cast a nonartifact spell." The
 /// automatic planner never taps it; tapped by hand, its mana pays an artifact
 /// spell and an activated ability but not a nonartifact spell.
 #[test]
-fn powerstone_mana_pays_artifact_spells_and_abilities_only() {
-    let mut state = game(P0);
-    let first = put(&mut state, P0, POWERSTONE, Zone::Battlefield);
-    let second = put(&mut state, P0, POWERSTONE, Zone::Battlefield);
-    let stone = put(&mut state, P0, "Mind Stone", Zone::Hand);
-    assert!(!castable(&mut state, stone), "not an automatic source");
-    act(&mut state, Action::ActivateManaAbility(first));
-    act(&mut state, Action::ActivateManaAbility(second));
-    assert!(tapped(&state, first) && tapped(&state, second));
-    assert_eq!(restricted(&state, P0), 2);
-    assert_eq!(state.players[0].mana_pool[ManaColor::C.pool_index()], 0);
-    cast(&mut state, stone);
-    settled(&mut state);
-    assert_eq!(zone(&state, stone), Zone::Battlefield);
-    assert_eq!(restricted(&state, P0), 0);
+fn powerstone_mana_pays_artifact_spells_and_abilities_only_in_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = game(actor);
+        let first = put(&mut state, actor, POWERSTONE, Zone::Battlefield);
+        let second = put(&mut state, actor, POWERSTONE, Zone::Battlefield);
+        let stone = put(&mut state, actor, "Mind Stone", Zone::Hand);
+        assert!(!castable(&mut state, stone), "not an automatic source");
+        act(&mut state, Action::ActivateManaAbility(first));
+        act(&mut state, Action::ActivateManaAbility(second));
+        assert!(tapped(&state, first) && tapped(&state, second));
+        assert_eq!(restricted(&state, actor), 2);
+        assert_eq!(
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+            0
+        );
+        cast(&mut state, stone);
+        settled(&mut state);
+        assert_eq!(zone(&state, stone), Zone::Battlefield);
+        assert_eq!(restricted(&state, actor), 0);
 
-    // A nonartifact spell's generic mana cannot come from it.
-    let mut state = game(P0);
-    let token = put(&mut state, P0, POWERSTONE, Zone::Battlefield);
-    let specter = put(&mut state, P0, "Hypnotic Specter", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::B, ManaColor::B], 0);
-    next(&mut state);
-    act(&mut state, Action::ActivateManaAbility(token));
-    assert_eq!(restricted(&state, P0), 1);
-    assert!(!castable(&mut state, specter));
+        // A nonartifact spell's generic mana cannot come from it.
+        let mut state = game(actor);
+        let token = put(&mut state, actor, POWERSTONE, Zone::Battlefield);
+        let specter = put(&mut state, actor, "Hypnotic Specter", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::B, ManaColor::B], 0);
+        next(&mut state);
+        act(&mut state, Action::ActivateManaAbility(token));
+        assert_eq!(restricted(&state, actor), 1);
+        assert!(!castable(&mut state, specter));
 
-    // It pays an activated ability.
-    let mut state = game(P0);
-    let first = put(&mut state, P0, POWERSTONE, Zone::Battlefield);
-    let second = put(&mut state, P0, POWERSTONE, Zone::Battlefield);
-    let foundry = put(&mut state, P0, "Retrofitter Foundry", Zone::Battlefield);
-    assert!(!activatable(&mut state, foundry, 1), "no mana yet");
-    act(&mut state, Action::ActivateManaAbility(first));
-    act(&mut state, Action::ActivateManaAbility(second));
-    assert!(activatable(&mut state, foundry, 1));
-    activate(&mut state, foundry, 1);
-    settled(&mut state);
-    assert_eq!(restricted(&state, P0), 0);
+        // It pays an activated ability.
+        let mut state = game(actor);
+        let first = put(&mut state, actor, POWERSTONE, Zone::Battlefield);
+        let second = put(&mut state, actor, POWERSTONE, Zone::Battlefield);
+        let foundry = put(&mut state, actor, "Retrofitter Foundry", Zone::Battlefield);
+        assert!(!activatable(&mut state, foundry, 1), "no mana yet");
+        act(&mut state, Action::ActivateManaAbility(first));
+        act(&mut state, Action::ActivateManaAbility(second));
+        assert!(activatable(&mut state, foundry, 1));
+        activate(&mut state, foundry, 1);
+        settled(&mut state);
+        assert_eq!(restricted(&state, actor), 0);
+    }
 }
 
 // ---- Invasion Submersible -----------------------------------------------------------
@@ -687,6 +737,150 @@ fn submersible_stays_a_creature_and_a_blink_resets_exhaust_in_both_seats() {
         activate(&mut state, submersible, 0);
         settled(&mut state);
         assert!(creature(&state, submersible));
+    }
+}
+
+/// Exhaust is "Activate only once" (702.177a): the record is set when the
+/// ability is activated, so a countered activation (Stifle) still uses it up.
+#[test]
+fn submersible_exhaust_countered_is_still_used_in_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = game(actor);
+        let submersible = put(&mut state, actor, SUBMERSIBLE, Zone::Battlefield);
+        let stifle = put(&mut state, actor, "Stifle", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U], 3);
+        activate(&mut state, submersible, 0);
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        let ability = Target::StackItem(state.stack.last().unwrap().v4.stack_item_id);
+        cast(&mut state, stifle);
+        match next(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(legal_targets.contains(&ability));
+                act(&mut state, Action::ChooseTarget(ability));
+            }
+            other => panic!("expected Stifle's target, got {other:?}"),
+        }
+        settled(&mut state);
+        assert!(!creature(&state, submersible), "countered");
+        assert_eq!(state.objects.get(submersible).counters.plus1_plus1, 0);
+        pool(&mut state, actor, &[], 3);
+        for index in 0..=3u8 {
+            assert!(!activatable(&mut state, submersible, index), "used up");
+        }
+    }
+}
+
+/// A control change keeps the object: the animated Submersible stays a 3/3
+/// artifact creature under its new controller, and its exhaust ability stays
+/// used (the record is the object's, not the controller's). The opponent's
+/// Oko, Thief of Crowns exchanges a Food for it.
+#[test]
+fn submersible_under_a_new_controller_stays_animated_and_exhausted_in_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor);
+        let submersible = put(&mut state, actor, SUBMERSIBLE, Zone::Battlefield);
+        pool(&mut state, actor, &[], 3);
+        activate(&mut state, submersible, 0);
+        settled(&mut state);
+        assert!(creature(&state, submersible));
+
+        let oko = put(&mut state, opponent, "Oko, Thief of Crowns", Zone::Hand);
+        run_until(
+            &mut state,
+            |s| s.active_player == opponent && s.step == Step::Main1 && s.stack.is_empty(),
+            |_, _| None,
+        );
+        pool(&mut state, opponent, &[ManaColor::G, ManaColor::U], 1);
+        cast(&mut state, oko);
+        settled(&mut state);
+        activate(&mut state, oko, 0);
+        settled(&mut state);
+        let food = state.players[opponent.index()]
+            .battlefield
+            .iter()
+            .copied()
+            .find(|&object| CARD_DEFS[state.objects.get(object).card_def as usize].name == "Food Token")
+            .expect("Oko's Food");
+        run_until(
+            &mut state,
+            |s| s.active_player == actor && s.step == Step::Main1,
+            |_, _| None,
+        );
+        run_until(
+            &mut state,
+            |s| s.active_player == opponent && s.step == Step::Main1 && s.stack.is_empty(),
+            |_, _| None,
+        );
+        activate(&mut state, oko, 2);
+        for target in [food, submersible] {
+            match next(&mut state) {
+                Decision::ChooseTargets { legal_targets, .. } => {
+                    assert!(legal_targets.contains(&Target::Object(target)));
+                    act(&mut state, Action::ChooseTarget(Target::Object(target)));
+                }
+                other => panic!("expected Oko's targets, got {other:?}"),
+            }
+        }
+        settled(&mut state);
+        assert_eq!(state.objects.get(submersible).controller, opponent);
+        assert!(creature(&state, submersible));
+        assert_eq!(
+            (power(&state, submersible), toughness(&state, submersible)),
+            (3, 3)
+        );
+        pool(&mut state, opponent, &[], 3);
+        for index in 0..=3u8 {
+            assert!(
+                !activatable(&mut state, submersible, index),
+                "the same object: exhaust stays used"
+            );
+        }
+    }
+}
+
+/// Dress Down: "Creatures lose all abilities." Abilities other effects grant
+/// an animated Submersible are lost too: Shadowspear's trample and lifelink
+/// while Dress Down is on the battlefield, back once it is gone.
+#[test]
+fn dress_down_removes_granted_abilities_of_an_animated_submersible_in_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = game(actor);
+        let submersible = put(&mut state, actor, SUBMERSIBLE, Zone::Battlefield);
+        let spear = put(&mut state, actor, "Shadowspear", Zone::Battlefield);
+        pool(&mut state, actor, &[], 5);
+        activate(&mut state, submersible, 0);
+        settled(&mut state);
+        // "Equip {2}" is Shadowspear's last ability.
+        let equip = u8::try_from(def("Shadowspear").activated_abilities.len() - 1).unwrap();
+        activate(&mut state, spear, equip);
+        match next(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(legal_targets.contains(&Target::Object(submersible)));
+                act(&mut state, Action::ChooseTarget(Target::Object(submersible)));
+            }
+            other => panic!("expected the equip target, got {other:?}"),
+        }
+        settled(&mut state);
+        assert!(engine::has_effective_keyword(&state, submersible, Keywords::TRAMPLE));
+        assert!(engine::has_effective_keyword(&state, submersible, Keywords::LIFELINK));
+
+        let dress = put(&mut state, actor, "Dress Down", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U], 1);
+        cast(&mut state, dress);
+        settled(&mut state);
+        assert!(!engine::has_effective_keyword(&state, submersible, Keywords::TRAMPLE));
+        assert!(!engine::has_effective_keyword(&state, submersible, Keywords::LIFELINK));
+        assert!(creature(&state, submersible), "still an artifact creature");
+        assert_eq!(power(&state, submersible), 4, "3/3 with Shadowspear's +1/+1");
+
+        run_until(
+            &mut state,
+            |s| s.active_player == actor.opponent() && s.step == Step::Main1,
+            |_, _| None,
+        );
+        assert_eq!(zone(&state, dress), Zone::Graveyard);
+        assert!(engine::has_effective_keyword(&state, submersible, Keywords::TRAMPLE));
     }
 }
 
@@ -1014,6 +1208,205 @@ fn bahamut_blink_restarts_at_chapter_one_and_chapters_may_target_nothing_in_both
         trigger_target(&mut state, Some(ring));
         settled(&mut state);
         assert_eq!(zone(&state, ring), Zone::Graveyard);
+    }
+}
+
+/// `actor`'s Summon: Bahamut on the battlefield with `lore` lore counters and
+/// `actor` in its draw step, holding priority: passing reaches the precombat
+/// main phase and its lore counter.
+fn bahamut_at(state: &mut GameState, actor: PlayerId, lore: i16) -> ObjectId {
+    let bahamut = put(state, actor, BAHAMUT, Zone::Battlefield);
+    state.objects.get_mut(bahamut).counters.lore = lore;
+    state.step = Step::Draw;
+    bahamut
+}
+
+/// Casts Dress Down for `player`, who holds priority, and resolves it.
+fn dress_down(state: &mut GameState, player: PlayerId) -> ObjectId {
+    let dress = put(state, player, "Dress Down", Zone::Hand);
+    pool(state, player, &[ManaColor::U], 1);
+    cast(state, dress);
+    settled(state);
+    assert_eq!(zone(state, dress), Zone::Battlefield);
+    dress
+}
+
+/// 715.3c and 704.5s with the card's ruling: a Saga that lost its chapter
+/// abilities gets no lore counter as its controller's precombat main phase
+/// begins and is not sacrificed. Bahamut at lore 3 under Dress Down cast
+/// during its controller's upkeep keeps three counters and stays. Dress Down
+/// is sacrificed at the end step; on its controller's next turn the fourth
+/// counter triggers Mega Flare, and then Bahamut is sacrificed.
+#[test]
+fn bahamut_without_its_abilities_gets_no_lore_counter_and_is_not_sacrificed_in_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor);
+        let bahamut = put(&mut state, actor, BAHAMUT, Zone::Battlefield);
+        state.objects.get_mut(bahamut).counters.lore = 3;
+        put(&mut state, actor, "Sol Ring", Zone::Battlefield);
+        state.step = Step::Upkeep;
+        // The actor holds priority in its own upkeep; whose Dress Down it is
+        // does not change its effect.
+        let dress = dress_down(&mut state, actor);
+        run_until(
+            &mut state,
+            |s| s.active_player == actor && s.step == Step::Main1 && s.stack.is_empty(),
+            |_, _| None,
+        );
+        assert_eq!(state.objects.get(bahamut).counters.lore, 3, "no counter (715.3c)");
+        assert_eq!(zone(&state, bahamut), Zone::Battlefield, "not sacrificed");
+        assert_eq!(state.players[opponent.index()].life, 20);
+
+        // Dress Down leaves at the end step; the next precombat main phase
+        // adds the fourth counter.
+        run_until(
+            &mut state,
+            |s| s.active_player == opponent && s.step == Step::Main1,
+            |_, _| None,
+        );
+        assert_eq!(zone(&state, dress), Zone::Graveyard);
+        assert_eq!(zone(&state, bahamut), Zone::Battlefield);
+        run_until(
+            &mut state,
+            |s| s.active_player == actor && s.step == Step::Main1 && s.stack.is_empty(),
+            |_, _| None,
+        );
+        assert_eq!(
+            state.players[opponent.index()].life,
+            19,
+            "Mega Flare: the Sol Ring"
+        );
+        assert_eq!(zone(&state, bahamut), Zone::Graveyard, "sacrificed after IV");
+    }
+}
+
+/// A chapter ability that triggered resolves even when the Saga loses its
+/// abilities before it does (the card's ruling). Bahamut's chapter IV
+/// triggers; Dress Down in response: Mega Flare still deals its damage (the
+/// Sol Ring and Dress Down, three), and Bahamut, now without chapter
+/// abilities, is not sacrificed while Dress Down stays; once Dress Down is
+/// gone it has them again and is sacrificed (715.4).
+#[test]
+fn bahamut_final_chapter_resolves_after_its_abilities_are_removed_in_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor);
+        let bahamut = bahamut_at(&mut state, actor, 3);
+        put(&mut state, actor, "Sol Ring", Zone::Battlefield);
+        run_until(
+            &mut state,
+            |s| s.step == Step::Main1 && !s.stack.is_empty(),
+            |_, _| None,
+        );
+        assert_eq!(state.objects.get(bahamut).counters.lore, 4);
+        let dress = put(&mut state, actor, "Dress Down", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U], 1);
+        cast(&mut state, dress);
+        settled(&mut state);
+        assert_eq!(state.players[opponent.index()].life, 17, "Mega Flare resolved");
+        assert_eq!(zone(&state, bahamut), Zone::Battlefield, "no chapter abilities");
+        run_until(
+            &mut state,
+            |s| s.active_player == opponent && s.step == Step::Main1,
+            |_, _| None,
+        );
+        assert_eq!(zone(&state, dress), Zone::Graveyard);
+        assert_eq!(zone(&state, bahamut), Zone::Graveyard, "sacrificed (715.4)");
+    }
+}
+
+/// Mega Flare counts the mana value of the other permanents its controller
+/// controls: an opponent's permanents do not count, and a token counts 0.
+#[test]
+fn mega_flare_counts_only_its_controllers_other_permanents_in_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor);
+        bahamut_at(&mut state, actor, 3);
+        put(&mut state, actor, "Grim Monolith", Zone::Battlefield);
+        put(&mut state, actor, POWERSTONE, Zone::Battlefield);
+        put(&mut state, opponent, "Sol Ring", Zone::Battlefield);
+        put(&mut state, opponent, "Grim Monolith", Zone::Battlefield);
+        run_until(
+            &mut state,
+            |s| s.step == Step::Main1 && s.stack.is_empty(),
+            |_, _| None,
+        );
+        assert_eq!(state.players[opponent.index()].life, 18, "the Monolith only");
+        assert_eq!(state.players[actor.index()].life, 20);
+    }
+}
+
+/// Mega Flare after Bahamut left the battlefield: the chapter ability still
+/// resolves (the ruling), its source's last known information deals the
+/// damage, and "other permanents you control" are every permanent its
+/// controller still controls.
+#[test]
+fn mega_flare_resolves_after_bahamut_left_the_battlefield_in_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor);
+        let bahamut = bahamut_at(&mut state, actor, 3);
+        put(&mut state, actor, "Grim Monolith", Zone::Battlefield);
+        run_until(
+            &mut state,
+            |s| s.step == Step::Main1 && !s.stack.is_empty(),
+            |_, _| None,
+        );
+        let swords = put(&mut state, actor, "Swords to Plowshares", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::W], 0);
+        cast(&mut state, swords);
+        match next(&mut state) {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert!(legal_targets.contains(&Target::Object(bahamut)));
+                act(&mut state, Action::ChooseTarget(Target::Object(bahamut)));
+            }
+            other => panic!("expected Swords' target, got {other:?}"),
+        }
+        settled(&mut state);
+        assert_eq!(zone(&state, bahamut), Zone::Exile);
+        assert_eq!(state.players[actor.index()].life, 29, "Swords' life");
+        assert_eq!(state.players[opponent.index()].life, 18, "the Monolith");
+    }
+}
+
+/// A Phyrexian Metamorph that enters as a copy of Summon: Bahamut is a Saga
+/// and enters with a lore counter (715.3a), so its chapter I triggers.
+#[test]
+fn phyrexian_metamorph_copying_bahamut_enters_with_a_lore_counter_in_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor);
+        let bahamut = put(&mut state, opponent, BAHAMUT, Zone::Battlefield);
+        state.objects.get_mut(bahamut).counters.lore = 2;
+        let ring = put(&mut state, opponent, "Sol Ring", Zone::Battlefield);
+        let metamorph = put(&mut state, actor, "Phyrexian Metamorph", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::U], 3);
+        cast(&mut state, metamorph);
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets { legal_targets, .. }) => {
+                assert!(legal_targets.contains(&Target::Object(bahamut)));
+                act(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(bahamut)),
+                );
+            }
+            other => panic!("expected the copy choice, got {other:?}"),
+        }
+        if let Some(Decision::ChooseEffectTargets {
+            can_finish: true, ..
+        }) = settle(&mut state)
+        {
+            act(&mut state, Action::FinishEffectSelection);
+        }
+        let offered = trigger_target(&mut state, Some(ring));
+        assert!(offered.contains(&Target::Object(metamorph)));
+        settled(&mut state);
+        assert_eq!(zone(&state, metamorph), Zone::Battlefield);
+        assert_eq!(engine::effective_name(&state, metamorph), BAHAMUT);
+        assert_eq!(state.objects.get(metamorph).counters.lore, 1);
+        assert_eq!(zone(&state, ring), Zone::Graveyard, "its chapter I");
     }
 }
 
