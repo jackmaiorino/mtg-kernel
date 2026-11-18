@@ -1396,80 +1396,96 @@ fn everflowing_chalice_pays_each_kick_from_lands_and_asks_nothing_when_none_is_p
     assert_eq!(mana(&state, P0, ManaColor::C), 1);
 }
 
+/// `player`'s first main phase, with `player` active and holding priority.
+fn turn_of(state: &mut GameState, player: PlayerId) {
+    state.active_player = player;
+    state.priority_player = player;
+}
+
 /// Multikicker is an additional cost: a Chalice cast without paying its mana
 /// cost still announces and pays its kicks (118.9d, 601.2f). Cascade.
 #[test]
-fn everflowing_chalice_cast_by_cascade_may_still_be_kicked() {
-    let mut state = game(&["Island", "Everflowing Chalice", "Plains", "Plains"]);
-    let chalice = state.players[0].library[1];
-    let challenger = put(&mut state, P0, "Bloodbraid Challenger", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::R, ManaColor::G], 7);
-    cast(&mut state, challenger, &[]);
-    let mut asked = Vec::new();
-    settle_with(&mut state, |_, decision| match decision {
-        Decision::ChooseEffectOption { option_count, .. } => {
-            asked.push(option_count);
-            // Cast the Chalice, then announce two kicks.
-            Action::ChooseEffectOption(if asked.len() == 1 { 0 } else { 2 })
-        }
-        Decision::ChooseEffectTargets { legal_targets, .. }
-            if legal_targets.contains(&Target::Object(chalice)) =>
-        {
-            Action::ChooseEffectTarget(Target::Object(chalice))
-        }
-        other => first_answer(other),
-    });
-    assert_eq!(asked, vec![2, 3], "cast or decline, then 0, 1 or 2 kicks");
-    assert_eq!(zone(&state, chalice), Zone::Battlefield);
-    assert_eq!(zone(&state, challenger), Zone::Battlefield);
-    assert_eq!(charge(&state, chalice), 2);
-    assert_eq!(mana(&state, P0, ManaColor::C), 0, "two kicks paid {{4}}");
+fn everflowing_chalice_cast_by_cascade_may_still_be_kicked_both_seats() {
+    for player in [P0, P1] {
+        let mut state = game(&["Island", "Everflowing Chalice", "Plains", "Plains"]);
+        turn_of(&mut state, player);
+        let chalice = state.players[player.index()].library[1];
+        let challenger = put(&mut state, player, "Bloodbraid Challenger", Zone::Hand);
+        pool(&mut state, player, &[ManaColor::R, ManaColor::G], 7);
+        cast(&mut state, challenger, &[]);
+        let mut asked = Vec::new();
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectOption { option_count, .. } => {
+                asked.push(option_count);
+                // Cast the Chalice, then announce two kicks.
+                Action::ChooseEffectOption(if asked.len() == 1 { 0 } else { 2 })
+            }
+            Decision::ChooseEffectTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Object(chalice)) =>
+            {
+                Action::ChooseEffectTarget(Target::Object(chalice))
+            }
+            other => first_answer(other),
+        });
+        assert_eq!(asked, vec![2, 3], "cast or decline, then 0, 1 or 2 kicks");
+        assert_eq!(zone(&state, chalice), Zone::Battlefield);
+        assert_eq!(state.objects.get(chalice).controller, player);
+        assert_eq!(zone(&state, challenger), Zone::Battlefield);
+        assert_eq!(charge(&state, chalice), 2);
+        assert_eq!(mana(&state, player, ManaColor::C), 0, "two kicks paid");
+    }
 }
 
 /// Omniscience: the mana cost is skipped and the kicks are still paid.
 #[test]
-fn everflowing_chalice_cast_through_omniscience_may_still_be_kicked() {
-    let mut state = plains();
-    put(&mut state, P0, "Omniscience", Zone::Battlefield);
-    let chalice = put(&mut state, P0, "Everflowing Chalice", Zone::Hand);
-    pool(&mut state, P0, &[], 4);
-    assert!(castable(&mut state, chalice));
-    act(&mut state, Action::CastSpell(chalice));
-    match next(&mut state) {
-        Decision::ChooseEffectOption { option_count, .. } => {
-            assert_eq!(option_count, 2, "pay the mana cost or not");
+fn everflowing_chalice_cast_through_omniscience_may_still_be_kicked_both_seats() {
+    for player in [P0, P1] {
+        let mut state = plains();
+        turn_of(&mut state, player);
+        put(&mut state, player, "Omniscience", Zone::Battlefield);
+        let chalice = put(&mut state, player, "Everflowing Chalice", Zone::Hand);
+        pool(&mut state, player, &[], 4);
+        assert!(castable(&mut state, chalice));
+        act(&mut state, Action::CastSpell(chalice));
+        match next(&mut state) {
+            Decision::ChooseEffectOption { option_count, .. } => {
+                assert_eq!(option_count, 2, "pay the mana cost or not");
+            }
+            other => panic!("expected the free-cast choice, got {other:?}"),
         }
-        other => panic!("expected the free-cast choice, got {other:?}"),
-    }
-    act(&mut state, Action::ChooseEffectOption(1));
-    match next(&mut state) {
-        Decision::ChooseEffectOption { option_count, .. } => {
-            assert_eq!(option_count, 3, "0, 1 or 2 kicks with four mana");
+        act(&mut state, Action::ChooseEffectOption(1));
+        match next(&mut state) {
+            Decision::ChooseEffectOption { option_count, .. } => {
+                assert_eq!(option_count, 3, "0, 1 or 2 kicks with four mana");
+            }
+            other => panic!("expected the kick count, got {other:?}"),
         }
-        other => panic!("expected the kick count, got {other:?}"),
+        act(&mut state, Action::ChooseEffectOption(2));
+        settled(&mut state);
+        assert_eq!(zone(&state, chalice), Zone::Battlefield);
+        assert_eq!(charge(&state, chalice), 2);
+        assert_eq!(mana(&state, player, ManaColor::C), 0);
     }
-    act(&mut state, Action::ChooseEffectOption(2));
-    settled(&mut state);
-    assert_eq!(zone(&state, chalice), Zone::Battlefield);
-    assert_eq!(charge(&state, chalice), 2);
-    assert_eq!(mana(&state, P0, ManaColor::C), 0);
 }
 
 /// Bolas's Citadel: life is paid rather than the mana cost, and the kicks
 /// are still paid with mana.
 #[test]
-fn everflowing_chalice_cast_through_bolas_citadel_may_still_be_kicked() {
-    let mut state = plains();
-    put(&mut state, P0, "Bolas's Citadel", Zone::Battlefield);
-    let chalice = put(&mut state, P0, "Everflowing Chalice", Zone::Library);
-    pool(&mut state, P0, &[], 4);
-    let counts = cast_chalice(&mut state, chalice, 2);
-    assert_eq!(counts, 3, "0, 1 or 2 kicks with four mana");
-    settled(&mut state);
-    assert_eq!(zone(&state, chalice), Zone::Battlefield);
-    assert_eq!(charge(&state, chalice), 2);
-    assert_eq!(mana(&state, P0, ManaColor::C), 0);
-    assert_eq!(life(&state, P0), 20, "its mana value is 0");
+fn everflowing_chalice_cast_through_bolas_citadel_may_still_be_kicked_both_seats() {
+    for player in [P0, P1] {
+        let mut state = plains();
+        turn_of(&mut state, player);
+        put(&mut state, player, "Bolas's Citadel", Zone::Battlefield);
+        let chalice = put(&mut state, player, "Everflowing Chalice", Zone::Library);
+        pool(&mut state, player, &[], 4);
+        let counts = cast_chalice(&mut state, chalice, 2);
+        assert_eq!(counts, 3, "0, 1 or 2 kicks with four mana");
+        settled(&mut state);
+        assert_eq!(zone(&state, chalice), Zone::Battlefield);
+        assert_eq!(charge(&state, chalice), 2);
+        assert_eq!(mana(&state, player, ManaColor::C), 0);
+        assert_eq!(life(&state, player), 20, "its mana value is 0");
+    }
 }
 
 #[test]

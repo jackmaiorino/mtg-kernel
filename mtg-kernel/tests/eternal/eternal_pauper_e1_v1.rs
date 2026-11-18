@@ -674,6 +674,88 @@ fn lose_focus_replicate_copy_can_take_a_new_target() {
     assert_eq!(state.players[0].life, 18);
 }
 
+/// Replicate is an additional cost (118.9d, 601.2f): `player` casts Lose
+/// Focus through Omniscience without paying its mana cost at the other
+/// player's Burst Lightning, still paying {U} for one replicate copy.
+#[test]
+fn lose_focus_cast_without_its_mana_cost_still_pays_for_replicate_both_seats() {
+    for player in [P0, P1] {
+        let other = if player == P0 { P1 } else { P0 };
+        let mut state = islands();
+        put(&mut state, player, "Omniscience", Zone::Battlefield);
+        let focus = put(&mut state, player, "Lose Focus", Zone::Hand);
+        state.priority_player = other;
+        let burst = put(&mut state, other, "Burst Lightning", Zone::Hand);
+        pool(&mut state, other, &[ManaColor::R], 0);
+        cast(&mut state, burst, &[Target::Player(player)]);
+        match next(&mut state) {
+            Decision::CastSpellOrPass { player: holder, .. } => assert_eq!(holder, other),
+            decision => panic!("expected priority, got {decision:?}"),
+        }
+        act(&mut state, Action::Pass);
+        // Only {U}: Lose Focus's own {1}{U} is not payable, one copy is.
+        pool(&mut state, player, &[ManaColor::U], 0);
+        assert!(castable(&mut state, focus));
+        act(&mut state, Action::CastSpell(focus));
+        let mut counts = Vec::new();
+        for _ in 0..6 {
+            match next(&mut state) {
+                Decision::ChooseTargets { legal_targets, .. } => {
+                    assert!(legal_targets.contains(&Target::Object(burst)));
+                    act(&mut state, Action::ChooseTarget(Target::Object(burst)));
+                }
+                // Not paying the mana cost, then one replicate payment.
+                Decision::ChooseEffectOption { option_count, .. } => {
+                    counts.push(option_count);
+                    act(&mut state, Action::ChooseEffectOption(1));
+                }
+                Decision::CastSpellOrPass { .. } => break,
+                decision => panic!("unexpected decision: {decision:?}"),
+            }
+        }
+        assert_eq!(counts.last(), Some(&2), "no copy or one copy");
+        assert_eq!(state.players[player.index()].mana_pool, [0; 6], "paid");
+        let original = state
+            .stack
+            .iter()
+            .find(|item| item.source == focus)
+            .expect("Lose Focus on the stack");
+        assert!(!original.is_copy);
+        assert_eq!(original.v4.x_value, 1);
+
+        // The copy trigger makes one copy, which keeps the target; nobody can
+        // pay {2}, so the copy counters the burn and the original fizzles.
+        let mut copies = 0;
+        for _ in 0..60 {
+            match next(&mut state) {
+                Decision::CastSpellOrPass { .. }
+                    if state.stack.is_empty() && state.engine.pending_triggers.is_empty() =>
+                {
+                    break
+                }
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                Decision::OrderTriggers { pending, .. } => act(
+                    &mut state,
+                    Action::OrderTriggers((0..pending.len()).collect()),
+                ),
+                // One keep-or-change target choice per copy.
+                Decision::ChooseEffectTargets { player: chooser, .. } => {
+                    assert_eq!(chooser, player);
+                    copies += 1;
+                    act(&mut state, Action::FinishEffectSelection);
+                }
+                Decision::ChooseEffectBoolean { .. } => {
+                    act(&mut state, Action::ChooseEffectBoolean(false))
+                }
+                decision => panic!("unexpected decision: {decision:?}"),
+            }
+        }
+        assert_eq!(copies, 1, "one copy for one payment");
+        assert_eq!(state.objects.get(burst).zone, Zone::Graveyard);
+        assert_eq!(state.players[player.index()].life, 20, "countered");
+    }
+}
+
 // ---- Plunder the Trollshaws -----------------------------------------------------
 
 #[test]
