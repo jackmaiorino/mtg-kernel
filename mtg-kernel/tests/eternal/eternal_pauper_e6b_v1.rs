@@ -1786,7 +1786,6 @@ fn pursue_the_past_draws_after_its_discard_may_be_dredged() {
         }
         other => panic!("expected the optional discard, got {other:?}"),
     }
-    assert_eq!(zone(&state, fodder), Zone::Graveyard);
     match settle(&mut state) {
         Some(Decision::ChooseEffectTargets {
             player,
@@ -1803,6 +1802,7 @@ fn pursue_the_past_draws_after_its_discard_may_be_dredged() {
     // The library still holds four cards for the Thug's dredge, but the Thug
     // is in hand now: the second draw is a plain draw.
     settled(&mut state);
+    assert_eq!(zone(&state, fodder), Zone::Graveyard, "discarded");
     assert_eq!(zone(&state, thug), Zone::Hand, "dredged back");
     assert_eq!(state.players[0].hand.len(), 2, "the Thug and one draw");
     assert_eq!(state.players[0].library.len(), 20 - 4 - 1);
