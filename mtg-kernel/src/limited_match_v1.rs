@@ -31,8 +31,9 @@
 //!   `0`.
 //! - `sampled-public-heuristic/v1`: one sampled world per decision, every
 //!   legal root action applied once in it and scored by the same evaluator.
-//! - `learner-checkpoint:<path>`: a `current_tree_learner_v2` checkpoint
-//!   sampling from its own seat stream (see `learner_policy_v1`).
+//! - `learner-checkpoint:<path>`: a campaign checkpoint with a v2 actor-critic
+//!   model or the v1 control model, sampling from its own seat stream (see
+//!   `learner_policy_v1`).
 
 use crate::card_def::{card_id_by_name, CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::ids::{ObjectId, PlayerId};
@@ -935,6 +936,8 @@ pub struct GameResultV1 {
     pub rollout_errors: u64,
     pub first_rollout_error: Option<String>,
     pub searched_decisions: u64,
+    /// Decisions with more legal actions than simulations, indexed by seat.
+    pub search_decisions_over_budget: [u64; 2],
     pub search_fallbacks: u64,
     pub rejection_reasons: BTreeMap<String, u64>,
 }
@@ -949,6 +952,7 @@ impl GameResultV1 {
             rollout_errors: 0,
             first_rollout_error: None,
             searched_decisions: 0,
+            search_decisions_over_budget: [0; 2],
             search_fallbacks: 0,
             rejection_reasons: BTreeMap::new(),
         }
@@ -1193,6 +1197,8 @@ pub(crate) fn play_game_observed_v1(
                         ) && decision.legal_action_count > 1
                         {
                             result.searched_decisions += 1;
+                            result.search_decisions_over_budget[actor.index()] +=
+                                u64::from(decision.legal_action_count > *sims);
                             result.search_fallbacks += u64::from(stats.rejected == *sims);
                             for (reason, count) in stats.rejection_reasons {
                                 *result.rejection_reasons.entry(reason).or_default() +=

@@ -555,13 +555,24 @@ class ProvenanceTest(unittest.TestCase):
         self.assertTrue(self.e0(lambda inputs: None)["pass"])
 
     def test_learner_checkpoint_keys_reach_the_canonical_summary(self):
-        evaluation = ev.evaluate(full_inputs(), INVENTORY, replicates=R)
+        inputs = full_inputs()
+        for run in inputs:
+            if run.opponent in (HEURISTIC, FAIR):
+                for summary in (run.summary, run.replay_summary):
+                    summary.update(a_search_decisions_over_budget=0,
+                                   b_search_decisions_over_budget=7 if run.opponent == FAIR else 0)
+        evaluation = ev.evaluate(inputs, INVENTORY, replicates=R)
         self.assertTrue(evaluation["gate_e0"]["pass"])
         runs = evaluation["candidates"]["u_final"]["runs"]
         self.assertEqual(runs["step_0"]["summary"]["b_checkpoint_sha256"], STEP0_SHA256)
         self.assertEqual(runs["heuristic"]["summary"]["a_checkpoint_sha256"], CANDIDATE_SHA256["u_final"])
         self.assertEqual(runs["uniform_legal"]["summary"]["learner_policy_contract"], LEARNER_CONTRACT)
         self.assertNotIn("b_checkpoint_sha256", runs["uniform_legal"]["summary"])
+        for role, count in (("heuristic", 0), ("fair_search", 7)):
+            self.assertEqual(runs[role]["summary"]["a_search_decisions_over_budget"], 0)
+            self.assertEqual(runs[role]["summary"]["b_search_decisions_over_budget"], count)
+        for key in ("a_search_decisions_over_budget", "b_search_decisions_over_budget"):
+            self.assertNotIn(key, runs["uniform_legal"]["summary"])
 
     def refuses(self, mutate, message: str, inputs=None) -> None:
         inputs = inputs if inputs is not None else full_inputs()

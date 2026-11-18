@@ -4,8 +4,9 @@
 //! A checkpoint is a `limited-campaign-checkpoint/v1` file
 //! (`limited_campaign_v1::checkpoint`). It is read once, when its spec is
 //! parsed: the reader refuses non-canonical bytes, a malformed record and a
-//! feature identity other than this build's, the learner is restored through
-//! its own `restore`, and the run is pinned by the SHA-256 of the file bytes.
+//! feature identity or card database hash other than this build's, the learner
+//! is restored through its own `restore`, and the run is pinned by the SHA-256
+//! of the file bytes.
 //! Each decision with more than one legal action scores the actor's
 //! `KaitoSession::training_input_v1` with the checkpoint's model and samples
 //! one action from the model's `f64` logits with the campaign's sampler
@@ -89,6 +90,13 @@ impl LearnerCheckpointV1 {
     /// and restores its model.
     pub fn load_v1(path: &str) -> Result<Self, String> {
         let (checkpoint, sha256) = CheckpointV1::load_v1(Path::new(path))?;
+        let card_db_hash = format!("{:016x}", crate::card_def::KERNEL_CARDDB_HASH);
+        if checkpoint.card_db_hash != card_db_hash {
+            return Err(format!(
+                "{path}: checkpoint card_db_hash {} does not match this build's {card_db_hash}",
+                checkpoint.card_db_hash,
+            ));
+        }
         let policy = checkpoint
             .policy_v1()
             .map_err(|error| format!("{path}: {error}"))?;
@@ -106,7 +114,7 @@ impl LearnerCheckpointV1 {
     /// another contract, another feature identity (which covers this build's
     /// learner and session sources), a bad configuration and malformed
     /// arrays.
-    pub fn from_snapshot_v1(
+    pub(crate) fn from_snapshot_v1(
         path: impl Into<String>,
         sha256: impl Into<String>,
         snapshot: SnapshotV2,

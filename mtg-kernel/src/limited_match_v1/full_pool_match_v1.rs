@@ -489,6 +489,7 @@ fn play_owner_in_pair(
                     rng.next_u64(),
                 )?;
                 record_search_v1(result, legal, *sims, stats);
+                result.search_decisions_over_budget[actor.index()] += u64::from(legal > *sims);
                 selected
             }
             PolicySpecV1::SampledPublicHeuristicV1 => {
@@ -532,6 +533,7 @@ fn play_owner_in_pair(
                 }
                 if legal > 1 {
                     result.searched_decisions += 1;
+                    result.search_decisions_over_budget[actor.index()] += u64::from(legal > *sims);
                     result.search_fallbacks += u64::from(stats.rejected == *sims);
                     for (reason, count) in stats.rejection_reasons {
                         *result.rejection_reasons.entry(reason).or_default() += u64::from(count);

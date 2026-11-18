@@ -75,17 +75,15 @@ fn learner_streams_are_per_seat_leg_pair_and_seed_and_their_seeds_are_pinned() {
     }
 }
 
-#[test]
-fn a_checkpoint_file_loads_through_its_spec_pinned_by_its_bytes() {
+fn checkpoint() -> CheckpointV1 {
     use crate::limited_campaign_v1::checkpoint::{
         LearnerSnapshotV1, SourceIdentityV1, HAND_KNOWLEDGE_V1,
     };
-    use crate::limited_campaign_v1::sha256_hex;
     let identity = SourceIdentityV1 {
         git_head: "0123456789abcdef0123456789abcdef01234567".into(),
         binary_sha256: "11".repeat(32),
         binary_source_sha256: "22".repeat(32),
-        card_db_hash: "0123456789abcdef".into(),
+        card_db_hash: format!("{:016x}", crate::card_def::KERNEL_CARDDB_HASH),
         sample_sha256_in_pool_order: "33".repeat(32),
         actor_profile: "fdn-full-pool-consumer/v1".into(),
         actor_producer_sha256: "44".repeat(32),
@@ -96,14 +94,20 @@ fn a_checkpoint_file_loads_through_its_spec_pinned_by_its_bytes() {
     let snapshot = LearnerV2::new(OptimizerConfigV2::campaign_v1(200))
         .unwrap()
         .snapshot();
-    let checkpoint = CheckpointV1::new(
+    CheckpointV1::new(
         &"77".repeat(32),
         &identity,
         None,
         &"88".repeat(32),
         LearnerSnapshotV1::ActorCritic(snapshot),
     )
-    .unwrap();
+    .unwrap()
+}
+
+#[test]
+fn a_checkpoint_file_loads_through_its_spec_pinned_by_its_bytes() {
+    use crate::limited_campaign_v1::sha256_hex;
+    let checkpoint = checkpoint();
     let bytes = checkpoint.to_bytes().unwrap();
     let directory = std::env::temp_dir().join(format!(
         "limited-eval-learner-checkpoint-{}",
@@ -129,6 +133,24 @@ fn a_checkpoint_file_loads_through_its_spec_pinned_by_its_bytes() {
     spaced.push(b' ');
     std::fs::write(&path, &spaced).unwrap();
     assert!(PolicySpecV1::parse(&spec).is_err());
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+#[test]
+fn a_checkpoint_with_another_card_database_is_refused() {
+    let mut checkpoint = checkpoint();
+    checkpoint.card_db_hash = format!("{:016x}", crate::card_def::KERNEL_CARDDB_HASH ^ 1);
+    let directory = std::env::temp_dir().join(format!(
+        "limited-eval-learner-card-db-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("step_0000.json");
+    std::fs::write(&path, checkpoint.to_bytes().unwrap()).unwrap();
+    let spec = format!("learner-checkpoint:{}", path.display());
+    let error = PolicySpecV1::parse(&spec).unwrap_err();
+    assert!(error.contains("card_db_hash"), "{error}");
+    assert!(error.contains("does not match this build"), "{error}");
     let _ = std::fs::remove_dir_all(&directory);
 }
 

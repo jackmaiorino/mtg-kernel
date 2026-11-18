@@ -119,6 +119,8 @@ SUMMARY_CANONICAL_KEYS = frozenset({
     "game_deck_contents_sha256", "belief_deck_contents_sha256", "max_turns", "max_decisions",
     "a_checkpoint_sha256",
     "b_checkpoint_sha256",
+    "a_search_decisions_over_budget",
+    "b_search_decisions_over_budget",
     "learner_policy_contract"})
 SUMMARY_TIMING_KEYS = frozenset({"wall_s", "games_per_hour", "workers"})
 SUMMARY_REQUIRED = ("schema", "engine", "card_db_hash", "a", "b", "split", "seed", "first_pair", "pairs", "legs",

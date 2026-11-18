@@ -319,6 +319,7 @@ fn sampled_public_heuristic_is_blind_to_hidden_cards_and_deterministic() {
             play_owner(left, policies, beliefs, 552_286, limits(24), &mut result).unwrap();
         assert!(!matches!(outcome, GameOutcomeV1::Error(_)));
         assert!(result.searched_decisions > 0);
+        assert_eq!(result.search_decisions_over_budget, [0; 2]);
         assert_eq!(
             (
                 result.search_fallbacks,
@@ -623,7 +624,7 @@ fn a_learner_loaded_from_a_checkpoint_file_plays_like_its_snapshot() {
         git_head: "0123456789abcdef0123456789abcdef01234567".into(),
         binary_sha256: "11".repeat(32),
         binary_source_sha256: "22".repeat(32),
-        card_db_hash: "0123456789abcdef".into(),
+        card_db_hash: format!("{KERNEL_CARDDB_HASH:016x}"),
         sample_sha256_in_pool_order: "33".repeat(32),
         actor_profile: "fdn-full-pool-consumer/v1".into(),
         actor_producer_sha256: "44".repeat(32),
@@ -718,11 +719,46 @@ fn development_scene(actor: PlayerId) -> (KaitoSession, LimitedBeliefV1) {
     )
 }
 
+#[test]
+fn search_counts_decisions_with_more_legal_actions_than_simulations_by_seat() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (session, _) = development_scene(actor);
+        let legal = legal_count(&encode_current(&session).unwrap()).unwrap();
+        assert!(legal > 1);
+        for world in [
+            WorldModeV1::FullPoolClosedListV1,
+            WorldModeV1::FullPoolClosedListHeuristicV1,
+        ] {
+            for (sims, count) in [(legal - 1, 1_u64), (legal, 0), (legal + 1, 0)] {
+                let search = PolicySpecV1::Pimc {
+                    sims,
+                    depth: 0,
+                    world,
+                };
+                let (session, belief) = development_scene(actor);
+                let mut policies = [&PolicySpecV1::Random; 2];
+                policies[actor.index()] = &search;
+                let mut beliefs = [None; 2];
+                beliefs[actor.index()] = Some(&belief);
+                let mut result = GameResultV1::empty();
+                let outcome =
+                    play_owner(session, policies, beliefs, 552_313, limits(1), &mut result)
+                        .unwrap();
+                assert_eq!(outcome, GameOutcomeV1::Stall);
+                assert_eq!((result.decisions, result.searched_decisions), (1, 1));
+                let mut expected = [0; 2];
+                expected[actor.index()] = count;
+                assert_eq!(result.search_decisions_over_budget, expected);
+            }
+        }
+    }
+}
+
 /// Documents `sampled-public-heuristic/v1` as the design defines it: each
 /// root action is applied once and the state right after it is scored. In an
-/// ordinary main phase a land drop scores below passing (a hand card is worth
-/// more than a land) and casting a spell scores no better than passing (the
-/// card leaves the hand and the stack is not scored), so in this position
+/// ordinary main phase, relative to passing at 0, a land drop scores -16
+/// (hand -48, land +24, untapped source +8) and a spell on the stack scores
+/// -48 or less (the stack is not scored), so in this position
 /// the pick is never a land and scores what passing scores. A second
 /// definition of the heuristic must change this expectation on purpose.
 #[test]
