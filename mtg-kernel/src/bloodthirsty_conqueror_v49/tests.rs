@@ -575,6 +575,98 @@ pub(crate) mod future_printed {
         }
     }
 
+    /// Issue 753: a Banishing Light that holds a card makes every Advance run
+    /// under an enclosing linked operation Runner, so the real gain commits
+    /// directly. The saved gain world never serializes that Runner, so its
+    /// replay must borrow it, as the Drake path does, or the replay wraps the
+    /// gain in a new Event operation and custody refuses the genuine game.
+    #[test]
+    fn genuine_paid_gain_while_banishing_light_holds_a_card_replays_under_its_runner_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, conqueror) = paid(actor);
+            let held = put(
+                &mut state,
+                actor.opponent(),
+                "Healer's Hawk",
+                Zone::Battlefield,
+            );
+            let banishing = put(&mut state, actor, "Banishing Light", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(banishing, Zone::Battlefield),
+            );
+            assert!(
+                matches!(next(&mut state), Decision::ChooseTargets { player, legal_targets, .. }
+                if player == actor && legal_targets.contains(&Target::Object(held)))
+            );
+            engine::step(&mut state, Action::ChooseTarget(Target::Object(held))).unwrap();
+            finish(&mut state);
+            assert_eq!(state.objects.get(held).zone, Zone::Exile);
+            assert!(!state.engine.linked_exile_records.is_empty());
+            assert!(!crate::drake_hatcher_v1::custody::relevant(&state));
+            validate(&state).unwrap();
+            event::propose_and_commit(&mut state, ProposedEvent::life_loss(actor.opponent(), 4));
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            for game in [&mut state, &mut restored] {
+                finish(game);
+                assert!(game.engine.halted.is_none());
+                assert_eq!(game.players[actor.index()].life, 24);
+                assert_eq!(
+                    game.engine
+                        .event_history
+                        .iter()
+                        .filter(|event| matches!(event,
+                    CommittedEvent::LifeGain { player, amount: 4 } if *player == actor))
+                        .count(),
+                    1
+                );
+                assert!(!game.engine.event_history.iter().any(|event| matches!(
+                    event,
+                    CommittedEvent::BanishingAuraOperationStartedV1 { operation, .. }
+                    if matches!(operation.as_ref(),
+                        crate::linked_aura_operation_v1::OperationV1::Event(
+                            ProposedEvent::LifeGain(_)
+                        ))
+                )));
+                validate(game).unwrap();
+            }
+            assert_eq!(state, restored);
+            assert!(state.stack.iter().all(|item| item.source != conqueror));
+            let sidecars = state
+                .engine
+                .event_history
+                .iter()
+                .enumerate()
+                .filter(|(_, event)| {
+                    matches!(event, CommittedEvent::ConquerorGainReplayBorrowV49 { .. })
+                })
+                .map(|(at, _)| at)
+                .collect::<Vec<_>>();
+            let [sidecar] = sidecars.as_slice() else {
+                panic!("one Runner borrow for the Banishing gain: {sidecars:?}");
+            };
+            for case in 0..2 {
+                let mut bad = state.clone();
+                if case == 0 {
+                    bad.engine.event_history.remove(*sidecar);
+                } else {
+                    let mut value =
+                        serde_json::to_value(&bad.engine.event_history[*sidecar]).unwrap();
+                    value["ConquerorGainReplayBorrowV49"]["borrow"]["runner"] =
+                        serde_json::Value::Null;
+                    bad.engine.event_history[*sidecar] = serde_json::from_value(value).unwrap();
+                }
+                let before = bad.clone();
+                assert!(
+                    validate(&bad).is_err(),
+                    "Banishing sidecar corruption {case}"
+                );
+                assert_eq!(bad, before);
+            }
+        }
+    }
+
     #[test]
     #[cfg(all(
         feature = "limited-fdn-fixtures",
