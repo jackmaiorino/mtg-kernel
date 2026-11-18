@@ -109,10 +109,33 @@ pub(crate) struct VerifiedBytesCacheV1 {
     held: Mutex<HeldV1>,
     /// Resident reads (module docs): set once by a run, never cleared.
     resident: AtomicBool,
+    /// Runs in flight that registered without resident reads
+    /// (`enter_run_v1`); the lock also orders every change of `resident`
+    /// made through a registration.
+    reread_runs: Mutex<usize>,
     /// Digests computed by `digest_matches_v1`, so tests can tell a
     /// comparison from a fallback.
     #[cfg(test)]
     hashed: std::sync::atomic::AtomicUsize,
+}
+
+/// A run's registration with a cache (`enter_run_v1`), held until the run
+/// returns.
+pub(crate) struct RunReadsV1<'a> {
+    cache: &'a VerifiedBytesCacheV1,
+    reread: bool,
+}
+
+impl Drop for RunReadsV1<'_> {
+    fn drop(&mut self) {
+        if self.reread {
+            *self
+                .cache
+                .reread_runs
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) -= 1;
+        }
+    }
 }
 
 impl VerifiedBytesCacheV1 {
@@ -122,6 +145,7 @@ impl VerifiedBytesCacheV1 {
             entry_limit,
             held: Mutex::new(HeldV1::default()),
             resident: AtomicBool::new(false),
+            reread_runs: Mutex::new(0),
             #[cfg(test)]
             hashed: std::sync::atomic::AtomicUsize::new(0),
         }
@@ -162,6 +186,43 @@ impl VerifiedBytesCacheV1 {
     /// Whether resident reads are on.
     pub(crate) fn resident_v1(&self) -> bool {
         self.resident.load(Ordering::SeqCst)
+    }
+
+    /// Registers a run with this cache for the life of the returned guard.
+    /// Resident reads belong to the cache, which a process shares, and never
+    /// turn off, so one cache does not serve both modes: a run without them
+    /// is refused once they are on (it would silently read resident), and
+    /// they do not turn on while a run without them is in flight (its reads
+    /// would change under it). Readers that do not register (anything but a
+    /// training run) take the mode the cache is in.
+    pub(crate) fn enter_run_v1(&self, resident: bool) -> Result<RunReadsV1<'_>, String> {
+        let mut reread_runs = self
+            .reread_runs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if resident {
+            if *reread_runs > 0 {
+                return Err(
+                    "resident verified reads cannot turn on while a run without them is in \
+                     flight in this process"
+                        .to_owned(),
+                );
+            }
+            self.enable_resident_v1();
+        } else {
+            if self.resident_v1() {
+                return Err(
+                    "this process reads with resident verified reads; a run without them \
+                     needs its own process"
+                        .to_owned(),
+                );
+            }
+            *reread_runs += 1;
+        }
+        Ok(RunReadsV1 {
+            cache: self,
+            reread: !resident,
+        })
     }
 
     /// With resident reads on, the bytes held for `path` and `sha256` when

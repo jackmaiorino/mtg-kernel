@@ -1766,9 +1766,6 @@ pub fn run_native_expanded_training_v1(
 ) -> Result<Value, String> {
     config.validate_v1()?;
     config.update_backend.require_compiled_v1()?;
-    if config.verified_reads == VerifiedReadsV1::Resident {
-        verified_bytes_cache_v1::global_v1().enable_resident_v1();
-    }
     // Masked runs compare every update's frozen digest with the initial source's.
     let line_b_frozen_sha256 = config
         .line_b
@@ -1779,6 +1776,12 @@ pub fn run_native_expanded_training_v1(
         max_new_iterations != Some(0),
         "iteration limit must be positive",
     )?;
+    // The read mode belongs to the process (`verified_bytes_cache_v1`), so the
+    // run registers its own once its arguments are accepted: resident reads
+    // turn on here, and a run without them is refused in a process that has
+    // them on instead of silently reading resident.
+    let _reads = verified_bytes_cache_v1::global_v1()
+        .enter_run_v1(config.verified_reads == VerifiedReadsV1::Resident)?;
     let root = &config.output_directory;
     fs::create_dir_all(root).map_err(err)?;
     // OS lock lifetime, not a persisted PID/marker, determines writer ownership.
@@ -2770,10 +2773,17 @@ mod tests {
         let _ = fs::remove_dir_all(&resident.output_directory);
         let plain_result = run_native_expanded_training_v1(&plain, None).unwrap();
         assert!(!verified_bytes_cache_v1::global_v1().resident_v1());
+        // A refused invocation leaves the process's read mode alone.
+        assert!(run_native_expanded_training_v1(&resident, Some(0)).is_err());
+        assert!(!verified_bytes_cache_v1::global_v1().resident_v1());
         let partial = run_native_expanded_training_v1(&resident, Some(1)).unwrap();
         assert!(verified_bytes_cache_v1::global_v1().resident_v1());
         assert_eq!(partial["complete"], false);
         let resident_result = run_native_expanded_training_v1(&resident, None).unwrap();
+        // The process now reads resident: a run without it is refused, not
+        // run resident under a config that says otherwise.
+        let refused = run_native_expanded_training_v1(&plain, None).unwrap_err();
+        assert!(refused.contains("needs its own process"), "{refused}");
         assert_eq!(resident_result["complete"], true);
         for field in ["state_sha256", "adam_step"] {
             assert_eq!(

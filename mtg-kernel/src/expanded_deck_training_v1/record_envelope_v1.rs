@@ -294,7 +294,10 @@ mod tests {
         assert!(sealed.len() < bytes.len() / 4);
         // The compressor's worst-case allocation (more than the record's
         // length) is not kept: the frame's buffer has little capacity
-        // beyond its bytes.
+        // beyond its bytes. (A `Vec` reports the same capacity after an
+        // in-place shrink that the allocator did not honor, so this cannot
+        // tell the copy from `shrink_to_fit`; a trainer process's peak
+        // memory is the measurement that does.)
         assert!(
             sealed.capacity() <= sealed.len() + sealed.len() / 8 + 64,
             "capacity {} for {} bytes",
