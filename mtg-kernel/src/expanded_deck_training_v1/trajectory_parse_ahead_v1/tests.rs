@@ -156,13 +156,13 @@ fn an_entry_is_never_charged_less_than_the_capacity_it_keeps_alive() {
     roomy.extend_from_slice(b"{}");
     let capacity = roomy.capacity();
     assert!(capacity >= 64 * 1024);
-    let charge = retained_charge_v1(roomy.len(), capacity);
+    let record_length = roomy.len();
     let mut state = lock_v1(shared_v1());
     assert!(insert_locked_v1(
         &mut state,
         key,
         Arc::new(roomy),
-        charge,
+        record_length,
         [SlotV1::Gone, SlotV1::Gone]
     ));
     assert_eq!(state.entries[key].charge, capacity);

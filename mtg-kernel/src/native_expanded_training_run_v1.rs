@@ -1785,7 +1785,8 @@ pub fn run_native_expanded_training_v1(
     // reads is refused in a process that has them on instead of silently
     // reading resident. Resident reads turn on only once the arguments below
     // are accepted; until then this invocation reads in the mode the process
-    // had (rereads, for the first resident run of a process).
+    // is in (rereads, for the first resident run of a process, unless another
+    // resident run is accepted meanwhile).
     let mut reads = verified_bytes_cache_v1::global_v1()
         .enter_run_v1(config.verified_reads == VerifiedReadsV1::Resident)?;
     // Masked runs compare every update's frozen digest with the initial source's.
@@ -2853,6 +2854,29 @@ mod tests {
         // A refused invocation leaves the process's read mode alone.
         assert!(run_native_expanded_training_v1(&resident, Some(0)).is_err());
         assert!(!verified_bytes_cache_v1::global_v1().resident_v1());
+        // A masked run whose frozen-digest read cannot succeed (its checkpoint
+        // does not exist). Admitted in a process without resident reads, it
+        // reaches that read, whose error comes before the iteration limit's.
+        let mut masked = plain.clone();
+        masked.line_b = Some(crate::expanded_deck_training_v1::LineBUpdateOptionsV1 {
+            optimizer_mask: crate::expanded_deck_training_v1::OptimizerMaskV1::LineBHeadOnlyV1,
+            teacher: None,
+        });
+        masked.record_envelope = Default::default();
+        masked.training_math = Default::default();
+        masked.initial_source.checkpoint = Some(PinnedFileV1 {
+            path: plain
+                .output_directory
+                .with_file_name("no-such-checkpoint.json"),
+            sha256: "0".repeat(64),
+        });
+        masked.output_directory = plain.output_directory.with_file_name("run-masked");
+        let unread = run_native_expanded_training_v1(&masked, Some(0)).unwrap_err();
+        assert!(
+            !unread.contains("iteration limit") && !unread.contains("needs its own process"),
+            "{unread}"
+        );
+        assert!(!verified_bytes_cache_v1::global_v1().resident_v1());
         let partial = run_native_expanded_training_v1(&resident, Some(1)).unwrap();
         assert!(verified_bytes_cache_v1::global_v1().resident_v1());
         assert_eq!(partial["complete"], false);
@@ -2860,6 +2884,10 @@ mod tests {
         // The process now reads resident: a run without it is refused, not
         // run resident under a config that says otherwise.
         let refused = run_native_expanded_training_v1(&plain, None).unwrap_err();
+        assert!(refused.contains("needs its own process"), "{refused}");
+        // The masked run is refused before its frozen-digest read, which
+        // would fail with another error if it were attempted first.
+        let refused = run_native_expanded_training_v1(&masked, None).unwrap_err();
         assert!(refused.contains("needs its own process"), "{refused}");
         assert_eq!(resident_result["complete"], true);
         for field in ["state_sha256", "adam_step"] {
