@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
 use std::thread::available_parallelism;
 
 /// Snapshot archetypes the eternal build plays, by format. A wave that
@@ -801,21 +802,21 @@ pub(crate) fn splitmix64(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// Worker threads for the tests that play many independent games:
-/// `MTG_ETERNAL_TEST_THREADS` when it is set (1 plays every game on the
-/// test's own thread, in order); otherwise the machine's available
-/// parallelism, at most 8, and no more than the cores a self-hosted CI job
-/// was given (a count in `MTG_CI_JOB_CORES`, or the core list of a
-/// host_slots claim in `HOST_SLOTS_CORES`) when either is set.
+/// Games that play at one time in this test process, across every test that
+/// calls `in_parallel`: `MTG_ETERNAL_TEST_THREADS` when it is set (1 plays
+/// every game in order on its test's own thread), otherwise the machine's
+/// available parallelism, at most 8. Either way no more than the cores a
+/// self-hosted CI job was given (a count in `MTG_CI_JOB_CORES`, or the core
+/// list of a host_slots claim in `HOST_SLOTS_CORES`) when either is set.
 pub(crate) fn game_threads() -> usize {
-    if let Ok(value) = std::env::var("MTG_ETERNAL_TEST_THREADS") {
-        return value
+    let mut threads = match std::env::var("MTG_ETERNAL_TEST_THREADS") {
+        Ok(value) => value
             .parse::<usize>()
             .ok()
             .filter(|&threads| threads >= 1)
-            .unwrap_or_else(|| panic!("MTG_ETERNAL_TEST_THREADS: {value:?}"));
-    }
-    let mut threads = available_parallelism().map_or(1, usize::from).min(8);
+            .unwrap_or_else(|| panic!("MTG_ETERNAL_TEST_THREADS: {value:?}")),
+        Err(_) => available_parallelism().map_or(1, usize::from).min(8),
+    };
     if let Ok(value) = std::env::var("MTG_CI_JOB_CORES") {
         if let Ok(cores) = value.trim().parse::<usize>() {
             threads = threads.min(cores.max(1));
@@ -852,12 +853,46 @@ fn core_lists_count_their_cores() {
     assert_eq!(listed_cores("0-x"), None);
 }
 
+/// `game_threads()`, read once per process.
+fn game_capacity() -> usize {
+    static CAPACITY: OnceLock<usize> = OnceLock::new();
+    *CAPACITY.get_or_init(game_threads)
+}
+
+static BUSY_GAMES: Mutex<usize> = Mutex::new(0);
+static GAME_FINISHED: Condvar = Condvar::new();
+
+/// One of the process's `game_capacity()` places to play a game, held while
+/// the game plays and given back when it ends, by a panic too.
+struct GamePermit;
+
+impl GamePermit {
+    fn acquire() -> Self {
+        let mut busy = BUSY_GAMES.lock().unwrap_or_else(PoisonError::into_inner);
+        while *busy >= game_capacity() {
+            busy = GAME_FINISHED.wait(busy).unwrap_or_else(PoisonError::into_inner);
+        }
+        *busy += 1;
+        GamePermit
+    }
+}
+
+impl Drop for GamePermit {
+    fn drop(&mut self) {
+        *BUSY_GAMES.lock().unwrap_or_else(PoisonError::into_inner) -= 1;
+        GAME_FINISHED.notify_one();
+    }
+}
+
 /// Runs `run` on every item and returns the results in item order, so a
 /// test reads them exactly as its sequential loop produced them. Up to
-/// `game_threads()` scoped worker threads each take the next unstarted item.
-/// A panic is caught per item, and once every item has run the panic of the
-/// first failing item is raised again, as the loop would have raised it
-/// first. With one thread the items run in order on the calling thread.
+/// `game_capacity()` scoped worker threads each take the next unstarted
+/// item, and every item holds a `GamePermit` while it runs, so at most
+/// `game_capacity()` games play at once in the whole process, however many
+/// tests libtest runs side by side. A panic is caught per item, and once
+/// every item has run the panic of the first failing item is raised again,
+/// as the loop would have raised it first. With one thread the items run in
+/// order on the calling thread.
 ///
 /// This is safe for the games these tests play: each game owns all of its
 /// state (its session, engine and seeded random choices); the library has
@@ -871,9 +906,15 @@ fn core_lists_count_their_cores() {
 /// `--nocapture` once with `MTG_ETERNAL_TEST_THREADS=1` and once without:
 /// their per-game lines, transcript hashes included, are the same.
 pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], run: impl Fn(&T) -> R + Sync) -> Vec<R> {
-    let threads = game_threads().min(items.len());
+    let threads = game_capacity().min(items.len());
     if threads <= 1 {
-        return items.iter().map(run).collect();
+        return items
+            .iter()
+            .map(|item| {
+                let _permit = GamePermit::acquire();
+                run(item)
+            })
+            .collect();
     }
     let next = AtomicUsize::new(0);
     let finished: Vec<(usize, std::thread::Result<R>)> = std::thread::scope(|scope| {
@@ -886,6 +927,7 @@ pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], run: impl Fn(&T) -> R +
                     let Some(item) = items.get(index) else {
                         return done;
                     };
+                    let _permit = GamePermit::acquire();
                     done.push((index, catch_unwind(AssertUnwindSafe(|| run(item)))));
                 }
             }));
@@ -907,6 +949,30 @@ pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], run: impl Fn(&T) -> R +
             Err(panic) => resume_unwind(panic),
         })
         .collect()
+}
+
+#[test]
+fn in_parallel_keeps_item_order_and_the_process_game_limit() {
+    let active = AtomicUsize::new(0);
+    let most = AtomicUsize::new(0);
+    let play = |item: &usize| {
+        let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+        most.fetch_max(now, Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        active.fetch_sub(1, Ordering::SeqCst);
+        *item * 2
+    };
+    let items: Vec<usize> = (0..24).collect();
+    // Two tests at once share the one limit.
+    let (first, second) = std::thread::scope(|scope| {
+        let first = scope.spawn(|| in_parallel(&items, play));
+        let second = scope.spawn(|| in_parallel(&items, play));
+        (first.join().unwrap(), second.join().unwrap())
+    });
+    let doubled: Vec<usize> = items.iter().map(|item| item * 2).collect();
+    assert_eq!(first, doubled);
+    assert_eq!(second, doubled);
+    assert!(most.load(Ordering::SeqCst) <= game_capacity());
 }
 
 pub(crate) struct Game {

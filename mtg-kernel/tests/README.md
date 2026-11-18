@@ -20,11 +20,12 @@ The Eternal tests that play every playable deck (the best-of-three and catalog
 replays in `eternal/eternal_bo3_v1.rs` and `eternal/eternal_catalog_v1.rs`, and
 the cube and sideboard deck tests) play their games on worker threads through
 `in_parallel` in `eternal/eternal_catalog_v1.rs`, and read the results in the
-order their loop lists the games. `MTG_ETERNAL_TEST_THREADS=N` sets the number
-of threads (1 plays every game in order on the test's own thread). Without it
-they use the available parallelism, at most 8, and no more than a self-hosted
-CI job's admitted cores (`MTG_CI_JOB_CORES`, or the core list in
-`HOST_SLOTS_CORES`).
+order their loop lists the games. At most N games play at one time in the whole
+test process, however many of these tests libtest runs side by side.
+`MTG_ETERNAL_TEST_THREADS=N` sets N (1 plays every game in order on its test's
+own thread); without it N is the available parallelism, at most 8. Either way N
+is no more than a self-hosted CI job's admitted cores (`MTG_CI_JOB_CORES`, or
+the core list in `HOST_SLOTS_CORES`) when the job has them.
 
 A suite can also run in shards: `--shard-index I --shard-count N` places whole
 modules longest first by their recorded hosted seconds in
