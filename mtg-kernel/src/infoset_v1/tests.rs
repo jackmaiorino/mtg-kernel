@@ -617,6 +617,269 @@ fn shuffled_library_token_exports_no_true_position() {
     }
 }
 
+/// Creates a token for `owner`, puts it on top of `owner`'s library and runs
+/// the state-based sweep, which makes it cease to exist there: the engine
+/// drops it from the library list with a removal note and no event, and
+/// leaves its zone as it was. Returns the token.
+fn ceased_library_token(
+    state: &mut crate::state::GameState,
+    owner: PlayerId,
+) -> crate::ids::ObjectId {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+
+    let token = create_token(state, owner);
+    propose_and_commit(state, ProposedEvent::zone_change(token, Zone::Library));
+    assert!(state.players[owner.index()].library.contains(&token));
+    crate::trigger::sba_fixed_point(state);
+    assert!(!state.players[owner.index()].library.contains(&token));
+    assert_eq!(state.objects.get(token).zone, Zone::Library);
+    token
+}
+
+/// `owner` scries 1 and puts the top card of their library on the bottom.
+/// Returns that card.
+fn scry_top_to_bottom(
+    state: &mut crate::state::GameState,
+    owner: PlayerId,
+) -> crate::ids::ObjectId {
+    let top = state.players[owner.index()].library[0];
+    let bound = crate::state::ObjectLinkV4 {
+        object: top,
+        zone_change_count: state.objects.get(top).zone_change_count,
+    };
+    state
+        .apply_scry_result(owner, &[bound], &[], &[top])
+        .unwrap();
+    top
+}
+
+/// Issue 744: a token put into its owner's library ceases to exist at the
+/// next state-based sweep. The projection stops counting it there, so when
+/// the owner then scries a card to the bottom, the owner's library fact sits
+/// at the true last position, and every mode exports both views with no
+/// token placed.
+#[test]
+fn ceased_library_token_leaves_the_library_count() {
+    for owner in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, lists) = token_game(owner, owner);
+        ceased_library_token(&mut state, owner);
+        let scried = scry_top_to_bottom(&mut state, owner);
+        check_scried_to_the_bottom(&state, &lists, owner, scried, "a scry after the cease");
+    }
+}
+
+/// Exports `state` under every mode for both viewers and checks that no
+/// export refuses, that `owner`'s exported library has its native length and
+/// no token, and that the owner knows a card at the last position, where
+/// `scried` (a card the owner scried to the bottom) natively sits.
+fn check_scried_to_the_bottom(
+    state: &crate::state::GameState,
+    lists: &[Vec<u16>; 2],
+    owner: PlayerId,
+    scried: crate::ids::ObjectId,
+    phase: &str,
+) {
+    let length = state.players[owner.index()].library.len();
+    assert_eq!(state.players[owner.index()].library[length - 1], scried);
+    for (mode, export) in &EXPORT_MODES {
+        for viewer in [owner, owner.opponent()] {
+            let at = format!("{mode}, owner {owner:?}, viewer {viewer:?}, {phase}");
+            let exported = export(&token_input(state, viewer, lists))
+                .unwrap_or_else(|error| panic!("{at}: {error:?}"));
+            let library = &exported.state.players[owner.index()].library;
+            assert_eq!(library.len(), length, "{at}");
+            assert!(
+                library
+                    .iter()
+                    .all(|id| !exported.state.objects.get(*id).v4.is_token),
+                "{at}: no token is placed"
+            );
+            if viewer == owner {
+                let rows = exported.state.known_library_cards(owner, owner);
+                assert!(
+                    rows.iter().any(|row| row.position as usize == length - 1),
+                    "{at}: the scried card is known at the bottom"
+                );
+            }
+        }
+    }
+}
+
+/// Issue 744: an ordinary removal from a library (a card leaves it with its
+/// own zone change) while a token sits there is claimed by that event, so the
+/// token stays counted until it ceases. The owner then scries 2, keeping the
+/// token on top and putting the other card on the bottom, and the token
+/// ceases: the owner's fact for the bottom card must sit at the true last
+/// position. If the ordinary removal took the token out of the count, the
+/// scry would read a library one card short and the fact would be one
+/// position too high.
+#[test]
+fn an_ordinary_library_removal_keeps_the_token_counted_until_it_ceases() {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+
+    for owner in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, lists) = token_game(owner, owner);
+        let token = create_token(&mut state, owner);
+        propose_and_commit(&mut state, ProposedEvent::zone_change(token, Zone::Library));
+        assert_eq!(state.players[owner.index()].library[0], token);
+        let card = state.players[owner.index()].library[2];
+        propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(card, Zone::Graveyard),
+        );
+        let second = state.players[owner.index()].library[1];
+        let bound = |id: crate::ids::ObjectId| crate::state::ObjectLinkV4 {
+            object: id,
+            zone_change_count: state.objects.get(id).zone_change_count,
+        };
+        let prefix = [bound(token), bound(second)];
+        state
+            .apply_scry_result(owner, &prefix, &[token], &[second])
+            .unwrap();
+        crate::trigger::sba_fixed_point(&mut state);
+        assert!(!state.players[owner.index()].library.contains(&token));
+        let phase = "an ordinary removal, a scry of 2, then the cease";
+        check_scried_to_the_bottom(&state, &lists, owner, second, phase);
+    }
+}
+
+/// A token of `owner` in `owner`'s library after a real card of that library
+/// has gone to the graveyard and the library was shuffled, with no sweep
+/// since. When `ceased` is set, another token of `owner` has first ceased to
+/// exist in that library. Returns the state, the decklists and the token.
+fn shuffled_library_token_state(
+    owner: PlayerId,
+    ceased: bool,
+) -> (crate::state::GameState, [Vec<u16>; 2], crate::ids::ObjectId) {
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+
+    let (mut state, lists) = token_game(owner, owner);
+    if ceased {
+        ceased_library_token(&mut state, owner);
+    }
+    let token = create_token(&mut state, owner);
+    propose_and_commit(&mut state, ProposedEvent::zone_change(token, Zone::Library));
+    let card = *state.players[owner.index()]
+        .library
+        .iter()
+        .find(|id| **id != token)
+        .unwrap();
+    propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(card, Zone::Graveyard),
+    );
+    state.shuffle_library(owner).unwrap();
+    assert_eq!(state.players[owner.index()].library.len(), 3);
+    (state, lists, token)
+}
+
+/// Exports `worlds` for `viewer` under every mode, checks that the token of
+/// `owner` sits at `expected[w]` in world `w` and, when `same_bytes` is set,
+/// that the two exports are equal.
+fn check_library_token_worlds(
+    worlds: [&crate::state::GameState; 2],
+    lists: &[Vec<u16>; 2],
+    owner: PlayerId,
+    viewer: PlayerId,
+    expected: [usize; 2],
+    same_bytes: bool,
+    phase: &str,
+) {
+    for (mode, export) in &EXPORT_MODES {
+        let at = format!("{mode}, owner {owner:?}, viewer {viewer:?}, {phase}");
+        let [a, b] = worlds.map(|world| {
+            export(&token_input(world, viewer, lists))
+                .unwrap_or_else(|error| panic!("{at}: {error:?}"))
+        });
+        assert_eq!(library_token_position(&a, owner, &at), expected[0], "{at}");
+        assert_eq!(library_token_position(&b, owner, &at), expected[1], "{at}");
+        if same_bytes {
+            assert_eq!(
+                a.bytes, b.bytes,
+                "{at}: the export shows which world the token is in"
+            );
+        }
+    }
+}
+
+/// Issue 744, owed by the review of issue 713 (finding 4 a): after a shuffle
+/// of a library that holds a token, its owner looks at the top card and it is
+/// not the token. In two worlds that differ only in where the shuffle put the
+/// token below the top, the owner's view places it at position 1 and the
+/// opponent's view at position 0, with equal bytes for each viewer.
+#[test]
+fn a_look_at_the_top_after_a_shuffle_rules_out_only_the_top() {
+    for owner in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, lists, token) = shuffled_library_token_state(owner, false);
+        let position = |s: &crate::state::GameState| {
+            s.players[owner.index()]
+                .library
+                .iter()
+                .position(|id| *id == token)
+                .unwrap()
+        };
+        if position(&state) == 0 {
+            state.players[owner.index()].library.swap(0, 1);
+        }
+        let mut other = state.clone();
+        let p = position(&other);
+        other.players[owner.index()]
+            .library
+            .swap(p, if p == 1 { 2 } else { 1 });
+        for world in [&mut state, &mut other] {
+            world.reveal_library_top(owner, owner, 1);
+        }
+        assert_ne!(position(&state), position(&other));
+        let worlds = [&state, &other];
+        let phase = "after a look at the top";
+        check_library_token_worlds(worlds, &lists, owner, owner, [1, 1], true, phase);
+        let opponent = owner.opponent();
+        check_library_token_worlds(worlds, &lists, owner, opponent, [0, 0], true, phase);
+    }
+}
+
+/// Issue 744, owed by the review of issue 713 (finding 4 b): after a shuffle
+/// of a library that holds a token, its owner scries 1 to the bottom. In one
+/// world the token was on top and goes to the bottom; in the other it was
+/// second and another card goes. The owner sees the token at the last
+/// position in the first world and on top in the second; the opponent cannot
+/// tell the worlds apart and gets position 0 in both, with equal bytes. With
+/// a token that ceased to exist in that library before, the length the
+/// projection reads must not count it (issue 744), or the bottom position is
+/// one too deep.
+#[test]
+fn a_scry_to_the_bottom_after_a_shuffle_shows_the_token_only_to_its_owner() {
+    for ceased in [false, true] {
+        for owner in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, lists, token) = shuffled_library_token_state(owner, ceased);
+            let position = |s: &crate::state::GameState| {
+                s.players[owner.index()]
+                    .library
+                    .iter()
+                    .position(|id| *id == token)
+                    .unwrap()
+            };
+            let p = position(&state);
+            state.players[owner.index()].library.swap(p, 0);
+            let mut other = state.clone();
+            other.players[owner.index()].library.swap(0, 1);
+            for world in [&mut state, &mut other] {
+                scry_top_to_bottom(world, owner);
+            }
+            assert_eq!(position(&state), 2);
+            assert_eq!(position(&other), 0);
+            let worlds = [&state, &other];
+            let phase = format!("after a scry to the bottom, ceased token {ceased}");
+            check_library_token_worlds(worlds, &lists, owner, owner, [2, 0], false, &phase);
+            let opponent = owner.opponent();
+            check_library_token_worlds(worlds, &lists, owner, opponent, [0, 0], true, &phase);
+        }
+    }
+}
+
 /// Issue 713, reveal v4: the reveal minima name hidden hand cards, so they
 /// are bounded by the hidden hand. A token in the hand is public and takes
 /// no hidden slot, so it does not count toward the bound.

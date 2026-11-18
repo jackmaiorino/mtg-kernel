@@ -480,8 +480,22 @@ fn project_versioned(
         w.next_event = index;
         let mut positions = Vec::new();
         let mut after = Vec::new();
+        // Issue 744: an event that moves a card out of a library claims the
+        // last removal note of that library anchored before it (the engine
+        // writes the note just before it commits the event).
+        let claimed = w.library_departure(event).and_then(|owner| {
+            let group = journal[cursor..]
+                .iter()
+                .take_while(|n| n.history_len <= index)
+                .count();
+            journal[cursor..cursor + group]
+                .iter()
+                .rposition(|n| library_removal_owner(&n.kind) == Some(owner))
+                .map(|k| cursor + k)
+        });
         while cursor < journal.len() && journal[cursor].history_len <= index {
             let note = &journal[cursor];
+            let unclaimed = Some(cursor) != claimed;
             cursor += 1;
             w.committed.1 = w.committed.1.max(cursor);
             if matches!(
@@ -504,6 +518,9 @@ fn project_versioned(
                 }
             }
             w.note(note);
+            if unclaimed {
+                w.removal_without_event(&note.kind);
+            }
         }
         event_items.push(w.item);
         w.next_event = index;
@@ -521,6 +538,7 @@ fn project_versioned(
     for (k, note) in journal[cursor..].iter().enumerate() {
         w.committed.1 = w.committed.1.max(cursor + k + 1);
         w.note(note);
+        w.removal_without_event(&note.kind);
     }
     // A spell being cast sits on the stack before its SpellCast commits:
     // the announcement is public, so the walk moves it as observed, in the
@@ -670,6 +688,14 @@ pub(crate) fn live_outside_pool_v1(state: &GameState, id: ObjectId, zone: Zone) 
         Zone::Hand => p.hand.contains(&id),
         Zone::Library => p.library.contains(&id),
         _ => false,
+    }
+}
+
+/// The owner of the library a removal note names, if `kind` is one.
+fn library_removal_owner(kind: &ObservationNoteKindV1) -> Option<PlayerId> {
+    match kind {
+        ObservationNoteKindV1::LibraryRemoval { owner, .. } => Some(*owner),
+        _ => None,
     }
 }
 
@@ -1554,6 +1580,57 @@ impl WalkV1<'_> {
         self.survivors.unpin(&top.record, &keep);
         if !undone {
             self.r8_latch = true;
+        }
+    }
+
+    /// Issue 744: the owner of the library `event` moves a card out of, as
+    /// the walk sees it before the event (a draw, a zone change from a
+    /// library, a spell cast from one).
+    fn library_departure(&self, event: &CommittedEvent) -> Option<PlayerId> {
+        let in_library = |id: &ObjectId| self.objs[id.0 as usize].zone == Some(Zone::Library);
+        match event {
+            CommittedEvent::Draw {
+                player,
+                object: Some(id),
+            } if in_library(id) => Some(*player),
+            CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Library,
+                ..
+            } => Some(self.owner(*object)),
+            CommittedEvent::SpellCast { spell, .. } if in_library(spell) => {
+                Some(self.owner(*spell))
+            }
+            _ => None,
+        }
+    }
+
+    /// Issue 744: a library removal note that no event claims. The engine
+    /// writes one when a token or spell copy in a library ceases to exist
+    /// (111.8, 707.10): `cease_to_exist` drops it from the library list with
+    /// no event and leaves its zone and generation as they were, so no later
+    /// event moves it. Such an object of that owner, still in the walk's
+    /// library, stops existing here, so `library_count` no longer counts it.
+    /// Only a token or spell copy that entered a library through an event can
+    /// match, so a walk in which none did is unchanged.
+    fn removal_without_event(&mut self, kind: &ObservationNoteKindV1) {
+        let Some(owner) = library_removal_owner(kind) else {
+            return;
+        };
+        let ceased = (0..self.objs.len() as u32).map(ObjectId).find(|&id| {
+            let o = &self.objs[id.0 as usize];
+            if !(o.exists && o.zone == Some(Zone::Library) && o.owner == Some(owner)) {
+                return false;
+            }
+            let native = self.state.objects.get(id);
+            (native.v4.is_token || native.spell_copy_origin.is_some())
+                && native.zone == Zone::Library
+                && native.zone_change_count == o.moves
+                && !self.state.players[owner.index()].library.contains(&id)
+        });
+        if let Some(id) = ceased {
+            self.objs[id.0 as usize].exists = false;
+            self.library_public.remove(&id);
         }
     }
 
