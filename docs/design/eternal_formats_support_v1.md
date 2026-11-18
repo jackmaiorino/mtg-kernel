@@ -520,7 +520,8 @@ New, each built once in the first wave that needs it:
   [Comprehensive Rules](https://media.wizards.com/2026/downloads/MagicCompRules%2020261106.txt)
   Not in this wave: Mycosynth Lattice (mana of any color needs a payment-planner change),
   Extinguisher Battleship (station), Cityscape Leveler (unearth, Powerstone), Invasion
-  Submersible (waterbend, exhaust), Summon: Bahamut, Keen-Eyed Curator, Outland Liberator
+  Submersible (waterbend, exhaust), Summon: Bahamut (these three added in S1q), Keen-Eyed
+  Curator, Outland Liberator
   (day and night; added in S1o), Fiery Confluence (choose three with repeats and per-instance targets),
   Kiora's Dismissal (strive), Eowyn (a target filter that reads the source's power) and
   Unlicensed Hearse (a single-graveyard target filter); S1o adds these two as well.
@@ -1469,7 +1470,7 @@ After S1l, Extinguisher Battleship is the only gap of Mystic Forge Combo (3.5% o
 which wishes for it with Karn, the Great Creator, and Fiery Confluence is the only gap of Red
 Stompy (1.0%). Neither card is in the registry. S1m adds both as Full cards. The Legacy full 75
 share goes from 77.0% to 81.5%, and the two lists join `PLAYABLE_75`. Tron (1.7%) also needs
-the Battleship, with Cityscape Leveler, Invasion Submersible and Summon: Bahamut.
+the Battleship, with Cityscape Leveler, Invasion Submersible and Summon: Bahamut (S1q).
 
 Both cards are built in `src/eternal_sideboard_s1m_v1.rs` and `build_eternal_s1m_v1.rs`, the
 new tail of the recipe chains after S1l's. Behavior follows the current Oracle text, the
@@ -2595,6 +2596,115 @@ cards public after the reveal) and plays a red-white deck with Eowyn and Gambit 
 deck with Liberator and Hearse through public schema-5 sessions in both seats under ranked and
 seeded random policies with replay checks. `tests/eternal/eternal_bo3_v1.rs` plays the three
 completed lists in seeded best-of-three matches with random sideboarding.
+
+### S1q: Legacy Tron sideboard
+
+After S1o, `legacy-tron` (1.7% of the Legacy snapshot) is the only Legacy list whose 75 misses
+three cards: Cityscape Leveler, Invasion Submersible and Summon: Bahamut (two copies). None of
+them was in the registry. S1q adds the three as Full cards and the Powerstone token as a Full
+token row. The Legacy full 75 share goes from 87.2% to 88.9% (`legacy-tron` joins
+`PLAYABLE_75`); the only missing sideboard card of a playable Legacy list is now Keen-Eyed
+Curator (`legacy-selesnya-depths`).
+
+S1q is built in `src/eternal_sideboard_s1q_v1.rs`, `src/eternal_sideboard_s1q_v1/targets.rs`
+and `build_eternal_s1q_v1.rs`, linked after S1o and before C1a in the recipe and trigger
+chains; the mana-ability table is reached from the tail of P2b's and the Saga table from the
+tail of the Vintage table's. Behavior follows each card's current Oracle text and rulings
+(Scryfall, read 2026-11-17) and rules 400.7, 601.2g, 601.2h, 602.2, 608.2b, 702.84 (unearth)
+and 714 (Sagas), with the waterbend and exhaust reminder text:
+
+- Cityscape Leveler, {8}, Artifact Creature - Construct 8/8: "Trample. When you cast this
+  spell and whenever this creature attacks, destroy up to one target nonland permanent. Its
+  controller creates a tapped Powerstone token. Unearth {8}". The cast trigger functions on
+  the stack (`TriggerCondition::CastSelf`, Ugin, Eye of the Storms' shape) and the attack
+  trigger is ordinary; both target with `StandardTargetV1::S1qV1(UpToOneNonlandPermanentV1)`
+  (any player's nonland permanent, the attacking Leveler included). On resolution the target
+  is checked again, its controller is read, it is destroyed, and that player creates one
+  Powerstone token tapped, also when the target survived (indestructible or regenerated), as
+  Stroke of Midnight's token does. No target, or an illegal one, does nothing. Unearth is
+  Phyrexian Dragon Engine's recipe (a graveyard ability at sorcery speed, haste, the
+  leave-the-battlefield exile and the next end step's exile); unearthing is not casting, so
+  only the attack trigger follows it (the card's ruling).
+- Powerstone token, Artifact - Powerstone: "{T}: Add {C}. This mana can't be spent to cast a
+  nonartifact spell." Its mana ability is a definition (`ManaAbilityDef`, tap for one), as
+  The Mightstone and Weakstone's is, so the automatic spell planner never taps it, and
+  `restrict_produced_mana` turns the {C} into one unit restricted by
+  `ManaSpendRestrictionDef::PowerstoneV1`: it pays artifact spells and every payment that is
+  not part of casting a spell (#726). Entering tapped is the Leveler's instruction, not the
+  token's (the ruling), so the token row has no entry-tapped mechanic.
+- Invasion Submersible, {2}{U}, Artifact - Vehicle 0/0 (it has no crew; the research note
+  expected one): "When this Vehicle enters, return up to one other target nonland permanent
+  to its owner's hand. Exhaust - Waterbend {3}: This Vehicle becomes an artifact creature. Put
+  three +1/+1 counters on it." The enters trigger targets with Phelia, Exuberant Shepherd's
+  `UpToOneOtherNonlandPermanentV1`. Waterbend is paid with the existing cost decisions: the
+  exhaust ability is registered as four activated abilities that differ only in how many
+  waterbend taps pay the {3}, from zero to three. Ability `k` costs
+  `TapControlled { count: k, ArtifactOrCreature }` and the rest of the {3} in mana; the number
+  of taps is announced by the ability chosen and the permanents are chosen through the
+  ordinary `ChooseCostTargets` choice (Warden of the Inner Sky's cost), the Vehicle itself and
+  summoning-sick creatures included, since the cost has no {T}. Every legal payment of the
+  printed cost is one of these and no other is offered:
+  - the four share one exhaust record per object (`S1qStateV1::exhausted`, written when the
+    costs are paid), so none is offered again for that object; a Submersible that changed
+    zones is a new object and may activate it again (the ruling);
+  - a tap that would leave the mana part unpayable (a mana creature the rest of the payment
+    needs) is not offered (`retain_payable_waterbend_taps`, called from
+    `engine::activation_controlled_cost_candidates` for a pending Submersible activation), and
+    a payment is offered only if some choice of its taps leaves its mana payable
+    (`activation_allowed`);
+  - a cost reduction applies to the waterbend {3} (Forensic Gadgeteer: {2}), the mana part is
+    that total less the taps, and no payment taps more permanents than the reduced total
+    (the ruling); a cost increase (Anointed Peacekeeper, Gloom) is added to the mana part
+    (`waterbend_mana`, called from `engine::reduced_activation_mana_cost`).
+  The animation has no duration: the incarnation is recorded (`S1qStateV1::animated`) and
+  `engine::object_has_type` answers Creature for it, after the stationed Battleship's check.
+  The printed 0/0 and three counters make a 3/3. Both records are absent from snapshots and
+  hashes while empty and drop entries whose object left the battlefield as a turn begins.
+- Summon: Bahamut, {9}, Enchantment Creature - Saga Dragon 9/9: "(As this Saga enters and after
+  your draw step, add a lore counter. Sacrifice after IV.) I, II - Destroy up to one target
+  nonland permanent. III - Draw two cards. IV - Mega Flare - This creature deals damage equal
+  to the total mana value of other permanents you control to each opponent. Flying". The
+  shared Saga rules (entry lore, the precombat main lore counter, 714.4's sacrifice) apply to a
+  creature as to any Saga. Chapters I and II are distinct program values with the Leveler's
+  target filter (so stack provenance names the right chapter), III is an ordinary draw of two
+  and IV sums `object_mana_value` over the other permanents its controller controls as it
+  resolves and deals that much damage from the Saga to the opponent (the ruling). A blinked
+  Bahamut is a new object and starts again at chapter I.
+
+The new target filter is classified for the Flagbearer rule as `Single` (it is the target of
+triggered abilities and chapters, which the obligation never binds) and added to the
+classification test. Each shared path is guarded so the frozen Pauper, FDN and Standard
+builds do not change: every new call is under `eternal-fixtures` and returns at once unless
+the source is one of these printed names (which occur only in the eternal registry) or the
+wave's state holds a record (`object_has_type`, the produced-mana hook, the activation paid
+and allowed hooks, the activation cost reduction and the tap candidates); the filter arms in
+`standard_cards_v1`, `rules_vector_v1::meaning::targets` and `flagbearer` answer only the new
+filter; `engine::activation_mana_payment` became `pub(crate)` without other change.
+
+Limits:
+
+- Waterbend's tap count is announced with the ability (four abilities in the action list for
+  one printed ability) rather than as a count chosen while paying; the payments offered are
+  exactly the legal ones. The exhaust record is not a field of the policy observations; once
+  used, the abilities are absent from the legal actions.
+- An Invasion Submersible animated by its exhaust ability is a creature to `object_has_type`
+  but not to Dress Down's "Creatures lose all abilities" (which reads printed creatures and a
+  stationed Battleship); its only abilities then are the enters trigger, which has triggered,
+  and the used exhaust ability, so no reachable branch changes.
+
+Verification: `tests/eternal/eternal_sideboard_s1q_v1.rs` covers the cast trigger with each
+player's permanent, with no target and with an indestructible target, the attack trigger and
+the attacking Leveler naming itself, unearth with haste and no cast trigger and its end-step
+exile, the Powerstone mana paying an artifact spell and an ability but not a nonartifact spell,
+the Submersible's bounce (other permanents only, none), each of the four waterbend payments
+with summoning-sick creatures and the Vehicle itself tapped, exhaust once only, the animation
+lasting into later turns and the Submersible attacking, a blink resetting exhaust, a mana
+creature withheld from the taps, the Gadgeteer reduction, Bahamut's four chapters with the
+Mega Flare count and the sacrifice, chapters with no target and a blink restarting at chapter
+I, each in both seats, and plays a Tron deck against a blue artifact deck through public
+schema-5 sessions in both seats under ranked and seeded random policies with replay checks.
+`tests/eternal/eternal_bo3_v1.rs` plays `legacy-tron` in a seeded best-of-three match with
+random sideboarding.
 
 ## Vintage Cube
 
