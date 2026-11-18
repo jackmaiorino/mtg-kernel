@@ -22,9 +22,10 @@ file through the specs and the rows, and by the SHA-256 of the checkpoint file, 
 summary as `a_checkpoint_sha256` (and `b_checkpoint_sha256` for a learner opponent) and which reaches the
 canonical file through the summary. Every learner seat must have a valid digest; a run and its replay must
 record the same digests and learner contract (else Gate E0 fails); a candidate's runs must record one digest
-and all runs one learner contract, and the step-0 opponent one digest across candidates (else the records are
-refused). The exit code is 0 when the
-records were evaluated (whatever the gates say) and 2 when they were refused.
+and all runs one learner contract, and the step-0 opponent one digest across candidates. Across all main runs,
+each learner checkpoint specification must record one digest across both policy slots and roles (else the
+records are refused). The exit code is 0 when the records were evaluated (whatever the gates say) and 2 when
+they were refused.
 """
 from __future__ import annotations
 
@@ -842,6 +843,17 @@ def evaluate(inputs: list[RunInput], inventory: dict, replicates: int = BOOTSTRA
     contracts = {r["summary"].get("learner_policy_contract") for roles in runs.values() for r in roles.values()}
     if len(contracts) > 1:
         raise EvaluationInputError("runs record different learner policy contracts")
+
+    checkpoint_digests: dict[str, set[str]] = {}
+    for roles in runs.values():
+        for r in roles.values():
+            for side in ("a", "b"):
+                spec = str(r["summary"][side])
+                if spec.startswith(LEARNER_SPEC_PREFIX):
+                    checkpoint_digests.setdefault(spec, set()).add(r["summary"][f"{side}_checkpoint_sha256"])
+    for spec, values in checkpoint_digests.items():
+        if len(values) > 1:
+            raise EvaluationInputError(f"{spec!r}: runs record different checkpoint digests {sorted(values)}")
 
     expected = [(c, role) for c in sorted(runs) for role in ROLES]
     absent = [f"{c} vs {role}" for c, role in expected if role not in runs[c]]

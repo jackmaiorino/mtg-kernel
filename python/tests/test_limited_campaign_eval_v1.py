@@ -618,6 +618,33 @@ class ProvenanceTest(unittest.TestCase):
         two_candidates(STEP0_SHA256, CANDIDATE_SHA256["u_best_dev"])(inputs)
         self.assertTrue(ev.evaluate(inputs, INVENTORY, replicates=R)["gate_e0"]["pass"])
 
+    def test_one_checkpoint_digest_per_specification_across_roles(self):
+        spec = "learner-checkpoint:shared/step_0000.json"
+
+        def two_candidates(best: str):
+            def mutate(inputs):
+                inputs.extend(full_inputs(candidate="u_best_dev"))
+                for run in inputs:
+                    for summary in (run.summary, run.replay_summary):
+                        summary["a"] = ("learner-checkpoint:final.json"
+                                        if run.candidate == "u_final" else spec)
+                        if run.candidate == "u_best_dev":
+                            summary["a_checkpoint_sha256"] = best
+                        if run.opponent == STEP0:
+                            summary["b"] = (spec if run.candidate == "u_final" else
+                                            "learner-checkpoint:baseline/step_0000.json")
+                    for row in run.rows + run.replay_rows:
+                        row["pols"] = [run.summary["a"] if side == "A" else run.summary["b"]
+                                       for side in row["side"]]
+            return mutate
+
+        self.refuses(two_candidates(CANDIDATE_SHA256["u_best_dev"]),
+                     f"{spec!r}: runs record different checkpoint digests "
+                     f"{sorted((STEP0_SHA256, CANDIDATE_SHA256['u_best_dev']))}")
+        inputs = full_inputs()
+        two_candidates(STEP0_SHA256)(inputs)
+        self.assertTrue(ev.evaluate(inputs, INVENTORY, replicates=R)["gate_e0"]["pass"])
+
     def test_unrecorded_limits_fail_e0(self):
         def drop(inputs):
             for summary in (inputs[0].summary, inputs[0].replay_summary):
