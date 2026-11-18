@@ -2928,10 +2928,17 @@ Conventions fixed under #717:
   triggers are collected: `note_discard` and `note_token_created` (called as each token creation
   commits) record the Converters and Staffs their player controlled then, so a source destroyed
   later in the same resolution (Kolaghan's Command making its controller discard and then
-  destroying the Converter) still triggers, and a Staff that arrives later does not. Staff still
-  triggers once per trigger collection in which its controller created creature tokens, so two
-  separate token-creating instructions of one resolution give one story counter; no card of the
-  eternal decks creates creature tokens with two instructions in one resolution.
+  destroying the Converter) still triggers, and a Staff that arrives later does not. Whether a
+  token is a creature is still read at the collection, because a token copy of a transformed
+  permanent is committed with its front face and turned to the back face it enters with (707.8a)
+  just after (Reflection of Kiki-Jiki copying another Reflection). A snapshot written before this
+  change in the middle of a resolution, after a token was created and before the next trigger
+  collection, has no note and loses that Staff trigger; such a pending state is not carried
+  across the change. Known limit: Staff triggers once per trigger collection in which its
+  controller created creature tokens, so two separate token-creating instructions of one
+  resolution give one story counter. Ocelot Pride with the city's blessing does that: its end
+  step ability creates a Cat and then, as a second instruction, copies of the tokens that
+  entered this turn, which should be two Staff triggers.
 - Counter costs and the charge leaf. Devoted Druid's -1/-1 cost counter and the charge counters
   of `E7aOpV1::AddChargeCountersV1` (Blast Zone's X, Staff of the Storyteller's story counter)
   always go through `doubling_season_v48::counter_amount`, as a cost and as an effect, so a
@@ -2941,8 +2948,10 @@ Conventions fixed under #717:
 - Sunburst on a copy. Phyrexian Metamorph's cast records its colors spent, like Engineered
   Explosives' and Pentad Prism's, and a Metamorph that enters as a copy of either gets a charge
   counter for each color spent to cast it (702.44a); a copy of Engineered Explosives also keeps
-  that count for its sacrifice ability. A Metamorph put onto the battlefield without being cast
-  gets none.
+  that count for its sacrifice ability. By the rules a Metamorph put onto the battlefield without
+  being cast would enter as such a copy with no counters, since no mana was spent to cast it; the
+  engine does not offer that route, because the copy menu of a Metamorph that was not cast
+  (Reanimate) refuses Pentad Prism and Engineered Explosives as unsupported entry forms.
 
 A batch is one event for replacement effects (614.1, 614.6): the name-keyed graveyard
 replacements (Rest in Peace, Leyline of the Void, Dauthi Voidwalker, with Yawgmoth's Will, Suplex,
