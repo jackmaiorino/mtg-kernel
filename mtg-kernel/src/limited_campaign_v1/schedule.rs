@@ -39,7 +39,8 @@ pub struct DealV1 {
 }
 
 pub fn deal_v1(seed: u64, pair: u64, deck_count: usize) -> Result<DealV1> {
-    let (decks, env_seed, starting) = crate::limited_match_v1::deal_pair_v1(seed, pair, deck_count)?;
+    let (decks, env_seed, starting) =
+        crate::limited_match_v1::deal_pair_v1(seed, pair, deck_count)?;
     Ok(DealV1 {
         pair,
         decks,
@@ -145,9 +146,8 @@ pub fn gate2_pairs_v1(train_names: &[String], drake_decks: &[&str]) -> Result<Ga
         let deal = deal_v1(QUALIFICATION_SEED_V1, pair, count)?;
         Ok(deal.decks.map(|index| train_names[index].as_str()))
     };
-    let has_curator = |pair: u64| -> Result<bool> {
-        Ok(names_of(pair)?.contains(&GATE2_REQUIRED_DECK_V1))
-    };
+    let has_curator =
+        |pair: u64| -> Result<bool> { Ok(names_of(pair)?.contains(&GATE2_REQUIRED_DECK_V1)) };
     let has_drake =
         |pair: u64| -> Result<bool> { Ok(names_of(pair)?.iter().any(|n| drake_decks.contains(n))) };
     let mut chosen: Vec<u64> = (0..QUALIFICATION_PAIRS_V1 as u64).collect();
@@ -162,7 +162,9 @@ pub fn gate2_pairs_v1(train_names: &[String], drake_decks: &[&str]) -> Result<Ga
         if present {
             continue;
         }
-        let slot = slots.next().ok_or("Gate 2 rule ran out of replaceable indices")?;
+        let slot = slots
+            .next()
+            .ok_or("Gate 2 rule ran out of replaceable indices")?;
         let mut candidate = QUALIFICATION_PAIRS_V1 as u64;
         while chosen.contains(&candidate) || !test(candidate)? {
             candidate += 1;

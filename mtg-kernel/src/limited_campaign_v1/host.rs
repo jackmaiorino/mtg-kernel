@@ -233,9 +233,8 @@ mod platform {
         };
         // SAFETY: the pseudo-handle needs no closing and `counters` is a
         // zeroed `PROCESS_MEMORY_COUNTERS` with its size set.
-        let succeeded = unsafe {
-            GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) != 0
-        };
+        let succeeded =
+            unsafe { GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) != 0 };
         succeeded.then_some(counters.peak_working_set_size as u64)
     }
 }

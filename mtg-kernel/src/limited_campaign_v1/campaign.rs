@@ -293,7 +293,10 @@ fn campaign_config_v1(inputs: ConfigInputs<'_>) -> CampaignConfigV1 {
         schema: CAMPAIGN_SCHEMA_V1.into(),
         mode: inputs.mode.name().into(),
         identity: inputs.identity,
-        runner_contract: RUNNER_CONTRACT_V1.iter().map(|line| line.to_string()).collect(),
+        runner_contract: RUNNER_CONTRACT_V1
+            .iter()
+            .map(|line| line.to_string())
+            .collect(),
         learner_contract: inputs.learner.contract().into(),
         objective: inputs.learner.objective().into(),
         feature_sha256: inputs.learner.feature_sha256(),
@@ -462,9 +465,7 @@ pub fn update_learner_v1(learner: &mut CampaignLearnerV1, games: &[GameRecordV1]
                     let own = match &game.terminal {
                         TerminalV1::Natural(returns) => returns[usize::from(seat)],
                         TerminalV1::Truncated(_) => continue,
-                        TerminalV1::Failed(reason) => {
-                            return Err(format!("failed game: {reason}"))
-                        }
+                        TerminalV1::Failed(reason) => return Err(format!("failed game: {reason}")),
                     };
                     let other = natural(game.receipt.pair, 1 - game.receipt.leg, seat);
                     let rewards = pair_centered_terminal_rewards_v1(own, other).map_err(refuse)?;
@@ -662,8 +663,8 @@ impl RunnerV1 {
         Ok(match mode_of(&self.config)? {
             ModeV1::Campaign => update_pairs_v1(step)
                 .map(|pair| {
-                    let league = is_league_pair_v1(pair)
-                        .then(|| league_opponent_step_v1(seed, step, pair));
+                    let league =
+                        is_league_pair_v1(pair).then(|| league_opponent_step_v1(seed, step, pair));
                     (pair, league)
                 })
                 .collect(),
@@ -741,7 +742,10 @@ impl RunnerV1 {
         counter.add(super::diagnostics::elapsed_ns(started));
         self.stages.dev_panel = counter;
         let half_points = dev_half_points_v1(&games)?;
-        Ok((games.into_iter().map(|game| game.receipt).collect(), half_points))
+        Ok((
+            games.into_iter().map(|game| game.receipt).collect(),
+            half_points,
+        ))
     }
 
     /// One update: collect with the policy at `update - 1`, apply the
@@ -1032,7 +1036,10 @@ pub fn guard_launch_v1(
             parsed.binary_source_sha256 == identity.binary_source_sha256,
             "binary_source_sha256",
         ),
-        (parsed.feature_sha256 == learner.feature_sha256(), "feature_sha256"),
+        (
+            parsed.feature_sha256 == learner.feature_sha256(),
+            "feature_sha256",
+        ),
         (parsed.card_db_hash == identity.card_db_hash, "card_db_hash"),
         (
             parsed.learner_contract == learner.contract(),
@@ -1046,7 +1053,10 @@ pub fn guard_launch_v1(
         (parsed.u_max == u_max, "U_max"),
         (parsed.workers == workers, "worker count W*"),
         (parsed.workers >= 2, "W* of at least 2"),
-        (CAMPAIGN_HORIZON_V1.contains(&parsed.u_max), "U_max in 100..=200"),
+        (
+            CAMPAIGN_HORIZON_V1.contains(&parsed.u_max),
+            "U_max in 100..=200",
+        ),
     ];
     if let Some((_, name)) = checks.iter().find(|(holds, _)| !holds) {
         return Err(format!("qualification manifest refuses this run: {name}"));
@@ -1175,7 +1185,10 @@ pub fn start_v1(
 fn committed_head(root: &Path) -> Result<Option<u64>> {
     let mut head = None;
     let mut update = 0;
-    while iteration_dir_v1(root, update).join("complete.json").exists() {
+    while iteration_dir_v1(root, update)
+        .join("complete.json")
+        .exists()
+    {
         head = Some(update);
         update += 1;
     }
@@ -1191,7 +1204,9 @@ fn clean_uncommitted(root: &Path, head: u64) -> Result<()> {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if name.starts_with('.') && name.ends_with(".staging") {
             fs::remove_dir_all(&path).map_err(io_error(&path))?;
-        } else if let Some(update) = name.strip_prefix("iter_").and_then(|u| u.parse::<u64>().ok())
+        } else if let Some(update) = name
+            .strip_prefix("iter_")
+            .and_then(|u| u.parse::<u64>().ok())
         {
             if update > head {
                 return Err(format!(
@@ -1280,8 +1295,7 @@ pub fn resume_v1(launch: &LaunchV1) -> Result<RunOutcomeV1> {
         // the host class of its first launch only.
         let first = read_bytes(&root.join("launches").join("launch_0000.json"))?;
         let first: Value = serde_json::from_slice(&first).map_err(|error| error.to_string())?;
-        if first["host_class"] != serde_json::to_value(&launch.host_class).unwrap_or(Value::Null)
-        {
+        if first["host_class"] != serde_json::to_value(&launch.host_class).unwrap_or(Value::Null) {
             return Err("the control arm resumes on its first launch's host class only".into());
         }
     }
@@ -1313,8 +1327,7 @@ pub fn resume_v1(launch: &LaunchV1) -> Result<RunOutcomeV1> {
         None
     } else {
         let receipt = read_bytes(&iteration_dir_v1(root, head).join("receipt.json"))?;
-        let receipt: Value =
-            serde_json::from_slice(&receipt).map_err(|error| error.to_string())?;
+        let receipt: Value = serde_json::from_slice(&receipt).map_err(|error| error.to_string())?;
         Some(
             receipt["truncated_games"]
                 .as_u64()
@@ -1495,9 +1508,7 @@ pub fn lock_manifest_v1(
         || !diagnostics.contains(&true)
         || !diagnostics.contains(&false)
     {
-        return Err(
-            "the runs must include one worker, W*, and diagnostics both on and off".into(),
-        );
+        return Err("the runs must include one worker, W*, and diagnostics both on and off".into());
     }
     if workers < 2 || !CAMPAIGN_HORIZON_V1.contains(&u_max) {
         return Err("W* must be at least 2 and U_max in 100..=200".into());
@@ -1507,7 +1518,8 @@ pub fn lock_manifest_v1(
     admit_receipt_host_class_v1(&host, available_vcpus)?;
     let identity: SourceIdentityV1 =
         serde_json::from_value(first["identity"].clone()).map_err(|error| error.to_string())?;
-    if !is_sha256_hex(&identity.binary_sha256) || host.trainer_binary_sha256 != identity.binary_sha256
+    if !is_sha256_hex(&identity.binary_sha256)
+        || host.trainer_binary_sha256 != identity.binary_sha256
     {
         return Err("the host class does not name the runs' trainer binary".into());
     }
@@ -1524,7 +1536,11 @@ pub fn lock_manifest_v1(
         .map(|(run, root)| {
             let w = run["workers"].as_u64().unwrap_or(0);
             let t = training_ns(run);
-            let speedup = if t == 0 { 0.0 } else { baseline as f64 / t as f64 };
+            let speedup = if t == 0 {
+                0.0
+            } else {
+                baseline as f64 / t as f64
+            };
             json!({
                 "directory": root.display().to_string(),
                 "workers": w,
@@ -1541,10 +1557,7 @@ pub fn lock_manifest_v1(
     Ok(QualificationManifestV1 {
         schema: MANIFEST_SCHEMA_V1.into(),
         binary_source_sha256: identity.binary_source_sha256,
-        feature_sha256: first["feature_sha256"]
-            .as_str()
-            .unwrap_or_default()
-            .into(),
+        feature_sha256: first["feature_sha256"].as_str().unwrap_or_default().into(),
         card_db_hash: identity.card_db_hash,
         learner_contract: first["learner_contract"]
             .as_str()

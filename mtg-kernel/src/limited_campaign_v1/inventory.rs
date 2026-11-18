@@ -218,7 +218,10 @@ pub fn read_inventory_v1(repo_root: &Path) -> Result<InventoryV1> {
 pub fn load_train_decks_v1(repo_root: &Path, inventory: &InventoryV1) -> Result<Vec<DeckV1>> {
     let mut decks = Vec::with_capacity(DECKS_PER_SPLIT_V1);
     for row in inventory.rows.iter().filter(|row| row.split == "train") {
-        let bytes = read(repo_root, &format!("{SAMPLE_DIR_V1}/decks/{}.json", row.deck))?;
+        let bytes = read(
+            repo_root,
+            &format!("{SAMPLE_DIR_V1}/decks/{}.json", row.deck),
+        )?;
         if sha256_hex(&bytes) != row.source_sha256 {
             return Err(format!("{} changed after the inventory was read", row.deck));
         }

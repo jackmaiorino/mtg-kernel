@@ -5,14 +5,14 @@
 //! guarded launcher. The full-length game path runs in the bounded smoke.
 use super::*;
 use crate::current_tree_learner_v2::ModelV2;
-use crate::limited_match_v1::{deal_pair_v1, DeckFileV1, SessionKindV1};
 use crate::limited_campaign_v1::collect::{play_game_v1, GameSpecV1, RetainedV1};
 use crate::limited_campaign_v1::inventory::{
     canonical_pool_bytes_v1, default_repo_root_v1, SAMPLE_DIR_V1, SAMPLE_SHA256_IN_POOL_ORDER_V1,
 };
 use crate::limited_campaign_v1::schedule::{
-    actor_seed_v1, leg_layout_v1, league_snapshot_steps_v1, SlotV1, GATE2_REQUIRED_DECK_V1,
+    actor_seed_v1, league_snapshot_steps_v1, leg_layout_v1, SlotV1, GATE2_REQUIRED_DECK_V1,
 };
+use crate::limited_match_v1::{deal_pair_v1, DeckFileV1, SessionKindV1};
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -89,7 +89,10 @@ fn train_decks_resolve_at_their_registered_counts_and_never_meet_an_eval_deck() 
     assert_eq!(oversize.cards.len(), 41);
     // The eval split, read here only to prove disjointness, shares no name
     // and no card multiset with the train split.
-    let train_names = decks.iter().map(|d| d.name.clone()).collect::<BTreeSet<_>>();
+    let train_names = decks
+        .iter()
+        .map(|d| d.name.clone())
+        .collect::<BTreeSet<_>>();
     let train_sets = decks.iter().map(DeckV1::multiset).collect::<BTreeSet<_>>();
     for row in inventory.rows.iter().filter(|row| row.split == "eval") {
         assert!(!train_names.contains(&row.deck));
@@ -108,8 +111,12 @@ fn train_decks_resolve_at_their_registered_counts_and_never_meet_an_eval_deck() 
 fn deals_and_seat_layouts_follow_section_2_2() {
     for pair in 0..64 {
         let deal = deal_v1(TRAINING_SCHEDULE_SEED_V1, pair, 40).unwrap();
-        let (decks, env_seed, starting) = deal_pair_v1(TRAINING_SCHEDULE_SEED_V1, pair, 40).unwrap();
-        assert_eq!((deal.decks, deal.env_seed, deal.starting), (decks, env_seed, starting));
+        let (decks, env_seed, starting) =
+            deal_pair_v1(TRAINING_SCHEDULE_SEED_V1, pair, 40).unwrap();
+        assert_eq!(
+            (deal.decks, deal.env_seed, deal.starting),
+            (decks, env_seed, starting)
+        );
         assert_ne!(deal.decks[0], deal.decks[1]);
         let symmetric = [0, 1].map(|leg| leg_layout_v1(true, &deal, leg));
         assert_eq!(symmetric[0], ([SlotV1::A, SlotV1::A], starting));
@@ -124,7 +131,9 @@ fn deals_and_seat_layouts_follow_section_2_2() {
 fn batches_league_draws_and_seat_streams_follow_the_schedule() {
     assert_eq!(update_pairs_v1(0), 0..16);
     assert_eq!(update_pairs_v1(3), 48..64);
-    let league = update_pairs_v1(5).filter(|&p| is_league_pair_v1(p)).collect::<Vec<_>>();
+    let league = update_pairs_v1(5)
+        .filter(|&p| is_league_pair_v1(p))
+        .collect::<Vec<_>>();
     assert_eq!(league, vec![92, 93, 94, 95]);
     assert_eq!(league_snapshot_steps_v1(0), vec![0]);
     assert_eq!(league_snapshot_steps_v1(1), vec![0]);
@@ -135,15 +144,25 @@ fn batches_league_draws_and_seat_streams_follow_the_schedule() {
     let mut counts = BTreeMap::<u64, u64>::new();
     for pair in 0..4_000 {
         let step = league_opponent_step_v1(TRAINING_SCHEDULE_SEED_V1, 31, pair);
-        assert_eq!(step, league_opponent_step_v1(TRAINING_SCHEDULE_SEED_V1, 31, pair));
+        assert_eq!(
+            step,
+            league_opponent_step_v1(TRAINING_SCHEDULE_SEED_V1, 31, pair)
+        );
         *counts.entry(step).or_default() += 1;
     }
-    assert_eq!(counts.keys().copied().collect::<Vec<_>>(), vec![0, 10, 20, 30]);
+    assert_eq!(
+        counts.keys().copied().collect::<Vec<_>>(),
+        vec![0, 10, 20, 30]
+    );
     assert!(counts.values().all(|&count| (850..1_150).contains(&count)));
     assert_eq!(league_opponent_step_v1(TRAINING_SCHEDULE_SEED_V1, 0, 12), 0);
     // Seat streams never coincide across pairs, legs, seats or seeds.
     let mut seeds = BTreeSet::new();
-    for seed in [TRAINING_SCHEDULE_SEED_V1, DEV_SEED_V1, QUALIFICATION_SEED_V1] {
+    for seed in [
+        TRAINING_SCHEDULE_SEED_V1,
+        DEV_SEED_V1,
+        QUALIFICATION_SEED_V1,
+    ] {
         for pair in 0..64 {
             for leg in 0..2 {
                 for seat in 0..2 {
@@ -175,7 +194,12 @@ fn every_campaign_deal_uses_train_decks_only() {
     }
     deals.extend((0..DEV_PAIRS_V1).map(|pair| (DEV_SEED_V1, pair)));
     let gate2 = gate2_pairs_v1(&train, &DRAKE_HATCHER_TRAIN_DECKS_V1).unwrap();
-    deals.extend(gate2.indices.iter().map(|&pair| (QUALIFICATION_SEED_V1, pair)));
+    deals.extend(
+        gate2
+            .indices
+            .iter()
+            .map(|&pair| (QUALIFICATION_SEED_V1, pair)),
+    );
     for (seed, pair) in deals {
         let deal = deal_v1(seed, pair, train.len()).unwrap();
         for index in deal.decks {
@@ -199,7 +223,11 @@ fn gate2_rule_keeps_or_replaces_indices_as_ruled() {
             .decks
             .map(|index| names[index].clone())
     };
-    let all = pairs.indices.iter().flat_map(|&p| decks_of(p)).collect::<Vec<_>>();
+    let all = pairs
+        .indices
+        .iter()
+        .flat_map(|&p| decks_of(p))
+        .collect::<Vec<_>>();
     assert!(all.iter().any(|name| name == GATE2_REQUIRED_DECK_V1));
     assert!(all
         .iter()
@@ -293,7 +321,10 @@ fn short_games_are_truncated_and_identical_for_any_worker_count_and_diagnostics(
     assert_eq!(one.len(), 6);
     for (first, second) in one.iter().zip(&three) {
         assert_eq!(first.receipt, second.receipt);
-        assert_eq!(first.terminal, TerminalV1::Truncated("max_decisions".into()));
+        assert_eq!(
+            first.terminal,
+            TerminalV1::Truncated("max_decisions".into())
+        );
         assert_eq!(first.receipt.decisions, 24);
         assert_eq!(first.retained.len(), second.retained.len());
         for (x, y) in first.retained.iter().zip(&second.retained) {
@@ -311,8 +342,14 @@ fn short_games_are_truncated_and_identical_for_any_worker_count_and_diagnostics(
     assert_eq!(one[5].receipt.learner_seats, [false, true]);
     assert_eq!(one[5].receipt.retained_decisions[0], 0);
     // The two legs of a symmetric pair start from opposite seats.
-    assert_ne!(one[0].receipt.starting_player, one[1].receipt.starting_player);
-    assert_eq!(one[4].receipt.starting_player, one[5].receipt.starting_player);
+    assert_ne!(
+        one[0].receipt.starting_player,
+        one[1].receipt.starting_player
+    );
+    assert_eq!(
+        one[4].receipt.starting_player,
+        one[5].receipt.starting_player
+    );
     // A different seat stream changes the game.
     let mut shifted = short_specs(&decks, &a, &b, 0..1, true);
     shifted[0].stream_seed += 1;
@@ -395,7 +432,10 @@ fn control_arm_centers_each_return_on_the_same_deck_in_the_other_leg() {
     let minus_ones = count(0, 1) + count(1, 0);
     let zeros = ones + minus_ones + 2 * (count(2, 0) + count(2, 1));
     assert_eq!(report["reward_counts"]["1"].as_u64().unwrap_or(0), ones);
-    assert_eq!(report["reward_counts"]["-1"].as_u64().unwrap_or(0), minus_ones);
+    assert_eq!(
+        report["reward_counts"]["-1"].as_u64().unwrap_or(0),
+        minus_ones
+    );
     assert_eq!(report["reward_counts"]["0"].as_u64().unwrap_or(0), zeros);
     assert_eq!(
         report["doubled_examples"],
@@ -433,7 +473,11 @@ fn resume_cleaning_removes_uncommitted_files_and_refuses_gaps() {
     fs::create_dir_all(&staging).unwrap();
     fs::write(staging.join("receipt.json"), b"{}").unwrap();
     fs::write(checkpoint_path_v1(&root, 2), b"{}").unwrap();
-    fs::write(root.join("checkpoints").join(".step_0003.json.staging"), b"").unwrap();
+    fs::write(
+        root.join("checkpoints").join(".step_0003.json.staging"),
+        b"",
+    )
+    .unwrap();
     assert_eq!(committed_head(&root).unwrap(), Some(1));
     clean_uncommitted(&root, 1).unwrap();
     assert!(!staging.exists());
@@ -488,11 +532,19 @@ fn receipt_host_classes_follow_the_ruled_names() {
             h.os_family = "windows".into();
         })
     };
-    admit_receipt_host_class_v1(&windows("win11-13700k", "13th Gen Intel(R) Core(TM) i7-13700K"), 24)
-        .unwrap();
-    admit_receipt_host_class_v1(&windows("win11-5900xt", "AMD Ryzen 9 5900XT 16-Core Processor"), 32)
-        .unwrap();
-    assert!(admit_receipt_host_class_v1(&windows("win11-13700k", "AMD Ryzen 9 5900XT"), 32).is_err());
+    admit_receipt_host_class_v1(
+        &windows("win11-13700k", "13th Gen Intel(R) Core(TM) i7-13700K"),
+        24,
+    )
+    .unwrap();
+    admit_receipt_host_class_v1(
+        &windows("win11-5900xt", "AMD Ryzen 9 5900XT 16-Core Processor"),
+        32,
+    )
+    .unwrap();
+    assert!(
+        admit_receipt_host_class_v1(&windows("win11-13700k", "AMD Ryzen 9 5900XT"), 32).is_err()
+    );
     let epyc = with(&|h| {
         h.short_name = "runpod-epyc-16".into();
         h.cpu_model = "AMD EPYC 9554 64-Core Processor".into();

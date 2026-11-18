@@ -42,7 +42,12 @@ fn parse(arguments: &[String]) -> Result<Options, String> {
     let mut options = Options::default();
     let mut iterator = arguments.iter();
     while let Some(argument) = iterator.next() {
-        let mut value = || iterator.next().cloned().ok_or(format!("{argument} needs a value"));
+        let mut value = || {
+            iterator
+                .next()
+                .cloned()
+                .ok_or(format!("{argument} needs a value"))
+        };
         match argument.as_str() {
             "--stage-diagnostics" => options.stage_diagnostics = true,
             "-out" => options.out = Some(value()?.into()),
@@ -96,7 +101,8 @@ fn launch(options: &Options) -> Result<LaunchV1, String> {
     };
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     let binary_sha256 = sha256_hex(
-        &std::fs::read(&executable).map_err(|error| format!("{}: {error}", executable.display()))?,
+        &std::fs::read(&executable)
+            .map_err(|error| format!("{}: {error}", executable.display()))?,
     );
     let host_class = measure_host_class_v1(
         options

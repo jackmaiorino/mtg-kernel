@@ -74,9 +74,8 @@ pub fn measure_phase<T>(
     let result = operation();
     let duration_ns = elapsed_ns(started);
     if let Some(diagnostics) = diagnostics {
-        diagnostics.record(
-            json!({"phase": phase, "checkpoint": "returned", "duration_ns": duration_ns}),
-        );
+        diagnostics
+            .record(json!({"phase": phase, "checkpoint": "returned", "duration_ns": duration_ns}));
     }
     if let Some(counter) = counter {
         counter.add(duration_ns);

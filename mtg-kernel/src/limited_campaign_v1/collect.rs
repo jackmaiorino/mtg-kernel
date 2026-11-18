@@ -242,10 +242,9 @@ pub fn play_game_v1(spec: &GameSpecV1<'_>, diagnostics: Option<&DiagnosticsV1>) 
                             (TerminalClassificationV1::Truncated, _) => TerminalV1::Truncated(
                                 format!("session ceiling: {}", terminal.terminal_reason),
                             ),
-                            (TerminalClassificationV1::Halted, _) => TerminalV1::Failed(format!(
-                                "halted: {}",
-                                terminal.terminal_reason
-                            )),
+                            (TerminalClassificationV1::Halted, _) => {
+                                TerminalV1::Failed(format!("halted: {}", terminal.terminal_reason))
+                            }
                         },
                     );
                 }
@@ -276,15 +275,16 @@ pub fn play_game_v1(spec: &GameSpecV1<'_>, diagnostics: Option<&DiagnosticsV1>) 
                     0
                 }
                 _ => {
-                    let input = measure_stage(
-                        stages.as_mut().map(|s| &mut s.authenticated_input),
-                        || session.training_input_v1(&decision),
-                    )
-                    .map_err(|error| format!("learner input {context}: {error}"))?;
-                    let logits = measure_stage(stages.as_mut().map(|s| &mut s.model_forward), || {
-                        spec.policies[actor].logits(&input)
-                    })
-                    .map_err(|error| format!("forward {context}: {error}"))?;
+                    let input =
+                        measure_stage(stages.as_mut().map(|s| &mut s.authenticated_input), || {
+                            session.training_input_v1(&decision)
+                        })
+                        .map_err(|error| format!("learner input {context}: {error}"))?;
+                    let logits =
+                        measure_stage(stages.as_mut().map(|s| &mut s.model_forward), || {
+                            spec.policies[actor].logits(&input)
+                        })
+                        .map_err(|error| format!("forward {context}: {error}"))?;
                     if logits.len() != legal {
                         return Err(format!("forward {context}: logits do not cover the menu"));
                     }
