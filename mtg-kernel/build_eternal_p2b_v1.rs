@@ -176,7 +176,7 @@ pub(super) fn mana_ability_def_for(name: &str) -> &'static str {
         // Vintage Cube wave C2c, Everflowing Chalice: "{T}: Add {C} for each
         // charge counter on this artifact."
         "Everflowing Chalice" => "Some(ManaAbilityDef { cost: ManaAbilityCostDef::TapSelf, amount: ManaAbilityAmountDef::ChargeCountersOnSourceV1, controller_damage: 0, max_activations_per_turn: None })",
-        _ => "None",
+        _ => super::build_eternal_s1q_v1::mana_ability_def_for(name),
     }
 }
 

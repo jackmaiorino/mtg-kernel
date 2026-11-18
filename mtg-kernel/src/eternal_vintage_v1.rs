@@ -1092,6 +1092,15 @@ pub(crate) fn enter_as_copy(
     if CARD_DEFS[copied_def as usize].enters_battlefield_tapped {
         state.objects.get_mut(host).tapped = true;
     }
+    // A copy of a Saga enters with its lore counter (715.3a), which the entry
+    // could not give it while it still had the Metamorph's definition
+    // (Summon: Bahamut, wave S1q).
+    if CARD_DEFS[copied_def as usize].saga.is_some()
+        && crate::trigger::saga_has_chapter_abilities(state, host)
+        && crate::event::add_lore_counters(state, host, 1).is_err()
+    {
+        halt(state, ctx.source);
+    }
 }
 
 pub(crate) fn paid_metamorph_copy_is_suppressed(state: &GameState, ctx: &ExecCtx) -> bool {
@@ -1339,6 +1348,7 @@ pub(crate) fn activation_allowed(
         )
         && crate::eternal_sideboard_s1a_v1::statics::activation_allowed(state, source)
         && crate::eternal_cube_c2b_v1::activation_allowed(state, source, name, ability_index)
+        && crate::eternal_sideboard_s1q_v1::activation_allowed(state, source, name, ability_index)
 }
 
 /// Anointed Peacekeeper: definitions named by a Peacekeeper whose printed

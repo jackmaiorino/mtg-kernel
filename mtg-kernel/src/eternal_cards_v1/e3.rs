@@ -1296,6 +1296,9 @@ pub(crate) fn drive(
         EternalOpV1::S1oV1(op) => {
             crate::eternal_sideboard_s1o_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::S1qV1(op) => {
+            crate::eternal_sideboard_s1q_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::DelayedUpkeepDrawV1 => crate::eternal_vintage_e7b_v1::dredge::drive_draws(
             state,
             continuation,

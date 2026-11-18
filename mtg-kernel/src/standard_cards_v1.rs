@@ -472,6 +472,8 @@ pub enum StandardTargetV1 {
     C4aV1(crate::eternal_cube_c4a_v1::targets::C4aTargetV1),
     /// A filter of eternal wave S1o (`eternal_sideboard_s1o_v1::targets`).
     S1oV1(crate::eternal_sideboard_s1o_v1::targets::S1oTargetV1),
+    /// A filter of eternal wave S1q (`eternal_sideboard_s1q_v1::targets`).
+    S1qV1(crate::eternal_sideboard_s1q_v1::targets::S1qTargetV1),
 }
 
 impl StandardTargetV1 {
@@ -541,6 +543,9 @@ impl StandardTargetV1 {
             return counts;
         }
         if let Some(counts) = crate::eternal_sideboard_s1o_v1::targets::counts(self) {
+            return counts;
+        }
+        if let Some(counts) = crate::eternal_sideboard_s1q_v1::targets::counts(self) {
             return counts;
         }
         match self {
@@ -1073,6 +1078,11 @@ pub(crate) fn legal_targets(
     ) {
         return targets;
     }
+    if let Some(targets) =
+        crate::eternal_sideboard_s1q_v1::targets::legal_targets(target, prefix, state)
+    {
+        return targets;
+    }
     if target.per_slot() {
         return match target.slot_kind(prefix.len()) {
             Some(None) => [PlayerId::P0, PlayerId::P1].map(Target::Player).to_vec(),
@@ -1393,6 +1403,11 @@ pub(crate) fn target_matches(
     {
         return matches;
     }
+    if let Some(matches) =
+        crate::eternal_sideboard_s1q_v1::targets::target_matches(target, object, state)
+    {
+        return matches;
+    }
     if target == StandardTargetV1::CardInAGraveyard {
         return live.zone == Zone::Graveyard && !live.v4.is_token;
     }
@@ -1640,6 +1655,8 @@ pub(crate) fn target_matches(
         StandardTargetV1::C4aV1(_) => false,
         // Answered by `eternal_sideboard_s1o_v1::targets` above.
         StandardTargetV1::S1oV1(_) => false,
+        // Answered by `eternal_sideboard_s1q_v1::targets` above.
+        StandardTargetV1::S1qV1(_) => false,
     }
 }
 
