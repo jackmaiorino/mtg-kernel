@@ -1244,6 +1244,27 @@ fn gather_sources_for_spell_restrictions_v1(
             continue;
         }
         let granted_colors = crate::standard_legends_v1::katilda_mana_colors(state, id);
+        // A permanent whose printed abilities an effect removed and that has
+        // granted mana abilities (Blood Moon, Harbinger of the Seas,
+        // Spreading Seas, Alpine Moon): nothing of its printed definition
+        // applies, neither its colors, its restricted mana, its yield nor its
+        // own gates. It is planned for exactly the colors tapping it by hand
+        // adds, one mana a tap, so the two paths cannot disagree. Eternal
+        // build only: every other build keeps the expression below.
+        if cfg!(feature = "eternal-fixtures")
+            && !granted_colors.is_empty()
+            && !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+        {
+            let choices = crate::engine::available_mana_ability_choices(player, id, state);
+            if !choices.is_empty() {
+                sources.push(ManaSource {
+                    id,
+                    choices,
+                    yield_per_tap: 1,
+                });
+            }
+            continue;
+        }
         if obj.tapped
             || (granted_colors.is_empty()
                 && !crate::continuous_characteristics_v1::printed_abilities_active(state, id))
