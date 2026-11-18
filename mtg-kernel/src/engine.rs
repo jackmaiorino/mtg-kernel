@@ -13121,7 +13121,13 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
             // Printed activated abilities belong to the front face; no
             // back face in the pool has its own.
             for (i, ability) in printed.iter().enumerate() {
-                if !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+                // Urza's Saga's chapter II ability is granted, so it stays
+                // while a land-type setter removes the printed ones (305.7).
+                if !(crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+                    || (cfg!(feature = "eternal-fixtures")
+                        && crate::eternal_vintage_v1::granted_activated_ability(
+                            state, id, def.name, i,
+                        )))
                     || !crate::standard_creatures_v1::activation_allowed(state, id, i)
                     || ability.activation_zone != zone
                     || !activated_ability_face_active(state, id, ability)
