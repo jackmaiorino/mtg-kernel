@@ -302,7 +302,7 @@ jobs:
   # Groups that build their own feature set run as parallel jobs;
   # `rust-tests` below keeps the per-OS check names. A group too long for one
   # job runs as parts named <group>, <group>-1, <group>-2 and so on (here
-  # eternal-integration and native-store, in the Limited job limited-only and
+  # native-store on Windows, in the Limited job limited-only and
   # limited-model); each part is a matrix group of its own.
   rust-test-groups:
     name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})
@@ -329,8 +329,6 @@ jobs:
           - standard
           - eternal
           - eternal-integration
-          - eternal-integration-1
-          - eternal-integration-2
           - cuda
           - native-store
           - native-store-1
@@ -343,7 +341,9 @@ jobs:
         # (2026-10-10 to 10-14), so they run on main, tags and manual
         # dispatches, which still cover every group on both systems. A Windows
         # complement dispatch runs exactly the Windows groups excluded here.
-        exclude: ${{ fromJSON((needs.detect-changes.outputs.scope == 'pr' || needs.detect-changes.outputs.scope == 'windows-pr') && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"eternal-integration"},{"os":"windows-2025","group":"eternal-integration-1"},{"os":"windows-2025","group":"eternal-integration-2"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-lib"},{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"},{"os":"windows-2025","group":"native-store-1"}]' || '[]') }}
+        # native-store-1 is a Windows-only part (see its step), so every Linux
+        # set excludes it.
+        exclude: ${{ fromJSON((needs.detect-changes.outputs.scope == 'pr' || needs.detect-changes.outputs.scope == 'windows-pr') && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"eternal-integration"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"},{"os":"ubuntu-24.04","group":"native-store-1"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-lib"},{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"},{"os":"windows-2025","group":"native-store-1"}]' || '[{"os":"ubuntu-24.04","group":"native-store-1"}]') }}
     # Linux groups use GitHub's hosted runners, which are free for this
     # public repository: the WSL runners can't be pinned to cores, so they
     # pause for any host reservation. Windows groups default to GitHub's
@@ -365,9 +365,9 @@ jobs:
     # queued for it, so name only groups it finishes faster than they
     # arrive, and clear the list to send new runs back to hosted runners.
     # Both lists name matrix groups exactly, so a group run as parts routes
-    # each part by its own name: '["eternal-integration"]' routes that
-    # group's first part, which holds its longest module, and leaves
-    # eternal-integration-1 and eternal-integration-2 on hosted runners.
+    # each part by its own name: '["native-store"]' in
+    # MTG_CI_PR_WINDOWS_GROUPS routes that group's first part and leaves
+    # native-store-1 on MTG_CI_WINDOWS_RUNNER.
     runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON(vars.MTG_CI_PR_WINDOWS_GROUPS || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
     steps:
       # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
@@ -582,32 +582,20 @@ jobs:
           cargo clippy --release --locked -p mtg-kernel --all-targets --features eternal-fixtures -- -D warnings
           python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_ has_a_fixed_seat_human_prompt full_text_v1::tests:: graveyard_order_v1::tests:: premodern_ordered_public_v1:: eternal_actor_ eternal_cost_choice_v1::
 
-      # The Eternal suite runs as three parts, one job each. Every part builds
-      # the whole suite and runs one shard of its modules: the runner places
-      # whole modules by their recorded hosted seconds
-      # (python/tools/rust_integration_module_seconds.json, with the mean for
-      # an unrecorded module), prints the plan of all three shards and fails
-      # unless it holds every module exactly once. On 2026-11-18 one module
-      # took 24 of the suite's 60 test minutes; it is shard 0 on its own, and
-      # the other two shards hold about 18 minutes each. The Standard suite on
-      # this catalog (about 4 minutes with its build) runs whole in the last
-      # part.
+      # One job. Until 2026-11-18 two tests that play every playable deck took
+      # 24 and 15 of the suite's 60 test minutes on hosted Linux, one game
+      # after another; they and six shorter deck tests now play their games
+      # on worker threads (in_parallel in tests/eternal/eternal_catalog_v1.rs).
+      # run_rust_integration_tests.py can also run the suite in shards
+      # (--shard-index, --shard-count) if it outgrows one job again.
       - name: Run the integration suites on the eternal catalog
-        if: startsWith(matrix.group, 'eternal-integration')
-        env:
-          MATRIX_GROUP: ${{ matrix.group }}
+        if: matrix.group == 'eternal-integration'
         run: |
           if [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
             export CARGO_BUILD_JOBS=2
           fi
-          shard=0
-          if [ "$MATRIX_GROUP" != eternal-integration ]; then
-            shard="${MATRIX_GROUP##*-}"
-          fi
-          python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures --shard-index "$shard" --shard-count 3
-          if [ "$shard" = 2 ]; then
-            python python/tools/run_rust_integration_tests.py standard_integration --features eternal-fixtures
-          fi
+          python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures
+          python python/tools/run_rust_integration_tests.py standard_integration --features eternal-fixtures
 
       # The library tests and all other targets are disjoint, so the two
       # halves of the workspace suite run as parallel jobs. Until 2026-11-16
@@ -657,16 +645,19 @@ jobs:
           cargo test --release --locked -p mtg-kernel --features "$features" --test s_learner_profile_v1
           python -m unittest discover -s scripts/experiments/s_learner_attribution_v1 -p test_run.py
 
-      # Two parts, one job each: the library test build and the plain library
-      # with the CLI stub test are separate whole-crate builds, which took 32
-      # and 26 minutes one after the other on hosted Windows (2026-11-18).
+      # The library test binary and the plain library with the CLI stub test
+      # are separate whole-crate builds (a test build compiles the crate with
+      # cfg(test), an integration test links the plain crate). On hosted
+      # Windows they took 32 and 26 minutes one after the other (2026-11-18),
+      # so there they are two parts, one job each. On Linux the group took 25
+      # minutes in all, so native-store runs both and has no second part.
       - name: Validate native Store production feature boundary
         if: matrix.group == 'native-store'
         run: |
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --lib native_store_production_capture_v2::
 
       - name: Validate the native Store CLI platform stub
-        if: matrix.group == 'native-store-1'
+        if: matrix.group == 'native-store-1' || (matrix.group == 'native-store' && runner.os == 'Linux')
         run: |
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --test native_cli_platform_stub_v2
 
@@ -721,7 +712,10 @@ jobs:
 
   # Every Limited group uses one feature set. One job per system builds the
   # library tests and the Limited process binaries once, as two parallel
-  # parts, instead of each of 22 groups compiling them again.
+  # parts, instead of each of 22 groups compiling them again. A third part
+  # builds the default-feature library test binary once to list its cases:
+  # the Limited-only shards need only that list, and each of them used to
+  # build the binary for it (16 minutes on hosted Linux).
   limited-build:
     name: Build shared Limited tests (${{ matrix.os }}, ${{ matrix.part }})
     needs: detect-changes
@@ -739,6 +733,7 @@ jobs:
         part:
           - tests
           - binaries
+          - default-list
     # Hosted runners only: every hosted job checks out to the same path, so
     # the source paths in Cargo's freshness records stay valid.
     runs-on: ${{ matrix.os }}
@@ -812,7 +807,40 @@ jobs:
           restore-keys: |
             cargo-registry-tests-${{ matrix.os }}-
 
+      - name: Set up pinned Python for the default library list
+        if: matrix.part == 'default-list'
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version-file: .python-version
+
+      # The workspace-lib group builds the same default-feature library test
+      # binary, so its cache (restored here, never saved) holds the
+      # dependencies; Cargo still rebuilds what changed.
+      - name: Restore the workspace library build
+        if: matrix.part == 'default-list'
+        uses: ./.github/actions/cargo-build-cache
+        with:
+          scope: tests-workspace-lib
+
+      - name: List the default-feature library cases
+        if: matrix.part == 'default-list'
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            export CARGO_BUILD_JOBS=2
+          fi
+          python python/tools/run_rust_lib_filters.py --write-default-library-list default-library-list.json
+
+      - name: Upload the default-feature library case list
+        if: matrix.part == 'default-list'
+        uses: actions/upload-artifact@v4
+        with:
+          name: limited-default-list-${{ matrix.os }}-${{ github.run_attempt }}
+          path: default-library-list.json
+          if-no-files-found: error
+          retention-days: 1
+
       - name: Build the shared Limited ${{ matrix.part }}
+        if: matrix.part != 'default-list'
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
             export CARGO_BUILD_JOBS=2
@@ -832,11 +860,13 @@ jobs:
       # Keep Cargo's fingerprints and dep-info with the outputs, so the
       # Limited groups reuse them only through Cargo's own freshness checks.
       - name: Package the shared Limited ${{ matrix.part }}
+        if: matrix.part != 'default-list'
         run: |
           tar -cf limited-${{ matrix.part }}.tar --exclude=release/incremental -C target release
           ls -l limited-${{ matrix.part }}.tar
 
       - name: Upload the shared Limited ${{ matrix.part }}
+        if: matrix.part != 'default-list'
         uses: actions/upload-artifact@v4
         with:
           name: limited-build-${{ matrix.os }}-${{ matrix.part }}-${{ github.run_attempt }}
@@ -872,9 +902,6 @@ jobs:
           - limited-only
           - limited-only-1
           - limited-only-2
-          - limited-only-3
-          - limited-only-4
-          - limited-only-5
           - limited-v2
           - limited-v5
           - limited-v3
@@ -898,14 +925,16 @@ jobs:
     # on MTG_CI_LINUX_RUNNER as in rust-test-groups (both must be set; names
     # are exact, so limited-model routes only that group's first part). A
     # routed group builds the Limited tests itself in the runner's persistent
-    # target directory instead of downloading the shared build. Pull requests
-    # from forks never run on self-hosted runners.
+    # target directory instead of downloading the shared build; a routed
+    # Limited-only shard still downloads the default library case list. Pull
+    # requests from forks never run on self-hosted runners.
     runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
     steps:
-      # The Limited-only shards compile the default-feature library test binary
-      # via default_library_names() to diff its inventory against the Limited
-      # build. Give hosted Linux shards the same swap space as the other
-      # heavy Rust builds so rustc does not exhaust the 16 GB VM memory limit
+      # The Limited-only shards diff the default-feature library's case list
+      # against the Limited build. The limited-build job now writes that list
+      # once, but a shard run without it (by hand, or with an older workflow)
+      # compiles the default-feature library test binary itself, so hosted
+      # Linux shards keep the same swap space as the other heavy Rust builds
       # (the step adds compressed memory, not a swap file: see the note at
       # the first swap step of this workflow, job rust-quality).
       - name: Add swap space for Limited-only default-library builds
@@ -1000,23 +1029,22 @@ jobs:
         with:
           python-version-file: .python-version
 
-      # The parts of a group (<group>, <group>-1, ...) share one persistent
-      # target directory on a self-hosted runner, as in rust-test-groups.
       - name: Use the runner's persistent target directory
-        env:
-          MATRIX_GROUP: ${{ matrix.group }}
         run: |
           if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
-            build_group="${MATRIX_GROUP%-[0-9]*}"
-            target_dir="$MTG_CI_TARGET_ROOT/$build_group"
+            target_dir="$MTG_CI_TARGET_ROOT/${{ matrix.group }}"
             if [ "$RUNNER_OS" = Windows ]; then
-              target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/$build_group")"
+              target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/${{ matrix.group }}")"
             fi
             printf 'CARGO_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
             # With a persistent target directory, incremental compilation
             # rebuilds only the changed parts of the mtg-kernel crate. It
-            # does not change program semantics.
-            echo 'CARGO_PROFILE_RELEASE_INCREMENTAL=true' >> "$GITHUB_ENV"
+            # does not change program semantics. It holds more memory, so a
+            # runner with little of it sets MTG_CI_INCREMENTAL=false, as in
+            # rust-test-groups.
+            if [ "${MTG_CI_INCREMENTAL:-true}" != false ]; then
+              echo 'CARGO_PROFILE_RELEASE_INCREMENTAL=true' >> "$GITHUB_ENV"
+            fi
           fi
 
       - name: Cache cargo registry
@@ -1206,6 +1234,8 @@ jobs:
       # names by recorded duration (python/tools/rust_case_seconds.json).
       # Give each exact case its own 30-minute bound with at most four children,
       # retaining immediate panic details and the complete original inventories.
+      # Ten shards: with eight, the longest shard ran 37 and 43 minutes in the
+      # two runs of 2026-11-18 and ended near minute 60 and 65.
       - name: Validate complete current mixed model and Human subtrees
         if: ${{ !cancelled() && startsWith(matrix.group, 'limited-model') }}
         run: |
@@ -1240,10 +1270,20 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      # Six shards. Each one first builds the default-feature library test
-      # binary to list its cases (16 minutes on hosted Linux), then runs its
-      # share of the cases: on 2026-11-18 each of the two shards of that day
-      # ran 35 minutes of cases.
+      # The default-feature case names come from the limited-build job's
+      # default-list part, so a shard builds nothing: it runs its share of
+      # the cases (on 2026-11-18 the two shards of that day ran 35 minutes
+      # of cases each; three shards hold about 23 minutes each).
+      - name: Download the default-feature library case list
+        if: ${{ !cancelled() && startsWith(matrix.group, 'limited-only') }}
+        uses: actions/download-artifact@v4
+        with:
+          # A partial retry keeps the list of the prior attempt; the step
+          # below takes the newest.
+          pattern: limited-default-list-${{ matrix.os }}-*
+          merge-multiple: false
+          path: limited-default-list
+
       - name: Validate every other Limited-only library case
         if: ${{ !cancelled() && startsWith(matrix.group, 'limited-only') }}
         run: |
@@ -1255,7 +1295,9 @@ jobs:
             shard='${{ matrix.group }}'
             shard="${shard##*-}"
           fi
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 6 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml
+          list=$(find limited-default-list -mindepth 2 -maxdepth 2 -type f -name default-library-list.json | sort -V | tail -n 1)
+          test -n "$list" || { echo "Missing the default library case list" >&2; exit 1; }
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 3 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml --default-library-list "$list"
 
       - name: Report the hosted Linux runner's memory use
         if: always() && steps.memory_guard.outcome == 'success'
