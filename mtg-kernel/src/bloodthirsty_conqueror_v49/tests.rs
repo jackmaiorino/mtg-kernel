@@ -653,7 +653,7 @@ pub(crate) mod future_printed {
             assert_eq!(completed, state);
             validate(&completed).unwrap();
             assert!(!matches!(next(&mut completed), Decision::Halted { .. }));
-            for case in 0..4 {
+            for case in 0..5 {
                 let mut bad = state.clone();
                 if case == 0 {
                     // Erase the sidecar and keep every later journal index
@@ -686,15 +686,26 @@ pub(crate) mod future_printed {
                     let mut value =
                         serde_json::to_value(&bad.engine.event_history[sidecar]).unwrap();
                     let runner = &mut value["ConquerorGainReplayBorrowV49"]["borrow"]["runner"];
-                    match case {
-                        1 => *runner = serde_json::Value::Null,
-                        2 => {
-                            runner["original_sha256"] =
-                                serde_json::Value::String(format!("v2:{}", "0".repeat(64)))
+                    let refusal = match case {
+                        1 => {
+                            *runner = serde_json::Value::Null;
+                            "Conqueror gain replay borrow lost its Runner"
                         }
-                        _ => runner["original_history_len"] = serde_json::json!(0),
-                    }
+                        2 => {
+                            runner["original_sha256"] = serde_json::json!("v2:not-a-digest");
+                            "Conqueror gain replay Runner lost its origin digest"
+                        }
+                        3 => {
+                            runner["original_history_len"] = serde_json::json!(0);
+                            "Conqueror gain replay Runner began outside its resolution"
+                        }
+                        _ => {
+                            runner["original_history_len"] = serde_json::json!(u32::MAX);
+                            "Conqueror gain replay Runner began outside its resolution"
+                        }
+                    };
                     bad.engine.event_history[sidecar] = serde_json::from_value(value).unwrap();
+                    assert_eq!(validate(&bad), Err(refusal.into()));
                 }
                 let before = bad.clone();
                 assert!(

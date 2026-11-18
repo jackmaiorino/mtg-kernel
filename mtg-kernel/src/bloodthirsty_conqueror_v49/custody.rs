@@ -396,16 +396,13 @@ fn runner_needed(
     let replayed = plain.engine.event_history.range_v2(start..);
     Ok(replayed != real.engine.event_history.range_v2(start..))
 }
-/// The saved world at the start of the Conqueror resolution, for binding a
-/// borrowed Runner to its genuine enclosing Advance.
-fn removal_world(state: &GameState, removal: u64) -> Result<GameState, String> {
+/// The history index of the saved resolution input, the latest point at
+/// which the enclosing Advance of the resolution can have begun.
+fn resolution_input(state: &GameState, removal: u64) -> Result<u64, String> {
     let JournalV49::Removed { input, .. } = journal(state, removal)? else {
         return Err("Conqueror removal absent".into());
     };
-    let JournalV49::RemovalInput { world, .. } = journal(state, *input)? else {
-        return Err("Conqueror removal lost independent actual input".into());
-    };
-    world.restore(state, *input)
+    Ok(*input)
 }
 fn validate_removal(state: &GameState, at: u64) -> Result<(u64, bool, &StackItem), String> {
     let JournalV49::Removed {
@@ -454,7 +451,7 @@ fn validate_gain(state: &GameState, at: u64) -> Result<u64, String> {
     else {
         return Err("Conqueror gain lost independent actual input".into());
     };
-    let (_, countered, item) = validate_removal(state, *removal)?;
+    let (published, countered, item) = validate_removal(state, *removal)?;
     if countered
         || *input <= *removal
         || *gain_history_index <= *input
@@ -521,13 +518,15 @@ fn validate_gain(state: &GameState, at: u64) -> Result<u64, String> {
             // Outside Drake custody a sidecar is genuine only where the
             // Runner-less replay differs from the gain under the actual
             // enclosing Runner, which must be the Runner of this resolution.
-            let original = removal_world(state, *removal)?;
+            let resolution = resolution_input(state, *removal)?;
             let gain = crate::event::ProposedEvent::life_gain(source.controller, amount);
             let base = replay.engine.event_history.len();
             let mut owned = replay.clone();
             crate::linked_aura_operation_v1::with_conqueror_runner_borrow_v49(
                 &mut owned,
-                &original,
+                item,
+                published,
+                resolution,
                 borrow,
                 |owned| {
                     crate::event::propose_and_commit(owned, gain.clone());
@@ -545,7 +544,9 @@ fn validate_gain(state: &GameState, at: u64) -> Result<u64, String> {
             let start = replay.engine.event_history.len();
             crate::linked_aura_operation_v1::with_conqueror_runner_borrow_v49(
                 &mut replay,
-                &original,
+                item,
+                published,
+                resolution,
                 borrow,
                 |replay| {
                     crate::event::propose_and_commit(replay, gain);
