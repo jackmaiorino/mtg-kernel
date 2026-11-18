@@ -41,6 +41,8 @@ OPT_MAIN_CEILING_SOURCE = "fd9ff09ad4785dcbfabeb1238eb2f77b657c29b9"
 OPT_PACK2_MULL_SOURCE = "675e2c038ecdcd94a2901080ef8ad16098c57ddb"
 # The same plus the shared-buffer capacity fix (review finding 1 on the PR 592 backport).
 OPT_PACK2B_MULL_SOURCE = "9d2e7bd6ab01e02abe14bf65d5f39206ade8056f"
+# The same after the review changes of the capacity fix (exact-size copy, parse-ahead charge).
+OPT_PACK2C_MULL_SOURCE = "76f8b18a03f6e40044a46a17097ee3b042fddd24"
 # Target-flag variant of a build-qualification build (this guard branch only); build.sh maps the name to flags.
 TARGET_CPUS = ("default", "x86-64-v3-no-fma", "x86-64-v3", "znver5", "znver3")
 TARGET_CPU = os.environ.get("PINNED_TARGET_CPU", "default")
@@ -59,6 +61,7 @@ SOURCES = (
     OPT_MAIN_CEILING_SOURCE,
     OPT_PACK2_MULL_SOURCE,
     OPT_PACK2B_MULL_SOURCE,
+    OPT_PACK2C_MULL_SOURCE,
 )
 IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
 GIB = 2**30
