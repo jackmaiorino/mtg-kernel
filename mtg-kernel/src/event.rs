@@ -6522,6 +6522,15 @@ fn materialize_event_v1(
             // Sword of the Meek (Vintage Cube wave C4c) reads the power and
             // toughness a creature enters with, after its entry counters.
             crate::eternal_cube_c4c_v1::apply_entry(state, object);
+            // Staff of the Storyteller (Vintage Cube wave C3c) notes the
+            // Staffs that see this creature token being created.
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_cube_c3c_v1::note_token_created(
+                state,
+                object,
+                t.token_def,
+                t.controller,
+            );
             if crate::ajani_full_v42::selected_definition(t.token_def) {
                 crate::planeswalker_v1::after_zone_change(state, object, counter_input.as_ref());
                 crate::ajani_full_v42::lifecycle::initialize_entry(state, object);

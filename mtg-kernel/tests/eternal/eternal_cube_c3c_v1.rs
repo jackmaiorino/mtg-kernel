@@ -1650,6 +1650,77 @@ fn currency_converter_triggers_once_per_converter_for_a_discard() {
     assert_eq!(named(&state, P0, "Rogue Token").len(), 1);
 }
 
+/// Kolaghan's Command's mode pairs used here, in printed order: discard (B)
+/// and destroy an artifact (C), destroy an artifact and 2 damage (D).
+const KC_BC: u8 = 3;
+const KC_CD: u8 = 5;
+
+#[test]
+fn currency_converter_release_on_the_stack_finds_a_card_exiled_after_the_converter_left() {
+    // 607.2a: P0 activates the release with nothing exiled yet and holds
+    // priority, cycles Hollow One (the discard trigger goes above the
+    // release) and destroys the Converter with Kolaghan's Command. The
+    // trigger still exiles Hollow One, linked to that Converter, and the
+    // release of the same Converter, still on the stack, puts it back.
+    let (mut state, converter, hand) = converter_game(&["Hollow One", "Kolaghan's Command"]);
+    let (hollow, command) = (hand[0], hand[1]);
+    activate(&mut state, converter, 1, &[]);
+    pool(&mut state, P0, &[], 2);
+    activate(&mut state, hollow, 0, &[]);
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::R], 1);
+    cast_mode(
+        &mut state,
+        command,
+        KC_CD,
+        &[Target::Object(converter), Target::Player(P1)],
+    );
+    let mut asked = 0;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption { .. } => {
+            asked += 1;
+            Action::ChooseEffectOption(0)
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(asked, 1, "the may-exile choice");
+    assert_eq!(zone(&state, converter), Zone::Graveyard);
+    assert_eq!(life(&state, P1), 18);
+    assert_eq!(
+        zone(&state, hollow),
+        Zone::Graveyard,
+        "the release put it back"
+    );
+    assert_eq!(named(&state, P0, "Rogue Token").len(), 1);
+}
+
+#[test]
+fn currency_converter_triggers_for_a_discard_although_the_same_spell_then_destroys_it() {
+    // 603.2: the trigger condition is checked as the card is discarded.
+    // Kolaghan's Command makes P0 discard first and then destroys the
+    // Converter, and the Converter's trigger is still put on the stack.
+    let (mut state, converter, hand) = converter_game(&["Kolaghan's Command", "Lightning Bolt"]);
+    let (command, bolt) = (hand[0], hand[1]);
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::R], 1);
+    cast_mode(
+        &mut state,
+        command,
+        KC_BC,
+        &[Target::Player(P0), Target::Object(converter)],
+    );
+    let mut asked = 0;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::Discard { .. } => Action::Discard(vec![bolt]),
+        Decision::ChooseEffectOption { .. } => {
+            asked += 1;
+            Action::ChooseEffectOption(0)
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, converter), Zone::Graveyard);
+    assert_eq!(asked, 1, "the destroyed Converter's trigger");
+    assert_eq!(zone(&state, bolt), Zone::Exile);
+}
+
 // ---- Staff of the Storyteller --------------------------------------------------------
 
 #[test]
@@ -1750,6 +1821,55 @@ fn staff_of_the_storyteller_ignores_noncreature_tokens_and_opponents_tokens() {
     settled(&mut state);
     assert_eq!(charge(&state, first), 1);
     assert_eq!(charge(&state, second), 1);
+}
+
+#[test]
+fn staff_of_the_storyteller_sees_the_battlefield_as_the_token_is_created() {
+    // 603.2: the trigger condition is checked as the token is created. The
+    // two commits stand in for one resolution that creates a creature token
+    // and then destroys the Staff: its trigger is still put on the stack (and
+    // finds no Staff to put a counter on).
+    let mut state = plains();
+    let staff = put(
+        &mut state,
+        P0,
+        "Staff of the Storyteller",
+        Zone::Battlefield,
+    );
+    next(&mut state);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::create_token(id("Servo Token"), P0),
+    );
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(staff, Zone::Graveyard),
+    );
+    next(&mut state);
+    assert!(
+        state.stack.iter().any(|item| item.source == staff),
+        "the departed Staff's trigger: {:#?}",
+        state.stack
+    );
+    settled(&mut state);
+    assert_eq!(named(&state, P0, "Servo Token").len(), 1);
+
+    // A Staff that arrives after the token was created, before the
+    // collection, does not trigger for it.
+    let mut state = plains();
+    next(&mut state);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::create_token(id("Servo Token"), P0),
+    );
+    let staff = put(
+        &mut state,
+        P0,
+        "Staff of the Storyteller",
+        Zone::Battlefield,
+    );
+    settled(&mut state);
+    assert_eq!(charge(&state, staff), 0);
 }
 
 #[test]
