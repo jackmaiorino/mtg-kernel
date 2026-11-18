@@ -568,14 +568,16 @@ fn sqrt_matches_the_platform_over_a_geometric_grid() {
 /// corrections `1 - beta^t`, whose relative error is then far below the
 /// `epsilon = 1e-8` in the update's denominator.
 ///
-/// Order, against the standard library's `powi`: on current toolchains it
-/// multiplies in the same order (binary exponentiation from the lowest bit),
-/// so the two agree closely; the bound is `64 * f64::EPSILON` relative, loose
-/// enough for a library that rounds differently somewhere. This comparison
-/// guards the multiplication order; it is not an accuracy claim. Neither
-/// comparison is what makes checkpoints bit-identical across platforms:
-/// `powi_v2` uses IEEE multiplication only, so its bits are fixed everywhere.
-/// Exponent `0` gives exactly `1` and exponent `1` exactly the base.
+/// The standard library's `powi` is compared under the same accuracy bound.
+/// Its precision is unspecified and differs by platform: where it is binary
+/// exponentiation from the lowest bit it agrees with `powi_v2` far more
+/// closely, but hosted Windows differed from `powi_v2` by about 64 epsilon at
+/// `0.95^372`, as a reference near the accurate value does. So this
+/// comparison carries the accuracy bound too and says nothing about the
+/// order of multiplications. Neither comparison is what makes checkpoints
+/// bit-identical across platforms: `powi_v2` uses IEEE multiplication only,
+/// so its bits are fixed everywhere. Exponent `0` gives exactly `1` and
+/// exponent `1` exactly the base.
 #[test]
 fn powi_matches_the_platform_for_adam_bias_corrections() {
     for base in [0.5_f64, 0.9, 0.95, 0.99, 0.999, 0.9999] {
@@ -588,10 +590,10 @@ fn powi_matches_the_platform_for_adam_bias_corrections() {
                 (ours - accurate).abs() <= 512. * f64::EPSILON * accurate,
                 "accuracy {base}^{exponent}: {ours:e} vs powf {accurate:e}"
             );
-            let same_order = base.powi(exponent as i32);
+            let platform = base.powi(exponent as i32);
             assert!(
-                (ours - same_order).abs() <= 64. * f64::EPSILON * same_order,
-                "order {base}^{exponent}: {ours:e} vs powi {same_order:e}"
+                (ours - platform).abs() <= 512. * f64::EPSILON * platform,
+                "accuracy {base}^{exponent}: {ours:e} vs powi {platform:e}"
             );
         }
     }
