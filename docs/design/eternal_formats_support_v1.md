@@ -2618,8 +2618,9 @@ S1q is built in `src/eternal_sideboard_s1q_v1.rs`, `src/eternal_sideboard_s1q_v1
 and `build_eternal_s1q_v1.rs`, linked after S1o and before C1a in the recipe and trigger
 chains; the mana-ability table is reached from the tail of P2b's and the Saga table from the
 tail of the Vintage table's. Behavior follows each card's current Oracle text and rulings
-(Scryfall, read 2026-11-17) and rules 400.7, 601.2g, 601.2h, 602.2, 608.2b, 702.84 (unearth)
-and 714 (Sagas), with the waterbend and exhaust reminder text:
+(Scryfall, read 2026-11-17) and the Comprehensive Rules of 2026-11-06: 400.7, 601.2f to 601.2h,
+602.2, 608.2b, 701.67 (waterbend), 702.84 (unearth), 702.177 (exhaust), 704.5s and 715 (Sagas,
+715.1a for a Saga that is also a creature):
 
 - Cityscape Leveler, {8}, Artifact Creature - Construct 8/8: "Trample. When you cast this
   spell and whenever this creature attacks, destroy up to one target nonland permanent. Its
@@ -2653,27 +2654,41 @@ and 714 (Sagas), with the waterbend and exhaust reminder text:
   summoning-sick creatures included, since the cost has no {T}. Every legal payment of the
   printed cost is one of these and no other is offered:
   - the four share one exhaust record per object (`S1qStateV1::exhausted`, written when the
-    costs are paid), so none is offered again for that object; a Submersible that changed
-    zones is a new object and may activate it again (the ruling);
+    costs are paid), so none is offered again for that object (702.177a, "Activate only
+    once"); a Submersible that changed zones is a new object (400.7) and may activate it
+    again (the ruling);
   - a tap that would leave the mana part unpayable (a mana creature the rest of the payment
     needs) is not offered (`retain_payable_waterbend_taps`, called from
     `engine::activation_controlled_cost_candidates` for a pending Submersible activation), and
     a payment is offered only if some choice of its taps leaves its mana payable
     (`activation_allowed`);
-  - a cost reduction applies to the waterbend {3} (Forensic Gadgeteer: {2}), the mana part is
-    that total less the taps, and no payment taps more permanents than the reduced total
-    (the ruling); a cost increase (Anointed Peacekeeper, Gloom) is added to the mana part
-    (`waterbend_mana`, called from `engine::reduced_activation_mana_cost`).
+  - every payment's mana comes from the engine's one activation total
+    (`engine::activation_total_mana_cost`, 601.2f), which the payment, the payable check,
+    the tap candidates and the component precheck all read: the printed {3}
+    (`waterbend_printed`), plus the increases (Anointed Peacekeeper, Gloom), minus the
+    floorless reductions (none apply), minus Forensic Gadgeteer's floored reduction; then the
+    payment's taps come off that total (`waterbend_taps_paid`, 601.2h: each tap pays {1}),
+    and only then Agatha's Soul Cauldron's conversion, which leaves generic mana alone. A
+    payment taps at most three permanents, the generic mana of the waterbend cost, however
+    the total changed (701.67b and the ruling), and never more than the total: with the
+    Gadgeteer alone the total is {2} and at most two taps; with a Peacekeeper tax alone it is
+    {5}, three taps and {2} more; with both it is {4}, three taps and {1} more. The
+    Cauldron's conversion cannot reach this ability: the Cauldron grants abilities of
+    creature cards (the Submersible is a Vehicle card), its "any color" spending acts on
+    colored pips and this cost has none, and the Submersible is a creature only once its
+    exhaust ability is used.
   The animation has no duration: the incarnation is recorded (`S1qStateV1::animated`) and
   `engine::object_has_type` answers Creature for it, after the stationed Battleship's check.
   The printed 0/0 and three counters make a 3/3. Both records are absent from snapshots and
   hashes while empty and drop entries whose object left the battlefield as a turn begins.
+  Neither is a record of "this turn": both are keyed by the object's incarnation, so the
+  turn identity rule (#741) does not apply to them.
 - Summon: Bahamut, {9}, Enchantment Creature - Saga Dragon 9/9: "(As this Saga enters and after
   your draw step, add a lore counter. Sacrifice after IV.) I, II - Destroy up to one target
   nonland permanent. III - Draw two cards. IV - Mega Flare - This creature deals damage equal
   to the total mana value of other permanents you control to each opponent. Flying". The
-  shared Saga rules (entry lore, the precombat main lore counter, 714.4's sacrifice) apply to a
-  creature as to any Saga. Chapters I and II are distinct program values with the Leveler's
+  shared Saga rules (715.3a's entry lore, 715.3c's lore counter as the precombat main phase
+  begins, 704.5s's sacrifice) apply to a creature as to any Saga (715.1a). Chapters I and II are distinct program values with the Leveler's
   target filter (so stack provenance names the right chapter), III is an ordinary draw of two
   and IV sums `object_mana_value` over the other permanents its controller controls as it
   resolves and deals that much damage from the Saga to the opponent (the ruling). A blinked
@@ -2685,7 +2700,7 @@ classification test. Each shared path is guarded so the frozen Pauper, FDN and S
 builds do not change: every new call is under `eternal-fixtures` and returns at once unless
 the source is one of these printed names (which occur only in the eternal registry) or the
 wave's state holds a record (`object_has_type`, the produced-mana hook, the activation paid
-and allowed hooks, the activation cost reduction and the tap candidates); the filter arms in
+and allowed hooks, the activation total and the tap candidates); the filter arms in
 `standard_cards_v1`, `rules_vector_v1::meaning::targets` and `flagbearer` answer only the new
 filter; `engine::activation_mana_payment` became `pub(crate)` without other change.
 
@@ -2707,11 +2722,13 @@ exile, the Powerstone mana paying an artifact spell and an ability but not a non
 the Submersible's bounce (other permanents only, none), each of the four waterbend payments
 with summoning-sick creatures and the Vehicle itself tapped, exhaust once only, the animation
 lasting into later turns and the Submersible attacking, a blink resetting exhaust, a mana
-creature withheld from the taps, the Gadgeteer reduction, Bahamut's four chapters with the
+creature withheld from the taps, the Gadgeteer reduction alone, a Peacekeeper tax alone and
+both together, Bahamut's four chapters with the
 Mega Flare count and the sacrifice, chapters with no target and a blink restarting at chapter
 I, each in both seats, and plays a Tron deck against a blue artifact deck through public
-schema-5 sessions in both seats under ranked and seeded random policies with replay checks.
-`tests/eternal/eternal_bo3_v1.rs` plays `legacy-tron` in a seeded best-of-three match with
+schema-5 sessions in both seats under ranked and seeded random policies with replay checks,
+including at least one waterbend tap chosen through the session's `choose_cost_target`
+action. `tests/eternal/eternal_bo3_v1.rs` plays `legacy-tron` in a seeded best-of-three match with
 random sideboarding.
 
 ## Vintage Cube
