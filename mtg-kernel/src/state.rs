@@ -2778,6 +2778,15 @@ impl GameState {
             .map_or(self.turn, |turn| turn.occurrence)
     }
 
+    /// The turn in progress: `turn_key_v1()` with the active player. Both
+    /// players' turns of one round share `turn_key_v1()` until the extra-turn
+    /// scheduler is installed, so a record that means "this turn" is keyed by
+    /// this pair, or is cleared when each turn begins, never by the round
+    /// number alone.
+    pub(crate) fn turn_id_v1(&self) -> (u32, PlayerId) {
+        (self.turn_key_v1(), self.active_player)
+    }
+
     pub(crate) fn own_turn_count_v1(&self, player: PlayerId) -> u32 {
         self.extra_turn_v1
             .as_ref()

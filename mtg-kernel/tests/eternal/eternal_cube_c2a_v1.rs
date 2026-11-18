@@ -818,6 +818,66 @@ fn a_shockland_that_enters_tapped_for_another_reason_still_asks() {
 }
 
 #[test]
+fn a_land_that_enters_tapped_enters_untapped_under_blood_moon() {
+    // Blood Moon makes the entering nonbasic land a Mountain with no
+    // rules-text abilities (305.7), and the land is checked as it would
+    // exist on the battlefield (614.12): its printed "enters tapped" and its
+    // "enters tapped unless" rule are gone, so it enters untapped.
+    for name in ["Raugrin Triome", "Commercial District", "Botanical Sanctum"] {
+        for moon_first in [false, true] {
+            let mut state = plains();
+            // Three other lands: Botanical Sanctum would enter tapped.
+            for _ in 0..3 {
+                put(&mut state, P0, "Plains", Zone::Battlefield);
+            }
+            if moon_first {
+                let moon = put(&mut state, P1, "Blood Moon", Zone::Hand);
+                enter(&mut state, moon);
+                settled(&mut state);
+                assert_eq!(zone(&state, moon), Zone::Battlefield);
+            }
+            let land = put(&mut state, P0, name, Zone::Hand);
+            play(&mut state, land);
+            expect_priority(&mut state);
+            assert_eq!(zone(&state, land), Zone::Battlefield, "{name}");
+            assert_eq!(is_tapped(&state, land), !moon_first, "{name}");
+            if moon_first {
+                assert!(
+                    taps_single(&state, land, ManaColor::R),
+                    "{name} is a Mountain"
+                );
+            }
+        }
+        // Put onto the battlefield by an effect: the same check.
+        let mut state = plains();
+        let moon = put(&mut state, P1, "Blood Moon", Zone::Hand);
+        enter(&mut state, moon);
+        settled(&mut state);
+        let land = put(&mut state, P0, name, Zone::Hand);
+        enter(&mut state, land);
+        settled(&mut state);
+        assert_eq!(zone(&state, land), Zone::Battlefield, "{name}");
+        assert!(!is_tapped(&state, land), "{name}");
+    }
+}
+
+#[test]
+fn a_land_under_blood_moon_still_enters_tapped_for_another_reason() {
+    // Archon of Emeria's effect is not the land's own ability: Blood Moon
+    // does not remove it.
+    let mut state = plains();
+    let moon = put(&mut state, P1, "Blood Moon", Zone::Hand);
+    enter(&mut state, moon);
+    settled(&mut state);
+    put(&mut state, P1, "Archon of Emeria", Zone::Battlefield);
+    let land = put(&mut state, P0, "Raugrin Triome", Zone::Hand);
+    play(&mut state, land);
+    expect_priority(&mut state);
+    assert_eq!(zone(&state, land), Zone::Battlefield);
+    assert!(is_tapped(&state, land), "the Archon's tapped entry stands");
+}
+
+#[test]
 fn a_shockland_asks_however_it_enters_the_battlefield() {
     // Put onto the battlefield by an effect.
     for pay in [true, false] {

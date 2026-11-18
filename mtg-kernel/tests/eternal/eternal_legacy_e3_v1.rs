@@ -889,6 +889,39 @@ fn veil_of_summer_gives_hexproof_from_blue_and_black_this_turn() {
     }
 }
 
+#[test]
+fn veil_of_summer_cast_in_the_opponents_turn_ends_before_its_controllers_turn() {
+    let mut state = islands();
+    let veil = put(&mut state, P1, "Veil of Summer", Zone::Hand);
+    // P1 casts Veil in P0's turn.
+    pass_until(&mut state, |state| state.priority_player == P1);
+    assert_eq!(state.active_player, P0);
+    pool(&mut state, P1, &[ManaColor::G], 0);
+    cast(&mut state, veil, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(veil).zone, Zone::Graveyard);
+
+    // P1's turn of the same round is another turn: Veil's "this turn" is
+    // over, so a blue spell from P0 may target P1 again.
+    let round = state.turn;
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::Main1 && state.priority_player == P0
+    });
+    assert_eq!(state.turn, round, "the same round");
+    let scour = put(&mut state, P0, "Thought Scour", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    act(&mut state, Action::CastSpell(scour));
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(
+                legal_targets.contains(&Target::Player(P1)),
+                "{legal_targets:?}"
+            );
+        }
+        other => panic!("expected targets, got {other:?}"),
+    }
+}
+
 // ---- Flusterstorm ---------------------------------------------------------------------------------
 
 #[test]

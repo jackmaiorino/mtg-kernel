@@ -265,6 +265,22 @@ fn settle_option(state: &mut GameState, option: u16) {
     });
 }
 
+/// Settles, choosing to search when a "may search" asks and then choosing
+/// `object` whenever a selection offers it.
+fn settle_searching_for(state: &mut GameState, object: ObjectId) {
+    settle_with(state, |_, decision| match decision {
+        Decision::ChooseEffectOption {
+            option_count: 2, ..
+        } => Action::ChooseEffectOption(1),
+        Decision::ChooseEffectTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(object)) =>
+        {
+            Action::ChooseEffectTarget(Target::Object(object))
+        }
+        other => first_answer(other),
+    });
+}
+
 fn priority(state: &mut GameState) -> (Vec<ObjectId>, Vec<(ObjectId, u8)>) {
     match next(state) {
         Decision::CastSpellOrPass {
@@ -1121,14 +1137,14 @@ fn heaped_harvest_finds_a_basic_land_on_entry_and_when_sacrificed() {
     let harvest = put(&mut state, P0, "Heaped Harvest", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::G], 2);
     cast(&mut state, harvest, &[]);
-    settle_choosing(&mut state, first);
+    settle_searching_for(&mut state, first);
     assert_eq!(zone(&state, first), Zone::Battlefield);
     assert!(state.objects.get(first).tapped);
 
     let second = put(&mut state, P0, "Forest", Zone::Library);
     pool(&mut state, P0, &[], 2);
     activate(&mut state, harvest, 0, &[]);
-    settle_choosing(&mut state, second);
+    settle_searching_for(&mut state, second);
     assert_eq!(zone(&state, harvest), Zone::Graveyard);
     assert_eq!(state.players[0].life, 23);
     assert_eq!(zone(&state, second), Zone::Battlefield, "sacrificed");
@@ -1273,6 +1289,43 @@ fn desperate_ritual_adds_three_red_and_splices_onto_arcane() {
     act(&mut state, Action::ChooseEffectOption(1));
     settled(&mut state);
     assert_eq!(mana(&state, P0, ManaColor::R), 3);
+}
+
+/// Splice is an additional cost (118.9d, 601.2f): Ethereal Haze cast through
+/// Omniscience without paying its mana cost still pays {1}{R} for a spliced
+/// Desperate Ritual, which adds {R}{R}{R} as the Haze resolves.
+#[test]
+fn ethereal_haze_cast_without_its_mana_cost_still_pays_for_a_splice_both_seats() {
+    for player in [P0, P1] {
+        let mut state = plains();
+        state.priority_player = player;
+        put(&mut state, player, "Omniscience", Zone::Battlefield);
+        let haze = put(&mut state, player, "Ethereal Haze", Zone::Hand);
+        let ritual = put(&mut state, player, "Desperate Ritual", Zone::Hand);
+        // Only {1}{R}: the Haze's own {W} is not payable, one splice is.
+        pool(&mut state, player, &[ManaColor::R], 1);
+        assert!(castable(&mut state, haze));
+        act(&mut state, Action::CastSpell(haze));
+        let mut counts = Vec::new();
+        for _ in 0..4 {
+            match next(&mut state) {
+                // Not paying the mana cost, then one splice.
+                Decision::ChooseEffectOption { option_count, .. } => {
+                    counts.push(option_count);
+                    act(&mut state, Action::ChooseEffectOption(1));
+                }
+                Decision::CastSpellOrPass { .. } => break,
+                decision => panic!("unexpected decision: {decision:?}"),
+            }
+        }
+        assert_eq!(counts.last(), Some(&2), "no splice or one");
+        assert_eq!(mana(&state, player, ManaColor::R), 0, "{{1}}{{R}} paid");
+        assert_eq!(mana(&state, player, ManaColor::C), 0);
+        assert!(hand_contains(&state, player, ritual), "it stays in hand");
+        settled(&mut state);
+        assert_eq!(mana(&state, player, ManaColor::R), 3, "spliced");
+        assert_eq!(state.objects.get(haze).zone, Zone::Graveyard);
+    }
 }
 
 #[test]

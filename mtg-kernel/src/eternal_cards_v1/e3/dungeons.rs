@@ -876,6 +876,12 @@ pub(crate) fn resolution_cast_card(
         .and_then(|&target| choice.binding_for(target))
 }
 
+/// The largest mana value the spell a resolution cast answer casts may have,
+/// if it is limited (cascade).
+pub(crate) fn resolution_cast_limit(choice: &E3ChoiceV1) -> Option<u16> {
+    crate::eternal_legacy_e5b_v1::resolution_cast_limit(choice)
+}
+
 /// Authenticates the cast a Mad Wizard's Lair answer authorized.
 pub(crate) fn validate_resolution_cast(
     suspended: &EffectContinuation,

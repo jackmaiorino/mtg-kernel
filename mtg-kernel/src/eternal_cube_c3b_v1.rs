@@ -38,7 +38,7 @@
 //!   card with exalted needs one row in `EXALTED_SOURCES`.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
-use crate::card_def::{card_id_by_name, CardType, Keywords, Subtype, TargetSpec, CARD_DEFS};
+use crate::card_def::{card_id_by_name, CardType, Keywords, Subtype, TargetSpec};
 use crate::effect::{
     EffectContinuation, EffectObjectBinding, EffectOp, ExecCtx, LibraryCardFilter, PlayerRef,
 };
@@ -145,13 +145,16 @@ pub fn tracker_counter() -> EffectOp {
 
 /// Spellseeker: "When this creature enters, you may search your library for
 /// an instant or sorcery card with mana value 2 or less, reveal it, put it
-/// into your hand, then shuffle." (Heliod's Pilgrim's search: finding
-/// nothing is always an allowed answer.)
+/// into your hand, then shuffle." (Heliod's Pilgrim's search: declining does
+/// not shuffle, and a search may find nothing.)
 pub fn spellseeker_search() -> EffectOp {
-    EffectOp::SearchLibraryToHand {
-        player: PlayerRef::Controller,
-        filter: LibraryCardFilter::InstantOrSorceryManaValueAtMostV1(2),
-    }
+    crate::eternal_cards_v1::may_search(
+        PlayerRef::Controller,
+        EffectOp::SearchLibraryToHand {
+            player: PlayerRef::Controller,
+            filter: LibraryCardFilter::InstantOrSorceryManaValueAtMostV1(2),
+        },
+    )
 }
 
 /// Marwyn, the Preserver: "{2}: Return target land card from your graveyard
@@ -418,7 +421,9 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
 /// control enter tapped." Whether `object`, entering under `controller`
 /// (the player it enters under, who may not be its owner), enters tapped.
 /// A permanent entering face down is a creature. Called from the two
-/// battlefield-entry sites of `event.rs`.
+/// battlefield-entry sites of `event.rs` once the permanent is on the
+/// battlefield, so its current types decide (614.12): a Mycosynth Lattice
+/// makes it an artifact.
 pub(crate) fn enters_tapped(
     state: &GameState,
     object: ObjectId,
@@ -428,13 +433,11 @@ pub(crate) fn enters_tapped(
     if !cfg!(feature = "eternal-fixtures") {
         return false;
     }
-    let Some(live) = state.objects.try_get(object) else {
+    if state.objects.try_get(object).is_none() {
         return false;
-    };
-    let Some(def) = CARD_DEFS.get(usize::from(live.card_def)) else {
-        return false;
-    };
-    let types = def.types_for_face(live.v4.face_index);
-    (face_down || types.contains(&CardType::Creature) || types.contains(&CardType::Artifact))
+    }
+    (face_down
+        || crate::engine::object_has_type(state, object, CardType::Creature)
+        || crate::engine::object_has_type(state, object, CardType::Artifact))
         && controls_active(state, controller.opponent(), static_ids()[2], SPIDER_WOMAN)
 }

@@ -6415,9 +6415,12 @@ fn materialize_event_v1(
                 state.objects.get_mut(object).v4.layer_timestamp = Some(timestamp);
             }
             state.players[t.controller.index()].battlefield.push(object);
+            // The token is already on the battlefield: every entry rule
+            // checks it as it exists there (614.12).
             let enters_tapped = t.entry_tapped
-                || permanent_enters_battlefield_tapped(state, object, t.controller, t.token_def)
-                || crate::eternal_cube_c3b_v1::enters_tapped(state, object, t.controller, false)
+                || (permanent_enters_battlefield_tapped(state, object, t.controller, t.token_def)
+                    && !printed_entry_rule_removed_v1(state, object))
+                || enters_tapped_on_battlefield_v1(state, object, t.controller, false)
                 || authority_observers.map_or_else(
                     || {
                         crate::authority_of_the_consuls_v1::enters_tapped(
@@ -6620,6 +6623,129 @@ fn preflight_wide_batch_v59(state: &mut GameState, events: &[ProposedEvent]) -> 
         return false;
     }
     true
+}
+
+/// Where the name-keyed graveyard replacements that `materialize_event_v1`
+/// applies to a single zone change (unearth, Yawgmoth's Will and Suplex,
+/// Lunarch Veteran, Dauthi Voidwalker, Rest in Peace and Leyline of the
+/// Void, in that order) send `event` in `state`: the destination and
+/// whether Dauthi Voidwalker's replacement is the one that applies, for an
+/// event that would put its object into a graveyard and is replaced.
+#[cfg(feature = "eternal-fixtures")]
+fn batch_graveyard_replacement_v1(
+    state: &GameState,
+    event: &ProposedEvent,
+) -> Option<(ObjectId, Zone, bool)> {
+    let ProposedEvent::ZoneChange(change) = event else {
+        return None;
+    };
+    if change.to_zone != Zone::Graveyard {
+        return None;
+    }
+    // A finality counter and an exile-if-it-would-die shield (Fiery
+    // Annihilation) are general replacements that the engine applies first;
+    // it offers no choice of order (616.1). The state-based death group commits
+    // directly and applies them only at the member's commit, so a member they
+    // apply to is left to that path, which then runs the hooks below on its
+    // own as for a single event.
+    let finality = state.objects.try_get(change.object).is_some_and(|live| {
+        live.zone == Zone::Battlefield
+            && live
+                .v4
+                .creature_upgrade
+                .as_ref()
+                .is_some_and(|upgrade| upgrade.finality > 0)
+    });
+    let shielded = state.engine.active_replacements.iter().any(|replacement| {
+        matches!(
+            replacement.kind,
+            ReplacementEffectKind::ExileIfDiesUntilEndOfTurnV1 { .. }
+        ) && replacement_applies(replacement, event, state)
+    });
+    if finality || shielded {
+        return None;
+    }
+    let mut z = change.clone();
+    crate::standard_keywords_v1::unearth_exile_instead(state, &mut z);
+    crate::eternal_e5a_v1::permissions::replace_zone_change(state, &mut z);
+    crate::eternal_pauper_e6b_v1::adjust_zone_change(state, &mut z);
+    let voided = crate::eternal_e9b_v1::voids(state, &z);
+    if voided {
+        z.to_zone = Zone::Exile;
+    }
+    crate::eternal_sideboard_s1a_v1::statics::replace_zone_change(state, &mut z);
+    (z.to_zone != Zone::Graveyard).then_some((z.object, z.to_zone, voided))
+}
+
+/// Applies one member's replacement found by
+/// `batch_graveyard_replacement_v1` before the batch to its event, if the
+/// event still puts that object into a graveyard. Dauthi Voidwalker's void
+/// counter is recorded here, so the hook in `materialize_event_v1`, which
+/// leaves an event that no longer goes to a graveyard alone, does not
+/// record it again.
+#[cfg(feature = "eternal-fixtures")]
+fn apply_batch_graveyard_replacement_v1(
+    state: &mut GameState,
+    event: &mut ProposedEvent,
+    replacement: Option<(ObjectId, Zone, bool)>,
+) {
+    let Some((object, to_zone, voided)) = replacement else {
+        return;
+    };
+    let ProposedEvent::ZoneChange(change) = event else {
+        return;
+    };
+    if change.object != object || change.to_zone != Zone::Graveyard {
+        return;
+    }
+    change.to_zone = to_zone;
+    if voided {
+        crate::eternal_e9b_v1::record_void(state, object);
+    }
+}
+
+/// Whether a name-keyed graveyard replacement applies to any of `chosen`
+/// sacrificed together, decided before any of them moves. A sacrifice of
+/// several permanents then commits as one group
+/// (`commit_sacrifice_death_group_v1`), which decides those replacements for
+/// the whole group, instead of one permanent at a time. Only the eternal
+/// catalog has such replacements.
+pub(crate) fn sacrifice_batch_replaced_v1(state: &GameState, chosen: &[ObjectId]) -> bool {
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        chosen.iter().any(|&id| {
+            let event = ProposedEvent::zone_change(id, Zone::Graveyard);
+            batch_graveyard_replacement_v1(state, &event).is_some()
+        })
+    }
+    #[cfg(not(feature = "eternal-fixtures"))]
+    {
+        let _ = (state, chosen);
+        false
+    }
+}
+
+/// A batch of simultaneous events is one event for replacement effects
+/// (614.1, 614.6): every replacement that exists immediately before it
+/// applies to every member, the member that is the replacement's own source
+/// included. The name-keyed graveyard replacements read the live battlefield
+/// as each member commits, so they are decided here for the whole batch,
+/// before any member moves: a Rest in Peace or Dauthi Voidwalker destroyed in
+/// the same batch still exiles the others, whatever their order. Applying it
+/// twice changes nothing. Only the eternal catalog has such replacements.
+fn pre_apply_batch_zone_replacements_v1(state: &mut GameState, events: &mut [ProposedEvent]) {
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        let replacements = events
+            .iter()
+            .map(|event| batch_graveyard_replacement_v1(state, event))
+            .collect::<Vec<_>>();
+        for (event, replacement) in events.iter_mut().zip(replacements) {
+            apply_batch_graveyard_replacement_v1(state, event, replacement);
+        }
+    }
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let _ = (state, events);
 }
 
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
@@ -6871,7 +6997,7 @@ fn batch_with_aura_token_hosts_v1(
         #[cfg(feature = "eternal-fixtures")]
         let nishoba_batch =
             crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(&mut replaced, &events);
-        let survivors = events
+        let mut survivors = events
             .into_iter()
             .filter_map(|event| apply_replacements(&mut replaced, event))
             .collect::<Vec<_>>();
@@ -6892,6 +7018,8 @@ fn batch_with_aura_token_hosts_v1(
                 return;
             }
         }
+        // The plan reads the batch's final destinations.
+        pre_apply_batch_zone_replacements_v1(&mut replaced, &mut survivors);
         let inputs = survivors
             .iter()
             .map(|event| crate::doubling_season_v48::entry_input(&replaced, event))
@@ -7018,11 +7146,12 @@ struct EntryBatchCommitContextV1 {
 /// Ground (Premodern wave P3d) read the batch before any of its moves.
 fn commit_batch_survivors(
     state: &mut GameState,
-    survivors: Vec<ProposedEvent>,
+    mut survivors: Vec<ProposedEvent>,
     authority_batch: Option<crate::authority_of_the_consuls_v1::EntryBatchV1>,
     context: EntryBatchCommitContextV1,
     prepared_zone_plan: Option<FinalZonePtPlanV1>,
 ) {
+    pre_apply_batch_zone_replacements_v1(state, &mut survivors);
     #[cfg(feature = "eternal-fixtures")]
     let enclosing = crate::eternal_premodern_p3d_v1::begin_departure_batch(state, &survivors);
     commit_batch_survivors_ordered(
@@ -7465,6 +7594,14 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
             return;
         }
     };
+    // The group is one event for replacement effects: the name-keyed
+    // graveyard replacements are decided before any member moves.
+    #[cfg(feature = "eternal-fixtures")]
+    let mut batch_replacements = planned_events
+        .iter()
+        .map(|event| batch_graveyard_replacement_v1(state, event))
+        .collect::<Vec<_>>()
+        .into_iter();
     let mut progenitus_completions = Vec::new();
     let progenitus_removed = chosen
         .iter()
@@ -7552,10 +7689,18 @@ pub(crate) fn commit_sacrifice_death_group_v1(state: &mut GameState, chosen: &[O
     }
     for (&id, captures) in chosen.iter().zip(captures) {
         let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
+        #[cfg(feature = "eternal-fixtures")]
+        let replacement = batch_replacements.next().flatten();
         log_sacrifice(state, id);
         if let Some(event) =
             apply_replacements(state, ProposedEvent::zone_change(id, Zone::Graveyard))
         {
+            #[cfg(feature = "eternal-fixtures")]
+            let event = {
+                let mut event = event;
+                apply_batch_graveyard_replacement_v1(state, &mut event, replacement);
+                event
+            };
             let progenitus_ability_removed = match &event {
                 ProposedEvent::ZoneChange(z) => progenitus_removed.get(&z.object).copied(),
                 _ => None,
@@ -7587,6 +7732,14 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         .copied()
         .map(|id| ProposedEvent::zone_change(id, Zone::Graveyard))
         .collect::<Vec<_>>();
+    // The group is one event for replacement effects (704.3): the name-keyed
+    // graveyard replacements are decided before any member moves.
+    #[cfg(feature = "eternal-fixtures")]
+    let mut batch_replacements = planned_events
+        .iter()
+        .map(|event| batch_graveyard_replacement_v1(state, event))
+        .collect::<Vec<_>>()
+        .into_iter();
     let zone_plan = match direct_zone_pt_plan_v1(state, &planned_events) {
         Ok(plan) => plan,
         Err(source) => {
@@ -7664,11 +7817,19 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
     if !crate::creature_death_capture_v1::enabled() {
         for id in dying {
             let frozen_color = source_colors.as_mut().and_then(Iterator::next).flatten();
+            let event = ProposedEvent::zone_change(id, Zone::Graveyard);
+            #[cfg(feature = "eternal-fixtures")]
+            let event = {
+                let mut event = event;
+                let replacement = batch_replacements.next().flatten();
+                apply_batch_graveyard_replacement_v1(state, &mut event, replacement);
+                event
+            };
             if frozen_color.is_some() || zone_plan.is_some() {
                 let progenitus_ability_removed = progenitus_removed.get(&id).copied();
                 commit_with_entry_batch_and_source_color(
                     state,
-                    ProposedEvent::zone_change(id, Zone::Graveyard),
+                    event,
                     progenitus_ability_removed,
                     None,
                     None,
@@ -7677,7 +7838,7 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
                     Some(&mut progenitus_completions),
                 );
             } else {
-                commit(state, ProposedEvent::zone_change(id, Zone::Graveyard));
+                commit(state, event);
             }
         }
         if state.engine.halted.is_none() {
@@ -7693,6 +7854,14 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         .into_iter()
         .map(|id| ProposedEvent::zone_change(id, Zone::Graveyard))
         .collect::<Vec<_>>();
+    #[cfg(feature = "eternal-fixtures")]
+    let events = {
+        let mut events = events;
+        for (event, replacement) in events.iter_mut().zip(batch_replacements) {
+            apply_batch_graveyard_replacement_v1(state, event, replacement);
+        }
+        events
+    };
     let captures = events
         .iter()
         .map(|event| crate::creature_death_capture_v1::capture(state, event))
@@ -7968,6 +8137,52 @@ pub fn log_monarch_trigger(
     Ok(binding)
 }
 
+/// Whether the entering permanent has lost the abilities of its rules text
+/// as it enters (wave E8a's Moon effects: Blood Moon, Magus of the Moon,
+/// Harbinger of the Seas, Vision Charm, Alpine Moon). Its printed "enters
+/// tapped" rule is one of those abilities, so it no longer applies (614.12,
+/// 305.7). Called once the permanent is on the battlefield with its
+/// controller set, before it gets a timestamp of its own, so only effects
+/// that already existed count. Outside the eternal catalog no such effect
+/// exists.
+fn printed_entry_rule_removed_v1(state: &GameState, object: ObjectId) -> bool {
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        crate::eternal_legacy_e8a_v1::statics::removal_timestamp(state, object).is_some()
+    }
+    #[cfg(not(feature = "eternal-fixtures"))]
+    {
+        let _ = (state, object);
+        false
+    }
+}
+
+/// The "enters tapped" effects of other permanents that read the entering
+/// permanent's types: Archon of Emeria and Root Maze (eternal catalog) and
+/// Spider-Woman, Stunning Savior (Vintage Cube wave C3b). Called once the
+/// permanent is on the battlefield under `controller`, so it is checked as
+/// it exists there, with the continuous effects that already apply to it
+/// (614.12): a Mycosynth Lattice makes it an artifact, an Opalescence makes
+/// an enchantment a creature. A permanent entering face down is a creature.
+fn enters_tapped_on_battlefield_v1(
+    state: &GameState,
+    object: ObjectId,
+    controller: PlayerId,
+    face_down: bool,
+) -> bool {
+    // Archon of Emeria: "Nonbasic lands your opponents control enter
+    // tapped." Root Maze: "Artifacts and lands enter the battlefield
+    // tapped."
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_vintage_v1::enters_tapped(state, object, controller) {
+        return true;
+    }
+    crate::eternal_cube_c3b_v1::enters_tapped(state, object, controller, face_down)
+}
+
+/// A permanent's own printed entry rule: "This enters tapped" and the
+/// "enters tapped unless" conditions of its definition. The effects of
+/// other permanents are `enters_tapped_on_battlefield_v1`.
 fn permanent_enters_battlefield_tapped(
     state: &GameState,
     object: ObjectId,
@@ -7976,12 +8191,6 @@ fn permanent_enters_battlefield_tapped(
 ) -> bool {
     let def = &crate::card_def::CARD_DEFS[usize::from(definition)];
     if def.enters_battlefield_tapped {
-        return true;
-    }
-    // Archon of Emeria: "Nonbasic lands your opponents control enter
-    // tapped."
-    #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_vintage_v1::enters_tapped(state, object, controller) {
         return true;
     }
     if let Some(rule) = def.enters_tapped_unless_controller {
@@ -8198,19 +8407,14 @@ fn materialize_zone_change_v1(
     let entry_flying_grant_timestamp = (to_zone == Zone::Battlefield
         && entering_characteristics.is_some_and(|entry| entry.grant_flying_v1))
     .then(|| crate::engine::next_timestamp(state));
-    let enters_battlefield_tapped = to_zone == Zone::Battlefield
-        && (force_battlefield_tapped
-            || (entering_face_down.is_none()
-                && permanent_enters_battlefield_tapped(state, id, owner, entry_definition))
-            // Spider-Woman, Stunning Savior (Vintage Cube wave C3b) reads the
-            // controller the permanent enters under, and a face-down
-            // permanent is a creature.
-            || crate::eternal_cube_c3b_v1::enters_tapped(
-                state,
-                id,
-                battlefield_controller.unwrap_or(owner),
-                entering_face_down.is_some(),
-            ));
+    // The permanent's own printed entry rule. Whether a Moon effect removes
+    // it, and the "enters tapped" effects of other permanents, are decided
+    // once the permanent is on the battlefield (below).
+    let printed_entry_tapped = to_zone == Zone::Battlefield
+        && entering_face_down.is_none()
+        && permanent_enters_battlefield_tapped(state, id, owner, entry_definition);
+    let enters_battlefield_tapped =
+        to_zone == Zone::Battlefield && (force_battlefield_tapped || printed_entry_tapped);
     {
         let obj = state.objects.get_mut(id);
         obj.zone = to_zone;
@@ -8330,10 +8534,23 @@ fn materialize_zone_change_v1(
                 }
             }
         }
+        // 614.12: the entry rules below check the permanent as it exists on
+        // the battlefield, under the controller it entered under. A Moon
+        // effect that already applies removes its printed entry rule (an
+        // entry tapped for another reason stays tapped).
+        let controller = state.objects.get(id).controller;
+        if printed_entry_tapped
+            && !force_battlefield_tapped
+            && printed_entry_rule_removed_v1(state, id)
+        {
+            state.objects.get_mut(id).tapped = false;
+        }
+        if enters_tapped_on_battlefield_v1(state, id, controller, entering_face_down.is_some()) {
+            state.objects.get_mut(id).tapped = true;
+        }
         // Evaluate this new static rule with the actual entering controller
         // and initialized battlefield characteristics, preserving the earlier
         // legacy entry checks and their order.
-        let controller = state.objects.get(id).controller;
         if authority_observers.map_or_else(
             || crate::authority_of_the_consuls_v1::enters_tapped(state, id, controller),
             |observers| {

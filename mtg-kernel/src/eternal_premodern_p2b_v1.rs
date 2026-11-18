@@ -383,13 +383,17 @@ fn acolyte_enters() -> EffectOp {
 }
 
 /// Yavimaya Granger: "you may search your library for a basic land card, put
-/// that card onto the battlefield tapped, then shuffle." The search must be
-/// the trigger's own root effect for its choice to authenticate.
+/// that card onto the battlefield tapped, then shuffle." The search must sit
+/// in the trigger's own program (here the searching option of its root
+/// choice) for its choice to authenticate.
 fn granger_enters() -> EffectOp {
-    EffectOp::SearchLibraryToBattlefieldTapped {
-        player: PlayerRef::Controller,
-        filter: LibraryCardFilter::BasicLand,
-    }
+    crate::eternal_cards_v1::may_search(
+        PlayerRef::Controller,
+        EffectOp::SearchLibraryToBattlefieldTapped {
+            player: PlayerRef::Controller,
+            filter: LibraryCardFilter::BasicLand,
+        },
+    )
 }
 
 /// Fading: "remove a fade counter from it. If you can't, sacrifice it."

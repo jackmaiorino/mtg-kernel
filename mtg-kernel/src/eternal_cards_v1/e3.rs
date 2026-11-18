@@ -2377,6 +2377,9 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
         e3.protected_players[player.index()] = false;
         e3.weakened.retain(|effect| effect.holder != player);
         e3.pacified.retain(|effect| effect.holder != player);
+        // Veil of Summer lasts "this turn". Its records carry the turn key,
+        // which both turns of a round share, so a new turn ends them all.
+        e3.veils.clear();
     }
 }
 

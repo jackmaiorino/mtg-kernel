@@ -629,11 +629,15 @@ pub(crate) fn drive(
             else {
                 return Ok(false);
             };
-            // The creature's controller searches. A zone change resets the
-            // controller, so name the searcher before exiling.
+            // The creature's controller may search. A zone change resets
+            // the controller, so name the searcher before exiling.
             let searcher = player_ref(&continuation.ctx, state.objects.get(object).controller);
             event::propose_and_commit(state, ProposedEvent::zone_change(object, Zone::Exile));
-            push(continuation, basic_land_search(searcher, 1), &path);
+            push(
+                continuation,
+                crate::eternal_cards_v1::may_search(searcher, basic_land_search(searcher, 1)),
+                &path,
+            );
             Ok(false)
         }
         C1aOpV1::WindsOfAbandonV1 => {

@@ -228,10 +228,14 @@ fn settle_picking(state: &mut GameState, option: u16, object: Option<ObjectId>) 
     });
 }
 
-/// Settles, taking the first candidate of every selection that has none
-/// selected yet (searches find a card) and the first answer otherwise.
+/// Settles, choosing to search when a "may search" asks, taking the first
+/// candidate of every selection that has none selected yet (searches find a
+/// card) and the first answer otherwise.
 fn settle_taking(state: &mut GameState) {
     settle_with(state, |_, decision| match decision {
+        Decision::ChooseEffectOption {
+            option_count: 2, ..
+        } => Action::ChooseEffectOption(1),
         Decision::ChooseEffectTargets {
             legal_targets,
             selected_count: 0,
