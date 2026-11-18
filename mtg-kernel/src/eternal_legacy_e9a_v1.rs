@@ -58,7 +58,7 @@ use serde::{Deserialize, Serialize};
 /// Per-game state for this module's cards, kept inside
 /// `eternal_cards_v1::EternalStateV1`. Default (and absent from snapshots)
 /// until one of these cards needs it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct E9aStateV1 {
     /// Triggers detected by hooks, waiting for the next trigger collection.
@@ -82,7 +82,8 @@ pub struct E9aStateV1 {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub block_bans: Vec<TurnV1>,
     /// Creatures with protection from a color until end of turn (Sejiri
-    /// Steppe).
+    /// Steppe), as recorded before the records had timestamps. Only states
+    /// saved then hold any; new grants go to `timed_protections`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub protections: Vec<(ObjectLinkV4, ManaColor, TurnV1)>,
     /// Creatures whose combat damage, dealt and received, is prevented this
@@ -108,12 +109,129 @@ pub struct E9aStateV1 {
     /// their owner's library as they finish resolving.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub zenith_shuffles: Vec<ObjectLinkV4>,
+    /// Protection from a color until end of turn with the timestamp of the
+    /// effect that granted it (Sejiri Steppe, Mother of Runes, Giver of
+    /// Runes, Glory, Crimson Acolyte, Eowyn, Fearless Knight), so that a
+    /// later ability removal takes it away (613.7). Appended: hashed only
+    /// when not empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub timed_protections: Vec<TimedProtectionV1>,
+}
+
+/// The fields in declaration order, as the derived hash had them before
+/// `timed_protections`; that field is hashed under its own tag only when it
+/// holds a record, so a state without one hashes as before.
+impl std::hash::Hash for E9aStateV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.queued_triggers.hash(state);
+        self.moons.hash(state);
+        self.escape_casts.hash(state);
+        self.cast_bans.hash(state);
+        self.attack_bans.hash(state);
+        self.block_bans.hash(state);
+        self.protections.hash(state);
+        self.prevented.hash(state);
+        self.redirects.hash(state);
+        self.reflexes.hash(state);
+        self.loki_triggered.hash(state);
+        self.hatchlings.hash(state);
+        self.deeps_answered.hash(state);
+        self.zenith_shuffles.hash(state);
+        if !self.timed_protections.is_empty() {
+            "e9a-timed-protections/v1".hash(state);
+            self.timed_protections.hash(state);
+        }
+    }
 }
 
 impl E9aStateV1 {
     pub(crate) fn is_empty(&self) -> bool {
         *self == Self::default()
     }
+}
+
+/// One protection from a color until end of turn: the creature, the color
+/// (`ManaColor::C` for Giver of Runes' protection from colorless), the turn
+/// and the timestamp of the effect that granted it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimedProtectionV1 {
+    pub host: ObjectLinkV4,
+    pub color: ManaColor,
+    pub turn: TurnV1,
+    pub timestamp: u64,
+}
+
+/// Gives each of `hosts` protection from each of `colors` until end of
+/// turn, all with one new timestamp (one effect). A grant the records
+/// already hold this turn takes the new timestamp: the later grant is the one
+/// a removal must follow.
+pub(crate) fn grant_protections(
+    state: &mut GameState,
+    hosts: &[ObjectLinkV4],
+    colors: &[ManaColor],
+) {
+    if hosts.is_empty() || colors.is_empty() {
+        return;
+    }
+    let turn = TurnV1::now(state);
+    let timestamp = crate::engine::next_timestamp(state);
+    let records = &mut e9a_state(state).timed_protections;
+    for &host in hosts {
+        for &color in colors {
+            match records.iter_mut().find(|record| {
+                record.host == host && record.color == color && record.turn == turn
+            }) {
+                Some(record) => record.timestamp = timestamp,
+                None => records.push(TimedProtectionV1 {
+                    host,
+                    color,
+                    turn,
+                    timestamp,
+                }),
+            }
+        }
+    }
+}
+
+/// The colors `host` has protection from until end of turn by the records
+/// above, as a color mask (`ManaColor::C` included as its own bit): a timed
+/// record counts while no later effect removed the host's granted
+/// abilities, a record saved before the timestamps counts as it did.
+pub(crate) fn protection_record_mask(state: &GameState, host: ObjectId) -> u8 {
+    let Some(e9a) = read_state(state) else {
+        return 0;
+    };
+    if e9a.protections.is_empty() && e9a.timed_protections.is_empty() {
+        return 0;
+    }
+    let Some(live) = state.objects.try_get(host) else {
+        return 0;
+    };
+    let now = TurnV1::now(state);
+    let current = |link: &ObjectLinkV4, turn: &TurnV1| {
+        link.object == host && link.zone_change_count == live.zone_change_count && *turn == now
+    };
+    let legacy = e9a
+        .protections
+        .iter()
+        .filter(|(link, _, turn)| current(link, turn))
+        .fold(0, |mask, (_, color, _)| {
+            mask | crate::card_def::mana_color_mask(*color)
+        });
+    e9a.timed_protections
+        .iter()
+        .filter(|record| {
+            current(&record.host, &record.turn)
+                && crate::continuous_characteristics_v1::granted_ability_survives(
+                    state,
+                    host,
+                    record.timestamp,
+                )
+        })
+        .fold(legacy, |mask, record| {
+            mask | crate::card_def::mana_color_mask(record.color)
+        })
 }
 
 /// One turn: its key and active player.
@@ -1163,11 +1281,8 @@ pub(crate) fn execute(op: &E9aOpV1, ctx: &ExecCtx, state: &mut GameState) {
             else {
                 return;
             };
-            let record = (live_link(state, creature), *color, TurnV1::now(state));
-            let protections = &mut e9a_state(state).protections;
-            if !protections.contains(&record) {
-                protections.push(record);
-            }
+            let host = live_link(state, creature);
+            grant_protections(state, &[host], &[*color]);
         }
         E9aOpV1::PoxwalkersReturnV1 => {
             if let Some(card) = graveyard_ability_source(ctx, state) {
@@ -2060,6 +2175,12 @@ fn prune(state: &mut GameState) {
         .copied()
         .filter(|spell| link_live_in(state, *spell, Zone::Stack))
         .collect::<Vec<_>>();
+    let timed_protections = e9a
+        .timed_protections
+        .iter()
+        .copied()
+        .filter(|record| record.turn == now && on_battlefield(&record.host))
+        .collect::<Vec<_>>();
     let changed = moons.len() != e9a.moons.len()
         || escape_casts.len() != e9a.escape_casts.len()
         || cast_bans.len() != e9a.cast_bans.len()
@@ -2072,7 +2193,8 @@ fn prune(state: &mut GameState) {
         || loki_triggered.len() != e9a.loki_triggered.len()
         || hatchlings.len() != e9a.hatchlings.len()
         || deeps_answered.len() != e9a.deeps_answered.len()
-        || zenith_shuffles.len() != e9a.zenith_shuffles.len();
+        || zenith_shuffles.len() != e9a.zenith_shuffles.len()
+        || timed_protections.len() != e9a.timed_protections.len();
     if changed {
         let e9a = e9a_state(state);
         e9a.moons = moons;
@@ -2088,6 +2210,7 @@ fn prune(state: &mut GameState) {
         e9a.hatchlings = hatchlings;
         e9a.deeps_answered = deeps_answered;
         e9a.zenith_shuffles = zenith_shuffles;
+        e9a.timed_protections = timed_protections;
     }
 }
 

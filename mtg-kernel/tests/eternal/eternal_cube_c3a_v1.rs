@@ -1552,6 +1552,36 @@ fn giver_of_runes_gives_another_creature_protection_from_colorless() {
 }
 
 #[test]
+fn a_later_ability_removal_ends_giver_of_runes_protection_from_colorless() {
+    let mut state = plains();
+    let giver = put(&mut state, P0, "Giver of Runes", Zone::Battlefield);
+    // A 1/2, a 0/2 under Unable to Scream: one point of damage doesn't kill
+    // it.
+    let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
+    let golem = put(&mut state, P1, "Phyrexian Dreadnought", Zone::Battlefield);
+    activate(&mut state, giver, 0, &[Target::Object(inspector)]);
+    settle_option(&mut state, GIVER_COLORLESS);
+    damage(&mut state, golem, inspector, 1);
+    assert_eq!(
+        state.objects.get(inspector).damage,
+        0,
+        "protection from colorless"
+    );
+    // Unable to Scream is later than the grant (613.7).
+    let scream = put(&mut state, P0, "Unable to Scream", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, scream, &[Target::Object(inspector)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, scream), Zone::Battlefield);
+    damage(&mut state, golem, inspector, 1);
+    assert_eq!(
+        state.objects.get(inspector).damage,
+        1,
+        "the protection is gone"
+    );
+}
+
+#[test]
 fn giver_of_runes_gives_protection_from_a_color_of_your_choice() {
     let mut state = plains();
     let giver = put(&mut state, P0, "Giver of Runes", Zone::Battlefield);

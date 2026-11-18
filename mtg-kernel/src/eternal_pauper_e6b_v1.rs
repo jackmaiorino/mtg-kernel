@@ -1504,14 +1504,24 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
 fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
     // Sejiri Steppe's protection until end of turn (wave E9a).
     let granted = crate::eternal_legacy_e9a_v1::statics::protection_mask(state, host);
-    attached_named(state, host, BENEVOLENT_BLESSING).fold(granted, |mask, blessing| {
-        mask | state
-            .objects
-            .get(blessing)
-            .v4
-            .chosen_color
-            .map_or(0, crate::card_def::mana_color_mask)
-    })
+    // The Aura's grant has the timestamp of its attachment, so a later
+    // ability removal on the host takes it away (613.7).
+    attached_named(state, host, BENEVOLENT_BLESSING)
+        .filter(|&blessing| {
+            crate::continuous_characteristics_v1::granted_ability_survives(
+                state,
+                host,
+                state.objects.get(blessing).v4.layer_timestamp.unwrap_or(0),
+            )
+        })
+        .fold(granted, |mask, blessing| {
+            mask | state
+                .objects
+                .get(blessing)
+                .v4
+                .chosen_color
+                .map_or(0, crate::card_def::mana_color_mask)
+        })
 }
 
 /// Benevolent Blessing: whether `object` has protection from `source`'s

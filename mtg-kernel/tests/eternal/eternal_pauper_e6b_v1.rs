@@ -1469,6 +1469,28 @@ fn benevolent_blessing_gives_protection_from_the_chosen_color() {
 }
 
 #[test]
+fn a_later_ability_removal_ends_benevolent_blessings_protection() {
+    let mut state = plains();
+    let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
+    let blessing = put(&mut state, P0, "Benevolent Blessing", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 1);
+    cast(&mut state, blessing, &[Target::Object(inspector)]);
+    // Red.
+    settle_option(&mut state, 3);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    assert!(!cast_targets(&state, bolt).contains(&Target::Object(inspector)));
+    // Unable to Scream is later than the Aura's grant (613.7).
+    let scream = put(&mut state, P0, "Unable to Scream", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, scream, &[Target::Object(inspector)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, scream), Zone::Battlefield);
+    assert_eq!(zone(&state, blessing), Zone::Battlefield);
+    assert!(cast_targets(&state, bolt).contains(&Target::Object(inspector)));
+}
+
+#[test]
 fn benevolent_blessing_has_flash() {
     let mut state = plains();
     let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);

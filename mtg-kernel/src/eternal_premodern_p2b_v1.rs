@@ -506,15 +506,9 @@ pub(crate) fn execute(op: &P2bOpV1, ctx: &ExecCtx, state: &mut GameState) {
                     state.objects.get(object).controller == ctx.controller
                         && crate::engine::object_has_type(state, object, CardType::Creature)
                 })
+                .map(|creature| live_link(state, creature))
                 .collect::<Vec<_>>();
-            let now = TurnV1::now(state);
-            for creature in creatures {
-                let record = (live_link(state, creature), *color, now);
-                let protections = &mut crate::eternal_legacy_e9a_v1::e9a_state(state).protections;
-                if !protections.contains(&record) {
-                    protections.push(record);
-                }
-            }
+            crate::eternal_legacy_e9a_v1::grant_protections(state, &creatures, &[*color]);
         }
         P2bOpV1::HermitSquirrelsV1 => create_tokens(ctx, state, SQUIRREL_TOKEN, 4),
         P2bOpV1::CallerBearsV1 => {

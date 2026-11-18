@@ -572,6 +572,53 @@ fn mother_of_runes_gives_protection_from_a_chosen_color() {
 }
 
 #[test]
+fn a_later_ability_removal_ends_mother_of_runes_protection_and_an_earlier_one_does_not() {
+    // Protection first, Unable to Scream later: the removal applies after
+    // the grant (613.7).
+    let mut state = islands();
+    let mother = put(&mut state, P0, "Mother of Runes", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let fanatic = put(&mut state, P1, "Mogg Fanatic", Zone::Battlefield);
+    activate(&mut state, mother, 0, &[Target::Object(elves)]);
+    settle_picking(&mut state, red_option(), None);
+    damage(&mut state, fanatic, elves, 1);
+    assert_eq!(state.objects.get(elves).damage, 0, "protection from red");
+    let scream = put(&mut state, P0, "Unable to Scream", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, scream, &[Target::Object(elves)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, scream), Zone::Battlefield);
+    damage(&mut state, fanatic, elves, 1);
+    assert_eq!(state.objects.get(elves).damage, 1, "no protection now");
+    // A red spell can target it again.
+    let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    state.priority_player = P1;
+    pool(&mut state, P1, &[ManaColor::R], 0);
+    act(&mut state, Action::CastSpell(bolt));
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(legal_targets.contains(&Target::Object(elves)));
+        }
+        other => panic!("{other:?}"),
+    }
+
+    // Unable to Scream first, protection later: the grant applies after the
+    // removal.
+    let mut state = islands();
+    let mother = put(&mut state, P0, "Mother of Runes", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let fanatic = put(&mut state, P1, "Mogg Fanatic", Zone::Battlefield);
+    let scream = put(&mut state, P0, "Unable to Scream", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, scream, &[Target::Object(elves)]);
+    settled(&mut state);
+    activate(&mut state, mother, 0, &[Target::Object(elves)]);
+    settle_picking(&mut state, red_option(), None);
+    damage(&mut state, fanatic, elves, 1);
+    assert_eq!(state.objects.get(elves).damage, 0, "protection from red");
+}
+
+#[test]
 fn devoted_caretaker_protects_from_instant_and_sorcery_spells() {
     let mut state = islands();
     let caretaker = put(&mut state, P0, "Devoted Caretaker", Zone::Battlefield);

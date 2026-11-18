@@ -30,7 +30,7 @@ pub mod statics;
 use crate::card_def::{CardType, Subtype, TargetSpec};
 use crate::effect::{EffectCond, EffectOp, ExecCtx, ObjectRef, PlayerRef};
 use crate::eternal_cards_v1::EternalOpV1;
-use crate::eternal_legacy_e9a_v1::{active_permanents, battlefield, live_link, TurnV1};
+use crate::eternal_legacy_e9a_v1::{active_permanents, battlefield, live_link};
 use crate::eternal_premodern_p1a_v1::{
     destroy_batch, halt, has_type, legal_object_target, queue_trigger,
 };
@@ -175,11 +175,8 @@ pub(crate) fn execute(op: &P3aOpV1, ctx: &ExecCtx, state: &mut GameState) {
             let Some(creature) = legal_object_target(ctx, state, 0, TargetSpec::Creature) else {
                 return;
             };
-            let record = (live_link(state, creature), ManaColor::R, TurnV1::now(state));
-            let protections = &mut crate::eternal_legacy_e9a_v1::e9a_state(state).protections;
-            if !protections.contains(&record) {
-                protections.push(record);
-            }
+            let host = live_link(state, creature);
+            crate::eternal_legacy_e9a_v1::grant_protections(state, &[host], &[ManaColor::R]);
         }
         P3aOpV1::PillarDamageV1 { player } => {
             // The Pillar deals the damage even if it has left the battlefield.
