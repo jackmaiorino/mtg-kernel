@@ -1588,9 +1588,13 @@ fn s1q_decks_finish_and_replay_through_public_sessions() {
     // counts in this loop's order.
     let counts = in_parallel(&games, |(pair, seed, policy)| {
         let mut events = S1qSessionEvents::default();
-        let game = play_observed(pair.clone(), None, *seed, *policy, &mut |decision, action| {
-            events.observe(decision, action)
-        });
+        let game = play_observed(
+            pair.clone(),
+            None,
+            *seed,
+            *policy,
+            &mut |decision, action| events.observe(decision, action),
+        );
         let replay = play_observed(pair.clone(), None, *seed, *policy, &mut |_, _| {});
         assert_eq!(game.transcript_sha256, replay.transcript_sha256);
         let mut casts = [0usize; 3];
