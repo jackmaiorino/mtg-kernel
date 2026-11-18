@@ -1549,25 +1549,49 @@ pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<Ma
         return Vec::new();
     }
     // A land whose own mana abilities already add {C} keeps them; the
-    // granted ability adds nothing they lack.
+    // granted ability adds nothing they lack. Once an effect removed those
+    // abilities (Spreading Seas, a moon), the grant is all that adds {C}.
+    let printed_active =
+        crate::continuous_characteristics_v1::printed_abilities_active(state, object);
     let def = printed(state, object);
-    if def.mana_ability_def.is_some()
-        || def
-            .primary_mana_ability_choices(state.objects.get(object).v4.chosen_color)
-            .contains(&ManaColor::C)
+    if printed_active
+        && (def.mana_ability_def.is_some()
+            || def
+                .primary_mana_ability_choices(state.objects.get(object).v4.chosen_color)
+                .contains(&ManaColor::C))
     {
         return Vec::new();
     }
     let name = crate::engine::effective_name(state, object);
-    let granted = e5b.hamlet_names.iter().any(|(hamlet, named)| {
-        link_live_in(state, *hamlet, Zone::Battlefield)
-            && active_named(state, hamlet.object, PETRIFIED_HAMLET)
-            && CARD_DEFS[usize::from(*named)].object_name == name
-    });
-    if granted {
-        vec![ManaColor::C]
-    } else {
-        Vec::new()
+    let granted_at = e5b
+        .hamlet_names
+        .iter()
+        .filter(|(hamlet, named)| {
+            link_live_in(state, *hamlet, Zone::Battlefield)
+                && active_named(state, hamlet.object, PETRIFIED_HAMLET)
+                && CARD_DEFS[usize::from(*named)].object_name == name
+        })
+        .map(|(hamlet, _)| {
+            state
+                .objects
+                .get(hamlet.object)
+                .v4
+                .layer_timestamp
+                .unwrap_or(0)
+        })
+        .max();
+    // A removal of all abilities removes an earlier grant (613.7); a
+    // land-type setter removes none (305.7).
+    match granted_at {
+        Some(timestamp)
+            if printed_active
+                || crate::continuous_characteristics_v1::grant_survives_land_type_setters(
+                    state, object, timestamp,
+                ) =>
+        {
+            vec![ManaColor::C]
+        }
+        _ => Vec::new(),
     }
 }
 

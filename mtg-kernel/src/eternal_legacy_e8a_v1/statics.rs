@@ -145,7 +145,10 @@ pub(crate) fn granted_ability_removal_timestamp(
 /// Harbinger of the Seas and the moons: a nonbasic land's land types become
 /// Island or Mountain. Other subtypes (Dryad Arbor's Dryad) stay. Alpine
 /// Moon (wave S1g) removes the land types of the lands it names, and a
-/// setter with a later timestamp sets one again (613.7).
+/// setter with a later timestamp sets one again (613.7). A land type added
+/// "in addition to its other land types" by an effect later than both
+/// (Yavimaya, Cradle of Growth; Urborg, Tomb of Yawgmoth; Navigator's
+/// Compass) is added again; an earlier one stays removed.
 pub(crate) fn adjust_subtypes(state: &GameState, object: ObjectId, subtype_ids: &mut Vec<u16>) {
     let setter = land_type_setter(state, object);
     let alpine = crate::eternal_sideboard_s1g_v1::alpine_timestamp(state, object);
@@ -153,15 +156,39 @@ pub(crate) fn adjust_subtypes(state: &GameState, object: ObjectId, subtype_ids: 
         return;
     }
     subtype_ids.retain(|&id| LAND_TYPES.iter().all(|land| land.stable_id() != id));
-    let Some((timestamp, land_type, _)) = setter else {
-        return;
-    };
-    if alpine.is_some_and(|moon| moon > timestamp) {
-        return;
+    if let Some((timestamp, land_type, _)) = setter {
+        if alpine.is_none_or(|moon| moon < timestamp) {
+            subtype_ids.push(land_type.stable_id());
+        }
     }
-    subtype_ids.push(land_type.stable_id());
+    let removed_at = setter
+        .map(|(timestamp, _, _)| timestamp)
+        .max(alpine)
+        .unwrap_or(0);
+    for (land_type, added_at) in additional_land_types(state, object) {
+        if added_at > removed_at {
+            subtype_ids.push(land_type.stable_id());
+        }
+    }
     subtype_ids.sort_unstable();
     subtype_ids.dedup();
+}
+
+/// The land types effects add to `object` "in addition to its other land
+/// types", each with its effect's timestamp.
+fn additional_land_types(state: &GameState, object: ObjectId) -> Vec<(Subtype, u64)> {
+    let mut types = crate::eternal_sideboard_s1d_v1::statics::extra_land_type_timestamps(
+        state, object,
+    );
+    if let Some(timestamp) = crate::eternal_legacy_e7a_v1::extra_forest_timestamp(state, object) {
+        types.push((Subtype::Forest, timestamp));
+    }
+    if let Some(timestamp) =
+        crate::eternal_sideboard_s1c_v1::statics::extra_swamp_timestamp(state, object)
+    {
+        types.push((Subtype::Swamp, timestamp));
+    }
+    types
 }
 
 /// Mana abilities this module grants: a nonbasic land under Harbinger of

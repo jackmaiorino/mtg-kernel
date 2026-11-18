@@ -347,12 +347,22 @@ fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<crate::mana::
                 colors.push(color);
             }
         }
-        if !colors.is_empty() {
+        // While the land's printed abilities are on, the grants above stand
+        // beside them as they always did. Once an effect removed them, every
+        // surviving grant is all the land has, so Abundant Growth's joins
+        // the others (305.7 keeps it beside a land-type setter's).
+        let printed_off = !colors.is_empty()
+            && !crate::continuous_characteristics_v1::printed_abilities_active(state, object);
+        if !colors.is_empty() && !printed_off {
             return colors;
         }
         // Abundant Growth: 'Enchanted land has "{T}: Add one mana of any
         // color."'
-        let colors = crate::eternal_pauper_e6b_v1::granted_mana_colors(state, object);
+        for color in crate::eternal_pauper_e6b_v1::granted_mana_colors(state, object) {
+            if !colors.contains(&color) {
+                colors.push(color);
+            }
+        }
         if !colors.is_empty() {
             return colors;
         }

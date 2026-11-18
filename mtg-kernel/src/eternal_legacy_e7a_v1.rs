@@ -2944,10 +2944,46 @@ pub(crate) fn is_extra_forest(state: &GameState, object: ObjectId) -> bool {
     }) && any_active(state, YAVIMAYA)
 }
 
+/// The timestamp of the latest Yavimaya, Cradle of Growth whose ability
+/// makes `object` a Forest (613.7).
+pub(crate) fn extra_forest_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
+    if !is_extra_forest(state, object) {
+        return None;
+    }
+    active_permanents(state, YAVIMAYA, None)
+        .map(|yavimaya| {
+            state
+                .objects
+                .get(yavimaya)
+                .v4
+                .layer_timestamp
+                .unwrap_or(0)
+        })
+        .max()
+}
+
 /// Yavimaya: a land that is a Forest only through it has "{T}: Add {G}."
+/// While an effect has removed the land's printed abilities, its own green
+/// is gone: it has "{T}: Add {G}." if it is still a Forest after the land
+/// type effects (a later land-type setter takes the Forest away) and no
+/// later removal of all abilities applies.
 pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<ManaColor> {
     if !is_extra_forest(state, object) {
         return Vec::new();
+    }
+    if !crate::continuous_characteristics_v1::printed_abilities_active(state, object) {
+        return extra_forest_timestamp(state, object)
+            .filter(|&timestamp| {
+                crate::engine::has_effective_subtype(
+                    state,
+                    object,
+                    crate::card_def::Subtype::Forest,
+                )
+                    && crate::continuous_characteristics_v1::grant_survives_land_type_setters(
+                        state, object, timestamp,
+                    )
+            })
+            .map_or_else(Vec::new, |_| vec![ManaColor::G]);
     }
     let live = state.objects.get(object);
     let def = &CARD_DEFS[live.card_def as usize];

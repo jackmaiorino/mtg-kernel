@@ -53,6 +53,18 @@ pub(crate) fn granted_ability_removal_timestamp(state: &GameState, host: ObjectI
     removal_timestamp_with(state, host, false)
 }
 
+/// Whether an ability granted to `host` by an effect with `timestamp` still
+/// applies: no removal that reaches granted abilities is later (613.7). A
+/// land-type setter never removes it (305.7).
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+pub(crate) fn grant_survives_land_type_setters(
+    state: &GameState,
+    host: ObjectId,
+    timestamp: u64,
+) -> bool {
+    granted_ability_removal_timestamp(state, host).is_none_or(|removed_at| timestamp > removed_at)
+}
+
 fn removal_timestamp_with(
     state: &GameState,
     host: ObjectId,

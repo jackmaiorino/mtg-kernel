@@ -1655,9 +1655,25 @@ pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<Ma
         return Vec::new();
     }
     let live = state.objects.get(object);
+    let printed_active =
+        crate::continuous_characteristics_v1::printed_abilities_active(state, object);
+    // While the land's printed abilities are removed, the Aura's grant still
+    // applies unless a removal of all abilities is later than it (613.7); a
+    // land-type setter removes none (305.7).
+    if !printed_active
+        && !attached_named(state, object, ABUNDANT_GROWTH).any(|growth| {
+            crate::continuous_characteristics_v1::grant_survives_land_type_setters(
+                state,
+                object,
+                state.objects.get(growth).v4.layer_timestamp.unwrap_or(0),
+            )
+        })
+    {
+        return Vec::new();
+    }
     let own = definition(state, object)
         .map(|def| {
-            if crate::continuous_characteristics_v1::printed_abilities_active(state, object) {
+            if printed_active {
                 def.primary_mana_ability_choices(live.v4.chosen_color)
             } else {
                 Vec::new()

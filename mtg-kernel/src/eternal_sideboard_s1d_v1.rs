@@ -198,6 +198,10 @@ pub struct ExtraLandTypeV1 {
     pub land: ObjectLinkV4,
     pub subtype: Subtype,
     pub turn: TurnV1,
+    /// The effect's 613.7 timestamp, 0 for a record made before records
+    /// carried one.
+    #[serde(default)]
+    pub timestamp: u64,
 }
 
 fn s1d_state(state: &mut GameState) -> &mut S1dStateV1 {
@@ -1436,12 +1440,14 @@ pub(crate) fn execute(op: &S1dOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             }
             let now = TurnV1::now(state);
+            let timestamp = crate::engine::next_timestamp(state);
             let records = &mut s1d_state(state).extra_land_types;
             records.retain(|record| record.turn == now);
             records.push(ExtraLandTypeV1 {
                 land: *land,
                 subtype: *subtype,
                 turn: now,
+                timestamp,
             });
         }
         S1dOpV1::ExileSecondTargetV1 => {
@@ -1775,6 +1781,18 @@ pub(crate) mod statics {
     /// Navigator's Compass: the basic land types `object` has gained until
     /// end of turn.
     pub(crate) fn extra_land_types(state: &GameState, object: ObjectId) -> Vec<Subtype> {
+        extra_land_type_timestamps(state, object)
+            .into_iter()
+            .map(|(subtype, _)| subtype)
+            .collect()
+    }
+
+    /// Navigator's Compass: the basic land types `object` has gained until
+    /// end of turn, each with the timestamp of the effect that gave it.
+    pub(crate) fn extra_land_type_timestamps(
+        state: &GameState,
+        object: ObjectId,
+    ) -> Vec<(Subtype, u64)> {
         let Some(s1d) = read_state(state) else {
             return Vec::new();
         };
@@ -1795,21 +1813,27 @@ pub(crate) mod statics {
                     && record.land.object == object
                     && record.land.zone_change_count == live.zone_change_count
             })
-            .map(|record| record.subtype)
+            .map(|record| (record.subtype, record.timestamp))
             .collect()
     }
 
     /// Navigator's Compass: a land that has a basic land type only through
-    /// it has that type's mana ability.
+    /// it has that type's mana ability. While an effect has removed the
+    /// land's printed abilities, its own colors are gone: it has the mana
+    /// ability of each type it still has after the land type effects (a
+    /// later land-type setter takes the type away) while no later removal of
+    /// all abilities applies.
     pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<ManaColor> {
-        let extra = extra_land_types(state, object);
+        let extra = extra_land_type_timestamps(state, object);
         if extra.is_empty() {
             return Vec::new();
         }
         let live = state.objects.get(object);
         let def = &CARD_DEFS[live.card_def as usize];
+        let printed_active =
+            crate::continuous_characteristics_v1::printed_abilities_active(state, object);
         let mut colors = Vec::new();
-        for subtype in extra {
+        for (subtype, timestamp) in extra {
             let color = match subtype {
                 Subtype::Plains => ManaColor::W,
                 Subtype::Island => ManaColor::U,
@@ -1818,18 +1842,26 @@ pub(crate) mod statics {
                 Subtype::Forest => ManaColor::G,
                 _ => continue,
             };
-            let own = def
-                .primary_mana_ability_choices(live.v4.chosen_color)
-                .contains(&color)
-                || def
-                    .additional_mana_abilities
-                    .iter()
-                    .any(|ability| ability.colors.contains(&color))
-                || def
-                    .restricted_mana_abilities
-                    .iter()
-                    .any(|ability| ability.colors.contains(&color));
-            if !own && !colors.contains(&color) {
+            let granted = if printed_active {
+                let own = def
+                    .primary_mana_ability_choices(live.v4.chosen_color)
+                    .contains(&color)
+                    || def
+                        .additional_mana_abilities
+                        .iter()
+                        .any(|ability| ability.colors.contains(&color))
+                    || def
+                        .restricted_mana_abilities
+                        .iter()
+                        .any(|ability| ability.colors.contains(&color));
+                !own
+            } else {
+                crate::engine::has_effective_subtype(state, object, subtype)
+                    && crate::continuous_characteristics_v1::grant_survives_land_type_setters(
+                        state, object, timestamp,
+                    )
+            };
+            if granted && !colors.contains(&color) {
                 colors.push(color);
             }
         }
