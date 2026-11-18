@@ -494,36 +494,36 @@ fn a_cache_serves_one_read_mode() {
     assert!(cache.enter_run_v1(false).is_err());
 }
 
-/// Threads entering in both modes: while a run without resident reads is in
-/// flight they are off, and once on they keep such runs out.
+/// Across threads: while one thread's run without resident reads is in
+/// flight, another thread's resident run is refused and the mode stays off;
+/// once that run has returned, the resident run is admitted.
 #[test]
-fn concurrent_runs_never_mix_read_modes() {
+fn a_run_in_flight_on_another_thread_keeps_resident_reads_off() {
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+    let wait = Duration::from_secs(60);
     let cache = VerifiedBytesCacheV1::new_v1(4096, 16);
+    let (admitted, is_admitted) = channel();
+    let (release, released) = channel::<()>();
     std::thread::scope(|scope| {
-        for _ in 0..4 {
-            scope.spawn(|| {
-                for _ in 0..2000 {
-                    if let Ok(run) = cache.enter_run_v1(false) {
-                        for _ in 0..8 {
-                            assert!(!cache.resident_v1());
-                            std::thread::yield_now();
-                        }
-                        drop(run);
-                    }
-                }
-            });
-        }
-        scope.spawn(|| loop {
-            match cache.enter_run_v1(true) {
-                Ok(mut run) => {
-                    std::thread::yield_now();
-                    run.accept_v1();
-                    break;
-                }
-                Err(_) => std::thread::yield_now(),
-            }
+        let shared = &cache;
+        let run = scope.spawn(move || {
+            let run = shared.enter_run_v1(false).unwrap();
+            admitted.send(()).unwrap();
+            // Held across what would be the run's reads.
+            released.recv_timeout(wait).unwrap();
+            assert!(!shared.resident_v1());
+            drop(run);
         });
+        is_admitted.recv_timeout(wait).unwrap();
+        let refused = cache.enter_run_v1(true).err().unwrap();
+        assert!(refused.contains("in flight"), "{refused}");
+        assert!(!cache.resident_v1());
+        release.send(()).unwrap();
+        run.join().unwrap();
     });
+    let mut resident = cache.enter_run_v1(true).unwrap();
+    resident.accept_v1();
     assert!(cache.resident_v1());
     assert!(cache.enter_run_v1(false).is_err());
 }

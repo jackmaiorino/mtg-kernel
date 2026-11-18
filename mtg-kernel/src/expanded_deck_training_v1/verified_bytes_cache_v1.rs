@@ -143,9 +143,11 @@ pub(crate) struct RunReadsV1<'a> {
 
 impl RunReadsV1<'_> {
     /// The run's arguments are accepted: a run admitted with resident reads
-    /// turns them on, for this cache and for good. Until this call its reads
-    /// are in the mode the cache had when it was admitted (rereads, for the
-    /// first resident run of a process).
+    /// turns them on, for this cache and for good. An admission does not turn
+    /// them on by itself, so until this call the run reads in the cache's
+    /// current mode: rereads for the first resident run of a process, unless
+    /// another resident run is accepted meanwhile (which this run's config
+    /// allows as well).
     pub(crate) fn accept_v1(&mut self) {
         if self.kind == RunReadsKindV1::ResidentPending {
             let mut runs = self
