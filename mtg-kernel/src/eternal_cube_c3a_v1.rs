@@ -229,27 +229,25 @@ fn offer(
 }
 
 /// Puts one -1/-1 counter on `object` as a cost (122.1, 614.16): the amount
-/// goes through the placement replacements Doubling Season's family adds.
+/// always goes through the shared placement replacements, so one that names
+/// any counter being put (Innkeeper's Talent) applies, while Doubling
+/// Season's "an effect" leaves a cost alone (`counter_amount`).
 fn put_minus_one_counter_as_cost(state: &mut GameState, object: ObjectId, actor: PlayerId) {
-    let placed = if crate::doubling_season_v48::requires_successor(state) {
-        match crate::doubling_season_v48::counter_amount(
-            state,
-            object,
-            actor,
-            crate::doubling_season_v48::CounterOriginV48::Cost,
-            1,
-        )
-        .ok()
-        .and_then(|count| i16::try_from(count).ok())
-        {
-            Some(count) => count,
-            None => {
-                halt(state, object);
-                return;
-            }
+    let placed = match crate::doubling_season_v48::counter_amount(
+        state,
+        object,
+        actor,
+        crate::doubling_season_v48::CounterOriginV48::Cost,
+        1,
+    )
+    .ok()
+    .and_then(|count| i16::try_from(count).ok())
+    {
+        Some(count) => count,
+        None => {
+            halt(state, object);
+            return;
         }
-    } else {
-        1
     };
     let Some(next) = state
         .objects

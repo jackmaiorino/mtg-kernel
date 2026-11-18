@@ -2943,6 +2943,43 @@ Conventions fixed under #717:
   on their own turn and for the opponent first otherwise (a flashed sorcery, or the Mastermind
   activated on the opponent's turn), with the stop between the two draws in both. With Jace on
   both sides this decides the winner, and with dredge or Hullbreacher who chooses first.
+- Linked exile after the source left. A card exiled by Currency Converter's "may exile" trigger
+  is linked to the Converter incarnation whose trigger it is, also when that Converter left the
+  battlefield before the trigger resolved (607.2a): a release ability of that incarnation already
+  on the stack still finds the card. A later incarnation never reads the link.
+- Delayed triggers see the event. Currency Converter's discard trigger and Staff of the
+  Storyteller's token trigger check their sources as the event happens (603.2), not when the
+  triggers are collected: `note_discard` and `note_token_created` (called as each token creation
+  commits) record the Converters and Staffs their player controlled then, so a source destroyed
+  later in the same resolution (Kolaghan's Command making its controller discard and then
+  destroying the Converter) still triggers, and a Staff that arrives later does not. Whether a
+  token is a creature is recorded as it is created too, and not read again at the collection: a
+  token made a creature by a later operation does not count, and a creature token that loses
+  that status before the collection still does. A token copy of a transformed permanent enters
+  with its back face up (707.8a); the copy helper that commits it with its front face and turns
+  it right after settles the recorded status once that face is on (Reflection of Kiki-Jiki
+  copying another Reflection). A snapshot written before this
+  change in the middle of a resolution, after a token was created and before the next trigger
+  collection, has no note and loses that Staff trigger; such a pending state is not carried
+  across the change. Known limit: Staff triggers once per trigger collection in which its
+  controller created creature tokens, so two separate token-creating instructions of one
+  resolution give one story counter. Ocelot Pride with the city's blessing does that: its end
+  step ability creates a Cat and then, as a second instruction, copies of the tokens that
+  entered this turn, which should be two Staff triggers.
+- Counter costs and the charge leaf. Devoted Druid's -1/-1 cost counter and the charge counters
+  of `E7aOpV1::AddChargeCountersV1` (Blast Zone's X, Staff of the Storyteller's story counter)
+  always go through `doubling_season_v48::counter_amount`, as a cost and as an effect, so a
+  replacement that names any counter being put (Innkeeper's Talent at level 3) applies to both
+  and Doubling Season's "an effect" only to the second. Counters a permanent enters with
+  (sunburst, Blast Zone's entry counter) are not yet modified.
+- Sunburst on a copy. Phyrexian Metamorph's cast records its colors spent, like Engineered
+  Explosives' and Pentad Prism's, and a Metamorph that enters as a copy of either gets a charge
+  counter for each color spent to cast it (702.44a); a copy of Engineered Explosives also keeps
+  that count for its sacrifice ability. By the rules a Metamorph put onto the battlefield without
+  being cast would enter as such a copy with no counters, since no mana was spent to cast it. The
+  engine does not offer that copy: the guarded copy menu of a Metamorph that was not cast (Reanimate)
+  refuses Pentad Prism and Engineered Explosives as unsupported entry forms, and Animate Dead and
+  Shallow Grave put a Metamorph onto the battlefield without any copy choice (an existing limit).
 
 A batch is one event for replacement effects (614.1, 614.6): the name-keyed graveyard
 replacements (Rest in Peace, Leyline of the Void, Dauthi Voidwalker, with Yawgmoth's Will, Suplex,

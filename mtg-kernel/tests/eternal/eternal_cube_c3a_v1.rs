@@ -1813,6 +1813,32 @@ fn a_creature_that_borrows_devoted_druids_untap_ability_pays_its_counter() {
     );
 }
 
+/// Innkeeper's Talent at level 3 for P0, levelled through its own abilities.
+fn innkeepers_talent_at_level_three(state: &mut GameState) -> ObjectId {
+    let class = put(state, P0, "Innkeeper's Talent", Zone::Battlefield);
+    pool(state, P0, &[ManaColor::G], 0);
+    activate(state, class, 0, &[]);
+    settled(state);
+    pool(state, P0, &[ManaColor::G], 3);
+    activate(state, class, 1, &[]);
+    settled(state);
+    class
+}
+
+#[test]
+fn devoted_druids_cost_counter_is_doubled_by_innkeepers_talent() {
+    // Innkeeper's Talent: "If you would put one or more counters on a
+    // permanent or player, put twice that many ... instead." That names a
+    // cost's counter too (614.1, 614.16), unlike Doubling Season's "If an
+    // effect would put". Two -1/-1 counters make the 0/2 Druid 0/0.
+    let mut state = plains();
+    innkeepers_talent_at_level_three(&mut state);
+    let druid = put(&mut state, P0, "Devoted Druid", Zone::Battlefield);
+    activate(&mut state, druid, 0, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, druid), Zone::Graveyard);
+}
+
 #[test]
 fn devoted_druid_cannot_tap_while_summoning_sick_but_can_untap_itself() {
     let mut state = plains();

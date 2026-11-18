@@ -2851,6 +2851,34 @@ fn engineered_explosives_enters_with_a_counter_per_color_and_destroys_that_mana_
 }
 
 #[test]
+fn phyrexian_metamorph_entering_as_engineered_explosives_has_sunburst_for_its_ability() {
+    // 702.44a: a Metamorph cast for {3}{U} that enters as a copy of an
+    // Engineered Explosives enters with one charge counter, and its
+    // sacrifice destroys mana value 1, not the original's 0.
+    let mut state = islands();
+    let star = put(&mut state, P1, "Chromatic Star", Zone::Battlefield);
+    let oracle = put(&mut state, P1, "Thassa's Oracle", Zone::Battlefield);
+    let ee = put(&mut state, P0, "Engineered Explosives", Zone::Battlefield);
+    let metamorph = put(&mut state, P0, "Phyrexian Metamorph", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    cast(&mut state, metamorph, &[]);
+    settle_choosing(&mut state, ee);
+    assert_eq!(zone(&state, metamorph), Zone::Battlefield);
+    assert_eq!(
+        state.objects.get(metamorph).card_def,
+        id("Engineered Explosives")
+    );
+    assert_eq!(state.objects.get(metamorph).counters.charge, 1);
+    pool(&mut state, P0, &[], 2);
+    activate(&mut state, metamorph, 0, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, metamorph), Zone::Graveyard);
+    assert_eq!(zone(&state, star), Zone::Graveyard, "mana value 1");
+    assert_eq!(zone(&state, oracle), Zone::Battlefield, "mana value 2");
+    assert_eq!(zone(&state, ee), Zone::Battlefield, "mana value 0");
+}
+
+#[test]
 fn liquimetal_coating_makes_a_permanent_an_artifact_for_the_turn() {
     let mut state = islands();
     let fury = put(&mut state, P1, "Fury", Zone::Battlefield);
