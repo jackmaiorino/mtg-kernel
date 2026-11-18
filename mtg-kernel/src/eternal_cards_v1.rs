@@ -877,6 +877,18 @@ pub(crate) fn delayed_upkeep_draw() -> EffectOp {
     eternal(EternalOpV1::DelayedUpkeepDrawV1)
 }
 
+/// "`searcher` may search their library ...": `searcher` chooses between
+/// doing nothing (the first option) and `search`. A player who declines
+/// neither searches nor shuffles; a player who searches may still find
+/// nothing when the search names a quality (701.23b) and then shuffles, so
+/// both answers stay open even with no matching card in the library.
+pub(crate) fn may_search(searcher: PlayerRef, search: EffectOp) -> EffectOp {
+    EffectOp::Choice {
+        controller: searcher,
+        options: vec![EffectOp::Sequence(Vec::new()), search],
+    }
+}
+
 /// "Whenever Bilbo attacks, you may cast an artifact, instant, or sorcery
 /// spell from your graveyard." The cast happens during the resolution and
 /// pays its costs; `exiled_instead_of_graveyard` applies the rest.
@@ -2087,11 +2099,15 @@ pub(crate) fn is_first_draw_in_draw_step(state: &GameState, player: PlayerId) ->
             .eternal_v1
             .as_ref()
             .and_then(|eternal| eternal.draw_step_draw)
-            .is_some_and(|marker| marker.turn == state.turn_key_v1() && marker.player == player)
+            .is_some_and(|marker| {
+                marker.player == player && (marker.turn, marker.player) == state.turn_id_v1()
+            })
 }
 
 /// Records the ordinal of the first actual draw in the active player's draw
-/// step. A replacement such as dredge does not consume this exemption.
+/// step. A replacement such as dredge does not consume this exemption. The
+/// marker's player is the active player, so its turn key and player name the
+/// turn it was made in.
 pub(crate) fn note_draw_step_draw(state: &mut GameState, player: PlayerId) {
     if !is_first_draw_in_draw_step(state, player) {
         return;
@@ -2372,6 +2388,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_sideboard_s1n_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1o_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1q_v1::begin_turn(state, player);
+    crate::eternal_sideboard_s1a_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks
@@ -2561,7 +2578,10 @@ pub(crate) fn trigger_matches(
                 .as_ref()
                 .and_then(|eternal| eternal.draw_step_draw)
                 .is_some_and(|marker| {
-                    marker.turn == state.turn_key_v1()
+                    // The marker's player drew it in their own draw step, so
+                    // it exempts a draw only in that same turn, never in the
+                    // other player's turn of the same round.
+                    (marker.turn, marker.player) == state.turn_id_v1()
                         && marker.player == player
                         && marker.ordinal == ordinal
                 })

@@ -93,6 +93,17 @@ Derived from the missing cards of each wave's decks. Already in the engine and r
 extra turns, initiative and dungeons, monarch, Phyrexian mana, delve, planeswalkers,
 Sagas, transform, temporary control, flashback, affinity, ninjutsu, kicker, madness.
 
+Turn identity (#741): `GameState::turn_key_v1()` and `state.turn` count rounds, so both
+players' turns of one round share them, and raw `state.turn` also stays the same through an
+extra turn. A record that means "this turn" (a once-each-turn budget, an "until end of turn"
+effect, a draw-step marker) is keyed by `GameState::turn_id_v1()`, the turn key together with
+the active player, or is cleared when each turn begins (the modules' `begin_turn`, run in
+every untap step), never by the round number alone. Moon-Circuit Hacker's "unless it entered
+this turn" reads the per-turn `entered_battlefield_this_turn` flag in builds with the Standard
+catalog. The Pauper build keeps its round comparison unchanged; the two agree whenever Hacker
+entered in its controller's own turn, and the Pauper pool has no way to make it enter in the
+opponent's turn.
+
 New, each built once in the first wave that needs it:
 
 - E1: energy counters; replicate; cast-from-graveyard conditions (Plunder the Trollshaws);
@@ -1162,8 +1173,7 @@ Spirits whose incarnations left the battlefield or exile, and Drop of Honey's tr
 once its trigger left the stack.
 
 Known gaps (S1g): no effect removes counters from the Spirits, so their flying counter is not
-a counter other effects can count or remove. A land entering under Alpine Moon keeps an
-enters-tapped ability, as under Blood Moon. Drop of Honey's state trigger is checked as
+a counter other effects can count or remove. Drop of Honey's state trigger is checked as
 triggers are collected, so creatures that all leave and return within one event batch, such
 as a flicker of every creature, don't trigger it (its ruling says they do).
 
@@ -1850,8 +1860,6 @@ Known gaps:
   day and night) still happen.
 - Academy Rector's search may find an Aura, which the engine puts onto the battlefield with no
   host rather than leaving it in the library (no Aura is in Other Control's list).
-- Veteran Explorer's search is not optional: each player searches, choosing no card is a search
-  that finds nothing, and every player shuffles.
 - The Tainted lands' second ability is an automatic payment source while a Swamp is controlled
   (the planner reads the gated colors from `statics::tainted_colors`); a Verge's is not.
 - Black Vise's chosen opponent is not a choice, and its record does not follow a change of control.
@@ -2729,10 +2737,11 @@ C1a:
 
 - Oust: the creature goes second from the top of its owner's library
   (`LibraryPlacement::SecondFromTop`) and its controller gains 3 life.
-- Path to Exile: exile, then the creature's controller (named before the exile) searches for
-  up to one basic land card, which enters tapped. Winds of Abandon is the same with a search
-  only for a creature that was exiled; its overload exiles each creature the caster doesn't
-  control as one batch, then each of their controllers searches for that many basic lands.
+- Path to Exile: exile, then the creature's controller (named before the exile) chooses
+  whether to search for up to one basic land card, which enters tapped. Winds of Abandon is
+  the same with a mandatory search only for a creature that was exiled; its overload exiles
+  each creature the caster doesn't control as one batch, then each of their controllers
+  searches for that many basic lands.
 - Damn: Avatar of Woe's destroy without regeneration; its overload is Decree of Pain's
   simultaneous destroy. Both overloads use wave S1d's machinery.
 - Reprieve returns the spell to its owner's hand (it is not a counter, so it also returns a
@@ -2753,7 +2762,8 @@ C1a:
   finishes resolving, shuffles both hands and graveyards into their libraries, then each player
   draws seven through `DrawCards` and its controller untaps up to six lands. Between the two
   players' draws, `C1aOpV1::StopIfWonV1` drops the rest of the program if a draw won the game
-  (Jace, Wielder of Mysteries); the plain interpreter would run the later instructions.
+  (Jace, Wielder of Mysteries). Both interpreters now stop on their own after such a win (see
+  the program stop below), so this local stop is kept but no longer needed.
 
 C1b:
 
@@ -2814,15 +2824,54 @@ C1c:
 - Pillage the Bog: looks at twice the controller's land count
   (`LibraryLookCount::ControllerLandsTwiceV1`), and plot {1}{B}{G}.
 
-Known limits shared with earlier waves, tracked in #710: an optional search
-that is declined still shuffles (Path to Exile); an unrestricted search may find nothing (Entomb,
-Imperial Seal, as Vampiric Tutor); a granted flashback does not add a second cost to a card that
-has flashback (Flashback, as Snapcaster Mage); "each player draws" from a sorcery cast outside its
-controller's turn draws for the controller first (Wheel of Fortune, Time Spiral); a draw that a
-leaf stages at resolution (Occult Epiphany's X cards) does not offer the choice between two
-competing draw replacements, which is Hullbreacher's Partial branch; and a batch applies
-replacement effects event by event, so a replacement source destroyed in the batch stops applying
-to the events after its own (Pest Infestation naming Rest in Peace first, as every sweeper).
+Known limits shared with earlier waves, tracked in #710: a granted flashback does not add a
+second cost to a card that has flashback (Flashback, as Snapcaster Mage); "each player draws" from
+a sorcery cast outside its controller's turn draws for the controller first (Wheel of Fortune,
+Time Spiral); and a draw that a leaf stages at resolution (Occult Epiphany's X cards) does not
+offer the choice between two competing draw replacements, which is Hullbreacher's Partial branch.
+
+Conventions fixed under #717:
+
+- Optional searches. A "may search" asks the searching player first, with declining as the first
+  option (`eternal_cards_v1::may_search`, the shape Solemn Simulacrum and Krosan Tusker already
+  had). A player who declines neither searches nor shuffles; a player who searches may still find
+  nothing when the search names a quality (701.23b), and then shuffles, also when the library
+  holds no matching card. This covers Path to Exile, Ghost Quarter, Erode, White Orchid Phantom,
+  Sundering Eruption (the new leaf `E8aOpV1::BasicLandSearchTappedV1` searches after the choice),
+  Assassin's Trophy (the opponent chooses), Flagstones of Trokair, Recruiter of the Guard,
+  Stoneforge Mystic, Goblin Engineer, Spellseeker, Goblin Matron, Yavimaya Granger, Heliod's
+  Pilgrim, Heaped Harvest, Golos and Veteran Explorer (each player chooses, its controller first,
+  the order the card already had; 101.4 would ask the active player first). Mandatory searches
+  (Winds of Abandon, the fetch lands) are unchanged.
+- Unrestricted searches. A search for "a card" names no quality, so it must find one while the
+  library has one (701.23d): Entomb's `SearchLibraryCardsToDestination` with
+  `LibraryCardFilter::AnyCard` must find its maximum, or every card of a smaller library, and
+  Vampiric Tutor, Imperial Seal and Beseech the Mirror must find one card. The prompt, the answer
+  and the coordinator all check the minimum.
+- Program stop after a win. When a player wins the game during a resolution (Jace, Wielder of
+  Mysteries replacing a draw), the game is over at once (104.1, 104.2a): in the eternal build the
+  plain interpreter's `Sequence` and the resumable interpreter's frame loop stop before the next
+  instruction (`owned_draws_v1::program_stops_after_win`), dropping the resolution's Coveted Jewel
+  and Paradoxical Outcome draw records as a Jace choice that wins already did. A player who can't
+  lose keeps the program running, and an owned draw instruction stops itself through its journal.
+  A loss for drawing from an empty library without Jace is a state-based action (704.5b), not an
+  effect, so "each player draws" still lets both players draw. Scrawling Crawler's "each player
+  draws" is the shape that needed it; the local stops of Time Spiral, Wheel of Fortune and the
+  owned draws stay.
+
+A batch is one event for replacement effects (614.1, 614.6): the name-keyed graveyard
+replacements (Rest in Peace, Leyline of the Void, Dauthi Voidwalker, with Yawgmoth's Will, Suplex,
+Lunarch Veteran and unearth before them in the same order as for a single event) are decided for
+every member before any member moves (`event::pre_apply_batch_zone_replacements_v1`), for an
+effect batch, a sacrifice group and a state-based death group alike. A cost that sacrifices
+several permanents commits as one group whenever such a replacement applies to one of them (Dread
+Return's flashback sacrificing a Rest in Peace that Opalescence animates). A member that a finality
+counter or an exile-if-it-would-die shield applies to is left out: those general replacements apply
+first, as for a single event, so it gets no void counter. A Rest in Peace or Dauthi
+Voidwalker destroyed in the batch still exiles the other members (Pest Infestation, every
+sweeper, Pestilence). Containment Priest's entry replacement is still applied as each member
+enters, so a Priest entering earlier in one entry batch exiles a later nontoken creature of the
+same batch.
 
 Each sub-module's test file covers every card's printed text in rules tests (costs, both sides of
 each condition, illegal targets) and plays decks of its cards through public schema-5 sessions
@@ -2878,6 +2927,14 @@ C2a:
 - Indatha, Ketria, Raugrin, Savai and Zagoth Triome, Raffine's Tower and Xander's Lounge join the
   `TRIOMES` table (enter tapped, three basic types, cycling {3}); Blazemire Verge and Bleachbone
   Verge join `VERGES`; Botanical Sanctum joins `FASTLANDS`; Commercial District is a surveil land.
+- Entering tapped is decided as the permanent would exist on the battlefield (614.12). A land's
+  own printed rule ("enters tapped", "enters tapped unless") is read before the move and dropped
+  once the land is placed if a Moon effect (Blood Moon, Magus of the Moon, Harbinger of the Seas,
+  Vision Charm, Alpine Moon) already removes its abilities (`event::printed_entry_rule_removed_v1`),
+  as the shocklands and Multiversal Passage skip their choice. The effects of other permanents
+  (Archon of Emeria, Root Maze, Spider-Woman) are checked after placement on the current types and
+  the controller it entered under, so a Mycosynth Lattice or an Opalescence counts; a tap from
+  another source is never undone by the Moon check.
 
 C2b:
 
@@ -2916,7 +2973,10 @@ C2c:
 - Everflowing Chalice: multikicker {2} through `eternal_cube_c2c_v1::multikicker_cost`, a
   name-keyed table any later multikicker card joins. The kick count is announced like replicate's,
   added to the payment once per kick and read by the program as its X; the Chalice taps for {C} for
-  each charge counter (`ManaAbilityAmountDef::ChargeCountersOnSourceV1`).
+  each charge counter (`ManaAbilityAmountDef::ChargeCountersOnSourceV1`). Kicks, replicate and
+  splice are additional costs, so their count is still announced and paid when the spell is cast
+  without paying its mana cost (cascade, Omniscience, Bolas's Citadel); only an X in the mana cost
+  is then 0.
 
 Limits shared with earlier cards: a declined life payment taps the land right after it enters
 (Soporific Springs), a hidden land is playable from a resolving effect only as the first land of
@@ -2935,7 +2995,11 @@ turn.
 C3a:
 
 - Auriok Salvagers returns an artifact card with mana value 1 or less (Goblin Engineer's filter).
-  Bloodbraid Challenger has cascade (Boarding Party's triggers), haste and escape. Death-Greeter's
+  Bloodbraid Challenger has cascade (Boarding Party's triggers), haste and escape. Cascade hits a
+  card by its own mana value, then casts it only as a spell whose mana value is less than the
+  cascade spell's (`E5bChoiceV1::PaidCastBelowV1` carries the limit into the resolution cast's
+  `maximum_mana_value`): Imodane's Recruiter (3, from the Standard catalog the eternal build
+  includes) is a hit for Bloodbraid Challenger, but its Train Troops (5) is not offered. Death-Greeter's
   Champion has dash (Ragavan's alternative cost and end-step return) and backup with double strike
   (Saiba Cryptomancer's op).
 - Embereth Shieldbreaker // Battle Display is an Adventure card (Brazen Borrower's shape).
@@ -3014,7 +3078,12 @@ C4a:
 - Displacer Kitten flickers up to one other nonland permanent its controller controls on each
   noncreature cast. Forensic Gadgeteer investigates on artifact casts and takes {1} of generic off
   activated abilities of its controller's artifacts, mana abilities with a mana cost included,
-  never below one mana.
+  never below one mana. An activation's total (`activation_total_mana_cost`, used by both the
+  payment and its legality check) is the mana cost, plus the taxes (Anointed Peacekeeper, Gloom),
+  minus the floorless reductions (Eiganjo's channel), minus the Gadgeteer's, whose floor is checked
+  against that total (601.2f), so a taxed ability with no mana cost of its own is reduced too.
+  Agatha's Soul Cauldron's "as though it were mana of any color" applies last: it changes how
+  the total is paid, so colored mana is never reduced as generic.
 - Faerie Mastermind (`OpponentDrawsSecondCardEachTurnV1`) and Ledger Shredder
   (`PlayerCastsSecondSpellEachTurnV1`, connive) read the engine's per-player draw and cast
   counters. The Mastermind's shared draw is controller first, with the stop between the two
@@ -3025,7 +3094,8 @@ C4a:
 - Lutri, the Spellchaser: companion with the distinct-names deck condition, and an
   enters-after-cast trigger that copies a target instant or sorcery spell its controller controls,
   with a keep-or-change choice per target. Caustic Bronco: saddle 3 is a crew cost at sorcery
-  speed, recorded for the turn and read by its attack trigger.
+  speed, recorded for the turn and read by its attack trigger. Saddle is not crew, so a Pilot
+  token's "crews Vehicles as though its power were 2 greater" counts only for a Vehicle's crew.
 - New subtypes: Vedalken (600), Horse (601), Mount (602).
 
 C4b:

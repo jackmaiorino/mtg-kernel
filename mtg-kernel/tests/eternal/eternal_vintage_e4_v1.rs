@@ -2252,6 +2252,31 @@ fn archon_of_emeria_limits_spells_and_taps_opponents_nonbasic_lands() {
 }
 
 #[test]
+fn archon_of_emeria_reads_the_controller_a_land_enters_under() {
+    // The Archon's own nonbasic land card, put onto the battlefield under
+    // the opponent's control, is a land that opponent controls as it
+    // enters: tapped. The opponent's card put onto the battlefield under
+    // the Archon's controller enters untapped.
+    let mut state = islands();
+    put(&mut state, P1, "Archon of Emeria", Zone::Battlefield);
+    let stolen = put(&mut state, P1, "Strip Mine", Zone::Graveyard);
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change_to_battlefield_under_controller(stolen, P0),
+    );
+    assert_eq!(state.objects.get(stolen).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(stolen).controller, P0);
+    assert!(state.objects.get(stolen).tapped, "it entered under P0");
+    let taken = put(&mut state, P0, "Strip Mine", Zone::Graveyard);
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change_to_battlefield_under_controller(taken, P1),
+    );
+    assert_eq!(state.objects.get(taken).controller, P1);
+    assert!(!state.objects.get(taken).tapped, "it entered under P1");
+}
+
+#[test]
 fn clarion_conqueror_stops_artifact_creature_and_planeswalker_abilities() {
     let mut state = islands();
     put(&mut state, P1, "Clarion Conqueror", Zone::Battlefield);
@@ -2365,6 +2390,57 @@ fn seasoned_dungeoneer_protects_an_attacking_warrior_from_creatures_and_explores
     }
     assert_eq!(blockable, Some(false), "protection from creatures");
     assert_eq!(state.objects.get(top).zone, Zone::Hand, "the land explored");
+}
+
+#[test]
+fn seasoned_dungeoneers_protection_ends_with_its_controllers_turn() {
+    let mut state = islands();
+    let dungeoneer = put(&mut state, P0, "Seasoned Dungeoneer", Zone::Battlefield);
+    let round = state.turn;
+    // P0 attacks with the Dungeoneer, which gains protection from creatures
+    // until end of turn; then the game plays on to P1's turn of the round.
+    for _ in 0..400 {
+        let decision = next(&mut state);
+        if state.active_player == P1 && state.step == Step::Main1 {
+            break;
+        }
+        let action = match decision {
+            Decision::DeclareAttackers { player: P0, .. } => {
+                Action::DeclareAttackers(vec![dungeoneer])
+            }
+            Decision::DeclareAttackers { .. } => Action::DeclareAttackers(vec![]),
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert_eq!(legal_targets, vec![Target::Object(dungeoneer)]);
+                Action::ChooseTarget(legal_targets[0])
+            }
+            Decision::DeclareBlockers { .. } => Action::DeclareBlockers(vec![]),
+            Decision::CastSpellOrPass { .. } => Action::Pass,
+            Decision::OrderTriggers { pending, .. } => {
+                Action::OrderTriggers((0..pending.len()).collect())
+            }
+            Decision::ChooseEffectBoolean { .. } => Action::ChooseEffectBoolean(false),
+            Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(0),
+            Decision::Discard { count, choices, .. } => {
+                Action::Discard(choices.into_iter().take(count as usize).collect())
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        };
+        act(&mut state, action);
+    }
+    assert_eq!(state.turn, round, "the same round");
+    assert_eq!(state.players[1].life, 17, "P0's attack connected");
+
+    // In P1's turn a creature's ability may target the Dungeoneer again.
+    let bowmasters = put(&mut state, P1, "Orcish Bowmasters", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::B], 1);
+    cast(&mut state, bowmasters, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseTargets { legal_targets, .. }) => assert!(
+            legal_targets.contains(&Target::Object(dungeoneer)),
+            "{legal_targets:?}"
+        ),
+        other => panic!("expected the Bowmasters target, got {other:?}"),
+    }
 }
 
 // ---- Batch three: planeswalkers -------------------------------------------
@@ -2837,6 +2913,44 @@ fn anointed_peacekeeper_sees_the_hand_and_taxes_the_named_card() {
     assert_eq!(mana(&state, P1, ManaColor::C), 0, "paid {{2}}");
     settled(&mut state);
     assert_eq!(state.objects.get(island).zone, Zone::Graveyard);
+}
+
+/// 601.2f: the total cost is the mana cost plus increases, then reductions.
+/// Anointed Peacekeeper naming Eiganjo makes its channel {4}{W}, and three
+/// legendary creatures take {3} off: {1}{W}.
+#[test]
+fn anointed_peacekeeper_tax_comes_before_eiganjos_channel_reduction() {
+    let mut state = islands();
+    peacekeeper_naming(&mut state, "Eiganjo, Seat of the Empire");
+    let eiganjo = put(&mut state, P0, "Eiganjo, Seat of the Empire", Zone::Hand);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    for name in [
+        "Squee, Goblin Nabob",
+        "Oswald Fiddlebender",
+        "Samwise the Stouthearted",
+    ] {
+        put(&mut state, P0, name, Zone::Battlefield);
+    }
+    for _ in 0..40 {
+        match next(&mut state) {
+            Decision::DeclareAttackers { .. } => {
+                act(&mut state, Action::DeclareAttackers(vec![elves]));
+                break;
+            }
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    assert!(!activatable(&mut state, eiganjo, 0), "{{W}} alone");
+    pool(&mut state, P0, &[], 1);
+    activate(&mut state, eiganjo, 0, &[Target::Object(elves)]);
+    settled(&mut state);
+    assert_eq!(mana(&state, P0, ManaColor::W), 0);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0, "{{1}}{{W}} was paid");
+    assert_eq!(state.objects.get(eiganjo).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(elves).zone, Zone::Graveyard);
 }
 
 /// A game at its very beginning: turn 1's untap step, P0 active.

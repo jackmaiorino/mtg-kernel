@@ -1302,6 +1302,8 @@ fn spellseeker_finds_an_instant_or_sorcery_with_mana_value_two_or_less() {
     let library_before = state.players[0].library.len();
     cast(&mut state, seeker, &[]);
     settle_with(&mut state, |_, decision| match decision {
+        // Search.
+        Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(1),
         Decision::ChooseEffectTargets { legal_targets, .. } => {
             for legal in [bolt, drain, time_walk] {
                 assert!(legal_targets.contains(&Target::Object(legal)));
@@ -1325,12 +1327,40 @@ fn spellseeker_search_may_be_declined_or_find_nothing() {
     let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Library);
     let seeker = put(&mut state, P0, "Spellseeker", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U], 2);
+    let before = state.players[0].library.clone();
     cast(&mut state, seeker, &[]);
-    // `first_answer` finishes the selection without choosing.
+    // `first_answer` declines the search: no shuffle.
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectOption {
+            player,
+            option_count: 2,
+            ..
+        }) => assert_eq!(player, P0),
+        other => panic!("expected the choice to search, got {other:?}"),
+    }
     settle_first(&mut state);
     assert_eq!(zone(&state, seeker), Zone::Battlefield);
     assert_eq!(zone(&state, bolt), Zone::Library);
     assert_eq!(hand_size(&state, P0), 0);
+    assert_eq!(
+        state.players[0].library, before,
+        "declining does not shuffle"
+    );
+
+    // Searching, the player may still find nothing, and shuffles.
+    let mut state = game(&["Island"; 20]);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Library);
+    let seeker = put(&mut state, P0, "Spellseeker", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 2);
+    let before = state.players[0].library.clone();
+    cast(&mut state, seeker, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(1),
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, bolt), Zone::Library);
+    assert_eq!(hand_size(&state, P0), 0);
+    assert_ne!(state.players[0].library, before, "a search shuffles");
 
     // Nothing in the library qualifies: the creature still enters.
     let mut state = game(&["Island"; 20]);
@@ -1738,6 +1768,34 @@ fn an_opposing_spider_woman_taps_your_creatures_as_they_enter() {
         !tapped(&state, theirs),
         "its controller's creatures are fine"
     );
+}
+
+#[test]
+fn spider_woman_reads_the_types_a_permanent_has_as_it_enters() {
+    // Mycosynth Lattice makes every permanent an artifact. An entering
+    // permanent is checked as it would exist on the battlefield (614.12),
+    // so an opposing land enters as an artifact, and tapped.
+    for lattice in [false, true] {
+        let mut state = plains();
+        put(
+            &mut state,
+            P0,
+            "Spider-Woman, Stunning Savior",
+            Zone::Battlefield,
+        );
+        if lattice {
+            put(&mut state, P0, "Mycosynth Lattice", Zone::Battlefield);
+        }
+        opponents_turn(&mut state);
+        let forest = put(&mut state, P1, "Forest", Zone::Hand);
+        play_land(&mut state, forest);
+        assert_eq!(zone(&state, forest), Zone::Battlefield);
+        assert_eq!(
+            engine::object_has_type(&state, forest, CardType::Artifact),
+            lattice
+        );
+        assert_eq!(tapped(&state, forest), lattice, "lattice={lattice}");
+    }
 }
 
 // ---- Public sessions -----------------------------------------------------------------

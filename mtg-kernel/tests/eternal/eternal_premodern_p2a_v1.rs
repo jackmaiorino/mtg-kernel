@@ -484,7 +484,42 @@ fn veteran_explorer_lets_each_player_fetch_two_basic_lands() {
     let mut state = game(&["Forest"; 10]);
     let explorer = put(&mut state, P0, "Veteran Explorer", Zone::Battlefield);
     to_graveyard(&mut state, explorer);
+    let mut asked = Vec::new();
     settle_with(&mut state, |_, decision| match decision {
+        // Each player chooses to search.
+        Decision::ChooseEffectOption {
+            player,
+            option_count: 2,
+            ..
+        } => {
+            asked.push(player);
+            Action::ChooseEffectOption(1)
+        }
+        Decision::ChooseEffectTargets {
+            legal_targets,
+            selected_count,
+            ..
+        } if selected_count < 2 => Action::ChooseEffectTarget(legal_targets[0]),
+        Decision::ChooseEffectTargets { .. } => Action::FinishEffectSelection,
+        other => first_answer(other),
+    });
+    assert_eq!(asked, vec![P0, P1]);
+    assert_eq!(controls(&state, P0, "Forest").len(), 2);
+    assert_eq!(controls(&state, P1, "Forest").len(), 2);
+    assert_eq!(state.players[0].library.len(), 8);
+    assert_eq!(state.players[1].library.len(), 8);
+
+    // A player who declines neither searches nor shuffles.
+    let mut state = game(&["Forest"; 10]);
+    let explorer = put(&mut state, P0, "Veteran Explorer", Zone::Battlefield);
+    let before = state.players[1].library.clone();
+    to_graveyard(&mut state, explorer);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption {
+            player,
+            option_count: 2,
+            ..
+        } => Action::ChooseEffectOption(u16::from(player == P0)),
         Decision::ChooseEffectTargets {
             legal_targets,
             selected_count,
@@ -494,9 +529,8 @@ fn veteran_explorer_lets_each_player_fetch_two_basic_lands() {
         other => first_answer(other),
     });
     assert_eq!(controls(&state, P0, "Forest").len(), 2);
-    assert_eq!(controls(&state, P1, "Forest").len(), 2);
-    assert_eq!(state.players[0].library.len(), 8);
-    assert_eq!(state.players[1].library.len(), 8);
+    assert!(controls(&state, P1, "Forest").is_empty());
+    assert_eq!(state.players[1].library, before);
 }
 
 #[test]
@@ -996,6 +1030,38 @@ fn root_maze_makes_artifacts_and_lands_enter_tapped() {
     state.priority_player = P1;
     act(&mut state, Action::PlayLand(theirs));
     assert!(state.objects.get(theirs).tapped);
+}
+
+#[test]
+fn root_maze_taps_a_creature_that_mycosynth_lattice_makes_an_artifact() {
+    // An entering permanent is checked as it would exist on the battlefield
+    // (614.12): under Mycosynth Lattice a creature enters as an artifact.
+    for lattice in [false, true] {
+        let mut state = islands();
+        put(&mut state, P0, "Root Maze", Zone::Battlefield);
+        if lattice {
+            put(&mut state, P1, "Mycosynth Lattice", Zone::Battlefield);
+        }
+        let wall = put(&mut state, P0, "Wall of Blossoms", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::G], 1);
+        cast(&mut state, wall, &[]);
+        settled(&mut state);
+        assert_eq!(state.objects.get(wall).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(wall).tapped, lattice, "{lattice}");
+    }
+}
+
+#[test]
+fn a_root_maze_that_becomes_an_artifact_does_not_tap_itself() {
+    // Its own static ability does not exist until it is on the battlefield.
+    let mut state = islands();
+    put(&mut state, P1, "Mycosynth Lattice", Zone::Battlefield);
+    let maze = put(&mut state, P0, "Root Maze", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    cast(&mut state, maze, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(maze).zone, Zone::Battlefield);
+    assert!(!state.objects.get(maze).tapped);
 }
 
 #[test]

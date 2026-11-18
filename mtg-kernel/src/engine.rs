@@ -2438,9 +2438,11 @@ fn validate_physical_spell_cast_origin(
             let from_hand = cfg!(feature = "eternal-fixtures")
                 && origin.origin_zone == Zone::Hand
                 && source.owner == caster;
+            // A free cast's X is 0, but a replicate, multikicker or splice
+            // count in the X slot counts additional costs paid.
             (origin.origin_zone == Zone::Exile || from_graveyard || from_hand)
                 && holder == caster
-                && (from_graveyard || item.v4.x_value == 0)
+                && (from_graveyard || item.v4.x_value == 0 || announces_additional_cost_count(def))
                 && (resolution_cast_v1::form_allowed(state, item.source, cast_method)
                     || (is_pending_placeholder
                         && resolution_cast_v1::form_allowed(
@@ -2610,7 +2612,7 @@ fn validate_physical_spell_cast_origin(
                 && holder == caster
                 && permission_zone_change_count == origin.origin_zone_change_count
                 && (!matches!(origin.route, SpellCastRouteV4::ExileFreePermission { .. })
-                    || (item.v4.x_value == 0
+                    || ((item.v4.x_value == 0 || announces_additional_cost_count(def))
                         && !(cast_method == CastMethodV4::Omen
                             && crate::eternal_sideboard_s1d_v1::statics::is_overload(def.name))
                         && (matches!(cast_method, CastMethodV4::Normal | CastMethodV4::Omen)
@@ -6307,7 +6309,7 @@ fn activation_mana_cost(components: &[CostComponent]) -> Option<&Cost> {
 /// controls). Only generic mana is reduced, never below zero. Activated
 /// ability costs are generated `'static` slices, so the ability is identified
 /// by the identity of its cost slice.
-fn reduced_activation_mana_cost(
+fn unfloored_activation_mana_cost(
     cost: &Cost,
     components: &[CostComponent],
     player: PlayerId,
@@ -6341,16 +6343,61 @@ fn reduced_activation_mana_cost(
             .generic
             .saturating_sub(u8::try_from(count).unwrap_or(u8::MAX));
     }
+    reduced
+}
+
+/// The total mana an activation costs (601.2f), from `printed`, the mana
+/// component of `components` if it has one: the mana cost, plus every
+/// increase (Anointed Peacekeeper, Gloom), minus the reductions without a
+/// floor (Eiganjo's channel), minus Forensic Gadgeteer's reduction, whose
+/// floor ("can't reduce the mana in that cost to less than one mana") is
+/// checked against that total. Only then does Agatha's Soul Cauldron's "as
+/// though it were mana of any color" apply: it changes how the total is paid,
+/// not how much it is, so colored mana is never reduced as generic. Both the
+/// payment and the legality precheck of a mana component use this total.
+/// Invasion Submersible's waterbend payments (wave S1q) start from the printed
+/// {3} and, once the total is known, take off the permanents each payment
+/// taps for it (601.2h pays the total), before the conversion, which leaves
+/// generic mana alone.
+fn activation_total_mana_cost(
+    printed: Option<&Cost>,
+    components: &[CostComponent],
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+) -> Option<Cost> {
+    // Anointed Peacekeeper: abilities of sources with the chosen name cost
+    // {2} more to activate. Gloom: abilities of white enchantments cost {3}
+    // more (eternal wave P3b).
+    #[cfg(feature = "eternal-fixtures")]
+    let tax = crate::eternal_vintage_v1::activation_tax(state, source).saturating_add(
+        crate::eternal_premodern_p3b_v1::statics::gloom_activation_tax(state, source),
+    );
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let tax = 0_u8;
+    // Invasion Submersible's four waterbend payments all cost the printed
+    // "Waterbend {3}" (wave S1q).
+    #[cfg(feature = "eternal-fixtures")]
+    let waterbend = crate::eternal_sideboard_s1q_v1::waterbend_printed(state, source, components);
+    #[cfg(feature = "eternal-fixtures")]
+    let printed = waterbend.as_ref().or(printed);
+    let mut total = match printed {
+        Some(cost) => *cost,
+        None if tax > 0 => Cost::zero(),
+        None => return None,
+    };
+    total.generic = total.generic.saturating_add(tax);
+    let total = unfloored_activation_mana_cost(&total, components, player, source, state);
     // Forensic Gadgeteer (eternal wave C4a): abilities of artifacts cost {1}
     // less, never below one mana.
-    let reduced = crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, reduced);
-    // Invasion Submersible's waterbend payments: the reduced {3} less the
-    // permanents tapped for it (wave S1q).
+    let total = crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, total);
+    // Invasion Submersible's waterbend taps pay part of that total; the rest
+    // is this ability's mana (wave S1q).
     #[cfg(feature = "eternal-fixtures")]
-    if let Some(cost) = crate::eternal_sideboard_s1q_v1::waterbend_mana(state, source, components) {
-        return cost;
-    }
-    reduced
+    let total = crate::eternal_sideboard_s1q_v1::waterbend_taps_paid(state, source, components, total);
+    Some(crate::standard_cards_v1::spend_as_any_color(
+        state, player, source, total,
+    ))
 }
 
 pub(crate) fn activation_mana_payment(
@@ -6359,25 +6406,13 @@ pub(crate) fn activation_mana_payment(
     source: ObjectId,
     state: &GameState,
 ) -> Option<Cost> {
-    let printed = activation_mana_cost(components).map(|cost| {
-        let reduced = reduced_activation_mana_cost(cost, components, player, source, state);
-        crate::standard_cards_v1::spend_as_any_color(state, player, source, reduced)
-    });
-    // Anointed Peacekeeper: abilities of sources with the chosen name cost
-    // {2} more to activate. Gloom: abilities of white enchantments cost {3}
-    // more (eternal wave P3b).
-    #[cfg(feature = "eternal-fixtures")]
-    {
-        let tax = crate::eternal_vintage_v1::activation_tax(state, source).saturating_add(
-            crate::eternal_premodern_p3b_v1::statics::gloom_activation_tax(state, source),
-        );
-        if tax > 0 {
-            let mut cost = printed.unwrap_or(Cost::zero());
-            cost.generic = cost.generic.saturating_add(tax);
-            return Some(cost);
-        }
-    }
-    printed
+    activation_total_mana_cost(
+        activation_mana_cost(components),
+        components,
+        player,
+        source,
+        state,
+    )
 }
 
 pub(crate) fn x_target_is_payable(
@@ -7150,20 +7185,13 @@ fn can_pay_components(
             CostComponent::ReturnControlledUnblockedAttackerToOwnersHand => {
                 !unblocked_attacker_return_candidates(player, state, &[]).is_empty()
             }
-            CostComponent::Mana(cost) => mana::plan_activation_mana_v1(
-                &crate::standard_cards_v1::spend_as_any_color(
-                    state,
-                    player,
-                    source,
-                    reduced_activation_mana_cost(cost, components, player, source, state),
-                ),
-                0,
-                player,
-                state,
-                source,
-                &[],
-            )
-            .is_some(),
+            CostComponent::Mana(cost) => {
+                activation_total_mana_cost(Some(cost), components, player, source, state)
+                    .and_then(|total| {
+                        mana::plan_activation_mana_v1(&total, 0, player, state, source, &[])
+                    })
+                    .is_some()
+            }
             CostComponent::PayLife(amount) => {
                 state.players[player.index()].life >= i32::from(*amount)
             }
@@ -7221,7 +7249,7 @@ fn can_pay_components(
             CostComponent::Crew(required) => {
                 crew_candidates(state, player, source, &[])
                     .iter()
-                    .map(|binding| crew_power(state, binding.object).max(0))
+                    .map(|binding| crew_power(state, binding.object, source).max(0))
                     .sum::<i64>()
                     >= i64::from(*required)
             }
@@ -7395,7 +7423,7 @@ fn validate_cost_component_choices_v1(
                 || !candidates.iter().any(|binding| binding.object == *id)
         }) || object_cost_chosen
             .iter()
-            .map(|&id| crew_power(state, id))
+            .map(|&id| crew_power(state, id, source))
             .sum::<i64>()
             < i64::from(required)
         {
@@ -8119,9 +8147,13 @@ fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
 
 fn commit_sacrifice_owned(state: &mut GameState, chosen: &[ObjectId], fiend_payment: Option<u32>) {
     crate::linked_aura_operation_v1::begin_batch(state);
+    // A name-keyed graveyard replacement of the eternal catalog that applies
+    // to one of several permanents sacrificed together is decided for the
+    // whole group before any of them moves (614.1, 614.6).
     if chosen.len() > 1
         && (crate::creature_death_capture_v1::enabled()
-            || crate::graveyard_order_v1::enabled(state))
+            || crate::graveyard_order_v1::enabled(state)
+            || (fiend_payment.is_none() && event::sacrifice_batch_replaced_v1(state, chosen)))
     {
         event::commit_sacrifice_death_group_v1(state, chosen);
         crate::linked_aura_operation_v1::end_batch(state);
@@ -10688,14 +10720,24 @@ fn thornscape_white_kicker_payable(
     .is_some()
 }
 
+/// Whether the cast announces a count of additional cost payments in the X
+/// slot (replicate, multikicker, splice onto Arcane). The count is announced
+/// whether or not the mana cost is paid.
+fn announces_additional_cost_count(def: &card_def::CardDef) -> bool {
+    crate::eternal_cards_v1::replicate_cost(def.name).is_some()
+        || crate::eternal_cube_c2c_v1::multikicker_cost(def.name).is_some()
+        || crate::eternal_pauper_e8b_v1::splice_cost(def).is_some()
+}
+
 /// Records the pay-or-skip answer of a hand cast under a free-cast
 /// permission. Skipping the mana cost makes X zero, except Sickening
-/// Dreams' X, which counts an additional cost's discards.
+/// Dreams' X, which counts an additional cost's discards, and a replicate,
+/// multikicker or splice count, which counts additional cost payments.
 fn set_hand_free_cast(state: &mut GameState, choice: HandFreeCastV1) {
     let discard_x = state.engine.pending_cast.as_ref().is_some_and(|pending| {
-        crate::eternal_premodern_p1b_v1::statics::announces_discard_x(
-            &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize],
-        )
+        let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+        crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
+            || announces_additional_cost_count(def)
     });
     let pending = state
         .engine
@@ -16064,19 +16106,15 @@ pub(crate) fn validate_pending_cast(
 
     let selected_cost =
         active_spec.and_then(|_| pending_cast_selected_mana_cost(def, pending, state));
-    // Replicate's payment count is announced and validated like X, and so
-    // is Sickening Dreams' "discard X cards", even for a free cast.
-    let discard_x = crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def);
-    let replicate = discard_x
-        || (!resolution_cast_v1::free_cast(state, pending.spell)
-            && (crate::eternal_cards_v1::replicate_cost(def.name).is_some()
-                || crate::eternal_cube_c2c_v1::multikicker_cost(def.name).is_some()
-                || crate::eternal_pauper_e8b_v1::splice_cost(def).is_some()));
-    let expected_seed_x: Option<u8> = if !discard_x
+    // Replicate's, multikicker's and splice's payment counts are announced
+    // and validated like X, and so is Sickening Dreams' "discard X cards",
+    // even for a free cast.
+    let replicate = crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
+        || announces_additional_cost_count(def);
+    let expected_seed_x: Option<u8> = if !replicate
         && (resolution_cast_v1::free_cast(state, pending.spell)
             || (def.cost.x_count == 0
-                && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
-                && !replicate))
+                && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)))
     {
         Some(0)
     } else {
@@ -17407,7 +17445,7 @@ fn drain_pending_activation_or_decide(state: &mut GameState) -> Option<Decision>
                 can_finish: pending
                     .object_cost_chosen
                     .iter()
-                    .map(|binding| crew_power(state, binding.object))
+                    .map(|binding| crew_power(state, binding.object, pending.source))
                     .sum::<i64>()
                     >= i64::from(required),
             });
@@ -17863,7 +17901,7 @@ pub(crate) fn validate_pending_activation(
         let selected_power = pending
             .object_cost_chosen
             .iter()
-            .map(|binding| crew_power(state, binding.object))
+            .map(|binding| crew_power(state, binding.object, pending.source))
             .sum::<i64>();
         if pending.crew_finished && selected_power < i64::from(required) {
             return Err("crew payment is incomplete".into());
@@ -30014,17 +30052,17 @@ fn materialize_begin_cast_with_quote_v1(
         optional_additional_cost_paid,
         optional_additional_cost_chosen: vec![],
         optional_additional_cost_selection_finished: false,
-        // Replicate's payment count is announced like X (601.2b).
-        // Sickening Dreams' "discard X cards" announces X even when the spell
-        // is cast without paying its mana cost.
+        // Replicate's payment count is announced like X (601.2b), and so are
+        // multikicker's and splice's. They count additional costs, which are
+        // still paid when the spell is cast without paying its mana cost
+        // (118.9d, 601.2f); only X in the mana cost is then 0 (107.3b).
+        // Sickening Dreams' "discard X cards" likewise announces X.
         x_value: if !crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
+            && !announces_additional_cost_count(def)
             && (without_mana_cost
                 || citadel_cast
                 || (def.cost.x_count == 0
-                    && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)
-                    && crate::eternal_cards_v1::replicate_cost(def.name).is_none()
-                    && crate::eternal_cube_c2c_v1::multikicker_cost(def.name).is_none()
-                    && crate::eternal_pauper_e8b_v1::splice_cost(def).is_none()))
+                    && supported_bestow(def).is_none_or(|bestow| bestow.cost.x_count == 0)))
         {
             Some(0)
         } else {
@@ -31977,10 +32015,15 @@ fn crew_requirement(components: &[CostComponent]) -> Option<u8> {
         }
     })
 }
-fn crew_power(state: &GameState, object: ObjectId) -> i64 {
+/// The power `object` counts with toward the crew cost of `source`'s ability.
+/// A Pilot Token "crews Vehicles as though its power were 2 greater": the
+/// bonus is for crewing a Vehicle only, not for saddling a Mount (702.171a),
+/// whose saddle cost shares this crew cost.
+fn crew_power(state: &GameState, object: ObjectId, source: ObjectId) -> i64 {
     let bonus = if card_def::CARD_DEFS[state.objects.get(object).card_def as usize].name
         == "Pilot Token"
         && crate::continuous_characteristics_v1::printed_abilities_active(state, object)
+        && has_effective_subtype(state, source, card_def::Subtype::Vehicle)
     {
         2
     } else {
@@ -32025,16 +32068,17 @@ fn crew_candidates(
     };
     let selected_power = selected
         .iter()
-        .map(|b| crew_power(state, b.object))
+        .map(|b| crew_power(state, b.object, source))
         .sum::<i64>();
     let positives = candidates
         .iter()
-        .map(|b| crew_power(state, b.object).max(0))
+        .map(|b| crew_power(state, b.object, source).max(0))
         .sum::<i64>();
     candidates
         .into_iter()
         .filter(|b| {
-            selected_power + positives + crew_power(state, b.object).min(0) >= i64::from(required)
+            selected_power + positives + crew_power(state, b.object, source).min(0)
+                >= i64::from(required)
         })
         .collect()
 }
@@ -32079,7 +32123,7 @@ fn finish_crew(state: &mut GameState) -> Result<(), String> {
     if pending
         .object_cost_chosen
         .iter()
-        .map(|b| crew_power(state, b.object))
+        .map(|b| crew_power(state, b.object, pending.source))
         .sum::<i64>()
         < i64::from(required)
     {

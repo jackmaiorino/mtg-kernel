@@ -1096,6 +1096,55 @@ fn ghostly_flicker_needs_two_different_targets() {
 }
 
 #[test]
+fn moon_circuit_hacker_flickered_in_the_opponents_turn_did_not_enter_in_its_controllers_turn() {
+    let mut state = islands();
+    let hacker = put(&mut state, P1, "Moon-Circuit Hacker", Zone::Battlefield);
+    let island = put(&mut state, P1, "Island", Zone::Battlefield);
+    let flicker = put(&mut state, P1, "Ghostly Flicker", Zone::Hand);
+    // P1 flickers the Hacker in P0's turn.
+    pass_until(&mut state, |state| state.priority_player == P1);
+    assert_eq!(state.active_player, P0);
+    pool(&mut state, P1, &[ManaColor::U], 2);
+    cast(
+        &mut state,
+        flicker,
+        &[Target::Object(hacker), Target::Object(island)],
+    );
+    settle_first(&mut state);
+    assert_eq!(state.objects.get(hacker).zone_change_count, 2);
+
+    // P1's turn of the same round: the Hacker connects, P1 draws, and it
+    // did not enter this turn, so P1 discards.
+    let round = state.turn;
+    let mut discards = 0;
+    run_until(
+        &mut state,
+        |state| state.active_player == P1 && state.step == Step::Main2,
+        |_, decision| match decision {
+            Decision::DeclareAttackers { player: P1, .. } => {
+                Some(Action::DeclareAttackers(vec![hacker]))
+            }
+            // "You may draw a card": option 1 draws.
+            Decision::ChooseEffectOption { player: P1, .. } => Some(Action::ChooseEffectOption(1)),
+            Decision::Discard {
+                player: P1,
+                count,
+                choices,
+            } => {
+                discards += 1;
+                Some(Action::Discard(
+                    choices.iter().copied().take(*count as usize).collect(),
+                ))
+            }
+            _ => None,
+        },
+    );
+    assert_eq!(state.turn, round, "the same round");
+    assert_eq!(state.players[0].life, 18, "the Hacker connected");
+    assert_eq!(discards, 1, "Moon-Circuit Hacker did not enter this turn");
+}
+
+#[test]
 fn moments_peace_prevents_combat_damage_and_has_flashback() {
     let mut state = islands();
     let angler = put(&mut state, P0, "Gurmag Angler", Zone::Battlefield);

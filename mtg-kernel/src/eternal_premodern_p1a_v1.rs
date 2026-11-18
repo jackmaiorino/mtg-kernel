@@ -849,7 +849,7 @@ const fn trigger(condition: TriggerCondition, effect: fn() -> EffectOp) -> Trigg
 /// Goblin Matron: "When this creature enters, you may search your library
 /// for a Goblin card, reveal it, put it into your hand, then shuffle."
 fn matron_enters() -> EffectOp {
-    p1a(P1aOpV1::MatronSearchV1)
+    crate::eternal_cards_v1::may_search(PlayerRef::Controller, p1a(P1aOpV1::MatronSearchV1))
 }
 
 /// Goblin Piledriver: "Whenever this creature attacks, it gets +2/+0 until

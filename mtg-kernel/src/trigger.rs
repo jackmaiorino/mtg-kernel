@@ -6126,8 +6126,20 @@ fn triggers_from_events(
                         let effect = if card.name == "Moon-Circuit Hacker"
                             && matches!(def.condition, TriggerCondition::DealsCombatDamageToPlayer)
                         {
+                            // `entered_battlefield_turn` is a round number, so
+                            // it would also count an entry in the opponent's
+                            // turn of the same round. Builds with the Standard
+                            // catalog keep the exact per-turn flag (cleared at
+                            // every untap step); the Pauper build keeps the
+                            // round comparison byte for byte. Both agree when
+                            // Hacker entered in its controller's own turn, the
+                            // only way the Pauper pool can make it enter.
                             moon_circuit_hacker_combat_effect_for_entered_this_turn(
-                                obj.v4.entered_battlefield_turn == Some(state.turn_key_v1()),
+                                if cfg!(feature = "standard-magezero-fixtures") {
+                                    obj.v4.entered_battlefield_this_turn
+                                } else {
+                                    obj.v4.entered_battlefield_turn == Some(state.turn_key_v1())
+                                },
                             )
                         } else {
                             #[cfg(feature = "standard-magezero-fixtures")]

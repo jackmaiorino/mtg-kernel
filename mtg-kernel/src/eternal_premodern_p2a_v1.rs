@@ -719,11 +719,18 @@ fn explorer_search(player: PlayerRef) -> EffectOp {
 
 /// Veteran Explorer: "each player may search their library for up to two
 /// basic land cards and put them onto the battlefield. Then each player who
-/// searched their library this way shuffles."
+/// searched their library this way shuffles." Each player chooses whether
+/// to search; one who declines does not shuffle.
 fn explorer_dies() -> EffectOp {
     EffectOp::Sequence(vec![
-        explorer_search(PlayerRef::Controller),
-        explorer_search(PlayerRef::Opponent),
+        crate::eternal_cards_v1::may_search(
+            PlayerRef::Controller,
+            explorer_search(PlayerRef::Controller),
+        ),
+        crate::eternal_cards_v1::may_search(
+            PlayerRef::Opponent,
+            explorer_search(PlayerRef::Opponent),
+        ),
     ])
 }
 

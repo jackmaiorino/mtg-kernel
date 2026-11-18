@@ -35,15 +35,22 @@
 //! - Invasion Submersible's exhaust ability is registered as four activated
 //!   abilities, one per number of waterbend taps (zero to three): ability `k`
 //!   costs `TapControlled { count: k, ArtifactOrCreature }` and the rest of the
-//!   {3} in mana. The taps are chosen through the ordinary cost-target choice.
-//!   The four share one exhaust record per object (`S1qStateV1::exhausted`),
-//!   so `activation_allowed` offers none of them once one was activated.
-//!   `waterbend_mana` sets the mana part after cost reductions, and
+//!   {3} in mana (701.67a: each tap pays {1} of the waterbend cost's generic
+//!   mana; 701.67b: only of that cost, never of a tax added to it). The taps
+//!   are chosen through the ordinary cost-target choice. The four share one
+//!   exhaust record per object (702.177a: "Activate only once"; 400.7: a new
+//!   object after a zone change), so `activation_allowed` offers none of them
+//!   once one was activated.
+//!   Each payment's mana is the engine's one activation total of the printed
+//!   {3} (`waterbend_printed`: increases added, then the reductions, Forensic
+//!   Gadgeteer's floor included) less its taps (`waterbend_taps_paid`), so the
+//!   payment, the payable checks and the tap candidates read the same number.
 //!   `retain_payable_waterbend_taps` keeps a tap from leaving the mana part
 //!   unpayable. The animation has no duration: `S1qStateV1::animated` holds
 //!   the incarnation, which `engine::object_has_type` reads.
-//! - Summon: Bahamut uses the shared Saga rules (714); its chapters are
-//!   `bahamut_chapter_one` to `bahamut_chapter_four`.
+//! - Summon: Bahamut uses the shared Saga rules (715, a Saga creature by
+//!   715.1a; the lore counter of 715.3c and the sacrifice of 704.5s); its
+//!   chapters are `bahamut_chapter_one` to `bahamut_chapter_four`.
 //!
 //! `eternal_cards_v1` forwards this module's effect leaves, triggers and
 //! per-game state, wave S1o's recipe tables fall through to
@@ -337,40 +344,53 @@ fn waterbend_taps(components: &[CostComponent]) -> u8 {
         .unwrap_or(0)
 }
 
-/// The generic mana of "Waterbend {3}" after cost reductions (Forensic
-/// Gadgeteer's "{1} less, never below one mana"). Waterbend taps can pay at
-/// most this much (the ruling: only up to the generic mana of the waterbend
-/// cost, even when the cost is reduced).
-fn waterbend_total(state: &GameState, source: ObjectId) -> u8 {
-    crate::eternal_cube_c4a_v1::reduce_artifact_activation(
-        state,
-        source,
-        Cost {
-            pips: &[],
-            generic: WATERBEND_GENERIC,
-            x_count: 0,
-        },
-    )
-    .generic
-}
-
-/// The mana part of one of Invasion Submersible's exhaust payments, after cost
-/// reductions: the reduced waterbend total less the payment's taps. `None`
-/// for every other ability. A cost increase (Anointed Peacekeeper, Gloom) is
-/// added by the engine afterwards, to the mana part.
-pub(crate) fn waterbend_mana(
+/// The printed cost every one of Invasion Submersible's exhaust payments
+/// starts from, "Waterbend {3}", or `None` for every other ability. The
+/// engine's activation total (`engine::activation_total_mana_cost`, 601.2f)
+/// adds the increases to it and takes the reductions off, Forensic
+/// Gadgeteer's floor included, exactly as for any other ability.
+pub(crate) fn waterbend_printed(
     state: &GameState,
     source: ObjectId,
     components: &[CostComponent],
 ) -> Option<Cost> {
-    if !named(state, source, INVASION_SUBMERSIBLE) {
-        return None;
-    }
-    let taps = waterbend_taps(components);
-    Some(Cost {
+    (named(state, source, INVASION_SUBMERSIBLE)
+        && components
+            .iter()
+            .any(|component| matches!(component, CostComponent::Mana(_))))
+    .then_some(Cost {
         pips: &[],
-        generic: waterbend_total(state, source).saturating_sub(taps),
+        generic: WATERBEND_GENERIC,
         x_count: 0,
+    })
+}
+
+/// The mana one of the Submersible's exhaust payments still needs once its
+/// waterbend taps paid their part of `total` (601.2h: the total is paid, each
+/// tap paying {1} of its generic mana). Other abilities keep `total`.
+pub(crate) fn waterbend_taps_paid(
+    state: &GameState,
+    source: ObjectId,
+    components: &[CostComponent],
+    total: Cost,
+) -> Cost {
+    if waterbend_printed(state, source, components).is_none() {
+        return total;
+    }
+    Cost {
+        generic: total.generic.saturating_sub(waterbend_taps(components)),
+        ..total
+    }
+}
+
+/// How many permanents a waterbend payment may tap: the generic mana of the
+/// printed waterbend cost (the ruling: "up to the amount of the generic mana
+/// in the waterbend cost", even when the total increases or decreases), and
+/// never more than the total there is to pay, which the all-mana payment's
+/// mana shows (a reduction to {2} leaves two to pay; a tax leaves three taps).
+fn waterbend_cap(state: &GameState, source: ObjectId) -> u8 {
+    exhaust_mana(state, source, 0).map_or(WATERBEND_GENERIC, |total| {
+        total.generic.min(WATERBEND_GENERIC)
     })
 }
 
@@ -465,9 +485,9 @@ fn exhaust_mana(state: &GameState, source: ObjectId, ability_index: usize) -> Op
 }
 
 /// Invasion Submersible's exhaust ability: none of its four payments once one
-/// was activated for this object; a payment with more waterbend taps than the
-/// reduced waterbend total allows is not offered; and a payment is offered
-/// only if some choice of its taps leaves its mana part payable.
+/// was activated for this object; a payment with more waterbend taps than
+/// `waterbend_cap` allows is not offered; and a payment is offered only if
+/// some choice of its taps leaves its mana part payable.
 pub(crate) fn activation_allowed(
     state: &GameState,
     source: ObjectId,
@@ -494,7 +514,7 @@ pub(crate) fn activation_allowed(
         return true;
     };
     let taps = waterbend_taps(ability.cost);
-    if taps > waterbend_total(state, source) {
+    if taps > waterbend_cap(state, source) {
         return false;
     }
     let Some(cost) = exhaust_mana(state, source, ability_index) else {

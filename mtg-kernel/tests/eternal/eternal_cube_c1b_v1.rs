@@ -708,17 +708,58 @@ fn entomb_puts_the_chosen_card_into_the_graveyard_at_instant_speed() {
     assert_eq!(zone(&state, entomb), Zone::Graveyard);
 }
 
+/// The search prompt of a resolving "search your library for a card": a
+/// nonempty library always has a card to find (701.23d), so it cannot finish
+/// before one is chosen.
+fn assert_must_find_a_card(state: &mut GameState) {
+    match settle(state) {
+        Some(Decision::ChooseEffectTargets {
+            player,
+            min_targets,
+            can_finish,
+            legal_targets,
+            ..
+        }) => {
+            assert_eq!(player, P0);
+            assert_eq!(min_targets, 1);
+            assert!(!can_finish, "a search for a card must find one");
+            assert_eq!(legal_targets.len(), state.players[0].library.len());
+        }
+        other => panic!("expected the search, got {other:?}"),
+    }
+    assert!(
+        engine::step(state, Action::FinishEffectSelection).is_err(),
+        "finishing with nothing found is refused"
+    );
+}
+
 #[test]
-fn entomb_may_find_nothing() {
+fn entomb_must_find_a_card_in_a_nonempty_library_and_finds_nothing_in_an_empty_one() {
     let mut state = swamps();
     let library = state.players[0].library.len();
     let entomb = put(&mut state, P0, "Entomb", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::B], 0);
     cast(&mut state, entomb, &[]);
-    // First answer: finish the selection with no card.
+    assert_must_find_a_card(&mut state);
     settle_first(&mut state);
-    assert_eq!(state.players[0].library.len(), library);
-    assert_eq!(state.players[0].graveyard.len(), 1, "only Entomb itself");
+    assert_eq!(state.players[0].library.len(), library - 1);
+    assert_eq!(
+        state.players[0].graveyard.len(),
+        2,
+        "Entomb and the found card"
+    );
+
+    // An empty library has nothing to find.
+    let mut state = game(&[]);
+    let entomb = put(&mut state, P0, "Entomb", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    cast(&mut state, entomb, &[]);
+    settle_first(&mut state);
+    assert_eq!(
+        state.players[0].graveyard,
+        vec![entomb],
+        "only Entomb itself"
+    );
 }
 
 // ---- Hymn to Tourach and Mind Twist ----------------------------------------------
@@ -933,8 +974,18 @@ fn imperial_seal_puts_the_chosen_card_on_top_and_costs_two_life() {
 }
 
 #[test]
-fn imperial_seal_may_find_nothing_but_still_costs_life_and_is_a_sorcery() {
+fn imperial_seal_must_find_a_card_costs_life_with_nothing_to_find_and_is_a_sorcery() {
     let mut state = swamps();
+    let seal = put(&mut state, P0, "Imperial Seal", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    cast(&mut state, seal, &[]);
+    assert_must_find_a_card(&mut state);
+    settle_first(&mut state);
+    assert_eq!(life(&state, P0), 18);
+    assert_eq!(zone(&state, seal), Zone::Graveyard);
+
+    // An empty library has nothing to find; the life is still paid.
+    let mut state = game(&[]);
     let seal = put(&mut state, P0, "Imperial Seal", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::B], 0);
     cast(&mut state, seal, &[]);
@@ -2380,26 +2431,31 @@ fn pest_infestation_destroys_up_to_x_targets_and_creates_twice_x_pests() {
 #[test]
 fn pest_infestation_destroys_its_targets_as_one_batch() {
     // Sol Ring and Rest in Peace are destroyed together, and Rest in Peace's
-    // replacement effect exiles both. (The engine's batch applies
-    // replacement effects event by event, so with Rest in Peace named first
-    // the Ring would reach the graveyard: the same limit every sweeper has.)
-    let mut state = forests();
-    let ring = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
-    let rest = put(&mut state, P1, "Rest in Peace", Zone::Battlefield);
-    let infestation = put(&mut state, P0, "Pest Infestation", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::G], 4);
-    act(&mut state, Action::CastSpell(infestation));
-    run_plan(
-        &mut state,
-        &Plan {
-            targets: vec![Target::Object(ring), Target::Object(rest)],
-            x: Some(2),
-            ..Plan::default()
-        },
-    );
-    assert_eq!(zone(&state, ring), Zone::Exile);
-    assert_eq!(zone(&state, rest), Zone::Exile);
-    assert_eq!(pests(&state, P0).len(), 4);
+    // replacement effect exiles both, whichever is named first: the batch
+    // is one event, and the replacement exists immediately before it.
+    for rest_first in [false, true] {
+        let mut state = forests();
+        let ring = put(&mut state, P1, "Sol Ring", Zone::Battlefield);
+        let rest = put(&mut state, P1, "Rest in Peace", Zone::Battlefield);
+        let infestation = put(&mut state, P0, "Pest Infestation", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::G], 4);
+        act(&mut state, Action::CastSpell(infestation));
+        let mut targets = vec![Target::Object(ring), Target::Object(rest)];
+        if rest_first {
+            targets.reverse();
+        }
+        run_plan(
+            &mut state,
+            &Plan {
+                targets,
+                x: Some(2),
+                ..Plan::default()
+            },
+        );
+        assert_eq!(zone(&state, ring), Zone::Exile, "rest_first={rest_first}");
+        assert_eq!(zone(&state, rest), Zone::Exile, "rest_first={rest_first}");
+        assert_eq!(pests(&state, P0).len(), 4);
+    }
 }
 
 #[test]

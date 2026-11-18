@@ -714,10 +714,13 @@ fn take_initiative() -> EffectOp {
 /// Heaped Harvest: "you may search your library for a basic land card, put
 /// it onto the battlefield tapped, then shuffle."
 fn search_basic_land_tapped() -> EffectOp {
-    EffectOp::SearchLibraryToBattlefieldTapped {
-        player: PlayerRef::Controller,
-        filter: LibraryCardFilter::BasicLand,
-    }
+    crate::eternal_cards_v1::may_search(
+        PlayerRef::Controller,
+        EffectOp::SearchLibraryToBattlefieldTapped {
+            player: PlayerRef::Controller,
+            filter: LibraryCardFilter::BasicLand,
+        },
+    )
 }
 
 fn create_plant() -> EffectOp {

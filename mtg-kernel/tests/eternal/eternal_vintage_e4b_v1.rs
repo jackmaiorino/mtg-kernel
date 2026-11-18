@@ -596,6 +596,67 @@ fn lurrus_casts_one_permanent_spell_with_mana_value_two_or_less_from_the_graveya
     assert!(!castable(&mut state, snapcaster));
 }
 
+#[test]
+fn lurrus_used_in_one_turn_is_unused_in_the_other_players_turn_of_the_round() {
+    let mut state = islands();
+    let lurrus = put(&mut state, P0, "Lurrus of the Dream-Den", Zone::Battlefield);
+    let pearl = put(&mut state, P0, "Mox Pearl", Zone::Graveyard);
+    let jet = put(&mut state, P1, "Mox Jet", Zone::Graveyard);
+    cast(&mut state, pearl, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, pearl), Zone::Battlefield);
+
+    // P1 gains control of this Lurrus, as a control-changing effect would.
+    state.objects.get_mut(lurrus).controller = P1;
+    let round = state.turn;
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::Main1
+    });
+    assert_eq!(state.turn, round, "the same round");
+    assert!(
+        castable(&mut state, jet),
+        "P1's own turn is another turn with its own Lurrus permission"
+    );
+    cast(&mut state, jet, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, jet), Zone::Battlefield);
+}
+
+#[test]
+fn lurrus_is_not_charged_for_a_graveyard_cast_it_did_not_permit() {
+    let mut state = islands();
+    put(&mut state, P0, "Lurrus of the Dream-Den", Zone::Battlefield);
+    let wrenn = put(&mut state, P0, "Wrenn and Six", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R, ManaColor::G], 0);
+    cast(&mut state, wrenn, &[]);
+    settled(&mut state);
+    mtg_kernel::planeswalker_v1::change_loyalty(&mut state, wrenn, 4);
+    activate(&mut state, wrenn, 2, &[]);
+    settled(&mut state);
+
+    // A retraced Lightning Bolt is a graveyard cast Lurrus does not permit.
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
+    let land = put(&mut state, P0, "Island", Zone::Hand);
+    put(&mut state, P0, "Tundra", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    cast(&mut state, bolt, &[Target::Player(P1)]);
+    match next(&mut state) {
+        Decision::ChooseCostTargets { candidates, .. } => {
+            assert!(candidates.contains(&land));
+            act(&mut state, Action::ChooseCostTarget(land));
+        }
+        other => panic!("expected the retrace discard, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(state.players[1].life, 17);
+
+    let pearl = put(&mut state, P0, "Mox Pearl", Zone::Graveyard);
+    assert!(
+        castable(&mut state, pearl),
+        "Lurrus' permission is still unused this turn"
+    );
+}
+
 // ---- Spells -----------------------------------------------------------------------
 
 #[test]

@@ -967,6 +967,48 @@ fn dauthi_voidwalker_exiles_opponents_cards_with_void_counters_and_plays_one_fre
 }
 
 #[test]
+fn dauthi_voidwalker_dying_with_an_opposing_creature_still_exiles_it() {
+    // Pestilence kills both creatures in one state-based action event.
+    // Dauthi Voidwalker's replacement exists immediately before it and
+    // applies to the other player's card, whatever order the group is in.
+    for (dauthi_seat, other_seat) in [(P0, P1), (P1, P0)] {
+        for dauthi_first in [true, false] {
+            let mut state = plains();
+            let pestilence = put(&mut state, P0, "Pestilence", Zone::Battlefield);
+            // The object created first is first in the dying group.
+            let mut rows = [
+                (dauthi_seat, "Dauthi Voidwalker"),
+                (other_seat, "Thraben Inspector"),
+            ];
+            if !dauthi_first {
+                rows.reverse();
+            }
+            let mut placed = Vec::new();
+            for (seat, name) in rows {
+                placed.push(put(&mut state, seat, name, Zone::Battlefield));
+            }
+            let (dauthi, inspector) = if dauthi_first {
+                (placed[0], placed[1])
+            } else {
+                (placed[1], placed[0])
+            };
+            pool(&mut state, P0, &[ManaColor::B, ManaColor::B], 0);
+            for _ in 0..2 {
+                activate(&mut state, pestilence, 0, &[]);
+                settled(&mut state);
+            }
+            let case = format!("Dauthi under {dauthi_seat:?}, first={dauthi_first}");
+            assert_eq!(zone(&state, dauthi), Zone::Graveyard, "{case}");
+            assert_eq!(zone(&state, inspector), Zone::Exile, "{case}");
+            assert!(
+                mtg_kernel::eternal_e9b_v1::has_void_counter(&state, inspector),
+                "{case}"
+            );
+        }
+    }
+}
+
+#[test]
 fn eldrazi_repurposer_makes_a_spawn_when_cast_and_when_it_dies() {
     let mut state = plains();
     let repurposer = put(&mut state, P0, "Eldrazi Repurposer", Zone::Hand);
