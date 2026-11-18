@@ -294,9 +294,24 @@ fn insert_v1(sha256: &str, bytes: impl Into<Arc<Vec<u8>>>, slots: [SlotV1; 2]) {
     };
     let charge = retained_charge_v1(charge as usize, bytes.capacity());
     let shared = shared_v1();
-    let mut state = lock_v1(shared);
+    if insert_locked_v1(&mut lock_v1(shared), sha256, bytes, charge, slots) {
+        // A reader waiting on a dropped entry parses its bytes itself.
+        shared.changed.notify_all();
+    }
+}
+
+/// Inserts an entry charged `charge` into the locked store, dropping the
+/// oldest entries to make room. False when it is not held (too large, or
+/// already there).
+fn insert_locked_v1(
+    state: &mut StateV1,
+    sha256: &str,
+    bytes: Arc<Vec<u8>>,
+    charge: usize,
+    slots: [SlotV1; 2],
+) -> bool {
     if charge > PARSE_AHEAD_RETAINED_BYTES_V1 || state.entries.contains_key(sha256) {
-        return;
+        return false;
     }
     while state.retained_bytes + charge > PARSE_AHEAD_RETAINED_BYTES_V1 {
         let Some(oldest) = state.order.pop_front() else {
@@ -321,8 +336,7 @@ fn insert_v1(sha256: &str, bytes: impl Into<Arc<Vec<u8>>>, slots: [SlotV1; 2]) {
             slots,
         },
     );
-    // A reader waiting on a dropped entry parses its bytes itself.
-    shared.changed.notify_all();
+    true
 }
 
 /// Starts a helper thread for the queued parses, unless none are queued or

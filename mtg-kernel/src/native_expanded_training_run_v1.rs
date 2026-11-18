@@ -1780,6 +1780,14 @@ pub fn run_native_expanded_training_v1(
 ) -> Result<Value, String> {
     config.validate_v1()?;
     config.update_backend.require_compiled_v1()?;
+    // The read mode belongs to the process (`verified_bytes_cache_v1`), so the
+    // run is admitted before its first pinned read: a run without resident
+    // reads is refused in a process that has them on instead of silently
+    // reading resident. Resident reads turn on only once the arguments below
+    // are accepted; until then this invocation reads in the mode the process
+    // had (rereads, for the first resident run of a process).
+    let mut reads = verified_bytes_cache_v1::global_v1()
+        .enter_run_v1(config.verified_reads == VerifiedReadsV1::Resident)?;
     // Masked runs compare every update's frozen digest with the initial source's.
     let line_b_frozen_sha256 = config
         .line_b
@@ -1790,12 +1798,7 @@ pub fn run_native_expanded_training_v1(
         max_new_iterations != Some(0),
         "iteration limit must be positive",
     )?;
-    // The read mode belongs to the process (`verified_bytes_cache_v1`), so the
-    // run registers its own once its arguments are accepted: resident reads
-    // turn on here, and a run without them is refused in a process that has
-    // them on instead of silently reading resident.
-    let _reads = verified_bytes_cache_v1::global_v1()
-        .enter_run_v1(config.verified_reads == VerifiedReadsV1::Resident)?;
+    reads.accept_v1();
     let root = &config.output_directory;
     fs::create_dir_all(root).map_err(err)?;
     // OS lock lifetime, not a persisted PID/marker, determines writer ownership.

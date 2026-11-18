@@ -159,10 +159,9 @@ pub(crate) struct VerifiedBytesCacheV1 {
     held: Mutex<HeldV1>,
     /// Resident reads (module docs): set once by a run, never cleared.
     resident: AtomicBool,
-    /// Runs in flight that registered without resident reads
-    /// (`enter_run_v1`); the lock also orders every change of `resident`
-    /// made through a registration.
-    reread_runs: Mutex<usize>,
+    /// Runs admitted to this cache (`enter_run_v1`); the lock also orders
+    /// every change of `resident`.
+    runs: Mutex<RunCountsV1>,
     stats: VerifiedBytesStatsV1,
     /// Digests computed by `digest_matches_v1`, so tests can tell a
     /// comparison from a fallback.
@@ -170,21 +169,60 @@ pub(crate) struct VerifiedBytesCacheV1 {
     hashed: std::sync::atomic::AtomicUsize,
 }
 
-/// A run's registration with a cache (`enter_run_v1`), held until the run
+/// Runs admitted to a cache (`enter_run_v1`).
+#[derive(Default)]
+struct RunCountsV1 {
+    /// In flight without resident reads.
+    reread: usize,
+    /// Admitted with resident reads and not accepted yet (`accept_v1`).
+    resident_pending: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RunReadsKindV1 {
+    Reread,
+    ResidentPending,
+    Resident,
+}
+
+/// A run's admission to a cache (`enter_run_v1`), held until the run
 /// returns.
 pub(crate) struct RunReadsV1<'a> {
     cache: &'a VerifiedBytesCacheV1,
-    reread: bool,
+    kind: RunReadsKindV1,
+}
+
+impl RunReadsV1<'_> {
+    /// The run's arguments are accepted: a run admitted with resident reads
+    /// turns them on, for this cache and for good. Until this call its reads
+    /// are in the mode the cache had when it was admitted (rereads, for the
+    /// first resident run of a process).
+    pub(crate) fn accept_v1(&mut self) {
+        if self.kind == RunReadsKindV1::ResidentPending {
+            let mut runs = self
+                .cache
+                .runs
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            self.cache.resident.store(true, Ordering::SeqCst);
+            runs.resident_pending -= 1;
+            self.kind = RunReadsKindV1::Resident;
+        }
+    }
 }
 
 impl Drop for RunReadsV1<'_> {
     fn drop(&mut self) {
-        if self.reread {
-            *self
-                .cache
-                .reread_runs
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner) -= 1;
+        let mut runs = self
+            .cache
+            .runs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        match self.kind {
+            RunReadsKindV1::Reread => runs.reread -= 1,
+            // Rejected before it was accepted: the mode stays as it was.
+            RunReadsKindV1::ResidentPending => runs.resident_pending -= 1,
+            RunReadsKindV1::Resident => {}
         }
     }
 }
@@ -196,7 +234,7 @@ impl VerifiedBytesCacheV1 {
             entry_limit,
             held: Mutex::new(HeldV1::default()),
             resident: AtomicBool::new(false),
-            reread_runs: Mutex::new(0),
+            runs: Mutex::new(RunCountsV1::default()),
             stats: VerifiedBytesStatsV1::default(),
             #[cfg(test)]
             hashed: std::sync::atomic::AtomicUsize::new(0),
@@ -368,8 +406,10 @@ impl VerifiedBytesCacheV1 {
     }
 
     /// The bytes held for `path` under `sha256`, whose SHA-256 is `sha256`.
-    /// Turns resident reads on for this cache (module docs). Irreversible.
-    pub(crate) fn enable_resident_v1(&self) {
+    /// Turns resident reads on for a test's private cache without an
+    /// admission. Everything else goes through `enter_run_v1`.
+    #[cfg(test)]
+    pub(crate) fn enable_resident_for_test_v1(&self) {
         self.resident.store(true, Ordering::SeqCst);
     }
 
@@ -378,41 +418,44 @@ impl VerifiedBytesCacheV1 {
         self.resident.load(Ordering::SeqCst)
     }
 
-    /// Registers a run with this cache for the life of the returned guard.
-    /// Resident reads belong to the cache, which a process shares, and never
-    /// turn off, so one cache does not serve both modes: a run without them
-    /// is refused once they are on (it would silently read resident), and
-    /// they do not turn on while a run without them is in flight (its reads
-    /// would change under it). Readers that do not register (anything but a
-    /// training run) take the mode the cache is in.
+    /// Admits a run to this cache for the life of the returned guard, before
+    /// the run's first pinned read. Resident reads belong to the cache, which
+    /// a process shares, and never turn off, so one cache does not serve both
+    /// modes. A run without them is refused once they are on, and while a run
+    /// that will turn them on is admitted (it would read resident under a
+    /// config that says otherwise). A run with them is refused while a run
+    /// without them is in flight (that run's reads would change under it), and
+    /// turns them on when its arguments are accepted (`RunReadsV1::accept_v1`),
+    /// not before, so a rejected invocation leaves the mode alone. Readers
+    /// that are never admitted take the mode the cache is in.
     pub(crate) fn enter_run_v1(&self, resident: bool) -> Result<RunReadsV1<'_>, String> {
-        let mut reread_runs = self
-            .reread_runs
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        if resident {
-            if *reread_runs > 0 {
+        let mut runs = self.runs.lock().unwrap_or_else(PoisonError::into_inner);
+        let kind = if resident {
+            if runs.reread > 0 {
                 return Err(
                     "resident verified reads cannot turn on while a run without them is in \
                      flight in this process"
                         .to_owned(),
                 );
             }
-            self.enable_resident_v1();
-        } else {
             if self.resident_v1() {
+                RunReadsKindV1::Resident
+            } else {
+                runs.resident_pending += 1;
+                RunReadsKindV1::ResidentPending
+            }
+        } else {
+            if self.resident_v1() || runs.resident_pending > 0 {
                 return Err(
-                    "this process reads with resident verified reads; a run without them \
-                     needs its own process"
+                    "this process reads, or is about to read, with resident verified reads; \
+                     a run without them needs its own process"
                         .to_owned(),
                 );
             }
-            *reread_runs += 1;
-        }
-        Ok(RunReadsV1 {
-            cache: self,
-            reread: !resident,
-        })
+            runs.reread += 1;
+            RunReadsKindV1::Reread
+        };
+        Ok(RunReadsV1 { cache: self, kind })
     }
 
     /// With resident reads on, the bytes held for `path` and `sha256` when
