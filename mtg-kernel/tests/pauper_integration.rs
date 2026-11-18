@@ -50,6 +50,8 @@ mod final_pool_initiative_v1;
 mod flat_policy_v1;
 #[path = "pauper/gut_shot_ichor_wellspring.rs"]
 mod gut_shot_ichor_wellspring;
+#[path = "pauper/journey_token_exile_v1.rs"]
+mod journey_token_exile_v1;
 #[path = "pauper/kshadow_combat_departure.rs"]
 mod kshadow_combat_departure;
 #[path = "pauper/kshadow_continuous_effects.rs"]
