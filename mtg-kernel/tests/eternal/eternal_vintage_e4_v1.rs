@@ -2806,7 +2806,11 @@ fn taps_for(state: &GameState, source: ObjectId, color: ManaColor) -> bool {
     let mut tapped = state.clone();
     let player = tapped.priority_player;
     let before = mana(&tapped, player, color);
-    engine::step(&mut tapped, Action::ActivateManaAbilityChoice(source, color)).is_ok()
+    engine::step(
+        &mut tapped,
+        Action::ActivateManaAbilityChoice(source, color),
+    )
+    .is_ok()
         && mana(&tapped, player, color) == before + 1
 }
 
@@ -2835,7 +2839,10 @@ fn urzas_saga_keeps_its_chapter_grants_under_a_land_type_setter_both_seats() {
             assert_eq!(state.objects.get(moon).zone, Zone::Battlefield, "{setter}");
             assert!(engine::has_effective_subtype(&state, saga, land_type));
 
-            assert!(taps_for(&state, saga, color), "{setter}: the setter's ability");
+            assert!(
+                taps_for(&state, saga, color),
+                "{setter}: the setter's ability"
+            );
             assert!(taps_for(&state, saga, ManaColor::C), "{setter}: chapter I");
             assert!(!taps_for(&state, saga, ManaColor::G), "{setter}");
             pool(&mut state, actor, &[], 2);
@@ -2871,9 +2878,16 @@ fn alpine_moon_naming_urzas_saga(state: &mut GameState, player: PlayerId) -> Obj
     let moon = put(state, player, "Alpine Moon", Zone::Hand);
     event_move(state, moon, Zone::Battlefield);
     match settle(state) {
-        Some(Decision::ChooseEffectOption { player: chooser, source, .. }) => {
+        Some(Decision::ChooseEffectOption {
+            player: chooser,
+            source,
+            ..
+        }) => {
             assert_eq!((chooser, source), (player, moon));
-            act(state, Action::ChooseEffectOption(alpine_option("Urza's Saga")));
+            act(
+                state,
+                Action::ChooseEffectOption(alpine_option("Urza's Saga")),
+            );
         }
         other => panic!("expected the name choice, got {other:?}"),
     }
@@ -2908,16 +2922,25 @@ fn urzas_saga_chapter_grants_and_alpine_moon_apply_in_timestamp_order_both_seats
         assert!(state.stack.is_empty());
         assert_eq!(state.objects.get(saga).zone, Zone::Battlefield);
         assert!(taps_for(&state, saga, ManaColor::G), "the Moon's ability");
-        assert!(taps_for(&state, saga, ManaColor::C), "chapter I's later grant");
+        assert!(
+            taps_for(&state, saga, ManaColor::C),
+            "chapter I's later grant"
+        );
 
         // Alpine Moon after chapter II resolved.
         let mut state = islands();
         let saga = saga_after_chapter_two(&mut state, actor);
         alpine_moon_naming_urzas_saga(&mut state, opponent);
         assert!(taps_for(&state, saga, ManaColor::G), "the Moon's ability");
-        assert!(!taps_for(&state, saga, ManaColor::C), "chapter I's earlier grant");
+        assert!(
+            !taps_for(&state, saga, ManaColor::C),
+            "chapter I's earlier grant"
+        );
         pool(&mut state, actor, &[], 2);
-        assert!(!activatable(&mut state, saga, 0), "chapter II's earlier grant");
+        assert!(
+            !activatable(&mut state, saga, 0),
+            "chapter II's earlier grant"
+        );
         assert_eq!(state.objects.get(saga).counters.lore, 2);
     }
 }
