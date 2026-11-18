@@ -435,6 +435,139 @@ fn cosine_schedule_end_points_and_shape() {
     );
 }
 
+/// The initialization the research lead accepted for design point 2, written
+/// out here because this file is not part of the feature identity.
+///
+/// The seed is the first eight bytes, read little-endian, of SHA-256 over the
+/// tag `mtg-kernel/current-tree-learner-v2-init/v1` followed by one zero byte
+/// (`INIT_TAG_V2`) and then the profile's contract string (`CONTRACT_V2` or
+/// `CONTRACT_V2_H16`), so the two profiles draw different weights. A
+/// `SplitMix64` generator with that seed draws one value per parameter of the
+/// scaled blocks, in parameter index order: the input weights (indices `0` to
+/// `20 H`), then the recurrent weights (`20 H` to `20 H + H H`), then the three
+/// policy-head vectors (state, action, bilinear: `3 H` entries after the
+/// encoder bias). Each draw `u` is the top 53 bits of the next output divided
+/// by `2^53`, and the weight is `(2 u - 1) s`: uniform in `[-s, s)` with
+/// `s = 1 / sqrt(20)` for the input weights and `s = 1 / sqrt(H)` for the
+/// recurrent and policy-head weights, the square root being this module's
+/// `sqrt_v2`. The encoder bias, the six flag weights, the policy bias and the
+/// whole value head draw nothing and are exactly zero.
+///
+/// Pinned below as bit patterns, for each width: the first four input weights
+/// (draws 0 to 3), the first recurrent weight (draw `20 H`) and the first
+/// policy-head weight (draw `20 H + H H`), plus the zero entries at the start
+/// of the encoder bias, the flags, the policy bias and the value head.
+#[test]
+fn initialization_tag_and_first_weights_are_pinned() {
+    assert_eq!(INIT_TAG_V2, b"mtg-kernel/current-tree-learner-v2-init/v1 ");
+    fn check<const H: usize>(pinned: [(usize, u64); 6]) {
+        let model = TreeModelV2::<H>::deterministic_initialization();
+        let layout = Layout { hidden: H };
+        let indices = pinned.map(|(index, _)| index);
+        assert_eq!(indices, [0, 1, 2, 3, layout.recurrent(), layout.head()]);
+        for (index, bits) in pinned {
+            let value = model.parameters()[index];
+            println!("H {H} weight {index}: {bits:#018x} {value:e}");
+            assert_eq!(value.to_bits(), bits, "H {H} weight {index}");
+        }
+        for index in [
+            layout.bias(),
+            layout.flags(),
+            layout.policy_bias(),
+            layout.value_weights(),
+            layout.value_bias(),
+        ] {
+            assert_eq!(model.parameters()[index].to_bits(), 0, "H {H} zero {index}");
+        }
+    }
+    check::<32>([
+        (0, 0x3fc6_dbd3_8a86_d260),
+        (1, 0x3fcb_5f85_bc39_af45),
+        (2, 0x3fb9_2f84_610d_2b74),
+        (3, 0xbfc4_8b83_5baf_b74e),
+        (640, 0xbfb0_48f5_81e8_9ac1),
+        (1_696, 0x3fc2_382b_9662_ff74),
+    ]);
+    check::<16>([
+        (0, 0xbf94_b179_4418_ac24),
+        (1, 0xbfa3_b7a1_cca8_cd87),
+        (2, 0xbfb1_8e96_3773_e677),
+        (3, 0x3fc8_f9ed_1201_a853),
+        (320, 0xbfcf_ed48_741d_b152),
+        (592, 0xbfb8_ce34_11a0_2f80),
+    ]);
+}
+
+/// `expm1_nonnegative_v2` against the standard library's `exp_m1` over its
+/// whole working range: every `t = i * 0.0125` for `i` in `0..=2880` (so
+/// `0` to `36`), plus small `t` where `e^t - 1` is near `t`. Bound: `4e-15`
+/// relative, about 18 units in the last place.
+#[test]
+fn expm1_matches_the_platform_over_its_range() {
+    let mut points = (0..=2_880).map(|i| f64::from(i) * 0.0125).collect::<Vec<_>>();
+    points.extend([1e-300, 1e-200, 1e-16, 1e-10, 1e-5, 1e-3]);
+    for t in points {
+        let reference = t.exp_m1();
+        assert!(
+            (expm1_nonnegative_v2(t) - reference).abs() <= 4e-15 * reference,
+            "expm1({t:e}): {:e} vs {reference:e}",
+            expm1_nonnegative_v2(t)
+        );
+    }
+    assert_eq!(expm1_nonnegative_v2(0.).to_bits(), 0);
+}
+
+/// `sqrt_v2` against the standard library's `sqrt` (which IEEE 754 requires
+/// to be correctly rounded) over a geometric grid from the smallest subnormal
+/// `5e-324` up to `1e300` with ratio `1.9` (about 2,200 points, every binade
+/// and both exponent parities), plus special points. Bound: two units in the
+/// last place, `2 * f64::EPSILON` relative.
+#[test]
+fn sqrt_matches_the_platform_over_a_geometric_grid() {
+    let mut points = Vec::new();
+    let mut x = 5e-324_f64;
+    while x < 1e300 {
+        points.push(x);
+        x *= 1.9;
+    }
+    points.extend([1e300, f64::MAX, f64::MIN_POSITIVE, 0.25, 1., 2., 4., 1e-310]);
+    for x in points {
+        let reference = x.sqrt();
+        assert!(
+            (sqrt_v2(x) - reference).abs() <= 2. * f64::EPSILON * reference,
+            "sqrt({x:e}): {:e} vs {reference:e}",
+            sqrt_v2(x)
+        );
+    }
+    assert_eq!(sqrt_v2(0.), 0.);
+    assert_eq!(sqrt_v2(4.), 2.);
+}
+
+/// `powi_v2` against the standard library's `powi` for the bases Adam's bias
+/// corrections use and a few more (`0.5`, `0.9`, `0.95`, `0.99`, `0.999`,
+/// `0.9999`), each at every exponent `0` to `400` (twice the campaign's
+/// nominal 200 updates). Neither function is correctly rounded: both multiply
+/// by repeated squaring, so each result carries at most about `2 log2(400)`,
+/// that is 18, roundings of half a unit in the last place. Bound: `64 *
+/// f64::EPSILON` relative (about `1.4e-14`), which covers both errors added
+/// together with a wide margin; exponent `0` gives exactly `1` and exponent `1`
+/// exactly the base.
+#[test]
+fn powi_matches_the_platform_for_adam_bias_corrections() {
+    for base in [0.5, 0.9, 0.95, 0.99, 0.999, 0.9999] {
+        assert_eq!(powi_v2(base, 0), 1.);
+        assert_eq!(powi_v2(base, 1), base);
+        for exponent in 0..=400_u64 {
+            let reference = base.powi(exponent as i32);
+            assert!(
+                (powi_v2(base, exponent) - reference).abs() <= 64. * f64::EPSILON * reference,
+                "{base}^{exponent}: {:e} vs {reference:e}",
+                powi_v2(base, exponent)
+            );
+        }
+    }
+}
+
 #[test]
 fn libm_free_functions_track_the_platform_functions() {
     let close = |ours: f64, reference: f64, what: &str| {
