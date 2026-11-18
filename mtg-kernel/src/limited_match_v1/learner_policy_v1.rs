@@ -26,8 +26,8 @@ use crate::current_tree_learner_v2::{
     LearnerV2, LearnerV2H16, ModelV2, ModelV2H16, SnapshotV2, CONTRACT_V2, CONTRACT_V2_H16,
 };
 use crate::unclamped_softmax_sampler_v1::{
-    exp_v1, unclamped_softmax_select_v1, unclamped_softmax_unit_v1,
-    UNCLAMPED_SOFTMAX_GAP_FLOOR_V1, UNCLAMPED_SOFTMAX_MAX_ACTIONS_V1,
+    exp_v1, unclamped_softmax_select_v1, unclamped_softmax_unit_v1, UNCLAMPED_SOFTMAX_GAP_FLOOR_V1,
+    UNCLAMPED_SOFTMAX_MAX_ACTIONS_V1,
 };
 use std::sync::Arc;
 

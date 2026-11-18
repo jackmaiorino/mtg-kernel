@@ -694,12 +694,12 @@ impl PolicySpecV1 {
             (SessionKindV1::FullPoolV1, Some(_)) => Ok(()),
             (SessionKindV1::FullPoolV1, None) if matches!(self, Self::Random) => Ok(()),
             (_, Some(name)) => Err(format!("{name} requires -session full-pool")),
-            (SessionKindV1::FullPoolV1, None) => Err(
-                "full-pool requires random, closedlist-full-pool-v1, \
+            (SessionKindV1::FullPoolV1, None) => {
+                Err("full-pool requires random, closedlist-full-pool-v1, \
                  closedlist-full-pool-heuristic-v1, sampled-public-heuristic/v1 \
                  or learner-checkpoint"
-                    .into(),
-            ),
+                    .into())
+            }
             _ => Ok(()),
         }
     }

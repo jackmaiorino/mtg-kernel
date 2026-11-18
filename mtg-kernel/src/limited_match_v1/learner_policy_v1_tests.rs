@@ -79,10 +79,15 @@ fn snapshots_of_both_profiles_load_and_other_contracts_or_identities_are_refused
     let config = OptimizerConfigV2::campaign_v1(200);
     let wide = LearnerV2::new(config.clone()).unwrap().snapshot();
     let narrow = LearnerV2H16::new(config).unwrap().snapshot();
-    let loaded = LearnerCheckpointV1::from_snapshot_v1("a/step_0000.json", "ab", wide.clone())
-        .unwrap();
+    let loaded =
+        LearnerCheckpointV1::from_snapshot_v1("a/step_0000.json", "ab", wide.clone()).unwrap();
     assert_eq!(
-        (loaded.contract(), loaded.step(), loaded.sha256(), loaded.path()),
+        (
+            loaded.contract(),
+            loaded.step(),
+            loaded.sha256(),
+            loaded.path()
+        ),
         (CONTRACT_V2, 0, "ab", "a/step_0000.json")
     );
     let small = LearnerCheckpointV1::from_snapshot_v1("b", "cd", narrow).unwrap();

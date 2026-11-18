@@ -178,8 +178,8 @@ fn step_zero_learner() -> PolicySpecV1 {
 
 #[test]
 fn campaign_policy_specs_parse_and_stay_on_the_full_pool_owner() {
-    let search = PolicySpecV1::parse("pimc:sims=16:depth=24:closedlist-full-pool-heuristic-v1")
-        .unwrap();
+    let search =
+        PolicySpecV1::parse("pimc:sims=16:depth=24:closedlist-full-pool-heuristic-v1").unwrap();
     assert_eq!(
         search,
         PolicySpecV1::Pimc {
@@ -193,7 +193,9 @@ fn campaign_policy_specs_parse_and_stay_on_the_full_pool_owner() {
     let learner = step_zero_learner();
     for policy in [&search, &heuristic] {
         assert!(policy.needs_belief() && policy.records_search_v1());
-        assert!(policy.uses_full_pool_sampled_world_v1() && !policy.uses_full_pool_closed_list_v1());
+        assert!(
+            policy.uses_full_pool_sampled_world_v1() && !policy.uses_full_pool_closed_list_v1()
+        );
     }
     assert!(!learner.needs_belief() && !learner.records_search_v1());
     for policy in [&search, &heuristic, &learner] {
@@ -256,7 +258,10 @@ fn state_evaluator_reads_only_sampled_worlds_of_the_current_decision() {
             .sampled_full_pool_closed_list_v1(&a, 552_301, &belief)
             .unwrap();
         let score = world.sampled_world_state_eval_v1(actor).unwrap();
-        assert_eq!(world.sampled_world_state_eval_v1(actor.opponent()), Ok(-score));
+        assert_eq!(
+            world.sampled_world_state_eval_v1(actor.opponent()),
+            Ok(-score)
+        );
         // The opponent's true hidden cards do not reach the score.
         let b = encode_current(&right).unwrap();
         let other = right
@@ -310,7 +315,8 @@ fn sampled_public_heuristic_is_blind_to_hidden_cards_and_deterministic() {
         let mut beliefs = [None; 2];
         beliefs[actor.index()] = Some(&belief);
         let mut result = GameResultV1::empty();
-        let outcome = play_owner(left, policies, beliefs, 552_286, limits(24), &mut result).unwrap();
+        let outcome =
+            play_owner(left, policies, beliefs, 552_286, limits(24), &mut result).unwrap();
         assert!(!matches!(outcome, GameOutcomeV1::Error(_)));
         assert!(result.searched_decisions > 0);
         assert_eq!(
@@ -362,7 +368,10 @@ fn heuristic_leaf_search_is_blind_to_hidden_cards_and_breaks_ties_by_value_then_
         heuristic_search_pick_v1(0, &stats(vec![2, 3, 3], vec![0.9, 0.1, 0.2]), 1),
         2
     );
-    assert_eq!(heuristic_search_pick_v1(1, &stats(vec![0, 0], vec![0.0, 0.0]), 1), 1);
+    assert_eq!(
+        heuristic_search_pick_v1(1, &stats(vec![0, 0], vec![0.0, 0.0]), 1),
+        1
+    );
     let tied = stats(vec![2, 2, 2], vec![0.5, 0.5, 0.5]);
     let picks: std::collections::BTreeSet<u32> = (0..64)
         .map(|seed| heuristic_search_pick_v1(0, &tied, seed))
@@ -400,13 +409,24 @@ fn learner_seat_draws_from_its_own_stream_and_other_policies_ignore_it() {
             &mut with,
         );
         assert_eq!(outcome, again);
-        assert_eq!((without.turns, without.decisions), (with.turns, with.decisions));
+        assert_eq!(
+            (without.turns, without.decisions),
+            (with.turns, with.decisions)
+        );
 
         let mut policies = [&PolicySpecV1::Random; 2];
         policies[actor.index()] = &learner;
         let (session, _) = scene(actor, "Forest");
         let mut result = GameResultV1::empty();
-        assert!(play_owner(session, policies, [None; 2], 552_286, limits(24), &mut result).is_err());
+        assert!(play_owner(
+            session,
+            policies,
+            [None; 2],
+            552_286,
+            limits(24),
+            &mut result
+        )
+        .is_err());
 
         let play = |hidden: &str| {
             let (session, _) = scene(actor, hidden);

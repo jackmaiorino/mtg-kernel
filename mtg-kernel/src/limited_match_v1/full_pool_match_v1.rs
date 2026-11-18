@@ -315,10 +315,12 @@ fn sampled_public_heuristic_v1(
                 .apply(&root_decision, action)
                 .map_err(|error| error.to_string())?
             {
-                FastActorResponseV1::Terminal(terminal) => match natural_value_v1(terminal, root)? {
-                    Some(value) => Ok(value),
-                    None => heuristic_leaf_value_v1(&world, root),
-                },
+                FastActorResponseV1::Terminal(terminal) => {
+                    match natural_value_v1(terminal, root)? {
+                        Some(value) => Ok(value),
+                        None => heuristic_leaf_value_v1(&world, root),
+                    }
+                }
                 FastActorResponseV1::Decision(_) => heuristic_leaf_value_v1(&world, root),
             }
         });
@@ -338,7 +340,9 @@ fn sampled_public_heuristic_v1(
     let Some(best) = scores.iter().flatten().copied().reduce(f64::max) else {
         return Ok((fallback(), stats));
     };
-    let ties: Vec<usize> = (0..n).filter(|&action| scores[action] == Some(best)).collect();
+    let ties: Vec<usize> = (0..n)
+        .filter(|&action| scores[action] == Some(best))
+        .collect();
     Ok((seeded_tie_v1(&ties, HEURISTIC_TIE_TAG_V1, seed), stats))
 }
 
