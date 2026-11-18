@@ -800,7 +800,9 @@ fn submersible_under_a_new_controller_stays_animated_and_exhausted_in_both_seats
             .battlefield
             .iter()
             .copied()
-            .find(|&object| CARD_DEFS[state.objects.get(object).card_def as usize].name == "Food Token")
+            .find(|&object| {
+                CARD_DEFS[state.objects.get(object).card_def as usize].name == "Food Token"
+            })
             .expect("Oko's Food");
         run_until(
             &mut state,
@@ -857,22 +859,45 @@ fn dress_down_removes_granted_abilities_of_an_animated_submersible_in_both_seats
         match next(&mut state) {
             Decision::ChooseTargets { legal_targets, .. } => {
                 assert!(legal_targets.contains(&Target::Object(submersible)));
-                act(&mut state, Action::ChooseTarget(Target::Object(submersible)));
+                act(
+                    &mut state,
+                    Action::ChooseTarget(Target::Object(submersible)),
+                );
             }
             other => panic!("expected the equip target, got {other:?}"),
         }
         settled(&mut state);
-        assert!(engine::has_effective_keyword(&state, submersible, Keywords::TRAMPLE));
-        assert!(engine::has_effective_keyword(&state, submersible, Keywords::LIFELINK));
+        assert!(engine::has_effective_keyword(
+            &state,
+            submersible,
+            Keywords::TRAMPLE
+        ));
+        assert!(engine::has_effective_keyword(
+            &state,
+            submersible,
+            Keywords::LIFELINK
+        ));
 
         let dress = put(&mut state, actor, "Dress Down", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::U], 1);
         cast(&mut state, dress);
         settled(&mut state);
-        assert!(!engine::has_effective_keyword(&state, submersible, Keywords::TRAMPLE));
-        assert!(!engine::has_effective_keyword(&state, submersible, Keywords::LIFELINK));
+        assert!(!engine::has_effective_keyword(
+            &state,
+            submersible,
+            Keywords::TRAMPLE
+        ));
+        assert!(!engine::has_effective_keyword(
+            &state,
+            submersible,
+            Keywords::LIFELINK
+        ));
         assert!(creature(&state, submersible), "still an artifact creature");
-        assert_eq!(power(&state, submersible), 4, "3/3 with Shadowspear's +1/+1");
+        assert_eq!(
+            power(&state, submersible),
+            4,
+            "3/3 with Shadowspear's +1/+1"
+        );
 
         run_until(
             &mut state,
@@ -880,7 +905,11 @@ fn dress_down_removes_granted_abilities_of_an_animated_submersible_in_both_seats
             |_, _| None,
         );
         assert_eq!(zone(&state, dress), Zone::Graveyard);
-        assert!(engine::has_effective_keyword(&state, submersible, Keywords::TRAMPLE));
+        assert!(engine::has_effective_keyword(
+            &state,
+            submersible,
+            Keywords::TRAMPLE
+        ));
     }
 }
 
@@ -1254,7 +1283,11 @@ fn bahamut_without_its_abilities_gets_no_lore_counter_and_is_not_sacrificed_in_b
             |s| s.active_player == actor && s.step == Step::Main1 && s.stack.is_empty(),
             |_, _| None,
         );
-        assert_eq!(state.objects.get(bahamut).counters.lore, 3, "no counter (715.3c)");
+        assert_eq!(
+            state.objects.get(bahamut).counters.lore,
+            3,
+            "no counter (715.3c)"
+        );
         assert_eq!(zone(&state, bahamut), Zone::Battlefield, "not sacrificed");
         assert_eq!(state.players[opponent.index()].life, 20);
 
@@ -1277,7 +1310,11 @@ fn bahamut_without_its_abilities_gets_no_lore_counter_and_is_not_sacrificed_in_b
             19,
             "Mega Flare: the Sol Ring"
         );
-        assert_eq!(zone(&state, bahamut), Zone::Graveyard, "sacrificed after IV");
+        assert_eq!(
+            zone(&state, bahamut),
+            Zone::Graveyard,
+            "sacrificed after IV"
+        );
     }
 }
 
@@ -1304,8 +1341,16 @@ fn bahamut_final_chapter_resolves_after_its_abilities_are_removed_in_both_seats(
         pool(&mut state, actor, &[ManaColor::U], 1);
         cast(&mut state, dress);
         settled(&mut state);
-        assert_eq!(state.players[opponent.index()].life, 17, "Mega Flare resolved");
-        assert_eq!(zone(&state, bahamut), Zone::Battlefield, "no chapter abilities");
+        assert_eq!(
+            state.players[opponent.index()].life,
+            17,
+            "Mega Flare resolved"
+        );
+        assert_eq!(
+            zone(&state, bahamut),
+            Zone::Battlefield,
+            "no chapter abilities"
+        );
         run_until(
             &mut state,
             |s| s.active_player == opponent && s.step == Step::Main1,
@@ -1333,7 +1378,11 @@ fn mega_flare_counts_only_its_controllers_other_permanents_in_both_seats() {
             |s| s.step == Step::Main1 && s.stack.is_empty(),
             |_, _| None,
         );
-        assert_eq!(state.players[opponent.index()].life, 18, "the Monolith only");
+        assert_eq!(
+            state.players[opponent.index()].life,
+            18,
+            "the Monolith only"
+        );
         assert_eq!(state.players[actor.index()].life, 20);
     }
 }
