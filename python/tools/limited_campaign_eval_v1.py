@@ -20,7 +20,10 @@ Timing, worker counts and the games paths go to the sidecar `evaluation.timing.j
 identified by the path in their policy spec (`learner-checkpoint:<path>`), which does reach the canonical
 file through the specs and the rows, and by the SHA-256 of the checkpoint file, which the driver writes to the
 summary as `a_checkpoint_sha256` (and `b_checkpoint_sha256` for a learner opponent) and which reaches the
-canonical file through the summary. The exit code is 0 when the
+canonical file through the summary. Every learner seat must have a valid digest; a run and its replay must
+record the same digests and learner contract (else Gate E0 fails); a candidate's runs must record one digest
+and all runs one learner contract, and the step-0 opponent one digest across candidates (else the records are
+refused). The exit code is 0 when the
 records were evaluated (whatever the gates say) and 2 when they were refused.
 """
 from __future__ import annotations
@@ -92,6 +95,10 @@ BELIEF_DECKS = 40
 # evaluation, must agree on each (the last two only where the driver writes them).
 BUILD_KEYS = ("engine", "card_db_hash", "session", "full_validation", "playable_decks_sha256")
 DECK_CONTENT_KEYS = ("game_deck_contents_sha256", "belief_deck_contents_sha256")
+# What the driver writes when a seat is a learner checkpoint: the SHA-256 of each learner's checkpoint
+# file and the learner policy contract. A run and its replay must agree on all three.
+LEARNER_KEYS = ("a_checkpoint_sha256", "b_checkpoint_sha256", "learner_policy_contract")
+LEARNER_SPEC_PREFIX = "learner-checkpoint:"
 EVAL_DECKS = 40
 EVAL_FULL_ONLY = 19
 OVER_40_DECKS = ("FDN_top_03718_UR", "FDN_top_21511_WUR", "FDN_top_24789_BGpW")
@@ -467,6 +474,27 @@ def check_specs(summary: dict, label: str, spec_b_ok) -> None:
         raise EvaluationInputError(f"{label}: policy B {summary.get('b')!r} is not this opponent's spec")
 
 
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+def check_learner_keys(summary: dict, label: str) -> None:
+    """A learner seat's checkpoint digest is present and valid exactly when that policy is a learner, and the
+    learner policy contract is present exactly when a seat is one."""
+    learner = False
+    for side in ("a", "b"):
+        key = f"{side}_checkpoint_sha256"
+        if str(summary.get(side)).startswith(LEARNER_SPEC_PREFIX):
+            learner = True
+            if not _is_sha256(summary.get(key)):
+                raise EvaluationInputError(f"{label}: summary {key} is missing or not a SHA-256 digest")
+        elif key in summary:
+            raise EvaluationInputError(f"{label}: summary {key} for a policy that is not a learner checkpoint")
+    contract = summary.get("learner_policy_contract")
+    if learner != (contract is not None) or (learner and not (isinstance(contract, str) and contract)):
+        raise EvaluationInputError(f"{label}: summary learner_policy_contract does not match its learner seats")
+
+
 def check_summary(summary: dict, label: str, *, seed: int, pairs: int, spec_b_ok, games: list[dict],
                   role: str) -> None:
     missing = [k for k in SUMMARY_REQUIRED if k not in summary]
@@ -484,6 +512,7 @@ def check_summary(summary: dict, label: str, *, seed: int, pairs: int, spec_b_ok
         if key in summary and summary[key] != value:
             raise EvaluationInputError(f"{label}: summary {key} is {summary[key]!r}, expected {value}")
     check_specs(summary, label, spec_b_ok)
+    check_learner_keys(summary, label)
     if not _is_int(summary["workers"]) or summary["workers"] < 1:
         raise EvaluationInputError(f"{label}: summary workers is not a positive count")
     if not _is_int(summary["belief_overlap"]) or summary["belief_overlap"] < 0:
@@ -663,8 +692,13 @@ def analyze_run(run: RunInput, classes: dict, replicates: int, seed: int) -> dic
                  == classes["playable_decks_sha256"],
                  "replay_build_differs": [k for k in BUILD_KEYS + DECK_CONTENT_KEYS
                                           if run.summary.get(k) != run.replay_summary.get(k)],
+                 # The replay plays the same checkpoint files under the same learner contract.
+                 "replay_learner_differs": [k for k in LEARNER_KEYS
+                                            if run.summary.get(k) != run.replay_summary.get(k)],
                  "replay": replay}
     failures = []
+    if integrity["replay_learner_differs"]:
+        failures.append("replay_learner_differs")
     if counts["error"]:
         failures.append("errors")
     if rollout_errors:
@@ -794,6 +828,20 @@ def evaluate(inputs: list[RunInput], inventory: dict, replicates: int = BOOTSTRA
             raise EvaluationInputError(f"{candidate}: runs name different candidate checkpoints {sorted(values)}")
     if len(runs) == 2 and specs["u_final"] == specs["u_best_dev"]:
         raise EvaluationInputError("u_final and u_best_dev name the same checkpoint")
+    # The same path may hold another file between runs: the recorded file digests must agree as well.
+    digests = {c: {r["summary"].get("a_checkpoint_sha256") for r in roles.values()} for c, roles in runs.items()}
+    for candidate, values in digests.items():
+        if len(values) != 1:
+            raise EvaluationInputError(f"{candidate}: runs record different candidate checkpoint digests")
+    if len(runs) == 2 and digests["u_final"] == digests["u_best_dev"]:
+        raise EvaluationInputError("u_final and u_best_dev record the same checkpoint digest")
+    step_zero = {roles["step_0"]["summary"].get("b_checkpoint_sha256") for roles in runs.values()
+                 if "step_0" in roles}
+    if len(step_zero) > 1:
+        raise EvaluationInputError("candidates record different initial-weights/step-0 checkpoint digests")
+    contracts = {r["summary"].get("learner_policy_contract") for roles in runs.values() for r in roles.values()}
+    if len(contracts) > 1:
+        raise EvaluationInputError("runs record different learner policy contracts")
 
     expected = [(c, role) for c in sorted(runs) for role in ROLES]
     absent = [f"{c} vs {role}" for c, role in expected if role not in runs[c]]

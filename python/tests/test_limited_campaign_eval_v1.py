@@ -32,6 +32,9 @@ SPECS_B = {STEP0: "learner-checkpoint:run/checkpoints/step_0000.json", UNIFORM: 
            HEURISTIC: HEURISTIC, FAIR: FAIR}
 CANDIDATE_SPEC = {"u_final": "learner-checkpoint:run/checkpoints/step_0200.json",
                   "u_best_dev": "learner-checkpoint:run/checkpoints/step_0140.json"}
+CANDIDATE_SHA256 = {"u_final": "a" * 64, "u_best_dev": "c" * 64}
+STEP0_SHA256 = "b" * 64
+LEARNER_CONTRACT = "learner-checkpoint/v1: fixture"
 R = 1_000  # small replicate count for the in-process tests; the CLI test uses the design's 10,000
 
 
@@ -77,7 +80,10 @@ def make_summary(opponent: str, rows: list[dict], candidate: str = "u_final", wo
                "games": 2 * pairs, "a_wins": count("A"), "b_wins": count("B"), "draws": count("draw"),
                "stalls": count("stall"), "errors": count("error"), "wall_s": 12.5 * workers,
                "games_per_hour": 99.0 / workers, "workers": workers, "full_validation": False,
-               "session": "FullPoolV1", "max_turns": 100, "max_decisions": 4_000}
+               "session": "FullPoolV1", "max_turns": 100, "max_decisions": 4_000,
+               "a_checkpoint_sha256": CANDIDATE_SHA256[candidate], "learner_policy_contract": LEARNER_CONTRACT}
+    if opponent == STEP0:
+        summary["b_checkpoint_sha256"] = STEP0_SHA256
     if opponent in (HEURISTIC, FAIR):
         summary.update(belief_decks=40, world_contract="limited-closedlist-full-pool/v1",
                        game_deck_contents_sha256="game-decks", belief_deck_contents_sha256="belief-decks")
@@ -549,19 +555,68 @@ class ProvenanceTest(unittest.TestCase):
         self.assertTrue(self.e0(lambda inputs: None)["pass"])
 
     def test_learner_checkpoint_keys_reach_the_canonical_summary(self):
-        contract = "learner-checkpoint/v1: fixture"
-        inputs = full_inputs()
-        for run in inputs:
-            for summary in (run.summary, run.replay_summary):
-                summary.update(a_checkpoint_sha256="a" * 64, learner_policy_contract=contract)
-                if run.opponent == STEP0:
-                    summary.update(b_checkpoint_sha256="b" * 64)
-        evaluation = ev.evaluate(inputs, INVENTORY, replicates=R)
+        evaluation = ev.evaluate(full_inputs(), INVENTORY, replicates=R)
         self.assertTrue(evaluation["gate_e0"]["pass"])
         runs = evaluation["candidates"]["u_final"]["runs"]
-        self.assertEqual(runs["step_0"]["summary"]["b_checkpoint_sha256"], "b" * 64)
-        self.assertEqual(runs["heuristic"]["summary"]["a_checkpoint_sha256"], "a" * 64)
-        self.assertEqual(runs["uniform_legal"]["summary"]["learner_policy_contract"], contract)
+        self.assertEqual(runs["step_0"]["summary"]["b_checkpoint_sha256"], STEP0_SHA256)
+        self.assertEqual(runs["heuristic"]["summary"]["a_checkpoint_sha256"], CANDIDATE_SHA256["u_final"])
+        self.assertEqual(runs["uniform_legal"]["summary"]["learner_policy_contract"], LEARNER_CONTRACT)
+        self.assertNotIn("b_checkpoint_sha256", runs["uniform_legal"]["summary"])
+
+    def refuses(self, mutate, message: str, inputs=None) -> None:
+        inputs = inputs if inputs is not None else full_inputs()
+        mutate(inputs)
+        with self.assertRaises(ev.EvaluationInputError) as caught:
+            ev.evaluate(inputs, INVENTORY, replicates=R)
+        self.assertIn(message, str(caught.exception))
+
+    def test_learner_seats_need_valid_checkpoint_digests_and_a_contract(self):
+        self.refuses(lambda i: i[0].summary.pop("a_checkpoint_sha256"), "a_checkpoint_sha256 is missing")
+        self.refuses(lambda i: i[0].summary.pop("b_checkpoint_sha256"), "b_checkpoint_sha256 is missing")
+        self.refuses(lambda i: i[1].summary.update(a_checkpoint_sha256="A" * 64), "not a SHA-256 digest")
+        self.refuses(lambda i: i[1].replay_summary.update(a_checkpoint_sha256="ab"), "not a SHA-256 digest")
+        self.refuses(lambda i: i[1].summary.update(b_checkpoint_sha256="b" * 64), "not a learner checkpoint")
+        self.refuses(lambda i: i[2].summary.pop("learner_policy_contract"), "learner_policy_contract")
+
+    def test_replay_of_another_checkpoint_or_contract_fails_e0(self):
+        for key, value in (("a_checkpoint_sha256", "d" * 64), ("b_checkpoint_sha256", "d" * 64),
+                           ("learner_policy_contract", "learner-checkpoint/v1: other")):
+            with self.subTest(key):
+                inputs = full_inputs()
+                inputs[0].replay_summary[key] = value  # inputs[0] is the step-0 run, which seats two learners
+                evaluation = ev.evaluate(inputs, INVENTORY, replicates=R)
+                self.assertFalse(evaluation["gate_e0"]["pass"])
+                integrity = evaluation["candidates"]["u_final"]["runs"]["step_0"]["integrity"]
+                self.assertEqual(integrity["replay_learner_differs"], [key])
+                self.assertIn("replay_learner_differs", integrity["failures"])
+
+    def test_one_checkpoint_digest_per_candidate_and_one_step_zero_digest(self):
+        def other_candidate_digest(inputs):
+            for summary in (inputs[2].summary, inputs[2].replay_summary):
+                summary["a_checkpoint_sha256"] = "d" * 64
+        self.refuses(other_candidate_digest, "different candidate checkpoint digests")
+
+        def contract_differs(inputs):
+            for summary in (inputs[3].summary, inputs[3].replay_summary):
+                summary["learner_policy_contract"] = "learner-checkpoint/v1: other"
+        self.refuses(contract_differs, "different learner policy contracts")
+
+        def two_candidates(step_zero: str, best: str):
+            def mutate(inputs):
+                more = full_inputs(candidate="u_best_dev")
+                for summary in (more[0].summary, more[0].replay_summary):
+                    summary["b_checkpoint_sha256"] = step_zero
+                for run in more:
+                    for summary in (run.summary, run.replay_summary):
+                        summary["a_checkpoint_sha256"] = best
+                inputs.extend(more)
+            return mutate
+        self.refuses(two_candidates("d" * 64, CANDIDATE_SHA256["u_best_dev"]),
+                     "different initial-weights/step-0 checkpoint digests")
+        self.refuses(two_candidates(STEP0_SHA256, CANDIDATE_SHA256["u_final"]), "record the same checkpoint digest")
+        inputs = full_inputs()
+        two_candidates(STEP0_SHA256, CANDIDATE_SHA256["u_best_dev"])(inputs)
+        self.assertTrue(ev.evaluate(inputs, INVENTORY, replicates=R)["gate_e0"]["pass"])
 
     def test_unrecorded_limits_fail_e0(self):
         def drop(inputs):
