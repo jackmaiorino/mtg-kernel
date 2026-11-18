@@ -753,6 +753,7 @@ impl WalkV1<'_> {
         let next_event = self.next_event;
         let prev_zones = std::mem::take(&mut self.prev_zones);
         let opp = self.opp();
+        self.ceased_in_opponent_hand();
         for id in observed {
             let o = &mut self.objs[id.0 as usize];
             o.last_obs_gen = o.moves;
@@ -914,6 +915,43 @@ impl WalkV1<'_> {
             0
         };
         untracked.saturating_sub(known)
+    }
+
+    /// Issue 751: a token or spell copy in the opponent's hand that has
+    /// ceased to exist there (111.8, 707.10). `cease_to_exist` drops it from
+    /// the hand list with no event and no note and leaves its zone and
+    /// generation as they were, so no later event moves it, and the walk
+    /// would count it in `state_hand_untracked` for the rest of the game:
+    /// the survivor tree would never be cleared and the R8 latch never
+    /// released. Such an object stops existing at the next settle. Like the
+    /// library side (issue 744), the test reads only public facts: a token or
+    /// copy, its generation, and whether the native hand still holds it. It
+    /// was already untracked (`live_outside_pool_v1` reads the same hand
+    /// list), so tracking does not change. V's own hand is left as it is:
+    /// nothing counts it, and its objects stay tracked there. Only a token or
+    /// spell copy that entered the opponent's hand through an event can
+    /// match, so a walk in which none did is unchanged.
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "the index is also the object id"
+    )]
+    fn ceased_in_opponent_hand(&mut self) {
+        let opp = self.opp();
+        for i in 0..self.objs.len() {
+            let o = &self.objs[i];
+            if !(o.exists && o.zone == Some(Zone::Hand) && o.owner == Some(opp)) {
+                continue;
+            }
+            let id = ObjectId(i as u32);
+            let native = self.state.objects.get(id);
+            if (native.v4.is_token || native.spell_copy_origin.is_some())
+                && native.zone == Zone::Hand
+                && native.zone_change_count == o.moves
+                && !self.state.players[opp.index()].hand.contains(&id)
+            {
+                self.objs[i].exists = false;
+            }
+        }
     }
 
     fn moved(&mut self, id: ObjectId, zone: Zone) {
