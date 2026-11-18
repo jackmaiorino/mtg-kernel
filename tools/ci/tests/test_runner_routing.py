@@ -182,6 +182,26 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(self.route("ubuntu-24.04", "eternal-integration-2", **event(), **second), LINUX_POOL)
         self.assertEqual(self.route("ubuntu-24.04", "eternal-integration", **event(), **second), "ubuntu-24.04")
 
+    def test_named_limited_groups_go_to_the_linux_runner_for_trusted_events(self):
+        limited = self.expressions["rust-limited-groups"]
+        settings = {"vars.MTG_CI_LINUX_GROUPS": '["limited-only-3", "limited"]', "vars.MTG_CI_LINUX_RUNNER": json.dumps(LINUX_POOL)}
+
+        def route(system, group, **context):
+            return evaluate(limited, **{"matrix.os": system, "matrix.group": group, **context})
+
+        for trusted in (event(), event("push"), event("workflow_dispatch")):
+            with self.subTest(event=trusted["github.event_name"]):
+                self.assertEqual(route("ubuntu-24.04", "limited-only-3", **trusted, **settings), LINUX_POOL)
+                self.assertEqual(route("ubuntu-24.04", "limited", **trusted, **settings), LINUX_POOL)
+                self.assertEqual(route("ubuntu-24.04", "limited-only", **trusted, **settings), "ubuntu-24.04")
+                self.assertEqual(route("ubuntu-24.04", "limited-model", **trusted, **settings), "ubuntu-24.04")
+        self.assertEqual(route("ubuntu-24.04", "limited", **event(), **{"vars.MTG_CI_LINUX_GROUPS": '["limited"]'}),
+                         "ubuntu-24.04")
+        self.assertEqual(route("ubuntu-24.04", "limited", **event()), "ubuntu-24.04")
+        # Linux settings never move a Windows Limited group, which keeps its own variable.
+        self.assertEqual(route("windows-2025", "limited", **event("push"), **settings), "windows-2025")
+        self.assertEqual(route("windows-2025", "limited", **event("push"), **EVERY_POOL), WINDOWS_POOL)
+
     def test_windows_routing_is_unchanged(self):
         self.assertEqual(self.route("windows-2025", "workspace-targets", **event(), **EVERY_POOL), PR_POOL)
         self.assertEqual(self.route("windows-2025", "workspace-lib", **event(), **EVERY_POOL), WINDOWS_POOL)
@@ -226,7 +246,10 @@ class MatrixTests(unittest.TestCase):
         # A shard count larger than the parts in the matrix would leave a shard's tests in no job, and a
         # smaller one would fail the extra parts. Parts are named <group>, <group>-1, ..., <group>-(n-1).
         tests = job_block("rust-test-groups", "limited-build")
-        cases = [(tests, "eternal-integration", "run_rust_integration_tests.py eternal_integration")]
+        limited = job_block("rust-limited-groups", "rust-tests")
+        cases = [(tests, "eternal-integration", "run_rust_integration_tests.py eternal_integration"),
+                 (limited, "limited-only", "--limited-only-workflow"),
+                 (limited, "limited-model", "current_mixed_policy_v1::")]
         for block, family, marker in cases:
             with self.subTest(family=family):
                 (line,) = [line for line in block.splitlines() if marker in line and "--shard-count" in line]

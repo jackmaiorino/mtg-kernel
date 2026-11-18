@@ -871,6 +871,10 @@ jobs:
           - limited
           - limited-only
           - limited-only-1
+          - limited-only-2
+          - limited-only-3
+          - limited-only-4
+          - limited-only-5
           - limited-v2
           - limited-v5
           - limited-v3
@@ -887,9 +891,16 @@ jobs:
           - limited-model-5
           - limited-model-6
           - limited-model-7
-    # Linux uses hosted runners. Windows follows the routing variable of the
-    # other groups; pull requests from forks never run on self-hosted runners.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
+          - limited-model-8
+          - limited-model-9
+    # Windows follows the routing variable of the other groups. Linux uses
+    # hosted runners except the groups named in MTG_CI_LINUX_GROUPS, which run
+    # on MTG_CI_LINUX_RUNNER as in rust-test-groups (both must be set; names
+    # are exact, so limited-model routes only that group's first part). A
+    # routed group builds the Limited tests itself in the runner's persistent
+    # target directory instead of downloading the shared build. Pull requests
+    # from forks never run on self-hosted runners.
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
     steps:
       # The Limited-only shards compile the default-feature library test binary
       # via default_library_names() to diff its inventory against the Limited
@@ -989,12 +1000,17 @@ jobs:
         with:
           python-version-file: .python-version
 
+      # The parts of a group (<group>, <group>-1, ...) share one persistent
+      # target directory on a self-hosted runner, as in rust-test-groups.
       - name: Use the runner's persistent target directory
+        env:
+          MATRIX_GROUP: ${{ matrix.group }}
         run: |
           if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
-            target_dir="$MTG_CI_TARGET_ROOT/${{ matrix.group }}"
+            build_group="${MATRIX_GROUP%-[0-9]*}"
+            target_dir="$MTG_CI_TARGET_ROOT/$build_group"
             if [ "$RUNNER_OS" = Windows ]; then
-              target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/${{ matrix.group }}")"
+              target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/$build_group")"
             fi
             printf 'CARGO_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
             # With a persistent target directory, incremental compilation
@@ -1198,7 +1214,7 @@ jobs:
             shard='${{ matrix.group }}'
             shard="${shard##*-}"
           fi
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 8 --isolated-cases --skip-ignored --nocapture current_mixed_policy_v1:: human_bo3_v1::
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 10 --isolated-cases --skip-ignored --nocapture current_mixed_policy_v1:: human_bo3_v1::
 
       # Cases only the Limited build compiles never run in the workspace
       # suite. The runner lists the default build too and runs every such case
@@ -1224,17 +1240,22 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      # Six shards. Each one first builds the default-feature library test
+      # binary to list its cases (16 minutes on hosted Linux), then runs its
+      # share of the cases: on 2026-11-18 each of the two shards of that day
+      # ran 35 minutes of cases.
       - name: Validate every other Limited-only library case
         if: ${{ !cancelled() && startsWith(matrix.group, 'limited-only') }}
         run: |
-          if [ "$RUNNER_OS" = Linux ]; then
+          if [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
             export CARGO_BUILD_JOBS=2
           fi
           shard=0
-          if [ '${{ matrix.group }}' = limited-only-1 ]; then
-            shard=1
+          if [ '${{ matrix.group }}' != limited-only ]; then
+            shard='${{ matrix.group }}'
+            shard="${shard##*-}"
           fi
-          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 2 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml
+          python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 6 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml
 
       - name: Report the hosted Linux runner's memory use
         if: always() && steps.memory_guard.outcome == 'success'
