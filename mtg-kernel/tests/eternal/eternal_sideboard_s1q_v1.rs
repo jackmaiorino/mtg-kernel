@@ -763,6 +763,121 @@ fn submersible_waterbend_follows_a_cost_reduction_in_both_seats() {
     }
 }
 
+/// `player` casts Anointed Peacekeeper naming `name`: activated abilities of
+/// sources with that name cost {2} more.
+fn peacekeeper_naming(state: &mut GameState, player: PlayerId, name: &str) -> ObjectId {
+    let keeper = put(state, player, "Anointed Peacekeeper", Zone::Hand);
+    pool(state, player, &[ManaColor::W], 2);
+    cast(state, keeper);
+    let (group, index) = mtg_kernel::eternal_vintage_v1::nameable_definitions()
+        .iter()
+        .enumerate()
+        .find_map(|(group, ids)| {
+            ids.iter()
+                .position(|&id| CARD_DEFS[usize::from(id)].object_name == name)
+                .map(|index| (group, index))
+        })
+        .unwrap_or_else(|| panic!("{name} is not nameable"));
+    match settle(state) {
+        Some(Decision::ChooseEffectOption { player: chooser, .. }) => {
+            assert_eq!(chooser, player);
+            act(
+                state,
+                Action::ChooseEffectOption(u16::try_from(group).unwrap()),
+            );
+        }
+        other => panic!("expected the letter, got {other:?}"),
+    }
+    if let Some(Decision::ChooseEffectOption { .. }) = settle(state) {
+        act(
+            state,
+            Action::ChooseEffectOption(u16::try_from(index).unwrap()),
+        );
+    }
+    settled(state);
+    assert_eq!(zone(state, keeper), Zone::Battlefield);
+    keeper
+}
+
+/// Anointed Peacekeeper's tax is added to the total, not to the waterbend
+/// cost: the total is {5}, the taps still pay at most the waterbend's {3}
+/// (701.67b), and the other {2} is mana.
+#[test]
+fn submersible_waterbend_taps_never_pay_a_peacekeeper_tax_in_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = game(actor);
+        let keeper = peacekeeper_naming(&mut state, actor, SUBMERSIBLE);
+        let submersible = put(&mut state, actor, SUBMERSIBLE, Zone::Battlefield);
+        let wall = put(&mut state, actor, "Basking Rootwalla", Zone::Battlefield);
+        let other = put(&mut state, actor, "Basking Rootwalla", Zone::Battlefield);
+        pool(&mut state, actor, &[], 2);
+        assert!(!activatable(&mut state, submersible, 0), "{{5}} with two mana");
+        assert!(!activatable(&mut state, submersible, 1), "{{4}} with two mana");
+        assert!(!activatable(&mut state, submersible, 2), "{{3}} with two mana");
+        assert!(
+            activatable(&mut state, submersible, 3),
+            "three taps and {{2}}"
+        );
+        activate(&mut state, submersible, 3);
+        let offered = waterbend_taps(&mut state, &[keeper, wall, other]);
+        assert!(offered[0].contains(&submersible));
+        settled(&mut state);
+        assert!(creature(&state, submersible));
+        assert!(!tapped(&state, submersible));
+        assert!(tapped(&state, keeper) && tapped(&state, wall) && tapped(&state, other));
+        assert_eq!(
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+            0,
+            "the tax was paid in mana"
+        );
+    }
+}
+
+/// A Peacekeeper tax and Forensic Gadgeteer together: {3} plus {2} less {1}
+/// is {4}; three permanents may still be tapped (the waterbend's {3}), and the
+/// fourth mana is paid.
+#[test]
+fn submersible_waterbend_with_a_peacekeeper_tax_and_a_gadgeteer_in_both_seats() {
+    for actor in [P0, P1] {
+        let mut state = game(actor);
+        let keeper = peacekeeper_naming(&mut state, actor, SUBMERSIBLE);
+        let submersible = put(&mut state, actor, SUBMERSIBLE, Zone::Battlefield);
+        let gadgeteer = put(&mut state, actor, "Forensic Gadgeteer", Zone::Battlefield);
+        let wall = put(&mut state, actor, "Basking Rootwalla", Zone::Battlefield);
+        pool(&mut state, actor, &[], 1);
+        assert!(!activatable(&mut state, submersible, 0), "{{4}} with one mana");
+        assert!(!activatable(&mut state, submersible, 1), "{{3}} with one mana");
+        assert!(!activatable(&mut state, submersible, 2), "{{2}} with one mana");
+        assert!(
+            activatable(&mut state, submersible, 3),
+            "three taps and {{1}}"
+        );
+        activate(&mut state, submersible, 3);
+        waterbend_taps(&mut state, &[keeper, gadgeteer, wall]);
+        settled(&mut state);
+        assert!(creature(&state, submersible));
+        assert!(!tapped(&state, submersible));
+        assert_eq!(
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+            0
+        );
+
+        // With four mana and no taps the whole {4} is mana.
+        let mut state = game(actor);
+        peacekeeper_naming(&mut state, actor, SUBMERSIBLE);
+        let submersible = put(&mut state, actor, SUBMERSIBLE, Zone::Battlefield);
+        put(&mut state, actor, "Forensic Gadgeteer", Zone::Battlefield);
+        pool(&mut state, actor, &[], 4);
+        activate(&mut state, submersible, 0);
+        settled(&mut state);
+        assert!(creature(&state, submersible));
+        assert_eq!(
+            state.players[actor.index()].mana_pool[ManaColor::C.pool_index()],
+            0
+        );
+    }
+}
+
 // ---- Summon: Bahamut ----------------------------------------------------------------
 
 /// Bahamut enters with a lore counter (chapter I) and gets one after its
@@ -887,6 +1002,10 @@ fn bahamut_blink_restarts_at_chapter_one_and_chapters_may_target_nothing_in_both
 #[derive(Default)]
 struct S1qSessionEvents {
     exhausts: usize,
+    /// Waterbend taps chosen through the session: the engine's
+    /// `ChooseCostTargets` decision, a `choose_cost_target` action whose
+    /// source is the Submersible and whose cost kind is a tap.
+    waterbend_taps: usize,
 }
 
 impl S1qSessionEvents {
@@ -897,6 +1016,11 @@ impl S1qSessionEvents {
             .map(|id| CARD_DEFS[id as usize].name);
         match semantic["action_kind"].as_str() {
             Some("activate_ability") if card == Some(SUBMERSIBLE) => self.exhausts += 1,
+            Some("choose_cost_target")
+                if card == Some(SUBMERSIBLE) && semantic["cost_kind"] == "TapPermanents" =>
+            {
+                self.waterbend_taps += 1
+            }
             _ => {}
         }
     }
@@ -953,6 +1077,7 @@ fn s1q_decks_finish_and_replay_through_public_sessions() {
                         .sum::<usize>();
                 }
                 totals.exhausts += events.exhausts;
+                totals.waterbend_taps += events.waterbend_taps;
             }
         }
     }
@@ -961,6 +1086,10 @@ fn s1q_decks_finish_and_replay_through_public_sessions() {
     assert!(cast_totals[1] > 0, "no Invasion Submersible cast");
     assert!(cast_totals[2] > 0, "no Summon: Bahamut cast");
     assert!(totals.exhausts > 0, "no exhaust activation");
+    assert!(
+        totals.waterbend_taps > 0,
+        "no waterbend tap chosen through the session"
+    );
 }
 
 fn deck(rows: &[(&str, u32)]) -> CustomDeckV1 {
