@@ -42,6 +42,18 @@
 //! streams fused into the vector loop (1.53x), 71.6 with them in a half-empty
 //! AVX2 group (1.33x), 73.4 in a separate scalar loop (1.30x). With both
 //! hyperthreads of a core busy the fused tail is still 1.44x to 1.50x.
+//!
+//! AVX-512: with AVX-512F and AVX-512BW a shared-schedule group runs every
+//! stream (up to eight) in the 64-bit lanes of one 512-bit round loop. No
+//! stream is left to scalar registers, one schedule pass covers eight
+//! consecutive blocks, and each rotate and each three-input function (Ch,
+//! Maj, the XOR of three rotates) is one instruction. It hashes the same
+//! blocks in the same order, so digests and checkpoints do not change.
+//! Measured with the same probe on a Sapphire Rapids Xeon (one thread of a
+//! shared cloud host), in ns per block per stream: `sha2` 222, the
+//! multi-buffer path 156, the fused tail 104, AVX-512 45.5 (2.3x the fused
+//! tail). `MTG_KERNEL_SHA512_NO_AVX512` (any value) keeps the AVX2 path, for
+//! a comparison run or for a CPU that lowers its clock under 512-bit work.
 
 use sha2::{Digest, Sha512};
 use std::ops::Range;
@@ -215,8 +227,9 @@ pub(crate) fn sha512_jobs_with_mode_v1(
 /// the same body slice (same address and length, hence the same bytes) and
 /// the same `start_block`, and the CPU has AVX2 and BMI2; anything else, and
 /// every job outside a group, goes through the multi-buffer path
-/// ([`sha512_jobs_with_mode_v1`]). Digests and checkpoints are the same
-/// either way.
+/// ([`sha512_jobs_with_mode_v1`]). With AVX-512F and AVX-512BW as well, a
+/// group's streams all run in one AVX-512 round loop. Digests and checkpoints
+/// are the same either way.
 pub(crate) fn sha512_jobs_grouped_v1(
     jobs: &[Sha512JobV1<'_>],
     groups: &[Range<usize>],
@@ -225,7 +238,7 @@ pub(crate) fn sha512_jobs_grouped_v1(
 ) {
     sha512_jobs_grouped_tail_v1(
         default_mode_v1(),
-        SharedTailV1::Fused,
+        SharedTailV1::Wide,
         jobs,
         groups,
         out,
@@ -233,9 +246,11 @@ pub(crate) fn sha512_jobs_grouped_v1(
     );
 }
 
-/// Where a shared-schedule group runs the streams left after its full groups
-/// of four AVX2 lanes. Every tail computes the same digests; production uses
-/// `Fused`, and the others stay for the differential tests and the probe.
+/// Where a shared-schedule group runs its streams: `Wide` puts them all in
+/// AVX-512 lanes, and the others say where the streams left after the full
+/// groups of four AVX2 lanes go. Every choice computes the same digests;
+/// production uses `Wide`, which is `Fused` on a CPU without AVX-512, and the
+/// others stay for the differential tests and the probe.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SharedTailV1 {
     /// One or two leftover streams in a separate scalar rounds-only loop
@@ -248,6 +263,10 @@ pub(crate) enum SharedTailV1 {
     /// One or two leftover streams in scalar registers inside the round loop
     /// of the last full AVX2 group (three in a masked AVX2 group).
     Fused,
+    /// Every stream in a 64-bit lane of one AVX-512 round loop, with eight
+    /// consecutive blocks per schedule pass. Without AVX-512F and AVX-512BW
+    /// this is `Fused`.
+    Wide,
 }
 
 fn sha512_jobs_grouped_tail_v1(
@@ -278,6 +297,23 @@ fn sha512_jobs_grouped_tail_v1(
                     "overlapping shared-schedule groups"
                 );
                 grouped[group.clone()].fill(true);
+                if tail == SharedTailV1::Wide && avx512_available_v1() {
+                    // SAFETY: AVX-512F and AVX-512BW support was checked at
+                    // runtime.
+                    unsafe {
+                        x86::sha512_shared_group_avx512_v1(
+                            members,
+                            group.start,
+                            &mut out[group.clone()],
+                            checkpoints.as_deref_mut(),
+                        )
+                    };
+                    continue;
+                }
+                let tail = match tail {
+                    SharedTailV1::Wide => SharedTailV1::Fused,
+                    tail => tail,
+                };
                 // SAFETY: AVX2 and BMI2 support was checked at runtime.
                 unsafe {
                     x86::sha512_shared_group_avx2_v1(
@@ -344,6 +380,56 @@ fn shared_schedule_available_v1() -> bool {
     use std::sync::OnceLock;
     static AVAILABLE: OnceLock<bool> = OnceLock::new();
     *AVAILABLE.get_or_init(|| avx2_available_v1() && std::arch::is_x86_feature_detected!("bmi2"))
+}
+
+/// Whether shared-schedule groups take the AVX-512 path
+/// (`SharedTailV1::Wide`): the CPU and the system support AVX-512F and
+/// AVX-512BW, and `MTG_KERNEL_SHA512_NO_AVX512` is not set. The first call
+/// that finds the path available checks it against `sha2`
+/// ([`avx512_self_check_v1`]).
+#[cfg(target_arch = "x86_64")]
+fn avx512_available_v1() -> bool {
+    use std::sync::OnceLock;
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        let available = std::env::var_os("MTG_KERNEL_SHA512_NO_AVX512").is_none()
+            && std::arch::is_x86_feature_detected!("avx512f")
+            && std::arch::is_x86_feature_detected!("avx512bw");
+        if available {
+            // SAFETY: AVX-512F and AVX-512BW support was checked just above.
+            unsafe { avx512_self_check_v1() };
+        }
+        available
+    })
+}
+
+/// Hashes one fixed six-stream group (the state shape: a counter block, a
+/// full schedule pass of eight blocks and a partial one that ends in the
+/// padding) through the AVX-512 path and through `sha2`, and panics on any
+/// difference. The differential tests cover the AVX-512 path only where the
+/// test machine has AVX-512, which a CI runner may lack, and nothing
+/// downstream would notice a wrong digest: it is a model input. So every
+/// process checks the path once before first using it.
+///
+/// # Safety
+///
+/// The CPU and the system must support AVX-512F and AVX-512BW.
+#[cfg(target_arch = "x86_64")]
+unsafe fn avx512_self_check_v1() {
+    let body: [u8; 1_500] = std::array::from_fn(|index| (index * 131 + 89) as u8);
+    let jobs: [Sha512JobV1<'_>; 6] = std::array::from_fn(|counter| {
+        Sha512JobV1::new(b"observation-state", counter as u32, &body)
+    });
+    let mut digests = [[0u8; 64]; 6];
+    // SAFETY: the caller guarantees AVX-512F and AVX-512BW support.
+    unsafe { x86::sha512_shared_group_avx512_v1(&jobs, 0, &mut digests, None) };
+    for (job, digest) in jobs.iter().zip(&digests) {
+        assert!(
+            *digest == sha512_job_scalar_v1(job),
+            "the AVX-512 SHA-512 path differs from sha2 on this machine; \
+             MTG_KERNEL_SHA512_NO_AVX512=1 keeps the AVX2 path"
+        );
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -1103,6 +1189,278 @@ mod x86 {
             }
         }
     }
+
+    // The AVX-512 group path: every stream of a group in a 64-bit lane of one
+    // vector (no scalar streams), eight consecutive blocks per schedule pass,
+    // rotates and three-input logic in one instruction each.
+
+    const WIDE: usize = 8;
+    const _: () = assert!(WIDE == SHARED_GROUP_MAX_V1);
+
+    #[inline]
+    #[target_feature(enable = "avx512f")]
+    unsafe fn big_sigma0_wide(x: __m512i) -> __m512i {
+        _mm512_ternarylogic_epi64::<0x96>(
+            _mm512_ror_epi64::<28>(x),
+            _mm512_ror_epi64::<34>(x),
+            _mm512_ror_epi64::<39>(x),
+        )
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx512f")]
+    unsafe fn big_sigma1_wide(x: __m512i) -> __m512i {
+        _mm512_ternarylogic_epi64::<0x96>(
+            _mm512_ror_epi64::<14>(x),
+            _mm512_ror_epi64::<18>(x),
+            _mm512_ror_epi64::<41>(x),
+        )
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx512f")]
+    unsafe fn small_sigma0_wide(x: __m512i) -> __m512i {
+        _mm512_ternarylogic_epi64::<0x96>(
+            _mm512_ror_epi64::<1>(x),
+            _mm512_ror_epi64::<8>(x),
+            _mm512_srli_epi64::<7>(x),
+        )
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx512f")]
+    unsafe fn small_sigma1_wide(x: __m512i) -> __m512i {
+        _mm512_ternarylogic_epi64::<0x96>(
+            _mm512_ror_epi64::<19>(x),
+            _mm512_ror_epi64::<61>(x),
+            _mm512_srli_epi64::<6>(x),
+        )
+    }
+
+    /// `K + W` for eight blocks at once: lane `j` of `wk[t]` is round `t`'s
+    /// `K[t] + W[t]` for `blocks[j]` (as `shared_schedule`, twice as wide).
+    #[inline]
+    #[target_feature(enable = "avx512f,avx512bw")]
+    unsafe fn shared_schedule_wide(blocks: &[[u8; 128]; WIDE], wk: &mut [[u64; WIDE]; 80]) {
+        // Byte swap within each 64-bit element.
+        let swap = _mm512_broadcast_i32x4(_mm_setr_epi8(
+            7, 6, 5, 4, 3, 2, 1, 0, 15, 14, 13, 12, 11, 10, 9, 8,
+        ));
+        let mut w = [_mm512_setzero_si512(); 16];
+        for half in 0..2 {
+            // Row k: block k's words [8 * half..8 * half + 8).
+            let mut r = [_mm512_setzero_si512(); WIDE];
+            for (row, block) in r.iter_mut().zip(blocks) {
+                *row = _mm512_shuffle_epi8(
+                    _mm512_loadu_si512(block.as_ptr().add(half * 64).cast()),
+                    swap,
+                );
+            }
+            // Transpose 8x8 of 64-bit: pairs of rows, then 128-bit lanes
+            // (0x88 takes lanes 0 and 2 of each operand, 0xdd lanes 1 and 3).
+            let t0 = _mm512_unpacklo_epi64(r[0], r[1]);
+            let t1 = _mm512_unpackhi_epi64(r[0], r[1]);
+            let t2 = _mm512_unpacklo_epi64(r[2], r[3]);
+            let t3 = _mm512_unpackhi_epi64(r[2], r[3]);
+            let t4 = _mm512_unpacklo_epi64(r[4], r[5]);
+            let t5 = _mm512_unpackhi_epi64(r[4], r[5]);
+            let t6 = _mm512_unpacklo_epi64(r[6], r[7]);
+            let t7 = _mm512_unpackhi_epi64(r[6], r[7]);
+            let even = [
+                _mm512_shuffle_i64x2::<0x88>(t0, t2),
+                _mm512_shuffle_i64x2::<0xdd>(t0, t2),
+                _mm512_shuffle_i64x2::<0x88>(t4, t6),
+                _mm512_shuffle_i64x2::<0xdd>(t4, t6),
+            ];
+            let odd = [
+                _mm512_shuffle_i64x2::<0x88>(t1, t3),
+                _mm512_shuffle_i64x2::<0xdd>(t1, t3),
+                _mm512_shuffle_i64x2::<0x88>(t5, t7),
+                _mm512_shuffle_i64x2::<0xdd>(t5, t7),
+            ];
+            let base = half * 8;
+            w[base] = _mm512_shuffle_i64x2::<0x88>(even[0], even[2]);
+            w[base + 1] = _mm512_shuffle_i64x2::<0x88>(odd[0], odd[2]);
+            w[base + 2] = _mm512_shuffle_i64x2::<0x88>(even[1], even[3]);
+            w[base + 3] = _mm512_shuffle_i64x2::<0x88>(odd[1], odd[3]);
+            w[base + 4] = _mm512_shuffle_i64x2::<0xdd>(even[0], even[2]);
+            w[base + 5] = _mm512_shuffle_i64x2::<0xdd>(odd[0], odd[2]);
+            w[base + 6] = _mm512_shuffle_i64x2::<0xdd>(even[1], even[3]);
+            w[base + 7] = _mm512_shuffle_i64x2::<0xdd>(odd[1], odd[3]);
+        }
+        for (t, out) in wk.iter_mut().enumerate() {
+            let wt = if t < 16 {
+                w[t]
+            } else {
+                let next = _mm512_add_epi64(
+                    _mm512_add_epi64(small_sigma1_wide(w[(t - 2) & 15]), w[(t - 7) & 15]),
+                    _mm512_add_epi64(small_sigma0_wide(w[(t - 15) & 15]), w[(t - 16) & 15]),
+                );
+                w[t & 15] = next;
+                next
+            };
+            let k = _mm512_set1_epi64(ROUND_CONSTANTS_V1[t] as i64);
+            _mm512_storeu_si512(out.as_mut_ptr().cast(), _mm512_add_epi64(wt, k));
+        }
+    }
+
+    /// The 80 rounds of one compression of eight lanes over one shared block,
+    /// whose `K + W` words are lane `block` of `wk` (broadcast to every lane).
+    /// Every lane is updated; a lane holding no stream carries junk. The sums
+    /// are grouped so that a round's new `a` and `e` each follow the previous
+    /// round's by four one-cycle steps (64-bit addition wraps, so any
+    /// grouping gives the same words).
+    #[inline]
+    #[target_feature(enable = "avx512f")]
+    unsafe fn rounds_shared_wide(state: &mut [__m512i; 8], wk: &[[u64; WIDE]; 80], block: usize) {
+        let [mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h] = *state;
+        for words in wk {
+            let hk = _mm512_add_epi64(h, _mm512_set1_epi64(words[block] as i64));
+            // T1 = hk + sc, with sc = Sigma1(e) + Ch(e, f, g).
+            let sc = _mm512_add_epi64(
+                big_sigma1_wide(e),
+                _mm512_ternarylogic_epi64::<0xca>(e, f, g),
+            );
+            // hk + T2 = hk + Maj(a, b, c) + Sigma0(a).
+            let maj = _mm512_ternarylogic_epi64::<0xe8>(a, b, c);
+            let hk_t2 = _mm512_add_epi64(_mm512_add_epi64(hk, maj), big_sigma0_wide(a));
+            h = g;
+            g = f;
+            f = e;
+            e = _mm512_add_epi64(_mm512_add_epi64(d, hk), sc);
+            d = c;
+            c = b;
+            b = a;
+            a = _mm512_add_epi64(hk_t2, sc);
+        }
+        let next = [a, b, c, d, e, f, g, h];
+        for (slot, value) in state.iter_mut().zip(next) {
+            *slot = _mm512_add_epi64(*slot, value);
+        }
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx512f")]
+    unsafe fn load_wide_states(lanes: &[[u64; 8]; WIDE]) -> [__m512i; 8] {
+        let mut words = [[0u64; WIDE]; 8];
+        for (lane, lane_state) in lanes.iter().enumerate() {
+            for (row, word) in words.iter_mut().zip(lane_state) {
+                row[lane] = *word;
+            }
+        }
+        let mut state = [_mm512_setzero_si512(); 8];
+        for (slot, row) in state.iter_mut().zip(&words) {
+            *slot = _mm512_loadu_si512(row.as_ptr().cast());
+        }
+        state
+    }
+
+    #[inline]
+    #[target_feature(enable = "avx512f")]
+    unsafe fn wide_lane_states(state: &[__m512i; 8]) -> [[u64; 8]; WIDE] {
+        let mut words = [[0u64; WIDE]; 8];
+        for (row, value) in words.iter_mut().zip(state) {
+            _mm512_storeu_si512(row.as_mut_ptr().cast(), *value);
+        }
+        let mut lanes = [[0u64; 8]; WIDE];
+        for (lane, lane_state) in lanes.iter_mut().enumerate() {
+            for (word, row) in lane_state.iter_mut().zip(&words) {
+                *word = row[lane];
+            }
+        }
+        lanes
+    }
+
+    /// One shared-schedule group (see `super::sha512_jobs_grouped_v1`) with
+    /// every stream in a lane of one AVX-512 vector: the same blocks, in the
+    /// same order, as `sha512_shared_group_avx2_v1`, and so the same digests
+    /// and checkpoints. Blocks holding a counter byte go through
+    /// `sha2::compress512` per stream; every other block is scheduled once
+    /// (eight consecutive blocks per pass) and its rounds run for all lanes
+    /// together. Chaining states stay in vectors across blocks and are
+    /// extracted only at checkpoints, counter blocks and the end.
+    #[target_feature(enable = "avx512f,avx512bw")]
+    pub(super) unsafe fn sha512_shared_group_avx512_v1(
+        jobs: &[Sha512JobV1<'_>],
+        first_index: usize,
+        out: &mut [[u8; 64]],
+        mut checkpoints: Option<&mut Sha512CheckpointsV1>,
+    ) {
+        use sha2::digest::generic_array::GenericArray;
+        let count = jobs.len();
+        assert!((1..=WIDE).contains(&count));
+        assert_eq!(out.len(), count);
+        let lead = &jobs[0];
+        let total = lead.block_count();
+        let data_blocks = lead.data_block_count();
+        // Blocks holding a counter byte differ per stream.
+        let counter_blocks = lead.prefix.len() / 128..=(lead.prefix.len() + 3) / 128;
+        // Chaining states; slots past `count` are padding lanes.
+        let mut states = [[0u64; 8]; WIDE];
+        for (state, job) in states.iter_mut().zip(jobs) {
+            *state = job.start_state;
+        }
+        let mut vector = [_mm512_setzero_si512(); 8];
+        // True while `vector` holds the current states.
+        let mut loaded = false;
+        let every = checkpoints.as_deref().map(|checkpoints| checkpoints.every);
+        let mut blocks = [[0u8; 128]; WIDE];
+        let mut wk = [[0u64; WIDE]; 80];
+        let mut next = lead.start_block;
+        while next < total {
+            if counter_blocks.contains(&next) {
+                if loaded {
+                    states = wide_lane_states(&vector);
+                    loaded = false;
+                }
+                for (state, job) in states.iter_mut().zip(jobs) {
+                    job.block(next, &mut blocks[0]);
+                    sha2::compress512(
+                        state,
+                        std::slice::from_ref(GenericArray::from_slice(&blocks[0])),
+                    );
+                }
+                next += 1;
+                if let Some(checkpoints) = checkpoints.as_deref_mut() {
+                    for (offset, job) in jobs.iter().enumerate() {
+                        checkpoints.record(first_index + offset, job, next, states[offset]);
+                    }
+                }
+                continue;
+            }
+            // Up to eight consecutive shared blocks; one schedule pass.
+            let mut run = 0;
+            while run < WIDE && next + run < total && !counter_blocks.contains(&(next + run)) {
+                lead.block(next + run, &mut blocks[run]);
+                run += 1;
+            }
+            shared_schedule_wide(&blocks, &mut wk);
+            if !loaded {
+                vector = load_wide_states(&states);
+                loaded = true;
+            }
+            for block in 0..run {
+                rounds_shared_wide(&mut vector, &wk, block);
+                next += 1;
+                let due =
+                    every.is_some_and(|every| next.is_multiple_of(every) && next <= data_blocks);
+                if due {
+                    states = wide_lane_states(&vector);
+                    if let Some(checkpoints) = checkpoints.as_deref_mut() {
+                        for (offset, job) in jobs.iter().enumerate() {
+                            checkpoints.record(first_index + offset, job, next, states[offset]);
+                        }
+                    }
+                }
+            }
+        }
+        if loaded {
+            states = wide_lane_states(&vector);
+        }
+        for (digest, state) in out.iter_mut().zip(&states) {
+            *digest = digest_bytes_v1(state);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1247,11 +1605,24 @@ mod tests {
         assert_eq!(abc[..4], [0xdd, 0xaf, 0x35, 0xa1]);
     }
 
-    const TAILS: [SharedTailV1; 3] = [
+    const TAILS: [SharedTailV1; 4] = [
         SharedTailV1::Scalar,
         SharedTailV1::Vector,
         SharedTailV1::Fused,
+        SharedTailV1::Wide,
     ];
+
+    /// Whether `SharedTailV1::Wide` is the AVX-512 path on this machine.
+    fn wide_is_avx512_v1() -> bool {
+        #[cfg(target_arch = "x86_64")]
+        {
+            avx512_available_v1()
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    }
 
     /// Hashes `jobs` as one shared-schedule group in every mode and tail and
     /// checks every digest against the scalar `sha2` path on the same jobs.
@@ -1490,21 +1861,25 @@ mod tests {
                 });
                 start.elapsed().as_nanos() as f64 / block_streams
             };
-            let mut best = [f64::INFINITY; 5];
+            let mut best = [f64::INFINITY; 6];
             for _ in 0..trials {
                 for (path, slot) in best.iter_mut().enumerate() {
                     *slot = slot.min(run(path));
                 }
             }
-            let [sha2, multi, scalar_tail, vector_tail, fused_tail] = best;
+            let [sha2, multi, scalar_tail, vector_tail, fused_tail, wide] = best;
             println!(
                 "sha512 shared-schedule {shape} body={bytes} threads={threads} ns/block-stream: \
                  sha2={sha2:.2} multi_buffer={multi:.2} scalar_tail={scalar_tail:.2} \
-                 vector_tail={vector_tail:.2} fused_tail={fused_tail:.2} speedup vs \
-                 multi_buffer: scalar_tail={:.3} vector_tail={:.3} fused_tail={:.3}",
+                 vector_tail={vector_tail:.2} fused_tail={fused_tail:.2} wide={wide:.2} \
+                 (avx512={}) speedup vs multi_buffer: scalar_tail={:.3} vector_tail={:.3} \
+                 fused_tail={:.3} wide={:.3}; wide vs fused_tail={:.3}",
+                wide_is_avx512_v1(),
                 multi / scalar_tail,
                 multi / vector_tail,
-                multi / fused_tail
+                multi / fused_tail,
+                multi / wide,
+                fused_tail / wide
             );
         }
     }
