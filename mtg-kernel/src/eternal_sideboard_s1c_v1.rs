@@ -632,11 +632,12 @@ pub(crate) mod statics {
             return Vec::new();
         }
         if !crate::continuous_characteristics_v1::printed_abilities_active(state, object) {
-            let keeps = crate::engine::has_effective_subtype(
-                state,
-                object,
-                crate::card_def::Subtype::Swamp,
-            ) && crate::continuous_characteristics_v1::land_type_mana_survives(state, object);
+            let keeps =
+                crate::engine::has_effective_subtype(
+                    state,
+                    object,
+                    crate::card_def::Subtype::Swamp,
+                ) && crate::continuous_characteristics_v1::land_type_mana_survives(state, object);
             return if keeps {
                 vec![ManaColor::B]
             } else {

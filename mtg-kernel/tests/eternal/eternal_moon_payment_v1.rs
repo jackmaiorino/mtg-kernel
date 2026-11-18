@@ -991,7 +991,12 @@ fn a_later_land_type_does_not_give_mana_through_dress_down_both_seats() {
 fn abundant_growth_after_dress_down_gives_any_color_both_seats() {
     for actor in [P0, P1] {
         let (mut state, arbor) = dryad_arbor_under_dress_down_then(actor, "Abundant Growth");
-        assert_offers(&mut state, arbor, &WUBRG, "Abundant Growth after Dress Down");
+        assert_offers(
+            &mut state,
+            arbor,
+            &WUBRG,
+            "Abundant Growth after Dress Down",
+        );
     }
 }
 
