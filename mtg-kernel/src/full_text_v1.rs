@@ -254,6 +254,7 @@ pub(crate) fn entry_replacement_refused(definition: &CardDef) -> bool {
 pub(crate) enum DonorCheckSiteV1 {
     CommitTail,
     BatchTail,
+    SbaBatch,
     Entry,
     ControlChange,
     PhaseIn,
@@ -263,9 +264,10 @@ pub(crate) enum DonorCheckSiteV1 {
 
 impl DonorCheckSiteV1 {
     #[cfg(test)]
-    pub(crate) const ALL: [Self; 7] = [
+    pub(crate) const ALL: [Self; 8] = [
         Self::CommitTail,
         Self::BatchTail,
+        Self::SbaBatch,
         Self::Entry,
         Self::ControlChange,
         Self::PhaseIn,
@@ -286,11 +288,19 @@ pub(crate) fn with_donor_check_site_disabled<R>(
     site: DonorCheckSiteV1,
     body: impl FnOnce() -> R,
 ) -> R {
+    struct RestoreDonorCheckSites(u8);
+
+    impl Drop for RestoreDonorCheckSites {
+        fn drop(&mut self) {
+            DISABLED_DONOR_CHECK_SITES.with(|sites| sites.set(self.0));
+        }
+    }
+
     let bit = 1_u8 << site as u8;
-    DISABLED_DONOR_CHECK_SITES.with(|sites| sites.set(sites.get() | bit));
-    let result = body();
-    DISABLED_DONOR_CHECK_SITES.with(|sites| sites.set(sites.get() & !bit));
-    result
+    let previous = DISABLED_DONOR_CHECK_SITES.with(|sites| sites.get());
+    let _restore = RestoreDonorCheckSites(previous);
+    DISABLED_DONOR_CHECK_SITES.with(|sites| sites.set(previous | bit));
+    body()
 }
 
 fn donor_check_site_disabled(site: DonorCheckSiteV1) -> bool {

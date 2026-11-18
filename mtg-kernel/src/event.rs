@@ -7865,6 +7865,10 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         }
         crate::linked_aura_operation_v1::end_batch(state);
         finish_graveyard_order_batch(state, graveyard_batch, None);
+        let _ = crate::full_text_v1::donor_refusal_at(
+            state,
+            crate::full_text_v1::DonorCheckSiteV1::SbaBatch,
+        );
         return;
     }
     let events = dying
@@ -7917,6 +7921,10 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
     }
     crate::linked_aura_operation_v1::end_batch(state);
     finish_graveyard_order_batch(state, graveyard_batch, None);
+    let _ = crate::full_text_v1::donor_refusal_at(
+        state,
+        crate::full_text_v1::DonorCheckSiteV1::SbaBatch,
+    );
 }
 
 /// Logs a `SpellCast` marker with no accompanying state mutation (casting

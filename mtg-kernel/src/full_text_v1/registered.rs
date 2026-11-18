@@ -1019,6 +1019,21 @@ fn lethally_damaged(
     creature
 }
 
+fn sba_donor_scene(player: PlayerId) -> (GameState, ObjectId, ObjectId) {
+    let mut state = ordered_game(player);
+    put(&mut state, player, "Island", Zone::Graveyard);
+    put(&mut state, player, "Birds of Paradise", Zone::Graveyard);
+    let source = put(&mut state, player, VOLRATH, Zone::Battlefield);
+    assert_eq!(
+        active_definition(&state, source).unwrap().name,
+        "Birds of Paradise"
+    );
+    let donor = lethally_damaged(&mut state, player, source, "Terravore");
+    assert_eq!(state.objects.get(donor).damage, 1);
+    assert_eq!(state.objects.get(source).damage, 0);
+    (state, source, donor)
+}
+
 fn torpor_orb_in_play(state: &mut GameState, player: PlayerId) -> ObjectId {
     let orb = put(state, player, "Torpor Orb", Zone::Hand);
     pool(state, player, &[], 2);
@@ -1179,6 +1194,22 @@ fn volrath_state_based_death_making_an_unsupported_top_halts_at_the_first_advanc
             assert_eq!(state.engine.halted, None);
             assert_halted_now(&mut state, source);
             assert_eq!(state.objects.get(masticore).zone, Zone::Graveyard);
+        }
+    }
+}
+
+#[test]
+fn unsupported_sba_donor_halts_before_the_next_sweep_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for loss in [false, true] {
+            let (mut state, source, donor) = sba_donor_scene(player);
+            if loss {
+                state.players[player.opponent().index()].life = 0;
+            }
+            assert_eq!(state.engine.halted, None);
+            assert_halted_now(&mut state, source);
+            assert_eq!(state.objects.get(donor).zone, Zone::Graveyard);
+            assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
         }
     }
 }
@@ -1472,7 +1503,7 @@ fn volrath_with_akroma_text_and_the_physical_akroma_meet_the_legend_rule_both_se
 /// One case per check site. Each returns whether that site's contract held:
 /// the event sites halt at the event itself, before any decision; the
 /// backstops halt at the first decision, the start one before any automatic
-/// work. Each case is built so that no other site catches it in time.
+/// work. The return backstop is isolated by disabling the earlier SBA audit.
 fn check_site_case(site: DonorCheckSiteV1, player: PlayerId) -> bool {
     use crate::eternal_e5a_v1::phasing;
 
@@ -1499,6 +1530,12 @@ fn check_site_case(site: DonorCheckSiteV1, player: PlayerId) -> bool {
             ));
             act(&mut state, Action::ChooseEffectTarget(Target::Object(land)));
             state.engine.halted == donor_halt(source)
+        }
+        DonorCheckSiteV1::SbaBatch => {
+            let (mut state, source, _) = sba_donor_scene(player);
+            crate::trigger::sba_fixed_point(&mut state);
+            state.engine.halted == donor_halt(source)
+                && state.objects.get(source).zone == Zone::Battlefield
         }
         DonorCheckSiteV1::Entry => {
             // Wall of Blossoms is accepted in play, so only the entry refuses.
@@ -1535,14 +1572,16 @@ fn check_site_case(site: DonorCheckSiteV1, player: PlayerId) -> bool {
             halted && state.objects.get(dying).zone == Zone::Battlefield
         }
         DonorCheckSiteV1::AdvanceDecision => {
-            // A state-based death inside the automatic work makes the top.
-            let (mut state, source) = volrath_in_play(player);
-            lethally_damaged(&mut state, player, source, "Masticore");
-            engine::advance_until_decision(&mut state)
-                == Decision::Halted {
-                    mechanic: UnsupportedMechanic::FullTextDonorOutsideSetV1,
-                    source,
-                }
+            // Isolate the return backstop from the earlier SBA audit.
+            with_donor_check_site_disabled(DonorCheckSiteV1::SbaBatch, || {
+                let (mut state, source) = volrath_in_play(player);
+                lethally_damaged(&mut state, player, source, "Masticore");
+                engine::advance_until_decision(&mut state)
+                    == Decision::Halted {
+                        mechanic: UnsupportedMechanic::FullTextDonorOutsideSetV1,
+                        source,
+                    }
+            })
         }
     }
 }
@@ -1556,8 +1595,7 @@ fn each_donor_check_site_halts_its_own_case_both_seats() {
     }
 }
 
-/// With only one site's check removed, that site's case no longer holds: no
-/// other site covers it, so every site is needed.
+/// With the selected site's check removed, its isolated case no longer holds.
 #[test]
 fn each_donor_check_site_case_fails_without_that_site_both_seats() {
     for site in DonorCheckSiteV1::ALL {
@@ -1565,5 +1603,40 @@ fn each_donor_check_site_case_fails_without_that_site_both_seats() {
             let held = with_donor_check_site_disabled(site, || check_site_case(site, player));
             assert!(!held, "{site:?} {player:?} held without its own check");
         }
+    }
+}
+
+#[test]
+fn disabled_donor_check_site_is_restored_after_panic() {
+    for site in DonorCheckSiteV1::ALL {
+        assert!(!donor_check_site_disabled(site));
+        let result = std::panic::catch_unwind(|| {
+            with_donor_check_site_disabled(site, || {
+                assert!(donor_check_site_disabled(site));
+                panic!("test donor check restoration");
+            });
+        });
+        assert!(result.is_err());
+        assert!(!donor_check_site_disabled(site));
+    }
+}
+
+#[test]
+fn nested_disabled_donor_check_sites_restore_the_previous_mask() {
+    for site in DonorCheckSiteV1::ALL {
+        assert!(!donor_check_site_disabled(site));
+        with_donor_check_site_disabled(site, || {
+            for nested in DonorCheckSiteV1::ALL {
+                with_donor_check_site_disabled(nested, || {
+                    assert!(donor_check_site_disabled(site));
+                    assert!(donor_check_site_disabled(nested));
+                });
+                assert!(donor_check_site_disabled(site));
+                if nested != site {
+                    assert!(!donor_check_site_disabled(nested));
+                }
+            }
+        });
+        assert!(!donor_check_site_disabled(site));
     }
 }
