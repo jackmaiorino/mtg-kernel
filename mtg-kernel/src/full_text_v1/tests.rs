@@ -640,6 +640,208 @@ fn full_text_rejects_graveyard_only_ability_and_out_of_range_selectors() {
         .is_ok());
 }
 
+/// Appendix A's refused class: creature cards of the Premodern pool that
+/// lose a battlefield ability as donors today.
+const REFUSED_DONORS: [&str; 62] = [
+    "Academy Rector",
+    "Anurid Brushhopper",
+    "Argothian Enchantress",
+    "Avalanche Riders",
+    "Avatar of Woe",
+    "Ball Lightning",
+    "Basking Rootwalla",
+    "Beloved Chaplain",
+    "Birchlore Rangers",
+    "Blastoderm",
+    "Crimson Acolyte",
+    "Deranged Hermit",
+    "Devoted Caretaker",
+    "Druid Lyrist",
+    "Exalted Angel",
+    "Fyndhorn Elves",
+    "Glowrider",
+    "Goblin Goon",
+    "Goblin Lackey",
+    "Goblin Piledriver",
+    "Goblin Sharpshooter",
+    "Goblin Tinkerer",
+    "Goblin Vandal",
+    "Goblin Warchief",
+    "Graveborn Muse",
+    "Grim Lavamancer",
+    "Hypnotic Specter",
+    "Jackal Pup",
+    "Knight of Stromgald",
+    "Llanowar Elves",
+    "Masticore",
+    "Mother of Runes",
+    "Multani's Acolyte",
+    "Multani, Maro-Sorcerer",
+    "Mystic Enforcer",
+    "Nantuko Shade",
+    "Nova Cleric",
+    "Petradon",
+    "Phantom Nishoba",
+    "Plaguebearer",
+    "Priest of Titania",
+    "Putrid Imp",
+    "Quirion Dryad",
+    "Quirion Ranger",
+    "Ravenous Baloth",
+    "Siege-Gang Commander",
+    "Skirk Prospector",
+    "Soltari Monk",
+    "Soltari Priest",
+    "Spike Feeder",
+    "Terravore",
+    "Tireless Tribe",
+    "True Believer",
+    "Verdant Force",
+    "Veteran Brawlers",
+    "Veteran Explorer",
+    "Vintara Snapper",
+    "Weathered Wayfarer",
+    "Wild Mongrel",
+    "Wirewood Symbiote",
+    "Withered Wretch",
+    "Yavimaya Granger",
+];
+
+#[test]
+fn every_premodern_pool_creature_is_in_exactly_one_donor_class() {
+    use std::collections::BTreeSet;
+
+    let snapshot: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../data/eternal_v1/meta_snapshot_mtgtop8_premodern_20261101.json"
+    )))
+    .unwrap();
+    let decks = snapshot["formats"]["premodern"].as_array().unwrap();
+    let names = |zone: &str, archetype: Option<&str>| {
+        decks
+            .iter()
+            .filter(|deck| archetype.is_none_or(|wanted| deck["archetype"] == wanted))
+            .flat_map(|deck| deck[zone].as_array().unwrap().iter())
+            .map(|row| row[1].as_str().unwrap().to_owned())
+            .collect::<BTreeSet<_>>()
+    };
+    let mut pool = names("mainboard", None);
+    pool.extend(names("sideboard", None));
+    assert_eq!(pool.len(), 305);
+    let creature = |name: &str| {
+        card_id_by_name(name).is_some_and(|card| {
+            CARD_DEFS[usize::from(card)]
+                .types
+                .contains(&CardType::Creature)
+        })
+    };
+    let creatures = pool
+        .iter()
+        .filter(|name| creature(name.as_str()))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(creatures.len(), 101);
+
+    let classes: [&[&str]; 5] = [
+        &DONATED_PROGRAM_DONORS_V1,
+        &LISTED_DONORS_V1,
+        &GENERIC_TEXT_DONORS_V1,
+        &ENTRY_ONLY_DONORS_V1,
+        &REFUSED_DONORS,
+    ];
+    assert_eq!(classes.iter().map(|class| class.len()).sum::<usize>(), 101);
+    for name in &creatures {
+        let found = classes
+            .iter()
+            .filter(|class| class.contains(&name.as_str()))
+            .count();
+        assert_eq!(found, 1, "{name} is in {found} donor classes");
+    }
+    for name in classes.iter().flat_map(|class| class.iter()) {
+        assert!(creatures.contains(*name), "{name} is not a pool creature");
+    }
+    for name in LISTED_ENTRY_PROGRAMS_PENDING_V1
+        .iter()
+        .chain(&LISTED_PROGRAMS_PENDING_V1)
+    {
+        assert!(LISTED_DONORS_V1.contains(name), "{name}");
+    }
+
+    let definition = |name: &str| &CARD_DEFS[usize::from(id(name))];
+    for name in &creatures {
+        let card = definition(name.as_str());
+        let pending = LISTED_PROGRAMS_PENDING_V1.contains(&name.as_str());
+        let refused = REFUSED_DONORS.contains(&name.as_str());
+        assert_eq!(donor_supported(card), !refused && !pending, "{name}");
+        let at_entry = ENTRY_ONLY_DONORS_V1.contains(&name.as_str())
+            || LISTED_ENTRY_PROGRAMS_PENDING_V1.contains(&name.as_str())
+            || name == "Meddling Mage";
+        assert_eq!(entry_refused(card), at_entry, "{name}");
+    }
+    // Every creature of the frozen mirror's mainboard plays as it does today,
+    // and so do the two donors the amended ruling keeps.
+    let mirror = names("mainboard", Some("premodern-full-english-breakfast"));
+    let mirror = mirror
+        .iter()
+        .filter(|name| creature(name.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(mirror.len(), 13);
+    for name in mirror
+        .into_iter()
+        .map(String::as_str)
+        .chain(["Mogg Fanatic", "Ravenous Rats"])
+    {
+        let card = definition(name);
+        assert!(donor_supported(card) && !entry_refused(card), "{name}");
+    }
+    // A creature outside the pool is refused.
+    assert!(!donor_supported(definition("Dauthi Voidwalker")));
+}
+
+/// Measures the donor check that runs at every commit tail. Run by hand:
+/// `cargo test --release -p mtg-kernel --features eternal-fixtures --lib
+/// donor_check_cost -- --ignored --nocapture`.
+#[test]
+#[ignore = "timing measurement, run by hand"]
+fn donor_check_cost_at_a_commit_tail() {
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    const ROUNDS: u32 = 2_000_000;
+    let time = |state: &GameState| {
+        let start = Instant::now();
+        let mut refused = 0_u32;
+        for _ in 0..ROUNDS {
+            refused += u32::from(refused_donor(black_box(state)).is_some());
+        }
+        black_box(refused);
+        start.elapsed().as_secs_f64() * 1e9 / f64::from(ROUNDS)
+    };
+    let mut state = game();
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for _ in 0..12 {
+            put(&mut state, player, "Island", Zone::Battlefield);
+        }
+        for _ in 0..10 {
+            put(&mut state, player, "Island", Zone::Graveyard);
+        }
+    }
+    let without = time(&state);
+    put(&mut state, PlayerId::P0, VOLRATH, Zone::Battlefield);
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Birds of Paradise",
+        Zone::Graveyard,
+    );
+    assert_eq!(refused_donor(&state), None);
+    let with = time(&state);
+    eprintln!(
+        "donor check, 24 permanents: {without:.1} ns without a Shapeshifter, \
+         {with:.1} ns with one on a supported top"
+    );
+}
+
 #[test]
 fn full_text_registration_is_partial() {
     assert_eq!(

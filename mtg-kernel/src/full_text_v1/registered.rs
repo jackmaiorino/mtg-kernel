@@ -1,7 +1,7 @@
 //! Native fixtures using the registered physical Shapeshifter.
 
 use super::*;
-use crate::engine::{self, Action, Decision, RuntimeRulesV1};
+use crate::engine::{self, Action, Decision, RuntimeRulesV1, UnsupportedMechanic};
 use crate::mana::ManaColor;
 use crate::state::{Step, Target};
 
@@ -259,9 +259,10 @@ fn volrath_native_simultaneous_entry_uses_final_donor_after_departure_both_seats
 #[test]
 fn volrath_native_registration_retains_paid_discard_with_no_or_unsupported_text_both_seats() {
     for player in [PlayerId::P0, PlayerId::P1] {
-        // Masticore supplies characteristics but its activation has no
-        // donated payment recipe in this profile.
-        for donor_name in [None, Some(VOLRATH), Some("Masticore")] {
+        // Glory supplies characteristics, and its only activation works from
+        // the graveyard, so no donated slot is offered. An unsupported donor
+        // such as Masticore is refused at entry (see the refusal fixtures).
+        for donor_name in [None, Some(VOLRATH), Some("Glory")] {
             let mut state = ordered_game(player);
             let donor = donor_name.map(|name| put(&mut state, player, name, Zone::Graveyard));
             let discarded = put(&mut state, player, "Island", Zone::Hand);
@@ -275,7 +276,7 @@ fn volrath_native_registration_retains_paid_discard_with_no_or_unsupported_text_
                 active_text(&state, source).map(|text| text.donor().object),
                 donor
             );
-            if donor_name != Some("Masticore") {
+            if donor_name != Some("Glory") {
                 assert_eq!(engine::effective_power(&state, source), 0);
                 assert_eq!(engine::effective_toughness(&state, source), 1);
             }
@@ -881,7 +882,9 @@ fn volrath_native_paid_control_transfer_records_the_new_controller_both_seats() 
         let controller = player.opponent();
         let mut state = ordered_game(player);
         let donor = put(&mut state, player, "Phyrexian Devourer", Zone::Graveyard);
-        let new_donor = put(&mut state, controller, "Tireless Tribe", Zone::Graveyard);
+        // A supported donor: an unsupported one halts the transfer (see
+        // `volrath_control_change_onto_an_unsupported_top_halts_both_seats`).
+        let new_donor = put(&mut state, controller, "Birds of Paradise", Zone::Graveyard);
         let source = cast_volrath(&mut state, player);
         settled(&mut state);
         assert_eq!(active_text(&state, source).unwrap().donor().object, donor);
@@ -922,5 +925,397 @@ fn volrath_native_paid_control_transfer_records_the_new_controller_both_seats() 
             active_text(&restored, source).unwrap().donor().object,
             new_donor
         );
+    }
+}
+
+// Donor scope (docs/design/premodern_shapeshifter_alter_reality_v1.md,
+// sections 2.2, 2.3 and 5.1).
+
+/// Refused donors: a sample of appendix A's refused class, among them the
+/// cards whose programs are only partly donated, and the listed additions
+/// whose programs are still pending.
+const REFUSED_SAMPLE: [&str; 7] = [
+    "Masticore",
+    "Phantom Nishoba",
+    "Spike Feeder",
+    "Exalted Angel",
+    "Tireless Tribe",
+    "Ghitu Slinger",
+    "Xantid Swarm",
+];
+
+/// Supported cards whose enters ability a Shapeshifter entering with one on
+/// top would lose.
+fn entry_refused_names() -> Vec<&'static str> {
+    let mut names = ENTRY_ONLY_DONORS_V1.to_vec();
+    names.push(MEDDLING_MAGE);
+    names.extend(LISTED_ENTRY_PROGRAMS_PENDING_V1);
+    names
+}
+
+fn restored(state: &GameState) -> GameState {
+    serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap()
+}
+
+/// Passes priority until the donor refusal halts the game, then checks that
+/// it stays halted with no later decision, also after a snapshot restore.
+fn assert_refused(state: &mut GameState, host: ObjectId) {
+    let halt = (UnsupportedMechanic::FullTextDonorOutsideSetV1, host);
+    for _ in 0..32 {
+        match engine::advance_until_decision(state) {
+            Decision::Halted { mechanic, source } => {
+                assert_eq!((mechanic, source), halt);
+                assert_eq!(state.engine.halted, Some(halt));
+                let mut copy = restored(state);
+                for branch in [&mut *state, &mut copy] {
+                    for _ in 0..2 {
+                        assert_eq!(
+                            engine::advance_until_decision(branch),
+                            Decision::Halted { mechanic, source }
+                        );
+                    }
+                }
+                assert_eq!(state.state_hash(), copy.state_hash());
+                return;
+            }
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            other => panic!("expected the donor refusal, got {other:?}"),
+        }
+    }
+    panic!("the donor refusal did not fire");
+}
+
+/// A Shapeshifter on the battlefield whose top is Birds of Paradise.
+fn volrath_in_play(player: PlayerId) -> (GameState, ObjectId) {
+    let mut state = ordered_game(player);
+    put(&mut state, player, "Birds of Paradise", Zone::Graveyard);
+    let source = cast_volrath(&mut state, player);
+    settled(&mut state);
+    assert_eq!(
+        active_definition(&state, source).unwrap().name,
+        "Birds of Paradise"
+    );
+    (state, source)
+}
+
+fn arrive(state: &mut GameState, player: PlayerId, name: &str) -> ObjectId {
+    let card = put(state, player, name, Zone::Hand);
+    event::propose_and_commit(state, ProposedEvent::zone_change(card, Zone::Graveyard));
+    card
+}
+
+fn only_retained_discard(state: &mut GameState, player: PlayerId, source: ObjectId) {
+    pool(state, player, &[], 2);
+    let Decision::CastSpellOrPass {
+        activatable_abilities,
+        ..
+    } = next(state)
+    else {
+        panic!("expected native activation choices");
+    };
+    assert_eq!(
+        activatable_abilities
+            .iter()
+            .copied()
+            .filter(|(object, _)| *object == source)
+            .collect::<Vec<_>>(),
+        [(source, 0)],
+    );
+}
+
+#[test]
+fn volrath_entry_with_an_unsupported_or_entry_only_top_halts_at_the_entry_both_seats() {
+    let donors = REFUSED_SAMPLE.into_iter().chain(entry_refused_names());
+    for donor in donors {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ordered_game(player);
+            put(&mut state, player, donor, Zone::Graveyard);
+            let source = cast_volrath(&mut state, player);
+            assert_refused(&mut state, source);
+            assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+            assert!(captured_entry(&state, source).is_none(), "{donor}");
+        }
+    }
+}
+
+#[test]
+fn volrath_returning_from_the_graveyard_onto_a_refused_top_halts_at_the_entry_both_seats() {
+    for donor in ["Wall of Blossoms", "Masticore"] {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ordered_game(player);
+            put(&mut state, player, donor, Zone::Graveyard);
+            let source = put(&mut state, player, VOLRATH, Zone::Graveyard);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            assert_eq!(
+                state.engine.halted,
+                Some((UnsupportedMechanic::FullTextDonorOutsideSetV1, source))
+            );
+            assert_refused(&mut state, source);
+        }
+    }
+}
+
+#[test]
+fn volrath_entering_with_a_generic_top_is_not_refused_both_seats() {
+    for donor in GENERIC_TEXT_DONORS_V1 {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ordered_game(player);
+            put(&mut state, player, donor, Zone::Graveyard);
+            let source = cast_volrath(&mut state, player);
+            settled(&mut state);
+            assert_eq!(state.engine.halted, None);
+            assert_eq!(active_definition(&state, source).unwrap().name, donor);
+            assert!(captured_entry(&state, source).is_none(), "{donor}");
+            assert!(state.stack.is_empty());
+        }
+    }
+}
+
+#[test]
+fn volrath_in_play_takes_generic_and_entry_only_tops_with_their_keywords_both_seats() {
+    use crate::card_def::Keywords;
+
+    let donors = GENERIC_TEXT_DONORS_V1
+        .into_iter()
+        .chain(entry_refused_names());
+    for donor in donors {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, source) = volrath_in_play(player);
+            arrive(&mut state, player, donor);
+            assert_eq!(state.engine.halted, None, "{donor}");
+            let text = active_definition(&state, source).unwrap();
+            assert_eq!(text.name, donor);
+            assert_eq!(
+                engine::effective_keywords(&state, source, Keywords(u32::MAX)),
+                text.keywords,
+                "{donor}"
+            );
+            only_retained_discard(&mut state, player, source);
+            let mut copy = restored(&state);
+            assert!(matches!(next(&mut copy), Decision::CastSpellOrPass { .. }));
+        }
+    }
+}
+
+#[test]
+fn volrath_single_arrival_of_an_unsupported_donor_halts_at_the_event_both_seats() {
+    for donor in REFUSED_SAMPLE {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, source) = volrath_in_play(player);
+            arrive(&mut state, player, donor);
+            assert_eq!(
+                state.engine.halted,
+                Some((UnsupportedMechanic::FullTextDonorOutsideSetV1, source)),
+                "{donor}"
+            );
+            assert_refused(&mut state, source);
+        }
+    }
+}
+
+#[test]
+fn volrath_departure_exposing_an_unsupported_card_halts_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ordered_game(player);
+        put(&mut state, player, "Masticore", Zone::Graveyard);
+        let birds = put(&mut state, player, "Birds of Paradise", Zone::Graveyard);
+        let source = cast_volrath(&mut state, player);
+        settled(&mut state);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(birds, Zone::Exile));
+        assert_eq!(
+            state.engine.halted,
+            Some((UnsupportedMechanic::FullTextDonorOutsideSetV1, source))
+        );
+        assert_refused(&mut state, source);
+    }
+}
+
+#[test]
+fn volrath_control_change_onto_an_unsupported_top_halts_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for (donor, refused) in [("Wall of Roots", false), ("Masticore", true)] {
+            let (mut state, source) = volrath_in_play(player);
+            let opponent = player.opponent();
+            put(&mut state, opponent, donor, Zone::Graveyard);
+            crate::standard_cards_v1::gain_control(&mut state, source, opponent);
+            assert_eq!(state.objects.get(source).controller, opponent);
+            if refused {
+                assert_eq!(
+                    state.engine.halted,
+                    Some((UnsupportedMechanic::FullTextDonorOutsideSetV1, source))
+                );
+                assert_refused(&mut state, source);
+            } else {
+                assert_eq!(state.engine.halted, None);
+                assert_eq!(active_definition(&state, source).unwrap().name, donor);
+                assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            }
+        }
+    }
+}
+
+#[test]
+fn volrath_phasing_in_onto_an_unsupported_top_halts_both_seats() {
+    use crate::eternal_e5a_v1::phasing;
+
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source) = volrath_in_play(player);
+        phasing::phase_out(&mut state, source);
+        assert!(phasing::phased_out(&state, source));
+        // Phased out, it is treated as though it does not exist.
+        arrive(&mut state, player, "Masticore");
+        assert_eq!(state.engine.halted, None);
+        phasing::phase_in(&mut state, player);
+        assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+        assert_eq!(
+            state.engine.halted,
+            Some((UnsupportedMechanic::FullTextDonorOutsideSetV1, source))
+        );
+        assert_refused(&mut state, source);
+    }
+}
+
+/// Two library cards arrive in the graveyard at once under the ordered
+/// profile, so the owner orders them. The order menu is offered, also after a
+/// restore without a runner, and the halt fires only once the order makes the
+/// unsupported donor the top.
+#[test]
+fn volrath_ordered_batch_offers_the_order_and_halts_only_on_its_final_top_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for donor_on_top in [true, false] {
+            let (mut state, source) = volrath_in_play(player);
+            let donor = put(&mut state, player, "Masticore", Zone::Library);
+            let land = put(&mut state, player, "Island", Zone::Library);
+            event::propose_and_commit_batch(
+                &mut state,
+                vec![
+                    ProposedEvent::zone_change(donor, Zone::Graveyard),
+                    ProposedEvent::zone_change(land, Zone::Graveyard),
+                ],
+            );
+            let prompt = next(&mut state);
+            assert!(
+                matches!(&prompt, Decision::ChooseEffectTargets { player: chooser, legal_targets, .. }
+                if *chooser == player && legal_targets.contains(&Target::Object(donor)))
+            );
+            assert_eq!(state.engine.halted, None);
+            let mut copy = restored(&state);
+            assert_eq!(next(&mut copy), prompt);
+            // The first pick goes to the bottom.
+            let bottom = if donor_on_top { land } else { donor };
+            for branch in [&mut state, &mut copy] {
+                act(branch, Action::ChooseEffectTarget(Target::Object(bottom)));
+                if donor_on_top {
+                    assert_refused(branch, source);
+                } else {
+                    assert_eq!(branch.engine.halted, None);
+                    assert!(active_text(branch, source).is_none());
+                    assert!(matches!(next(branch), Decision::CastSpellOrPass { .. }));
+                }
+            }
+            assert_eq!(state.state_hash(), copy.state_hash());
+        }
+    }
+}
+
+/// A Shapeshifter entering in the same batch as two graveyard arrivals takes
+/// the batch's final top as its text at entry.
+#[test]
+fn volrath_entering_in_an_ordered_batch_halts_only_when_its_final_top_is_entry_only_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for donor_on_top in [true, false] {
+            let mut state = ordered_game(player);
+            let source = put(&mut state, player, VOLRATH, Zone::Hand);
+            let donor = put(&mut state, player, "Wall of Blossoms", Zone::Library);
+            let land = put(&mut state, player, "Island", Zone::Library);
+            event::propose_and_commit_batch(
+                &mut state,
+                vec![
+                    ProposedEvent::zone_change(source, Zone::Battlefield),
+                    ProposedEvent::zone_change(donor, Zone::Graveyard),
+                    ProposedEvent::zone_change(land, Zone::Graveyard),
+                ],
+            );
+            let prompt = next(&mut state);
+            assert!(matches!(&prompt, Decision::ChooseEffectTargets { .. }));
+            assert_eq!(state.engine.halted, None);
+            let mut copy = restored(&state);
+            assert_eq!(next(&mut copy), prompt);
+            let bottom = if donor_on_top { land } else { donor };
+            for branch in [&mut state, &mut copy] {
+                act(branch, Action::ChooseEffectTarget(Target::Object(bottom)));
+                assert_eq!(branch.objects.get(source).zone, Zone::Battlefield);
+                if donor_on_top {
+                    assert_refused(branch, source);
+                } else {
+                    settled(branch);
+                    assert!(active_text(branch, source).is_none());
+                }
+            }
+            assert_eq!(state.state_hash(), copy.state_hash());
+        }
+    }
+}
+
+#[test]
+fn volrath_with_ihsans_shade_or_iridescent_angel_text_has_their_protection_both_seats() {
+    let white = crate::card_def::mana_color_mask(ManaColor::W);
+    // White, blue, black, red and green in the schema-v4 bit order.
+    let each: u8 = 0b1_1111;
+    for (donor, protection) in [("Ihsan's Shade", white), ("Iridescent Angel", each)] {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ordered_game(player);
+            put(&mut state, player, donor, Zone::Graveyard);
+            let source = cast_volrath(&mut state, player);
+            settled(&mut state);
+            assert_eq!(state.engine.halted, None);
+            assert_eq!(
+                crate::eternal_legacy_e9a_v1::statics::protection_mask(&state, source),
+                protection,
+                "{donor}"
+            );
+            // The physical card would have no protection without the text.
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+            assert_eq!(
+                crate::eternal_legacy_e9a_v1::statics::protection_mask(&state, source),
+                0
+            );
+        }
+    }
+}
+
+#[test]
+fn volrath_with_akroma_text_and_the_physical_akroma_meet_the_legend_rule_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ordered_game(player);
+        put(
+            &mut state,
+            player,
+            "Akroma, Angel of Wrath",
+            Zone::Graveyard,
+        );
+        let source = cast_volrath(&mut state, player);
+        settled(&mut state);
+        assert_eq!(
+            engine::effective_name(&state, source),
+            "Akroma, Angel of Wrath"
+        );
+        let akroma = put(&mut state, player, "Akroma, Angel of Wrath", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(akroma, Zone::Battlefield),
+        );
+        assert_eq!(state.engine.halted, None);
+        assert!(
+            matches!(next(&mut state), Decision::ChooseLegendPermanent { player: chooser, candidates }
+            if chooser == player && candidates.contains(&source) && candidates.contains(&akroma))
+        );
+        act(&mut state, Action::ChooseLegendPermanent(akroma));
+        settled(&mut state);
+        assert_eq!(state.objects.get(akroma).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
     }
 }
