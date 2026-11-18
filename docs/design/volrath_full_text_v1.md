@@ -88,16 +88,22 @@ all keywords, and cards whose only other text works as they enter.
 `donor_supported` accepts the four; `entry_refused` marks the last class and
 Meddling Mage. A face-up Shapeshifter whose top is any other creature card
 halts the game with `UnsupportedMechanic::FullTextDonorOutsideSetV1` and the
-Shapeshifter as source, and so does a Shapeshifter entering with an
-entry-refused top. The check runs where the top or the reader can change: at
+Shapeshifter as source. A Shapeshifter entering with Meddling Mage on top is
+refused too, since its naming is a replacement as the permanent enters; one
+entering with a part D top is refused only when the lost enters trigger would
+trigger, judged like a donated entry trigger with every simultaneous entrant
+and departure applied, so an entry under Torpor Orb plays as before. The
+check runs where the top or the reader can change (`DonorCheckSiteV1`): at
 the tails of `propose_and_commit` and `propose_and_commit_batch`, at a
 Shapeshifter's entry in `record_entry_trigger` (inside an ordered batch this
-is already the batch's final top), at a control change and at a phase-in. A
-backstop in `advance_until_decision` and in its automatic loop guarantees that
-no decision is offered and no terminal is reported while an unsupported donor
-is in place. While an owner order is quoted, open or pending the check waits,
-because the arrivals are then in the graveyard in their unordered native
-order; it runs once the order completes. Of the listed additions, Auramancer,
+is already the batch's final top), at a control change and at a phase-in. Two
+backstops in `advance_until_decision` guarantee that no automatic work runs
+while an unsupported donor is in place, and that no decision or terminal
+leaves the engine while one is (automatic work such as a state-based death
+can change a top without passing an event site). While an owner order is
+quoted, open or pending the check waits, because the arrivals are then in the
+graveyard in their unordered native order; it runs once the order completes.
+Each site has a fixture that fails when only that site's check is turned off. Of the listed additions, Auramancer,
 Monk Realist and Uktabi Orangutan are accepted only as part D cards and Ghitu
 Slinger and Xantid Swarm are refused, until their donated programs land.
 
