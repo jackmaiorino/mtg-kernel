@@ -388,7 +388,10 @@ fn truncated_games_add_nothing_to_the_actor_critic_update() {
     let only_truncated = records_with(&[truncated.clone(), truncated.clone()]);
     let mut learner = initial_learner_v1(LearnerKindV1::ActorCriticH32, 4).unwrap();
     let before = learner.snapshot();
-    assert_eq!(update_learner_v1(&mut learner, &only_truncated).unwrap(), None);
+    assert_eq!(
+        update_learner_v1(&mut learner, &only_truncated).unwrap(),
+        None
+    );
     assert_eq!(learner.snapshot(), before);
     let mixed = records_with(&[natural.clone(), truncated.clone()]);
     let natural_decisions = mixed[0].retained.len() as u64;
@@ -727,7 +730,10 @@ fn fixture_games(config: &CampaignConfigV1, update: u64, dev: bool, half_points:
             let other = if dev {
                 "step_0000".to_string()
             } else {
-                opponent.map_or_else(|| candidate.clone(), |step| format!("league:step_{step:04}"))
+                opponent.map_or_else(
+                    || candidate.clone(),
+                    |step| format!("league:step_{step:04}"),
+                )
             };
             let policies = if opponent.is_some() && leg == 1 {
                 [other, candidate]
@@ -749,7 +755,9 @@ fn fixture_games(config: &CampaignConfigV1, update: u64, dev: bool, half_points:
                 leg,
                 env_seed: deal.env_seed,
                 starting_player: starting.index() as u8,
-                decks: deal.decks.map(|index| config.train_decks[index].deck.clone()),
+                decks: deal
+                    .decks
+                    .map(|index| config.train_decks[index].deck.clone()),
                 policies,
                 learner_seats,
                 terminal: "natural".into(),
@@ -960,7 +968,10 @@ fn all_truncated_batches_stop_without_updating_any_learner() {
         let mut runner = start_runner(&fixture_launch(&root), ModeV1::Campaign, kind, 1).unwrap();
         runner.config.limits.max_decisions = 0;
         let before = runner.learner.snapshot();
-        assert_eq!(runner.run_to_horizon().unwrap(), RunOutcomeV1::ExcessTruncation);
+        assert_eq!(
+            runner.run_to_horizon().unwrap(),
+            RunOutcomeV1::ExcessTruncation
+        );
         assert_eq!(runner.learner.snapshot(), before);
         assert_eq!(runner.head, 0);
         assert!(!checkpoint_path_v1(&root, 1).exists());
@@ -1032,7 +1043,11 @@ fn rebind_receipt(root: &Path, step: u64, bytes: &[u8]) -> String {
     let digest = sha256_hex(&bytes);
     let complete =
         IterationCompleteV1::new(step, &digest, &checkpoint.iteration_receipt_sha256, None);
-    fs::write(directory.join("complete.json"), complete.to_bytes().unwrap()).unwrap();
+    fs::write(
+        directory.join("complete.json"),
+        complete.to_bytes().unwrap(),
+    )
+    .unwrap();
     digest
 }
 
@@ -1080,7 +1095,13 @@ fn verification_requires_milestone_dev_records_and_checks_their_scores() {
     let dev = fs::read(directory.join("dev.json")).unwrap();
     let complete_bytes = fs::read(directory.join("complete.json")).unwrap();
     let complete = IterationCompleteV1::parse_v1(&complete_bytes).unwrap();
-    for field in ["schema", "campaign_sha256", "candidate_checkpoint_sha256", "score", "update"] {
+    for field in [
+        "schema",
+        "campaign_sha256",
+        "candidate_checkpoint_sha256",
+        "score",
+        "update",
+    ] {
         let mut value = canonical_value(&dev).unwrap();
         value[field] = if field == "score" {
             json!(0.5)

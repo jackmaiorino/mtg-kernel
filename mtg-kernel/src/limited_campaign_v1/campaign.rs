@@ -685,7 +685,10 @@ fn verify_games(
     let pairs = if dev {
         (0..config.dev_pairs).map(|pair| (pair, Some(0))).collect()
     } else {
-        batch_pairs_v1(config, update.checked_sub(1).ok_or("update zero has no games")?)?
+        batch_pairs_v1(
+            config,
+            update.checked_sub(1).ok_or("update zero has no games")?,
+        )?
     };
     if games.len() != 2 * pairs.len() {
         return Err("game count differs from the scheduled workload".into());
@@ -716,7 +719,10 @@ fn verify_games(
             let other = if dev {
                 "step_0000".to_string()
             } else {
-                opponent.map_or_else(|| candidate.clone(), |step| format!("league:step_{step:04}"))
+                opponent.map_or_else(
+                    || candidate.clone(),
+                    |step| format!("league:step_{step:04}"),
+                )
             };
             let policies = if opponent.is_some() && leg == 1 {
                 [other, candidate]
@@ -727,14 +733,20 @@ fn verify_games(
                 || game.leg != leg
                 || game.env_seed != deal.env_seed
                 || game.starting_player != starting.index() as u8
-                || game.decks != deal.decks.map(|index| config.train_decks[index].deck.clone())
+                || game.decks
+                    != deal
+                        .decks
+                        .map(|index| config.train_decks[index].deck.clone())
                 || game.policies != policies
                 || game.learner_seats != learner
                 || game.failure.is_some()
                 || !is_sha256_hex(&game.action_trace_sha256)
                 || game.decisions > config.limits.max_decisions
                 || game.forced_decisions > game.decisions
-                || game.retained_decisions.iter().any(|count| *count > game.decisions)
+                || game
+                    .retained_decisions
+                    .iter()
+                    .any(|count| *count > game.decisions)
                 || game.retained_decisions[0] + game.retained_decisions[1]
                     > game.decisions - game.forced_decisions
                 || (0..2).any(|seat| !learner[seat] && game.retained_decisions[seat] != 0)
@@ -753,8 +765,7 @@ fn verify_games(
                         [0, 0] => "draw",
                         _ => return Err("invalid natural returns".into()),
                     };
-                    if game.outcome.as_deref() != Some(outcome)
-                        || game.truncation_reason.is_some()
+                    if game.outcome.as_deref() != Some(outcome) || game.truncation_reason.is_some()
                     {
                         return Err("invalid natural terminal fields".into());
                     }
@@ -765,7 +776,10 @@ fn verify_games(
                 }
                 ("truncated", None) => {
                     if game.outcome.is_some()
-                        || !game.truncation_reason.as_ref().is_some_and(|reason| !reason.is_empty())
+                        || !game
+                            .truncation_reason
+                            .as_ref()
+                            .is_some_and(|reason| !reason.is_empty())
                     {
                         return Err("invalid truncated terminal fields".into());
                     }
@@ -804,7 +818,9 @@ fn verify_update_report(
                     "truncated_trajectories",
                 ],
             )?;
-            let learning_rate = optimizer.learning_rate(update).map_err(|error| error.to_string())?;
+            let learning_rate = optimizer
+                .learning_rate(update)
+                .map_err(|error| error.to_string())?;
             if report["step"] != update
                 || report["learning_rate"].as_f64() != Some(learning_rate)
                 || report["decisions"] != totals.eligible
@@ -826,7 +842,9 @@ fn verify_update_report(
         }
         OptimizerConfigV1::PairCenteredControl(_) => {
             fields(report, &["loss", "doubled_examples", "reward_counts"])?;
-            let counts = report["reward_counts"].as_object().ok_or("missing reward counts")?;
+            let counts = report["reward_counts"]
+                .as_object()
+                .ok_or("missing reward counts")?;
             let mut total = 0u64;
             for (reward, count) in counts {
                 if !matches!(reward.as_str(), "-1" | "0" | "1") {
@@ -970,7 +988,10 @@ impl RunnerV1 {
         let iterations = self.root.join("iterations");
         let staging = iterations.join(format!(".iter_{update:04}.staging"));
         if staging.exists() {
-            return Err(format!("uncommitted staging remains: {}", staging.display()));
+            return Err(format!(
+                "uncommitted staging remains: {}",
+                staging.display()
+            ));
         }
         fs::create_dir(&staging).map_err(io_error(&staging))?;
         let receipt_bytes = to_bytes(receipt)?;
@@ -1625,7 +1646,10 @@ fn validate_run_tree(root: &Path) -> Result<()> {
             }
         }
     } else if !metadata.is_file() {
-        return Err(format!("run path is not a regular file: {}", root.display()));
+        return Err(format!(
+            "run path is not a regular file: {}",
+            root.display()
+        ));
     }
     Ok(())
 }
@@ -1987,7 +2011,9 @@ fn qualification_run_v1(root: &Path) -> Result<Value> {
     {
         return Err("qualification run differs from its workload or outputs".into());
     }
-    let receipt = canonical_value(&read_bytes(&iteration_dir_v1(root, 1).join("receipt.json"))?)?;
+    let receipt = canonical_value(&read_bytes(
+        &iteration_dir_v1(root, 1).join("receipt.json"),
+    )?)?;
     let training = verify_games(&config, &receipt["games"], 1, false)?;
     require_qualification_training(training.natural)?;
     let timing = canonical_value(&read_bytes(&root.join("timing.json"))?)?;
@@ -2032,7 +2058,9 @@ fn qualification_run_v1(root: &Path) -> Result<Value> {
         || timing["schema"] != "limited-campaign-qualification-timing/v1"
         || timing["workers"] != run["workers"]
         || timing["stage_diagnostics"] != run["stage_diagnostics"]
-        || training_ns.checked_add(evaluation_ns).is_none_or(|total| total > wall_ns)
+        || training_ns
+            .checked_add(evaluation_ns)
+            .is_none_or(|total| total > wall_ns)
         || timing["training_natural_games"] != training.natural
         || training_decisions != games.iter().map(|game| game.decisions).sum::<u64>()
         || timing["all_natural_games"] != training.natural + dev_totals.natural
@@ -2098,9 +2126,10 @@ pub fn lock_manifest_v1(
     for count in [1, 2, 4, 8, workers] {
         if count <= available_vcpus {
             for enabled in [false, true] {
-                if !runs.iter().any(|run| {
-                    run["workers"] == count && run["stage_diagnostics"] == enabled
-                }) {
+                if !runs
+                    .iter()
+                    .any(|run| run["workers"] == count && run["stage_diagnostics"] == enabled)
+                {
                     return Err(format!(
                         "missing qualification at {count} workers with diagnostics {enabled}"
                     ));
