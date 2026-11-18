@@ -245,6 +245,14 @@ fn wide_learner_end_to_end_v1() {
     let record: WLearnerCheckpointV1 = read_pinned(&checkpoint).unwrap();
     assert_eq!(record.trajectories, trajectories);
     assert_eq!(record.architecture, W_MODEL_ARCHITECTURE_VERSION_V1);
+    // The update itself held its state under the container it wrote; a load
+    // decoding the file never marks this. (Whether a later load is served
+    // from that entry is not asserted: the two-entry cache is shared with
+    // every test in this process.)
+    assert!(W_HELD_BY_UPDATE_FOR_TEST_V1
+        .lock()
+        .unwrap()
+        .contains(&record.state.sha256));
     // The decode cache: the container the update held (its in-memory state)
     // gives exactly a fresh decode of the file, and a changed file is refused
     // by its pin before any lookup.

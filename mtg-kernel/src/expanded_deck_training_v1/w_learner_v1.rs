@@ -159,6 +159,13 @@ pub(crate) fn w_state_sha256_v1(
 /// loads the same state for its recovery check, its collection and its
 /// update; this decodes it once. Holds the last two containers (a lineage's
 /// initial state and its latest).
+///
+/// "Reads the file" is as strong as the process's verified-reads mode makes
+/// any pinned read: with resident reads on (`verified_bytes_cache_v1`, an
+/// opt-in run setting), `read_pinned_bytes` may serve bytes this process
+/// already verified against that pin, after checking the file's metadata,
+/// instead of reading the file again. That holds for every pinned read here,
+/// the update's readback of the files it has just written included.
 type WDecodedEntryV1 = Arc<(NativePolicyValueTrainStateWideV1, String)>;
 static W_DECODED_V1: std::sync::Mutex<Vec<(String, WDecodedEntryV1)>> =
     std::sync::Mutex::new(Vec::new());
@@ -169,6 +176,13 @@ const W_DECODED_CAPACITY_V1: usize = 2;
 /// own encoding). A continuation checks its lineage's initial container
 /// against this set instead of decoding it on every load.
 static W_VALID_V1: std::sync::Mutex<BTreeSet<String>> = std::sync::Mutex::new(BTreeSet::new());
+
+/// The pinned sha256s of containers an update held as its own state
+/// (`hold_written_w_state_v1`), so a test can tell that from a later load's
+/// decode filling the cache.
+#[cfg(test)]
+static W_HELD_BY_UPDATE_FOR_TEST_V1: std::sync::Mutex<BTreeSet<String>> =
+    std::sync::Mutex::new(BTreeSet::new());
 
 fn mark_valid_w_container_v1(sha256: &str) -> Result<(), String> {
     W_VALID_V1
@@ -250,6 +264,11 @@ fn hold_written_w_state_v1(
         cache.remove(0);
     }
     cache.push((pin.sha256.clone(), entry));
+    #[cfg(test)]
+    W_HELD_BY_UPDATE_FOR_TEST_V1
+        .lock()
+        .map_err(|_| "wide held-by-update set poisoned")?
+        .insert(pin.sha256.clone());
     Ok(())
 }
 
