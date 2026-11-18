@@ -16,4 +16,6 @@ The first hosted attempt passed capacity admission but its compiler was killed u
 
 The workflow preserves capacity evidence, `guard.json`, logs, binaries and build manifests for seven days. Download and hash-verify those artifacts into the required durable storage before using a binary in native qualification. Retain failed-attempt receipts and logs. Compiler caches are disposable and are excluded from the artifact upload.
 
+A dispatch may name a target-flag variant (`target_cpu`: `x86-64-v3-no-fma`, `x86-64-v3`, `znver5`, `znver3`; default `default`, the portable x86-64 build, unchanged). `build.sh` then builds the mtg-kernel target artifacts with the named `-C target-cpu` (and `-C target-feature=-fma` for the no-FMA variant) through an explicit `--target`, so build scripts and proc macros stay portable, and writes the flags to `BUILD-MANIFEST.json` (`build.target_rustflags`). A variant binary runs only on CPUs with those features and is qualified like any other pin: first-updates equality against chain records on the execution host, then throughput.
+
 Local checks: `bash -n tools/pinned-release-build/build.sh` and `python3 -B -m unittest discover -s tools/pinned-release-build -p 'test_*.py'`. A passing build still needs workload-specific correctness and throughput checks on the intended execution host.

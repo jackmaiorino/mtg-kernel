@@ -31,6 +31,13 @@ LONDON_VECTOR_SOURCE_B = "6faa42219a4e67d266019458a2380df5aa5e25f8"
 LONDON_VECTOR_SOURCE_MERGED = "ce3df74f85649bdbb9a9c4971bafefb7346243ed"
 # The merge commit of PR 729 (pregame announcement step scale) on release/mull-c5719e1cf: this is what gets pinned for arm Q.
 ANNOUNCE_STEP_SOURCE_MERGED = "b6516e6f578109194c496768222ca97cdf5f0191"
+# Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
+# name to rustc target flags for the mtg-kernel target artifacts and records them in BUILD-MANIFEST.json. A variant
+# binary runs only on CPUs with the named features; `default` is the portable x86-64 build and is unchanged.
+TARGET_CPUS = ("default", "x86-64-v3-no-fma", "x86-64-v3", "znver5", "znver3")
+TARGET_CPU = os.environ.get("PINNED_TARGET_CPU", "default")
+if TARGET_CPU not in TARGET_CPUS:
+    raise SystemExit("unknown PINNED_TARGET_CPU")
 SOURCES = (
     SOURCE,
     PRE_FIX_SOURCE,
@@ -285,6 +292,7 @@ def run(root, source, wall):
         resources.check()
         builder = start([*docker, "run", "--name", CONTAINER, "--network=host", "--platform=linux/amd64",
                          "--cpus=4", "--memory=12g", "--memory-swap=28g", "--sig-proxy=false",
+                         "--env", "PINNED_TARGET_CPU=" + TARGET_CPU,
                          "--mount", f"type=bind,src={work},dst=/work",
                          "--mount", f"type=bind,src={helper},dst=/build.sh,readonly",
                          "--entrypoint", "/bin/bash", IMAGE, "/build.sh", source, "/work/out"],
@@ -337,6 +345,7 @@ def run(root, source, wall):
                 cleanup_errors.append(f"owned swap verification: {exc}")
         receipt = {"schema": "pinned-release-hosted-build/v1", "pass": error is None and not cleanup_errors,
                    "source_commit": source, "image": IMAGE, "work_root": str(root), "output": str(root / "work/out"),
+                   "target_cpu": TARGET_CPU,
                    "guard_sha256": guard_sha, "build_helper_sha256": helper_sha,
                    "limits": {"minimum_start_free_bytes": FREE_FLOOR + TOTAL_GROWTH, "free_floor_bytes": FREE_FLOOR,
                               "growth_bytes": TOTAL_GROWTH, "build_growth_bytes": GROWTH, "owned_swap_bytes": SWAP,

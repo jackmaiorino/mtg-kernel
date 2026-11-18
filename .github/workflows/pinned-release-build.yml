@@ -12,6 +12,17 @@ on:
         required: true
         default: a30c3769f1ef3a7b569ab52814688141969d877f
         type: string
+      target_cpu:
+        description: Target-flag variant (default is the portable x86-64 build)
+        required: false
+        default: default
+        type: choice
+        options:
+          - default
+          - x86-64-v3-no-fma
+          - x86-64-v3
+          - znver5
+          - znver3
 
 permissions:
   contents: read
@@ -80,7 +91,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo python3 -B tools/pinned-release-build/hosted.py \
+          sudo PINNED_TARGET_CPU="${{ inputs.target_cpu || 'default' }}" python3 -B tools/pinned-release-build/hosted.py \
             --work-root "$BUILD_ROOT" --source-commit "$BUILD_SOURCE"
       - name: Preserve capacity evidence
         if: always()

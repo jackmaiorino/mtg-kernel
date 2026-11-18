@@ -101,6 +101,10 @@ class HostedGuardTests(unittest.TestCase):
         self.assertIn("--memory-swap=28g", commands[1][0])
         self.assertNotIn("--rm", commands[1][0])
         self.assertEqual(commands[1][0][-4:], [hosted.IMAGE, "/build.sh", hosted.SOURCE, "/work/out"])
+        # The target-flag variant reaches build.sh through the container's environment; the default is `default`.
+        self.assertIn("PINNED_TARGET_CPU=" + hosted.TARGET_CPU, commands[1][0])
+        self.assertEqual(receipt["target_cpu"], hosted.TARGET_CPU)
+        self.assertIn(hosted.TARGET_CPU, hosted.TARGET_CPUS)
         self.assertFalse(receipt["pass"])
         self.assertTrue((self.root / "daemon.log").is_file())
         self.assertTrue((self.root / "container.log").is_file())

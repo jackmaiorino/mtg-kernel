@@ -9,6 +9,24 @@ if [[ $# != 2 || ! $1 =~ ^[0-9a-f]{40}$ || $2 != /work/out ]]; then
     printf 'Usage: build.sh SOURCE_COMMIT /work/out\n' >&2
     exit 2
 fi
+# PINNED_TARGET_CPU selects target flags for the mtg-kernel target artifacts (default: none, the portable x86-64
+# build, unchanged). An explicit --target keeps the flags off build scripts and proc macros, which run on the build
+# host. A variant binary runs only on CPUs with the named features, and the flags are recorded in the manifest.
+case "${PINNED_TARGET_CPU:-default}" in
+    default) rustflags= ;;
+    x86-64-v3-no-fma) rustflags='-C target-cpu=x86-64-v3 -C target-feature=-fma' ;;
+    x86-64-v3) rustflags='-C target-cpu=x86-64-v3' ;;
+    znver5) rustflags='-C target-cpu=znver5' ;;
+    znver3) rustflags='-C target-cpu=znver3' ;;
+    *) printf 'Unknown PINNED_TARGET_CPU\n' >&2; exit 2 ;;
+esac
+variant_args=()
+variant_env=()
+if [[ -n $rustflags ]]; then
+    variant_args=(--target x86_64-unknown-linux-gnu)
+    variant_env=(CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="$rustflags")
+fi
+export PINNED_RUSTFLAGS="$rustflags"
 [[ $EUID == 0 && $(uname -m) == x86_64 ]]
 grep -qx 'VERSION_CODENAME=bookworm' /etc/os-release
 [[ $(realpath -e -- /work) == /work && -d /work && -w /work ]]
@@ -136,15 +154,18 @@ for bin in "${bins[@]}"; do
             GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
             SOURCE_DATE_EPOCH="$source_epoch" CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$target" \
             CARGO_INCREMENTAL=0 CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc \
-            cargo build --release --locked --jobs 2 -p mtg-kernel --bin "$bin"
+            "${variant_env[@]}" \
+            cargo build --release --locked --jobs 2 -p mtg-kernel --bin "$bin" "${variant_args[@]}"
     )
 done
 
 check_stop
 check_checkout
+release_dir=$target/release
+[[ -z $rustflags ]] || release_dir=$target/x86_64-unknown-linux-gnu/release
 for bin in "${bins[@]}"; do
-    install -m 0755 -- "$target/release/$bin" "$out/$bin"
-    cmp -- "$target/release/$bin" "$out/$bin"
+    install -m 0755 -- "$release_dir/$bin" "$out/$bin"
+    cmp -- "$release_dir/$bin" "$out/$bin"
 done
 
 "$python" -B - "$repo" "$out" "$commit" "$origin" "$source_epoch" "${bins[@]}" <<'PY'
@@ -187,8 +208,11 @@ manifest = {
     "source_checkout_clean": True,
     "source_date_epoch": int(epoch),
     "cargo_lock": pin(repo / "Cargo.lock"),
-    "build": {"profile": "release", "lto": "thin", "codegen_units": 1, "jobs": 2,
-              "locked": True, "incremental": False, "binaries": binaries},
+    "build": dict({"profile": "release", "lto": "thin", "codegen_units": 1, "jobs": 2,
+                   "locked": True, "incremental": False, "binaries": binaries},
+                  **({"target_rustflags": __import__("os").environ["PINNED_RUSTFLAGS"],
+                      "explicit_target": "x86_64-unknown-linux-gnu"}
+                     if __import__("os").environ.get("PINNED_RUSTFLAGS") else {})),
     "tools": {
         "rustc": cmd("rustc", "-vV"), "cargo": cmd("cargo", "--version"),
         "gcc": cmd("gcc", "--version").splitlines()[0],
