@@ -801,18 +801,55 @@ pub(crate) fn splitmix64(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// Worker threads for the tests that play many independent games: the
-/// machine's available parallelism, at most 8, or `MTG_ETERNAL_TEST_THREADS`
-/// when it is set (1 plays every game on the test's own thread, in order).
+/// Worker threads for the tests that play many independent games:
+/// `MTG_ETERNAL_TEST_THREADS` when it is set (1 plays every game on the
+/// test's own thread, in order); otherwise the machine's available
+/// parallelism, at most 8, and no more than the cores a self-hosted CI job
+/// was given (a count in `MTG_CI_JOB_CORES`, or the core list of a
+/// host_slots claim in `HOST_SLOTS_CORES`) when either is set.
 pub(crate) fn game_threads() -> usize {
-    match std::env::var("MTG_ETERNAL_TEST_THREADS") {
-        Ok(value) => value
+    if let Ok(value) = std::env::var("MTG_ETERNAL_TEST_THREADS") {
+        return value
             .parse::<usize>()
             .ok()
             .filter(|&threads| threads >= 1)
-            .unwrap_or_else(|| panic!("MTG_ETERNAL_TEST_THREADS: {value:?}")),
-        Err(_) => available_parallelism().map_or(1, usize::from).min(8),
+            .unwrap_or_else(|| panic!("MTG_ETERNAL_TEST_THREADS: {value:?}"));
     }
+    let mut threads = available_parallelism().map_or(1, usize::from).min(8);
+    if let Ok(value) = std::env::var("MTG_CI_JOB_CORES") {
+        if let Ok(cores) = value.trim().parse::<usize>() {
+            threads = threads.min(cores.max(1));
+        }
+    }
+    if let Ok(value) = std::env::var("HOST_SLOTS_CORES") {
+        if let Some(cores) = listed_cores(&value) {
+            threads = threads.min(cores);
+        }
+    }
+    threads
+}
+
+/// The number of cores in a list such as `0-3,8`, or `None` if the text is
+/// not such a list.
+fn listed_cores(list: &str) -> Option<usize> {
+    let mut count = 0;
+    for part in list.split(',') {
+        let part = part.trim();
+        let (first, last) = part.split_once('-').unwrap_or((part, part));
+        let first: usize = first.parse().ok()?;
+        let last: usize = last.parse().ok()?;
+        count += first.abs_diff(last) + 1;
+    }
+    Some(count)
+}
+
+#[test]
+fn core_lists_count_their_cores() {
+    assert_eq!(listed_cores("0-3,8"), Some(5));
+    assert_eq!(listed_cores("11-10"), Some(2));
+    assert_eq!(listed_cores("5"), Some(1));
+    assert_eq!(listed_cores(""), None);
+    assert_eq!(listed_cores("0-x"), None);
 }
 
 /// Runs `run` on every item and returns the results in item order, so a
@@ -823,12 +860,16 @@ pub(crate) fn game_threads() -> usize {
 /// first. With one thread the items run in order on the calling thread.
 ///
 /// This is safe for the games these tests play: each game owns all of its
-/// state (its session, engine and seeded random choices); the engine keeps
-/// no process-wide mutable state (no `static mut` and no global random
-/// source; its `OnceLock` statics cache fixed values, and its thread-locals
-/// are scoped to one call or cache values derived from their inputs); no
-/// game path sets an environment variable; and libtest already runs this
-/// suite's other tests on parallel threads in the same process.
+/// state (its session, engine and seeded random choices); the library has
+/// no `static mut` and no global random source, its `OnceLock` statics
+/// cache fixed values, and its thread-locals are call frames restored on
+/// exit, memos of values it would compute anyway, or test and profiling
+/// counters, so a game's result does not depend on the thread that plays
+/// it; no game path sets an environment variable; and libtest already runs
+/// this suite's other tests on parallel threads in the same process. To
+/// check it, run the best-of-three and catalog modules with
+/// `--nocapture` once with `MTG_ETERNAL_TEST_THREADS=1` and once without:
+/// their per-game lines, transcript hashes included, are the same.
 pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], run: impl Fn(&T) -> R + Sync) -> Vec<R> {
     let threads = game_threads().min(items.len());
     if threads <= 1 {
