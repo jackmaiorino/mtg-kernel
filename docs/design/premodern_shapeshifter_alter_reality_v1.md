@@ -41,7 +41,8 @@ identity, registration, routing and refusals, and the one schema 5 message that 
 the schema 5 field (section 4); the tests that gate Full (section 5); the census effect
 (section 6); the pull request plan (section 7); and what remains after both cards are Full
 (section 8). Section 9 records the lead's rulings on the eight questions this design raised
-and where each is implemented. Section 10 records how the research note this work started
+and where each is implemented. Appendix A classifies every creature card of the Premodern pool
+as a donor. Section 10 records how the research note this work started
 from was checked against main.
 
 Out of scope: a schema successor or any change to schema 5 beyond Alter Reality's field, its
@@ -85,21 +86,38 @@ and keywords and drops everything else, which is why the card is Partial:
 ### 2.2 The supported donor set
 
 A donor is a creature card that can be the top card of the graveyard of the player who
-controls a face-up Shapeshifter. The set follows amended ruling 1: every card with a donated
-program today, plus the listed additions; any other donor is refused with the typed error
-(section 2.3). `full_text_v1` gains a constant `SUPPORTED_DONORS_V1` with the names below and
-a predicate `donor_supported(definition)`.
+controls a face-up Shapeshifter. Amended ruling 1 has two sentences, and the set applies both:
+"every card with a donated program today, plus the listed additions; any other donor is refused
+with the typed error", and "Nothing that plays correctly today is refused". So the supported
+set is what plays correctly today plus the listed additions, and only what would play wrongly
+is refused.
 
-"A donated program today" is read as code on main that makes the card's whole battlefield text
-work on a Shapeshifter through the full-text queries of section 2.1, so that the card plays
-correctly as a donor today. Two cards have only part of their text donated: Phantom Nishoba and
-Spike Feeder get their entry counters from `apply_entry_counters`, but Nishoba's damage and
-life triggers and Spike Feeder's two activated abilities are not donated, so as donors today
-they silently lose those abilities. They do not play correctly today and are refused (refused
-beats wrong). A creature with no donated program and no listed addition is refused even when its
-battlefield text is only keywords (for example Exalted Angel); the rule names cards with a
-donated program, and Elvish Spirit Guide and Squee, Goblin Nabob are supported only because the
-original ruling lists the FEB mirror donors.
+What a Shapeshifter has today with any creature card on top: the card's name, card types,
+subtypes, supertypes, color, mana value, base power and toughness and every keyword in its
+`CardDef.keywords`, through `full_text_v1::active_definition` and the engine's characteristic
+queries (`engine.rs`: `effective_name`, `object_has_type`, `unpainted_object_color_mask`,
+`object_mana_value`, `effective_supertypes`, the base power and toughness queries,
+`effective_keywords_unchecked`, `has_effective_keyword`, `effective_subtype_ids`), and it keeps
+"{2}: Discard a card". Any other ability works only through a donated program (section 2.1).
+Name-keyed statics outside those programs read the physical card
+(`eternal_legacy_e9a_v1::active_named`), so they do not reach a Shapeshifter.
+
+The donors fall into four classes, recognized by four named, audited constants in
+`full_text_v1`, never by a guess from a definition: `DONATED_PROGRAM_DONORS_V1` (part A),
+`LISTED_DONORS_V1` (part B), `GENERIC_TEXT_DONORS_V1` (part C) and `ENTRY_ONLY_DONORS_V1`
+(part D). `donor_supported(definition)` is true for A, B, C and D; `entry_refused(definition)`
+is true for D and for Meddling Mage. Appendix A lists the class of every one of the 101
+creature cards in the Premodern pool; with registrations limited to that pool (section 3.3) no
+other creature card can be a donor in a registered game.
+
+Phantom Nishoba and Spike Feeder have only part of their text donated: they get their entry
+counters from `apply_entry_counters`, but Nishoba's damage life gain and damage-prevention
+replacement (keyed by `p2c::statics::is_nishoba`, which reads the physical name) and Spike
+Feeder's two activated abilities (absent from `public_program`) are not donated. As donors today
+they lose those abilities, so they do not play correctly and are refused. Exalted Angel is
+refused for the same reason: its "Whenever this creature deals damage, you gain that much life"
+is keyed by the physical name (`eternal_premodern_p1a_v1.rs`), so a Shapeshifter with its text
+has flying but no life gain.
 
 Cards with a donated program on main today (part A):
 
@@ -133,6 +151,52 @@ The listed additions (part B):
 | Ghitu Slinger | FEB sideboard | echo {2}{R}; entry: 2 damage to any target | new entry kind over `p3h::ghitu_slinger_enters`; a donated echo through `p2d::echo_cost` |
 | Xantid Swarm | FEB sideboard | flying; attack trigger: defending player can't cast spells this turn | new attack kind over `eternal_premodern_p3b_v1` `XANTID_SWARM_TRIGGERS` |
 | Meddling Mage | reached through Legacy's Allure (confirmed reading of "the two Premodern control effects") | its "as enters" name choice, which never happens for a Shapeshifter already on the battlefield | a test; refusal on entry (below) |
+
+Cards that need no donated program, because their whole battlefield text is generic (part C).
+The rule: every ability the card has on the battlefield is a keyword in its `CardDef.keywords`,
+and every other ability functions only from the hand, from the graveyard, while the card is
+face down, or as it is turned face up. A Shapeshifter with such a card on top has exactly the
+card's battlefield text through the generic queries, and nothing is lost; the 2004-10-04
+Volrath's Shapeshifter ruling also notes that the "enters" abilities of the card it copies do
+not trigger when it changes forms.
+
+| Donor | Battlefield-relevant Oracle text | Why nothing is lost |
+| --- | --- | --- |
+| Anger | Haste | haste is in `CardDef.keywords` (`build_eternal_e9a_v1.rs`); its other ability works only while the card is in the graveyard |
+| Arrogant Wurm | Trample | trample is a keyword (`build_eternal_p2b_v1.rs`); madness works from the hand |
+| Eternal Dragon | Flying | flying is a keyword (`build_eternal_p2a_v1.rs`); its return works from the graveyard and Plainscycling from the hand |
+| Glory | Flying | flying is a keyword (`build_eternal_p2b_v1.rs`); its protection ability can be activated only while the card is in the graveyard |
+| Krosan Tusker | none | cycling and its cycling trigger work from the hand |
+| Gempalm Incinerator | none | cycling and its cycling trigger work from the hand |
+| Genesis | none | its upkeep ability works only while the card is in the graveyard |
+| Nether Spirit | none | its upkeep return works only while the card is in the graveyard |
+| Thornscape Battlemage | two enters triggers, each "if it was kicked" | kicker is paid while casting the card itself; a Shapeshifter is never cast with this text (full text applies only on the battlefield), so it is never kicked and both intervening-if triggers do nothing, entering or not |
+| Bane of the Living | none face up | morph and "When this creature is turned face up" need the permanent to be turned face up; `top_creature_text` reads only a face-up host, a face-up Shapeshifter cannot be turned face up, and no card in the Premodern pool turns a permanent face down |
+| Nantuko Vigilante | none face up | the same as Bane of the Living |
+
+Cards accepted as a top card except at entry (part D). The rule: every battlefield ability is a
+keyword, except abilities that work only as the permanent enters (an enters trigger, an "as
+enters" or "enters with" effect), and the card has no donated program for them and no
+leaves-the-battlefield half. Such a card plays correctly when it becomes the top card while
+the Shapeshifter is already on the battlefield (the entry has passed), and wrongly only when a
+Shapeshifter enters with it on top (the enters ability would be lost). So it is accepted as a
+top card for a Shapeshifter already on the battlefield, and the typed refusal fires at the
+moment a Shapeshifter would enter with it on top (section 2.3, the entry check):
+
+| Donor | Battlefield-relevant Oracle text | Lost only at entry |
+| --- | --- | --- |
+| Wall of Blossoms | Defender; when this creature enters, draw a card | the draw |
+| Goblin Matron | When this creature enters, you may search for a Goblin card | the search |
+| Goblin Ringleader | Haste; when this creature enters, reveal the top four cards | the reveal |
+| Phyrexian Dreadnought | Trample; when this creature enters, sacrifice it unless you sacrifice creatures with total power 12 or greater | the sacrifice |
+| Caller of the Claw | Flash; when this creature enters, create Bears | the tokens (flash works from the hand) |
+
+Meddling Mage (part B) follows the same rule: accepted on a Shapeshifter already on the
+battlefield, refused at entry. Cards whose enters ability has another half on the battlefield
+are not in part D and are refused in both cases: Petradon (its leaves-the-battlefield return
+and its pump), the echo creatures (Avalanche Riders, Deranged Hermit, Multani's Acolyte,
+Yavimaya Granger: echo triggers at upkeep while the permanent is on the battlefield), Blastoderm
+(fading removes counters at upkeep) and Siege-Gang Commander (its activated ability).
 
 Dominate reaches Psychatog, already in part A. Every FEB mirror donor is in A or B: the 13
 creature cards of the FEB mainboard are Akroma, Battlefield Scrounger, Birds of Paradise,
@@ -190,8 +254,20 @@ full_text_v1::refused_donor(state) -> Option<ObjectId>
   None
 ```
 
-plus the entry case: `record_entry_trigger` refuses a host whose text at entry is Meddling
-Mage's.
+`donor_supported` is true for part D and Meddling Mage, so `refused_donor` accepts them on a
+Shapeshifter already on the battlefield. The entry case is separate, and the backstop below
+cannot see it, because it reads states, not events; it relies on `record_entry_trigger`, which
+`event.rs` reaches for every entry: at the moment a Shapeshifter enters,
+the check refuses it when its text at entry (`entry_refused`) is a part D card or Meddling
+Mage. The engine tells the two moments apart, because an entry is a distinct event
+(`full_text_v1::entry_source`: a zone change to the battlefield from elsewhere, or a token
+creation) while a change of top card, a control change or a phase-in is not an entry. The entry
+check sits where the entry's text is fixed: in `event.rs::record_entry_trigger` after
+`active_text` (which, inside a batch, already reads the batch's final top for an entering host
+through `batch_text_top`), and, for an entry whose donor arrives later in the same ordered
+batch (`quoting_entry_scene`), in `graveyard_order_v1` where the batch's final text is selected
+and `record_batch_entry_trigger` runs. No part D card has a leaves-the-battlefield half, so the
+split is sound for every card in the list.
 
 Every event that can make a card the top of a graveyard a Shapeshifter is looking at, or make
 a Shapeshifter look at a top card:
@@ -284,8 +360,9 @@ control effects in the pool. From the deck lists in
 Every name in the right column is in the supported set, and the Mage case is the "already on
 the battlefield" one. So the refusal is reachable only from a custom registration, never from
 a game between snapshot decks. Because registrations are limited to the Premodern pool, the
-refusable donors are the pool's other creature cards (for example Masticore, Phantom Nishoba,
-Spike Feeder or Exalted Angel in a custom deck that also plays Dominate or Legacy's Allure).
+refusable donors are the 62 refused creature cards of appendix A (for example Masticore,
+Phantom Nishoba, Spike Feeder or Exalted Angel in a custom deck that also plays Dominate or
+Legacy's Allure), and the part D cards only when a Shapeshifter enters with one on top.
 
 ## 3. The public consumer: the registered ordered owner
 
@@ -604,7 +681,11 @@ Acolyte's grant op, the token ops, `circle_choose`). Everything new lives in the
   whatever text the Shapeshifter has at the moment of the query, after the full text (613.8).
   The full-text branches of the protection sites (`p2c::statics::protection_mask` for Akroma and
   Karmic Guide, `p3c::statics::protection_mask` for Ihsan's Shade) therefore pass the donor's
-  printed mask through `text_color_mask` with the host. When the top card changes, the entry
+  printed mask through `text_color_mask` with the host. Only masks that come from color words
+  are mapped (Akroma, Karmic Guide, Ihsan's Shade). Iridescent Angel's "protection from each
+  color" has no color word, and `p3c::statics::printed_mask` returns all five colors for it;
+  that mask is never mapped, in the physical or the full-text branch, so a change on an
+  Iridescent Angel or on a Shapeshifter with its text leaves protection from every color. When the top card changes, the entry
   stays and acts on the new donor's text; with a noncreature top, or a donor without the word,
   it has nothing to act on and stays. The donor leaving the graveyard does not end it; only the
   Shapeshifter changing zones does (or, for a Shapeshifter spell, it moves to the permanent,
@@ -887,6 +968,19 @@ There is no typed halt for this case. The test lands with whichever of B2 and C2
       becomes a refusal case.
 - [ ] Part A donors without a dedicated donor fixture today: Ihsan's Shade and Iridescent Angel
       as donors give their protection on a Shapeshifter and are not refused, both seats.
+- [ ] Part C, both seats, one fixture each: with Anger, Arrogant Wurm, Eternal Dragon or Glory
+      on top the Shapeshifter has exactly that card's keywords and no other; with Krosan
+      Tusker, Gempalm Incinerator, Genesis, Nether Spirit, Thornscape Battlemage, Bane of the
+      Living or Nantuko Vigilante on top it has no keyword and offers no action beyond the
+      retained discard; a Shapeshifter entering with Thornscape Battlemage on top triggers
+      nothing and is not refused; no part C card is refused, entering or not.
+- [ ] Part D, both seats, for each of the five cards: it becomes the top card under a
+      Shapeshifter already on the battlefield (a death, a discard) and play continues with its
+      keywords and no refusal; a Shapeshifter entering with it on top (cast, Animate Dead, and
+      inside an ordered batch whose final top is the card) halts with
+      `FullTextDonorOutsideSetV1` at that entry. Meddling Mage the same way.
+- [ ] The audited lists: every creature card of the Premodern pool is in exactly one of the
+      four classes or the refused class of appendix A.
 - [ ] Pending order and the backstop: a pending owner order, also after a restore without a
       runner, with an unsupported donor among the arrivals offers the order menu and halts
       only once the order completes.
@@ -944,6 +1038,8 @@ There is no typed halt for this case. The test lands with whichever of B2 and C2
 - [ ] Animation colors: a Treetop Village animated after a change to "blue" stays a blue Ape
       when the land is changed again the same turn, loses the entry at cleanup, and an
       unchanged land writes no entry; the same for Ghitu Encampment.
+- [ ] Iridescent Angel: a change "black" to "green" on an Iridescent Angel, and on a
+      Shapeshifter with its text, leaves protection from all five colors.
 - [ ] Volrath interaction, a test of exactly the ruled case (section 4.7), in both seats: a
       Shapeshifter that has gained Akroma's text is the target of Alter Reality changing
       "black" to "green"; the changed text governs (protection from green and from red: a green
@@ -977,6 +1073,9 @@ two cards counted as Full gives:
 | Alter Reality Full | 304 | 87.0% | 87.0% |
 | Both | 305 | 90.0% | 90.0% |
 
+The donor classes of section 2.2 change no census figure: the census counts registry rows,
+and every donor class concerns only what a Shapeshifter may read in a game.
+
 By deck: `premodern-full-english-breakfast` (3.0%) gains both its mainboard and its full 75
 with the Shapeshifter (every other card of its 75 is already Full);
 `premodern-replenish` (6.0%) gains its full 75 with Alter Reality (its mainboard is already
@@ -990,8 +1089,8 @@ catalog-hash chain, because they re-pin `card_db_hash_eternal_v1_is_frozen`; the
 none. All of it waits behind the chain steps and issue #657's pieces. The lead's order: "Steps
 B2 and C2 take chain slots after S1o and C5, and behind issue 657's pieces."
 
-1. **A: Volrath donor scope.** Files: `full_text_v1.rs` (`SUPPORTED_DONORS_V1`,
-   `refused_donor`, the new kinds and programs), `premodern_ordered_public_v1.rs` (program
+1. **A: Volrath donor scope.** Files: `full_text_v1.rs` (the four donor class constants
+   of section 2.2, `donor_supported`, `entry_refused`, `refused_donor`, the new kinds and programs), `premodern_ordered_public_v1.rs` (program
    meanings), `eternal_premodern_p2d_v1.rs` (donated echo cost), `engine.rs` (the appended
    mechanic and the backstop), `event.rs`, `graveyard_order_v1.rs`, `eternal_e5a_v1/phasing.rs`
    (check sites), `full_text_v1/registered.rs` and `tests.rs`, `volrath_full_text_v1.md`.
@@ -1062,10 +1161,10 @@ both merged and the census on main shows 305 of 305 Full.
   an ability copier from another format can reach it.
 - The registered owner's Human view labels only the meanings its renderer knows; the other
   rows stay `unsupported`, and qualification uses numeric ordinals.
-- Donors are refused unless they have a donated program today or are listed (section 2.2):
-  Phantom Nishoba and Spike Feeder (partial programs) and creatures whose battlefield text is
-  only keywords (Exalted Angel) are refused under a Shapeshifter in a custom registration.
-  Extending the set is a later wave.
+- Donors that would play wrongly are refused (section 2.2, appendix A): 62 pool creatures in
+  any case, the five part D cards when a Shapeshifter enters with one on top. Only a custom
+  registration with Dominate or Legacy's Allure, or a custom FEB 75, reaches them. Giving them
+  programs is a later wave.
 - The registered owner is in process only; a JSONL route for registered games is a later
   issue (section 9, question 5).
 - Flat encoders, search, infoset export and earlier observation versions still refuse these
@@ -1086,8 +1185,21 @@ ruling, quoted or closely paraphrased, and where the design implements it:
 1. Mogg Fanatic and Ravenous Rats: "Ruling 1 amended: Mogg Fanatic and Ravenous Rats stay
    donors. The rule is 'every card with a donated program today, plus the listed additions; any
    other donor is refused with the typed error'. Nothing that plays correctly today is refused."
-   Implemented in section 1 (the amended ruling), section 2.2 (the donor table, parts A and B)
-   and section 5.1 (their fixtures stay).
+   Implemented in section 1 (the amended ruling), section 2.2 (the donor classes), section 5.1
+   (their fixtures stay) and appendix A.
+
+   How the amended ruling is applied. This design reads the ruling's two sentences together:
+   the supported set is what plays correctly today plus the listed additions, and only what
+   would play wrongly is refused. So besides the cards with a donated program (part A) and the
+   listed additions (part B), it supports the eleven cards whose whole battlefield text is
+   generic (part C: Anger, Arrogant Wurm, Eternal Dragon, Glory, Krosan Tusker, Gempalm
+   Incinerator, Genesis, Nether Spirit, Thornscape Battlemage, Bane of the Living, Nantuko
+   Vigilante), which play correctly today with no program. And it accepts the five cards whose
+   only other text works as the permanent enters (part D: Wall of Blossoms, Goblin Matron,
+   Goblin Ringleader, Phyrexian Dreadnought, Caller of the Claw) as a top card for a
+   Shapeshifter already on the battlefield, refusing them only at the moment a Shapeshifter
+   would enter with one on top, the one case where they play wrongly. Phantom Nishoba, Spike
+   Feeder, Exalted Angel and the other refused cards each lose a battlefield ability today.
 2. Meddling Mage through Legacy's Allure, as a donor reached through "the two Premodern
    control effects": confirmed. Section 2.2, part B, with the refusal of a Shapeshifter entering
    with Mage text.
@@ -1143,3 +1255,23 @@ here was re-read on `fd9ff09a`. Corrections:
   combat. Once the card is Full, a schema 5 FEB reset would pass both the session's row check
   and the preflight, which is why section 3.7 adds the refusal. `EternalStateV1`, `StackItem` and `PendingTrigger` derive `Hash`, so neither
   the color record nor its captures can live in them without moving state hashes.
+
+## Appendix A. The 101 creature cards of the Premodern pool, by donor class
+
+Source: the 305 distinct cards of the Premodern snapshot, of which 101 are creature cards, each
+read against its current Oracle text and the code paths of section 2.2.
+
+| Class | Count | Cards |
+| --- | ---: | --- |
+| A: donated program today | 15 | Akroma, Angel of Wrath; Battlefield Scrounger; Birds of Paradise; Hermit Druid; Ihsan's Shade; Iridescent Angel; Karmic Guide; Mogg Fanatic; Palinchron; Phyrexian Devourer; Psychatog; Ravenous Rats; Triskelion; Volrath's Shapeshifter; Wall of Roots |
+| B: listed additions | 8 | Elvish Spirit Guide; Squee, Goblin Nabob; Auramancer; Monk Realist; Uktabi Orangutan; Ghitu Slinger; Xantid Swarm; Meddling Mage (refused at entry) |
+| C: generic battlefield text, no program needed | 11 | Anger; Arrogant Wurm; Bane of the Living; Eternal Dragon; Gempalm Incinerator; Genesis; Glory; Krosan Tusker; Nantuko Vigilante; Nether Spirit; Thornscape Battlemage |
+| D: accepted except at entry | 5 | Caller of the Claw; Goblin Matron; Goblin Ringleader; Phyrexian Dreadnought; Wall of Blossoms |
+| Refused: loses a battlefield ability today | 62 | Academy Rector; Anurid Brushhopper; Argothian Enchantress; Avalanche Riders; Avatar of Woe; Ball Lightning; Basking Rootwalla; Beloved Chaplain; Birchlore Rangers; Blastoderm; Crimson Acolyte; Deranged Hermit; Devoted Caretaker; Druid Lyrist; Exalted Angel; Fyndhorn Elves; Glowrider; Goblin Goon; Goblin Lackey; Goblin Piledriver; Goblin Sharpshooter; Goblin Tinkerer; Goblin Vandal; Goblin Warchief; Graveborn Muse; Grim Lavamancer; Hypnotic Specter; Jackal Pup; Knight of Stromgald; Llanowar Elves; Masticore; Mother of Runes; Multani's Acolyte; Multani, Maro-Sorcerer; Mystic Enforcer; Nantuko Shade; Nova Cleric; Petradon; Phantom Nishoba; Plaguebearer; Priest of Titania; Putrid Imp; Quirion Dryad; Quirion Ranger; Ravenous Baloth; Siege-Gang Commander; Skirk Prospector; Soltari Monk; Soltari Priest; Spike Feeder; Terravore; Tireless Tribe; True Believer; Verdant Force; Veteran Brawlers; Veteran Explorer; Vintara Snapper; Weathered Wayfarer; Wild Mongrel; Wirewood Symbiote; Withered Wretch; Yavimaya Granger |
+
+Each refused card has at least one battlefield ability that is neither a keyword nor donated:
+an activated or mana ability outside `public_program` and `mana_text`, a triggered ability
+outside `DonatedTriggerKindV1` (including dies, upkeep, echo and fading triggers), a static
+ability or characteristic-defining ability keyed by the physical name, or protection or shadow
+read through `active_named`. Of the snapshot decks only FEB, Psychatog and Replenish can
+control a Shapeshifter, and their creature cards are all in A or B (section 2.3).
