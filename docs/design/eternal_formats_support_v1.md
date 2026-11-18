@@ -2679,20 +2679,46 @@ tail of the Vintage table's. Behavior follows each card's current Oracle text an
     exhaust ability is used.
   The animation has no duration: the incarnation is recorded (`S1qStateV1::animated`) and
   `engine::object_has_type` answers Creature for it, after the stationed Battleship's check.
-  The printed 0/0 and three counters make a 3/3. Both records are absent from snapshots and
+  The printed 0/0 and three counters make a 3/3. Dress Down's "Creatures lose all abilities"
+  reaches it as it reaches the stationed Battleship (`eternal_legacy_e7a_v1::
+  removal_timestamp`), so abilities other effects grant it (Shadowspear's trample and
+  lifelink) are lost while Dress Down stays. A control change keeps the object, so the
+  animation and the used exhaust ability go with it. Both records are absent from snapshots and
   hashes while empty and drop entries whose object left the battlefield as a turn begins.
   Neither is a record of "this turn": both are keyed by the object's incarnation, so the
   turn identity rule (#741) does not apply to them.
 - Summon: Bahamut, {9}, Enchantment Creature - Saga Dragon 9/9: "(As this Saga enters and after
   your draw step, add a lore counter. Sacrifice after IV.) I, II - Destroy up to one target
   nonland permanent. III - Draw two cards. IV - Mega Flare - This creature deals damage equal
-  to the total mana value of other permanents you control to each opponent. Flying". The
-  shared Saga rules (715.3a's entry lore, 715.3c's lore counter as the precombat main phase
-  begins, 704.5s's sacrifice) apply to a creature as to any Saga (715.1a). Chapters I and II are distinct program values with the Leveler's
-  target filter (so stack provenance names the right chapter), III is an ordinary draw of two
-  and IV sums `object_mana_value` over the other permanents its controller controls as it
-  resolves and deals that much damage from the Saga to the opponent (the ruling). A blinked
-  Bahamut is a new object and starts again at chapter I.
+  to the total mana value of other permanents you control to each opponent. Flying". It is
+  the first Saga in the registry that is also a creature (715.1a), so the creature ability
+  removers (Dress Down, Oko, Thief of Crowns' Elk, Unable to Scream, Azure Beastbinder) now
+  reach a Saga. The rules give a Saga its lore counters and sacrifice it only while it has
+  chapter abilities: 715.3c puts the precombat main phase's counter on "each Saga they
+  control with one or more chapter abilities", 715.4 and 704.5s sacrifice "a Saga permanent
+  with one or more chapter abilities", and 715.3a's entry counter is the Saga's own
+  ability; the card's ruling says the same. In the eternal build all three now ask
+  `trigger::saga_has_chapter_abilities` (the Saga's printed abilities are active): the
+  precombat main phase's counter (`engine.rs`), the entry counter (`event.rs`) and the
+  sacrifice (`trigger.rs` and the legend rule's batch in `legend_rule_v1.rs`). A chapter
+  that already triggered still resolves when the Saga then loses its abilities (the
+  ruling), and a Saga that gets its abilities back resumes: with Dress Down gone, the next
+  precombat main phase adds the next counter, and a Saga already at its final chapter is
+  sacrificed. The other builds keep their behavior (the check is true there). Among the
+  existing Sagas only Urza's Saga can lose its abilities in the eternal catalog (Harbinger
+  of the Seas, Blood Moon, Magus of the Moon and Alpine Moon set or remove its land types):
+  it now stays without counters and is not sacrificed,
+  as the rules have required since this card's release; no existing test covered that
+  case. Chapters I and II are distinct program values with the Leveler's target filter (so
+  stack provenance names the right chapter), III is an ordinary draw of two and IV sums
+  `object_mana_value` over the other permanents its controller controls as it resolves (an
+  opponent's permanents do not count, a token counts 0) and deals that much damage from the
+  Saga to the opponent (the ruling); after Bahamut left, it is the last known information
+  of the Saga that deals the damage, counting every permanent its controller controls. A
+  blinked Bahamut is a new object and starts again at chapter I. A Phyrexian Metamorph that
+  enters as a copy of it takes the copied definition after it entered
+  (`eternal_vintage_v1::enter_as_copy`), so the copy path now gives it the lore counter
+  of 715.3a there, and its chapter I triggers.
 
 The new target filter is classified for the Flagbearer rule as `Single` (it is the target of
 triggered abilities and chapters, which the obligation never binds) and added to the
@@ -2700,7 +2726,9 @@ classification test. Each shared path is guarded so the frozen Pauper, FDN and S
 builds do not change: every new call is under `eternal-fixtures` and returns at once unless
 the source is one of these printed names (which occur only in the eternal registry) or the
 wave's state holds a record (`object_has_type`, the produced-mana hook, the activation paid
-and allowed hooks, the activation total and the tap candidates); the filter arms in
+and allowed hooks, the activation total, the tap candidates, Dress Down's creature check
+and the Metamorph's copy of a Saga), or the Saga check above, which is true outside the
+eternal build; the filter arms in
 `standard_cards_v1`, `rules_vector_v1::meaning::targets` and `flagbearer` answer only the new
 filter; `engine::activation_mana_payment` became `pub(crate)` without other change.
 
@@ -2710,10 +2738,6 @@ Limits:
   one printed ability) rather than as a count chosen while paying; the payments offered are
   exactly the legal ones. The exhaust record is not a field of the policy observations; once
   used, the abilities are absent from the legal actions.
-- An Invasion Submersible animated by its exhaust ability is a creature to `object_has_type`
-  but not to Dress Down's "Creatures lose all abilities" (which reads printed creatures and a
-  stationed Battleship); its only abilities then are the enters trigger, which has triggered,
-  and the used exhaust ability, so no reachable branch changes.
 
 Verification: `tests/eternal/eternal_sideboard_s1q_v1.rs` covers the cast trigger with each
 player's permanent, with no target and with an indestructible target, the attack trigger and
@@ -2723,13 +2747,19 @@ the Submersible's bounce (other permanents only, none), each of the four waterbe
 with summoning-sick creatures and the Vehicle itself tapped, exhaust once only, the animation
 lasting into later turns and the Submersible attacking, a blink resetting exhaust, a mana
 creature withheld from the taps, the Gadgeteer reduction alone, a Peacekeeper tax alone and
-both together, Bahamut's four chapters with the
-Mega Flare count and the sacrifice, chapters with no target and a blink restarting at chapter
-I, each in both seats, and plays a Tron deck against a blue artifact deck through public
+both together, a countered exhaust activation (still used), the Submersible under Oko's
+exchange (still animated and exhausted), Dress Down removing Shadowspear's abilities from it,
+a Leveler target that is illegal on resolution (no token), an unearthed Leveler naming
+itself (exiled, token created), Bahamut's four chapters with the Mega Flare count and the
+sacrifice, Mega Flare with an opponent's permanents and a token, Mega Flare after Bahamut
+left, Bahamut under Dress Down (no counter, no sacrifice, resuming once it is gone), its
+final chapter resolving after Dress Down arrived, a Metamorph copy of Bahamut entering
+with a lore counter, chapters with no target and a blink restarting at chapter I, each in
+both seats, and plays a Tron deck against a blue artifact deck through public
 schema-5 sessions in both seats under ranked and seeded random policies with replay checks,
 including at least one waterbend tap chosen through the session's `choose_cost_target`
-action. `tests/eternal/eternal_bo3_v1.rs` plays `legacy-tron` in a seeded best-of-three match with
-random sideboarding.
+action. `tests/eternal/eternal_bo3_v1.rs` plays `legacy-tron` in a seeded best-of-three
+match with random sideboarding.
 
 ## Vintage Cube
 
