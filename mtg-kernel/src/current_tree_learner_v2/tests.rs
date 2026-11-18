@@ -561,12 +561,12 @@ fn sqrt_matches_the_platform_over_a_geometric_grid() {
 /// each squaring doubles the relative error carried so far and adds one
 /// rounding of at most `u = 2^-53`, so `b^(2^j)` is within `(2^j - 1) u`. The
 /// result multiplies at most nine of those powers, adding at most nine more
-/// roundings, so its relative error is at most `(sum over j <= 8 of (2^j - 1)
-/// + 9) u = 511 u`, below `256 f64::EPSILON` to first order. Bound:
-/// `512 * f64::EPSILON` relative (about `1.1e-13`), which leaves room for the
-/// reference's own error. This is ample for Adam's bias corrections
-/// `1 - beta^t`, whose relative error is then far below the `epsilon = 1e-8`
-/// in the update's denominator.
+/// roundings, so its relative error is at most the sum over `j <= 8` of
+/// `(2^j - 1) u` plus `9 u`, that is `511 u`, below `256 f64::EPSILON` to
+/// first order. Bound: `512 * f64::EPSILON` relative (about `1.1e-13`), which
+/// leaves room for the reference's own error. This is ample for Adam's bias
+/// corrections `1 - beta^t`, whose relative error is then far below the
+/// `epsilon = 1e-8` in the update's denominator.
 ///
 /// Order, against the standard library's `powi`: on current toolchains it
 /// multiplies in the same order (binary exponentiation from the lowest bit),
