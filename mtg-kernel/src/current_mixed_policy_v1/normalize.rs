@@ -454,6 +454,8 @@ pub(super) fn encode_with_action_rows<T>(
     super::kellan_public_operands::prepare(&mut state)?;
     super::fiery_public_operands::prepare(&mut state)?;
     super::fishing_public_operands::prepare(&mut state)?;
+    super::krenko_public_operands::prepare(&mut state)?;
+    super::ajani_public_operands::prepare(&mut state)?;
     if matches!(
         source,
         Source::PreparedV57
