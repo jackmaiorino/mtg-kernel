@@ -1498,7 +1498,12 @@ fn benevolent_blessing_attachment_protection_follows_timestamps() {
             let mut state = plains();
             state.active_player = opponent;
             state.priority_player = opponent;
-            let inspector = put(&mut state, controller, "Thraben Inspector", Zone::Battlefield);
+            let inspector = put(
+                &mut state,
+                controller,
+                "Thraben Inspector",
+                Zone::Battlefield,
+            );
             let other = put(&mut state, opponent, "Thraben Inspector", Zone::Battlefield);
             let blessing = put(&mut state, controller, "Benevolent Blessing", Zone::Hand);
             let dress = put(&mut state, opponent, "Dress Down", Zone::Hand);
