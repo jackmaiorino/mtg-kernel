@@ -3,9 +3,10 @@
 //! battlefield tapped" functions only from the graveyard, so it triggers only
 //! if Snacker is already in its owner's graveyard when the third card is
 //! drawn. Faithless Looting draws two cards and then discards two as one
-//! resolution, so its draws and its discard are matched in one event batch;
-//! a Snacker that was still in hand at the third draw must not trigger even
-//! though it is in the graveyard once the batch is matched.
+//! resolution. The discard is a player decision, and the engine captures the
+//! triggers of the draws before that decision is answered, while a Snacker
+//! about to be discarded is still in hand, so that Snacker must not trigger
+//! although it is in the graveyard once the resolution ends.
 
 use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
