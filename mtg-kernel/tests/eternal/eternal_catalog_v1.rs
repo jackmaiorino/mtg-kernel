@@ -870,7 +870,9 @@ impl GamePermit {
     fn acquire() -> Self {
         let mut busy = BUSY_GAMES.lock().unwrap_or_else(PoisonError::into_inner);
         while *busy >= game_capacity() {
-            busy = GAME_FINISHED.wait(busy).unwrap_or_else(PoisonError::into_inner);
+            busy = GAME_FINISHED
+                .wait(busy)
+                .unwrap_or_else(PoisonError::into_inner);
         }
         *busy += 1;
         GamePermit
