@@ -6343,10 +6343,18 @@ fn reduced_activation_mana_cost(
     }
     // Forensic Gadgeteer (eternal wave C4a): abilities of artifacts cost {1}
     // less, never below one mana.
-    crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, reduced)
+    let reduced = crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, reduced);
+    // Invasion Submersible's waterbend payments: the reduced {3} less the
+    // permanents tapped for it (wave S1q).
+    #[cfg(feature = "eternal-fixtures")]
+    if let Some(cost) = crate::eternal_sideboard_s1q_v1::waterbend_mana(state, source, components)
+    {
+        return cost;
+    }
+    reduced
 }
 
-fn activation_mana_payment(
+pub(crate) fn activation_mana_payment(
     components: &[CostComponent],
     player: PlayerId,
     source: ObjectId,
@@ -8729,7 +8737,8 @@ fn activation_controlled_cost_candidates(
     } else {
         sacrificeable_controlled_permanents(player, filter, state, &already_chosen_ids)
     };
-    candidates
+    #[allow(unused_mut)]
+    let mut candidates = candidates
         .into_iter()
         .filter(|&object| !permanent_filter_excludes_source(filter) || object != source)
         .map(|object| {
@@ -8740,7 +8749,19 @@ fn activation_controlled_cost_candidates(
                 expected_zone_change_count: live.zone_change_count,
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    // Invasion Submersible's waterbend taps leave its mana part payable
+    // (wave S1q).
+    #[cfg(feature = "eternal-fixtures")]
+    if tap {
+        crate::eternal_sideboard_s1q_v1::retain_payable_waterbend_taps(
+            state,
+            source,
+            already_chosen,
+            &mut candidates,
+        );
+    }
+    candidates
 }
 
 pub(crate) fn lathril_payment_candidates_v1(
@@ -12906,6 +12927,9 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
     // The Mightstone and Weakstone's restricted mana (wave C3c).
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cube_c3c_v1::restrict_produced_mana(state, player, source, choice);
+    // A Powerstone token's restricted mana (wave S1q).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1q_v1::restrict_produced_mana(state, player, source, choice);
     // Pentad Prism's cost: the charge counter it removes (wave C2c).
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cube_c2c_v1::note_mana_ability_used(state, source);
@@ -23740,6 +23764,12 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
     if card_type == CardType::Creature && crate::eternal_sideboard_s1m_v1::stationed(state, id) {
         return true;
     }
+    // An Invasion Submersible whose exhaust ability made it an artifact
+    // creature, with no duration (wave S1q).
+    #[cfg(feature = "eternal-fixtures")]
+    if card_type == CardType::Creature && crate::eternal_sideboard_s1q_v1::animated(state, id) {
+        return true;
+    }
     // Life's animated lands (Premodern wave P2c).
     #[cfg(feature = "eternal-fixtures")]
     if card_type == CardType::Creature
@@ -31328,6 +31358,12 @@ fn push_paid_activation(
             pending.ability_index,
         );
         crate::eternal_premodern_p2a_v1::statics::activation_paid(
+            state,
+            pending.source,
+            pending.ability_index,
+        );
+        // Invasion Submersible's exhaust record (wave S1q).
+        crate::eternal_sideboard_s1q_v1::activation_paid(
             state,
             pending.source,
             pending.ability_index,

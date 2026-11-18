@@ -722,7 +722,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::AnyNumberControlledNonlandNontokenPermanentsV1 => ObjF::NonlandPermanent,
         S::PlayerThenArtifactV1 | S::PlayerThenCreatureV1 => ObjF::PlayerOrPermanent,
         S::ArtifactThenCreatureV1 => ObjF::Permanent,
-        S::UpToOneOtherNonlandPermanentV1 => ObjF::NonlandPermanent,
+        S::UpToOneOtherNonlandPermanentV1 | S::S1qV1(_) => ObjF::NonlandPermanent,
         S::TriggeredAbilityOrColorlessSpellV1 => ObjF::Spell,
         S::CreaturesThenNonlandPermanentsV1 { .. } => ObjF::Permanent,
         S::TwoControlledArtifactsCreaturesOrLandsV1 => ObjF::Permanent,
@@ -908,6 +908,7 @@ pub(super) fn standard_target_origin(
         | S::PlayerThenCreatureV1
         | S::ArtifactThenCreatureV1
         | S::UpToOneOtherNonlandPermanentV1
+        | S::S1qV1(_)
         | S::CreaturesThenNonlandPermanentsV1 { .. }
         | S::PlayerThenPlayerV1
         | S::CreatureThenGraveyardCardsV1
@@ -1174,6 +1175,12 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             out.target(TargetAtom::UpTo);
             // Source exclusion.
             out.atoms.push(Atom::Opaque);
+        }
+        // Wave S1q's "up to one target nonland permanent", the source
+        // included.
+        S::S1qV1(_) => {
+            object(out, ObjF::NonlandPermanent, relation, zone);
+            out.target(TargetAtom::UpTo);
         }
         S::TriggeredAbilityOrColorlessSpellV1 => {
             object(out, ObjF::Spell, relation, zone);

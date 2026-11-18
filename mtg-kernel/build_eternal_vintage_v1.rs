@@ -302,11 +302,11 @@ pub(super) fn additional_cost_for(name: &str) -> &'static str {
 }
 
 /// Saga chapters. Urza's Saga's first two chapters give it abilities that
-/// the runtime gates on the chapters resolved.
+/// the runtime gates on the chapters resolved. Wave S1q's Saga follows.
 pub(super) fn saga_for(name: &str) -> &'static str {
     match name {
         "Urza's Saga" => "Some(SagaDef { chapter_effects: &[crate::eternal_vintage_v1::urzas_saga_one, crate::eternal_vintage_v1::urzas_saga_two, crate::eternal_vintage_v1::urzas_saga_three] })",
-        _ => "None",
+        _ => super::build_eternal_s1q_v1::saga_for(name),
     }
 }
 

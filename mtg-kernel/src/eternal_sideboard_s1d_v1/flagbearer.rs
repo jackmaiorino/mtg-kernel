@@ -43,6 +43,7 @@ use crate::eternal_cube_c4a_v1::targets::C4aTargetV1;
 use crate::eternal_cube_c4c_v1::targets::C4cTargetV1;
 use crate::eternal_sideboard_s1d_v1::targets::S1dTargetV1;
 use crate::eternal_sideboard_s1o_v1::targets::S1oTargetV1;
+use crate::eternal_sideboard_s1q_v1::targets::S1qTargetV1;
 use crate::standard_cards_v1::StandardTargetV1;
 use crate::state::{GameState, Target};
 
@@ -225,6 +226,13 @@ fn standard_shape(filter: StandardTargetV1) -> TargetShape {
             // from a single graveyard". A card in a graveyard is never a
             // Flagbearer on the battlefield.
             S1oTargetV1::UpToTwoCardsFromOneGraveyardV1 => NoPermanentSlot,
+        },
+        S::S1qV1(filter) => match filter {
+            // Cityscape Leveler's cast and attack trigger and Summon:
+            // Bahamut's first two chapters: "up to one target nonland
+            // permanent", one slot (and triggered abilities, which the
+            // obligation never binds).
+            S1qTargetV1::UpToOneNonlandPermanentV1 => Single,
         },
         S::UpToTwoAnyTargets
         | S::TwoCreaturesV1
@@ -633,6 +641,20 @@ mod tests {
                 );
             }
         }
+        // Wave S1q's filter is the target of triggered abilities and Saga
+        // chapters, which no spell form or activated ability reaches.
+        check(
+            TargetSpec::StandardV1(StandardTargetV1::S1qV1(
+                S1qTargetV1::UpToOneNonlandPermanentV1,
+            )),
+            "Cityscape Leveler",
+        );
+        assert_eq!(
+            shape(TargetSpec::StandardV1(StandardTargetV1::S1qV1(
+                S1qTargetV1::UpToOneNonlandPermanentV1
+            ))),
+            TargetShape::Single
+        );
         for count in 0..=3 {
             check(
                 TargetSpec::StandardV1(StandardTargetV1::RepeatableArtifactsV1(count)),

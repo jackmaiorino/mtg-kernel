@@ -304,6 +304,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_sideboard_s1o_v1::S1oStateV1::is_empty"
     )]
     pub s1o: crate::eternal_sideboard_s1o_v1::S1oStateV1,
+    /// Sideboard wave S1q's state (`eternal_sideboard_s1q_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_sideboard_s1q_v1::S1qStateV1::is_empty"
+    )]
+    pub s1q: crate::eternal_sideboard_s1q_v1::S1qStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -627,6 +633,9 @@ pub enum EternalOpV1 {
     /// A leaf owned by sideboard wave S1o's module. Appended to preserve
     /// existing stack and continuation hash discriminants.
     S1oV1(crate::eternal_sideboard_s1o_v1::S1oOpV1),
+    /// A leaf owned by sideboard wave S1q's module. Appended to preserve
+    /// existing stack and continuation hash discriminants.
+    S1qV1(crate::eternal_sideboard_s1q_v1::S1qOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -718,6 +727,7 @@ impl EternalOpV1 {
             EternalOpV1::C4bV1(op) => op.contains_player_choice(),
             EternalOpV1::C4cV1(op) => op.contains_player_choice(),
             EternalOpV1::S1oV1(op) => op.contains_player_choice(),
+            EternalOpV1::S1qV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -1077,6 +1087,10 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     if let Some(spec) = crate::eternal_sideboard_s1o_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }
+    // Legacy sideboard wave S1q's printed triggers and Saga chapters.
+    if let Some(spec) = crate::eternal_sideboard_s1q_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     // Vintage Cube wave C1a's printed and queued triggers.
     if let Some(spec) = crate::eternal_cube_c1a_v1::trigger_target_spec(name, effect) {
         return Some(spec);
@@ -1385,6 +1399,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::C4bV1(op) => crate::eternal_cube_c4b_v1::execute(op, ctx, state),
         EternalOpV1::C4cV1(op) => crate::eternal_cube_c4c_v1::execute(op, ctx, state),
         EternalOpV1::S1oV1(op) => crate::eternal_sideboard_s1o_v1::execute(op, ctx, state),
+        EternalOpV1::S1qV1(op) => crate::eternal_sideboard_s1q_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -2356,6 +2371,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_sideboard_s1d_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1n_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1o_v1::begin_turn(state, player);
+    crate::eternal_sideboard_s1q_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks

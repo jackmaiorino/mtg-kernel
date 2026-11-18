@@ -34627,6 +34627,137 @@
     "attack_trigger"
    ],
    "java_file": "Mage.Sets/src/mage/cards/o/OutlandLiberator.java"
+  },
+  {
+   "name": "Powerstone Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": [],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [
+    "Powerstone"
+   ],
+   "supertypes": [],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [
+    "C"
+   ],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": [
+    "mana_ability",
+    "tap_ability",
+    "restricted_mana",
+    "colorless_mana"
+   ],
+   "java_file": "Mage/src/main/java/mage/game/permanent/token/PowerstoneToken.java",
+   "is_token": true
+  },
+  {
+   "name": "Cityscape Leveler",
+   "engine_capability": "full",
+   "mana_cost": "{8}",
+   "mana_value": 8,
+   "colors": [],
+   "types": [
+    "Artifact",
+    "Creature"
+   ],
+   "subtypes": [
+    "Construct"
+   ],
+   "supertypes": [],
+   "power": 8,
+   "toughness": 8,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-tron"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "trample",
+    "cast_trigger",
+    "attack_trigger",
+    "destroy_target",
+    "token_creation",
+    "unearth"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/c/CityscapeLeveler.java"
+  },
+  {
+   "name": "Invasion Submersible",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Artifact"
+   ],
+   "subtypes": [
+    "Vehicle"
+   ],
+   "supertypes": [],
+   "power": 0,
+   "toughness": 0,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-tron"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "etb_trigger",
+    "bounce",
+    "exhaust",
+    "waterbend",
+    "animation",
+    "plus_one_counters"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/i/InvasionSubmersible.java"
+  },
+  {
+   "name": "Summon: Bahamut",
+   "engine_capability": "full",
+   "mana_cost": "{9}",
+   "mana_value": 9,
+   "colors": [],
+   "types": [
+    "Enchantment",
+    "Creature"
+   ],
+   "subtypes": [
+    "Saga",
+    "Dragon"
+   ],
+   "supertypes": [],
+   "power": 9,
+   "toughness": 9,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "legacy-tron"
+   ],
+   "sideboard_only": true,
+   "complexity": "complex",
+   "mechanics": [
+    "saga",
+    "flying",
+    "destroy_target",
+    "draw_card",
+    "damage_each_opponent"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/s/SummonBahamut.java"
   }
  ]
 }

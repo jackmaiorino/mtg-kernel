@@ -410,6 +410,10 @@ pub mod eternal_sideboard_s1n_v1;
 /// Stronghold Gambit, Eowyn, Fearless Knight, Unlicensed Hearse and Outland
 /// Liberator.
 pub mod eternal_sideboard_s1o_v1;
+/// Legacy Tron's sideboard card programs of the eternal catalog (wave S1q):
+/// Cityscape Leveler, Invasion Submersible, Summon: Bahamut and the Powerstone
+/// token.
+pub mod eternal_sideboard_s1q_v1;
 /// Vintage graveyard and tempo card programs of the eternal catalog (wave
 /// E7b).
 pub mod eternal_vintage_e7b_v1;
