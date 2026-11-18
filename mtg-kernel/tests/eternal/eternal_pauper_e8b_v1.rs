@@ -789,12 +789,16 @@ fn snow_covered_mountain_is_a_basic_snow_mountain() {
 
 #[test]
 fn depletion_lands_add_two_mana_twice_then_are_sacrificed() {
-    for (name, color) in [
-        ("Hickory Woodlot", ManaColor::G),
-        ("Sandstone Needle", ManaColor::R),
+    for (player, name, color) in [
+        (P0, "Hickory Woodlot", ManaColor::G),
+        (P1, "Hickory Woodlot", ManaColor::G),
+        (P0, "Sandstone Needle", ManaColor::R),
+        (P1, "Sandstone Needle", ManaColor::R),
     ] {
         let mut state = plains();
-        let land = put(&mut state, P0, name, Zone::Hand);
+        state.active_player = player;
+        state.priority_player = player;
+        let land = put(&mut state, player, name, Zone::Hand);
         play_land(&mut state, land);
         assert!(state.objects.get(land).tapped, "{name}");
         assert_eq!(
@@ -804,7 +808,7 @@ fn depletion_lands_add_two_mana_twice_then_are_sacrificed() {
         state.objects.get_mut(land).tapped = false;
         next(&mut state);
         act(&mut state, Action::ActivateManaAbility(land));
-        assert_eq!(mana(&state, P0, color), 2, "{name}");
+        assert_eq!(mana(&state, player, color), 2, "{name}");
         assert_eq!(zone(&state, land), Zone::Battlefield, "{name}");
         assert_eq!(
             mtg_kernel::eternal_pauper_e8b_v1::depletion_counters(&state, land),
@@ -813,14 +817,80 @@ fn depletion_lands_add_two_mana_twice_then_are_sacrificed() {
         state.objects.get_mut(land).tapped = false;
         next(&mut state);
         act(&mut state, Action::ActivateManaAbility(land));
-        assert_eq!(mana(&state, P0, color), 4, "{name}");
+        assert_eq!(mana(&state, player, color), 4, "{name}");
         assert_eq!(zone(&state, land), Zone::Graveyard, "{name} sacrificed");
 
         // Without a depletion counter the ability can't be activated.
         let mut state = plains();
-        let land = put(&mut state, P0, name, Zone::Battlefield);
+        state.active_player = player;
+        state.priority_player = player;
+        let land = put(&mut state, player, name, Zone::Battlefield);
         next(&mut state);
         assert!(engine::step(&mut state, Action::ActivateManaAbility(land)).is_err());
+    }
+}
+
+#[test]
+fn blood_moon_preserves_depletion_counters_when_tapping_for_mana_both_seats() {
+    for player in [P0, P1] {
+        let mut state = plains();
+        state.active_player = player;
+        state.priority_player = player;
+        let land = put(&mut state, player, "Hickory Woodlot", Zone::Hand);
+        play_land(&mut state, land);
+        assert_eq!(
+            mtg_kernel::eternal_pauper_e8b_v1::depletion_counters(&state, land),
+            2,
+        );
+
+        let moon = put(&mut state, player, "Blood Moon", Zone::Hand);
+        pool(&mut state, player, &[ManaColor::R], 2);
+        cast(&mut state, moon, &[]);
+        settled(&mut state);
+        state.priority_player = player;
+        state.objects.get_mut(land).tapped = false;
+        assert_eq!(mana(&state, player, ManaColor::R), 0);
+        next(&mut state);
+        act(&mut state, Action::ActivateManaAbility(land));
+        assert_eq!(mana(&state, player, ManaColor::R), 1);
+        assert_eq!(mana(&state, player, ManaColor::G), 0);
+        assert!(state.objects.get(land).tapped);
+        assert_eq!(
+            mtg_kernel::eternal_pauper_e8b_v1::depletion_counters(&state, land),
+            2,
+        );
+        assert_eq!(zone(&state, land), Zone::Battlefield);
+    }
+}
+
+#[test]
+fn blood_moon_allows_depletion_lands_without_counters_to_tap_for_mana_both_seats() {
+    for player in [P0, P1] {
+        let mut state = plains();
+        state.active_player = player;
+        state.priority_player = player;
+        let land = put(&mut state, player, "Hickory Woodlot", Zone::Battlefield);
+        assert_eq!(
+            mtg_kernel::eternal_pauper_e8b_v1::depletion_counters(&state, land),
+            0,
+        );
+
+        let moon = put(&mut state, player, "Blood Moon", Zone::Hand);
+        pool(&mut state, player, &[ManaColor::R], 2);
+        cast(&mut state, moon, &[]);
+        settled(&mut state);
+        state.priority_player = player;
+        assert_eq!(mana(&state, player, ManaColor::R), 0);
+        next(&mut state);
+        act(&mut state, Action::ActivateManaAbility(land));
+        assert_eq!(mana(&state, player, ManaColor::R), 1);
+        assert_eq!(mana(&state, player, ManaColor::G), 0);
+        assert!(state.objects.get(land).tapped);
+        assert_eq!(
+            mtg_kernel::eternal_pauper_e8b_v1::depletion_counters(&state, land),
+            0,
+        );
+        assert_eq!(zone(&state, land), Zone::Battlefield);
     }
 }
 
