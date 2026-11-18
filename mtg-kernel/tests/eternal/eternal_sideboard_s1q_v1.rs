@@ -779,7 +779,9 @@ fn peacekeeper_naming(state: &mut GameState, player: PlayerId, name: &str) -> Ob
         })
         .unwrap_or_else(|| panic!("{name} is not nameable"));
     match settle(state) {
-        Some(Decision::ChooseEffectOption { player: chooser, .. }) => {
+        Some(Decision::ChooseEffectOption {
+            player: chooser, ..
+        }) => {
             assert_eq!(chooser, player);
             act(
                 state,
@@ -811,9 +813,18 @@ fn submersible_waterbend_taps_never_pay_a_peacekeeper_tax_in_both_seats() {
         let wall = put(&mut state, actor, "Basking Rootwalla", Zone::Battlefield);
         let other = put(&mut state, actor, "Basking Rootwalla", Zone::Battlefield);
         pool(&mut state, actor, &[], 2);
-        assert!(!activatable(&mut state, submersible, 0), "{{5}} with two mana");
-        assert!(!activatable(&mut state, submersible, 1), "{{4}} with two mana");
-        assert!(!activatable(&mut state, submersible, 2), "{{3}} with two mana");
+        assert!(
+            !activatable(&mut state, submersible, 0),
+            "{{5}} with two mana"
+        );
+        assert!(
+            !activatable(&mut state, submersible, 1),
+            "{{4}} with two mana"
+        );
+        assert!(
+            !activatable(&mut state, submersible, 2),
+            "{{3}} with two mana"
+        );
         assert!(
             activatable(&mut state, submersible, 3),
             "three taps and {{2}}"
@@ -845,9 +856,18 @@ fn submersible_waterbend_with_a_peacekeeper_tax_and_a_gadgeteer_in_both_seats() 
         let gadgeteer = put(&mut state, actor, "Forensic Gadgeteer", Zone::Battlefield);
         let wall = put(&mut state, actor, "Basking Rootwalla", Zone::Battlefield);
         pool(&mut state, actor, &[], 1);
-        assert!(!activatable(&mut state, submersible, 0), "{{4}} with one mana");
-        assert!(!activatable(&mut state, submersible, 1), "{{3}} with one mana");
-        assert!(!activatable(&mut state, submersible, 2), "{{2}} with one mana");
+        assert!(
+            !activatable(&mut state, submersible, 0),
+            "{{4}} with one mana"
+        );
+        assert!(
+            !activatable(&mut state, submersible, 1),
+            "{{3}} with one mana"
+        );
+        assert!(
+            !activatable(&mut state, submersible, 2),
+            "{{2}} with one mana"
+        );
         assert!(
             activatable(&mut state, submersible, 3),
             "three taps and {{1}}"

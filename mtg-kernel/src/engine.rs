@@ -6394,7 +6394,8 @@ fn activation_total_mana_cost(
     // Invasion Submersible's waterbend taps pay part of that total; the rest
     // is this ability's mana (wave S1q).
     #[cfg(feature = "eternal-fixtures")]
-    let total = crate::eternal_sideboard_s1q_v1::waterbend_taps_paid(state, source, components, total);
+    let total =
+        crate::eternal_sideboard_s1q_v1::waterbend_taps_paid(state, source, components, total);
     Some(crate::standard_cards_v1::spend_as_any_color(
         state, player, source, total,
     ))
