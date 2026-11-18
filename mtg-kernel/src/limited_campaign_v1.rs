@@ -16,6 +16,8 @@ use crate::unclamped_softmax_sampler_v1::{
 use sha2::{Digest, Sha256};
 
 pub mod checkpoint;
+pub mod inventory;
+pub mod schedule;
 
 /// The sampler name every campaign artifact records.
 pub const SAMPLER_V1: &str = "f64-exp-icdf-u53/v1";
