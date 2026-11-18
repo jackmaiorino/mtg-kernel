@@ -722,9 +722,9 @@ fn development_scene(actor: PlayerId) -> (KaitoSession, LimitedBeliefV1) {
 /// root action is applied once and the state right after it is scored. In an
 /// ordinary main phase a land drop scores below passing (a hand card is worth
 /// more than a land) and casting a spell scores no better than passing (the
-/// card leaves the hand and the stack is not scored), so the policy never
-/// develops. A second definition of the heuristic must change this
-/// expectation on purpose.
+/// card leaves the hand and the stack is not scored), so in this position
+/// the pick is never a land and scores what passing scores. A second
+/// definition of the heuristic must change this expectation on purpose.
 #[test]
 fn sampled_public_heuristic_v1_one_apply_scores_pass_over_land_drop_and_spell_in_main_phase() {
     for actor in [PlayerId::P0, PlayerId::P1] {
