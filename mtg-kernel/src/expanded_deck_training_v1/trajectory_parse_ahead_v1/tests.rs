@@ -138,3 +138,13 @@ fn a_claim_released_by_unwinding_wakes_its_readers() {
     assert!(reader.join().unwrap());
     assert!(!lock_v1(shared_v1()).entries.contains_key(key));
 }
+
+/// An entry is charged its record length, or its buffer's capacity when the
+/// buffer keeps more than that alive.
+#[test]
+fn an_entry_is_never_charged_less_than_the_capacity_it_keeps_alive() {
+    assert_eq!(retained_charge_v1(100, 100), 100);
+    assert_eq!(retained_charge_v1(100, 4096), 4096);
+    // A sealed record: the record length exceeds the frame's buffer.
+    assert_eq!(retained_charge_v1(4096, 100), 4096);
+}
