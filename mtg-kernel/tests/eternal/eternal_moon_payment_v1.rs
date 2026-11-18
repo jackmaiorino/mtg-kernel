@@ -574,6 +574,9 @@ fn the_planner_lists_exactly_what_tapping_by_hand_adds_both_seats() {
             volcanic_under_compass_then_spreading_seas(actor).0,
             volcanic_under_spreading_seas_with_urborg(actor, true).0,
             volcanic_under_spreading_seas_with_urborg(actor, false).0,
+            dryad_arbor_under_dress_down_then(actor, "Yavimaya, Cradle of Growth").0,
+            dryad_arbor_under_dress_down_then(actor, "Navigator's Compass").0,
+            dryad_arbor_under_dress_down_then(actor, "Abundant Growth").0,
         ];
         for (scenario, mut state) in states.into_iter().enumerate() {
             next(&mut state);
@@ -703,6 +706,12 @@ fn tower_named_by_hamlet_under_spreading_seas(actor: PlayerId) -> (GameState, Ob
 
 /// Activates `actor`'s new Navigator's Compass on `land`, choosing Mountain.
 fn compass_makes_a_mountain(state: &mut GameState, actor: PlayerId, land: ObjectId) {
+    compass_adds(state, actor, land, 3);
+}
+
+/// Activates `actor`'s new Navigator's Compass on `land`, choosing land type
+/// option `option` (Plains, Island, Swamp, Mountain, Forest).
+fn compass_adds(state: &mut GameState, actor: PlayerId, land: ObjectId, option: u16) {
     let compass = put(state, actor, "Navigator's Compass", Zone::Battlefield);
     next(state);
     act(state, Action::ActivateAbility(compass, 0));
@@ -713,11 +722,10 @@ fn compass_makes_a_mountain(state: &mut GameState, actor: PlayerId, land: Object
         }
         other => panic!("expected targets, got {other:?}"),
     }
-    // Options: Plains, Island, Swamp, Mountain, Forest.
     match settle(state) {
         Some(Decision::ChooseEffectOption { source, .. }) => {
             assert_eq!(source, compass);
-            act(state, Action::ChooseEffectOption(3));
+            act(state, Action::ChooseEffectOption(option));
         }
         other => panic!("expected the land type choice, got {other:?}"),
     }
@@ -919,5 +927,99 @@ fn land_grants_beside_active_printed_abilities_are_planned_as_before_both_seats(
         let brainstorm = put(&mut state, actor, "Brainstorm", Zone::Hand);
         assert!(castable(&mut state, bolt));
         assert!(castable(&mut state, brainstorm));
+    }
+}
+
+// ---- A removal of all abilities and the mana of a land type -------------------------
+
+/// `actor`'s Dryad Arbor under `actor`'s Dress Down ("Creatures lose all
+/// abilities"), then `after`: Yavimaya, Cradle of Growth entering, Navigator's
+/// Compass making the Arbor a Forest, or Abundant Growth enchanting it.
+fn dryad_arbor_under_dress_down_then(actor: PlayerId, after: &str) -> (GameState, ObjectId) {
+    let mut state = game(actor);
+    let arbor = put(&mut state, actor, "Dryad Arbor", Zone::Battlefield);
+    cast_from_pool(&mut state, actor, "Dress Down", &[ManaColor::U], 1, &[]);
+    match after {
+        "Yavimaya, Cradle of Growth" => {
+            let yavimaya = put(&mut state, actor, after, Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(yavimaya, Zone::Battlefield),
+            );
+            settled(&mut state);
+        }
+        "Navigator's Compass" => compass_adds(&mut state, actor, arbor, 4),
+        "Abundant Growth" => {
+            let growth = put(&mut state, actor, after, Zone::Hand);
+            pool(&mut state, actor, &[ManaColor::G], 0);
+            cast(&mut state, growth, &[Target::Object(arbor)]);
+            settled(&mut state);
+            assert_eq!(state.objects.get(growth).zone, Zone::Battlefield);
+        }
+        other => panic!("{other}"),
+    }
+    assert!(!state.objects.get(arbor).tapped);
+    (state, arbor)
+}
+
+/// The mana ability that comes with a basic land type belongs to the type
+/// (305.6), and Dress Down's "lose all abilities" removes it in layer 6
+/// whatever the timestamp of the effect that gave the type (613.1): a Dryad
+/// Arbor under Dress Down does not tap for {G} when Yavimaya enters or
+/// Navigator's Compass makes it a Forest later, by hand or in the planner.
+#[test]
+fn a_later_land_type_does_not_give_mana_through_dress_down_both_seats() {
+    for actor in [P0, P1] {
+        for after in ["Yavimaya, Cradle of Growth", "Navigator's Compass"] {
+            let (mut state, arbor) = dryad_arbor_under_dress_down_then(actor, after);
+            assert!(engine::has_effective_subtype(
+                &state,
+                arbor,
+                mtg_kernel::card_def::Subtype::Forest
+            ));
+            next(&mut state);
+            assert_eq!(tapped_colors(&state, arbor), Vec::new(), "{after}: by hand");
+            assert!(planned(&state, actor, arbor).is_none(), "{after}: planner");
+        }
+    }
+}
+
+/// Abundant Growth's grant is a layer-6 effect: one that enchants a Dryad
+/// Arbor after Dress Down has the later timestamp and applies (613.7), so the
+/// Arbor taps for any color.
+#[test]
+fn abundant_growth_after_dress_down_gives_any_color_both_seats() {
+    for actor in [P0, P1] {
+        let (mut state, arbor) = dryad_arbor_under_dress_down_then(actor, "Abundant Growth");
+        assert_offers(&mut state, arbor, &WUBRG, "Abundant Growth after Dress Down");
+    }
+}
+
+/// A Navigator's Compass record saved before records carried a timestamp
+/// loads with timestamp 0, so a land type it added under a land-type setter
+/// counts as earlier than the setter: the land has the setter's type only.
+#[test]
+fn a_compass_record_without_a_timestamp_loads_as_earlier_than_the_setter_both_seats() {
+    for actor in [P0, P1] {
+        let (state, volcanic) = volcanic_under_spreading_seas_then_compass(actor);
+        let mut json = serde_json::to_value(&state).unwrap();
+        let records = json["eternal_v1"]["s1d"]["extra_land_types"]
+            .as_array_mut()
+            .expect("the Compass record");
+        assert_eq!(records.len(), 1);
+        assert!(records[0]["timestamp"].as_u64().unwrap() > 0);
+        records[0].as_object_mut().unwrap().remove("timestamp");
+        let mut loaded: GameState = serde_json::from_value(json).unwrap();
+        let reloaded = serde_json::to_value(&loaded).unwrap();
+        assert_eq!(
+            reloaded["eternal_v1"]["s1d"]["extra_land_types"][0]["timestamp"],
+            serde_json::json!(0)
+        );
+        assert!(!engine::has_effective_subtype(
+            &loaded,
+            volcanic,
+            mtg_kernel::card_def::Subtype::Mountain
+        ));
+        assert_offers(&mut loaded, volcanic, &[ManaColor::U], "an old record");
     }
 }
