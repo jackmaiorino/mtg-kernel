@@ -2894,11 +2894,13 @@ pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u
     let live = state.objects.try_get(object)?;
     // A stationed Extinguisher Battleship's creature type doesn't depend on
     // its abilities either (wave S1m), nor does an Invasion Submersible's
-    // after its exhaust ability (wave S1q).
+    // after its exhaust ability (wave S1q), nor an animated land's or
+    // artifact's, which a resolved ability gave it (Celestial Colonnade).
     if live.zone != Zone::Battlefield
         || !(CARD_DEFS.get(live.card_def as usize).is_some_and(|def| {
             def.types_for_face(live.v4.face_index)
                 .contains(&CardType::Creature)
+                || (live.v4.animation_timestamp.is_some() && def.animation.is_some())
         }) || crate::eternal_sideboard_s1m_v1::stationed(state, object)
             || crate::eternal_sideboard_s1q_v1::animated(state, object))
     {

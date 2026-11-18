@@ -895,6 +895,76 @@ fn creeping_tar_pit_becomes_an_unblockable_three_two_until_end_of_turn() {
 }
 
 #[test]
+fn creeping_tar_pit_stays_unblockable_after_ability_removal_or_a_creature_override() {
+    // "It can't be blocked this turn" is a rule effect of the resolved
+    // ability, not an ability of the land: Unable to Scream's later removal
+    // keeps it...
+    let mut state = plains();
+    let land = put(&mut state, P0, "Creeping Tar Pit", Zone::Battlefield);
+    put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    animate(&mut state, land);
+    let scream = put(&mut state, P0, "Unable to Scream", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, scream, &[Target::Object(land)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, scream), Zone::Battlefield);
+    assert_eq!(power_toughness(&state, land), (0, 2));
+    assert!(keyword(&state, land, Keywords::CANT_BE_BLOCKED));
+    assert!(legal_blockers(&mut state, land).is_empty());
+
+    // ...and so does Witness Protection, whose characteristics replace the
+    // animation's.
+    let mut state = plains();
+    let land = put(&mut state, P0, "Creeping Tar Pit", Zone::Battlefield);
+    put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    animate(&mut state, land);
+    let protection = put(&mut state, P0, "Witness Protection", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, protection, &[Target::Object(land)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, protection), Zone::Battlefield);
+    assert!(engine::object_has_type(&state, land, CardType::Creature));
+    assert_eq!(power_toughness(&state, land), (1, 1));
+    assert!(keyword(&state, land, Keywords::CANT_BE_BLOCKED));
+    assert!(
+        legal_blockers(&mut state, land).is_empty(),
+        "nothing can block it"
+    );
+}
+
+#[test]
+fn dress_down_removes_an_animated_colonnades_keywords_only_when_it_is_later() {
+    // Animated first, Dress Down later: the animation's creature type
+    // doesn't depend on abilities, so Dress Down applies to the land, and
+    // its removal is later than the animation's flying and vigilance
+    // (613.7).
+    let mut state = plains();
+    let land = put(&mut state, P0, "Celestial Colonnade", Zone::Battlefield);
+    animate(&mut state, land);
+    assert!(keyword(&state, land, Keywords::FLYING));
+    let dress = put(&mut state, P0, "Dress Down", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, dress, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, dress), Zone::Battlefield);
+    assert!(!keyword(&state, land, Keywords::FLYING));
+    assert!(!keyword(&state, land, Keywords::VIGILANCE));
+
+    // Dress Down first, animated later: the animation's keywords apply after
+    // the removal.
+    let mut state = plains();
+    let land = put(&mut state, P0, "Celestial Colonnade", Zone::Battlefield);
+    let dress = put(&mut state, P0, "Dress Down", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, dress, &[]);
+    settled(&mut state);
+    animate(&mut state, land);
+    assert!(engine::object_has_type(&state, land, CardType::Creature));
+    assert!(keyword(&state, land, Keywords::FLYING));
+    assert!(keyword(&state, land, Keywords::VIGILANCE));
+}
+
+#[test]
 fn creature_lands_cannot_attack_or_tap_the_turn_they_arrive() {
     for name in ["Celestial Colonnade", "Creeping Tar Pit"] {
         for sick in [true, false] {

@@ -1644,6 +1644,23 @@ fn goblin_warchief_discounts_and_hastes_goblins() {
 }
 
 #[test]
+fn a_later_unable_to_scream_removes_goblin_warchiefs_haste() {
+    let mut state = islands();
+    put(&mut state, P0, "Goblin Warchief", Zone::Battlefield);
+    let lackey = put(&mut state, P0, "Goblin Lackey", Zone::Battlefield);
+    assert!(keyword(&state, lackey, Keywords::HASTE));
+    let scream = put(&mut state, P0, "Unable to Scream", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, scream, &[Target::Object(lackey)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, scream), Zone::Battlefield);
+    // Still a Goblin ("in addition to its other types"), but the removal is
+    // later than the Warchief's grant (613.7).
+    assert!(has_subtype(&state, lackey, Subtype::Goblin));
+    assert!(!keyword(&state, lackey, Keywords::HASTE));
+}
+
+#[test]
 fn graveborn_muse_draws_and_drains_per_zombie() {
     let mut state = game(&["Island"; 10]);
     put(&mut state, P0, "Graveborn Muse", Zone::Battlefield);

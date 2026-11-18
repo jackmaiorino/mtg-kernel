@@ -1197,6 +1197,73 @@ fn an_opposing_samut_gives_its_controller_haste_not_yours() {
     assert!(!keyword(&state, mine, Keywords::HASTE));
 }
 
+#[test]
+fn a_later_unable_to_scream_removes_samuts_haste_and_an_earlier_one_does_not() {
+    // Samut first, Unable to Scream later: the removal applies after the
+    // grant (613.7).
+    let mut state = plains();
+    put(
+        &mut state,
+        P0,
+        "Samut, Hazoret's Champion",
+        Zone::Battlefield,
+    );
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    assert!(keyword(&state, elves, Keywords::HASTE));
+    let scream = put(&mut state, P0, "Unable to Scream", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, scream, &[Target::Object(elves)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, scream), Zone::Battlefield);
+    assert!(!keyword(&state, elves, Keywords::HASTE));
+
+    // Unable to Scream first, Samut later: the grant applies after the
+    // removal.
+    let mut state = plains();
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    let scream = put(&mut state, P0, "Unable to Scream", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, scream, &[Target::Object(elves)]);
+    settled(&mut state);
+    let samut = put(&mut state, P0, "Samut, Hazoret's Champion", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast(&mut state, samut, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, samut), Zone::Battlefield);
+    assert!(keyword(&state, elves, Keywords::HASTE));
+}
+
+#[test]
+fn a_later_unable_to_scream_removes_marwyns_hexproof_and_the_animation_keywords() {
+    let mut state = plains();
+    put(&mut state, P0, "Marwyn, the Preserver", Zone::Battlefield);
+    let land = put(&mut state, P0, "Celestial Colonnade", Zone::Battlefield);
+    // The land is tapped, so it cannot pay for its own animation.
+    state.objects.get_mut(land).tapped = true;
+    pool(&mut state, P0, &[ManaColor::W, ManaColor::U], 3);
+    activate(&mut state, land, 0, &[]);
+    settled(&mut state);
+    state.objects.get_mut(land).tapped = false;
+    assert!(engine::object_has_type(&state, land, CardType::Creature));
+    assert!(keyword(&state, land, Keywords::HEXPROOF));
+    assert!(keyword(&state, land, Keywords::FLYING));
+    // Hexproof doesn't stop its controller's Aura.
+    let scream = put(&mut state, P0, "Unable to Scream", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, scream, &[Target::Object(land)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, scream), Zone::Battlefield);
+    assert!(
+        !keyword(&state, land, Keywords::HEXPROOF),
+        "Marwyn's grant is earlier"
+    );
+    assert!(
+        !keyword(&state, land, Keywords::FLYING),
+        "so is the animation"
+    );
+    assert!(!keyword(&state, land, Keywords::VIGILANCE));
+}
+
 // ---- Marwyn, the Preserver -----------------------------------------------------------
 
 #[test]

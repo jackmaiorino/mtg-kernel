@@ -387,6 +387,37 @@ fn controls_active(state: &GameState, player: PlayerId, id: Option<u16>, name: &
     })
 }
 
+/// Whether `player` controls such a permanent whose grant still applies to
+/// `host`: the grant has the permanent's timestamp, so a later ability
+/// removal on `host` takes it away and an earlier one does not (613.7).
+fn controls_granting(
+    state: &GameState,
+    player: PlayerId,
+    id: Option<u16>,
+    name: &str,
+    host: ObjectId,
+) -> bool {
+    let Some(id) = id else {
+        return false;
+    };
+    [PlayerId::P0, PlayerId::P1].into_iter().any(|seat| {
+        state.players[seat.index()]
+            .battlefield
+            .iter()
+            .any(|&object| {
+                let live = state.objects.get(object);
+                live.card_def == id
+                    && live.controller == player
+                    && crate::eternal_e5a_v1::active_named(state, object, name)
+                    && crate::continuous_characteristics_v1::granted_ability_survives(
+                        state,
+                        host,
+                        live.v4.layer_timestamp.unwrap_or(0),
+                    )
+            })
+    })
+}
+
 /// The keywords this module's statics grant `object`: Samut, Hazoret's
 /// Champion ("Creatures you control have haste.") and Marwyn, the Preserver
 /// ("Lands you control have hexproof."). Called from wave E9a's
@@ -404,13 +435,13 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
     let controller = live.controller;
     let ids = static_ids();
     let mut keywords = Keywords::NONE;
-    if controls_active(state, controller, ids[0], SAMUT)
-        && crate::engine::object_has_type(state, object, CardType::Creature)
+    if crate::engine::object_has_type(state, object, CardType::Creature)
+        && controls_granting(state, controller, ids[0], SAMUT, object)
     {
         keywords = keywords | Keywords::HASTE;
     }
-    if controls_active(state, controller, ids[1], MARWYN)
-        && crate::engine::object_has_type(state, object, CardType::Land)
+    if crate::engine::object_has_type(state, object, CardType::Land)
+        && controls_granting(state, controller, ids[1], MARWYN, object)
     {
         keywords = keywords | Keywords::HEXPROOF;
     }

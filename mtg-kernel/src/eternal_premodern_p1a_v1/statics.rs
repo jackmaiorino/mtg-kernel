@@ -82,10 +82,16 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
         | crate::eternal_premodern_p3f_v1::granted_keywords(state, object)
         | crate::eternal_sideboard_s1e_v1::granted_keywords(state, object)
         | crate::eternal_sideboard_s1g_v1::granted_keywords(state, object);
+    // A Warchief's grant has its timestamp, so a later ability removal on
+    // the Goblin takes the haste away and an earlier one does not (613.7).
     if crate::engine::has_effective_subtype(state, object, Subtype::Goblin)
-        && active_permanents(state, GOBLIN_WARCHIEF, Some(controller))
-            .next()
-            .is_some()
+        && active_permanents(state, GOBLIN_WARCHIEF, Some(controller)).any(|warchief| {
+            crate::continuous_characteristics_v1::granted_ability_survives(
+                state,
+                object,
+                state.objects.get(warchief).v4.layer_timestamp.unwrap_or(0),
+            )
+        })
     {
         keywords = keywords | Keywords::HASTE;
     }

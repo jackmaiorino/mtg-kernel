@@ -322,11 +322,18 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
         return Keywords::NONE;
     }
     let controller = live.controller;
+    // Each Grove's grant has its timestamp, so a later ability removal on
+    // the enchantment takes the shroud away (613.7).
     let granted = groves.iter().any(|grove| {
         grove.object != object
             && link_live_in(state, *grove, Zone::Battlefield)
             && state.objects.get(grove.object).controller == controller
             && active_named(state, grove.object, STERLING_GROVE)
+            && crate::continuous_characteristics_v1::granted_ability_survives(
+                state,
+                object,
+                state.objects.get(grove.object).v4.layer_timestamp.unwrap_or(0),
+            )
     });
     if granted && crate::engine::object_has_type(state, object, CardType::Enchantment) {
         Keywords::SHROUD

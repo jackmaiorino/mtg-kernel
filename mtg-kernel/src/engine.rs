@@ -24574,9 +24574,7 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     {
         return true;
     }
-    if crate::continuous_characteristics_v1::animation(state, id)
-        .is_some_and(|(animation, _)| animation.keywords.has(kw))
-    {
+    if crate::continuous_characteristics_v1::animation_keywords(state, id).has(kw) {
         return true;
     }
     #[cfg(feature = "standard-magezero-fixtures")]
@@ -24876,9 +24874,7 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
             found = found | keyword;
         }
     }
-    if let Some((animation, _)) = crate::continuous_characteristics_v1::animation(state, id) {
-        found = found | animation.keywords;
-    }
+    found = found | crate::continuous_characteristics_v1::animation_keywords(state, id);
     #[cfg(feature = "standard-magezero-fixtures")]
     {
         if printed_active {
