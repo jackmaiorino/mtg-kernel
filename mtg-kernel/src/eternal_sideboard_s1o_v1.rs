@@ -255,12 +255,12 @@ const EOWYN_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(TriggerCondition::Etb,
 const LIBERATOR_TRIGGERS: [TriggeredAbilityDef; 1] =
     [trigger(TriggerCondition::Attacks, 1, trapbreaker_attack)];
 
-/// Triggered abilities of this module's cards, falling through to wave C1a.
+/// Triggered abilities of this module's cards, falling through to wave S1q.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         EOWYN => &EOWYN_TRIGGERS,
         OUTLAND_LIBERATOR => &LIBERATOR_TRIGGERS,
-        _ => crate::eternal_cube_c1a_v1::triggers_for(name),
+        _ => crate::eternal_sideboard_s1q_v1::triggers_for(name),
     }
 }
 

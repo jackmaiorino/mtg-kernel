@@ -1,6 +1,6 @@
 //! Card-database recipes for the eternal catalog's sideboard wave S1o. Wave
-//! S1n's tables fall through to these, and these fall through to Vintage Cube
-//! wave C1a's (`build_eternal_c1a_v1.rs`); the transform-face tables are
+//! S1n's tables fall through to these, and these fall through to sideboard
+//! wave S1q's (`build_eternal_s1q_v1.rs`); the transform-face tables are
 //! reached from the tail of wave E9a's. Runtime programs, triggers and
 //! static hooks live in `src/eternal_sideboard_s1o_v1.rs`. Every row is keyed
 //! by a name that occurs only in the eternal registry.
@@ -53,7 +53,7 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
     match name {
         "Outland Liberator" => &OUTLAND_LIBERATOR,
         "Unlicensed Hearse" => &UNLICENSED_HEARSE,
-        _ => super::build_eternal_c1a_v1::activated_ability_recipes_for(name),
+        _ => super::build_eternal_s1q_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -64,35 +64,35 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             target_spec: "TargetSpec::None",
             program: "crate::eternal_sideboard_s1o_v1::stronghold_gambit",
         }),
-        _ => super::build_eternal_c1a_v1::special_for(name),
+        _ => super::build_eternal_s1q_v1::special_for(name),
     }
 }
 
 /// No S1o card has kicker.
 pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
-    super::build_eternal_c1a_v1::kicker_cost_for(name)
+    super::build_eternal_s1q_v1::kicker_cost_for(name)
 }
 
 /// No S1o card is an Aura or an Equipment.
 pub(super) fn attachment_for(name: &str) -> &'static str {
-    super::build_eternal_c1a_v1::attachment_for(name)
+    super::build_eternal_s1q_v1::attachment_for(name)
 }
 
 /// No S1o card has flashback.
 pub(super) fn flashback_for(name: &str) -> String {
-    super::build_eternal_c1a_v1::flashback_for(name)
+    super::build_eternal_s1q_v1::flashback_for(name)
 }
 
 /// No S1o card has an alternative cost.
 pub(super) fn alt_cost_for(name: &str) -> &'static str {
-    super::build_eternal_c1a_v1::alt_cost_for(name)
+    super::build_eternal_s1q_v1::alt_cost_for(name)
 }
 
 /// Printed evergreen keywords on S1o permanents.
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "Eowyn, Fearless Knight" => &["Keywords::HASTE"],
-        _ => super::build_eternal_c1a_v1::keywords_for(name),
+        _ => super::build_eternal_s1q_v1::keywords_for(name),
     }
 }
 
@@ -111,7 +111,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Unlicensed Hearse" => {
             "vehicle:cda_power_toughness_cards_exiled_with_this_incarnation;crew:2;activated:tap_exile_up_to_two_target_cards_from_single_graveyard"
         }
-        _ => super::build_eternal_c1a_v1::trigger_recipe_for(name),
+        _ => super::build_eternal_s1q_v1::trigger_recipe_for(name),
     }
 }
 

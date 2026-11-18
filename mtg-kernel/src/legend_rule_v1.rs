@@ -155,6 +155,7 @@ fn prepare(state: &GameState, waiting: &[PendingTrigger]) -> PreparedPassV1 {
         let completed_saga = object.v4.face_index == 0
             && definition.saga.as_ref().is_some_and(|saga| {
                 object.counters.lore >= saga.chapter_effects.len() as i16
+                    && trigger::saga_has_chapter_abilities(state, id)
                     && saga.chapter_effects.last().is_some_and(|effect| {
                         !trigger::saga_final_chapter_is_pending(
                             state,

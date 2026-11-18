@@ -6355,6 +6355,10 @@ fn unfloored_activation_mana_cost(
 /// though it were mana of any color" apply: it changes how the total is paid,
 /// not how much it is, so colored mana is never reduced as generic. Both the
 /// payment and the legality precheck of a mana component use this total.
+/// Invasion Submersible's waterbend payments (wave S1q) start from the printed
+/// {3} and, once the total is known, take off the permanents each payment
+/// taps for it (601.2h pays the total), before the conversion, which leaves
+/// generic mana alone.
 fn activation_total_mana_cost(
     printed: Option<&Cost>,
     components: &[CostComponent],
@@ -6371,6 +6375,12 @@ fn activation_total_mana_cost(
     );
     #[cfg(not(feature = "eternal-fixtures"))]
     let tax = 0_u8;
+    // Invasion Submersible's four waterbend payments all cost the printed
+    // "Waterbend {3}" (wave S1q).
+    #[cfg(feature = "eternal-fixtures")]
+    let waterbend = crate::eternal_sideboard_s1q_v1::waterbend_printed(state, source, components);
+    #[cfg(feature = "eternal-fixtures")]
+    let printed = waterbend.as_ref().or(printed);
     let mut total = match printed {
         Some(cost) => *cost,
         None if tax > 0 => Cost::zero(),
@@ -6381,12 +6391,17 @@ fn activation_total_mana_cost(
     // Forensic Gadgeteer (eternal wave C4a): abilities of artifacts cost {1}
     // less, never below one mana.
     let total = crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, total);
+    // Invasion Submersible's waterbend taps pay part of that total; the rest
+    // is this ability's mana (wave S1q).
+    #[cfg(feature = "eternal-fixtures")]
+    let total =
+        crate::eternal_sideboard_s1q_v1::waterbend_taps_paid(state, source, components, total);
     Some(crate::standard_cards_v1::spend_as_any_color(
         state, player, source, total,
     ))
 }
 
-fn activation_mana_payment(
+pub(crate) fn activation_mana_payment(
     components: &[CostComponent],
     player: PlayerId,
     source: ObjectId,
@@ -8754,7 +8769,8 @@ fn activation_controlled_cost_candidates(
     } else {
         sacrificeable_controlled_permanents(player, filter, state, &already_chosen_ids)
     };
-    candidates
+    #[allow(unused_mut)]
+    let mut candidates = candidates
         .into_iter()
         .filter(|&object| !permanent_filter_excludes_source(filter) || object != source)
         .map(|object| {
@@ -8765,7 +8781,19 @@ fn activation_controlled_cost_candidates(
                 expected_zone_change_count: live.zone_change_count,
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    // Invasion Submersible's waterbend taps leave its mana part payable
+    // (wave S1q).
+    #[cfg(feature = "eternal-fixtures")]
+    if tap {
+        crate::eternal_sideboard_s1q_v1::retain_payable_waterbend_taps(
+            state,
+            source,
+            already_chosen,
+            &mut candidates,
+        );
+    }
+    candidates
 }
 
 pub(crate) fn lathril_payment_candidates_v1(
@@ -12941,6 +12969,9 @@ fn activate_mana_ability_unreplaced_for_with_checkpoint(
     // The Mightstone and Weakstone's restricted mana (wave C3c).
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cube_c3c_v1::restrict_produced_mana(state, player, source, choice);
+    // A Powerstone token's restricted mana (wave S1q).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_sideboard_s1q_v1::restrict_produced_mana(state, player, source, choice);
     // Pentad Prism's cost: the charge counter it removes (wave C2c).
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cube_c2c_v1::note_mana_ability_used(state, source);
@@ -23151,9 +23182,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 state.engine.event_log.push(marker.clone());
                 state.engine.event_history.push(marker);
             }
-            // 714.3b: as the precombat main phase begins, each front-face Saga
-            // controlled by the active player receives one lore counter. All
-            // chapter markers are logged before their triggers are collected.
+            // 715.3c: as the precombat main phase begins, each front-face Saga
+            // with one or more chapter abilities controlled by the active player
+            // receives one lore counter. All chapter markers are logged before
+            // their triggers are collected.
             let sagas = state
                 .objects
                 .iter()
@@ -23161,7 +23193,8 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     (object.zone == Zone::Battlefield
                         && object.controller == state.active_player
                         && object.v4.face_index == 0
-                        && card_def::CARD_DEFS[object.card_def as usize].saga.is_some())
+                        && card_def::CARD_DEFS[object.card_def as usize].saga.is_some()
+                        && crate::trigger::saga_has_chapter_abilities(state, id))
                     .then_some(id)
                 })
                 .collect::<Vec<_>>();
@@ -23769,6 +23802,12 @@ pub fn object_has_type(state: &GameState, id: ObjectId, card_type: CardType) -> 
     // its other types (721.2b, wave S1m).
     #[cfg(feature = "eternal-fixtures")]
     if card_type == CardType::Creature && crate::eternal_sideboard_s1m_v1::stationed(state, id) {
+        return true;
+    }
+    // An Invasion Submersible whose exhaust ability made it an artifact
+    // creature, with no duration (wave S1q).
+    #[cfg(feature = "eternal-fixtures")]
+    if card_type == CardType::Creature && crate::eternal_sideboard_s1q_v1::animated(state, id) {
         return true;
     }
     // Life's animated lands (Premodern wave P2c).
@@ -31359,6 +31398,12 @@ fn push_paid_activation(
             pending.ability_index,
         );
         crate::eternal_premodern_p2a_v1::statics::activation_paid(
+            state,
+            pending.source,
+            pending.ability_index,
+        );
+        // Invasion Submersible's exhaust record (wave S1q).
+        crate::eternal_sideboard_s1q_v1::activation_paid(
             state,
             pending.source,
             pending.ability_index,
