@@ -123,8 +123,9 @@ fn settled(state: &mut GameState) {
     }
 }
 
-/// `settle`, answering every card selection with its first legal card
-/// (Brainstorm's cards put back).
+/// `settle`, answering every target, card selection and option with its
+/// first legal answer (Brainstorm's cards put back, Thought-Knot Seer's
+/// target).
 fn settled_choosing_first(state: &mut GameState) {
     while let Some(decision) = settle(state) {
         match decision {
@@ -134,6 +135,10 @@ fn settled_choosing_first(state: &mut GameState) {
             Decision::ChooseEffectTargets { legal_targets, .. } => {
                 act(state, Action::ChooseEffectTarget(legal_targets[0]))
             }
+            Decision::ChooseTargets { legal_targets, .. } => {
+                act(state, Action::ChooseTarget(legal_targets[0]))
+            }
+            Decision::ChooseEffectOption { .. } => act(state, Action::ChooseEffectOption(0)),
             other => panic!("unexpected choice: {other:?}"),
         }
     }
@@ -544,10 +549,12 @@ fn a_land_alpine_moon_names_is_planned_for_one_mana_of_any_color_both_seats() {
     }
 }
 
-/// Every color the planner lists for an untapped source in the scenarios
-/// above is one that tapping it by hand adds, and in the amount it plans.
+/// In every scenario of this module the planner and tapping by hand agree:
+/// each color the planner lists for an untapped source is one tapping it by
+/// hand adds, in the amount it plans, and each color tapping an untapped
+/// permanent by hand adds is one the planner lists for it.
 #[test]
-fn the_planner_lists_only_what_tapping_by_hand_adds_both_seats() {
+fn the_planner_lists_exactly_what_tapping_by_hand_adds_both_seats() {
     for actor in [P0, P1] {
         let states = [
             volcanic_under_blood_moon(actor).0,
@@ -560,12 +567,19 @@ fn the_planner_lists_only_what_tapping_by_hand_adds_both_seats() {
             saga_without_chapters_under_blood_moon(actor).0,
             volcanic_with_urborg_and_yavimaya(actor).0,
             plain_volcanic(actor).0,
+            volcanic_with_growth_under(actor, "Blood Moon").0,
+            volcanic_with_growth_under(actor, "Spreading Seas").0,
+            tower_named_by_hamlet_under_spreading_seas(actor).0,
+            volcanic_under_spreading_seas_then_compass(actor).0,
+            volcanic_under_compass_then_spreading_seas(actor).0,
+            volcanic_under_spreading_seas_with_urborg(actor, true).0,
+            volcanic_under_spreading_seas_with_urborg(actor, false).0,
         ];
         for (scenario, mut state) in states.into_iter().enumerate() {
             next(&mut state);
             let sources = mana::gather_sources(actor, &state);
             assert!(!sources.is_empty(), "scenario {scenario}");
-            for source in sources {
+            for source in &sources {
                 for &color in &source.choices {
                     assert_eq!(
                         tapped_for(&state, source.id, color),
@@ -575,7 +589,311 @@ fn the_planner_lists_only_what_tapping_by_hand_adds_both_seats() {
                     );
                 }
             }
+            for &permanent in &state.players[actor.index()].battlefield {
+                if state.objects.get(permanent).tapped {
+                    continue;
+                }
+                for color in COLORS {
+                    let Some(amount) = tapped_for(&state, permanent, color) else {
+                        continue;
+                    };
+                    let source = sources.iter().find(|source| source.id == permanent);
+                    assert!(
+                        source.is_some_and(|source| {
+                            source.choices.contains(&color) && source.yield_per_tap == amount
+                        }),
+                        "scenario {scenario}: {} taps for {amount} {color:?}, planned {source:?}",
+                        state.objects.get(permanent).name
+                    );
+                }
+            }
         }
+    }
+}
+
+/// The colors tapping `source` by hand adds, in WUBRG then {C} order.
+fn tapped_colors(state: &GameState, source: ObjectId) -> Vec<ManaColor> {
+    COLORS
+        .into_iter()
+        .filter(|&color| tapped_for(state, source, color).is_some())
+        .collect()
+}
+
+/// The colors the planner lists for `source`, in WUBRG then {C} order.
+fn planned_colors(state: &GameState, player: PlayerId, source: ObjectId) -> Vec<ManaColor> {
+    planned(state, player, source).map_or_else(Vec::new, |planned| sorted(&planned.choices))
+}
+
+/// Asserts that tapping `source` by hand and the planner both offer exactly
+/// `expected`.
+fn assert_offers(state: &mut GameState, source: ObjectId, expected: &[ManaColor], what: &str) {
+    next(state);
+    let player = state.priority_player;
+    assert_eq!(tapped_colors(state, source), expected, "{what}: by hand");
+    assert_eq!(
+        planned_colors(state, player, source),
+        expected,
+        "{what}: planner"
+    );
+}
+
+// ---- Grants beside a removal of printed abilities -------------------------------------
+
+/// `actor`'s Volcanic Island enchanted by `actor`'s Abundant Growth, then
+/// `setter` (Blood Moon, or Spreading Seas on the Volcanic Island).
+fn volcanic_with_growth_under(actor: PlayerId, setter: &str) -> (GameState, ObjectId) {
+    let mut state = game(actor);
+    let volcanic = put(&mut state, actor, "Volcanic Island", Zone::Battlefield);
+    let growth = put(&mut state, actor, "Abundant Growth", Zone::Hand);
+    pool(&mut state, actor, &[ManaColor::G], 0);
+    cast(&mut state, growth, &[Target::Object(volcanic)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(growth).zone, Zone::Battlefield);
+    if setter == "Blood Moon" {
+        cast_from_pool(&mut state, actor, setter, &[ManaColor::R], 2, &[]);
+    } else {
+        cast_from_pool(
+            &mut state,
+            actor,
+            setter,
+            &[ManaColor::U],
+            1,
+            &[Target::Object(volcanic)],
+        );
+    }
+    assert!(!state.objects.get(volcanic).tapped);
+    (state, volcanic)
+}
+
+/// `actor`'s Urza's Tower enchanted by `actor`'s Spreading Seas, while
+/// `actor`'s tapped Petrified Hamlet names Urza's Tower.
+fn tower_named_by_hamlet_under_spreading_seas(actor: PlayerId) -> (GameState, ObjectId) {
+    let mut state = game(actor);
+    let tower = put(&mut state, actor, "Urza's Tower", Zone::Battlefield);
+    let hamlet = put(&mut state, actor, "Petrified Hamlet", Zone::Hand);
+    next(&mut state);
+    act(&mut state, Action::PlayLand(hamlet));
+    let tower_option = mtg_kernel::eternal_legacy_e5b_v1::hamlet_name_options()
+        .iter()
+        .position(|&card_def| card_def == card_id_by_name("Urza's Tower").unwrap())
+        .unwrap();
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectOption { source, .. }) => {
+            assert_eq!(source, hamlet);
+            act(
+                &mut state,
+                Action::ChooseEffectOption(u16::try_from(tower_option).unwrap()),
+            );
+        }
+        other => panic!("expected the name choice, got {other:?}"),
+    }
+    settled(&mut state);
+    state.objects.get_mut(hamlet).tapped = true;
+    cast_from_pool(
+        &mut state,
+        actor,
+        "Spreading Seas",
+        &[ManaColor::U],
+        1,
+        &[Target::Object(tower)],
+    );
+    assert!(!state.objects.get(tower).tapped);
+    (state, tower)
+}
+
+/// Activates `actor`'s new Navigator's Compass on `land`, choosing Mountain.
+fn compass_makes_a_mountain(state: &mut GameState, actor: PlayerId, land: ObjectId) {
+    let compass = put(state, actor, "Navigator's Compass", Zone::Battlefield);
+    next(state);
+    act(state, Action::ActivateAbility(compass, 0));
+    match next(state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(legal_targets.contains(&Target::Object(land)));
+            act(state, Action::ChooseTarget(Target::Object(land)));
+        }
+        other => panic!("expected targets, got {other:?}"),
+    }
+    // Options: Plains, Island, Swamp, Mountain, Forest.
+    match settle(state) {
+        Some(Decision::ChooseEffectOption { source, .. }) => {
+            assert_eq!(source, compass);
+            act(state, Action::ChooseEffectOption(3));
+        }
+        other => panic!("expected the land type choice, got {other:?}"),
+    }
+    settled(state);
+}
+
+/// `actor`'s Volcanic Island under `actor`'s Spreading Seas, then made a
+/// Mountain in addition by `actor`'s Navigator's Compass.
+fn volcanic_under_spreading_seas_then_compass(actor: PlayerId) -> (GameState, ObjectId) {
+    let (mut state, volcanic) = volcanic_under_spreading_seas(actor);
+    compass_makes_a_mountain(&mut state, actor, volcanic);
+    (state, volcanic)
+}
+
+/// `actor`'s Volcanic Island made a Mountain in addition by `actor`'s
+/// Navigator's Compass, then enchanted by `actor`'s Spreading Seas.
+fn volcanic_under_compass_then_spreading_seas(actor: PlayerId) -> (GameState, ObjectId) {
+    let mut state = game(actor);
+    let volcanic = put(&mut state, actor, "Volcanic Island", Zone::Battlefield);
+    compass_makes_a_mountain(&mut state, actor, volcanic);
+    cast_from_pool(
+        &mut state,
+        actor,
+        "Spreading Seas",
+        &[ManaColor::U],
+        1,
+        &[Target::Object(volcanic)],
+    );
+    (state, volcanic)
+}
+
+/// `actor`'s Volcanic Island under `actor`'s Spreading Seas, with `actor`'s
+/// Urborg, Tomb of Yawgmoth entering after the Seas when `urborg_later`, or
+/// on the battlefield before it.
+fn volcanic_under_spreading_seas_with_urborg(
+    actor: PlayerId,
+    urborg_later: bool,
+) -> (GameState, ObjectId) {
+    let mut state = game(actor);
+    let volcanic = put(&mut state, actor, "Volcanic Island", Zone::Battlefield);
+    let urborg = put(&mut state, actor, "Urborg, Tomb of Yawgmoth", Zone::Hand);
+    if !urborg_later {
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(urborg, Zone::Battlefield),
+        );
+        settled(&mut state);
+    }
+    cast_from_pool(
+        &mut state,
+        actor,
+        "Spreading Seas",
+        &[ManaColor::U],
+        1,
+        &[Target::Object(volcanic)],
+    );
+    if urborg_later {
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(urborg, Zone::Battlefield),
+        );
+        settled(&mut state);
+    }
+    assert_eq!(state.objects.get(urborg).zone, Zone::Battlefield);
+    (state, volcanic)
+}
+
+const WUBRG: [ManaColor; 5] = [
+    ManaColor::W,
+    ManaColor::U,
+    ManaColor::B,
+    ManaColor::R,
+    ManaColor::G,
+];
+
+/// Abundant Growth's grant survives a land-type setter (305.7): a Volcanic
+/// Island with it taps for any color under Blood Moon or Spreading Seas, by
+/// hand and in the planner, and pays for Brainstorm under Blood Moon.
+#[test]
+fn abundant_growth_keeps_any_color_under_a_land_type_setter_both_seats() {
+    for actor in [P0, P1] {
+        for setter in ["Blood Moon", "Spreading Seas"] {
+            let (mut state, volcanic) = volcanic_with_growth_under(actor, setter);
+            assert_offers(&mut state, volcanic, &WUBRG, setter);
+        }
+        let (mut state, volcanic) = volcanic_with_growth_under(actor, "Blood Moon");
+        let brainstorm = put(&mut state, actor, "Brainstorm", Zone::Hand);
+        cast(&mut state, brainstorm, &[]);
+        settled_choosing_first(&mut state);
+        assert!(state.objects.get(volcanic).tapped);
+        assert_eq!(state.objects.get(brainstorm).zone, Zone::Graveyard);
+    }
+}
+
+/// Petrified Hamlet's grant to the lands it names, "{T}: Add {C}.", survives
+/// Spreading Seas: an Urza's Tower under the Seas taps for {U} or {C}, and
+/// pays the {C} of Thought-Knot Seer.
+#[test]
+fn petrified_hamlets_grant_survives_spreading_seas_both_seats() {
+    for actor in [P0, P1] {
+        let (mut state, tower) = tower_named_by_hamlet_under_spreading_seas(actor);
+        assert_offers(&mut state, tower, &[ManaColor::U, ManaColor::C], "Tower");
+        let seer = put(&mut state, actor, "Thought-Knot Seer", Zone::Hand);
+        pool(
+            &mut state,
+            actor,
+            &[ManaColor::U, ManaColor::U, ManaColor::U],
+            0,
+        );
+        cast(&mut state, seer, &[]);
+        settled_choosing_first(&mut state);
+        assert!(state.objects.get(tower).tapped);
+        assert_eq!(state.objects.get(seer).zone, Zone::Battlefield);
+    }
+}
+
+/// Navigator's Compass and Spreading Seas both change land types, in
+/// timestamp order (613.7): a Mountain the Compass adds after the Seas stays
+/// and taps for {R}; one it added before the Seas is gone.
+#[test]
+fn navigators_compass_and_spreading_seas_apply_in_timestamp_order_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = opponent_of(actor);
+        let (mut state, volcanic) = volcanic_under_spreading_seas_then_compass(actor);
+        assert!(engine::has_effective_subtype(
+            &state,
+            volcanic,
+            mtg_kernel::card_def::Subtype::Mountain
+        ));
+        assert_offers(
+            &mut state,
+            volcanic,
+            &[ManaColor::U, ManaColor::R],
+            "Compass after the Seas",
+        );
+        let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
+        cast(&mut state, bolt, &[Target::Player(opponent)]);
+        settled(&mut state);
+        assert!(state.objects.get(volcanic).tapped);
+        assert_eq!(state.players[opponent.index()].life, 17);
+
+        let (mut state, volcanic) = volcanic_under_compass_then_spreading_seas(actor);
+        assert!(!engine::has_effective_subtype(
+            &state,
+            volcanic,
+            mtg_kernel::card_def::Subtype::Mountain
+        ));
+        assert_offers(
+            &mut state,
+            volcanic,
+            &[ManaColor::U],
+            "Compass before the Seas",
+        );
+    }
+}
+
+/// Urborg, Tomb of Yawgmoth and Spreading Seas, in timestamp order (613.7):
+/// an Urborg that entered after the Seas makes the Island a Swamp too, one
+/// that was there before does not.
+#[test]
+fn urborg_and_spreading_seas_apply_in_timestamp_order_both_seats() {
+    for actor in [P0, P1] {
+        let (mut state, volcanic) = volcanic_under_spreading_seas_with_urborg(actor, true);
+        assert_offers(
+            &mut state,
+            volcanic,
+            &[ManaColor::U, ManaColor::B],
+            "Urborg after the Seas",
+        );
+        let (mut state, volcanic) = volcanic_under_spreading_seas_with_urborg(actor, false);
+        assert_offers(
+            &mut state,
+            volcanic,
+            &[ManaColor::U],
+            "Urborg before the Seas",
+        );
     }
 }
 
