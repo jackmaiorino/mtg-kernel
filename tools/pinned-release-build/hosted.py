@@ -32,8 +32,10 @@ LONDON_VECTOR_SOURCE_MERGED = "ce3df74f85649bdbb9a9c4971bafefb7346243ed"
 # The merge commit of PR 729 (pregame announcement step scale) on release/mull-c5719e1cf: this is what gets pinned for arm Q.
 ANNOUNCE_STEP_SOURCE_MERGED = "b6516e6f578109194c496768222ca97cdf5f0191"
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
-# name to rustc target flags for the mtg-kernel target artifacts and records them in BUILD-MANIFEST.json. A variant
-# binary runs only on CPUs with the named features; `default` is the portable x86-64 build and is unchanged.
+# name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
+# scripts or proc macros) and writes a manifest with another schema id, the name and the flags. A variant binary runs
+# only on CPUs with the named features; `default` is the portable x86-64 build and is unchanged. The receipt
+# (guard.json) records the name as `target_cpu`.
 TARGET_CPUS = ("default", "x86-64-v3-no-fma", "x86-64-v3", "znver5", "znver3")
 TARGET_CPU = os.environ.get("PINNED_TARGET_CPU", "default")
 if TARGET_CPU not in TARGET_CPUS:

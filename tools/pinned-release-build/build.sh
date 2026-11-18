@@ -9,10 +9,14 @@ if [[ $# != 2 || ! $1 =~ ^[0-9a-f]{40}$ || $2 != /work/out ]]; then
     printf 'Usage: build.sh SOURCE_COMMIT /work/out\n' >&2
     exit 2
 fi
-# PINNED_TARGET_CPU selects target flags for the mtg-kernel target artifacts (default: none, the portable x86-64
-# build, unchanged). An explicit --target keeps the flags off build scripts and proc macros, which run on the build
-# host. A variant binary runs only on CPUs with the named features, and the flags are recorded in the manifest.
-case "${PINNED_TARGET_CPU:-default}" in
+# PINNED_TARGET_CPU selects rustc target flags (default: none, the portable x86-64 build, unchanged). The flags
+# reach every crate compiled for the target, dependencies included, but not the precompiled standard library; an
+# explicit --target keeps them off build scripts and proc macros, which run on the build host. A variant binary runs
+# only on CPUs with the named features. Its manifest carries another schema id, the variant name and the flags, so
+# that nothing written for the portable build accepts it as one.
+variant=${PINNED_TARGET_CPU:-default}
+manifest_schema=fleet-combined-trainer-build/v1
+case "$variant" in
     default) rustflags= ;;
     x86-64-v3-no-fma) rustflags='-C target-cpu=x86-64-v3 -C target-feature=-fma' ;;
     x86-64-v3) rustflags='-C target-cpu=x86-64-v3' ;;
@@ -25,8 +29,11 @@ variant_env=()
 if [[ -n $rustflags ]]; then
     variant_args=(--target x86_64-unknown-linux-gnu)
     variant_env=(CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="$rustflags")
+    manifest_schema=fleet-combined-trainer-build-target-variant/v1
 fi
-export PINNED_RUSTFLAGS="$rustflags"
+export PINNED_RUSTFLAGS="$rustflags" PINNED_VARIANT="$variant" PINNED_MANIFEST_SCHEMA="$manifest_schema"
+printf 'Build variant: %s; manifest schema: %s; target flags: %s
+' "$variant" "$manifest_schema" "${rustflags:-none}" >&2
 [[ $EUID == 0 && $(uname -m) == x86_64 ]]
 grep -qx 'VERSION_CODENAME=bookworm' /etc/os-release
 [[ $(realpath -e -- /work) == /work && -d /work && -w /work ]]
@@ -171,6 +178,7 @@ done
 "$python" -B - "$repo" "$out" "$commit" "$origin" "$source_epoch" "${bins[@]}" <<'PY'
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -201,7 +209,7 @@ ld = Path(cmd("gcc", "-print-prog-name=ld"))
 if not ld.is_absolute():
     ld = Path("/usr/bin") / ld
 manifest = {
-    "schema": "fleet-combined-trainer-build/v1",
+    "schema": os.environ["PINNED_MANIFEST_SCHEMA"],
     "source_commit": commit,
     "source_tree": cmd("git", "-C", repo, "rev-parse", "HEAD^{tree}"),
     "source_origin": origin,
@@ -210,9 +218,10 @@ manifest = {
     "cargo_lock": pin(repo / "Cargo.lock"),
     "build": dict({"profile": "release", "lto": "thin", "codegen_units": 1, "jobs": 2,
                    "locked": True, "incremental": False, "binaries": binaries},
-                  **({"target_rustflags": __import__("os").environ["PINNED_RUSTFLAGS"],
+                  **({"target_cpu": os.environ["PINNED_VARIANT"],
+                      "target_rustflags": os.environ["PINNED_RUSTFLAGS"],
                       "explicit_target": "x86_64-unknown-linux-gnu"}
-                     if __import__("os").environ.get("PINNED_RUSTFLAGS") else {})),
+                     if os.environ["PINNED_RUSTFLAGS"] else {})),
     "tools": {
         "rustc": cmd("rustc", "-vV"), "cargo": cmd("cargo", "--version"),
         "gcc": cmd("gcc", "--version").splitlines()[0],

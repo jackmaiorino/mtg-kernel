@@ -88,10 +88,11 @@ jobs:
       - name: Build exact release pair under resource guards
         env:
           BUILD_ROOT: ${{ steps.capacity.outputs.root }}
+          PINNED_TARGET_CPU: ${{ inputs.target_cpu || 'default' }}
         shell: bash
         run: |
           set -euo pipefail
-          sudo PINNED_TARGET_CPU="${{ inputs.target_cpu || 'default' }}" python3 -B tools/pinned-release-build/hosted.py \
+          sudo PINNED_TARGET_CPU="$PINNED_TARGET_CPU" python3 -B tools/pinned-release-build/hosted.py \
             --work-root "$BUILD_ROOT" --source-commit "$BUILD_SOURCE"
       - name: Preserve capacity evidence
         if: always()
@@ -105,7 +106,8 @@ jobs:
         if: always() && steps.capacity.outputs.root != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: pinned-release-${{ github.run_id }}
+          # A target-flag variant's bundle says so in its name; the portable build's name is unchanged.
+          name: pinned-release-${{ github.run_id }}${{ (inputs.target_cpu && inputs.target_cpu != 'default') && format('-{0}', inputs.target_cpu) || '' }}
           path: |
             ${{ steps.capacity.outputs.root }}/*.json
             ${{ steps.capacity.outputs.root }}/*.log

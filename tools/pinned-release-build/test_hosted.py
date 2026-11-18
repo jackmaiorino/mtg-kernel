@@ -1,15 +1,86 @@
 """Exercise admission and owned-process cleanup without invoking Docker."""
 
 import json
+import os
 from pathlib import Path
+import re
 import signal
 import subprocess
+import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import hosted
+
+HERE = Path(__file__).resolve().parent
+PORTABLE_SCHEMA = "fleet-combined-trainer-build/v1"
+VARIANT_SCHEMA = "fleet-combined-trainer-build-target-variant/v1"
+
+
+def import_hosted(value):
+    """Import hosted.py in a fresh interpreter with PINNED_TARGET_CPU set to `value` (None: unset)."""
+    env = {key: item for key, item in os.environ.items() if key != "PINNED_TARGET_CPU"}
+    if value is not None:
+        env["PINNED_TARGET_CPU"] = value
+    return subprocess.run([sys.executable, "-B", "-c", "import hosted; print(hosted.TARGET_CPU)"], cwd=HERE, env=env,
+                          capture_output=True, text=True, timeout=60)
+
+
+def build_sh(value):
+    """Run build.sh as far as its first privilege check with PINNED_TARGET_CPU set to `value` (None: unset)."""
+    env = {key: item for key, item in os.environ.items() if key != "PINNED_TARGET_CPU"}
+    if value is not None:
+        env["PINNED_TARGET_CPU"] = value
+    return subprocess.run(["bash", "build.sh", "0" * 40, "/work/out"], cwd=HERE, env=env, capture_output=True,
+                          text=True, timeout=60)
+
+
+class TargetVariantTests(unittest.TestCase):
+    def test_the_environment_selects_the_variant_and_an_unknown_name_is_refused(self):
+        self.assertEqual(import_hosted(None).stdout.strip(), "default")
+        for name in hosted.TARGET_CPUS:
+            self.assertEqual(import_hosted(name).stdout.strip(), name)
+        for name in ("", "bogus", "znver5 -C x", "ZNVER5"):
+            result = import_hosted(name)
+            self.assertNotEqual(result.returncode, 0, name)
+            self.assertIn("unknown PINNED_TARGET_CPU", result.stderr)
+
+    def test_the_workflow_the_guard_and_the_build_helper_name_the_same_variants(self):
+        workflow = (HERE.parents[1] / ".github/workflows/pinned-release-build.yml").read_text(encoding="utf-8")
+        options = re.search(r"target_cpu:\n(?:.*\n)*?\s+options:\n((?:\s+- \S+\n)+)", workflow).group(1)
+        helper = (HERE / "build.sh").read_text(encoding="utf-8")
+        cases = re.search(r'case "\$variant" in\n((?:.*\n)*?)esac', helper).group(1)
+        labels = re.findall(r"^\s+([a-z0-9-]+)\) rustflags=", cases, flags=re.M)
+        self.assertEqual(tuple(re.findall(r"- (\S+)", options)), hosted.TARGET_CPUS)
+        self.assertEqual(tuple(labels), hosted.TARGET_CPUS)
+        self.assertEqual(hosted.TARGET_CPUS[0], "default")
+        # The value reaches the shell as an environment variable, never as script text.
+        for script in re.findall(r"run: \|\n((?:(?: {10}.*)?\n)+)", workflow):
+            self.assertNotIn("inputs.target_cpu", script)
+
+    @unittest.skipIf(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+                     "runs build.sh up to its root check: needs bash and a user that is not root")
+    def test_build_helper_gives_a_variant_another_manifest_schema_and_refuses_an_unknown_name(self):
+        result = build_sh("bogus")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Unknown PINNED_TARGET_CPU", result.stderr)
+        for name in (None, "", "default"):
+            result = build_sh(name)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(f"Build variant: default; manifest schema: {PORTABLE_SCHEMA}; target flags: none\n",
+                          result.stderr)
+        seen = set()
+        for name in hosted.TARGET_CPUS[1:]:
+            result = build_sh(name)
+            self.assertNotEqual(result.returncode, 0)
+            line = re.search(r"Build variant: (\S+); manifest schema: (\S+); target flags: (.+)\n", result.stderr)
+            self.assertEqual(line.group(1, 2), (name, VARIANT_SCHEMA))
+            self.assertIn("-C target-cpu=", line.group(3))
+            seen.add(line.group(3))
+        self.assertEqual(len(seen), len(hosted.TARGET_CPUS) - 1)
+        self.assertNotEqual(PORTABLE_SCHEMA, VARIANT_SCHEMA)
 
 
 class HostedGuardTests(unittest.TestCase):
@@ -40,7 +111,11 @@ class HostedGuardTests(unittest.TestCase):
         self.assertEqual(receipt["swap"]["original"], self.swaps)
         self.assertEqual(json.loads((self.root / "guard.json").read_bytes()), receipt)
 
-    def exercise_cleanup(self, *, growth_stop=False, swapoff_error=False):
+    def test_the_variant_reaches_the_container_and_the_receipt(self):
+        with patch.object(hosted, "TARGET_CPU", "znver5"):
+            self.exercise_cleanup(growth_stop=True, target_cpu="znver5")
+
+    def exercise_cleanup(self, growth_stop=False, swapoff_error=False, target_cpu="default"):
         free = 85 * hosted.GIB
         daemon = Mock(pid=101, returncode=None)
         daemon.poll.return_value = None
@@ -102,9 +177,11 @@ class HostedGuardTests(unittest.TestCase):
         self.assertNotIn("--rm", commands[1][0])
         self.assertEqual(commands[1][0][-4:], [hosted.IMAGE, "/build.sh", hosted.SOURCE, "/work/out"])
         # The target-flag variant reaches build.sh through the container's environment; the default is `default`.
-        self.assertIn("PINNED_TARGET_CPU=" + hosted.TARGET_CPU, commands[1][0])
-        self.assertEqual(receipt["target_cpu"], hosted.TARGET_CPU)
-        self.assertIn(hosted.TARGET_CPU, hosted.TARGET_CPUS)
+        position = commands[1][0].index("PINNED_TARGET_CPU=" + target_cpu)
+        self.assertEqual(commands[1][0][position - 1], "--env")
+        self.assertEqual([item for item in commands[1][0] if item.startswith("PINNED_TARGET_CPU=")],
+                         ["PINNED_TARGET_CPU=" + target_cpu])
+        self.assertEqual(receipt["target_cpu"], target_cpu)
         self.assertFalse(receipt["pass"])
         self.assertTrue((self.root / "daemon.log").is_file())
         self.assertTrue((self.root / "container.log").is_file())
