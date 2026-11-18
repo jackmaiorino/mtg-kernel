@@ -261,7 +261,7 @@ fn publication_records_its_bytes_only_after_success() {
 fn resident_cache_v1() -> VerifiedBytesCacheV1 {
     let cache = VerifiedBytesCacheV1::new_v1(1 << 20, 16);
     assert!(!cache.resident_v1());
-    cache.enable_resident_v1();
+    cache.enable_resident_for_test_v1();
     assert!(cache.resident_v1());
     cache
 }
@@ -449,7 +449,8 @@ fn a_shared_record_is_charged_the_capacity_it_keeps_alive() {
 }
 
 /// One cache does not serve both read modes: resident reads do not turn on
-/// under a run without them, and once on they refuse such a run.
+/// under a run without them, an admitted resident run already keeps such runs
+/// out, and a rejected one leaves the mode alone.
 #[test]
 fn a_cache_serves_one_read_mode() {
     let cache = VerifiedBytesCacheV1::new_v1(4096, 16);
@@ -457,20 +458,72 @@ fn a_cache_serves_one_read_mode() {
     let second = cache.enter_run_v1(false).unwrap();
     let refused = cache.enter_run_v1(true).err().unwrap();
     assert!(refused.contains("in flight"), "{refused}");
-    assert!(!cache.resident_v1());
     drop(first);
     assert!(cache.enter_run_v1(true).is_err());
-    assert!(!cache.resident_v1());
     drop(second);
-    let resident = cache.enter_run_v1(true).unwrap();
-    assert!(cache.resident_v1());
+
+    // Admitted and not accepted: the mode is still off, and a run without
+    // resident reads is refused already.
+    let pending = cache.enter_run_v1(true).unwrap();
+    let beside = cache.enter_run_v1(true).unwrap();
+    assert!(!cache.resident_v1());
     let refused = cache.enter_run_v1(false).err().unwrap();
     assert!(refused.contains("needs its own process"), "{refused}");
-    // The mode outlives the run that turned it on.
+    // Both rejected before acceptance: nothing turned on, rereads run again.
+    drop(pending);
+    assert!(cache.enter_run_v1(false).is_err());
+    drop(beside);
+    assert!(!cache.resident_v1());
+    drop(cache.enter_run_v1(false).unwrap());
+
+    // Accepted: on, for good.
+    let mut resident = cache.enter_run_v1(true).unwrap();
+    assert!(!cache.resident_v1());
+    resident.accept_v1();
+    assert!(cache.resident_v1());
+    resident.accept_v1();
+    assert!(cache.enter_run_v1(false).is_err());
     drop(resident);
     assert!(cache.resident_v1());
     assert!(cache.enter_run_v1(false).is_err());
-    assert!(cache.enter_run_v1(true).is_ok());
-    // A refused registration counted nothing: resident runs still start.
-    assert!(cache.enter_run_v1(true).is_ok());
+    // A later resident run is admitted, and its acceptance changes nothing.
+    let mut later = cache.enter_run_v1(true).unwrap();
+    later.accept_v1();
+    drop(later);
+    assert!(cache.resident_v1());
+    assert!(cache.enter_run_v1(false).is_err());
+}
+
+/// Threads entering in both modes: while a run without resident reads is in
+/// flight they are off, and once on they keep such runs out.
+#[test]
+fn concurrent_runs_never_mix_read_modes() {
+    let cache = VerifiedBytesCacheV1::new_v1(4096, 16);
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            scope.spawn(|| {
+                for _ in 0..2000 {
+                    if let Ok(run) = cache.enter_run_v1(false) {
+                        for _ in 0..8 {
+                            assert!(!cache.resident_v1());
+                            std::thread::yield_now();
+                        }
+                        drop(run);
+                    }
+                }
+            });
+        }
+        scope.spawn(|| loop {
+            match cache.enter_run_v1(true) {
+                Ok(mut run) => {
+                    std::thread::yield_now();
+                    run.accept_v1();
+                    break;
+                }
+                Err(_) => std::thread::yield_now(),
+            }
+        });
+    });
+    assert!(cache.resident_v1());
+    assert!(cache.enter_run_v1(false).is_err());
 }
