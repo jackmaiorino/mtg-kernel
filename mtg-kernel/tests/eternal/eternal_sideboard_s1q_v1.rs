@@ -1378,7 +1378,11 @@ fn bahamut_entering_under_dress_down_starts_at_the_next_main_phase_in_both_seats
         cast(&mut state, bahamut);
         settled(&mut state);
         assert_eq!(zone(&state, bahamut), Zone::Battlefield);
-        assert_eq!(state.objects.get(bahamut).counters.lore, 0, "no entry counter");
+        assert_eq!(
+            state.objects.get(bahamut).counters.lore,
+            0,
+            "no entry counter"
+        );
 
         run_until(
             &mut state,
@@ -1386,7 +1390,11 @@ fn bahamut_entering_under_dress_down_starts_at_the_next_main_phase_in_both_seats
             |_, _| None,
         );
         assert_eq!(zone(&state, dress), Zone::Graveyard);
-        assert_eq!(state.objects.get(bahamut).counters.lore, 0, "not on leaving");
+        assert_eq!(
+            state.objects.get(bahamut).counters.lore,
+            0,
+            "not on leaving"
+        );
 
         let mut chapter_one = false;
         run_until(

@@ -2728,7 +2728,11 @@ fn urzas_saga_under_blood_moon_gets_no_lore_counter_and_is_not_sacrificed_both_s
         pass_until(&mut state, |state| {
             state.active_player == actor && state.step == Step::Main1 && state.stack.is_empty()
         });
-        assert_eq!(state.objects.get(saga).counters.lore, 1, "no counter (715.3c)");
+        assert_eq!(
+            state.objects.get(saga).counters.lore,
+            1,
+            "no counter (715.3c)"
+        );
         assert_eq!(state.objects.get(saga).zone, Zone::Battlefield);
         assert_eq!(
             state.objects.get(finished).zone,
@@ -2738,7 +2742,10 @@ fn urzas_saga_under_blood_moon_gets_no_lore_counter_and_is_not_sacrificed_both_s
 
         // Blood Moon leaves: the finished Saga is sacrificed at once, the
         // other resumes at its next precombat main phase.
-        event::propose_and_commit(&mut state, ProposedEvent::zone_change(moon, Zone::Graveyard));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(moon, Zone::Graveyard),
+        );
         next(&mut state);
         assert_eq!(state.objects.get(finished).zone, Zone::Graveyard);
         assert_eq!(state.objects.get(saga).zone, Zone::Battlefield);
