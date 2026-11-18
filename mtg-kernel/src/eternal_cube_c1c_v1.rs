@@ -227,19 +227,12 @@ pub fn mine_collapse() -> EffectOp {
 /// Wheel of Fortune: "Each player discards their hand, then draws seven
 /// cards." The draws are their own ops, so Dredge and other draw
 /// replacements can interrupt them (Ox of Agonas' shape, for both players).
+/// The active player draws first, and a draw that wins the game ends it
+/// before the other player draws.
 pub fn wheel_of_fortune() -> EffectOp {
     EffectOp::Sequence(vec![
         c1c(C1cOpV1::DiscardEachHandV1),
-        EffectOp::DrawCards {
-            player: PlayerRef::Controller,
-            count: 7,
-        },
-        // A draw that wins the game ends it before the other player draws.
-        crate::eternal_cube_c1a_v1::stop_if_won(),
-        EffectOp::DrawCards {
-            player: PlayerRef::Opponent,
-            count: 7,
-        },
+        crate::eternal_cube_c1a_v1::each_player_draws(7, Vec::new()),
     ])
 }
 
