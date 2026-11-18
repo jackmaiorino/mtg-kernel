@@ -2833,7 +2833,8 @@ fn urzas_saga_keeps_its_chapter_grants_under_a_land_type_setter_both_seats() {
             let mut state = islands();
             let saga = saga_after_chapter_two(&mut state, actor);
             let moon = put(&mut state, actor, setter, Zone::Hand);
-            pool(&mut state, actor, &[color], 2);
+            // {2}{R} or {1}{U}{U}.
+            pool(&mut state, actor, &[color, color], 1);
             cast(&mut state, moon, &[]);
             settled(&mut state);
             assert_eq!(state.objects.get(moon).zone, Zone::Battlefield, "{setter}");
