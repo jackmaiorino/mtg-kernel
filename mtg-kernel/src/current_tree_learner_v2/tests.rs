@@ -1,0 +1,937 @@
+use super::*;
+use serde_json::json;
+
+struct OwnedDecision {
+    state: NumericTree,
+    actions: Vec<NumericTree>,
+    flags: Vec<[bool; FLAG_COUNT]>,
+    selected: usize,
+}
+impl OwnedDecision {
+    fn view(&self) -> DecisionView<'_> {
+        DecisionView {
+            state: &self.state,
+            actions: &self.actions,
+            flags: &self.flags,
+        }
+    }
+}
+
+struct OwnedTrajectory {
+    pair_index: u64,
+    leg: u8,
+    seat: u8,
+    terminal: TerminalV2,
+    decisions: Vec<OwnedDecision>,
+}
+
+fn tree(value: serde_json::Value) -> NumericTree {
+    NumericTree::probe_fixture_v1(&value).unwrap()
+}
+
+/// A decision with two to four legal actions and varied payloads, flags and
+/// tree shapes.
+fn decision(seed: u64) -> OwnedDecision {
+    let width = 2 + (seed % 3) as usize;
+    let phase = if seed.is_multiple_of(2) {
+        "main"
+    } else {
+        "combat"
+    };
+    let state = tree(json!({
+        "life": [20 + seed % 7, 17 - seed % 5],
+        "hand": (seed * 977) % 60_000,
+        "zones": {"library": 33 - seed % 9, "battlefield": [(seed * 31) % 65_535, 40_000, 123]},
+        "phase": phase,
+    }));
+    let actions = (0..width as u64)
+        .map(|i| {
+            tree(json!({
+                "kind": "cast",
+                "card": (seed * 7_919 + i * 104_729) % 65_535,
+                "targets": [i, (seed + i) * 5_003 % 65_535],
+            }))
+        })
+        .collect();
+    let flags = (0..width as u64)
+        .map(|i| std::array::from_fn(|f| (seed + i + f as u64).is_multiple_of(2)))
+        .collect();
+    OwnedDecision {
+        state,
+        actions,
+        flags,
+        selected: (seed % width as u64) as usize,
+    }
+}
+
+fn decisions(base: u64, count: u64) -> Vec<OwnedDecision> {
+    (0..count).map(|i| decision(base + i)).collect()
+}
+
+fn trajectory(
+    pair_index: u64,
+    leg: u8,
+    seat: u8,
+    terminal: TerminalV2,
+    decisions: Vec<OwnedDecision>,
+) -> OwnedTrajectory {
+    OwnedTrajectory {
+        pair_index,
+        leg,
+        seat,
+        terminal,
+        decisions,
+    }
+}
+
+fn natural(learner_return: i8) -> TerminalV2 {
+    TerminalV2::Natural { learner_return }
+}
+
+fn batch() -> Vec<OwnedTrajectory> {
+    vec![
+        trajectory(0, 0, 0, natural(1), decisions(1, 4)),
+        trajectory(0, 0, 1, natural(-1), decisions(11, 3)),
+        trajectory(0, 1, 0, natural(0), decisions(21, 5)),
+        trajectory(0, 1, 1, natural(0), decisions(31, 2)),
+        trajectory(1, 0, 0, natural(-1), decisions(41, 3)),
+        trajectory(1, 1, 1, natural(1), decisions(51, 4)),
+    ]
+}
+
+fn views(owned: &[OwnedTrajectory]) -> Vec<TrajectoryView<'_>> {
+    owned
+        .iter()
+        .map(|t| TrajectoryView {
+            pair_index: t.pair_index,
+            leg: t.leg,
+            seat: t.seat,
+            terminal: t.terminal,
+            decisions: t
+                .decisions
+                .iter()
+                .map(|d| SelectedView {
+                    view: d.view(),
+                    selected: d.selected,
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn random_model<const H: usize>(seed: u64) -> TreeModelV2<H> {
+    let mut rng = SplitMix64::seed(seed);
+    TreeModelV2::from_parameters(
+        (0..TreeModelV2::<H>::PARAMETER_COUNT)
+            .map(|_| ((rng.next_u64() >> 11) as f64 * TWO_POW_MINUS_53 - 0.5) * 0.8)
+            .collect(),
+    )
+    .unwrap()
+}
+
+fn blocks(hidden: usize) -> Vec<(&'static str, usize, usize)> {
+    let layout = Layout { hidden };
+    vec![
+        ("input", 0, layout.recurrent()),
+        ("recurrent", layout.recurrent(), layout.bias()),
+        ("encoder bias", layout.bias(), layout.head()),
+        ("head state", layout.head(), layout.head() + hidden),
+        (
+            "head action",
+            layout.head() + hidden,
+            layout.head() + 2 * hidden,
+        ),
+        ("head bilinear", layout.head() + 2 * hidden, layout.flags()),
+        ("flags", layout.flags(), layout.policy_bias()),
+        ("policy bias", layout.policy_bias(), layout.value_weights()),
+        ("value weights", layout.value_weights(), layout.value_bias()),
+        (
+            "value bias",
+            layout.value_bias(),
+            parameter_count_v2(hidden),
+        ),
+    ]
+}
+
+#[test]
+fn contracts_parameter_counts_and_identities() {
+    assert_eq!(PARAMETER_COUNT_V2, 1_832);
+    assert_eq!(PARAMETER_COUNT_V2_H16, 664);
+    assert_eq!(ModelV2::PARAMETER_COUNT, 1_832);
+    assert_eq!(ModelV2H16::PARAMETER_COUNT, 664);
+    assert_eq!(Layout { hidden: 32 }.value_bias() + 1, 1_832);
+    assert_eq!(Layout { hidden: 16 }.value_bias() + 1, 664);
+    assert!(CONTRACT_V2
+        .starts_with("current-tree-learner/v2/f64/input20/hidden32/flags6/value1/gae-adam"));
+    assert!(CONTRACT_V2.ends_with("/libm-free-v1"));
+    assert_eq!(CONTRACT_V2_H16, CONTRACT_V2.replace("hidden32", "hidden16"));
+    assert_eq!(ModelV2::CONTRACT, CONTRACT_V2);
+    assert_eq!(ModelV2H16::CONTRACT, CONTRACT_V2_H16);
+    let wide = feature_identity_v2();
+    let narrow = feature_identity_v2_h16();
+    println!(
+        "current_tree_learner_v2 feature identities: h32 {wide} h16 {narrow} (v1 input {})",
+        feature_identity_v1()
+    );
+    assert_ne!(wide, narrow);
+    for identity in [&wide, &narrow] {
+        assert_eq!(identity.len(), 64);
+        assert!(identity.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_ne!(*identity, feature_identity_v1());
+    }
+    assert_eq!(wide, feature_identity_v2());
+}
+
+#[test]
+fn deterministic_initialization_is_fixed_finite_with_a_zero_value_head() {
+    fn check<const H: usize>() {
+        let model = TreeModelV2::<H>::deterministic_initialization();
+        assert_eq!(model, TreeModelV2::<H>::deterministic_initialization());
+        let layout = Layout { hidden: H };
+        let parameters = model.parameters();
+        assert_eq!(parameters.len(), parameter_count_v2(H));
+        let input_scale = 1. / (INPUT as f64).sqrt();
+        let hidden_scale = 1. / (H as f64).sqrt();
+        for (index, value) in parameters.iter().enumerate() {
+            let bound = if index < layout.recurrent() {
+                input_scale
+            } else if index < layout.bias() || (layout.head()..layout.flags()).contains(&index) {
+                hidden_scale
+            } else {
+                0.
+            };
+            assert!(
+                value.is_finite() && value.abs() <= bound * (1. + 1e-12),
+                "{index}"
+            );
+            if bound == 0. {
+                assert_eq!(value.to_bits(), 0, "{index}");
+            }
+        }
+        assert!(parameters[..layout.bias()].iter().all(|v| *v != 0.));
+        let learner = TreeLearnerV2::<H>::new(OptimizerConfigV2::campaign_v1(200)).unwrap();
+        assert_eq!(learner.step(), 0);
+        let snapshot = learner.snapshot();
+        assert!(snapshot
+            .first_moment_bits
+            .iter()
+            .chain(&snapshot.second_moment_bits)
+            .all(|bits| *bits == 0));
+        let fixture = decision(7);
+        let tape = learner.model().forward_view(fixture.view()).unwrap();
+        assert_eq!(tape.value.to_bits(), 0);
+        assert!(tape.logits.iter().all(|v| v.is_finite()));
+    }
+    check::<32>();
+    check::<16>();
+    assert_ne!(
+        ModelV2::deterministic_initialization().parameters()[..16],
+        ModelV2H16::deterministic_initialization().parameters()[..16]
+    );
+}
+
+/// Fixed advantages (multiplied by `advantage_scale`) and value targets for
+/// five decisions.
+fn examples(owned: &[OwnedDecision], advantage_scale: f64) -> Vec<ExampleV2<'_>> {
+    let advantages = [0.7, -1.3, 0.4, 2.1, -0.2].map(|a| a * advantage_scale);
+    let targets = [0.3, -0.6, 0.9, 0., -0.95];
+    owned
+        .iter()
+        .zip(advantages.into_iter().zip(targets))
+        .map(|(d, (advantage, value_target))| ExampleV2 {
+            view: d.view(),
+            selected: d.selected,
+            advantage,
+            value_target,
+        })
+        .collect()
+}
+
+/// Checks the gradient of one weighting of the three terms: `advantage_scale`
+/// switches the policy term on or off, the coefficients the other two.
+fn finite_difference_check<const H: usize>(
+    advantage_scale: f64,
+    value_coefficient: f64,
+    entropy_coefficient: f64,
+) {
+    let owned = decisions(3, 5);
+    let model = random_model::<H>(0x5eed + H as u64);
+    let batch = examples(&owned, advantage_scale);
+    let (loss, gradient) = model
+        .loss_and_gradient(&batch, value_coefficient, entropy_coefficient)
+        .unwrap();
+    if advantage_scale == 0. {
+        assert_eq!(loss.policy, 0.);
+    }
+    let loss_at = |parameters: Vec<f64>| {
+        TreeModelV2::<H>::from_parameters(parameters)
+            .unwrap()
+            .loss_and_gradient(&batch, value_coefficient, entropy_coefficient)
+            .unwrap()
+            .0
+            .total
+    };
+    let step = 1e-6;
+    for (name, start, end) in blocks(H) {
+        let width = end - start;
+        let mut indices = vec![start, end - 1, start + width / 2, start + width / 3];
+        indices.extend((start..end).step_by(width.div_ceil(7)));
+        indices.sort_unstable();
+        indices.dedup();
+        for index in indices {
+            let mut plus = model.parameters().to_vec();
+            plus[index] += step;
+            let mut minus = model.parameters().to_vec();
+            minus[index] -= step;
+            let numeric = (loss_at(plus) - loss_at(minus)) / (2. * step);
+            let analytic = gradient[index];
+            let tolerance = 1e-7 + 1e-6 * analytic.abs().max(numeric.abs());
+            assert!(
+                (numeric - analytic).abs() <= tolerance,
+                "H {H} policy {advantage_scale} c_v {value_coefficient} \
+                 c_ent {entropy_coefficient} {name} {index}: analytic {analytic} numeric {numeric}"
+            );
+        }
+    }
+}
+
+#[test]
+fn finite_differences_match_every_parameter_block() {
+    // The policy term alone, the value term alone, the entropy term alone and
+    // the design's weighting of all three.
+    for (policy, value, entropy) in [(1., 0., 0.), (0., 1., 0.), (0., 0., 0.5), (1., 0.5, 0.01)] {
+        finite_difference_check::<16>(policy, value, entropy);
+        finite_difference_check::<32>(policy, value, entropy);
+    }
+}
+
+#[test]
+fn every_block_but_the_softmax_invariant_ones_receives_gradient() {
+    let owned = decisions(3, 5);
+    let model = random_model::<32>(17);
+    let (_, gradient) = model
+        .loss_and_gradient(&examples(&owned, 1.), 0.5, 0.01)
+        .unwrap();
+    for (name, start, end) in blocks(32) {
+        let largest = gradient[start..end]
+            .iter()
+            .fold(0_f64, |m, v| m.max(v.abs()));
+        if name == "policy bias" || name == "head state" {
+            // Both add the same amount to every logit of a decision, which
+            // leaves the softmax unchanged, and neither feeds the value head.
+            assert!(largest < 1e-12, "{name} {largest}");
+        } else {
+            assert!(largest > 1e-6, "{name} {largest}");
+        }
+    }
+}
+
+#[test]
+fn entropy_term_alone_matches_its_closed_form() {
+    let owned = decisions(5, 1);
+    let model = random_model::<16>(23);
+    let example = [ExampleV2 {
+        view: owned[0].view(),
+        selected: owned[0].selected,
+        advantage: 0.,
+        value_target: 0.,
+    }];
+    let (loss, _) = model.loss_and_gradient(&example, 0., 1.).unwrap();
+    let logits = model.forward_view(owned[0].view()).unwrap().logits;
+    let max = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let sum = logits.iter().map(|z| (z - max).exp()).sum::<f64>();
+    let entropy = -logits
+        .iter()
+        .map(|z| {
+            let log_p = z - max - sum.ln();
+            log_p.exp() * log_p
+        })
+        .sum::<f64>();
+    assert!((loss.entropy - entropy).abs() < 1e-14);
+    assert!((loss.total + entropy).abs() < 1e-14);
+}
+
+#[test]
+fn generalized_advantage_estimation_matches_hand_computed_fixtures() {
+    // Dyadic fixture, exact: gamma = lambda = 1/2, values 1/2, -1/4, 1/8, R = 1.
+    // delta = [-5/8, 5/16, 7/8]; A_2 = 7/8, A_1 = 5/16 + 7/32 = 17/32,
+    // A_0 = -5/8 + 17/128 = -63/128.
+    assert_eq!(
+        gae_v2(&[0.5, -0.25, 0.125], 1., 0.5, 0.5),
+        vec![-63. / 128., 17. / 32., 7. / 8.]
+    );
+    assert_eq!(gae_v2(&[0.25], -1., 0.997, 0.95), vec![-1.25]);
+    assert!(gae_v2(&[], 1., 0.997, 0.95).is_empty());
+    // Design parameters against the sum formula.
+    let values = [0.1, -0.3, 0.25, 0.6, -0.45];
+    let (gamma, lambda, terminal) = (0.997, 0.95, -1.);
+    let deltas = (0..values.len())
+        .map(|t| match values.get(t + 1) {
+            Some(next) => gamma * next - values[t],
+            None => terminal - values[t],
+        })
+        .collect::<Vec<f64>>();
+    let advantages = gae_v2(&values, terminal, gamma, lambda);
+    for (t, advantage) in advantages.iter().enumerate() {
+        let expected = (t..values.len())
+            .map(|k| (gamma * lambda).powi((k - t) as i32) * deltas[k])
+            .sum::<f64>();
+        assert!((advantage - expected).abs() < 1e-14, "{t}");
+    }
+}
+
+#[test]
+fn scale_only_standardization_does_not_center() {
+    let (standardized, sigma) = scale_only_standardize_v2(&[2., 4.]).unwrap();
+    assert_eq!(sigma, 1.);
+    assert_eq!(standardized, vec![2. / (1. + 1e-8), 4. / (1. + 1e-8)]);
+    let (standardized, sigma) = scale_only_standardize_v2(&[1., -1., 3., -3.]).unwrap();
+    assert!((sigma - 5_f64.sqrt()).abs() < 1e-15);
+    for (value, raw) in standardized.iter().zip([1., -1., 3., -3.]) {
+        assert!((value - raw / (5_f64.sqrt() + 1e-8)).abs() < 1e-15);
+    }
+    let (standardized, sigma) = scale_only_standardize_v2(&[0.5]).unwrap();
+    assert_eq!(sigma, 0.);
+    assert_eq!(standardized, vec![0.5 / 1e-8]);
+    assert_eq!(scale_only_standardize_v2(&[]), Err(Error::NoDecision));
+    assert_eq!(
+        scale_only_standardize_v2(&[1., f64::NAN]),
+        Err(Error::NonFiniteLogit)
+    );
+}
+
+#[test]
+fn global_norm_clip_scales_only_above_the_limit() {
+    let mut gradient = vec![3., -4.];
+    assert!((clip_global_norm_v2(&mut gradient, 1.) - 5.).abs() < 1e-15);
+    assert!((gradient[0] - 0.6).abs() < 1e-15 && (gradient[1] + 0.8).abs() < 1e-15);
+    let mut gradient = vec![0.3, 0.4];
+    assert!((clip_global_norm_v2(&mut gradient, 1.) - 0.5).abs() < 1e-15);
+    assert_eq!(gradient, vec![0.3, 0.4]);
+    let mut gradient = vec![30., 40., 0.];
+    assert!((clip_global_norm_v2(&mut gradient, 2.) - 50.).abs() < 1e-13);
+    let norm = clip_global_norm_v2(&mut gradient, 2.);
+    assert!((norm - 2.).abs() < 1e-15 && norm <= 2. * (1. + 1e-15));
+}
+
+#[test]
+fn cosine_schedule_end_points_and_shape() {
+    let config = OptimizerConfigV2::campaign_v1(200);
+    assert_eq!(config.learning_rate(1), Ok(3e-4));
+    assert_eq!(config.learning_rate(200), Ok(1e-4));
+    assert_eq!(config.learning_rate(0), Err(Error::Range));
+    assert_eq!(config.learning_rate(201), Err(Error::Range));
+    let mut previous = f64::INFINITY;
+    for update in 1..=200 {
+        let rate = config.learning_rate(update).unwrap();
+        assert!(rate <= previous && (1e-4..=3e-4).contains(&rate));
+        let fraction = (update - 1) as f64 / 199.;
+        let expected = 1e-4 + 2e-4 * 0.5 * (1. + (std::f64::consts::PI * fraction).cos());
+        assert!((rate - expected).abs() < 1e-18, "{update}");
+        previous = rate;
+    }
+    let short = OptimizerConfigV2::campaign_v1(3);
+    assert!((short.learning_rate(2).unwrap() - 2e-4).abs() < 1e-18);
+    assert_eq!(OptimizerConfigV2::campaign_v1(1).learning_rate(1), Ok(3e-4));
+    assert_eq!(
+        OptimizerConfigV2::campaign_v1(0).learning_rate(1),
+        Err(Error::ModelContract)
+    );
+}
+
+/// The initialization the research lead accepted for design point 2, written
+/// out here because this file is not part of the feature identity.
+///
+/// The seed is the first eight bytes, read little-endian, of SHA-256 over the
+/// tag `mtg-kernel/current-tree-learner-v2-init/v1` followed by one zero byte
+/// (`INIT_TAG_V2`) and then the profile's contract string (`CONTRACT_V2` or
+/// `CONTRACT_V2_H16`), so the two profiles draw different weights. A
+/// `SplitMix64` generator with that seed draws one value per parameter of the
+/// scaled blocks, in parameter index order: the input weights (indices `0` to
+/// `20 H`), then the recurrent weights (`20 H` to `20 H + H H`), then the three
+/// policy-head vectors (state, action, bilinear: `3 H` entries after the
+/// encoder bias). Each draw `u` is the top 53 bits of the next output divided
+/// by `2^53`, and the weight is `(2 u - 1) s`: uniform in `[-s, s)` with
+/// `s = 1 / sqrt(20)` for the input weights and `s = 1 / sqrt(H)` for the
+/// recurrent and policy-head weights, the square root being this module's
+/// `sqrt_v2`. The encoder bias, the six flag weights, the policy bias and the
+/// whole value head draw nothing and are exactly zero.
+///
+/// Pinned below as bit patterns, for each width: the first four input weights
+/// (draws 0 to 3), the first recurrent weight (draw `20 H`) and the first
+/// policy-head weight (draw `20 H + H H`), plus the zero entries at the start
+/// of the encoder bias, the flags, the policy bias and the value head.
+#[test]
+fn initialization_tag_and_first_weights_are_pinned() {
+    assert_eq!(INIT_TAG_V2, b"mtg-kernel/current-tree-learner-v2-init/v1\0");
+    assert_eq!(INIT_TAG_V2.len(), 43);
+    assert_eq!(INIT_TAG_V2.last(), Some(&0));
+    fn check<const H: usize>(pinned: [(usize, u64); 6]) {
+        let model = TreeModelV2::<H>::deterministic_initialization();
+        let layout = Layout { hidden: H };
+        let indices = pinned.map(|(index, _)| index);
+        assert_eq!(indices, [0, 1, 2, 3, layout.recurrent(), layout.head()]);
+        for (index, bits) in pinned {
+            let value = model.parameters()[index];
+            println!("H {H} weight {index}: {bits:#018x} {value:e}");
+            assert_eq!(value.to_bits(), bits, "H {H} weight {index}");
+        }
+        for index in [
+            layout.bias(),
+            layout.flags(),
+            layout.policy_bias(),
+            layout.value_weights(),
+            layout.value_bias(),
+        ] {
+            assert_eq!(model.parameters()[index].to_bits(), 0, "H {H} zero {index}");
+        }
+    }
+    check::<32>([
+        (0, 0x3fc6_dbd3_8a86_d260),
+        (1, 0x3fcb_5f85_bc39_af45),
+        (2, 0x3fb9_2f84_610d_2b74),
+        (3, 0xbfc4_8b83_5baf_b74e),
+        (640, 0xbfb0_48f5_81e8_9ac1),
+        (1_696, 0x3fc2_382b_9662_ff74),
+    ]);
+    check::<16>([
+        (0, 0xbf94_b179_4418_ac24),
+        (1, 0xbfa3_b7a1_cca8_cd87),
+        (2, 0xbfb1_8e96_3773_e677),
+        (3, 0x3fc8_f9ed_1201_a853),
+        (320, 0xbfcf_ed48_741d_b152),
+        (592, 0xbfb8_ce34_11a0_2f80),
+    ]);
+}
+
+/// `expm1_nonnegative_v2` against the standard library's `exp_m1` over its
+/// whole working range: every `t = i * 0.0125` for `i` in `0..=2880` (so
+/// `0` to `36`), plus small `t` where `e^t - 1` is near `t`. Bound: `4e-15`
+/// relative, about 18 units in the last place.
+#[test]
+fn expm1_matches_the_platform_over_its_range() {
+    let mut points = (0..=2_880)
+        .map(|i| f64::from(i) * 0.0125)
+        .collect::<Vec<_>>();
+    points.extend([1e-300, 1e-200, 1e-16, 1e-10, 1e-5, 1e-3]);
+    for t in points {
+        let reference = t.exp_m1();
+        assert!(
+            (expm1_nonnegative_v2(t) - reference).abs() <= 4e-15 * reference,
+            "expm1({t:e}): {:e} vs {reference:e}",
+            expm1_nonnegative_v2(t)
+        );
+    }
+    assert_eq!(expm1_nonnegative_v2(0.).to_bits(), 0);
+}
+
+/// `sqrt_v2` against the standard library's `sqrt` (which IEEE 754 requires
+/// to be correctly rounded) over a geometric grid from the smallest subnormal
+/// `5e-324` up to `1e300` with ratio `1.9` (about 2,200 points, every binade
+/// and both exponent parities), plus special points. Bound: two units in the
+/// last place, `2 * f64::EPSILON` relative.
+#[test]
+fn sqrt_matches_the_platform_over_a_geometric_grid() {
+    let mut points = Vec::new();
+    let mut x = 5e-324_f64;
+    while x < 1e300 {
+        points.push(x);
+        x *= 1.9;
+    }
+    points.extend([1e300, f64::MAX, f64::MIN_POSITIVE, 0.25, 1., 2., 4., 1e-310]);
+    for x in points {
+        let reference = x.sqrt();
+        assert!(
+            (sqrt_v2(x) - reference).abs() <= 2. * f64::EPSILON * reference,
+            "sqrt({x:e}): {:e} vs {reference:e}",
+            sqrt_v2(x)
+        );
+    }
+    assert_eq!(sqrt_v2(0.), 0.);
+    assert_eq!(sqrt_v2(4.), 2.);
+}
+
+/// `powi_v2` for the bases Adam's bias corrections use and a few more (`0.5`,
+/// `0.9`, `0.95`, `0.99`, `0.999`, `0.9999`), each at every exponent `0` to
+/// `400` (twice the campaign's nominal 200 updates).
+///
+/// Accuracy, against the standard library's `powf` (the base raised to the
+/// exponent as a float, accurate to about one unit in the last place): for an
+/// exponent below `2^9`, `powi_v2` forms `b^(2^j)` by `j <= 8` squarings, and
+/// each squaring doubles the relative error carried so far and adds one
+/// rounding of at most `u = 2^-53`, so `b^(2^j)` is within `(2^j - 1) u`. The
+/// result multiplies at most nine of those powers, adding at most nine more
+/// roundings, so its relative error is at most the sum over `j <= 8` of
+/// `(2^j - 1) u` plus `9 u`, that is `511 u`, below `256 f64::EPSILON` to
+/// first order. Bound: `512 * f64::EPSILON` relative (about `1.1e-13`), which
+/// leaves room for the reference's own error. This is ample for Adam's bias
+/// corrections `1 - beta^t`, whose relative error is then far below the
+/// `epsilon = 1e-8` in the update's denominator.
+///
+/// The standard library's `powi` is compared under the same accuracy bound.
+/// Its precision is unspecified and differs by platform: where it is binary
+/// exponentiation from the lowest bit it agrees with `powi_v2` far more
+/// closely, but hosted Windows differed from `powi_v2` by about 64 epsilon at
+/// `0.95^372`, as a reference near the accurate value does. So this
+/// comparison carries the accuracy bound too and says nothing about the
+/// order of multiplications. Neither comparison is what makes checkpoints
+/// bit-identical across platforms: `powi_v2` uses IEEE multiplication only,
+/// so its bits are fixed everywhere. Exponent `0` gives exactly `1` and
+/// exponent `1` exactly the base.
+#[test]
+fn powi_matches_the_platform_for_adam_bias_corrections() {
+    for base in [0.5_f64, 0.9, 0.95, 0.99, 0.999, 0.9999] {
+        assert_eq!(powi_v2(base, 0), 1.);
+        assert_eq!(powi_v2(base, 1), base);
+        for exponent in 0..=400_u64 {
+            let ours = powi_v2(base, exponent);
+            let accurate = base.powf(exponent as f64);
+            assert!(
+                (ours - accurate).abs() <= 512. * f64::EPSILON * accurate,
+                "accuracy {base}^{exponent}: {ours:e} vs powf {accurate:e}"
+            );
+            let platform = base.powi(exponent as i32);
+            assert!(
+                (ours - platform).abs() <= 512. * f64::EPSILON * platform,
+                "accuracy {base}^{exponent}: {ours:e} vs powi {platform:e}"
+            );
+        }
+    }
+}
+
+#[test]
+fn libm_free_functions_track_the_platform_functions() {
+    let close = |ours: f64, reference: f64, what: &str| {
+        let tolerance = 4e-15 * reference.abs().max(1e-300);
+        assert!(
+            (ours - reference).abs() <= tolerance,
+            "{what}: {ours:e} vs {reference:e}"
+        );
+    };
+    let mut x = -25.;
+    while x <= 25. {
+        close(tanh_v2(x), x.tanh(), "tanh");
+        x += 0.0371;
+    }
+    for x in [
+        1e-300, 1e-12, 1e-6, 0.01, 0.3, 0.5493, 1., 9., 17.99, 18., 30.,
+    ] {
+        close(tanh_v2(x), x.tanh(), "tanh");
+        close(tanh_v2(-x), -x.tanh(), "tanh");
+    }
+    assert_eq!(tanh_v2(0.).to_bits(), 0);
+    assert_eq!(tanh_v2(-0.).to_bits(), (-0_f64).to_bits());
+    let mut x = -700.;
+    while x <= 0. {
+        close(exp_nonpositive_v2(x), x.exp(), "exp");
+        x += 0.913;
+    }
+    assert_eq!(exp_nonpositive_v2(0.), 1.);
+    let mut x = 1.;
+    while x < 1e6 {
+        close(ln_v2(x), x.ln(), "ln");
+        close(ln_v2(1. / x), (1. / x).ln(), "ln");
+        x *= 1.37;
+    }
+    assert_eq!(ln_v2(1.), 0.);
+    for x in [
+        1e-300, 2.5e-310, 5e-324, 1e-10, 0.5, 2., 3., 10., 1e10, 1e300,
+    ] {
+        close(sqrt_v2(x), x.sqrt(), "sqrt");
+    }
+    assert_eq!(sqrt_v2(4.), 2.);
+    assert_eq!(sqrt_v2(0.), 0.);
+    assert!(sqrt_v2(-1.).is_nan() && sqrt_v2(f64::INFINITY).is_nan());
+    for i in 0..=64 {
+        let fraction = f64::from(i) / 64.;
+        let reference = (std::f64::consts::PI * fraction).cos();
+        assert!((cos_pi_v2(fraction) - reference).abs() < 1e-15, "{i}");
+    }
+    assert_eq!(powi_v2(0.999, 0), 1.);
+    assert_eq!(powi_v2(0.5, 10), 1. / 1024.);
+    assert!((powi_v2(0.999, 200) / 0.999_f64.powi(200) - 1.).abs() < 1e-13);
+    let softmax = softmax_v2(&[1., 2., -800., 0.5]).unwrap();
+    let total = softmax.probabilities.iter().sum::<f64>();
+    assert!((total - 1.).abs() < 1e-15);
+    assert!(softmax.probabilities[2] < 1e-300);
+    assert!(softmax_v2(&[]).is_err_and(|e| e == Error::ActionRange));
+    assert!(softmax_v2(&[f64::NAN]).is_err_and(|e| e == Error::NonFiniteLogit));
+}
+
+#[test]
+fn snapshot_round_trip_is_bit_exact() {
+    let owned = batch();
+    let mut learner = LearnerV2::new(OptimizerConfigV2::campaign_v1(4)).unwrap();
+    learner.update_views(&views(&owned)).unwrap();
+    let snapshot = learner.snapshot();
+    let text = serde_json::to_string(&snapshot).unwrap();
+    let parsed: SnapshotV2 = serde_json::from_str(&text).unwrap();
+    assert_eq!(parsed, snapshot);
+    let mut restored = LearnerV2::restore(parsed).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+    assert_eq!(restored.snapshot().state_sha256(), snapshot.state_sha256());
+    // Restored and original continue to identical bits.
+    let first = learner.update_views(&views(&owned)).unwrap();
+    let second = restored.update_views(&views(&owned)).unwrap();
+    assert_eq!(first, second);
+    assert_eq!(learner.snapshot(), restored.snapshot());
+    // A fresh step-0 snapshot also restores.
+    let fresh = LearnerV2H16::new(OptimizerConfigV2::campaign_v1(4)).unwrap();
+    assert_eq!(
+        LearnerV2H16::restore(fresh.snapshot()).unwrap().snapshot(),
+        fresh.snapshot()
+    );
+    let mut unknown: serde_json::Value = serde_json::from_str(&text).unwrap();
+    unknown["extra"] = json!(1);
+    assert!(serde_json::from_value::<SnapshotV2>(unknown).is_err());
+}
+
+#[test]
+fn restore_refuses_wrong_or_damaged_snapshots() {
+    let owned = batch();
+    let mut learner = LearnerV2::new(OptimizerConfigV2::campaign_v1(4)).unwrap();
+    let fresh = learner.snapshot();
+    learner.update_views(&views(&owned)).unwrap();
+    let trained = learner.snapshot();
+    let refuses = |snapshot: SnapshotV2, what: &str| {
+        assert_eq!(
+            LearnerV2::restore(snapshot).err(),
+            Some(Error::ModelContract),
+            "{what}"
+        );
+    };
+    let mut s = trained.clone();
+    s.contract = CONTRACT_V2_H16.into();
+    refuses(s, "contract");
+    let mut s = trained.clone();
+    s.feature_identity = feature_identity_v1();
+    refuses(s, "feature identity");
+    refuses(
+        LearnerV2H16::new(OptimizerConfigV2::campaign_v1(4))
+            .unwrap()
+            .snapshot(),
+        "other profile",
+    );
+    let mut s = trained.clone();
+    s.parameter_bits.pop();
+    refuses(s, "short parameters");
+    let mut s = trained.clone();
+    s.first_moment_bits.push(0);
+    refuses(s, "long first moment");
+    let mut s = trained.clone();
+    s.second_moment_bits.clear();
+    refuses(s, "empty second moment");
+    let mut s = trained.clone();
+    s.parameter_bits[5] = f64::NAN.to_bits();
+    refuses(s, "NaN parameter");
+    let mut s = trained.clone();
+    s.first_moment_bits[9] = f64::INFINITY.to_bits();
+    refuses(s, "infinite moment");
+    let mut s = trained.clone();
+    s.second_moment_bits[3] = (-1e-9_f64).to_bits();
+    refuses(s, "negative second moment");
+    let mut s = fresh.clone();
+    s.first_moment_bits[0] = 1e-12_f64.to_bits();
+    refuses(s, "first moment at step 0");
+    let mut s = fresh.clone();
+    s.second_moment_bits[7] = 1e-12_f64.to_bits();
+    refuses(s, "second moment at step 0");
+    let mut s = trained.clone();
+    s.step = 5;
+    refuses(s, "step past the horizon");
+    let mut s = trained.clone();
+    s.config.beta2 = 1.;
+    refuses(s, "invalid configuration");
+    assert!(LearnerV2::restore(trained).is_ok());
+    assert!(LearnerV2::restore(fresh).is_ok());
+}
+
+#[test]
+fn failed_updates_leave_the_state_unchanged() {
+    let owned = batch();
+    let mut learner = LearnerV2::new(OptimizerConfigV2::campaign_v1(2)).unwrap();
+    learner.update_views(&views(&owned)).unwrap();
+    let before = learner.snapshot();
+    let mut check = |trajectories: Vec<TrajectoryView<'_>>, error: Error| {
+        assert_eq!(learner.update_views(&trajectories), Err(error));
+        assert_eq!(learner.snapshot(), before);
+    };
+    // The selected ordinal of the last trajectory's last decision is out of range.
+    let mut bad = views(&owned);
+    let last = bad.last_mut().unwrap().decisions.last_mut().unwrap();
+    last.selected = last.view.actions.len();
+    check(bad, Error::ActionRange);
+    // A repeated (pair, leg, seat) key.
+    let mut repeated = views(&owned);
+    repeated[5].pair_index = 0;
+    repeated[5].leg = 0;
+    repeated[5].seat = 0;
+    check(repeated, Error::ModelContract);
+    // A forced single-action step is not a retained decision.
+    let forced = decision(4);
+    let mut with_forced = views(&owned);
+    with_forced[2].decisions.push(SelectedView {
+        view: DecisionView {
+            state: &forced.state,
+            actions: &forced.actions[..1],
+            flags: &forced.flags[..1],
+        },
+        selected: 0,
+    });
+    check(with_forced, Error::ActionRange);
+    // A return outside {-1, 0, 1}, a leg outside {0, 1} and an empty batch.
+    let mut out_of_range = views(&owned);
+    out_of_range[3].terminal = natural(2);
+    check(out_of_range, Error::ModelContract);
+    let mut leg = views(&owned);
+    leg[1].leg = 2;
+    check(leg, Error::ModelContract);
+    check(Vec::new(), Error::NoDecision);
+    // Only truncated games: nothing to learn from.
+    let mut truncated = views(&owned);
+    for t in &mut truncated {
+        t.terminal = TerminalV2::Truncated;
+    }
+    check(truncated, Error::NoDecision);
+    // The horizon is two updates; the third is refused.
+    learner.update_views(&views(&owned)).unwrap();
+    let after = learner.snapshot();
+    assert_eq!(learner.update_views(&views(&owned)), Err(Error::Range));
+    assert_eq!(learner.snapshot(), after);
+}
+
+#[test]
+fn collection_order_does_not_change_the_bits() {
+    let owned = batch();
+    let mut canonical = LearnerV2::new(OptimizerConfigV2::campaign_v1(3)).unwrap();
+    let mut shuffled = LearnerV2::new(OptimizerConfigV2::campaign_v1(3)).unwrap();
+    for round in 0..3 {
+        let mut permuted = views(&owned);
+        permuted.reverse();
+        permuted.swap(0, 3 + round);
+        let a = canonical.update_views(&views(&owned)).unwrap();
+        let b = shuffled.update_views(&permuted).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(canonical.snapshot(), shuffled.snapshot());
+    }
+}
+
+#[test]
+fn truncated_games_add_nothing_to_either_loss() {
+    // A truncated seat in the middle of the canonical order, with decisions,
+    // changes neither the advantages, nor N, nor either loss.
+    let owned = batch();
+    let mut extended = batch();
+    extended.push(trajectory(1, 0, 1, TerminalV2::Truncated, decisions(61, 6)));
+    let mut plain = LearnerV2::new(OptimizerConfigV2::campaign_v1(2)).unwrap();
+    let mut with_truncated = LearnerV2::new(OptimizerConfigV2::campaign_v1(2)).unwrap();
+    for _ in 0..2 {
+        let a = plain.update_views(&views(&owned)).unwrap();
+        let b = with_truncated.update_views(&views(&extended)).unwrap();
+        assert_eq!(a.truncated_trajectories, 0);
+        assert_eq!(b.truncated_trajectories, 1);
+        assert_eq!(
+            UpdateReportV2 {
+                truncated_trajectories: 0,
+                ..b
+            },
+            a
+        );
+        assert_eq!(plain.snapshot(), with_truncated.snapshot());
+    }
+}
+
+#[test]
+fn pair_centered_rewards_encode_half_integer_advantages() {
+    assert_eq!(pair_centered_terminal_rewards_v1(1, Some(-1)), Ok([1, 1]));
+    assert_eq!(pair_centered_terminal_rewards_v1(1, Some(0)), Ok([1, 0]));
+    assert_eq!(pair_centered_terminal_rewards_v1(0, Some(0)), Ok([0, 0]));
+    assert_eq!(pair_centered_terminal_rewards_v1(1, Some(1)), Ok([0, 0]));
+    assert_eq!(pair_centered_terminal_rewards_v1(-1, Some(0)), Ok([-1, 0]));
+    assert_eq!(pair_centered_terminal_rewards_v1(-1, Some(1)), Ok([-1, -1]));
+    assert_eq!(pair_centered_terminal_rewards_v1(1, None), Ok([0, 0]));
+    assert_eq!(
+        pair_centered_terminal_rewards_v1(2, None),
+        Err(Error::ModelContract)
+    );
+    assert_eq!(
+        pair_centered_terminal_rewards_v1(0, Some(-2)),
+        Err(Error::ModelContract)
+    );
+    for own in -1..=1_i8 {
+        for other in -1..=1_i8 {
+            let rewards = pair_centered_terminal_rewards_v1(own, Some(other)).unwrap();
+            let mean = f64::from(own + other) / 2.;
+            assert_eq!(
+                f64::from(rewards[0] + rewards[1]) / 2.,
+                f64::from(own) - mean
+            );
+        }
+    }
+}
+
+/// Ruling (11): the state digests below are pinned here and checked by hosted
+/// CI on Linux and on Windows. Five updates of the design configuration with
+/// its nominal horizon of 200 updates, from the deterministic initialization:
+///
+/// 1. Every seat a natural draw. All values start at exactly zero, so every
+///    advantage and value error is zero and only the entropy term moves the
+///    policy: the gradient is small and is not clipped.
+/// 2. One seat with one decision and a win. Sigma is zero, so the standardized
+///    advantage is about `1e8` and the update is clipped.
+/// 3. to 5. The six-seat batch, with a truncated seat added at update 4.
+///
+/// Updates 2 to 5 take the cosine at `f = 1/199` to `4/199`; `powi_v2` gives
+/// Adam's corrections at steps 1 to 5; the square root takes the clip norm
+/// and every Adam denominator at every update and a nonzero sigma at updates
+/// 3 to 5; every encoder node is a `tanh_v2` of a nonzero argument, and the
+/// value head is one from update 3 on; every decision's softmax takes
+/// `exp_nonpositive_v2` of each nonzero logit gap and `ln_v2` of a weight sum
+/// between 1 and the menu width.
+#[test]
+fn pinned_checkpoint_state_digests() {
+    fn run<const H: usize>() -> (String, Vec<bool>) {
+        let mut draws = batch();
+        for seat in &mut draws {
+            seat.terminal = natural(0);
+        }
+        let single = vec![trajectory(7, 0, 1, natural(1), decisions(71, 1))];
+        let mut with_truncated = batch();
+        with_truncated.push(trajectory(1, 0, 1, TerminalV2::Truncated, decisions(81, 3)));
+        let plain = batch();
+        let mut learner = TreeLearnerV2::<H>::new(OptimizerConfigV2::campaign_v1(200)).unwrap();
+        let mut clipped = Vec::new();
+        for (update, owned) in [&draws, &single, &plain, &with_truncated, &plain]
+            .into_iter()
+            .enumerate()
+        {
+            let report = learner.update_views(&views(owned)).unwrap();
+            if update == 0 {
+                assert_eq!(report.learning_rate, 3e-4);
+                assert_eq!(report.advantage_sigma, 0.);
+            } else {
+                assert!(report.learning_rate > 1e-4);
+                assert!(report.learning_rate < 3e-4);
+            }
+            clipped.push(report.clipped);
+        }
+        assert_eq!(learner.step(), 5);
+        (learner.snapshot().state_sha256(), clipped)
+    }
+    let (wide, wide_clipped) = run::<32>();
+    let (narrow, narrow_clipped) = run::<16>();
+    println!(
+        "current_tree_learner_v2 pinned state digests: h32 {wide} {wide_clipped:?} \
+         h16 {narrow} {narrow_clipped:?}"
+    );
+    assert_eq!(wide_clipped, [false, true, false, false, false]);
+    assert_eq!(narrow_clipped, [false, true, false, false, false]);
+    assert_eq!(
+        wide,
+        "c552ee18687824106219b264252a4f2588eb68567e671560b5713b30ba310d61"
+    );
+    assert_eq!(
+        narrow,
+        "1a92eff6ef02a088f73975e0c2508bf43a4f20455e61063417905338579ec404"
+    );
+}

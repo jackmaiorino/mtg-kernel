@@ -2338,6 +2338,102 @@ fn sd1_world_modes_repeat_and_fresh_is_the_default() {
     }
 }
 
+/// One search with the opt-in flat root at `session` (EX1's selection
+/// settings), `n` attempted simulations.
+fn flat_root_search(
+    session: &crate::rl_session::FastActorSessionV1,
+    prior: &world::DeckPrior,
+    flat_root: bool,
+    leaf: Option<value_leaf::Horizon>,
+    n: u64,
+) -> (arms::Selection, tree::Tree) {
+    let mut roles = Roles {
+        focal: fixture(),
+        opps: vec![fixture()],
+        scorer: fixture(),
+        inner_focal: fixture(),
+        inner_opps: vec![fixture()],
+    };
+    let seeds = RootSeeds {
+        model: "fixture".into(),
+        root: "flat-root-fixture".into(),
+    };
+    let ctx = RootCtx {
+        visible_history: &[],
+        root: session,
+        d: play::decision(session).unwrap(),
+        focal: play::acting(&play::decision(session).unwrap()),
+        opp: 0,
+        seeds: &seeds,
+        prior,
+        defs: spy_defs(),
+        cast_root: false,
+        probs: Vec::new(),
+        limits: Limits {
+            select_cap: 1_000_000,
+            eval_worlds: 1,
+            eval_cap: 1,
+        },
+        urgency: Some(1.5),
+        key_mode: super::canon2::KeyMode::Legacy,
+        interchange: false,
+        bestline: None,
+    };
+    let options = root_allocation::SearchOptions {
+        work_limit: Some(n),
+        value_leaf: leaf.map(|horizon| value_leaf::ValueLeafV1 { horizon }),
+        flat_root,
+        ..root_allocation::SearchOptions::default()
+    };
+    roles.select_e_options(&ctx, None, 1, None, None, None, &options)
+}
+
+/// The flat root (collab LANES/searchpm-20261116): the tree is the root
+/// alone, every completed simulation is one root backup, the search repeats
+/// exactly, and with the option off the search is E unchanged (it grows
+/// nodes below the root).
+#[test]
+fn flat_root_keeps_only_the_root_and_repeats() {
+    let (session, prior) = value_leaf_root();
+    for leaf in [None, Some(value_leaf::Horizon::H0)] {
+        let (a, ta) = flat_root_search(&session, &prior, true, leaf, 40);
+        let (b, tb) = flat_root_search(&session, &prior, true, leaf, 40);
+        assert!(!a.incomplete && a.faults.is_empty(), "{:?}", a.faults);
+        assert_eq!(world_primary(&a, &ta), world_primary(&b, &tb));
+        assert_eq!(ta.nodes.len(), 1, "{leaf:?}");
+        let root = ta.nodes.values().next().unwrap();
+        assert_eq!(root.n.iter().sum::<u64>(), root.visits);
+        assert_eq!(root.visits, a.completed);
+        assert_eq!(root.vsum.is_empty(), leaf.is_none());
+        let (e, te) = flat_root_search(&session, &prior, false, leaf, 40);
+        assert!(!e.incomplete && e.faults.is_empty(), "{:?}", e.faults);
+        assert!(te.nodes.len() > 1, "{leaf:?}");
+    }
+}
+
+/// The flat-root switch is honoured by the searched budget player only and
+/// parses strictly.
+#[test]
+fn flat_root_switch_is_budget_only() {
+    assert!(validate_flat_root_mode("s4a-budget", true).is_ok());
+    for mode in [
+        "s4a-refresh",
+        "s4a-bank",
+        "s4a-budget-replay",
+        "s4a-utility-root",
+    ] {
+        assert!(validate_flat_root_mode(mode, true).is_err());
+        assert!(validate_flat_root_mode(mode, false).is_ok());
+    }
+    assert_eq!(parse_flat_root(Ok("1".into())), Ok(true));
+    assert_eq!(parse_flat_root(Ok("0".into())), Ok(false));
+    assert_eq!(
+        parse_flat_root(Err(std::env::VarError::NotPresent)),
+        Ok(false)
+    );
+    assert!(parse_flat_root(Ok("yes".into())).is_err());
+}
+
 /// SD1 E1: a `true-v1` (or pinned) simulation world keeps every object,
 /// zone and library order of its base and changes only the future engine
 /// randomness, which differs between simulation seeds.

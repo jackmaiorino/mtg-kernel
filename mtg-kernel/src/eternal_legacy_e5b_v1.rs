@@ -23,6 +23,7 @@ use crate::effect::{
     EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp, ExecCtx, ObjectRef, PlayerRef,
     TargetRef,
 };
+use crate::engine::{can_pay_effect_cast_mana, pay_effect_cast_mana};
 use crate::eternal_cards_v1::e3::{E3ChoiceKindV1, E3ChoiceV1};
 use crate::event::{self, CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId, StackItemId};
@@ -1357,13 +1358,12 @@ pub(crate) fn begin_main_phase(state: &mut GameState) -> Vec<PendingTrigger> {
 }
 
 /// The beginning of `active`'s turn ends this module's turn-bound records.
+///
+/// Sand Scout's uses carry the turn key, which both turns of a round share,
+/// so a new turn ends them all.
 pub(crate) fn begin_turn(state: &mut GameState, _active: PlayerId) {
-    let turn = state.turn_key_v1();
     if let Some(eternal) = state.eternal_v1.as_mut() {
-        eternal
-            .e5b
-            .sand_scout_turns
-            .retain(|(_, used_turn)| *used_turn == turn);
+        eternal.e5b.sand_scout_turns.clear();
     }
 }
 
@@ -1701,6 +1701,9 @@ pub enum E5bChoiceV1 {
     /// The card a resolution casts after its alternative cost was paid
     /// (miracle, Amped Raptor).
     PaidCastV1,
+    /// The card cascade casts without paying its mana cost, as a spell whose
+    /// mana value is at most `limit` (702.85a: less than the cascade spell's).
+    PaidCastBelowV1 { limit: u16 },
 }
 
 impl E5bChoiceV1 {
@@ -1711,7 +1714,7 @@ impl E5bChoiceV1 {
 
     pub(crate) fn public_purpose(&self) -> crate::rl::TargetSelectionPurposeV4 {
         match self {
-            Self::SmasherDiscardV1 { .. } | Self::PaidCastV1 => {
+            Self::SmasherDiscardV1 { .. } | Self::PaidCastV1 | Self::PaidCastBelowV1 { .. } => {
                 crate::rl::TargetSelectionPurposeV4::CardSelection
             }
             Self::TerminusOrderV1 { .. } | Self::AjaniKeepV1 { .. } => {
@@ -1769,9 +1772,12 @@ pub(crate) fn resolution_cast_card(
     choice: &E3ChoiceV1,
     selected: &[Target],
 ) -> Option<EffectObjectBinding> {
-    let E3ChoiceKindV1::E5bV1(E5bChoiceV1::PaidCastV1) = choice.kind else {
+    if !matches!(
+        choice.kind,
+        E3ChoiceKindV1::E5bV1(E5bChoiceV1::PaidCastV1 | E5bChoiceV1::PaidCastBelowV1 { .. })
+    ) {
         return None;
-    };
+    }
     let &Target::Object(object) = selected.first()? else {
         return None;
     };
@@ -1780,6 +1786,15 @@ pub(crate) fn resolution_cast_card(
         .iter()
         .copied()
         .find(|binding| binding.object == object)
+}
+
+/// The largest mana value the spell a paid resolution cast answer casts may
+/// have, if it is limited (cascade).
+pub(crate) fn resolution_cast_limit(choice: &E3ChoiceV1) -> Option<u16> {
+    match choice.kind {
+        E3ChoiceKindV1::E5bV1(E5bChoiceV1::PaidCastBelowV1 { limit }) => Some(limit),
+        _ => None,
+    }
 }
 
 /// Authenticates the cast a paid resolution cast answer authorized.
@@ -1793,7 +1808,7 @@ pub(crate) fn validate_resolution_cast(
         || selected.len() != 1
         || !matches!(permission.card.expected_zone, Zone::Hand | Zone::Exile)
         || permission.land
-        || permission.maximum_mana_value.is_some()
+        || permission.maximum_mana_value != resolution_cast_limit(choice)
         || permission.controller != choice.player
         || suspended.ctx.controller != choice.player
         || suspended.frames != choice.remaining
@@ -1841,7 +1856,7 @@ pub(crate) fn finish_selection(
             )
         }
         // A cast answer is staged by the interpreter before it gets here.
-        E5bChoiceV1::PaidCastV1 => Ok(false),
+        E5bChoiceV1::PaidCastV1 | E5bChoiceV1::PaidCastBelowV1 { .. } => Ok(false),
     }
 }
 
@@ -2009,14 +2024,34 @@ pub(crate) fn offer_paid_cast(
     card: EffectObjectBinding,
     path: Vec<u16>,
 ) -> bool {
+    offer_limited_cast(state, continuation, card, path, None)
+}
+
+/// `offer_paid_cast` for a cast whose spell must have mana value at most
+/// `maximum_mana_value` (cascade).
+pub(crate) fn offer_limited_cast(
+    state: &GameState,
+    continuation: &mut EffectContinuation,
+    card: EffectObjectBinding,
+    path: Vec<u16>,
+    maximum_mana_value: Option<u16>,
+) -> bool {
     let player = continuation.ctx.controller;
-    if !crate::engine::resolution_cast_v1::can_cast_exiled_without_mana(state, player, card, None) {
+    if !crate::engine::resolution_cast_v1::can_cast_exiled_without_mana(
+        state,
+        player,
+        card,
+        maximum_mana_value,
+    ) {
         return false;
     }
     offer(
         continuation,
         OfferV1 {
-            kind: E5bChoiceV1::PaidCastV1,
+            kind: match maximum_mana_value {
+                Some(limit) => E5bChoiceV1::PaidCastBelowV1 { limit },
+                None => E5bChoiceV1::PaidCastV1,
+            },
             player,
             bindings: vec![card],
             min: 1,
@@ -2107,7 +2142,11 @@ pub(crate) fn drive(
             let Some((colored, generic)) = miracle_cost(state, card.object) else {
                 return Ok(false);
             };
-            if crate::engine::can_pay_effect_mana(controller, colored, generic, state)
+            // The miracle cost is a cost of casting the card (601.2f), so
+            // mana that can't be spent to cast nonartifact spells pays it
+            // only for an artifact.
+            let artifact = crate::engine::object_has_type(state, card.object, CardType::Artifact);
+            if can_pay_effect_cast_mana(controller, colored, generic, state, artifact)
                 && crate::engine::resolution_cast_v1::can_cast_exiled_without_mana(
                     state, controller, card, None,
                 )
@@ -2127,7 +2166,8 @@ pub(crate) fn drive(
             let Some((colored, generic)) = miracle_cost(state, card.object) else {
                 return Ok(false);
             };
-            if !crate::engine::pay_effect_mana(controller, colored, generic, state) {
+            let artifact = crate::engine::object_has_type(state, card.object, CardType::Artifact);
+            if !pay_effect_cast_mana(controller, colored, generic, state, artifact) {
                 return Ok(false);
             }
             let offered = offer_paid_cast(state, continuation, card, path);

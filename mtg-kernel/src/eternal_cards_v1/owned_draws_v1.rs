@@ -298,6 +298,20 @@ pub(crate) fn draw_won_game(state: &GameState, player: PlayerId) -> bool {
         && !crate::game_outcome_protection_v1::cannot_lose(state, opponent)
 }
 
+/// Whether the resolving program stops because a player has won the game
+/// during it (Jace, Wielder of Mysteries replacing a draw): the game ends at
+/// once (104.1, 104.2a), so nothing else in the program happens. A player
+/// who can't lose keeps the program running. An owned draw instruction in
+/// progress stops itself through its own journal. Eternal builds only, so
+/// the other catalogs' resolutions are unchanged.
+pub(crate) fn program_stops_after_win(state: &GameState) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && state.eternal_owned_draw_progress_v1.is_none()
+        && [PlayerId::P0, PlayerId::P1]
+            .into_iter()
+            .any(|player| draw_won_game(state, player))
+}
+
 /// Draws with no pending replacement choice. A Jace win ends the game
 /// immediately, before another attempt or a following instruction.
 pub(crate) fn draw_uninterrupted(state: &mut GameState, player: PlayerId, count: u32) -> bool {

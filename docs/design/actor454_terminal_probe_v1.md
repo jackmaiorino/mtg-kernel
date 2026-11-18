@@ -101,6 +101,20 @@ opening is never completion. The paid Doomsday fixture is a new explicit
 range witness, not a reconstruction of the old unretained InvalidActionRange
 decision. Existing source tests and terminal coverage remain separate gates.
 
+Inclusion-step arity (the research lead's ruling for Limited game 39): the
+probe accepts a shorter public menu on attacker or blocker inclusion steps only
+when the dropped originals are exactly the infeasible scan answers, recomputed
+by the probe, each counted in a typed report field; any other arity difference
+stays a stop; `legal_action_count` and `FastActorDecisionV1` do not change. The
+probe recomputes the scan feasibility from the native state and surface and
+compares it with the complete native menu that the header counts. The field is
+`infeasible_scan_answers_dropped` (attacker and blocker counts), per game and in
+the report total. A failure row also carries a `witness` list for single-game
+reruns: the JSON pointer and card of each object that the opponent-hand guard
+matched, or, for a halt in Bloodthirsty Conqueror replay custody, the first
+event where the replayed gain differs from the real history. Witnesses are
+diagnostics only; the acceptance rule above is unchanged.
+
 ## Next valid native check and launch boundary
 
 When the coordinator admits native capacity, compile the Eternal feature

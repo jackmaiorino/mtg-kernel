@@ -4,7 +4,8 @@
 use super::super::fresh_initialization_source::read_actual_in_v1;
 use super::super::no_state_digest_v1::holds_bytes_in_v1;
 use super::super::{
-    check_pinned_in_v1, publish_json_bytes_in_v1, read_pinned_bytes_in_v1, sha, PinnedFileV1,
+    check_pinned_in_v1, holds_pinned_in_v1, publish_json_bytes_in_v1, read_pinned_bytes_in_v1, sha,
+    PinnedFileV1, PinnedOpponentFileV1,
 };
 use super::{charge_v1, VerifiedBytesCacheV1};
 use std::fs;
@@ -485,4 +486,83 @@ fn diagnostics_count_shared_records_and_resident_serves() {
         VerifiedBytesCacheV1::new_v1(1 << 20, 16).diagnostics_v1()["resident"],
         false
     );
+}
+
+#[test]
+fn stream_digest_matches_and_holds_pinned_enforce_strict_and_resident_contracts() {
+    let payload: Vec<u8> = (0..(150 * 1024)).map(|i| (i * 31 + 7) as u8).collect();
+    let (_dir, pin) = pinned_file_v1("stream-verify", &payload);
+    let pinned = PinnedOpponentFileV1 {
+        pin: pin.clone(),
+        len: payload.len() as u64,
+    };
+
+    // Unheld streaming check hashes in 64 KiB chunks without inserting into or
+    // churning the verified-bytes memo.
+    let unheld = VerifiedBytesCacheV1::new_v1(1 << 20, 16);
+    check_pinned_in_v1(&unheld, &pin).unwrap();
+    assert_eq!(unheld.hashed_for_test_v1(), 1);
+    assert_eq!(unheld.diagnostics_v1()["records"], 0);
+    assert!(holds_pinned_in_v1(&unheld, &pinned, false));
+
+    // Held streaming check compares chunks against the held allocation without
+    // hashing again.
+    let held = VerifiedBytesCacheV1::new_v1(1 << 20, 16);
+    held.record_verified_v1(&pin.path, &pin.sha256, &payload);
+    check_pinned_in_v1(&held, &pin).unwrap();
+    assert_eq!(held.hashed_for_test_v1(), 0);
+    assert_eq!(held.diagnostics_v1()["compared_hits"], 1);
+    assert!(holds_pinned_in_v1(&held, &pinned, false));
+
+    // Strict mode rejects same-length mutations, truncations, lengthening,
+    // directories, and missing files whether bytes are held or unheld.
+    let mut same_len_mutated = payload.clone();
+    same_len_mutated[90 * 1024] ^= 0x55;
+    fs::write(&pin.path, &same_len_mutated).unwrap();
+    assert_eq!(
+        check_pinned_in_v1(&unheld, &pin).unwrap_err(),
+        "input file SHA differs"
+    );
+    assert_eq!(
+        check_pinned_in_v1(&held, &pin).unwrap_err(),
+        "input file SHA differs"
+    );
+    assert!(!holds_pinned_in_v1(&unheld, &pinned, false));
+    assert!(!holds_pinned_in_v1(&held, &pinned, false));
+    // Resident mode keeps its metadata-only contract for same-length rewrites.
+    assert!(holds_pinned_in_v1(&held, &pinned, true));
+
+    // Truncated and lengthened files fail both strict and resident checks.
+    fs::write(&pin.path, &payload[..payload.len() - 1]).unwrap();
+    assert!(!holds_pinned_in_v1(&held, &pinned, false));
+    assert!(!holds_pinned_in_v1(&held, &pinned, true));
+    let mut longer = payload.clone();
+    longer.push(0);
+    fs::write(&pin.path, &longer).unwrap();
+    assert!(!holds_pinned_in_v1(&held, &pinned, false));
+    assert!(!holds_pinned_in_v1(&held, &pinned, true));
+    assert!(!held
+        .stream_digest_matches_v1(
+            std::io::Cursor::new(&longer),
+            payload.len() as u64,
+            0,
+            &pin.path,
+            &pin.sha256,
+        )
+        .unwrap());
+
+    // Non-regular directory and missing file replacements fail closed.
+    fs::remove_file(&pin.path).unwrap();
+    assert!(!holds_pinned_in_v1(&held, &pinned, false));
+    assert!(!holds_pinned_in_v1(&held, &pinned, true));
+    fs::create_dir(&pin.path).unwrap();
+    assert_eq!(
+        check_pinned_in_v1(&unheld, &pin).unwrap_err(),
+        "input is not a bounded regular file"
+    );
+    assert!(!holds_pinned_in_v1(&held, &pinned, false));
+    assert!(!holds_pinned_in_v1(&held, &pinned, true));
+    fs::remove_dir(&pin.path).unwrap();
+    fs::write(&pin.path, &payload).unwrap();
+    assert!(holds_pinned_in_v1(&held, &pinned, false));
 }

@@ -1,7 +1,11 @@
 //! Bounded optional generic payment. Option N means pay N and draw N.
 use super::*;
+/// A resolution-time payment, not part of casting a spell, so mana that
+/// can't be spent to cast nonartifact spells pays it too.
 fn plan(state: &GameState, player: PlayerId, amount: u32) -> Option<crate::mana::PaymentPlan> {
-    crate::mana::plan_spell_mana_total_v1(&[], amount, player, state, false, &[], 0)
+    crate::mana::plan_noncast_payment_v1(state, player, |state| {
+        crate::mana::plan_spell_mana_total_v1(&[], amount, player, state, false, &[], 0)
+    })
 }
 fn maximum(state: &GameState, player: PlayerId) -> Result<u16, String> {
     #[cfg(feature = "standard-magezero-fixtures")]

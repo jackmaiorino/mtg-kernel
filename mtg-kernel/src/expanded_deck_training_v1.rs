@@ -763,24 +763,284 @@ struct LoadedOpponentV1 {
 
 /// Private inference policies, keyed by the entire content-pinned descriptor.
 /// Keep a small population working set without retaining optimizer snapshots.
-/// Least-recently-used entries are evicted before any replacement is loaded.
+/// Least-recently-used entries are evicted before any replacement is loaded,
+/// under both an explicit entry cap and an explicit byte budget.
 const OPPONENT_CACHE_CAPACITY_V1: usize = 8;
+pub const MAX_COLLECTION_OPPONENT_CACHE_ENTRIES_V1: usize = 128;
+pub const DEFAULT_COLLECTION_OPPONENT_CACHE_MIB_V1: usize = 256;
+pub const MAX_COLLECTION_OPPONENT_CACHE_MIB_V1: usize = 16_384;
+const COLLECTION_ENTRY_OVERHEAD_BYTES_V1: usize = 256;
 
-#[derive(Default)]
+/// Explicit bounded configuration for the process and per-worker opponent
+/// caches. Omitted by default so existing run configs and run identities keep
+/// their exact wire bytes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpponentCacheRunOptionsV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entries: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget_mib: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection_entries: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection_budget_mib: Option<usize>,
+}
+
+impl OpponentCacheRunOptionsV1 {
+    pub fn validate_v1(&self) -> Result<(), String> {
+        ensure(
+            self.entries
+                .is_none_or(|n| n <= ordered_update_preparation::MAX_OPPONENT_CACHE_ENTRIES_V1),
+            "opponent_cache.entries exceeds maximum 256",
+        )?;
+        ensure(
+            self.budget_mib
+                .is_none_or(|n| n <= ordered_update_preparation::MAX_OPPONENT_CACHE_MIB_V1),
+            "opponent_cache.budget_mib exceeds maximum 16384",
+        )?;
+        ensure(
+            self.collection_entries
+                .is_none_or(|n| n <= MAX_COLLECTION_OPPONENT_CACHE_ENTRIES_V1),
+            "opponent_cache.collection_entries exceeds maximum 128",
+        )?;
+        ensure(
+            self.collection_budget_mib
+                .is_none_or(|n| n <= MAX_COLLECTION_OPPONENT_CACHE_MIB_V1),
+            "opponent_cache.collection_budget_mib exceeds maximum 16384",
+        )
+    }
+}
+
+static COLLECTION_OPPONENT_CACHE_OVERRIDES_V1: std::sync::OnceLock<
+    std::sync::Mutex<(Option<usize>, Option<usize>)>,
+> = std::sync::OnceLock::new();
+
+pub fn configure_opponent_caches_v1(options: &OpponentCacheRunOptionsV1) -> Result<(), String> {
+    options.validate_v1()?;
+    ordered_update_preparation::configure_process_opponent_cache_v1(
+        options.entries,
+        options.budget_mib,
+    );
+    if options.collection_entries.is_some() || options.collection_budget_mib.is_some() {
+        let lock = COLLECTION_OPPONENT_CACHE_OVERRIDES_V1
+            .get_or_init(|| std::sync::Mutex::new((None, None)));
+        let mut guard = lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(entries) = options.collection_entries {
+            guard.0 = Some(entries.min(MAX_COLLECTION_OPPONENT_CACHE_ENTRIES_V1));
+        }
+        if let Some(mib) = options.collection_budget_mib {
+            guard.1 = Some(mib.min(MAX_COLLECTION_OPPONENT_CACHE_MIB_V1));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Collection cache limits for caches this test thread builds, in place of
+    /// the process-wide configuration other tests share.
+    static COLLECTION_OPPONENT_CACHE_LIMITS_FOR_TEST_V1: std::cell::Cell<Option<(usize, usize)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Runs `body` with every collection or replay cache this thread builds
+/// limited to `entries` and `budget_bytes`.
+#[cfg(test)]
+pub(crate) fn with_collection_opponent_cache_limits_for_test_v1<T>(
+    entries: usize,
+    budget_bytes: usize,
+    body: impl FnOnce() -> T,
+) -> T {
+    let previous = COLLECTION_OPPONENT_CACHE_LIMITS_FOR_TEST_V1
+        .with(|limits| limits.replace(Some((entries, budget_bytes))));
+    let result = body();
+    COLLECTION_OPPONENT_CACHE_LIMITS_FOR_TEST_V1.with(|limits| limits.set(previous));
+    result
+}
+
+/// A count of transient-slot serves shared across threads (tests only).
+#[cfg(test)]
+type TransientHitsForTestV1 = std::sync::Arc<std::sync::atomic::AtomicU64>;
+
+#[cfg(test)]
+thread_local! {
+    /// The counter of transient-slot serves that collection or replay caches
+    /// this test thread builds share, wherever they are used.
+    static TRANSIENT_HITS_FOR_TEST_V1: std::cell::RefCell<Option<TransientHitsForTestV1>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn transient_hits_counter_for_test_v1() -> Option<TransientHitsForTestV1> {
+    TRANSIENT_HITS_FOR_TEST_V1.with(|counter| counter.borrow().clone())
+}
+
+/// Runs `body` and returns its result with the number of loads served from
+/// the transient slot of every collection or replay cache this thread builds
+/// meanwhile, including caches moved to collector threads. The diagnostics
+/// counters cannot show those: in tests they are per thread.
+#[cfg(test)]
+pub(crate) fn count_collection_transient_hits_for_test_v1<T>(body: impl FnOnce() -> T) -> (T, u64) {
+    let counter = TransientHitsForTestV1::default();
+    let previous = TRANSIENT_HITS_FOR_TEST_V1.with(|slot| slot.replace(Some(counter.clone())));
+    let result = body();
+    TRANSIENT_HITS_FOR_TEST_V1.with(|slot| *slot.borrow_mut() = previous);
+    (result, counter.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+pub(crate) fn configured_collection_opponent_cache_limits_v1() -> (usize, usize) {
+    #[cfg(test)]
+    {
+        if let Some(limits) =
+            COLLECTION_OPPONENT_CACHE_LIMITS_FOR_TEST_V1.with(std::cell::Cell::get)
+        {
+            return limits;
+        }
+    }
+    let overrides = COLLECTION_OPPONENT_CACHE_OVERRIDES_V1
+        .get()
+        .map(|lock| {
+            *lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        })
+        .unwrap_or((None, None));
+    let entries = overrides.0.unwrap_or_else(|| {
+        ordered_update_preparation::parse_bounded_env_usize_v1(
+            "MTG_KERNEL_COLLECTION_OPPONENT_CACHE_ENTRIES",
+            OPPONENT_CACHE_CAPACITY_V1,
+            MAX_COLLECTION_OPPONENT_CACHE_ENTRIES_V1,
+        )
+    });
+    let budget_mib = overrides.1.unwrap_or_else(|| {
+        ordered_update_preparation::parse_bounded_env_usize_v1(
+            "MTG_KERNEL_COLLECTION_OPPONENT_CACHE_MIB",
+            DEFAULT_COLLECTION_OPPONENT_CACHE_MIB_V1,
+            MAX_COLLECTION_OPPONENT_CACHE_MIB_V1,
+        )
+    });
+    (entries, budget_mib.saturating_mul(1 << 20))
+}
+
+enum OpponentCacheModeV1 {
+    /// Standalone unit-test mode: misses always perform a full uncached load.
+    Unverified,
+    /// Collection worker mode: sources verified at the collection boundary may
+    /// fork from the process opponent cache without rereading pins.
+    CollectionVerified(Vec<ExpandedModelSourceV1>),
+    /// Serial update replay mode: misses fork from the process opponent cache
+    /// after revalidating every pinned file on disk.
+    ReplayRevalidated,
+}
+
+/// The bytes a collection or replay cache entry charges for itself: its
+/// policy's own copies, its source descriptor and a fixed overhead. Its
+/// shared model is charged separately, once per cache
+/// (`OpponentCacheV1::model_charge_v1`).
+fn collection_entry_charge_v1(entry: &LoadedOpponentV1) -> usize {
+    opponent_cache_diagnostics_v1::policy_bytes_v1(&entry.policy)
+        .saturating_add(ordered_update_preparation::source_descriptor_bytes_v1(
+            &entry.behavior.source,
+        ))
+        .saturating_add(COLLECTION_ENTRY_OVERHEAD_BYTES_V1)
+}
+
+/// What one entry charges in an otherwise empty collection or replay cache:
+/// its own bytes and its whole model.
+fn collection_entry_standalone_charge_v1(entry: &LoadedOpponentV1) -> usize {
+    collection_entry_charge_v1(entry)
+        .saturating_add(opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy).1)
+}
+
 struct OpponentCacheV1 {
     entries: Vec<LoadedOpponentV1>,
-    verified_sources: Vec<ExpandedModelSourceV1>,
+    /// Uncached caller borrow slot: the last entry `insert` refused because it
+    /// exceeds `budget_bytes` or `entry_limit == 0`. A load of its source
+    /// serves it again, as a kept entry is served, without a revalidation or
+    /// reload. The next refused entry replaces it; a kept entry of its source,
+    /// a load of any other source, or drop clears it. A kept entry of another
+    /// source leaves it in place.
+    transient: Option<LoadedOpponentV1>,
+    entry_limit: usize,
+    budget_bytes: usize,
+    /// Every entry's own charge plus each distinct model its entries hold,
+    /// once, whether or not the process cache also holds that model.
+    charged_bytes: usize,
+    /// The distinct models the entries hold: identity, bytes and how many
+    /// entries hold it.
+    models: Vec<(usize, usize, usize)>,
+    mode: OpponentCacheModeV1,
     /// The command's training math, which every loaded opponent plays
     /// under ([`bind_opponent_math_v1`]).
     training_math: TrainingMathV1,
+    /// The counter of transient-slot serves of the test thread that built
+    /// this cache, if it counts them
+    /// ([`count_collection_transient_hits_for_test_v1`]).
+    #[cfg(test)]
+    transient_hits_for_test: Option<TransientHitsForTestV1>,
+}
+
+impl Default for OpponentCacheV1 {
+    fn default() -> Self {
+        Self::new(OPPONENT_CACHE_CAPACITY_V1)
+    }
 }
 
 impl OpponentCacheV1 {
-    fn for_collection(verified_sources: Vec<ExpandedModelSourceV1>) -> Self {
+    fn new(entry_limit: usize) -> Self {
+        Self::with_limits_v1(
+            entry_limit,
+            DEFAULT_COLLECTION_OPPONENT_CACHE_MIB_V1.saturating_mul(1 << 20),
+        )
+    }
+
+    fn with_limits_v1(entry_limit: usize, budget_bytes: usize) -> Self {
         Self {
             entries: Vec::new(),
-            verified_sources,
+            transient: None,
+            entry_limit,
+            budget_bytes,
+            charged_bytes: 0,
+            models: Vec::new(),
+            mode: OpponentCacheModeV1::Unverified,
             training_math: TrainingMathV1::PlatformLibm,
+            #[cfg(test)]
+            transient_hits_for_test: transient_hits_counter_for_test_v1(),
+        }
+    }
+
+    fn for_collection(verified_sources: Vec<ExpandedModelSourceV1>) -> Self {
+        let (entry_limit, budget_bytes) = configured_collection_opponent_cache_limits_v1();
+        Self {
+            entries: Vec::new(),
+            transient: None,
+            entry_limit,
+            budget_bytes,
+            charged_bytes: 0,
+            models: Vec::new(),
+            mode: OpponentCacheModeV1::CollectionVerified(verified_sources),
+            training_math: TrainingMathV1::PlatformLibm,
+            #[cfg(test)]
+            transient_hits_for_test: transient_hits_counter_for_test_v1(),
+        }
+    }
+
+    fn for_replay_v1() -> Self {
+        let (entry_limit, budget_bytes) = configured_collection_opponent_cache_limits_v1();
+        Self {
+            entries: Vec::new(),
+            transient: None,
+            entry_limit,
+            budget_bytes,
+            charged_bytes: 0,
+            models: Vec::new(),
+            mode: OpponentCacheModeV1::ReplayRevalidated,
+            training_math: TrainingMathV1::PlatformLibm,
+            #[cfg(test)]
+            transient_hits_for_test: transient_hits_counter_for_test_v1(),
         }
     }
 
@@ -795,7 +1055,53 @@ impl OpponentCacheV1 {
             .any(|entry| entry.behavior.source == *source)
     }
 
-    fn insert(&mut self, entry: LoadedOpponentV1) {
+    /// The model bytes `entry` adds to this cache: none when another entry
+    /// already holds its model.
+    fn model_charge_v1(&self, entry: &LoadedOpponentV1) -> usize {
+        let (model, bytes) = opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy);
+        if self.models.iter().any(|held| held.0 == model) {
+            0
+        } else {
+            bytes
+        }
+    }
+
+    /// Charge a kept entry: its own bytes, and its model if no other entry
+    /// holds it.
+    fn charge_v1(&mut self, entry: &LoadedOpponentV1) {
+        let (model, bytes) = opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy);
+        let mut charge = collection_entry_charge_v1(entry);
+        match self.models.iter_mut().find(|held| held.0 == model) {
+            Some(held) => held.2 += 1,
+            None => {
+                self.models.push((model, bytes, 1));
+                charge = charge.saturating_add(bytes);
+            }
+        }
+        self.charged_bytes = self.charged_bytes.saturating_add(charge);
+        opponent_cache_diagnostics_v1::counters_v1()
+            .collection_opponent
+            .charged_v1(charge);
+    }
+
+    /// Release a dropped entry's charge, and its model's once no entry holds
+    /// it.
+    fn uncharge_v1(&mut self, entry: &LoadedOpponentV1) {
+        let (model, _) = opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy);
+        let mut charge = collection_entry_charge_v1(entry);
+        if let Some(index) = self.models.iter().position(|held| held.0 == model) {
+            self.models[index].2 -= 1;
+            if self.models[index].2 == 0 {
+                charge = charge.saturating_add(self.models.swap_remove(index).1);
+            }
+        }
+        self.charged_bytes = self.charged_bytes.saturating_sub(charge);
+        opponent_cache_diagnostics_v1::counters_v1()
+            .collection_opponent
+            .uncharged_v1(charge);
+    }
+
+    fn insert(&mut self, entry: LoadedOpponentV1) -> bool {
         let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
         if let Some(index) = self
             .entries
@@ -803,27 +1109,83 @@ impl OpponentCacheV1 {
             .position(|old| old.behavior.source == entry.behavior.source)
         {
             let old = self.entries.remove(index);
+            self.uncharge_v1(&old);
             stats.released_v1(opponent_cache_diagnostics_v1::policy_bytes_v1(&old.policy));
         }
-        if self.entries.len() == OPPONENT_CACHE_CAPACITY_V1 {
-            self.evict_oldest_v1();
+        if self.entry_limit == 0
+            || collection_entry_standalone_charge_v1(&entry) > self.budget_bytes
+        {
+            stats.not_kept_budget.add(1);
+            self.transient = Some(entry);
+            return false;
         }
+        // A refused policy of this source in the transient slot is stale now:
+        // `load` looks there first and would serve it instead of this entry.
+        if self
+            .transient
+            .as_ref()
+            .is_some_and(|held| held.behavior.source == entry.behavior.source)
+        {
+            self.transient = None;
+        }
+        let own = collection_entry_charge_v1(&entry);
+        while self.entries.len() >= self.entry_limit
+            || self
+                .charged_bytes
+                .saturating_add(own)
+                .saturating_add(self.model_charge_v1(&entry))
+                > self.budget_bytes
+        {
+            if !self.evict_oldest_v1() {
+                break;
+            }
+        }
+        self.charge_v1(&entry);
         stats.held_v1(opponent_cache_diagnostics_v1::policy_bytes_v1(
             &entry.policy,
         ));
         self.entries.push(entry);
+        true
     }
 
-    fn evict_oldest_v1(&mut self) {
+    fn evict_oldest_v1(&mut self) -> bool {
+        if self.entries.is_empty() {
+            return false;
+        }
         let old = self.entries.remove(0);
+        self.uncharge_v1(&old);
         let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
         stats.evictions.add(1);
         stats.released_v1(opponent_cache_diagnostics_v1::policy_bytes_v1(&old.policy));
+        true
     }
 
     fn load(&mut self, source: &ExpandedModelSourceV1) -> Result<&mut LoadedOpponentV1, String> {
         let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
         let started = std::time::Instant::now();
+        // A policy the bounds refused stays in the transient slot until a
+        // load of another source, so a current-self fork inserted for this
+        // episode, or a repeated oversized source, is served without a reload.
+        if self
+            .transient
+            .as_ref()
+            .is_some_and(|held| held.behavior.source == *source)
+        {
+            stats.hits.add(1);
+            stats.transient_hits.add(1);
+            stats.hit_nanos.add_elapsed(started);
+            #[cfg(test)]
+            {
+                if let Some(count) = &self.transient_hits_for_test {
+                    count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            return self
+                .transient
+                .as_mut()
+                .ok_or_else(|| "transient opponent slot is empty".into());
+        }
+        self.transient = None;
         if let Some(index) = self
             .entries
             .iter()
@@ -835,21 +1197,42 @@ impl OpponentCacheV1 {
             self.entries.push(entry);
             stats.hits.add(1);
             stats.hit_nanos.add_elapsed(started);
-        } else {
-            if self.entries.len() == OPPONENT_CACHE_CAPACITY_V1 {
-                self.evict_oldest_v1();
-            }
-            let verified = self.verified_sources.contains(source);
-            if verified {
+            return self
+                .entries
+                .last_mut()
+                .ok_or_else(|| "opponent cache is empty".into());
+        }
+        if self.entry_limit > 0 && self.entries.len() >= self.entry_limit {
+            self.evict_oldest_v1();
+        }
+        let mut opponent = match &self.mode {
+            OpponentCacheModeV1::CollectionVerified(verified_sources)
+                if verified_sources.contains(source) =>
+            {
                 stats.misses_verified.add(1);
-            } else {
-                stats.misses_unverified.add(1);
-            }
-            let mut opponent = if verified {
                 ordered_update_preparation::load_opponent_cached_v1(source, false)?.0
-            } else {
+            }
+            OpponentCacheModeV1::ReplayRevalidated => {
+                stats.misses_revalidated.add(1);
+                // Serial replay runs on the caller's thread, which may be a
+                // main thread with a small default stack. A process-cache
+                // miss loads in full from this frame, as an unverified miss
+                // does, not from inside the process cache's frames.
+                match ordered_update_preparation::lookup_opponent_cached_v1(source, true)? {
+                    Some(hit) => hit,
+                    None => {
+                        let (policy, identity) = ordered_update_preparation::full_load_opponent_v1(
+                            source,
+                            LoadRoleV1::Opponent,
+                        )?;
+                        ordered_update_preparation::admit_opponent_v1(source, policy, identity)?
+                    }
+                }
+            }
+            OpponentCacheModeV1::Unverified | OpponentCacheModeV1::CollectionVerified(_) => {
                 // Unrecognized import schemas retain their original complete
                 // loader validation rather than trusting a process cache hit.
+                stats.misses_unverified.add(1);
                 let (policy, identity) =
                     loaded_source_profile_v1::scoped_v1(LoadRoleV1::Opponent, || {
                         load_expanded_inference_any_math_v1(source)
@@ -861,35 +1244,58 @@ impl OpponentCacheV1 {
                         identity,
                     },
                 }
-            };
-            bind_opponent_math_v1(source, &mut opponent.policy, self.training_math)?;
-            stats.miss_nanos.add_elapsed(started);
-            self.insert(opponent);
+            }
+        };
+        bind_opponent_math_v1(source, &mut opponent.policy, self.training_math)?;
+        stats.miss_nanos.add_elapsed(started);
+        if self.insert(opponent) {
+            self.entries
+                .last_mut()
+                .ok_or_else(|| "opponent cache is empty".into())
+        } else {
+            self.transient
+                .as_mut()
+                .ok_or_else(|| "transient opponent slot is empty".into())
         }
-        self.entries
-            .last_mut()
-            .ok_or_else(|| "opponent cache is empty".into())
     }
 }
 
 impl Drop for OpponentCacheV1 {
     fn drop(&mut self) {
+        self.transient = None;
         let stats = &opponent_cache_diagnostics_v1::counters_v1().collection_opponent;
         for entry in &self.entries {
             stats.released_v1(opponent_cache_diagnostics_v1::policy_bytes_v1(
                 &entry.policy,
             ));
         }
+        stats.uncharged_v1(self.charged_bytes);
     }
+}
+
+/// Validates a fixed roster opponent at run start while populating the process
+/// opponent cache (`LoadRoleV1::RunFixedOpponent` on full loads, revalidated on
+/// hits) so collection and update phases do not re-decode the same checkpoint.
+pub(crate) fn load_fixed_roster_opponent_contract_v1(
+    source: &ExpandedModelSourceV1,
+    training_math: TrainingMathV1,
+) -> Result<Option<String>, String> {
+    let (mut opponent, _) = ordered_update_preparation::load_opponent_cached_with_role_v1(
+        source,
+        true,
+        LoadRoleV1::RunFixedOpponent,
+    )?;
+    bind_opponent_math_v1(source, &mut opponent.policy, training_math)?;
+    Ok(opponent.policy.input_contract_v1().map(str::to_owned))
 }
 
 /// Revalidate every external byte pin once at a collection boundary before
 /// reusing a process-cached model. Schema-specific semantic validation remains
 /// the cache miss loader's responsibility; changed bytes cannot hit that cache.
 ///
-/// The import and checkpoint are read as shared bytes: with resident reads on
-/// (`verified_bytes_cache_v1`) each read checks the file's metadata and
-/// borrows the held verified bytes, without copying a 20 MB checkpoint.
+/// Sources already held in the process opponent cache verify their checkpoint
+/// and import pins via streaming checks (`check_pinned_v1`) without allocating
+/// 15-20 MB buffers or churning `verified_bytes_cache_v1`.
 fn verify_collection_opponent_sources_v1(
     episodes: &[ExpandedEpisodeV1],
 ) -> Result<Vec<ExpandedModelSourceV1>, String> {
@@ -910,29 +1316,36 @@ fn verify_collection_opponent_sources_v1(
             continue;
         }
         let bytes = read_pinned_shared_v1(&source.play_import)?;
-        let checkpoint_bytes = source
-            .checkpoint
-            .as_ref()
-            .map(read_pinned_shared_v1)
-            .transpose()?;
-        let checkpoint_bytes = checkpoint_bytes.as_deref().map(Vec::as_slice);
         let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
         let schema = probe.get("schema").and_then(Value::as_str);
         // A converted source whose base trains verifies the conversion's
         // pins and the base's own, then is served like its base.
         let verified_pins = if schema == Some(no_state_digest_v1::IMPORT_SCHEMA_V1) {
+            let checkpoint_bytes = source
+                .checkpoint
+                .as_ref()
+                .map(read_pinned_shared_v1)
+                .transpose()?;
+            let checkpoint_bytes = checkpoint_bytes.as_deref().map(Vec::as_slice);
             no_state_digest_v1::verify_source_pins_v1(source, &bytes, checkpoint_bytes)?
+        } else if ordered_update_preparation::holds_source_v1(source) {
+            if let Some(checkpoint) = &source.checkpoint {
+                check_pinned_v1(checkpoint)?;
+            }
+            verify_import_pins_v1(&bytes)?
         } else {
+            let checkpoint_bytes = source
+                .checkpoint
+                .as_ref()
+                .map(read_pinned_shared_v1)
+                .transpose()?;
+            let checkpoint_bytes = checkpoint_bytes.as_deref().map(Vec::as_slice);
             let mut pins_ok = verify_import_pins_v1(&bytes)?;
             // A checkpoint that names a further file (a phase-1
             // archive-distillation parent), or that the probe cannot read,
             // keeps its full load, which reads it and reports its own error.
-            // The process cache holds only sources whose checkpoint the same
-            // probe found clean, and this pin was just verified, so a held
-            // source needs no probe.
             if let (true, Some(checkpoint)) = (pins_ok, checkpoint_bytes) {
-                pins_ok = ordered_update_preparation::holds_source_v1(source)
-                    || no_state_digest_v1::names_another_file_v1(checkpoint) == Ok(false);
+                pins_ok = no_state_digest_v1::names_another_file_v1(checkpoint) == Ok(false);
             }
             pins_ok
         };
@@ -952,20 +1365,29 @@ fn verify_collection_opponent_sources_v1(
 /// Files read in full, each with its bytes verified against its pin.
 pub(super) type VerifiedFilesV1 = Vec<(PathBuf, Vec<u8>)>;
 
-/// Every file a full opponent load of `source` reads, read again and
-/// verified against its pin, for the process opponent cache: the import, its
-/// own inputs and the checkpoint, or for a converted source over a trainable
-/// base the conversion record, the base's files, the base checkpoint and the
-/// artifact or continuation checkpoint. `None` for any other kind of source,
-/// and for one whose base or source checkpoint names a further file (a
-/// phase-1 archive-distillation parent): those load in full every time.
-pub(super) fn opponent_cache_files_v1(
+/// One pinned file an opponent load depends on, paired with the regular-file
+/// byte length verified when the entry was captured.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct PinnedOpponentFileV1 {
+    pub(super) pin: PinnedFileV1,
+    pub(super) len: u64,
+}
+
+/// Every file a full opponent load of `source` reads, verified against its pin
+/// and recorded as `(pin, len)` metadata without retaining raw `Vec<u8>` file
+/// buffers: the import, its own inputs and the checkpoint, or for a converted
+/// source over a trainable base the conversion record, the base's files, the
+/// base checkpoint and the artifact or continuation checkpoint. `None` for any
+/// other kind of source, and for one whose base or source checkpoint names a
+/// further file (a phase-1 archive-distillation parent): those load in full
+/// every time.
+pub(super) fn opponent_cache_pins_v1(
     source: &ExpandedModelSourceV1,
-) -> Result<Option<VerifiedFilesV1>, String> {
+) -> Result<Option<Vec<PinnedOpponentFileV1>>, String> {
     if source.s_learner.is_some() || source.w_learner.is_some() {
         return Ok(None);
     }
-    let bytes = read_pinned_bytes(&source.play_import)?;
+    let bytes = read_pinned_shared_v1(&source.play_import)?;
     let probe: Value = serde_json::from_slice(&bytes).map_err(err)?;
     let (pins, checkpoints) = if probe.get("schema").and_then(Value::as_str)
         == Some(no_state_digest_v1::IMPORT_SCHEMA_V1)
@@ -982,15 +1404,27 @@ pub(super) fn opponent_cache_files_v1(
         pins.extend(checkpoints.iter().cloned());
         (pins, checkpoints)
     };
-    let mut files = vec![(source.play_import.path.clone(), bytes)];
+    let mut verified = vec![PinnedOpponentFileV1 {
+        pin: source.play_import.clone(),
+        len: bytes.len() as u64,
+    }];
+    drop(bytes);
     for pin in &pins {
-        let read = read_pinned_bytes(pin)?;
-        if checkpoints.contains(pin) && no_state_digest_v1::names_another_file_v1(&read)? {
-            return Ok(None);
-        }
-        files.push((pin.path.clone(), read));
+        let len = if checkpoints.contains(pin) {
+            let read = read_pinned_shared_v1(pin)?;
+            if no_state_digest_v1::names_another_file_v1(&read)? {
+                return Ok(None);
+            }
+            read.len() as u64
+        } else {
+            check_pinned_len_v1(pin)?
+        };
+        verified.push(PinnedOpponentFileV1 {
+            pin: pin.clone(),
+            len,
+        });
     }
-    Ok(Some(files))
+    Ok(Some(verified))
 }
 
 /// The pins of the files a full load of an import reads besides the import
@@ -1044,8 +1478,8 @@ fn import_pins_v1(bytes: &[u8]) -> Result<Option<Vec<PinnedFileV1>>, String> {
 }
 
 /// The external pins of a fresh-initialization source or an ordinary import,
-/// read once; `false` for any other schema, whose loader keeps its own full
-/// validation.
+/// checked via streaming verification (`check_pinned_v1`); `false` for any
+/// other schema, whose loader keeps its own full validation.
 fn verify_import_pins_v1(bytes: &[u8]) -> Result<bool, String> {
     let Some(pins) = import_pins_v1(bytes)? else {
         return Ok(false);
@@ -5660,7 +6094,8 @@ fn execute_update_inner_v1(
         (prepared.groups, Some(prepared.telemetry))
     } else {
         let mut tensor_groups = Vec::new();
-        let mut opponent_cache = OpponentCacheV1::default().with_training_math_v1(training_math);
+        let mut opponent_cache =
+            OpponentCacheV1::for_replay_v1().with_training_math_v1(training_math);
         for (episode_ordinal, episode) in episodes.iter().enumerate() {
             let opponent = episode
                 .episode
@@ -6904,9 +7339,14 @@ fn read_pinned_shared_in_v1(
 
 /// `read_pinned_bytes` for a caller that only needs the check: with resident
 /// reads on and the pin's bytes held, the metadata checks run and the held
-/// bytes are not copied; otherwise exactly `read_pinned_bytes`.
+/// bytes are not copied; otherwise streams through a fixed 64 KiB stack buffer
+/// without allocating a whole-file `Vec<u8>`.
 fn check_pinned_v1(pin: &PinnedFileV1) -> Result<(), String> {
     check_pinned_in_v1(verified_bytes_cache_v1::global_v1(), pin)
+}
+
+fn check_pinned_len_v1(pin: &PinnedFileV1) -> Result<u64, String> {
+    check_pinned_len_in_v1(verified_bytes_cache_v1::global_v1(), pin)
 }
 
 /// `check_pinned_v1` against the verified-bytes cache `cache`.
@@ -6914,6 +7354,24 @@ fn check_pinned_in_v1(
     cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
     pin: &PinnedFileV1,
 ) -> Result<(), String> {
+    check_pinned_len_in_v1(cache, pin).map(drop)
+}
+
+fn check_pinned_len_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    pin: &PinnedFileV1,
+) -> Result<u64, String> {
+    struct CountingReader<'a, R> {
+        inner: R,
+        bytes: &'a mut u64,
+    }
+    impl<R: std::io::Read> std::io::Read for CountingReader<'_, R> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let count = self.inner.read(buf)?;
+            *self.bytes = self.bytes.saturating_add(count as u64);
+            Ok(count)
+        }
+    }
     let started = std::time::Instant::now();
     let metadata = fs::metadata(&pin.path).map_err(err)?;
     ensure(
@@ -6924,16 +7382,138 @@ fn check_pinned_in_v1(
         .resident_bytes_v1(&pin.path, &pin.sha256, metadata.len())
         .is_some()
     {
-        return Ok(());
+        return Ok(metadata.len());
     }
     let file = fs::File::open(&pin.path).map_err(err)?;
+    let opened = file.metadata().map_err(err)?;
+    ensure(
+        opened.is_file() && opened.len() <= MAX_FILE_BYTES,
+        "input is not a bounded regular file",
+    )?;
     let open_nanos = opponent_cache_diagnostics_v1::nanos_since_v1(started);
+    let mut read_len = 0u64;
     ensure(
         cache
-            .stream_digest_matches_v1(file, MAX_FILE_BYTES, open_nanos, &pin.path, &pin.sha256)
+            .stream_digest_matches_v1(
+                CountingReader {
+                    inner: file,
+                    bytes: &mut read_len,
+                },
+                MAX_FILE_BYTES,
+                open_nanos,
+                &pin.path,
+                &pin.sha256,
+            )
             .map_err(err)?,
         "input file SHA differs",
-    )
+    )?;
+    Ok(read_len)
+}
+
+/// Whether `file.pin.path` is a regular file of exact byte length `file.len`
+/// whose contents match `file.pin.sha256` (`holds_pinned_in_v1` under the
+/// process verified-bytes memo).
+pub(super) fn holds_pinned_v1(file: &PinnedOpponentFileV1) -> bool {
+    let cache = verified_bytes_cache_v1::global_v1();
+    holds_pinned_in_v1(cache, file, cache.resident_v1())
+}
+
+pub(super) fn holds_pinned_in_v1(
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    file: &PinnedOpponentFileV1,
+    resident: bool,
+) -> bool {
+    use opponent_cache_diagnostics_v1::{add_thread_work_v1, nanos_since_v1, WorkV1};
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    const HEX_LUT: &[u8; 16] = b"0123456789abcdef";
+    let regular = |metadata: std::io::Result<fs::Metadata>| {
+        metadata.is_ok_and(|metadata| {
+            metadata.is_file() && metadata.len() == file.len && file.len <= MAX_FILE_BYTES
+        })
+    };
+    let meta_started = std::time::Instant::now();
+    if !regular(fs::metadata(&file.pin.path)) {
+        add_thread_work_v1(WorkV1::Read, nanos_since_v1(meta_started));
+        return false;
+    }
+    let Ok(opened) = fs::File::open(&file.pin.path) else {
+        add_thread_work_v1(WorkV1::Read, nanos_since_v1(meta_started));
+        return false;
+    };
+    if !regular(opened.metadata()) {
+        add_thread_work_v1(WorkV1::Read, nanos_since_v1(meta_started));
+        return false;
+    }
+    add_thread_work_v1(WorkV1::Read, nanos_since_v1(meta_started));
+    if resident {
+        return true;
+    }
+    let held = cache
+        .peek_held_v1(&file.pin.path, &file.pin.sha256)
+        .filter(|bytes| bytes.len() as u64 == file.len);
+    let mut reader = opened.take(file.len.saturating_add(1));
+    let mut buffer = [0u8; 64 * 1024];
+    let mut total = 0u64;
+    if let Some(expected) = held {
+        let mut offset = 0usize;
+        loop {
+            let read_started = std::time::Instant::now();
+            let Ok(count) = reader.read(&mut buffer) else {
+                add_thread_work_v1(WorkV1::Read, nanos_since_v1(read_started));
+                return false;
+            };
+            add_thread_work_v1(WorkV1::Read, nanos_since_v1(read_started));
+            if count == 0 {
+                return total == file.len && offset == expected.len();
+            }
+            total = total.saturating_add(count as u64);
+            let verify_started = std::time::Instant::now();
+            let matches = total <= file.len
+                && offset.checked_add(count).is_some_and(|end| {
+                    end <= expected.len() && expected[offset..end] == buffer[..count]
+                });
+            add_thread_work_v1(WorkV1::Verify, nanos_since_v1(verify_started));
+            if !matches {
+                return false;
+            }
+            offset += count;
+        }
+    }
+    let hash_init = std::time::Instant::now();
+    let mut hasher = Sha256::new();
+    add_thread_work_v1(WorkV1::Verify, nanos_since_v1(hash_init));
+    loop {
+        let read_started = std::time::Instant::now();
+        let Ok(count) = reader.read(&mut buffer) else {
+            add_thread_work_v1(WorkV1::Read, nanos_since_v1(read_started));
+            return false;
+        };
+        add_thread_work_v1(WorkV1::Read, nanos_since_v1(read_started));
+        if count == 0 {
+            break;
+        }
+        total = total.saturating_add(count as u64);
+        if total > file.len {
+            return false;
+        }
+        let verify_started = std::time::Instant::now();
+        hasher.update(&buffer[..count]);
+        add_thread_work_v1(WorkV1::Verify, nanos_since_v1(verify_started));
+    }
+    if total != file.len {
+        return false;
+    }
+    let verify_started = std::time::Instant::now();
+    let raw = hasher.finalize();
+    let mut hex = [0u8; 64];
+    for (index, &byte) in raw.iter().enumerate() {
+        hex[2 * index] = HEX_LUT[(byte >> 4) as usize];
+        hex[2 * index + 1] = HEX_LUT[(byte & 0x0f) as usize];
+    }
+    let matches = file.pin.sha256.as_bytes() == hex;
+    add_thread_work_v1(WorkV1::Verify, nanos_since_v1(verify_started));
+    matches
 }
 
 /// `read_pinned_bytes` against the verified-bytes cache `cache`.
@@ -10345,6 +10925,7 @@ pub(crate) mod tests {
             search_seeds: vec![0],
             budget,
             value_leaf: None,
+            flat_root: false,
         };
         let options = |arms: Vec<ex1_collect_v1::Sd1ArmOptionsV1>, half_rollouts: u64| {
             ex1_collect_v1::Ex1CollectOptionsV1 {
@@ -10364,6 +10945,7 @@ pub(crate) mod tests {
                             arms,
                             half_rollouts,
                             coverage_max: 16,
+                            root_value: false,
                         }),
                     }),
                 }),

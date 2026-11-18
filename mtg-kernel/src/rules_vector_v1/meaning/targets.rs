@@ -722,7 +722,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::AnyNumberControlledNonlandNontokenPermanentsV1 => ObjF::NonlandPermanent,
         S::PlayerThenArtifactV1 | S::PlayerThenCreatureV1 => ObjF::PlayerOrPermanent,
         S::ArtifactThenCreatureV1 => ObjF::Permanent,
-        S::UpToOneOtherNonlandPermanentV1 => ObjF::NonlandPermanent,
+        S::UpToOneOtherNonlandPermanentV1 | S::S1qV1(_) => ObjF::NonlandPermanent,
         S::TriggeredAbilityOrColorlessSpellV1 => ObjF::Spell,
         S::CreaturesThenNonlandPermanentsV1 { .. } => ObjF::Permanent,
         S::TwoControlledArtifactsCreaturesOrLandsV1 => ObjF::Permanent,
@@ -776,9 +776,13 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::PlayerThenUpToTwoOfTheirGraveyardCardsV1 => ObjF::AnyCard,
         S::TwoLandsV1 => typed(CardType::Land),
         S::C4cV1(_) => ObjF::Permanent,
-        S::S1dV1(_) | S::C1cV1(_) | S::C1aV1(_) | S::C1bV1(_) | S::C2cV1(_) | S::C4aV1(_) => {
-            ObjF::AnyCard
-        }
+        S::S1dV1(_)
+        | S::C1cV1(_)
+        | S::C1aV1(_)
+        | S::C1bV1(_)
+        | S::C2cV1(_)
+        | S::C4aV1(_)
+        | S::S1oV1(_) => ObjF::AnyCard,
         S::CreatureOrPlaneswalkerManaValueAtMostV1(_) | S::OpponentCreatureOrEnchantmentV1 => {
             ObjF::Permanent
         }
@@ -888,6 +892,7 @@ pub(super) fn standard_target_origin(
         | S::C1bV1(_)
         | S::C2cV1(_)
         | S::C4aV1(_)
+        | S::S1oV1(_)
         | S::CreatureOrPlaneswalkerManaValueAtMostV1(_)
         | S::CreatureLandOrPlaneswalkerV1
         | S::ArtifactEnchantmentOrFlyingCreatureV1
@@ -903,6 +908,7 @@ pub(super) fn standard_target_origin(
         | S::PlayerThenCreatureV1
         | S::ArtifactThenCreatureV1
         | S::UpToOneOtherNonlandPermanentV1
+        | S::S1qV1(_)
         | S::CreaturesThenNonlandPermanentsV1 { .. }
         | S::PlayerThenPlayerV1
         | S::CreatureThenGraveyardCardsV1
@@ -979,10 +985,17 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             // Two distinct lands: the count has no facet.
             out.atoms.push(Atom::Opaque);
         }
-        S::S1dV1(_) | S::C1cV1(_) | S::C1aV1(_) | S::C1bV1(_) | S::C2cV1(_) | S::C4aV1(_) => {
+        S::S1dV1(_)
+        | S::C1cV1(_)
+        | S::C1aV1(_)
+        | S::C1bV1(_)
+        | S::C2cV1(_)
+        | S::C4aV1(_)
+        | S::S1oV1(_) => {
             // Wave S1d's filters (a power bound, flying, a land you control,
-            // a distinct-type graveyard pair) and wave C1c's pairs of
-            // differently targeted modes have no facet.
+            // a distinct-type graveyard pair), wave C1c's pairs of
+            // differently targeted modes and wave S1o's source-relative power
+            // and single-graveyard filters have no facet.
             out.atoms.push(Atom::Opaque);
         }
         S::CreatureOrPlaneswalkerManaValueAtMostV1(maximum) => {
@@ -1162,6 +1175,12 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             out.target(TargetAtom::UpTo);
             // Source exclusion.
             out.atoms.push(Atom::Opaque);
+        }
+        // Wave S1q's "up to one target nonland permanent", the source
+        // included.
+        S::S1qV1(_) => {
+            object(out, ObjF::NonlandPermanent, relation, zone);
+            out.target(TargetAtom::UpTo);
         }
         S::TriggeredAbilityOrColorlessSpellV1 => {
             object(out, ObjF::Spell, relation, zone);

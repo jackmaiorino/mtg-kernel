@@ -13,7 +13,7 @@ use super::ledger::SurvivorTreeV1;
 use crate::event::CommittedEvent;
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::{GameState, ObservationNoteKindV1, ObservationNoteV1, Zone};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) fn is_public(zone: Zone) -> bool {
     !matches!(zone, Zone::Hand | Zone::Library)
@@ -131,6 +131,12 @@ pub(crate) struct ProjectionV1 {
     pub objects: Vec<ObjectTrackSummaryV1>,
     /// V's library knowledge per owner: position from the top to object.
     pub library: [BTreeMap<u32, ObjectId>; 2],
+    /// Issue 713: for each token or spell copy V saw enter a library, the
+    /// positions from the top V cannot rule out for it, carried through the
+    /// same public notes as `library`. A single position is one V knows;
+    /// after a shuffle every position is possible, so the export must not
+    /// place the object at its true position.
+    pub library_public: BTreeMap<ObjectId, BTreeSet<u32>>,
     /// Name-level facts about the opponent's hand (amendment 43.8), in the
     /// order V learned them.
     pub hand_facts: Vec<HandFactV1>,
@@ -335,6 +341,7 @@ struct WalkV1<'a> {
     viewer: PlayerId,
     objs: Vec<ObjectTrackV1>,
     library: [BTreeMap<u32, ObjectId>; 2],
+    library_public: BTreeMap<ObjectId, BTreeSet<u32>>,
     hand: Vec<HandFactV1>,
     seams: Vec<(usize, u16)>,
     departures: Vec<(usize, u16)>,
@@ -431,6 +438,7 @@ fn project_versioned(
         viewer,
         objs,
         library: [BTreeMap::new(), BTreeMap::new()],
+        library_public: BTreeMap::new(),
         hand: Vec::new(),
         seams: Vec::new(),
         departures: Vec::new(),
@@ -472,8 +480,22 @@ fn project_versioned(
         w.next_event = index;
         let mut positions = Vec::new();
         let mut after = Vec::new();
+        // Issue 744: an event that moves a card out of a library claims the
+        // last removal note of that library anchored before it (the engine
+        // writes the note just before it commits the event).
+        let claimed = w.library_departure(event).and_then(|owner| {
+            let group = journal[cursor..]
+                .iter()
+                .take_while(|n| n.history_len <= index)
+                .count();
+            journal[cursor..cursor + group]
+                .iter()
+                .rposition(|n| library_removal_owner(&n.kind) == Some(owner))
+                .map(|k| cursor + k)
+        });
         while cursor < journal.len() && journal[cursor].history_len <= index {
             let note = &journal[cursor];
+            let unclaimed = Some(cursor) != claimed;
             cursor += 1;
             w.committed.1 = w.committed.1.max(cursor);
             if matches!(
@@ -496,6 +518,9 @@ fn project_versioned(
                 }
             }
             w.note(note);
+            if unclaimed {
+                w.removal_without_event(&note.kind);
+            }
         }
         event_items.push(w.item);
         w.next_event = index;
@@ -513,6 +538,7 @@ fn project_versioned(
     for (k, note) in journal[cursor..].iter().enumerate() {
         w.committed.1 = w.committed.1.max(cursor + k + 1);
         w.note(note);
+        w.removal_without_event(&note.kind);
     }
     // A spell being cast sits on the stack before its SpellCast commits:
     // the announcement is public, so the walk moves it as observed, in the
@@ -624,6 +650,7 @@ fn project_versioned(
             })
             .collect(),
         library: w.library,
+        library_public: w.library_public,
         hand_facts: w.hand,
         seams: w.seams,
         departures: w.departures,
@@ -643,6 +670,32 @@ fn project_versioned(
         open_item: w.open_item,
         inconsistencies: w.inconsistencies,
         departure_known: w.departure_known,
+    }
+}
+
+/// A token or spell copy that still sits in its owner's `zone` list (hand or
+/// library) in `state`. Such an object is outside the deck's card pool: V sees
+/// it (it came from a public zone) and the engine removes it at the next
+/// state-based sweep, with no event. Once it has ceased the zone list no
+/// longer holds it and this is false.
+pub(crate) fn live_outside_pool_v1(state: &GameState, id: ObjectId, zone: Zone) -> bool {
+    let o = state.objects.get(id);
+    if !(o.v4.is_token || o.spell_copy_origin.is_some()) {
+        return false;
+    }
+    let p = &state.players[o.owner.index()];
+    match zone {
+        Zone::Hand => p.hand.contains(&id),
+        Zone::Library => p.library.contains(&id),
+        _ => false,
+    }
+}
+
+/// The owner of the library a removal note names, if `kind` is one.
+fn library_removal_owner(kind: &ObservationNoteKindV1) -> Option<PlayerId> {
+    match kind {
+        ObservationNoteKindV1::LibraryRemoval { owner, .. } => Some(*owner),
+        _ => None,
     }
 }
 
@@ -672,10 +725,18 @@ impl WalkV1<'_> {
             // ends when it enters the opponent's hand and a new one starts
             // when it leaves; in the hand V holds name-level facts only. V's
             // own hand is unchanged.
-            Some(Zone::Hand) => o.owner == Some(self.viewer),
+            //
+            // A token or spell copy physically sitting in a hand or library
+            // list is public and about to cease to exist (111.8, 707.10; the
+            // next state-based sweep removes it without an event). It is not
+            // part of the card pool, so it stays tracked there (issue 713).
+            Some(Zone::Hand) => {
+                o.owner == Some(self.viewer) || live_outside_pool_v1(self.state, id, Zone::Hand)
+            }
             Some(Zone::Library) => {
                 let owner = self.owner(id);
                 self.library[owner.index()].values().any(|&x| x == id)
+                    || live_outside_pool_v1(self.state, id, Zone::Library)
             }
             Some(_) => true,
         }
@@ -692,6 +753,7 @@ impl WalkV1<'_> {
         let next_event = self.next_event;
         let prev_zones = std::mem::take(&mut self.prev_zones);
         let opp = self.opp();
+        self.ceased_in_opponent_hand();
         for id in observed {
             let o = &mut self.objs[id.0 as usize];
             o.last_obs_gen = o.moves;
@@ -855,12 +917,213 @@ impl WalkV1<'_> {
         untracked.saturating_sub(known)
     }
 
+    /// Issue 751: a token or spell copy in the opponent's hand that has
+    /// ceased to exist there (111.8, 707.10). `cease_to_exist` drops it from
+    /// the hand list with no event and no note and leaves its zone and
+    /// generation as they were, so no later event moves it, and the walk
+    /// would count it in `state_hand_untracked` for the rest of the game:
+    /// the survivor tree would never be cleared and the R8 latch never
+    /// released. Such an object stops existing at the next settle. Like the
+    /// library side (issue 744), the test reads only public facts: a token or
+    /// copy, its generation, and whether the native hand still holds it. It
+    /// was already untracked (`live_outside_pool_v1` reads the same hand
+    /// list), so tracking does not change. V's own hand is left as it is:
+    /// nothing counts it, and its objects stay tracked there. Only a token or
+    /// spell copy that entered the opponent's hand through an event can
+    /// match, so a walk in which none did is unchanged.
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "the index is also the object id"
+    )]
+    fn ceased_in_opponent_hand(&mut self) {
+        let opp = self.opp();
+        for i in 0..self.objs.len() {
+            let o = &self.objs[i];
+            if !(o.exists && o.zone == Some(Zone::Hand) && o.owner == Some(opp)) {
+                continue;
+            }
+            let id = ObjectId(i as u32);
+            let native = self.state.objects.get(id);
+            if (native.v4.is_token || native.spell_copy_origin.is_some())
+                && native.zone == Zone::Hand
+                && native.zone_change_count == o.moves
+                && !self.state.players[opp.index()].hand.contains(&id)
+            {
+                self.objs[i].exists = false;
+            }
+        }
+    }
+
     fn moved(&mut self, id: ObjectId, zone: Zone) {
         let before = self.objs[id.0 as usize].zone;
         self.prev_zones.push((id, before));
         let o = &mut self.objs[id.0 as usize];
         o.zone = Some(zone);
         o.moves += 1;
+        if zone != Zone::Library {
+            self.library_public.remove(&id);
+        }
+    }
+
+    /// Issue 713: a move into or out of `owner`'s library. A token or spell
+    /// copy that enters it is at the position its insertion note names, or
+    /// anywhere in the library when no note names one. A move with no
+    /// position note shifts every other public object's position in that
+    /// library by at most one, in a direction V cannot tell.
+    fn library_public_move(
+        &mut self,
+        id: ObjectId,
+        owner: PlayerId,
+        out: bool,
+        into: bool,
+        positions: &[&ObservationNoteV1],
+    ) {
+        let noted = |insertion: bool| -> Vec<u32> {
+            positions
+                .iter()
+                .filter_map(|n| match n.kind {
+                    ObservationNoteKindV1::LibraryInsertion { owner: o, position }
+                        if insertion && o == owner =>
+                    {
+                        Some(position)
+                    }
+                    ObservationNoteKindV1::LibraryRemoval { owner: o, position }
+                        if !insertion && o == owner =>
+                    {
+                        Some(position)
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let inserted = noted(true);
+        let unnoted_in = into && inserted.is_empty();
+        let unnoted_out = out && noted(false).is_empty();
+        if unnoted_in || unnoted_out {
+            for (other, set) in self.library_public.iter_mut() {
+                if *other == id || self.objs[other.0 as usize].owner != Some(owner) {
+                    continue;
+                }
+                *set = set
+                    .iter()
+                    .flat_map(|&x| {
+                        let up = unnoted_in.then_some(x + 1);
+                        let down = if unnoted_out { x.checked_sub(1) } else { None };
+                        std::iter::once(x).chain(up).chain(down)
+                    })
+                    .collect();
+            }
+        }
+        let o = self.state.objects.get(id);
+        if into && (o.v4.is_token || o.spell_copy_origin.is_some()) {
+            let possible = match inserted.as_slice() {
+                [position] => BTreeSet::from([*position]),
+                _ => (0..self.library_count(owner)).collect(),
+            };
+            self.library_public.insert(id, possible);
+        }
+    }
+
+    /// Issue 713: carries the positions V cannot rule out for each token or
+    /// spell copy in a library through one note, by the rules `note` applies
+    /// to `library`. A shuffle makes every position possible; a reorder or
+    /// a scry V does not see makes every position it touched possible; a
+    /// look, reorder or scry V sees fixes or excludes positions; a removal
+    /// or an insertion at a public position shifts them.
+    fn note_library_public(&mut self, kind: &ObservationNoteKindV1) {
+        use ObservationNoteKindV1 as K;
+        let owner = match kind {
+            K::LibraryRandomized { owner }
+            | K::LibraryLooked { owner, .. }
+            | K::LibraryReordered { owner, .. }
+            | K::LibraryScried { owner, .. }
+            | K::LibraryRemoval { owner, .. }
+            | K::LibraryInsertion { owner, .. } => *owner,
+            K::HandCardRevealed { .. } => return,
+        };
+        if self.library_public.is_empty() {
+            return;
+        }
+        let viewer = self.viewer;
+        let length = self.library_count(owner);
+        for (id, set) in self.library_public.iter_mut() {
+            if self.objs[id.0 as usize].owner != Some(owner) {
+                continue;
+            }
+            let id = *id;
+            let old = std::mem::take(set);
+            *set = match kind {
+                K::LibraryRandomized { .. } => (0..length).collect(),
+                K::LibraryLooked {
+                    observer,
+                    positions,
+                    ..
+                } => {
+                    if *observer != viewer {
+                        old
+                    } else if let Some((p, _)) = positions.iter().find(|(_, o)| *o == id) {
+                        BTreeSet::from([*p])
+                    } else {
+                        old.into_iter()
+                            .filter(|x| positions.iter().all(|(p, _)| p != x))
+                            .collect()
+                    }
+                }
+                K::LibraryReordered {
+                    ordered,
+                    revealed_to,
+                    ..
+                } => {
+                    let len = ordered.len() as u32;
+                    if revealed_to.contains(&viewer) {
+                        match ordered.iter().position(|o| *o == id) {
+                            Some(k) => BTreeSet::from([k as u32]),
+                            None => old.into_iter().filter(|x| *x >= len).collect(),
+                        }
+                    } else if old.iter().any(|x| *x < len) {
+                        old.into_iter().chain(0..len).collect()
+                    } else {
+                        old
+                    }
+                }
+                K::LibraryScried {
+                    retained_top,
+                    ordered_bottom,
+                    ..
+                } => {
+                    let top = retained_top.len() as u32;
+                    let bottom = ordered_bottom.len() as u32;
+                    let prefix = top + bottom;
+                    let first_bottom = length.saturating_sub(bottom);
+                    let mut new: BTreeSet<u32> = old
+                        .iter()
+                        .filter(|x| **x >= prefix)
+                        .map(|x| x - bottom)
+                        .collect();
+                    if owner == viewer {
+                        if let Some(k) = retained_top.iter().position(|o| *o == id) {
+                            new = BTreeSet::from([k as u32]);
+                        } else if let Some(k) = ordered_bottom.iter().position(|o| *o == id) {
+                            new = BTreeSet::from([first_bottom + k as u32]);
+                        }
+                    } else if old.iter().any(|x| *x < prefix) {
+                        new.extend(0..top);
+                        new.extend(first_bottom..length);
+                    }
+                    new
+                }
+                K::LibraryRemoval { position, .. } => old
+                    .into_iter()
+                    .filter(|x| x != position)
+                    .map(|x| if x > *position { x - 1 } else { x })
+                    .collect(),
+                K::LibraryInsertion { position, .. } => old
+                    .into_iter()
+                    .map(|x| if x >= *position { x + 1 } else { x })
+                    .collect(),
+                K::HandCardRevealed { .. } => old,
+            };
+        }
     }
 
     fn event(&mut self, event: &CommittedEvent, index: usize, positions: &[&ObservationNoteV1]) {
@@ -929,6 +1192,9 @@ impl WalkV1<'_> {
                 let was = self.objs[id.0 as usize].tracked;
                 let from_library = self.objs[id.0 as usize].zone == Some(Zone::Library);
                 self.moved(id, Zone::Hand);
+                if from_library {
+                    self.library_public_move(id, *player, true, false, positions);
+                }
                 self.library_to_hand(id, *player);
                 let named = *player == self.viewer;
                 if !named && !was && from_library {
@@ -969,6 +1235,15 @@ impl WalkV1<'_> {
                 let informative = owner == self.opp()
                     && (!self.hand.is_empty() || !self.survivors.is_empty() || self.r8_latch);
                 self.moved(id, *to);
+                if *from == Zone::Library || *to == Zone::Library {
+                    self.library_public_move(
+                        id,
+                        owner,
+                        *from == Zone::Library,
+                        *to == Zone::Library,
+                        positions,
+                    );
+                }
                 let public = is_public(*from) || is_public(*to);
                 let named = (public || owner == self.viewer) && !self.objs[id.0 as usize].hidden_v2;
                 if !token_or_copy {
@@ -1070,6 +1345,7 @@ impl WalkV1<'_> {
 
     fn note(&mut self, note: &ObservationNoteV1) {
         let viewer = self.viewer;
+        self.note_library_public(&note.kind);
         match &note.kind {
             ObservationNoteKindV1::LibraryRandomized { owner } => {
                 self.search_mark = None;
@@ -1219,6 +1495,18 @@ impl WalkV1<'_> {
                     return;
                 }
                 let id = *object;
+                if live_outside_pool_v1(self.state, id, Zone::Hand) {
+                    // A token or spell copy in the hand is public and tracked
+                    // (issue 713): the engine's reveal note names no hidden
+                    // card, so it is no hand fact and no reveal-triggered
+                    // refusal of a reference to an earlier incarnation. The
+                    // search mark is cleared as the ordinary path clears it
+                    // for a reveal outside a search run (the token's own zone
+                    // move already cleared it).
+                    self.search_mark = None;
+                    self.settle(&[]);
+                    return;
+                }
                 let card_def = self.card_def(id);
                 // Amendment 43.8 revision b (lead ruling 15): reveals are read
                 // by name only. No reveal is provably not an aborted cast's,
@@ -1330,6 +1618,57 @@ impl WalkV1<'_> {
         self.survivors.unpin(&top.record, &keep);
         if !undone {
             self.r8_latch = true;
+        }
+    }
+
+    /// Issue 744: the owner of the library `event` moves a card out of, as
+    /// the walk sees it before the event (a draw, a zone change from a
+    /// library, a spell cast from one).
+    fn library_departure(&self, event: &CommittedEvent) -> Option<PlayerId> {
+        let in_library = |id: &ObjectId| self.objs[id.0 as usize].zone == Some(Zone::Library);
+        match event {
+            CommittedEvent::Draw {
+                player,
+                object: Some(id),
+            } if in_library(id) => Some(*player),
+            CommittedEvent::ZoneChange {
+                object,
+                from: Zone::Library,
+                ..
+            } => Some(self.owner(*object)),
+            CommittedEvent::SpellCast { spell, .. } if in_library(spell) => {
+                Some(self.owner(*spell))
+            }
+            _ => None,
+        }
+    }
+
+    /// Issue 744: a library removal note that no event claims. The engine
+    /// writes one when a token or spell copy in a library ceases to exist
+    /// (111.8, 707.10): `cease_to_exist` drops it from the library list with
+    /// no event and leaves its zone and generation as they were, so no later
+    /// event moves it. Such an object of that owner, still in the walk's
+    /// library, stops existing here, so `library_count` no longer counts it.
+    /// Only a token or spell copy that entered a library through an event can
+    /// match, so a walk in which none did is unchanged.
+    fn removal_without_event(&mut self, kind: &ObservationNoteKindV1) {
+        let Some(owner) = library_removal_owner(kind) else {
+            return;
+        };
+        let ceased = (0..self.objs.len() as u32).map(ObjectId).find(|&id| {
+            let o = &self.objs[id.0 as usize];
+            if !(o.exists && o.zone == Some(Zone::Library) && o.owner == Some(owner)) {
+                return false;
+            }
+            let native = self.state.objects.get(id);
+            (native.v4.is_token || native.spell_copy_origin.is_some())
+                && native.zone == Zone::Library
+                && native.zone_change_count == o.moves
+                && !self.state.players[owner.index()].library.contains(&id)
+        });
+        if let Some(id) = ceased {
+            self.objs[id.0 as usize].exists = false;
+            self.library_public.remove(&id);
         }
     }
 

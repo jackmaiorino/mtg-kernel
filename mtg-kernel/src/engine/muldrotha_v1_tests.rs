@@ -65,6 +65,17 @@ fn pass(s: &mut GameState, d: Decision) {
     };
     step(s, a).unwrap();
 }
+/// Drives actual turn work until `player`'s first main phase begins.
+pub(crate) fn to_first_main(s: &mut GameState, player: PlayerId) {
+    for _ in 0..160 {
+        let d = next(s);
+        if s.active_player == player && matches!(s.step, Step::Main1) {
+            return;
+        }
+        pass(s, d);
+    }
+    panic!("{player:?}'s first main phase never began");
+}
 pub(crate) fn priority(s: &mut GameState, p: PlayerId) {
     for _ in 0..64 {
         let d = next(s);
@@ -465,6 +476,39 @@ fn current_generation_source_controller_changes_and_next_turn_reset_both_seats()
             .any(|q| q.permanent_type == CardType::Creature));
         pay(&mut s, p, elf, Some((m, CardType::Creature)), None);
         finish(&mut s);
+    }
+}
+#[test]
+fn budget_spent_in_one_turn_is_unused_in_the_other_players_turn_of_the_round_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(p, "Forest");
+        let n = p.opponent();
+        let m = paid(&mut s, p);
+        cast(&mut s, p, "Llanowar Elves", m, CardType::Creature, 1);
+        finish(&mut s);
+        // Explicit native control-change boundary, same source incarnation.
+        s.players[p.index()].battlefield.retain(|x| *x != m);
+        s.players[n.index()].battlefield.push(m);
+        s.objects.get_mut(m).controller = n;
+        validate_state(&s).unwrap();
+        // Drive actual turn work to the other player's turn of the same round.
+        let round = s.turn;
+        to_first_main(&mut s, n);
+        assert_eq!(s.active_player, n);
+        assert_eq!(s.turn, round, "the same round");
+        let elf = put(&mut s, n, "Llanowar Elves", Zone::Graveyard);
+        assert!(permissions(&s, elf, n)
+            .iter()
+            .any(|q| q.source.source == m && q.permanent_type == CardType::Creature));
+        // The frozen V71 public facts still label the budget by round, as
+        // before: the one case where they differ from the rules by design.
+        let facts = crate::muldrotha_public_v71::capture(&s, n).unwrap();
+        assert_eq!(facts.budgets.len(), 1);
+        assert_eq!(facts.budgets[0].spent, [CardType::Creature]);
+        pay(&mut s, n, elf, Some((m, CardType::Creature)), None);
+        finish(&mut s);
+        assert_eq!(s.objects.get(elf).zone, Zone::Battlefield);
+        validate_state(&s).unwrap();
     }
 }
 #[test]

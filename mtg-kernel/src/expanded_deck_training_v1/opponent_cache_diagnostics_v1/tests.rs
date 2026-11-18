@@ -228,26 +228,21 @@ fn the_process_opponent_cache_counts_a_full_load_and_its_hits_v1() {
     // No checkpoint: nothing decoded.
     assert_eq!(stats.capture.decode.get(), 0);
     assert!(stats.hit_max_nanos.get() > 0 && stats.hit_nanos.get() >= stats.hit_max_nanos.get());
-    // The entry's files are held, and reported in the sections.
+    // The entry's pinned dependencies are held without retaining duplicate
+    // file bytes, and reported in the sections.
     let held = ordered_update_preparation::held_v1();
     let entry = held
-        .files
+        .pins
         .iter()
-        .find(|files| {
-            files
-                .iter()
-                .any(|(path, _)| *path == source.play_import.path)
+        .find(|pins| {
+            pins.iter()
+                .any(|file| file.pin.path == source.play_import.path)
         })
         .expect("the source is held");
-    assert_eq!(
-        entry
-            .iter()
-            .map(|(_, bytes)| bytes.len() as u64)
-            .sum::<u64>(),
-        on_disk
-    );
+    assert_eq!(entry.iter().map(|file| file.len).sum::<u64>(), on_disk);
     assert!(held.policy_bytes > 0);
-    assert!(held.models >= 1 && held.models <= held.files.len() && held.model_bytes > 0);
+    assert!(held.models >= 1 && held.models <= held.entries && held.model_bytes > 0);
+    assert!(held.charged_bytes >= held.policy_bytes + held.model_bytes + held.metadata_bytes);
     let section = opponent_cache_section_v1();
     assert_eq!(section["process"]["lookups"], stats.lookups.get());
     assert_eq!(section["process"]["forks"], stats.forks.get());
@@ -256,9 +251,560 @@ fn the_process_opponent_cache_counts_a_full_load_and_its_hits_v1() {
     let forked = stats.forked_policy_bytes.get() - forked_before;
     assert!(forked > 0 && forked.is_multiple_of(3));
     assert!(section["process"]["entries"].as_u64().unwrap() >= 1);
-    assert!(section["process"]["file_bytes"].as_u64().unwrap() >= on_disk);
+    assert!(section["process"]["budget_bytes"].as_u64().unwrap() > 0);
+    assert!(section["process"]["charged_bytes"].as_u64().unwrap() >= held.charged_bytes as u64);
+    assert_eq!(section["process"]["file_bytes"], 0);
     let retained = retained_files_section_v1();
-    assert!(retained["opponent_cache_bytes"].as_u64().unwrap() >= on_disk);
+    assert_eq!(retained["opponent_cache_bytes"], 0);
+    fs::remove_dir_all(&root).unwrap();
+}
+
+/// Every net-8 parameter's name, shape and exact f32 bits.
+fn parameter_bits_v1(
+    opponent: &super::super::LoadedOpponentV1,
+) -> Vec<(&'static str, Vec<usize>, Vec<u32>)> {
+    opponent
+        .policy
+        .training_parameters_v3()
+        .into_iter()
+        .map(|parameter| {
+            (
+                parameter.name,
+                parameter.shape,
+                parameter
+                    .values
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect(),
+            )
+        })
+        .collect()
+}
+
+/// Two loads of one source agree on their behavior record and on every
+/// parameter bit.
+fn assert_same_opponent_v1(
+    left: &super::super::LoadedOpponentV1,
+    right: &super::super::LoadedOpponentV1,
+) {
+    assert_eq!(left.behavior, right.behavior);
+    assert_eq!(parameter_bits_v1(left), parameter_bits_v1(right));
+}
+
+fn fresh_source_variant_v1(
+    root: &Path,
+    label: &str,
+    delta: f32,
+) -> (ExpandedModelSourceV1, Vec<PathBuf>) {
+    let identity = FRESH_FEATURE_IDENTITY_V4;
+    let sub = root.join(label);
+    let descriptor =
+        write_synthetic_fresh_source_with_parameters_v1(&sub.join("source"), identity, |params| {
+            // Row 0 of the card embedding is the zero padding row.
+            params[0].values[16] += delta;
+        });
+    let bytes = serde_json::to_vec(&descriptor).unwrap();
+    let path = sub.join("descriptor.json");
+    fs::write(&path, &bytes).unwrap();
+    let read = vec![
+        path.clone(),
+        descriptor.initialization.path.clone(),
+        descriptor.parameters.path.clone(),
+    ];
+    let source = ExpandedModelSourceV1 {
+        play_import: PinnedFileV1 {
+            path,
+            sha256: sha(&bytes),
+        },
+        feature_transfer: FrozenPlayObservationTransferV3 {
+            expected_feature_contract_digest: identity.feature_contract_digest.into(),
+            expected_feature_encoding_digest: identity.feature_encoding_digest.into(),
+        },
+        checkpoint: None,
+        s_learner: None,
+        w_learner: None,
+    };
+    (source, read)
+}
+
+#[test]
+fn process_and_collection_opponent_caches_enforce_byte_budgets_lru_and_oversized_passthrough() {
+    on_large_stack_v1(
+        process_and_collection_opponent_caches_enforce_byte_budgets_lru_and_oversized_passthrough_v1,
+    );
+}
+
+fn process_and_collection_opponent_caches_enforce_byte_budgets_lru_and_oversized_passthrough_v1() {
+    use super::super::loaded_source_profile_v1::LoadRoleV1;
+    use super::super::{
+        collection_entry_charge_v1, collection_entry_standalone_charge_v1,
+        OpponentCacheRunOptionsV1, OpponentCacheV1,
+    };
+    use ordered_update_preparation::ProcessOpponentCacheV1;
+
+    // Validate bounded config options.
+    assert!(OpponentCacheRunOptionsV1 {
+        entries: Some(64),
+        budget_mib: Some(768),
+        collection_entries: Some(16),
+        collection_budget_mib: Some(256),
+    }
+    .validate_v1()
+    .is_ok());
+    assert!(OpponentCacheRunOptionsV1 {
+        entries: Some(0),
+        budget_mib: Some(0),
+        collection_entries: Some(0),
+        collection_budget_mib: Some(0),
+    }
+    .validate_v1()
+    .is_ok());
+    for bad in [
+        OpponentCacheRunOptionsV1 {
+            entries: Some(257),
+            ..Default::default()
+        },
+        OpponentCacheRunOptionsV1 {
+            budget_mib: Some(16_385),
+            ..Default::default()
+        },
+        OpponentCacheRunOptionsV1 {
+            collection_entries: Some(129),
+            ..Default::default()
+        },
+        OpponentCacheRunOptionsV1 {
+            collection_budget_mib: Some(16_385),
+            ..Default::default()
+        },
+    ] {
+        assert!(bad.validate_v1().is_err());
+    }
+
+    let root = std::env::temp_dir().join(format!(
+        "opponent-cache-budgets-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let (s0, s0_files) = fresh_source_variant_v1(&root, "m0", 0.0);
+    let (s1, _) = fresh_source_variant_v1(&root, "m1", 0.125);
+    let (s2, _) = fresh_source_variant_v1(&root, "m2", 0.25);
+
+    // Measure one standalone entry's exact byte charge.
+    let probe_cache = ProcessOpponentCacheV1::new_v1(8, 256 << 20);
+    let (first_loaded, hit) = probe_cache
+        .load_v1(&s0, true, LoadRoleV1::Opponent)
+        .unwrap();
+    assert!(!hit);
+    let single = probe_cache.held_v1();
+    assert_eq!(single.entries, 1);
+    assert_eq!(single.holders_v1().len(), 0);
+    assert_eq!(
+        single.charged_bytes,
+        single.policy_bytes + single.model_bytes + single.metadata_bytes
+    );
+    let single_charge = single.charged_bytes;
+    assert!(single_charge > single.policy_bytes && single.model_bytes > 0);
+
+    // Byte-budget LRU eviction with a generous entry limit (8 entries, budget
+    // sized for at most 2 entries).
+    let two_budget = 2 * single_charge + 4096;
+    let bounded = ProcessOpponentCacheV1::new_v1(8, two_budget);
+    assert!(!bounded.load_v1(&s0, true, LoadRoleV1::Opponent).unwrap().1);
+    assert!(!bounded.load_v1(&s1, true, LoadRoleV1::Opponent).unwrap().1);
+    assert_eq!(bounded.held_v1().entries, 2);
+    assert!(bounded.held_v1().charged_bytes <= two_budget);
+    // Touch s0 so s1 becomes least-recently-used; loading s2 must evict s1.
+    assert!(bounded.load_v1(&s0, false, LoadRoleV1::Opponent).unwrap().1);
+    assert!(!bounded.load_v1(&s2, true, LoadRoleV1::Opponent).unwrap().1);
+    assert_eq!(bounded.held_v1().entries, 2);
+    assert!(bounded.held_v1().charged_bytes <= two_budget);
+    assert!(bounded.holds_source_v1(&s0));
+    assert!(!bounded.holds_source_v1(&s1));
+    assert!(bounded.holds_source_v1(&s2));
+
+    // Re-loading the evicted s1 is a full miss that evicts the new LRU entry
+    // (s0), and its policy matches a never-evicted reference load and hit bit
+    // for bit.
+    let reference = ProcessOpponentCacheV1::new_v1(8, 256 << 20);
+    let (reference_s1, hit) = reference.load_v1(&s1, true, LoadRoleV1::Opponent).unwrap();
+    assert!(!hit);
+    let (reference_s1_hit, hit) = reference.load_v1(&s1, true, LoadRoleV1::Opponent).unwrap();
+    assert!(hit);
+    let evictions_before = counters_v1().process_opponent.evictions.get();
+    let (reloaded_s1, hit) = bounded.load_v1(&s1, true, LoadRoleV1::Opponent).unwrap();
+    assert!(!hit);
+    assert_eq!(
+        counters_v1().process_opponent.evictions.get() - evictions_before,
+        1
+    );
+    assert!(!bounded.holds_source_v1(&s0));
+    assert!(bounded.holds_source_v1(&s1));
+    assert!(bounded.holds_source_v1(&s2));
+    assert_same_opponent_v1(&reloaded_s1, &reference_s1);
+    assert_same_opponent_v1(&reloaded_s1, &reference_s1_hit);
+    // The comparison distinguishes members: s0 and s1 differ in a parameter.
+    assert_ne!(
+        parameter_bits_v1(&first_loaded),
+        parameter_bits_v1(&reference_s1)
+    );
+
+    // Oversized-entry pass-through and zero-budget / zero-entry caches still
+    // serve valid forks without retaining entries or evicting smaller entries.
+    let counters = counters_v1();
+    let refused_before = counters.process_opponent.not_kept_budget.get();
+    for (entries, budget) in [(8, single_charge - 1), (8, 0), (0, 256 << 20)] {
+        let tiny = ProcessOpponentCacheV1::new_v1(entries, budget);
+        let (loaded, hit) = tiny.load_v1(&s0, true, LoadRoleV1::Opponent).unwrap();
+        assert!(!hit);
+        assert_eq!(loaded.behavior.identity, first_loaded.behavior.identity);
+        assert_eq!(tiny.held_v1().entries, 0);
+        assert_eq!(tiny.held_v1().charged_bytes, 0);
+    }
+    assert_eq!(
+        counters.process_opponent.not_kept_budget.get() - refused_before,
+        3
+    );
+
+    // Reconfiguring a live cache downward evicts oldest entries until within bounds.
+    bounded.configure_v1(None, Some(0));
+    assert_eq!(bounded.held_v1().entries, 0);
+    assert_eq!(bounded.held_v1().charged_bytes, 0);
+
+    // Strict revalidation rejects same-length mutation, truncation, lengthening,
+    // directory replacement, and deletion of any pinned file.
+    let strict_cache = ProcessOpponentCacheV1::new_v1(4, 256 << 20);
+    assert!(
+        !strict_cache
+            .load_v1(&s0, true, LoadRoleV1::Opponent)
+            .unwrap()
+            .1
+    );
+    assert!(
+        strict_cache
+            .load_v1(&s0, true, LoadRoleV1::Opponent)
+            .unwrap()
+            .1
+    );
+    // Each change makes the held entry a miss whose full load reports exactly
+    // the error an uncached load reports.
+    let rejects_like_a_full_load = || {
+        let full = super::super::load_expanded_inference_any_math_v1(&s0)
+            .err()
+            .expect("an uncached load rejects the changed file");
+        let cached = strict_cache
+            .load_v1(&s0, true, LoadRoleV1::Opponent)
+            .err()
+            .expect("the held entry rejects the changed file");
+        assert_eq!(cached, full);
+    };
+    let param_path = &s0_files[2];
+    let original_params = fs::read(param_path).unwrap();
+    let mut same_len_bad = original_params.clone();
+    same_len_bad[original_params.len() / 2] ^= 0x01;
+    fs::write(param_path, &same_len_bad).unwrap();
+    rejects_like_a_full_load();
+    fs::write(param_path, &original_params[..original_params.len() - 4]).unwrap();
+    rejects_like_a_full_load();
+    let mut longer = original_params.clone();
+    longer.extend_from_slice(&[0u8; 16]);
+    fs::write(param_path, &longer).unwrap();
+    rejects_like_a_full_load();
+    fs::remove_file(param_path).unwrap();
+    rejects_like_a_full_load();
+    fs::create_dir(param_path).unwrap();
+    rejects_like_a_full_load();
+    fs::remove_dir(param_path).unwrap();
+    fs::write(param_path, &original_params).unwrap();
+    assert!(
+        strict_cache
+            .load_v1(&s0, true, LoadRoleV1::Opponent)
+            .unwrap()
+            .1
+    );
+
+    // Collection OpponentCacheV1 enforces both byte-budget LRU eviction and
+    // oversized-entry transient borrows without leaking live_entries. Each
+    // entry charges its own bytes and, once per cache, its model.
+    let entry_charge = collection_entry_standalone_charge_v1(&first_loaded);
+    let first_model_bytes = model_bytes_v1(&first_loaded.policy).1;
+    assert!(first_model_bytes > 0);
+    assert_eq!(
+        entry_charge,
+        collection_entry_charge_v1(&first_loaded) + first_model_bytes
+    );
+    let live_before = counters.collection_opponent.live_entries.get();
+    let charged_before = counters.collection_opponent.live_charged_bytes.get();
+    let col_refused_before = counters.collection_opponent.not_kept_budget.get();
+    {
+        let mut col = OpponentCacheV1::with_limits_v1(8, 2 * entry_charge + 512);
+        assert_eq!(col.load(&s0).unwrap().behavior.source, s0);
+        assert_eq!(col.load(&s1).unwrap().behavior.source, s1);
+        assert_eq!(col.load(&s0).unwrap().behavior.source, s0);
+        assert_eq!(col.load(&s2).unwrap().behavior.source, s2);
+        assert!(col.contains(&s0));
+        assert!(!col.contains(&s1));
+        assert!(col.contains(&s2));
+        assert!(col.charged_bytes <= col.budget_bytes);
+        // Re-loading the evicted s1 matches the never-evicted reference.
+        let reloaded = col.load(&s1).unwrap();
+        assert_same_opponent_v1(reloaded, &reference_s1);
+        assert!(col.contains(&s1));
+        assert!(!col.contains(&s0));
+
+        let mut oversized_col = OpponentCacheV1::with_limits_v1(8, entry_charge - 1);
+        assert_eq!(oversized_col.load(&s0).unwrap().behavior.source, s0);
+        assert!(!oversized_col.contains(&s0));
+        assert_eq!(oversized_col.charged_bytes, 0);
+
+        let mut zero_col = OpponentCacheV1::with_limits_v1(0, 256 << 20);
+        assert_eq!(zero_col.load(&s0).unwrap().behavior.source, s0);
+        assert!(!zero_col.contains(&s0));
+        // Loading the refused source again serves the transient slot: the
+        // same policy, without a reload. Another source replaces it.
+        let transient_before = counters.collection_opponent.transient_hits.get();
+        let misses_before = counters.collection_opponent.misses_unverified.get();
+        let served: *const _ = zero_col.load(&s0).unwrap();
+        let served_again: *const _ = zero_col.load(&s0).unwrap();
+        assert_eq!(served, served_again);
+        assert_eq!(
+            counters.collection_opponent.transient_hits.get() - transient_before,
+            2
+        );
+        assert_eq!(
+            counters.collection_opponent.misses_unverified.get(),
+            misses_before
+        );
+        assert_eq!(zero_col.load(&s1).unwrap().behavior.source, s1);
+        assert_eq!(
+            counters.collection_opponent.misses_unverified.get() - misses_before,
+            1
+        );
+        assert_eq!(zero_col.charged_bytes, 0);
+    }
+    assert_eq!(counters.collection_opponent.live_entries.get(), live_before);
+    assert_eq!(
+        counters.collection_opponent.live_charged_bytes.get(),
+        charged_before
+    );
+    assert_eq!(
+        counters.collection_opponent.not_kept_budget.get() - col_refused_before,
+        3
+    );
+
+    // A policy the process cache refused for its budget and served once: the
+    // collection cache alone holds its model, and charges it, so its byte
+    // budget bounds that model too.
+    let refusing = ProcessOpponentCacheV1::new_v1(8, 0);
+    let (served_once, hit) = refusing.load_v1(&s0, true, LoadRoleV1::Opponent).unwrap();
+    assert!(!hit);
+    assert_eq!(refusing.held_v1().entries, 0);
+    let standalone = collection_entry_standalone_charge_v1(&served_once);
+    assert_eq!(
+        standalone,
+        collection_entry_charge_v1(&served_once) + model_bytes_v1(&served_once.policy).1
+    );
+    {
+        let mut col = OpponentCacheV1::with_limits_v1(8, standalone);
+        assert!(col.insert(served_once));
+        assert_eq!(col.charged_bytes, standalone);
+        assert_eq!(
+            counters.collection_opponent.live_charged_bytes.get() - charged_before,
+            standalone as u64
+        );
+        // One byte less refuses it.
+        let (again, _) = refusing.load_v1(&s0, true, LoadRoleV1::Opponent).unwrap();
+        let mut tight = OpponentCacheV1::with_limits_v1(8, standalone - 1);
+        assert!(!tight.insert(again));
+        assert_eq!(tight.charged_bytes, 0);
+    }
+    // Two entries over one model charge it once, until the last one goes.
+    {
+        let (template, _) = reference.load_v1(&s1, true, LoadRoleV1::Opponent).unwrap();
+        let shared_model = model_bytes_v1(&template.policy).1;
+        let own = collection_entry_charge_v1(&template);
+        let mut col = OpponentCacheV1::with_limits_v1(8, 256 << 20);
+        let twin = super::super::LoadedOpponentV1 {
+            policy: template.policy.fork_for_collection_v3().unwrap(),
+            behavior: super::super::ExpandedSeatBehaviorV1 {
+                source: s2.clone(),
+                identity: template.behavior.identity.clone(),
+            },
+        };
+        let twin_own = collection_entry_charge_v1(&twin);
+        assert!(col.insert(template));
+        assert!(col.insert(twin));
+        assert_eq!(col.charged_bytes, own + twin_own + shared_model);
+        assert!(col.evict_oldest_v1());
+        assert_eq!(col.charged_bytes, twin_own + shared_model);
+        assert!(col.evict_oldest_v1());
+        assert_eq!(col.charged_bytes, 0);
+    }
+    assert_eq!(
+        counters.collection_opponent.live_charged_bytes.get(),
+        charged_before
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+/// The process cache keeps nothing for a policy it cannot fork and serves the
+/// loaded policy itself (`not_kept_unforkable`). The collection or replay
+/// cache that keeps that policy alone holds its model, and charges it.
+#[test]
+fn a_policy_that_cannot_be_forked_is_charged_for_its_model() {
+    on_large_stack_v1(a_policy_that_cannot_be_forked_is_charged_for_its_model_v1);
+}
+
+fn a_policy_that_cannot_be_forked_is_charged_for_its_model_v1() {
+    use super::super::loaded_source_profile_v1::LoadRoleV1;
+    use super::super::{
+        collection_entry_charge_v1, collection_entry_standalone_charge_v1, OpponentCacheV1,
+    };
+    use ordered_update_preparation::{full_load_opponent_v1, ProcessOpponentCacheV1};
+
+    let root = std::env::temp_dir().join(format!(
+        "opponent-cache-unforkable-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let (source, _) = fresh_source_v1(&root);
+    let counters = counters_v1();
+    let process = ProcessOpponentCacheV1::new_v1(8, 256 << 20);
+    // No loader of this module returns a policy that cannot be forked, so one
+    // is made from a full load by dropping its successor features, and is
+    // then offered to the process cache as a miss offers its full load.
+    let admit_unforkable = || {
+        let (policy, identity) = full_load_opponent_v1(&source, LoadRoleV1::Opponent).unwrap();
+        let policy = policy.without_successor_features_for_test_v1();
+        assert!(policy.fork_for_collection_v3().is_err());
+        process.admit_v1(&source, policy, identity).unwrap()
+    };
+    let unforkable_before = counters.process_opponent.not_kept_unforkable.get();
+    let kept_before = counters.process_opponent.kept.get();
+    let served = admit_unforkable();
+    assert_eq!(
+        counters.process_opponent.not_kept_unforkable.get() - unforkable_before,
+        1
+    );
+    assert_eq!(counters.process_opponent.kept.get(), kept_before);
+    assert_eq!(process.held_v1().entries, 0);
+    assert_eq!(process.held_v1().charged_bytes, 0);
+    // What it serves is the loaded policy, not a fork of it.
+    assert_eq!(served.behavior.source, source);
+    assert!(served.policy.fork_for_collection_v3().is_err());
+    let model_bytes = model_bytes_v1(&served.policy).1;
+    assert!(model_bytes > 0);
+    let own_bytes = collection_entry_charge_v1(&served);
+    let standalone = collection_entry_standalone_charge_v1(&served);
+    assert_eq!(standalone, own_bytes + model_bytes);
+    let charged_before = counters.collection_opponent.live_charged_bytes.get();
+    let refused_before = counters.collection_opponent.not_kept_budget.get();
+    {
+        // A budget of exactly the entry and its model keeps it, charged in
+        // full.
+        let mut col = OpponentCacheV1::with_limits_v1(8, standalone);
+        assert!(col.insert(served));
+        assert!(col.contains(&source));
+        assert_eq!(col.charged_bytes, standalone);
+        assert_eq!(
+            counters.collection_opponent.live_charged_bytes.get() - charged_before,
+            standalone as u64
+        );
+        // One byte less refuses it: the model counts against the budget.
+        let mut tight = OpponentCacheV1::with_limits_v1(8, standalone - 1);
+        assert!(!tight.insert(admit_unforkable()));
+        assert!(!tight.contains(&source));
+        assert_eq!(tight.charged_bytes, 0);
+    }
+    assert_eq!(
+        counters.collection_opponent.not_kept_budget.get() - refused_before,
+        1
+    );
+    assert_eq!(
+        counters.collection_opponent.live_charged_bytes.get(),
+        charged_before
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+/// A kept entry of the source the transient slot holds supersedes the refused
+/// policy there: the next load serves the kept entry, not the stale one.
+#[test]
+fn a_kept_entry_supersedes_the_transient_slot_of_its_source() {
+    on_large_stack_v1(a_kept_entry_supersedes_the_transient_slot_of_its_source_v1);
+}
+
+fn a_kept_entry_supersedes_the_transient_slot_of_its_source_v1() {
+    use super::super::loaded_source_profile_v1::LoadRoleV1;
+    use super::super::{
+        collection_entry_standalone_charge_v1, ExpandedSeatBehaviorV1, LoadedOpponentV1,
+        OpponentCacheV1,
+    };
+    use ordered_update_preparation::full_load_opponent_v1;
+
+    let root = std::env::temp_dir().join(format!(
+        "opponent-cache-transient-superseded-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let (source, _) = fresh_source_v1(&root);
+    let (policy, identity) = full_load_opponent_v1(&source, LoadRoleV1::Opponent).unwrap();
+    let fork = policy.fork_for_collection_v3().unwrap();
+    let refused = LoadedOpponentV1 {
+        policy,
+        behavior: ExpandedSeatBehaviorV1 {
+            source: source.clone(),
+            identity: identity.clone(),
+        },
+    };
+    let kept = LoadedOpponentV1 {
+        policy: fork,
+        behavior: ExpandedSeatBehaviorV1 {
+            source: source.clone(),
+            identity,
+        },
+    };
+    let standalone = collection_entry_standalone_charge_v1(&kept);
+    assert_eq!(collection_entry_standalone_charge_v1(&refused), standalone);
+    let counters = counters_v1();
+    {
+        // A budget one byte below the entry's charge refuses it into the
+        // transient slot.
+        let mut col = OpponentCacheV1::with_limits_v1(8, standalone - 1);
+        assert!(!col.insert(refused));
+        assert!(col.transient.is_some());
+        // With room for it, an entry of the same source is kept and the
+        // refused policy leaves the slot.
+        col.budget_bytes = standalone;
+        assert!(col.insert(kept));
+        assert!(col.contains(&source));
+        assert!(col.transient.is_none());
+        let transient_before = counters.collection_opponent.transient_hits.get();
+        let hits_before = counters.collection_opponent.hits.get();
+        let served: *const LoadedOpponentV1 = col.load(&source).unwrap();
+        let kept_entry: *const LoadedOpponentV1 = col.entries.last().unwrap();
+        assert_eq!(served, kept_entry);
+        assert_eq!(
+            counters.collection_opponent.transient_hits.get(),
+            transient_before
+        );
+        assert_eq!(counters.collection_opponent.hits.get() - hits_before, 1);
+    }
     fs::remove_dir_all(&root).unwrap();
 }
 

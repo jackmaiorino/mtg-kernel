@@ -1,6 +1,9 @@
 mtg_kernel::fast_global_allocator!();
 
-use mtg_kernel::expanded_deck_training_v1::{portable_chain_v1, ExpandedModelSourceV1};
+use mtg_kernel::expanded_deck_training_v1::{
+    configure_opponent_caches_v1, portable_chain_v1, ExpandedModelSourceV1,
+    OpponentCacheRunOptionsV1,
+};
 use mtg_kernel::native_expanded_training_run_v1::{
     run_native_expanded_training_v1, NativeExpandedTrainingRunV1,
 };
@@ -15,11 +18,31 @@ fn main() {
     unsafe { mtg_kernel::retain_freed_memory_v1() };
     mtg_kernel::opt_out_of_power_throttling_v1();
     mtg_kernel::set_default_digest_memo_mib_v1(16);
-    if let Err(error) = run() {
-        eprintln!("native expanded training: {error}");
-        std::process::exit(1);
+    // The driver runs on its own thread with an explicit stack, so its depth
+    // does not depend on the platform's main-thread default (1 MiB on
+    // Windows, where serial replay's opponent loads ran within about 64 KiB
+    // of it). A panic is re-raised on the main thread, which exits as before.
+    let driver = std::thread::Builder::new()
+        .name("native-expanded-training".into())
+        .stack_size(DRIVER_STACK_BYTES)
+        .spawn(run)
+        .unwrap_or_else(|error| {
+            eprintln!("native expanded training: driver thread: {error}");
+            std::process::exit(1);
+        });
+    match driver.join() {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            eprintln!("native expanded training: {error}");
+            std::process::exit(1);
+        }
+        Err(panic) => std::panic::resume_unwind(panic),
     }
 }
+
+/// The driver thread's stack: 16 MiB, as `--validate-config` uses.
+const DRIVER_STACK_BYTES: usize = 16 * 1024 * 1024;
+
 fn run() -> Result<(), String> {
     match std::env::args_os()
         .nth(1)
@@ -46,6 +69,8 @@ fn run() -> Result<(), String> {
     }
     let usage = concat!(
         "usage: native_expanded_training_run_v1 CONFIG.json [--max-new-iterations N] ",
+        "[--opponent-cache-entries N] [--opponent-cache-mib N] ",
+        "[--collection-opponent-cache-entries N] [--collection-opponent-cache-mib N] ",
         "[--gpu-exact-inference ORDINAL [--gpu-exact-latency-us N]] [--gpu-exact-learner ORDINAL] ",
         "[--gpu-exact-kernels v1|v2] [--gpu-exact-wait spin|block] ",
         "[--portable-output ABS_PACKAGE_DIRECTORY]"
@@ -53,6 +78,7 @@ fn run() -> Result<(), String> {
     let mut args = std::env::args_os().skip(1);
     let path = PathBuf::from(args.next().ok_or(usage)?);
     let mut limit = None;
+    let mut opponent_cache = OpponentCacheRunOptionsV1::default();
     let mut gpu_inference: Option<usize> = None;
     let mut gpu_latency_us: Option<u64> = None;
     let mut gpu_learner: Option<usize> = None;
@@ -77,6 +103,26 @@ fn run() -> Result<(), String> {
         match flag.to_str() {
             Some("--max-new-iterations") if limit.is_none() => {
                 limit = Some(number(args.next(), "iteration limit")? as usize);
+            }
+            Some("--opponent-cache-entries") if opponent_cache.entries.is_none() => {
+                opponent_cache.entries =
+                    Some(number(args.next(), "opponent cache entries")? as usize);
+            }
+            Some("--opponent-cache-mib") if opponent_cache.budget_mib.is_none() => {
+                opponent_cache.budget_mib =
+                    Some(number(args.next(), "opponent cache MiB")? as usize);
+            }
+            Some("--collection-opponent-cache-entries")
+                if opponent_cache.collection_entries.is_none() =>
+            {
+                opponent_cache.collection_entries =
+                    Some(number(args.next(), "collection opponent cache entries")? as usize);
+            }
+            Some("--collection-opponent-cache-mib")
+                if opponent_cache.collection_budget_mib.is_none() =>
+            {
+                opponent_cache.collection_budget_mib =
+                    Some(number(args.next(), "collection opponent cache MiB")? as usize);
             }
             Some("--gpu-exact-inference") if gpu_inference.is_none() => {
                 gpu_inference = Some(number(args.next(), "GPU ordinal")? as usize);
@@ -130,6 +176,7 @@ fn run() -> Result<(), String> {
     }
     let config: NativeExpandedTrainingRunV1 =
         serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    configure_opponent_caches_v1(&opponent_cache)?;
     // The kernel version and wait mode change timing only, like the backends.
     if gpu_kernels.is_some() || gpu_wait.is_some() {
         #[cfg(feature = "gpu-exact-v1")]

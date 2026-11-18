@@ -23,7 +23,6 @@ use crate::state::{GameState, Target, Zone};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
-const BONE_SHARDS: &str = "Bone Shards";
 const COLLECTIVE_BRUTALITY: &str = "Collective Brutality";
 const PEST_INFESTATION: &str = "Pest Infestation";
 const PEST_TOKEN: &str = "Pest Token";
@@ -205,8 +204,8 @@ pub fn bloodchiefs_thirst() -> EffectOp {
     destroy_target()
 }
 
-/// Bone Shards: "Destroy target creature or planeswalker." Its additional
-/// cost is the card's own (`additional_cost` and `alt_cost`).
+/// Bone Shards: "Destroy target creature or planeswalker." Its choice
+/// between two additional costs is its two modes (`eternal_cost_choice_v1`).
 pub fn bone_shards() -> EffectOp {
     destroy_target()
 }
@@ -317,14 +316,6 @@ pub fn tamiyos_safekeeping() -> EffectOp {
 
 // ---- Costs ----------------------------------------------------------------------------
 
-/// Bone Shards' sacrifice branch is its alternative cost, which replaces
-/// the discard: whether a cast of `definition` (for its alternative cost if
-/// `alternative`) skips its additional cost (the shape of
-/// `eternal_pauper_e6b_v1::alternative_skips_additional_cost`).
-pub(crate) fn alternative_skips_additional_cost(definition: &CardDef, alternative: bool) -> bool {
-    alternative && definition.name == BONE_SHARDS
-}
-
 /// The cards escalate makes `mode` of Collective Brutality discard: one for
 /// each chosen mode beyond the first. Mode `m` chooses the modes of the
 /// bits of `m + 1`.
@@ -350,21 +341,18 @@ pub(crate) fn filters_cast_targets(def: &CardDef) -> bool {
     def.name == PEST_INFESTATION
 }
 
-/// Pest Infestation: one more target is legal only when an X covering all
-/// the targets so far and this one is payable.
+/// Pest Infestation: one more target after `chosen` targets is legal only
+/// when an X covering all of them and this one is payable. `chosen` is the
+/// prefix being extended, which a completion search may take beyond the
+/// targets the pending cast holds.
 pub(crate) fn cast_target_allowed(
     def: &CardDef,
     source: ObjectId,
     controller: PlayerId,
+    chosen: usize,
     target: Target,
     state: &GameState,
 ) -> bool {
-    let chosen = state
-        .engine
-        .pending_cast
-        .as_ref()
-        .filter(|pending| pending.spell == source)
-        .map_or(0, |pending| pending.targets_chosen.len());
     let minimum = u16::try_from(chosen.saturating_add(1)).unwrap_or(u16::MAX);
     crate::engine::x_target_is_payable(def, source, controller, target, minimum, state)
 }

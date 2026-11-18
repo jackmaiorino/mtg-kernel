@@ -290,6 +290,9 @@ mod equipment_damage_source_v4;
 pub mod eternal_bo3_v1;
 /// Pauper, Legacy and Vintage catalog card programs (`eternal-fixtures`).
 pub mod eternal_cards_v1;
+/// A choice between two additional costs, carried as a spell's two modes
+/// (Bone Shards, Demand Answers).
+pub mod eternal_cost_choice_v1;
 /// Vintage Cube card programs of the eternal catalog (wave C1a).
 pub mod eternal_cube_c1a_v1;
 /// Vintage Cube card programs of the eternal catalog (wave C1b).
@@ -411,6 +414,14 @@ pub mod eternal_sideboard_s1j_v1;
 pub mod eternal_sideboard_s1l_v1;
 pub mod eternal_sideboard_s1m_v1;
 pub mod eternal_sideboard_s1n_v1;
+/// Legacy sideboard card programs of the eternal catalog (wave S1o):
+/// Stronghold Gambit, Eowyn, Fearless Knight, Unlicensed Hearse and Outland
+/// Liberator.
+pub mod eternal_sideboard_s1o_v1;
+/// Legacy Tron's sideboard card programs of the eternal catalog (wave S1q):
+/// Cityscape Leveler, Invasion Submersible, Summon: Bahamut and the Powerstone
+/// token.
+pub mod eternal_sideboard_s1q_v1;
 /// Vintage graveyard and tempo card programs of the eternal catalog (wave
 /// E7b).
 pub mod eternal_vintage_e7b_v1;
@@ -1097,6 +1108,7 @@ pub mod season_token_attachment_v48;
 mod current_actor_probe_v1;
 pub mod current_mixed_policy_v1;
 pub mod current_tree_learner_v1;
+pub mod current_tree_learner_v2;
 pub mod eternal_actor_choice_v1;
 pub mod eternal_actor_printed_v1;
 pub mod eternal_actor_public_v1;

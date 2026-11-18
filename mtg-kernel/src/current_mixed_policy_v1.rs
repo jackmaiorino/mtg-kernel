@@ -1,5 +1,6 @@
 //! Distinct current-family numeric/scorer prerequisite. Frozen encoders and search are untouched.
 //! Public packets contain numeric features only. Bindings and executable candidates remain private.
+mod ajani_public_operands;
 mod call;
 mod end_turn;
 mod genesis_wave;
@@ -13,6 +14,7 @@ mod graveyard_return;
 pub use call::{CallDecision, CallSession, CallSnapshot};
 mod eternal;
 mod kellan_public_operands;
+mod krenko_public_operands;
 mod network;
 mod next_five;
 mod next_five_support;
@@ -167,6 +169,10 @@ pub fn feature_identity() -> String {
             include_str!("current_mixed_policy_v1/fiery_printing.rs"),
             include_str!("current_mixed_policy_v1/fiery_public_operands.rs"),
             include_str!("current_mixed_policy_v1/fishing_public_operands.rs"),
+            include_str!("current_mixed_policy_v1/krenko_public_operands.rs"),
+            include_str!("current_mixed_policy_v1/ajani_public_operands.rs"),
+            include_str!("krenko_public_v1.rs"),
+            include_str!("ajani_public_v42.rs"),
             include_str!("fishing_pole_public_v39.rs"),
             include_str!("fishing_pole_observation_v39.rs"),
             include_str!("rules_meaning_fishing_pole_v39.rs"),
@@ -763,6 +769,6 @@ mod chandra;
 pub use chandra::{ChandraDecision, ChandraSession, ChandraSnapshot};
 
 mod kaito;
-pub use kaito::{KaitoDecision, KaitoSession, KaitoSnapshot};
 #[cfg(test)]
-pub(crate) use kaito::{ProbeCaptureV2, RevealedDiscardFamilyV2};
+pub(crate) use kaito::{take_opponent_hand_witness_v1, ProbeCaptureV2, RevealedDiscardFamilyV2};
+pub use kaito::{KaitoDecision, KaitoSession, KaitoSnapshot};

@@ -298,6 +298,18 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c4b_v1::C4bStateV1::is_empty"
     )]
     pub c4b: crate::eternal_cube_c4b_v1::C4bStateV1,
+    /// Sideboard wave S1o's state (`eternal_sideboard_s1o_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_sideboard_s1o_v1::S1oStateV1::is_empty"
+    )]
+    pub s1o: crate::eternal_sideboard_s1o_v1::S1oStateV1,
+    /// Sideboard wave S1q's state (`eternal_sideboard_s1q_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_sideboard_s1q_v1::S1qStateV1::is_empty"
+    )]
+    pub s1q: crate::eternal_sideboard_s1q_v1::S1qStateV1,
     /// Vintage Cube wave C5a's state (`eternal_cube_c5a_v1`).
     #[serde(
         default,
@@ -648,6 +660,12 @@ pub enum EternalOpV1 {
     /// A leaf owned by Vintage Cube wave C4c's module. Appended to
     /// preserve existing stack and continuation hash discriminants.
     C4cV1(crate::eternal_cube_c4c_v1::C4cOpV1),
+    /// A leaf owned by sideboard wave S1o's module. Appended to preserve
+    /// existing stack and continuation hash discriminants.
+    S1oV1(crate::eternal_sideboard_s1o_v1::S1oOpV1),
+    /// A leaf owned by sideboard wave S1q's module. Appended to preserve
+    /// existing stack and continuation hash discriminants.
+    S1qV1(crate::eternal_sideboard_s1q_v1::S1qOpV1),
     /// A leaf owned by Vintage Cube wave C5a's module. Appended to
     /// preserve existing stack and continuation hash discriminants.
     C5aV1(crate::eternal_cube_c5a_v1::C5aOpV1),
@@ -753,6 +771,8 @@ impl EternalOpV1 {
             EternalOpV1::C4aV1(op) => op.contains_player_choice(),
             EternalOpV1::C4bV1(op) => op.contains_player_choice(),
             EternalOpV1::C4cV1(op) => op.contains_player_choice(),
+            EternalOpV1::S1oV1(op) => op.contains_player_choice(),
+            EternalOpV1::S1qV1(op) => op.contains_player_choice(),
             EternalOpV1::C5aV1(op) => op.contains_player_choice(),
             EternalOpV1::C5bV1(op) => op.contains_player_choice(),
             EternalOpV1::C5cV1(op) => op.contains_player_choice(),
@@ -904,6 +924,18 @@ fn bowmasters_ping_then_amass() -> EffectOp {
 
 pub(crate) fn delayed_upkeep_draw() -> EffectOp {
     eternal(EternalOpV1::DelayedUpkeepDrawV1)
+}
+
+/// "`searcher` may search their library ...": `searcher` chooses between
+/// doing nothing (the first option) and `search`. A player who declines
+/// neither searches nor shuffles; a player who searches may still find
+/// nothing when the search names a quality (701.23b) and then shuffles, so
+/// both answers stay open even with no matching card in the library.
+pub(crate) fn may_search(searcher: PlayerRef, search: EffectOp) -> EffectOp {
+    EffectOp::Choice {
+        controller: searcher,
+        options: vec![EffectOp::Sequence(Vec::new()), search],
+    }
 }
 
 /// "Whenever Bilbo attacks, you may cast an artifact, instant, or sorcery
@@ -1110,6 +1142,14 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     // Premodern sideboard wave P3h's printed and queued triggers, the tail of
     // those trigger tables.
     if let Some(spec) = crate::eternal_premodern_p3h_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Legacy sideboard wave S1o's printed triggers.
+    if let Some(spec) = crate::eternal_sideboard_s1o_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
+    // Legacy sideboard wave S1q's printed triggers and Saga chapters.
+    if let Some(spec) = crate::eternal_sideboard_s1q_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }
     // Vintage Cube wave C1a's printed and queued triggers.
@@ -1435,6 +1475,8 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::C4aV1(op) => crate::eternal_cube_c4a_v1::execute(op, ctx, state),
         EternalOpV1::C4bV1(op) => crate::eternal_cube_c4b_v1::execute(op, ctx, state),
         EternalOpV1::C4cV1(op) => crate::eternal_cube_c4c_v1::execute(op, ctx, state),
+        EternalOpV1::S1oV1(op) => crate::eternal_sideboard_s1o_v1::execute(op, ctx, state),
+        EternalOpV1::S1qV1(op) => crate::eternal_sideboard_s1q_v1::execute(op, ctx, state),
         EternalOpV1::C5aV1(op) => crate::eternal_cube_c5a_v1::execute(op, ctx, state),
         EternalOpV1::C5bV1(op) => crate::eternal_cube_c5b_v1::execute(op, ctx, state),
         EternalOpV1::C5cV1(op) => crate::eternal_cube_c5c_v1::execute(op, ctx, state),
@@ -1788,17 +1830,9 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
 
 /// The number of distinct card types among `cards` (delirium, Nethergoyf).
 /// Cards outside the stack have only their front-face characteristics.
+/// Kindred is a card type, so a Kindred Instant counts as two.
 pub fn card_type_count(state: &GameState, cards: &[ObjectId]) -> usize {
-    const TYPES: [CardType; 7] = [
-        CardType::Land,
-        CardType::Creature,
-        CardType::Instant,
-        CardType::Sorcery,
-        CardType::Artifact,
-        CardType::Enchantment,
-        CardType::Planeswalker,
-    ];
-    TYPES
+    CardType::ALL
         .iter()
         .filter(|&&card_type| {
             cards.iter().any(|&card| {
@@ -1942,6 +1976,10 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
 /// among cards in your graveyard and its toughness is equal to that number
 /// plus 1." A characteristic-defining ability works in every zone.
 pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> Option<i32> {
+    // Unlicensed Hearse sets both stats (wave S1o).
+    if let Some(value) = crate::eternal_sideboard_s1o_v1::characteristic_defining_power(state, id) {
+        return Some(value);
+    }
     // Terravore sets both stats (wave P1a).
     if let Some(value) =
         crate::eternal_premodern_p1a_v1::statics::characteristic_defining_power(state, id)
@@ -2135,11 +2173,15 @@ pub(crate) fn is_first_draw_in_draw_step(state: &GameState, player: PlayerId) ->
             .eternal_v1
             .as_ref()
             .and_then(|eternal| eternal.draw_step_draw)
-            .is_some_and(|marker| marker.turn == state.turn_key_v1() && marker.player == player)
+            .is_some_and(|marker| {
+                marker.player == player && (marker.turn, marker.player) == state.turn_id_v1()
+            })
 }
 
 /// Records the ordinal of the first actual draw in the active player's draw
-/// step. A replacement such as dredge does not consume this exemption.
+/// step. A replacement such as dredge does not consume this exemption. The
+/// marker's player is the active player, so its turn key and player name the
+/// turn it was made in.
 pub(crate) fn note_draw_step_draw(state: &mut GameState, player: PlayerId) {
     if !is_first_draw_in_draw_step(state, player) {
         return;
@@ -2431,6 +2473,9 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_sideboard_s1g_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1d_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1n_v1::begin_turn(state, player);
+    crate::eternal_sideboard_s1o_v1::begin_turn(state, player);
+    crate::eternal_sideboard_s1q_v1::begin_turn(state, player);
+    crate::eternal_sideboard_s1a_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
             .attack_shrinks
@@ -2632,7 +2677,10 @@ pub(crate) fn trigger_matches(
                 .as_ref()
                 .and_then(|eternal| eternal.draw_step_draw)
                 .is_some_and(|marker| {
-                    marker.turn == state.turn_key_v1()
+                    // The marker's player drew it in their own draw step, so
+                    // it exempts a draw only in that same turn, never in the
+                    // other player's turn of the same round.
+                    (marker.turn, marker.player) == state.turn_id_v1()
                         && marker.player == player
                         && marker.ordinal == ordinal
                 })

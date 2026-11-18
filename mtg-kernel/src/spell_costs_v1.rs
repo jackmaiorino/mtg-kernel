@@ -204,7 +204,10 @@ impl SelectedSpellManaCostsV1 {
             CastMethodV4::Escape => Some(escape_cost_v1(definition)?),
             _ => None,
         };
-        let additional_cost = additional_cost_for_method_v1(definition, method);
+        // A card with a choice between additional costs (#715) has one of two
+        // groups here; the selected group below is the chosen mode's, and it
+        // must be one of the card's two costs.
+        let additional_cost = additional_cost_for_method_v1(definition, method, 0);
         let retrace = self.retrace.then_some(RETRACE_COST);
         let additional_slot = self
             .component_groups
@@ -213,10 +216,18 @@ impl SelectedSpellManaCostsV1 {
         let original_groups = base
             .into_iter()
             .chain(additional_cost.map(|group| {
+                let selected = additional_slot
+                    .and_then(|slot| self.component_groups.get(slot))
+                    .copied();
                 if super::mandatory_cast_cost_v1::mana_branch(definition).is_some() {
-                    additional_slot
-                        .and_then(|slot| self.component_groups.get(slot))
-                        .copied()
+                    selected.unwrap_or(group)
+                } else if crate::eternal_cost_choice_v1::applies(definition) {
+                    // Any other selected group falls back to the first cost,
+                    // which then differs from the selection and refuses it.
+                    selected
+                        .filter(|selected| {
+                            crate::eternal_cost_choice_v1::is_its_cost(definition, selected)
+                        })
                         .unwrap_or(group)
                 } else {
                     group
@@ -779,7 +790,7 @@ pub(super) fn selected_spell_mana_costs_v1(
             .costs
             .extend(std::iter::repeat_n(STRIVE_BLUE, targets.len() - 1));
     }
-    if let Some(additional) = additional_cost_for_method_v1(definition, method) {
+    if let Some(additional) = additional_cost_for_method_v1(definition, method, mode) {
         let additional = if let Some(mana) = super::mandatory_cast_cost_v1::mana_branch(definition)
         {
             let sacrifice = state.engine.pending_cast.as_ref().is_some_and(|pending| {
@@ -807,15 +818,18 @@ pub(super) fn selected_spell_mana_costs_v1(
 /// Retrace's additional cost: "discard a land card".
 const RETRACE_COST: &[CostComponent] = &[CostComponent::DiscardLandCardsV1(1)];
 
-/// A definition's mandatory additional cost for a cast by `method`. Demand
-/// Answers' alternative cost replaces its discard
-/// (`eternal_pauper_e6b_v1::alternative_skips_additional_cost`).
+/// A definition's mandatory additional cost for a cast by `method` in spell
+/// mode `mode`. Bitter Triumph's alternative cost replaces its discard
+/// (`eternal_legacy_e8a_v1::alternative_skips_additional_cost`). A card
+/// with a choice between two additional costs (Bone Shards, Demand Answers)
+/// pays the one its mode names (`eternal_cost_choice_v1`).
 fn additional_cost_for_method_v1(
     definition: &card_def::CardDef,
     method: CastMethodV4,
+    mode: u8,
 ) -> Option<&'static [CostComponent]> {
     #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_pauper_e6b_v1::alternative_skips_additional_cost(
+    if crate::eternal_legacy_e8a_v1::alternative_skips_additional_cost(
         definition,
         method == CastMethodV4::Alternative,
     ) || crate::eternal_pauper_e8b_v1::skips_additional_cost(
@@ -825,6 +839,9 @@ fn additional_cost_for_method_v1(
         return None;
     }
     let _ = method;
+    if let Some(chosen) = crate::eternal_cost_choice_v1::components(definition, mode) {
+        return Some(chosen);
+    }
     definition.additional_cost
 }
 
@@ -1214,9 +1231,11 @@ fn selected_spell_quote_branch_grant_v1(
         return None;
     }
     // A free cast's X is zero, except Sickening Dreams' X, which counts an
-    // additional cost's discards (Premodern wave P1b).
+    // additional cost's discards (Premodern wave P1b), and a replicate,
+    // multikicker or splice count, which counts additional cost payments.
     if x != 0
         && !crate::eternal_premodern_p1b_v1::statics::announces_discard_x(definition)
+        && !super::announces_additional_cost_count(definition)
         && (super::resolution_cast_v1::free_cast_for(state, source, player)
             || (cfg!(feature = "eternal-fixtures")
                 && method == CastMethodV4::Normal

@@ -744,7 +744,12 @@ fn c1c_cards_are_full_with_their_printed_characteristics() {
         assert_eq!(card.cost.generic, generic, "{name}");
         assert_eq!(card.cost.x_count, x_count, "{name}");
         assert_eq!(card.cost.pips, pips.as_slice(), "{name}");
-        assert_eq!(card.types, &[card_type], "{name}");
+        if name == "Tarfire" {
+            // A Kindred Instant (#716).
+            assert_eq!(card.types, &[CardType::Kindred, card_type], "{name}");
+        } else {
+            assert_eq!(card.types, &[card_type], "{name}");
+        }
         assert_eq!(card.subtypes, subtypes.as_slice(), "{name}");
         assert_eq!(card.colors.len(), colors.len(), "{name}");
         for color in colors {

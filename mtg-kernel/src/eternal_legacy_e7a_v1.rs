@@ -212,7 +212,7 @@ pub enum E7aOpV1 {
     DarkDepthsV1 { depths: ObjectLinkV4 },
     /// Ghost Quarter: destroy target 0; its controller may search.
     GhostQuarterV1,
-    /// Ghost Quarter's search, for `player`. A choice.
+    /// Ghost Quarter's search, for `player`, who chose to search. A choice.
     GhostQuarterSearchV1 { player: PlayerId },
     /// Maze of Ith on target 0.
     MazeOfIthV1,
@@ -957,8 +957,10 @@ fn animate_dead_leaves() -> EffectOp {
     e7a(E7aOpV1::AnimateDeadLeavesV1)
 }
 
+/// Goblin Engineer: "you may search your library for an artifact card, put
+/// it into your graveyard, then shuffle."
 fn engineer_search() -> EffectOp {
-    e7a(E7aOpV1::EngineerSearchV1)
+    crate::eternal_cards_v1::may_search(PlayerRef::Controller, e7a(E7aOpV1::EngineerSearchV1))
 }
 
 /// Kappa Cannoneer: "put a +1/+1 counter on this creature. It can't be
@@ -1963,9 +1965,18 @@ pub(crate) fn drive(
             };
             let player = state.objects.get(land).controller;
             destroy(state, land);
+            // Its controller may search; declining does not shuffle.
+            let searcher = if player == controller {
+                PlayerRef::Controller
+            } else {
+                PlayerRef::Opponent
+            };
             push(
                 continuation,
-                e7a(E7aOpV1::GhostQuarterSearchV1 { player }),
+                crate::eternal_cards_v1::may_search(
+                    searcher,
+                    e7a(E7aOpV1::GhostQuarterSearchV1 { player }),
+                ),
                 &path,
             );
             Ok(false)
@@ -1975,8 +1986,9 @@ pub(crate) fn drive(
                 def.is_land && def.supertypes.contains(&crate::card_def::Supertype::Basic)
             });
             if cards.is_empty() {
-                // Searching is optional; a player who searches finds
-                // nothing and still shuffles.
+                // The player chose to search: finding nothing, they still
+                // shuffle.
+                shuffle(state, *player)?;
                 return Ok(false);
             }
             offer(
@@ -2881,12 +2893,14 @@ pub(crate) fn keyword_lost(state: &GameState, object: ObjectId, keyword: Keyword
 pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
     let live = state.objects.try_get(object)?;
     // A stationed Extinguisher Battleship's creature type doesn't depend on
-    // its abilities either (wave S1m).
+    // its abilities either (wave S1m), nor does an Invasion Submersible's
+    // after its exhaust ability (wave S1q).
     if live.zone != Zone::Battlefield
         || !(CARD_DEFS.get(live.card_def as usize).is_some_and(|def| {
             def.types_for_face(live.v4.face_index)
                 .contains(&CardType::Creature)
-        }) || crate::eternal_sideboard_s1m_v1::stationed(state, object))
+        }) || crate::eternal_sideboard_s1m_v1::stationed(state, object)
+            || crate::eternal_sideboard_s1q_v1::animated(state, object))
     {
         return None;
     }

@@ -29,6 +29,8 @@ ARMS.json: {"version": "sd1-capture-v1", "half_rollouts": 64, "coverage_max": 16
             "arms": [{"label": "D64", "world": "fresh", "budget": 64000, "search_seeds": [0, 1]},
                      {"label": "VL8-h0", "world": "fresh", "search_seeds": [0, 1],
                       "value_leaf": {"horizon": "h0", "sims": 512}}, ...]}
+Optional (collab LANES/searchpm-20261116): per arm "flat_root": true (the tree is the root alone), and top-level
+"root_value": true (the record takes the searching network's raw value-head output at the placed decision).
 """
 import argparse
 import hashlib
@@ -48,7 +50,7 @@ RECORD_SCHEMA = 'sd1-record/v1'
 PANEL_SCHEMA = 'sd1-panel/v1'
 VERSION = 'sd1-capture-v1'
 ARM_KEYS = ('arm', 'world', 'search_seed', 'seed_root', 'status', 'cpu_s', 'visits', 'n', 'wins', 'draws',
-            'value_units', 'perm_live', 'frozen_choice', 'pick_v2', 'fallback')
+            'value_units', 'perm_live', 'frozen_choice', 'pick_v2', 'fallback', 'flat_root')
 SEARCH_KEYS = ('budget', 'transitions', 'attempted', 'completed', 'nonnatural', 'cap_reached', 'incomplete',
                'faults', 'sampler', 'world_receipt', 'failed', 'value_leaf')
 
@@ -75,6 +77,8 @@ def jobs(base, dose, out_dir, updates, arms, first_update=0, chain='sd1/panel', 
     sd1 = {'version': VERSION, 'arms': [] if panel_only else arms['arms'],
            'half_rollouts': 0 if panel_only else int(arms['half_rollouts']),
            'coverage_max': int(arms['coverage_max'])}
+    if arms.get('root_value') and not panel_only:
+        sd1['root_value'] = True
     budget = max([a.get('budget', 0) for a in arms['arms']] + [1])
     cfg = qual.build_config(base, dose, Path(out_dir) / 'unused', chain, chain, first_update, updates, 1)
     source = cfg['initial_source']
@@ -285,6 +289,8 @@ def records(out_dir):
                     record['arms'].append(row)
                 if 'references' in capture:
                     record['references'] = capture['references']
+                if 'root_value' in capture:
+                    record['root_value'] = capture['root_value']
             yield record
             ordinal += 1
 

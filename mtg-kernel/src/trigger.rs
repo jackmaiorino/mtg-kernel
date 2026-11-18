@@ -4850,6 +4850,20 @@ pub(crate) fn saga_final_chapter_is_pending(
         })
 }
 
+/// Whether the Saga `saga` still has its chapter abilities. 715.3c puts the
+/// precombat main phase's lore counter only on "each Saga they control with
+/// one or more chapter abilities", and 715.4 and 704.5s sacrifice only "a
+/// Saga permanent with one or more chapter abilities"; the entry counter of
+/// 715.3a is the Saga's own intrinsic ability. A Saga whose abilities were
+/// removed (Dress Down on Summon: Bahamut, a Saga creature; Harbinger of the
+/// Seas or a moon on Urza's Saga) has none. In the eternal build that is
+/// `printed_abilities_active`; the Pauper, FDN and Standard builds keep their
+/// earlier behavior, so the check is true there.
+pub(crate) fn saga_has_chapter_abilities(state: &GameState, saga: ObjectId) -> bool {
+    !cfg!(feature = "eternal-fixtures")
+        || crate::continuous_characteristics_v1::printed_abilities_active(state, saga)
+}
+
 /// `CARD_DEFS[i].is_token`, packed densely so the per-SBA-pass token sweep
 /// over every object does not stride through full `CardDef` entries.
 fn token_card_defs() -> &'static [bool] {
@@ -5119,6 +5133,8 @@ fn sba_fixed_point_with_protected_triggers(
         // 704.5s: after a Saga's final chapter ability leaves the stack, its
         // controller sacrifices it. The chapter trigger is protected across
         // the pre-placement SBA checkpoint by its exact source incarnation.
+        // Only a Saga with one or more chapter abilities is sacrificed
+        // (`saga_has_chapter_abilities`).
         let completed_sagas = state
             .objects
             .iter()
@@ -5129,7 +5145,9 @@ fn sba_fixed_point_with_protected_triggers(
                 let saga = crate::card_def::CARD_DEFS[object.card_def as usize]
                     .saga
                     .as_ref()?;
-                if object.counters.lore < saga.chapter_effects.len() as i16 {
+                if object.counters.lore < saga.chapter_effects.len() as i16
+                    || !saga_has_chapter_abilities(state, id)
+                {
                     return None;
                 }
                 let final_effect = (saga.chapter_effects.last().copied()?)();
@@ -6131,8 +6149,20 @@ fn triggers_from_events(
                         let effect = if card.name == "Moon-Circuit Hacker"
                             && matches!(def.condition, TriggerCondition::DealsCombatDamageToPlayer)
                         {
+                            // `entered_battlefield_turn` is a round number, so
+                            // it would also count an entry in the opponent's
+                            // turn of the same round. Builds with the Standard
+                            // catalog keep the exact per-turn flag (cleared at
+                            // every untap step); the Pauper build keeps the
+                            // round comparison byte for byte. Both agree when
+                            // Hacker entered in its controller's own turn, the
+                            // only way the Pauper pool can make it enter.
                             moon_circuit_hacker_combat_effect_for_entered_this_turn(
-                                obj.v4.entered_battlefield_turn == Some(state.turn_key_v1()),
+                                if cfg!(feature = "standard-magezero-fixtures") {
+                                    obj.v4.entered_battlefield_this_turn
+                                } else {
+                                    obj.v4.entered_battlefield_turn == Some(state.turn_key_v1())
+                                },
                             )
                         } else {
                             #[cfg(feature = "standard-magezero-fixtures")]

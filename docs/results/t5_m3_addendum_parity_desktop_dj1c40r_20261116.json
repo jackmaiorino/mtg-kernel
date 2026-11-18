@@ -1,0 +1,2080 @@
+{
+ "binaries": {
+  "m3": {
+   "arm": "m3v2",
+   "build_seconds": 2698.9,
+   "bytes": 64568832,
+   "commit": "ed3f5e29e8ae6f07e00f1700dbbd446a991baf10",
+   "sha256": "43dc077473d0b49ff848dadfec7a45995fa1ec6f15d89c64090489780a568473"
+  },
+  "m4": {
+   "arm": "m4",
+   "build_seconds": 9424.1,
+   "bytes": 64573440,
+   "command": "cargo build --release --locked -j 4 -p mtg-kernel --bin native_expanded_training_run_v1",
+   "commit": "95c33b0dda4d1a72c1ff9911154d1a27518bb1e8",
+   "sha256": "97e35121d7cdc0d09ca8e38863370e1a660f0c0b4274cce8e2c767e8de44c8e6"
+  }
+ },
+ "checks": {
+  "clippy": {
+   "claimed_cores": "12-15",
+   "command": "cargo clippy --release --locked --workspace --all-targets -- -D warnings",
+   "commit": "95c33b0dda4d1a72c1ff9911154d1a27518bb1e8",
+   "end_utc": "2026-11-16T12:12:31Z",
+   "rc": 0,
+   "start_utc": "2026-11-16T11:39:00Z"
+  },
+  "unit_tests": {
+   "claimed_cores": "12-15",
+   "command": "cargo test --release --locked -p mtg-kernel --lib -- --test-threads 4 opponent_cache verified_bytes_cache_v1:: s_learner_v1:: w_learner_v1:: no_state_digest_v1:: fixture_bench_v1:: loaded_source_cache_v1:: collection_cache_boundary_rejects_same_path_mutation_of_all_pins phase1_preparation_rejects_stale_and_corrupted_opponent_before_learning pool_fixture_v1 cache_diagnostics_v1 loaded_source_profile_v1 phase1_parallel_collection::",
+   "commit": "95c33b0dda4d1a72c1ff9911154d1a27518bb1e8",
+   "end_utc": "2026-11-16T13:39:42Z",
+   "rc": 0,
+   "results": [
+    "test result: ok. 87 passed; 0 failed; 3 ignored; 0 measured; 3949 filtered out; finished in 78.02s"
+   ],
+   "start_utc": "2026-11-16T12:12:31Z",
+   "tests_by_status": {
+    "ignored": 3,
+    "ok": 87
+   }
+  }
+ },
+ "commit": "95c33b0dda4d1a72c1ff9911154d1a27518bb1e8",
+ "counters_scope": "each arm's first timed sample of the case (comparison.json counts); the transient-slot and charged-byte counters exist only in m4",
+ "evidence_files_sha256": {
+  "bench-599/ab4/bench.json": "f06e9e201c50ac612267d89e6c9422612450e533acedd582adc05c620b5a59fc",
+  "bench-599/ab4/comparison.json": "debde8b8a7eaf1dd37a2dea1eaf5a3a2ec7e96945e0e8d4d3eb044f64e9bb701",
+  "bench-599/ab4/samples.jsonl": "d674059009d055f6eb55b62812f6a24ca049e46b89d42f3d3147c365f81d283b",
+  "bench-599/counters4/bench.json": "937b98e7a9b43c2303aed04f5cdcd459241dfe62d5b4e63421e9db74fdfc77e1",
+  "bench-599/counters4/comparison.json": "d7f4ba3aa82999f0c4c4bc478100b45470cee458a6c7f2c2312523048bb8febb",
+  "bench-599/evict4/bench.json": "2bdcad75dcd8a979d813f67510d458d37afdf7394453643f6c4fff07db486a6d",
+  "bench-599/evict4/comparison.json": "7fc75a8e972510294049622d1bf0cf12f921e58640e99775cfaa4b7765799ded",
+  "bench-599/over4/bench.json": "c282c7166791a34e3b11e630e10ae9d1feb330286bada8b8385d452af00e26cb",
+  "bench-599/over4/comparison.json": "de6b853dd93c3f8ecccf07d4bd33e7d0f32fbd9d60e686bb7a4c95c2eba970a8",
+  "bench-599/par-evict4/bench.json": "9e7336964ac6f75f28337e66dfa067958e392b863884c50a91a0f8711429760e",
+  "bench-599/par-zero4/bench.json": "55e442bd726208c81ae7f3e4f141b696175ba84f4a2bf636ebdcd954b69f428a",
+  "bench-599/state/m3v2.json": "b85363d7ff16440f5fa809b4c6770635f883e0eae6bae12782035be766f765db",
+  "bench-599/state/m4.json": "46e8de8272f4646100d43935a75af4717ecc9f3a080c003f59f5dd5c100c8e42",
+  "bench-599/state/m4_clippy.json": "71f38a7a62130bad28a3de4b8dba2d9119596a3129281d563fffc54eaf5234e0",
+  "bench-599/state/m4_stack.json": "a8061bb2541c12bccb22a2b36b4c424b67032a837ac76d0823e32fce364a8251",
+  "bench-599/state/m4_tests.json": "36ec2f3b9dd0d429a296e48bcd942857d6243cb9202d05dd9f86ce79783668fe",
+  "bench-599/state/m4_tests.log": "fd25fc0c060a593a2a94f350b2c0c858fc20ff7fd467278c1c539710be2269af",
+  "bench-599/state/steps.log": "badfa8f5d1786eb9d66dbd4b9b015ec271a75085624baf1b194bf2199dbd2f6c",
+  "logs/jobs/s599m4-pipe1.log": "533184f6907a3812a4b3ec0ec5491a939ed91932cd5595be236ef5f60c2b3202"
+ },
+ "fixtures_sha256": {
+  "parallel_4_workers": "47f461b93a095503be558b78a1e3aafa3f785d3b68128890a66d974c87990e0f",
+  "serial": "f2c4d4116bd690d147e08d60c34439fcb39cb0d1dfff3c6bfbc873801ce68031"
+ },
+ "issue": 599,
+ "note": "Arm m4 is the build of the #599 cache follow-up commit, not the issue's milestone 4. Written on 2026-11-17 from copies of the outputs retained on the desktop; the files named under not_held were not among the copies, and their SHA-256 are the run manifests' own pins.",
+ "runs": {
+  "counters4": {
+   "argv": [
+    "run",
+    "--fixture",
+    "D:\\antigravity-20261112\\bench-599\\fixture",
+    "--out",
+    "D:\\antigravity-20261112\\bench-599\\counters4",
+    "--baseline",
+    "m3=D:\\antigravity-20261112\\bench-599\\bins\\m3v2\\native_expanded_training_run_v1.exe",
+    "--candidate",
+    "m4=D:\\antigravity-20261112\\bench-599\\bins\\m4\\native_expanded_training_run_v1.exe",
+    "--blocks",
+    "1",
+    "--warmup-runs",
+    "0",
+    "--keep-runs",
+    "reference",
+    "--build-profile",
+    "release, checked-in profile (thin LTO, codegen-units 1)",
+    "--label",
+    "DESKTOP-DJ1C40R, untimed 4-core below-normal claim",
+    "--cold-resume"
+   ],
+   "arms": {
+    "baseline": {
+     "bytes": 64568832,
+     "env": {},
+     "name": "m3",
+     "sha256": "43dc077473d0b49ff848dadfec7a45995fa1ec6f15d89c64090489780a568473"
+    },
+    "candidate": {
+     "bytes": 64573440,
+     "env": {},
+     "name": "m4",
+     "sha256": "97e35121d7cdc0d09ca8e38863370e1a660f0c0b4274cce8e2c767e8de44c8e6"
+    }
+   },
+   "binaries_unchanged": true,
+   "cache_diagnostics": true,
+   "cases": {
+    "fresh": {
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m4",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 3,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 42,
+        "inserts": 6,
+        "live_charged_bytes": null,
+        "misses": {
+         "revalidated": 3,
+         "unverified": 0,
+         "verified": 3
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": null,
+        "peak_live_entries": 1,
+        "peak_live_policy_bytes": 4194368,
+        "transient_hits": null
+       },
+       "file_read_bytes": 539418758,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 29537565,
+        "entries": 3,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 3,
+        "hits": {
+         "revalidated": 3,
+         "trusted": 0
+        },
+        "kept": 3,
+        "misses": {
+         "absent": 3,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 16949976,
+        "models": 3,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 29537565,
+        "policy_bytes": 12583104
+       },
+       "process_reports_evicted_file_bytes": true
+      },
+      "m4": {
+       "checkpoint_decodes": 3,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 42,
+        "inserts": 6,
+        "live_charged_bytes": 0,
+        "misses": {
+         "revalidated": 3,
+         "unverified": 0,
+         "verified": 3
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": 9845049,
+        "peak_live_entries": 1,
+        "peak_live_policy_bytes": 4194368,
+        "transient_hits": 0
+       },
+       "file_read_bytes": 539418758,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 29537565,
+        "entries": 3,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 3,
+        "hits": {
+         "revalidated": 3,
+         "trusted": 0
+        },
+        "kept": 3,
+        "misses": {
+         "absent": 3,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 16949976,
+        "models": 3,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 29537565,
+        "policy_bytes": 12583104
+       },
+       "process_reports_evicted_file_bytes": false
+      }
+     },
+     "failures": [],
+     "parity": {
+      "equal_up_to_accounted_fields": 5,
+      "reference": 1
+     },
+     "parity_ok": true,
+     "samples": 6
+    },
+    "pool18": {
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m4",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 21,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 6,
+        "inserts": 42,
+        "live_charged_bytes": null,
+        "misses": {
+         "revalidated": 21,
+         "unverified": 0,
+         "verified": 21
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": null,
+        "peak_live_entries": 8,
+        "peak_live_policy_bytes": 33554944,
+        "transient_hits": null
+       },
+       "file_read_bytes": 1518248757,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 177226686,
+        "entries": 18,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 18,
+        "hits": {
+         "revalidated": 21,
+         "trusted": 21
+        },
+        "kept": 18,
+        "misses": {
+         "absent": 18,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 101699856,
+        "models": 18,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 177226686,
+        "policy_bytes": 75498624
+       },
+       "process_reports_evicted_file_bytes": true
+      },
+      "m4": {
+       "checkpoint_decodes": 21,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 6,
+        "inserts": 42,
+        "live_charged_bytes": 0,
+        "misses": {
+         "revalidated": 21,
+         "unverified": 0,
+         "verified": 21
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": 78760072,
+        "peak_live_entries": 8,
+        "peak_live_policy_bytes": 33554944,
+        "transient_hits": 0
+       },
+       "file_read_bytes": 1518248757,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 177226686,
+        "entries": 18,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 18,
+        "hits": {
+         "revalidated": 21,
+         "trusted": 21
+        },
+        "kept": 18,
+        "misses": {
+         "absent": 18,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 101699856,
+        "models": 18,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 177226686,
+        "policy_bytes": 75498624
+       },
+       "process_reports_evicted_file_bytes": false
+      }
+     },
+     "failures": [],
+     "parity": {
+      "equal_up_to_accounted_fields": 5,
+      "reference": 1
+     },
+     "parity_ok": true,
+     "samples": 6
+    },
+    "pool2": {
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m4",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 5,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 36,
+        "inserts": 12,
+        "live_charged_bytes": null,
+        "misses": {
+         "revalidated": 6,
+         "unverified": 0,
+         "verified": 6
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": null,
+        "peak_live_entries": 2,
+        "peak_live_policy_bytes": 8388736,
+        "transient_hits": null
+       },
+       "file_read_bytes": 591297848,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 19691854,
+        "entries": 2,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 2,
+        "hits": {
+         "revalidated": 6,
+         "trusted": 6
+        },
+        "kept": 2,
+        "misses": {
+         "absent": 2,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 11299984,
+        "models": 2,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 19691854,
+        "policy_bytes": 8388736
+       },
+       "process_reports_evicted_file_bytes": true
+      },
+      "m4": {
+       "checkpoint_decodes": 5,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 36,
+        "inserts": 12,
+        "live_charged_bytes": 0,
+        "misses": {
+         "revalidated": 6,
+         "unverified": 0,
+         "verified": 6
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": 19690018,
+        "peak_live_entries": 2,
+        "peak_live_policy_bytes": 8388736,
+        "transient_hits": 0
+       },
+       "file_read_bytes": 591297848,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 19691854,
+        "entries": 2,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 2,
+        "hits": {
+         "revalidated": 6,
+         "trusted": 6
+        },
+        "kept": 2,
+        "misses": {
+         "absent": 2,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 11299984,
+        "models": 2,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 19691854,
+        "policy_bytes": 8388736
+       },
+       "process_reports_evicted_file_bytes": false
+      }
+     },
+     "failures": [],
+     "parity": {
+      "equal_up_to_accounted_fields": 5,
+      "reference": 1
+     },
+     "parity_ok": true,
+     "samples": 6
+    },
+    "pool64": {
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m4",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 78,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 0,
+        "inserts": 48,
+        "live_charged_bytes": null,
+        "misses": {
+         "revalidated": 24,
+         "unverified": 0,
+         "verified": 24
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": null,
+        "peak_live_entries": 8,
+        "peak_live_policy_bytes": 33554944,
+        "transient_hits": null
+       },
+       "file_read_bytes": 3825764638,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 315069664,
+        "entries": 32,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 423374861,
+        "evictions": 43,
+        "full_loads": 75,
+        "hits": {
+         "revalidated": 24,
+         "trusted": 13
+        },
+        "kept": 75,
+        "misses": {
+         "absent": 75,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 180799744,
+        "models": 32,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 315069664,
+        "policy_bytes": 134219776
+       },
+       "process_reports_evicted_file_bytes": true
+      },
+      "m4": {
+       "checkpoint_decodes": 78,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 0,
+        "inserts": 48,
+        "live_charged_bytes": 0,
+        "misses": {
+         "revalidated": 24,
+         "unverified": 0,
+         "verified": 24
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": 78760072,
+        "peak_live_entries": 8,
+        "peak_live_policy_bytes": 33554944,
+        "transient_hits": 0
+       },
+       "file_read_bytes": 3825764638,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 315069664,
+        "entries": 32,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 423374861,
+        "evictions": 43,
+        "full_loads": 75,
+        "hits": {
+         "revalidated": 24,
+         "trusted": 13
+        },
+        "kept": 75,
+        "misses": {
+         "absent": 75,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 180799744,
+        "models": 32,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 315069664,
+        "policy_bytes": 134219776
+       },
+       "process_reports_evicted_file_bytes": false
+      }
+     },
+     "failures": [],
+     "parity": {
+      "equal_up_to_accounted_fields": 5,
+      "reference": 1
+     },
+     "parity_ok": true,
+     "samples": 6
+    }
+   },
+   "claimed_cores": "20-23",
+   "completed_utc": "2026-11-16T16:33:53.313630Z",
+   "created_utc": "2026-11-16T16:28:01.508904Z",
+   "driver_exit_code": 0,
+   "driver_sha256": "ebf86f4c04edddc3e599115d7f1e4160f321c19256d376d1e3e0303a2f15c347",
+   "fixture_sha256": "f2c4d4116bd690d147e08d60c34439fcb39cb0d1dfff3c6bfbc873801ce68031",
+   "fixture_workers": {
+    "collection_workers": 1,
+    "preparation_workers": 1
+   },
+   "label": "DESKTOP-DJ1C40R, untimed 4-core below-normal claim",
+   "not_held": [
+    "samples.jsonl"
+   ],
+   "ok": true,
+   "outputs_sha256": {
+    "bench.json": "937b98e7a9b43c2303aed04f5cdcd459241dfe62d5b4e63421e9db74fdfc77e1",
+    "comparison.json": "d7f4ba3aa82999f0c4c4bc478100b45470cee458a6c7f2c2312523048bb8febb",
+    "samples.jsonl": "e77caf899e041b2f4409b925012756f7875da628e45d8035f6a82068c6d8a21c"
+   }
+  },
+  "evict4": {
+   "argv": [
+    "run",
+    "--fixture",
+    "D:\\antigravity-20261112\\bench-599\\fixture",
+    "--out",
+    "D:\\antigravity-20261112\\bench-599\\evict4",
+    "--baseline",
+    "m3=D:\\antigravity-20261112\\bench-599\\bins\\m3v2\\native_expanded_training_run_v1.exe",
+    "--candidate",
+    "m4evict=D:\\antigravity-20261112\\bench-599\\bins\\m4\\native_expanded_training_run_v1.exe",
+    "--blocks",
+    "1",
+    "--warmup-runs",
+    "0",
+    "--keep-runs",
+    "reference",
+    "--build-profile",
+    "release, checked-in profile (thin LTO, codegen-units 1)",
+    "--label",
+    "DESKTOP-DJ1C40R, untimed 4-core below-normal claim",
+    "--cold-resume",
+    "--arm-env",
+    "m4evict:MTG_KERNEL_OPPONENT_CACHE_MIB=12",
+    "--arm-env",
+    "m4evict:MTG_KERNEL_COLLECTION_OPPONENT_CACHE_ENTRIES=1"
+   ],
+   "arms": {
+    "baseline": {
+     "bytes": 64568832,
+     "env": {},
+     "name": "m3",
+     "sha256": "43dc077473d0b49ff848dadfec7a45995fa1ec6f15d89c64090489780a568473"
+    },
+    "candidate": {
+     "bytes": 64573440,
+     "env": {
+      "MTG_KERNEL_COLLECTION_OPPONENT_CACHE_ENTRIES": "1",
+      "MTG_KERNEL_OPPONENT_CACHE_MIB": "12"
+     },
+     "name": "m4evict",
+     "sha256": "97e35121d7cdc0d09ca8e38863370e1a660f0c0b4274cce8e2c767e8de44c8e6"
+    }
+   },
+   "binaries_unchanged": true,
+   "cache_diagnostics": true,
+   "cases": {
+    "fresh": {
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m4evict",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 3,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 42,
+        "inserts": 6,
+        "live_charged_bytes": null,
+        "misses": {
+         "revalidated": 3,
+         "unverified": 0,
+         "verified": 3
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": null,
+        "peak_live_entries": 1,
+        "peak_live_policy_bytes": 4194368,
+        "transient_hits": null
+       },
+       "file_read_bytes": 539418758,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 29537565,
+        "entries": 3,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 3,
+        "hits": {
+         "revalidated": 3,
+         "trusted": 0
+        },
+        "kept": 3,
+        "misses": {
+         "absent": 3,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 16949976,
+        "models": 3,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 29537565,
+        "policy_bytes": 12583104
+       },
+       "process_reports_evicted_file_bytes": true
+      },
+      "m4evict": {
+       "checkpoint_decodes": 3,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 1,
+        "evictions": 0,
+        "hits": 42,
+        "inserts": 6,
+        "live_charged_bytes": 0,
+        "misses": {
+         "revalidated": 3,
+         "unverified": 0,
+         "verified": 3
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": 9845049,
+        "peak_live_entries": 1,
+        "peak_live_policy_bytes": 4194368,
+        "transient_hits": 0
+       },
+       "file_read_bytes": 539418758,
+       "process": {
+        "budget_bytes": 12582912,
+        "charged_bytes": 9846007,
+        "entries": 1,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 19691558,
+        "evictions": 2,
+        "full_loads": 3,
+        "hits": {
+         "revalidated": 3,
+         "trusted": 0
+        },
+        "kept": 3,
+        "misses": {
+         "absent": 3,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 5649992,
+        "models": 1,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 9846007,
+        "policy_bytes": 4194368
+       },
+       "process_reports_evicted_file_bytes": false
+      }
+     },
+     "failures": [],
+     "parity": {
+      "equal_up_to_accounted_fields": 5,
+      "reference": 1
+     },
+     "parity_ok": true,
+     "samples": 6
+    },
+    "pool18": {
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m4evict",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 21,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 6,
+        "inserts": 42,
+        "live_charged_bytes": null,
+        "misses": {
+         "revalidated": 21,
+         "unverified": 0,
+         "verified": 21
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": null,
+        "peak_live_entries": 8,
+        "peak_live_policy_bytes": 33554944,
+        "transient_hits": null
+       },
+       "file_read_bytes": 1518248757,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 177226686,
+        "entries": 18,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 18,
+        "hits": {
+         "revalidated": 21,
+         "trusted": 21
+        },
+        "kept": 18,
+        "misses": {
+         "absent": 18,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 101699856,
+        "models": 18,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 177226686,
+        "policy_bytes": 75498624
+       },
+       "process_reports_evicted_file_bytes": true
+      },
+      "m4evict": {
+       "checkpoint_decodes": 65,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 1,
+        "evictions": 42,
+        "hits": 0,
+        "inserts": 48,
+        "live_charged_bytes": 0,
+        "misses": {
+         "revalidated": 24,
+         "unverified": 0,
+         "verified": 24
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": 9845009,
+        "peak_live_entries": 1,
+        "peak_live_policy_bytes": 4194368,
+        "transient_hits": 0
+       },
+       "file_read_bytes": 3372150409,
+       "process": {
+        "budget_bytes": 12582912,
+        "charged_bytes": 9845927,
+        "entries": 1,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 630139328,
+        "evictions": 64,
+        "full_loads": 65,
+        "hits": {
+         "revalidated": 0,
+         "trusted": 1
+        },
+        "kept": 65,
+        "misses": {
+         "absent": 65,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 5649992,
+        "models": 1,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 9845927,
+        "policy_bytes": 4194368
+       },
+       "process_reports_evicted_file_bytes": false
+      }
+     },
+     "failures": [],
+     "parity": {
+      "equal_up_to_accounted_fields": 5,
+      "reference": 1
+     },
+     "parity_ok": true,
+     "samples": 6
+    },
+    "pool2": {
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m4evict",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 5,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 36,
+        "inserts": 12,
+        "live_charged_bytes": null,
+        "misses": {
+         "revalidated": 6,
+         "unverified": 0,
+         "verified": 6
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": null,
+        "peak_live_entries": 2,
+        "peak_live_policy_bytes": 8388736,
+        "transient_hits": null
+       },
+       "file_read_bytes": 591297848,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 19691854,
+        "entries": 2,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 2,
+        "hits": {
+         "revalidated": 6,
+         "trusted": 6
+        },
+        "kept": 2,
+        "misses": {
+         "absent": 2,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 11299984,
+        "models": 2,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 19691854,
+        "policy_bytes": 8388736
+       },
+       "process_reports_evicted_file_bytes": true
+      },
+      "m4evict": {
+       "checkpoint_decodes": 9,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 1,
+        "evictions": 28,
+        "hits": 14,
+        "inserts": 34,
+        "live_charged_bytes": 0,
+        "misses": {
+         "revalidated": 17,
+         "unverified": 0,
+         "verified": 17
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": 9845009,
+        "peak_live_entries": 1,
+        "peak_live_policy_bytes": 4194368,
+        "transient_hits": 0
+       },
+       "file_read_bytes": 1853528760,
+       "process": {
+        "budget_bytes": 12582912,
+        "charged_bytes": 9845927,
+        "entries": 1,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 324915591,
+        "evictions": 33,
+        "full_loads": 34,
+        "hits": {
+         "revalidated": 1,
+         "trusted": 1
+        },
+        "kept": 34,
+        "misses": {
+         "absent": 34,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 5649992,
+        "models": 1,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 9845927,
+        "policy_bytes": 4194368
+       },
+       "process_reports_evicted_file_bytes": false
+      }
+     },
+     "failures": [],
+     "parity": {
+      "equal_up_to_accounted_fields": 5,
+      "reference": 1
+     },
+     "parity_ok": true,
+     "samples": 6
+    },
+    "pool64": {
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m4evict",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 78,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 0,
+        "inserts": 48,
+        "live_charged_bytes": null,
+        "misses": {
+         "revalidated": 24,
+         "unverified": 0,
+         "verified": 24
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": null,
+        "peak_live_entries": 8,
+        "peak_live_policy_bytes": 33554944,
+        "transient_hits": null
+       },
+       "file_read_bytes": 3825764638,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 315069664,
+        "entries": 32,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 423374861,
+        "evictions": 43,
+        "full_loads": 75,
+        "hits": {
+         "revalidated": 24,
+         "trusted": 13
+        },
+        "kept": 75,
+        "misses": {
+         "absent": 75,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 180799744,
+        "models": 32,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 315069664,
+        "policy_bytes": 134219776
+       },
+       "process_reports_evicted_file_bytes": true
+      },
+      "m4evict": {
+       "checkpoint_decodes": 115,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 1,
+        "evictions": 42,
+        "hits": 0,
+        "inserts": 48,
+        "live_charged_bytes": 0,
+        "misses": {
+         "revalidated": 24,
+         "unverified": 0,
+         "verified": 24
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": 9845009,
+        "peak_live_entries": 1,
+        "peak_live_policy_bytes": 4194368,
+        "transient_hits": 0
+       },
+       "file_read_bytes": 5285219130,
+       "process": {
+        "budget_bytes": 12582912,
+        "charged_bytes": 9845927,
+        "entries": 1,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 1092897897,
+        "evictions": 111,
+        "full_loads": 112,
+        "hits": {
+         "revalidated": 0,
+         "trusted": 0
+        },
+        "kept": 112,
+        "misses": {
+         "absent": 112,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 5649992,
+        "models": 1,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 9845927,
+        "policy_bytes": 4194368
+       },
+       "process_reports_evicted_file_bytes": false
+      }
+     },
+     "failures": [],
+     "parity": {
+      "equal_up_to_accounted_fields": 5,
+      "reference": 1
+     },
+     "parity_ok": true,
+     "samples": 6
+    }
+   },
+   "claimed_cores": "20-23",
+   "completed_utc": "2026-11-16T16:40:13.942247Z",
+   "created_utc": "2026-11-16T16:33:55.356209Z",
+   "driver_exit_code": 0,
+   "driver_sha256": "ebf86f4c04edddc3e599115d7f1e4160f321c19256d376d1e3e0303a2f15c347",
+   "fixture_sha256": "f2c4d4116bd690d147e08d60c34439fcb39cb0d1dfff3c6bfbc873801ce68031",
+   "fixture_workers": {
+    "collection_workers": 1,
+    "preparation_workers": 1
+   },
+   "label": "DESKTOP-DJ1C40R, untimed 4-core below-normal claim",
+   "not_held": [
+    "samples.jsonl"
+   ],
+   "ok": true,
+   "outputs_sha256": {
+    "bench.json": "2bdcad75dcd8a979d813f67510d458d37afdf7394453643f6c4fff07db486a6d",
+    "comparison.json": "7fc75a8e972510294049622d1bf0cf12f921e58640e99775cfaa4b7765799ded",
+    "samples.jsonl": "0b6c5f02cf64a910db546104600ecc59dcdb05186746ea4e86805196cb3b1a9a"
+   }
+  },
+  "over4": {
+   "argv": [
+    "run",
+    "--fixture",
+    "D:\\antigravity-20261112\\bench-599\\fixture",
+    "--out",
+    "D:\\antigravity-20261112\\bench-599\\over4",
+    "--baseline",
+    "m3=D:\\antigravity-20261112\\bench-599\\bins\\m3v2\\native_expanded_training_run_v1.exe",
+    "--candidate",
+    "m4over=D:\\antigravity-20261112\\bench-599\\bins\\m4\\native_expanded_training_run_v1.exe",
+    "--blocks",
+    "1",
+    "--warmup-runs",
+    "0",
+    "--keep-runs",
+    "reference",
+    "--build-profile",
+    "release, checked-in profile (thin LTO, codegen-units 1)",
+    "--label",
+    "DESKTOP-DJ1C40R, untimed 4-core below-normal claim",
+    "--cold-resume",
+    "--arm-env",
+    "m4over:MTG_KERNEL_OPPONENT_CACHE_MIB=1",
+    "--arm-env",
+    "m4over:MTG_KERNEL_COLLECTION_OPPONENT_CACHE_MIB=1"
+   ],
+   "arms": {
+    "baseline": {
+     "bytes": 64568832,
+     "env": {},
+     "name": "m3",
+     "sha256": "43dc077473d0b49ff848dadfec7a45995fa1ec6f15d89c64090489780a568473"
+    },
+    "candidate": {
+     "bytes": 64573440,
+     "env": {
+      "MTG_KERNEL_COLLECTION_OPPONENT_CACHE_MIB": "1",
+      "MTG_KERNEL_OPPONENT_CACHE_MIB": "1"
+     },
+     "name": "m4over",
+     "sha256": "97e35121d7cdc0d09ca8e38863370e1a660f0c0b4274cce8e2c767e8de44c8e6"
+    }
+   },
+   "binaries_unchanged": true,
+   "cache_diagnostics": true,
+   "cases": {
+    "fresh": {
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m4over",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 3,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 42,
+        "inserts": 6,
+        "live_charged_bytes": null,
+        "misses": {
+         "revalidated": 3,
+         "unverified": 0,
+         "verified": 3
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": null,
+        "peak_live_entries": 1,
+        "peak_live_policy_bytes": 4194368,
+        "transient_hits": null
+       },
+       "file_read_bytes": 539418758,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 29537565,
+        "entries": 3,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 3,
+        "hits": {
+         "revalidated": 3,
+         "trusted": 0
+        },
+        "kept": 3,
+        "misses": {
+         "absent": 3,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 16949976,
+        "models": 3,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 29537565,
+        "policy_bytes": 12583104
+       },
+       "process_reports_evicted_file_bytes": true
+      },
+      "m4over": {
+       "checkpoint_decodes": 3,
+       "collection": {
+        "budget_bytes": 1048576,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 42,
+        "inserts": 0,
+        "live_charged_bytes": 0,
+        "misses": {
+         "revalidated": 3,
+         "unverified": 0,
+         "verified": 3
+        },
+        "not_kept_budget": 6,
+        "peak_live_charged_bytes": 0,
+        "peak_live_entries": 0,
+        "peak_live_policy_bytes": 0,
+        "transient_hits": 42
+       },
+       "file_read_bytes": 628184386,
+       "process": {
+        "budget_bytes": 1048576,
+        "charged_bytes": 0,
+        "entries": 0,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 6,
+        "hits": {
+         "revalidated": 0,
+         "trusted": 0
+        },
+        "kept": 0,
+        "misses": {
+         "absent": 6,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 0,
+        "models": 0,
+        "not_kept": {
+         "budget": 6,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 0,
+        "policy_bytes": 0
+       },
+       "process_reports_evicted_file_bytes": false
+      }
+     },
+     "failures": [],
+     "parity": {
+      "equal_up_to_accounted_fields": 5,
+      "reference": 1
+     },
+     "parity_ok": true,
+     "samples": 6
+    },
+    "pool18": {
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m4over",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 21,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 6,
+        "inserts": 42,
+        "live_charged_bytes": null,
+        "misses": {
+         "revalidated": 21,
+         "unverified": 0,
+         "verified": 21
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": null,
+        "peak_live_entries": 8,
+        "peak_live_policy_bytes": 33554944,
+        "transient_hits": null
+       },
+       "file_read_bytes": 1518248757,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 177226686,
+        "entries": 18,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 18,
+        "hits": {
+         "revalidated": 21,
+         "trusted": 21
+        },
+        "kept": 18,
+        "misses": {
+         "absent": 18,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 101699856,
+        "models": 18,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 177226686,
+        "policy_bytes": 75498624
+       },
+       "process_reports_evicted_file_bytes": true
+      },
+      "m4over": {
+       "checkpoint_decodes": 65,
+       "collection": {
+        "budget_bytes": 1048576,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 0,
+        "inserts": 0,
+        "live_charged_bytes": 0,
+        "misses": {
+         "revalidated": 24,
+         "unverified": 0,
+         "verified": 24
+        },
+        "not_kept_budget": 48,
+        "peak_live_charged_bytes": 0,
+        "peak_live_entries": 0,
+        "peak_live_policy_bytes": 0,
+        "transient_hits": 0
+       },
+       "file_read_bytes": 3411595125,
+       "process": {
+        "budget_bytes": 1048576,
+        "charged_bytes": 0,
+        "entries": 0,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 66,
+        "hits": {
+         "revalidated": 0,
+         "trusted": 0
+        },
+        "kept": 0,
+        "misses": {
+         "absent": 66,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 0,
+        "models": 0,
+        "not_kept": {
+         "budget": 66,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 0,
+        "policy_bytes": 0
+       },
+       "process_reports_evicted_file_bytes": false
+      }
+     },
+     "failures": [],
+     "parity": {
+      "equal_up_to_accounted_fields": 5,
+      "reference": 1
+     },
+     "parity_ok": true,
+     "samples": 6
+    },
+    "pool2": {
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m4over",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 5,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 36,
+        "inserts": 12,
+        "live_charged_bytes": null,
+        "misses": {
+         "revalidated": 6,
+         "unverified": 0,
+         "verified": 6
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": null,
+        "peak_live_entries": 2,
+        "peak_live_policy_bytes": 8388736,
+        "transient_hits": null
+       },
+       "file_read_bytes": 591297848,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 19691854,
+        "entries": 2,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 2,
+        "hits": {
+         "revalidated": 6,
+         "trusted": 6
+        },
+        "kept": 2,
+        "misses": {
+         "absent": 2,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 11299984,
+        "models": 2,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 19691854,
+        "policy_bytes": 8388736
+       },
+       "process_reports_evicted_file_bytes": true
+      },
+      "m4over": {
+       "checkpoint_decodes": 8,
+       "collection": {
+        "budget_bytes": 1048576,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 14,
+        "inserts": 0,
+        "live_charged_bytes": 0,
+        "misses": {
+         "revalidated": 17,
+         "unverified": 0,
+         "verified": 17
+        },
+        "not_kept_budget": 34,
+        "peak_live_charged_bytes": 0,
+        "peak_live_entries": 0,
+        "peak_live_policy_bytes": 0,
+        "transient_hits": 14
+       },
+       "file_read_bytes": 1932418192,
+       "process": {
+        "budget_bytes": 1048576,
+        "charged_bytes": 0,
+        "entries": 0,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 36,
+        "hits": {
+         "revalidated": 0,
+         "trusted": 0
+        },
+        "kept": 0,
+        "misses": {
+         "absent": 36,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 0,
+        "models": 0,
+        "not_kept": {
+         "budget": 36,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 0,
+        "policy_bytes": 0
+       },
+       "process_reports_evicted_file_bytes": false
+      }
+     },
+     "failures": [],
+     "parity": {
+      "equal_up_to_accounted_fields": 5,
+      "reference": 1
+     },
+     "parity_ok": true,
+     "samples": 6
+    },
+    "pool64": {
+     "cold_resume": [
+      {
+       "arm": "m3",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      },
+      {
+       "arm": "m4over",
+       "first_process_completed": 1,
+       "ok": true,
+       "status": "equal_up_to_accounted_fields"
+      }
+     ],
+     "counters": {
+      "m3": {
+       "checkpoint_decodes": 78,
+       "collection": {
+        "budget_bytes": 268435456,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 0,
+        "inserts": 48,
+        "live_charged_bytes": null,
+        "misses": {
+         "revalidated": 24,
+         "unverified": 0,
+         "verified": 24
+        },
+        "not_kept_budget": 0,
+        "peak_live_charged_bytes": null,
+        "peak_live_entries": 8,
+        "peak_live_policy_bytes": 33554944,
+        "transient_hits": null
+       },
+       "file_read_bytes": 3825764638,
+       "process": {
+        "budget_bytes": 805306368,
+        "charged_bytes": 315069664,
+        "entries": 32,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 423374861,
+        "evictions": 43,
+        "full_loads": 75,
+        "hits": {
+         "revalidated": 24,
+         "trusted": 13
+        },
+        "kept": 75,
+        "misses": {
+         "absent": 75,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 180799744,
+        "models": 32,
+        "not_kept": {
+         "budget": 0,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 315069664,
+        "policy_bytes": 134219776
+       },
+       "process_reports_evicted_file_bytes": true
+      },
+      "m4over": {
+       "checkpoint_decodes": 115,
+       "collection": {
+        "budget_bytes": 1048576,
+        "entry_limit": 8,
+        "evictions": 0,
+        "hits": 0,
+        "inserts": 0,
+        "live_charged_bytes": 0,
+        "misses": {
+         "revalidated": 24,
+         "unverified": 0,
+         "verified": 24
+        },
+        "not_kept_budget": 48,
+        "peak_live_charged_bytes": 0,
+        "peak_live_entries": 0,
+        "peak_live_policy_bytes": 0,
+        "transient_hits": 0
+       },
+       "file_read_bytes": 5285219130,
+       "process": {
+        "budget_bytes": 1048576,
+        "charged_bytes": 0,
+        "entries": 0,
+        "entry_limit": 32,
+        "evicted_charged_bytes": 0,
+        "evictions": 0,
+        "full_loads": 112,
+        "hits": {
+         "revalidated": 0,
+         "trusted": 0
+        },
+        "kept": 0,
+        "misses": {
+         "absent": 112,
+         "check_setting": 0,
+         "revalidation": 0
+        },
+        "model_bytes": 0,
+        "models": 0,
+        "not_kept": {
+         "budget": 112,
+         "unforkable": 0,
+         "unverifiable": 0
+        },
+        "peak_charged_bytes": 0,
+        "policy_bytes": 0
+       },
+       "process_reports_evicted_file_bytes": false
+      }
+     },
+     "failures": [],
+     "parity": {
+      "equal_up_to_accounted_fields": 5,
+      "reference": 1
+     },
+     "parity_ok": true,
+     "samples": 6
+    }
+   },
+   "claimed_cores": "20-23",
+   "completed_utc": "2026-11-16T16:46:21.675108Z",
+   "created_utc": "2026-11-16T16:40:16.083965Z",
+   "driver_exit_code": 0,
+   "driver_sha256": "ebf86f4c04edddc3e599115d7f1e4160f321c19256d376d1e3e0303a2f15c347",
+   "fixture_sha256": "f2c4d4116bd690d147e08d60c34439fcb39cb0d1dfff3c6bfbc873801ce68031",
+   "fixture_workers": {
+    "collection_workers": 1,
+    "preparation_workers": 1
+   },
+   "label": "DESKTOP-DJ1C40R, untimed 4-core below-normal claim",
+   "not_held": [
+    "samples.jsonl"
+   ],
+   "ok": true,
+   "outputs_sha256": {
+    "bench.json": "c282c7166791a34e3b11e630e10ae9d1feb330286bada8b8385d452af00e26cb",
+    "comparison.json": "de6b853dd93c3f8ecccf07d4bd33e7d0f32fbd9d60e686bb7a4c95c2eba970a8",
+    "samples.jsonl": "196728aa1c1fdc81229d2a05ca60e59d2d0a57afdf508af79072b769eed45300"
+   }
+  },
+  "par-evict4": {
+   "argv": [
+    "run",
+    "--fixture",
+    "D:\\antigravity-20261112\\bench-599\\fixture-par",
+    "--out",
+    "D:\\antigravity-20261112\\bench-599\\par-evict4",
+    "--baseline",
+    "m3=D:\\antigravity-20261112\\bench-599\\bins\\m3v2\\native_expanded_training_run_v1.exe",
+    "--candidate",
+    "m4evict=D:\\antigravity-20261112\\bench-599\\bins\\m4\\native_expanded_training_run_v1.exe",
+    "--blocks",
+    "1",
+    "--warmup-runs",
+    "0",
+    "--keep-runs",
+    "reference",
+    "--build-profile",
+    "release, checked-in profile (thin LTO, codegen-units 1)",
+    "--label",
+    "DESKTOP-DJ1C40R, untimed 4-core below-normal claim",
+    "--cold-resume",
+    "--arm-env",
+    "m4evict:MTG_KERNEL_OPPONENT_CACHE_MIB=12",
+    "--arm-env",
+    "m4evict:MTG_KERNEL_COLLECTION_OPPONENT_CACHE_ENTRIES=1"
+   ],
+   "arms": {
+    "baseline": {
+     "bytes": 64568832,
+     "env": {},
+     "name": "m3",
+     "sha256": "43dc077473d0b49ff848dadfec7a45995fa1ec6f15d89c64090489780a568473"
+    },
+    "candidate": {
+     "bytes": 64573440,
+     "env": {
+      "MTG_KERNEL_COLLECTION_OPPONENT_CACHE_ENTRIES": "1",
+      "MTG_KERNEL_OPPONENT_CACHE_MIB": "12"
+     },
+     "name": "m4evict",
+     "sha256": "97e35121d7cdc0d09ca8e38863370e1a660f0c0b4274cce8e2c767e8de44c8e6"
+    }
+   },
+   "binaries_unchanged": true,
+   "cache_diagnostics": true,
+   "cases": {
+    "fresh": {
+     "driver_parity": {
+      "mismatch": 5,
+      "reference": 1
+     },
+     "samples": 6
+    },
+    "pool18": {
+     "driver_parity": {
+      "mismatch": 5,
+      "reference": 1
+     },
+     "samples": 6
+    },
+    "pool2": {
+     "driver_parity": {
+      "mismatch": 5,
+      "reference": 1
+     },
+     "samples": 6
+    },
+    "pool64": {
+     "driver_parity": {
+      "mismatch": 5,
+      "reference": 1
+     },
+     "samples": 6
+    }
+   },
+   "claimed_cores": "20-23",
+   "completed_utc": "2026-11-16T16:49:37.179948Z",
+   "counters": null,
+   "created_utc": "2026-11-16T16:46:24.503896Z",
+   "driver_exit_code": 1,
+   "driver_sha256": "ebf86f4c04edddc3e599115d7f1e4160f321c19256d376d1e3e0303a2f15c347",
+   "driver_verdict": "m3 (baseline) vs m4evict (candidate); ok=False",
+   "fixture_sha256": "47f461b93a095503be558b78a1e3aafa3f785d3b68128890a66d974c87990e0f",
+   "fixture_workers": {
+    "collection_workers": 4,
+    "preparation_workers": 4
+   },
+   "label": "DESKTOP-DJ1C40R, untimed 4-core below-normal claim",
+   "not_held": [
+    "comparison.json",
+    "samples.jsonl"
+   ],
+   "outputs_sha256": {
+    "bench.json": "9e7336964ac6f75f28337e66dfa067958e392b863884c50a91a0f8711429760e",
+    "comparison.json": "4dcd149e054f7abf110a3508518fdbd70116f6f753d27b32eaf3c0248827e469",
+    "samples.jsonl": "20e79990362542d987ae3ce44a11b5a1b6ef5044465bd063b6e2e00bfb8c466d"
+   },
+   "pipeline_check": {
+    "line": "par-evict4: parallel driver rc=1, all complete and boundaries equal: True",
+    "rule": "pipeline_m4.py, over samples.jsonl: every sample is complete, and every compared sample has boundaries_equal true and no extra files"
+   }
+  },
+  "par-zero4": {
+   "argv": [
+    "run",
+    "--fixture",
+    "D:\\antigravity-20261112\\bench-599\\fixture-par",
+    "--out",
+    "D:\\antigravity-20261112\\bench-599\\par-zero4",
+    "--baseline",
+    "m3=D:\\antigravity-20261112\\bench-599\\bins\\m3v2\\native_expanded_training_run_v1.exe",
+    "--candidate",
+    "m4zero=D:\\antigravity-20261112\\bench-599\\bins\\m4\\native_expanded_training_run_v1.exe",
+    "--blocks",
+    "1",
+    "--warmup-runs",
+    "0",
+    "--keep-runs",
+    "reference",
+    "--build-profile",
+    "release, checked-in profile (thin LTO, codegen-units 1)",
+    "--label",
+    "DESKTOP-DJ1C40R, untimed 4-core below-normal claim",
+    "--cold-resume",
+    "--arm-env",
+    "m4zero:MTG_KERNEL_COLLECTION_OPPONENT_CACHE_ENTRIES=0"
+   ],
+   "arms": {
+    "baseline": {
+     "bytes": 64568832,
+     "env": {},
+     "name": "m3",
+     "sha256": "43dc077473d0b49ff848dadfec7a45995fa1ec6f15d89c64090489780a568473"
+    },
+    "candidate": {
+     "bytes": 64573440,
+     "env": {
+      "MTG_KERNEL_COLLECTION_OPPONENT_CACHE_ENTRIES": "0"
+     },
+     "name": "m4zero",
+     "sha256": "97e35121d7cdc0d09ca8e38863370e1a660f0c0b4274cce8e2c767e8de44c8e6"
+    }
+   },
+   "binaries_unchanged": true,
+   "cache_diagnostics": true,
+   "cases": {
+    "fresh": {
+     "driver_parity": {
+      "mismatch": 5,
+      "reference": 1
+     },
+     "samples": 6
+    },
+    "pool18": {
+     "driver_parity": {
+      "mismatch": 5,
+      "reference": 1
+     },
+     "samples": 6
+    },
+    "pool2": {
+     "driver_parity": {
+      "mismatch": 5,
+      "reference": 1
+     },
+     "samples": 6
+    },
+    "pool64": {
+     "driver_parity": {
+      "mismatch": 5,
+      "reference": 1
+     },
+     "samples": 6
+    }
+   },
+   "claimed_cores": "20-23",
+   "completed_utc": "2026-11-16T16:52:28.515104Z",
+   "counters": null,
+   "created_utc": "2026-11-16T16:49:39.091074Z",
+   "driver_exit_code": 1,
+   "driver_sha256": "ebf86f4c04edddc3e599115d7f1e4160f321c19256d376d1e3e0303a2f15c347",
+   "driver_verdict": "m3 (baseline) vs m4zero (candidate); ok=False",
+   "fixture_sha256": "47f461b93a095503be558b78a1e3aafa3f785d3b68128890a66d974c87990e0f",
+   "fixture_workers": {
+    "collection_workers": 4,
+    "preparation_workers": 4
+   },
+   "label": "DESKTOP-DJ1C40R, untimed 4-core below-normal claim",
+   "not_held": [
+    "comparison.json",
+    "samples.jsonl"
+   ],
+   "outputs_sha256": {
+    "bench.json": "55e442bd726208c81ae7f3e4f141b696175ba84f4a2bf636ebdcd954b69f428a",
+    "comparison.json": "f2729186bfb4dc297181801916bfaf19d761f623d3537f80d3a03a6377a3f279",
+    "samples.jsonl": "c8083bf9c5a3a16209db11eebe44f8629e871a91ab950f1e4acd8ed5ddc3092c"
+   },
+   "pipeline_check": {
+    "line": "par-zero4: parallel driver rc=1, all complete and boundaries equal: True",
+    "rule": "pipeline_m4.py, over samples.jsonl: every sample is complete, and every compared sample has boundaries_equal true and no extra files"
+   }
+  }
+ },
+ "schema": "mtg-kernel-t5-m3-addendum-receipt/v1",
+ "stack_probe": {
+  "claimed_cores": "20-23",
+  "command": "C:\\Python314\\python.exe D:\\antigravity-20261112\\tmp\\s599\\stack_probe_m4.py",
+  "end_utc": "2026-11-16T16:27:59Z",
+  "env": {
+   "MTG_KERNEL_OPPONENT_CACHE_MIB": "12"
+  },
+  "rc": 0,
+  "rows": [
+   {
+    "arm": "m4",
+    "case": "pool18",
+    "exit_code": 0,
+    "exit_hex": "0x00000000",
+    "stack_kib": 1024
+   },
+   {
+    "arm": "m4",
+    "case": "pool18",
+    "exit_code": 0,
+    "exit_hex": "0x00000000",
+    "stack_kib": 896
+   },
+   {
+    "arm": "m4",
+    "case": "pool18",
+    "exit_code": 0,
+    "exit_hex": "0x00000000",
+    "stack_kib": 512
+   },
+   {
+    "arm": "m4",
+    "case": "pool18",
+    "exit_code": 0,
+    "exit_hex": "0x00000000",
+    "stack_kib": 256
+   },
+   {
+    "arm": "m4",
+    "case": "pool64",
+    "exit_code": 0,
+    "exit_hex": "0x00000000",
+    "stack_kib": 1024
+   },
+   {
+    "arm": "m4",
+    "case": "pool64",
+    "exit_code": 0,
+    "exit_hex": "0x00000000",
+    "stack_kib": 896
+   },
+   {
+    "arm": "m4",
+    "case": "pool64",
+    "exit_code": 0,
+    "exit_hex": "0x00000000",
+    "stack_kib": 512
+   },
+   {
+    "arm": "m4",
+    "case": "pool64",
+    "exit_code": 0,
+    "exit_hex": "0x00000000",
+    "stack_kib": 256
+   }
+  ],
+  "start_utc": "2026-11-16T16:16:46Z",
+  "what": "main-thread stack reserve set with editbin /STACK on probe copies of m4, pool18 and pool64 under MTG_KERNEL_OPPONENT_CACHE_MIB=12 (serial replay misses the process cache)"
+ },
+ "timed_run": {
+  "end_utc": "2026-11-16T16:53:38Z",
+  "host_context": "not recorded: the retained outputs hold no snapshot of the other claims or of free memory around this run",
+  "label": "DESKTOP-DJ1C40R, timed reservation P-cores 0-7",
+  "rc": 0,
+  "receipt": "t5_m3_addendum_native_fixture_desktop_dj1c40r_20261116.json",
+  "start_utc": "2026-11-16T16:52:29Z"
+ }
+}

@@ -1,0 +1,26 @@
+name: Guard hosted Linux memory
+description: Record a hosted Linux job's memory use and stop the process that would starve the runner
+inputs:
+  mode:
+    description: start (after checkout) or report (at job end)
+    required: false
+    default: start
+runs:
+  using: composite
+  steps:
+    # A hosted runner starved of memory and swap is lost with no log (see
+    # tools/ci/memory_guard.py). Root lets the guard lock its own memory and
+    # run ahead of the starved job. Its output goes to files, so the step
+    # does not wait for it.
+    - name: Start the memory guard
+      if: inputs.mode == 'start' && runner.environment == 'github-hosted' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        nohup sudo -n python3 "$GITHUB_WORKSPACE/tools/ci/memory_guard.py" watch \
+          --log "$RUNNER_TEMP/memory-guard.log" < /dev/null > "$RUNNER_TEMP/memory-guard.out" 2>&1 &
+    - name: Report memory use
+      if: inputs.mode == 'report' && runner.environment == 'github-hosted' && runner.os == 'Linux'
+      shell: bash
+      run: |
+        cat "$RUNNER_TEMP/memory-guard.out" 2>/dev/null || true
+        python3 "$GITHUB_WORKSPACE/tools/ci/memory_guard.py" report --log "$RUNNER_TEMP/memory-guard.log"

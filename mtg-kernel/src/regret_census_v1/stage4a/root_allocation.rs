@@ -100,6 +100,11 @@ pub(crate) struct SearchOptions {
     /// SD1's world lifecycle for E's selection (`world::WorldMode`); `None`
     /// is the default `Fresh` (unchanged). Never read from the environment.
     pub(crate) world: Option<super::world::WorldMode>,
+    /// Opt-in flat root (collab LANES/searchpm-20261116, measurement only):
+    /// the tree is the root node alone. After the root edge every focal
+    /// choice is the rollout policy's own, and a value leaf is the first
+    /// focal choice after the root edge. `false` keeps E unchanged.
+    pub(crate) flat_root: bool,
 }
 
 #[derive(Default)]

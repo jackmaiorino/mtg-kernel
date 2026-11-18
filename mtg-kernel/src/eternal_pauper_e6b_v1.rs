@@ -185,7 +185,6 @@ const BENEVOLENT_BLESSING: &str = "Benevolent Blessing";
 const BOROS_GARRISON: &str = "Boros Garrison";
 const CARTOUCHE_OF_SOLIDARITY: &str = "Cartouche of Solidarity";
 const DAWNBRINGER_CLERIC: &str = "Dawnbringer Cleric";
-const DEMAND_ANSWERS: &str = "Demand Answers";
 const EAGLES_OF_THE_NORTH: &str = "Eagles of the North";
 const ETHEREAL_ARMOR: &str = "Ethereal Armor";
 const FORTRESS_KIN_GUARD: &str = "Fortress Kin-Guard";
@@ -636,10 +635,13 @@ fn endure_one() -> EffectOp {
 /// Heliod's Pilgrim: "you may search your library for an Aura card, reveal
 /// it, put it into your hand, then shuffle."
 fn search_aura() -> EffectOp {
-    EffectOp::SearchLibraryToHand {
-        player: PlayerRef::Controller,
-        filter: LibraryCardFilter::CardWithAnySubtypeV1([Subtype::Aura, Subtype::Aura]),
-    }
+    crate::eternal_cards_v1::may_search(
+        PlayerRef::Controller,
+        EffectOp::SearchLibraryToHand {
+            player: PlayerRef::Controller,
+            filter: LibraryCardFilter::CardWithAnySubtypeV1([Subtype::Aura, Subtype::Aura]),
+        },
+    )
 }
 
 fn martyr_counters() -> EffectOp {
@@ -1782,13 +1784,4 @@ pub(crate) fn quote_allowed(
         }
         _ => true,
     }
-}
-
-/// Demand Answers' sacrifice branch is its alternative cost, which replaces
-/// the discard: whether a cast of `definition` (for its alternative cost if
-/// `alternative`) skips its additional cost.
-pub(crate) fn alternative_skips_additional_cost(definition: &CardDef, alternative: bool) -> bool {
-    (alternative && definition.name == DEMAND_ANSWERS)
-        || crate::eternal_cube_c1b_v1::alternative_skips_additional_cost(definition, alternative)
-        || crate::eternal_legacy_e8a_v1::alternative_skips_additional_cost(definition, alternative)
 }

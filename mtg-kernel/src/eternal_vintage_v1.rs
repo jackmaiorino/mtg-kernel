@@ -60,6 +60,10 @@ pub struct VintageStateV1 {
     /// Urza's Sagas and the highest chapter ability each has gained.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub saga_abilities: Vec<(ObjectLinkV4, u8)>,
+    /// The timestamp of each Urza's Saga chapter grant, by Saga and chapter:
+    /// the grant is an effect of the chapter ability that resolved (613.7).
+    #[serde(default, skip_serializing_if = "SagaGrantTimestampsV1::is_empty")]
+    pub saga_grant_timestamps: SagaGrantTimestampsV1,
     /// Permanents that entered as a copy (Phyrexian Metamorph), with their
     /// own definition and name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -82,6 +86,27 @@ pub struct VintageStateV1 {
 
 fn no_spells_cast(cast: &[bool; 2]) -> bool {
     !cast[0] && !cast[1]
+}
+
+/// Urza's Saga chapter grants as (Saga, chapter, timestamp). Empty, it adds
+/// nothing to the state hash, so a game without such a grant keeps its hash.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SagaGrantTimestampsV1(pub Vec<(ObjectLinkV4, u8, u64)>);
+
+impl SagaGrantTimestampsV1 {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl std::hash::Hash for SagaGrantTimestampsV1 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        if !self.0.is_empty() {
+            std::hash::Hash::hash(&"saga-grant-timestamps/v1", state);
+            std::hash::Hash::hash(&self.0, state);
+        }
+    }
 }
 
 /// A permanent that is a copy of another definition until it leaves the
@@ -915,10 +940,22 @@ pub(crate) fn execute(op: &VintageOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 return;
             };
             let link = live_link(state, saga);
-            let abilities = &mut vintage_state(state).saga_abilities;
+            let timestamp = crate::engine::next_timestamp(state);
+            let vintage = vintage_state(state);
+            let abilities = &mut vintage.saga_abilities;
             match abilities.iter_mut().find(|(host, _)| *host == link) {
                 Some((_, gained)) => *gained = (*gained).max(*level),
                 None => abilities.push((link, *level)),
+            }
+            // The latest grant of a chapter's ability is the one that
+            // applies last.
+            let grants = &mut vintage.saga_grant_timestamps.0;
+            match grants
+                .iter_mut()
+                .find(|(host, chapter, _)| *host == link && chapter == level)
+            {
+                Some((_, _, granted_at)) => *granted_at = timestamp,
+                None => grants.push((link, *level, timestamp)),
             }
         }
         VintageOpV1::EnterIfStillOnStackV1 => enter_battlefield(ctx, state),
@@ -1092,6 +1129,15 @@ pub(crate) fn enter_as_copy(
     if CARD_DEFS[copied_def as usize].enters_battlefield_tapped {
         state.objects.get_mut(host).tapped = true;
     }
+    // A copy of a Saga enters with its lore counter (715.3a), which the entry
+    // could not give it while it still had the Metamorph's definition
+    // (Summon: Bahamut, wave S1q).
+    if CARD_DEFS[copied_def as usize].saga.is_some()
+        && crate::trigger::saga_has_chapter_abilities(state, host)
+        && crate::event::add_lore_counters(state, host, 1).is_err()
+    {
+        halt(state, ctx.source);
+    }
 }
 
 pub(crate) fn paid_metamorph_copy_is_suppressed(state: &GameState, ctx: &ExecCtx) -> bool {
@@ -1252,6 +1298,10 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
             .vintage
             .karn_animated
             .retain(|(_, controller)| *controller != player);
+        // Seasoned Dungeoneer's protection lasts until end of turn. Its
+        // records carry the turn key, which both turns of a round share, so
+        // a new turn ends them all.
+        eternal.vintage.protected_from_creatures.clear();
     }
 }
 
@@ -1272,6 +1322,79 @@ fn saga_level(state: &GameState, saga: ObjectId) -> u8 {
             .find(|(host, _)| *host == link)
             .map_or(0, |(_, level)| *level)
     })
+}
+
+/// The timestamp of the grant Urza's Saga's chapter `level` made to `saga`,
+/// or 0 for a grant recorded before grants carried one.
+fn saga_grant_timestamp(state: &GameState, saga: ObjectId, level: u8) -> u64 {
+    let Some(live) = state.objects.try_get(saga) else {
+        return 0;
+    };
+    let link = ObjectLinkV4 {
+        object: saga,
+        zone_change_count: live.zone_change_count,
+    };
+    state.eternal_v1.as_ref().map_or(0, |eternal| {
+        eternal
+            .vintage
+            .saga_grant_timestamps
+            .0
+            .iter()
+            .find(|(host, chapter, _)| *host == link && *chapter == level)
+            .map_or(0, |(_, _, timestamp)| *timestamp)
+    })
+}
+
+/// Whether `object` is a face-up Urza's Saga on the battlefield.
+fn is_urzas_saga(state: &GameState, object: ObjectId) -> bool {
+    state.objects.try_get(object).is_some_and(|live| {
+        live.zone == Zone::Battlefield
+            && live.v4.face_down_v1.is_none()
+            && CARD_DEFS
+                .get(usize::from(live.card_def))
+                .is_some_and(|def| def.name == URZAS_SAGA)
+    })
+}
+
+/// Whether the ability chapter `level` granted `saga`, an Urza's Saga on the
+/// battlefield, still applies. The engine models the two granted abilities
+/// as the card's printed ones, gated by `saga_level`, so this answers for
+/// them while its printed abilities are removed. Its rulings: it "keeps
+/// those abilities for as long as it's on the battlefield". A land-type
+/// setter (Harbinger of the Seas, Blood Moon, Magus of the Moon) removes
+/// only the abilities from its rules text (305.7), so the grants survive it
+/// whatever the timestamps. A removal of all abilities (Alpine Moon's)
+/// removes a grant with an earlier timestamp only (613.7).
+fn saga_grant_applies(state: &GameState, saga: ObjectId, level: u8) -> bool {
+    is_urzas_saga(state, saga)
+        && saga_level(state, saga) >= level
+        && crate::continuous_characteristics_v1::granted_ability_removal_timestamp(state, saga)
+            .is_none_or(|removed_at| saga_grant_timestamp(state, saga, level) > removed_at)
+}
+
+/// Urza's Saga's chapter I ability, "{T}: Add {C}.", while its printed
+/// abilities are removed and the grant still applies: offered as a granted
+/// tap-for-one mana ability beside the setter's own ({R} or {U}).
+pub(crate) fn saga_granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<ManaColor> {
+    if !is_urzas_saga(state, object)
+        || crate::continuous_characteristics_v1::printed_abilities_active(state, object)
+        || !saga_grant_applies(state, object, 1)
+    {
+        return Vec::new();
+    }
+    vec![ManaColor::C]
+}
+
+/// Whether printed activated ability `ability_index` of `source` is one an
+/// Urza's Saga chapter granted and that still applies while its printed
+/// abilities are removed: chapter II's Construct ability.
+pub(crate) fn granted_activated_ability(
+    state: &GameState,
+    source: ObjectId,
+    name: &str,
+    ability_index: usize,
+) -> bool {
+    name == URZAS_SAGA && ability_index == 0 && saga_grant_applies(state, source, 2)
 }
 
 /// Mana abilities this module gates: Urza's Saga has "{T}: Add {C}" once
@@ -1335,6 +1458,7 @@ pub(crate) fn activation_allowed(
         )
         && crate::eternal_sideboard_s1a_v1::statics::activation_allowed(state, source)
         && crate::eternal_cube_c2b_v1::activation_allowed(state, source, name, ability_index)
+        && crate::eternal_sideboard_s1q_v1::activation_allowed(state, source, name, ability_index)
         && crate::eternal_cube_c5c_v1::activation_allowed(state, source, name, ability_index)
 }
 
@@ -1920,21 +2044,20 @@ pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId) -> bool {
 }
 
 /// Archon of Emeria: "Nonbasic lands your opponents control enter tapped."
+/// Called once `object` is on the battlefield under `controller`: its
+/// current types and supertypes decide (614.12).
 pub(crate) fn enters_tapped(state: &GameState, object: ObjectId, controller: PlayerId) -> bool {
     // Root Maze (Premodern wave P2a).
     if crate::eternal_premodern_p2a_v1::statics::enters_tapped(state, object, controller) {
         return true;
     }
-    let Some(def) = state
-        .objects
-        .try_get(object)
-        .and_then(|live| CARD_DEFS.get(live.card_def as usize))
-    else {
+    let Some(live) = state.objects.try_get(object) else {
         return false;
     };
-    let face = state.objects.get(object).v4.face_index;
-    def.types_for_face(face).contains(&CardType::Land)
-        && !(face == 0 && def.supertypes.contains(&Supertype::Basic))
+    let face = live.v4.face_index;
+    let supertypes = crate::engine::effective_supertypes(state, object);
+    crate::engine::object_has_type(state, object, CardType::Land)
+        && !(face == 0 && supertypes.contains(&Supertype::Basic))
         && active_permanents(state, ARCHON_OF_EMERIA, Some(controller.opponent()))
             .next()
             .is_some()

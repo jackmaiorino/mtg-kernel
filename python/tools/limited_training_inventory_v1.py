@@ -1,4 +1,8 @@
-"""Audit the original DraftZero deck sizes and declared Full-only preflight."""
+"""Audit the original DraftZero deck sizes and declared Full-only preflight.
+
+`sample_sha256_in_pool_order` is pinned over the CRLF form of pool.tsv, and every platform hashes that
+form, whatever line endings the checkout gave the file (see `canonical_pool_bytes`).
+"""
 
 from collections import Counter
 import csv
@@ -11,6 +15,15 @@ ROOT = Path(__file__).resolve().parents[2]
 SAMPLE = ROOT / "data/limited/draftzero_sample_v1"
 REGISTRIES = (ROOT / "data/cards_v1.json", ROOT / "data/limited/fdn_v1/cards_v1.json")
 RETURN_PRINTINGS = {"Alesha, Who Laughs at Fate", "Nine-Lives Familiar", "Valkyrie's Call"}
+
+
+def canonical_pool_bytes(data: bytes) -> bytes:
+    """pool.tsv as hashed: CRLF line endings on every platform.
+
+    The file is `text=auto` (LF in the index, CRLF in a Windows checkout); the pinned
+    `sample_sha256_in_pool_order` was taken over CRLF bytes, so both checkouts hash this form.
+    """
+    return data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
 
 
 def inventory() -> dict:
@@ -52,7 +65,7 @@ def inventory() -> dict:
         all_inputs.update(path.name.encode("utf-8"))
         all_inputs.update(data)
     all_inputs.update(pool.name.encode("utf-8"))
-    all_inputs.update(pool.read_bytes())
+    all_inputs.update(canonical_pool_bytes(pool.read_bytes()))
     return {"schema": "limited-training-deck-inventory/v1", "sample_sha256_in_pool_order": all_inputs.hexdigest(),
             "registry_sha256": registry_hashes, "model_coverage": "requires native actor runs",
             "counts": [{"split": split, "cards": size, "declared_full_only": eligible, "decks": count}

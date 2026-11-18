@@ -140,18 +140,10 @@ fn current(state: &GameState, object: ObjectId) -> Result<CurrentV52, RlContract
     let live = state.objects.get(object);
     let facts = crate::starting_life_statics_v1::characteristics(state, object)
         .ok_or_else(|| RlContractError("Elenda current rules are absent".into()))?;
-    let effective_types = [
-        CardType::Land,
-        CardType::Creature,
-        CardType::Instant,
-        CardType::Sorcery,
-        CardType::Artifact,
-        CardType::Enchantment,
-        CardType::Planeswalker,
-    ]
-    .into_iter()
-    .filter(|kind| crate::engine::object_has_type(state, object, *kind))
-    .collect::<Vec<_>>();
+    let effective_types = CardType::ALL
+        .into_iter()
+        .filter(|kind| crate::engine::object_has_type(state, object, *kind))
+        .collect::<Vec<_>>();
     let creature = effective_types.contains(&CardType::Creature);
     let pt = creature
         .then(|| crate::engine::checked_effective_pt(state, object))

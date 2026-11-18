@@ -13,6 +13,7 @@ use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision};
+use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
@@ -2252,6 +2253,31 @@ fn archon_of_emeria_limits_spells_and_taps_opponents_nonbasic_lands() {
 }
 
 #[test]
+fn archon_of_emeria_reads_the_controller_a_land_enters_under() {
+    // The Archon's own nonbasic land card, put onto the battlefield under
+    // the opponent's control, is a land that opponent controls as it
+    // enters: tapped. The opponent's card put onto the battlefield under
+    // the Archon's controller enters untapped.
+    let mut state = islands();
+    put(&mut state, P1, "Archon of Emeria", Zone::Battlefield);
+    let stolen = put(&mut state, P1, "Strip Mine", Zone::Graveyard);
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change_to_battlefield_under_controller(stolen, P0),
+    );
+    assert_eq!(state.objects.get(stolen).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(stolen).controller, P0);
+    assert!(state.objects.get(stolen).tapped, "it entered under P0");
+    let taken = put(&mut state, P0, "Strip Mine", Zone::Graveyard);
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change_to_battlefield_under_controller(taken, P1),
+    );
+    assert_eq!(state.objects.get(taken).controller, P1);
+    assert!(!state.objects.get(taken).tapped, "it entered under P1");
+}
+
+#[test]
 fn clarion_conqueror_stops_artifact_creature_and_planeswalker_abilities() {
     let mut state = islands();
     put(&mut state, P1, "Clarion Conqueror", Zone::Battlefield);
@@ -2365,6 +2391,57 @@ fn seasoned_dungeoneer_protects_an_attacking_warrior_from_creatures_and_explores
     }
     assert_eq!(blockable, Some(false), "protection from creatures");
     assert_eq!(state.objects.get(top).zone, Zone::Hand, "the land explored");
+}
+
+#[test]
+fn seasoned_dungeoneers_protection_ends_with_its_controllers_turn() {
+    let mut state = islands();
+    let dungeoneer = put(&mut state, P0, "Seasoned Dungeoneer", Zone::Battlefield);
+    let round = state.turn;
+    // P0 attacks with the Dungeoneer, which gains protection from creatures
+    // until end of turn; then the game plays on to P1's turn of the round.
+    for _ in 0..400 {
+        let decision = next(&mut state);
+        if state.active_player == P1 && state.step == Step::Main1 {
+            break;
+        }
+        let action = match decision {
+            Decision::DeclareAttackers { player: P0, .. } => {
+                Action::DeclareAttackers(vec![dungeoneer])
+            }
+            Decision::DeclareAttackers { .. } => Action::DeclareAttackers(vec![]),
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert_eq!(legal_targets, vec![Target::Object(dungeoneer)]);
+                Action::ChooseTarget(legal_targets[0])
+            }
+            Decision::DeclareBlockers { .. } => Action::DeclareBlockers(vec![]),
+            Decision::CastSpellOrPass { .. } => Action::Pass,
+            Decision::OrderTriggers { pending, .. } => {
+                Action::OrderTriggers((0..pending.len()).collect())
+            }
+            Decision::ChooseEffectBoolean { .. } => Action::ChooseEffectBoolean(false),
+            Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(0),
+            Decision::Discard { count, choices, .. } => {
+                Action::Discard(choices.into_iter().take(count as usize).collect())
+            }
+            other => panic!("unexpected decision: {other:?}"),
+        };
+        act(&mut state, action);
+    }
+    assert_eq!(state.turn, round, "the same round");
+    assert_eq!(state.players[1].life, 17, "P0's attack connected");
+
+    // In P1's turn a creature's ability may target the Dungeoneer again.
+    let bowmasters = put(&mut state, P1, "Orcish Bowmasters", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::B], 1);
+    cast(&mut state, bowmasters, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseTargets { legal_targets, .. }) => assert!(
+            legal_targets.contains(&Target::Object(dungeoneer)),
+            "{legal_targets:?}"
+        ),
+        other => panic!("expected the Bowmasters target, got {other:?}"),
+    }
 }
 
 // ---- Batch three: planeswalkers -------------------------------------------
@@ -2613,6 +2690,265 @@ fn urzas_saga_gains_its_abilities_by_chapter_and_fetches_a_cheap_artifact() {
     assert_eq!(state.objects.get(saga).zone, Zone::Graveyard);
 }
 
+/// Under Blood Moon an Urza's Saga is a Mountain that lost its abilities, its
+/// chapter abilities among them (305.7). 715.3c gives a lore counter only to
+/// a Saga with one or more chapter abilities, and 715.4 and 704.5s sacrifice
+/// only such a Saga (the 2025 rule that Summon: Bahamut's rulings describe):
+/// a Saga at lore 1 stays at 1 through its controller's next precombat main
+/// phase, and a Saga already at lore 3 is not sacrificed. Once Blood Moon is
+/// gone both have their chapter abilities again: the one at lore 3, with no
+/// chapter ability on the stack, is sacrificed by the next state-based check;
+/// the other gets its counter at the next precombat main phase and chapter II
+/// gives it its ability.
+#[test]
+fn urzas_saga_under_blood_moon_gets_no_lore_counter_and_is_not_sacrificed_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = if actor == P0 { P1 } else { P0 };
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let saga = put(&mut state, actor, "Urza's Saga", Zone::Battlefield);
+        state.objects.get_mut(saga).counters.lore = 1;
+        let moon = put(&mut state, actor, "Blood Moon", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R], 2);
+        cast(&mut state, moon, &[]);
+        settled(&mut state);
+        assert_eq!(state.objects.get(moon).zone, Zone::Battlefield);
+        let finished = put(&mut state, actor, "Urza's Saga", Zone::Battlefield);
+        state.objects.get_mut(finished).counters.lore = 3;
+        assert!(engine::has_effective_subtype(
+            &state,
+            saga,
+            Subtype::Mountain
+        ));
+
+        pass_until(&mut state, |state| {
+            state.active_player == opponent && state.step == Step::Main1
+        });
+        pass_until(&mut state, |state| {
+            state.active_player == actor && state.step == Step::Main1 && state.stack.is_empty()
+        });
+        assert_eq!(
+            state.objects.get(saga).counters.lore,
+            1,
+            "no counter (715.3c)"
+        );
+        assert_eq!(state.objects.get(saga).zone, Zone::Battlefield);
+        assert_eq!(
+            state.objects.get(finished).zone,
+            Zone::Battlefield,
+            "not sacrificed (715.4)"
+        );
+
+        // Blood Moon leaves: the finished Saga is sacrificed at once, the
+        // other resumes at its next precombat main phase.
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(moon, Zone::Graveyard),
+        );
+        next(&mut state);
+        assert_eq!(state.objects.get(finished).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(saga).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(saga).counters.lore, 1, "not on leaving");
+        pass_until(&mut state, |state| {
+            state.active_player == opponent && state.step == Step::Main1
+        });
+        pass_until(&mut state, |state| {
+            state.active_player == actor && state.step == Step::Main1 && state.stack.is_empty()
+        });
+        assert_eq!(state.objects.get(saga).counters.lore, 2);
+        pool(&mut state, actor, &[], 2);
+        assert!(activatable(&mut state, saga, 0), "chapter II resolved");
+    }
+}
+
+fn opponent_of(player: PlayerId) -> PlayerId {
+    if player == P0 {
+        P1
+    } else {
+        P0
+    }
+}
+
+/// An Urza's Saga that `actor` played on this turn, at `actor`'s next
+/// precombat main phase once its chapter II ability resolved.
+fn saga_after_chapter_two(state: &mut GameState, actor: PlayerId) -> ObjectId {
+    let opponent = opponent_of(actor);
+    state.active_player = actor;
+    state.priority_player = actor;
+    let saga = put(state, actor, "Urza's Saga", Zone::Hand);
+    next(state);
+    act(state, Action::PlayLand(saga));
+    settled(state);
+    assert_eq!(state.objects.get(saga).counters.lore, 1);
+    pass_until(state, |state| {
+        state.active_player == opponent && state.step == Step::Main1
+    });
+    pass_until(state, |state| {
+        state.active_player == actor && state.step == Step::Main1 && state.stack.is_empty()
+    });
+    assert_eq!(state.objects.get(saga).counters.lore, 2);
+    saga
+}
+
+fn constructs(state: &GameState, player: PlayerId) -> usize {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .filter(|&&id| {
+            CARD_DEFS[state.objects.get(id).card_def as usize].name == "Karn Construct Token"
+        })
+        .count()
+}
+
+/// Whether tapping `source` for `color` adds one `color`, tried on a copy. A
+/// source with a single mana choice takes the plain activation.
+fn taps_for(state: &GameState, source: ObjectId, color: ManaColor) -> bool {
+    let player = state.priority_player;
+    let before = mana(state, player, color);
+    [
+        Action::ActivateManaAbilityChoice(source, color),
+        Action::ActivateManaAbility(source),
+    ]
+    .into_iter()
+    .any(|action| {
+        let mut tapped = state.clone();
+        engine::step(&mut tapped, action).is_ok() && mana(&tapped, player, color) == before + 1
+    })
+}
+
+/// Urza's Saga "gains an ability from its first and second chapters. It
+/// keeps those abilities for as long as it's on the battlefield" (its
+/// rulings). A land-type setter removes only the abilities from its rules
+/// text and not those other effects granted it (305.7). Under Blood Moon or
+/// Harbinger of the Seas a Saga whose chapters I and II resolved taps for the
+/// setter's color or for {C}, and "{2}, {T}" creates a Construct. Without
+/// chapter abilities it gets no lore counter and is not sacrificed (715.3c,
+/// 715.4).
+#[test]
+fn urzas_saga_keeps_its_chapter_grants_under_a_land_type_setter_both_seats() {
+    for (setter, color, land_type) in [
+        ("Blood Moon", ManaColor::R, Subtype::Mountain),
+        ("Harbinger of the Seas", ManaColor::U, Subtype::Island),
+    ] {
+        for actor in [P0, P1] {
+            let opponent = opponent_of(actor);
+            let mut state = islands();
+            let saga = saga_after_chapter_two(&mut state, actor);
+            let moon = put(&mut state, actor, setter, Zone::Hand);
+            // {2}{R} or {1}{U}{U}.
+            pool(&mut state, actor, &[color, color], 1);
+            cast(&mut state, moon, &[]);
+            settled(&mut state);
+            assert_eq!(state.objects.get(moon).zone, Zone::Battlefield, "{setter}");
+            assert!(engine::has_effective_subtype(&state, saga, land_type));
+
+            assert!(
+                taps_for(&state, saga, color),
+                "{setter}: the setter's ability"
+            );
+            assert!(taps_for(&state, saga, ManaColor::C), "{setter}: chapter I");
+            assert!(!taps_for(&state, saga, ManaColor::G), "{setter}");
+            pool(&mut state, actor, &[], 2);
+            activate(&mut state, saga, 0, &[]);
+            settled(&mut state);
+            assert_eq!(constructs(&state, actor), 1, "{setter}: chapter II");
+
+            pass_until(&mut state, |state| {
+                state.active_player == opponent && state.step == Step::Main1
+            });
+            pass_until(&mut state, |state| {
+                state.active_player == actor && state.step == Step::Main1 && state.stack.is_empty()
+            });
+            assert_eq!(state.objects.get(saga).zone, Zone::Battlefield, "{setter}");
+            assert_eq!(state.objects.get(saga).counters.lore, 2, "{setter}");
+            assert!(taps_for(&state, saga, ManaColor::C), "{setter}: still");
+        }
+    }
+}
+
+/// The Alpine Moon option that names `land`.
+fn alpine_option(land: &str) -> u16 {
+    use mtg_kernel::eternal_sideboard_s1g_v1::{alpine_name_options, alpine_option_name};
+    (0..alpine_name_options().len())
+        .map(|option| u16::try_from(option).unwrap())
+        .find(|&option| alpine_option_name(option) == Some(land))
+        .unwrap_or_else(|| panic!("{land} is not a nonbasic land name"))
+}
+
+/// Puts an Alpine Moon from `player`'s hand onto the battlefield, naming
+/// Urza's Saga, and settles the stack.
+fn alpine_moon_naming_urzas_saga(state: &mut GameState, player: PlayerId) -> ObjectId {
+    let moon = put(state, player, "Alpine Moon", Zone::Hand);
+    event_move(state, moon, Zone::Battlefield);
+    match settle(state) {
+        Some(Decision::ChooseEffectOption {
+            player: chooser,
+            source,
+            ..
+        }) => {
+            assert_eq!((chooser, source), (player, moon));
+            act(
+                state,
+                Action::ChooseEffectOption(alpine_option("Urza's Saga")),
+            );
+        }
+        other => panic!("expected the name choice, got {other:?}"),
+    }
+    settled(state);
+    moon
+}
+
+/// Alpine Moon's named lands "lose all land types and abilities", which also
+/// removes abilities other effects granted them with an earlier timestamp
+/// (613.7). An Alpine Moon that entered while chapter I's ability was on the
+/// stack is earlier than its grant, so the Saga keeps "{T}: Add {C}." beside
+/// the Moon's "{T}: Add one mana of any color.". One that entered after
+/// chapter II resolved removes both grants.
+#[test]
+fn urzas_saga_chapter_grants_and_alpine_moon_apply_in_timestamp_order_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = opponent_of(actor);
+
+        // Alpine Moon before chapter I resolved.
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let saga = put(&mut state, actor, "Urza's Saga", Zone::Hand);
+        next(&mut state);
+        act(&mut state, Action::PlayLand(saga));
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } => {}
+            other => panic!("expected priority, got {other:?}"),
+        }
+        assert_eq!(state.stack.len(), 1, "chapter I");
+        alpine_moon_naming_urzas_saga(&mut state, opponent);
+        assert!(state.stack.is_empty());
+        assert_eq!(state.objects.get(saga).zone, Zone::Battlefield);
+        assert!(taps_for(&state, saga, ManaColor::G), "the Moon's ability");
+        assert!(
+            taps_for(&state, saga, ManaColor::C),
+            "chapter I's later grant"
+        );
+
+        // Alpine Moon after chapter II resolved.
+        let mut state = islands();
+        let saga = saga_after_chapter_two(&mut state, actor);
+        alpine_moon_naming_urzas_saga(&mut state, opponent);
+        assert!(taps_for(&state, saga, ManaColor::G), "the Moon's ability");
+        assert!(
+            !taps_for(&state, saga, ManaColor::C),
+            "chapter I's earlier grant"
+        );
+        pool(&mut state, actor, &[], 2);
+        assert!(
+            !activatable(&mut state, saga, 0),
+            "chapter II's earlier grant"
+        );
+        assert_eq!(state.objects.get(saga).counters.lore, 2);
+    }
+}
+
 #[test]
 fn phyrexian_metamorph_enters_as_an_artifact_copy_and_leaves_as_itself() {
     let mut state = islands();
@@ -2837,6 +3173,44 @@ fn anointed_peacekeeper_sees_the_hand_and_taxes_the_named_card() {
     assert_eq!(mana(&state, P1, ManaColor::C), 0, "paid {{2}}");
     settled(&mut state);
     assert_eq!(state.objects.get(island).zone, Zone::Graveyard);
+}
+
+/// 601.2f: the total cost is the mana cost plus increases, then reductions.
+/// Anointed Peacekeeper naming Eiganjo makes its channel {4}{W}, and three
+/// legendary creatures take {3} off: {1}{W}.
+#[test]
+fn anointed_peacekeeper_tax_comes_before_eiganjos_channel_reduction() {
+    let mut state = islands();
+    peacekeeper_naming(&mut state, "Eiganjo, Seat of the Empire");
+    let eiganjo = put(&mut state, P0, "Eiganjo, Seat of the Empire", Zone::Hand);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    for name in [
+        "Squee, Goblin Nabob",
+        "Oswald Fiddlebender",
+        "Samwise the Stouthearted",
+    ] {
+        put(&mut state, P0, name, Zone::Battlefield);
+    }
+    for _ in 0..40 {
+        match next(&mut state) {
+            Decision::DeclareAttackers { .. } => {
+                act(&mut state, Action::DeclareAttackers(vec![elves]));
+                break;
+            }
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    assert!(!activatable(&mut state, eiganjo, 0), "{{W}} alone");
+    pool(&mut state, P0, &[], 1);
+    activate(&mut state, eiganjo, 0, &[Target::Object(elves)]);
+    settled(&mut state);
+    assert_eq!(mana(&state, P0, ManaColor::W), 0);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0, "{{1}}{{W}} was paid");
+    assert_eq!(state.objects.get(eiganjo).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(elves).zone, Zone::Graveyard);
 }
 
 /// A game at its very beginning: turn 1's untap step, P0 active.

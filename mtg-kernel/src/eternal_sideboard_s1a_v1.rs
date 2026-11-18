@@ -644,7 +644,7 @@ pub(crate) fn execute(op: &S1aOpV1, ctx: &ExecCtx, state: &mut GameState) {
                 object: contract.source,
                 zone_change_count: contract.zone_change_count,
             };
-            let turn = state.turn;
+            let turn = state.turn_key_v1();
             let turns = &mut s1a_state(state).carpet_turns;
             turns.retain(|(carpet, _)| *carpet != link);
             turns.push((link, turn));
@@ -824,6 +824,15 @@ fn lavinia_triggers(state: &mut GameState, events: &[CommittedEvent]) -> Vec<Pen
     triggers
 }
 
+/// The beginning of a turn ends Carpet of Flowers' "this turn". Its records
+/// carry the turn key, which both turns of a round share, so a new turn ends
+/// them all.
+pub(crate) fn begin_turn(state: &mut GameState, _active: PlayerId) {
+    if let Some(eternal) = state.eternal_v1.as_mut() {
+        eternal.s1a.carpet_turns.clear();
+    }
+}
+
 /// A main phase began for the active player: Carpet of Flowers' trigger for
 /// each Carpet they control that has not added mana this turn.
 pub(crate) fn begin_main_phase(state: &mut GameState) -> Vec<PendingTrigger> {
@@ -832,7 +841,7 @@ pub(crate) fn begin_main_phase(state: &mut GameState) -> Vec<PendingTrigger> {
     if islands == 0 {
         return Vec::new();
     }
-    let turn = state.turn;
+    let turn = state.turn_key_v1();
     let carpets = statics::active_controlled_by(state, CARPET_OF_FLOWERS, player)
         .into_iter()
         .filter(|&carpet| {

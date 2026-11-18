@@ -418,20 +418,20 @@ def trajectory_files(iteration):
 
 
 def read_pregame_scale(iteration):
-    """The scaled-advantage fields of one iteration's update receipt (`pregame_advantage` with a `scale`, written only
-    under the trainer's `pregame_advantage_scale`): `{'s', 'n', 'mu', 'ms'}` (the scale, the announcement rows it
-    multiplied, and the mean normalized announcement advantage before and after), or None (no scale, no receipt, or
-    anything unreadable: the monitor never fails on it)."""
+    """The scaled-step fields of one iteration's update receipt (`pregame_announcement_step`, written only under the
+    trainer's `pregame_announcement_step_scale`): `{'s', 'n', 'ga', 'gr'}` (the scale, the announcement rows whose
+    policy term went to the second gradient buffer, and the L2 norms of that buffer and of the rest), or None (no
+    scale, no receipt, or anything unreadable: the monitor never fails on it)."""
     try:
         complete = json.loads((Path(iteration) / 'complete.json').read_text(encoding='utf-8'))
         update = json.loads(Path(complete['update']['path']).read_text(encoding='utf-8'))
-        receipt = update.get('pregame_advantage') or {}
+        receipt = update.get('pregame_announcement_step') or {}
         if receipt.get('scale') is None:
             return None
-        pas = {'s': receipt['scale'], 'n': receipt['scaled_groups']}
-        for key, name in (('mu', 'announcement_advantage_mean_unscaled'), ('ms', 'announcement_advantage_mean_scaled')):
+        pas = {'s': receipt['scale'], 'n': receipt['routed_groups']}
+        for key, name in (('ga', 'announcement_gradient_l2'), ('gr', 'rest_gradient_l2')):
             value = receipt.get(name)
-            pas[key] = None if value is None else round(value, 6)
+            pas[key] = None if value is None else float(f'{value:.6g}')
         return pas
     except (OSError, ValueError, KeyError, TypeError):
         return None
@@ -492,7 +492,7 @@ COUNT_LISTS = (('dk', COUNTS), ('ma', COUNTS), ('vn', COUNTS), ('vk', COUNTS), (
 def empty_sums():
     sums = {'iterations': 0, 'n': 0, 'plain': 0, 'norec': 0, 'learned': 0, 'kept': [0] * SIZES, 'exp': 0,
             'fixed': 0, 'fixed_not7': 0, 'decks': {}, 'v2_iterations': 0, 'norew': 0, 'annbad': 0,
-            'pas_iterations': 0, 'pas_rows': 0, 'pas_mu_x_rows': 0.0, 'pas_ms_x_rows': 0.0}
+            'pas_iterations': 0, 'pas_rows': 0, 'pas_ga_sum': 0.0, 'pas_gr_sum': 0.0}
     sums.update({key: [0] * size for key, size in COUNT_LISTS})
     return sums
 
@@ -508,11 +508,11 @@ def add_line(sums, line):
         for i, c in enumerate(hist):
             mine[i] += c
     pas = line.get('pas')
-    if pas and pas.get('n'):  # a line of an update run under pregame_advantage_scale
+    if pas and pas.get('n'):  # a line of an update run under pregame_announcement_step_scale
         sums['pas_iterations'] += 1
         sums['pas_rows'] += pas['n']
-        sums['pas_mu_x_rows'] += (pas.get('mu') or 0.0) * pas['n']
-        sums['pas_ms_x_rows'] += (pas.get('ms') or 0.0) * pas['n']
+        sums['pas_ga_sum'] += pas.get('ga') or 0.0
+        sums['pas_gr_sum'] += pas.get('gr') or 0.0
     if 'dk' in line:  # a v2 line: the per-count fields (a v1 line has none and adds nothing)
         sums['v2_iterations'] += 1
         for key, size in COUNT_LISTS:
@@ -524,7 +524,7 @@ def merge_sums(total, sums):
     """`sums` (one segment's tally) added into `total`."""
     total['iterations'] += sums['iterations']
     for key in ('n', 'plain', 'norec', 'learned', 'exp', 'fixed', 'fixed_not7', 'v2_iterations', 'norew', 'annbad',
-                'pas_iterations', 'pas_rows', 'pas_mu_x_rows', 'pas_ms_x_rows'):
+                'pas_iterations', 'pas_rows', 'pas_ga_sum', 'pas_gr_sum'):
         total[key] += sums[key]
     for key, size in (('kept', SIZES),) + COUNT_LISTS:
         for i in range(size):
@@ -686,10 +686,10 @@ def summarize_chain(chain_dir, per_update=False, last=None):
                             ret_by_size=ret_by_size(total), **rates(total), by_deck=by_deck(total))}
     if total['pas_iterations']:  # absent for an unscaled run: its report keeps its keys
         rows_scaled = total['pas_rows']
-        report['pregame_scale'] = {'scale': (man.get('recipe') or {}).get('pregame_advantage_scale'),
+        report['pregame_scale'] = {'scale': (man.get('recipe') or {}).get('pregame_announcement_step_scale'),
                                    'updates': total['pas_iterations'], 'announcement_rows': rows_scaled,
-                                   'announcement_advantage_mean_unscaled': total['pas_mu_x_rows'] / rows_scaled,
-                                   'announcement_advantage_mean_scaled': total['pas_ms_x_rows'] / rows_scaled}
+                                   'announcement_gradient_l2_mean': total['pas_ga_sum'] / total['pas_iterations'],
+                                   'rest_gradient_l2_mean': total['pas_gr_sum'] / total['pas_iterations']}
     force = lean_in_force(schedule, segments)
     if force is not None:
         report['lean_vector_in_force'] = force
@@ -744,9 +744,10 @@ def format_by_count(report):
                    f' learned seats without a terminal reward: {t.get("episodes_without_reward_seats", 0)}')
     scale = report.get('pregame_scale')
     if scale:
-        out.append(f'pregame advantage scale {_num(scale["scale"])}: {scale["announcement_rows"]} announcement rows in '
-                   f'{scale["updates"]} updates, mean normalized advantage {_num(scale["announcement_advantage_mean_unscaled"])}'
-                   f' before and {_num(scale["announcement_advantage_mean_scaled"])} after the scale')
+        out.append(f'pregame announcement step scale {_num(scale["scale"])}: {scale["announcement_rows"]} announcement '
+                   f'rows in {scale["updates"]} updates, mean gradient L2 '
+                   f'{_num(scale["announcement_gradient_l2_mean"])} (announcement buffer) and '
+                   f'{_num(scale["rest_gradient_l2_mean"])} (rest)')
     force = report.get('lean_vector_in_force')
     if force:
         fmt = lambda v: '-' if v is None else '[' + ', '.join(_num(x) for x in v) + ']'  # noqa: E731

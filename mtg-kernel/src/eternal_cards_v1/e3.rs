@@ -317,6 +317,9 @@ pub enum E3ChoiceKindV1 {
     C1bV1(crate::eternal_cube_c1b_v1::C1bChoiceV1),
     /// A Vintage Cube wave C3a choice (`eternal_cube_c3a_v1`).
     C3aV1(crate::eternal_cube_c3a_v1::C3aChoiceV1),
+    /// A sideboard wave S1o choice (`eternal_sideboard_s1o_v1`). Appended to
+    /// preserve existing hashes.
+    S1oV1(crate::eternal_sideboard_s1o_v1::S1oChoiceV1),
     /// A Vintage Cube wave C5d choice (`eternal_cube_c5d_v1`).
     C5dV1(crate::eternal_cube_c5d_v1::C5dChoiceV1),
     /// A Vintage Cube wave C5b choice (`eternal_cube_c5b_v1`).
@@ -410,6 +413,9 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::C3aV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::S1oV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
         if let E3ChoiceKindV1::C5dV1(kind) = &self.kind {
             return kind.chooser_private();
         }
@@ -464,6 +470,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::C1cV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C1bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C3aV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::S1oV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C5bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C5dV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9aV1(kind) => kind.public_purpose(),
@@ -529,6 +536,7 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::C1aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::C1bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::C3aV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::S1oV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::C5bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::C5dV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9aV1(kind) => out.extend(kind.referenced_bindings()),
@@ -895,6 +903,13 @@ pub(crate) fn finish_selection(
             selected,
         ),
         E3ChoiceKindV1::C3aV1(kind) => crate::eternal_cube_c3a_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::S1oV1(kind) => crate::eternal_sideboard_s1o_v1::finish_selection(
             state,
             continuation,
             choice,
@@ -1303,6 +1318,12 @@ pub(crate) fn drive(
         EternalOpV1::C4aV1(op) => crate::eternal_cube_c4a_v1::drive(state, continuation, op, path),
         EternalOpV1::C4bV1(op) => crate::eternal_cube_c4b_v1::drive(state, continuation, op, path),
         EternalOpV1::C4cV1(op) => crate::eternal_cube_c4c_v1::drive(state, continuation, op, path),
+        EternalOpV1::S1oV1(op) => {
+            crate::eternal_sideboard_s1o_v1::drive(state, continuation, op, path)
+        }
+        EternalOpV1::S1qV1(op) => {
+            crate::eternal_sideboard_s1q_v1::drive(state, continuation, op, path)
+        }
         EternalOpV1::C5aV1(op) => crate::eternal_cube_c5a_v1::drive(state, continuation, op, path),
         EternalOpV1::C5bV1(op) => crate::eternal_cube_c5b_v1::drive(state, continuation, op, path),
         EternalOpV1::C5cV1(op) => crate::eternal_cube_c5c_v1::drive(state, continuation, op, path),
@@ -2398,6 +2419,9 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
         e3.protected_players[player.index()] = false;
         e3.weakened.retain(|effect| effect.holder != player);
         e3.pacified.retain(|effect| effect.holder != player);
+        // Veil of Summer lasts "this turn". Its records carry the turn key,
+        // which both turns of a round share, so a new turn ends them all.
+        e3.veils.clear();
     }
 }
 

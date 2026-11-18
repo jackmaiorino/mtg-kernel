@@ -142,6 +142,56 @@ fn opponent_hand_binding(value: &Value, opponent: &Value) -> bool {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only witness of the last opponent-hand guard refusal on this
+    /// thread: where each matching object sits in the public value and which
+    /// card it names. The actor probe reads it to report a single-game witness.
+    static OPPONENT_HAND_WITNESS_V1: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Same match as `opponent_hand_binding`, collecting every matching object
+/// with its JSON pointer instead of stopping at the first one.
+#[cfg(test)]
+fn opponent_hand_matches(value: &Value, opponent: &Value, path: &str, out: &mut Vec<String>) {
+    match value {
+        Value::Object(fields) => {
+            if fields.contains_key("arena_id")
+                && fields.get("zone").is_some_and(|zone| zone == "Hand")
+                && fields.get("owner") == Some(opponent)
+            {
+                let card = fields.get("card_db_id").and_then(Value::as_u64);
+                let name = card
+                    .and_then(|id| usize::try_from(id).ok())
+                    .and_then(|id| crate::card_def::CARD_DEFS.get(id))
+                    .map(|definition| definition.name);
+                out.push(format!(
+                    "{} arena_id={} card_db_id={card:?} card={name:?}",
+                    if path.is_empty() { "/" } else { path },
+                    fields["arena_id"]
+                ));
+            }
+            for (key, child) in fields {
+                let key = key.replace('~', "~0").replace('/', "~1");
+                opponent_hand_matches(child, opponent, &format!("{path}/{key}"), out);
+            }
+        }
+        Value::Array(rows) => {
+            for (index, row) in rows.iter().enumerate() {
+                opponent_hand_matches(row, opponent, &format!("{path}/{index}"), out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Takes, and clears, this thread's last opponent-hand guard witness.
+#[cfg(test)]
+pub(crate) fn take_opponent_hand_witness_v1() -> Vec<String> {
+    OPPONENT_HAND_WITNESS_V1.with(|witness| std::mem::take(&mut *witness.borrow_mut()))
+}
+
 /// Normalize only the exact current public reveal/discard targets. The backend
 /// still owns every original physical answer, including equal-printing copies.
 fn revealed_discard_by_name(
@@ -310,6 +360,12 @@ fn packet_from_current(
                     crate::rl::PlayerSeatV1::P1 => "p0",
                 };
                 if opponent_hand_binding(state, &Value::from(opponent)) {
+                    #[cfg(test)]
+                    {
+                        let mut matches = Vec::new();
+                        opponent_hand_matches(state, &Value::from(opponent), "", &mut matches);
+                        OPPONENT_HAND_WITNESS_V1.with(|witness| *witness.borrow_mut() = matches);
+                    }
                     return Err(Error::Projection(
                         "opponent hand binding requires a public name action".into(),
                     ));
@@ -419,6 +475,35 @@ impl KaitoSession {
             actions,
             families,
         })
+    }
+
+    /// Test-only native inclusion-step answers for the actor probe's arity
+    /// rule, recomputed by the owning backend for this exact current decision.
+    #[cfg(test)]
+    pub(crate) fn probe_scan_answers_v1(
+        &self,
+        decision: &KaitoDecision,
+    ) -> Result<Option<crate::rl_session::kaito_v75::ProbeScanAnswersV1>> {
+        if !Arc::ptr_eq(&self.owner, &decision.owner)
+            || self.generation != decision.generation
+            || decision.current.name_order.is_some()
+        {
+            return Err(Error::StaleBinding);
+        }
+        self.inner
+            .probe_scan_answers_v1(&decision.backend)
+            .map_err(|error| Error::Projection(error.to_string()))
+    }
+
+    /// Test-only read of the owner's native world, for a halted game's
+    /// diagnostic witness. It grants no action authority.
+    #[cfg(all(
+        test,
+        feature = "limited-fdn-fixtures",
+        not(feature = "standard-magezero-fixtures")
+    ))]
+    pub(crate) fn probe_native_state_v1(&self) -> &crate::state::GameState {
+        self.inner.fixture_state_v75()
     }
 
     fn hand_facts(&self) -> Result<HandFacts> {

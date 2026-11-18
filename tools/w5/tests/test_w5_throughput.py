@@ -149,7 +149,11 @@ class ThroughputTests(unittest.TestCase):
                 c = d['per_chain'][b['chain']]
                 self.assertEqual((c['complete'], c['how'], c['instances'], c['target_updates']),
                                  (True, 'native', [0], 8))
-                self.assertLessEqual(d['start_unix'], b['start_unix'])  # the common start precedes every launch
+                # The common start precedes every launch. The ledger stamps a launcher start to the millisecond
+                # and the common start is not rounded, so the two are compared at the ledger's resolution:
+                # rounding keeps order, where the raw stamp of a launch in the start's own millisecond can read
+                # up to half a millisecond below it.
+                self.assertLessEqual(round(d['start_unix'], 3), b['start_unix'])
                 self.assertGreaterEqual(c['durable_unix'], b['end_unix'])  # a commit follows its native receipt
                 self.assertGreaterEqual(c['elapsed_seconds'], b['seconds'])
                 self.assertGreaterEqual(c['overshoot_updates'], 0)

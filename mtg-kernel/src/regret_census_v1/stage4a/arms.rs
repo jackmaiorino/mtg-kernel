@@ -887,6 +887,7 @@ impl Roles {
         mut sharing: Option<&mut Sharing>,
         sharing_cursor: &mut SharingCursor,
         value_leaf: Option<super::value_leaf::ValueLeafV1>,
+        flat_root: bool,
     ) -> Result<(Vec<(Key, usize)>, Vec<(Key, Node)>, SimEnd), PlayErr> {
         let capturing = capture
             .as_deref()
@@ -952,16 +953,19 @@ impl Roles {
                     // Diagnostic: whether this choice executes a tree edge
                     // with eight prior natural terminal backups.
                     let mut supported = false;
+                    // The tree prefix ends past the depth limit, or under
+                    // the opt-in flat root at any choice after the root edge.
+                    let past_limit = depth > MAX_DEPTH || (flat_root && !path.is_empty());
                     // Accounting only: the tree prefix ends at the first
-                    // choice past the depth limit when nothing expanded.
-                    if in_tree && depth > MAX_DEPTH && rec.depth_limit.is_none() {
+                    // choice past the limit when nothing expanded.
+                    if in_tree && past_limit && rec.depth_limit.is_none() {
                         rec.depth_limit = Some(snap(depth, meter, c));
                         rec.anchor_turn = Some(s.game_state().turn);
                     }
                     // Accounting only (value-leaf cost split): the first
                     // focal choice at or after the anchor, in a later turn,
                     // and two or more turns later.
-                    if let Some(t0) = rec.anchor_turn.filter(|_| !in_tree || depth > MAX_DEPTH) {
+                    if let Some(t0) = rec.anchor_turn.filter(|_| !in_tree || past_limit) {
                         let turn = s.game_state().turn;
                         let at = snap(depth, meter, c);
                         rec.leaf_h0.get_or_insert(at);
@@ -992,7 +996,7 @@ impl Roles {
                     } else {
                         SelSrc::TailAfterExpand
                     };
-                    let a = if in_tree && depth <= MAX_DEPTH {
+                    let a = if in_tree && !past_limit {
                         let span = crate::search_profile_v1::span(
                             crate::search_profile_v1::Bucket::KeyStep,
                         );
@@ -1583,6 +1587,7 @@ impl Roles {
                 sharing.as_mut(),
                 &mut sharing_cursor,
                 options.value_leaf,
+                options.flat_root,
             );
             // A value leaf is backed up here; game endings take the formal
             // path below (with value units in a value-leaf search).

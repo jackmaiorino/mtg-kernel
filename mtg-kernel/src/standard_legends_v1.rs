@@ -340,6 +340,13 @@ fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<crate::mana::
                 colors.push(color);
             }
         }
+        // Urza's Saga's chapter I ability while its printed abilities are
+        // removed (305.7).
+        for color in crate::eternal_vintage_v1::saga_granted_mana_colors(state, object) {
+            if !colors.contains(&color) {
+                colors.push(color);
+            }
+        }
         if !colors.is_empty() {
             return colors;
         }

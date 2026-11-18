@@ -268,10 +268,14 @@ fn settle_picking(state: &mut GameState, option: u16, object: Option<ObjectId>) 
     });
 }
 
-/// Settles, taking the first candidate of every selection that has none
-/// selected yet (searches find a card) and the first answer otherwise.
+/// Settles, choosing to search when a "may search" asks, taking the first
+/// candidate of every selection that has none selected yet (searches find a
+/// card) and the first answer otherwise.
 fn settle_taking(state: &mut GameState) {
     settle_with(state, |_, decision| match decision {
+        Decision::ChooseEffectOption {
+            option_count: 2, ..
+        } => Action::ChooseEffectOption(1),
         Decision::ChooseEffectTargets {
             legal_targets,
             selected_count: 0,
@@ -779,6 +783,10 @@ fn erode_destroys_and_its_controller_may_fetch_a_tapped_basic() {
     cast(&mut state, erode, &[Target::Object(angler)]);
     let mut searcher = None;
     settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption { player, .. } => {
+            assert_eq!(player, P1, "the creature's controller chooses to search");
+            Action::ChooseEffectOption(1)
+        }
         Decision::ChooseEffectTargets {
             player,
             legal_targets,
@@ -795,6 +803,41 @@ fn erode_destroys_and_its_controller_may_fetch_a_tapped_basic() {
     let island = controls(&state, P1, "Island");
     assert_eq!(island.len(), 1);
     assert!(state.objects.get(island[0]).tapped);
+}
+
+#[test]
+fn erode_shuffles_only_when_the_controller_chooses_to_search() {
+    // A player who declines does not shuffle; a player who searches a
+    // library with no basic land card finds nothing and still shuffles.
+    for (library, search) in [("Island", false), ("Volcanic Island", true)] {
+        let mut state = game(&[library; 16]);
+        let angler = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
+        let before = state.players[1].library.clone();
+        let erode = put(&mut state, P0, "Erode", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::W], 0);
+        cast(&mut state, erode, &[Target::Object(angler)]);
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectOption {
+                player,
+                option_count,
+                ..
+            }) => assert_eq!((player, option_count), (P1, 2)),
+            other => panic!("expected the choice to search, got {other:?}"),
+        }
+        act(&mut state, Action::ChooseEffectOption(u16::from(search)));
+        settled(&mut state);
+        assert_eq!(zone(&state, angler), Zone::Graveyard);
+        let after = &state.players[1].library;
+        assert_eq!(after.len(), before.len(), "{library}: nothing found");
+        if search {
+            assert_ne!(
+                *after, before,
+                "a search shuffles even when it finds nothing"
+            );
+        } else {
+            assert_eq!(*after, before, "declining does not shuffle");
+        }
+    }
 }
 
 #[test]
@@ -1039,6 +1082,53 @@ fn emperor_of_bones_exiles_at_combat_and_reanimates_when_it_adapts() {
 }
 
 #[test]
+fn a_finality_counter_exiles_before_dauthi_voidwalker_whichever_way_it_dies() {
+    // A creature with a finality counter that would die is exiled by it. The
+    // engine applies that general replacement first and offers no choice of
+    // order, although under 616.1 the creature's controller, who also
+    // controls the Dauthi Voidwalker, would choose. So the Voidwalker's
+    // replacement (the card's owner is its opponent) no longer applies: no
+    // void counter. Dying to state-based actions and being destroyed by a
+    // spell agree.
+    for (seat, other) in [(P0, P1), (P1, P0)] {
+        for by_spell in [false, true] {
+            let mut state = islands();
+            if seat == P1 {
+                opponents_main_phase(&mut state);
+            }
+            let emperor = put(&mut state, seat, "Emperor of Bones", Zone::Battlefield);
+            put(&mut state, seat, "Dauthi Voidwalker", Zone::Battlefield);
+            let pestilence = put(&mut state, seat, "Pestilence", Zone::Battlefield);
+            let elves = put(&mut state, other, "Llanowar Elves", Zone::Graveyard);
+            pass_until(&mut state, |state| state.step == Step::BeginCombat);
+            settle_picking(&mut state, 0, Some(elves));
+            assert_eq!(zone(&state, elves), Zone::Exile);
+            pool(&mut state, seat, &[ManaColor::B], 1);
+            activate(&mut state, emperor, 0, &[]);
+            settle_picking(&mut state, 0, Some(elves));
+            assert_eq!(zone(&state, elves), Zone::Battlefield);
+            assert_eq!(state.objects.get(elves).controller, seat);
+            let case = format!("{seat:?} by_spell={by_spell}");
+            if by_spell {
+                let push = put(&mut state, seat, "Fatal Push", Zone::Hand);
+                pool(&mut state, seat, &[ManaColor::B], 0);
+                cast(&mut state, push, &[Target::Object(elves)]);
+            } else {
+                // One damage: the Elves die alone to state-based actions.
+                pool(&mut state, seat, &[ManaColor::B], 0);
+                activate(&mut state, pestilence, 0, &[]);
+            }
+            settled(&mut state);
+            assert_eq!(zone(&state, elves), Zone::Exile, "{case}");
+            assert!(
+                !mtg_kernel::eternal_e9b_v1::has_void_counter(&state, elves),
+                "{case}"
+            );
+        }
+    }
+}
+
+#[test]
 fn flickerwisp_returns_its_target_at_the_next_end_step() {
     let mut state = islands();
     let angler = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
@@ -1145,6 +1235,7 @@ fn recruiter_of_the_guard_finds_a_creature_with_toughness_two_or_less() {
     pool(&mut state, P0, &[ManaColor::W], 2);
     cast(&mut state, recruiter, &[]);
     settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(1),
         Decision::ChooseEffectTargets {
             legal_targets,
             selected_count: 0,
@@ -1157,6 +1248,24 @@ fn recruiter_of_the_guard_finds_a_creature_with_toughness_two_or_less() {
     });
     assert!(hand_contains(&state, P0, delver));
     assert!(known_to(&state, P1, P0, delver), "revealed");
+
+    // Declining the search leaves the library as it was.
+    let mut state = game(&["Island", "Gurmag Angler", "Delver of Secrets", "Island"]);
+    let before = state.players[0].library.clone();
+    let recruiter = put(&mut state, P0, "Recruiter of the Guard", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 2);
+    cast(&mut state, recruiter, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectOption {
+            player,
+            option_count: 2,
+            ..
+        }) => assert_eq!(player, P0),
+        other => panic!("expected the choice to search, got {other:?}"),
+    }
+    act(&mut state, Action::ChooseEffectOption(0));
+    settled(&mut state);
+    assert_eq!(state.players[0].library, before, "no search, no shuffle");
 }
 
 #[test]
@@ -1228,7 +1337,8 @@ fn stoneforge_mystic_finds_and_puts_in_equipment() {
     let mystic = put(&mut state, P0, "Stoneforge Mystic", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::W], 1);
     cast(&mut state, mystic, &[]);
-    settle_picking(&mut state, 0, Some(spear));
+    // Option 1: search.
+    settle_picking(&mut state, 1, Some(spear));
     assert!(hand_contains(&state, P0, spear));
     assert!(known_to(&state, P1, P0, spear));
     state.objects.get_mut(mystic).summoning_sick = false;
@@ -1286,6 +1396,10 @@ fn white_orchid_phantom_destroys_a_nonbasic_land_and_its_controller_may_fetch() 
         Decision::ChooseTargets { legal_targets, .. } => {
             assert!(!legal_targets.contains(&Target::Object(basic)));
             Action::ChooseTarget(Target::Object(volcanic))
+        }
+        Decision::ChooseEffectOption { player, .. } => {
+            assert_eq!(player, P1, "the land's controller chooses to search");
+            Action::ChooseEffectOption(1)
         }
         Decision::ChooseEffectTargets {
             legal_targets,

@@ -48,6 +48,36 @@ pub enum CardType {
     Artifact,
     Enchantment,
     Planeswalker,
+    /// Appended for the printed Kindred cards of the eternal registry
+    /// (Tarfire, Kozilek's Command, Faerie Trickery), so every earlier
+    /// discriminant and serialized name is unchanged. A kindred card always
+    /// has another card type, and casting and resolving it follow that
+    /// type's rules (308.1); its subtypes are creature types (308.3). The
+    /// type itself only counts as a card type (delirium, Nethergoyf,
+    /// Barrowgoyf, Atraxa, Occult Epiphany). It is not a permanent type
+    /// (110.4b). The fixed type bits `rl::CardTypeFlagsV2` and
+    /// `source_type_hexproof_v1::SourceTypesV1` have no Kindred bit and
+    /// leave it out (the first has no Planeswalker bit either), and
+    /// `rules_vector_v1` refuses it.
+    Kindred,
+}
+
+impl CardType {
+    /// Every card type, in discriminant order. Rules that count card types
+    /// and the type lists of public forms read this list, so a type appended
+    /// later is counted and listed too. Its first seven entries are the
+    /// seven types those lists named before Kindred, in the same order, so
+    /// they list every earlier card exactly as before.
+    pub const ALL: [CardType; 8] = [
+        CardType::Land,
+        CardType::Creature,
+        CardType::Instant,
+        CardType::Sorcery,
+        CardType::Artifact,
+        CardType::Enchantment,
+        CardType::Planeswalker,
+        CardType::Kindred,
+    ];
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2864,9 +2894,10 @@ pub enum ManaSpendRestrictionDef {
     /// Compliance). Appended for the eternal catalog.
     NoncreatureSpellV1,
     /// "This mana can't be spent to cast nonartifact spells" (The Mightstone
-    /// and Weakstone): it may cast artifact spells and pay for any ability.
-    /// A spell payment accepts it only for an artifact spell; an ability
-    /// payment (`mana::plan_activation_mana_v1`) accepts it for any source.
+    /// and Weakstone): it may cast artifact spells and pay every cost that is
+    /// not part of casting a spell. A spell payment accepts it only for an
+    /// artifact spell; an ability payment (`mana::plan_activation_mana_v1`)
+    /// and every other payment (`mana::plan_noncast_payment_v1`) accept it.
     /// Appended for Vintage Cube wave C3c.
     PowerstoneV1,
 }
@@ -3809,6 +3840,10 @@ pub fn no_effect() -> Option<EffectOp> {
 
 include!(concat!(env!("OUT_DIR"), "/card_defs.rs"));
 
+#[cfg(all(test, feature = "eternal-fixtures"))]
+#[path = "kindred_v1_tests.rs"]
+mod kindred_v1_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4111,11 +4146,87 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0xeaa1_148e_8e7d_3c21;
+        const EXPECTED_ETERNAL: u64 = 0xc194_9feb_c568_c057;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"
         );
+    }
+
+    /// Each variant's position in `CardType::ALL`. Exhaustive, so a new
+    /// variant fails to compile here until it is placed in the list.
+    fn card_type_index(card_type: CardType) -> usize {
+        match card_type {
+            CardType::Land => 0,
+            CardType::Creature => 1,
+            CardType::Instant => 2,
+            CardType::Sorcery => 3,
+            CardType::Artifact => 4,
+            CardType::Enchantment => 5,
+            CardType::Planeswalker => 6,
+            CardType::Kindred => 7,
+        }
+    }
+
+    #[test]
+    fn card_type_all_lists_every_type_once_in_discriminant_order() {
+        for (index, &card_type) in CardType::ALL.iter().enumerate() {
+            assert_eq!(card_type_index(card_type), index);
+            assert_eq!(card_type as usize, index);
+        }
+        // The seven types the fixed public type lists named before Kindred,
+        // in their order, so those lists are unchanged for every other card.
+        assert_eq!(
+            CardType::ALL[..7],
+            [
+                CardType::Land,
+                CardType::Creature,
+                CardType::Instant,
+                CardType::Sorcery,
+                CardType::Artifact,
+                CardType::Enchantment,
+                CardType::Planeswalker,
+            ]
+        );
+        for (card_type, name) in [
+            (CardType::Land, "\"Land\""),
+            (CardType::Planeswalker, "\"Planeswalker\""),
+            (CardType::Kindred, "\"Kindred\""),
+        ] {
+            assert_eq!(serde_json::to_string(&card_type).unwrap(), name);
+            assert_eq!(serde_json::from_str::<CardType>(name).unwrap(), card_type);
+        }
+    }
+
+    /// Only the printed Kindred cards of the eternal registry have the type,
+    /// each with Instant as its other type. The Pauper, FDN and Standard
+    /// registries have none, so their catalog hashes are unchanged.
+    #[test]
+    fn only_the_printed_kindred_cards_are_kindred() {
+        let mut kindred: Vec<&str> = CARD_DEFS
+            .iter()
+            .filter(|def| def.has_type(CardType::Kindred))
+            .map(|def| def.name)
+            .collect();
+        kindred.sort_unstable();
+        let expected: &[&str] = if cfg!(feature = "eternal-fixtures") {
+            &["Faerie Trickery", "Kozilek's Command", "Tarfire"]
+        } else {
+            &[]
+        };
+        assert_eq!(kindred, expected);
+        for def in CARD_DEFS
+            .iter()
+            .filter(|def| def.has_type(CardType::Kindred))
+        {
+            assert_eq!(
+                def.types,
+                &[CardType::Kindred, CardType::Instant],
+                "{}",
+                def.name
+            );
+            assert!(def.transform_face.is_none(), "{}", def.name);
+        }
     }
 
     #[test]

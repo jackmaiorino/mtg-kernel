@@ -292,6 +292,10 @@ pub enum E8aOpV1 {
     TeferiPlusOneV1,
     /// Wishclaw Talisman's search and control change. A choice.
     WishclawSearchV1,
+    /// `player`'s search for a basic land card that enters tapped, after
+    /// they chose to search (Erode, White Orchid Phantom, Sundering
+    /// Eruption). A choice.
+    BasicLandSearchTappedV1 { player: PlayerId },
 }
 
 impl E8aOpV1 {
@@ -315,6 +319,7 @@ impl E8aOpV1 {
                 | Self::StoneforgePutV1
                 | Self::AetherVialPutV1
                 | Self::WishclawSearchV1
+                | Self::BasicLandSearchTappedV1 { .. }
         )
     }
 }
@@ -1011,12 +1016,15 @@ fn emperor_counters() -> EffectOp {
 /// Flagstones of Trokair: "you may search your library for a Plains card,
 /// put it onto the battlefield tapped, then shuffle."
 fn flagstones_search() -> EffectOp {
-    EffectOp::SearchLibraryCardsToDestination {
-        player: PlayerRef::Controller,
-        filter: crate::effect::LibraryCardFilter::LandWithSubtype(Subtype::Plains),
-        max_targets: 1,
-        destination: crate::effect::LibrarySearchDestinationV1::Battlefield { tapped: true },
-    }
+    crate::eternal_cards_v1::may_search(
+        PlayerRef::Controller,
+        EffectOp::SearchLibraryCardsToDestination {
+            player: PlayerRef::Controller,
+            filter: crate::effect::LibraryCardFilter::LandWithSubtype(Subtype::Plains),
+            max_targets: 1,
+            destination: crate::effect::LibrarySearchDestinationV1::Battlefield { tapped: true },
+        },
+    )
 }
 
 /// Flickerwisp: "exile another target permanent. Return that card to the
@@ -1062,7 +1070,7 @@ fn formalwear_enters() -> EffectOp {
 /// with toughness 2 or less, reveal it, put it into your hand, then
 /// shuffle."
 fn recruiter_enters() -> EffectOp {
-    e8a(E8aOpV1::RecruiterSearchV1)
+    crate::eternal_cards_v1::may_search(PlayerRef::Controller, e8a(E8aOpV1::RecruiterSearchV1))
 }
 
 /// Skyclave Apparition: "exile up to one target nonland, nontoken permanent
@@ -1093,7 +1101,7 @@ fn evoked_sacrifice() -> EffectOp {
 /// Stoneforge Mystic: "you may search your library for an Equipment card,
 /// reveal it, put it into your hand, then shuffle."
 fn stoneforge_enters() -> EffectOp {
-    e8a(E8aOpV1::StoneforgeSearchV1)
+    crate::eternal_cards_v1::may_search(PlayerRef::Controller, e8a(E8aOpV1::StoneforgeSearchV1))
 }
 
 /// Thought Monitor: "draw two cards."
@@ -1618,7 +1626,8 @@ pub(crate) fn execute(op: &E8aOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | E8aOpV1::StoneforgeSearchV1
         | E8aOpV1::StoneforgePutV1
         | E8aOpV1::AetherVialPutV1
-        | E8aOpV1::WishclawSearchV1 => halt(state, ctx.source),
+        | E8aOpV1::WishclawSearchV1
+        | E8aOpV1::BasicLandSearchTappedV1 { .. } => halt(state, ctx.source),
     }
 }
 
@@ -1902,12 +1911,31 @@ pub(crate) fn drive(
                 &ctx,
                 state,
             );
+            // Its controller may search; declining does not shuffle.
+            let searcher = if player == controller {
+                PlayerRef::Controller
+            } else {
+                PlayerRef::Opponent
+            };
+            push(
+                continuation,
+                crate::eternal_cards_v1::may_search(
+                    searcher,
+                    e8a(E8aOpV1::BasicLandSearchTappedV1 { player }),
+                ),
+                &path,
+            );
+            Ok(false)
+        }
+        E8aOpV1::BasicLandSearchTappedV1 { player } => {
+            let player = *player;
             let cards = library_cards(state, player, |def| {
                 def.is_land && def.supertypes.contains(&crate::card_def::Supertype::Basic)
             });
             if cards.is_empty() {
-                // Searching is optional; a player who searches finds
-                // nothing.
+                // The player chose to search: finding nothing, they still
+                // shuffle.
+                shuffle(state, player)?;
                 return Ok(false);
             }
             offer(

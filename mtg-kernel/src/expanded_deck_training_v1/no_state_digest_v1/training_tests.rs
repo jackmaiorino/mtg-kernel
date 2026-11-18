@@ -978,6 +978,31 @@ fn archive_distillation_bases_always_load_in_full_v1() {
             assert!(verified.is_empty());
             let opponents = || super::super::OpponentCacheV1::for_collection(verified.clone());
             opponents().load(source).unwrap();
+            // An unverified full load: the collection cache alone holds the
+            // model, and charges it.
+            let mut collection = opponents();
+            let loaded = collection.load(source).unwrap();
+            let model_bytes =
+                super::super::opponent_cache_diagnostics_v1::model_bytes_v1(&loaded.policy).1;
+            let expected = super::super::collection_entry_standalone_charge_v1(loaded);
+            assert!(model_bytes > 0);
+            assert_eq!(collection.charged_bytes, expected);
+            drop(collection);
+            // An unverifiable source: serial replay loads it through the
+            // process cache, which cannot re-verify it and keeps nothing, so
+            // the replay cache alone holds the model, and charges it.
+            let process =
+                &super::super::opponent_cache_diagnostics_v1::counters_v1().process_opponent;
+            let unverifiable_before = process.not_kept_unverifiable.get();
+            let mut replay = super::super::OpponentCacheV1::for_replay_v1();
+            let replayed = replay.load(source).unwrap();
+            let expected = super::super::collection_entry_standalone_charge_v1(replayed);
+            assert!(process.not_kept_unverifiable.get() > unverifiable_before);
+            assert!(!super::super::ordered_update_preparation::holds_source_v1(
+                source
+            ));
+            assert_eq!(replay.charged_bytes, expected);
+            drop(replay);
             for action in ["changed", "missing"] {
                 let original = corrupt(action);
                 let full = bypassed_for_test_v1(|| refusal(source));
@@ -1074,12 +1099,12 @@ fn prepared_opponent_hits_reverify_every_file_a_full_load_reads_v1() {
     };
     with_check_for_test_v1(false, || {
         for (source, files) in cases {
-            // The entry keeps exactly the files a full load reads.
-            let mut kept: Vec<PathBuf> = super::super::opponent_cache_files_v1(source)
+            // The entry keeps exactly the pinned files a full load reads.
+            let mut kept: Vec<PathBuf> = super::super::opponent_cache_pins_v1(source)
                 .unwrap()
                 .unwrap()
                 .into_iter()
-                .map(|(path, _)| path)
+                .map(|file| file.pin.path)
                 .collect();
             kept.sort();
             let mut expected = files.clone();
@@ -1148,7 +1173,7 @@ fn archive_distillation_opponents_always_load_in_full_v1() {
     with_check_for_test_v1(false, || {
         let verified = verify_collection_opponent_sources_v1(&episodes).unwrap();
         assert!(verified.is_empty());
-        assert!(super::super::opponent_cache_files_v1(&phase1)
+        assert!(super::super::opponent_cache_pins_v1(&phase1)
             .unwrap()
             .is_none());
         let full = bypassed_for_test_v1(|| load_expanded_inference_any_math_v1(&phase1)).unwrap();
