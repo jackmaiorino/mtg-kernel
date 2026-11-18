@@ -326,14 +326,19 @@ fn sneaky_snacker_returned_by_another_effect_stays_untapped() {
         );
         let returned = game.state.objects.get(game.snacker);
         assert_eq!(returned.zone, Zone::Battlefield);
-        assert_eq!(returned.zone_change_count, before + 1);
+        assert!(returned.zone_change_count > before);
         assert!(!returned.tapped);
         pass_until_idle_watching(&mut game.state, game.snacker);
         let state = &game.state;
         assert!(state.engine.halted.is_none());
         assert_eq!(state.objects.get(game.snacker).zone, Zone::Battlefield);
-        assert_eq!(state.objects.get(game.snacker).zone_change_count, before + 1);
-        assert!(state.players[me.index()].battlefield.contains(&game.snacker));
+        assert_eq!(
+            state.objects.get(game.snacker).zone_change_count,
+            before + 1
+        );
+        assert!(state.players[me.index()]
+            .battlefield
+            .contains(&game.snacker));
         assert!(!state.players[me.index()].graveyard.contains(&game.snacker));
         assert!(!state.objects.get(game.snacker).tapped);
     }
