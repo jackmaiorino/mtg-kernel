@@ -13376,12 +13376,15 @@ fn drive_resumable_in_departure_scope_v1(
                     if let Some(card) = crate::eternal_cards_v1::e3::dungeons::resolution_cast_card(
                         &choice, &selected,
                     ) {
+                        // Cascade limits the cast spell's mana value.
+                        let limit =
+                            crate::eternal_cards_v1::e3::dungeons::resolution_cast_limit(&choice);
                         let answer = EffectFrame::EternalSelectionV1 { choice, selected };
                         crate::engine::resolution_cast_v1::stage(
                             state,
                             continuation,
                             card,
-                            None,
+                            limit,
                             false,
                             answer,
                         )?;

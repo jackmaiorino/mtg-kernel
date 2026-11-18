@@ -957,6 +957,43 @@ fn bloodbraid_challenger_escapes_by_exiling_three_other_cards_and_cascades_again
     assert_eq!(power_toughness(&state, challenger), (4, 3));
 }
 
+/// Cascade casts the card only as a spell whose mana value is less than the
+/// cascade spell's (702.85a). Imodane's Recruiter (3) is a hit for Bloodbraid
+/// Challenger (5), but its Adventure, Train Troops (5), is not offered.
+#[test]
+fn bloodbraid_challenger_cascade_does_not_offer_an_adventure_that_costs_too_much_both_seats() {
+    for player in [P0, P1] {
+        let mut state = game(&["Island", "Imodane's Recruiter", "Plains", "Plains"]);
+        state.active_player = player;
+        state.priority_player = player;
+        let recruiter = state.players[player.index()].library[1];
+        let challenger = put(&mut state, player, "Bloodbraid Challenger", Zone::Hand);
+        pool(&mut state, player, &[ManaColor::R, ManaColor::G], 3);
+        cast(&mut state, challenger, &[]);
+        let mut adventure_offered = false;
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectOption { option_count, .. } => {
+                assert_eq!(option_count, 2, "cast or decline");
+                Action::ChooseEffectOption(0)
+            }
+            Decision::ChooseEffectTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Object(recruiter)) =>
+            {
+                Action::ChooseEffectTarget(Target::Object(recruiter))
+            }
+            Decision::ChooseSpellMode { legal_modes, .. } => {
+                adventure_offered |= legal_modes.contains(&1);
+                Action::ChooseSpellMode(0)
+            }
+            other => first_answer(other),
+        });
+        assert!(!adventure_offered, "Train Troops costs five");
+        assert_eq!(zone(&state, recruiter), Zone::Battlefield, "the Knight");
+        assert_eq!(state.objects.get(recruiter).controller, player);
+        assert_eq!(zone(&state, challenger), Zone::Battlefield);
+    }
+}
+
 #[test]
 fn bloodbraid_challenger_cannot_escape_without_three_other_cards_or_the_mana() {
     let mut state = plains();

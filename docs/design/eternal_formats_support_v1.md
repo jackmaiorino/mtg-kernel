@@ -2648,12 +2648,11 @@ turn.
 C3a:
 
 - Auriok Salvagers returns an artifact card with mana value 1 or less (Goblin Engineer's filter).
-  Bloodbraid Challenger has cascade (Boarding Party's triggers), haste and escape. Cascade's cast
-  checks the exiled card's mana value, not the cast spell's: an Adventure half that costs more than
-  its card would be offered at the cascade spell's value. No eternal card reaches this (Brazen
-  Borrower's and Embereth Shieldbreaker's Adventures cost less, and a split card's halves cost less
-  than the whole); the one engine card that does is the Standard card Imodane's Recruiter, whose
-  Train Troops (5) Bloodbraid Challenger would offer, so the check is left as it is. Death-Greeter's
+  Bloodbraid Challenger has cascade (Boarding Party's triggers), haste and escape. Cascade hits a
+  card by its own mana value, then casts it only as a spell whose mana value is less than the
+  cascade spell's (`E5bChoiceV1::PaidCastBelowV1` carries the limit into the resolution cast's
+  `maximum_mana_value`): Imodane's Recruiter (3, from the Standard catalog the eternal build
+  includes) is a hit for Bloodbraid Challenger, but its Train Troops (5) is not offered. Death-Greeter's
   Champion has dash (Ragavan's alternative cost and end-step return) and backup with double strike
   (Saiba Cryptomancer's op).
 - Embereth Shieldbreaker // Battle Display is an Adventure card (Brazen Borrower's shape).
