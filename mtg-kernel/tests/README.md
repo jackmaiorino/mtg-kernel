@@ -16,6 +16,17 @@ python python/tools/run_rust_integration_tests.py standard_integration --feature
 python python/tools/run_rust_integration_tests.py pauper_integration --features ""
 ```
 
+CI runs `eternal_integration` as three shards, one job each. `--shard-index I
+--shard-count N` runs one shard: whole modules are placed longest first by
+their recorded hosted seconds in `python/tools/rust_integration_module_seconds.json`
+(a module without a recorded time weighs the mean), and the runner prints the
+plan of every shard and fails unless it holds each module exactly once. A new
+module needs no edit to run; record its time there when it is slow.
+
+```powershell
+python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures --shard-index 0 --shard-count 3
+```
+
 For one former target, use its module as the test filter:
 
 ```powershell
