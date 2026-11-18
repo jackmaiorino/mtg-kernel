@@ -590,13 +590,17 @@ fn learner_seat_selects_from_its_own_stream_and_draws_nothing_at_forced_decision
         // The game holds a forced learner decision, then a random decision with
         // more than one action (it advances the shared generator), then a
         // learner decision with more than one action.
-        let forced = log.iter().position(|&(learner, legal, _)| learner && legal == 1);
+        let forced = log
+            .iter()
+            .position(|&(learner, legal, _)| learner && legal == 1);
         let forced = forced.expect("a forced learner decision");
         let opponent = (forced..log.len())
             .find(|&i| !log[i].0 && log[i].1 > 1)
             .expect("a random decision with a choice after it");
         assert!(
-            log[opponent..].iter().any(|&(learner, legal, _)| learner && legal > 1),
+            log[opponent..]
+                .iter()
+                .any(|&(learner, legal, _)| learner && legal > 1),
             "a learner decision with a choice after the random one"
         );
         // The check has power: either wrong draw rule plays another game.
@@ -744,7 +748,10 @@ fn sampled_public_heuristic_v1_one_apply_scores_pass_over_land_drop_and_spell_in
             assert!(value(land) < passing, "a land drop scores below passing");
         }
         for &spell in &spells {
-            assert!(value(spell) <= passing, "a spell scores no better than passing");
+            assert!(
+                value(spell) <= passing,
+                "a spell scores no better than passing"
+            );
         }
         assert!(!lands.contains(&(pick as usize)));
         assert_eq!(value(pick as usize), passing);
