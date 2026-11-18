@@ -896,11 +896,14 @@ jobs:
         # Pull requests run the Limited groups on Linux only; Windows-only
         # group sets other than windows-pr run them on Windows only.
         os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '["ubuntu-24.04"]' || contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
-        # Slowest groups first: runners take matrix jobs in this order, and
+        # Slowest groups first: GitHub creates matrix jobs in this order, and
         # while other runs hold the account's hosted runners the groups start
         # one by one (run 44377022866: from minute 25 to 38 after the shared
         # build). The model shards (12 to 44 minutes there) and the
-        # Limited-only shards (23 to 31) go before the short groups.
+        # Limited-only shards (23 to 31) are listed before the short groups so
+        # that they are created first. Whether that starts them earlier is not
+        # guaranteed (runners need not start jobs in creation order) and is to
+        # be measured.
         group:
           - limited-model
           - limited-model-1

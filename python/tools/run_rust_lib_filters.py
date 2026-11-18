@@ -188,7 +188,7 @@ def read_default_library_list(path: Path) -> list[str]:
     record = json.loads(path.read_text(encoding="utf-8"))
     names = record.get("names") if isinstance(record, dict) else None
     if (not isinstance(names, list) or not names or record.get("schema") != DEFAULT_LIST_SCHEMA
-            or record.get("count") != len(names)
+            or type(record.get("count")) is not int or record.get("count") != len(names)
             or any(not isinstance(name, str) or not name for name in names)
             or names != sorted(set(names))):
         raise ValueError(f"Not a default library case list: {path}")

@@ -802,12 +802,16 @@ pub(crate) fn splitmix64(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
-/// Games that play at one time in this test process, across every test that
-/// calls `in_parallel`: `MTG_ETERNAL_TEST_THREADS` when it is set (1 plays
-/// every game in order on its test's own thread), otherwise the machine's
-/// available parallelism, at most 8. Either way no more than the cores a
-/// self-hosted CI job was given (a count in `MTG_CI_JOB_CORES`, or the core
-/// list of a host_slots claim in `HOST_SLOTS_CORES`) when either is set.
+/// Games that play at one time through `in_parallel` in this test process,
+/// across every test that calls it: `MTG_ETERNAL_TEST_THREADS` when it is
+/// set (1 plays every game in order on its test's own thread), otherwise the
+/// machine's available parallelism, at most 8. A test that plays one game
+/// directly (`play`, `play_observed`, `play_match`) holds no permit and is
+/// bounded only by libtest's `--test-threads`, so the games playing at one
+/// time are at most this count plus the test threads. Either way the count is
+/// no more than the cores a self-hosted CI job was given (a count in
+/// `MTG_CI_JOB_CORES`, or the core list of a host_slots claim in
+/// `HOST_SLOTS_CORES`) when either is set.
 pub(crate) fn game_threads() -> usize {
     let mut threads = match std::env::var("MTG_ETERNAL_TEST_THREADS") {
         Ok(value) => value
@@ -890,8 +894,11 @@ impl Drop for GamePermit {
 /// test reads them exactly as its sequential loop produced them. Up to
 /// `game_capacity()` scoped worker threads each take the next unstarted
 /// item, and every item holds a `GamePermit` while it runs, so at most
-/// `game_capacity()` games play at once in the whole process, however many
-/// tests libtest runs side by side. A panic is caught per item, and once
+/// `game_capacity()` games played through `in_parallel` play at once in the
+/// whole process, however many tests libtest runs side by side. A test that
+/// plays one game directly holds no permit and is bounded by libtest's
+/// `--test-threads`, so the games playing at one time are at most the permit
+/// count plus the test threads. A panic is caught per item, and once
 /// every item has run the panic of the first failing item is raised again,
 /// as the loop would have raised it first. With one thread the items run in
 /// order on the calling thread.
@@ -965,7 +972,9 @@ fn in_parallel_keeps_item_order_and_the_process_game_limit() {
         *item * 2
     };
     let items: Vec<usize> = (0..24).collect();
-    // Two tests at once share the one limit.
+    // Two tests at once share the one limit on the games played through
+    // `in_parallel`. A game played directly holds no permit, so this does
+    // not bound those.
     let (first, second) = std::thread::scope(|scope| {
         let first = scope.spawn(|| in_parallel(&items, play));
         let second = scope.spawn(|| in_parallel(&items, play));

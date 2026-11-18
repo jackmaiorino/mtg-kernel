@@ -47,7 +47,9 @@ class DefaultListTests(unittest.TestCase):
         good = CURRENT_LIST
         for record in ({**good, "schema": "other"}, {**good, "count": 2}, {**good, "names": []},
                        {**good, "count": 2, "names": ["beta::two", "alpha::one"]},
-                       {**good, "names": ["a", "a", "b"]}, [NAMES]):
+                       {**good, "names": ["a", "a", "b"]}, [NAMES],
+                       # Equal to the length in Python, but not an integer count.
+                       {**good, "count": 3.0}, {**good, "count": True, "names": ["a"]}):
             with self.subTest(record=record):
                 self.path.write_text(json.dumps(record), encoding="utf-8")
                 with self.assertRaises(ValueError), patch("builtins.print"):
