@@ -1226,11 +1226,13 @@ pub(crate) fn drive(
                 return Ok(false);
             }
             let binding = bind(state, card.object);
-            Ok(crate::eternal_legacy_e5b_v1::offer_paid_cast(
+            let limit = Some(cascade_bound(state, continuation.ctx.source).saturating_sub(1));
+            Ok(crate::eternal_legacy_e5b_v1::offer_limited_cast(
                 state,
                 continuation,
                 binding,
                 path,
+                limit,
             ))
         }
         E9bOpV1::BoomerangBasicsV1 => {
@@ -1538,18 +1540,22 @@ pub(crate) fn drive(
 /// nonland card that costs less. You may cast it without paying its mana
 /// cost. Put the exiled cards on the bottom in a random order." The spell's
 /// mana value is its last known one if it already left the stack.
-fn cascade_exile(state: &mut GameState, continuation: &mut EffectContinuation, path: &[u16]) {
-    let player = continuation.ctx.controller;
-    let source = continuation.ctx.source;
-    // A cast trigger's source is the spell; after it left the stack, its
-    // last known (printed) mana value.
-    let bound = match state.objects.try_get(source) {
+/// The cascade spell's mana value. A cast trigger's source is the spell;
+/// after it left the stack, its last known (printed) mana value.
+fn cascade_bound(state: &GameState, source: ObjectId) -> u16 {
+    match state.objects.try_get(source) {
         Some(live) if live.zone == Zone::Stack => crate::engine::object_mana_value(state, source),
         Some(live) => CARD_DEFS
             .get(live.card_def as usize)
             .map_or(0, |def| def.mana_value),
         None => 0,
-    };
+    }
+}
+
+fn cascade_exile(state: &mut GameState, continuation: &mut EffectContinuation, path: &[u16]) {
+    let player = continuation.ctx.controller;
+    let source = continuation.ctx.source;
+    let bound = cascade_bound(state, source);
     let mut exiled = Vec::new();
     let mut hit = None;
     while let Some(&top) = state.players[player.index()].library.first() {
@@ -1577,8 +1583,14 @@ fn cascade_exile(state: &mut GameState, continuation: &mut EffectContinuation, p
         return;
     };
     let binding = bind(state, card);
-    if crate::engine::resolution_cast_v1::can_cast_exiled_without_mana(state, player, binding, None)
-    {
+    // The resulting spell's mana value must also be less (an Adventure may
+    // cost more than its card).
+    if crate::engine::resolution_cast_v1::can_cast_exiled_without_mana(
+        state,
+        player,
+        binding,
+        Some(bound.saturating_sub(1)),
+    ) {
         push_choice(
             continuation,
             vec![

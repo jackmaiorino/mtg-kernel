@@ -1033,6 +1033,164 @@ fn forensic_gadgeteer_reduces_an_artifact_mana_ability_that_has_a_mana_cost() {
     assert_eq!(mana(&state, P0, ManaColor::C), 0);
 }
 
+/// Casts Anointed Peacekeeper for P0 and names `name`: its two-step choice
+/// takes the group of the name's first letter, then the name.
+fn peacekeeper_naming(state: &mut GameState, name: &str) {
+    let keeper = put(state, P0, "Anointed Peacekeeper", Zone::Hand);
+    pool(state, P0, &[ManaColor::W], 2);
+    cast(state, keeper, &[]);
+    let (group, index) = mtg_kernel::eternal_vintage_v1::nameable_definitions()
+        .iter()
+        .enumerate()
+        .find_map(|(group, ids)| {
+            ids.iter()
+                .position(|&id| CARD_DEFS[usize::from(id)].object_name == name)
+                .map(|index| (group, index))
+        })
+        .unwrap_or_else(|| panic!("{name} is not nameable"));
+    match settle(state) {
+        Some(Decision::ChooseEffectOption { player, .. }) => {
+            assert_eq!(player, P0);
+            act(
+                state,
+                Action::ChooseEffectOption(u16::try_from(group).unwrap()),
+            );
+        }
+        other => panic!("expected the letter, got {other:?}"),
+    }
+    if let Some(Decision::ChooseEffectOption { .. }) = settle(state) {
+        act(
+            state,
+            Action::ChooseEffectOption(u16::try_from(index).unwrap()),
+        );
+    }
+    settled(state);
+    assert_eq!(zone(state, keeper), Zone::Battlefield);
+}
+
+/// The floor is checked against the total cost (601.2f): Anointed
+/// Peacekeeper's {2} tax is added first, then the Gadgeteer takes {1} off.
+#[test]
+fn forensic_gadgeteer_reduces_the_total_after_an_activation_tax() {
+    // Pyrite Spellbomb's "{1}, Sacrifice: Draw a card" named by the
+    // Peacekeeper costs {3}; with the Gadgeteer, {2}.
+    let draw = def("Pyrite Spellbomb")
+        .activated_abilities
+        .iter()
+        .position(|ability| {
+            ability.cost.iter().any(|component| {
+                matches!(component, CostComponent::Mana(cost) if cost.generic == 1 && cost.pips.is_empty())
+            })
+        })
+        .expect("the {1} ability");
+    let draw = u8::try_from(draw).unwrap();
+    let mut state = plains();
+    peacekeeper_naming(&mut state, "Pyrite Spellbomb");
+    let bomb = put(&mut state, P0, "Pyrite Spellbomb", Zone::Battlefield);
+    pool(&mut state, P0, &[], 2);
+    assert!(!activatable(&mut state, bomb, draw), "{{3}} with two mana");
+    put(&mut state, P0, "Forensic Gadgeteer", Zone::Battlefield);
+    assert!(activatable(&mut state, bomb, draw), "{{2}} with two mana");
+    let hand = hand_len(&state, P0);
+    activate(&mut state, bomb, draw, &[]);
+    on_the_stack(&mut state);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0, "{{2}} was paid");
+    settled(&mut state);
+    assert_eq!(hand_len(&state, P0), hand + 1);
+
+    // An ability with no mana cost is taxed to {2}, which the Gadgeteer
+    // reduces to {1}: Mishra's Bauble's "{T}, Sacrifice".
+    let mut state = plains();
+    peacekeeper_naming(&mut state, "Mishra's Bauble");
+    put(&mut state, P0, "Forensic Gadgeteer", Zone::Battlefield);
+    let bauble = put(&mut state, P0, "Mishra's Bauble", Zone::Battlefield);
+    assert!(!activatable(&mut state, bauble, 0), "never free");
+    pool(&mut state, P0, &[], 1);
+    assert!(activatable(&mut state, bauble, 0), "{{1}} with one mana");
+}
+
+/// On `player`'s turn, Agatha's Soul Cauldron exiles Knight of Stromgald
+/// from the other graveyard and puts a +1/+1 counter on `player`'s Walking
+/// Ballista (which had one), so the Ballista has the Knight's abilities;
+/// `player` also controls a Forensic Gadgeteer. Returns the Ballista and the
+/// index of its borrowed "{B}{B}: +1/+0".
+fn cauldron_ballista(state: &mut GameState, player: PlayerId) -> (ObjectId, u8) {
+    let other = if player == P0 { P1 } else { P0 };
+    state.active_player = player;
+    state.priority_player = player;
+    let cauldron = put(state, player, "Agatha's Soul Cauldron", Zone::Battlefield);
+    put(state, player, "Forensic Gadgeteer", Zone::Battlefield);
+    let ballista = put(state, player, "Walking Ballista", Zone::Battlefield);
+    state.objects.get_mut(ballista).counters.plus1_plus1 = 1;
+    let knight = put(state, other, "Knight of Stromgald", Zone::Graveyard);
+    next(state);
+    act(state, Action::ActivateAbility(cauldron, 0));
+    let targets = [Target::Object(knight), Target::Object(ballista)];
+    let mut wanted = targets.into_iter();
+    for _ in 0..40 {
+        match next(state) {
+            Decision::ChooseTargets { .. } => {
+                let target = wanted.next().expect("a target");
+                act(state, Action::ChooseTarget(target));
+            }
+            Decision::ChooseEffectTargets { .. } => {
+                let target = wanted.next().expect("a target");
+                act(state, Action::ChooseEffectTarget(target));
+            }
+            Decision::CastSpellOrPass { .. }
+                if state.stack.is_empty() && state.engine.pending_triggers.is_empty() =>
+            {
+                break
+            }
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            other => {
+                let action = first_answer(other);
+                act(state, action);
+            }
+        }
+    }
+    assert_eq!(zone(state, knight), Zone::Exile);
+    assert_eq!(counters(state, ballista), 2);
+    state.priority_player = player;
+    // The Knight's "{B}: first strike" and "{B}{B}: +1/+0" are numbered from
+    // one past the Ballista's own abilities.
+    let pump = def("Walking Ballista").activated_abilities.len() + 2;
+    (ballista, u8::try_from(pump).unwrap())
+}
+
+/// Spending mana as though it were any color changes how a cost is paid, not
+/// how much it is: the Gadgeteer takes only generic mana, so a borrowed
+/// {B}{B} stays two mana, and with Anointed Peacekeeper's {2} tax it is
+/// {2}{B}{B} minus {1}.
+#[test]
+fn forensic_gadgeteer_does_not_reduce_colored_mana_paid_as_any_color_both_seats() {
+    for player in [P0, P1] {
+        let mut state = plains();
+        let (ballista, pump) = cauldron_ballista(&mut state, player);
+        pool(&mut state, player, &[], 1);
+        assert!(!activatable(&mut state, ballista, pump), "one mana");
+        pool(&mut state, player, &[], 1);
+        activate(&mut state, ballista, pump, &[]);
+        on_the_stack(&mut state);
+        assert_eq!(mana(&state, player, ManaColor::C), 0, "two mana paid");
+        settled(&mut state);
+        assert_eq!(power_toughness(&state, ballista), (3, 2));
+
+        // Taxed: {B}{B} + {2} - {1} is three mana.
+        let mut state = plains();
+        peacekeeper_naming(&mut state, "Walking Ballista");
+        let (ballista, pump) = cauldron_ballista(&mut state, player);
+        pool(&mut state, player, &[], 2);
+        assert!(!activatable(&mut state, ballista, pump), "three with two");
+        pool(&mut state, player, &[], 1);
+        activate(&mut state, ballista, pump, &[]);
+        on_the_stack(&mut state);
+        assert_eq!(mana(&state, player, ManaColor::C), 0, "three mana paid");
+        settled(&mut state);
+        assert_eq!(power_toughness(&state, ballista), (3, 2));
+    }
+}
+
 // ---- Faerie Mastermind ---------------------------------------------------------------
 
 #[test]
@@ -1742,6 +1900,33 @@ fn caustic_bronco_is_saddled_only_until_end_of_turn() {
     let before = life(&state, P0);
     attack_with(&mut state, vec![bronco], |_, _| None);
     assert_eq!(life(&state, P0), before - 5, "not saddled any more");
+}
+
+/// Saddle is not crew (702.171a): a Pilot Token "crews Vehicles as though its
+/// power were 2 greater", which does not count toward saddling a Mount.
+#[test]
+fn caustic_bronco_saddle_does_not_count_a_pilot_tokens_crew_bonus() {
+    let mut state = plains();
+    let bronco = put(&mut state, P0, "Caustic Bronco", Zone::Battlefield);
+    token(&mut state, P0, "Pilot Token");
+    put(&mut state, P0, "Mother of Runes", Zone::Battlefield);
+    assert!(!activatable(&mut state, bronco, 0), "power 1 + 1 of 3");
+
+    // The same two creatures crew Esika's Chariot (crew 4): 1 + 2 + 1.
+    let chariot = put(&mut state, P0, "Esika's Chariot", Zone::Battlefield);
+    let crew = def("Esika's Chariot")
+        .activated_abilities
+        .iter()
+        .position(|ability| {
+            ability
+                .cost
+                .iter()
+                .any(|component| matches!(component, CostComponent::Crew(4)))
+        })
+        .expect("crew 4");
+    let crew = u8::try_from(crew).unwrap();
+    assert!(activatable(&mut state, chariot, crew), "1 + 2 + 1 of 4");
+    assert!(!activatable(&mut state, bronco, 0), "still power 2 of 3");
 }
 
 // ---- Public sessions ---------------------------------------------------------------

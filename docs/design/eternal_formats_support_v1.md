@@ -2683,7 +2683,10 @@ C2c:
 - Everflowing Chalice: multikicker {2} through `eternal_cube_c2c_v1::multikicker_cost`, a
   name-keyed table any later multikicker card joins. The kick count is announced like replicate's,
   added to the payment once per kick and read by the program as its X; the Chalice taps for {C} for
-  each charge counter (`ManaAbilityAmountDef::ChargeCountersOnSourceV1`).
+  each charge counter (`ManaAbilityAmountDef::ChargeCountersOnSourceV1`). Kicks, replicate and
+  splice are additional costs, so their count is still announced and paid when the spell is cast
+  without paying its mana cost (cascade, Omniscience, Bolas's Citadel); only an X in the mana cost
+  is then 0.
 
 Limits shared with earlier cards: a declined life payment taps the land right after it enters
 (Soporific Springs), a hidden land is playable from a resolving effect only as the first land of
@@ -2702,7 +2705,11 @@ turn.
 C3a:
 
 - Auriok Salvagers returns an artifact card with mana value 1 or less (Goblin Engineer's filter).
-  Bloodbraid Challenger has cascade (Boarding Party's triggers), haste and escape. Death-Greeter's
+  Bloodbraid Challenger has cascade (Boarding Party's triggers), haste and escape. Cascade hits a
+  card by its own mana value, then casts it only as a spell whose mana value is less than the
+  cascade spell's (`E5bChoiceV1::PaidCastBelowV1` carries the limit into the resolution cast's
+  `maximum_mana_value`): Imodane's Recruiter (3, from the Standard catalog the eternal build
+  includes) is a hit for Bloodbraid Challenger, but its Train Troops (5) is not offered. Death-Greeter's
   Champion has dash (Ragavan's alternative cost and end-step return) and backup with double strike
   (Saiba Cryptomancer's op).
 - Embereth Shieldbreaker // Battle Display is an Adventure card (Brazen Borrower's shape).
@@ -2781,7 +2788,12 @@ C4a:
 - Displacer Kitten flickers up to one other nonland permanent its controller controls on each
   noncreature cast. Forensic Gadgeteer investigates on artifact casts and takes {1} of generic off
   activated abilities of its controller's artifacts, mana abilities with a mana cost included,
-  never below one mana.
+  never below one mana. An activation's total (`activation_total_mana_cost`, used by both the
+  payment and its legality check) is the mana cost, plus the taxes (Anointed Peacekeeper, Gloom),
+  minus the floorless reductions (Eiganjo's channel), minus the Gadgeteer's, whose floor is checked
+  against that total (601.2f), so a taxed ability with no mana cost of its own is reduced too.
+  Agatha's Soul Cauldron's "as though it were mana of any color" applies last: it changes how
+  the total is paid, so colored mana is never reduced as generic.
 - Faerie Mastermind (`OpponentDrawsSecondCardEachTurnV1`) and Ledger Shredder
   (`PlayerCastsSecondSpellEachTurnV1`, connive) read the engine's per-player draw and cast
   counters. The Mastermind's shared draw is controller first, with the stop between the two
@@ -2792,7 +2804,8 @@ C4a:
 - Lutri, the Spellchaser: companion with the distinct-names deck condition, and an
   enters-after-cast trigger that copies a target instant or sorcery spell its controller controls,
   with a keep-or-change choice per target. Caustic Bronco: saddle 3 is a crew cost at sorcery
-  speed, recorded for the turn and read by its attack trigger.
+  speed, recorded for the turn and read by its attack trigger. Saddle is not crew, so a Pilot
+  token's "crews Vehicles as though its power were 2 greater" counts only for a Vehicle's crew.
 - New subtypes: Vedalken (600), Horse (601), Mount (602).
 
 C4b:

@@ -1291,6 +1291,43 @@ fn desperate_ritual_adds_three_red_and_splices_onto_arcane() {
     assert_eq!(mana(&state, P0, ManaColor::R), 3);
 }
 
+/// Splice is an additional cost (118.9d, 601.2f): Ethereal Haze cast through
+/// Omniscience without paying its mana cost still pays {1}{R} for a spliced
+/// Desperate Ritual, which adds {R}{R}{R} as the Haze resolves.
+#[test]
+fn ethereal_haze_cast_without_its_mana_cost_still_pays_for_a_splice_both_seats() {
+    for player in [P0, P1] {
+        let mut state = plains();
+        state.priority_player = player;
+        put(&mut state, player, "Omniscience", Zone::Battlefield);
+        let haze = put(&mut state, player, "Ethereal Haze", Zone::Hand);
+        let ritual = put(&mut state, player, "Desperate Ritual", Zone::Hand);
+        // Only {1}{R}: the Haze's own {W} is not payable, one splice is.
+        pool(&mut state, player, &[ManaColor::R], 1);
+        assert!(castable(&mut state, haze));
+        act(&mut state, Action::CastSpell(haze));
+        let mut counts = Vec::new();
+        for _ in 0..4 {
+            match next(&mut state) {
+                // Not paying the mana cost, then one splice.
+                Decision::ChooseEffectOption { option_count, .. } => {
+                    counts.push(option_count);
+                    act(&mut state, Action::ChooseEffectOption(1));
+                }
+                Decision::CastSpellOrPass { .. } => break,
+                decision => panic!("unexpected decision: {decision:?}"),
+            }
+        }
+        assert_eq!(counts.last(), Some(&2), "no splice or one");
+        assert_eq!(mana(&state, player, ManaColor::R), 0, "{{1}}{{R}} paid");
+        assert_eq!(mana(&state, player, ManaColor::C), 0);
+        assert!(hand_contains(&state, player, ritual), "it stays in hand");
+        settled(&mut state);
+        assert_eq!(mana(&state, player, ManaColor::R), 3, "spliced");
+        assert_eq!(state.objects.get(haze).zone, Zone::Graveyard);
+    }
+}
+
 #[test]
 fn first_day_of_class_counters_and_hastes_creatures_entering_this_turn() {
     let mut state = plains();
