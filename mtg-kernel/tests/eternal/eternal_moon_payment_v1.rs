@@ -427,8 +427,8 @@ fn a_dual_land_under_a_land_type_setter_pays_only_the_setters_color_both_seats()
         let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
         assert!(!castable(&mut state, brainstorm), "Blood Moon: no {{U}}");
         cast(&mut state, bolt, &[Target::Player(opponent)]);
-        assert!(state.objects.get(volcanic).tapped);
         settled(&mut state);
+        assert!(state.objects.get(volcanic).tapped);
         assert_eq!(state.objects.get(bolt).zone, Zone::Graveyard);
         assert_eq!(state.players[opponent.index()].life, 17);
 
@@ -438,8 +438,8 @@ fn a_dual_land_under_a_land_type_setter_pays_only_the_setters_color_both_seats()
         assert!(!castable(&mut state, bolt), "Harbinger: no {{R}}");
         let hand = state.players[actor.index()].hand.len();
         cast(&mut state, brainstorm, &[]);
-        assert!(state.objects.get(volcanic).tapped);
         settled_choosing_first(&mut state);
+        assert!(state.objects.get(volcanic).tapped);
         assert_eq!(state.objects.get(brainstorm).zone, Zone::Graveyard);
         // Brainstorm left the hand, three were drawn and two put back.
         assert_eq!(state.players[actor.index()].hand.len(), hand);
@@ -458,12 +458,13 @@ fn urza_lands_under_blood_moon_pay_one_red_each_both_seats() {
         let (mut state, lands) = urza_lands(actor, true);
         let forge = put(&mut state, actor, "Mystic Forge", Zone::Hand);
         let seer = put(&mut state, actor, "Thought-Knot Seer", Zone::Hand);
-        let matron = put(&mut state, actor, "Goblin Matron", Zone::Hand);
+        let song = put(&mut state, actor, "Seething Song", Zone::Hand);
         assert!(!castable(&mut state, forge), "three mana, not four");
         pool(&mut state, actor, &[ManaColor::R], 0);
         assert!(!castable(&mut state, seer), "no {{C}} under the Moon");
         state.players[actor.index()].mana_pool = [0; 6];
-        cast(&mut state, matron, &[]);
+        cast(&mut state, song, &[]);
+        settled(&mut state);
         assert!(lands.iter().all(|&land| state.objects.get(land).tapped));
     }
 }
@@ -485,8 +486,8 @@ fn urzas_saga_under_a_later_alpine_moon_pays_no_colorless_pip_both_seats() {
         );
         assert!(!castable(&mut state, seer), "no {{C}}");
         cast(&mut state, bolt, &[Target::Player(opponent)]);
-        assert!(state.objects.get(saga).tapped);
         settled(&mut state);
+        assert!(state.objects.get(saga).tapped);
         assert_eq!(state.players[opponent.index()].life, 17);
     }
 }
@@ -500,8 +501,8 @@ fn urzas_saga_without_chapters_under_blood_moon_pays_red_both_seats() {
         let (mut state, saga) = saga_without_chapters_under_blood_moon(actor);
         let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
         cast(&mut state, bolt, &[Target::Player(opponent)]);
-        assert!(state.objects.get(saga).tapped);
         settled(&mut state);
+        assert!(state.objects.get(saga).tapped);
         assert_eq!(state.players[opponent.index()].life, 17);
     }
 }
@@ -516,8 +517,8 @@ fn a_dual_land_under_spreading_seas_pays_only_blue_both_seats() {
         let brainstorm = put(&mut state, actor, "Brainstorm", Zone::Hand);
         assert!(!castable(&mut state, bolt), "no {{R}}");
         cast(&mut state, brainstorm, &[]);
-        assert!(state.objects.get(volcanic).tapped);
         settled_choosing_first(&mut state);
+        assert!(state.objects.get(volcanic).tapped);
     }
 }
 
