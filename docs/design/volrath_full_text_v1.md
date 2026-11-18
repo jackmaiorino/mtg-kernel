@@ -81,6 +81,29 @@ existing immediate and final-batch entry suppression rules. Wall of Blossoms'
 donated draw and Academy Rector's donated death trigger remain outside this
 set. The ruled donor set for Full, and the typed refusal of every other donor,
 are in [premodern_shapeshifter_alter_reality_v1.md](premodern_shapeshifter_alter_reality_v1.md).
+
+The donor classes are four audited name lists in `full_text_v1`: cards with a
+donated program today, the listed additions, cards whose battlefield text is
+all keywords, and cards whose only other text works as they enter.
+`donor_supported` accepts the four; `entry_refused` marks the last class and
+Meddling Mage. A face-up Shapeshifter whose top is any other creature card
+halts the game with `UnsupportedMechanic::FullTextDonorOutsideSetV1` and the
+Shapeshifter as source, and so does a Shapeshifter entering with an
+entry-refused top. The check runs where the top or the reader can change: at
+the tails of `propose_and_commit` and `propose_and_commit_batch`, at a
+Shapeshifter's entry in `record_entry_trigger` (inside an ordered batch this
+is already the batch's final top), at a control change and at a phase-in. A
+backstop in `advance_until_decision` and in its automatic loop guarantees that
+no decision is offered and no terminal is reported while an unsupported donor
+is in place. While an owner order is quoted, open or pending the check waits,
+because the arrivals are then in the graveyard in their unordered native
+order; it runs once the order completes. Of the listed additions, Auramancer,
+Monk Realist and Uktabi Orangutan are accepted only as part D cards and Ghitu
+Slinger and Xantid Swarm are refused, until their donated programs land.
+
+The frozen mirror's numeric and Human views, prompt by prompt with the chosen
+ordinal and with the catalog hash folded out, are pinned in both starting seats
+by `feb_jsonl_mirror_view_sequence_matches_its_pin_both_starting_seats`.
 Mainboard qualification also requires terminal play and replay evidence
 from the actual snapshot list. No card in the Premodern pool copies a
 permanent, so copies of the Shapeshifter are outside that contract.
