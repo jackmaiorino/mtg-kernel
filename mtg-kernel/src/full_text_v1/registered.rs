@@ -1466,7 +1466,10 @@ fn check_site_case(site: DonorCheckSiteV1, player: PlayerId) -> bool {
                     ProposedEvent::zone_change(land, Zone::Graveyard),
                 ],
             );
-            assert!(matches!(next(&mut state), Decision::ChooseEffectTargets { .. }));
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseEffectTargets { .. }
+            ));
             act(&mut state, Action::ChooseEffectTarget(Target::Object(land)));
             state.engine.halted == donor_halt(source)
         }

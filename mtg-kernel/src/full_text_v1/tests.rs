@@ -874,7 +874,10 @@ fn every_premodern_pool_creature_is_in_exactly_one_donor_class() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         expected,
-        creatures.iter().map(String::as_str).collect::<BTreeSet<_>>()
+        creatures
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>()
     );
     for (name, expect) in EXPECTED_DONORS
         .into_iter()
