@@ -388,3 +388,51 @@ fn resident_cache_comparisons_check_metadata_without_reading() {
     }
     fs::remove_dir_all(pin.path.parent().unwrap()).unwrap();
 }
+
+/// A shared record keeps the publisher's whole allocation alive, so its
+/// spare capacity counts against the budget: two shared buffers of four bytes
+/// each with a large allocation do not both fit a budget that two four-byte
+/// copies fit.
+#[test]
+fn a_shared_record_is_charged_the_capacity_it_keeps_alive() {
+    let path = Path::new("/memo/capacity");
+    let overhead = charge_v1(path, "a", 0);
+    let roomy = |fill: u8| {
+        let mut bytes = Vec::with_capacity(4096);
+        bytes.extend_from_slice(&[fill; 4]);
+        assert!(bytes.capacity() >= 4096);
+        std::sync::Arc::new(bytes)
+    };
+    // Copies are charged their bytes: both fit.
+    let copies = VerifiedBytesCacheV1::new_v1(2 * overhead + 4096, 16);
+    copies.record_verified_v1(path, "a", &[1; 4]);
+    copies.record_verified_v1(path, "b", &[2; 4]);
+    assert_eq!(
+        held_entries_v1(&copies),
+        (vec!["a".into(), "b".into()], 2 * overhead + 8)
+    );
+    // The same bytes shared with a 4,096 byte allocation each: the second
+    // drops the first, and the charge is the capacity.
+    let shared = VerifiedBytesCacheV1::new_v1(2 * overhead + 4096, 16);
+    let first = roomy(1);
+    let second = roomy(2);
+    let second_charge = overhead + second.capacity();
+    shared.record_verified_shared_v1(path, "a", first);
+    shared.record_verified_shared_v1(path, "b", second);
+    assert_eq!(held_entries_v1(&shared), (vec!["b".into()], second_charge));
+    // A shared buffer whose allocation exceeds the whole budget is not held,
+    // however few bytes it has.
+    let small = VerifiedBytesCacheV1::new_v1(overhead + 64, 16);
+    small.record_verified_shared_v1(path, "a", roomy(3));
+    assert_eq!(held_entries_v1(&small), (vec![], 0));
+    // A shared buffer with no spare capacity is charged as a copy is.
+    let exact = VerifiedBytesCacheV1::new_v1(2 * overhead + 4096, 16);
+    let mut tight = vec![4u8; 4];
+    tight.shrink_to_fit();
+    let tight_capacity = tight.capacity();
+    exact.record_verified_shared_v1(path, "a", std::sync::Arc::new(tight));
+    assert_eq!(
+        held_entries_v1(&exact),
+        (vec!["a".into()], overhead + tight_capacity)
+    );
+}

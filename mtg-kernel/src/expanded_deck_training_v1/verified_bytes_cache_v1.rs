@@ -24,7 +24,9 @@
 //! (`global_v1`), and tests pass their own.
 //!
 //! `MTG_KERNEL_VERIFIED_BYTES_CACHE_MIB` sets the process cache's budget
-//! (default 160; 0 turns the memo off). An entry is charged its bytes, its
+//! (default 160; 0 turns the memo off). An entry is charged its bytes (for
+//! bytes shared with their publisher, the whole allocation it keeps alive,
+//! which can exceed the bytes), its
 //! path, its digest and `ENTRY_OVERHEAD_BYTES_V1`, so empty files count too,
 //! and at most `ENTRY_LIMIT_V1` entries are held. Least recently used entries
 //! are dropped before a new one is copied in, so held entries never exceed
@@ -75,7 +77,8 @@ pub(crate) fn global_v1() -> &'static VerifiedBytesCacheV1 {
     })
 }
 
-/// What an entry for `path`, `sha256` and `bytes_len` bytes is charged.
+/// What an entry for `path`, `sha256` and `bytes_len` bytes of memory kept
+/// alive for its bytes is charged.
 fn charge_v1(path: &Path, sha256: &str, bytes_len: usize) -> usize {
     bytes_len
         .saturating_add(path.as_os_str().len())
@@ -198,27 +201,36 @@ impl VerifiedBytesCacheV1 {
     /// the new entry fits both bounds, then `bytes` are copied in; an entry
     /// whose charge exceeds the whole budget is not held.
     pub(crate) fn record_verified_v1(&self, path: &Path, sha256: &str, bytes: &[u8]) {
-        self.record_with_v1(path, sha256, bytes.len(), || Arc::new(bytes.to_vec()));
+        self.record_with_v1(path, sha256, bytes.len(), bytes.len(), || {
+            Arc::new(bytes.to_vec())
+        });
     }
 
     /// [`Self::record_verified_v1`] keeping the caller's allocation instead
     /// of a copy (the bytes are immutable once shared): a publisher that
     /// still hands its bytes to other readers records them without copying.
+    /// The entry keeps the whole allocation alive, so it is charged the
+    /// allocation's capacity, not only the bytes in use: a buffer with spare
+    /// capacity (a compressor's worst-case allocation, a grown `Vec`) counts
+    /// in full against the budget.
     pub(crate) fn record_verified_shared_v1(&self, path: &Path, sha256: &str, bytes: Arc<Vec<u8>>) {
-        self.record_with_v1(path, sha256, bytes.len(), || bytes);
+        self.record_with_v1(path, sha256, bytes.len(), bytes.capacity(), || bytes);
     }
 
     /// Both recorders: the bounds, then the evictions, then `bytes()` (a copy
     /// or the caller's allocation), so nothing is copied for an entry that is
     /// not held and nothing beyond the budget is held while copying.
+    /// `length` is the bytes' length and `allocated` the memory the entry
+    /// keeps alive for them (the same for a copy).
     fn record_with_v1(
         &self,
         path: &Path,
         sha256: &str,
         length: usize,
+        allocated: usize,
         bytes: impl FnOnce() -> Arc<Vec<u8>>,
     ) {
-        let charge = charge_v1(path, sha256, length);
+        let charge = charge_v1(path, sha256, allocated.max(length));
         if self.entry_limit == 0 || charge > self.budget {
             return;
         }

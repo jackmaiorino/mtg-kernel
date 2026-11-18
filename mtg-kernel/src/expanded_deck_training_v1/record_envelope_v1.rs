@@ -83,7 +83,14 @@ impl RecordEnvelopeV1 {
                 compressor
                     .set_parameter(zstd::stream::raw::CParameter::ContentSizeFlag(true))
                     .map_err(|e| e.to_string())?;
-                let sealed = compressor.compress(bytes).map_err(|e| e.to_string())?;
+                // The compressor allocates for the worst case (the bound for
+                // the unsealed length) and returns the frame in that
+                // allocation. The frame is kept for a long time (the
+                // verified-bytes cache and the parse-ahead store share it), so
+                // the unused capacity, several times the frame for a record
+                // that compresses well, is given back here.
+                let mut sealed = compressor.compress(bytes).map_err(|e| e.to_string())?;
+                sealed.shrink_to_fit();
                 if open_v1(&sealed, bytes.len() as u64)?.as_ref() != bytes {
                     return Err("record envelope round trip differs".into());
                 }
@@ -279,6 +286,14 @@ mod tests {
             .into_owned();
         assert!(is_sealed_v1(&sealed));
         assert!(sealed.len() < bytes.len() / 4);
+        // The compressor's worst-case allocation (more than the record's
+        // length) is given back: the frame keeps little beyond its bytes.
+        assert!(
+            sealed.capacity() <= sealed.len() + sealed.len() / 8 + 64,
+            "capacity {} for {} bytes",
+            sealed.capacity(),
+            sealed.len()
+        );
         assert_eq!(
             RecordEnvelopeV1::Zstd1.seal_v1(&bytes).unwrap().as_ref(),
             sealed.as_slice()
