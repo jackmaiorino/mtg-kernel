@@ -1695,7 +1695,8 @@ pub(crate) fn mana_ability_blocked(state: &GameState, source: ObjectId) -> bool 
     matches!(
         definition_name(state, source),
         Some(HICKORY_WOODLOT | SANDSTONE_NEEDLE)
-    ) && depletion_counters(state, source) == 0
+    ) && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+        && depletion_counters(state, source) == 0
 }
 
 /// After a depletion land was tapped for mana: remove a depletion counter,
@@ -1705,6 +1706,7 @@ pub(crate) fn after_tapped_for_mana(state: &mut GameState, land: ObjectId) {
         definition_name(state, land),
         Some(HICKORY_WOODLOT | SANDSTONE_NEEDLE)
     ) || state.objects.get(land).zone != Zone::Battlefield
+        || !crate::continuous_characteristics_v1::printed_abilities_active(state, land)
     {
         return;
     }
