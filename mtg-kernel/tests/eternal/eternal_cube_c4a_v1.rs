@@ -1109,6 +1109,88 @@ fn forensic_gadgeteer_reduces_the_total_after_an_activation_tax() {
     assert!(activatable(&mut state, bauble, 0), "{{1}} with one mana");
 }
 
+/// On `player`'s turn, Agatha's Soul Cauldron exiles Knight of Stromgald
+/// from the other graveyard and puts a +1/+1 counter on `player`'s Walking
+/// Ballista (which had one), so the Ballista has the Knight's abilities;
+/// `player` also controls a Forensic Gadgeteer. Returns the Ballista and the
+/// index of its borrowed "{B}{B}: +1/+0".
+fn cauldron_ballista(state: &mut GameState, player: PlayerId) -> (ObjectId, u8) {
+    let other = if player == P0 { P1 } else { P0 };
+    state.active_player = player;
+    state.priority_player = player;
+    let cauldron = put(state, player, "Agatha's Soul Cauldron", Zone::Battlefield);
+    put(state, player, "Forensic Gadgeteer", Zone::Battlefield);
+    let ballista = put(state, player, "Walking Ballista", Zone::Battlefield);
+    state.objects.get_mut(ballista).counters.plus1_plus1 = 1;
+    let knight = put(state, other, "Knight of Stromgald", Zone::Graveyard);
+    next(state);
+    act(state, Action::ActivateAbility(cauldron, 0));
+    let targets = [Target::Object(knight), Target::Object(ballista)];
+    let mut wanted = targets.into_iter();
+    for _ in 0..40 {
+        match next(state) {
+            Decision::ChooseTargets { .. } => {
+                let target = wanted.next().expect("a target");
+                act(state, Action::ChooseTarget(target));
+            }
+            Decision::ChooseEffectTargets { .. } => {
+                let target = wanted.next().expect("a target");
+                act(state, Action::ChooseEffectTarget(target));
+            }
+            Decision::CastSpellOrPass { .. }
+                if state.stack.is_empty() && state.engine.pending_triggers.is_empty() =>
+            {
+                break
+            }
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            other => {
+                let action = first_answer(other);
+                act(state, action);
+            }
+        }
+    }
+    assert_eq!(zone(state, knight), Zone::Exile);
+    assert_eq!(counters(state, ballista), 2);
+    state.priority_player = player;
+    // The Knight's "{B}: first strike" and "{B}{B}: +1/+0" follow the
+    // Ballista's own abilities.
+    let pump = def("Walking Ballista").activated_abilities.len() + 1;
+    (ballista, u8::try_from(pump).unwrap())
+}
+
+/// Spending mana as though it were any color changes how a cost is paid, not
+/// how much it is: the Gadgeteer takes only generic mana, so a borrowed
+/// {B}{B} stays two mana, and with Anointed Peacekeeper's {2} tax it is
+/// {2}{B}{B} minus {1}.
+#[test]
+fn forensic_gadgeteer_does_not_reduce_colored_mana_paid_as_any_color_both_seats() {
+    for player in [P0, P1] {
+        let mut state = plains();
+        let (ballista, pump) = cauldron_ballista(&mut state, player);
+        pool(&mut state, player, &[], 1);
+        assert!(!activatable(&mut state, ballista, pump), "one mana");
+        pool(&mut state, player, &[], 1);
+        activate(&mut state, ballista, pump, &[]);
+        on_the_stack(&mut state);
+        assert_eq!(mana(&state, player, ManaColor::C), 0, "two mana paid");
+        settled(&mut state);
+        assert_eq!(power_toughness(&state, ballista), (3, 2));
+
+        // Taxed: {B}{B} + {2} - {1} is three mana.
+        let mut state = plains();
+        peacekeeper_naming(&mut state, "Walking Ballista");
+        let (ballista, pump) = cauldron_ballista(&mut state, player);
+        pool(&mut state, player, &[], 2);
+        assert!(!activatable(&mut state, ballista, pump), "three with two");
+        pool(&mut state, player, &[], 1);
+        activate(&mut state, ballista, pump, &[]);
+        on_the_stack(&mut state);
+        assert_eq!(mana(&state, player, ManaColor::C), 0, "three mana paid");
+        settled(&mut state);
+        assert_eq!(power_toughness(&state, ballista), (3, 2));
+    }
+}
+
 // ---- Faerie Mastermind ---------------------------------------------------------------
 
 #[test]

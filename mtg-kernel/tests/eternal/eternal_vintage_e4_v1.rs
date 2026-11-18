@@ -2839,6 +2839,44 @@ fn anointed_peacekeeper_sees_the_hand_and_taxes_the_named_card() {
     assert_eq!(state.objects.get(island).zone, Zone::Graveyard);
 }
 
+/// 601.2f: the total cost is the mana cost plus increases, then reductions.
+/// Anointed Peacekeeper naming Eiganjo makes its channel {4}{W}, and three
+/// legendary creatures take {3} off: {1}{W}.
+#[test]
+fn anointed_peacekeeper_tax_comes_before_eiganjos_channel_reduction() {
+    let mut state = islands();
+    peacekeeper_naming(&mut state, "Eiganjo, Seat of the Empire");
+    let eiganjo = put(&mut state, P0, "Eiganjo, Seat of the Empire", Zone::Hand);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    for name in [
+        "Squee, Goblin Nabob",
+        "Oswald Fiddlebender",
+        "Samwise the Stouthearted",
+    ] {
+        put(&mut state, P0, name, Zone::Battlefield);
+    }
+    for _ in 0..40 {
+        match next(&mut state) {
+            Decision::DeclareAttackers { .. } => {
+                act(&mut state, Action::DeclareAttackers(vec![elves]));
+                break;
+            }
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => panic!("unexpected decision: {other:?}"),
+        }
+    }
+    pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    assert!(!activatable(&mut state, eiganjo, 0), "{{W}} alone");
+    pool(&mut state, P0, &[], 1);
+    activate(&mut state, eiganjo, 0, &[Target::Object(elves)]);
+    settled(&mut state);
+    assert_eq!(mana(&state, P0, ManaColor::W), 0);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0, "{{1}}{{W}} was paid");
+    assert_eq!(state.objects.get(eiganjo).zone, Zone::Graveyard);
+    assert_eq!(state.objects.get(elves).zone, Zone::Graveyard);
+}
+
 /// A game at its very beginning: turn 1's untap step, P0 active.
 fn fresh_game(library: &[&str]) -> GameState {
     let ids: Vec<u16> = library

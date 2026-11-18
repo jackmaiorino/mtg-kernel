@@ -6319,22 +6319,7 @@ fn activation_mana_cost(components: &[CostComponent]) -> Option<&Cost> {
 /// (Eiganjo's channel: `{1}` less per legendary creature its activator
 /// controls). Only generic mana is reduced, never below zero. Activated
 /// ability costs are generated `'static` slices, so the ability is identified
-/// by the identity of its cost slice. Forensic Gadgeteer's floored reduction
-/// is applied last.
-fn reduced_activation_mana_cost(
-    cost: &Cost,
-    components: &[CostComponent],
-    player: PlayerId,
-    source: ObjectId,
-    state: &GameState,
-) -> Cost {
-    let reduced = unfloored_activation_mana_cost(cost, components, player, source, state);
-    // Forensic Gadgeteer (eternal wave C4a): abilities of artifacts cost {1}
-    // less, never below one mana.
-    crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, reduced)
-}
-
-/// `cost` net of the reductions that have no floor (Eiganjo's channel).
+/// by the identity of its cost slice.
 fn unfloored_activation_mana_cost(
     cost: &Cost,
     components: &[CostComponent],
@@ -6372,39 +6357,57 @@ fn unfloored_activation_mana_cost(
     reduced
 }
 
-/// The total mana an activation costs: the mana cost, then increases, then
-/// reductions (601.2f). A reduction with a floor (Forensic Gadgeteer's "can't
-/// reduce the mana in that cost to less than one mana") is checked against
-/// that total, so it applies after Anointed Peacekeeper's and Gloom's taxes.
+/// The total mana an activation costs (601.2f), from `printed`, the mana
+/// component of `components` if it has one: the mana cost, plus every
+/// increase (Anointed Peacekeeper, Gloom), minus the reductions without a
+/// floor (Eiganjo's channel), minus Forensic Gadgeteer's reduction, whose
+/// floor ("can't reduce the mana in that cost to less than one mana") is
+/// checked against that total. Only then does Agatha's Soul Cauldron's "as
+/// though it were mana of any color" apply: it changes how the total is paid,
+/// not how much it is, so colored mana is never reduced as generic. Both the
+/// payment and the legality precheck of a mana component use this total.
+fn activation_total_mana_cost(
+    printed: Option<&Cost>,
+    components: &[CostComponent],
+    player: PlayerId,
+    source: ObjectId,
+    state: &GameState,
+) -> Option<Cost> {
+    // Anointed Peacekeeper: abilities of sources with the chosen name cost
+    // {2} more to activate. Gloom: abilities of white enchantments cost {3}
+    // more (eternal wave P3b).
+    #[cfg(feature = "eternal-fixtures")]
+    let tax = crate::eternal_vintage_v1::activation_tax(state, source).saturating_add(
+        crate::eternal_premodern_p3b_v1::statics::gloom_activation_tax(state, source),
+    );
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let tax = 0_u8;
+    let mut total = match printed {
+        Some(cost) => *cost,
+        None if tax > 0 => Cost::zero(),
+        None => return None,
+    };
+    total.generic = total.generic.saturating_add(tax);
+    let total = unfloored_activation_mana_cost(&total, components, player, source, state);
+    // Forensic Gadgeteer (eternal wave C4a): abilities of artifacts cost {1}
+    // less, never below one mana.
+    let total = crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, total);
+    Some(crate::standard_cards_v1::spend_as_any_color(state, player, source, total))
+}
+
 fn activation_mana_payment(
     components: &[CostComponent],
     player: PlayerId,
     source: ObjectId,
     state: &GameState,
 ) -> Option<Cost> {
-    let printed = activation_mana_cost(components).map(|cost| {
-        let reduced = unfloored_activation_mana_cost(cost, components, player, source, state);
-        crate::standard_cards_v1::spend_as_any_color(state, player, source, reduced)
-    });
-    // Anointed Peacekeeper: abilities of sources with the chosen name cost
-    // {2} more to activate. Gloom: abilities of white enchantments cost {3}
-    // more (eternal wave P3b).
-    #[cfg(feature = "eternal-fixtures")]
-    let printed = {
-        let tax = crate::eternal_vintage_v1::activation_tax(state, source).saturating_add(
-            crate::eternal_premodern_p3b_v1::statics::gloom_activation_tax(state, source),
-        );
-        if tax > 0 {
-            let mut cost = printed.unwrap_or(Cost::zero());
-            cost.generic = cost.generic.saturating_add(tax);
-            Some(cost)
-        } else {
-            printed
-        }
-    };
-    // Forensic Gadgeteer (eternal wave C4a): abilities of artifacts cost {1}
-    // less, never below one mana.
-    printed.map(|cost| crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, cost))
+    activation_total_mana_cost(
+        activation_mana_cost(components),
+        components,
+        player,
+        source,
+        state,
+    )
 }
 
 pub(crate) fn x_target_is_payable(
@@ -7177,20 +7180,13 @@ fn can_pay_components(
             CostComponent::ReturnControlledUnblockedAttackerToOwnersHand => {
                 !unblocked_attacker_return_candidates(player, state, &[]).is_empty()
             }
-            CostComponent::Mana(cost) => mana::plan_activation_mana_v1(
-                &crate::standard_cards_v1::spend_as_any_color(
-                    state,
-                    player,
-                    source,
-                    reduced_activation_mana_cost(cost, components, player, source, state),
-                ),
-                0,
-                player,
-                state,
-                source,
-                &[],
-            )
-            .is_some(),
+            CostComponent::Mana(cost) => {
+                activation_total_mana_cost(Some(cost), components, player, source, state)
+                    .and_then(|total| {
+                        mana::plan_activation_mana_v1(&total, 0, player, state, source, &[])
+                    })
+                    .is_some()
+            }
             CostComponent::PayLife(amount) => {
                 state.players[player.index()].life >= i32::from(*amount)
             }

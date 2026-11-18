@@ -2732,8 +2732,12 @@ C4a:
 - Displacer Kitten flickers up to one other nonland permanent its controller controls on each
   noncreature cast. Forensic Gadgeteer investigates on artifact casts and takes {1} of generic off
   activated abilities of its controller's artifacts, mana abilities with a mana cost included,
-  never below one mana. The floor is checked against the total cost, after activation taxes
-  (Anointed Peacekeeper, Gloom), so a taxed ability with no mana cost of its own is reduced too.
+  never below one mana. An activation's total (`activation_total_mana_cost`, used by both the
+  payment and its legality check) is the mana cost, plus the taxes (Anointed Peacekeeper, Gloom),
+  minus the floorless reductions (Eiganjo's channel), minus the Gadgeteer's, whose floor is checked
+  against that total (601.2f), so a taxed ability with no mana cost of its own is reduced too.
+  Agatha's Soul Cauldron's "as though it were mana of any color" applies last: it changes how
+  the total is paid, so colored mana is never reduced as generic.
 - Faerie Mastermind (`OpponentDrawsSecondCardEachTurnV1`) and Ledger Shredder
   (`PlayerCastsSecondSpellEachTurnV1`, connive) read the engine's per-player draw and cast
   counters. The Mastermind's shared draw is controller first, with the stop between the two
