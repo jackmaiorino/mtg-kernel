@@ -8171,16 +8171,58 @@ pub(crate) fn jace_draw_replacement_origin(
                 state, pending, path, remaining,
             );
     }
-    let Some(EffectOp::DrawCards { player, count }) =
-        resolved_definition_op_at(&root, path, &pending.ctx, state)
-    else {
-        return false;
+    let ctx = &pending.ctx;
+    let (player, count, staged_below) = match resolved_definition_op_at(&root, path, ctx, state) {
+        Some(EffectOp::DrawCards { player, count }) => (*player, *count, Vec::new()),
+        Some(leaf) => match leaf_staged_draw(leaf, path, ctx) {
+            Some(staged) => staged,
+            None => return false,
+        },
+        None => return false,
     };
-    if *count == 0 || pending.ctx.resolve_player(*player, state) != drawer {
+    if count == 0 || pending.ctx.resolve_player(player, state) != drawer {
         return false;
     }
-    nonland_sacrifice_payment_v1::remaining(&root, path)
-        .is_ok_and(|siblings| draw_remainder_matches(remaining, &siblings, path, *player, *count))
+    nonland_sacrifice_payment_v1::remaining(&root, path).is_ok_and(|mut below| {
+        below.extend(staged_below);
+        draw_remainder_matches(remaining, &below, path, player, count)
+    })
+}
+
+/// The draw a definition-owned leaf stages at its own path when it resolves:
+/// its drawer, the most cards it draws, and the frames it pushes below the
+/// draw. Only the leaf itself pushes a frame at its path, so a draw found
+/// there with these frames below it is that leaf's draw.
+fn leaf_staged_draw(
+    leaf: &EffectOp,
+    path: &[u16],
+    ctx: &ExecCtx,
+) -> Option<(PlayerRef, u32, Vec<EffectFrame>)> {
+    use crate::eternal_cards_v1::EternalOpV1 as E;
+    use crate::eternal_cube_c1a_v1::C1aOpV1;
+    use crate::eternal_vintage_e7b_v1::E7bOpV1;
+    use crate::standard_cards_v1::StandardOpV1;
+    let EffectOp::StandardV1(StandardOpV1::EternalV1(leaf)) = leaf else {
+        return None;
+    };
+    match leaf {
+        // Occult Epiphany: "Draw X cards, then discard X cards", the discard
+        // stage staged below the draw.
+        E::C1aV1(C1aOpV1::OccultEpiphanyV1) => {
+            let count = ctx.x_value;
+            let discard = E::C1aV1(C1aOpV1::OccultDiscardV1 { count });
+            let below = EffectFrame::Program {
+                op: EffectOp::StandardV1(StandardOpV1::EternalV1(discard)),
+                path: path.to_vec(),
+            };
+            Some((PlayerRef::Controller, u32::from(count), vec![below]))
+        }
+        // "You may discard a card. If you do, draw N cards."
+        E::E7bV1(E7bOpV1::MayDiscardThenDrawV1 { draws }) => {
+            Some((PlayerRef::Controller, u32::from(*draws), Vec::new()))
+        }
+        _ => None,
+    }
 }
 
 /// The definition-owned instruction at `path`, walked through every

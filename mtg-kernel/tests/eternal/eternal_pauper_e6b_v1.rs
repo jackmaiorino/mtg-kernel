@@ -1724,6 +1724,50 @@ fn pursue_the_past_gains_two_may_loot_and_has_flashback() {
 }
 
 #[test]
+fn pursue_the_past_draws_offer_competing_draw_replacements() {
+    // Its controller draws from an empty library with Jace, Wielder of
+    // Mysteries while the opponent controls Hullbreacher: after the discard,
+    // the drawing player chooses which replacement applies (616.1).
+    let mut state = game(&[]);
+    put(&mut state, P1, "Hullbreacher", Zone::Battlefield);
+    let jace = put(&mut state, P0, "Jace, Wielder of Mysteries", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(jace, Zone::Battlefield),
+    );
+    let fodder = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    let pursue = put(&mut state, P0, "Pursue the Past", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R, ManaColor::W], 0);
+    cast(&mut state, pursue, &[]);
+    let discarded = Target::Object(fodder);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. })
+            if legal_targets.contains(&discarded) =>
+        {
+            act(&mut state, Action::ChooseEffectTarget(discarded));
+        }
+        other => panic!("expected the optional discard, got {other:?}"),
+    }
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            can_finish: true,
+            ..
+        }) => {
+            assert_eq!(player, P0);
+            assert_eq!(legal_targets, vec![Target::Object(jace)]);
+        }
+        other => panic!("expected the Jace or Hullbreacher choice, got {other:?}"),
+    }
+    act(&mut state, Action::ChooseEffectTarget(Target::Object(jace)));
+    assert!(matches!(
+        next(&mut state),
+        Decision::GameOver { winner: Some(P0) }
+    ));
+}
+
+#[test]
 fn pursue_the_past_draws_after_its_discard_may_be_dredged() {
     // "If you do, draw two cards": each of the two draws may be replaced by
     // dredge (702.52), here Golgari Thug's dredge 4 and then a plain draw.

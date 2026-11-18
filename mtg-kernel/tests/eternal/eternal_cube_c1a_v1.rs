@@ -2226,6 +2226,51 @@ fn occult_epiphany_with_x_zero_or_a_hand_of_exactly_x_needs_no_choice() {
     assert_eq!(spirits(&state, P0).len(), 2);
 }
 
+#[test]
+fn occult_epiphany_draws_offer_competing_draw_replacements() {
+    // The X draws are staged by the Epiphany's own leaf as it resolves. Its
+    // controller draws from an empty library with Jace, Wielder of Mysteries
+    // while the opponent controls Hullbreacher: the drawing player chooses
+    // which replacement applies (616.1), on each draw.
+    for jace_wins in [true, false] {
+        let mut state = game(&[]);
+        put(&mut state, P1, "Hullbreacher", Zone::Battlefield);
+        let jace = put(&mut state, P0, "Jace, Wielder of Mysteries", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(jace, Zone::Battlefield),
+        );
+        let epiphany = put(&mut state, P0, "Occult Epiphany", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::U], 2);
+        cast_with_x(&mut state, epiphany, 2, &[]);
+        let choice = settle(&mut state).expect("Jace competes with Hullbreacher");
+        assert!(matches!(&choice, Decision::ChooseEffectTargets {
+            player, source, legal_targets, can_finish: true, .. }
+            if *player == P0 && *source == epiphany
+                && legal_targets.as_slice() == [Target::Object(jace)]));
+        if jace_wins {
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(jace)));
+            assert!(matches!(
+                next(&mut state),
+                Decision::GameOver { winner: Some(P0) }
+            ));
+        } else {
+            // Declining Jace on both draws lets Hullbreacher replace them.
+            let mut asked = 0;
+            settle_with(&mut state, |_, decision| match decision {
+                Decision::ChooseEffectTargets { .. } => {
+                    asked += 1;
+                    Action::FinishEffectSelection
+                }
+                other => first_answer(other),
+            });
+            assert_eq!(asked, 2, "one choice per draw");
+            assert_eq!(named(&state, P1, "Treasure Token").len(), 2);
+            assert_eq!(hand_len(&state, P0), 0);
+        }
+    }
+}
+
 // ---- Time Spiral ---------------------------------------------------------------------
 
 #[test]

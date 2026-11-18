@@ -593,7 +593,9 @@ New, each built once in the first wave that needs it:
   actual completed attempts when the replacement continuation runs. Restore
   checks saved progress against that native evidence.
   An affected player can also choose between Jace's empty-library win and
-  Hullbreacher on fixed-count draw instructions and the covered owned draws.
+  Hullbreacher on fixed-count draw instructions and the covered owned draws,
+  on definition-owned draws nested below the root of their program, and on
+  the draws Occult Epiphany and the pay-then-draw leaf stage (#717).
   Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
   Their damage-draw interaction has no native qualification.
   Curie's combat trigger binds the original source and controller. It uses
@@ -2887,9 +2889,7 @@ C1c:
   (`LibraryLookCount::ControllerLandsTwiceV1`), and plot {1}{B}{G}.
 
 Known limits shared with earlier waves, tracked in #710: a granted flashback does not add a
-second cost to a card that has flashback (Flashback, as Snapcaster Mage); and a draw that a leaf
-stages at resolution (Occult Epiphany's X cards) does not offer the choice between two competing
-draw replacements, which is Hullbreacher's Partial branch.
+second cost to a card that has flashback (Flashback, as Snapcaster Mage).
 
 Conventions fixed under #717:
 
@@ -2929,8 +2929,14 @@ Conventions fixed under #717:
   instead of the legacy optional cost: its controller picks up to one card from hand
   (`E7bChoiceV1::DiscardThenDrawV1`, hidden from the opponent; finishing with none declines, and
   an empty hand asks nothing), and after the discard the draw is the leaf's next instruction, so
-  dredge (702.52) is offered for it as for any other draw of the program. Quantum Riddler's
-  extra draw on such a draw follows the limit recorded for nested draws above.
+  dredge (702.52) and the choice between competing draw replacements are offered for it as for
+  any other draw of the program. Quantum Riddler's extra draw on such a draw follows the limit
+  recorded for nested draws above.
+- Leaf-staged draws. A definition-owned leaf that stages its draw at its own path as it resolves
+  declares that draw to the origin check (`effect::leaf_staged_draw`: the drawer, the most cards
+  and the frames it stages below the draw), so the choice between Jace and Hullbreacher is
+  offered on each of its draws: Occult Epiphany's X cards (above its discard stage) and the
+  pay-then-draw leaf.
 - Each player draws. "Each player draws" (Wheel of Fortune, Time Spiral, Faerie Mastermind's
   ability) starts with the active player (101.4): `eternal_cube_c1a_v1::each_player_draws` is a
   `Conditional` on `EffectCond::ControllersTurnV1` whose branches draw for the controller first
