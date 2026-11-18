@@ -504,7 +504,9 @@ fn initialization_tag_and_first_weights_are_pinned() {
 /// relative, about 18 units in the last place.
 #[test]
 fn expm1_matches_the_platform_over_its_range() {
-    let mut points = (0..=2_880).map(|i| f64::from(i) * 0.0125).collect::<Vec<_>>();
+    let mut points = (0..=2_880)
+        .map(|i| f64::from(i) * 0.0125)
+        .collect::<Vec<_>>();
     points.extend([1e-300, 1e-200, 1e-16, 1e-10, 1e-5, 1e-3]);
     for t in points {
         let reference = t.exp_m1();
