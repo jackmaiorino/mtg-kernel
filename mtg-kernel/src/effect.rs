@@ -20746,6 +20746,30 @@ fn execute_with_native_row_v1(
     crate::eternal_premodern_p3d_v1::leave_resolution(state, enclosing);
 }
 
+/// CR 400.7 and 608.2b: an ability that triggered or was activated while its
+/// source was in a graveyard refers to that graveyard object only. If the
+/// card has left that graveyard since (exiled in response, or moved and put
+/// back as a new object), "this card" names nothing and an effect that
+/// moves it does nothing (Sneaky Snacker against Nihil Spellbomb or Relic of
+/// Progenitus). The check uses the captured ability source, so abilities
+/// that triggered on the battlefield, spells, and effects that move a
+/// target are unaffected.
+fn graveyard_ability_source_left_graveyard(
+    object: ObjectRef,
+    ctx: &ExecCtx,
+    state: &GameState,
+) -> bool {
+    object == ObjectRef::ThisSource
+        && ctx.ability_source_contract.is_some_and(|contract| {
+            contract.zone == Zone::Graveyard
+                && contract.source == ctx.source
+                && state.objects.try_get(ctx.source).is_none_or(|source| {
+                    source.zone != Zone::Graveyard
+                        || source.zone_change_count != contract.zone_change_count
+                })
+        })
+}
+
 fn execute_in_departure_scope_v1(
     op: &EffectOp,
     ctx: &ExecCtx,
@@ -21694,8 +21718,14 @@ fn execute_in_departure_scope_v1(
                     .expect("freshly revealed batch bindings remain valid");
             }
         }
-        EffectOp::MoveObject { object, to_zone } => {
-            let object = ctx.resolve_object(*object);
+        EffectOp::MoveObject {
+            object: object_ref,
+            to_zone,
+        } => {
+            if graveyard_ability_source_left_graveyard(*object_ref, ctx, state) {
+                return;
+            }
+            let object = ctx.resolve_object(*object_ref);
             if *to_zone != Zone::Stack {
                 match crate::engine::apply_live_stack_spell_departure(state, object, *to_zone) {
                     Ok(true) => return,
@@ -23094,6 +23124,20 @@ fn execute_in_departure_scope_v1(
             event::propose_and_commit(state, proposed);
         }
         EffectOp::TapObject { object } => {
+            // Only a permanent can be tapped (CR 701.26a). A graveyard
+            // ability whose source never reached the battlefield (see
+            // `graveyard_ability_source_left_graveyard`) taps nothing.
+            if *object == ObjectRef::ThisSource
+                && ctx
+                    .ability_source_contract
+                    .is_some_and(|contract| contract.zone == Zone::Graveyard)
+                && state
+                    .objects
+                    .try_get(ctx.source)
+                    .is_none_or(|source| source.zone != Zone::Battlefield)
+            {
+                return;
+            }
             let object = ctx.resolve_object(*object);
             event::propose_and_commit(state, event::ProposedEvent::tap(object));
         }
