@@ -169,6 +169,7 @@ fn contracts_parameter_counts_and_identities() {
     assert_eq!(ModelV2H16::CONTRACT, CONTRACT_V2_H16);
     let wide = feature_identity_v2();
     let narrow = feature_identity_v2_h16();
+    println!("current_tree_learner_v2 feature identities: h32 {wide} h16 {narrow}");
     assert_ne!(wide, narrow);
     for identity in [&wide, &narrow] {
         assert_eq!(identity.len(), 64);
@@ -459,7 +460,9 @@ fn cosine_schedule_end_points_and_shape() {
 /// of the encoder bias, the flags, the policy bias and the value head.
 #[test]
 fn initialization_tag_and_first_weights_are_pinned() {
-    assert_eq!(INIT_TAG_V2, b"mtg-kernel/current-tree-learner-v2-init/v1 ");
+    assert_eq!(INIT_TAG_V2, b"mtg-kernel/current-tree-learner-v2-init/v1\0");
+    assert_eq!(INIT_TAG_V2.len(), 43);
+    assert_eq!(INIT_TAG_V2.last(), Some(&0));
     fn check<const H: usize>(pinned: [(usize, u64); 6]) {
         let model = TreeModelV2::<H>::deterministic_initialization();
         let layout = Layout { hidden: H };
@@ -545,26 +548,47 @@ fn sqrt_matches_the_platform_over_a_geometric_grid() {
     assert_eq!(sqrt_v2(4.), 2.);
 }
 
-/// `powi_v2` against the standard library's `powi` for the bases Adam's bias
-/// corrections use and a few more (`0.5`, `0.9`, `0.95`, `0.99`, `0.999`,
-/// `0.9999`), each at every exponent `0` to `400` (twice the campaign's
-/// nominal 200 updates). Neither function is correctly rounded: both multiply
-/// by repeated squaring, so each result carries at most about `2 log2(400)`,
-/// that is 18, roundings of half a unit in the last place. Bound: `64 *
-/// f64::EPSILON` relative (about `1.4e-14`), which covers both errors added
-/// together with a wide margin; exponent `0` gives exactly `1` and exponent `1`
-/// exactly the base.
+/// `powi_v2` for the bases Adam's bias corrections use and a few more (`0.5`,
+/// `0.9`, `0.95`, `0.99`, `0.999`, `0.9999`), each at every exponent `0` to
+/// `400` (twice the campaign's nominal 200 updates).
+///
+/// Accuracy, against the standard library's `powf` (the base raised to the
+/// exponent as a float, accurate to about one unit in the last place): for an
+/// exponent below `2^9`, `powi_v2` forms `b^(2^j)` by `j <= 8` squarings, and
+/// each squaring doubles the relative error carried so far and adds one
+/// rounding of at most `u = 2^-53`, so `b^(2^j)` is within `(2^j - 1) u`. The
+/// result multiplies at most nine of those powers, adding at most nine more
+/// roundings, so its relative error is at most `(sum over j <= 8 of (2^j - 1)
+/// + 9) u = 511 u`, below `256 f64::EPSILON` to first order. Bound:
+/// `512 * f64::EPSILON` relative (about `1.1e-13`), which leaves room for the
+/// reference's own error. This is ample for Adam's bias corrections
+/// `1 - beta^t`, whose relative error is then far below the `epsilon = 1e-8`
+/// in the update's denominator.
+///
+/// Order, against the standard library's `powi`: on current toolchains it
+/// multiplies in the same order (binary exponentiation from the lowest bit),
+/// so the two agree closely; the bound is `64 * f64::EPSILON` relative, loose
+/// enough for a library that rounds differently somewhere. This comparison
+/// guards the multiplication order; it is not an accuracy claim. Neither
+/// comparison is what makes checkpoints bit-identical across platforms:
+/// `powi_v2` uses IEEE multiplication only, so its bits are fixed everywhere.
+/// Exponent `0` gives exactly `1` and exponent `1` exactly the base.
 #[test]
 fn powi_matches_the_platform_for_adam_bias_corrections() {
-    for base in [0.5, 0.9, 0.95, 0.99, 0.999, 0.9999] {
+    for base in [0.5_f64, 0.9, 0.95, 0.99, 0.999, 0.9999] {
         assert_eq!(powi_v2(base, 0), 1.);
         assert_eq!(powi_v2(base, 1), base);
         for exponent in 0..=400_u64 {
-            let reference = base.powi(exponent as i32);
+            let ours = powi_v2(base, exponent);
+            let accurate = base.powf(exponent as f64);
             assert!(
-                (powi_v2(base, exponent) - reference).abs() <= 64. * f64::EPSILON * reference,
-                "{base}^{exponent}: {:e} vs {reference:e}",
-                powi_v2(base, exponent)
+                (ours - accurate).abs() <= 512. * f64::EPSILON * accurate,
+                "accuracy {base}^{exponent}: {ours:e} vs powf {accurate:e}"
+            );
+            let same_order = base.powi(exponent as i32);
+            assert!(
+                (ours - same_order).abs() <= 64. * f64::EPSILON * same_order,
+                "order {base}^{exponent}: {ours:e} vs powi {same_order:e}"
             );
         }
     }
