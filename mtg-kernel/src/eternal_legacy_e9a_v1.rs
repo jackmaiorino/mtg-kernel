@@ -179,9 +179,10 @@ pub(crate) fn grant_protections(
     let records = &mut e9a_state(state).timed_protections;
     for &host in hosts {
         for &color in colors {
-            match records.iter_mut().find(|record| {
-                record.host == host && record.color == color && record.turn == turn
-            }) {
+            match records
+                .iter_mut()
+                .find(|record| record.host == host && record.color == color && record.turn == turn)
+            {
                 Some(record) => record.timestamp = timestamp,
                 None => records.push(TimedProtectionV1 {
                     host,

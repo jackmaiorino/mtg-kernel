@@ -321,7 +321,9 @@ pub(crate) fn animation_keywords(state: &GameState, id: ObjectId) -> crate::card
         .and_then(|object| CARD_DEFS.get(object.card_def as usize))
         .filter(|definition| definition.is_executable())
         .and_then(|definition| definition.animation)
-        .map_or(Keywords::NONE, |animation| Keywords(animation.keywords.0 & rule_effects.0));
+        .map_or(Keywords::NONE, |animation| {
+            Keywords(animation.keywords.0 & rule_effects.0)
+        });
     granted | own
 }
 

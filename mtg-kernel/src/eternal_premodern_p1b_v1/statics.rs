@@ -332,7 +332,12 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
             && crate::continuous_characteristics_v1::granted_ability_survives(
                 state,
                 object,
-                state.objects.get(grove.object).v4.layer_timestamp.unwrap_or(0),
+                state
+                    .objects
+                    .get(grove.object)
+                    .v4
+                    .layer_timestamp
+                    .unwrap_or(0),
             )
     });
     if granted && crate::engine::object_has_type(state, object, CardType::Enchantment) {
