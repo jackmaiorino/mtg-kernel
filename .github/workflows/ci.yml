@@ -896,20 +896,12 @@ jobs:
         # Pull requests run the Limited groups on Linux only; Windows-only
         # group sets other than windows-pr run them on Windows only.
         os: ${{ fromJSON(needs.detect-changes.outputs.scope == 'pr' && '["ubuntu-24.04"]' || contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope) && '["ubuntu-24.04", "windows-2025"]' || '["windows-2025"]') }}
-        # Slowest groups first: runners take matrix jobs in this order.
+        # Slowest groups first: runners take matrix jobs in this order, and
+        # while other runs hold the account's hosted runners the groups start
+        # one by one (run 44377022866: from minute 25 to 38 after the shared
+        # build). The model shards (12 to 44 minutes there) and the
+        # Limited-only shards (23 to 31) go before the short groups.
         group:
-          - limited
-          - limited-only
-          - limited-only-1
-          - limited-only-2
-          - limited-v2
-          - limited-v5
-          - limited-v3
-          - limited-v1
-          - limited-v4
-          - limited-v6
-          - limited-v7
-          - limited-v8
           - limited-model
           - limited-model-1
           - limited-model-2
@@ -920,6 +912,18 @@ jobs:
           - limited-model-7
           - limited-model-8
           - limited-model-9
+          - limited-only
+          - limited-only-1
+          - limited-only-2
+          - limited-v5
+          - limited
+          - limited-v2
+          - limited-v3
+          - limited-v1
+          - limited-v4
+          - limited-v6
+          - limited-v7
+          - limited-v8
     # Windows follows the routing variable of the other groups. Linux uses
     # hosted runners except the groups named in MTG_CI_LINUX_GROUPS, which run
     # on MTG_CI_LINUX_RUNNER as in rust-test-groups (both must be set; names
