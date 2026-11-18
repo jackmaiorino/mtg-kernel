@@ -544,10 +544,6 @@ fn mode_of(config: &CampaignConfigV1) -> Result<ModeV1> {
 }
 
 impl RunnerV1 {
-    fn diagnostics(&self) -> Option<&DiagnosticsV1> {
-        self.diagnostics.as_ref()
-    }
-
     fn fail(&self, update: u64, error: String, games: &[GameReceiptV1]) -> String {
         let record = json!({
             "schema": FAILED_SCHEMA_V1,
