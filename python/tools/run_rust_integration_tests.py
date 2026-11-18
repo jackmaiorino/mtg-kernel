@@ -36,12 +36,16 @@ def suite_modules(root: Path, suite: str) -> list[str]:
     return sorted(declared)
 
 
-def module_seconds(suite: str, path: Path = MODULE_SECONDS_PATH) -> tuple[dict[str, float], float]:
+def module_seconds(suite: str, inventory: list[str],
+                   path: Path = MODULE_SECONDS_PATH) -> tuple[dict[str, float], float]:
     table = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
     recorded = table.get(suite, {})
-    # A module without a recorded time gets the mean, so a new module is
-    # never assumed to be cheap.
-    return recorded, (sum(recorded.values()) / len(recorded) if recorded else 1.0)
+    # A module without a recorded time gets the mean of the recorded modules
+    # still in the inventory, so a new module is never assumed to be cheap
+    # and a removed module's time does not count.
+    current = set(inventory)
+    present = [seconds for module, seconds in recorded.items() if module in current]
+    return recorded, (sum(present) / len(present) if present else 1.0)
 
 
 def shard_plan(modules: list[str], count: int, recorded: dict[str, float], default: float) -> list[list[str]]:
@@ -157,7 +161,7 @@ def main() -> int:
         if (args.shard_index is None or args.shard_count is None
                 or not 0 <= args.shard_index < args.shard_count):
             parser.error("Sharding requires 0 <= --shard-index < --shard-count")
-        recorded, default = module_seconds(args.suite)
+        recorded, default = module_seconds(args.suite, modules)
         plan = shard_plan(modules, args.shard_count, recorded, default)
         report_plan(args.suite, plan, args.shard_index, recorded, default)
         environment[SHARD_ENV] = json.dumps({"inventory": modules, "selected": plan[args.shard_index],

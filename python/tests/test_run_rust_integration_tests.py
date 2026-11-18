@@ -73,15 +73,25 @@ class ShardPlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             table = Path(directory) / "seconds.json"
             table.write_text(json.dumps({"suite": {"a": 10, "b": 30}}), encoding="utf-8")
-            self.assertEqual(integration.module_seconds("suite", table), ({"a": 10, "b": 30}, 20.0))
-            self.assertEqual(integration.module_seconds("other", table), ({}, 1.0))
-            self.assertEqual(integration.module_seconds("suite", Path(directory) / "missing.json"), ({}, 1.0))
+            self.assertEqual(integration.module_seconds("suite", ["a", "b", "new"], table),
+                             ({"a": 10, "b": 30}, 20.0))
+            self.assertEqual(integration.module_seconds("other", ["a"], table), ({}, 1.0))
+            self.assertEqual(integration.module_seconds("suite", ["a"], Path(directory) / "missing.json"), ({}, 1.0))
+
+    def test_a_removed_module_does_not_weigh_in_the_default(self):
+        with tempfile.TemporaryDirectory() as directory:
+            table = Path(directory) / "seconds.json"
+            table.write_text(json.dumps({"suite": {"removed": 1000, "existing": 10}}), encoding="utf-8")
+            recorded, default = integration.module_seconds("suite", ["existing", "new"], table)
+            self.assertEqual(default, 10.0)
+            recorded, default = integration.module_seconds("suite", ["new"], table)
+            self.assertEqual(default, 1.0)
 
 
 class CheckedInTableTests(unittest.TestCase):
     def test_the_eternal_shards_of_ci_cover_the_real_inventory(self):
         modules = integration.suite_modules(ROOT, "eternal_integration")
-        recorded, default = integration.module_seconds("eternal_integration")
+        recorded, default = integration.module_seconds("eternal_integration", modules)
         self.assertTrue(recorded)
         self.assertTrue(all(isinstance(seconds, int) and seconds >= 1 for seconds in recorded.values()))
         plan = integration.shard_plan(modules, 3, recorded, default)
@@ -137,7 +147,7 @@ class MainTests(unittest.TestCase):
         self.assertEqual(command[-2:], ["--test", "eternal_integration"])
         shard = json.loads(environment[integration.SHARD_ENV])
         modules = integration.suite_modules(ROOT, "eternal_integration")
-        recorded, default = integration.module_seconds("eternal_integration")
+        recorded, default = integration.module_seconds("eternal_integration", modules)
         self.assertEqual(shard, {"inventory": modules, "shard": [2, 3],
                                  "selected": integration.shard_plan(modules, 3, recorded, default)[2]})
 
