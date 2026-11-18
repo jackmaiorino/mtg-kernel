@@ -8,6 +8,17 @@
 //! use `f64::powi`, which LLVM lowers to compiler-builtins' square-and-
 //! multiply on Linux and to the CRT's `pow` on Windows.
 //!
+//! One exception: on aarch64 Linux with glibc, platform math means the
+//! x86-64 Linux results, so that a build there continues an x86-64 lineage.
+//! Two things are replaced, both measured against glibc 2.36 on the two
+//! architectures (2026-11-17) and valid for that glibc: every `tanhf` of a
+//! value that is not a NaN is computed by `vector_tanh_v1::fdlibm` (the
+//! loaded aarch64 `tanhf` differs from the x86-64 one), and `expf` takes the
+//! x86-64 result on the two inputs where the builds differ. `logf` is equal
+//! on every input. The double-precision `exp` and `log` (the scorer-bias
+//! gauge) go to the loaded library unchanged; they agreed on a sample of
+//! 23.4 million inputs and cannot be compared on every input.
+//!
 //! [`TrainingMathV1::PortableV1`] computes `tanh` with
 //! [`deterministic_math_v1::tanh_f32_v1`] (four elements at a time where
 //! AVX2 is available, with the same bits), `exp` and `ln` with the pinned

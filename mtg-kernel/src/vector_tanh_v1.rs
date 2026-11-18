@@ -1340,9 +1340,78 @@ mod tests {
     const CHUNK_3F_DIGEST: &str =
         "778c1cd2e9e6ea13a47f3ece7bb9a0344c34c540283fdcafb44d4c479557af79";
 
+    /// Inputs at the algorithm's branch boundaries and inside each range, with
+    /// the results glibc 2.36's `tanhf` gives on x86-64 (measured 2026-11-17):
+    /// zero and the smallest values, the 2^-55 and 2^-26 shortcuts, both sides
+    /// of the k = 0 and k = -1 reductions, 1, and arguments whose reduction
+    /// takes each reconstruction (k = 3, 23, 56 and above), up to infinity.
+    const PINNED: [(u32, u32); 30] = [
+        (0x0000_0000, 0x0000_0000),
+        (0x0000_0001, 0x0000_0001),
+        (0x0080_0000, 0x0080_0000),
+        (0x23ff_ffff, 0x23ff_ffff),
+        (0x2400_0000, 0x2400_0000),
+        (0x2400_0001, 0x2400_0001),
+        (0x327f_ffff, 0x327f_ffff),
+        (0x3280_0000, 0x3280_0000),
+        (0x3280_0001, 0x3280_0001),
+        (0x3e31_7217, 0x3e2f_b0cc),
+        (0x3e31_7218, 0x3e2f_b0cd),
+        (0x3e31_7219, 0x3e2f_b0cd),
+        (0x3e80_0000, 0x3e7a_cbf5),
+        (0x3f05_1591, 0x3ef4_86f8),
+        (0x3f05_1592, 0x3ef4_86f8),
+        (0x3f05_1593, 0x3ef4_86fb),
+        (0x3f00_0000, 0x3eec_9a9f),
+        (0x3f7f_ffff, 0x3f42_f7d5),
+        (0x3f80_0000, 0x3f42_f7d6),
+        (0x3f80_0001, 0x3f42_f7d6),
+        (0x4000_0000, 0x3f76_ca83),
+        (0x40ff_0000, 0x3f7f_fffc),
+        (0x40ff_8000, 0x3f7f_fffc),
+        (0x4100_0000, 0x3f7f_fffc),
+        (0x419b_0000, 0x3f80_0000),
+        (0x419c_0000, 0x3f80_0000),
+        (0x41af_ffff, 0x3f80_0000),
+        (0x41b0_0000, 0x3f80_0000),
+        (0x7f7f_ffff, 0x3f80_0000),
+        (0x7f80_0000, 0x3f80_0000),
+    ];
+    /// Inputs where fdlibm's `tanhf` is not the correctly rounded result,
+    /// with fdlibm's results (the same measurement): a loaded `tanhf` that
+    /// returns all of them is fdlibm's, and one that computes `tanhf` another
+    /// way (glibc 2.41 and later round correctly) does not.
+    const NOT_CORRECTLY_ROUNDED: [(u32, u32); 8] = [
+        (0x3ed0_9810, 0x3ec5_c560),
+        (0x3ecc_88e0, 0x3ec2_4e8b),
+        (0x400b_35cc, 0x3f79_7a5c),
+        (0x3f30_b360, 0x3f19_1f53),
+        (0x3e69_8620, 0x3e65_8ee1),
+        (0x3f03_edc8, 0x3ef2_bd57),
+        (0x3ef7_1800, 0x3ee5_8b2b),
+        (0x3e87_d630, 0x3e84_bca2),
+    ];
+
+    /// The portable `tanhf` gives the pinned results on this target at every
+    /// branch boundary and range of the algorithm, for both signs.
+    #[test]
+    fn fdlibm_tanhf_gives_the_pinned_results_at_every_branch() {
+        for (input, result) in PINNED.into_iter().chain(NOT_CORRECTLY_ROUNDED) {
+            for sign in [0u32, 0x8000_0000] {
+                assert_eq!(
+                    fdlibm::tanhf_v1(f32::from_bits(input | sign)).to_bits(),
+                    result | sign,
+                    "{:08x}",
+                    input | sign
+                );
+            }
+        }
+    }
+
     /// The portable `tanhf` gives the pinned results on this target for the
-    /// 2^24 inputs in [0.5, 2) (every branch of `expm1f` that `tanhf` uses
-    /// for |x| < 2 runs there).
+    /// 2^24 inputs in [0.5, 2). (There the reduction takes k = -1 and k >= 3
+    /// only; the pinned pairs above cover the other branches, and the full
+    /// digest below every input.)
     #[test]
     fn fdlibm_tanhf_chunk_digest_is_the_pinned_one() {
         assert_eq!(hex(&fdlibm_chunk_digest(0x3f)), CHUNK_3F_DIGEST);
@@ -1363,11 +1432,21 @@ mod tests {
 
     /// On x86-64 Linux with a glibc whose `tanhf` is fdlibm's, the portable
     /// form equals the loaded `tanhf` on a sample across all bit patterns and
-    /// a dense band around the activations' range. (A newer glibc computes
-    /// `tanhf` another way; there the sample differs and this test says so.)
+    /// a dense band around the activations' range. Whether the loaded
+    /// `tanhf` is fdlibm's is decided from pinned results, not from the
+    /// function under test; with another `tanhf` the test says it is skipped.
     #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
     #[test]
     fn fdlibm_tanhf_equals_the_loaded_tanhf_on_a_sample_here() {
+        let loaded_is_fdlibm = NOT_CORRECTLY_ROUNDED.iter().all(|&(input, result)| {
+            std::hint::black_box(f32::from_bits(input)).tanh().to_bits() == result
+        });
+        if !loaded_is_fdlibm {
+            eprintln!(
+                "skipped: the loaded tanhf is not fdlibm's (a glibc that rounds it correctly)"
+            );
+            return;
+        }
         let mut differing = 0u64;
         let mut check = |bits: u32| {
             let x = f32::from_bits(bits);
@@ -1389,26 +1468,7 @@ mod tests {
             let x = (step as f32 / (1u32 << 20) as f32 - 0.5) * 8.0;
             check(x.to_bits());
         }
-        if differing != 0 && glibc_tanhf_is_fdlibm_sample() {
-            panic!("{differing} sampled inputs differ from the loaded tanhf");
-        }
-    }
-
-    /// Whether the loaded `tanhf` looks like fdlibm's: a few inputs where
-    /// the correctly rounded result (glibc 2.41 and later) differs from it.
-    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
-    fn glibc_tanhf_is_fdlibm_sample() -> bool {
-        // If every one of a spread of inputs agrees with the portable form,
-        // the loaded function is the fdlibm one.
-        let mut agree = 0;
-        let total = 4096;
-        for i in 0..total {
-            let x = (i as f32 / total as f32 - 0.5) * 6.0;
-            if fdlibm::tanhf_v1(x).to_bits() == std::hint::black_box(x).tanh().to_bits() {
-                agree += 1;
-            }
-        }
-        agree == total
+        assert_eq!(differing, 0, "sampled inputs differ from the loaded tanhf");
     }
 
     /// The slice form equals `f32::tanh` bit for bit on typical and edge
