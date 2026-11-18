@@ -23,6 +23,7 @@
 //! match's generator draw from it exactly as before.
 use super::{derive_seed, MatchStreamV1};
 use crate::current_tree_learner_v1::AuthenticatedInputV1;
+#[cfg(test)]
 use crate::current_tree_learner_v2::{
     LearnerV2, LearnerV2H16, SnapshotV2, CONTRACT_V2, CONTRACT_V2_H16,
 };
@@ -109,11 +110,12 @@ impl LearnerCheckpointV1 {
         })
     }
 
-    /// A checkpoint player from a bare v2 learner snapshot, for tests and
-    /// tools that hold no checkpoint file. `LearnerV2::restore` refuses
+    /// A checkpoint player from a bare v2 learner snapshot, for tests that
+    /// hold no checkpoint file (compiled for tests only). `LearnerV2::restore` refuses
     /// another contract, another feature identity (which covers this build's
     /// learner and session sources), a bad configuration and malformed
     /// arrays.
+    #[cfg(test)]
     pub(crate) fn from_snapshot_v1(
         path: impl Into<String>,
         sha256: impl Into<String>,
