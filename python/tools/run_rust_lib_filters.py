@@ -135,6 +135,30 @@ def default_library_names() -> list[str]:
     return listed_names(result.stdout, "")
 
 
+DEFAULT_LIST_SCHEMA = "mtg-ci-default-library-cases/v1"
+
+
+def write_default_library_list(path: Path) -> list[str]:
+    """Build the default-feature library test binary once and record its case names for the Limited-only shards."""
+    names = default_library_names()
+    path.write_text(json.dumps({"schema": DEFAULT_LIST_SCHEMA, "count": len(names), "names": names}) + "\n",
+                    encoding="utf-8")
+    print(f"Default library cases: {len(names)} written to {path}", flush=True)
+    return names
+
+
+def read_default_library_list(path: Path) -> list[str]:
+    record = json.loads(path.read_text(encoding="utf-8"))
+    names = record.get("names") if isinstance(record, dict) else None
+    if (not isinstance(names, list) or not names or record.get("schema") != DEFAULT_LIST_SCHEMA
+            or record.get("count") != len(names)
+            or any(not isinstance(name, str) or not name for name in names)
+            or names != sorted(set(names))):
+        raise ValueError(f"Not a default library case list: {path}")
+    print(f"Default library cases: {len(names)} read from {path}", flush=True)
+    return names
+
+
 def listed_names(listing: str, test_filter: str) -> list[str]:
     names = []
     summary_count = None
@@ -384,7 +408,7 @@ def main() -> int:
         return first_failure
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--features", required=True)
+    parser.add_argument("--features")
     parser.add_argument("--filter-timeout-seconds", type=int, default=1800)
     parser.add_argument("--shard-index", type=int)
     parser.add_argument("--shard-count", type=int)
@@ -395,16 +419,34 @@ def main() -> int:
     parser.add_argument("--limited-only-workflow", type=Path,
                         help="Run every case only the Limited build compiles that no Limited "
                              "filter in this workflow selects")
+    parser.add_argument("--default-library-list", type=Path,
+                        help="With --limited-only-workflow: the default-feature library case names written by "
+                             "--write-default-library-list, instead of building that library here")
+    parser.add_argument("--write-default-library-list", type=Path,
+                        help="Only build the default-feature library test binary and write its case names here")
     parser.add_argument("filters", nargs="*")
     args = parser.parse_args()
+    if args.write_default_library_list is not None:
+        if (args.features is not None or args.filters or args.limited_only_workflow is not None
+                or args.default_library_list is not None or args.shard_index is not None
+                or args.shard_count is not None):
+            parser.error("--write-default-library-list takes no other option")
+        write_default_library_list(args.write_default_library_list)
+        return 0
+    if args.features is None:
+        parser.error("--features is required")
+    if args.default_library_list is not None and args.limited_only_workflow is None:
+        parser.error("--default-library-list requires --limited-only-workflow")
     if args.limited_only_workflow is not None:
         if args.filters:
             parser.error("--limited-only-workflow takes no filters")
         if not args.isolated_cases:
             parser.error("--limited-only-workflow requires --isolated-cases")
         covered = workflow_limited_filters(args.limited_only_workflow)
+        default = (read_default_library_list(args.default_library_list) if args.default_library_list is not None
+                   else default_library_names())
         selection = Path(tempfile.mkdtemp()) / "limited_only_selection.json"
-        selection.write_text(json.dumps({"default": default_library_names(), "covered": covered}))
+        selection.write_text(json.dumps({"default": default, "covered": covered}))
         filters = []
     else:
         filters = valid_filters(args.filters)
