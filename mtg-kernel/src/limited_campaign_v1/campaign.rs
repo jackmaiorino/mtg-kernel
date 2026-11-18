@@ -875,7 +875,7 @@ impl RunnerV1 {
             self.stage_iteration(update, &receipt)?;
         io.add(super::diagnostics::elapsed_ns(started));
         let milestone = mode_of(&self.config)? != ModeV1::Qualification
-            && update % self.config.dev_interval == 0;
+            && update.is_multiple_of(self.config.dev_interval);
         let mut dev_score = None;
         let dev = if milestone {
             let label = format!("candidate:step_{update:04}");
@@ -906,7 +906,7 @@ impl RunnerV1 {
         self.finish_iteration(update, (staging, receipt_sha256, checkpoint_sha256), dev)?;
         io.add(super::diagnostics::elapsed_ns(started));
         self.stages.io = io;
-        if update % LEAGUE_INTERVAL_V1 == 0 {
+        if update.is_multiple_of(LEAGUE_INTERVAL_V1) {
             self.snapshots.insert(update, reloaded);
         }
         self.previous_truncated = Some(truncated);
@@ -1309,7 +1309,7 @@ pub fn resume_v1(launch: &LaunchV1) -> Result<RunOutcomeV1> {
     let mut dev_scores = BTreeMap::new();
     for link in &chain {
         let step = link.checkpoint.step;
-        if step % LEAGUE_INTERVAL_V1 == 0 {
+        if step.is_multiple_of(LEAGUE_INTERVAL_V1) {
             snapshots.insert(step, link.checkpoint.policy_v1()?);
         }
         if link.complete.dev_sha256.is_some() {
