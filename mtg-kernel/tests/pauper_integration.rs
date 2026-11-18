@@ -76,6 +76,8 @@ mod mana_permanents;
 mod mill_cards;
 #[path = "pauper/murmuring_mystic.rs"]
 mod murmuring_mystic;
+#[path = "pauper/nyxborn_bestow_sacrifice_v1.rs"]
+mod nyxborn_bestow_sacrifice_v1;
 #[path = "pauper/pauper_counterspells.rs"]
 mod pauper_counterspells;
 #[path = "pauper/pauper_green_utility.rs"]
