@@ -171,6 +171,17 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(self.route("windows-2025", "eternal", **event(), **linux_only), "windows-2025")
         self.assertEqual(self.route("windows-2025", "eternal", **event("push"), **linux_only), "windows-2025")
 
+    def test_a_group_run_as_parts_routes_each_part_by_its_own_name(self):
+        # The value set on 2026-11-18 routes the first Eternal integration part and no other.
+        today = {"vars.MTG_CI_LINUX_GROUPS": '["eternal-integration"]', "vars.MTG_CI_LINUX_RUNNER": json.dumps(LINUX_POOL)}
+        self.assertEqual(self.route("ubuntu-24.04", "eternal-integration", **event(), **today), LINUX_POOL)
+        for part in ("eternal-integration-1", "eternal-integration-2", "eternal"):
+            with self.subTest(part=part):
+                self.assertEqual(self.route("ubuntu-24.04", part, **event(), **today), "ubuntu-24.04")
+        second = {**today, "vars.MTG_CI_LINUX_GROUPS": '["eternal-integration-2"]'}
+        self.assertEqual(self.route("ubuntu-24.04", "eternal-integration-2", **event(), **second), LINUX_POOL)
+        self.assertEqual(self.route("ubuntu-24.04", "eternal-integration", **event(), **second), "ubuntu-24.04")
+
     def test_windows_routing_is_unchanged(self):
         self.assertEqual(self.route("windows-2025", "workspace-targets", **event(), **EVERY_POOL), PR_POOL)
         self.assertEqual(self.route("windows-2025", "workspace-lib", **event(), **EVERY_POOL), WINDOWS_POOL)
@@ -180,20 +191,62 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(self.route("windows-2025", "workspace-targets", **event()), "windows-2025")
 
 
+def job_block(name, following):
+    text = WORKFLOW.read_text(encoding="utf-8")
+    return text[text.index(f"\n  {name}:\n"):text.index(f"\n  {following}:\n")]
+
+
+def matrix_groups(block):
+    listing = block[block.index("        group:\n"):]
+    end = re.search(r"^        [a-z]|^    [a-z]", listing[len("        group:\n"):], re.MULTILINE)
+    listing = listing[:len("        group:\n") + end.start()]
+    return re.findall(r"^          - ([a-z0-9-]+)$", listing, re.MULTILINE)
+
+
+ETERNAL_PARTS = {"eternal-integration", "eternal-integration-1", "eternal-integration-2"}
+
+
 class MatrixTests(unittest.TestCase):
     def test_a_pull_request_and_its_windows_complement_cover_every_group_once(self):
-        text = WORKFLOW.read_text(encoding="utf-8")
-        block = text[text.index("\n  rust-test-groups:\n"):text.index("\n  limited-build:\n")]
-        groups = re.findall(r"^          - ([a-z-]+)$", block[:block.index("        exclude:")], re.MULTILINE)
+        block = job_block("rust-test-groups", "limited-build")
+        groups = matrix_groups(block)
         exclude = block[block.index("        exclude:"):].splitlines()[0]
-        pull_request, complement = (set(re.findall(r'\{"os":"windows-2025","group":"([a-z-]+)"\}', part))
+        pull_request, complement = (set(re.findall(r'\{"os":"windows-2025","group":"([a-z0-9-]+)"\}', part))
                                     for part in exclude.split("'windows-complement'"))
         self.assertEqual(len(groups), len(set(groups)))
         self.assertEqual(pull_request | complement, set(groups))
         self.assertFalse(pull_request & complement)
         # Windows runs the Eternal catalog on main and in the complement, never in a pull request's own run.
-        self.assertEqual({group for group in groups if group.startswith("eternal")}, {"eternal", "eternal-integration"})
-        self.assertLessEqual({"eternal", "eternal-integration"}, pull_request)
+        self.assertEqual({group for group in groups if group.startswith("eternal")}, {"eternal", *ETERNAL_PARTS})
+        self.assertLessEqual({"eternal", *ETERNAL_PARTS}, pull_request)
+        # Pull requests keep both native Store parts on Windows.
+        self.assertLessEqual({"native-store", "native-store-1"}, complement)
+
+    def test_every_shard_of_a_sharded_step_has_its_own_matrix_group(self):
+        # A shard count larger than the parts in the matrix would leave a shard's tests in no job, and a
+        # smaller one would fail the extra parts. Parts are named <group>, <group>-1, ..., <group>-(n-1).
+        tests = job_block("rust-test-groups", "limited-build")
+        cases = [(tests, "eternal-integration", "run_rust_integration_tests.py eternal_integration")]
+        for block, family, marker in cases:
+            with self.subTest(family=family):
+                (line,) = [line for line in block.splitlines() if marker in line and "--shard-count" in line]
+                count = int(re.search(r"--shard-count (\d+)", line).group(1))
+                parts = [group for group in matrix_groups(block) if group == family or group.startswith(family + "-")]
+                self.assertEqual(parts, [family] + [f"{family}-{index}" for index in range(1, count)])
+
+    def test_each_native_store_part_runs_its_own_build(self):
+        block = job_block("rust-test-groups", "limited-build")
+        steps = {group: [line for line in block.split("\n      - name: ") if f"if: matrix.group == '{group}'" in line]
+                 for group in ("native-store", "native-store-1")}
+        self.assertIn("--lib native_store_production_capture_v2::", "".join(steps["native-store"]))
+        self.assertIn("--test native_cli_platform_stub_v2", "".join(steps["native-store-1"]))
+        self.assertNotIn("--test native_cli_platform_stub_v2", "".join(steps["native-store"]))
+
+    def test_the_parts_of_a_group_share_one_build_cache(self):
+        block = job_block("rust-test-groups", "limited-build")
+        self.assertIn("scope: tests-${{ env.MTG_CI_BUILD_GROUP }}", block)
+        self.assertNotIn("scope: tests-${{ matrix.group }}", block)
+        self.assertIn("matrix.group == env.MTG_CI_BUILD_GROUP", block)
 
 
 if __name__ == "__main__":

@@ -153,7 +153,7 @@ jobs:
             # markdown are irrelevant. build.rs still hashes every tracked
             # file into its provenance digest; no test pins that value.
             case "$f" in
-              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/check_rust_integration_inventory.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
+              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/rust_integration_module_seconds.json|python/tools/check_rust_integration_inventory.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
                 rust_relevant=true ;;
               python/tests/*|python/tools/*|tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
@@ -300,7 +300,10 @@ jobs:
           mode: save
 
   # Groups that build their own feature set run as parallel jobs;
-  # `rust-tests` below keeps the per-OS check names.
+  # `rust-tests` below keeps the per-OS check names. A group too long for one
+  # job runs as parts named <group>, <group>-1, <group>-2 and so on (here
+  # eternal-integration and native-store, in the Limited job limited-only and
+  # limited-model); each part is a matrix group of its own.
   rust-test-groups:
     name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})
     needs: detect-changes
@@ -326,8 +329,11 @@ jobs:
           - standard
           - eternal
           - eternal-integration
+          - eternal-integration-1
+          - eternal-integration-2
           - cuda
           - native-store
+          - native-store-1
           - trace
           - saved-input
           - limited-store
@@ -337,7 +343,7 @@ jobs:
         # (2026-10-10 to 10-14), so they run on main, tags and manual
         # dispatches, which still cover every group on both systems. A Windows
         # complement dispatch runs exactly the Windows groups excluded here.
-        exclude: ${{ fromJSON((needs.detect-changes.outputs.scope == 'pr' || needs.detect-changes.outputs.scope == 'windows-pr') && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"eternal-integration"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-lib"},{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"}]' || '[]') }}
+        exclude: ${{ fromJSON((needs.detect-changes.outputs.scope == 'pr' || needs.detect-changes.outputs.scope == 'windows-pr') && '[{"os":"windows-2025","group":"standard"},{"os":"windows-2025","group":"eternal"},{"os":"windows-2025","group":"eternal-integration"},{"os":"windows-2025","group":"eternal-integration-1"},{"os":"windows-2025","group":"eternal-integration-2"},{"os":"windows-2025","group":"cuda"},{"os":"windows-2025","group":"trace"},{"os":"windows-2025","group":"saved-input"},{"os":"windows-2025","group":"limited-store"}]' || needs.detect-changes.outputs.scope == 'windows-complement' && '[{"os":"windows-2025","group":"workspace-lib"},{"os":"windows-2025","group":"workspace-targets"},{"os":"windows-2025","group":"native-store"},{"os":"windows-2025","group":"native-store-1"}]' || '[]') }}
     # Linux groups use GitHub's hosted runners, which are free for this
     # public repository: the WSL runners can't be pinned to cores, so they
     # pause for any host reservation. Windows groups default to GitHub's
@@ -358,6 +364,10 @@ jobs:
     # self-hosted runner takes one job at a time and a job cannot move once
     # queued for it, so name only groups it finishes faster than they
     # arrive, and clear the list to send new runs back to hosted runners.
+    # Both lists name matrix groups exactly, so a group run as parts routes
+    # each part by its own name: '["eternal-integration"]' routes that
+    # group's first part, which holds its longest module, and leaves
+    # eternal-integration-1 and eternal-integration-2 on hosted runners.
     runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON(vars.MTG_CI_PR_WINDOWS_GROUPS || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
     steps:
       # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
@@ -463,12 +473,21 @@ jobs:
         with:
           python-version-file: .python-version
 
+      # The parts of a group (<group>, <group>-1, ...) build the same feature
+      # set, so they share the group's compiled-output cache and, on a
+      # self-hosted runner, its persistent target directory. Only the first
+      # part saves the cache, so the parts add no cache entries.
+      - name: Name the build this group shares with its parts
+        env:
+          MATRIX_GROUP: ${{ matrix.group }}
+        run: echo "MTG_CI_BUILD_GROUP=${MATRIX_GROUP%-[0-9]*}" >> "$GITHUB_ENV"
+
       - name: Use the runner's persistent target directory
         run: |
           if [ -n "${MTG_CI_TARGET_ROOT:-}" ]; then
-            target_dir="$MTG_CI_TARGET_ROOT/${{ matrix.group }}"
+            target_dir="$MTG_CI_TARGET_ROOT/$MTG_CI_BUILD_GROUP"
             if [ "$RUNNER_OS" = Windows ]; then
-              target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/${{ matrix.group }}")"
+              target_dir="$(cygpath -w "$(cygpath -u "$MTG_CI_TARGET_ROOT")/$MTG_CI_BUILD_GROUP")"
             fi
             printf 'CARGO_TARGET_DIR=%s\n' "$target_dir" >> "$GITHUB_ENV"
             # With a persistent target directory, incremental compilation
@@ -496,7 +515,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         uses: ./.github/actions/cargo-build-cache
         with:
-          scope: tests-${{ matrix.group }}
+          scope: tests-${{ env.MTG_CI_BUILD_GROUP }}
 
       - name: Validate MageZero Standard catalog
         if: matrix.group == 'standard'
@@ -563,14 +582,32 @@ jobs:
           cargo clippy --release --locked -p mtg-kernel --all-targets --features eternal-fixtures -- -D warnings
           python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_ has_a_fixed_seat_human_prompt full_text_v1::tests:: graveyard_order_v1::tests:: premodern_ordered_public_v1:: eternal_actor_ eternal_cost_choice_v1::
 
+      # The Eternal suite runs as three parts, one job each. Every part builds
+      # the whole suite and runs one shard of its modules: the runner places
+      # whole modules by their recorded hosted seconds
+      # (python/tools/rust_integration_module_seconds.json, with the mean for
+      # an unrecorded module), prints the plan of all three shards and fails
+      # unless it holds every module exactly once. On 2026-11-18 one module
+      # took 24 of the suite's 60 test minutes; it is shard 0 on its own, and
+      # the other two shards hold about 18 minutes each. The Standard suite on
+      # this catalog (about 4 minutes with its build) runs whole in the last
+      # part.
       - name: Run the integration suites on the eternal catalog
-        if: matrix.group == 'eternal-integration'
+        if: startsWith(matrix.group, 'eternal-integration')
+        env:
+          MATRIX_GROUP: ${{ matrix.group }}
         run: |
           if [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
             export CARGO_BUILD_JOBS=2
           fi
-          python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures
-          python python/tools/run_rust_integration_tests.py standard_integration --features eternal-fixtures
+          shard=0
+          if [ "$MATRIX_GROUP" != eternal-integration ]; then
+            shard="${MATRIX_GROUP##*-}"
+          fi
+          python python/tools/run_rust_integration_tests.py eternal_integration --features eternal-fixtures --shard-index "$shard" --shard-count 3
+          if [ "$shard" = 2 ]; then
+            python python/tools/run_rust_integration_tests.py standard_integration --features eternal-fixtures
+          fi
 
       # The library tests and all other targets are disjoint, so the two
       # halves of the workspace suite run as parallel jobs. Until 2026-11-16
@@ -620,10 +657,17 @@ jobs:
           cargo test --release --locked -p mtg-kernel --features "$features" --test s_learner_profile_v1
           python -m unittest discover -s scripts/experiments/s_learner_attribution_v1 -p test_run.py
 
+      # Two parts, one job each: the library test build and the plain library
+      # with the CLI stub test are separate whole-crate builds, which took 32
+      # and 26 minutes one after the other on hosted Windows (2026-11-18).
       - name: Validate native Store production feature boundary
         if: matrix.group == 'native-store'
         run: |
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --lib native_store_production_capture_v2::
+
+      - name: Validate the native Store CLI platform stub
+        if: matrix.group == 'native-store-1'
+        run: |
           cargo test --release --locked -p mtg-kernel --features native-training-store-v2-production --test native_cli_platform_stub_v2
 
       - name: Validate FDN profiles under the native Store feature
@@ -663,10 +707,10 @@ jobs:
             action_block_gradient_diagnostic_v1::
 
       - name: Save compiled test output
-        if: success() && runner.environment == 'github-hosted'
+        if: success() && runner.environment == 'github-hosted' && matrix.group == env.MTG_CI_BUILD_GROUP
         uses: ./.github/actions/cargo-build-cache
         with:
-          scope: tests-${{ matrix.group }}
+          scope: tests-${{ env.MTG_CI_BUILD_GROUP }}
           mode: save
 
       - name: Report the hosted Linux runner's memory use
