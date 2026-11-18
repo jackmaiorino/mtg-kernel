@@ -623,25 +623,25 @@ pub(crate) mod statics {
 
     /// Urborg: a land that is a Swamp only through it has "{T}: Add {B}."
     /// While an effect has removed the land's printed abilities, its own
-    /// black is gone: it has "{T}: Add {B}." if it is still a Swamp after
-    /// the land type effects (a later land-type setter takes the Swamp
-    /// away) and no later removal of all abilities applies.
+    /// black is gone: it has the Swamp's "{T}: Add {B}." if it is still a
+    /// Swamp after the land type effects (a later land-type setter takes the
+    /// Swamp away) and no removal of all abilities applies, whatever the
+    /// timestamps: the ability is the type's own, not a grant (305.6).
     pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<ManaColor> {
         if !is_extra_swamp(state, object) {
             return Vec::new();
         }
         if !crate::continuous_characteristics_v1::printed_abilities_active(state, object) {
-            return extra_swamp_timestamp(state, object)
-                .filter(|&timestamp| {
-                    crate::engine::has_effective_subtype(
-                        state,
-                        object,
-                        crate::card_def::Subtype::Swamp,
-                    ) && crate::continuous_characteristics_v1::grant_survives_land_type_setters(
-                        state, object, timestamp,
-                    )
-                })
-                .map_or_else(Vec::new, |_| vec![ManaColor::B]);
+            let keeps = crate::engine::has_effective_subtype(
+                state,
+                object,
+                crate::card_def::Subtype::Swamp,
+            ) && crate::continuous_characteristics_v1::land_type_mana_survives(state, object);
+            return if keeps {
+                vec![ManaColor::B]
+            } else {
+                Vec::new()
+            };
         }
         let live = state.objects.get(object);
         let def = &CARD_DEFS[live.card_def as usize];

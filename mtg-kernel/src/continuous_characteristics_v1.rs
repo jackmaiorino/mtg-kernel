@@ -65,6 +65,18 @@ pub(crate) fn grant_survives_land_type_setters(
     granted_ability_removal_timestamp(state, host).is_none_or(|removed_at| timestamp > removed_at)
 }
 
+/// Whether `host` keeps the mana ability that comes with a basic land type
+/// it has (305.6). That ability is intrinsic to the type, not a grant, so it
+/// does not compete with a removal of all abilities by timestamp: any such
+/// removal (Dress Down, Alpine Moon, an Elk) takes it away, because layer 6
+/// applies after every type change of layer 4 (613.1). A land-type setter is
+/// not such a removal (305.7). Only a true layer-6 grant (Abundant Growth's,
+/// Petrified Hamlet's) uses `grant_survives_land_type_setters` instead.
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+pub(crate) fn land_type_mana_survives(state: &GameState, host: ObjectId) -> bool {
+    granted_ability_removal_timestamp(state, host).is_none()
+}
+
 fn removal_timestamp_with(
     state: &GameState,
     host: ObjectId,

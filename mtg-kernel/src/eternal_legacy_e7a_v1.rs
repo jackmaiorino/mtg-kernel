@@ -2957,25 +2957,25 @@ pub(crate) fn extra_forest_timestamp(state: &GameState, object: ObjectId) -> Opt
 
 /// Yavimaya: a land that is a Forest only through it has "{T}: Add {G}."
 /// While an effect has removed the land's printed abilities, its own green
-/// is gone: it has "{T}: Add {G}." if it is still a Forest after the land
-/// type effects (a later land-type setter takes the Forest away) and no
-/// later removal of all abilities applies.
+/// is gone: it has the Forest's "{T}: Add {G}." if it is still a Forest
+/// after the land type effects (a later land-type setter takes the Forest
+/// away) and no removal of all abilities applies, whatever the timestamps:
+/// the ability is the type's own, not a grant (305.6).
 pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<ManaColor> {
     if !is_extra_forest(state, object) {
         return Vec::new();
     }
     if !crate::continuous_characteristics_v1::printed_abilities_active(state, object) {
-        return extra_forest_timestamp(state, object)
-            .filter(|&timestamp| {
-                crate::engine::has_effective_subtype(
-                    state,
-                    object,
-                    crate::card_def::Subtype::Forest,
-                ) && crate::continuous_characteristics_v1::grant_survives_land_type_setters(
-                    state, object, timestamp,
-                )
-            })
-            .map_or_else(Vec::new, |_| vec![ManaColor::G]);
+        let keeps = crate::engine::has_effective_subtype(
+            state,
+            object,
+            crate::card_def::Subtype::Forest,
+        ) && crate::continuous_characteristics_v1::land_type_mana_survives(state, object);
+        return if keeps {
+            vec![ManaColor::G]
+        } else {
+            Vec::new()
+        };
     }
     let live = state.objects.get(object);
     let def = &CARD_DEFS[live.card_def as usize];

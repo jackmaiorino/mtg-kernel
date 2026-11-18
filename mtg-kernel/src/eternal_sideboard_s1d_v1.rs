@@ -1821,10 +1821,11 @@ pub(crate) mod statics {
     /// it has that type's mana ability. While an effect has removed the
     /// land's printed abilities, its own colors are gone: it has the mana
     /// ability of each type it still has after the land type effects (a
-    /// later land-type setter takes the type away) while no later removal of
-    /// all abilities applies.
+    /// later land-type setter takes the type away) while no removal of all
+    /// abilities applies, whatever the timestamps: the ability is the type's
+    /// own, not a grant (305.6).
     pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<ManaColor> {
-        let extra = extra_land_type_timestamps(state, object);
+        let extra = extra_land_types(state, object);
         if extra.is_empty() {
             return Vec::new();
         }
@@ -1832,8 +1833,10 @@ pub(crate) mod statics {
         let def = &CARD_DEFS[live.card_def as usize];
         let printed_active =
             crate::continuous_characteristics_v1::printed_abilities_active(state, object);
+        let type_mana_survives = printed_active
+            || crate::continuous_characteristics_v1::land_type_mana_survives(state, object);
         let mut colors = Vec::new();
-        for (subtype, timestamp) in extra {
+        for subtype in extra {
             let color = match subtype {
                 Subtype::Plains => ManaColor::W,
                 Subtype::Island => ManaColor::U,
@@ -1856,10 +1859,7 @@ pub(crate) mod statics {
                         .any(|ability| ability.colors.contains(&color));
                 !own
             } else {
-                crate::engine::has_effective_subtype(state, object, subtype)
-                    && crate::continuous_characteristics_v1::grant_survives_land_type_setters(
-                        state, object, timestamp,
-                    )
+                type_mana_survives && crate::engine::has_effective_subtype(state, object, subtype)
             };
             if granted && !colors.contains(&color) {
                 colors.push(color);
