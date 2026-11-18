@@ -725,7 +725,10 @@ pub(crate) fn execute(op: &S1qOpV1, ctx: &ExecCtx, state: &mut GameState) {
         S1qOpV1::LevelerCastV1 | S1qOpV1::LevelerAttackV1 => resolve_destroy(ctx, state, true),
         S1qOpV1::SubmersibleBounceV1 => resolve_bounce(ctx, state),
         S1qOpV1::SubmersibleExhaustV1 => resolve_exhaust(ctx, state),
-        S1qOpV1::BahamutDestroyV1 { .. } => resolve_destroy(ctx, state, false),
+        S1qOpV1::BahamutDestroyV1 { chapter } => {
+            debug_assert!(matches!(chapter, 1 | 2), "chapters I and II destroy");
+            resolve_destroy(ctx, state, false)
+        }
         S1qOpV1::BahamutMegaFlareV1 => resolve_mega_flare(ctx, state),
     }
 }
