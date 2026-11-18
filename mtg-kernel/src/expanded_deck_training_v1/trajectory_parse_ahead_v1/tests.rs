@@ -147,4 +147,20 @@ fn an_entry_is_never_charged_less_than_the_capacity_it_keeps_alive() {
     assert_eq!(retained_charge_v1(100, 4096), 4096);
     // A sealed record: the record length exceeds the frame's buffer.
     assert_eq!(retained_charge_v1(4096, 100), 4096);
+
+    // Through the store's own insertion: a short plain record in a roomy
+    // buffer, as a serializer can leave it, is charged the buffer.
+    let key = "parse-ahead-test-roomy";
+    let mut roomy = Vec::with_capacity(64 * 1024);
+    roomy.extend_from_slice(b"{}");
+    let capacity = roomy.capacity();
+    assert!(capacity >= 64 * 1024);
+    insert_v1(key, roomy, [SlotV1::Gone, SlotV1::Gone]);
+    let mut state = lock_v1(shared_v1());
+    assert_eq!(state.entries[key].charge, capacity);
+    // Dropping the entry gives back exactly what it was charged.
+    let before = state.retained_bytes;
+    state.remove_v1(key);
+    assert_eq!(before - state.retained_bytes, capacity);
+    assert!(!state.entries.contains_key(key));
 }

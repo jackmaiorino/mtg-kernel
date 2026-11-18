@@ -627,3 +627,30 @@ fn a_shared_record_is_charged_the_capacity_it_keeps_alive() {
         (vec!["a".into()], overhead + tight_capacity)
     );
 }
+
+/// One cache does not serve both read modes: resident reads do not turn on
+/// under a run without them, and once on they refuse such a run.
+#[test]
+fn a_cache_serves_one_read_mode() {
+    let cache = VerifiedBytesCacheV1::new_v1(4096, 16);
+    let first = cache.enter_run_v1(false).unwrap();
+    let second = cache.enter_run_v1(false).unwrap();
+    let refused = cache.enter_run_v1(true).err().unwrap();
+    assert!(refused.contains("in flight"), "{refused}");
+    assert!(!cache.resident_v1());
+    drop(first);
+    assert!(cache.enter_run_v1(true).is_err());
+    assert!(!cache.resident_v1());
+    drop(second);
+    let resident = cache.enter_run_v1(true).unwrap();
+    assert!(cache.resident_v1());
+    let refused = cache.enter_run_v1(false).err().unwrap();
+    assert!(refused.contains("needs its own process"), "{refused}");
+    // The mode outlives the run that turned it on.
+    drop(resident);
+    assert!(cache.resident_v1());
+    assert!(cache.enter_run_v1(false).is_err());
+    assert!(cache.enter_run_v1(true).is_ok());
+    // A refused registration counted nothing: resident runs still start.
+    assert!(cache.enter_run_v1(true).is_ok());
+}
