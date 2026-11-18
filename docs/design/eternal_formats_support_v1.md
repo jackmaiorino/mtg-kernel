@@ -2535,7 +2535,9 @@ A batch is one event for replacement effects (614.1, 614.6): the name-keyed grav
 replacements (Rest in Peace, Leyline of the Void, Dauthi Voidwalker, with Yawgmoth's Will, Suplex,
 Lunarch Veteran and unearth before them in the same order as for a single event) are decided for
 every member before any member moves (`event::pre_apply_batch_zone_replacements_v1`), for an
-effect batch, a sacrifice group and a state-based death group alike. A member that a finality
+effect batch, a sacrifice group and a state-based death group alike. A cost that sacrifices
+several permanents commits as one group whenever such a replacement applies to one of them (Dread
+Return's flashback sacrificing a Rest in Peace that Opalescence animates). A member that a finality
 counter or an exile-if-it-would-die shield applies to is left out: those general replacements apply
 first, as for a single event, so it gets no void counter. A Rest in Peace or Dauthi
 Voidwalker destroyed in the batch still exiles the other members (Pest Infestation, every
