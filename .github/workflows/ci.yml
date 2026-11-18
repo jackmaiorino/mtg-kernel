@@ -561,7 +561,7 @@ jobs:
           # the test build and the small targets.
           cargo clippy --release --locked -p mtg-kernel --lib --features eternal-fixtures -- -D warnings
           cargo clippy --release --locked -p mtg-kernel --all-targets --features eternal-fixtures -- -D warnings
-          python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_ has_a_fixed_seat_human_prompt full_text_v1::tests:: graveyard_order_v1::tests:: premodern_ordered_public_v1::
+          python python/tools/run_rust_lib_filters.py --features eternal-fixtures card_def:: issue567_ has_a_fixed_seat_human_prompt full_text_v1::tests:: graveyard_order_v1::tests:: premodern_ordered_public_v1:: eternal_actor_ eternal_cost_choice_v1::
 
       - name: Run the integration suites on the eternal catalog
         if: matrix.group == 'eternal-integration'

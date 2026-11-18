@@ -23,7 +23,7 @@ mod native;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 124] = [
+const PLAYABLE_75: [(&str, &str); 132] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -85,6 +85,14 @@ const PLAYABLE_75: [(&str, &str); 124] = [
     ("pauper", "pauper-izzet-faeries"),
     ("pauper", "pauper-4c-ephemerate"),
     ("pauper", "tron-c244ab01-c9e3-400d-8db1-6d717616b7e2"),
+    ("pauper", "pauper-white-aggro"),
+    (
+        "pauper",
+        "pauper-mono-white-aggro-6b67ea64-5bde-42ea-8d1a-93578d3e3f3c",
+    ),
+    ("pauper", "pauper-snacker-gates"),
+    ("pauper", "pauper-boros-bully"),
+    ("pauper", "pauper-azorius-faeries"),
     ("legacy", "legacy-dimir-tempo"),
     ("legacy", "legacy-izzet-delver"),
     ("legacy", "legacy-doomsday"),
@@ -137,6 +145,9 @@ const PLAYABLE_75: [(&str, &str); 124] = [
     ("legacy", "legacy-jeskai-control"),
     ("legacy", "legacy-led-dredge"),
     ("legacy", "legacy-bant-control"),
+    ("legacy", "legacy-rakdos-reanimator"),
+    ("legacy", "legacy-naya-initiative"),
+    ("legacy", "legacy-dimir-control"),
     ("vintage", "vintage-esper-lurrus-control"),
     ("vintage", "vintage-dimir-lurrus-control"),
     ("vintage", "vintage-lurrus-po"),
@@ -702,7 +713,7 @@ fn native_opening_match_uses_real_london_keeps_and_preserves_the_profile_both_se
         Err(EternalBo3ErrorV1::NativeOpeningSetup { .. })
     ));
     let mut unrelated = main.clone();
-    unrelated[0] = id("Coalition Honor Guard");
+    unrelated[0] = id("Volrath's Shapeshifter");
     assert!(matches!(
         EternalRegisteredDeckV1::new_with_native_opening_v1(
             format,
@@ -1208,6 +1219,43 @@ fn s1n_completed_75_decks_play_best_of_three_with_random_sideboarding() {
         ),
         ("legacy-led-dredge", "legacy-dimir-tempo", 0x5331_4e30),
         ("vintage-scam", "vintage-blue-tempo", 0x5331_4e40),
+    ] {
+        let first = find(first);
+        let second = find(second);
+        let native = needs_native_opening(&first) || needs_native_opening(&second);
+        let pair = if native {
+            [natively(&first), natively(&second)]
+        } else {
+            [first, second]
+        };
+        for seed in [base_seed, base_seed + 1] {
+            let record = play_match(pair.clone(), seed, native);
+            let replay = play_match(pair.clone(), seed, native);
+            assert_eq!(record.transcripts, replay.transcripts);
+            assert_eq!(record.winner, replay.winner);
+            assert!(record.sideboarded_games > 0);
+        }
+    }
+}
+
+#[test]
+fn s1o_completed_75_decks_play_best_of_three_with_random_sideboarding() {
+    let decks = registered_snapshot_decks();
+    let find = |archetype: &str| -> EternalRegisteredDeckV1 {
+        decks
+            .iter()
+            .find(|(_, deck)| deck.deck_id() == archetype)
+            .map(|(_, deck)| deck.clone())
+            .unwrap()
+    };
+    for (first, second, base_seed) in [
+        (
+            "legacy-rakdos-reanimator",
+            "legacy-sneak-and-show",
+            0x5331_4f20_u64,
+        ),
+        ("legacy-naya-initiative", "legacy-dimir-tempo", 0x5331_4f30),
+        ("legacy-dimir-control", "legacy-reanimator", 0x5331_4f40),
     ] {
         let first = find(first);
         let second = find(second);

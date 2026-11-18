@@ -298,6 +298,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c4b_v1::C4bStateV1::is_empty"
     )]
     pub c4b: crate::eternal_cube_c4b_v1::C4bStateV1,
+    /// Sideboard wave S1o's state (`eternal_sideboard_s1o_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_sideboard_s1o_v1::S1oStateV1::is_empty"
+    )]
+    pub s1o: crate::eternal_sideboard_s1o_v1::S1oStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -618,6 +624,9 @@ pub enum EternalOpV1 {
     /// A leaf owned by Vintage Cube wave C4c's module. Appended to
     /// preserve existing stack and continuation hash discriminants.
     C4cV1(crate::eternal_cube_c4c_v1::C4cOpV1),
+    /// A leaf owned by sideboard wave S1o's module. Appended to preserve
+    /// existing stack and continuation hash discriminants.
+    S1oV1(crate::eternal_sideboard_s1o_v1::S1oOpV1),
 }
 
 /// Whether `condition` triggers on its source's own arrival in the zone it
@@ -708,6 +717,7 @@ impl EternalOpV1 {
             EternalOpV1::C4aV1(op) => op.contains_player_choice(),
             EternalOpV1::C4bV1(op) => op.contains_player_choice(),
             EternalOpV1::C4cV1(op) => op.contains_player_choice(),
+            EternalOpV1::S1oV1(op) => op.contains_player_choice(),
             _ => e3::contains_player_choice(self),
         }
     }
@@ -1075,6 +1085,10 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
     if let Some(spec) = crate::eternal_premodern_p3h_v1::trigger_target_spec(name, effect) {
         return Some(spec);
     }
+    // Legacy sideboard wave S1o's printed triggers.
+    if let Some(spec) = crate::eternal_sideboard_s1o_v1::trigger_target_spec(name, effect) {
+        return Some(spec);
+    }
     // Vintage Cube wave C1a's printed and queued triggers.
     if let Some(spec) = crate::eternal_cube_c1a_v1::trigger_target_spec(name, effect) {
         return Some(spec);
@@ -1382,6 +1396,7 @@ pub(crate) fn execute(op: &EternalOpV1, ctx: &ExecCtx, state: &mut GameState) {
         EternalOpV1::C4aV1(op) => crate::eternal_cube_c4a_v1::execute(op, ctx, state),
         EternalOpV1::C4bV1(op) => crate::eternal_cube_c4b_v1::execute(op, ctx, state),
         EternalOpV1::C4cV1(op) => crate::eternal_cube_c4c_v1::execute(op, ctx, state),
+        EternalOpV1::S1oV1(op) => crate::eternal_sideboard_s1o_v1::execute(op, ctx, state),
         EternalOpV1::GainEnergy { amount } => {
             let eternal = state.eternal_v1.get_or_insert_with(Default::default);
             let counters = &mut eternal.energy[ctx.controller.index()];
@@ -1874,6 +1889,10 @@ pub(crate) fn blocker_allowed(state: &GameState, attacker: ObjectId, blocker: Ob
 /// among cards in your graveyard and its toughness is equal to that number
 /// plus 1." A characteristic-defining ability works in every zone.
 pub(crate) fn characteristic_defining_power(state: &GameState, id: ObjectId) -> Option<i32> {
+    // Unlicensed Hearse sets both stats (wave S1o).
+    if let Some(value) = crate::eternal_sideboard_s1o_v1::characteristic_defining_power(state, id) {
+        return Some(value);
+    }
     // Terravore sets both stats (wave P1a).
     if let Some(value) =
         crate::eternal_premodern_p1a_v1::statics::characteristic_defining_power(state, id)
@@ -2352,6 +2371,7 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
     crate::eternal_sideboard_s1g_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1d_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1n_v1::begin_turn(state, player);
+    crate::eternal_sideboard_s1o_v1::begin_turn(state, player);
     crate::eternal_sideboard_s1a_v1::begin_turn(state, player);
     if let Some(eternal) = state.eternal_v1.as_mut() {
         eternal
