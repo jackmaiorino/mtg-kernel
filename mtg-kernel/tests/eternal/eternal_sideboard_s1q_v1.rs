@@ -1361,6 +1361,53 @@ fn bahamut_final_chapter_resolves_after_its_abilities_are_removed_in_both_seats(
     }
 }
 
+/// A Saga that enters while it has no abilities gets no entry lore counter
+/// (715.3a is its own ability): Bahamut cast under Dress Down enters with
+/// none and no chapter I. Dress Down leaves at the end step, which adds no
+/// counter; the next precombat main phase adds the first one (715.3c) and
+/// chapter I triggers.
+#[test]
+fn bahamut_entering_under_dress_down_starts_at_the_next_main_phase_in_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = actor.opponent();
+        let mut state = game(actor);
+        let dress = dress_down(&mut state, actor);
+        let bahamut = put(&mut state, actor, BAHAMUT, Zone::Hand);
+        let ring = put(&mut state, opponent, "Sol Ring", Zone::Battlefield);
+        pool(&mut state, actor, &[], 9);
+        cast(&mut state, bahamut);
+        settled(&mut state);
+        assert_eq!(zone(&state, bahamut), Zone::Battlefield);
+        assert_eq!(state.objects.get(bahamut).counters.lore, 0, "no entry counter");
+
+        run_until(
+            &mut state,
+            |s| s.active_player == opponent && s.step == Step::Main1,
+            |_, _| None,
+        );
+        assert_eq!(zone(&state, dress), Zone::Graveyard);
+        assert_eq!(state.objects.get(bahamut).counters.lore, 0, "not on leaving");
+
+        let mut chapter_one = false;
+        run_until(
+            &mut state,
+            |s| s.active_player == actor && s.step == Step::Main1 && s.stack.is_empty(),
+            |state, decision| match decision {
+                Decision::ChooseTargets { legal_targets, .. }
+                    if legal_targets.contains(&Target::Object(ring)) =>
+                {
+                    assert_eq!(state.objects.get(bahamut).counters.lore, 1);
+                    chapter_one = true;
+                    Some(Action::ChooseTarget(Target::Object(ring)))
+                }
+                _ => None,
+            },
+        );
+        assert!(chapter_one, "chapter I at the precombat main phase");
+        assert_eq!(zone(&state, ring), Zone::Graveyard);
+    }
+}
+
 /// Mega Flare counts the mana value of the other permanents its controller
 /// controls: an opponent's permanents do not count, and a token counts 0.
 #[test]

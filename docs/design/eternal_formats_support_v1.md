@@ -2680,11 +2680,12 @@ tail of the Vintage table's. Behavior follows each card's current Oracle text an
   The animation has no duration: the incarnation is recorded (`S1qStateV1::animated`) and
   `engine::object_has_type` answers Creature for it, after the stationed Battleship's check.
   The printed 0/0 and three counters make a 3/3. Dress Down's "Creatures lose all abilities"
-  reaches it as it reaches the stationed Battleship (`eternal_legacy_e7a_v1::
-  removal_timestamp`), so abilities other effects grant it (Shadowspear's trample and
-  lifelink) are lost while Dress Down stays. A control change keeps the object, so the
-  animation and the used exhaust ability go with it. Both records are absent from snapshots and
-  hashes while empty and drop entries whose object left the battlefield as a turn begins.
+  reaches it as it reaches the stationed Battleship
+  (`eternal_legacy_e7a_v1::removal_timestamp`), so abilities other effects grant it
+  (Shadowspear's trample and lifelink) are lost while Dress Down stays. A control change
+  keeps the object, so the animation and the used exhaust ability go with it. Both
+  records are absent from snapshots and hashes while empty and drop entries whose object
+  left the battlefield as a turn begins.
   Neither is a record of "this turn": both are keyed by the object's incarnation, so the
   turn identity rule (#741) does not apply to them.
 - Summon: Bahamut, {9}, Enchantment Creature - Saga Dragon 9/9: "(As this Saga enters and after
@@ -2704,12 +2705,17 @@ tail of the Vintage table's. Behavior follows each card's current Oracle text an
   that already triggered still resolves when the Saga then loses its abilities (the
   ruling), and a Saga that gets its abilities back resumes: with Dress Down gone, the next
   precombat main phase adds the next counter, and a Saga already at its final chapter is
-  sacrificed. The other builds keep their behavior (the check is true there). Among the
-  existing Sagas only Urza's Saga can lose its abilities in the eternal catalog (Harbinger
-  of the Seas, Blood Moon, Magus of the Moon and Alpine Moon set or remove its land types):
-  it now stays without counters and is not sacrificed,
-  as the rules have required since this card's release; no existing test covered that
-  case. Chapters I and II are distinct program values with the Leveler's target filter (so
+  sacrificed. A Saga that enters without its abilities gets no entry counter and starts at
+  the next precombat main phase after it has them again. The other builds keep their
+  behavior (the check is true there). Among the existing Sagas only Urza's Saga can lose
+  its abilities in the eternal catalog (Harbinger of the Seas, Blood Moon, Magus of the
+  Moon and Alpine Moon set or remove its land types): it now stays without counters and is
+  not sacrificed, as the rules have required since the rules change that came with Summon:
+  Bahamut (its rulings of 2025-06-06 describe it); once the effect is gone it resumes, and
+  one already at its final chapter is sacrificed by the next state-based check
+  (`urzas_saga_under_blood_moon_gets_no_lore_counter_and_is_not_sacrificed_both_seats` in
+  `eternal_vintage_e4_v1`).
+  Chapters I and II are distinct program values with the Leveler's target filter (so
   stack provenance names the right chapter), III is an ordinary draw of two and IV sums
   `object_mana_value` over the other permanents its controller controls as it resolves (an
   opponent's permanents do not count, a token counts 0) and deals that much damage from the
@@ -2734,6 +2740,14 @@ filter; `engine::activation_mana_payment` became `pub(crate)` without other chan
 
 Limits:
 
+- Urza's Saga under Harbinger of the Seas, Blood Moon or Magus of the Moon loses the abilities
+  its chapters I and II granted it. 305.7 removes only the abilities generated from the land's
+  rules text and "doesn't remove any abilities that were granted to the land by other
+  effects", and the card's ruling says it keeps them for as long as it is on the battlefield.
+  The engine models the two granted abilities as printed abilities gated by the chapter
+  reached (`eternal_vintage_v1::saga_level`), so the ability-removal check that a land-type
+  setter triggers removes them too. This is earlier behavior, not changed by S1q; it is
+  drafted as its own issue.
 - Waterbend's tap count is announced with the ability (four abilities in the action list for
   one printed ability) rather than as a count chosen while paying; the payments offered are
   exactly the legal ones. The exhaust record is not a field of the policy observations; once

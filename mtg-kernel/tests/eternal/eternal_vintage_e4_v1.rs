@@ -13,6 +13,7 @@ use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision};
+use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::mana::ManaColor;
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
@@ -2687,6 +2688,71 @@ fn urzas_saga_gains_its_abilities_by_chapter_and_fetches_a_cheap_artifact() {
     settle_declining_selections(&mut state);
     assert_eq!(state.objects.get(library[4]).zone, Zone::Battlefield);
     assert_eq!(state.objects.get(saga).zone, Zone::Graveyard);
+}
+
+/// Under Blood Moon an Urza's Saga is a Mountain that lost its abilities, its
+/// chapter abilities among them (305.7). 715.3c gives a lore counter only to
+/// a Saga with one or more chapter abilities, and 715.4 and 704.5s sacrifice
+/// only such a Saga (the 2025 rule that Summon: Bahamut's rulings describe):
+/// a Saga at lore 1 stays at 1 through its controller's next precombat main
+/// phase, and a Saga already at lore 3 is not sacrificed. Once Blood Moon is
+/// gone both have their chapter abilities again: the one at lore 3, with no
+/// chapter ability on the stack, is sacrificed by the next state-based check;
+/// the other gets its counter at the next precombat main phase and chapter II
+/// gives it its ability.
+#[test]
+fn urzas_saga_under_blood_moon_gets_no_lore_counter_and_is_not_sacrificed_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = if actor == P0 { P1 } else { P0 };
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let saga = put(&mut state, actor, "Urza's Saga", Zone::Battlefield);
+        state.objects.get_mut(saga).counters.lore = 1;
+        let moon = put(&mut state, actor, "Blood Moon", Zone::Hand);
+        pool(&mut state, actor, &[ManaColor::R], 2);
+        cast(&mut state, moon, &[]);
+        settled(&mut state);
+        assert_eq!(state.objects.get(moon).zone, Zone::Battlefield);
+        let finished = put(&mut state, actor, "Urza's Saga", Zone::Battlefield);
+        state.objects.get_mut(finished).counters.lore = 3;
+        assert!(engine::has_effective_subtype(
+            &state,
+            saga,
+            Subtype::Mountain
+        ));
+
+        pass_until(&mut state, |state| {
+            state.active_player == opponent && state.step == Step::Main1
+        });
+        pass_until(&mut state, |state| {
+            state.active_player == actor && state.step == Step::Main1 && state.stack.is_empty()
+        });
+        assert_eq!(state.objects.get(saga).counters.lore, 1, "no counter (715.3c)");
+        assert_eq!(state.objects.get(saga).zone, Zone::Battlefield);
+        assert_eq!(
+            state.objects.get(finished).zone,
+            Zone::Battlefield,
+            "not sacrificed (715.4)"
+        );
+
+        // Blood Moon leaves: the finished Saga is sacrificed at once, the
+        // other resumes at its next precombat main phase.
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(moon, Zone::Graveyard));
+        next(&mut state);
+        assert_eq!(state.objects.get(finished).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(saga).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(saga).counters.lore, 1, "not on leaving");
+        pass_until(&mut state, |state| {
+            state.active_player == opponent && state.step == Step::Main1
+        });
+        pass_until(&mut state, |state| {
+            state.active_player == actor && state.step == Step::Main1 && state.stack.is_empty()
+        });
+        assert_eq!(state.objects.get(saga).counters.lore, 2);
+        pool(&mut state, actor, &[], 2);
+        assert!(activatable(&mut state, saga, 0), "chapter II resolved");
+    }
 }
 
 #[test]
