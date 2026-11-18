@@ -202,8 +202,9 @@ impl<const H: usize> TreeModelV2<H> {
     /// (little-endian) of SHA-256 over `INIT_TAG_V2` and the contract string.
     /// The tag is the 42 ASCII characters
     /// `mtg-kernel/current-tree-learner-v2-init/v1` followed by one NUL byte,
-    /// 43 bytes in all. The generator draws one value per parameter of the scaled blocks, in parameter
-    /// index order: `(2 u - 1) s` with `u` the top 53 bits over `2^53`. The
+    /// 43 bytes in all. The generator draws one value per parameter of the
+    /// scaled blocks, in parameter index order: `(2 u - 1) s` with `u` the top
+    /// 53 bits over `2^53`. The
     /// scale `s` is `1 / sqrt(20)` for the input weights and `1 / sqrt(H)`
     /// for the recurrent weights and the three policy-head vectors. The
     /// encoder bias, the action-flag weights, the policy bias and the whole
