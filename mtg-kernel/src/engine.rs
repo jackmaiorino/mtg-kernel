@@ -8123,9 +8123,13 @@ fn commit_sacrifice(state: &mut GameState, chosen: &[ObjectId]) {
 
 fn commit_sacrifice_owned(state: &mut GameState, chosen: &[ObjectId], fiend_payment: Option<u32>) {
     crate::linked_aura_operation_v1::begin_batch(state);
+    // A name-keyed graveyard replacement of the eternal catalog that applies
+    // to one of several permanents sacrificed together is decided for the
+    // whole group before any of them moves (614.1, 614.6).
     if chosen.len() > 1
         && (crate::creature_death_capture_v1::enabled()
-            || crate::graveyard_order_v1::enabled(state))
+            || crate::graveyard_order_v1::enabled(state)
+            || (fiend_payment.is_none() && event::sacrifice_batch_replaced_v1(state, chosen)))
     {
         event::commit_sacrifice_death_group_v1(state, chosen);
         crate::linked_aura_operation_v1::end_batch(state);

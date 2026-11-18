@@ -6704,6 +6704,27 @@ fn apply_batch_graveyard_replacement_v1(
     }
 }
 
+/// Whether a name-keyed graveyard replacement applies to any of `chosen`
+/// sacrificed together, decided before any of them moves. A sacrifice of
+/// several permanents then commits as one group
+/// (`commit_sacrifice_death_group_v1`), which decides those replacements for
+/// the whole group, instead of one permanent at a time. Only the eternal
+/// catalog has such replacements.
+pub(crate) fn sacrifice_batch_replaced_v1(state: &GameState, chosen: &[ObjectId]) -> bool {
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        chosen.iter().any(|&id| {
+            let event = ProposedEvent::zone_change(id, Zone::Graveyard);
+            batch_graveyard_replacement_v1(state, &event).is_some()
+        })
+    }
+    #[cfg(not(feature = "eternal-fixtures"))]
+    {
+        let _ = (state, chosen);
+        false
+    }
+}
+
 /// A batch of simultaneous events is one event for replacement effects
 /// (614.1, 614.6): every replacement that exists immediately before it
 /// applies to every member, the member that is the replacement's own source
