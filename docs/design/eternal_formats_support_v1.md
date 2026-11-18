@@ -441,7 +441,7 @@ New, each built once in the first wave that needs it:
 
   Left out of the wave: Damping Sphere (its land replacement spans the mana planner and
   every mana yield path), Collective
-  Brutality (escalate), Stronghold Gambit, Alpine Moon, Ghost Vacuum, Drop of Honey, Triumph
+  Brutality (escalate), Stronghold Gambit (added in S1o), Alpine Moon, Ghost Vacuum, Drop of Honey, Triumph
   of Saint Katherine (miracle is Terminus-only and its cost needs generic mana) and From the
   Ashes.
 - S1b, built in `src/eternal_sideboard_s1b_v1.rs` (with a `targets` submodule) and
@@ -521,9 +521,9 @@ New, each built once in the first wave that needs it:
   Not in this wave: Mycosynth Lattice (mana of any color needs a payment-planner change),
   Extinguisher Battleship (station), Cityscape Leveler (unearth, Powerstone), Invasion
   Submersible (waterbend, exhaust), Summon: Bahamut, Keen-Eyed Curator, Outland Liberator
-  (day and night), Fiery Confluence (choose three with repeats and per-instance targets),
+  (day and night; added in S1o), Fiery Confluence (choose three with repeats and per-instance targets),
   Kiora's Dismissal (strive), Eowyn (a target filter that reads the source's power) and
-  Unlicensed Hearse (a single-graveyard target filter).
+  Unlicensed Hearse (a single-graveyard target filter); S1o adds these two as well.
 - S1c (issue #365, Vintage-only sideboard cards), built in `src/eternal_sideboard_s1c_v1.rs`
   (with a `targets` submodule) and `build_eternal_s1c_v1.rs`, linked late in the recipe
   chains (after E8a and S1d, before S1a, S1b and E9b). Bounce-all (Hurkyl's Recall, Rebuild with
@@ -726,8 +726,9 @@ New, each built once in the first wave that needs it:
   checks whether its announced allocation can include a Flagbearer at a payable
   X. An empty allocation can still finish, and each selected target requires
   at least one damage. Chandra, Flameshaper and the Flagbearers are in separate
-  shipped registries. Native qualification and broader targeting coverage are
-  pending. Vandalblast and Electrickery use the existing graveyard
+  shipped registries. Wave S1o (below) classifies every target shape for the
+  Flagbearer obligation, judges it on the final legal roster and marks both
+  Flagbearers Full. Vandalblast and Electrickery use the existing graveyard
   permission for a paid overload and retain Retrace's land discard. A free-cast
   permission offers the ordinary spell form with its original target requirement.
   Omniscience can still cast the ordinary form for free or let its controller pay
@@ -1226,8 +1227,8 @@ choice, restore, disclosure and transport checks were pending.
 As for every cast, the pending cast menu has no interleaved mana activation, so an overload cost
 is paid with the ordinary mana plan. Martyr of Sands' last pending check, the three event-history
 consumers of every event kind, now runs with its sample in the workspace library group on Linux
-and hosted Windows. It stays Partial for now: the one list that needs it, White Aggro, also needs
-Standard Bearer, whose broader targeting coverage is pending.
+and hosted Windows. It stayed Partial then because the one list that needs it, White Aggro, also
+needed Standard Bearer; wave S1n marked Martyr Full and wave S1o qualifies Standard Bearer.
 
 ### S1i: Leyline qualification
 
@@ -2415,6 +2416,185 @@ each card's current Oracle text, checked against XMage and rules 101.4, 601.2b-c
 - Consumers: `tests/eternal/eternal_sideboard_s1n_v1.rs` covers all five S1n cards and Martyr of
   Sands in both seats, and plays two 40-card decks built around all six cards through public
   schema-5 sessions in both seats under ranked and seeded random policies with replay checks.
+
+### S1o: Flagbearer qualification and Legacy sideboards
+
+Wave S1o has two parts: the Pauper Flagbearers qualified to Full (first), and four new Legacy
+sideboard cards (second). Together they add eight lists to `PLAYABLE_75` (124 to 132).
+
+#### Flagbearer qualification
+
+After S1n the only non-Full sideboard cards of Pauper's mainboard-playable lists are Standard
+Bearer (White Aggro 2.0%, Mono-White Aggro 1.1%, Boros Bully 0.2%, Azorius Faeries 0.1%) and
+Coalition Honor Guard (Snacker Gates 0.8%), both registered Partial by S1d. S1o qualifies them
+and marks both Full. The Pauper full 75 share goes from 91.0% to 95.2%, the Pauper playable
+share, and the five lists join `PLAYABLE_75`. This part leaves Legacy (83.8%) and Vintage (94.1%)
+unchanged.
+
+Both cards share the current Oracle text "While an opponent is choosing targets as part of
+casting a spell they control or activating an ability they control, that player must choose at
+least one Flagbearer on the battlefield if able." The published rulings (2016-06-08) say that
+any player's Flagbearer may be targeted, that triggered abilities need not target one, and that
+changed targets and copies with new targets need not either. Rule 601.2b chooses modes before
+targets and 601.2c announces the number of targets before choosing them, so the caster is never
+forced into a mode or a count that allows a Flagbearer, and the obligation is about the whole
+announced set: one Flagbearer among the targets satisfies it.
+
+What S1d left: the general legal-target path kept only Flagbearers on the last target slot of a
+pending cast or activation, which is sound only when every slot draws from one roster. A
+read of the code found four reachable escapes, each now a failing-then-passing rules test:
+Collective Brutality escalated to shrink and drain (the last slot is an opponent, so the
+creature slot was never restricted), Searing Blaze (choosing a player without a Flagbearer
+emptied the creature slot's obligation), Pest Infestation's wide optional roster (restricted
+only at its 64th slot, so it could always finish early), and per-card cast filters, which ran
+after the restriction (Dominate with an Honor Guard above the payable X offered no target at
+all).
+
+New pieces:
+
+- `eternal_sideboard_s1d_v1::flagbearer` classifies every target spec by how its slots relate:
+  one slot, one shared roster (picks only exclude themselves; the count may be capped by cost or
+  life), divided allocations (one point per pick, repeats allowed), independent slots (a fixed
+  count of rosters that earlier picks do not change), dependent slots (at most three slots whose
+  rosters differ or depend on earlier picks), a leading permanent slot (only the first slot can
+  name a permanent), and no permanent slot. The classification is an exhaustive match over
+  `TargetSpec`, `StandardTargetV1` and each wave's filter enum (S1d, C1a, C1b, C1c, C2c, C4a,
+  C4c, S1o) with no wildcard arm, so a new target shape does not compile until it is classified;
+  a library test checks the classes against the slot counts of every printed spell form, kicked
+  form and activated ability, and of the specs built from mode choices (Collective Brutality's
+  masks, Mystic and Eldrazi Confluence, Fiery Confluence, the C2c lands).
+- Each class has a rule: the exact complete-assignment search (the S1d search, now for every
+  shape with at most two slots and for dependent slots), the shared-roster rule (a pick that is
+  not a Flagbearer stays only while a Flagbearer can still follow it, and finishing is refused
+  when the last slot could have taken one), the independent-slot rule (a slot must take a
+  Flagbearer when no later slot can), and the leading-slot rule.
+- The obligation moved out of `legal_targets_for_controller_from_source` into
+  `engine::cast_target_choices` and `engine::activation_target_choices`, after Pest Infestation's
+  payable-X filter, the X-bounded creature filter (Blue Sun's Twilight, Dominate) and the
+  payability checks. Shatterskull Smashing and Kiora's Dismissal keep their payable-allocation
+  and strive completions. Pest Infestation's filter now reads the length of the prefix being
+  extended instead of the pending cast's targets, so a completion search judges it correctly. The
+  pending-cast validation checks each target against the bound menu while the caster is still
+  choosing and refuses a complete selection that could have named a Flagbearer.
+- Triggered abilities, spell copies and changed targets never used these two functions; with the
+  general-path restriction gone they are free in every case, as the rulings say.
+
+Guard: every shared path above runs its Flagbearer rule only when
+`statics::flagbearer_requirement_applies` holds for the chooser (an opponent controls a Standard
+Bearer or Coalition Honor Guard with its abilities active), and only in `eternal-fixtures`
+builds. Otherwise each returns exactly what it returned before: the removed general-path
+restriction was a no-op without that condition. The default Pauper, FDN and Standard builds
+compile the new module and the new Pest Infestation filter signature but run none of it: the
+module is reached only from `eternal-fixtures` code, and Pest Infestation is not in their
+registries.
+
+Limits: the shared-roster and independent-slot rules assume what their class says; a card filter
+or cost that depended on which object was picked (rather than how many) would need the exact
+search. The exact search is bounded to three slots. Hullbreacher stays Partial (issue 717).
+
+Verification: `tests/eternal/eternal_sideboard_s1o_flagbearers_v1.rs` plays each escape and each
+ruling in both seats (Collective Brutality's shrink and drain and all three modes, Searing Blaze,
+Pest Infestation with an artifact Standard Bearer at X 1 and X 2, Dominate's filter, Journey to
+Nowhere's trigger, Grapeshot's storm copy, Misdirection's new target, a mode that avoids
+targeting, Agony Warp's two slots, either player's Flagbearer, Mogg Fanatic's activation and a
+Bearer without its ability under Dress Down, a Phyrexian Metamorph copy of a Bearer as the
+binding object and the target, Mystic Confluence's three bounces and Fire Covenant's last payable
+pick), and a white Flagbearer deck plays a red burn deck
+through public schema-5 sessions in both seats under ranked and seeded random policies with
+replay checks. The S1d Flagbearer fixtures run unchanged.
+
+#### Legacy Rakdos Reanimator, Naya Initiative and Dimir Control sideboards
+
+The second part adds four Legacy sideboard cards, each the only gap of its list's 75 except Outland
+Liberator:
+
+- `legacy-rakdos-reanimator` (2.2% of the Legacy snapshot) completes its 75 with Stronghold Gambit,
+  `legacy-naya-initiative` (0.9%) with Eowyn, Fearless Knight and `legacy-dimir-control` (0.3%) with
+  Unlicensed Hearse, raising the Legacy full 75 share from 83.8% to 87.2% (three more `PLAYABLE_75`
+  lists).
+- `legacy-selesnya-depths` (1.2%) gets Outland Liberator as Full; its 75 still needs Keen-Eyed
+  Curator, which the Vintage Cube waves (#710) deliver, so the list stays out of `PLAYABLE_75`.
+
+S1o is built in `src/eternal_sideboard_s1o_v1.rs`, `src/eternal_sideboard_s1o_v1/targets.rs` and
+`build_eternal_s1o_v1.rs`, linked after S1n and before C1a in the recipe and trigger chains (the
+transform-face tables reach it from the tail of E9a's). Behavior follows each card's current
+Oracle text and rulings (Scryfall, read 2026-11-17) and rules 101.4, 113.7a, 302.6, 603.3d,
+604.3, 607.2a, 608.2b, 611.2c, 614.12, 702.16, 702.122 and 702.145:
+
+- Stronghold Gambit, {1}{R}, Sorcery: "Each player chooses a card in their hand. Then each player
+  reveals their chosen card. The owner of each creature card revealed this way with the lowest
+  mana value puts it onto the battlefield." `S1oOpV1::StrongholdGambitV1` offers each player with a
+  card in hand, in APNAP order, one resolution choice (`E3ChoiceKindV1::S1oV1(GambitV1)`, exactly
+  one card of their own hand, private to the chooser; the earlier pick is carried in the choice but
+  is not in the later chooser's menu). After both picks every chosen card is revealed, and the
+  creature cards among them with the lowest printed mana value (all of them on a tie) are put onto
+  the battlefield under their owners' control in one batch; the rest stay in hand. As with Show
+  and Tell's paid route, the destinations are decided from the battlefield before any entrant
+  moves, so Containment Priest exiles an entrant only if it was already on the battlefield, not
+  when it enters in the same batch. A batch moves its members one at a time and Containment
+  Priest's replacement is applied as each one moves, so the entrants sent to the battlefield are
+  recorded in the wave's state (`S1oStateV1::gambit_entries`, absent from snapshots and hashes
+  while empty) and `eternal_sideboard_s1a_v1::statics::replace_zone_change` leaves them alone. The
+  record stays while an entrant waits in hand for an as-enters choice (Meddling Mage's name) and
+  is dropped once the entrants have moved. A Phyrexian Metamorph with nothing to copy enters as
+  itself; one that a Priest already on the battlefield exiles needs no copy choice.
+- Eowyn, Fearless Knight, {2}{R}{W}, Legendary Creature - Human Knight 3/4 (the snapshot and the
+  registry spell the name without the accent): "Haste. When Eowyn enters, exile target creature an
+  opponent controls with greater power. Legendary creatures you control gain protection from each
+  of that creature's colors until end of turn." The trigger targets with
+  `StandardTargetV1::S1oV1(OpponentCreatureGreaterPowerV1)`, which compares with the source
+  incarnation's current power, or its last-known power once it left (the shared creature stats
+  cache); the pending-trigger check keeps the source for it, as for the source-power graveyard
+  filter. On resolution the target is checked again (608.2b); its colors are read before it is
+  exiled (the ruling: its colors as it last existed on the battlefield) and every legendary
+  creature its controller controls at that moment gets one wave E9a protection record per color
+  until end of turn (611.2c), so a legendary creature that arrives later is not protected.
+- Unlicensed Hearse, {2}, Artifact - Vehicle */*: "{T}: Exile up to two target cards from a single
+  graveyard. Unlicensed Hearse's power and toughness are each equal to the number of cards exiled
+  with it. Crew 2" (the note's "Crew 1" was wrong). The {T} ability targets with
+  `StandardTargetV1::S1oV1(UpToTwoCardsFromOneGraveyardV1)` (zero to two physical graveyard cards;
+  the first fixes the owner), exiles the still-legal targets at once and links each card that
+  reached exile to the Hearse incarnation (`S1oStateV1::hearse_exiles`). The power and toughness
+  are a characteristic-defining ability read in `eternal_cards_v1::characteristic_defining_power`:
+  the linked cards still in exile, and 0 off the battlefield or for a new object after a blink.
+  A crewed Hearse with nothing exiled with it is 0/0 and dies (the card's ruling). Crew is Reckoner
+  Bankbuster's; the {T} ability works the turn the Hearse arrived while it is not a creature, and
+  not while it is a crewed creature that came under its controller's control this turn.
+- Outland Liberator, {1}{G}, Creature - Human Werewolf 2/2, back face Frenzied Trapbreaker,
+  Creature - Werewolf 3/3: "{1}, Sacrifice this creature: Destroy target artifact or enchantment.
+  Daybound" and the same ability, "Whenever this creature attacks, destroy target artifact or
+  enchantment defending player controls. Nightbound" on the back. The name joins
+  `standard_keywords_v1::is_daybound`, so the day and night of Brutal Cathar and Graveyard
+  Trespasser (726, 702.145) turn it, make it day when it is the first daybound permanent and let
+  it enter as Frenzied Trapbreaker at night. The sacrifice ability is Cathar Commando's recipe and
+  works on both faces; the attack trigger exists on face 1 only and targets
+  `TargetSpec::OpponentArtifactOrEnchantmentPermanent`.
+
+Limits:
+
+- A Phyrexian Metamorph that Stronghold Gambit would put onto the battlefield while an artifact or
+  creature is on the battlefield would let its owner choose a copy as it enters. The native
+  pre-entry copy owner serves only paid Show and Tell, Reanimate and Aether Vial, so the engine
+  halts that game (`InvalidEffectContinuation`) before revealing, as copied Show and Tell refuses
+  every Metamorph. The check runs after the replacement effects, so a Metamorph that a Priest
+  already on the battlefield would exile does not halt. No Legacy list in the snapshot plays
+  Metamorph.
+- The day or night designation is not a field of the policy observations; the face is (as for
+  Brutal Cathar in Standard sessions).
+- `legacy-selesnya-depths` waits for Keen-Eyed Curator (#710).
+
+Verification: `tests/eternal/eternal_sideboard_s1o_v1.rs` covers every printed branch above in
+both seats (lower, equal and greater power, a power change and Eowyn leaving before resolution,
+two graveyards, zero targets, the 0/0 crewed Hearse, blink, both faces, night and day turns,
+casting at night, the front face attacking without a trigger, Priest in and before the batch,
+Priest and Meddling Mage entering together in either order, a noncreature pick, an empty hand,
+Metamorph uncopied, exiled or refused, a Metamorph copy of the Hearse counting its own exiled
+cards, protection from exactly the exiled colors and none for a colorless creature, and the
+second chooser's menu and policy observation not depending on the first pick, with the chosen
+cards public after the reveal) and plays a red-white deck with Eowyn and Gambit against a green
+deck with Liberator and Hearse through public schema-5 sessions in both seats under ranked and
+seeded random policies with replay checks. `tests/eternal/eternal_bo3_v1.rs` plays the three
+completed lists in seeded best-of-three matches with random sideboarding.
 
 ## Vintage Cube
 

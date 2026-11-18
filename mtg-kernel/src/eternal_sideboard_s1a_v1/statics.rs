@@ -176,6 +176,7 @@ pub(crate) fn replace_zone_change(state: &GameState, change: &mut event::ZoneCha
                 || live.zone == Zone::Stack
                 || live.zone == Zone::Battlefield
                 || crate::linked_aura_operation_v1::show_and_tell_entry_prepared(state, change)
+                || crate::eternal_sideboard_s1o_v1::gambit_entry_prepared(state, change.object)
             {
                 return;
             }
