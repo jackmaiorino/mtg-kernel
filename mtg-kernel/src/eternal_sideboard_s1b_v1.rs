@@ -1128,9 +1128,16 @@ fn run_explosives_enter(ctx: &ExecCtx, state: &mut GameState) {
         object: ctx.source,
         zone_change_count: live.zone_change_count,
     };
-    state.objects.get_mut(ctx.source).counters.charge = i32::from(colors);
+    explosives_entered(state, link, colors);
+}
+
+/// An Engineered Explosives incarnation (the card, or a permanent that
+/// entered as a copy of it) entered with sunburst's `colors` charge
+/// counters: puts them and records the count for its ability.
+pub(crate) fn explosives_entered(state: &mut GameState, link: ObjectLinkV4, colors: u8) {
+    state.objects.get_mut(link.object).counters.charge = i32::from(colors);
     let s1b = s1b_state(state);
-    s1b.explosives.retain(|(host, _)| host.object != ctx.source);
+    s1b.explosives.retain(|(host, _)| host.object != link.object);
     s1b.explosives.push((link, colors));
 }
 
