@@ -2801,17 +2801,20 @@ fn constructs(state: &GameState, player: PlayerId) -> usize {
         .count()
 }
 
-/// Whether tapping `source` for `color` adds one `color`, tried on a copy.
+/// Whether tapping `source` for `color` adds one `color`, tried on a copy. A
+/// source with a single mana choice takes the plain activation.
 fn taps_for(state: &GameState, source: ObjectId, color: ManaColor) -> bool {
-    let mut tapped = state.clone();
-    let player = tapped.priority_player;
-    let before = mana(&tapped, player, color);
-    engine::step(
-        &mut tapped,
+    let player = state.priority_player;
+    let before = mana(state, player, color);
+    [
         Action::ActivateManaAbilityChoice(source, color),
-    )
-    .is_ok()
-        && mana(&tapped, player, color) == before + 1
+        Action::ActivateManaAbility(source),
+    ]
+    .into_iter()
+    .any(|action| {
+        let mut tapped = state.clone();
+        engine::step(&mut tapped, action).is_ok() && mana(&tapped, player, color) == before + 1
+    })
 }
 
 /// Urza's Saga "gains an ability from its first and second chapters. It
