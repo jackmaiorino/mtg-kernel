@@ -24,6 +24,7 @@ pub struct KaitoSession {
     generation: u64,
     /// Set only on a world drawn by `sampled_full_pool_closed_list_v1`: the
     /// one kind of session whose state the heuristic evaluator may read.
+    #[cfg(feature = "limited-fdn-fixtures")]
     sampled_world: bool,
 }
 #[derive(Clone)]
@@ -546,6 +547,7 @@ impl KaitoSession {
             inner,
             owner: Arc::new(()),
             generation: 0,
+            #[cfg(feature = "limited-fdn-fixtures")]
             sampled_world: false,
         }
     }
