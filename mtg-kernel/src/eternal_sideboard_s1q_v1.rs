@@ -442,7 +442,15 @@ fn completion_among(
     among.iter().enumerate().any(|(index, &next)| {
         let mut with = chosen.to_vec();
         with.push(next);
-        completion_among(state, player, source, cost, &with, &among[index + 1..], more - 1)
+        completion_among(
+            state,
+            player,
+            source,
+            cost,
+            &with,
+            &among[index + 1..],
+            more - 1,
+        )
     })
 }
 
@@ -492,7 +500,14 @@ pub(crate) fn activation_allowed(
     let Some(cost) = exhaust_mana(state, source, ability_index) else {
         return true;
     };
-    completion_exists(state, live.controller, source, &cost, &[], usize::from(taps))
+    completion_exists(
+        state,
+        live.controller,
+        source,
+        &cost,
+        &[],
+        usize::from(taps),
+    )
 }
 
 /// Keeps only the waterbend taps after which the rest of the pending exhaust

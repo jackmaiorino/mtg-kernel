@@ -288,7 +288,10 @@ fn s1q_definitions_have_printed_characteristics() {
     assert_eq!((leveler.power, leveler.toughness), (Some(8), Some(8)));
     assert!(leveler.keywords.has(Keywords::TRAMPLE));
     assert_eq!(leveler.activated_abilities.len(), 1, "Unearth {{8}}");
-    assert_eq!(leveler.activated_abilities[0].activation_zone, Zone::Graveyard);
+    assert_eq!(
+        leveler.activated_abilities[0].activation_zone,
+        Zone::Graveyard
+    );
 
     let submersible = def(SUBMERSIBLE);
     assert_eq!(submersible.capability, CardCapability::Full);
@@ -314,7 +317,10 @@ fn s1q_definitions_have_printed_characteristics() {
     assert_eq!(bahamut.mana_value, 9);
     assert_eq!((bahamut.power, bahamut.toughness), (Some(9), Some(9)));
     assert!(bahamut.keywords.has(Keywords::FLYING));
-    assert_eq!(bahamut.saga.as_ref().expect("a Saga").chapter_effects.len(), 4);
+    assert_eq!(
+        bahamut.saga.as_ref().expect("a Saga").chapter_effects.len(),
+        4
+    );
 
     let powerstone = def(POWERSTONE);
     assert_eq!(powerstone.capability, CardCapability::Full);
@@ -728,7 +734,10 @@ fn submersible_waterbend_follows_a_cost_reduction_in_both_seats() {
         let wall = put(&mut state, actor, "Basking Rootwalla", Zone::Battlefield);
         assert!(!activatable(&mut state, submersible, 0), "{{2}} unpaid");
         assert!(!activatable(&mut state, submersible, 1), "{{1}} unpaid");
-        assert!(activatable(&mut state, submersible, 2), "two taps pay {{2}}");
+        assert!(
+            activatable(&mut state, submersible, 2),
+            "two taps pay {{2}}"
+        );
         assert!(
             !activatable(&mut state, submersible, 3),
             "no more taps than the reduced cost"
@@ -836,7 +845,11 @@ fn bahamut_chapters_destroy_draw_and_mega_flare_then_it_is_sacrificed_in_both_se
             |_, _| None,
         );
         assert_eq!(state.players[opponent.index()].life, life - 3);
-        assert_eq!(zone(&state, bahamut), Zone::Graveyard, "sacrificed after IV");
+        assert_eq!(
+            zone(&state, bahamut),
+            Zone::Graveyard,
+            "sacrificed after IV"
+        );
     }
 }
 

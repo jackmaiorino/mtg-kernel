@@ -6347,8 +6347,7 @@ fn reduced_activation_mana_cost(
     // Invasion Submersible's waterbend payments: the reduced {3} less the
     // permanents tapped for it (wave S1q).
     #[cfg(feature = "eternal-fixtures")]
-    if let Some(cost) = crate::eternal_sideboard_s1q_v1::waterbend_mana(state, source, components)
-    {
+    if let Some(cost) = crate::eternal_sideboard_s1q_v1::waterbend_mana(state, source, components) {
         return cost;
     }
     reduced
