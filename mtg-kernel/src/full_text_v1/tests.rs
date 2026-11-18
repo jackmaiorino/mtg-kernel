@@ -707,6 +707,102 @@ const REFUSED_DONORS: [&str; 62] = [
     "Yavimaya Granger",
 ];
 
+/// How a Shapeshifter must treat a pool creature as its top card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expect {
+    /// Its whole battlefield text is donated, entering or not.
+    Supported,
+    /// Accepted in play; at entry it loses an enters trigger, so the entry is
+    /// refused unless that trigger would not trigger anyway.
+    EntryTrigger,
+    /// Accepted in play; at entry it loses an "as enters" replacement, so the
+    /// entry is always refused.
+    EntryReplacement,
+    /// Refused in every case.
+    Refused,
+}
+
+/// Every pool creature outside `REFUSED_DONORS`, with its expected behavior,
+/// written out from the design's appendix A independently of the production
+/// lists. Auramancer, Monk Realist and Uktabi Orangutan are entry triggers
+/// and Ghitu Slinger and Xantid Swarm are refused until their donated
+/// programs land.
+const EXPECTED_DONORS: [(&str, Expect); 39] = [
+    ("Akroma, Angel of Wrath", Expect::Supported),
+    ("Battlefield Scrounger", Expect::Supported),
+    ("Birds of Paradise", Expect::Supported),
+    ("Hermit Druid", Expect::Supported),
+    ("Ihsan's Shade", Expect::Supported),
+    ("Iridescent Angel", Expect::Supported),
+    ("Karmic Guide", Expect::Supported),
+    ("Mogg Fanatic", Expect::Supported),
+    ("Palinchron", Expect::Supported),
+    ("Phyrexian Devourer", Expect::Supported),
+    ("Psychatog", Expect::Supported),
+    ("Ravenous Rats", Expect::Supported),
+    ("Triskelion", Expect::Supported),
+    ("Volrath's Shapeshifter", Expect::Supported),
+    ("Wall of Roots", Expect::Supported),
+    ("Elvish Spirit Guide", Expect::Supported),
+    ("Squee, Goblin Nabob", Expect::Supported),
+    ("Auramancer", Expect::EntryTrigger),
+    ("Monk Realist", Expect::EntryTrigger),
+    ("Uktabi Orangutan", Expect::EntryTrigger),
+    ("Ghitu Slinger", Expect::Refused),
+    ("Xantid Swarm", Expect::Refused),
+    ("Meddling Mage", Expect::EntryReplacement),
+    ("Anger", Expect::Supported),
+    ("Arrogant Wurm", Expect::Supported),
+    ("Bane of the Living", Expect::Supported),
+    ("Eternal Dragon", Expect::Supported),
+    ("Gempalm Incinerator", Expect::Supported),
+    ("Genesis", Expect::Supported),
+    ("Glory", Expect::Supported),
+    ("Krosan Tusker", Expect::Supported),
+    ("Nantuko Vigilante", Expect::Supported),
+    ("Nether Spirit", Expect::Supported),
+    ("Thornscape Battlemage", Expect::Supported),
+    ("Caller of the Claw", Expect::EntryTrigger),
+    ("Goblin Matron", Expect::EntryTrigger),
+    ("Goblin Ringleader", Expect::EntryTrigger),
+    ("Phyrexian Dreadnought", Expect::EntryTrigger),
+    ("Wall of Blossoms", Expect::EntryTrigger),
+];
+
+fn expect_of(name: &str) -> Expect {
+    EXPECTED_DONORS
+        .iter()
+        .find(|&&(listed, _)| listed == name)
+        .map_or(Expect::Refused, |&(_, expect)| expect)
+}
+
+/// Fixture cases, written out here so that a fixture never takes its cases
+/// from the production lists it checks.
+const GENERIC_FIXTURE_DONORS: [&str; 11] = [
+    "Anger",
+    "Arrogant Wurm",
+    "Bane of the Living",
+    "Eternal Dragon",
+    "Gempalm Incinerator",
+    "Genesis",
+    "Glory",
+    "Krosan Tusker",
+    "Nantuko Vigilante",
+    "Nether Spirit",
+    "Thornscape Battlemage",
+];
+
+const ENTRY_TRIGGER_FIXTURE_DONORS: [&str; 8] = [
+    "Caller of the Claw",
+    "Goblin Matron",
+    "Goblin Ringleader",
+    "Phyrexian Dreadnought",
+    "Wall of Blossoms",
+    "Auramancer",
+    "Monk Realist",
+    "Uktabi Orangutan",
+];
+
 #[test]
 fn every_premodern_pool_creature_is_in_exactly_one_donor_class() {
     use std::collections::BTreeSet;
@@ -767,16 +863,39 @@ fn every_premodern_pool_creature_is_in_exactly_one_donor_class() {
         assert!(LISTED_DONORS_V1.contains(name), "{name}");
     }
 
+    // The expected behavior of every pool creature, written out here
+    // independently of the production lists (design appendix A, with the
+    // listed additions whose programs are still pending).
     let definition = |name: &str| &CARD_DEFS[usize::from(id(name))];
-    for name in &creatures {
-        let card = definition(name.as_str());
-        let pending = LISTED_PROGRAMS_PENDING_V1.contains(&name.as_str());
-        let refused = REFUSED_DONORS.contains(&name.as_str());
-        assert_eq!(donor_supported(card), !refused && !pending, "{name}");
-        let at_entry = ENTRY_ONLY_DONORS_V1.contains(&name.as_str())
-            || LISTED_ENTRY_PROGRAMS_PENDING_V1.contains(&name.as_str())
-            || name == "Meddling Mage";
-        assert_eq!(entry_refused(card), at_entry, "{name}");
+    let expected = EXPECTED_DONORS
+        .iter()
+        .map(|&(name, _)| name)
+        .chain(REFUSED_DONORS)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        expected,
+        creatures.iter().map(String::as_str).collect::<BTreeSet<_>>()
+    );
+    for (name, expect) in EXPECTED_DONORS
+        .into_iter()
+        .chain(REFUSED_DONORS.map(|name| (name, Expect::Refused)))
+    {
+        let card = definition(name);
+        assert_eq!(
+            (donor_supported(card), entry_refused(card)),
+            match expect {
+                Expect::Supported => (true, false),
+                Expect::EntryTrigger | Expect::EntryReplacement => (true, true),
+                Expect::Refused => (false, false),
+            },
+            "{name} should be {expect:?}"
+        );
+    }
+    for name in GENERIC_FIXTURE_DONORS {
+        assert_eq!(expect_of(name), Expect::Supported, "{name}");
+    }
+    for name in ENTRY_TRIGGER_FIXTURE_DONORS {
+        assert_eq!(expect_of(name), Expect::EntryTrigger, "{name}");
     }
     // Every creature of the frozen mirror's mainboard plays as it does today,
     // and so do the two donors the amended ruling keeps.

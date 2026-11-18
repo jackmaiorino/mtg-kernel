@@ -945,11 +945,11 @@ const REFUSED_SAMPLE: [&str; 7] = [
 ];
 
 /// Supported cards whose enters ability a Shapeshifter entering with one on
-/// top would lose.
-fn entry_refused_names() -> Vec<&'static str> {
-    let mut names = ENTRY_ONLY_DONORS_V1.to_vec();
-    names.push(MEDDLING_MAGE);
-    names.extend(LISTED_ENTRY_PROGRAMS_PENDING_V1);
+/// top would lose (written out in the test module, not taken from the
+/// production lists).
+fn entry_refused_cases() -> Vec<&'static str> {
+    let mut names = ENTRY_TRIGGER_FIXTURE_DONORS.to_vec();
+    names.push("Meddling Mage");
     names
 }
 
@@ -957,32 +957,47 @@ fn restored(state: &GameState) -> GameState {
     serde_json::from_slice(&serde_json::to_vec(state).unwrap()).unwrap()
 }
 
-/// Passes priority until the donor refusal halts the game, then checks that
-/// it stays halted with no later decision, also after a snapshot restore.
-fn assert_refused(state: &mut GameState, host: ObjectId) {
-    let halt = (UnsupportedMechanic::FullTextDonorOutsideSetV1, host);
-    for _ in 0..32 {
-        match engine::advance_until_decision(state) {
-            Decision::Halted { mechanic, source } => {
-                assert_eq!((mechanic, source), halt);
-                assert_eq!(state.engine.halted, Some(halt));
-                let mut copy = restored(state);
-                for branch in [&mut *state, &mut copy] {
-                    for _ in 0..2 {
-                        assert_eq!(
-                            engine::advance_until_decision(branch),
-                            Decision::Halted { mechanic, source }
-                        );
-                    }
-                }
-                assert_eq!(state.state_hash(), copy.state_hash());
-                return;
-            }
-            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
-            other => panic!("expected the donor refusal, got {other:?}"),
+fn donor_halt(host: ObjectId) -> Option<(UnsupportedMechanic, ObjectId)> {
+    Some((UnsupportedMechanic::FullTextDonorOutsideSetV1, host))
+}
+
+/// The unsupported top already exists: the first decision must be the typed
+/// halt, and the game stays halted, also after a snapshot restore.
+fn assert_halted_now(state: &mut GameState, host: ObjectId) {
+    let halted = Decision::Halted {
+        mechanic: UnsupportedMechanic::FullTextDonorOutsideSetV1,
+        source: host,
+    };
+    assert_eq!(engine::advance_until_decision(state), halted);
+    assert_eq!(state.engine.halted, donor_halt(host));
+    let mut copy = restored(state);
+    for branch in [&mut *state, &mut copy] {
+        for _ in 0..2 {
+            assert_eq!(engine::advance_until_decision(branch), halted);
         }
     }
-    panic!("the donor refusal did not fire");
+    assert_eq!(state.state_hash(), copy.state_hash());
+}
+
+/// Passes priority until the cast Shapeshifter has entered the battlefield.
+fn resolve_to_entry(state: &mut GameState, source: ObjectId) {
+    for _ in 0..8 {
+        if state.objects.get(source).zone == Zone::Battlefield {
+            return;
+        }
+        assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+        act(state, Action::Pass);
+    }
+    panic!("the Shapeshifter did not resolve");
+}
+
+fn torpor_orb_in_play(state: &mut GameState, player: PlayerId) -> ObjectId {
+    let orb = put(state, player, "Torpor Orb", Zone::Hand);
+    pool(state, player, &[], 2);
+    cast(state, orb);
+    settled(state);
+    assert_eq!(state.objects.get(orb).zone, Zone::Battlefield);
+    orb
 }
 
 /// A Shapeshifter on the battlefield whose top is Birds of Paradise.
@@ -1025,15 +1040,118 @@ fn only_retained_discard(state: &mut GameState, player: PlayerId, source: Object
 
 #[test]
 fn volrath_entry_with_an_unsupported_or_entry_only_top_halts_at_the_entry_both_seats() {
-    let donors = REFUSED_SAMPLE.into_iter().chain(entry_refused_names());
+    let donors = REFUSED_SAMPLE.into_iter().chain(entry_refused_cases());
     for donor in donors {
         for player in [PlayerId::P0, PlayerId::P1] {
             let mut state = ordered_game(player);
             put(&mut state, player, donor, Zone::Graveyard);
             let source = cast_volrath(&mut state, player);
-            assert_refused(&mut state, source);
-            assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+            resolve_to_entry(&mut state, source);
+            assert_eq!(state.engine.halted, donor_halt(source), "{donor}");
+            assert_halted_now(&mut state, source);
             assert!(captured_entry(&state, source).is_none(), "{donor}");
+        }
+    }
+}
+
+/// An entry-trigger suppressor means the lost enters trigger would not have
+/// triggered anyway, so the entry plays correctly and is not refused.
+#[test]
+fn volrath_entering_under_torpor_orb_with_an_entry_trigger_top_is_not_refused_both_seats() {
+    for donor in ENTRY_TRIGGER_FIXTURE_DONORS {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let mut state = ordered_game(player);
+            torpor_orb_in_play(&mut state, player);
+            put(&mut state, player, donor, Zone::Graveyard);
+            let hand = state.players[player.index()].hand.len();
+            let battlefield = state.players[player.index()].battlefield.len();
+            let source = cast_volrath(&mut state, player);
+            settled(&mut state);
+            assert_eq!(state.engine.halted, None, "{donor}");
+            assert_eq!(active_definition(&state, source).unwrap().name, donor);
+            assert_eq!(state.players[player.index()].hand.len(), hand);
+            assert_eq!(
+                state.players[player.index()].battlefield.len(),
+                battlefield + 1
+            );
+            let mut copy = restored(&state);
+            assert!(matches!(next(&mut copy), Decision::CastSpellOrPass { .. }));
+        }
+    }
+}
+
+/// Meddling Mage's naming is a replacement effect as the permanent enters
+/// (614.12), not a trigger, so an entry-trigger suppressor does not cover it.
+#[test]
+fn volrath_entering_under_torpor_orb_with_meddling_mage_on_top_is_still_refused_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ordered_game(player);
+        torpor_orb_in_play(&mut state, player);
+        put(&mut state, player, "Meddling Mage", Zone::Graveyard);
+        let source = cast_volrath(&mut state, player);
+        resolve_to_entry(&mut state, source);
+        assert_eq!(state.engine.halted, donor_halt(source));
+        assert_halted_now(&mut state, source);
+    }
+}
+
+/// Suppression is judged on the final simultaneous-entry scene: an Orb that
+/// enters with the Shapeshifter suppresses its lost trigger, and one that
+/// leaves in the same batch does not.
+#[test]
+fn volrath_simultaneous_entry_refusal_obeys_the_final_suppressor_scene_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for arriving in [true, false] {
+            for orb_first in [true, false] {
+                let mut state = ordered_game(player);
+                let source = put(&mut state, player, VOLRATH, Zone::Hand);
+                put(&mut state, player, "Wall of Blossoms", Zone::Graveyard);
+                let (from, to) = if arriving {
+                    (Zone::Hand, Zone::Battlefield)
+                } else {
+                    (Zone::Battlefield, Zone::Exile)
+                };
+                let orb = put(&mut state, player.opponent(), "Torpor Orb", from);
+                let hand = state.players[player.index()].hand.len();
+                let mut changes = vec![
+                    ProposedEvent::zone_change(source, Zone::Battlefield),
+                    ProposedEvent::zone_change(orb, to),
+                ];
+                if orb_first {
+                    changes.reverse();
+                }
+                event::propose_and_commit_batch(&mut state, changes);
+                assert_eq!(state.objects.get(orb).zone, to);
+                assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+                if arriving {
+                    assert_eq!(state.engine.halted, None);
+                    settled(&mut state);
+                    assert_eq!(state.players[player.index()].hand.len(), hand - 1);
+                } else {
+                    assert_eq!(state.engine.halted, donor_halt(source));
+                    assert_halted_now(&mut state, source);
+                }
+            }
+        }
+    }
+}
+
+/// A state-based death in the engine's automatic work makes an unsupported
+/// card the top, here together with a loss: the first decision that leaves
+/// the engine is the typed halt, not a priority prompt or a terminal.
+#[test]
+fn volrath_state_based_death_making_an_unsupported_top_halts_at_the_first_advance_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for loss in [false, true] {
+            let (mut state, source) = volrath_in_play(player);
+            let masticore = put(&mut state, player, "Masticore", Zone::Battlefield);
+            state.objects.get_mut(masticore).damage = 4;
+            if loss {
+                state.players[player.opponent().index()].life = 0;
+            }
+            assert_eq!(state.engine.halted, None);
+            assert_halted_now(&mut state, source);
+            assert_eq!(state.objects.get(masticore).zone, Zone::Graveyard);
         }
     }
 }
@@ -1053,14 +1171,14 @@ fn volrath_returning_from_the_graveyard_onto_a_refused_top_halts_at_the_entry_bo
                 state.engine.halted,
                 Some((UnsupportedMechanic::FullTextDonorOutsideSetV1, source))
             );
-            assert_refused(&mut state, source);
+            assert_halted_now(&mut state, source);
         }
     }
 }
 
 #[test]
 fn volrath_entering_with_a_generic_top_is_not_refused_both_seats() {
-    for donor in GENERIC_TEXT_DONORS_V1 {
+    for donor in GENERIC_FIXTURE_DONORS {
         for player in [PlayerId::P0, PlayerId::P1] {
             let mut state = ordered_game(player);
             put(&mut state, player, donor, Zone::Graveyard);
@@ -1078,9 +1196,9 @@ fn volrath_entering_with_a_generic_top_is_not_refused_both_seats() {
 fn volrath_in_play_takes_generic_and_entry_only_tops_with_their_keywords_both_seats() {
     use crate::card_def::Keywords;
 
-    let donors = GENERIC_TEXT_DONORS_V1
+    let donors = GENERIC_FIXTURE_DONORS
         .into_iter()
-        .chain(entry_refused_names());
+        .chain(entry_refused_cases());
     for donor in donors {
         for player in [PlayerId::P0, PlayerId::P1] {
             let (mut state, source) = volrath_in_play(player);
@@ -1111,7 +1229,7 @@ fn volrath_single_arrival_of_an_unsupported_donor_halts_at_the_event_both_seats(
                 Some((UnsupportedMechanic::FullTextDonorOutsideSetV1, source)),
                 "{donor}"
             );
-            assert_refused(&mut state, source);
+            assert_halted_now(&mut state, source);
         }
     }
 }
@@ -1129,7 +1247,7 @@ fn volrath_departure_exposing_an_unsupported_card_halts_both_seats() {
             state.engine.halted,
             Some((UnsupportedMechanic::FullTextDonorOutsideSetV1, source))
         );
-        assert_refused(&mut state, source);
+        assert_halted_now(&mut state, source);
     }
 }
 
@@ -1147,7 +1265,7 @@ fn volrath_control_change_onto_an_unsupported_top_halts_both_seats() {
                     state.engine.halted,
                     Some((UnsupportedMechanic::FullTextDonorOutsideSetV1, source))
                 );
-                assert_refused(&mut state, source);
+                assert_halted_now(&mut state, source);
             } else {
                 assert_eq!(state.engine.halted, None);
                 assert_eq!(active_definition(&state, source).unwrap().name, donor);
@@ -1174,7 +1292,7 @@ fn volrath_phasing_in_onto_an_unsupported_top_halts_both_seats() {
             state.engine.halted,
             Some((UnsupportedMechanic::FullTextDonorOutsideSetV1, source))
         );
-        assert_refused(&mut state, source);
+        assert_halted_now(&mut state, source);
     }
 }
 
@@ -1209,7 +1327,9 @@ fn volrath_ordered_batch_offers_the_order_and_halts_only_on_its_final_top_both_s
             for branch in [&mut state, &mut copy] {
                 act(branch, Action::ChooseEffectTarget(Target::Object(bottom)));
                 if donor_on_top {
-                    assert_refused(branch, source);
+                    // Halted by the batch tail, once the order selects the top.
+                    assert_eq!(branch.engine.halted, donor_halt(source));
+                    assert_halted_now(branch, source);
                 } else {
                     assert_eq!(branch.engine.halted, None);
                     assert!(active_text(branch, source).is_none());
@@ -1249,7 +1369,9 @@ fn volrath_entering_in_an_ordered_batch_halts_only_when_its_final_top_is_entry_o
                 act(branch, Action::ChooseEffectTarget(Target::Object(bottom)));
                 assert_eq!(branch.objects.get(source).zone, Zone::Battlefield);
                 if donor_on_top {
-                    assert_refused(branch, source);
+                    // Halted at the entry, with the batch's final top.
+                    assert_eq!(branch.engine.halted, donor_halt(source));
+                    assert_halted_now(branch, source);
                 } else {
                     settled(branch);
                     assert!(active_text(branch, source).is_none());
