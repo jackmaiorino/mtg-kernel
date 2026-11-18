@@ -1034,6 +1034,24 @@ fn sba_donor_scene(player: PlayerId) -> (GameState, ObjectId, ObjectId) {
     (state, source, donor)
 }
 
+fn completed_saga_donor_scene(player: PlayerId) -> (GameState, ObjectId, ObjectId) {
+    let mut state = ordered_game(player);
+    put(&mut state, player, "Birds of Paradise", Zone::Graveyard);
+    put(&mut state, player, "Phyrexian Dreadnought", Zone::Graveyard);
+    let source = put(&mut state, player, VOLRATH, Zone::Battlefield);
+    assert_eq!(engine::effective_toughness(&state, source), 12);
+    state.objects.get_mut(source).damage = 11;
+    let donor = put(&mut state, player, "Summon: Bahamut", Zone::Battlefield);
+    let definition = &CARD_DEFS[usize::from(state.objects.get(donor).card_def)];
+    assert!(!donor_supported(definition));
+    let chapters = definition.saga.as_ref().unwrap().chapter_effects.len();
+    assert_eq!(chapters, 4);
+    // Model the checkpoint after the final chapter has left the stack.
+    // Fixture placement creates no chapter event or pending trigger.
+    state.objects.get_mut(donor).counters.lore = chapters as i16;
+    (state, source, donor)
+}
+
 fn torpor_orb_in_play(state: &mut GameState, player: PlayerId) -> ObjectId {
     let orb = put(state, player, "Torpor Orb", Zone::Hand);
     pool(state, player, &[], 2);
@@ -1209,6 +1227,85 @@ fn unsupported_sba_donor_halts_before_the_next_sweep_both_seats() {
             assert_eq!(state.engine.halted, None);
             assert_halted_now(&mut state, source);
             assert_eq!(state.objects.get(donor).zone, Zone::Graveyard);
+            assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+        }
+    }
+}
+
+#[test]
+fn unsupported_completed_saga_halts_at_the_first_advance_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for rules in [
+            RuntimeRulesV1::default(),
+            RuntimeRulesV1::OWNER_ORDERED_GRAVEYARD_V1,
+        ] {
+            let (mut state, source, donor) = completed_saga_donor_scene(player);
+            state.engine.runtime_rules = rules;
+            assert_eq!(state.engine.halted, None);
+            assert_halted_now(&mut state, source);
+            assert_eq!(state.objects.get(donor).zone, Zone::Graveyard);
+            assert_eq!(state.players[player.index()].graveyard.last(), Some(&donor));
+            assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+            assert!(state.pending_legend_rule_v1.is_none());
+        }
+    }
+}
+
+#[test]
+fn unsupported_sba_donor_halts_with_default_rules_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let (mut state, source, donor) = sba_donor_scene(player);
+        state.engine.runtime_rules = RuntimeRulesV1::default();
+        state.players[player.opponent().index()].life = 0;
+        assert_eq!(state.engine.halted, None);
+        assert_halted_now(&mut state, source);
+        assert_eq!(state.objects.get(donor).zone, Zone::Graveyard);
+        assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+        assert!(!state.players[player.opponent().index()].has_lost);
+    }
+}
+
+#[test]
+fn sba_owner_order_halts_only_on_the_unsupported_final_top_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for donor_on_top in [true, false] {
+            let (mut state, source, donor) = sba_donor_scene(player);
+            let supported = lethally_damaged(&mut state, player, source, "Birds of Paradise");
+            let Decision::ChooseEffectTargets {
+                player: chooser,
+                legal_targets,
+                ..
+            } = next(&mut state)
+            else {
+                panic!("expected graveyard ordering choice");
+            };
+            assert_eq!(chooser, player);
+            assert_eq!(legal_targets.len(), 2);
+            assert!(legal_targets.contains(&Target::Object(donor)));
+            assert!(legal_targets.contains(&Target::Object(supported)));
+            assert_eq!(state.engine.halted, None);
+            assert_eq!(state.objects.get(donor).zone, Zone::Graveyard);
+            assert_eq!(state.objects.get(supported).zone, Zone::Graveyard);
+            assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+            // The first pick goes to the bottom.
+            let bottom = if donor_on_top { supported } else { donor };
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(bottom)));
+            if donor_on_top {
+                assert_eq!(state.engine.halted, donor_halt(source));
+                assert_halted_now(&mut state, source);
+                assert_eq!(state.players[player.index()].graveyard.last(), Some(&donor));
+            } else {
+                assert_eq!(state.engine.halted, None);
+                assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+                assert_eq!(
+                    state.players[player.index()].graveyard.last(),
+                    Some(&supported)
+                );
+                assert_eq!(
+                    active_definition(&state, source).unwrap().name,
+                    "Birds of Paradise"
+                );
+            }
             assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
         }
     }
@@ -1586,11 +1683,22 @@ fn check_site_case(site: DonorCheckSiteV1, player: PlayerId) -> bool {
     }
 }
 
+fn check_completed_saga_sba_site_case(player: PlayerId) -> bool {
+    let (mut state, source, donor) = completed_saga_donor_scene(player);
+    crate::trigger::sba_fixed_point(&mut state);
+    state.engine.halted == donor_halt(source)
+        && state.objects.get(donor).zone == Zone::Graveyard
+        && state.objects.get(source).zone == Zone::Battlefield
+}
+
 #[test]
 fn each_donor_check_site_halts_its_own_case_both_seats() {
     for site in DonorCheckSiteV1::ALL {
         for player in [PlayerId::P0, PlayerId::P1] {
             assert!(check_site_case(site, player), "{site:?} {player:?}");
+            if site == DonorCheckSiteV1::SbaBatch {
+                assert!(check_completed_saga_sba_site_case(player), "{player:?}");
+            }
         }
     }
 }
@@ -1602,6 +1710,12 @@ fn each_donor_check_site_case_fails_without_that_site_both_seats() {
         for player in [PlayerId::P0, PlayerId::P1] {
             let held = with_donor_check_site_disabled(site, || check_site_case(site, player));
             assert!(!held, "{site:?} {player:?} held without its own check");
+            if site == DonorCheckSiteV1::SbaBatch {
+                let held = with_donor_check_site_disabled(site, || {
+                    check_completed_saga_sba_site_case(player)
+                });
+                assert!(!held, "{player:?} held without the Saga SBA check");
+            }
         }
     }
 }
