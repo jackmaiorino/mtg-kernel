@@ -654,8 +654,10 @@ fn released_exports_are_unchanged_by_the_hand_token_fix() {
 }
 
 /// See [`released_exports_are_unchanged_by_the_hand_token_fix`].
-const RELEASED_GAME_DIGEST_751: &str = "record";
-const RELEASED_SCENARIO_DIGEST_751: &str = "record";
+const RELEASED_GAME_DIGEST_751: &str =
+    "5937bf54620f8f8fab8eb3c9adc409dec1973e0fb7703495a41ba26d401f2d11";
+const RELEASED_SCENARIO_DIGEST_751: &str =
+    "0df1e20f3da03335e7a2cf95041155481805aec83a05402f17ff4aafd83328b2";
 
 /// A token of `owner` put on top of `owner`'s library, where no state-based
 /// sweep has removed it yet. Returns the state, the decklists and the token.
