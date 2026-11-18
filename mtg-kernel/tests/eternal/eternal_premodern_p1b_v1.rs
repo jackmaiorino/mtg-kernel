@@ -1179,6 +1179,8 @@ fn dread_return_sacrificing_rest_in_peace_under_opalescence_exiles_all_three() {
             assert!(is_creature(&state, rest));
             let first = put(&mut state, seat, "Llanowar Elves", Zone::Battlefield);
             let second = put(&mut state, seat, "Llanowar Elves", Zone::Battlefield);
+            // A fourth creature, so each sacrifice is a choice.
+            let spare = put(&mut state, seat, "Llanowar Elves", Zone::Battlefield);
             let dread = put(&mut state, seat, "Dread Return", Zone::Graveyard);
             let giant = put(&mut state, seat, "Lotleth Giant", Zone::Graveyard);
             let mut chosen = vec![rest, first, second];
@@ -1197,6 +1199,7 @@ fn dread_return_sacrificing_rest_in_peace_under_opalescence_exiles_all_three() {
                 }
             }
             let case = format!("{seat:?} rest_first={rest_first}");
+            assert_eq!(zone(&state, spare), Zone::Battlefield, "{case}");
             for member in chosen {
                 assert_eq!(zone(&state, member), Zone::Exile, "{case}");
             }
