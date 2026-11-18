@@ -16,6 +16,9 @@ use crate::unclamped_softmax_sampler_v1::{
 use sha2::{Digest, Sha256};
 
 pub mod checkpoint;
+pub mod collect;
+pub mod diagnostics;
+pub mod host;
 pub mod inventory;
 pub mod schedule;
 
