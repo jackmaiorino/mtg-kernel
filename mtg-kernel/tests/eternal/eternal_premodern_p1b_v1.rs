@@ -1199,7 +1199,8 @@ fn dread_return_sacrificing_rest_in_peace_under_opalescence_exiles_all_three() {
                 }
             }
             // The cost is paid as the cast finishes, before priority.
-            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            let decision = next(&mut state);
+            assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
             let case = format!("{seat:?} rest_first={rest_first}");
             assert_eq!(zone(&state, spare), Zone::Battlefield, "{case}");
             for member in chosen {
