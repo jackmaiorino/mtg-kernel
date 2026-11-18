@@ -57,28 +57,11 @@ fn write(path: &Path, bytes: &[u8]) {
 /// Writes update `step` (receipt, checkpoint, complete record) and returns
 /// the checkpoint's SHA-256.
 fn commit(root: &Path, step: u64, parent: Option<String>, marker: f64) -> String {
-    let directory = iteration_dir_v1(root, step);
-    fs::create_dir_all(&directory).unwrap();
-    let receipt = format!("{{\"update\":{step}}}");
-    write(&directory.join("receipt.json"), receipt.as_bytes());
-    let receipt_sha256 = sha256_hex(receipt.as_bytes());
-    let checkpoint = CheckpointV1::new(
-        CAMPAIGN,
-        &identity(),
-        parent,
-        &receipt_sha256,
-        LearnerSnapshotV1::ActorCritic(snapshot_at(step, marker)),
-    )
-    .unwrap();
-    let bytes = checkpoint.to_bytes().unwrap();
-    write(&checkpoint_path_v1(root, step), &bytes);
-    let sha256 = sha256_hex(&bytes);
-    let complete = IterationCompleteV1::new(step, &sha256, &receipt_sha256, None);
-    write(
-        &directory.join("complete.json"),
-        &complete.to_bytes().unwrap(),
+    let config = super::super::campaign::tests::fixture_config(
+        super::super::campaign::ModeV1::Smoke,
+        3,
     );
-    sha256
+    super::super::campaign::tests::fixture_commit(root, &config, step, parent, marker, None)
 }
 
 fn chain(name: &str) -> (PathBuf, [String; 3]) {

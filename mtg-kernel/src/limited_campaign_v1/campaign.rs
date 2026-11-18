@@ -356,12 +356,12 @@ fn sync_directory(path: &Path) {
 
 /// `.NAME.staging` + `sync_all` + rename; returns the SHA-256 of `bytes`.
 pub fn publish_atomic_v1(directory: &Path, name: &str, bytes: &[u8]) -> Result<String> {
-    let staging = directory.join(format!(".{name}.staging"));
+    let target = child_path(directory, name)?;
+    let staging = child_path(directory, &format!(".{name}.staging"))?;
     if staging.exists() {
         fs::remove_file(&staging).map_err(io_error(&staging))?;
     }
     write_synced(&staging, bytes)?;
-    let target = directory.join(name);
     fs::rename(&staging, &target).map_err(io_error(&target))?;
     sync_directory(directory);
     Ok(sha256_hex(bytes))
@@ -437,9 +437,21 @@ fn trajectories_of(games: &[GameRecordV1]) -> Result<Vec<TrajectoryV2<'_>>> {
 /// retained decision of a natural game the pair-centered advantage against
 /// the same seat (the same deck) in the pair's other leg, through
 /// `pair_centered_terminal_rewards_v1`; truncated games add nothing.
-pub fn update_learner_v1(learner: &mut CampaignLearnerV1, games: &[GameRecordV1]) -> Result<Value> {
+/// None means no natural learner decision was eligible; the optimizer is unchanged.
+pub fn update_learner_v1(
+    learner: &mut CampaignLearnerV1,
+    games: &[GameRecordV1],
+) -> Result<Option<Value>> {
+    for game in games {
+        if let TerminalV1::Failed(reason) = &game.terminal {
+            return Err(format!("failed game: {reason}"));
+        }
+    }
+    if !has_eligible_decisions(games) {
+        return Ok(None);
+    }
     let refuse = |error: crate::current_mixed_policy_v1::Error| format!("update: {error}");
-    match learner {
+    let report = match learner {
         CampaignLearnerV1::ActorCriticH32(learner) => {
             let report = learner.update(&trajectories_of(games)?).map_err(refuse)?;
             serde_json::to_value(report).map_err(|error| error.to_string())
@@ -491,7 +503,17 @@ pub fn update_learner_v1(learner: &mut CampaignLearnerV1, games: &[GameRecordV1]
                     .collect::<BTreeMap<_, _>>(),
             }))
         }
-    }
+    }?;
+    Ok(Some(report))
+}
+
+fn has_eligible_decisions(games: &[GameRecordV1]) -> bool {
+    games.iter().any(|game| {
+        matches!(game.terminal, TerminalV1::Natural(_))
+            && game.retained.iter().any(|decision| {
+                game.receipt.learner_seats.get(usize::from(decision.seat)) == Some(&true)
+            })
+    })
 }
 
 /// The dev score of one panel (design Section 4.3): candidate points `1`
@@ -543,6 +565,384 @@ fn mode_of(config: &CampaignConfigV1) -> Result<ModeV1> {
     ModeV1::parse(&config.mode)
 }
 
+fn batch_pairs_v1(config: &CampaignConfigV1, step: u64) -> Result<Vec<(u64, Option<u64>)>> {
+    let seed = config.schedule_seed;
+    Ok(match mode_of(config)? {
+        ModeV1::Campaign => update_pairs_v1(step)
+            .map(|pair| {
+                let league =
+                    is_league_pair_v1(pair).then(|| league_opponent_step_v1(seed, step, pair));
+                (pair, league)
+            })
+            .collect(),
+        ModeV1::Smoke => vec![(step * PAIRS_PER_UPDATE_V1, None)],
+        ModeV1::Qualification => config
+            .qualification_pairs
+            .as_ref()
+            .ok_or("qualification campaign lacks its pairs")?
+            .indices
+            .iter()
+            .map(|&pair| (pair, None))
+            .collect(),
+    })
+}
+
+pub(super) fn read_config_v1(root: &Path) -> Result<(CampaignConfigV1, String)> {
+    let bytes = read_bytes(&root.join("campaign.json"))?;
+    let config: CampaignConfigV1 =
+        serde_json::from_slice(&bytes).map_err(|error| format!("campaign.json: {error}"))?;
+    let mode = mode_of(&config)?;
+    let learner = LearnerKindV1::from_contract(&config.learner_contract)?;
+    let dev_pairs = if mode == ModeV1::Qualification {
+        QUALIFICATION_DEV_PAIRS_V1
+    } else {
+        DEV_PAIRS_V1
+    };
+    if to_bytes(&config)? != bytes
+        || config.schema != CAMPAIGN_SCHEMA_V1
+        || config.u_max == 0
+        || config.u_max > 200
+        || config.dev_interval != DEV_INTERVAL_V1
+        || config.dev_seed != DEV_SEED_V1
+        || config.dev_pairs != dev_pairs
+        || config.schedule_seed != mode.schedule_seed()
+        || config.objective != learner.objective()
+        || config.feature_sha256 != learner.feature_sha256()
+        || config.optimizer_config != optimizer_config_v1(learner, config.u_max)
+        || config.sampler != SAMPLER_V1
+        || config.sampler_exp != SAMPLER_EXP_V1
+        || config.limits != CAMPAIGN_LIMITS_V1
+        || config.dev_collapse_after_update != DEV_COLLAPSE_AFTER_UPDATE_V1
+        || config.dev_collapse_threshold != DEV_COLLAPSE_THRESHOLD_V1
+        || config.truncation_gate_games != TRUNCATION_GATE_GAMES_V1
+        || config.league_interval != LEAGUE_INTERVAL_V1
+        || config.train_decks.len() != 40
+    {
+        return Err("campaign.json is not a canonical campaign configuration".into());
+    }
+    let pairs = batch_pairs_v1(&config, 0)?;
+    let self_play = pairs.iter().filter(|(_, league)| league.is_none()).count() as u64;
+    if config.pairs_per_update != pairs.len() as u64
+        || config.self_play_pairs_per_update != self_play
+    {
+        return Err("campaign pair counts differ from its schedule".into());
+    }
+    if mode == ModeV1::Qualification {
+        let names = config
+            .train_decks
+            .iter()
+            .map(|deck| deck.deck.clone())
+            .collect::<Vec<_>>();
+        if config.qualification_pairs
+            != Some(gate2_pairs_v1(&names, &DRAKE_HATCHER_TRAIN_DECKS_V1)?)
+        {
+            return Err("qualification pairs differ from the ruled workload".into());
+        }
+    } else if config.qualification_pairs.is_some() {
+        return Err("only qualification runs have qualification pairs".into());
+    }
+    Ok((config, sha256_hex(&bytes)))
+}
+
+fn canonical_value(bytes: &[u8]) -> Result<Value> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+    if to_bytes(&value)? != bytes {
+        return Err("record is not in canonical form".into());
+    }
+    Ok(value)
+}
+
+fn fields(value: &Value, names: &[&str]) -> Result<()> {
+    let object = value.as_object().ok_or("record is not an object")?;
+    if object.len() != names.len() || names.iter().any(|name| !object.contains_key(*name)) {
+        return Err("record fields do not match its schema".into());
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct GameTotals {
+    natural: u64,
+    truncated: u64,
+    trajectories: u64,
+    natural_trajectories: u64,
+    retained: u64,
+    eligible: u64,
+    half_points: u64,
+}
+
+fn verify_games(
+    config: &CampaignConfigV1,
+    value: &Value,
+    update: u64,
+    dev: bool,
+) -> Result<GameTotals> {
+    let games: Vec<GameReceiptV1> =
+        serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
+    if serde_json::to_value(&games).map_err(|error| error.to_string())? != *value {
+        return Err("game receipt fields differ from their schema".into());
+    }
+    let pairs = if dev {
+        (0..config.dev_pairs).map(|pair| (pair, Some(0))).collect()
+    } else {
+        batch_pairs_v1(config, update.checked_sub(1).ok_or("update zero has no games")?)?
+    };
+    if games.len() != 2 * pairs.len() {
+        return Err("game count differs from the scheduled workload".into());
+    }
+    let mut totals = GameTotals::default();
+    for ((pair, opponent), legs) in pairs.iter().zip(games.chunks_exact(2)) {
+        let seed = if dev {
+            config.dev_seed
+        } else {
+            config.schedule_seed
+        };
+        let deal = deal_v1(seed, *pair, config.train_decks.len())?;
+        for (leg, game) in legs.iter().enumerate() {
+            let leg = leg as u8;
+            let (_, starting) = super::schedule::leg_layout_v1(opponent.is_none(), &deal, leg);
+            let learner = if dev {
+                [false, false]
+            } else if opponent.is_none() {
+                [true, true]
+            } else {
+                [leg == 0, leg == 1]
+            };
+            let candidate = if dev {
+                format!("candidate:step_{update:04}")
+            } else {
+                format!("learner:step_{:04}", update - 1)
+            };
+            let other = if dev {
+                "step_0000".to_string()
+            } else {
+                opponent.map_or_else(|| candidate.clone(), |step| format!("league:step_{step:04}"))
+            };
+            let policies = if opponent.is_some() && leg == 1 {
+                [other, candidate]
+            } else {
+                [candidate, other]
+            };
+            if game.pair != *pair
+                || game.leg != leg
+                || game.env_seed != deal.env_seed
+                || game.starting_player != starting.index() as u8
+                || game.decks != deal.decks.map(|index| config.train_decks[index].deck.clone())
+                || game.policies != policies
+                || game.learner_seats != learner
+                || game.failure.is_some()
+                || !is_sha256_hex(&game.action_trace_sha256)
+                || game.decisions > config.limits.max_decisions
+                || game.forced_decisions > game.decisions
+                || game.retained_decisions.iter().any(|count| *count > game.decisions)
+                || game.retained_decisions[0] + game.retained_decisions[1]
+                    > game.decisions - game.forced_decisions
+                || (0..2).any(|seat| !learner[seat] && game.retained_decisions[seat] != 0)
+            {
+                return Err("game receipt differs from its schedule or counters".into());
+            }
+            let trajectories = learner.iter().filter(|seat| **seat).count() as u64;
+            let retained = game.retained_decisions.iter().sum::<u64>();
+            totals.trajectories += trajectories;
+            totals.retained += retained;
+            match (game.terminal.as_str(), game.returns) {
+                ("natural", Some(returns)) => {
+                    let outcome = match returns {
+                        [1, -1] => "p0_win",
+                        [-1, 1] => "p1_win",
+                        [0, 0] => "draw",
+                        _ => return Err("invalid natural returns".into()),
+                    };
+                    if game.outcome.as_deref() != Some(outcome)
+                        || game.truncation_reason.is_some()
+                    {
+                        return Err("invalid natural terminal fields".into());
+                    }
+                    totals.natural += 1;
+                    totals.natural_trajectories += trajectories;
+                    totals.eligible += retained;
+                    totals.half_points += (returns[usize::from(leg)] + 1) as u64;
+                }
+                ("truncated", None) => {
+                    if game.outcome.is_some()
+                        || !game.truncation_reason.as_ref().is_some_and(|reason| !reason.is_empty())
+                    {
+                        return Err("invalid truncated terminal fields".into());
+                    }
+                    totals.truncated += 1;
+                    totals.half_points += 1;
+                }
+                _ => return Err("committed game is neither natural nor truncated".into()),
+            }
+        }
+    }
+    Ok(totals)
+}
+
+fn verify_update_report(
+    report: &Value,
+    config: &CampaignConfigV1,
+    update: u64,
+    totals: &GameTotals,
+) -> Result<()> {
+    let numbers: &[&str] = match &config.optimizer_config {
+        OptimizerConfigV1::ActorCritic(optimizer) => {
+            fields(
+                report,
+                &[
+                    "step",
+                    "learning_rate",
+                    "loss",
+                    "policy_loss",
+                    "value_loss",
+                    "entropy",
+                    "advantage_sigma",
+                    "gradient_norm",
+                    "clipped",
+                    "decisions",
+                    "natural_trajectories",
+                    "truncated_trajectories",
+                ],
+            )?;
+            let learning_rate = optimizer.learning_rate(update).map_err(|error| error.to_string())?;
+            if report["step"] != update
+                || report["learning_rate"].as_f64() != Some(learning_rate)
+                || report["decisions"] != totals.eligible
+                || report["natural_trajectories"] != totals.natural_trajectories
+                || report["truncated_trajectories"]
+                    != totals.trajectories - totals.natural_trajectories
+                || report["clipped"].as_bool().is_none()
+            {
+                return Err("update report differs from the batch".into());
+            }
+            &[
+                "loss",
+                "policy_loss",
+                "value_loss",
+                "entropy",
+                "advantage_sigma",
+                "gradient_norm",
+            ]
+        }
+        OptimizerConfigV1::PairCenteredControl(_) => {
+            fields(report, &["loss", "doubled_examples", "reward_counts"])?;
+            let counts = report["reward_counts"].as_object().ok_or("missing reward counts")?;
+            let mut total = 0u64;
+            for (reward, count) in counts {
+                if !matches!(reward.as_str(), "-1" | "0" | "1") {
+                    return Err("invalid control reward".into());
+                }
+                total = total
+                    .checked_add(count.as_u64().ok_or("invalid reward count")?)
+                    .ok_or("reward count overflow")?;
+            }
+            if total != 2 * totals.eligible || report["doubled_examples"] != total {
+                return Err("control report differs from the batch".into());
+            }
+            &["loss"]
+        }
+    };
+    if totals.eligible == 0
+        || numbers
+            .iter()
+            .any(|field| !report[*field].as_f64().is_some_and(f64::is_finite))
+    {
+        return Err("update report has no eligible decisions or has invalid arithmetic".into());
+    }
+    Ok(())
+}
+
+pub(super) fn verify_receipt_v1(
+    bytes: &[u8],
+    config: &CampaignConfigV1,
+    checkpoint: &CheckpointV1,
+    previous_truncated: Option<u64>,
+) -> Result<Option<u64>> {
+    let receipt = canonical_value(bytes)?;
+    let update = checkpoint.step;
+    let expected = if update == 0 {
+        json!({
+            "schema": RECEIPT_SCHEMA_V1,
+            "campaign_sha256": checkpoint.campaign_sha256,
+            "update": 0,
+            "kind": "initialization",
+            "learner_contract": config.learner_contract,
+        })
+    } else {
+        let totals = verify_games(config, &receipt["games"], update, false)?;
+        verify_update_report(&receipt["update_report"], config, update, &totals)?;
+        let gate = config.truncation_gate_games;
+        if totals.truncated > gate && previous_truncated.is_some_and(|count| count > gate) {
+            return Err("a committed update passed the truncation stop".into());
+        }
+        let mut pairs = Vec::new();
+        for (pair, league) in batch_pairs_v1(config, update - 1)? {
+            let deal = deal_v1(config.schedule_seed, pair, config.train_decks.len())?;
+            pairs.push(json!({
+                "pair": pair,
+                "kind": if league.is_some() { "league" } else { "self_play" },
+                "opponent_step": league,
+                "decks": deal.decks.map(|index| config.train_decks[index].deck.clone()),
+                "env_seed": deal.env_seed,
+                "starting_player": deal.starting.index(),
+            }));
+        }
+        json!({
+            "schema": RECEIPT_SCHEMA_V1,
+            "campaign_sha256": checkpoint.campaign_sha256,
+            "update": update,
+            "kind": "update",
+            "policy_step": update - 1,
+            "parent_checkpoint_sha256": checkpoint.parent_checkpoint_sha256,
+            "pairs": pairs,
+            "games": receipt["games"],
+            "natural_games": totals.natural,
+            "truncated_games": totals.truncated,
+            "learner_trajectories": totals.trajectories,
+            "retained_decisions": totals.retained,
+            "truncation_gate": {
+                "limit": gate,
+                "previous_truncated_games": previous_truncated,
+                "exceeded": totals.truncated > gate,
+            },
+            "update_report": receipt["update_report"],
+        })
+    };
+    if receipt != expected {
+        return Err("receipt schema or checkpoint bindings differ".into());
+    }
+    Ok(receipt["truncated_games"].as_u64())
+}
+
+pub(super) fn verify_dev_v1(
+    bytes: &[u8],
+    config: &CampaignConfigV1,
+    checkpoint: &CheckpointV1,
+    checkpoint_sha256: &str,
+    qualification: bool,
+) -> Result<()> {
+    let dev = canonical_value(bytes)?;
+    let totals = verify_games(config, &dev["games"], checkpoint.step, true)?;
+    let mut expected = json!({
+        "schema": if qualification { EVALUATION_SCHEMA_V1 } else { DEV_SCHEMA_V1 },
+        "campaign_sha256": checkpoint.campaign_sha256,
+        "candidate_checkpoint_sha256": checkpoint_sha256,
+        "opponent": "step_0000",
+        "seed": config.dev_seed,
+        "pairs": config.dev_pairs,
+        "games": dev["games"],
+        "half_points": totals.half_points,
+        "score": totals.half_points as f64 / (4 * config.dev_pairs) as f64,
+    });
+    if !qualification {
+        expected["update"] = json!(checkpoint.step);
+    }
+    if dev != expected {
+        return Err("dev schema, score or checkpoint bindings differ".into());
+    }
+    Ok(())
+}
+
 impl RunnerV1 {
     fn fail(&self, update: u64, error: String, games: &[GameReceiptV1]) -> String {
         let record = json!({
@@ -570,7 +970,7 @@ impl RunnerV1 {
         let iterations = self.root.join("iterations");
         let staging = iterations.join(format!(".iter_{update:04}.staging"));
         if staging.exists() {
-            fs::remove_dir_all(&staging).map_err(io_error(&staging))?;
+            return Err(format!("uncommitted staging remains: {}", staging.display()));
         }
         fs::create_dir(&staging).map_err(io_error(&staging))?;
         let receipt_bytes = to_bytes(receipt)?;
@@ -655,26 +1055,7 @@ impl RunnerV1 {
     /// The pairs of the batch collected at `step`, each with its league
     /// opponent's step when it is a league pair.
     fn batch_pairs(&self, step: u64) -> Result<Vec<(u64, Option<u64>)>> {
-        let seed = self.config.schedule_seed;
-        Ok(match mode_of(&self.config)? {
-            ModeV1::Campaign => update_pairs_v1(step)
-                .map(|pair| {
-                    let league =
-                        is_league_pair_v1(pair).then(|| league_opponent_step_v1(seed, step, pair));
-                    (pair, league)
-                })
-                .collect(),
-            ModeV1::Smoke => vec![(step * PAIRS_PER_UPDATE_V1, None)],
-            ModeV1::Qualification => self
-                .config
-                .qualification_pairs
-                .as_ref()
-                .ok_or("qualification campaign lacks its pairs")?
-                .indices
-                .iter()
-                .map(|&pair| (pair, None))
-                .collect(),
-        })
+        batch_pairs_v1(&self.config, step)
     }
 
     fn play(&mut self, specs: &[super::collect::GameSpecV1<'_>]) -> Vec<GameRecordV1> {
@@ -811,7 +1192,9 @@ impl RunnerV1 {
         let natural = games.len() as u64 - truncated;
         let gate = self.config.truncation_gate_games;
         let previous = self.previous_truncated;
-        if truncated > gate && previous.is_some_and(|previous| previous > gate) {
+        if !has_eligible_decisions(&games)
+            || (truncated > gate && previous.is_some_and(|previous| previous > gate))
+        {
             let record = json!({
                 "schema": STOPPED_SCHEMA_V1,
                 "campaign_sha256": self.campaign_sha256,
@@ -837,7 +1220,8 @@ impl RunnerV1 {
         );
         self.stages.update = update_counter;
         let report = match report {
-            Ok(report) => report,
+            Ok(Some(report)) => report,
+            Ok(None) => return Err("eligible decisions disappeared before the update".into()),
             Err(error) => return Err(self.fail(update, error, &receipts)),
         };
         let learner_trajectories = games
@@ -912,18 +1296,27 @@ impl RunnerV1 {
         self.previous_truncated = Some(truncated);
         if let Some(score) = dev_score {
             self.dev_scores.insert(update, score);
-            let threshold = self.config.dev_collapse_threshold;
-            let earlier = update
-                .checked_sub(self.config.dev_interval)
-                .and_then(|earlier| self.dev_scores.get(&earlier));
-            if update >= self.config.dev_collapse_after_update
-                && score < threshold
-                && earlier.is_some_and(|earlier| *earlier < threshold)
-            {
-                return Ok(Some(RunOutcomeV1::DevCollapse));
-            }
         }
-        Ok(None)
+        Ok(self.committed_stop())
+    }
+
+    fn committed_stop(&self) -> Option<RunOutcomeV1> {
+        let threshold = self.config.dev_collapse_threshold;
+        let earlier = self
+            .head
+            .checked_sub(self.config.dev_interval)
+            .and_then(|step| self.dev_scores.get(&step));
+        if self.head >= self.config.dev_collapse_after_update
+            && self
+                .dev_scores
+                .get(&self.head)
+                .is_some_and(|score| *score < threshold)
+            && earlier.is_some_and(|score| *score < threshold)
+        {
+            Some(RunOutcomeV1::DevCollapse)
+        } else {
+            None
+        }
     }
 
     fn finish_campaign(&self, outcome: RunOutcomeV1) -> Result<()> {
@@ -939,6 +1332,10 @@ impl RunnerV1 {
     }
 
     fn run_to_horizon(&mut self) -> Result<RunOutcomeV1> {
+        if let Some(outcome) = self.committed_stop() {
+            self.finish_campaign(outcome)?;
+            return Ok(outcome);
+        }
         while self.head < self.config.u_max {
             if let Some(outcome) = self.run_update(self.head + 1)? {
                 self.finish_campaign(outcome)?;
@@ -1058,6 +1455,7 @@ pub fn guard_launch_v1(
         return Err(format!("qualification manifest refuses this run: {name}"));
     }
     admit_receipt_host_class_v1(host, available_vcpus)?;
+    validate_manifest_v1(&parsed, available_vcpus)?;
     Ok(Some(sha256_hex(&bytes)))
 }
 
@@ -1191,15 +1589,65 @@ fn committed_head(root: &Path) -> Result<Option<u64>> {
     Ok(head)
 }
 
-/// Removes every uncommitted file a killed run can leave: staging
-/// directories and files, and checkpoints after the committed head.
-fn clean_uncommitted(root: &Path, head: u64) -> Result<()> {
-    let iterations = root.join("iterations");
+fn child_path(directory: &Path, name: &str) -> Result<PathBuf> {
+    if name.is_empty()
+        || name == "."
+        || name.contains("..")
+        || name.bytes().any(|byte| matches!(byte, b'/' | b'\\' | b':'))
+        || Path::new(name).is_absolute()
+    {
+        return Err(format!("unsafe run file name {name:?}"));
+    }
+    Ok(directory.join(name))
+}
+
+fn validate_run_tree(root: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(root).map_err(io_error(root))?;
+    if metadata.file_type().is_symlink() {
+        return Err(format!("redirected run path: {}", root.display()));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return Err(format!("run path is a reparse point: {}", root.display()));
+        }
+    }
+    if metadata.is_dir() {
+        let directory = fs::canonicalize(root).map_err(io_error(root))?;
+        for entry in fs::read_dir(root).map_err(io_error(root))? {
+            let name = entry.map_err(io_error(root))?.file_name();
+            let name = name.to_str().ok_or("run file name is not UTF-8")?;
+            let path = child_path(&directory, name)?;
+            validate_run_tree(&path)?;
+            if fs::canonicalize(&path).map_err(io_error(&path))? != path {
+                return Err(format!("redirected run path: {}", path.display()));
+            }
+        }
+    } else if !metadata.is_file() {
+        return Err(format!("run path is not a regular file: {}", root.display()));
+    }
+    Ok(())
+}
+
+/// Verifies the committed chain and all paths before removing uncommitted files.
+fn clean_uncommitted(
+    root: &Path,
+    head: u64,
+) -> Result<Vec<super::checkpoint::VerifiedCheckpointV1>> {
+    validate_run_tree(root)?;
+    let directory = fs::canonicalize(root).map_err(io_error(root))?;
+    let root = directory.as_path();
+    let chain = super::checkpoint::verify_chain_v1(root, head)?;
+    let mut directories = Vec::new();
+    let mut files = Vec::new();
+    let iterations = child_path(root, "iterations")?;
     for entry in fs::read_dir(&iterations).map_err(io_error(&iterations))? {
-        let path = entry.map_err(io_error(&iterations))?.path();
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let name = entry.map_err(io_error(&iterations))?.file_name();
+        let name = name.to_str().ok_or("run file name is not UTF-8")?;
+        let path = child_path(&iterations, name)?;
         if name.starts_with('.') && name.ends_with(".staging") {
-            fs::remove_dir_all(&path).map_err(io_error(&path))?;
+            directories.push(path);
         } else if let Some(update) = name
             .strip_prefix("iter_")
             .and_then(|u| u.parse::<u64>().ok())
@@ -1212,27 +1660,35 @@ fn clean_uncommitted(root: &Path, head: u64) -> Result<()> {
             }
         }
     }
-    let checkpoints = root.join("checkpoints");
+    let checkpoints = child_path(root, "checkpoints")?;
     for entry in fs::read_dir(&checkpoints).map_err(io_error(&checkpoints))? {
-        let path = entry.map_err(io_error(&checkpoints))?.path();
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let name = entry.map_err(io_error(&checkpoints))?.file_name();
+        let name = name.to_str().ok_or("run file name is not UTF-8")?;
+        let path = child_path(&checkpoints, name)?;
         let uncommitted = name
             .strip_prefix("step_")
             .and_then(|rest| rest.strip_suffix(".json"))
             .and_then(|step| step.parse::<u64>().ok())
             .is_some_and(|step| step > head);
         if uncommitted || (name.starts_with('.') && name.ends_with(".staging")) {
-            fs::remove_file(&path).map_err(io_error(&path))?;
+            files.push(path);
         }
     }
     for entry in fs::read_dir(root).map_err(io_error(root))? {
-        let path = entry.map_err(io_error(root))?.path();
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let name = entry.map_err(io_error(root))?.file_name();
+        let name = name.to_str().ok_or("run file name is not UTF-8")?;
+        let path = child_path(root, name)?;
         if name.starts_with('.') && name.ends_with(".staging") {
-            fs::remove_file(&path).map_err(io_error(&path))?;
+            files.push(path);
         }
     }
-    Ok(())
+    for path in directories {
+        fs::remove_dir_all(&path).map_err(io_error(&path))?;
+    }
+    for path in files {
+        fs::remove_file(&path).map_err(io_error(&path))?;
+    }
+    Ok(chain)
 }
 
 /// Cold resume (design Section 3.4): verifies `campaign.json` against this
@@ -1240,7 +1696,12 @@ fn clean_uncommitted(root: &Path, head: u64) -> Result<()> {
 /// committed iteration, removes uncommitted staging, and continues at the
 /// next update with the outputs an uninterrupted run would have written.
 pub fn resume_v1(launch: &LaunchV1) -> Result<RunOutcomeV1> {
+    resume_runner_v1(launch)?.run_to_horizon()
+}
+
+fn resume_runner_v1(launch: &LaunchV1) -> Result<RunnerV1> {
     let root = &launch.root;
+    validate_run_tree(root)?;
     if root.join("complete.json").exists() {
         return Err("the campaign is already complete".into());
     }
@@ -1296,8 +1757,7 @@ pub fn resume_v1(launch: &LaunchV1) -> Result<RunOutcomeV1> {
         }
     }
     let head = committed_head(root)?.ok_or("no committed iteration: start the run again")?;
-    clean_uncommitted(root, head)?;
-    let chain = super::checkpoint::verify_chain_v1(root, head)?;
+    let chain = clean_uncommitted(root, head)?;
     let campaign_sha256 = sha256_hex(&config_bytes);
     if chain
         .iter()
@@ -1334,7 +1794,7 @@ pub fn resume_v1(launch: &LaunchV1) -> Result<RunOutcomeV1> {
     let learner_state = last.checkpoint.restore_learner_v1()?;
     let head_sha256 = last.sha256.clone();
     record_launch(launch, "resume", Some(head))?;
-    let mut runner = RunnerV1 {
+    let runner = RunnerV1 {
         root: root.clone(),
         config,
         campaign_sha256,
@@ -1352,7 +1812,7 @@ pub fn resume_v1(launch: &LaunchV1) -> Result<RunOutcomeV1> {
         natural_games: 0,
         decisions: 0,
     };
-    runner.run_to_horizon()
+    Ok(runner)
 }
 
 /// Verifies a campaign directory's chain to its committed head.
@@ -1378,7 +1838,18 @@ pub fn qualify_v1(launch: &LaunchV1, learner: LearnerKindV1) -> Result<Value> {
         ));
     }
     let training_ns = super::diagnostics::elapsed_ns(collection_started);
+    finish_qualification_v1(launch, runner, started, training_ns)
+}
+
+fn finish_qualification_v1(
+    launch: &LaunchV1,
+    mut runner: RunnerV1,
+    started: Instant,
+    training_ns: u64,
+) -> Result<Value> {
     let training_games = runner.natural_games;
+    // Keep the committed batch as engineering evidence, without a qualifying receipt.
+    require_qualification_training(training_games)?;
     let training_decisions = runner.decisions;
     let (step_1, step_1_sha256) = CheckpointV1::load_v1(&checkpoint_path_v1(&launch.root, 1))?;
     let candidate = step_1.policy_v1()?;
@@ -1447,6 +1918,135 @@ pub fn qualify_v1(launch: &LaunchV1, learner: LearnerKindV1) -> Result<Value> {
     Ok(run)
 }
 
+fn require_qualification_training(natural_games: u64) -> Result<()> {
+    if natural_games != 2 * super::schedule::QUALIFICATION_PAIRS_V1 as u64 {
+        return Err("qualification requires exactly 16 natural training games".into());
+    }
+    Ok(())
+}
+
+/// Rebuild from the referenced evidence; paths here are read only.
+fn validate_manifest_v1(manifest: &QualificationManifestV1, available_vcpus: usize) -> Result<()> {
+    let roots = manifest
+        .runs
+        .iter()
+        .map(|run| {
+            run["directory"]
+                .as_str()
+                .filter(|directory| !directory.is_empty())
+                .map(PathBuf::from)
+                .ok_or_else(|| "manifest run has no directory".to_string())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let checked = lock_manifest_v1(&roots, manifest.workers, manifest.u_max, available_vcpus)?;
+    if checked != *manifest {
+        return Err("manifest differs from its qualification evidence".into());
+    }
+    Ok(())
+}
+
+fn qualification_run_v1(root: &Path) -> Result<Value> {
+    let run = canonical_value(&read_bytes(&root.join("qualification_run.json"))?)?;
+    fields(
+        &run,
+        &[
+            "schema",
+            "identity",
+            "learner_contract",
+            "feature_sha256",
+            "host_class",
+            "workers",
+            "stage_diagnostics",
+            "qualification_pairs",
+            "step_0001_sha256",
+            "evaluation_sha256",
+            "timing",
+        ],
+    )?;
+    if run["schema"] != QUALIFICATION_RUN_SCHEMA_V1 || verify_v1(root)? != 1 {
+        return Err("not a completed qualification update".into());
+    }
+    let (config, _) = read_config_v1(root)?;
+    let (checkpoint, step) = CheckpointV1::load_v1(&checkpoint_path_v1(root, 1))?;
+    let evaluation = read_bytes(&root.join("evaluation.json"))?;
+    verify_dev_v1(&evaluation, &config, &checkpoint, &step, true)?;
+    if config.mode != ModeV1::Qualification.name()
+        || config.u_max != 1
+        || run["identity"] != serde_json::to_value(&config.identity).map_err(|e| e.to_string())?
+        || run["learner_contract"] != config.learner_contract
+        || run["feature_sha256"] != config.feature_sha256
+        || run["qualification_pairs"]
+            != serde_json::to_value(&config.qualification_pairs).map_err(|e| e.to_string())?
+        || run["step_0001_sha256"] != step
+        || run["evaluation_sha256"] != sha256_hex(&evaluation)
+        || run["workers"]
+            .as_u64()
+            .filter(|workers| *workers > 0)
+            .is_none()
+        || run["stage_diagnostics"].as_bool().is_none()
+    {
+        return Err("qualification run differs from its workload or outputs".into());
+    }
+    let receipt = canonical_value(&read_bytes(&iteration_dir_v1(root, 1).join("receipt.json"))?)?;
+    let training = verify_games(&config, &receipt["games"], 1, false)?;
+    require_qualification_training(training.natural)?;
+    let timing = canonical_value(&read_bytes(&root.join("timing.json"))?)?;
+    fields(
+        &timing,
+        &[
+            "schema",
+            "workers",
+            "stage_diagnostics",
+            "wall_ns",
+            "training_ns",
+            "evaluation_ns",
+            "training_natural_games",
+            "training_decisions",
+            "all_natural_games",
+            "all_decisions",
+            "completed_natural_games_per_sec",
+            "decisions_per_sec",
+            "peak_rss_bytes",
+            "peak_rss_note",
+            "stages",
+        ],
+    )?;
+    let positive = |field: &str| {
+        timing[field]
+            .as_u64()
+            .filter(|value| *value > 0)
+            .ok_or_else(|| format!("qualification timing has no positive {field}"))
+    };
+    let training_ns = positive("training_ns")?;
+    let evaluation_ns = positive("evaluation_ns")?;
+    let wall_ns = positive("wall_ns")?;
+    let training_decisions = positive("training_decisions")?;
+    let games: Vec<GameReceiptV1> =
+        serde_json::from_value(receipt["games"].clone()).map_err(|error| error.to_string())?;
+    let dev = canonical_value(&evaluation)?;
+    let dev_games: Vec<GameReceiptV1> =
+        serde_json::from_value(dev["games"].clone()).map_err(|error| error.to_string())?;
+    let dev_totals = verify_games(&config, &dev["games"], 1, true)?;
+    let per_second = |count: u64| count as f64 / (training_ns as f64 / 1e9);
+    if timing != run["timing"]
+        || timing["schema"] != "limited-campaign-qualification-timing/v1"
+        || timing["workers"] != run["workers"]
+        || timing["stage_diagnostics"] != run["stage_diagnostics"]
+        || training_ns.checked_add(evaluation_ns).is_none_or(|total| total > wall_ns)
+        || timing["training_natural_games"] != training.natural
+        || training_decisions != games.iter().map(|game| game.decisions).sum::<u64>()
+        || timing["all_natural_games"] != training.natural + dev_totals.natural
+        || timing["all_decisions"]
+            != training_decisions + dev_games.iter().map(|game| game.decisions).sum::<u64>()
+        || timing["completed_natural_games_per_sec"].as_f64() != Some(per_second(training.natural))
+        || timing["decisions_per_sec"].as_f64() != Some(per_second(training_decisions))
+        || !(timing["peak_rss_bytes"].is_null() || timing["peak_rss_bytes"].as_u64().is_some())
+    {
+        return Err("qualification timing differs from completed work".into());
+    }
+    Ok(run)
+}
+
 /// Locks `W*` and `U_max` into a qualification manifest from qualification
 /// runs on one host: every run must have the same identity, learner, host
 /// class, Gate 2 pairs, `step_0001.json` digest and `evaluation.json`
@@ -1462,18 +2062,7 @@ pub fn lock_manifest_v1(
 ) -> Result<QualificationManifestV1> {
     let mut runs = Vec::new();
     for root in run_roots {
-        let bytes = read_bytes(&root.join("qualification_run.json"))?;
-        let run: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
-        if run["schema"] != QUALIFICATION_RUN_SCHEMA_V1 {
-            return Err(format!("{}: not a qualification run", root.display()));
-        }
-        // The run's files must still have the recorded digests.
-        let step = sha256_hex(&read_bytes(&checkpoint_path_v1(root, 1))?);
-        let evaluation = sha256_hex(&read_bytes(&root.join("evaluation.json"))?);
-        if run["step_0001_sha256"] != step || run["evaluation_sha256"] != evaluation {
-            return Err(format!("{}: files differ from its record", root.display()));
-        }
-        runs.push(run);
+        runs.push(qualification_run_v1(root)?);
     }
     let first = runs.first().ok_or("no qualification runs")?.clone();
     for run in &runs {
@@ -1506,7 +2095,23 @@ pub fn lock_manifest_v1(
     {
         return Err("the runs must include one worker, W*, and diagnostics both on and off".into());
     }
-    if workers < 2 || !CAMPAIGN_HORIZON_V1.contains(&u_max) {
+    for count in [1, 2, 4, 8, workers] {
+        if count <= available_vcpus {
+            for enabled in [false, true] {
+                if !runs.iter().any(|run| {
+                    run["workers"] == count && run["stage_diagnostics"] == enabled
+                }) {
+                    return Err(format!(
+                        "missing qualification at {count} workers with diagnostics {enabled}"
+                    ));
+                }
+            }
+        }
+    }
+    if worker_counts.iter().any(|count| *count > available_vcpus)
+        || workers < 2
+        || !CAMPAIGN_HORIZON_V1.contains(&u_max)
+    {
         return Err("W* must be at least 2 and U_max in 100..=200".into());
     }
     let host: HostClassV1 =
@@ -1583,4 +2188,4 @@ pub fn manifest_bytes_v1(manifest: &QualificationManifestV1) -> Result<Vec<u8>> 
 
 #[cfg(all(test, not(feature = "standard-magezero-fixtures")))]
 #[path = "campaign_tests.rs"]
-mod tests;
+pub(super) mod tests;

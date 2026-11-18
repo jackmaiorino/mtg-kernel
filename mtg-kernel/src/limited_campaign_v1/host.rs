@@ -122,14 +122,18 @@ pub fn measure_host_class_v1(short_name: &str, trainer_binary_sha256: &str) -> R
 /// and exactly `<vcpus>` logical processors (`available_vcpus`).
 pub fn admit_receipt_host_class_v1(host: &HostClassV1, available_vcpus: usize) -> Result<()> {
     let cpu = host.cpu_model.to_ascii_uppercase();
+    let has_model = |model: &str| {
+        cpu.split(|ch: char| !ch.is_ascii_alphanumeric())
+            .any(|token| token == model)
+    };
     let fits = match host.short_name.as_str() {
-        "win11-13700k" => host.os_family == "windows" && cpu.contains("13700K"),
-        "win11-5900xt" => host.os_family == "windows" && cpu.contains("5900XT"),
-        "linux-9950x" => host.os_family == "linux" && cpu.contains("9950X"),
+        "win11-13700k" => host.os_family == "windows" && has_model("13700K"),
+        "win11-5900xt" => host.os_family == "windows" && has_model("5900XT"),
+        "linux-9950x" => host.os_family == "linux" && has_model("9950X"),
         name => match name.strip_prefix("runpod-epyc-") {
             Some(vcpus) => {
                 host.os_family == "linux"
-                    && cpu.contains("EPYC")
+                    && has_model("EPYC")
                     && vcpus.parse::<usize>().ok() == Some(available_vcpus)
                     && !vcpus.starts_with('0')
             }

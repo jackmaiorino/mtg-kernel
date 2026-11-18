@@ -537,6 +537,11 @@ fn read(path: &Path) -> Result<Vec<u8>> {
 /// campaign digest, source identity, learner contract, feature identity and
 /// optimizer configuration equal step 0's; and the learner restores.
 pub fn verify_chain_v1(root: &Path, head: u64) -> Result<Vec<VerifiedCheckpointV1>> {
+    let (config, campaign_sha256) = super::campaign::read_config_v1(root)?;
+    if head > config.u_max {
+        return Err("committed head exceeds the campaign horizon".into());
+    }
+    let mut previous_truncated = None;
     let mut chain: Vec<VerifiedCheckpointV1> = Vec::new();
     for update in 0..=head {
         let directory = iteration_dir_v1(root, update);
@@ -547,13 +552,23 @@ pub fn verify_chain_v1(root: &Path, head: u64) -> Result<Vec<VerifiedCheckpointV
                 "update {update}: complete record names another update"
             ));
         }
-        let receipt_sha256 = sha256_hex(&read(&directory.join("receipt.json"))?);
+        let receipt = read(&directory.join("receipt.json"))?;
+        let receipt_sha256 = sha256_hex(&receipt);
         let dev_path = directory.join("dev.json");
-        let dev_sha256 = if dev_path.exists() {
-            Some(sha256_hex(&read(&dev_path)?))
+        let dev = if dev_path.exists() {
+            Some(read(&dev_path)?)
         } else {
             None
         };
+        let dev_sha256 = dev.as_ref().map(|bytes| sha256_hex(bytes));
+        let milestone = update > 0
+            && config.mode != "qualification"
+            && update.is_multiple_of(config.dev_interval);
+        if dev.is_some() != milestone {
+            return Err(format!(
+                "update {update}: dev panel does not match the milestone schedule"
+            ));
+        }
         let (checkpoint, sha256) = CheckpointV1::load_v1(&checkpoint_path_v1(root, update))?;
         let previous = chain.last();
         let parent = previous.map(|link| link.sha256.clone());
@@ -584,6 +599,21 @@ pub fn verify_chain_v1(root: &Path, head: u64) -> Result<Vec<VerifiedCheckpointV
                     "update {update}: checkpoint identity differs from step 0"
                 ));
             }
+        }
+        if checkpoint.campaign_sha256 != campaign_sha256
+            || checkpoint.identity() != config.identity
+            || checkpoint.learner_contract != config.learner_contract
+            || checkpoint.feature_sha256 != config.feature_sha256
+            || checkpoint.optimizer_config != config.optimizer_config
+        {
+            return Err(format!(
+                "update {update}: checkpoint differs from campaign.json"
+            ));
+        }
+        previous_truncated =
+            super::campaign::verify_receipt_v1(&receipt, &config, &checkpoint, previous_truncated)?;
+        if let Some(bytes) = dev {
+            super::campaign::verify_dev_v1(&bytes, &config, &checkpoint, &sha256, false)?;
         }
         checkpoint.restore_learner_v1()?;
         chain.push(VerifiedCheckpointV1 {
