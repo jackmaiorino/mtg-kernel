@@ -8172,10 +8172,7 @@ pub(crate) fn jace_draw_replacement_origin(
             );
     }
     let Some(EffectOp::DrawCards { player, count }) =
-        path.iter().try_fold(root.as_ref(), |op, ordinal| match op {
-            EffectOp::Sequence(steps) => steps.get(usize::from(*ordinal)),
-            _ => None,
-        })
+        resolved_definition_op_at(&root, path, &pending.ctx, state)
     else {
         return false;
     };
@@ -8184,6 +8181,29 @@ pub(crate) fn jace_draw_replacement_origin(
     }
     nonland_sacrifice_payment_v1::remaining(&root, path)
         .is_ok_and(|siblings| draw_remainder_matches(remaining, &siblings, path, *player, *count))
+}
+
+/// The definition-owned instruction at `path`, walked through every
+/// structural parent a resolution enters (`Sequence`, `Choice`, the unpaid
+/// branch of a payment), so a draw below the root of its program is found. A
+/// `Conditional` is walked only through the branch its condition selects
+/// now; the conditions that order draws (`ControllersTurnV1`) cannot change
+/// while the program resolves, and a condition that did change only loses
+/// the replacement choice.
+fn resolved_definition_op_at<'a>(
+    root: &'a EffectOp,
+    path: &[u16],
+    ctx: &ExecCtx,
+    state: &GameState,
+) -> Option<&'a EffectOp> {
+    path.iter().try_fold(root, |op, &ordinal| match op {
+        EffectOp::Conditional { cond, .. }
+            if ordinal != u16::from(!eval_cond(cond, ctx, state)) =>
+        {
+            None
+        }
+        _ => effect_op_at_structural_path(op, &[ordinal]),
+    })
 }
 
 fn draw_remainder_matches(

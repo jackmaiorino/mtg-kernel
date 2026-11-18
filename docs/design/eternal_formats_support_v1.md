@@ -2919,6 +2919,11 @@ Conventions fixed under #717:
   effect, so "each player draws" still lets both players draw. Scrawling Crawler's "each player
   draws" is the shape that needed it; the local stops of Time Spiral, Wheel of Fortune and the
   owned draws stay.
+- Draw replacement origins. The choice between two competing draw replacements (Jace, Wielder of
+  Mysteries and Hullbreacher, 616.1) finds a definition-owned draw anywhere below the root of its
+  program (`effect::jace_draw_replacement_origin`): through a `Sequence`, a `Choice` option, the
+  unpaid branch of a payment, and a `Conditional` only through the branch its condition selects
+  at that moment. Smuggler's Copter's loot is the first draw this reaches.
 
 A batch is one event for replacement effects (614.1, 614.6): the name-keyed graveyard
 replacements (Rest in Peace, Leyline of the Void, Dauthi Voidwalker, with Yawgmoth's Will, Suplex,
