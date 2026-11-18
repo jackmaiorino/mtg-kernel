@@ -1816,6 +1816,37 @@ fn sand_scout_fetches_a_desert_and_makes_one_sand_warrior_each_turn() {
 }
 
 #[test]
+fn sand_scout_triggers_again_in_its_controllers_turn_after_the_opponents_turn_of_the_round() {
+    let mut state = islands();
+    let scout = put(&mut state, P1, "Sand Scout", Zone::Battlefield);
+    // P1 cracks a fetchland in P0's turn: one Sand Warrior.
+    run_until(&mut state, |state| state.priority_player == P1, |_, _| None);
+    assert_eq!(state.active_player, P0);
+    let fetch = put(&mut state, P1, "Arid Mesa", Zone::Battlefield);
+    activate(&mut state, fetch, 0, &[]);
+    settle_first(&mut state);
+    assert_eq!(named(&state, P1, "Sand Warrior Token").len(), 1);
+
+    // P1's own turn of the same round is another turn: one more.
+    let turn = state.turn;
+    run_until(
+        &mut state,
+        |state| state.active_player == P1 && state.step == Step::Main1,
+        |_, _| None,
+    );
+    assert_eq!(state.turn, turn, "the same round");
+    assert_eq!(zone(&state, scout), Zone::Battlefield);
+    let fetch = put(&mut state, P1, "Arid Mesa", Zone::Battlefield);
+    activate(&mut state, fetch, 0, &[]);
+    settle_first(&mut state);
+    assert_eq!(
+        named(&state, P1, "Sand Warrior Token").len(),
+        2,
+        "once each turn, not once each round"
+    );
+}
+
+#[test]
 fn voice_of_victory_mobilizes_and_stops_opponents_spells_on_its_controllers_turn() {
     let mut state = islands();
     let voice = put(&mut state, P0, "Voice of Victory", Zone::Battlefield);

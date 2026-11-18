@@ -1587,3 +1587,86 @@ fn carpet_of_flowers_adds_mana_for_each_island_the_opponent_controls() {
         assert_eq!(mana(&state, P0, color), 0);
     }
 }
+
+/// Answers Carpet of Flowers' choice with two blue mana, given two Islands.
+fn take_two_blue(state: &mut GameState) {
+    settle_with(state, |_, decision| match decision {
+        // Options: nothing, then one or two mana of W, U, B, R or G.
+        Decision::ChooseEffectOption { option_count, .. } => {
+            assert_eq!(option_count, 1 + 5 * 2);
+            Action::ChooseEffectOption(1 + 2 + 1)
+        }
+        other => first_answer(other),
+    });
+}
+
+/// Settles, declining every Carpet of Flowers offer, and returns how many
+/// there were.
+fn carpet_offers(state: &mut GameState) -> usize {
+    let mut offers = 0;
+    settle_with(state, |_, decision| match decision {
+        Decision::ChooseEffectOption { .. } => {
+            offers += 1;
+            Action::ChooseEffectOption(0)
+        }
+        other => first_answer(other),
+    });
+    offers
+}
+
+#[test]
+fn carpet_of_flowers_adds_mana_again_in_an_extra_turn() {
+    let mut state = islands();
+    put(&mut state, P0, "Carpet of Flowers", Zone::Battlefield);
+    for _ in 0..2 {
+        put(&mut state, P1, "Island", Zone::Battlefield);
+    }
+    let walk = put(&mut state, P0, "Time Walk", Zone::Hand);
+    to_next_turn(&mut state, |_, _| None);
+    take_two_blue(&mut state);
+    assert_eq!(mana(&state, P0, ManaColor::U), 2);
+    cast(&mut state, walk, &[]);
+    settled(&mut state);
+    assert!(state.extra_turn_v1.is_some());
+
+    // The extra turn's draw step draws a card; its first main phase is in
+    // another turn, though the round is the same.
+    let round = state.turn;
+    let hand = state.players[0].hand.len();
+    run_until(
+        &mut state,
+        |state| {
+            state.active_player == P0
+                && state.step == Step::Main1
+                && state.players[0].hand.len() > hand
+        },
+        |_, _| None,
+    );
+    assert_eq!(state.turn, round, "an extra turn keeps the round");
+    assert_eq!(carpet_offers(&mut state), 1, "once each turn");
+}
+
+#[test]
+fn carpet_of_flowers_triggers_for_a_new_controller_in_the_other_turn_of_the_round() {
+    let mut state = islands();
+    let carpet = put(&mut state, P0, "Carpet of Flowers", Zone::Battlefield);
+    for player in [P0, P1] {
+        for _ in 0..2 {
+            put(&mut state, player, "Island", Zone::Battlefield);
+        }
+    }
+    to_next_turn(&mut state, |_, _| None);
+    take_two_blue(&mut state);
+    assert_eq!(mana(&state, P0, ManaColor::U), 2);
+
+    // P1 gains control of this Carpet, as a control-changing effect would.
+    state.objects.get_mut(carpet).controller = P1;
+    let round = state.turn;
+    run_until(
+        &mut state,
+        |state| state.active_player == P1 && state.step == Step::Main1,
+        |_, _| None,
+    );
+    assert_eq!(state.turn, round, "the same round");
+    assert_eq!(carpet_offers(&mut state), 1, "P1's turn is another turn");
+}

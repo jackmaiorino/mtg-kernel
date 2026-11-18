@@ -242,11 +242,30 @@ fn active(state: &GameState, source: AbilitySourceContractV4, player: PlayerId) 
             && crate::continuous_characteristics_v1::printed_abilities_active(state, source.source)
     })
 }
-fn spent(state: &GameState, permission: PermissionV1, turn: u32) -> bool {
+/// Whether `permission` was used in the turn `turn` (`GameState::turn_id_v1`).
+/// A play is made only in its controller's own turn, so the recorded turn key
+/// and controller name that turn; the round number alone would also match the
+/// other player's turn of the same round.
+fn spent(state: &GameState, permission: PermissionV1, turn: (u32, PlayerId)) -> bool {
     state.engine.event_history.iter().any(|event| {
         matches!(event,
         CommittedEvent::MuldrothaPlayedV1 { played }
-        if played.turn == turn && played.permission.source.source == permission.source.source
+        if (played.turn, played.controller) == turn && played.permission.source.source == permission.source.source
+            && played.permission.source.zone_change_count == permission.source.zone_change_count
+            && played.permission.permanent_type == permission.permanent_type)
+    })
+}
+/// Whether `permission` was used in any turn of round key `round`. Only the
+/// public facts read this: the frozen V71 and V72 observation contracts
+/// (Muldrotha, Tinybones compatibility, the human prompt) report a budget as
+/// spent for the whole round, so they stay byte-identical. That label differs
+/// from the rules answer only for a Muldrotha whose control changed within the
+/// round; the next feature contract version corrects it (#740).
+fn spent_in_round(state: &GameState, permission: PermissionV1, round: u32) -> bool {
+    state.engine.event_history.iter().any(|event| {
+        matches!(event,
+        CommittedEvent::MuldrothaPlayedV1 { played }
+        if played.turn == round && played.permission.source.source == permission.source.source
             && played.permission.source.zone_change_count == permission.source.zone_change_count
             && played.permission.permanent_type == permission.permanent_type)
     })
@@ -295,7 +314,7 @@ pub(super) fn permissions(
                 } else {
                     permanent_type != CardType::Land
                 })
-                && !spent(state, p, state.turn_key_v1())
+                && !spent(state, p, state.turn_id_v1())
             {
                 out.push(p);
             }
@@ -605,7 +624,7 @@ pub(super) fn validate_pending(state: &GameState, p: &PendingCast) -> Result<(),
         || p.sphinx_lore_v1.is_some()
         || p.greatwurm_v1.is_some()
         || !active(state, permission.source, p.controller)
-        || spent(state, permission, o.turn)
+        || spent(state, permission, (o.turn, o.controller))
         || p.mode_chosen.is_some()
             && !form_allowed(
                 state,
@@ -654,7 +673,7 @@ pub(super) fn record_cast(state: &mut GameState, p: &PendingCast) -> Result<(), 
         })
         .ok_or("Muldrotha selection absent")?;
     let permission = selected(state, choice)?.ok_or("Muldrotha permission absent")?;
-    if spent(state, permission, o.turn) {
+    if spent(state, permission, (o.turn, o.controller)) {
         return Err("Muldrotha type already consumed".into());
     }
     let stack_item_id = state
@@ -892,6 +911,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
                         CommittedEvent::MuldrothaPlayedV1 { played: old }
                             if old.options_history_index == played.options_history_index
                             || old.turn == played.turn
+                                && old.controller == played.controller
                                 && old.permission.source.source == played.permission.source.source
                                 && old.permission.source.zone_change_count == played.permission.source.zone_change_count
                                 && old.permission.permanent_type == played.permission.permanent_type))
@@ -1039,7 +1059,7 @@ fn public_facts_counter_scope_v72(
         let mut unused = Vec::new();
         let mut used = Vec::new();
         for permanent_type in TYPES {
-            if spent(
+            if spent_in_round(
                 state,
                 PermissionV1 {
                     source,

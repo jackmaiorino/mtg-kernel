@@ -1371,6 +1371,32 @@ fn orcish_bowmasters_ignores_the_draw_step_draw_and_its_own_controller() {
     assert_eq!(state.players[1].life, 19);
 }
 
+#[test]
+fn orcish_bowmasters_exempts_a_draw_step_draw_only_in_that_players_own_turn() {
+    let mut state = islands();
+    put(&mut state, P1, "Orcish Bowmasters", Zone::Battlefield);
+    // Round 1: P0 starts and skips its first draw; then P1's turn. Round 2:
+    // P0 draws in its own draw step, which Bowmasters ignores.
+    pass_until(&mut state, |state| state.active_player == P1);
+    pass_until(&mut state, |state| {
+        state.active_player == P0 && state.step == Step::Main1
+    });
+    let round = state.turn;
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    assert_eq!(state.players[0].life, 20);
+
+    // P1's upkeep in the same round: P0's first draw of this turn is not a
+    // draw in P0's draw step, so Bowmasters triggers.
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::Upkeep
+    });
+    assert_eq!(state.turn, round, "the same round");
+    event::propose_and_commit(&mut state, ProposedEvent::draw(P0));
+    assert_eq!(state.players[0].draws_this_turn, 1);
+    answer_bowmasters_target(&mut state, Target::Player(P0));
+    assert_eq!(state.players[0].life, 19);
+}
+
 // ---- Tamiyo, Inquisitive Student // Tamiyo, Seasoned Scholar --------------------
 
 /// Tamiyo on P0's battlefield, transformed by P0's third draw this turn.
