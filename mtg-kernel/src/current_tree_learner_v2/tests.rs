@@ -169,7 +169,10 @@ fn contracts_parameter_counts_and_identities() {
     assert_eq!(ModelV2H16::CONTRACT, CONTRACT_V2_H16);
     let wide = feature_identity_v2();
     let narrow = feature_identity_v2_h16();
-    println!("current_tree_learner_v2 feature identities: h32 {wide} h16 {narrow}");
+    println!(
+        "current_tree_learner_v2 feature identities: h32 {wide} h16 {narrow} (v1 input {})",
+        feature_identity_v1()
+    );
     assert_ne!(wide, narrow);
     for identity in [&wide, &narrow] {
         assert_eq!(identity.len(), 64);
