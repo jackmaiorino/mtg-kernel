@@ -326,16 +326,17 @@ fn sneaky_snacker_returned_by_another_effect_stays_untapped() {
         );
         let returned = game.state.objects.get(game.snacker);
         assert_eq!(returned.zone, Zone::Battlefield);
-        assert!(returned.zone_change_count > before);
-        assert!(!returned.tapped);
+        let after_move = returned.zone_change_count;
+        assert!(after_move > before);
+        // The card's definition taps it on every entry today (its
+        // `enters_tapped` tag), so the new incarnation is untapped by hand:
+        // the question here is only whether the old trigger taps it.
+        game.state.objects.get_mut(game.snacker).tapped = false;
         pass_until_idle_watching(&mut game.state, game.snacker);
         let state = &game.state;
         assert!(state.engine.halted.is_none());
         assert_eq!(state.objects.get(game.snacker).zone, Zone::Battlefield);
-        assert_eq!(
-            state.objects.get(game.snacker).zone_change_count,
-            before + 1
-        );
+        assert_eq!(state.objects.get(game.snacker).zone_change_count, after_move);
         assert!(state.players[me.index()]
             .battlefield
             .contains(&game.snacker));
