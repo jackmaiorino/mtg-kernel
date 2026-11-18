@@ -473,6 +473,190 @@ fn bounced_token_in_hand_exports_in_every_later_mode() {
     }
 }
 
+/// Issue 751: the state of [`bounced_token_state`] after the state-based
+/// sweep has made the token cease to exist in its owner's hand, after which
+/// the owner draws a card, cycles another through the graveyard back to the
+/// hand (so the Snap player knows it there), puts that card back on top of
+/// the library unidentified, scries 1 (which latches R8 for the Snap player:
+/// an informative put-back was scried), shuffles the library (which retires
+/// the put-back) and finally moves the last hand card to the graveyard. The
+/// owner's hand is then empty. Returns the state and the decklists.
+fn ceased_hand_token_then_an_empty_hand(
+    actor: PlayerId,
+) -> (crate::state::GameState, [Vec<u16>; 2]) {
+    use crate::engine::{advance_until_decision, step, Action, Decision};
+    use crate::event::{propose_and_commit, ProposedEvent};
+    use crate::state::Zone;
+
+    let owner = actor.opponent();
+    let (mut state, lists, token) = bounced_token_state(actor);
+    step(&mut state, Action::FinishEffectSelection).unwrap();
+    assert!(matches!(
+        advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    assert!(!state.players[owner.index()].hand.contains(&token));
+    assert_eq!(state.objects.get(token).zone, Zone::Hand);
+
+    propose_and_commit(&mut state, ProposedEvent::draw(owner));
+    let hand = state.players[owner.index()].hand.clone();
+    assert_eq!(hand.len(), 2);
+    let (known, last) = (hand[0], hand[1]);
+    propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(known, Zone::Graveyard),
+    );
+    propose_and_commit(&mut state, ProposedEvent::zone_change(known, Zone::Hand));
+    propose_and_commit(&mut state, ProposedEvent::zone_change(known, Zone::Library));
+    assert_eq!(state.players[owner.index()].library[0], known);
+    let bound = crate::state::ObjectLinkV4 {
+        object: known,
+        zone_change_count: state.objects.get(known).zone_change_count,
+    };
+    state
+        .apply_scry_result(owner, &[bound], &[known], &[])
+        .unwrap();
+    state.shuffle_library(owner).unwrap();
+    propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(last, Zone::Graveyard),
+    );
+    assert!(state.players[owner.index()].hand.is_empty());
+    (state, lists)
+}
+
+/// Issue 751: a token that ceased to exist in the opponent's hand leaves no
+/// phantom card in the Snap player's walk. Once the opponent's hand is empty
+/// the R8 latch (set by an informative put-back that was scried) is released,
+/// so the harness mutant L12, which reads the latch, does not refuse R8. Every
+/// released mode exports both views with the native (empty) hand.
+#[test]
+fn a_hand_token_that_ceased_releases_the_latch_once_the_hand_is_empty() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let owner = actor.opponent();
+        let (state, lists) = ceased_hand_token_then_an_empty_hand(actor);
+        let journal = state.observation_journal.notes();
+        for (name, projection) in [
+            ("v1", super::projection::project_v1(&state, journal, actor)),
+            ("v2", super::projection::project_v2(&state, journal, actor)),
+        ] {
+            assert!(
+                !projection.r8_latch,
+                "projection {name}, actor {actor:?}: the latch is released"
+            );
+        }
+        let at = format!("L12, actor {actor:?}, viewer {actor:?}");
+        let options = ExportOptionsV1 {
+            mutant: Some(MutantV1::L12),
+        };
+        if let Err(error) = export_v1(&token_input(&state, actor, &lists), options) {
+            assert!(
+                !matches!(error.code_name(), "R8" | "R8b"),
+                "{at}: {error:?}"
+            );
+        }
+        for (mode, export) in &EXPORT_MODES {
+            for viewer in [actor, owner] {
+                let at = format!("{mode}, actor {actor:?}, viewer {viewer:?}");
+                let exported = export(&token_input(&state, viewer, &lists))
+                    .unwrap_or_else(|error| panic!("{at}: {error:?}"));
+                assert!(
+                    exported.state.players[owner.index()].hand.is_empty(),
+                    "{at}"
+                );
+            }
+        }
+    }
+}
+
+/// Issue 751: the fix changes only the walk's count of the opponent's hand,
+/// which the released export modes do not read. This pins a digest of every
+/// released mode's export (or refusal), for both viewers, at every decision
+/// of a seeded game in which no token or spell copy ever enters a hand, and
+/// at the end of the issue's own scenario in both seats. The digests were
+/// recorded on the parent commit of the fix; a deliberate change to the
+/// export elsewhere must record them again.
+#[test]
+fn released_exports_are_unchanged_by_the_hand_token_fix() {
+    use crate::event::CommittedEvent;
+    use crate::state::Zone;
+    use sha2::Digest as _;
+
+    fn fold(hasher: &mut sha2::Sha256, result: &Result<InfosetV1, ExportErrorV1>) {
+        match result {
+            Ok(x) => {
+                hasher.update(b"ok");
+                hasher.update((x.bytes.len() as u64).to_le_bytes());
+                hasher.update(x.bytes.as_slice());
+            }
+            Err(e) => {
+                let text = format!("{e:?}");
+                hasher.update(b"err");
+                hasher.update((text.len() as u64).to_le_bytes());
+                hasher.update(text.as_bytes());
+            }
+        }
+    }
+
+    let mut game = sha2::Sha256::new();
+    let mut decisions = 0;
+    play(["CawGates", "Faeries"], 3, 300, |s, _| {
+        let state = s.game_state();
+        for event in &state.engine.event_history {
+            if let CommittedEvent::ZoneChange {
+                object,
+                to: Zone::Hand,
+                ..
+            } = event
+            {
+                let o = state.objects.get(*object);
+                assert!(
+                    !o.v4.is_token && o.spell_copy_origin.is_none(),
+                    "a token or spell copy entered a hand: pick another seed"
+                );
+            }
+        }
+        let lists = decklists(s);
+        for viewer in [PlayerId::P0, PlayerId::P1] {
+            let marks = s.infoset_marks_v1(viewer);
+            let input = ExportInputV1 {
+                state,
+                journal: state.observation_journal.notes(),
+                viewer,
+                decklists: [&lists[0], &lists[1]],
+                marks: Some(&marks),
+            };
+            for (_, export) in &EXPORT_MODES {
+                fold(&mut game, &export(&input));
+            }
+        }
+        decisions += 1;
+    });
+    let game = format!("{:x}", game.finalize());
+
+    let mut scenario = sha2::Sha256::new();
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (state, lists) = ceased_hand_token_then_an_empty_hand(actor);
+        for viewer in [actor, actor.opponent()] {
+            for (_, export) in &EXPORT_MODES {
+                fold(&mut scenario, &export(&token_input(&state, viewer, &lists)));
+            }
+        }
+    }
+    let scenario = format!("{:x}", scenario.finalize());
+
+    assert!(decisions > 20, "{decisions} decisions");
+    assert_eq!(
+        (game.as_str(), scenario.as_str()),
+        (RELEASED_GAME_DIGEST_751, RELEASED_SCENARIO_DIGEST_751),
+        "released export digests ({decisions} decisions)"
+    );
+}
+
+/// See [`released_exports_are_unchanged_by_the_hand_token_fix`].
+const RELEASED_GAME_DIGEST_751: &str = "record";
+const RELEASED_SCENARIO_DIGEST_751: &str = "record";
+
 /// A token of `owner` put on top of `owner`'s library, where no state-based
 /// sweep has removed it yet. Returns the state, the decklists and the token.
 fn library_token_state(
