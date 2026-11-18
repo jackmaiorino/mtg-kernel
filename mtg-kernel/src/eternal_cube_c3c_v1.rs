@@ -450,11 +450,7 @@ pub(crate) fn delayed_triggers(
 /// token without a note was created while its controller had no Staff. The
 /// notes are consumed by this collection; a note whose event this
 /// collection does not see (a discarded event log) is dropped with it.
-fn staff_triggers(
-    state: &mut GameState,
-    events: &[CommittedEvent],
-    out: &mut Vec<PendingTrigger>,
-) {
+fn staff_triggers(state: &mut GameState, events: &[CommittedEvent], out: &mut Vec<PendingTrigger>) {
     let notes = match state.eternal_v1.as_mut() {
         Some(eternal) if !eternal.c3c.staff_tokens.is_empty() => {
             std::mem::take(&mut eternal.c3c.staff_tokens)
