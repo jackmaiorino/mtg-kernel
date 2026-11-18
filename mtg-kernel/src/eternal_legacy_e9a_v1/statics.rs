@@ -471,24 +471,7 @@ pub(crate) fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
 
 /// Sejiri Steppe's protection until end of turn, as a mask.
 fn granted_protection_mask(state: &GameState, host: ObjectId) -> u8 {
-    let Some(e9a) = read_state(state) else {
-        return 0;
-    };
-    if e9a.protections.is_empty() {
-        return 0;
-    }
-    let Some(live) = state.objects.try_get(host) else {
-        return 0;
-    };
-    let now = TurnV1::now(state);
-    e9a.protections
-        .iter()
-        .filter(|(link, _, turn)| {
-            link.object == host && link.zone_change_count == live.zone_change_count && *turn == now
-        })
-        .fold(0, |mask, (_, color, _)| {
-            mask | crate::card_def::mana_color_mask(*color)
-        })
+    super::protection_record_mask(state, host)
 }
 
 /// Cephalid Illusionist: whether `damage` is combat damage dealt to or by a

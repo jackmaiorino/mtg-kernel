@@ -39,7 +39,7 @@ use crate::card_def::{mana_color_mask, CardType, Supertype, TargetSpec, CARD_DEF
 use crate::effect::{EffectContinuation, EffectObjectBinding, EffectOp, ExecCtx, ObjectRef};
 use crate::eternal_cards_v1::e3::{E3ChoiceKindV1, E3ChoiceV1};
 use crate::eternal_cards_v1::EternalOpV1;
-use crate::eternal_legacy_e9a_v1::{link_live_in, live_link, TurnV1};
+use crate::eternal_legacy_e9a_v1::{link_live_in, live_link};
 use crate::event::{self, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::standard_cards_v1::{StandardOpV1, StandardTargetV1};
@@ -549,16 +549,7 @@ fn resolve_eowyn(ctx: &ExecCtx, state: &mut GameState) {
         })
         .map(|object| live_link(state, object))
         .collect::<Vec<_>>();
-    let now = TurnV1::now(state);
-    let protections = &mut crate::eternal_legacy_e9a_v1::e9a_state(state).protections;
-    for host in hosts {
-        for &color in &colors {
-            let record = (host, color, now);
-            if !protections.contains(&record) {
-                protections.push(record);
-            }
-        }
-    }
+    crate::eternal_legacy_e9a_v1::grant_protections(state, &hosts, &colors);
 }
 
 // ---- Unlicensed Hearse --------------------------------------------------------------
