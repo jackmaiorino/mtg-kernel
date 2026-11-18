@@ -208,7 +208,7 @@ fn lock_v1(shared: &ParseAheadV1) -> MutexGuard<'_, StateV1> {
 }
 
 /// Queues the bytes of a trajectory file just published under `sha256`.
-pub(super) fn offer_v1(sha256: &str, bytes: Vec<u8>) {
+pub(super) fn offer_v1(sha256: &str, bytes: impl Into<Arc<Vec<u8>>>) {
     insert_v1(sha256, bytes, [SlotV1::Queued, SlotV1::Queued]);
 }
 
@@ -238,9 +238,10 @@ fn seed_check_enabled_v1() -> bool {
 /// still compare their own bytes with these in full before taking a result.
 pub(super) fn offer_serialized_v1(
     sha256: &str,
-    bytes: Vec<u8>,
+    bytes: impl Into<Arc<Vec<u8>>>,
     trajectory: ExpandedTrajectoryV1,
 ) -> Result<(), String> {
+    let bytes: Arc<Vec<u8>> = bytes.into();
     if !seeding_enabled_v1() {
         offer_v1(sha256, bytes);
         return Ok(());
@@ -275,7 +276,8 @@ pub(super) fn offer_serialized_v1(
     Ok(())
 }
 
-fn insert_v1(sha256: &str, bytes: Vec<u8>, slots: [SlotV1; 2]) {
+fn insert_v1(sha256: &str, bytes: impl Into<Arc<Vec<u8>>>, slots: [SlotV1; 2]) {
+    let bytes: Arc<Vec<u8>> = bytes.into();
     // A plain file is charged its length, as before; a sealed one its record
     // length, and one whose header is unreadable is never held.
     let Ok(charge) = record_envelope_v1::record_length_v1(&bytes, MAX_FILE_BYTES) else {
@@ -305,7 +307,7 @@ fn insert_v1(sha256: &str, bytes: Vec<u8>, slots: [SlotV1; 2]) {
     state.entries.insert(
         sha256.to_owned(),
         EntryV1 {
-            bytes: Arc::new(bytes),
+            bytes,
             charge,
             slots,
         },
@@ -380,7 +382,10 @@ fn helper_v1(shared: &'static ParseAheadV1) {
 fn take_v1(sha256: &str, bytes: &[u8], kind: KindV1) -> Option<ParsedV1> {
     let shared = shared_v1();
     let stored = Arc::clone(&lock_v1(shared).entries.get(sha256)?.bytes);
-    if stored.as_slice() != bytes {
+    // The very allocation the entry holds (a resident read of the bytes the
+    // publisher shared) is equal without comparing it.
+    let same_allocation = stored.as_ptr() == bytes.as_ptr() && stored.len() == bytes.len();
+    if !same_allocation && stored.as_slice() != bytes {
         return None;
     }
     let mut state = lock_v1(shared);

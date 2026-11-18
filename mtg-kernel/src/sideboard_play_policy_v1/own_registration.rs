@@ -44,7 +44,7 @@ impl OwnRegistrationPlayPolicyV1 {
         base.inference_key.clear();
         base.inference_probe = None;
         base.fast_search_forward = false;
-        let model = NativeRegistrationNetV1::new(base.model.clone(), weights, mode)
+        let model = NativeRegistrationNetV1::new((*base.model).clone(), weights, mode)
             .map_err(|e| e.to_string())?;
         Ok(Self {
             base,
@@ -62,7 +62,7 @@ impl OwnRegistrationPlayPolicyV1 {
             RegistrationInputWeightsV1::zero(),
             RegistrationModeV1::Own,
         )?;
-        policy.model = NativeRegistrationNetV1::new_legacy(policy.base.model.clone())
+        policy.model = NativeRegistrationNetV1::new_legacy((*policy.base.model).clone())
             .map_err(|e| e.to_string())?;
         policy.projection_enabled = false;
         Ok(policy)
@@ -109,7 +109,7 @@ impl OwnRegistrationPlayPolicyV1 {
         if !self.projection_enabled && !weights.is_zero() {
             return Err("baseline registration projection must stay zero".into());
         }
-        let mut candidate = self.base.model.clone();
+        let mut candidate = (*self.base.model).clone();
         candidate
             .replace_parameter_snapshot_v1(parameters)
             .map_err(|e| e.to_string())?;

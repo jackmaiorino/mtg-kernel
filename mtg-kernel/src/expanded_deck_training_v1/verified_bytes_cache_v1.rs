@@ -32,9 +32,23 @@
 //! held. A dropped entry's bytes live on only while a reader that took it
 //! before the drop finishes its comparison (at most one file per concurrent
 //! reader).
+//!
+//! Resident reads (`verified_reads: "resident"`, an opt-in run setting) go
+//! one step further for a process that writes and rereads its own records at
+//! memory-bandwidth cost. With the mode on, a reader whose pin this process
+//! holds verified bytes for still checks the file's metadata (a regular file
+//! of exactly the held length) but takes the held bytes instead of reading
+//! the file again: every byte a reader returns still has the pinned SHA-256,
+//! established when it entered the memo, so every output is unchanged. What
+//! the mode gives up is noticing that a file this process already verified
+//! was rewritten with the same length later in the same process; a new
+//! process (a segment, a resume, an audit) reads and verifies every file
+//! again. The other process-cache comparisons (`holds_bytes_v1`) and durable
+//! publication follow the same switch. The mode only ever turns on, never off.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 #[cfg(test)]
@@ -90,6 +104,8 @@ pub(crate) struct VerifiedBytesCacheV1 {
     /// Bound on the number of held entries.
     entry_limit: usize,
     held: Mutex<HeldV1>,
+    /// Resident reads (module docs): set once by a run, never cleared.
+    resident: AtomicBool,
     /// Digests computed by `digest_matches_v1`, so tests can tell a
     /// comparison from a fallback.
     #[cfg(test)]
@@ -102,6 +118,7 @@ impl VerifiedBytesCacheV1 {
             budget,
             entry_limit,
             held: Mutex::new(HeldV1::default()),
+            resident: AtomicBool::new(false),
             #[cfg(test)]
             hashed: std::sync::atomic::AtomicUsize::new(0),
         }
@@ -134,6 +151,33 @@ impl VerifiedBytesCacheV1 {
     }
 
     /// The bytes held for `path` under `sha256`, whose SHA-256 is `sha256`.
+    /// Turns resident reads on for this cache (module docs). Irreversible.
+    pub(crate) fn enable_resident_v1(&self) {
+        self.resident.store(true, Ordering::SeqCst);
+    }
+
+    /// Whether resident reads are on.
+    pub(crate) fn resident_v1(&self) -> bool {
+        self.resident.load(Ordering::SeqCst)
+    }
+
+    /// With resident reads on, the bytes held for `path` and `sha256` when
+    /// they are exactly `file_length` long: a reader that has checked the
+    /// file's metadata returns them instead of reading the file. `None`
+    /// (mode off, nothing held, a different length) means read as before.
+    pub(crate) fn resident_bytes_v1(
+        &self,
+        path: &Path,
+        sha256: &str,
+        file_length: u64,
+    ) -> Option<Arc<Vec<u8>>> {
+        if !self.resident_v1() {
+            return None;
+        }
+        self.held_v1(path, sha256)
+            .filter(|held| held.len() as u64 == file_length)
+    }
+
     pub(crate) fn held_v1(&self, path: &Path, sha256: &str) -> Option<Arc<Vec<u8>>> {
         if self.budget == 0 {
             return None;
@@ -154,7 +198,27 @@ impl VerifiedBytesCacheV1 {
     /// the new entry fits both bounds, then `bytes` are copied in; an entry
     /// whose charge exceeds the whole budget is not held.
     pub(crate) fn record_verified_v1(&self, path: &Path, sha256: &str, bytes: &[u8]) {
-        let charge = charge_v1(path, sha256, bytes.len());
+        self.record_with_v1(path, sha256, bytes.len(), || Arc::new(bytes.to_vec()));
+    }
+
+    /// [`Self::record_verified_v1`] keeping the caller's allocation instead
+    /// of a copy (the bytes are immutable once shared): a publisher that
+    /// still hands its bytes to other readers records them without copying.
+    pub(crate) fn record_verified_shared_v1(&self, path: &Path, sha256: &str, bytes: Arc<Vec<u8>>) {
+        self.record_with_v1(path, sha256, bytes.len(), || bytes);
+    }
+
+    /// Both recorders: the bounds, then the evictions, then `bytes()` (a copy
+    /// or the caller's allocation), so nothing is copied for an entry that is
+    /// not held and nothing beyond the budget is held while copying.
+    fn record_with_v1(
+        &self,
+        path: &Path,
+        sha256: &str,
+        length: usize,
+        bytes: impl FnOnce() -> Arc<Vec<u8>>,
+    ) {
+        let charge = charge_v1(path, sha256, length);
         if self.entry_limit == 0 || charge > self.budget {
             return;
         }
@@ -178,7 +242,7 @@ impl VerifiedBytesCacheV1 {
         held.entries.push_back(EntryV1 {
             path: path.to_path_buf(),
             sha256: sha256.to_owned(),
-            bytes: Arc::new(bytes.to_vec()),
+            bytes: bytes(),
             charge,
         });
     }

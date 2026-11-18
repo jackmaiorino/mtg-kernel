@@ -284,7 +284,7 @@ pub(super) fn read_trajectories_v1(
         MAX_BATCH_BYTES,
     )?;
     let read = |ordinal: usize| {
-        let bytes = read_pinned_bytes(&pins[ordinal])?;
+        let bytes = super::read_pinned_shared_v1(&pins[ordinal])?;
         admitted[ordinal].check_v1(&bytes)?;
         let length = record_envelope_v1::record_length_v1(&bytes, MAX_FILE_BYTES)?;
         let episode =

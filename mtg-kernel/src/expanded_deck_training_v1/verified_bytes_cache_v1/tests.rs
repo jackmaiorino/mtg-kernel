@@ -2,7 +2,10 @@
 //! on what other tests hold or on `MTG_KERNEL_VERIFIED_BYTES_CACHE_MIB`.
 
 use super::super::fresh_initialization_source::read_actual_in_v1;
-use super::super::{publish_json_bytes_in_v1, read_pinned_bytes_in_v1, sha, PinnedFileV1};
+use super::super::no_state_digest_v1::holds_bytes_in_v1;
+use super::super::{
+    check_pinned_in_v1, publish_json_bytes_in_v1, read_pinned_bytes_in_v1, sha, PinnedFileV1,
+};
 use super::{charge_v1, VerifiedBytesCacheV1};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -253,4 +256,135 @@ fn publication_records_its_bytes_only_after_success() {
     );
     assert_eq!(cache.hashed_for_test_v1(), 1);
     fs::remove_dir_all(directory).unwrap();
+}
+
+fn resident_cache_v1() -> VerifiedBytesCacheV1 {
+    let cache = VerifiedBytesCacheV1::new_v1(1 << 20, 16);
+    assert!(!cache.resident_v1());
+    cache.enable_resident_v1();
+    assert!(cache.resident_v1());
+    cache
+}
+
+#[test]
+fn resident_bytes_need_the_mode_the_pin_and_the_exact_length() {
+    let path = Path::new("/memo/resident");
+    let off = VerifiedBytesCacheV1::new_v1(1 << 20, 16);
+    off.record_verified_v1(path, "x", b"alpha");
+    assert!(off.resident_bytes_v1(path, "x", 5).is_none());
+    let cache = resident_cache_v1();
+    assert!(cache.resident_bytes_v1(path, "x", 5).is_none());
+    cache.record_verified_v1(path, "x", b"alpha");
+    assert_eq!(
+        cache.resident_bytes_v1(path, "x", 5).unwrap().as_slice(),
+        b"alpha"
+    );
+    for (sha256, length) in [("x", 4), ("x", 6), ("y", 5)] {
+        assert!(cache.resident_bytes_v1(path, sha256, length).is_none());
+    }
+    assert!(cache
+        .resident_bytes_v1(Path::new("/memo/other"), "x", 5)
+        .is_none());
+}
+
+#[test]
+fn resident_pinned_reads_reuse_verified_bytes_and_keep_the_metadata_checks() {
+    let cache = resident_cache_v1();
+    let bytes = br#"{"verified":"original"}"#.to_vec();
+    let pin = pinned_file_v1("resident-reads", &bytes);
+    // The first read verifies in full; later reads and checks reuse its bytes.
+    assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap(), bytes);
+    assert_eq!(cache.hashed_for_test_v1(), 1);
+    // The mode's contract: a same-length rewrite later in this process is not
+    // reread, and the verified bytes, which have the pinned digest, are served.
+    fs::write(&pin.path, br#"{"verified":"changed!"}"#).unwrap();
+    for _ in 0..2 {
+        assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap(), bytes);
+        check_pinned_in_v1(&cache, &pin).unwrap();
+        assert_eq!(read_actual_in_v1(&cache, &pin, 1024).unwrap(), bytes);
+    }
+    assert_eq!(cache.hashed_for_test_v1(), 1);
+    // A changed length is read in full and fails as before, as does a pin
+    // the cache holds nothing for.
+    fs::write(&pin.path, br#"{"verified":"longer, changed"}"#).unwrap();
+    assert_eq!(
+        read_pinned_bytes_in_v1(&cache, &pin).unwrap_err(),
+        "input file SHA differs"
+    );
+    assert_eq!(
+        check_pinned_in_v1(&cache, &pin).unwrap_err(),
+        "input file SHA differs"
+    );
+    let wrong = PinnedFileV1 {
+        path: pin.path.clone(),
+        sha256: "0".repeat(64),
+    };
+    assert_eq!(
+        check_pinned_in_v1(&cache, &wrong).unwrap_err(),
+        "input file SHA differs"
+    );
+    // The size bound and a deleted file still fail first.
+    fs::write(&pin.path, &bytes).unwrap();
+    assert_eq!(
+        read_actual_in_v1(&cache, &pin, bytes.len() - 1).unwrap_err(),
+        "fresh input is not a bounded regular file"
+    );
+    fs::remove_file(&pin.path).unwrap();
+    let missing = fs::metadata(&pin.path).unwrap_err().to_string();
+    assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap_err(), missing);
+    assert_eq!(check_pinned_in_v1(&cache, &pin).unwrap_err(), missing);
+    fs::create_dir(&pin.path).unwrap();
+    assert_eq!(
+        read_pinned_bytes_in_v1(&cache, &pin).unwrap_err(),
+        "input is not a bounded regular file"
+    );
+    assert_eq!(
+        check_pinned_in_v1(&cache, &pin).unwrap_err(),
+        "input is not a bounded regular file"
+    );
+    fs::remove_dir_all(pin.path.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn resident_publication_holds_its_bytes_and_later_reads_reuse_them() {
+    let cache = resident_cache_v1();
+    let directory = temp_directory_v1("resident-publish");
+    let bytes = br#"{"published":1}"#.to_vec();
+    let pin = publish_json_bytes_in_v1(&cache, &directory, "document.json", &bytes).unwrap();
+    assert_eq!(pin.sha256, sha(&bytes));
+    assert_eq!(fs::read(&pin.path).unwrap(), bytes);
+    assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap(), bytes);
+    check_pinned_in_v1(&cache, &pin).unwrap();
+    assert_eq!(cache.hashed_for_test_v1(), 0);
+    // A second publication under the same name still fails, unheld.
+    let other = br#"{"published":2}"#.to_vec();
+    assert!(publish_json_bytes_in_v1(&cache, &directory, "document.json", &other).is_err());
+    assert!(cache.held_v1(&pin.path, &sha(&other)).is_none());
+    assert_eq!(fs::read(&pin.path).unwrap(), bytes);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn resident_cache_comparisons_check_metadata_without_reading() {
+    let bytes = br#"{"cached":"original"}"#.to_vec();
+    let pin = pinned_file_v1("resident-holds", &bytes);
+    for resident in [false, true] {
+        assert!(holds_bytes_in_v1(&pin.path, &bytes, resident));
+    }
+    fs::write(&pin.path, br#"{"cached":"changed!"}"#).unwrap();
+    assert!(!holds_bytes_in_v1(&pin.path, &bytes, false));
+    assert!(holds_bytes_in_v1(&pin.path, &bytes, true));
+    fs::write(&pin.path, br#"{"cached":"longer, changed"}"#).unwrap();
+    for resident in [false, true] {
+        assert!(!holds_bytes_in_v1(&pin.path, &bytes, resident));
+    }
+    fs::remove_file(&pin.path).unwrap();
+    for resident in [false, true] {
+        assert!(!holds_bytes_in_v1(&pin.path, &bytes, resident));
+    }
+    fs::create_dir(&pin.path).unwrap();
+    for resident in [false, true] {
+        assert!(!holds_bytes_in_v1(&pin.path, &bytes, resident));
+    }
+    fs::remove_dir_all(pin.path.parent().unwrap()).unwrap();
 }

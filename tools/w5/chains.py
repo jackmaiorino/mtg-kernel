@@ -26,7 +26,9 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
   from), `workers`, `memory_max_bytes`, `bytes_per_update`, optional `segment_updates`, `base` and `throughput`
   (a `w5-box-throughput/v1` record), for C-recipe arms optional `record_envelope` (`zstd1`: the trainer seals every
   trajectory and checkpoint in one zstd frame of its exact bytes, mtg-kernel `record_envelope_v1`; same states, about
-  a fifth of the bytes), for X arms `budget`, `coefficient`, `dose`, and for a CG arm (P-grow, independent
+  a fifth of the bytes) and optional `verified_reads` (`resident`: the trainer reuses bytes its process already
+  verified against a pin instead of rereading them, mtg-kernel `verified_bytes_cache_v1`; same states and bytes,
+  less memory traffic per update), for X arms `budget`, `coefficient`, `dose`, and for a CG arm (P-grow, independent
   Stage 0 plans) `ladder` (`stride`, `roster_max`, `replaces`, `test_stride`, and for a fork `history`: pgrow.py;
   the base's fixed-parent share plays a per-segment roster drawn from the chain's own checkpoint ladder, each state
   verified before use);
@@ -189,8 +191,9 @@ REPLAY_START_GRACE = 120.0
 EXIT_STOP, EXIT_ROOM, EXIT_FAILED = 5, 7, 8
 FAILED_ENDS = ('chain-failure', 'operator')  # END reasons whose recorded last valid boundary is the endpoint
 PAIR_ONLY_KEYS = {'ex1', 'preparation_workers', 'output_directory', 'chain_ledger', 'collection_workers',
-                  'record_envelope'}
+                  'record_envelope', 'verified_reads'}
 RECORD_ENVELOPES = ('zstd1',)  # mtg-kernel record_envelope_v1; C-recipe arms only (the trainer refuses EX1)
+VERIFIED_READS = ('resident',)  # mtg-kernel verified_bytes_cache_v1 resident reads; C-recipe arms only
 TOOL_FILES = {'chains.py': HERE / 'chains.py', 'retention.py': HERE / 'retention.py', 'xact.py': HERE / 'xact.py',
               'replay_sample.py': HERE / 'replay_sample.py', 'pgrow.py': HERE / 'pgrow.py',
               'w5box.py': HERE / 'w5box.py', 'qual.py': HERE.parent / 'ex1' / 'qual.py',
@@ -367,6 +370,8 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
         cfg['initial_source'] = source
     if arm.get('record_envelope'):
         cfg['record_envelope'] = arm['record_envelope']
+    if arm.get('verified_reads'):
+        cfg['verified_reads'] = arm['verified_reads']
     if arm.get('ladder'):
         try:
             states = ladder if ladder is not None else \
@@ -437,6 +442,8 @@ def recipe_identity(arm):
                                     'c_wall_seconds')} | {'trainer_sha256': arm['trainer']['sha256']}
     if arm.get('record_envelope'):
         identity['record_envelope'] = arm['record_envelope']
+    if arm.get('verified_reads'):
+        identity['verified_reads'] = arm['verified_reads']
     if arm.get('ladder'):
         identity['ladder'] = arm['ladder']  # absent otherwise: existing manifests unchanged
     return identity
@@ -547,6 +554,9 @@ def make_plan(inputs_path):
         envelope = spec.get('record_envelope')
         require(envelope is None or (envelope in RECORD_ENVELOPES and recipe == 'C'),
                 f'{a}: record_envelope is one of {RECORD_ENVELOPES}, for C-recipe arms only')
+        verified_reads = spec.get('verified_reads')
+        require(verified_reads is None or (verified_reads in VERIFIED_READS and recipe == 'C'),
+                f'{a}: verified_reads is one of {VERIFIED_READS}, for C-recipe arms only')
         doc = {'schema': ARM_SCHEMA, 'arm': a, 'recipe': recipe, 'retention_arm': ret, 'root': root.as_posix(),
                'trainer': common['trainer'], 'base': base, 'parent': pin(spec['parent']), 'frozen': frozen_pin,
                'x': x, 'workers': int(spec['workers']), 'segment_updates': length, 'bytes_per_update': bpu,
@@ -565,6 +575,8 @@ def make_plan(inputs_path):
             doc['ladder'] = ladder  # CG only: other arm files unchanged
         if envelope is not None:  # absent otherwise, so every existing arm file keeps its bytes and pin
             doc['record_envelope'] = envelope
+        if verified_reads is not None:  # absent otherwise, as record_envelope
+            doc['verified_reads'] = verified_reads
         text = json.dumps(doc, indent=1, sort_keys=True) + '\n'
         digest = w5box.sha256_bytes(text.encode('utf-8'))
         path = root / 'plan' / 'arms' / f'{a}-{digest[:12]}.json'
