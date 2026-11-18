@@ -124,6 +124,8 @@ mod rl_session;
 mod sideboard_v1;
 #[path = "pauper/sleep_of_the_dead.rs"]
 mod sleep_of_the_dead;
+#[path = "pauper/sneaky_snacker_trigger_zone.rs"]
+mod sneaky_snacker_trigger_zone;
 #[path = "pauper/spy_combo_core.rs"]
 mod spy_combo_core;
 #[path = "pauper/spy_mana.rs"]
