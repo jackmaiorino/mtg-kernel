@@ -336,7 +336,10 @@ fn sneaky_snacker_returned_by_another_effect_stays_untapped() {
         let state = &game.state;
         assert!(state.engine.halted.is_none());
         assert_eq!(state.objects.get(game.snacker).zone, Zone::Battlefield);
-        assert_eq!(state.objects.get(game.snacker).zone_change_count, after_move);
+        assert_eq!(
+            state.objects.get(game.snacker).zone_change_count,
+            after_move
+        );
         assert!(state.players[me.index()]
             .battlefield
             .contains(&game.snacker));
