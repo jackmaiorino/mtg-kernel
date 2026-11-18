@@ -437,7 +437,12 @@ fn validate_gain(state: &GameState, at: u64) -> Result<u64, String> {
             }
         })
         .collect::<Vec<_>>();
-    let needs_borrow = crate::drake_hatcher_v1::custody::relevant(&replay);
+    let drake = crate::drake_hatcher_v1::custody::relevant(&replay);
+    // Any potential linked operation, not only Drake custody, means a real
+    // gain under its Runner committed directly, while a Runner-less replay
+    // would start a new event owner. Its sidecar carries that Runner.
+    let needs_borrow =
+        crate::linked_aura_operation_v1::conqueror_gain_replay_needs_runner_v49(&replay);
     let start = match sidecars.as_slice() {
         [(position, borrow, event)]
             if needs_borrow && u64::try_from(*position).ok() == input.checked_add(1) =>
@@ -461,7 +466,7 @@ fn validate_gain(state: &GameState, at: u64) -> Result<u64, String> {
             )?;
             start
         }
-        [] if !needs_borrow => {
+        [] if !drake => {
             // The original non-Drake path emits and replays exactly the old bytes.
             let start = replay.engine.event_history.len();
             crate::event::propose_and_commit(

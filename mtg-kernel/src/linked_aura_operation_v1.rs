@@ -415,14 +415,23 @@ pub(crate) fn with_end_turn_replay_borrow_v1<T>(
     replay.engine.linked_aura_operation_v1.runtime = None;
     result
 }
-/// Ordinary V49 keeps its frozen world payload and old non-Drake bytes.
-/// Only an actual synchronous Drake-owning operation needs this sidecar data.
-/// The opaque value can be borrowed only by the existing local replay helper.
+/// Ordinary V49 keeps its frozen world payload and old bytes. Only a gain
+/// that runs under an actual synchronous Runner, in a world where a
+/// Runner-less replay would start a new event owner, needs this sidecar data:
+/// a Drake-owning operation, or any other potential linked operation, such as
+/// a Banishing Light that holds a card. The serialized world never carries the
+/// Runner. The opaque value can be borrowed only by the existing local replay
+/// helper.
 pub(crate) fn capture_conqueror_drake_replay_borrow_v49(
     state: &GameState,
 ) -> Option<PandaReplayBorrowV1> {
-    (crate::drake_hatcher_v1::custody::relevant(state) && locally_owned(state))
+    (conqueror_gain_replay_needs_runner_v49(state) && locally_owned(state))
         .then(|| capture_panda_replay_borrow_v1(state))
+}
+/// Whether a Runner-less replay of a V49 gain in this world would start a new
+/// event owner. Drake custody is one of these potential operations.
+pub(crate) fn conqueror_gain_replay_needs_runner_v49(state: &GameState) -> bool {
+    potential_operation(state)
 }
 
 pub(crate) fn with_panda_replay_borrow_v1(
