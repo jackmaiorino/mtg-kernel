@@ -961,13 +961,17 @@ fn donor_halt(host: ObjectId) -> Option<(UnsupportedMechanic, ObjectId)> {
     Some((UnsupportedMechanic::FullTextDonorOutsideSetV1, host))
 }
 
+fn halted_decision(host: ObjectId) -> Decision {
+    Decision::Halted {
+        mechanic: UnsupportedMechanic::FullTextDonorOutsideSetV1,
+        source: host,
+    }
+}
+
 /// The unsupported top already exists: the first decision must be the typed
 /// halt, and the game stays halted, also after a snapshot restore.
 fn assert_halted_now(state: &mut GameState, host: ObjectId) {
-    let halted = Decision::Halted {
-        mechanic: UnsupportedMechanic::FullTextDonorOutsideSetV1,
-        source: host,
-    };
+    let halted = halted_decision(host);
     assert_eq!(engine::advance_until_decision(state), halted);
     assert_eq!(state.engine.halted, donor_halt(host));
     let mut copy = restored(state);
@@ -979,16 +983,40 @@ fn assert_halted_now(state: &mut GameState, host: ObjectId) {
     assert_eq!(state.state_hash(), copy.state_hash());
 }
 
-/// Passes priority until the cast Shapeshifter has entered the battlefield.
-fn resolve_to_entry(state: &mut GameState, source: ObjectId) {
+/// Passes priority until the cast Shapeshifter has entered the battlefield,
+/// and returns the first decision the engine offers after that entry (the
+/// spell can resolve inside the engine's own advance).
+fn decision_at_entry(state: &mut GameState, source: ObjectId) -> Decision {
     for _ in 0..8 {
+        let decision = engine::advance_until_decision(state);
         if state.objects.get(source).zone == Zone::Battlefield {
-            return;
+            return decision;
         }
-        assert!(matches!(next(state), Decision::CastSpellOrPass { .. }));
+        assert!(
+            matches!(decision, Decision::CastSpellOrPass { .. }),
+            "{decision:?}"
+        );
         act(state, Action::Pass);
     }
     panic!("the Shapeshifter did not resolve");
+}
+
+/// A creature on `player`'s battlefield dealt lethal damage by a committed
+/// event, so that its state-based death is left to the engine's next advance.
+fn lethally_damaged(
+    state: &mut GameState,
+    player: PlayerId,
+    source: ObjectId,
+    name: &str,
+) -> ObjectId {
+    let creature = put(state, player, name, Zone::Battlefield);
+    let lethal = engine::effective_toughness(state, creature);
+    event::propose_and_commit(
+        state,
+        ProposedEvent::damage(source, Target::Object(creature), lethal),
+    );
+    assert_eq!(state.objects.get(creature).zone, Zone::Battlefield);
+    creature
 }
 
 fn torpor_orb_in_play(state: &mut GameState, player: PlayerId) -> ObjectId {
@@ -1046,8 +1074,8 @@ fn volrath_entry_with_an_unsupported_or_entry_only_top_halts_at_the_entry_both_s
             let mut state = ordered_game(player);
             put(&mut state, player, donor, Zone::Graveyard);
             let source = cast_volrath(&mut state, player);
-            resolve_to_entry(&mut state, source);
-            assert_eq!(state.engine.halted, donor_halt(source), "{donor}");
+            let decision = decision_at_entry(&mut state, source);
+            assert_eq!(decision, halted_decision(source), "{donor}");
             assert_halted_now(&mut state, source);
             assert!(captured_entry(&state, source).is_none(), "{donor}");
         }
@@ -1089,8 +1117,8 @@ fn volrath_entering_under_torpor_orb_with_meddling_mage_on_top_is_still_refused_
         torpor_orb_in_play(&mut state, player);
         put(&mut state, player, "Meddling Mage", Zone::Graveyard);
         let source = cast_volrath(&mut state, player);
-        resolve_to_entry(&mut state, source);
-        assert_eq!(state.engine.halted, donor_halt(source));
+        let decision = decision_at_entry(&mut state, source);
+        assert_eq!(decision, halted_decision(source));
         assert_halted_now(&mut state, source);
     }
 }
@@ -1144,8 +1172,7 @@ fn volrath_state_based_death_making_an_unsupported_top_halts_at_the_first_advanc
     for player in [PlayerId::P0, PlayerId::P1] {
         for loss in [false, true] {
             let (mut state, source) = volrath_in_play(player);
-            let masticore = put(&mut state, player, "Masticore", Zone::Battlefield);
-            state.objects.get_mut(masticore).damage = 4;
+            let masticore = lethally_damaged(&mut state, player, source, "Masticore");
             if loss {
                 state.players[player.opponent().index()].life = 0;
             }
@@ -1478,8 +1505,8 @@ fn check_site_case(site: DonorCheckSiteV1, player: PlayerId) -> bool {
             let mut state = ordered_game(player);
             put(&mut state, player, "Wall of Blossoms", Zone::Graveyard);
             let source = cast_volrath(&mut state, player);
-            resolve_to_entry(&mut state, source);
-            state.engine.halted == donor_halt(source)
+            decision_at_entry(&mut state, source) == halted_decision(source)
+                && state.engine.halted == donor_halt(source)
         }
         DonorCheckSiteV1::ControlChange => {
             let (mut state, source) = volrath_in_play(player);
@@ -1498,14 +1525,8 @@ fn check_site_case(site: DonorCheckSiteV1, player: PlayerId) -> bool {
             // The top changes with no event; a lethally damaged creature
             // shows whether automatic work ran before the refusal.
             let (mut state, source) = volrath_in_play(player);
+            let dying = lethally_damaged(&mut state, player.opponent(), source, "Tireless Tribe");
             put(&mut state, player, "Masticore", Zone::Graveyard);
-            let dying = put(
-                &mut state,
-                player.opponent(),
-                "Tireless Tribe",
-                Zone::Battlefield,
-            );
-            state.objects.get_mut(dying).damage = 100;
             let halted = engine::advance_until_decision(&mut state)
                 == Decision::Halted {
                     mechanic: UnsupportedMechanic::FullTextDonorOutsideSetV1,
@@ -1516,8 +1537,7 @@ fn check_site_case(site: DonorCheckSiteV1, player: PlayerId) -> bool {
         DonorCheckSiteV1::AdvanceDecision => {
             // A state-based death inside the automatic work makes the top.
             let (mut state, source) = volrath_in_play(player);
-            let masticore = put(&mut state, player, "Masticore", Zone::Battlefield);
-            state.objects.get_mut(masticore).damage = 4;
+            lethally_damaged(&mut state, player, source, "Masticore");
             engine::advance_until_decision(&mut state)
                 == Decision::Halted {
                     mechanic: UnsupportedMechanic::FullTextDonorOutsideSetV1,
