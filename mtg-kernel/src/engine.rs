@@ -8429,7 +8429,7 @@ fn validate_optional_additional_paid_refs(
                 || def.has_type(CardType::Enchantment)
                 || (cfg!(feature = "eternal-fixtures") && has_permanent_card_type(def));
             if paid.controller != controller
-                || paid.zone != Zone::Graveyard
+                || !sacrifice_destination(paid.zone)
                 || paid.visible_to_mask != 0b11
                 || !eligible
             {
@@ -8446,7 +8446,7 @@ fn validate_optional_additional_paid_refs(
                 .get(paid.card_def as usize)
                 .ok_or("Casualty paid creature definition is missing")?;
             if paid.controller != controller
-                || paid.zone != Zone::Graveyard
+                || !sacrifice_destination(paid.zone)
                 || paid.visible_to_mask != 0b11
                 || !(def.has_type(CardType::Creature)
                     || def
@@ -8459,6 +8459,13 @@ fn validate_optional_additional_paid_refs(
         }
     }
     Ok(())
+}
+
+/// Whether a sacrificed permanent's recorded destination is one a sacrifice
+/// can reach: its owner's graveyard, or exile when a replacement such as
+/// Leyline of the Void or Rest in Peace moves it there instead.
+fn sacrifice_destination(zone: Zone) -> bool {
+    matches!(zone, Zone::Graveyard | Zone::Exile)
 }
 
 /// Whether either face of `def` has a permanent card type.

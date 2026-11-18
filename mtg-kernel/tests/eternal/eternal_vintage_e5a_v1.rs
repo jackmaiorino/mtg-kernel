@@ -820,6 +820,49 @@ fn beseech_the_mirror_finds_a_card_and_casts_it_free_when_bargained() {
 }
 
 #[test]
+fn beseech_the_mirror_bargains_while_leyline_of_the_void_exiles_the_sacrifice() {
+    // An opponent's Leyline of the Void exiles the sacrificed artifact
+    // instead; the bargain is still paid (a seeded best-of-three game halted
+    // here when the payment record had to name a graveyard).
+    let mut state = islands();
+    put(&mut state, P1, "Leyline of the Void", Zone::Battlefield);
+    let beseech = put(&mut state, P0, "Beseech the Mirror", Zone::Hand);
+    let key = put(&mut state, P0, "Voltaic Key", Zone::Battlefield);
+    let ritual = put(&mut state, P0, "Dark Ritual", Zone::Library);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::B, ManaColor::B, ManaColor::B],
+        1,
+    );
+    act(&mut state, Action::CastSpell(beseech));
+    let mut cast_offered = false;
+    settle_with(&mut state, |state, decision| match decision {
+        Decision::ChooseEffectOption { source, .. } if source == beseech => {
+            Action::ChooseEffectOption(1)
+        }
+        Decision::ChooseCostTargets { candidates, .. } => {
+            assert!(candidates.contains(&key));
+            Action::ChooseCostTarget(key)
+        }
+        Decision::ChooseEffectTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(ritual)) =>
+        {
+            if zone(state, ritual) == Zone::Hand {
+                cast_offered = true;
+            }
+            Action::ChooseEffectTarget(Target::Object(ritual))
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, key), Zone::Exile, "Leyline exiled the sacrifice");
+    assert!(cast_offered, "the bargained free cast was offered");
+    // Leyline exiles the resolved Ritual and Beseech too.
+    assert_eq!(zone(&state, ritual), Zone::Exile, "cast and resolved");
+    assert_eq!(mana(&state, P0, ManaColor::B), 3);
+}
+
+#[test]
 fn extrapolate_the_impossible_finds_nothing_outside_a_best_of_one_game() {
     let mut state = islands();
     let extrapolate = put(&mut state, P0, "Extrapolate the Impossible", Zone::Hand);
