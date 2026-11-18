@@ -1,5 +1,6 @@
 use super::*;
 use crate::current_tree_learner_v2::OptimizerConfigV2;
+use crate::limited_match_v1::PolicySpecV1;
 use crate::state::SplitMix64;
 use crate::unclamped_softmax_sampler_v1::UnclampedSoftmaxScratchV1;
 
@@ -72,6 +73,58 @@ fn learner_streams_are_per_seat_leg_pair_and_seed_and_their_seeds_are_pinned() {
             assert_ne!(a, b);
         }
     }
+}
+
+#[test]
+fn a_checkpoint_file_loads_through_its_spec_pinned_by_its_bytes() {
+    use crate::limited_campaign_v1::checkpoint::{
+        LearnerSnapshotV1, SourceIdentityV1, HAND_KNOWLEDGE_V1,
+    };
+    use crate::limited_campaign_v1::sha256_hex;
+    let identity = SourceIdentityV1 {
+        git_head: "0123456789abcdef0123456789abcdef01234567".into(),
+        binary_sha256: "11".repeat(32),
+        binary_source_sha256: "22".repeat(32),
+        card_db_hash: "0123456789abcdef".into(),
+        sample_sha256_in_pool_order: "33".repeat(32),
+        actor_profile: "fdn-full-pool-consumer/v1".into(),
+        actor_producer_sha256: "44".repeat(32),
+        hand_knowledge: HAND_KNOWLEDGE_V1.into(),
+        reveal_producer_sha256: "55".repeat(32),
+        reveal_reducer_sha256: "66".repeat(32),
+    };
+    let snapshot = LearnerV2::new(OptimizerConfigV2::campaign_v1(200))
+        .unwrap()
+        .snapshot();
+    let checkpoint = CheckpointV1::new(
+        &"77".repeat(32),
+        &identity,
+        None,
+        &"88".repeat(32),
+        LearnerSnapshotV1::ActorCritic(snapshot),
+    )
+    .unwrap();
+    let bytes = checkpoint.to_bytes().unwrap();
+    let directory = std::env::temp_dir().join(format!(
+        "limited-eval-learner-checkpoint-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("step_0000.json");
+    std::fs::write(&path, &bytes).unwrap();
+    let spec = format!("learner-checkpoint:{}", path.display());
+    let loaded = match PolicySpecV1::parse(&spec).unwrap() {
+        PolicySpecV1::LearnerCheckpoint(loaded) => loaded,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(loaded.sha256(), sha256_hex(&bytes));
+    assert_eq!((loaded.step(), loaded.contract()), (0, CONTRACT_V2));
+    // Any changed byte, here a re-encoding with extra whitespace, is refused.
+    let mut spaced = bytes.clone();
+    spaced.push(b' ');
+    std::fs::write(&path, &spaced).unwrap();
+    assert!(PolicySpecV1::parse(&spec).is_err());
+    let _ = std::fs::remove_dir_all(&directory);
 }
 
 #[test]
