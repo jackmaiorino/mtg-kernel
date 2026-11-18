@@ -41,6 +41,23 @@ pub(crate) fn creature_override(
 }
 
 pub(crate) fn removal_timestamp(state: &GameState, host: ObjectId) -> Option<u64> {
+    removal_timestamp_with(state, host, true)
+}
+
+/// The latest effect that also removes abilities other effects granted
+/// `host`, those with earlier timestamps (613.7). A land-type setter
+/// (Harbinger of the Seas, the moons) is left out: under 305.7 the land loses
+/// only the abilities from its rules text and keeps granted ones, whatever
+/// the timestamps.
+pub(crate) fn granted_ability_removal_timestamp(state: &GameState, host: ObjectId) -> Option<u64> {
+    removal_timestamp_with(state, host, false)
+}
+
+fn removal_timestamp_with(
+    state: &GameState,
+    host: ObjectId,
+    land_type_setters: bool,
+) -> Option<u64> {
     creature_override(state, host)
         .filter(|(characteristics, _)| characteristics.loses_abilities)
         .map(|(_, timestamp)| timestamp)
@@ -61,7 +78,13 @@ pub(crate) fn removal_timestamp(state: &GameState, host: ObjectId) -> Option<u64
         })
         .chain(if cfg!(feature = "eternal-fixtures") {
             // Harbinger of the Seas: nonbasic lands are Islands (305.7).
-            crate::eternal_legacy_e8a_v1::statics::removal_timestamp(state, host)
+            if land_type_setters {
+                crate::eternal_legacy_e8a_v1::statics::removal_timestamp(state, host)
+            } else {
+                crate::eternal_legacy_e8a_v1::statics::granted_ability_removal_timestamp(
+                    state, host,
+                )
+            }
         } else {
             None
         })

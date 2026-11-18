@@ -131,6 +131,17 @@ pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u
         ))
 }
 
+/// The removal above that also removes abilities other effects granted
+/// `object` earlier (613.7): Alpine Moon's, which says "lose all land types
+/// and abilities". Harbinger of the Seas and the moons set a basic land type,
+/// and under 305.7 that does not remove abilities granted by other effects.
+pub(crate) fn granted_ability_removal_timestamp(
+    state: &GameState,
+    object: ObjectId,
+) -> Option<u64> {
+    crate::eternal_sideboard_s1g_v1::alpine_timestamp(state, object)
+}
+
 /// Harbinger of the Seas and the moons: a nonbasic land's land types become
 /// Island or Mountain. Other subtypes (Dryad Arbor's Dryad) stay. Alpine
 /// Moon (wave S1g) removes the land types of the lands it names, and a
