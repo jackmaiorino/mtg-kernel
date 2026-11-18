@@ -3,7 +3,7 @@
 #![cfg(feature = "eternal-fixtures")]
 #![allow(dead_code)]
 
-use crate::eternal_catalog_v1::{play_observed, Policy};
+use crate::eternal_catalog_v1::{in_parallel, play_observed, Policy};
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, CARD_DEFS,
 };
@@ -2897,6 +2897,7 @@ fn c1b_decks_finish_and_replay_through_public_sessions_both_seats() {
         companion: None,
     };
     let mut totals = C1bEvents::default();
+    let mut games = Vec::new();
     for (pair, first_seed) in [
         (
             [black_discard.clone(), black_green.clone()],
@@ -2915,17 +2916,24 @@ fn c1b_decks_finish_and_replay_through_public_sessions_both_seats() {
                 } else {
                     pair.clone()
                 };
-                let mut events = C1bEvents::default();
-                let game =
-                    play_observed(pair.clone(), None, seed, policy, &mut |decision, action| {
-                        events.observe(decision, action)
-                    });
-                let replay = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
-                assert_eq!(game.transcript_sha256, replay.transcript_sha256);
-                for (card, count) in events.casts {
-                    *totals.casts.entry(card).or_default() += count;
-                }
+                games.push((pair, seed, policy));
             }
+        }
+    }
+    // The games run on worker threads (`in_parallel`); the totals add their
+    // casts in this loop's order.
+    let casts = in_parallel(&games, |(pair, seed, policy)| {
+        let mut events = C1bEvents::default();
+        let game = play_observed(pair.clone(), None, *seed, *policy, &mut |decision, action| {
+            events.observe(decision, action)
+        });
+        let replay = play_observed(pair.clone(), None, *seed, *policy, &mut |_, _| {});
+        assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+        events.casts
+    });
+    for game_casts in casts {
+        for (card, count) in game_casts {
+            *totals.casts.entry(card).or_default() += count;
         }
     }
     for card in C1B_CARDS {

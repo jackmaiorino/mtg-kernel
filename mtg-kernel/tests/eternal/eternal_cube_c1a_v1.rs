@@ -3,7 +3,7 @@
 #![cfg(feature = "eternal-fixtures")]
 #![allow(dead_code)]
 
-use crate::eternal_catalog_v1::{play_observed, Policy};
+use crate::eternal_catalog_v1::{in_parallel, play_observed, Policy};
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, TargetSpec, CARD_DEFS,
 };
@@ -2428,6 +2428,7 @@ fn c1a_decks_finish_and_replay_through_public_sessions_both_seats() {
     let aggro = deck(&[("Mountain", 14), ("Jackal Pup", 14), ("Lightning Bolt", 12)]);
 
     let mut totals = C1aEvents::default();
+    let mut games = Vec::new();
     for (pair, first_seed) in [
         ([control.clone(), aggro.clone()], 0x4331_4100_u64),
         ([aggro.clone(), control.clone()], 0x4331_4110),
@@ -2438,17 +2439,24 @@ fn c1a_decks_finish_and_replay_through_public_sessions_both_seats() {
     ] {
         for seed in first_seed..first_seed + 2 {
             for policy in [Policy::Ranked, Policy::Random(seed + 0x100)] {
-                let mut events = C1aEvents::default();
-                let game =
-                    play_observed(pair.clone(), None, seed, policy, &mut |decision, action| {
-                        events.observe(decision, action)
-                    });
-                let replay = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
-                assert_eq!(game.transcript_sha256, replay.transcript_sha256);
-                for (card, count) in events.casts {
-                    *totals.casts.entry(card).or_default() += count;
-                }
+                games.push((pair.clone(), seed, policy));
             }
+        }
+    }
+    // The games run on worker threads (`in_parallel`); the totals add their
+    // casts in this loop's order.
+    let casts = in_parallel(&games, |(pair, seed, policy)| {
+        let mut events = C1aEvents::default();
+        let game = play_observed(pair.clone(), None, *seed, *policy, &mut |decision, action| {
+            events.observe(decision, action)
+        });
+        let replay = play_observed(pair.clone(), None, *seed, *policy, &mut |_, _| {});
+        assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+        events.casts
+    });
+    for game_casts in casts {
+        for (card, count) in game_casts {
+            *totals.casts.entry(card).or_default() += count;
         }
     }
     for card in C1A_CARDS {

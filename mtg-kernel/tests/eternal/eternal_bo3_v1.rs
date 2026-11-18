@@ -4,7 +4,9 @@
 //! builder and the match driver keep their rules.
 #![cfg(feature = "eternal-fixtures")]
 
-use crate::eternal_catalog_v1::{fully_supported, play_with_outside, snapshot_decks, Policy};
+use crate::eternal_catalog_v1::{
+    fully_supported, in_parallel, play_with_outside, snapshot_decks, Policy,
+};
 use mtg_kernel::bo3_match::{GameOutcomeV1, MatchPhaseV1, PlayDrawChoiceV1};
 use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
 use mtg_kernel::eternal_bo3_v1::{
@@ -1315,6 +1317,7 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
     let (mut games, mut sideboarded, mut sided_in_casts, mut companion_games) = (0, 0, 0, 0);
     let mut index = 0u64;
     let mut native_matches = 0;
+    let mut pairings = Vec::new();
     for (format, decks) in &by_format {
         // Each deck plays the next deck of its format, or a mirror when the
         // format has one deck. A match with a deck that needs the native
@@ -1330,36 +1333,43 @@ fn playable_75_decks_play_best_of_three_with_random_sideboarding() {
             };
             let seed = 0x424f_3300_0000 + index;
             index += 1;
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let record = play_match(pair.clone(), seed, native);
-                let replay = play_match(pair.clone(), seed, native);
-                assert_eq!(record.transcripts, replay.transcripts);
-                assert_eq!(record.winner, replay.winner);
-                record
-            }));
-            let Ok(record) = outcome else {
-                failures.push(format!(
-                    "{format}: {} / {} seed={seed}",
-                    first.deck_id(),
-                    second.deck_id()
-                ));
-                continue;
-            };
-            println!(
-                "{} / {} seed={seed} native={native} games={} sideboarded={} sided_in_casts={} winner={:?} transcripts={:?}",
-                first.deck_id(),
-                second.deck_id(),
-                record.games,
-                record.sideboarded_games,
-                record.sided_in_casts,
-                record.winner,
-                record.transcripts
-            );
-            games += record.games;
-            sideboarded += record.sideboarded_games;
-            sided_in_casts += record.sided_in_casts;
-            companion_games += record.companion_games;
+            pairings.push((*format, *first, second, pair, seed, native));
         }
+    }
+    // The matches run on worker threads (`in_parallel`); the lines, failures
+    // and totals below take their results in this loop's order.
+    let outcomes = in_parallel(&pairings, |(_, _, _, pair, seed, native)| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let record = play_match(pair.clone(), *seed, *native);
+            let replay = play_match(pair.clone(), *seed, *native);
+            assert_eq!(record.transcripts, replay.transcripts);
+            assert_eq!(record.winner, replay.winner);
+            record
+        }))
+    });
+    for ((format, first, second, _, seed, native), outcome) in pairings.iter().zip(outcomes) {
+        let Ok(record) = outcome else {
+            failures.push(format!(
+                "{format}: {} / {} seed={seed}",
+                first.deck_id(),
+                second.deck_id()
+            ));
+            continue;
+        };
+        println!(
+            "{} / {} seed={seed} native={native} games={} sideboarded={} sided_in_casts={} winner={:?} transcripts={:?}",
+            first.deck_id(),
+            second.deck_id(),
+            record.games,
+            record.sideboarded_games,
+            record.sided_in_casts,
+            record.winner,
+            record.transcripts
+        );
+        games += record.games;
+        sideboarded += record.sideboarded_games;
+        sided_in_casts += record.sided_in_casts;
+        companion_games += record.companion_games;
     }
     assert!(
         failures.is_empty(),

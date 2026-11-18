@@ -3,7 +3,7 @@
 #![cfg(feature = "eternal-fixtures")]
 #![allow(dead_code)]
 
-use crate::eternal_catalog_v1::{play_observed, Policy};
+use crate::eternal_catalog_v1::{in_parallel, play_observed, Policy};
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, CARD_DEFS,
 };
@@ -2154,20 +2154,29 @@ fn c4c_decks_finish_and_replay_through_public_sessions_both_seats() {
     ]);
 
     let mut casts = std::collections::BTreeMap::<u16, usize>::new();
+    let mut games = Vec::new();
     for (pair, first_seed) in [
         ([colored.clone(), colorless.clone()], 0x4334_4300_u64),
         ([colorless, colored], 0x4334_4310),
     ] {
         for seed in first_seed..first_seed + 3 {
             for policy in [Policy::Ranked, Policy::Random(seed + 0x100)] {
-                let game = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
-                let replay = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
-                assert_eq!(game.transcript_sha256, replay.transcript_sha256);
-                for seat in &game.cast_cards {
-                    for (&card, &count) in seat {
-                        *casts.entry(card).or_default() += count;
-                    }
-                }
+                games.push((pair.clone(), seed, policy));
+            }
+        }
+    }
+    // The games run on worker threads (`in_parallel`); the totals add their
+    // casts in this loop's order.
+    let cast_cards = in_parallel(&games, |(pair, seed, policy)| {
+        let game = play_observed(pair.clone(), None, *seed, *policy, &mut |_, _| {});
+        let replay = play_observed(pair.clone(), None, *seed, *policy, &mut |_, _| {});
+        assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+        game.cast_cards
+    });
+    for game_cast_cards in &cast_cards {
+        for seat in game_cast_cards {
+            for (&card, &count) in seat {
+                *casts.entry(card).or_default() += count;
             }
         }
     }

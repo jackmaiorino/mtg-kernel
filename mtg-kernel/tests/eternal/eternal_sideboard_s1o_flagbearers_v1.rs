@@ -5,7 +5,7 @@
 //! copies, changed targets, modes and either player's Flagbearer.
 #![cfg(feature = "eternal-fixtures")]
 
-use crate::eternal_catalog_v1::{play_observed, Policy};
+use crate::eternal_catalog_v1::{in_parallel, play_observed, Policy};
 use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::event::{propose_and_commit, ProposedEvent};
@@ -905,6 +905,7 @@ fn flagbearer_decks_finish_and_replay_through_public_sessions() {
     ]);
     let mut flagbearer_casts = 0;
     let mut flagbearer_targets = 0;
+    let mut games = Vec::new();
     for (pair, first_seed) in [
         ([white.clone(), red.clone()], 0x5331_4f00_u64),
         ([red, white], 0x5331_4f10),
@@ -915,21 +916,30 @@ fn flagbearer_decks_finish_and_replay_through_public_sessions() {
                 Policy::Random(seed + 0x100),
                 Policy::Random(seed + 0x200),
             ] {
-                let mut targets = 0;
-                let game = play_observed(pair.clone(), None, seed, policy, &mut |_, action| {
-                    targets += usize::from(targets_opposing_flagbearer(action));
-                });
-                let replay = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
-                assert_eq!(game.transcript_sha256, replay.transcript_sha256);
-                flagbearer_targets += targets;
-                flagbearer_casts += game
-                    .cast_cards
-                    .iter()
-                    .flat_map(|cards| [id(BEARER), id(GUARD)].map(|card| cards.get(&card)))
-                    .flatten()
-                    .sum::<usize>();
+                games.push((pair.clone(), seed, policy));
             }
         }
+    }
+    // The games run on worker threads (`in_parallel`); the totals add their
+    // counts in this loop's order.
+    let counts = in_parallel(&games, |(pair, seed, policy)| {
+        let mut targets = 0;
+        let game = play_observed(pair.clone(), None, *seed, *policy, &mut |_, action| {
+            targets += usize::from(targets_opposing_flagbearer(action));
+        });
+        let replay = play_observed(pair.clone(), None, *seed, *policy, &mut |_, _| {});
+        assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+        let casts = game
+            .cast_cards
+            .iter()
+            .flat_map(|cards| [id(BEARER), id(GUARD)].map(|card| cards.get(&card)))
+            .flatten()
+            .sum::<usize>();
+        (targets, casts)
+    });
+    for (targets, casts) in counts {
+        flagbearer_targets += targets;
+        flagbearer_casts += casts;
     }
     assert!(flagbearer_casts > 0, "no Flagbearer cast");
     assert!(flagbearer_targets > 0, "no opposing Flagbearer targeted");

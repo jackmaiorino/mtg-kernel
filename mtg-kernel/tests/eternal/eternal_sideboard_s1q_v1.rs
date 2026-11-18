@@ -3,7 +3,7 @@
 //! consumer games with replay verification.
 #![cfg(feature = "eternal-fixtures")]
 
-use crate::eternal_catalog_v1::{play_observed, Policy};
+use crate::eternal_catalog_v1::{in_parallel, play_observed, Policy};
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, CARD_DEFS,
 };
@@ -1569,6 +1569,7 @@ fn s1q_decks_finish_and_replay_through_public_sessions() {
     let tracked = [LEVELER, SUBMERSIBLE, BAHAMUT];
     let mut cast_totals = [0usize; 3];
 
+    let mut games = Vec::new();
     for (pair, first_seed) in [
         ([tron.clone(), artifacts.clone()], 0x5331_7100_u64),
         ([artifacts, tron], 0x5331_7110),
@@ -1579,24 +1580,35 @@ fn s1q_decks_finish_and_replay_through_public_sessions() {
                 Policy::Random(seed + 0x100),
                 Policy::Random(seed + 0x200),
             ] {
-                let mut events = S1qSessionEvents::default();
-                let game =
-                    play_observed(pair.clone(), None, seed, policy, &mut |decision, action| {
-                        events.observe(decision, action)
-                    });
-                let replay = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
-                assert_eq!(game.transcript_sha256, replay.transcript_sha256);
-                for (slot, name) in cast_totals.iter_mut().zip(tracked) {
-                    *slot += game
-                        .cast_cards
-                        .iter()
-                        .map(|cards| cards.get(&id(name)).copied().unwrap_or(0))
-                        .sum::<usize>();
-                }
-                totals.exhausts += events.exhausts;
-                totals.waterbend_taps += events.waterbend_taps;
+                games.push((pair.clone(), seed, policy));
             }
         }
+    }
+    // The games run on worker threads (`in_parallel`); the totals add their
+    // counts in this loop's order.
+    let counts = in_parallel(&games, |(pair, seed, policy)| {
+        let mut events = S1qSessionEvents::default();
+        let game = play_observed(pair.clone(), None, *seed, *policy, &mut |decision, action| {
+            events.observe(decision, action)
+        });
+        let replay = play_observed(pair.clone(), None, *seed, *policy, &mut |_, _| {});
+        assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+        let mut casts = [0usize; 3];
+        for (slot, name) in casts.iter_mut().zip(tracked) {
+            *slot += game
+                .cast_cards
+                .iter()
+                .map(|cards| cards.get(&id(name)).copied().unwrap_or(0))
+                .sum::<usize>();
+        }
+        (casts, events)
+    });
+    for (casts, events) in counts {
+        for (slot, count) in cast_totals.iter_mut().zip(casts) {
+            *slot += count;
+        }
+        totals.exhausts += events.exhausts;
+        totals.waterbend_taps += events.waterbend_taps;
     }
 
     assert!(cast_totals[0] > 0, "no Cityscape Leveler cast");

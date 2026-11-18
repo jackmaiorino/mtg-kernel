@@ -14,7 +14,10 @@ use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1, LimitedJso
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::thread::available_parallelism;
 
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
@@ -798,6 +801,73 @@ pub(crate) fn splitmix64(state: &mut u64) -> u64 {
     z ^ (z >> 31)
 }
 
+/// Worker threads for the tests that play many independent games: the
+/// machine's available parallelism, at most 8, or `MTG_ETERNAL_TEST_THREADS`
+/// when it is set (1 plays every game on the test's own thread, in order).
+pub(crate) fn game_threads() -> usize {
+    match std::env::var("MTG_ETERNAL_TEST_THREADS") {
+        Ok(value) => value
+            .parse::<usize>()
+            .ok()
+            .filter(|&threads| threads >= 1)
+            .unwrap_or_else(|| panic!("MTG_ETERNAL_TEST_THREADS: {value:?}")),
+        Err(_) => available_parallelism().map_or(1, usize::from).min(8),
+    }
+}
+
+/// Runs `run` on every item and returns the results in item order, so a
+/// test reads them exactly as its sequential loop produced them. Up to
+/// `game_threads()` scoped worker threads each take the next unstarted item.
+/// A panic is caught per item, and once every item has run the panic of the
+/// first failing item is raised again, as the loop would have raised it
+/// first. With one thread the items run in order on the calling thread.
+///
+/// This is safe for the games these tests play: each game owns all of its
+/// state (its session, engine and seeded random choices); the engine keeps
+/// no process-wide mutable state (no `static mut` and no global random
+/// source; its `OnceLock` statics cache fixed values, and its thread-locals
+/// are scoped to one call or cache values derived from their inputs); no
+/// game path sets an environment variable; and libtest already runs this
+/// suite's other tests on parallel threads in the same process.
+pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], run: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let threads = game_threads().min(items.len());
+    if threads <= 1 {
+        return items.iter().map(run).collect();
+    }
+    let next = AtomicUsize::new(0);
+    let finished: Vec<(usize, std::thread::Result<R>)> = std::thread::scope(|scope| {
+        let mut workers = Vec::new();
+        for _ in 0..threads {
+            workers.push(scope.spawn(|| {
+                let mut done = Vec::new();
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(item) = items.get(index) else {
+                        return done;
+                    };
+                    done.push((index, catch_unwind(AssertUnwindSafe(|| run(item)))));
+                }
+            }));
+        }
+        let mut finished = Vec::new();
+        for worker in workers {
+            finished.extend(worker.join().expect("worker panicked"));
+        }
+        finished
+    });
+    let mut results: Vec<Option<std::thread::Result<R>>> = items.iter().map(|_| None).collect();
+    for (index, result) in finished {
+        results[index] = Some(result);
+    }
+    results
+        .into_iter()
+        .map(|result| match result.expect("every item ran") {
+            Ok(value) => value,
+            Err(panic) => resume_unwind(panic),
+        })
+        .collect()
+}
+
 pub(crate) struct Game {
     pub(crate) transcript_sha256: String,
     pub(crate) action_counts: BTreeMap<String, usize>,
@@ -1182,49 +1252,56 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     // single shuffle can leave one seat without a castable spell.
     let mut ranked_casts: BTreeMap<&str, usize> = BTreeMap::new();
     let mut failures: Vec<String> = Vec::new();
+    let mut games = Vec::new();
     for index in 0..decks.len() {
         let (first, second) = (&decks[index], &decks[(index + 1) % decks.len()]);
-        let pair = [first.deck.clone(), second.deck.clone()];
         let seed = 0x4554_4552_0000 + index as u64;
         for policy in [Policy::Ranked, Policy::Random(seed)] {
-            // Every pairing runs even after one fails, so a single run
-            // reports all failing games (each panic message is printed).
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let game = play(pair.clone(), seed, policy);
-                let replay = play(pair.clone(), seed, policy);
-                assert_eq!(
-                    game.transcript_sha256, replay.transcript_sha256,
-                    "{} / {}",
-                    first.archetype, second.archetype
-                );
-                game
-            }));
-            let Ok(game) = outcome else {
-                failures.push(format!(
-                    "{} / {} seed={seed} random={}",
-                    first.archetype,
-                    second.archetype,
-                    matches!(policy, Policy::Random(_))
-                ));
-                continue;
-            };
-            companion_actions += game.companion_actions;
-            if let Policy::Ranked = policy {
-                *ranked_casts.entry(first.archetype.as_str()).or_default() += game.casts_by_seat[0];
-                *ranked_casts.entry(second.archetype.as_str()).or_default() +=
-                    game.casts_by_seat[1];
-            } else {
-                random_activations += game.action_counts.get("activate_ability").unwrap_or(&0);
-            }
-            println!(
-                "{} / {} seed={seed} random={} transcript_sha256={} actions={:?}",
+            games.push((first, second, seed, policy));
+        }
+    }
+    // Every pairing runs even after one fails, so a single run reports all
+    // failing games (each panic message is printed). The games run on worker
+    // threads (`in_parallel`); everything below takes their results in this
+    // loop's order.
+    let outcomes = in_parallel(&games, |&(first, second, seed, policy)| {
+        let pair = [first.deck.clone(), second.deck.clone()];
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let game = play(pair.clone(), seed, policy);
+            let replay = play(pair.clone(), seed, policy);
+            assert_eq!(
+                game.transcript_sha256, replay.transcript_sha256,
+                "{} / {}",
+                first.archetype, second.archetype
+            );
+            game
+        }))
+    });
+    for (&(first, second, seed, policy), outcome) in games.iter().zip(outcomes) {
+        let Ok(game) = outcome else {
+            failures.push(format!(
+                "{} / {} seed={seed} random={}",
                 first.archetype,
                 second.archetype,
-                matches!(policy, Policy::Random(_)),
-                game.transcript_sha256,
-                game.action_counts
-            );
+                matches!(policy, Policy::Random(_))
+            ));
+            continue;
+        };
+        companion_actions += game.companion_actions;
+        if let Policy::Ranked = policy {
+            *ranked_casts.entry(first.archetype.as_str()).or_default() += game.casts_by_seat[0];
+            *ranked_casts.entry(second.archetype.as_str()).or_default() += game.casts_by_seat[1];
+        } else {
+            random_activations += game.action_counts.get("activate_ability").unwrap_or(&0);
         }
+        println!(
+            "{} / {} seed={seed} random={} transcript_sha256={} actions={:?}",
+            first.archetype,
+            second.archetype,
+            matches!(policy, Policy::Random(_)),
+            game.transcript_sha256,
+            game.action_counts
+        );
     }
     assert!(
         failures.is_empty(),
