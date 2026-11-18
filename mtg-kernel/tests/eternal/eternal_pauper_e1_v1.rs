@@ -739,7 +739,9 @@ fn lose_focus_cast_without_its_mana_cost_still_pays_for_replicate_both_seats() {
                     Action::OrderTriggers((0..pending.len()).collect()),
                 ),
                 // One keep-or-change target choice per copy.
-                Decision::ChooseEffectTargets { player: chooser, .. } => {
+                Decision::ChooseEffectTargets {
+                    player: chooser, ..
+                } => {
                     assert_eq!(chooser, player);
                     copies += 1;
                     act(&mut state, Action::FinishEffectSelection);

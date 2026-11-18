@@ -6392,7 +6392,9 @@ fn activation_total_mana_cost(
     // Forensic Gadgeteer (eternal wave C4a): abilities of artifacts cost {1}
     // less, never below one mana.
     let total = crate::eternal_cube_c4a_v1::reduce_artifact_activation(state, source, total);
-    Some(crate::standard_cards_v1::spend_as_any_color(state, player, source, total))
+    Some(crate::standard_cards_v1::spend_as_any_color(
+        state, player, source, total,
+    ))
 }
 
 fn activation_mana_payment(
