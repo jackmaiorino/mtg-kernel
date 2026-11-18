@@ -463,9 +463,7 @@ fn staff_triggers(state: &mut GameState, events: &[CommittedEvent], out: &mut Ve
     let mut fired: Vec<(PlayerId, AbilitySourceContractV4)> = Vec::new();
     for event in events {
         let CommittedEvent::CreateToken {
-            object,
-            token_def,
-            ..
+            object, token_def, ..
         } = event
         else {
             continue;
