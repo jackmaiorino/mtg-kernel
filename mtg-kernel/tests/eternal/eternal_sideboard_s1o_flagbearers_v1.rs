@@ -830,12 +830,15 @@ fn flagbearers_never_bind_unlicensed_hearses_graveyard_targets_both_seats() {
 #[test]
 fn flagbearers_never_bind_eowyns_enters_trigger_both_seats() {
     // "When Eowyn enters, exile target creature an opponent controls with
-    // greater power": a triggered ability, and a Standard Bearer's power 1 is
-    // not greater than Eowyn's 3 in any case.
+    // greater power": a triggered ability. Three +1/+1 counters make the
+    // Standard Bearer a 4/4, a legal target, so a bound trigger would offer
+    // only the Bearer.
     for actor in [P0, P1] {
         let opponent = actor.opponent();
         let mut state = game(actor, "Plains");
         let bearer = put(&mut state, opponent, BEARER, Zone::Battlefield);
+        state.objects.get_mut(bearer).counters.plus1_plus1 = 3;
+        assert_eq!(engine::effective_power(&state, bearer), 4);
         let big = put(&mut state, opponent, "Griselbrand", Zone::Battlefield);
         let eowyn = put(&mut state, actor, "Eowyn, Fearless Knight", Zone::Hand);
         pool(&mut state, actor, &[ManaColor::R, ManaColor::W], 2);
@@ -848,7 +851,10 @@ fn flagbearers_never_bind_eowyns_enters_trigger_both_seats() {
             }
             other => first_answer(other),
         });
-        assert_eq!(trigger_targets, [Target::Object(big)]);
+        assert!(same_set(
+            trigger_targets,
+            vec![Target::Object(bearer), Target::Object(big)]
+        ));
         assert_eq!(zone(&state, big), Zone::Exile);
         assert_eq!(zone(&state, bearer), Zone::Battlefield);
         assert_eq!(zone(&state, eowyn), Zone::Battlefield);
