@@ -548,6 +548,21 @@ class ProvenanceTest(unittest.TestCase):
         self.assertEqual(ev.eval_subgroups(INVENTORY)["playable_decks_sha256"], PLAYABLE_SHA256[0])
         self.assertTrue(self.e0(lambda inputs: None)["pass"])
 
+    def test_learner_checkpoint_keys_reach_the_canonical_summary(self):
+        contract = "learner-checkpoint/v1: fixture"
+        inputs = full_inputs()
+        for run in inputs:
+            for summary in (run.summary, run.replay_summary):
+                summary.update(a_checkpoint_sha256="a" * 64, learner_policy_contract=contract)
+                if run.opponent == STEP0:
+                    summary.update(b_checkpoint_sha256="b" * 64)
+        evaluation = ev.evaluate(inputs, INVENTORY, replicates=R)
+        self.assertTrue(evaluation["gate_e0"]["pass"])
+        runs = evaluation["candidates"]["u_final"]["runs"]
+        self.assertEqual(runs["step_0"]["summary"]["b_checkpoint_sha256"], "b" * 64)
+        self.assertEqual(runs["heuristic"]["summary"]["a_checkpoint_sha256"], "a" * 64)
+        self.assertEqual(runs["uniform_legal"]["summary"]["learner_policy_contract"], contract)
+
     def test_unrecorded_limits_fail_e0(self):
         def drop(inputs):
             for summary in (inputs[0].summary, inputs[0].replay_summary):

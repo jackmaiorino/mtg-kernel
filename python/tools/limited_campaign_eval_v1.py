@@ -18,7 +18,9 @@ count (the replay), which Gate E0 compares on pairs 0..4.
 games files, so the same records give the same bytes whatever their order, host timing or worker count.
 Timing, worker counts and the games paths go to the sidecar `evaluation.timing.json`. Checkpoints are
 identified by the path in their policy spec (`learner-checkpoint:<path>`), which does reach the canonical
-file through the specs and the rows; a checkpoint digest is not yet in the driver's records. The exit code is 0 when the
+file through the specs and the rows, and by the SHA-256 of the checkpoint file, which the driver writes to the
+summary as `a_checkpoint_sha256` (and `b_checkpoint_sha256` for a learner opponent) and which reaches the
+canonical file through the summary. The exit code is 0 when the
 records were evaluated (whatever the gates say) and 2 when they were refused.
 """
 from __future__ import annotations
@@ -106,7 +108,10 @@ SUMMARY_CANONICAL_KEYS = frozenset({
     "schema", "engine", "card_db_hash", "a", "b", "split", "seed", "first_pair", "pairs", "legs",
     "playable_decks", "playable_decks_sha256", "belief_overlap", "belief_decks", "games", "a_wins",
     "b_wins", "draws", "stalls", "errors", "full_validation", "session", "world_contract",
-    "game_deck_contents_sha256", "belief_deck_contents_sha256", "max_turns", "max_decisions"})
+    "game_deck_contents_sha256", "belief_deck_contents_sha256", "max_turns", "max_decisions",
+    "a_checkpoint_sha256",
+    "b_checkpoint_sha256",
+    "learner_policy_contract"})
 SUMMARY_TIMING_KEYS = frozenset({"wall_s", "games_per_hour", "workers"})
 SUMMARY_REQUIRED = ("schema", "engine", "card_db_hash", "a", "b", "split", "seed", "first_pair", "pairs", "legs",
                     "playable_decks", "playable_decks_sha256", "belief_overlap", "belief_decks", "games",
