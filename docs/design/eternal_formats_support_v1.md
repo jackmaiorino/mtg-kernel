@@ -3228,7 +3228,7 @@ encoder admits only its named card pool, which has no Kindred card.
 
 ### C5: statics, token makers, reanimation and each-player spells
 
-Wave C5 adds 25 cards and seven tokens, raising the cube to 463 of 540 Full. It is four sub-modules
+Wave C5 adds 25 cards and seven tokens, raising the cube to 465 of 540 Full. It is four sub-modules
 chained after C4c: C5a (seven creatures with statics, mana and counter state,
 `eternal_cube_c5a_v1`), C5b (six token makers, `eternal_cube_c5b_v1`), C5c (reanimation spells and
 enchantments, a sweeper and a land, `eternal_cube_c5c_v1`) and C5d (each-player decision spells and
