@@ -394,13 +394,13 @@ fn learner_seat_draws_from_its_own_stream_and_other_policies_ignore_it() {
     for actor in [PlayerId::P0, PlayerId::P1] {
         // Random play is the same with and without a pair stream.
         let (plain, _) = scene(actor, "Forest");
-        let (paired, _) = scene(actor, "Forest");
+        let (mut paired, _) = scene(actor, "Forest");
         let mut without = GameResultV1::empty();
         let mut with = GameResultV1::empty();
         let random = [&PolicySpecV1::Random; 2];
         let outcome = play_owner(plain, random, [None; 2], 552_286, limits(24), &mut without);
         let again = play_owner_in_pair(
-            paired,
+            &mut paired,
             random,
             [None; 2],
             552_286,
@@ -429,10 +429,10 @@ fn learner_seat_draws_from_its_own_stream_and_other_policies_ignore_it() {
         .is_err());
 
         let play = |hidden: &str| {
-            let (session, _) = scene(actor, hidden);
+            let (mut session, _) = scene(actor, hidden);
             let mut result = GameResultV1::empty();
             let outcome = play_owner_in_pair(
-                session,
+                &mut session,
                 policies,
                 [None; 2],
                 552_286,
@@ -463,4 +463,290 @@ fn learner_seat_draws_from_its_own_stream_and_other_policies_ignore_it() {
         checkpoint.sample_v1(&input, draw).unwrap(),
         learner_policy_v1::sample_learner_action_v1(&logits, draw).unwrap()
     );
+}
+
+/// A fresh full-pool game between two all-basic-land decks, reset the way
+/// `play_game` resets one.
+fn land_game(env_seed: u64) -> KaitoSession {
+    let decks = ["Forest", "Island"].map(|name| vec![card_id_by_name(name).unwrap(); 40]);
+    let deck_ids = decks.clone().map(|deck| {
+        let mut hash = Sha256::new();
+        hash.update(b"kernel_limited_full_pool_deck/v1");
+        hash.update(KERNEL_CARDDB_HASH.to_le_bytes());
+        for card in &deck {
+            hash.update(card.to_le_bytes());
+        }
+        format!("limited-full-pool-v1:{:x}", hash.finalize())
+    });
+    reset_numeric_reveal_facts_v3(&ResetV1 {
+        expected_card_db_hash: KERNEL_CARDDB_HASH,
+        episode_id: env_seed,
+        env_seed,
+        starting_player: PlayerId::P0.into(),
+        deck_ids,
+        mainboards: decks,
+        max_physical_decisions: 16_000,
+        max_policy_steps: 2_048_000,
+    })
+    .unwrap()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LearnerDrawRuleV1 {
+    /// The policy's rule: one draw of the seat's own stream per decision
+    /// with more than one legal action, none at a forced decision.
+    OwnStream,
+    /// A learner that drew from the match's shared generator instead.
+    SharedGenerator,
+    /// A learner that also drew from its stream at a forced decision.
+    ExtraForcedDraw,
+}
+
+/// `steps` decisions of `land_game(env_seed)` stepped by hand: the random
+/// seat from the shared generator, the learner seat under `rule`. Returns the
+/// session and, per decision, whether the learner acted, its menu width and
+/// the action taken.
+fn hand_stepped(
+    checkpoint: &LearnerCheckpointV1,
+    learner_seat: PlayerId,
+    env_seed: u64,
+    stream: MatchStreamV1,
+    steps: u64,
+    rule: LearnerDrawRuleV1,
+) -> (KaitoSession, Vec<(bool, u32, u32)>) {
+    let mut session = land_game(env_seed);
+    let mut shared = SplitMix64::seed(derive_seed(
+        b"mtg-kernel/limited-full-pool-match-policy/v1\0",
+        &[env_seed],
+    ));
+    let own_seed = learner_policy_v1::learner_stream_seed_v1(stream, learner_seat.index() as u64);
+    let mut own = SplitMix64::seed(own_seed);
+    let mut log = Vec::new();
+    for _ in 0..steps {
+        let FastActorResponseV1::Decision(expected) = session.current_response() else {
+            panic!("the land game ended early");
+        };
+        let decision = session.encode(expected).unwrap();
+        let legal = legal_count(&decision).unwrap();
+        let learner = seat(expected.acting_player) == learner_seat;
+        let pick = if !learner {
+            random_index(&mut shared, legal)
+        } else if legal <= 1 {
+            if rule == LearnerDrawRuleV1::ExtraForcedDraw {
+                own.next_u64();
+            }
+            0
+        } else {
+            let draw = if rule == LearnerDrawRuleV1::SharedGenerator {
+                shared.next_u64()
+            } else {
+                own.next_u64()
+            };
+            let input = session.training_input_v1(&decision).unwrap();
+            checkpoint.sample_v1(&input, draw).unwrap() as u32
+        };
+        log.push((learner, legal, pick));
+        session.apply(&decision, pick).unwrap();
+    }
+    (session, log)
+}
+
+#[test]
+fn learner_seat_selects_from_its_own_stream_and_draws_nothing_at_forced_decisions() {
+    let learner = step_zero_learner();
+    let PolicySpecV1::LearnerCheckpoint(checkpoint) = &learner else {
+        unreachable!()
+    };
+    let (env_seed, steps) = (552_311, 160);
+    let game_limits = GameLimitsV1 {
+        max_turns: 100,
+        ..limits(steps)
+    };
+    for learner_seat in [PlayerId::P0, PlayerId::P1] {
+        let stream = MatchStreamV1 {
+            seed: 657_101,
+            pair: 4,
+            leg: learner_seat.index() as u64,
+        };
+        let mut policies = [&PolicySpecV1::Random; 2];
+        policies[learner_seat.index()] = &learner;
+        let mut played = land_game(env_seed);
+        let mut result = GameResultV1::empty();
+        let outcome = play_owner_in_pair(
+            &mut played,
+            policies,
+            [None; 2],
+            env_seed,
+            game_limits,
+            Some(stream),
+            &mut result,
+        )
+        .unwrap();
+        assert_eq!((outcome, result.decisions), (GameOutcomeV1::Stall, steps));
+        let run = |rule| hand_stepped(checkpoint, learner_seat, env_seed, stream, steps, rule);
+        let (expected, log) = run(LearnerDrawRuleV1::OwnStream);
+        // Every action the game loop took is the one the seat-stream rule gives.
+        assert_eq!(played.fixture_state(), expected.fixture_state());
+        // The game holds a forced learner decision, then a random decision with
+        // more than one action (it advances the shared generator), then a
+        // learner decision with more than one action.
+        let forced = log.iter().position(|&(learner, legal, _)| learner && legal == 1);
+        let forced = forced.expect("a forced learner decision");
+        let opponent = (forced..log.len())
+            .find(|&i| !log[i].0 && log[i].1 > 1)
+            .expect("a random decision with a choice after it");
+        assert!(
+            log[opponent..].iter().any(|&(learner, legal, _)| learner && legal > 1),
+            "a learner decision with a choice after the random one"
+        );
+        // The check has power: either wrong draw rule plays another game.
+        for rule in [
+            LearnerDrawRuleV1::SharedGenerator,
+            LearnerDrawRuleV1::ExtraForcedDraw,
+        ] {
+            assert_ne!(played.fixture_state(), run(rule).0.fixture_state());
+        }
+    }
+}
+
+#[test]
+fn a_learner_loaded_from_a_checkpoint_file_plays_like_its_snapshot() {
+    use crate::current_tree_learner_v2::{LearnerV2, OptimizerConfigV2};
+    use crate::limited_campaign_v1::checkpoint::{
+        CheckpointV1, LearnerSnapshotV1, SourceIdentityV1, HAND_KNOWLEDGE_V1,
+    };
+    let identity = SourceIdentityV1 {
+        git_head: "0123456789abcdef0123456789abcdef01234567".into(),
+        binary_sha256: "11".repeat(32),
+        binary_source_sha256: "22".repeat(32),
+        card_db_hash: "0123456789abcdef".into(),
+        sample_sha256_in_pool_order: "33".repeat(32),
+        actor_profile: "fdn-full-pool-consumer/v1".into(),
+        actor_producer_sha256: "44".repeat(32),
+        hand_knowledge: HAND_KNOWLEDGE_V1.into(),
+        reveal_producer_sha256: "55".repeat(32),
+        reveal_reducer_sha256: "66".repeat(32),
+    };
+    let snapshot = LearnerV2::new(OptimizerConfigV2::campaign_v1(200))
+        .unwrap()
+        .snapshot();
+    let checkpoint = CheckpointV1::new(
+        &"77".repeat(32),
+        &identity,
+        None,
+        &"88".repeat(32),
+        LearnerSnapshotV1::ActorCritic(snapshot),
+    )
+    .unwrap();
+    let name = format!("limited-eval-learner-game-{}", std::process::id());
+    let directory = std::env::temp_dir().join(name);
+    std::fs::create_dir_all(&directory).unwrap();
+    let path = directory.join("step_0000.json");
+    std::fs::write(&path, checkpoint.to_bytes().unwrap()).unwrap();
+    let spec = format!("learner-checkpoint:{}", path.display());
+    let from_file = PolicySpecV1::parse(&spec).unwrap();
+    let _ = std::fs::remove_dir_all(&directory);
+    let from_snapshot = step_zero_learner();
+    let decks = ["Forest", "Island"].map(|name| vec![card_id_by_name(name).unwrap(); 40]);
+    let game_limits = GameLimitsV1 {
+        max_turns: 100,
+        ..limits(60)
+    };
+    let stream = MatchStreamV1 {
+        seed: 657_101,
+        pair: 0,
+        leg: 0,
+    };
+    let play = |learner: &PolicySpecV1| {
+        let result = play_game_in_pair_v1(
+            [decks[0].as_slice(), decks[1].as_slice()],
+            [learner, &PolicySpecV1::Random],
+            [None; 2],
+            552_312,
+            PlayerId::P0,
+            game_limits,
+            stream,
+        );
+        (result.outcome, result.turns, result.decisions)
+    };
+    let played = play(&from_file);
+    assert_eq!(played, (GameOutcomeV1::Stall, played.1, 60));
+    assert_eq!(played, play(&from_snapshot));
+}
+
+/// An ordinary main phase: the actor has priority with an empty stack, one
+/// untapped Mountain and Forest on the battlefield, and a Mountain and
+/// Axgard Cavalry ({1}{R}) in hand.
+fn development_scene(actor: PlayerId) -> (KaitoSession, LimitedBeliefV1) {
+    let libraries = [[card_id_by_name("Forest").unwrap(); 40]; 2];
+    let mut state = GameState::new_from_libraries_with_starting_player_v1(
+        &libraries[0],
+        &libraries[1],
+        crate::rl::card_name,
+        552_313,
+        actor,
+    );
+    state.step = Step::Main1;
+    put(&mut state, actor, "Mountain", Zone::Battlefield);
+    put(&mut state, actor, "Forest", Zone::Battlefield);
+    put(&mut state, actor, "Mountain", Zone::Hand);
+    put(&mut state, actor, "Axgard Cavalry", Zone::Hand);
+    put(&mut state, actor.opponent(), "Forest", Zone::Battlefield);
+    FastActorSessionV1::enable_limited_native_modes_v1(&mut state, LimitedAppendixV1::FullPool);
+    state.reveal_knowledge_v4 = Some(Default::default());
+    state.reveal_meaning_v3.enable();
+    assert!(state.stack.is_empty());
+    let opposing = &state.players[actor.opponent().index()];
+    let mut public_corpus = opposing
+        .battlefield
+        .iter()
+        .map(|&object| state.objects.get(object).card_def)
+        .collect::<Vec<_>>();
+    public_corpus.extend(std::iter::repeat_n(
+        card_id_by_name("Forest").unwrap(),
+        opposing.hand.len() + opposing.library.len(),
+    ));
+    let raw =
+        FastActorSessionV1::from_kaito_v75_fixture_state_scoped(state, LimitedAppendixV1::FullPool);
+    (
+        KaitoSession::from_session(raw).unwrap(),
+        LimitedBeliefV1::new([public_corpus]),
+    )
+}
+
+/// Documents `sampled-public-heuristic/v1` as the design defines it: each
+/// root action is applied once and the state right after it is scored. In an
+/// ordinary main phase a land drop scores below passing (a hand card is worth
+/// more than a land) and casting a spell scores no better than passing (the
+/// card leaves the hand and the stack is not scored), so the policy never
+/// develops. A second definition of the heuristic must change this
+/// expectation on purpose.
+#[test]
+fn sampled_public_heuristic_v1_one_apply_scores_pass_over_land_drop_and_spell_in_main_phase() {
+    for actor in [PlayerId::P0, PlayerId::P1] {
+        let (session, belief) = development_scene(actor);
+        let decision = encode_current(&session).unwrap();
+        let actions = decision.fixture_backend_v75().actions();
+        let of = |kind: fn(&ActionSemanticV1) -> bool| -> Vec<usize> {
+            (0..actions.len()).filter(|&i| kind(&actions[i])).collect()
+        };
+        let pass = of(|a| matches!(a, ActionSemanticV1::Pass { .. }));
+        let lands = of(|a| matches!(a, ActionSemanticV1::PlayLand { .. }));
+        let spells = of(|a| matches!(a, ActionSemanticV1::CastSpell { .. }));
+        assert_eq!(pass.len(), 1);
+        assert!(!lands.is_empty() && !spells.is_empty());
+        let (pick, stats) =
+            sampled_public_heuristic_v1(&session, &decision, &belief, 552_313).unwrap();
+        assert_eq!((stats.rejected, stats.rollout_errors), (0, 0));
+        let value = |i: usize| stats.value_sum[i];
+        let passing = value(pass[0]);
+        for &land in &lands {
+            assert!(value(land) < passing, "a land drop scores below passing");
+        }
+        for &spell in &spells {
+            assert!(value(spell) <= passing, "a spell scores no better than passing");
+        }
+        assert!(!lands.contains(&(pick as usize)));
+        assert_eq!(value(pick as usize), passing);
+    }
 }

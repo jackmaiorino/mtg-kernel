@@ -119,7 +119,12 @@ fn a_checkpoint_file_loads_through_its_spec_pinned_by_its_bytes() {
     };
     assert_eq!(loaded.sha256(), sha256_hex(&bytes));
     assert_eq!((loaded.step(), loaded.contract()), (0, CONTRACT_V2));
-    // Any changed byte, here a re-encoding with extra whitespace, is refused.
+    // Bytes that are not the canonical encoding (here one extra space) are
+    // refused. A valid canonical checkpoint with other contents would load
+    // under its own digest: the loader checks form and identity, not which
+    // checkpoint it is. The digest recorded in the match summary, which the
+    // evaluation tool compares across a run, its replay and a candidate's
+    // runs, is what ties the games to one checkpoint file.
     let mut spaced = bytes.clone();
     spaced.push(b' ');
     std::fs::write(&path, &spaced).unwrap();

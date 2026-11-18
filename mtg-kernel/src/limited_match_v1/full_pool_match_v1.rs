@@ -403,8 +403,8 @@ pub(super) fn play_game(
         reset_numeric_reveal_facts_v3(&reset)
     };
     result.outcome = match run() {
-        Ok(session) => play_owner_in_pair(
-            session,
+        Ok(mut session) => play_owner_in_pair(
+            &mut session,
             policies,
             beliefs,
             env_seed,
@@ -420,14 +420,14 @@ pub(super) fn play_game(
 
 #[cfg(all(test, not(feature = "standard-magezero-fixtures")))]
 fn play_owner(
-    session: KaitoSession,
+    mut session: KaitoSession,
     policies: [&PolicySpecV1; 2],
     beliefs: [Option<&LimitedBeliefV1>; 2],
     seed: u64,
     limits: GameLimitsV1,
     result: &mut GameResultV1,
 ) -> Result<GameOutcomeV1, String> {
-    play_owner_in_pair(session, policies, beliefs, seed, limits, None, result)
+    play_owner_in_pair(&mut session, policies, beliefs, seed, limits, None, result)
 }
 
 /// Both seats share one policy generator seeded from the environment seed,
@@ -436,7 +436,7 @@ fn play_owner(
 /// do not depend on the opponent's draws and the shared generator advances
 /// exactly as it would without it.
 fn play_owner_in_pair(
-    mut session: KaitoSession,
+    session: &mut KaitoSession,
     policies: [&PolicySpecV1; 2],
     beliefs: [Option<&LimitedBeliefV1>; 2],
     seed: u64,
@@ -480,7 +480,7 @@ fn play_owner_in_pair(
                 let belief =
                     beliefs[actor.index()].ok_or("full-pool match lacks a belief corpus")?;
                 let (selected, stats) = pimc_choose_full_pool_heuristic_v1(
-                    &session,
+                    session,
                     &decision,
                     *sims,
                     *depth,
@@ -495,7 +495,7 @@ fn play_owner_in_pair(
                 let belief =
                     beliefs[actor.index()].ok_or("full-pool match lacks a belief corpus")?;
                 let (selected, stats) =
-                    sampled_public_heuristic_v1(&session, &decision, belief, rng.next_u64())?;
+                    sampled_public_heuristic_v1(session, &decision, belief, rng.next_u64())?;
                 record_search_v1(result, legal, 1, stats);
                 selected
             }
@@ -517,7 +517,7 @@ fn play_owner_in_pair(
                 let belief =
                     beliefs[actor.index()].ok_or("full-pool match lacks a belief corpus")?;
                 let (selected, stats) = pimc_choose_full_pool_v1(
-                    &session,
+                    session,
                     &decision,
                     *sims,
                     *depth,
