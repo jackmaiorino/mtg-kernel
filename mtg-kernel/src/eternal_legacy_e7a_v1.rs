@@ -200,7 +200,7 @@ pub enum E7aTriggerV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum E7aOpV1 {
     /// Blast Zone: put `count` charge counters on the ability's source
-    /// incarnation.
+    /// incarnation, as modified by the counter placement replacements.
     AddChargeCountersV1 { count: u8 },
     /// Blast Zone: destroy each nonland permanent with mana value equal to
     /// the number of charge counters the sacrificed land had.
@@ -1218,10 +1218,26 @@ pub(crate) fn trigger_matches(
 pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         E7aOpV1::AddChargeCountersV1 { count } => {
-            if let Some(source) = live_ability_source(ctx, state) {
-                let counters = &mut state.objects.get_mut(source).counters.charge;
-                *counters = counters.saturating_add(i32::from(*count));
+            let Some(source) = live_ability_source(ctx, state) else {
+                return;
+            };
+            if *count == 0 {
+                return;
             }
+            // An effect's placement goes through the shared counter
+            // replacements (Innkeeper's Talent, Doubling Season).
+            let Ok(placed) = crate::doubling_season_v48::counter_amount(
+                state,
+                source,
+                ctx.controller,
+                crate::doubling_season_v48::CounterOriginV48::Effect,
+                i32::from(*count),
+            ) else {
+                halt(state, source);
+                return;
+            };
+            let counters = &mut state.objects.get_mut(source).counters.charge;
+            *counters = counters.saturating_add(placed);
         }
         E7aOpV1::BlastZoneDestroyV1 => {
             let Some(contract) = ctx.ability_source_contract else {

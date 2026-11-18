@@ -1872,6 +1872,39 @@ fn staff_of_the_storyteller_sees_the_battlefield_as_the_token_is_created() {
     assert_eq!(charge(&state, staff), 0);
 }
 
+/// Innkeeper's Talent at level 3 for P0, levelled through its own abilities.
+fn innkeepers_talent_at_level_three(state: &mut GameState) -> ObjectId {
+    let class = put(state, P0, "Innkeeper's Talent", Zone::Battlefield);
+    pool(state, P0, &[ManaColor::G], 0);
+    activate(state, class, 0, &[]);
+    settled(state);
+    pool(state, P0, &[ManaColor::G], 3);
+    activate(state, class, 1, &[]);
+    settled(state);
+    class
+}
+
+#[test]
+fn staff_of_the_storyteller_story_counters_are_doubled_by_innkeepers_talent() {
+    // Innkeeper's Talent: "If you would put one or more counters on a
+    // permanent or player, put twice that many ... instead." The story
+    // counter is put by an effect.
+    let mut state = plains();
+    innkeepers_talent_at_level_three(&mut state);
+    let staff = put(
+        &mut state,
+        P0,
+        "Staff of the Storyteller",
+        Zone::Battlefield,
+    );
+    let foundry = put(&mut state, P0, "Retrofitter Foundry", Zone::Battlefield);
+    pool(&mut state, P0, &[], 2);
+    activate(&mut state, foundry, 1, &[]);
+    settled(&mut state);
+    assert_eq!(named(&state, P0, "Servo Token").len(), 1);
+    assert_eq!(charge(&state, staff), 2);
+}
+
 #[test]
 fn staff_of_the_storyteller_removes_a_counter_to_draw() {
     let mut state = plains();
