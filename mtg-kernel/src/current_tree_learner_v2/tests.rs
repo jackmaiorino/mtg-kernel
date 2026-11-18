@@ -762,6 +762,12 @@ fn pinned_checkpoint_state_digests() {
     );
     assert_eq!(wide_clipped, [false, true, false, false, false]);
     assert_eq!(narrow_clipped, [false, true, false, false, false]);
-    assert_eq!(wide, "pending");
-    assert_eq!(narrow, "pending");
+    assert_eq!(
+        wide,
+        "c552ee18687824106219b264252a4f2588eb68567e671560b5713b30ba310d61"
+    );
+    assert_eq!(
+        narrow,
+        "1a92eff6ef02a088f73975e0c2508bf43a4f20455e61063417905338579ec404"
+    );
 }
