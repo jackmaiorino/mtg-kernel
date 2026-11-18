@@ -36,6 +36,12 @@ mod eternal_cube_c5b_v1;
 mod eternal_cube_c5c_v1;
 #[path = "eternal/eternal_cube_c5d_v1.rs"]
 mod eternal_cube_c5d_v1;
+#[path = "eternal/eternal_cube_c6a_v1.rs"]
+mod eternal_cube_c6a_v1;
+#[path = "eternal/eternal_cube_c6b_v1.rs"]
+mod eternal_cube_c6b_v1;
+#[path = "eternal/eternal_cube_c6c_v1.rs"]
+mod eternal_cube_c6c_v1;
 #[path = "eternal/eternal_e9b_v1.rs"]
 mod eternal_e9b_v1;
 #[path = "eternal/eternal_kindred_v1.rs"]
