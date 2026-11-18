@@ -646,16 +646,55 @@ pub(crate) mod future_printed {
             let [sidecar] = sidecars.as_slice() else {
                 panic!("one Runner borrow for the Banishing gain: {sidecars:?}");
             };
-            for case in 0..2 {
+            let sidecar = *sidecar;
+            // The completed game, sidecar included, restores and validates.
+            let mut completed: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            assert_eq!(completed, state);
+            validate(&completed).unwrap();
+            assert!(!matches!(next(&mut completed), Decision::Halted { .. }));
+            for case in 0..4 {
                 let mut bad = state.clone();
                 if case == 0 {
-                    bad.engine.event_history.remove(*sidecar);
+                    // Erase the sidecar and keep every later journal index
+                    // coherent, so the refusal comes from the Runner-less
+                    // replay itself, not from a shifted journal position.
+                    bad.engine.event_history.remove(sidecar);
+                    for at in sidecar..bad.engine.event_history.len() {
+                        let CommittedEvent::ConquerorJournalV49 { journal } =
+                            &mut bad.engine.event_history[at]
+                        else {
+                            continue;
+                        };
+                        match journal.as_mut() {
+                            custody::JournalV49::Gain {
+                                gain_history_index, ..
+                            } if *gain_history_index > sidecar as u64 => {
+                                *gain_history_index -= 1;
+                            }
+                            custody::JournalV49::Closed {
+                                gain: Some(gain), ..
+                            } if *gain > sidecar as u64 => *gain -= 1,
+                            _ => {}
+                        }
+                    }
+                    assert_eq!(
+                        validate(&bad),
+                        Err("Conqueror gain and its actual downstream captures changed".into())
+                    );
                 } else {
                     let mut value =
-                        serde_json::to_value(&bad.engine.event_history[*sidecar]).unwrap();
-                    value["ConquerorGainReplayBorrowV49"]["borrow"]["runner"] =
-                        serde_json::Value::Null;
-                    bad.engine.event_history[*sidecar] = serde_json::from_value(value).unwrap();
+                        serde_json::to_value(&bad.engine.event_history[sidecar]).unwrap();
+                    let runner = &mut value["ConquerorGainReplayBorrowV49"]["borrow"]["runner"];
+                    match case {
+                        1 => *runner = serde_json::Value::Null,
+                        2 => {
+                            runner["original_sha256"] =
+                                serde_json::Value::String(format!("v2:{}", "0".repeat(64)))
+                        }
+                        _ => runner["original_history_len"] = serde_json::json!(0),
+                    }
+                    bad.engine.event_history[sidecar] = serde_json::from_value(value).unwrap();
                 }
                 let before = bad.clone();
                 assert!(
@@ -663,7 +702,48 @@ pub(crate) mod future_printed {
                     "Banishing sidecar corruption {case}"
                 );
                 assert_eq!(bad, before);
+                readonly(bad);
             }
+        }
+    }
+
+    /// Issue 753 review: a Heraldic Banner in hand also makes every Advance
+    /// own a Runner, but a Runner-less replay of a plain gain commits the same
+    /// lone LifeGain. That gain records no sidecar, so its history and its
+    /// serialized state keep the bytes they had before the fix. The printed
+    /// digests are compared with a run of this test at main.
+    #[test]
+    fn genuine_paid_gain_with_heraldic_banner_in_hand_records_no_runner_both_seats() {
+        for actor in [PlayerId::P0, PlayerId::P1] {
+            let (mut state, _) = paid(actor);
+            put(&mut state, actor, "Heraldic Banner", Zone::Hand);
+            assert!(!crate::drake_hatcher_v1::custody::relevant(&state));
+            assert!(state.engine.linked_exile_records.is_empty());
+            assert!(crate::linked_aura_operation_v1::needs_surrounding_operation_owner(&state));
+            event::propose_and_commit(&mut state, ProposedEvent::life_loss(actor.opponent(), 4));
+            finish(&mut state);
+            validate(&state).unwrap();
+            assert!(state.engine.halted.is_none());
+            assert_eq!(state.players[actor.index()].life, 24);
+            assert!(state.engine.event_history.iter().any(|event| matches!(
+                event,
+                CommittedEvent::ConquerorJournalV49 { journal }
+                if matches!(journal.as_ref(), custody::JournalV49::Gain { .. })
+            )));
+            assert!(state.engine.event_history.iter().all(|event| !matches!(
+                event,
+                CommittedEvent::ConquerorGainReplayBorrowV49 { .. }
+            )));
+            use sha2::Digest as _;
+            let bytes = serde_json::to_vec(&state).unwrap();
+            let events = state.engine.event_history.iter().collect::<Vec<_>>();
+            let history = serde_json::to_vec(&events).unwrap();
+            eprintln!(
+                "issue753 banner {actor:?}: history {} events sha256 {:x}, state sha256 {:x}",
+                state.engine.event_history.len(),
+                sha2::Sha256::digest(&history),
+                sha2::Sha256::digest(&bytes),
+            );
         }
     }
 
