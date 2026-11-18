@@ -2459,11 +2459,10 @@ New pieces:
   rosters differ or depend on earlier picks), a leading permanent slot (only the first slot can
   name a permanent), and no permanent slot. The classification is an exhaustive match over
   `TargetSpec`, `StandardTargetV1` and each wave's filter enum (S1d, C1a, C1b, C1c, C2c, C4a,
-  C4c) with no wildcard arm, so a new target shape does not compile until it is classified; a
-  library test
-  checks the classes against the slot counts of every printed spell form, kicked form and
-  activated ability, and of the specs built from mode choices (Collective Brutality's masks,
-  Mystic and Eldrazi Confluence, Fiery Confluence, the C2c lands).
+  C4c, S1o) with no wildcard arm, so a new target shape does not compile until it is classified;
+  a library test checks the classes against the slot counts of every printed spell form, kicked
+  form and activated ability, and of the specs built from mode choices (Collective Brutality's
+  masks, Mystic and Eldrazi Confluence, Fiery Confluence, the C2c lands).
 - Each class has a rule: the exact complete-assignment search (the S1d search, now for every
   shape with at most two slots and for dependent slots), the shared-roster rule (a pick that is
   not a Flagbearer stays only while a Flagbearer can still follow it, and finishing is refused
@@ -2493,9 +2492,9 @@ Limits: the shared-roster and independent-slot rules assume what their class say
 or cost that depended on which object was picked (rather than how many) would need the exact
 search. The exact search is bounded to three slots. Hullbreacher stays Partial (issue 717).
 
-Verification: `tests/eternal/eternal_sideboard_s1o_flagbearers_v1.rs` plays each escape and each ruling in
-both seats (Collective Brutality's shrink and drain and all three modes, Searing Blaze, Pest
-Infestation with an artifact Standard Bearer at X 1 and X 2, Dominate's filter, Journey to
+Verification: `tests/eternal/eternal_sideboard_s1o_flagbearers_v1.rs` plays each escape and each
+ruling in both seats (Collective Brutality's shrink and drain and all three modes, Searing Blaze,
+Pest Infestation with an artifact Standard Bearer at X 1 and X 2, Dominate's filter, Journey to
 Nowhere's trigger, Grapeshot's storm copy, Misdirection's new target, a mode that avoids
 targeting, Agony Warp's two slots, either player's Flagbearer, Mogg Fanatic's activation and a
 Bearer without its ability under Dress Down, a Phyrexian Metamorph copy of a Bearer as the
@@ -2592,10 +2591,10 @@ Priest and Meddling Mage entering together in either order, a noncreature pick, 
 Metamorph uncopied, exiled or refused, a Metamorph copy of the Hearse counting its own exiled
 cards, protection from exactly the exiled colors and none for a colorless creature, and the
 second chooser's menu and policy observation not depending on the first pick, with the chosen
-cards public after the reveal) and plays a red-white deck with Eowyn and Gambit against a green deck with Liberator and Hearse
-through public schema-5 sessions in both seats under ranked and seeded random policies with replay
-checks. `tests/eternal/eternal_bo3_v1.rs` plays the three completed lists in seeded best-of-three
-matches with random sideboarding.
+cards public after the reveal) and plays a red-white deck with Eowyn and Gambit against a green
+deck with Liberator and Hearse through public schema-5 sessions in both seats under ranked and
+seeded random policies with replay checks. `tests/eternal/eternal_bo3_v1.rs` plays the three
+completed lists in seeded best-of-three matches with random sideboarding.
 
 ## Vintage Cube
 
