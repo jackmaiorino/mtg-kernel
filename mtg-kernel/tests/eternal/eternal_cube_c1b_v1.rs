@@ -2932,7 +2932,11 @@ fn c1b_decks_finish_and_replay_through_public_sessions_both_seats() {
             &mut |decision, action| events.observe(decision, action),
         );
         let replay = play_observed(pair.clone(), None, *seed, *policy, &mut |_, _| {});
-        assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+        assert_eq!(
+            game.transcript_sha256, replay.transcript_sha256,
+            "seed={seed} ranked={}",
+            matches!(policy, Policy::Ranked)
+        );
         events.casts
     });
     for game_casts in casts {

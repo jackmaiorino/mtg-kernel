@@ -2170,7 +2170,11 @@ fn c4c_decks_finish_and_replay_through_public_sessions_both_seats() {
     let cast_cards = in_parallel(&games, |(pair, seed, policy)| {
         let game = play_observed(pair.clone(), None, *seed, *policy, &mut |_, _| {});
         let replay = play_observed(pair.clone(), None, *seed, *policy, &mut |_, _| {});
-        assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+        assert_eq!(
+            game.transcript_sha256, replay.transcript_sha256,
+            "seed={seed} ranked={}",
+            matches!(policy, Policy::Ranked)
+        );
         game.cast_cards
     });
     for game_cast_cards in &cast_cards {
