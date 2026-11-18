@@ -1872,6 +1872,54 @@ fn staff_of_the_storyteller_sees_the_battlefield_as_the_token_is_created() {
     assert_eq!(charge(&state, staff), 0);
 }
 
+#[test]
+fn staff_of_the_storyteller_counts_a_token_copy_of_a_transformed_reflection_both_seats() {
+    // Reflection of Kiki-Jiki copies another Reflection: the copy of a
+    // transformed permanent enters with its back face up (707.8a), so it is a
+    // creature token and the Staff triggers once.
+    for actor in [P0, P1] {
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let staff = put(
+            &mut state,
+            actor,
+            "Staff of the Storyteller",
+            Zone::Battlefield,
+        );
+        let [first, second] = [0, 1].map(|_| {
+            let fable = put(
+                &mut state,
+                actor,
+                "Fable of the Mirror-Breaker",
+                Zone::Battlefield,
+            );
+            event::propose_and_commit(&mut state, ProposedEvent::transform_in_place(fable, 1));
+            fable
+        });
+        settled(&mut state);
+        assert!(engine::object_has_type(&state, second, CardType::Creature));
+        pool(&mut state, actor, &[ManaColor::R], 0);
+        activate(&mut state, first, 0, &[Target::Object(second)]);
+        settled(&mut state);
+        let copies = [P0, P1]
+            .into_iter()
+            .flat_map(|seat| state.players[seat.index()].battlefield.clone())
+            .filter(|&object| {
+                let live = state.objects.get(object);
+                live.v4.is_token && live.controller == actor
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(copies.len(), 1, "{actor:?}");
+        assert!(engine::object_has_type(
+            &state,
+            copies[0],
+            CardType::Creature
+        ));
+        assert_eq!(charge(&state, staff), 1, "{actor:?}");
+    }
+}
+
 /// Innkeeper's Talent at level 3 for P0, levelled through its own abilities.
 fn innkeepers_talent_at_level_three(state: &mut GameState) -> ObjectId {
     let class = put(state, P0, "Innkeeper's Talent", Zone::Battlefield);

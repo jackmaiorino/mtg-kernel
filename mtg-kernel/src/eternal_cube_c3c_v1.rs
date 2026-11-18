@@ -74,7 +74,7 @@ pub struct C3cStateV1 {
     /// The cards exiled with each Currency Converter incarnation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub converter_exiled: Vec<LinkedExileV1>,
-    /// Creature tokens created by a player who controls a Staff of the
+    /// Tokens created by a player who controls a Staff of the
     /// Storyteller, noted as each token was created and waiting for the next
     /// trigger collection.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -128,7 +128,7 @@ impl Hash for DiscardedCardV1 {
     }
 }
 
-/// One creature token created by a player who controlled a Staff of the
+/// One token created by a player who controlled a Staff of the
 /// Storyteller, with that player's Staffs as the token was created.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -383,20 +383,18 @@ pub(crate) fn note_discard(state: &mut GameState, card: ObjectId) {
     });
 }
 
-/// Staff of the Storyteller: a token has just been created. When it is a
-/// creature token and its controller controls a Staff, the token is noted
-/// with those Staffs as they are now, since the trigger condition is checked
-/// as the event happens (603.2): a Staff that leaves later in the same
-/// resolution still triggers, and one that arrives later does not.
-pub(crate) fn note_token_created(
-    state: &mut GameState,
-    token: ObjectId,
-    token_def: u16,
-    controller: PlayerId,
-) {
-    if !creature_token(state, token, token_def) {
-        return;
-    }
+/// Staff of the Storyteller: a token has just been created. When its
+/// controller controls a Staff, the token is noted with those Staffs as they
+/// are now, since the trigger condition is checked as the event happens
+/// (603.2): a Staff that leaves later in the same resolution still triggers,
+/// and one that arrives later does not. Whether the token is a creature is
+/// read at the collection instead, as before: a token copy of a transformed
+/// permanent is committed with the front face and turned to its back face
+/// right after (`standard_cards_v1::create_token_copy_without_banner_owner`),
+/// and it enters as that back face (707.8a), so at this point a copy of
+/// Reflection of Kiki-Jiki would still look like the noncreature Fable of
+/// the Mirror-Breaker.
+pub(crate) fn note_token_created(state: &mut GameState, token: ObjectId, controller: PlayerId) {
     let staffs = sources_controlled_by(state, STAFF_OF_THE_STORYTELLER, controller);
     if staffs.is_empty() {
         return;
@@ -449,7 +447,12 @@ pub(crate) fn delayed_triggers(
 /// (`note_token_created`). Every committed token creation is noted, so a
 /// token without a note was created while its controller had no Staff. The
 /// notes are consumed by this collection; a note whose event this
-/// collection does not see (a discarded event log) is dropped with it.
+/// collection does not see (a discarded event log) is dropped with it. A
+/// snapshot written before the notes existed, in the middle of a resolution
+/// after a token was created, has no note for that token and loses its
+/// Staff trigger: that pending state is not carried across this change (a
+/// fallback to the Staffs at collection would bring back the Staff that
+/// arrives later).
 fn staff_triggers(state: &mut GameState, events: &[CommittedEvent], out: &mut Vec<PendingTrigger>) {
     let notes = match state.eternal_v1.as_mut() {
         Some(eternal) if !eternal.c3c.staff_tokens.is_empty() => {
@@ -459,9 +462,17 @@ fn staff_triggers(state: &mut GameState, events: &[CommittedEvent], out: &mut Ve
     };
     let mut fired: Vec<(PlayerId, AbilitySourceContractV4)> = Vec::new();
     for event in events {
-        let CommittedEvent::CreateToken { object, .. } = event else {
+        let CommittedEvent::CreateToken {
+            object,
+            token_def,
+            ..
+        } = event
+        else {
             continue;
         };
+        if !creature_token(state, *object, *token_def) {
+            continue;
+        }
         let Some(note) = notes.iter().find(|note| note.token == *object) else {
             continue;
         };
