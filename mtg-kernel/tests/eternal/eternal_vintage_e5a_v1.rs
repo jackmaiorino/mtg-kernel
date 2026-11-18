@@ -855,7 +855,11 @@ fn beseech_the_mirror_bargains_while_leyline_of_the_void_exiles_the_sacrifice() 
         }
         other => first_answer(other),
     });
-    assert_eq!(zone(&state, key), Zone::Exile, "Leyline exiled the sacrifice");
+    assert_eq!(
+        zone(&state, key),
+        Zone::Exile,
+        "Leyline exiled the sacrifice"
+    );
     assert!(cast_offered, "the bargained free cast was offered");
     // Leyline exiles the resolved Ritual and Beseech too.
     assert_eq!(zone(&state, ritual), Zone::Exile, "cast and resolved");
