@@ -1108,6 +1108,46 @@ fn recurring_nightmare_cannot_be_the_creature_it_sacrifices() {
 }
 
 #[test]
+fn necromancy_stops_being_an_opalescence_creature_once_it_is_an_aura() {
+    // Opalescence animates each other non-Aura enchantment. Necromancy enters
+    // as one, then its entry trigger makes it an Aura: no longer a creature.
+    let mut state = plains();
+    let opalescence = put(&mut state, P0, "Opalescence", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W, ManaColor::W], 2);
+    cast(&mut state, opalescence, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, opalescence), Zone::Battlefield);
+    let angler = put(&mut state, P1, "Gurmag Angler", Zone::Graveyard);
+    let necromancy = put(&mut state, P0, "Necromancy", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 2);
+    cast(&mut state, necromancy, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Object(angler)),
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, necromancy), Zone::Battlefield);
+    assert_eq!(zone(&state, angler), Zone::Battlefield);
+    assert_eq!(
+        state
+            .objects
+            .get(necromancy)
+            .v4
+            .attached_to
+            .map(|link| link.object),
+        Some(angler)
+    );
+    assert!(engine::has_effective_subtype(
+        &state,
+        necromancy,
+        mtg_kernel::card_def::Subtype::Aura
+    ));
+    assert!(
+        !engine::object_has_type(&state, necromancy, CardType::Creature),
+        "an Aura is not animated by Opalescence"
+    );
+}
+
+#[test]
 fn recurring_nightmare_is_back_in_hand_even_if_its_target_vanishes() {
     let mut state = plains();
     let nightmare = put(&mut state, P0, "Recurring Nightmare", Zone::Battlefield);
