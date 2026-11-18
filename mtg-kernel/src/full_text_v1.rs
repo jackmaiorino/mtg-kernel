@@ -136,6 +136,168 @@ pub(crate) fn owns_definition(definition: &CardDef) -> bool {
     cfg!(feature = "eternal-fixtures") && definition.name == VOLRATH && definition.is_executable()
 }
 
+// Donor classes (docs/design/premodern_shapeshifter_alter_reality_v1.md,
+// section 2.2 and appendix A). A donor is recognized by its printed name in
+// one of these audited lists, never by a guess from its definition. Every
+// other creature card is refused as a donor.
+
+/// Part A: every card with a donated program today. Their battlefield text
+/// is complete on a Shapeshifter through the generic characteristic queries
+/// and the programs of this module and the Premodern static modules.
+pub(crate) const DONATED_PROGRAM_DONORS_V1: [&str; 15] = [
+    "Akroma, Angel of Wrath",
+    "Battlefield Scrounger",
+    "Birds of Paradise",
+    "Hermit Druid",
+    "Ihsan's Shade",
+    "Iridescent Angel",
+    "Karmic Guide",
+    "Mogg Fanatic",
+    "Palinchron",
+    "Phyrexian Devourer",
+    "Psychatog",
+    "Ravenous Rats",
+    "Triskelion",
+    "Volrath's Shapeshifter",
+    "Wall of Roots",
+];
+
+/// Part B: the listed additions (the mirror donors, the sideboard creatures
+/// of the Full English Breakfast and the creature reached through Legacy's
+/// Allure).
+pub(crate) const LISTED_DONORS_V1: [&str; 8] = [
+    "Elvish Spirit Guide",
+    "Squee, Goblin Nabob",
+    "Auramancer",
+    "Monk Realist",
+    "Uktabi Orangutan",
+    "Ghitu Slinger",
+    "Xantid Swarm",
+    "Meddling Mage",
+];
+
+/// Listed additions whose only other battlefield text is an enters trigger
+/// that has no donated program yet. Until it lands, each is accepted like a
+/// part D card: on a Shapeshifter already on the battlefield nothing is lost,
+/// and a Shapeshifter entering with one on top is refused.
+pub(crate) const LISTED_ENTRY_PROGRAMS_PENDING_V1: [&str; 3] =
+    ["Auramancer", "Monk Realist", "Uktabi Orangutan"];
+
+/// Listed additions with battlefield text beyond an entry (Ghitu Slinger's
+/// echo, Xantid Swarm's attack trigger) whose donated programs have not
+/// landed yet. Until they do, each is refused like any unlisted donor.
+pub(crate) const LISTED_PROGRAMS_PENDING_V1: [&str; 2] = ["Ghitu Slinger", "Xantid Swarm"];
+
+/// Part C: every battlefield ability is a keyword in `CardDef.keywords`, and
+/// every other ability works only from the hand, from the graveyard, while
+/// the card is face down or as it is turned face up.
+pub(crate) const GENERIC_TEXT_DONORS_V1: [&str; 11] = [
+    "Anger",
+    "Arrogant Wurm",
+    "Bane of the Living",
+    "Eternal Dragon",
+    "Gempalm Incinerator",
+    "Genesis",
+    "Glory",
+    "Krosan Tusker",
+    "Nantuko Vigilante",
+    "Nether Spirit",
+    "Thornscape Battlemage",
+];
+
+/// Part D: every battlefield ability is a keyword except abilities that work
+/// only as the permanent enters, with no leaves-the-battlefield half. Such a
+/// card plays correctly once the Shapeshifter is on the battlefield, and
+/// wrongly only when a Shapeshifter enters with it on top.
+pub(crate) const ENTRY_ONLY_DONORS_V1: [&str; 5] = [
+    "Caller of the Claw",
+    "Goblin Matron",
+    "Goblin Ringleader",
+    "Phyrexian Dreadnought",
+    "Wall of Blossoms",
+];
+
+/// Meddling Mage's only ability is its "as enters" name choice (614.12),
+/// which a Shapeshifter already on the battlefield never makes.
+const MEDDLING_MAGE: &str = "Meddling Mage";
+
+/// True for a card whose text a Shapeshifter already on the battlefield can
+/// have without losing any of it: parts A to D, less the listed additions
+/// whose programs are still pending.
+pub(crate) fn donor_supported(definition: &CardDef) -> bool {
+    let name = definition.name;
+    !LISTED_PROGRAMS_PENDING_V1.contains(&name)
+        && (DONATED_PROGRAM_DONORS_V1.contains(&name)
+            || LISTED_DONORS_V1.contains(&name)
+            || GENERIC_TEXT_DONORS_V1.contains(&name)
+            || ENTRY_ONLY_DONORS_V1.contains(&name))
+}
+
+/// True for a supported card whose enters ability a Shapeshifter entering
+/// with it on top would lose.
+pub(crate) fn entry_refused(definition: &CardDef) -> bool {
+    let name = definition.name;
+    name == MEDDLING_MAGE
+        || ENTRY_ONLY_DONORS_V1.contains(&name)
+        || LISTED_ENTRY_PROGRAMS_PENDING_V1.contains(&name)
+}
+
+/// The first face-up Shapeshifter whose current top card is outside the
+/// supported donor set. One battlefield pass; it returns at once in a build
+/// without the Eternal catalog.
+pub(crate) fn refused_donor(state: &GameState) -> Option<ObjectId> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return None;
+    }
+    state
+        .players
+        .iter()
+        .flat_map(|player| player.battlefield.iter().copied())
+        .find(|&source| {
+            state.objects.try_get(source).is_some_and(|object| {
+                object.v4.face_down_v1.is_none()
+                    && CARD_DEFS
+                        .get(usize::from(object.card_def))
+                        .is_some_and(owns_definition)
+            }) && top_creature_text(state, AbilitySourceContractV4::capture(state, source))
+                .is_some_and(|text| !donor_supported(text.definition()))
+        })
+}
+
+/// While an owner order is quoted, suspended or pending, the visible top is
+/// not final: the arrivals are in the graveyard in their unordered native
+/// order. The final top is audited once the order completes.
+fn donor_refusal_deferred(state: &GameState) -> bool {
+    crate::graveyard_order_v1::quoting_entry_scene(state)
+        || crate::graveyard_order_v1::paused(state)
+        || !state.engine.graveyard_order_v1.is_empty()
+}
+
+/// Halt with the typed donor refusal when an unsupported donor is in place.
+/// Returns the halt when the game is halted by it, now or earlier, so that a
+/// caller can report it before any other decision or terminal.
+pub(crate) fn donor_refusal(
+    state: &mut GameState,
+) -> Option<(crate::engine::UnsupportedMechanic, ObjectId)> {
+    use crate::engine::UnsupportedMechanic;
+
+    if !cfg!(feature = "eternal-fixtures") {
+        return None;
+    }
+    match state.engine.halted {
+        Some(halt @ (UnsupportedMechanic::FullTextDonorOutsideSetV1, _)) => return Some(halt),
+        Some(_) => return None,
+        None => {}
+    }
+    if donor_refusal_deferred(state) {
+        return None;
+    }
+    let host = refused_donor(state)?;
+    let halt = (UnsupportedMechanic::FullTextDonorOutsideSetV1, host);
+    state.engine.halted = Some(halt);
+    Some(halt)
+}
+
 impl FullTextV1 {
     /// Printed full text, before layers 4-7, counters or CDA evaluation.
     /// The receiver must evaluate copied self-references on `host`, not donor.
@@ -429,20 +591,21 @@ fn entry_trigger_suppressed(state: &GameState, index: usize, source: ObjectId) -
 /// echo. This record describes only the public transfer, independent of its
 /// printing, face and current donor.
 pub(crate) fn record_control_gained(state: &mut GameState, object: ObjectId) {
-    if !crate::graveyard_order_v1::enabled(state) {
-        return;
+    if crate::graveyard_order_v1::enabled(state) {
+        let live = state.objects.get(object);
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::OrderedGraveyardControlGainedV1 {
+                permanent: ObjectLinkV4 {
+                    object,
+                    zone_change_count: live.zone_change_count,
+                },
+                controller: live.controller,
+            });
     }
-    let live = state.objects.get(object);
-    state
-        .engine
-        .event_history
-        .push(CommittedEvent::OrderedGraveyardControlGainedV1 {
-            permanent: ObjectLinkV4 {
-                object,
-                zone_change_count: live.zone_change_count,
-            },
-            controller: live.controller,
-        });
+    // A new controller makes a Shapeshifter read that player's graveyard.
+    let _ = donor_refusal(state);
 }
 
 fn echo_custody(state: &GameState, host: AbilitySourceContractV4, upkeep: u64) -> Option<u64> {
@@ -555,6 +718,18 @@ pub(crate) fn record_entry_trigger(
     let Some(text) = active_text(state, source) else {
         return Ok(());
     };
+    // The text at entry is fixed here (inside an ordered batch it is already
+    // the batch's final top). A Shapeshifter entering with a donor whose
+    // enters ability it cannot donate is refused at this entry.
+    if !donor_supported(text.definition()) || entry_refused(text.definition()) {
+        if state.engine.halted.is_none() {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::FullTextDonorOutsideSetV1,
+                source,
+            ));
+        }
+        return Ok(());
+    }
     let entry = u64::try_from(index).map_err(|_| source)?;
     let Some(kind) = DonatedTriggerKindV1::entry(text, entry, None) else {
         return Ok(());

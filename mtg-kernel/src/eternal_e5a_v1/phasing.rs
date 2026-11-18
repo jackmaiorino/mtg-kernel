@@ -98,4 +98,6 @@ pub(crate) fn phase_in(state: &mut GameState, player: PlayerId) {
             state.players[player.index()].battlefield.push(id);
         }
     }
+    // A Shapeshifter that phases in reads its controller's graveyard again.
+    let _ = crate::full_text_v1::donor_refusal(state);
 }
