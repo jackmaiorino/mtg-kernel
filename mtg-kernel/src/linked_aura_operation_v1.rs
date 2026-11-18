@@ -465,7 +465,10 @@ pub(crate) fn with_conqueror_runner_borrow_v49(
         .filter(|item| item.v4.stack_item_id == original_item.v4.stack_item_id)
         .count()
         != 1
-        || !runner.original_stack.iter().any(|item| item == original_item)
+        || !runner
+            .original_stack
+            .iter()
+            .any(|item| item == original_item)
     {
         return Err("Conqueror gain replay Runner lost the resolving row".into());
     }
