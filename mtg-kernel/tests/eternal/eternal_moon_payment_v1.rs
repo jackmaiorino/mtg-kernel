@@ -387,8 +387,18 @@ fn saga_without_chapters_under_blood_moon(actor: PlayerId) -> (GameState, Object
 fn volcanic_with_urborg_and_yavimaya(actor: PlayerId) -> (GameState, ObjectId) {
     let mut state = game(actor);
     let volcanic = put(&mut state, actor, "Volcanic Island", Zone::Battlefield);
-    put(&mut state, actor, "Urborg, Tomb of Yawgmoth", Zone::Battlefield);
-    put(&mut state, actor, "Yavimaya, Cradle of Growth", Zone::Battlefield);
+    put(
+        &mut state,
+        actor,
+        "Urborg, Tomb of Yawgmoth",
+        Zone::Battlefield,
+    );
+    put(
+        &mut state,
+        actor,
+        "Yavimaya, Cradle of Growth",
+        Zone::Battlefield,
+    );
     settled(&mut state);
     (state, volcanic)
 }
@@ -467,7 +477,12 @@ fn urzas_saga_under_a_later_alpine_moon_pays_no_colorless_pip_both_seats() {
         let (mut state, saga) = saga_under_later_alpine_moon(actor);
         let seer = put(&mut state, actor, "Thought-Knot Seer", Zone::Hand);
         let bolt = put(&mut state, actor, "Lightning Bolt", Zone::Hand);
-        pool(&mut state, actor, &[ManaColor::U, ManaColor::U, ManaColor::U], 0);
+        pool(
+            &mut state,
+            actor,
+            &[ManaColor::U, ManaColor::U, ManaColor::U],
+            0,
+        );
         assert!(!castable(&mut state, seer), "no {{C}}");
         cast(&mut state, bolt, &[Target::Player(opponent)]);
         assert!(state.objects.get(saga).tapped);
