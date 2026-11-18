@@ -177,9 +177,8 @@ pub(crate) fn adjust_subtypes(state: &GameState, object: ObjectId, subtype_ids: 
 /// The land types effects add to `object` "in addition to its other land
 /// types", each with its effect's timestamp.
 fn additional_land_types(state: &GameState, object: ObjectId) -> Vec<(Subtype, u64)> {
-    let mut types = crate::eternal_sideboard_s1d_v1::statics::extra_land_type_timestamps(
-        state, object,
-    );
+    let mut types =
+        crate::eternal_sideboard_s1d_v1::statics::extra_land_type_timestamps(state, object);
     if let Some(timestamp) = crate::eternal_legacy_e7a_v1::extra_forest_timestamp(state, object) {
         types.push((Subtype::Forest, timestamp));
     }

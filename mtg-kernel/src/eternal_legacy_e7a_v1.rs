@@ -2951,14 +2951,7 @@ pub(crate) fn extra_forest_timestamp(state: &GameState, object: ObjectId) -> Opt
         return None;
     }
     active_permanents(state, YAVIMAYA, None)
-        .map(|yavimaya| {
-            state
-                .objects
-                .get(yavimaya)
-                .v4
-                .layer_timestamp
-                .unwrap_or(0)
-        })
+        .map(|yavimaya| state.objects.get(yavimaya).v4.layer_timestamp.unwrap_or(0))
         .max()
 }
 
@@ -2978,10 +2971,9 @@ pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<Ma
                     state,
                     object,
                     crate::card_def::Subtype::Forest,
+                ) && crate::continuous_characteristics_v1::grant_survives_land_type_setters(
+                    state, object, timestamp,
                 )
-                    && crate::continuous_characteristics_v1::grant_survives_land_type_setters(
-                        state, object, timestamp,
-                    )
             })
             .map_or_else(Vec::new, |_| vec![ManaColor::G]);
     }
