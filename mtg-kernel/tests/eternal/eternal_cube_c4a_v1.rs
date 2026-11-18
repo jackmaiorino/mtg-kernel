@@ -1152,9 +1152,9 @@ fn cauldron_ballista(state: &mut GameState, player: PlayerId) -> (ObjectId, u8) 
     assert_eq!(zone(state, knight), Zone::Exile);
     assert_eq!(counters(state, ballista), 2);
     state.priority_player = player;
-    // The Knight's "{B}: first strike" and "{B}{B}: +1/+0" follow the
-    // Ballista's own abilities.
-    let pump = def("Walking Ballista").activated_abilities.len() + 1;
+    // The Knight's "{B}: first strike" and "{B}{B}: +1/+0" are numbered from
+    // one past the Ballista's own abilities.
+    let pump = def("Walking Ballista").activated_abilities.len() + 2;
     (ballista, u8::try_from(pump).unwrap())
 }
 
