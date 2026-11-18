@@ -78,7 +78,7 @@ impl TrainingMathV1 {
     #[inline]
     pub(crate) fn exp_f32_v1(self, x: f32) -> f32 {
         match self {
-            Self::PlatformLibm => x.exp(),
+            Self::PlatformLibm => platform_exp_f32_v1(x),
             Self::PortableV1 => libm::expf(x),
         }
     }
@@ -116,6 +116,26 @@ impl TrainingMathV1 {
             Self::PortableV1 => powi_f64_portable_v1(base, exponent),
         }
     }
+}
+
+/// The platform `expf`, which on aarch64 Linux with glibc is made the x86-64
+/// one. glibc 2.36's `expf` there equals the x86-64 build's (the variant CPUs
+/// with FMA select, as the training hosts do) on every input except two,
+/// where the x86-64 result is one unit in the last place higher; those two
+/// take the x86-64 results. Measured over all 2^32 inputs on both
+/// architectures, 2026-11-17: `logf` is equal on every input and needs no
+/// such case.
+#[inline]
+fn platform_exp_f32_v1(x: f32) -> f32 {
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "aarch64"))]
+    match x.to_bits() {
+        // exp(32.564632415771484)
+        0x4202_422f => return f32::from_bits(0x56fc_9f1c),
+        // exp(-63.09946060180664)
+        0xc27c_65d9 => return f32::from_bits(0x11fa_2993),
+        _ => {}
+    }
+    x.exp()
 }
 
 /// compiler-builtins' `__powidf2`, which `f64::powi` calls on Linux:
