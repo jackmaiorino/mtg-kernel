@@ -23,7 +23,7 @@ mod native;
 /// Snapshot archetypes whose mainboard, companion and sideboard are all Full.
 /// A wave that completes a deck's sideboard adds it here; a regression
 /// removes one and fails.
-const PLAYABLE_75: [(&str, &str); 133] = [
+const PLAYABLE_75: [(&str, &str); 134] = [
     ("pauper", "pauper-mono-red-madness"),
     (
         "pauper",
@@ -149,6 +149,7 @@ const PLAYABLE_75: [(&str, &str); 133] = [
     ("legacy", "legacy-naya-initiative"),
     ("legacy", "legacy-dimir-control"),
     ("legacy", "legacy-tron"),
+    ("legacy", "legacy-selesnya-depths"),
     ("vintage", "vintage-esper-lurrus-control"),
     ("vintage", "vintage-dimir-lurrus-control"),
     ("vintage", "vintage-lurrus-po"),
@@ -1295,6 +1296,34 @@ fn s1q_completed_75_deck_plays_best_of_three_with_random_sideboarding() {
         [first, second]
     };
     for seed in [0x5331_7120_u64, 0x5331_7121] {
+        let record = play_match(pair.clone(), seed, native);
+        let replay = play_match(pair.clone(), seed, native);
+        assert_eq!(record.transcripts, replay.transcripts);
+        assert_eq!(record.winner, replay.winner);
+        assert!(record.sideboarded_games > 0);
+    }
+}
+
+#[test]
+fn c5_completed_75_deck_plays_best_of_three_with_random_sideboarding() {
+    // Keen-Eyed Curator (Vintage Cube wave C5) completes Selesnya Depths' 75.
+    let decks = registered_snapshot_decks();
+    let find = |archetype: &str| -> EternalRegisteredDeckV1 {
+        decks
+            .iter()
+            .find(|(_, deck)| deck.deck_id() == archetype)
+            .map(|(_, deck)| deck.clone())
+            .unwrap()
+    };
+    let first = find("legacy-selesnya-depths");
+    let second = find("legacy-dimir-tempo");
+    let native = needs_native_opening(&first) || needs_native_opening(&second);
+    let pair = if native {
+        [natively(&first), natively(&second)]
+    } else {
+        [first, second]
+    };
+    for seed in [0x4335_7120_u64, 0x4335_7121] {
         let record = play_match(pair.clone(), seed, native);
         let replay = play_match(pair.clone(), seed, native);
         assert_eq!(record.transcripts, replay.transcripts);

@@ -3309,3 +3309,6 @@ C5d:
   enchants.
 - Memory Jar exiles both hands face down, visible only to their owners (foretell's hidden exile),
   and returns them at the beginning of the next end step even when the Jar has left.
+
+Keen-Eyed Curator completes Legacy Selesnya Depths' 75, which joins `PLAYABLE_75` with a seeded
+best-of-three test against Dimir Tempo.
