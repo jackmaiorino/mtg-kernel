@@ -923,16 +923,7 @@ fn tamiyo_transform() -> EffectOp {
 /// "When this artifact enters, you may discard a card. If you do, draw two
 /// cards."
 fn may_discard_then_draw_two() -> EffectOp {
-    EffectOp::MayPayCostThen {
-        discard: 1,
-        sacrifice_lands: 0,
-        return_permanent: None,
-        then: Box::new(EffectOp::DrawCards {
-            player: PlayerRef::Controller,
-            count: 2,
-        }),
-        otherwise: None,
-    }
+    crate::eternal_vintage_e7b_v1::may_discard_then_draw(2)
 }
 
 /// "When this Equipment enters, you get {E}{E}."

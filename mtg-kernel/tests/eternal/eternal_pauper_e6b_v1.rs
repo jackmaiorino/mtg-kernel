@@ -1582,13 +1582,7 @@ fn ragged_short_spear_loots_on_entry_and_equips_for_three() {
     let spear = put(&mut state, P0, "Ragged Short Spear", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 1);
     cast(&mut state, spear, &[]);
-    settle_with(&mut state, |_, decision| match decision {
-        Decision::ChooseOptionalCost { .. } => {
-            Action::ChooseOptionalCost(OptionalCostChoice::Discard)
-        }
-        Decision::Discard { .. } => Action::Discard(vec![fodder]),
-        other => first_answer(other),
-    });
+    settle_choosing(&mut state, fodder);
     assert_eq!(zone(&state, fodder), Zone::Graveyard);
     assert_eq!(state.players[0].hand.len(), 2);
     let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
@@ -1718,13 +1712,7 @@ fn pursue_the_past_gains_two_may_loot_and_has_flashback() {
     let pursue = put(&mut state, P0, "Pursue the Past", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R, ManaColor::W], 0);
     cast(&mut state, pursue, &[]);
-    settle_with(&mut state, |_, decision| match decision {
-        Decision::ChooseOptionalCost { .. } => {
-            Action::ChooseOptionalCost(OptionalCostChoice::Discard)
-        }
-        Decision::Discard { .. } => Action::Discard(vec![fodder]),
-        other => first_answer(other),
-    });
+    settle_choosing(&mut state, fodder);
     assert_eq!(state.players[0].life, 22);
     assert_eq!(zone(&state, fodder), Zone::Graveyard);
     assert_eq!(state.players[0].hand.len(), 2);
@@ -1733,6 +1721,48 @@ fn pursue_the_past_gains_two_may_loot_and_has_flashback() {
     settle_first(&mut state);
     assert_eq!(zone(&state, pursue), Zone::Exile, "flashback");
     assert_eq!(state.players[0].life, 24);
+}
+
+#[test]
+fn pursue_the_past_draws_after_its_discard_may_be_dredged() {
+    // "If you do, draw two cards": each of the two draws may be replaced by
+    // dredge (702.52), here Golgari Thug's dredge 4 and then a plain draw.
+    let mut state = plains();
+    let thug = put(&mut state, P0, "Golgari Thug", Zone::Graveyard);
+    let fodder = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    let pursue = put(&mut state, P0, "Pursue the Past", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R, ManaColor::W], 0);
+    cast(&mut state, pursue, &[]);
+    let discarded = Target::Object(fodder);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. })
+            if legal_targets.contains(&discarded) =>
+        {
+            act(&mut state, Action::ChooseEffectTarget(discarded));
+        }
+        other => panic!("expected the optional discard, got {other:?}"),
+    }
+    assert_eq!(zone(&state, fodder), Zone::Graveyard);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            can_finish: true,
+            ..
+        }) => {
+            assert_eq!(player, P0);
+            assert_eq!(legal_targets, vec![Target::Object(thug)], "dredge");
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+        }
+        other => panic!("expected the dredge choice for the first draw, got {other:?}"),
+    }
+    // The library still holds four cards for the Thug's dredge, but the Thug
+    // is in hand now: the second draw is a plain draw.
+    settled(&mut state);
+    assert_eq!(zone(&state, thug), Zone::Hand, "dredged back");
+    assert_eq!(state.players[0].hand.len(), 2, "the Thug and one draw");
+    assert_eq!(state.players[0].library.len(), 20 - 4 - 1);
+    assert_eq!(state.players[0].life, 22);
 }
 
 #[test]

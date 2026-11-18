@@ -254,19 +254,10 @@ fn prowess() -> EffectOp {
 
 /// Improvised Act, Pompous Battlemage's prepare spell: "You may discard a
 /// card. If you do, draw a card." (Pursue the Past's may-discard-then-draw.
-/// The draw is conditional on the discard, so it is not a root element, as in
-/// that card.)
+/// The draw is conditional on the discard and follows it as the leaf's next
+/// instruction, where dredge may replace it.)
 pub fn improvised_act() -> EffectOp {
-    EffectOp::MayPayCostThen {
-        discard: 1,
-        sacrifice_lands: 0,
-        return_permanent: None,
-        then: Box::new(EffectOp::DrawCards {
-            player: PlayerRef::Controller,
-            count: 1,
-        }),
-        otherwise: None,
-    }
+    crate::eternal_vintage_e7b_v1::may_discard_then_draw(1)
 }
 
 fn sage_copy() -> EffectOp {

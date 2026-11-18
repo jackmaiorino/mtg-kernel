@@ -2924,6 +2924,13 @@ Conventions fixed under #717:
   program (`effect::jace_draw_replacement_origin`): through a `Sequence`, a `Choice` option, the
   unpaid branch of a payment, and a `Conditional` only through the branch its condition selects
   at that moment. Smuggler's Copter's loot is the first draw this reaches.
+- Pay-then-draw. "You may discard a card. If you do, draw N cards" (Improvised Act, Pursue the
+  Past, Melded Moxite, Ragged Short Spear) is the eternal leaf `E7bOpV1::MayDiscardThenDrawV1`
+  instead of the legacy optional cost: its controller picks up to one card from hand
+  (`E7bChoiceV1::DiscardThenDrawV1`, hidden from the opponent; finishing with none declines, and
+  an empty hand asks nothing), and after the discard the draw is the leaf's next instruction, so
+  dredge (702.52) is offered for it as for any other draw of the program. Quantum Riddler's
+  extra draw on such a draw follows the limit recorded for nested draws above.
 
 A batch is one event for replacement effects (614.1, 614.6): the name-keyed graveyard
 replacements (Rest in Peace, Leyline of the Void, Dauthi Voidwalker, with Yawgmoth's Will, Suplex,

@@ -1092,13 +1092,7 @@ fn pompous_battlemage_enters_prepared_and_its_improvised_act_copy_may_loot() {
     pool(&mut state, P0, &[ManaColor::R], 0);
     let library = state.players[0].library.len();
     cast(&mut state, act, &[]);
-    settle_with(&mut state, |_, decision| match decision {
-        Decision::ChooseOptionalCost { .. } => {
-            Action::ChooseOptionalCost(OptionalCostChoice::Discard)
-        }
-        Decision::Discard { .. } => Action::Discard(vec![fodder]),
-        other => first_answer(other),
-    });
+    settle_choosing(&mut state, fodder);
     assert_eq!(zone(&state, fodder), Zone::Graveyard, "discarded");
     assert_eq!(state.players[0].library.len(), library - 1, "and drew");
     assert_eq!(hand_size(&state, P0), 1);
@@ -1111,6 +1105,44 @@ fn pompous_battlemage_enters_prepared_and_its_improvised_act_copy_may_loot() {
         (2, 2),
         "prowess: the copy was a noncreature spell cast"
     );
+}
+
+#[test]
+fn pompous_battlemage_improvised_act_draw_may_be_dredged() {
+    // "If you do, draw a card": the draw after the discard may be replaced by
+    // dredge (702.52), here Golgari Thug's dredge 4.
+    let mut state = plains();
+    let battlemage = put(&mut state, P0, "Pompous Battlemage", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    cast(&mut state, battlemage, &[]);
+    settled(&mut state);
+    let act = exile_copies(&state, "Improvised Act")[0];
+    let thug = put(&mut state, P0, "Golgari Thug", Zone::Graveyard);
+    let fodder = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    let library = state.players[0].library.len();
+    cast(&mut state, act, &[]);
+    let mut offered = Vec::new();
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(fodder)) =>
+        {
+            Action::ChooseEffectTarget(Target::Object(fodder))
+        }
+        Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            ..
+        } => {
+            offered.push((player, legal_targets));
+            Action::ChooseEffectTarget(Target::Object(thug))
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(offered, vec![(P0, vec![Target::Object(thug)])], "dredge");
+    assert_eq!(zone(&state, fodder), Zone::Graveyard, "discarded");
+    assert_eq!(zone(&state, thug), Zone::Hand, "dredged instead of drawing");
+    assert_eq!(state.players[0].library.len(), library - 4);
 }
 
 #[test]
