@@ -135,19 +135,56 @@ def default_library_names() -> list[str]:
     return listed_names(result.stdout, "")
 
 
-DEFAULT_LIST_SCHEMA = "mtg-ci-default-library-cases/v1"
+DEFAULT_LIST_SCHEMA = "mtg-ci-default-library-cases/v2"
+# Accept a list without checking where it came from. Only for tests run where the checkout cannot name its own
+# revision or compiler; CI never sets it.
+UNVERIFIED_LIST_ENV = "MTG_CI_DEFAULT_LIST_UNVERIFIED_FOR_TEST"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def list_provenance() -> dict:
+    """What decides the default-feature library's case list: the source revision, the feature set and the compiler.
+
+    The revision is GITHUB_SHA when set (the commit every job of a CI run checks out), else git's HEAD. The
+    compiler is the pinned toolchain's rustc, run in the repository so rust-toolchain.toml selects it. A value
+    that cannot be found is None.
+    """
+    commit = os.environ.get("GITHUB_SHA") or None
+    if commit is None:
+        try:
+            result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True,
+                                    check=False)
+            commit = (result.stdout.strip() or None) if result.returncode == 0 else None
+        except OSError:
+            commit = None
+    host = release = None
+    try:
+        result = subprocess.run(["rustc", "-vV"], cwd=REPO_ROOT, capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            fields = dict(line.split(": ", 1) for line in result.stdout.splitlines() if ": " in line)
+            host, release = fields.get("host"), fields.get("release")
+    except OSError:
+        pass
+    return {"commit": commit, "features": "default", "rustc_host": host, "rustc_release": release}
 
 
 def write_default_library_list(path: Path) -> list[str]:
-    """Build the default-feature library test binary once and record its case names for the Limited-only shards."""
+    """Build the default-feature library test binary once and record its case names for the Limited-only shards,
+    with the revision and build they belong to."""
     names = default_library_names()
-    path.write_text(json.dumps({"schema": DEFAULT_LIST_SCHEMA, "count": len(names), "names": names}) + "\n",
-                    encoding="utf-8")
-    print(f"Default library cases: {len(names)} written to {path}", flush=True)
+    record = {"schema": DEFAULT_LIST_SCHEMA, "provenance": list_provenance(), "count": len(names), "names": names}
+    path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    print(f"Default library cases: {len(names)} written to {path} for {record['provenance']}", flush=True)
     return names
 
 
 def read_default_library_list(path: Path) -> list[str]:
+    """The names of a list written at this revision and build.
+
+    A name in the list is subtracted from the Limited inventory, so a list from another revision could remove a
+    case that has since become Limited-only, and that case would run nowhere. Such a list is refused, and so is
+    any list when this checkout cannot name its own revision and compiler (unless UNVERIFIED_LIST_ENV is 1).
+    """
     record = json.loads(path.read_text(encoding="utf-8"))
     names = record.get("names") if isinstance(record, dict) else None
     if (not isinstance(names, list) or not names or record.get("schema") != DEFAULT_LIST_SCHEMA
@@ -155,7 +192,15 @@ def read_default_library_list(path: Path) -> list[str]:
             or any(not isinstance(name, str) or not name for name in names)
             or names != sorted(set(names))):
         raise ValueError(f"Not a default library case list: {path}")
-    print(f"Default library cases: {len(names)} read from {path}", flush=True)
+    own = list_provenance()
+    if any(value is None for value in own.values()):
+        if os.environ.get(UNVERIFIED_LIST_ENV) != "1":
+            raise ValueError(f"This checkout cannot name its revision and compiler ({own}), so it cannot check "
+                             f"that {path} belongs to it")
+    elif record.get("provenance") != own:
+        raise ValueError(f"Default library case list {path} comes from another revision or build: "
+                         f"{record.get('provenance')}, this job is {own}")
+    print(f"Default library cases: {len(names)} read from {path} for {own}", flush=True)
     return names
 
 
@@ -409,7 +454,7 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--features")
-    parser.add_argument("--filter-timeout-seconds", type=int, default=1800)
+    parser.add_argument("--filter-timeout-seconds", type=int, help="Seconds per filter or case (default 1800)")
     parser.add_argument("--shard-index", type=int)
     parser.add_argument("--shard-count", type=int)
     parser.add_argument("--nocapture", action="store_true")
@@ -429,7 +474,8 @@ def main() -> int:
     if args.write_default_library_list is not None:
         if (args.features is not None or args.filters or args.limited_only_workflow is not None
                 or args.default_library_list is not None or args.shard_index is not None
-                or args.shard_count is not None):
+                or args.shard_count is not None or args.filter_timeout_seconds is not None
+                or args.nocapture or args.skip_ignored or args.isolated_cases):
             parser.error("--write-default-library-list takes no other option")
         write_default_library_list(args.write_default_library_list)
         return 0
@@ -450,6 +496,8 @@ def main() -> int:
         filters = []
     else:
         filters = valid_filters(args.filters)
+    if args.filter_timeout_seconds is None:
+        args.filter_timeout_seconds = 1800
     if args.filter_timeout_seconds <= 0:
         parser.error("--filter-timeout-seconds must be positive")
     shard = None
