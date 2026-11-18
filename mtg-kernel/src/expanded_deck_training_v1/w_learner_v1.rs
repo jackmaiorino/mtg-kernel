@@ -164,6 +164,36 @@ static W_DECODED_V1: std::sync::Mutex<Vec<(String, WDecodedEntryV1)>> =
     std::sync::Mutex::new(Vec::new());
 const W_DECODED_CAPACITY_V1: usize = 2;
 
+/// The pinned sha256s of wide containers this process has decoded
+/// successfully (a decode refuses anything that is not a valid container's
+/// own encoding). A continuation checks its lineage's initial container
+/// against this set instead of decoding it on every load.
+static W_VALID_V1: std::sync::Mutex<BTreeSet<String>> = std::sync::Mutex::new(BTreeSet::new());
+
+fn mark_valid_w_container_v1(sha256: &str) -> Result<(), String> {
+    W_VALID_V1
+        .lock()
+        .map_err(|_| "wide container validation set poisoned")?
+        .insert(sha256.to_owned());
+    Ok(())
+}
+
+/// Reads the container `pin` names, verifies it against the pin, and refuses
+/// it unless it decodes as a wide container: decoded here the first time this
+/// process sees those bytes, recognized by its pinned sha256 afterwards.
+fn validate_pinned_w_container_v1(pin: &PinnedFileV1) -> Result<(), String> {
+    let bytes = read_pinned_bytes(pin)?;
+    let known = W_VALID_V1
+        .lock()
+        .map_err(|_| "wide container validation set poisoned")?
+        .contains(&pin.sha256);
+    if !known {
+        decode_w_state_v1(&open_v1(&bytes, MAX_FILE_BYTES)?)?;
+        mark_valid_w_container_v1(&pin.sha256)?;
+    }
+    Ok(())
+}
+
 /// The wide state in the container `pin` names, with its `state_sha256`.
 /// With `fresh`, the bytes are decoded even if this process holds them (an
 /// update's readback of the container it just wrote).
@@ -184,6 +214,7 @@ fn decode_pinned_w_state_v1(
         }
     }
     let state = decode_w_state_v1(&open_v1(&bytes, MAX_FILE_BYTES)?)?;
+    mark_valid_w_container_v1(&pin.sha256)?;
     let state_sha256 = w_state_sha256_v1(&state)?;
     let entry = Arc::new((state, state_sha256));
     {
@@ -313,12 +344,10 @@ fn load_w_fresh_v1(
             (initial, initial_sha256, None)
         }
         Some(pin) => {
-            // A continuation decodes the initial container only to refuse
-            // bytes that are not a wide container; its state is not used.
-            decode_w_state_v1(&open_v1(
-                &read_pinned_bytes(&member.initial)?,
-                MAX_FILE_BYTES,
-            )?)?;
+            // A continuation does not use the initial state: the container
+            // is read and verified against its pin, and refused unless it is
+            // a valid container, decoded once per process.
+            validate_pinned_w_container_v1(&member.initial)?;
             let record: WLearnerCheckpointV1 =
                 serde_json::from_slice(&read_pinned_bytes(pin)?).map_err(err)?;
             let identity = policy.feature_identity_v1();
