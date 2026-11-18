@@ -46,6 +46,14 @@
 //! otherwise every such process would pay for the comparison again. Builds
 //! with debug assertions (unoptimized ones) always call `tanhf`: the
 //! comparison would take them minutes for every new binary.
+//!
+//! On aarch64 Linux with glibc the loaded `tanhf` is not the x86-64 one:
+//! the same fdlibm source is compiled there with fused multiply-adds, and a
+//! few results differ. Every value there takes `fdlibm::tanhf_v1` instead,
+//! the scalar form of `glibc::tanh8`, whose results on every input are the
+//! x86-64 `tanhf`'s (see that module). So an aarch64 Linux build computes
+//! the activations of an x86-64 Linux build bit for bit; no proof record is
+//! kept there, since nothing is compared with the loaded library.
 
 /// A token for the state the platform `tanhf` (and so every activation)
 /// depends on beyond its input: UCRT's FMA3 switch on Windows x86_64. Equal
@@ -119,8 +127,151 @@ pub(crate) fn libm_tanh_in_place_v1(values: &mut [f32]) {
         unsafe { glibc::tanh_in_place(values) };
         return;
     }
+    // On aarch64 Linux with glibc every value takes the portable form of the
+    // x86-64 `tanhf` (see `fdlibm`); NaN inputs take `tanhf`, as elsewhere.
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "aarch64"))]
+    for value in values {
+        *value = if value.is_nan() {
+            value.tanh()
+        } else {
+            fdlibm::tanhf_v1(*value)
+        };
+    }
+    #[cfg(not(all(target_os = "linux", target_env = "gnu", target_arch = "aarch64")))]
     for value in values {
         *value = value.tanh();
+    }
+}
+
+/// glibc's `tanhf` as the releases before 2.41 compute it
+/// (`sysdeps/ieee754/flt-32/s_tanhf.c` over `s_expm1f.c`, fdlibm), one value
+/// at a time, in single-precision IEEE operations with no fused multiply-add:
+/// the scalar form of `glibc::tanh8`, which is proved equal to the loaded
+/// `tanhf` on every input on x86-64 before use.
+///
+/// glibc's aarch64 build of the same C source differs from its x86-64 build
+/// on some inputs (measured on 2.36: 1,667 of 23.4 million sampled inputs, up
+/// to 3 units in the last place), because the compiler fuses multiply-adds
+/// there. Rust does not, so this source performs the same operations on every
+/// target, and its results are the x86-64 `tanhf`'s. Measured: the digest of
+/// its results over all 2^32 inputs except NaNs is the same on x86-64 and on
+/// aarch64 (`FULL_DIGEST` in the tests), and on x86-64 with glibc 2.36 every
+/// one of those results equals the loaded `tanhf`'s.
+///
+/// On aarch64 Linux with glibc it replaces `tanhf` for every activation, so
+/// that a trainer built there continues an x86-64 lineage bit for bit. It
+/// assumes the default floating-point environment (round to nearest, no
+/// flush-to-zero), which is what a Linux process starts with.
+#[cfg_attr(
+    not(any(
+        test,
+        all(target_os = "linux", target_env = "gnu", target_arch = "aarch64")
+    )),
+    allow(dead_code)
+)]
+pub(crate) mod fdlibm {
+    // `s_expm1f.c`'s constants, as bits.
+    const LN2_HI: u32 = 0x3f31_7180;
+    const LN2_LO: u32 = 0x3717_f7d1;
+    const INVLN2: u32 = 0x3fb8_aa3b;
+    const Q1: u32 = 0xbd08_8889;
+    const Q2: u32 = 0x3ad0_0d01;
+    const Q3: u32 = 0xb8a6_70cd;
+    const Q4: u32 = 0x3686_7e54;
+    const Q5: u32 = 0xb457_edbb;
+
+    /// `expm1f(a)` for the arguments `tanhf` passes: a = 2|x| >= 2, or
+    /// a = -2|x| in (-2, 0), with |a| >= 2^-25.
+    #[inline(always)]
+    fn expm1_for_tanh(a: f32) -> f32 {
+        let f = f32::from_bits;
+        let hx = a.to_bits() & 0x7fff_ffff;
+        // a = k ln2 + r. Up to 0.5 ln2, k = 0 and r = a. Below 1.5 ln2 (only
+        // a negative a is there), k = -1. Otherwise
+        // k = (int)(invln2 * a + (a < 0 ? -0.5 : 0.5)), truncated.
+        let k: i32 = if hx <= 0x3eb1_7218 {
+            0
+        } else if hx < 0x3f85_1592 {
+            -1
+        } else {
+            (f(INVLN2) * a + if a.is_sign_negative() { -0.5 } else { 0.5 }) as i32
+        };
+        // With k = 0 these give r = a and c = 0, as `expm1f` has them.
+        let t = k as f32;
+        let hi = a - t * f(LN2_HI);
+        let lo = t * f(LN2_LO);
+        let r = hi - lo;
+        let c = (hi - r) - lo;
+        // The primary range.
+        let hfx = 0.5 * r;
+        let hxs = r * hfx;
+        let mut q = f(Q4) + hxs * f(Q5);
+        q = f(Q3) + hxs * q;
+        q = f(Q2) + hxs * q;
+        q = f(Q1) + hxs * q;
+        let r1 = 1.0 + hxs * q;
+        let t3 = 3.0 - r1 * hfx;
+        let e = hxs * ((r1 - t3) / (6.0 - r * t3));
+        if k == 0 {
+            return r - (r * e - hxs);
+        }
+        let e = (r * (e - c) - c) - hxs;
+        if k == -1 {
+            return 0.5 * (r - e) - 0.5;
+        }
+        // The others add k to the exponent of a y near 1.
+        let scaled =
+            |y: f32| f32::from_bits((y.to_bits() as i32).wrapping_add(k.wrapping_shl(23)) as u32);
+        let e_minus_r = e - r;
+        if !(-1..=56).contains(&k) {
+            // y = 1 - (e - r), scaled, minus 1.
+            return scaled(1.0 - e_minus_r) - 1.0;
+        }
+        if k < 23 {
+            // y = (1 - 2^-k) - (e - r), scaled.
+            let below_one = f32::from_bits(0x3f80_0000 - (0x0100_0000u32 >> k));
+            return scaled(below_one - e_minus_r);
+        }
+        // 23 <= k <= 56: y = (r - (e + 2^-k)) + 1, scaled.
+        let power = f32::from_bits(((0x7f - k) as u32) << 23);
+        scaled((r - (e + power)) + 1.0)
+    }
+
+    /// The x86-64 glibc (before 2.41) `tanhf(x)` for every x that is not a
+    /// NaN.
+    #[inline(always)]
+    pub(crate) fn tanhf_v1(x: f32) -> f32 {
+        let bits = x.to_bits();
+        let sign = bits & 0x8000_0000;
+        let ix = bits & 0x7fff_ffff;
+        // |x| < 2^-55, and zero: x.
+        if ix < 0x2400_0000 {
+            return x;
+        }
+        // |x| >= 22, and infinity: 1 with x's sign.
+        let z = if ix > 0x41af_ffff {
+            1.0f32
+        } else {
+            let ax = f32::from_bits(ix);
+            let at_least_one = ix > 0x3f7f_ffff;
+            // `expm1f`'s argument: 2|x| where |x| >= 1 and -2|x| below, both
+            // exact products.
+            let a = if at_least_one { 2.0 * ax } else { -(2.0 * ax) };
+            // `expm1f` returns its argument below 2^-25, so where
+            // |x| < 2^-26.
+            let t = if ix < 0x3280_0000 {
+                a
+            } else {
+                expm1_for_tanh(a)
+            };
+            // 1 - 2/(t + 2) where |x| >= 1 and -t/(t + 2) below.
+            if at_least_one {
+                1.0 - 2.0 / (t + 2.0)
+            } else {
+                (-t) / (t + 2.0)
+            }
+        };
+        f32::from_bits(z.to_bits() ^ sign)
     }
 }
 
@@ -1139,8 +1290,130 @@ mod glibc {
 mod tests {
     use super::*;
 
+    /// What `libm_tanh_in_place_v1` must return for one value on this
+    /// target: the platform `tanhf`, except on aarch64 Linux with glibc,
+    /// where it is the portable form of the x86-64 one.
+    fn expected_tanh(a: f32) -> f32 {
+        if cfg!(all(
+            target_os = "linux",
+            target_env = "gnu",
+            target_arch = "aarch64"
+        )) && !a.is_nan()
+        {
+            fdlibm::tanhf_v1(a)
+        } else {
+            a.tanh()
+        }
+    }
+
+    /// SHA-256 of `fdlibm::tanhf_v1`'s results, as little-endian bits in
+    /// input order, for the 2^24 inputs whose top byte is `top`.
+    fn fdlibm_chunk_digest(top: u32) -> [u8; 32] {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        let mut buffer = Vec::with_capacity(1 << 16);
+        for low in 0..(1u32 << 24) {
+            let bits = (top << 24) | low;
+            if bits & 0x7fff_ffff > 0x7f80_0000 {
+                continue;
+            }
+            let value = fdlibm::tanhf_v1(std::hint::black_box(f32::from_bits(bits)));
+            buffer.extend_from_slice(&value.to_bits().to_le_bytes());
+            if buffer.len() == 1 << 16 {
+                hash.update(&buffer);
+                buffer.clear();
+            }
+        }
+        hash.update(&buffer);
+        hash.finalize().into()
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// The digest over every input except NaNs: SHA-256 of the 256 chunk
+    /// digests in order. Measured on x86-64 (where every result also equalled
+    /// glibc 2.36's `tanhf`) and on aarch64, 2026-11-17.
+    const FULL_DIGEST: &str = "ef2005497c512b31ecf6ac00db268c343d35f129e6ce5ec28025d6aed38f241e";
+    /// The chunk of inputs in [0.5, 2), the same measurement.
+    const CHUNK_3F_DIGEST: &str =
+        "778c1cd2e9e6ea13a47f3ece7bb9a0344c34c540283fdcafb44d4c479557af79";
+
+    /// The portable `tanhf` gives the pinned results on this target for the
+    /// 2^24 inputs in [0.5, 2) (every branch of `expm1f` that `tanhf` uses
+    /// for |x| < 2 runs there).
+    #[test]
+    fn fdlibm_tanhf_chunk_digest_is_the_pinned_one() {
+        assert_eq!(hex(&fdlibm_chunk_digest(0x3f)), CHUNK_3F_DIGEST);
+    }
+
+    /// The same over every input except NaNs (about a minute on one thread
+    /// in an optimized build).
+    #[test]
+    #[ignore = "evaluates all 2^32 inputs"]
+    fn fdlibm_tanhf_full_digest_is_the_pinned_one() {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        for top in 0..256u32 {
+            hash.update(fdlibm_chunk_digest(top));
+        }
+        assert_eq!(hex(&hash.finalize()), FULL_DIGEST);
+    }
+
+    /// On x86-64 Linux with a glibc whose `tanhf` is fdlibm's, the portable
+    /// form equals the loaded `tanhf` on a sample across all bit patterns and
+    /// a dense band around the activations' range. (A newer glibc computes
+    /// `tanhf` another way; there the sample differs and this test says so.)
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+    #[test]
+    fn fdlibm_tanhf_equals_the_loaded_tanhf_on_a_sample_here() {
+        let mut differing = 0u64;
+        let mut check = |bits: u32| {
+            let x = f32::from_bits(bits);
+            if !x.is_nan()
+                && fdlibm::tanhf_v1(x).to_bits() != std::hint::black_box(x).tanh().to_bits()
+            {
+                differing += 1;
+            }
+        };
+        let mut bits = 0u32;
+        loop {
+            check(bits);
+            match bits.checked_add(4099) {
+                Some(next) => bits = next,
+                None => break,
+            }
+        }
+        for step in 0..=(1u32 << 20) {
+            let x = (step as f32 / (1u32 << 20) as f32 - 0.5) * 8.0;
+            check(x.to_bits());
+        }
+        if differing != 0 && glibc_tanhf_is_fdlibm_sample() {
+            panic!("{differing} sampled inputs differ from the loaded tanhf");
+        }
+    }
+
+    /// Whether the loaded `tanhf` looks like fdlibm's: a few inputs where
+    /// the correctly rounded result (glibc 2.41 and later) differs from it.
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+    fn glibc_tanhf_is_fdlibm_sample() -> bool {
+        // If every one of a spread of inputs agrees with the portable form,
+        // the loaded function is the fdlibm one.
+        let mut agree = 0;
+        let total = 4096;
+        for i in 0..total {
+            let x = (i as f32 / total as f32 - 0.5) * 6.0;
+            if fdlibm::tanhf_v1(x).to_bits() == std::hint::black_box(x).tanh().to_bits() {
+                agree += 1;
+            }
+        }
+        agree == total
+    }
+
     /// The slice form equals `f32::tanh` bit for bit on typical and edge
-    /// inputs (every length, so the tail path runs), proved or not.
+    /// inputs (every length, so the tail path runs), proved or not. (On
+    /// aarch64 Linux with glibc: the portable form of the x86-64 `tanhf`.)
     #[test]
     fn libm_tanh_in_place_matches_scalar_tanh() {
         let mut values = vec![
@@ -1183,14 +1456,14 @@ mod tests {
             let mut v = values[..len].to_vec();
             libm_tanh_in_place_v1(&mut v);
             for (a, b) in values[..len].iter().zip(&v) {
-                assert_eq!(a.tanh().to_bits(), b.to_bits(), "{a:e}");
+                assert_eq!(expected_tanh(*a).to_bits(), b.to_bits(), "{a:e}");
             }
         }
         let mut v = values.clone();
         libm_tanh_in_place_v1(&mut v);
         for (a, b) in values.iter().zip(&v) {
             assert!(
-                a.tanh().to_bits() == b.to_bits() || (a.is_nan() && b.is_nan()),
+                expected_tanh(*a).to_bits() == b.to_bits() || (a.is_nan() && b.is_nan()),
                 "{a:e}"
             );
         }
