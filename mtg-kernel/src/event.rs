@@ -5452,7 +5452,9 @@ fn commit_with_entry_batch_and_source_color(
             for chapter in 1..=count {
                 log_saga_chapter(state, source, chapter as u8);
             }
-        } else {
+        } else if crate::trigger::saga_has_chapter_abilities(state, source) {
+            // 715.3a: the entry counter is the Saga's own ability, which a
+            // Saga that enters without its abilities does not have.
             add_lore_counters(state, source, 1).expect("new Saga counters fit");
         }
     }

@@ -23182,9 +23182,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                 state.engine.event_log.push(marker.clone());
                 state.engine.event_history.push(marker);
             }
-            // 714.3b: as the precombat main phase begins, each front-face Saga
-            // controlled by the active player receives one lore counter. All
-            // chapter markers are logged before their triggers are collected.
+            // 715.3c: as the precombat main phase begins, each front-face Saga
+            // with one or more chapter abilities controlled by the active player
+            // receives one lore counter. All chapter markers are logged before
+            // their triggers are collected.
             let sagas = state
                 .objects
                 .iter()
@@ -23192,7 +23193,8 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
                     (object.zone == Zone::Battlefield
                         && object.controller == state.active_player
                         && object.v4.face_index == 0
-                        && card_def::CARD_DEFS[object.card_def as usize].saga.is_some())
+                        && card_def::CARD_DEFS[object.card_def as usize].saga.is_some()
+                        && crate::trigger::saga_has_chapter_abilities(state, id))
                     .then_some(id)
                 })
                 .collect::<Vec<_>>();
