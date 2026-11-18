@@ -702,18 +702,33 @@ fn oust_does_nothing_when_its_target_left_before_it_resolved() {
 
 // ---- Path to Exile ------------------------------------------------------------------
 
-/// Settles a Path to Exile, answering its controller's search with `land`
-/// when `Some` and declining otherwise. Returns who was asked.
+/// Settles a Path to Exile (or Winds of Abandon), answering its
+/// controller's choice to search and the search with `land` when `Some`,
+/// and declining (or finding nothing, for Winds) otherwise. Returns who was
+/// asked first.
 fn settle_path(state: &mut GameState, land: Option<ObjectId>) -> Option<PlayerId> {
     let mut asked = None;
     settle_with(state, |_, decision| match decision {
+        // Path to Exile's "may search": search only to find `land`.
+        Decision::ChooseEffectOption {
+            player,
+            option_count: 2,
+            ..
+        } => {
+            if asked.is_none() {
+                asked = Some(player);
+            }
+            Action::ChooseEffectOption(u16::from(land.is_some()))
+        }
         Decision::ChooseEffectTargets {
             player,
             legal_targets,
             selected_count: 0,
             ..
         } => {
-            asked = Some(player);
+            if asked.is_none() {
+                asked = Some(player);
+            }
             match land {
                 Some(land) => {
                     assert!(legal_targets.contains(&Target::Object(land)));
@@ -763,7 +778,7 @@ fn path_to_exile_exiles_and_its_controller_may_fetch_a_tapped_basic_land() {
 }
 
 #[test]
-fn path_to_exile_search_is_optional_and_finds_only_basic_lands() {
+fn path_to_exile_search_may_find_nothing_and_finds_only_basic_lands() {
     let mut state = game(&["Plateau", "Plains", "Lightning Bolt"]);
     let plateau = state.players[P1.index()].library[0];
     let plains_card = state.players[P1.index()].library[1];
@@ -773,6 +788,8 @@ fn path_to_exile_search_is_optional_and_finds_only_basic_lands() {
     cast(&mut state, path, &[Target::Object(angler)]);
     let mut offered = Vec::new();
     settle_with(&mut state, |_, decision| match decision {
+        // Search.
+        Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(1),
         Decision::ChooseEffectTargets {
             legal_targets,
             selected_count: 0,
@@ -790,8 +807,55 @@ fn path_to_exile_search_is_optional_and_finds_only_basic_lands() {
     );
     assert_eq!(offered.len(), 1);
     assert_eq!(zone(&state, angler), Zone::Exile);
-    assert_eq!(zone(&state, plains_card), Zone::Library, "declined");
+    assert_eq!(zone(&state, plains_card), Zone::Library, "found nothing");
     assert_eq!(library_len(&state, P1), 3);
+}
+
+#[test]
+fn path_to_exile_shuffles_only_when_its_controller_chooses_to_search() {
+    // A player who chooses not to search does not shuffle; a player who
+    // searches and finds nothing still does (701.23). Library order is the
+    // observable: sixteen distinct cards keep it after no shuffle.
+    for (library, search) in [
+        ("Plains", false),
+        ("Plains", true),
+        ("Lightning Bolt", true),
+    ] {
+        let mut state = game(&[library; 16]);
+        let angler = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
+        let before = state.players[P1.index()].library.clone();
+        let path = put(&mut state, P0, "Path to Exile", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::W], 0);
+        cast(&mut state, path, &[Target::Object(angler)]);
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectOption {
+                player,
+                option_count,
+                ..
+            }) => assert_eq!((player, option_count), (P1, 2), "search or not"),
+            other => panic!("expected the choice to search, got {other:?}"),
+        }
+        act(&mut state, Action::ChooseEffectOption(u16::from(search)));
+        // A search with no candidate may end without a prompt.
+        if let (true, Some(decision)) = (search, settle(&mut state)) {
+            match decision {
+                Decision::ChooseEffectTargets {
+                    player, can_finish, ..
+                } => assert!(player == P1 && can_finish, "{library}: may find nothing"),
+                other => panic!("expected the search, got {other:?}"),
+            }
+            act(&mut state, Action::FinishEffectSelection);
+        }
+        settled(&mut state);
+        assert_eq!(zone(&state, angler), Zone::Exile);
+        let after = &state.players[P1.index()].library;
+        assert_eq!(after.len(), before.len());
+        if search {
+            assert_ne!(*after, before, "{library}: a search shuffles");
+        } else {
+            assert_eq!(*after, before, "declining does not shuffle");
+        }
+    }
 }
 
 #[test]

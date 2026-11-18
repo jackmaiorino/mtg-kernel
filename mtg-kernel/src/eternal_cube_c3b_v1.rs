@@ -145,13 +145,16 @@ pub fn tracker_counter() -> EffectOp {
 
 /// Spellseeker: "When this creature enters, you may search your library for
 /// an instant or sorcery card with mana value 2 or less, reveal it, put it
-/// into your hand, then shuffle." (Heliod's Pilgrim's search: finding
-/// nothing is always an allowed answer.)
+/// into your hand, then shuffle." (Heliod's Pilgrim's search: declining does
+/// not shuffle, and a search may find nothing.)
 pub fn spellseeker_search() -> EffectOp {
-    EffectOp::SearchLibraryToHand {
-        player: PlayerRef::Controller,
-        filter: LibraryCardFilter::InstantOrSorceryManaValueAtMostV1(2),
-    }
+    crate::eternal_cards_v1::may_search(
+        PlayerRef::Controller,
+        EffectOp::SearchLibraryToHand {
+            player: PlayerRef::Controller,
+            filter: LibraryCardFilter::InstantOrSorceryManaValueAtMostV1(2),
+        },
+    )
 }
 
 /// Marwyn, the Preserver: "{2}: Return target land card from your graveyard

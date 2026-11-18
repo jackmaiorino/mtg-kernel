@@ -705,6 +705,60 @@ fn vampiric_tutor_puts_the_card_on_top_known_only_to_its_controller() {
 }
 
 #[test]
+fn vampiric_tutor_and_beseech_the_mirror_must_find_a_card_in_a_nonempty_library() {
+    // "Search your library for a card": a library with a card in it always
+    // has one to find (701.23d), so the search cannot finish with nothing.
+    let mut state = islands();
+    let tutor = put(&mut state, P0, "Vampiric Tutor", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    cast(&mut state, tutor, &[]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets {
+            player,
+            min_targets,
+            can_finish,
+            ..
+        }) => {
+            assert_eq!(player, P0);
+            assert_eq!(min_targets, 1);
+            assert!(!can_finish);
+        }
+        other => panic!("expected Vampiric Tutor's search, got {other:?}"),
+    }
+    assert!(engine::step(&mut state, Action::FinishEffectSelection).is_err());
+    settle_first(&mut state);
+    assert_eq!(state.players[0].life, 18);
+
+    let mut state = islands();
+    let beseech = put(&mut state, P0, "Beseech the Mirror", Zone::Hand);
+    let ritual = put(&mut state, P0, "Dark Ritual", Zone::Library);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::B, ManaColor::B, ManaColor::B],
+        1,
+    );
+    act(&mut state, Action::CastSpell(beseech));
+    let mut searched = false;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectTargets {
+            legal_targets,
+            min_targets,
+            can_finish,
+            ..
+        } if legal_targets.contains(&Target::Object(ritual)) => {
+            assert_eq!(min_targets, 1);
+            assert!(!can_finish, "Beseech the Mirror's search must find a card");
+            searched = true;
+            Action::ChooseEffectTarget(Target::Object(ritual))
+        }
+        other => first_answer(other),
+    });
+    assert!(searched);
+    assert_eq!(zone(&state, ritual), Zone::Hand);
+}
+
+#[test]
 fn beseech_the_mirror_finds_a_card_and_casts_it_free_when_bargained() {
     // Not bargained: the card goes to the hand.
     let mut state = islands();
@@ -982,6 +1036,85 @@ fn scrawling_crawler_makes_each_player_draw_and_punishes_opponent_draws() {
     assert_eq!(state.players[0].hand.len(), hands[0] + 2);
     assert_eq!(state.players[1].hand.len(), hands[1] + 2);
     assert_eq!(state.players[0].life, 20);
+}
+
+/// P0's first main phase with P0's library empty and P1's holding
+/// `p1_library` Islands; Scrawling Crawler and Jace, Wielder of Mysteries
+/// on P0's side.
+fn crawler_with_jace(p1_library: usize) -> GameState {
+    let island = id("Island");
+    let mut state = GameState::new_from_libraries(
+        &[],
+        &vec![island; p1_library],
+        |id| CARD_DEFS[id as usize].object_name.into(),
+        0x4535_4141,
+    );
+    state.active_player = P0;
+    state.priority_player = P0;
+    state.step = Step::Main1;
+    put(&mut state, P0, "Scrawling Crawler", Zone::Battlefield);
+    jace_enters(&mut state, P0);
+    state
+}
+
+/// Jace, Wielder of Mysteries enters under `player`'s control with its
+/// loyalty.
+fn jace_enters(state: &mut GameState, player: PlayerId) {
+    let jace = put(state, player, "Jace, Wielder of Mysteries", Zone::Hand);
+    mtg_kernel::event::propose_and_commit(
+        state,
+        mtg_kernel::event::ProposedEvent::zone_change(jace, Zone::Battlefield),
+    );
+}
+
+/// Passes until a player has lost, then returns the next decision.
+fn decision_after_a_loss(state: &mut GameState) -> Decision {
+    pass_until(state, |s| s.players.iter().any(|p| p.has_lost));
+    next(state)
+}
+
+#[test]
+fn scrawling_crawler_stops_once_the_first_draw_wins_the_game() {
+    // Both players control Jace, Wielder of Mysteries and both libraries are
+    // empty at P0's upkeep. P0 draws first and wins the game instead; the
+    // game is over at once (104.1), so P1's draw, which P1's Jace would
+    // also have turned into a win, never happens.
+    let mut state = crawler_with_jace(1);
+    jace_enters(&mut state, P1);
+    to_main(&mut state, P1);
+    assert!(state.players[1].library.is_empty(), "P1 drew its last card");
+    let hand = state.players[1].hand.len();
+    assert_eq!(
+        decision_after_a_loss(&mut state),
+        Decision::GameOver { winner: Some(P0) }
+    );
+    assert!(!state.players[0].has_lost);
+    assert_eq!(state.players[1].hand.len(), hand);
+}
+
+#[test]
+fn a_resumable_program_stops_once_a_draw_wins_the_game() {
+    // A dredge card in P1's graveyard moves the trigger to the resumable
+    // interpreter. P0's draw from an empty library wins with Jace; P1 is
+    // not asked whether to dredge the draw that no longer happens.
+    let mut state = crawler_with_jace(6);
+    to_main(&mut state, P1);
+    put(&mut state, P1, "Golgari Thug", Zone::Graveyard);
+    let (hand, library) = (state.players[1].hand.len(), state.players[1].library.len());
+    assert!(library >= 4, "the Thug can dredge");
+    assert_eq!(
+        decision_after_a_loss(&mut state),
+        Decision::GameOver { winner: Some(P0) }
+    );
+    assert!(state.players[1].has_lost);
+    // The game-over check would hide a continuation still waiting at P1's
+    // dredge choice; none must be left.
+    assert!(
+        state.engine.pending_effect.is_none(),
+        "no dredge choice for a draw that never happens"
+    );
+    assert_eq!(state.players[1].hand.len(), hand);
+    assert_eq!(state.players[1].library.len(), library);
 }
 
 #[test]

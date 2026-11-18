@@ -699,7 +699,21 @@ fn sundering_eruption_destroys_a_land_and_grounds_blockers() {
     let eruption = put(&mut state, P0, "Sundering Eruption", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 2);
     cast(&mut state, eruption, &[Target::Object(taiga)]);
-    settle_taking(&mut state);
+    let mut searcher = None;
+    settle_with(&mut state, |_, decision| match decision {
+        // The land's controller chooses to search.
+        Decision::ChooseEffectOption { player, .. } => {
+            searcher = Some(player);
+            Action::ChooseEffectOption(1)
+        }
+        Decision::ChooseEffectTargets {
+            legal_targets,
+            selected_count: 0,
+            ..
+        } if !legal_targets.is_empty() => Action::ChooseEffectTarget(legal_targets[0]),
+        other => first_answer(other),
+    });
+    assert_eq!(searcher, Some(P1));
     assert_eq!(zone(&state, taiga), Zone::Graveyard);
     assert_eq!(controls(&state, P1, "Forest").len(), 1, "searched");
     let mut blockers_offered = None;

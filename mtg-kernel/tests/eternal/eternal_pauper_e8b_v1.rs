@@ -265,6 +265,22 @@ fn settle_option(state: &mut GameState, option: u16) {
     });
 }
 
+/// Settles, choosing to search when a "may search" asks and then choosing
+/// `object` whenever a selection offers it.
+fn settle_searching_for(state: &mut GameState, object: ObjectId) {
+    settle_with(state, |_, decision| match decision {
+        Decision::ChooseEffectOption {
+            option_count: 2, ..
+        } => Action::ChooseEffectOption(1),
+        Decision::ChooseEffectTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(object)) =>
+        {
+            Action::ChooseEffectTarget(Target::Object(object))
+        }
+        other => first_answer(other),
+    });
+}
+
 fn priority(state: &mut GameState) -> (Vec<ObjectId>, Vec<(ObjectId, u8)>) {
     match next(state) {
         Decision::CastSpellOrPass {
@@ -1121,14 +1137,14 @@ fn heaped_harvest_finds_a_basic_land_on_entry_and_when_sacrificed() {
     let harvest = put(&mut state, P0, "Heaped Harvest", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::G], 2);
     cast(&mut state, harvest, &[]);
-    settle_choosing(&mut state, first);
+    settle_searching_for(&mut state, first);
     assert_eq!(zone(&state, first), Zone::Battlefield);
     assert!(state.objects.get(first).tapped);
 
     let second = put(&mut state, P0, "Forest", Zone::Library);
     pool(&mut state, P0, &[], 2);
     activate(&mut state, harvest, 0, &[]);
-    settle_choosing(&mut state, second);
+    settle_searching_for(&mut state, second);
     assert_eq!(zone(&state, harvest), Zone::Graveyard);
     assert_eq!(state.players[0].life, 23);
     assert_eq!(zone(&state, second), Zone::Battlefield, "sacrificed");

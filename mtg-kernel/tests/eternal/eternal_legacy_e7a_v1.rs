@@ -267,6 +267,22 @@ fn settle_choosing(state: &mut GameState, object: ObjectId) {
     });
 }
 
+/// Settles, choosing to search when a "may search" asks and then choosing
+/// `object` whenever a selection or target offers it.
+fn settle_searching_for(state: &mut GameState, object: ObjectId) {
+    settle_with(state, |_, decision| match decision {
+        Decision::ChooseEffectOption {
+            option_count: 2, ..
+        } => Action::ChooseEffectOption(1),
+        Decision::ChooseEffectTargets { legal_targets, .. }
+            if legal_targets.contains(&Target::Object(object)) =>
+        {
+            Action::ChooseEffectTarget(Target::Object(object))
+        }
+        other => first_answer(other),
+    });
+}
+
 fn priority(state: &mut GameState) -> Decision {
     match next(state) {
         decision @ Decision::CastSpellOrPass { .. } => decision,
@@ -564,6 +580,10 @@ fn ghost_quarter_destroys_a_land_and_its_controller_may_fetch_a_basic() {
     activate(&mut state, quarter, 0, &[Target::Object(taiga)]);
     let mut searcher = None;
     settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption { player, .. } => {
+            assert_eq!(player, P1, "the land's controller chooses to search");
+            Action::ChooseEffectOption(1)
+        }
         Decision::ChooseEffectTargets {
             player,
             legal_targets,
@@ -579,6 +599,40 @@ fn ghost_quarter_destroys_a_land_and_its_controller_may_fetch_a_basic() {
     assert_eq!(zone(&state, taiga), Zone::Graveyard);
     assert_eq!(named(&state, P1, "Island").len(), 1);
     assert_eq!(library_len(&state, P1), 19);
+}
+
+#[test]
+fn ghost_quarter_shuffles_only_when_the_lands_controller_chooses_to_search() {
+    // A player who declines does not shuffle; a player who searches a
+    // library with no basic land card finds nothing and still shuffles.
+    for (library, search) in [("Island", false), ("Taiga", true)] {
+        let mut state = game(&[library; 16]);
+        let quarter = put(&mut state, P0, "Ghost Quarter", Zone::Battlefield);
+        let taiga = put(&mut state, P1, "Taiga", Zone::Battlefield);
+        let before = state.players[P1.index()].library.clone();
+        activate(&mut state, quarter, 0, &[Target::Object(taiga)]);
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectOption {
+                player,
+                option_count,
+                ..
+            }) => assert_eq!((player, option_count), (P1, 2)),
+            other => panic!("expected the choice to search, got {other:?}"),
+        }
+        act(&mut state, Action::ChooseEffectOption(u16::from(search)));
+        settled(&mut state);
+        assert_eq!(zone(&state, taiga), Zone::Graveyard);
+        let after = &state.players[P1.index()].library;
+        assert_eq!(after.len(), before.len(), "{library}: nothing found");
+        if search {
+            assert_ne!(
+                *after, before,
+                "a search shuffles even when it finds nothing"
+            );
+        } else {
+            assert_eq!(*after, before, "declining does not shuffle");
+        }
+    }
 }
 
 #[test]
@@ -939,7 +993,7 @@ fn goblin_engineer_entombs_an_artifact_and_returns_a_cheap_one() {
     let engineer = put(&mut state, P0, "Goblin Engineer", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 1);
     cast(&mut state, engineer, &[]);
-    settle_choosing(&mut state, cage);
+    settle_searching_for(&mut state, cage);
     assert_eq!(zone(&state, cage), Zone::Graveyard);
 
     let mut state = islands();

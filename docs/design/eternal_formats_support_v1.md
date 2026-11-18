@@ -1859,8 +1859,6 @@ Known gaps:
   day and night) still happen.
 - Academy Rector's search may find an Aura, which the engine puts onto the battlefield with no
   host rather than leaving it in the library (no Aura is in Other Control's list).
-- Veteran Explorer's search is not optional: each player searches, choosing no card is a search
-  that finds nothing, and every player shuffles.
 - The Tainted lands' second ability is an automatic payment source while a Swamp is controlled
   (the planner reads the gated colors from `statics::tainted_colors`); a Verge's is not.
 - Black Vise's chosen opponent is not a choice, and its record does not follow a change of control.
@@ -2450,10 +2448,11 @@ C1a:
 
 - Oust: the creature goes second from the top of its owner's library
   (`LibraryPlacement::SecondFromTop`) and its controller gains 3 life.
-- Path to Exile: exile, then the creature's controller (named before the exile) searches for
-  up to one basic land card, which enters tapped. Winds of Abandon is the same with a search
-  only for a creature that was exiled; its overload exiles each creature the caster doesn't
-  control as one batch, then each of their controllers searches for that many basic lands.
+- Path to Exile: exile, then the creature's controller (named before the exile) chooses
+  whether to search for up to one basic land card, which enters tapped. Winds of Abandon is
+  the same with a mandatory search only for a creature that was exiled; its overload exiles
+  each creature the caster doesn't control as one batch, then each of their controllers
+  searches for that many basic lands.
 - Damn: Avatar of Woe's destroy without regeneration; its overload is Decree of Pain's
   simultaneous destroy. Both overloads use wave S1d's machinery.
 - Reprieve returns the spell to its owner's hand (it is not a counter, so it also returns a
@@ -2474,7 +2473,8 @@ C1a:
   finishes resolving, shuffles both hands and graveyards into their libraries, then each player
   draws seven through `DrawCards` and its controller untaps up to six lands. Between the two
   players' draws, `C1aOpV1::StopIfWonV1` drops the rest of the program if a draw won the game
-  (Jace, Wielder of Mysteries); the plain interpreter would run the later instructions.
+  (Jace, Wielder of Mysteries). Both interpreters now stop on their own after such a win (see
+  the program stop below), so this local stop is kept but no longer needed.
 
 C1b:
 
@@ -2535,15 +2535,43 @@ C1c:
 - Pillage the Bog: looks at twice the controller's land count
   (`LibraryLookCount::ControllerLandsTwiceV1`), and plot {1}{B}{G}.
 
-Known limits shared with earlier waves, tracked in #710: an optional search
-that is declined still shuffles (Path to Exile); an unrestricted search may find nothing (Entomb,
-Imperial Seal, as Vampiric Tutor); a granted flashback does not add a second cost to a card that
-has flashback (Flashback, as Snapcaster Mage); "each player draws" from a sorcery cast outside its
-controller's turn draws for the controller first (Wheel of Fortune, Time Spiral); a draw that a
-leaf stages at resolution (Occult Epiphany's X cards) does not offer the choice between two
-competing draw replacements, which is Hullbreacher's Partial branch; and a batch applies
-replacement effects event by event, so a replacement source destroyed in the batch stops applying
-to the events after its own (Pest Infestation naming Rest in Peace first, as every sweeper).
+Known limits shared with earlier waves, tracked in #710: a granted flashback does not add a
+second cost to a card that has flashback (Flashback, as Snapcaster Mage); "each player draws" from
+a sorcery cast outside its controller's turn draws for the controller first (Wheel of Fortune,
+Time Spiral); a draw that a leaf stages at resolution (Occult Epiphany's X cards) does not offer
+the choice between two competing draw replacements, which is Hullbreacher's Partial branch; and a
+batch applies replacement effects event by event, so a replacement source destroyed in the batch
+stops applying to the events after its own (Pest Infestation naming Rest in Peace first, as every
+sweeper).
+
+Conventions fixed under #717:
+
+- Optional searches. A "may search" asks the searching player first, with declining as the first
+  option (`eternal_cards_v1::may_search`, the shape Solemn Simulacrum and Krosan Tusker already
+  had). A player who declines neither searches nor shuffles; a player who searches may still find
+  nothing when the search names a quality (701.23b), and then shuffles, also when the library
+  holds no matching card. This covers Path to Exile, Ghost Quarter, Erode, White Orchid Phantom,
+  Sundering Eruption (the new leaf `E8aOpV1::BasicLandSearchTappedV1` searches after the choice),
+  Assassin's Trophy (the opponent chooses), Flagstones of Trokair, Recruiter of the Guard,
+  Stoneforge Mystic, Goblin Engineer, Spellseeker, Goblin Matron, Yavimaya Granger, Heliod's
+  Pilgrim, Heaped Harvest, Golos and Veteran Explorer (each player chooses, its controller first,
+  the order the card already had; 101.4 would ask the active player first). Mandatory searches
+  (Winds of Abandon, the fetch lands) are unchanged.
+- Unrestricted searches. A search for "a card" names no quality, so it must find one while the
+  library has one (701.23d): Entomb's `SearchLibraryCardsToDestination` with
+  `LibraryCardFilter::AnyCard` must find its maximum, or every card of a smaller library, and
+  Vampiric Tutor, Imperial Seal and Beseech the Mirror must find one card. The prompt, the answer
+  and the coordinator all check the minimum.
+- Program stop after a win. When a player wins the game during a resolution (Jace, Wielder of
+  Mysteries replacing a draw), the game is over at once (104.1, 104.2a): in the eternal build the
+  plain interpreter's `Sequence` and the resumable interpreter's frame loop stop before the next
+  instruction (`owned_draws_v1::program_stops_after_win`), dropping the resolution's Coveted Jewel
+  and Paradoxical Outcome draw records as a Jace choice that wins already did. A player who can't
+  lose keeps the program running, and an owned draw instruction stops itself through its journal.
+  A loss for drawing from an empty library without Jace is a state-based action (704.5b), not an
+  effect, so "each player draws" still lets both players draw. Scrawling Crawler's "each player
+  draws" is the shape that needed it; the local stops of Time Spiral, Wheel of Fortune and the
+  owned draws stay.
 
 Each sub-module's test file covers every card's printed text in rules tests (costs, both sides of
 each condition, illegal targets) and plays decks of its cards through public schema-5 sessions

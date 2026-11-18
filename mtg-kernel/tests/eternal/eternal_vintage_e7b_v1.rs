@@ -1306,6 +1306,10 @@ fn assassins_trophy_destroys_and_its_controller_may_search_a_basic_land() {
     cast(&mut state, trophy, &[Target::Object(strix)]);
     let mut searched = false;
     settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption { player, .. } => {
+            assert_eq!(player, P1, "the permanent's controller chooses to search");
+            Action::ChooseEffectOption(1)
+        }
         Decision::ChooseEffectTargets {
             player,
             legal_targets,
@@ -1325,6 +1329,26 @@ fn assassins_trophy_destroys_and_its_controller_may_search_a_basic_land() {
     assert_eq!(zone(&state, forest), Zone::Battlefield);
     assert!(!state.objects.get(forest).tapped);
     assert_eq!(state.objects.get(forest).controller, P1);
+
+    // Declining searches nothing and does not shuffle.
+    let mut state = game(&["Forest", "Island", "Island"]);
+    let before = state.players[1].library.clone();
+    let trophy = put(&mut state, P0, "Assassin's Trophy", Zone::Hand);
+    let strix = put(&mut state, P1, "Baleful Strix", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::G], 0);
+    cast(&mut state, trophy, &[Target::Object(strix)]);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectOption {
+            player,
+            option_count: 2,
+            ..
+        }) => assert_eq!(player, P1),
+        other => panic!("expected the choice to search, got {other:?}"),
+    }
+    act(&mut state, Action::ChooseEffectOption(0));
+    settled(&mut state);
+    assert_eq!(zone(&state, strix), Zone::Graveyard);
+    assert_eq!(state.players[1].library, before);
 }
 
 #[test]
@@ -2086,7 +2110,8 @@ fn golos_fetches_a_land_and_exiles_three_to_play_free() {
     let golos = put(&mut state, P0, "Golos, Tireless Pilgrim", Zone::Hand);
     pool(&mut state, P0, &[], 5);
     cast(&mut state, golos, &[]);
-    settle_picking(&mut state, 0, Some(bayou));
+    // Option 1: search.
+    settle_picking(&mut state, 1, Some(bayou));
     assert_eq!(zone(&state, bayou), Zone::Battlefield);
     assert!(state.objects.get(bayou).tapped);
 
