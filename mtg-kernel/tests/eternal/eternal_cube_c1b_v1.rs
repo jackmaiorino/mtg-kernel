@@ -2934,8 +2934,7 @@ fn c1b_decks_finish_and_replay_through_public_sessions_both_seats() {
         let replay = play_observed(pair.clone(), None, *seed, *policy, &mut |_, _| {});
         assert_eq!(
             game.transcript_sha256, replay.transcript_sha256,
-            "seed={seed} ranked={}",
-            matches!(policy, Policy::Ranked)
+            "seed={seed} policy={policy:?}"
         );
         events.casts
     });

@@ -788,7 +788,7 @@ fn informed_s1m_option<'a>(actions: &[&'a Value], decision: &Value) -> Option<&'
 /// but activates no ability other than an Extinguisher Battleship's station;
 /// `Random` reaches activations, so lands, mana rocks and activated abilities
 /// run too.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum Policy {
     Ranked,
     Random(u64),
