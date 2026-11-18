@@ -1033,6 +1033,38 @@ fn root_maze_makes_artifacts_and_lands_enter_tapped() {
 }
 
 #[test]
+fn root_maze_taps_a_creature_that_mycosynth_lattice_makes_an_artifact() {
+    // An entering permanent is checked as it would exist on the battlefield
+    // (614.12): under Mycosynth Lattice a creature enters as an artifact.
+    for lattice in [false, true] {
+        let mut state = islands();
+        put(&mut state, P0, "Root Maze", Zone::Battlefield);
+        if lattice {
+            put(&mut state, P1, "Mycosynth Lattice", Zone::Battlefield);
+        }
+        let wall = put(&mut state, P0, "Wall of Blossoms", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::G], 1);
+        cast(&mut state, wall, &[]);
+        settled(&mut state);
+        assert_eq!(state.objects.get(wall).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(wall).tapped, lattice, "{lattice}");
+    }
+}
+
+#[test]
+fn a_root_maze_that_becomes_an_artifact_does_not_tap_itself() {
+    // Its own static ability does not exist until it is on the battlefield.
+    let mut state = islands();
+    put(&mut state, P1, "Mycosynth Lattice", Zone::Battlefield);
+    let maze = put(&mut state, P0, "Root Maze", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    cast(&mut state, maze, &[]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(maze).zone, Zone::Battlefield);
+    assert!(!state.objects.get(maze).tapped);
+}
+
+#[test]
 fn stasis_skips_untap_steps_and_costs_u_each_upkeep() {
     let mut state = game(&["Island"; 10]);
     put(&mut state, P0, "Stasis", Zone::Battlefield);

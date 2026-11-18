@@ -1923,21 +1923,20 @@ pub(crate) fn cast_prohibited(state: &GameState, player: PlayerId) -> bool {
 }
 
 /// Archon of Emeria: "Nonbasic lands your opponents control enter tapped."
+/// Called once `object` is on the battlefield under `controller`: its
+/// current types and supertypes decide (614.12).
 pub(crate) fn enters_tapped(state: &GameState, object: ObjectId, controller: PlayerId) -> bool {
     // Root Maze (Premodern wave P2a).
     if crate::eternal_premodern_p2a_v1::statics::enters_tapped(state, object, controller) {
         return true;
     }
-    let Some(def) = state
-        .objects
-        .try_get(object)
-        .and_then(|live| CARD_DEFS.get(live.card_def as usize))
-    else {
+    let Some(live) = state.objects.try_get(object) else {
         return false;
     };
-    let face = state.objects.get(object).v4.face_index;
-    def.types_for_face(face).contains(&CardType::Land)
-        && !(face == 0 && def.supertypes.contains(&Supertype::Basic))
+    let face = live.v4.face_index;
+    let supertypes = crate::engine::effective_supertypes(state, object);
+    crate::engine::object_has_type(state, object, CardType::Land)
+        && !(face == 0 && supertypes.contains(&Supertype::Basic))
         && active_permanents(state, ARCHON_OF_EMERIA, Some(controller.opponent()))
             .next()
             .is_some()

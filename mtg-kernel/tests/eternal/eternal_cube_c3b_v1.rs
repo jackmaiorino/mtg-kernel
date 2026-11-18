@@ -1770,6 +1770,34 @@ fn an_opposing_spider_woman_taps_your_creatures_as_they_enter() {
     );
 }
 
+#[test]
+fn spider_woman_reads_the_types_a_permanent_has_as_it_enters() {
+    // Mycosynth Lattice makes every permanent an artifact. An entering
+    // permanent is checked as it would exist on the battlefield (614.12),
+    // so an opposing land enters as an artifact, and tapped.
+    for lattice in [false, true] {
+        let mut state = plains();
+        put(
+            &mut state,
+            P0,
+            "Spider-Woman, Stunning Savior",
+            Zone::Battlefield,
+        );
+        if lattice {
+            put(&mut state, P0, "Mycosynth Lattice", Zone::Battlefield);
+        }
+        opponents_turn(&mut state);
+        let forest = put(&mut state, P1, "Forest", Zone::Hand);
+        play_land(&mut state, forest);
+        assert_eq!(zone(&state, forest), Zone::Battlefield);
+        assert_eq!(
+            engine::object_has_type(&state, forest, CardType::Artifact),
+            lattice
+        );
+        assert_eq!(tapped(&state, forest), lattice, "lattice={lattice}");
+    }
+}
+
 // ---- Public sessions -----------------------------------------------------------------
 
 #[test]

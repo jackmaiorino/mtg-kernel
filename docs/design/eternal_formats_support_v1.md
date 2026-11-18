@@ -1171,8 +1171,7 @@ Spirits whose incarnations left the battlefield or exile, and Drop of Honey's tr
 once its trigger left the stack.
 
 Known gaps (S1g): no effect removes counters from the Spirits, so their flying counter is not
-a counter other effects can count or remove. A land entering under Alpine Moon keeps an
-enters-tapped ability, as under Blood Moon. Drop of Honey's state trigger is checked as
+a counter other effects can count or remove. Drop of Honey's state trigger is checked as
 triggers are collected, so creatures that all leave and return within one event batch, such
 as a flicker of every creature, don't trigger it (its ruling says they do).
 
@@ -2538,11 +2537,8 @@ C1c:
 Known limits shared with earlier waves, tracked in #710: a granted flashback does not add a
 second cost to a card that has flashback (Flashback, as Snapcaster Mage); "each player draws" from
 a sorcery cast outside its controller's turn draws for the controller first (Wheel of Fortune,
-Time Spiral); a draw that a leaf stages at resolution (Occult Epiphany's X cards) does not offer
-the choice between two competing draw replacements, which is Hullbreacher's Partial branch; and a
-batch applies replacement effects event by event, so a replacement source destroyed in the batch
-stops applying to the events after its own (Pest Infestation naming Rest in Peace first, as every
-sweeper).
+Time Spiral); and a draw that a leaf stages at resolution (Occult Epiphany's X cards) does not
+offer the choice between two competing draw replacements, which is Hullbreacher's Partial branch.
 
 Conventions fixed under #717:
 
@@ -2572,6 +2568,20 @@ Conventions fixed under #717:
   effect, so "each player draws" still lets both players draw. Scrawling Crawler's "each player
   draws" is the shape that needed it; the local stops of Time Spiral, Wheel of Fortune and the
   owned draws stay.
+
+A batch is one event for replacement effects (614.1, 614.6): the name-keyed graveyard
+replacements (Rest in Peace, Leyline of the Void, Dauthi Voidwalker, with Yawgmoth's Will, Suplex,
+Lunarch Veteran and unearth before them in the same order as for a single event) are decided for
+every member before any member moves (`event::pre_apply_batch_zone_replacements_v1`), for an
+effect batch, a sacrifice group and a state-based death group alike. A cost that sacrifices
+several permanents commits as one group whenever such a replacement applies to one of them (Dread
+Return's flashback sacrificing a Rest in Peace that Opalescence animates). A member that a finality
+counter or an exile-if-it-would-die shield applies to is left out: those general replacements apply
+first, as for a single event, so it gets no void counter. A Rest in Peace or Dauthi
+Voidwalker destroyed in the batch still exiles the other members (Pest Infestation, every
+sweeper, Pestilence). Containment Priest's entry replacement is still applied as each member
+enters, so a Priest entering earlier in one entry batch exiles a later nontoken creature of the
+same batch.
 
 Each sub-module's test file covers every card's printed text in rules tests (costs, both sides of
 each condition, illegal targets) and plays decks of its cards through public schema-5 sessions
@@ -2627,6 +2637,14 @@ C2a:
 - Indatha, Ketria, Raugrin, Savai and Zagoth Triome, Raffine's Tower and Xander's Lounge join the
   `TRIOMES` table (enter tapped, three basic types, cycling {3}); Blazemire Verge and Bleachbone
   Verge join `VERGES`; Botanical Sanctum joins `FASTLANDS`; Commercial District is a surveil land.
+- Entering tapped is decided as the permanent would exist on the battlefield (614.12). A land's
+  own printed rule ("enters tapped", "enters tapped unless") is read before the move and dropped
+  once the land is placed if a Moon effect (Blood Moon, Magus of the Moon, Harbinger of the Seas,
+  Vision Charm, Alpine Moon) already removes its abilities (`event::printed_entry_rule_removed_v1`),
+  as the shocklands and Multiversal Passage skip their choice. The effects of other permanents
+  (Archon of Emeria, Root Maze, Spider-Woman) are checked after placement on the current types and
+  the controller it entered under, so a Mycosynth Lattice or an Opalescence counts; a tap from
+  another source is never undone by the Moon check.
 
 C2b:
 

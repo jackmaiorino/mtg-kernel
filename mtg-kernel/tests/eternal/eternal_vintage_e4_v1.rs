@@ -2252,6 +2252,31 @@ fn archon_of_emeria_limits_spells_and_taps_opponents_nonbasic_lands() {
 }
 
 #[test]
+fn archon_of_emeria_reads_the_controller_a_land_enters_under() {
+    // The Archon's own nonbasic land card, put onto the battlefield under
+    // the opponent's control, is a land that opponent controls as it
+    // enters: tapped. The opponent's card put onto the battlefield under
+    // the Archon's controller enters untapped.
+    let mut state = islands();
+    put(&mut state, P1, "Archon of Emeria", Zone::Battlefield);
+    let stolen = put(&mut state, P1, "Strip Mine", Zone::Graveyard);
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change_to_battlefield_under_controller(stolen, P0),
+    );
+    assert_eq!(state.objects.get(stolen).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(stolen).controller, P0);
+    assert!(state.objects.get(stolen).tapped, "it entered under P0");
+    let taken = put(&mut state, P0, "Strip Mine", Zone::Graveyard);
+    mtg_kernel::event::propose_and_commit(
+        &mut state,
+        mtg_kernel::event::ProposedEvent::zone_change_to_battlefield_under_controller(taken, P1),
+    );
+    assert_eq!(state.objects.get(taken).controller, P1);
+    assert!(!state.objects.get(taken).tapped, "it entered under P1");
+}
+
+#[test]
 fn clarion_conqueror_stops_artifact_creature_and_planeswalker_abilities() {
     let mut state = islands();
     put(&mut state, P1, "Clarion Conqueror", Zone::Battlefield);
