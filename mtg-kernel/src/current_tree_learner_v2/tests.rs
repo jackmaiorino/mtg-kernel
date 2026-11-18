@@ -54,7 +54,7 @@ fn decision(seed: u64) -> OwnedDecision {
         })
         .collect();
     let flags = (0..width as u64)
-        .map(|i| std::array::from_fn(|f| (seed + 3 * i + f as u64).is_multiple_of(3)))
+        .map(|i| std::array::from_fn(|f| (seed + i + f as u64).is_multiple_of(2)))
         .collect();
     OwnedDecision {
         state,
@@ -66,19 +66,6 @@ fn decision(seed: u64) -> OwnedDecision {
 
 fn decisions(base: u64, count: u64) -> Vec<OwnedDecision> {
     (0..count).map(|i| decision(base + i)).collect()
-}
-
-/// Decisions whose flag columns differ between actions. In [`decision`] each
-/// action of a decision carries the same flags (the pinned digests use it), so
-/// there the flag weights are invariant under the softmax.
-fn varied_decisions(base: u64, count: u64) -> Vec<OwnedDecision> {
-    let mut owned = decisions(base, count);
-    for (offset, decision) in (base..).zip(&mut owned) {
-        for (i, flags) in (0..).zip(&mut decision.flags) {
-            *flags = std::array::from_fn(|f| (offset + i + f as u64).is_multiple_of(2));
-        }
-    }
-    owned
 }
 
 fn trajectory(
@@ -239,9 +226,10 @@ fn deterministic_initialization_is_fixed_finite_with_a_zero_value_head() {
     );
 }
 
-/// Fixed advantages and value targets for five decisions.
-fn examples(owned: &[OwnedDecision]) -> Vec<ExampleV2<'_>> {
-    let advantages = [0.7, -1.3, 0.4, 2.1, -0.2];
+/// Fixed advantages (multiplied by `advantage_scale`) and value targets for
+/// five decisions.
+fn examples(owned: &[OwnedDecision], advantage_scale: f64) -> Vec<ExampleV2<'_>> {
+    let advantages = [0.7, -1.3, 0.4, 2.1, -0.2].map(|a| a * advantage_scale);
     let targets = [0.3, -0.6, 0.9, 0., -0.95];
     owned
         .iter()
@@ -255,13 +243,22 @@ fn examples(owned: &[OwnedDecision]) -> Vec<ExampleV2<'_>> {
         .collect()
 }
 
-fn finite_difference_check<const H: usize>(value_coefficient: f64, entropy_coefficient: f64) {
-    let owned = varied_decisions(3, 5);
+/// Checks the gradient of one weighting of the three terms: `advantage_scale`
+/// switches the policy term on or off, the coefficients the other two.
+fn finite_difference_check<const H: usize>(
+    advantage_scale: f64,
+    value_coefficient: f64,
+    entropy_coefficient: f64,
+) {
+    let owned = decisions(3, 5);
     let model = random_model::<H>(0x5eed + H as u64);
-    let batch = examples(&owned);
-    let (_, gradient) = model
+    let batch = examples(&owned, advantage_scale);
+    let (loss, gradient) = model
         .loss_and_gradient(&batch, value_coefficient, entropy_coefficient)
         .unwrap();
+    if advantage_scale == 0. {
+        assert_eq!(loss.policy, 0.);
+    }
     let loss_at = |parameters: Vec<f64>| {
         TreeModelV2::<H>::from_parameters(parameters)
             .unwrap()
@@ -287,8 +284,8 @@ fn finite_difference_check<const H: usize>(value_coefficient: f64, entropy_coeff
             let tolerance = 1e-7 + 1e-6 * analytic.abs().max(numeric.abs());
             assert!(
                 (numeric - analytic).abs() <= tolerance,
-                "H {H} c_v {value_coefficient} c_ent {entropy_coefficient} {name} {index}: \
-                 analytic {analytic} numeric {numeric}"
+                "H {H} policy {advantage_scale} c_v {value_coefficient} \
+                 c_ent {entropy_coefficient} {name} {index}: analytic {analytic} numeric {numeric}"
             );
         }
     }
@@ -296,18 +293,25 @@ fn finite_difference_check<const H: usize>(value_coefficient: f64, entropy_coeff
 
 #[test]
 fn finite_differences_match_every_parameter_block() {
-    for (value_coefficient, entropy_coefficient) in [(0., 0.), (1., 0.), (0., 0.5), (0.5, 0.01)] {
-        finite_difference_check::<16>(value_coefficient, entropy_coefficient);
-        finite_difference_check::<32>(value_coefficient, entropy_coefficient);
+    // The policy term alone, the value term alone, the entropy term alone and
+    // the design's weighting of all three.
+    for (policy, value, entropy) in [
+        (1., 0., 0.),
+        (0., 1., 0.),
+        (0., 0., 0.5),
+        (1., 0.5, 0.01),
+    ] {
+        finite_difference_check::<16>(policy, value, entropy);
+        finite_difference_check::<32>(policy, value, entropy);
     }
 }
 
 #[test]
 fn every_block_but_the_softmax_invariant_ones_receives_gradient() {
-    let owned = varied_decisions(3, 5);
+    let owned = decisions(3, 5);
     let model = random_model::<32>(17);
     let (_, gradient) = model
-        .loss_and_gradient(&examples(&owned), 0.5, 0.01)
+        .loss_and_gradient(&examples(&owned, 1.), 0.5, 0.01)
         .unwrap();
     for (name, start, end) in blocks(32) {
         let largest = gradient[start..end]
@@ -325,7 +329,7 @@ fn every_block_but_the_softmax_invariant_ones_receives_gradient() {
 
 #[test]
 fn entropy_term_alone_matches_its_closed_form() {
-    let owned = varied_decisions(5, 1);
+    let owned = decisions(5, 1);
     let model = random_model::<16>(23);
     let example = [ExampleV2 {
         view: owned[0].view(),
@@ -487,12 +491,12 @@ fn libm_free_functions_track_the_platform_functions() {
     assert_eq!(powi_v2(0.999, 0), 1.);
     assert_eq!(powi_v2(0.5, 10), 1. / 1024.);
     assert!((powi_v2(0.999, 200) / 0.999_f64.powi(200) - 1.).abs() < 1e-13);
-    let probabilities = probabilities_v2(&[1., 2., -800., 0.5]).unwrap();
-    let total = probabilities.iter().sum::<f64>();
+    let softmax = softmax_v2(&[1., 2., -800., 0.5]).unwrap();
+    let total = softmax.probabilities.iter().sum::<f64>();
     assert!((total - 1.).abs() < 1e-15);
-    assert!(probabilities[2] < 1e-300);
-    assert_eq!(probabilities_v2(&[]), Err(Error::ActionRange));
-    assert_eq!(probabilities_v2(&[f64::NAN]), Err(Error::NonFiniteLogit));
+    assert!(softmax.probabilities[2] < 1e-300);
+    assert!(softmax_v2(&[]).is_err_and(|e| e == Error::ActionRange));
+    assert!(softmax_v2(&[f64::NAN]).is_err_and(|e| e == Error::NonFiniteLogit));
 }
 
 #[test]
@@ -707,29 +711,62 @@ fn pair_centered_rewards_encode_half_integer_advantages() {
     }
 }
 
-/// Ruling (11): one checkpoint digest, pinned here, that hosted CI checks on
-/// Linux and on Windows. Three updates of the design configuration from the
-/// deterministic initialization over a fixed batch.
+/// Ruling (11): the state digests below are pinned here and checked by hosted
+/// CI on Linux and on Windows. Five updates of the design configuration with
+/// its nominal horizon of 200 updates, from the deterministic initialization:
+///
+/// 1. Every seat a natural draw. All values start at exactly zero, so every
+///    advantage and value error is zero and only the entropy term moves the
+///    policy: the gradient is small and is not clipped.
+/// 2. One seat with one decision and a win. Sigma is zero, so the standardized
+///    advantage is about `1e8` and the update is clipped.
+/// 3. to 5. The six-seat batch, with a truncated seat added at update 4.
+///
+/// Updates 2 to 5 take the cosine at `f = 1/199` to `4/199`; `powi_v2` gives
+/// Adam's corrections at steps 1 to 5; the square root takes the clip norm
+/// and every Adam denominator at every update and a nonzero sigma at updates
+/// 3 to 5; every encoder node is a `tanh_v2` of a nonzero argument, and the
+/// value head is one from update 3 on; every decision's softmax takes
+/// `exp_nonpositive_v2` of each nonzero logit gap and `ln_v2` of a weight sum
+/// between 1 and the menu width.
 #[test]
 fn pinned_checkpoint_state_digests() {
-    fn digest<const H: usize>() -> String {
-        let owned = batch();
-        let mut learner = TreeLearnerV2::<H>::new(OptimizerConfigV2::campaign_v1(3)).unwrap();
-        for _ in 0..3 {
-            learner.update_views(&views(&owned)).unwrap();
+    fn run<const H: usize>() -> (String, Vec<bool>) {
+        let mut draws = batch();
+        for seat in &mut draws {
+            seat.terminal = natural(0);
         }
-        assert_eq!(learner.step(), 3);
-        learner.snapshot().state_sha256()
+        let single = vec![trajectory(7, 0, 1, natural(1), decisions(71, 1))];
+        let mut with_truncated = batch();
+        with_truncated.push(trajectory(1, 0, 1, TerminalV2::Truncated, decisions(81, 3)));
+        let plain = batch();
+        let mut learner = TreeLearnerV2::<H>::new(OptimizerConfigV2::campaign_v1(200)).unwrap();
+        let mut clipped = Vec::new();
+        for (update, owned) in [&draws, &single, &plain, &with_truncated, &plain]
+            .into_iter()
+            .enumerate()
+        {
+            let report = learner.update_views(&views(owned)).unwrap();
+            if update == 0 {
+                assert_eq!(report.learning_rate, 3e-4);
+                assert_eq!(report.advantage_sigma, 0.);
+            } else {
+                assert!(report.learning_rate > 1e-4);
+                assert!(report.learning_rate < 3e-4);
+            }
+            clipped.push(report.clipped);
+        }
+        assert_eq!(learner.step(), 5);
+        (learner.snapshot().state_sha256(), clipped)
     }
-    let wide = digest::<32>();
-    let narrow = digest::<16>();
-    println!("current_tree_learner_v2 pinned state digests: h32 {wide} h16 {narrow}");
-    assert_eq!(
-        wide,
-        "3e08214287dca45a30df5cf425d6b1118ff35bf37cd198b9e8c6bbec290efd7f"
+    let (wide, wide_clipped) = run::<32>();
+    let (narrow, narrow_clipped) = run::<16>();
+    println!(
+        "current_tree_learner_v2 pinned state digests: h32 {wide} {wide_clipped:?} \
+         h16 {narrow} {narrow_clipped:?}"
     );
-    assert_eq!(
-        narrow,
-        "e3f35703da3ed61e6ea76a864cada30f3da2a62059544e16934ecb0d7101f4af"
-    );
+    assert_eq!(wide_clipped, [false, true, false, false, false]);
+    assert_eq!(narrow_clipped, [false, true, false, false, false]);
+    assert_eq!(wide, "pending");
+    assert_eq!(narrow, "pending");
 }

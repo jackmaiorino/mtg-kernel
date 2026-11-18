@@ -526,12 +526,6 @@ fn softmax_v2(logits: &[f64]) -> Result<SoftmaxV2> {
     })
 }
 
-/// Action probabilities from logits with the libm-free softmax of this
-/// module, for a sampler that must not call the platform math library.
-pub fn probabilities_v2(logits: &[f64]) -> Result<Vec<f64>> {
-    softmax_v2(logits).map(|softmax| softmax.probabilities)
-}
-
 /// Generalized advantage estimation for one seat's natural game (design
 /// Section 3.2): `delta_t = gamma V_(t+1) - V_t` before the last retained
 /// decision and `R - V_(T-1)` at it, then `A_t = delta_t + gamma lambda
