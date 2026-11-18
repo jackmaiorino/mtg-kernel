@@ -1491,6 +1491,75 @@ fn a_later_ability_removal_ends_benevolent_blessings_protection() {
 }
 
 #[test]
+fn benevolent_blessing_attachment_protection_follows_timestamps() {
+    for controller in [P0, P1] {
+        for removal_first in [false, true] {
+            let opponent = controller.opponent();
+            let mut state = plains();
+            state.active_player = opponent;
+            state.priority_player = opponent;
+            let inspector = put(&mut state, controller, "Thraben Inspector", Zone::Battlefield);
+            let other = put(&mut state, opponent, "Thraben Inspector", Zone::Battlefield);
+            let blessing = put(&mut state, controller, "Benevolent Blessing", Zone::Hand);
+            let dress = put(&mut state, opponent, "Dress Down", Zone::Hand);
+
+            if removal_first {
+                pool(&mut state, opponent, &[ManaColor::U], 1);
+                cast(&mut state, dress, &[]);
+                settled(&mut state);
+            }
+
+            pass_until(&mut state, |state| state.priority_player == controller);
+            pool(&mut state, controller, &[ManaColor::W], 1);
+            cast(&mut state, blessing, &[Target::Object(inspector)]);
+            // Choose blue.
+            settle_option(&mut state, 1);
+            assert_eq!(
+                state.objects.get(blessing).v4.chosen_color,
+                Some(ManaColor::U)
+            );
+
+            if !removal_first {
+                pool(&mut state, opponent, &[ManaColor::U], 1);
+                cast(&mut state, dress, &[]);
+                settled(&mut state);
+            }
+
+            assert_eq!(state.active_player, opponent);
+            assert_eq!(state.priority_player, opponent);
+            assert_eq!(state.step, Step::Main1);
+            assert_eq!(zone(&state, dress), Zone::Battlefield);
+            assert_eq!(zone(&state, blessing), Zone::Battlefield);
+            let scream = put(&mut state, opponent, "Unable to Scream", Zone::Hand);
+            pool(&mut state, opponent, &[ManaColor::U], 0);
+            let targets = cast_targets(&state, scream);
+            assert!(targets.contains(&Target::Object(other)));
+            if removal_first {
+                // The later Blessing still grants protection from blue.
+                assert!(!targets.contains(&Target::Object(inspector)));
+                assert_eq!(zone(&state, scream), Zone::Hand);
+            } else {
+                assert!(targets.contains(&Target::Object(inspector)));
+                cast(&mut state, scream, &[Target::Object(inspector)]);
+                settled(&mut state);
+                assert_eq!(zone(&state, scream), Zone::Battlefield);
+                assert_eq!(zone(&state, blessing), Zone::Battlefield);
+                assert_eq!(
+                    state
+                        .objects
+                        .get(scream)
+                        .v4
+                        .attached_to
+                        .map(|link| link.object),
+                    Some(inspector)
+                );
+                assert!(state.objects.get(inspector).attachments.contains(&scream));
+            }
+        }
+    }
+}
+
+#[test]
 fn benevolent_blessing_has_flash() {
     let mut state = plains();
     let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);

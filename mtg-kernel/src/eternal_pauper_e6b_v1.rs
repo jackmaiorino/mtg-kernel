@@ -1581,6 +1581,11 @@ pub(crate) fn protection_removes_attachment(
     attached_named(state, host, BENEVOLENT_BLESSING).any(|blessing| {
         let live = state.objects.get(blessing);
         live.controller != controller
+            && crate::continuous_characteristics_v1::granted_ability_survives(
+                state,
+                host,
+                live.v4.layer_timestamp.unwrap_or(0),
+            )
             && live
                 .v4
                 .chosen_color
