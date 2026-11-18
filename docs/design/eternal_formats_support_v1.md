@@ -2919,6 +2919,30 @@ Conventions fixed under #717:
   effect, so "each player draws" still lets both players draw. Scrawling Crawler's "each player
   draws" is the shape that needed it; the local stops of Time Spiral, Wheel of Fortune and the
   owned draws stay.
+- Linked exile after the source left. A card exiled by Currency Converter's "may exile" trigger
+  is linked to the Converter incarnation whose trigger it is, also when that Converter left the
+  battlefield before the trigger resolved (607.2a): a release ability of that incarnation already
+  on the stack still finds the card. A later incarnation never reads the link.
+- Delayed triggers see the event. Currency Converter's discard trigger and Staff of the
+  Storyteller's token trigger check their sources as the event happens (603.2), not when the
+  triggers are collected: `note_discard` and `note_token_created` (called as each token creation
+  commits) record the Converters and Staffs their player controlled then, so a source destroyed
+  later in the same resolution (Kolaghan's Command making its controller discard and then
+  destroying the Converter) still triggers, and a Staff that arrives later does not. Staff still
+  triggers once per trigger collection in which its controller created creature tokens, so two
+  separate token-creating instructions of one resolution give one story counter; no card of the
+  eternal decks creates creature tokens with two instructions in one resolution.
+- Counter costs and the charge leaf. Devoted Druid's -1/-1 cost counter and the charge counters
+  of `E7aOpV1::AddChargeCountersV1` (Blast Zone's X, Staff of the Storyteller's story counter)
+  always go through `doubling_season_v48::counter_amount`, as a cost and as an effect, so a
+  replacement that names any counter being put (Innkeeper's Talent at level 3) applies to both
+  and Doubling Season's "an effect" only to the second. Counters a permanent enters with
+  (sunburst, Blast Zone's entry counter) are not yet modified.
+- Sunburst on a copy. Phyrexian Metamorph's cast records its colors spent, like Engineered
+  Explosives' and Pentad Prism's, and a Metamorph that enters as a copy of either gets a charge
+  counter for each color spent to cast it (702.44a); a copy of Engineered Explosives also keeps
+  that count for its sacrifice ability. A Metamorph put onto the battlefield without being cast
+  gets none.
 
 A batch is one event for replacement effects (614.1, 614.6): the name-keyed graveyard
 replacements (Rest in Peace, Leyline of the Void, Dauthi Voidwalker, with Yawgmoth's Will, Suplex,
