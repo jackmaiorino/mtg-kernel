@@ -112,6 +112,8 @@ mod eternal_sideboard_s1n_v1;
 mod eternal_sideboard_s1o_flagbearers_v1;
 #[path = "eternal/eternal_sideboard_s1o_v1.rs"]
 mod eternal_sideboard_s1o_v1;
+#[path = "eternal/eternal_sideboard_s1q_v1.rs"]
+mod eternal_sideboard_s1q_v1;
 #[path = "eternal/eternal_vintage_e4_v1.rs"]
 mod eternal_vintage_e4_v1;
 #[path = "eternal/eternal_vintage_e4b_v1.rs"]
