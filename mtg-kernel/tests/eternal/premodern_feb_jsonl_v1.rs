@@ -108,7 +108,61 @@ fn rank(label: &str, ordinal: usize) -> (u8, usize) {
 
 type TraceRow = ([u8; 32], usize);
 
+/// The view-sequence pin of the frozen mirror: every numeric and Human view,
+/// prompt by prompt, with the chosen ordinal. The catalog hash is folded out,
+/// so a registry wave that changes no FEB card leaves the pin alone.
+const MIRROR_VIEW_PINS: [(PlayerSeatV1, &str); 2] = [
+    (
+        PlayerSeatV1::P0,
+        "5402d2b23941145fb12398853414107e2d8d209ffe104c0d6f48fe10bd4e171f",
+    ),
+    (
+        PlayerSeatV1::P1,
+        "424c64f9f46d2dd571564a725a3343cd27550d822f9bd4a4a4b9337891db8195",
+    ),
+];
+
+fn without_catalog_hash(value: &Value) -> Value {
+    match value {
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(key, field)| {
+                    let field = if key == "card_db_hash" {
+                        json!(0)
+                    } else {
+                        without_catalog_hash(field)
+                    };
+                    (key.clone(), field)
+                })
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(without_catalog_hash).collect()),
+        other => other.clone(),
+    }
+}
+
+fn view_pin(views: &[(Value, usize)]) -> String {
+    let mut pin = Sha256::new();
+    for (view, ordinal) in views {
+        pin.update(serde_json::to_vec(&without_catalog_hash(view)).unwrap());
+        pin.update((*ordinal as u64).to_le_bytes());
+    }
+    pin.finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn play(starting: PlayerSeatV1, replay: Option<&[TraceRow]>) -> (Value, Vec<TraceRow>) {
+    let (winner, trace, _) = play_with_views(starting, replay);
+    (winner, trace)
+}
+
+fn play_with_views(
+    starting: PlayerSeatV1,
+    replay: Option<&[TraceRow]>,
+) -> (Value, Vec<TraceRow>, Vec<(Value, usize)>) {
     const MAX_ACTIONS: usize = 65_536;
     let mut process = Process::start();
     let reset = json!({"request_type": "reset", "expected_card_db_hash": KERNEL_CARDDB_HASH,
@@ -136,6 +190,7 @@ fn play(starting: PlayerSeatV1, replay: Option<&[TraceRow]>) -> (Value, Vec<Trac
     reply = refreshed;
 
     let mut trace = Vec::new();
+    let mut views = Vec::new();
     let mut cast = [false; 2];
     for step in 0..=MAX_ACTIONS {
         let state = &reply["state"];
@@ -150,7 +205,7 @@ fn play(starting: PlayerSeatV1, replay: Option<&[TraceRow]>) -> (Value, Vec<Trac
             let _ = process.request(reset);
             assert_eq!(process.request(restore)["code"], "unknown_snapshot");
             process.finish();
-            return (winner, trace);
+            return (winner, trace, views);
         }
         assert_eq!(
             state["state_type"], "decision",
@@ -195,6 +250,7 @@ fn play(starting: PlayerSeatV1, replay: Option<&[TraceRow]>) -> (Value, Vec<Trac
             assert_eq!(row, replay[step], "FEB replay diverged at step {step}");
         }
         trace.push(row);
+        views.push((json!([&state["numeric"], &state["human"]]), ordinal));
         if labels[ordinal].starts_with("Begin casting ") {
             cast[usize::from(prompt["actor"] == "p1")] = true;
         }
@@ -217,5 +273,19 @@ fn feb_jsonl_subprocess_reaches_terminal_and_replays_both_starting_seats() {
         let (winner, trace) = play(starting, None);
         let (replayed, _) = play(starting, Some(&trace));
         assert_eq!(replayed, winner);
+    }
+}
+
+#[test]
+fn feb_jsonl_mirror_view_sequence_matches_its_pin_both_starting_seats() {
+    let observed = MIRROR_VIEW_PINS.map(|(starting, _)| {
+        let (_, _, views) = play_with_views(starting, None);
+        (starting, view_pin(&views))
+    });
+    for ((starting, pinned), (_, actual)) in MIRROR_VIEW_PINS.iter().zip(&observed) {
+        assert_eq!(
+            actual, pinned,
+            "frozen FEB mirror views changed for {starting:?}; observed {observed:?}"
+        );
     }
 }
