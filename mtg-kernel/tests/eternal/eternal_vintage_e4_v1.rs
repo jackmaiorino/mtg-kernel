@@ -2762,6 +2762,166 @@ fn urzas_saga_under_blood_moon_gets_no_lore_counter_and_is_not_sacrificed_both_s
     }
 }
 
+fn opponent_of(player: PlayerId) -> PlayerId {
+    if player == P0 {
+        P1
+    } else {
+        P0
+    }
+}
+
+/// An Urza's Saga that `actor` played on this turn, at `actor`'s next
+/// precombat main phase once its chapter II ability resolved.
+fn saga_after_chapter_two(state: &mut GameState, actor: PlayerId) -> ObjectId {
+    let opponent = opponent_of(actor);
+    state.active_player = actor;
+    state.priority_player = actor;
+    let saga = put(state, actor, "Urza's Saga", Zone::Hand);
+    next(state);
+    act(state, Action::PlayLand(saga));
+    settled(state);
+    assert_eq!(state.objects.get(saga).counters.lore, 1);
+    pass_until(state, |state| {
+        state.active_player == opponent && state.step == Step::Main1
+    });
+    pass_until(state, |state| {
+        state.active_player == actor && state.step == Step::Main1 && state.stack.is_empty()
+    });
+    assert_eq!(state.objects.get(saga).counters.lore, 2);
+    saga
+}
+
+fn constructs(state: &GameState, player: PlayerId) -> usize {
+    state.players[player.index()]
+        .battlefield
+        .iter()
+        .filter(|&&id| {
+            CARD_DEFS[state.objects.get(id).card_def as usize].name == "Karn Construct Token"
+        })
+        .count()
+}
+
+/// Whether tapping `source` for `color` adds one `color`, tried on a copy.
+fn taps_for(state: &GameState, source: ObjectId, color: ManaColor) -> bool {
+    let mut tapped = state.clone();
+    let player = tapped.priority_player;
+    let before = mana(&tapped, player, color);
+    engine::step(&mut tapped, Action::ActivateManaAbilityChoice(source, color)).is_ok()
+        && mana(&tapped, player, color) == before + 1
+}
+
+/// Urza's Saga "gains an ability from its first and second chapters. It
+/// keeps those abilities for as long as it's on the battlefield" (its
+/// rulings). A land-type setter removes only the abilities from its rules
+/// text and not those other effects granted it (305.7). Under Blood Moon or
+/// Harbinger of the Seas a Saga whose chapters I and II resolved taps for the
+/// setter's color or for {C}, and "{2}, {T}" creates a Construct. Without
+/// chapter abilities it gets no lore counter and is not sacrificed (715.3c,
+/// 715.4).
+#[test]
+fn urzas_saga_keeps_its_chapter_grants_under_a_land_type_setter_both_seats() {
+    for (setter, color, land_type) in [
+        ("Blood Moon", ManaColor::R, Subtype::Mountain),
+        ("Harbinger of the Seas", ManaColor::U, Subtype::Island),
+    ] {
+        for actor in [P0, P1] {
+            let opponent = opponent_of(actor);
+            let mut state = islands();
+            let saga = saga_after_chapter_two(&mut state, actor);
+            let moon = put(&mut state, actor, setter, Zone::Hand);
+            pool(&mut state, actor, &[color], 2);
+            cast(&mut state, moon, &[]);
+            settled(&mut state);
+            assert_eq!(state.objects.get(moon).zone, Zone::Battlefield, "{setter}");
+            assert!(engine::has_effective_subtype(&state, saga, land_type));
+
+            assert!(taps_for(&state, saga, color), "{setter}: the setter's ability");
+            assert!(taps_for(&state, saga, ManaColor::C), "{setter}: chapter I");
+            assert!(!taps_for(&state, saga, ManaColor::G), "{setter}");
+            pool(&mut state, actor, &[], 2);
+            activate(&mut state, saga, 0, &[]);
+            settled(&mut state);
+            assert_eq!(constructs(&state, actor), 1, "{setter}: chapter II");
+
+            pass_until(&mut state, |state| {
+                state.active_player == opponent && state.step == Step::Main1
+            });
+            pass_until(&mut state, |state| {
+                state.active_player == actor && state.step == Step::Main1 && state.stack.is_empty()
+            });
+            assert_eq!(state.objects.get(saga).zone, Zone::Battlefield, "{setter}");
+            assert_eq!(state.objects.get(saga).counters.lore, 2, "{setter}");
+            assert!(taps_for(&state, saga, ManaColor::C), "{setter}: still");
+        }
+    }
+}
+
+/// The Alpine Moon option that names `land`.
+fn alpine_option(land: &str) -> u16 {
+    use mtg_kernel::eternal_sideboard_s1g_v1::{alpine_name_options, alpine_option_name};
+    (0..alpine_name_options().len())
+        .map(|option| u16::try_from(option).unwrap())
+        .find(|&option| alpine_option_name(option) == Some(land))
+        .unwrap_or_else(|| panic!("{land} is not a nonbasic land name"))
+}
+
+/// Puts an Alpine Moon from `player`'s hand onto the battlefield, naming
+/// Urza's Saga, and settles the stack.
+fn alpine_moon_naming_urzas_saga(state: &mut GameState, player: PlayerId) -> ObjectId {
+    let moon = put(state, player, "Alpine Moon", Zone::Hand);
+    event_move(state, moon, Zone::Battlefield);
+    match settle(state) {
+        Some(Decision::ChooseEffectOption { player: chooser, source, .. }) => {
+            assert_eq!((chooser, source), (player, moon));
+            act(state, Action::ChooseEffectOption(alpine_option("Urza's Saga")));
+        }
+        other => panic!("expected the name choice, got {other:?}"),
+    }
+    settled(state);
+    moon
+}
+
+/// Alpine Moon's named lands "lose all land types and abilities", which also
+/// removes abilities other effects granted them with an earlier timestamp
+/// (613.7). An Alpine Moon that entered while chapter I's ability was on the
+/// stack is earlier than its grant, so the Saga keeps "{T}: Add {C}." beside
+/// the Moon's "{T}: Add one mana of any color.". One that entered after
+/// chapter II resolved removes both grants.
+#[test]
+fn urzas_saga_chapter_grants_and_alpine_moon_apply_in_timestamp_order_both_seats() {
+    for actor in [P0, P1] {
+        let opponent = opponent_of(actor);
+
+        // Alpine Moon before chapter I resolved.
+        let mut state = islands();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let saga = put(&mut state, actor, "Urza's Saga", Zone::Hand);
+        next(&mut state);
+        act(&mut state, Action::PlayLand(saga));
+        match next(&mut state) {
+            Decision::CastSpellOrPass { .. } => {}
+            other => panic!("expected priority, got {other:?}"),
+        }
+        assert_eq!(state.stack.len(), 1, "chapter I");
+        alpine_moon_naming_urzas_saga(&mut state, opponent);
+        assert!(state.stack.is_empty());
+        assert_eq!(state.objects.get(saga).zone, Zone::Battlefield);
+        assert!(taps_for(&state, saga, ManaColor::G), "the Moon's ability");
+        assert!(taps_for(&state, saga, ManaColor::C), "chapter I's later grant");
+
+        // Alpine Moon after chapter II resolved.
+        let mut state = islands();
+        let saga = saga_after_chapter_two(&mut state, actor);
+        alpine_moon_naming_urzas_saga(&mut state, opponent);
+        assert!(taps_for(&state, saga, ManaColor::G), "the Moon's ability");
+        assert!(!taps_for(&state, saga, ManaColor::C), "chapter I's earlier grant");
+        pool(&mut state, actor, &[], 2);
+        assert!(!activatable(&mut state, saga, 0), "chapter II's earlier grant");
+        assert_eq!(state.objects.get(saga).counters.lore, 2);
+    }
+}
+
 #[test]
 fn phyrexian_metamorph_enters_as_an_artifact_copy_and_leaves_as_itself() {
     let mut state = islands();
