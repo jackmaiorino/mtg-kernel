@@ -295,12 +295,7 @@ fn finite_difference_check<const H: usize>(
 fn finite_differences_match_every_parameter_block() {
     // The policy term alone, the value term alone, the entropy term alone and
     // the design's weighting of all three.
-    for (policy, value, entropy) in [
-        (1., 0., 0.),
-        (0., 1., 0.),
-        (0., 0., 0.5),
-        (1., 0.5, 0.01),
-    ] {
+    for (policy, value, entropy) in [(1., 0., 0.), (0., 1., 0.), (0., 0., 0.5), (1., 0.5, 0.01)] {
         finite_difference_check::<16>(policy, value, entropy);
         finite_difference_check::<32>(policy, value, entropy);
     }
