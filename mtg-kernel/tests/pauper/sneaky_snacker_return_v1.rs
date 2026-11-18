@@ -1,9 +1,11 @@
 //! Sneaky Snacker's "whenever you draw your third card each turn, return
-//! this card from your graveyard to the battlefield tapped" against
-//! graveyard hate. CR 400.7 and 608.2b: once the card leaves the graveyard
-//! it is a new object the resolving ability cannot find, so exiling the
-//! graveyard in response (Nihil Spellbomb, Relic of Progenitus) leaves it in
-//! exile, and a card that left the graveyard and came back is not returned.
+//! this card from your graveyard to the battlefield tapped" has no targets
+//! and no intervening "if" clause. Under CR 400.7, if another effect moves
+//! the card, its ability resolves and does nothing because the original
+//! object is gone, even if the card returns to the graveyard or battlefield.
+//! CR 400.7j lets the effect find an object it moved to a public zone itself,
+//! or that moved there to pay the spell or ability's costs. With no response,
+//! the resolving ability finds the card it returned and taps it.
 
 use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision};
@@ -303,6 +305,36 @@ fn sneaky_snacker_back_in_the_graveyard_as_a_new_object_is_not_returned() {
         assert!(!state.players[me.index()]
             .battlefield
             .contains(&game.snacker));
+        assert!(!state.objects.get(game.snacker).tapped);
+    }
+}
+
+/// A separate effect returns Sneaky Snacker while its trigger waits. The
+/// old trigger must leave the new battlefield incarnation untapped.
+#[test]
+fn sneaky_snacker_returned_by_another_effect_stays_untapped() {
+    for (me, seed) in [
+        (PlayerId::P0, 0x534e_4143_4b00_000b),
+        (PlayerId::P1, 0x534e_4143_4b00_000c),
+    ] {
+        let mut game = snacker_game(seed, me);
+        snacker_trigger_on_the_stack(&mut game);
+        let before = game.state.objects.get(game.snacker).zone_change_count;
+        event::propose_and_commit(
+            &mut game.state,
+            ProposedEvent::zone_change(game.snacker, Zone::Battlefield),
+        );
+        let returned = game.state.objects.get(game.snacker);
+        assert_eq!(returned.zone, Zone::Battlefield);
+        assert_eq!(returned.zone_change_count, before + 1);
+        assert!(!returned.tapped);
+        pass_until_idle_watching(&mut game.state, game.snacker);
+        let state = &game.state;
+        assert!(state.engine.halted.is_none());
+        assert_eq!(state.objects.get(game.snacker).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(game.snacker).zone_change_count, before + 1);
+        assert!(state.players[me.index()].battlefield.contains(&game.snacker));
+        assert!(!state.players[me.index()].graveyard.contains(&game.snacker));
         assert!(!state.objects.get(game.snacker).tapped);
     }
 }
