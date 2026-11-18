@@ -1441,3 +1441,106 @@ fn volrath_with_akroma_text_and_the_physical_akroma_meet_the_legend_rule_both_se
         assert_eq!(state.objects.get(source).zone, Zone::Graveyard);
     }
 }
+
+/// One case per check site. Each returns whether that site's contract held:
+/// the event sites halt at the event itself, before any decision; the
+/// backstops halt at the first decision, the start one before any automatic
+/// work. Each case is built so that no other site catches it in time.
+fn check_site_case(site: DonorCheckSiteV1, player: PlayerId) -> bool {
+    use crate::eternal_e5a_v1::phasing;
+
+    match site {
+        DonorCheckSiteV1::CommitTail => {
+            let (mut state, source) = volrath_in_play(player);
+            arrive(&mut state, player, "Masticore");
+            state.engine.halted == donor_halt(source)
+        }
+        DonorCheckSiteV1::BatchTail => {
+            let (mut state, source) = volrath_in_play(player);
+            let donor = put(&mut state, player, "Masticore", Zone::Library);
+            let land = put(&mut state, player, "Island", Zone::Library);
+            event::propose_and_commit_batch(
+                &mut state,
+                vec![
+                    ProposedEvent::zone_change(donor, Zone::Graveyard),
+                    ProposedEvent::zone_change(land, Zone::Graveyard),
+                ],
+            );
+            assert!(matches!(next(&mut state), Decision::ChooseEffectTargets { .. }));
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(land)));
+            state.engine.halted == donor_halt(source)
+        }
+        DonorCheckSiteV1::Entry => {
+            // Wall of Blossoms is accepted in play, so only the entry refuses.
+            let mut state = ordered_game(player);
+            put(&mut state, player, "Wall of Blossoms", Zone::Graveyard);
+            let source = cast_volrath(&mut state, player);
+            resolve_to_entry(&mut state, source);
+            state.engine.halted == donor_halt(source)
+        }
+        DonorCheckSiteV1::ControlChange => {
+            let (mut state, source) = volrath_in_play(player);
+            put(&mut state, player.opponent(), "Masticore", Zone::Graveyard);
+            crate::standard_cards_v1::gain_control(&mut state, source, player.opponent());
+            state.engine.halted == donor_halt(source)
+        }
+        DonorCheckSiteV1::PhaseIn => {
+            let (mut state, source) = volrath_in_play(player);
+            phasing::phase_out(&mut state, source);
+            arrive(&mut state, player, "Masticore");
+            phasing::phase_in(&mut state, player);
+            state.engine.halted == donor_halt(source)
+        }
+        DonorCheckSiteV1::AdvanceStart => {
+            // The top changes with no event; a lethally damaged creature
+            // shows whether automatic work ran before the refusal.
+            let (mut state, source) = volrath_in_play(player);
+            put(&mut state, player, "Masticore", Zone::Graveyard);
+            let dying = put(
+                &mut state,
+                player.opponent(),
+                "Tireless Tribe",
+                Zone::Battlefield,
+            );
+            state.objects.get_mut(dying).damage = 100;
+            let halted = engine::advance_until_decision(&mut state)
+                == Decision::Halted {
+                    mechanic: UnsupportedMechanic::FullTextDonorOutsideSetV1,
+                    source,
+                };
+            halted && state.objects.get(dying).zone == Zone::Battlefield
+        }
+        DonorCheckSiteV1::AdvanceDecision => {
+            // A state-based death inside the automatic work makes the top.
+            let (mut state, source) = volrath_in_play(player);
+            let masticore = put(&mut state, player, "Masticore", Zone::Battlefield);
+            state.objects.get_mut(masticore).damage = 4;
+            engine::advance_until_decision(&mut state)
+                == Decision::Halted {
+                    mechanic: UnsupportedMechanic::FullTextDonorOutsideSetV1,
+                    source,
+                }
+        }
+    }
+}
+
+#[test]
+fn each_donor_check_site_halts_its_own_case_both_seats() {
+    for site in DonorCheckSiteV1::ALL {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            assert!(check_site_case(site, player), "{site:?} {player:?}");
+        }
+    }
+}
+
+/// With only one site's check removed, that site's case no longer holds: no
+/// other site covers it, so every site is needed.
+#[test]
+fn each_donor_check_site_case_fails_without_that_site_both_seats() {
+    for site in DonorCheckSiteV1::ALL {
+        for player in [PlayerId::P0, PlayerId::P1] {
+            let held = with_donor_check_site_disabled(site, || check_site_case(site, player));
+            assert!(!held, "{site:?} {player:?} held without its own check");
+        }
+    }
+}

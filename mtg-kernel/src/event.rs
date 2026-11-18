@@ -3677,7 +3677,10 @@ fn preflight_wide_life_v59(state: &mut GameState, event: &ProposedEvent) -> bool
 pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
     propose_event(state, event, false);
     // A committed event can change the graveyard top a Shapeshifter reads.
-    let _ = crate::full_text_v1::donor_refusal(state);
+    let _ = crate::full_text_v1::donor_refusal_at(
+        state,
+        crate::full_text_v1::DonorCheckSiteV1::CommitTail,
+    );
 }
 
 fn propose_event(state: &mut GameState, event: ProposedEvent, individual_draw: bool) {
@@ -6756,7 +6759,10 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
     propose_and_commit_batch_unaudited(state, events);
     // Audited after the batch, once an owner order has selected its final
     // graveyard top (the check defers while the order is still open).
-    let _ = crate::full_text_v1::donor_refusal(state);
+    let _ = crate::full_text_v1::donor_refusal_at(
+        state,
+        crate::full_text_v1::DonorCheckSiteV1::BatchTail,
+    );
 }
 
 fn propose_and_commit_batch_unaudited(state: &mut GameState, events: Vec<ProposedEvent>) {

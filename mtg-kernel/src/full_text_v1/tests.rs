@@ -890,6 +890,11 @@ fn every_premodern_pool_creature_is_in_exactly_one_donor_class() {
             },
             "{name} should be {expect:?}"
         );
+        assert_eq!(
+            entry_replacement_refused(card),
+            expect == Expect::EntryReplacement,
+            "{name}"
+        );
     }
     for name in GENERIC_FIXTURE_DONORS {
         assert_eq!(expect_of(name), Expect::Supported, "{name}");
@@ -955,9 +960,19 @@ fn donor_check_cost_at_a_commit_tail() {
     );
     assert_eq!(refused_donor(&state), None);
     let with = time(&state);
+    // A larger board: 80 more permanents and a second Shapeshifter.
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for _ in 0..40 {
+            put(&mut state, player, "Island", Zone::Battlefield);
+        }
+    }
+    put(&mut state, PlayerId::P0, VOLRATH, Zone::Battlefield);
+    assert_eq!(refused_donor(&state), None);
+    let large = time(&state);
     eprintln!(
-        "donor check, 24 permanents: {without:.1} ns without a Shapeshifter, \
-         {with:.1} ns with one on a supported top"
+        "donor check: {without:.1} ns with 24 permanents and no Shapeshifter, \
+         {with:.1} ns with one Shapeshifter on a supported top, \
+         {large:.1} ns with 106 permanents and two Shapeshifters"
     );
 }
 

@@ -236,10 +236,104 @@ pub(crate) fn donor_supported(definition: &CardDef) -> bool {
 /// True for a supported card whose enters ability a Shapeshifter entering
 /// with it on top would lose.
 pub(crate) fn entry_refused(definition: &CardDef) -> bool {
-    let name = definition.name;
-    name == MEDDLING_MAGE
-        || ENTRY_ONLY_DONORS_V1.contains(&name)
-        || LISTED_ENTRY_PROGRAMS_PENDING_V1.contains(&name)
+    entry_replacement_refused(definition)
+        || ENTRY_ONLY_DONORS_V1.contains(&definition.name)
+        || LISTED_ENTRY_PROGRAMS_PENDING_V1.contains(&definition.name)
+}
+
+/// True when the enters ability lost at entry is a replacement effect that
+/// applies as the permanent enters (614.12), not a trigger, so an
+/// entry-trigger suppressor such as Torpor Orb does not cover it.
+pub(crate) fn entry_replacement_refused(definition: &CardDef) -> bool {
+    definition.name == MEDDLING_MAGE
+}
+
+/// Where the donor refusal is checked. Each site has its own fixture, which
+/// fails when only that site's check is removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DonorCheckSiteV1 {
+    CommitTail,
+    BatchTail,
+    Entry,
+    ControlChange,
+    PhaseIn,
+    AdvanceStart,
+    AdvanceDecision,
+}
+
+impl DonorCheckSiteV1 {
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 7] = [
+        Self::CommitTail,
+        Self::BatchTail,
+        Self::Entry,
+        Self::ControlChange,
+        Self::PhaseIn,
+        Self::AdvanceStart,
+        Self::AdvanceDecision,
+    ];
+}
+
+#[cfg(test)]
+thread_local! {
+    static DISABLED_DONOR_CHECK_SITES: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+/// Test instrumentation: runs `body` with one check site turned off, on this
+/// thread only, to show that the site's fixture depends on it.
+#[cfg(test)]
+pub(crate) fn with_donor_check_site_disabled<R>(
+    site: DonorCheckSiteV1,
+    body: impl FnOnce() -> R,
+) -> R {
+    let bit = 1_u8 << site as u8;
+    DISABLED_DONOR_CHECK_SITES.with(|sites| sites.set(sites.get() | bit));
+    let result = body();
+    DISABLED_DONOR_CHECK_SITES.with(|sites| sites.set(sites.get() & !bit));
+    result
+}
+
+fn donor_check_site_disabled(site: DonorCheckSiteV1) -> bool {
+    #[cfg(test)]
+    {
+        DISABLED_DONOR_CHECK_SITES.with(|sites| sites.get() & (1_u8 << site as u8) != 0)
+    }
+    #[cfg(not(test))]
+    {
+        let _ = site;
+        false
+    }
+}
+
+/// `donor_refusal` at one named check site.
+pub(crate) fn donor_refusal_at(
+    state: &mut GameState,
+    site: DonorCheckSiteV1,
+) -> Option<(crate::engine::UnsupportedMechanic, ObjectId)> {
+    if donor_check_site_disabled(site) {
+        return None;
+    }
+    donor_refusal(state)
+}
+
+/// Refuses a Shapeshifter's entry with the typed donor halt.
+fn refuse_entry(state: &mut GameState, source: ObjectId) {
+    if !donor_check_site_disabled(DonorCheckSiteV1::Entry) && state.engine.halted.is_none() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::FullTextDonorOutsideSetV1,
+            source,
+        ));
+    }
+}
+
+/// An entry whose lost enters trigger can be suppressed by the final
+/// simultaneous-entry scene is checked at the end of its batch. The deferred
+/// check shares the batch's list of entry markers, tagged by this bit; a
+/// history index never reaches it.
+const DEFERRED_ENTRY_CHECK_V1: u64 = 1 << 63;
+
+fn deferred_entry_check(marker: u64) -> Option<u64> {
+    (marker & DEFERRED_ENTRY_CHECK_V1 != 0).then_some(marker & !DEFERRED_ENTRY_CHECK_V1)
 }
 
 /// The first face-up Shapeshifter whose current top card is outside the
@@ -605,7 +699,7 @@ pub(crate) fn record_control_gained(state: &mut GameState, object: ObjectId) {
             });
     }
     // A new controller makes a Shapeshifter read that player's graveyard.
-    let _ = donor_refusal(state);
+    let _ = donor_refusal_at(state, DonorCheckSiteV1::ControlChange);
 }
 
 fn echo_custody(state: &GameState, host: AbilitySourceContractV4, upkeep: u64) -> Option<u64> {
@@ -718,19 +812,30 @@ pub(crate) fn record_entry_trigger(
     let Some(text) = active_text(state, source) else {
         return Ok(());
     };
+    let entry = u64::try_from(index).map_err(|_| source)?;
     // The text at entry is fixed here (inside an ordered batch it is already
     // the batch's final top). A Shapeshifter entering with a donor whose
-    // enters ability it cannot donate is refused at this entry.
-    if !donor_supported(text.definition()) || entry_refused(text.definition()) {
-        if state.engine.halted.is_none() {
-            state.engine.halted = Some((
-                crate::engine::UnsupportedMechanic::FullTextDonorOutsideSetV1,
-                source,
-            ));
+    // battlefield text or "as enters" replacement it cannot donate is refused
+    // at this entry.
+    let definition = text.definition();
+    if !donor_supported(definition) || entry_replacement_refused(definition) {
+        refuse_entry(state, source);
+        return Ok(());
+    }
+    // A lost enters trigger is refused only when it would trigger: with every
+    // simultaneous entrant and departure applied, no suppressor applies.
+    if entry_refused(definition) {
+        let check = entry | DEFERRED_ENTRY_CHECK_V1;
+        if crate::graveyard_order_v1::defer_entry_check(state, check) {
+            return Ok(());
+        }
+        match batch {
+            Some(batch) => batch.push(check),
+            None if !entry_trigger_suppressed(state, index, source) => refuse_entry(state, source),
+            None => {}
         }
         return Ok(());
     }
-    let entry = u64::try_from(index).map_err(|_| source)?;
     let Some(kind) = DonatedTriggerKindV1::entry(text, entry, None) else {
         return Ok(());
     };
@@ -757,6 +862,15 @@ pub(crate) fn record_entry_trigger(
 }
 
 pub(crate) fn record_batch_entry_trigger(state: &mut GameState, marker: u64) -> Result<(), String> {
+    if let Some(entry) = deferred_entry_check(marker) {
+        let index = usize::try_from(entry).map_err(|_| "deferred entry index overflow")?;
+        let source =
+            entry_source(state, index).ok_or("deferred entry check lost its native entry")?;
+        if !entry_trigger_suppressed(state, index, source) {
+            refuse_entry(state, source);
+        }
+        return Ok(());
+    }
     let (entry, text) = batch_entry(state, marker)?;
     if active_text(state, text.host.source) != Some(text) {
         return Err("batched entry lost the selected final graveyard text".into());

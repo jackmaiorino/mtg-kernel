@@ -13626,11 +13626,24 @@ fn native_validation_stage<T, E>(_stage: &'static str, result: Result<T, E>) -> 
 /// decision in the same pass (issue #433). Default rules keep that
 /// historical transition.
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
-    // Backstop for the Shapeshifter donor refusal: no decision is offered
+    use crate::full_text_v1::{donor_refusal_at, DonorCheckSiteV1};
+
+    // Backstop for the Shapeshifter donor refusal: no automatic work runs
     // while an unsupported donor is in place, whatever path changed the top.
-    if let Some((mechanic, source)) = crate::full_text_v1::donor_refusal(state) {
+    if let Some((mechanic, source)) = donor_refusal_at(state, DonorCheckSiteV1::AdvanceStart) {
         return Decision::Halted { mechanic, source };
     }
+    let decision = advance_until_decision_unaudited(state);
+    // Automatic work (state-based deaths, upkeep, draws) can change a top
+    // without passing an event site: no decision or terminal leaves the engine
+    // while an unsupported donor is in place.
+    match donor_refusal_at(state, DonorCheckSiteV1::AdvanceDecision) {
+        Some((mechanic, source)) => Decision::Halted { mechanic, source },
+        None => decision,
+    }
+}
+
+fn advance_until_decision_unaudited(state: &mut GameState) -> Decision {
     if crate::graveyard_order_v1::owns_operation(state) {
         return crate::graveyard_order_v1::advance(state);
     }
@@ -13954,12 +13967,6 @@ pub(crate) fn advance_without_linked_aura_v1(state: &mut GameState) -> Decision 
         }
         if let Err(source) = state.validate_attachment_relations() {
             state.engine.halted = Some((UnsupportedMechanic::InvalidEffectContinuation, source));
-        }
-        // Automatic work in this loop (state-based deaths, upkeep and draw
-        // steps) can change a graveyard top; a donor refusal wins over a
-        // terminal reached in the same pass.
-        if let Some((mechanic, source)) = crate::full_text_v1::donor_refusal(state) {
-            return Decision::Halted { mechanic, source };
         }
         if let Some(d) = check_game_over(state) {
             return d;
