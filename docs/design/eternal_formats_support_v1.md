@@ -593,7 +593,9 @@ New, each built once in the first wave that needs it:
   actual completed attempts when the replacement continuation runs. Restore
   checks saved progress against that native evidence.
   An affected player can also choose between Jace's empty-library win and
-  Hullbreacher on fixed-count draw instructions and the covered owned draws.
+  Hullbreacher on fixed-count draw instructions and the covered owned draws,
+  on definition-owned draws nested below the root of their program, and on
+  the draws Occult Epiphany and the pay-then-draw leaf stage (#717).
   Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
   Their damage-draw interaction has no native qualification.
   Curie's combat trigger binds the original source and controller. It uses
@@ -2821,7 +2823,8 @@ C1a:
   Spirit for each card type among them.
 - Timetwister has Echo of Eons' text and program. Time Spiral marks itself to be exiled as it
   finishes resolving, shuffles both hands and graveyards into their libraries, then each player
-  draws seven through `DrawCards` and its controller untaps up to six lands. Between the two
+  draws seven through `DrawCards`, the active player first (see "Each player draws" below), and
+  its controller untaps up to six lands. Between the two
   players' draws, `C1aOpV1::StopIfWonV1` drops the rest of the program if a draw won the game
   (Jace, Wielder of Mysteries). Both interpreters now stop on their own after such a win (see
   the program stop below), so this local stop is kept but no longer needed.
@@ -2858,7 +2861,7 @@ C1c:
   subtype (the Kindred type arrived with #716). Traumatic Critique deals X, then draws two and
   discards one.
 - Wheel of Fortune: each player discards their hand, the active player first, then each draws
-  seven, with the same stop between the draws as Time Spiral.
+  seven, the active player first, with the same stop between the draws as Time Spiral.
 - Lingering Souls: two Spirit tokens (the new "White Flying Spirit Token" row, shared with Occult
   Epiphany) and flashback {1}{B}.
 - No More Lies: pay {3} or the spell is countered and exiled
@@ -2886,10 +2889,7 @@ C1c:
   (`LibraryLookCount::ControllerLandsTwiceV1`), and plot {1}{B}{G}.
 
 Known limits shared with earlier waves, tracked in #710: a granted flashback does not add a
-second cost to a card that has flashback (Flashback, as Snapcaster Mage); "each player draws" from
-a sorcery cast outside its controller's turn draws for the controller first (Wheel of Fortune,
-Time Spiral); and a draw that a leaf stages at resolution (Occult Epiphany's X cards) does not
-offer the choice between two competing draw replacements, which is Hullbreacher's Partial branch.
+second cost to a card that has flashback (Flashback, as Snapcaster Mage).
 
 Conventions fixed under #717:
 
@@ -2919,6 +2919,30 @@ Conventions fixed under #717:
   effect, so "each player draws" still lets both players draw. Scrawling Crawler's "each player
   draws" is the shape that needed it; the local stops of Time Spiral, Wheel of Fortune and the
   owned draws stay.
+- Draw replacement origins. The choice between two competing draw replacements (Jace, Wielder of
+  Mysteries and Hullbreacher, 616.1) finds a definition-owned draw anywhere below the root of its
+  program (`effect::jace_draw_replacement_origin`): through a `Sequence`, a `Choice` option, the
+  unpaid branch of a payment, and a `Conditional` only through the branch its condition selects
+  at that moment. Smuggler's Copter's loot is the first draw this reaches.
+- Pay-then-draw. "You may discard a card. If you do, draw N cards" (Improvised Act, Pursue the
+  Past, Melded Moxite, Ragged Short Spear) is the eternal leaf `E7bOpV1::MayDiscardThenDrawV1`
+  instead of the legacy optional cost: its controller picks up to one card from hand
+  (`E7bChoiceV1::DiscardThenDrawV1`, hidden from the opponent; finishing with none declines, and
+  an empty hand asks nothing), and after the discard the draw is the leaf's next instruction, so
+  dredge (702.52) and the choice between competing draw replacements are offered for it as for
+  any other draw of the program. Quantum Riddler's extra draw on such a draw follows the limit
+  recorded for nested draws above.
+- Leaf-staged draws. A definition-owned leaf that stages its draw at its own path as it resolves
+  declares that draw to the origin check (`effect::leaf_staged_draw`: the drawer, the most cards
+  and the frames it stages below the draw), so the choice between Jace and Hullbreacher is
+  offered on each of its draws: Occult Epiphany's X cards (above its discard stage) and the
+  pay-then-draw leaf.
+- Each player draws. "Each player draws" (Wheel of Fortune, Time Spiral, Faerie Mastermind's
+  ability) starts with the active player (101.4): `eternal_cube_c1a_v1::each_player_draws` is a
+  `Conditional` on `EffectCond::ControllersTurnV1` whose branches draw for the controller first
+  on their own turn and for the opponent first otherwise (a flashed sorcery, or the Mastermind
+  activated on the opponent's turn), with the stop between the two draws in both. With Jace on
+  both sides this decides the winner, and with dredge or Hullbreacher who chooses first.
 
 A batch is one event for replacement effects (614.1, 614.6): the name-keyed graveyard
 replacements (Rest in Peace, Leyline of the Void, Dauthi Voidwalker, with Yawgmoth's Will, Suplex,
@@ -3147,7 +3171,7 @@ C4a:
   the total is paid, so colored mana is never reduced as generic.
 - Faerie Mastermind (`OpponentDrawsSecondCardEachTurnV1`) and Ledger Shredder
   (`PlayerCastsSecondSpellEachTurnV1`, connive) read the engine's per-player draw and cast
-  counters. The Mastermind's shared draw is controller first, with the stop between the two
+  counters. The Mastermind's shared draw is active player first, with the stop between the two
   players' draws.
 - Jacked Rabbit enters with X counters, draws when cast with X of 5 or more, and makes Rabbit
   tokens equal to its power when it attacks. Bristly Bill, Spine Sower puts a counter on a creature

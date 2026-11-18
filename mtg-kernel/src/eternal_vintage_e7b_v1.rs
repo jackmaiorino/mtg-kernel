@@ -314,6 +314,11 @@ pub enum E7bOpV1 {
     MayV1(Box<E7bOpV1>),
     /// Hamster damage and draws owned by an exact native sacrifice.
     MinscDamageBoundV1 { sacrifice: usize },
+    /// "You may discard a card. If you do, draw `draws` cards" (Improvised
+    /// Act, Pursue the Past, Melded Moxite, Ragged Short Spear). A choice:
+    /// the draw runs in the interpreter after the discard, so dredge and the
+    /// other draw replacements may replace it.
+    MayDiscardThenDrawV1 { draws: u8 },
 }
 
 impl E7bOpV1 {
@@ -331,6 +336,7 @@ impl E7bOpV1 {
                 | Self::MinscDamageBoundV1 { .. }
                 | Self::EmpowerJaceV1 { .. }
                 | Self::MayV1(_)
+                | Self::MayDiscardThenDrawV1 { .. }
         )
     }
 }
@@ -361,12 +367,15 @@ pub enum E7bChoiceV1 {
     JaceTokenV1 { amount: u8 },
     /// Select Jace's empty-library replacement, or finish to use Hullbreacher.
     JaceOrHullbreacherV1,
+    /// "You may discard a card. If you do, draw `draws` cards": up to one
+    /// card from hand.
+    DiscardThenDrawV1 { draws: u8 },
 }
 
 impl E7bChoiceV1 {
     /// Whether the candidates are hidden from the other player.
     pub(crate) fn chooser_private(&self) -> bool {
-        matches!(self, Self::UroLandV1)
+        matches!(self, Self::UroLandV1 | Self::DiscardThenDrawV1 { .. })
     }
 
     pub(crate) fn public_purpose(&self) -> crate::rl::TargetSelectionPurposeV4 {
@@ -421,6 +430,13 @@ const COLORS: [ManaColor; 5] = [
 
 fn e7b(op: E7bOpV1) -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::E7bV1(op)))
+}
+
+/// "You may discard a card. If you do, draw `draws` cards." The discard is a
+/// choice of the resumable interpreter and the draw its next instruction,
+/// so dredge and the other draw replacements are offered for it.
+pub(crate) fn may_discard_then_draw(draws: u8) -> EffectOp {
+    e7b(E7bOpV1::MayDiscardThenDrawV1 { draws })
 }
 
 fn halt(state: &mut GameState, source: ObjectId) {
@@ -1567,7 +1583,8 @@ pub(crate) fn execute(op: &E7bOpV1, ctx: &ExecCtx, state: &mut GameState) {
         | E7bOpV1::MinscSacrificeV1
         | E7bOpV1::MinscDamageBoundV1 { .. }
         | E7bOpV1::EmpowerJaceV1 { .. }
-        | E7bOpV1::MayV1(_) => halt(state, ctx.source),
+        | E7bOpV1::MayV1(_)
+        | E7bOpV1::MayDiscardThenDrawV1 { .. } => halt(state, ctx.source),
     }
 }
 
@@ -2016,6 +2033,25 @@ pub(crate) fn drive(
             });
             Ok(false)
         }
+        E7bOpV1::MayDiscardThenDrawV1 { draws } => {
+            // With no card in hand nothing can be discarded, so nothing is
+            // drawn.
+            let hand = state.players[controller.index()].hand.clone();
+            if hand.is_empty() || *draws == 0 {
+                return Ok(false);
+            }
+            offer_objects(
+                state,
+                continuation,
+                E7bChoiceV1::DiscardThenDrawV1 { draws: *draws },
+                controller,
+                &hand,
+                0,
+                1,
+                path,
+            );
+            Ok(true)
+        }
         other => {
             execute(other, &continuation.ctx, state);
             Ok(false)
@@ -2281,6 +2317,29 @@ pub(crate) fn finish_selection(
                     empower(state, token.object, *amount);
                 }
             }
+            Ok(false)
+        }
+        E7bChoiceV1::DiscardThenDrawV1 { draws } => {
+            let Some(card) = chosen else {
+                return Ok(false);
+            };
+            if player != continuation.ctx.controller
+                || !link_live_in(state, binding_link(&card), Zone::Hand)
+                || state.objects.get(card.object).owner != player
+            {
+                return Err("the discarded card left its owner's hand".to_string());
+            }
+            // The genuine discard path (madness included). The draw is the
+            // next instruction at this leaf's path, where the draw
+            // replacements are offered as for any draw of the program.
+            crate::engine::commit_discarded_card(state, card.object);
+            continuation.frames.push(EffectFrame::Program {
+                op: EffectOp::DrawCards {
+                    player: PlayerRef::Controller,
+                    count: u32::from(*draws),
+                },
+                path: choice.path.clone(),
+            });
             Ok(false)
         }
     }
