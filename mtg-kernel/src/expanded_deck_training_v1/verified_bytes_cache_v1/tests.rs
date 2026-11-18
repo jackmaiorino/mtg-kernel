@@ -605,6 +605,17 @@ fn a_shared_record_is_charged_the_capacity_it_keeps_alive() {
     small.record_verified_shared_v1(path, "a", roomy(3));
     assert_eq!(held_entries_v1(&small), (vec![], 0));
     assert_eq!(small.diagnostics_v1()["records_refused"], 1);
+    // Recording a held pin again replaces its charge: a roomy buffer by a
+    // copy, and back, leaves exactly the last one's charge.
+    let again = VerifiedBytesCacheV1::new_v1(2 * overhead + 8192, 16);
+    let wide = roomy(5);
+    let wide_charge = overhead + wide.capacity();
+    again.record_verified_shared_v1(path, "a", std::sync::Arc::clone(&wide));
+    assert_eq!(held_entries_v1(&again), (vec!["a".into()], wide_charge));
+    again.record_verified_v1(path, "a", &[5; 4]);
+    assert_eq!(held_entries_v1(&again), (vec!["a".into()], overhead + 4));
+    again.record_verified_shared_v1(path, "a", wide);
+    assert_eq!(held_entries_v1(&again), (vec!["a".into()], wide_charge));
     // A shared buffer with no spare capacity is charged as a copy is.
     let exact = VerifiedBytesCacheV1::new_v1(2 * overhead + 4096, 16);
     let mut tight = vec![4u8; 4];

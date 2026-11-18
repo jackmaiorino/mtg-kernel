@@ -276,14 +276,23 @@ pub(super) fn offer_serialized_v1(
     Ok(())
 }
 
+/// What an entry is charged: its record length, or the capacity of the
+/// buffer it keeps alive when that is larger.
+fn retained_charge_v1(record_length: usize, capacity: usize) -> usize {
+    record_length.max(capacity)
+}
+
 fn insert_v1(sha256: &str, bytes: impl Into<Arc<Vec<u8>>>, slots: [SlotV1; 2]) {
     let bytes: Arc<Vec<u8>> = bytes.into();
     // A plain file is charged its length, as before; a sealed one its record
-    // length, and one whose header is unreadable is never held.
+    // length, and one whose header is unreadable is never held. The entry
+    // shares the publisher's buffer and keeps its whole allocation alive, so
+    // it is never charged less than that allocation's capacity (a plain
+    // record's buffer can carry spare capacity from its serializer).
     let Ok(charge) = record_envelope_v1::record_length_v1(&bytes, MAX_FILE_BYTES) else {
         return;
     };
-    let charge = charge as usize;
+    let charge = retained_charge_v1(charge as usize, bytes.capacity());
     let shared = shared_v1();
     let mut state = lock_v1(shared);
     if charge > PARSE_AHEAD_RETAINED_BYTES_V1 || state.entries.contains_key(sha256) {
