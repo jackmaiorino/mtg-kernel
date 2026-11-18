@@ -10,17 +10,72 @@
 //! Action sampling ([`sample_logits_v1`], recorded as `f64-exp-icdf-u53/v1`)
 //! uses only the libm-free `exp_v1` of `unclamped_softmax_sampler_v1`, so a
 //! seat's choices have the same bits on every platform for the same logits.
+//!
+//! The runner's contract is [`RUNNER_CONTRACT_V1`], which every
+//! `campaign.json` records: the design's frozen choices as built, and what
+//! the research lead's rulings on issue 657 require of the runner.
 use crate::unclamped_softmax_sampler_v1::{
     exp_v1, unclamped_softmax_select_v1, unclamped_softmax_unit_v1, UNCLAMPED_SOFTMAX_GAP_FLOOR_V1,
 };
 use sha2::{Digest, Sha256};
 
+pub mod campaign;
 pub mod checkpoint;
 pub mod collect;
 pub mod diagnostics;
 pub mod host;
 pub mod inventory;
 pub mod schedule;
+
+/// The runner's contract, one clause per line.
+pub const RUNNER_CONTRACT_V1: [&str; 11] = [
+    "Session: -session full-pool, profile fdn-full-pool-consumer/v1, hand knowledge \
+     public-reveal-minima/v3. Every deal is limited_match_v1::deal_pair_v1 over the 40 train \
+     decks in pool.tsv order; eval decks are never parsed, resolved or dealt in training, \
+     league or dev games.",
+    "Inventory: sample_sha256_in_pool_order is SHA-256 over each deck's file name and bytes in \
+     pool.tsv order, then the name pool.tsv and its bytes in CRLF form, exactly as \
+     python/tools/limited_training_inventory_v1.py::canonical_pool_bytes hashes it, and must \
+     equal the design's pin; both card-file digests and the four oversize registrations are \
+     pinned; each train deck resolves to exactly its pool.tsv count, which lies in \
+     40..=MAX_CUSTOM_DECK_CARDS_V1.",
+    "Retention: every decision of a learner seat with more than one legal action is retained. \
+     A forced single-action step takes ordinal 0 without a model call or a seat-stream draw and \
+     is dropped before a trajectory is built, so GAE indexes retained decisions only.",
+    "Terminal classes: a natural game returns +1, 0 or -1 per seat. A game that reaches \
+     max_turns 100, max_decisions 4000 or a ResetV1 ceiling (16000 physical decisions, 2048000 \
+     policy steps) is truncated: its receipt is kept and counted, and it is left out of the \
+     policy loss and the value loss (and out of N). A halted game or any error writes \
+     failed-iteration-UUUU.json and exits with code 2.",
+    "Truncation gate: more than 2 truncated games in one batch on two consecutive updates stops \
+     the campaign with stop_reason stopped_excess_truncation, before the second such update is \
+     applied.",
+    "Determinism: each game is a function of its deal, its seat policies and its seat streams \
+     derive_seed(mtg-kernel/limited-campaign-actor-rng/v1, [schedule_seed, pair, leg, seat]). \
+     Games are gathered in (pair, leg) order and the update reduces in (pair, leg, seat, \
+     decision) order, so every published file is identical for any worker count and with or \
+     without --stage-diagnostics.",
+    "Arithmetic: the v2 learner and the sampler use libm-free functions only, so the \
+     actor-critic arms replay across host classes. The control arm pair-centered-reinforce/v1 \
+     runs on the unchanged v1 learner, whose arithmetic uses the platform math library: it is \
+     replayable within one host class only, its runs and their replay stay on one class, its \
+     launch records name the class, and it is a diagnostic that carries no strength claim.",
+    "Host class: the tuple (CPU model, OS family, target triple, trainer binary SHA-256), \
+     written in full, with the short name win11-13700k, win11-5900xt, linux-9950x or \
+     runpod-epyc-<vcpus>. A qualification receipt is valid for its class only; other hosts \
+     run the workload as engineering verification only.",
+    "Gate 2 pairs: pair indices 0 to 7 at seed 657_001. If the set lacks FDN_top_09446_URpG \
+     or lacks every Drake Hatcher train deck, index 7 (then 6) is replaced by the lowest index \
+     of 8 or more whose pair contains the missing deck. The rule and the indices are recorded \
+     in campaign.json and the qualification manifest.",
+    "Guarded launcher: a campaign of more than one update requires a qualification manifest \
+     whose binary_source_sha256, feature_sha256, card_db_hash, learner contract, host class, \
+     U_max (100 to 200) and W* (at least 2) match the run.",
+    "Publication: each update writes its receipt, then checkpoints/step_UUUU.json by staging, \
+     sync and rename with an immediate readback restore, then the dev panel at a milestone and \
+     complete.json, then renames the iteration directory into place. Resume verifies the whole \
+     chain from step_0000 and continues with the bytes an uninterrupted run writes.",
+];
 
 /// The sampler name every campaign artifact records.
 pub const SAMPLER_V1: &str = "f64-exp-icdf-u53/v1";
