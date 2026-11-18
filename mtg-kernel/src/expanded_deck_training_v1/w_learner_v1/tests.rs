@@ -245,6 +245,24 @@ fn wide_learner_end_to_end_v1() {
     let record: WLearnerCheckpointV1 = read_pinned(&checkpoint).unwrap();
     assert_eq!(record.trajectories, trajectories);
     assert_eq!(record.architecture, W_MODEL_ARCHITECTURE_VERSION_V1);
+    // The decode cache: a held container gives exactly a fresh decode, and a
+    // changed file is refused by its pin before any lookup.
+    let held = decode_pinned_w_state_v1(&record.state, false).unwrap();
+    let decoded = decode_pinned_w_state_v1(&record.state, true).unwrap();
+    assert_eq!(held.1, decoded.1);
+    assert_eq!(held.1, record.state_sha256);
+    assert_eq!(
+        held.0.snapshot_v1().unwrap(),
+        decoded.0.snapshot_v1().unwrap()
+    );
+    let written = fs::read(&record.state.path).unwrap();
+    let mut changed = written.clone();
+    let last = changed.len() - 1;
+    changed[last] ^= 1;
+    fs::write(&record.state.path, &changed).unwrap();
+    assert!(decode_pinned_w_state_v1(&record.state, false).is_err());
+    assert!(load_inference_v1(&next).is_err());
+    fs::write(&record.state.path, &written).unwrap();
     let expectation = CheckpointInputExpectationV1 {
         trajectories: &trajectories,
         learning_rate_bits: 1.0e-3f32.to_bits(),
