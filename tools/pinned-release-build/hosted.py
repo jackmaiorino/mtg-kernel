@@ -37,6 +37,8 @@ ANNOUNCE_STEP_SOURCE_MERGED = "b6516e6f578109194c496768222ca97cdf5f0191"
 OPT_PACK_MULL_SOURCE = "77908fee6f2f647cf0cfa7a95ceaeefc4dd3e429"
 OPT_PACK_W128_SOURCE = "ffe101d7c5d65f00e5742524f518f37ab70fe0f1"
 OPT_MAIN_CEILING_SOURCE = "fd9ff09ad4785dcbfabeb1238eb2f77b657c29b9"
+# P-mull plus the backport of PR 592 (update memory traffic), a step 3 candidate of the optimization lane.
+OPT_PACK2_MULL_SOURCE = "675e2c038ecdcd94a2901080ef8ad16098c57ddb"
 # Target-flag variant of a build-qualification build (this guard branch only); build.sh maps the name to flags.
 TARGET_CPUS = ("default", "x86-64-v3-no-fma", "x86-64-v3", "znver5", "znver3")
 TARGET_CPU = os.environ.get("PINNED_TARGET_CPU", "default")
@@ -53,6 +55,7 @@ SOURCES = (
     OPT_PACK_MULL_SOURCE,
     OPT_PACK_W128_SOURCE,
     OPT_MAIN_CEILING_SOURCE,
+    OPT_PACK2_MULL_SOURCE,
 )
 IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
 GIB = 2**30
