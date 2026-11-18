@@ -22,6 +22,9 @@ pub struct KaitoSession {
     inner: KaitoSessionV75,
     owner: Arc<()>,
     generation: u64,
+    /// Set only on a world drawn by `sampled_full_pool_closed_list_v1`: the
+    /// one kind of session whose state the heuristic evaluator may read.
+    sampled_world: bool,
 }
 #[derive(Clone)]
 pub struct KaitoSnapshot {
@@ -543,6 +546,7 @@ impl KaitoSession {
             inner,
             owner: Arc::new(()),
             generation: 0,
+            sampled_world: false,
         }
     }
     /// Ordinary production reset keeps the native Full-only declared-deck preflight.
@@ -652,11 +656,29 @@ impl KaitoSession {
             .inner
             .sampled_full_pool_closed_list_v1(&decision.backend, seed, belief)
             .map_err(|e| Error::Projection(e.to_string()))?;
-        let sampled = Self::from_kaito(inner);
+        let mut sampled = Self::from_kaito(inner);
         if sampled.encode(decision.backend.expected())?.packet() != decision.packet() {
             return Err(Error::StaleBinding);
         }
+        sampled.sampled_world = true;
         Ok(sampled)
+    }
+
+    /// `kernel_native_search_opponent_v1::evaluate_state_v1` for `root`, read
+    /// only inside a world from `sampled_full_pool_closed_list_v1`, where the
+    /// opponent's unseen hand and library come from the public belief corpus.
+    /// A live owner refuses, so the evaluator never reads true hidden cards.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn sampled_world_state_eval_v1(&self, root: crate::ids::PlayerId) -> Result<i32> {
+        if !self.sampled_world {
+            return Err(Error::Projection(
+                "the state evaluator reads only a sampled full-pool world".into(),
+            ));
+        }
+        Ok(crate::kernel_native_search_opponent_v1::evaluate_state_v1(
+            self.inner.sampled_world_state_v75(),
+            root,
+        ))
     }
 
     pub fn current_response(&self) -> FastActorResponseV1 {

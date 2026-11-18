@@ -21,6 +21,18 @@
 //!
 //! In every mode the actor's own library order is reshuffled, since the
 //! actor knows its own decklist but not the order.
+//!
+//! The sealed Foundations owner (`-session full-pool`) also plays the
+//! evaluation policies of `docs/design/limited_campaign_v1.md` Section 4.2:
+//!
+//! - `pimc:sims=N:depth=D:closedlist-full-pool-heuristic-v1`: the fair
+//!   full-pool search, scoring a depth or turn cutoff inside the sampled world
+//!   with `kernel_native_search_opponent_v1::evaluate_state_v1` instead of
+//!   `0`.
+//! - `sampled-public-heuristic/v1`: one sampled world per decision, every
+//!   legal root action applied once in it and scored by the same evaluator.
+//! - `learner-checkpoint:<path>`: a `current_tree_learner_v2` checkpoint
+//!   sampling from its own seat stream (see `learner_policy_v1`).
 
 use crate::card_def::{card_id_by_name, CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::ids::{ObjectId, PlayerId};
@@ -35,7 +47,10 @@ use std::collections::{BTreeMap, HashSet};
 pub(crate) mod closed_list_v2;
 pub(crate) mod curator_sampling_v1;
 mod full_pool_match_v1;
+pub mod learner_policy_v1;
 pub(crate) mod library_minima_v1;
+
+pub use learner_policy_v1::LearnerCheckpointV1;
 
 pub const LIMITED_MATCH_SCHEMA_V1: &str = "mtg-kernel-limited-match/v1";
 /// UCB1 exploration constant on values in [-1, 1].
@@ -426,6 +441,8 @@ pub enum WorldModeV1 {
     ClosedListV2,
     ClosedListV3,
     FullPoolClosedListV1,
+    /// The `FullPoolClosedListV1` world with heuristic depth-cutoff leaves.
+    FullPoolClosedListHeuristicV1,
     TrueList,
     Peek,
 }
@@ -486,11 +503,19 @@ pub fn sample_world_v1(
         WorldModeV1::FullPoolClosedListV1 => {
             Err("closedlist-full-pool-v1 requires the sealed numeric owner".into())
         }
+        WorldModeV1::FullPoolClosedListHeuristicV1 => {
+            Err("closedlist-full-pool-heuristic-v1 requires the sealed numeric owner".into())
+        }
     }
 }
 
 // ---------------------------------------------------------------------------
 // policies
+
+/// The spec of the one-ply sampled-world heuristic (design Section 4.2).
+pub const SAMPLED_PUBLIC_HEURISTIC_SPEC_V1: &str = "sampled-public-heuristic/v1";
+/// Prefix of a learner checkpoint spec; the rest of the spec is the path.
+pub const LEARNER_CHECKPOINT_SPEC_PREFIX_V1: &str = "learner-checkpoint:";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PolicySpecV1 {
@@ -500,10 +525,25 @@ pub enum PolicySpecV1 {
         depth: u32,
         world: WorldModeV1,
     },
+    /// `sampled-public-heuristic/v1` (FullPool only).
+    SampledPublicHeuristicV1,
+    /// `learner-checkpoint:<path>` (FullPool only), loaded and pinned at parse.
+    LearnerCheckpoint(LearnerCheckpointV1),
 }
 
 impl PolicySpecV1 {
+    /// Parses a spec. A `learner-checkpoint:<path>` spec reads and verifies
+    /// the checkpoint file here, so a run pins one checkpoint for all games.
     pub fn parse(spec: &str) -> Result<Self, String> {
+        if let Some(path) = spec.strip_prefix(LEARNER_CHECKPOINT_SPEC_PREFIX_V1) {
+            if path.is_empty() {
+                return Err(format!("{spec:?}: name the checkpoint path"));
+            }
+            return LearnerCheckpointV1::load_v1(path).map(Self::LearnerCheckpoint);
+        }
+        if spec == SAMPLED_PUBLIC_HEURISTIC_SPEC_V1 {
+            return Ok(Self::SampledPublicHeuristicV1);
+        }
         let mut parts = spec.split(':');
         match parts.next() {
             Some("random") if parts.next().is_none() => Ok(Self::Random),
@@ -536,6 +576,9 @@ impl PolicySpecV1 {
                         None if part == "closedlist-full-pool-v1" => {
                             set_world(WorldModeV1::FullPoolClosedListV1, &mut world)?
                         }
+                        None if part == "closedlist-full-pool-heuristic-v1" => {
+                            set_world(WorldModeV1::FullPoolClosedListHeuristicV1, &mut world)?
+                        }
                         None if part == "truelist" => set_world(WorldModeV1::TrueList, &mut world)?,
                         None if part == "peek" => set_world(WorldModeV1::Peek, &mut world)?,
                         _ => return Err(format!("{spec:?}: unknown field {part:?}")),
@@ -548,7 +591,7 @@ impl PolicySpecV1 {
                     sims,
                     depth,
                     world: world.ok_or_else(|| {
-                        format!("{spec:?}: name a world mode (closedlist, closedlist-v2, closedlist-v3, closedlist-full-pool-v1, truelist or peek)")
+                        format!("{spec:?}: name a world mode (closedlist, closedlist-v2, closedlist-v3, closedlist-full-pool-v1, closedlist-full-pool-heuristic-v1, truelist or peek)")
                     })?,
                 })
             }
@@ -563,10 +606,11 @@ impl PolicySpecV1 {
                 world: WorldModeV1::ClosedList
                     | WorldModeV1::ClosedListV2
                     | WorldModeV1::ClosedListV3
-                    | WorldModeV1::FullPoolClosedListV1,
+                    | WorldModeV1::FullPoolClosedListV1
+                    | WorldModeV1::FullPoolClosedListHeuristicV1,
                 ..
             }
-        )
+        ) || matches!(self, Self::SampledPublicHeuristicV1)
     }
 
     pub fn uses_closed_list_v2(&self) -> bool {
@@ -603,32 +647,59 @@ impl PolicySpecV1 {
         )
     }
 
-    /// Policies whose match output keeps search counts and replay identity.
-    pub fn records_search_v1(&self) -> bool {
-        self.uses_versioned_closed_list() || self.uses_full_pool_closed_list_v1()
+    /// Policies that draw worlds through `sampled_full_pool_closed_list_v1`
+    /// (world contract `limited-closedlist-full-pool/v1`).
+    pub fn uses_full_pool_sampled_world_v1(&self) -> bool {
+        match self {
+            Self::Pimc { world, .. } => matches!(
+                world,
+                WorldModeV1::FullPoolClosedListV1 | WorldModeV1::FullPoolClosedListHeuristicV1
+            ),
+            Self::SampledPublicHeuristicV1 => true,
+            Self::Random | Self::LearnerCheckpoint(_) => false,
+        }
     }
 
-    /// Keep the sealed FullPool policy and raw match policies on their own sessions.
+    /// The evaluation policies added for the Limited campaign (design
+    /// Section 4.2), which run only with the design's explicit limits.
+    pub fn is_campaign_evaluation_policy_v1(&self) -> bool {
+        match self {
+            Self::Pimc { world, .. } => *world == WorldModeV1::FullPoolClosedListHeuristicV1,
+            Self::SampledPublicHeuristicV1 | Self::LearnerCheckpoint(_) => true,
+            Self::Random => false,
+        }
+    }
+
+    /// Policies whose match output keeps search counts and replay identity.
+    pub fn records_search_v1(&self) -> bool {
+        self.uses_versioned_closed_list() || self.uses_full_pool_sampled_world_v1()
+    }
+
+    /// Keep the sealed FullPool policies and raw match policies on their own sessions.
     pub fn validate_full_pool_session_v1(&self, session: SessionKindV1) -> Result<(), String> {
-        match (session, self) {
-            (SessionKindV1::FullPoolV1, Self::Random)
-            | (
-                SessionKindV1::FullPoolV1,
-                Self::Pimc {
-                    world: WorldModeV1::FullPoolClosedListV1,
-                    ..
-                },
-            ) => Ok(()),
-            (
-                _,
-                Self::Pimc {
-                    world: WorldModeV1::FullPoolClosedListV1,
-                    ..
-                },
-            ) => Err("closedlist-full-pool-v1 requires -session full-pool".into()),
-            (SessionKindV1::FullPoolV1, _) => {
-                Err("full-pool requires random or closedlist-full-pool-v1".into())
-            }
+        let full_pool_only = match self {
+            Self::Pimc {
+                world: WorldModeV1::FullPoolClosedListV1,
+                ..
+            } => Some("closedlist-full-pool-v1"),
+            Self::Pimc {
+                world: WorldModeV1::FullPoolClosedListHeuristicV1,
+                ..
+            } => Some("closedlist-full-pool-heuristic-v1"),
+            Self::SampledPublicHeuristicV1 => Some(SAMPLED_PUBLIC_HEURISTIC_SPEC_V1),
+            Self::LearnerCheckpoint(_) => Some("learner-checkpoint"),
+            Self::Random | Self::Pimc { .. } => None,
+        };
+        match (session, full_pool_only) {
+            (SessionKindV1::FullPoolV1, Some(_)) => Ok(()),
+            (SessionKindV1::FullPoolV1, None) if matches!(self, Self::Random) => Ok(()),
+            (_, Some(name)) => Err(format!("{name} requires -session full-pool")),
+            (SessionKindV1::FullPoolV1, None) => Err(
+                "full-pool requires random, closedlist-full-pool-v1, \
+                 closedlist-full-pool-heuristic-v1, sampled-public-heuristic/v1 \
+                 or learner-checkpoint"
+                    .into(),
+            ),
             _ => Ok(()),
         }
     }
@@ -714,6 +785,9 @@ pub fn pimc_choose_v1(
 ) -> Result<(u32, PimcStatsV1), String> {
     if world == WorldModeV1::FullPoolClosedListV1 {
         return Err("closedlist-full-pool-v1 requires the sealed numeric owner".into());
+    }
+    if world == WorldModeV1::FullPoolClosedListHeuristicV1 {
+        return Err("closedlist-full-pool-heuristic-v1 requires the sealed numeric owner".into());
     }
     session.refuse_curator_sampling_v1()?;
     let FastActorResponseV1::Decision(decision) = session.current_response() else {
@@ -888,8 +962,19 @@ fn trace_enabled_v1() -> bool {
     *TRACE.get_or_init(|| std::env::var_os("MTG_LIMITED_MATCH_TRACE").is_some())
 }
 
+/// Where a game sits in its match: the match seed, the pair index and the
+/// leg (game in pair). A `learner-checkpoint` seat seeds its own action
+/// stream from these and its seat (`learner_policy_v1::learner_stream_seed_v1`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MatchStreamV1 {
+    pub seed: u64,
+    pub pair: u64,
+    pub leg: u64,
+}
+
 /// One game: `decks[seat]`, `policies[seat]`, `beliefs[seat]` (the corpus a
-/// `closedlist` seat samples its opponent from).
+/// `closedlist` seat samples its opponent from). A `learner-checkpoint`
+/// seat needs [`play_game_in_pair_v1`].
 pub fn play_game_v1(
     decks: [&[u16]; 2],
     policies: [&PolicySpecV1; 2],
@@ -897,6 +982,49 @@ pub fn play_game_v1(
     env_seed: u64,
     starting_player: PlayerId,
     limits: GameLimitsV1,
+) -> GameResultV1 {
+    play_game_with_stream_v1(
+        decks,
+        policies,
+        beliefs,
+        env_seed,
+        starting_player,
+        limits,
+        None,
+    )
+}
+
+/// [`play_game_v1`] for game `stream` of a paired match. Every policy except
+/// `learner-checkpoint` ignores `stream` and plays exactly as in
+/// [`play_game_v1`].
+pub fn play_game_in_pair_v1(
+    decks: [&[u16]; 2],
+    policies: [&PolicySpecV1; 2],
+    beliefs: [Option<&LimitedBeliefV1>; 2],
+    env_seed: u64,
+    starting_player: PlayerId,
+    limits: GameLimitsV1,
+    stream: MatchStreamV1,
+) -> GameResultV1 {
+    play_game_with_stream_v1(
+        decks,
+        policies,
+        beliefs,
+        env_seed,
+        starting_player,
+        limits,
+        Some(stream),
+    )
+}
+
+fn play_game_with_stream_v1(
+    decks: [&[u16]; 2],
+    policies: [&PolicySpecV1; 2],
+    beliefs: [Option<&LimitedBeliefV1>; 2],
+    env_seed: u64,
+    starting_player: PlayerId,
+    limits: GameLimitsV1,
+    stream: Option<MatchStreamV1>,
 ) -> GameResultV1 {
     if limits.session == SessionKindV1::FullPoolV1 {
         return full_pool_match_v1::play_game(
@@ -906,6 +1034,7 @@ pub fn play_game_v1(
             env_seed,
             starting_player,
             limits,
+            stream,
         );
     }
     play_game_observed_v1(
@@ -1077,6 +1206,12 @@ pub(crate) fn play_game_observed_v1(
                         return result;
                     }
                 }
+            }
+            // `validate_full_pool_session_v1` refused these above.
+            PolicySpecV1::SampledPublicHeuristicV1 | PolicySpecV1::LearnerCheckpoint(_) => {
+                result.outcome =
+                    GameOutcomeV1::Error("this policy requires the sealed numeric owner".into());
+                return result;
             }
         };
         if trace_enabled_v1() {
