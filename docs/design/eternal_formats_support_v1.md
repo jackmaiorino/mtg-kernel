@@ -1520,7 +1520,8 @@ notes for station, 2015-11-04 for Fiery Confluence), checked against the XMage s
     Metamorph copy has the Battleship's abilities with its own counters.
   - Dress Down's "Creatures lose all abilities" reads printed creature types, so that types and
     abilities don't depend on each other. A stationed Battleship's creature type doesn't depend
-    on its abilities, so Dress Down now applies to it too.
+    on its abilities, so Dress Down now applies to it too, and so does an animated land's or
+    artifact's (Celestial Colonnade), which a resolved ability gave it.
   - Found in the fixtures: wave S1e's trigger target specs answered "no target" for every
     trigger in the tables chained after its own (S1g's, S1l's and the Battleship's). S1g's and
     S1l's triggers have no target, so only the Battleship's was affected. S1e now answers only
@@ -2933,6 +2934,25 @@ Voidwalker destroyed in the batch still exiles the other members (Pest Infestati
 sweeper, Pestilence). Containment Priest's entry replacement is still applied as each member
 enters, so a Priest entering earlier in one entry batch exiles a later nontoken creature of the
 same batch.
+
+Granted abilities follow the timestamps of the effects that remove abilities (613.7), with the
+check `continuous_characteristics_v1::granted_ability_survives`, which leaves out a land-type
+setter (305.7). A static keyword grant from another permanent has that permanent's timestamp:
+Samut, Hazoret's Champion's haste, Marwyn, the Preserver's hexproof, Goblin Warchief's haste and
+Sterling Grove's shroud end on a host whose abilities a later Dress Down, Unable to Scream or
+Azure Beastbinder removes, and apply on a host whose abilities an earlier one removed. An
+animated land's keywords (Celestial Colonnade's flying and vigilance) have the timestamp of the
+animation (`animation_keywords`), and Dress Down applies to an animated land, whose creature type
+comes from the resolved ability. Creeping Tar Pit's "can't be blocked this turn" is a rule effect
+of the resolved ability, not an ability, so it stays under a removal and under an Aura that
+replaces the animation's characteristics (Witness Protection). Protection from a color until end
+of turn (Sejiri Steppe, Mother of Runes, Giver of Runes' colors and colorless, Glory, Crimson
+Acolyte, Eowyn, Fearless Knight) is stored with the timestamp of its effect in E9a's
+`timed_protections` (appended to the state and hashed under its own tag only when it holds a
+record), so a later removal ends it and an earlier one does not; Benevolent Blessing's
+protection has the Aura's timestamp. Anger's haste from a graveyard keeps applying under a
+removal: its effect's timestamp would be the time Anger entered the graveyard (613.7d), which is
+not recorded.
 
 Each sub-module's test file covers every card's printed text in rules tests (costs, both sides of
 each condition, illegal targets) and plays decks of its cards through public schema-5 sessions
