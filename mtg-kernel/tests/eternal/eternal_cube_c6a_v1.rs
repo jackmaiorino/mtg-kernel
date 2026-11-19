@@ -637,7 +637,7 @@ fn fallen_shinobi_exiles_two_opposing_cards_and_casts_them_free_under_its_contro
     let mut state = plains();
     let shinobi = ready_shinobi(&mut state);
     let own_top = state.players[0].library[0];
-    let bear = put(&mut state, P1, "Grizzly Bears", Zone::Library);
+    let bear = put(&mut state, P1, "Wild Mongrel", Zone::Library);
     let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Library);
     let third = state.players[1].library[2];
     attack_with(&mut state, vec![shinobi], |_, _| None);
@@ -672,7 +672,7 @@ fn fallen_shinobi_exiles_two_opposing_cards_and_casts_them_free_under_its_contro
 #[test]
 fn fallen_shinobi_ninjutsu_pays_four_mana_returns_an_unblocked_attacker_and_hits() {
     let mut state = plains();
-    let attacker = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let attacker = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
     let shinobi = put(&mut state, P0, "Fallen Shinobi", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U, ManaColor::B], 2);
     assert!(!activatable(&mut state, shinobi, 0), "not in combat");
@@ -707,8 +707,8 @@ fn fallen_shinobi_ninjutsu_pays_four_mana_returns_an_unblocked_attacker_and_hits
 fn fallen_shinobi_ninjutsu_requires_mana_and_an_unblocked_attacker() {
     for blocked in [false, true] {
         let mut state = plains();
-        let attacker = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
-        let blocker = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+        let attacker = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
+        let blocker = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
         let shinobi = put(&mut state, P0, "Fallen Shinobi", Zone::Hand);
         pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
         act(&mut state, Action::DeclareAttackers(vec![attacker]));
@@ -777,7 +777,7 @@ fn fallen_shinobi_uses_the_correct_opponent_and_exiles_in_one_batch_in_both_seat
 #[test]
 fn fallen_shinobi_ninjutsu_does_not_recover_a_source_that_left_hand() {
     let mut state = plains();
-    let attacker = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let attacker = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
     let shinobi = put(&mut state, P0, "Fallen Shinobi", Zone::Hand);
     pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
     act(&mut state, Action::DeclareAttackers(vec![attacker]));
@@ -805,8 +805,8 @@ fn fallen_shinobi_ignores_noncombat_damage_other_attackers_and_blocked_damage() 
         );
         settled(&mut state);
         assert!(state.engine.exile_play_permissions.is_empty());
-        let bear = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
-        let blocker = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+        let bear = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
+        let blocker = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
         let top = state.players[1].library[0];
         attack_with(
             &mut state,
@@ -834,7 +834,7 @@ fn fallen_shinobi_permissions_survive_source_departure_and_obey_timing_and_land_
             let land = put(&mut state, P0, "Island", Zone::Hand);
             play_land(&mut state, land);
         }
-        let bear = put(&mut state, P1, "Grizzly Bears", Zone::Library);
+        let bear = put(&mut state, P1, "Wild Mongrel", Zone::Library);
         let land = put(&mut state, P1, "Swamp", Zone::Library);
         pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
         act(&mut state, Action::DeclareAttackers(vec![shinobi]));
@@ -864,6 +864,8 @@ fn fallen_shinobi_permissions_survive_source_departure_and_obey_timing_and_land_
             play_land(&mut state, land);
             assert_eq!(state.objects.get(land).controller, P0);
             assert_eq!(state.objects.get(land).owner, P1);
+            assert!(state.players[P0.index()].battlefield.contains(&land));
+            assert!(!state.players[P1.index()].battlefield.contains(&land));
             let other = put(&mut state, P0, "Island", Zone::Hand);
             let Decision::CastSpellOrPass { land_drops, .. } = next(&mut state) else {
                 panic!("main-phase priority");
@@ -1085,7 +1087,7 @@ fn ivora_ignores_noncombat_player_damage_and_another_creatures_combat_damage() {
     settled(&mut state);
     assert_eq!(named(&state, P0, "Blood Token").len(), 1);
     assert_eq!(life(&state, P1), 19);
-    let bear = put(&mut state, P0, "Grizzly Bears", Zone::Hand);
+    let bear = put(&mut state, P0, "Wild Mongrel", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::G], 1);
     cast(&mut state, bear, &[]);
     settled(&mut state);
@@ -1347,14 +1349,14 @@ fn gau_samples_current_power_and_uses_departure_power_even_after_a_blink() {
         let card = put(&mut state, P0, "Plains", Zone::Graveyard);
         event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Exile));
         pass_until(&mut state, |s| s.step == Step::End && !s.stack.is_empty());
-        let growth = put(&mut state, P0, "Giant Growth", Zone::Hand);
+        let growth = put(&mut state, P0, "Mutagenic Growth", Zone::Hand);
         state.priority_player = P0;
         pool(&mut state, P0, &[ManaColor::G], 0);
         cast(&mut state, growth, &[Target::Object(gau)]);
         on_the_stack(&mut state);
         // Resolve the pump, stopping with the original end-step trigger waiting.
         pass_until(&mut state, |s| zone(s, growth) == Zone::Graveyard);
-        assert_eq!(power_toughness(&state, gau), (5, 5));
+        assert_eq!(power_toughness(&state, gau), (4, 4));
         if let Some(destination) = departure {
             event::propose_and_commit(&mut state, ProposedEvent::zone_change(gau, Zone::Hand));
             if destination == Zone::Battlefield {
@@ -1366,7 +1368,7 @@ fn gau_samples_current_power_and_uses_departure_power_even_after_a_blink() {
             }
         }
         settled(&mut state);
-        assert_eq!(life(&state, P1), 15);
+        assert_eq!(life(&state, P1), 16);
         assert_eq!(life(&state, P0), 20);
     }
 }
@@ -1402,7 +1404,7 @@ fn gau_zero_or_negative_power_deals_no_damage() {
 fn laelia_haste_attack_exiles_and_grows_then_casts_the_exiled_creature_for_mana() {
     let mut state = plains();
     let laelia = cast_c6a_creature(&mut state, P0, C6A_CARDS[2]);
-    let bear = put(&mut state, P0, "Grizzly Bears", Zone::Library);
+    let bear = put(&mut state, P0, "Wild Mongrel", Zone::Library);
     let opponents_top = state.players[1].library[0];
     assert!(keyword(&state, laelia, Keywords::HASTE));
     assert!(state.objects.get(laelia).summoning_sick);
@@ -1650,7 +1652,7 @@ fn opponents_crypt_exiles_multiple_cards_once_for_laelia_and_enables_gau() {
 fn laelia_does_not_impulse_when_only_another_creature_attacks() {
     let mut state = plains();
     let laelia = cast_c6a_creature(&mut state, P0, C6A_CARDS[2]);
-    let other = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let other = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
     let top = state.players[0].library[0];
     attack_with(&mut state, vec![other], |_, _| None);
     assert_eq!(zone(&state, top), Zone::Library);
@@ -1704,9 +1706,10 @@ fn plunderer_upkeep_is_optional_controller_only_and_gives_a_separate_tapped_trea
             pass_until(&mut state, |s| {
                 s.active_player == player && s.step == Step::Upkeep
             });
-            assert!(
-                matches!(settle(&mut state), Some(Decision::ChooseEffectOption { player: chooser, .. }) if chooser == player)
-            );
+            let choice = settle(&mut state);
+            assert!(matches!(choice,
+                Some(Decision::ChooseEffectOption { player: chooser, .. }) if chooser == player
+            ));
             act(
                 &mut state,
                 Action::ChooseEffectOption(if accept { 0 } else { 1 }),
@@ -1835,7 +1838,7 @@ fn plunderer_attack_counts_opponents_current_artifacts_even_tapped_and_after_sou
     }
     let mut state = plains();
     cast_c6a_creature(&mut state, P0, C6A_CARDS[4]);
-    let bear = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let bear = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
     token(&mut state, P1, "Treasure Token");
     attack_with(&mut state, vec![bear], |_, _| None);
     assert_eq!(
@@ -1849,8 +1852,8 @@ fn plunderer_attack_counts_opponents_current_artifacts_even_tapped_and_after_sou
 fn plunderer_menace_requires_two_blockers() {
     let mut state = plains();
     let source = ready_plunderer(&mut state);
-    let first = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
-    let second = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    let first = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
+    let second = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
     pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
     act(&mut state, Action::DeclareAttackers(vec![source]));
     pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
@@ -1863,18 +1866,18 @@ fn plunderer_menace_requires_two_blockers() {
 
 #[test]
 fn gut_sacrifices_another_creature_or_artifact_once_per_attack_and_makes_an_attacking_skeleton() {
-    for sacrifice_name in ["Grizzly Bears", "Treasure Token", "Ornithopter"] {
+    for sacrifice_name in ["Wild Mongrel", "Treasure Token", "Hollow One"] {
         let mut state = plains();
         let gut = cast_c6a_creature(&mut state, P0, C6A_CARDS[5]);
-        let first = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
-        let second = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+        let first = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
+        let second = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
         let sacrifice = if sacrifice_name == "Treasure Token" {
             token(&mut state, P0, sacrifice_name)
         } else {
             put(&mut state, P0, sacrifice_name, Zone::Battlefield)
         };
         let land = put(&mut state, P0, "Mountain", Zone::Battlefield);
-        let enemy = put(&mut state, P1, "Ornithopter", Zone::Battlefield);
+        let enemy = put(&mut state, P1, "Hollow One", Zone::Battlefield);
         let mut selections = 0;
         pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
         act(&mut state, Action::DeclareAttackers(vec![first, second]));
@@ -1930,7 +1933,7 @@ fn gut_allows_decline_and_has_no_offer_without_another_creature_or_artifact() {
         next_turn_main(&mut state);
         next_turn_main(&mut state);
         let candidate =
-            have_candidate.then(|| put(&mut state, P0, "Grizzly Bears", Zone::Battlefield));
+            have_candidate.then(|| put(&mut state, P0, "Wild Mongrel", Zone::Battlefield));
         let mut offers = 0;
         attack_with(&mut state, vec![gut], |_, choice| {
             if let Decision::ChooseEffectTargets { can_finish, .. } = choice {
@@ -1960,7 +1963,7 @@ fn gut_does_not_trigger_for_empty_attacks_or_opponents_attacks() {
     });
     assert!(named(&state, P0, "Skeleton Token").is_empty());
     next_turn_main(&mut state);
-    let attacker = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    let attacker = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
     attack_with(&mut state, vec![attacker], |_, choice| {
         assert!(!matches!(choice, Decision::ChooseEffectTargets { .. }));
         None
@@ -1976,7 +1979,7 @@ fn gut_can_sacrifice_itself_as_an_artifact_and_still_creates_the_skeleton() {
     let coating = put(&mut state, P0, "Liquimetal Coating", Zone::Battlefield);
     activate(&mut state, coating, 0, &[Target::Object(gut)]);
     settled(&mut state);
-    let attacker = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let attacker = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
     attack_with(&mut state, vec![attacker], |_, choice| match choice {
         Decision::ChooseEffectTargets { legal_targets, .. } => {
             assert!(legal_targets.contains(&Target::Object(gut)));
@@ -1994,7 +1997,7 @@ fn gut_selects_at_resolution_and_a_returned_source_is_another_creature() {
     for return_source in [false, true] {
         let mut state = plains();
         let gut = cast_c6a_creature(&mut state, P0, C6A_CARDS[5]);
-        let attacker = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+        let attacker = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
         pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
         act(&mut state, Action::DeclareAttackers(vec![attacker]));
         on_the_stack(&mut state);

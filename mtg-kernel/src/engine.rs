@@ -29658,7 +29658,12 @@ fn play_land(
         event::propose_and_commit(state, event);
     } else if tinybones_land.is_some()
         || resolution_cast_v1::permit(state, id).is_some_and(|p| p.land)
+        || (state.objects.get(id).zone == Zone::Exile
+            && active_permission_for(player, id, state)
+                .is_some_and(|p| p.play_or_cast == PlayOrCast::Play))
     {
+        // A land played from exile enters under its player's control (CR 305.2),
+        // even when the permission lets that player use an opponent's card.
         event::propose_and_commit(
             state,
             ProposedEvent::zone_change_to_battlefield_under_controller(id, player),
@@ -30704,6 +30709,18 @@ fn finalize_owned_cast(
     );
     let cast_at = state.engine.event_history.len();
     event::log_spell_cast_with_targets(state, pending.spell, pending.controller, storm_targets);
+    // Casting moves directly to the stack without event::commit's zone-change hook.
+    // Record only completed casts, so an aborted attempt cannot satisfy Gau.
+    #[cfg(feature = "eternal-fixtures")]
+    if pending.origin_zone == Zone::Graveyard {
+        crate::eternal_cube_c6a_v1::note_zone_change(
+            state,
+            pending.spell,
+            Zone::Graveyard,
+            Zone::Stack,
+            None,
+        );
+    }
     crate::eternal_cards_v1::owned_draws_v1::portent::record_cast(state, stack_item_id)?;
     crate::etali_primal_storm_receipts_v1::record_cast(
         state,
