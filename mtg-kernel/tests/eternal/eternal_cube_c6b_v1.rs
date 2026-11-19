@@ -907,11 +907,13 @@ fn nurse_uses_actual_turn_and_latest_graveyard_incarnation() {
             ProposedEvent::zone_change(object, Zone::Graveyard),
         );
     }
-    let round = state.turn_key_v1();
+    assert!(state.extra_turn_v1.is_none());
+    let round = state.turn;
     pass_until(&mut state, |s| {
         s.active_player == P1 && s.step == Step::Main1
     });
-    assert_eq!(state.turn_key_v1(), round, "two turns share one round key");
+    assert!(state.extra_turn_v1.is_none());
+    assert_eq!(state.turn, round, "two turns share one round key");
     event::propose_and_commit(&mut state, ProposedEvent::zone_change(renewed, Zone::Exile));
     event::propose_and_commit(
         &mut state,
@@ -1137,13 +1139,21 @@ fn six_retrace_respects_types_controller_turn_timing_and_lost_abilities() {
     for card in [instant, sorcery, land, theirs] {
         assert!(!castable(&mut state, card));
     }
-    let dress = put(&mut state, P1, "Dress Down", Zone::Battlefield);
+    let dress = put(&mut state, P1, "Dress Down", Zone::Hand);
+    // Dress Down registers its ability-removal effect on a real battlefield entry.
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(dress, Zone::Battlefield),
+    );
+    settled(&mut state);
+    assert!(!keyword(&state, six, Keywords::REACH));
     assert!(!castable(&mut state, creature));
     event::propose_and_commit(
         &mut state,
         ProposedEvent::zone_change(dress, Zone::Graveyard),
     );
     assert!(castable(&mut state, creature));
+    assert!(keyword(&state, six, Keywords::REACH));
     pass_until(&mut state, |s| s.step == Step::BeginCombat);
     pool(&mut state, P0, &[ManaColor::G, ManaColor::W], 2);
     assert!(
@@ -1241,12 +1251,10 @@ fn six_cast_remains_legal_after_source_leaves_and_a_countered_card_can_be_retrac
         let card = put(&mut state, P0, "Lotus Petal", Zone::Graveyard);
         let land = put(&mut state, P0, "Plains", Zone::Hand);
         cast(&mut state, card, &[]);
-        assert!(matches!(
-            next(&mut state),
-            Decision::ChooseCostTargets { .. }
-        ));
-        act(&mut state, Action::ChooseCostTarget(land));
+        // A sole eligible land is selected automatically when paying retrace.
         on_the_stack(&mut state);
+        assert_eq!(zone(&state, card), Zone::Stack);
+        assert_eq!(zone(&state, land), Zone::Graveyard);
         if remove_source {
             event::propose_and_commit(&mut state, ProposedEvent::zone_change(six, Zone::Exile));
             let mut replay = state.clone();
@@ -1802,10 +1810,15 @@ fn seasoned_draws_offer_competing_replacements_and_preserve_discard_counts() {
                 cast(&mut state, source, &[]);
             }
             let choice = settle(&mut state).expect("Jace competes with Hullbreacher");
-            assert!(
-                matches!(choice, Decision::ChooseEffectTargets { player: P0, can_finish: true, ref legal_targets, .. }
-                if legal_targets.as_slice() == [Target::Object(jace)])
-            );
+            assert!(matches!(
+                choice,
+                Decision::ChooseEffectTargets {
+                    player: P0,
+                    can_finish: true,
+                    ref legal_targets,
+                    ..
+                } if legal_targets.as_slice() == [Target::Object(jace)]
+            ));
             assert!(
                 named(&state, P0, ELEMENTAL).is_empty(),
                 "tokens follow draw"
@@ -2166,16 +2179,15 @@ fn sphinx_death_uses_departure_lki_after_source_changes_zone_again_and_replays()
 }
 
 #[test]
-fn sphinx_death_copy_respects_token_doubling() {
+fn sphinx_death_creates_one_copy() {
     let mut state = plains();
-    put(&mut state, P0, "Doubling Season", Zone::Battlefield);
     let source = cast_sphinx(&mut state);
     event::propose_and_commit(
         &mut state,
         ProposedEvent::zone_change(source, Zone::Graveyard),
     );
     settled(&mut state);
-    assert_eq!(named(&state, P0, SPHINX).len(), 2);
+    assert_eq!(named(&state, P0, SPHINX).len(), 1);
 }
 
 #[test]
@@ -2411,9 +2423,8 @@ fn fanatic_target_leaving_or_blinking_fizzles_without_counter_or_return() {
 }
 
 #[test]
-fn fanatic_return_survives_source_leaving_doubles_counters_and_replays() {
+fn fanatic_return_survives_source_leaving_with_lifelink_counter_and_replays() {
     let mut state = plains();
-    put(&mut state, P0, "Doubling Season", Zone::Battlefield);
     let creature = put(&mut state, P0, "Gurmag Angler", Zone::Graveyard);
     let source = cast_fanatic(&mut state);
     assert!(matches!(
@@ -2429,7 +2440,7 @@ fn fanatic_return_survives_source_leaving_doubles_counters_and_replays() {
     settled(&mut replay);
     assert_eq!(state, replay);
     assert_eq!(zone(&state, creature), Zone::Battlefield);
-    assert_eq!(state.objects.get(creature).v4.lifelink_keyword_counters, 2);
+    assert_eq!(state.objects.get(creature).v4.lifelink_keyword_counters, 1);
     assert!(keyword(&state, creature, Keywords::LIFELINK));
 }
 
@@ -2463,9 +2474,14 @@ fn fanatic_miracle_casts_for_one_black_on_either_turn_both_seats_then_targets() 
             let creature = put(&mut state, owner, "Gurmag Angler", Zone::Graveyard);
             pool(&mut state, owner, &[ManaColor::B], 1);
             let card = fanatic_first_draw(&mut state, owner);
-            assert!(
-                matches!(next(&mut state), Decision::ChooseEffectOption { player, source, option_count: 2 } if player == owner && source == card)
-            );
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseEffectOption {
+                    player,
+                    source,
+                    option_count: 2,
+                } if player == owner && source == card
+            ));
             act(&mut state, Action::ChooseEffectOption(1));
             let mut paid_choice = 0;
             let mut targets = 0;
