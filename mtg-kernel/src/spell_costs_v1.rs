@@ -964,6 +964,12 @@ fn selected_spell_mana_costs_for_source_grant_v1(
                 && crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name)))
             && crate::eternal_vintage_e7b_v1::retrace_quote(state, source, player)
         {
+            // Delve is tracked outside component_groups, so the check for
+            // two object families below does not see it. Retrace cannot
+            // share its land-discard selection with that payment route.
+            if selected.delve {
+                return None;
+            }
             selected.components(RETRACE_COST);
             selected.retrace = true;
         }
