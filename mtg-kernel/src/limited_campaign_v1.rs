@@ -49,8 +49,7 @@ pub const RUNNER_CONTRACT_V1: [&str; 11] = [
      failed-iteration-UUUU.json and exits with code 2.",
     "Truncation gate: more than 2 truncated games in one batch on two consecutive updates stops \
      the campaign with stop_reason stopped_excess_truncation, before the second such update is \
-     applied. A batch with no eligible natural learner decisions stops through the same \
-     truncation policy immediately, without an optimizer update.",
+     applied.",
     "Determinism: each game is a function of its deal, its seat policies and its seat streams \
      derive_seed(mtg-kernel/limited-campaign-actor-rng/v1, [schedule_seed, pair, leg, seat]). \
      Games are gathered in (pair, leg) order and the update reduces in (pair, leg, seat, \

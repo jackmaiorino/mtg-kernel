@@ -7,6 +7,7 @@
 //! qualification receipt is valid for its class only; any other host (the Mac
 //! Studio among them) can run the qualification workload as engineering
 //! verification, but its runs cannot be locked into a manifest.
+use super::is_sha256_hex;
 use serde::{Deserialize, Serialize};
 
 type Result<T> = std::result::Result<T, String>;
@@ -115,6 +116,20 @@ pub fn measure_host_class_v1(short_name: &str, trainer_binary_sha256: &str) -> R
     })
 }
 
+/// Full logical CPU allocation used to qualify a receipt host class.
+pub(super) fn receipt_vcpus_v1(host: &HostClassV1) -> Result<usize> {
+    match host.short_name.as_str() {
+        "win11-13700k" => Ok(24),
+        "win11-5900xt" | "linux-9950x" => Ok(32),
+        name => name
+            .strip_prefix("runpod-epyc-")
+            .filter(|count| !count.starts_with('0'))
+            .and_then(|count| count.parse::<usize>().ok())
+            .filter(|count| *count > 0)
+            .ok_or_else(|| format!("host class {name:?} has no qualification CPU allocation")),
+    }
+}
+
 /// Refuses a host class whose short name is not one the ruling defines, or
 /// whose tuple does not fit its name: `win11-13700k` is Windows with an
 /// i7-13700K, `win11-5900xt` Windows with a Ryzen 9 5900XT, `linux-9950x`
@@ -122,17 +137,48 @@ pub fn measure_host_class_v1(short_name: &str, trainer_binary_sha256: &str) -> R
 /// and exactly `<vcpus>` logical processors (`available_vcpus`).
 pub fn admit_receipt_host_class_v1(host: &HostClassV1, available_vcpus: usize) -> Result<()> {
     let cpu = host.cpu_model.to_ascii_uppercase();
+    let has_token = |word: &str| {
+        cpu.split(|ch: char| !ch.is_alphanumeric())
+            .any(|token| token == word)
+    };
     let has_model = |model: &str| {
-        cpu.split(|ch: char| !ch.is_ascii_alphanumeric())
-            .any(|token| token == model)
+        cpu.split(|ch: char| !ch.is_alphanumeric() && ch != '-')
+            .any(|token| token.strip_prefix("I7-").unwrap_or(token) == model)
+    };
+    let target_fits = match host.os_family.as_str() {
+        "windows" => matches!(
+            host.target_triple.as_str(),
+            "x86_64-pc-windows-msvc" | "x86_64-pc-windows-gnu"
+        ),
+        "linux" => matches!(
+            host.target_triple.as_str(),
+            "x86_64-unknown-linux-gnu" | "x86_64-unknown-linux-musl"
+        ),
+        _ => false,
     };
     let fits = match host.short_name.as_str() {
-        "win11-13700k" => host.os_family == "windows" && has_model("13700K"),
-        "win11-5900xt" => host.os_family == "windows" && has_model("5900XT"),
-        "linux-9950x" => host.os_family == "linux" && has_model("9950X"),
+        "win11-13700k" => {
+            host.os_family == "windows"
+                && has_token("INTEL")
+                && has_token("I7")
+                && has_model("13700K")
+        }
+        "win11-5900xt" => {
+            host.os_family == "windows"
+                && has_token("AMD")
+                && has_token("RYZEN")
+                && has_model("5900XT")
+        }
+        "linux-9950x" => {
+            host.os_family == "linux"
+                && has_token("AMD")
+                && has_token("RYZEN")
+                && has_model("9950X")
+        }
         name => match name.strip_prefix("runpod-epyc-") {
             Some(vcpus) => {
                 host.os_family == "linux"
+                    && has_token("AMD")
                     && has_model("EPYC")
                     && vcpus.parse::<usize>().ok() == Some(available_vcpus)
                     && !vcpus.starts_with('0')
@@ -145,7 +191,7 @@ pub fn admit_receipt_host_class_v1(host: &HostClassV1, available_vcpus: usize) -
             }
         },
     };
-    if !fits {
+    if !fits || !target_fits || !is_sha256_hex(&host.trainer_binary_sha256) {
         return Err(format!(
             "host class {} does not fit this host ({}, {})",
             host.short_name, host.os_family, host.cpu_model

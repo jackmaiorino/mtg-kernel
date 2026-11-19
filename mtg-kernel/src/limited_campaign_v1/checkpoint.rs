@@ -179,7 +179,7 @@ pub struct SourceIdentityV1 {
 }
 
 impl SourceIdentityV1 {
-    fn validate(&self) -> Result<()> {
+    pub(super) fn validate(&self) -> Result<()> {
         for (name, value) in [
             ("binary_sha256", &self.binary_sha256),
             ("binary_source_sha256", &self.binary_source_sha256),
@@ -542,8 +542,12 @@ pub fn verify_chain_v1(root: &Path, head: u64) -> Result<Vec<VerifiedCheckpointV
         return Err("committed head exceeds the campaign horizon".into());
     }
     let mut previous_truncated = None;
+    let mut dev_scores = std::collections::BTreeMap::new();
     let mut chain: Vec<VerifiedCheckpointV1> = Vec::new();
     for update in 0..=head {
+        if super::campaign::dev_collapse_at_v1(&config, &dev_scores, update).is_some() {
+            return Err("a committed update passed the dev collapse stop".into());
+        }
         let directory = iteration_dir_v1(root, update);
         let complete = IterationCompleteV1::parse_v1(&read(&directory.join("complete.json"))?)
             .map_err(|error| format!("update {update}: {error}"))?;
@@ -613,7 +617,9 @@ pub fn verify_chain_v1(root: &Path, head: u64) -> Result<Vec<VerifiedCheckpointV
         previous_truncated =
             super::campaign::verify_receipt_v1(&receipt, &config, &checkpoint, previous_truncated)?;
         if let Some(bytes) = dev {
-            super::campaign::verify_dev_v1(&bytes, &config, &checkpoint, &sha256, false)?;
+            let score =
+                super::campaign::verify_dev_v1(&bytes, &config, &checkpoint, &sha256, false)?;
+            dev_scores.insert(update, score);
         }
         checkpoint.restore_learner_v1()?;
         chain.push(VerifiedCheckpointV1 {

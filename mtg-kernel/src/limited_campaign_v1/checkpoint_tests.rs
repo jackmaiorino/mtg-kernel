@@ -58,7 +58,7 @@ fn write(path: &Path, bytes: &[u8]) {
 /// the checkpoint's SHA-256.
 fn commit(root: &Path, step: u64, parent: Option<String>, marker: f64) -> String {
     let config =
-        super::super::campaign::tests::fixture_config(super::super::campaign::ModeV1::Smoke, 3);
+        super::super::campaign::tests::fixture_config(super::super::campaign::ModeV1::Smoke, 2);
     super::super::campaign::tests::fixture_commit(root, &config, step, parent, marker, None)
 }
 

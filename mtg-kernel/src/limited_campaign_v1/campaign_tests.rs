@@ -525,6 +525,7 @@ fn receipt_host_classes_follow_the_ruled_names() {
             h.short_name = name.into();
             h.cpu_model = cpu.into();
             h.os_family = "windows".into();
+            h.target_triple = "x86_64-pc-windows-msvc".into();
         })
     };
     admit_receipt_host_class_v1(
@@ -558,10 +559,19 @@ fn receipt_host_classes_follow_the_ruled_names() {
         32,
     )
     .is_err());
-    for model in ["13700KF", "13700KS", "13700KX"] {
+    for model in ["13700KF", "13700KS", "13700KX", "13700K-ES", "13700KФ"] {
         let cpu = format!("13th Gen Intel(R) Core(TM) i7-{model}");
         assert!(admit_receipt_host_class_v1(&windows("win11-13700k", &cpu), 24).is_err());
     }
+    for cpu in ["OtherCPU 13700K", "AMD Ryzen 9 9950XФ", "AMD Ryzen 9 9950X-ES"] {
+        assert!(admit_receipt_host_class_v1(&with(&|h| h.cpu_model = cpu.into()), 32).is_err());
+    }
+    assert!(admit_receipt_host_class_v1(&with(&|h| h.target_triple.clear()), 32).is_err());
+    assert!(admit_receipt_host_class_v1(
+        &with(&|h| h.trainer_binary_sha256 = "wrong".into()),
+        32,
+    )
+    .is_err());
     admit_receipt_host_class_v1(
         &windows("win11-13700k", "Intel Core i7-13700k @ 3.40GHz"),
         24,
@@ -665,6 +675,64 @@ fn guarded_launcher_refuses_any_mismatch() {
 }
 
 #[test]
+fn guarded_launcher_uses_recorded_evidence_under_a_different_cpu_allocation() {
+    let root = temp_root("pinned-launch");
+    fs::create_dir(&root).unwrap();
+    let config = fixture_config(ModeV1::Qualification, 1);
+    let mut roots = Vec::new();
+    for workers in [1, 2, 4, 8] {
+        for diagnostics in [false, true] {
+            let directory = root.join(format!("w{workers}-{diagnostics}"));
+            qualification_fixture(&directory, &config, workers, diagnostics);
+            roots.push(directory.join("."));
+        }
+    }
+    assert!(lock_manifest_v1(&roots, 4, 200, 4).is_err());
+    let manifest = lock_manifest_v1(&roots, 4, 200, 32).unwrap();
+    for (run, directory) in manifest.runs.iter().zip(&roots) {
+        assert_eq!(
+            PathBuf::from(run["directory"].as_str().unwrap()),
+            fs::canonicalize(directory).unwrap()
+        );
+    }
+    let path = root.join("qualification_manifest.json");
+    let bytes = manifest_bytes_v1(&manifest).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    let check = |available| {
+        guard_launch_v1(
+            Some(&path),
+            200,
+            4,
+            LearnerKindV1::ActorCriticH32,
+            &config.identity,
+            &host(),
+            available,
+        )
+    };
+    for available in [4, 32] {
+        assert_eq!(check(available).unwrap(), Some(sha256_hex(&bytes)));
+    }
+    assert!(check(3).is_err());
+
+    // Keep the timing internally consistent, but change the recorded evidence.
+    let timing_path = roots[0].join("timing.json");
+    let run_path = roots[0].join("qualification_run.json");
+    let mut timing = canonical_value(&fs::read(&timing_path).unwrap()).unwrap();
+    timing["training_ns"] = json!(500_000_000u64);
+    timing["completed_natural_games_per_sec"] = json!(32.0);
+    timing["decisions_per_sec"] = json!(64.0);
+    let mut run = canonical_value(&fs::read(&run_path).unwrap()).unwrap();
+    run["timing"] = timing.clone();
+    fs::write(&timing_path, to_bytes(&timing).unwrap()).unwrap();
+    fs::write(&run_path, to_bytes(&run).unwrap()).unwrap();
+    for available in [4, 32] {
+        let error = check(available).unwrap_err();
+        assert!(error.contains("differs from its qualification evidence"), "{error}");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn runner_contract_states_what_the_rulings_require() {
     let text = RUNNER_CONTRACT_V1.join(" ");
     for phrase in [
@@ -697,7 +765,8 @@ pub(crate) fn fixture_config(mode: ModeV1, u_max: u64) -> CampaignConfigV1 {
         identity: source_identity_v1(&identity().git_head, &identity().binary_sha256, &inventory),
         inventory: &inventory,
         decks: &decks,
-        qualification_manifest_sha256: None,
+        qualification_manifest_sha256: (mode == ModeV1::Campaign && u_max > 1)
+            .then(|| "aa".repeat(32)),
         qualification_pairs: if mode == ModeV1::Qualification {
             Some(gate2_pairs_v1(&names, &DRAKE_HATCHER_TRAIN_DECKS_V1).unwrap())
         } else {
@@ -934,26 +1003,140 @@ fn fixture_launch(root: &Path) -> LaunchV1 {
 
 #[test]
 fn resume_stops_after_the_collapse_milestone_directory_was_committed() {
-    let config = fixture_config(ModeV1::Smoke, 100);
+    let config = fixture_config(ModeV1::Campaign, 100);
     let root = temp_root("collapse");
     fixture_chain(&root, &config, 40);
     assert!(!root.join("complete.json").exists());
     assert_eq!(verify_v1(&root).unwrap(), 40);
-    let mut runner = resume_runner_v1(&fixture_launch(&root)).unwrap();
-    assert_eq!(runner.dev_scores.get(&20), Some(&0.375));
-    assert_eq!(runner.dev_scores.get(&40), Some(&0.375));
-    let snapshot = runner.learner.snapshot();
-    // Any attempt to collect update 41 now fails instead of running a full game.
-    runner.decks.clear();
-    assert_eq!(runner.run_to_horizon().unwrap(), RunOutcomeV1::DevCollapse);
-    assert_eq!(runner.learner.snapshot(), snapshot);
+    let checkpoint = fs::read(checkpoint_path_v1(&root, 40)).unwrap();
+    let mut launch = fixture_launch(&root);
+    // No inventory is needed to report a final stop without collecting again.
+    launch.repo_root = root.join("no-inventory");
+    assert_eq!(resume_v1(&launch).unwrap(), RunOutcomeV1::DevCollapse);
+    assert_eq!(fs::read(checkpoint_path_v1(&root, 40)).unwrap(), checkpoint);
     assert!(!checkpoint_path_v1(&root, 41).exists());
     let complete = canonical_value(&fs::read(root.join("complete.json")).unwrap()).unwrap();
     assert_eq!(complete["final_update"], 40);
     assert_eq!(complete["stop_reason"], "dev_collapse");
     let bytes = fs::read(root.join("complete.json")).unwrap();
-    runner.finish_campaign(RunOutcomeV1::DevCollapse).unwrap();
+    assert_eq!(resume_v1(&launch).unwrap(), RunOutcomeV1::DevCollapse);
     assert_eq!(fs::read(root.join("complete.json")).unwrap(), bytes);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn resume_refuses_a_failed_iteration_before_cleanup_or_collection() {
+    let root = temp_root("failed-resume");
+    let config = fixture_config(ModeV1::Smoke, 2);
+    fixture_chain(&root, &config, 1);
+    let staging = root.join("iterations").join(".iter_0002.staging");
+    fs::create_dir(&staging).unwrap();
+    fs::write(checkpoint_path_v1(&root, 2), b"keep").unwrap();
+    let failed = json!({
+        "schema": FAILED_SCHEMA_V1,
+        "campaign_sha256": sha256_hex(&to_bytes(&config).unwrap()),
+        "update": 2,
+        "error": "worker panic",
+        "games": [],
+    });
+    fs::write(
+        root.join("failed-iteration-0002.json"),
+        to_bytes(&failed).unwrap(),
+    )
+    .unwrap();
+    let mut launch = fixture_launch(&root);
+    launch.repo_root = root.join("no-inventory");
+    let error = resume_v1(&launch).unwrap_err();
+    assert!(error.contains("failed-iteration-0002.json"), "{error}");
+    assert!(staging.exists());
+    assert_eq!(fs::read(checkpoint_path_v1(&root, 2)).unwrap(), b"keep");
+    assert!(!root.join("complete.json").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn resume_finishes_an_interrupted_truncation_stop_without_collection() {
+    let root = temp_root("stopped-resume");
+    let config = fixture_config(ModeV1::Smoke, 2);
+    fixture_chain(&root, &config, 1);
+    let mut games = fixture_games(&config, 2, false, 0);
+    for game in games.as_array_mut().unwrap() {
+        game["terminal"] = json!("truncated");
+        game["returns"] = Value::Null;
+        game["outcome"] = Value::Null;
+        game["truncation_reason"] = json!("max_decisions");
+    }
+    let stopped = json!({
+        "schema": STOPPED_SCHEMA_V1,
+        "campaign_sha256": sha256_hex(&to_bytes(&config).unwrap()),
+        "update": 2,
+        "stop_reason": "stopped_excess_truncation",
+        "truncated_games": 2,
+        "previous_truncated_games": 0,
+        "games": games,
+    });
+    let path = root.join("stopped-iteration-0002.json");
+    let mut launch = fixture_launch(&root);
+    launch.repo_root = root.join("no-inventory");
+    for field in ["schema", "campaign_sha256", "update", "truncated_games"] {
+        let mut changed = stopped.clone();
+        changed[field] = json!("wrong");
+        fs::write(&path, to_bytes(&changed).unwrap()).unwrap();
+        assert!(resume_v1(&launch).is_err(), "{field}");
+        assert!(!root.join("complete.json").exists());
+    }
+    fs::write(&path, to_bytes(&stopped).unwrap()).unwrap();
+    let checkpoint = fs::read(checkpoint_path_v1(&root, 1)).unwrap();
+    assert_eq!(resume_v1(&launch).unwrap(), RunOutcomeV1::ExcessTruncation);
+    let bytes = fs::read(root.join("complete.json")).unwrap();
+    let complete = canonical_value(&bytes).unwrap();
+    assert_eq!(complete["final_update"], 1);
+    assert_eq!(complete["stop_reason"], "stopped_excess_truncation");
+    assert_eq!(resume_v1(&launch).unwrap(), RunOutcomeV1::ExcessTruncation);
+    assert_eq!(fs::read(root.join("complete.json")).unwrap(), bytes);
+    assert_eq!(fs::read(checkpoint_path_v1(&root, 1)).unwrap(), checkpoint);
+    assert!(!checkpoint_path_v1(&root, 2).exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn resume_refuses_a_non_milestone_head_after_dev_collapse() {
+    let root = temp_root("past-collapse");
+    let config = fixture_config(ModeV1::Campaign, 100);
+    fixture_chain(&root, &config, 41);
+    let error = verify_v1(&root).unwrap_err();
+    assert!(error.contains("passed the dev collapse stop"), "{error}");
+    let error = resume_v1(&fixture_launch(&root)).unwrap_err();
+    assert!(error.contains("passed the dev collapse stop"), "{error}");
+    assert!(!checkpoint_path_v1(&root, 42).exists());
+    fs::remove_dir_all(root).unwrap();
+
+    let root = temp_root("remember-collapse");
+    let mut runner = start_runner(
+        &fixture_launch(&root),
+        ModeV1::Smoke,
+        LearnerKindV1::ActorCriticH32,
+        2,
+    )
+    .unwrap();
+    runner.head = 41;
+    runner.dev_scores.insert(20, 0.375);
+    runner.dev_scores.insert(40, 0.375);
+    assert_eq!(runner.committed_stop(), Some(RunOutcomeV1::DevCollapse));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn resume_finishes_the_horizon_without_collection() {
+    let root = temp_root("horizon-resume");
+    fixture_chain(&root, &fixture_config(ModeV1::Smoke, 2), 2);
+    let mut launch = fixture_launch(&root);
+    launch.repo_root = root.join("no-inventory");
+    assert_eq!(resume_v1(&launch).unwrap(), RunOutcomeV1::Horizon);
+    let bytes = fs::read(root.join("complete.json")).unwrap();
+    assert_eq!(resume_v1(&launch).unwrap(), RunOutcomeV1::Horizon);
+    assert_eq!(fs::read(root.join("complete.json")).unwrap(), bytes);
+    assert!(!checkpoint_path_v1(&root, 3).exists());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1052,6 +1235,177 @@ fn rebind_receipt(root: &Path, step: u64, bytes: &[u8]) -> String {
 }
 
 #[test]
+fn configuration_reader_refuses_each_invalid_invariant() {
+    let root = temp_root("invalid-config");
+    fs::create_dir(&root).unwrap();
+    let config = fixture_config(ModeV1::Smoke, 2);
+    let path = root.join("campaign.json");
+    fs::write(&path, to_bytes(&config).unwrap()).unwrap();
+    read_config_v1(&root).unwrap();
+    let refuse = |name: &str, change: &dyn Fn(&mut CampaignConfigV1)| {
+        let mut changed = config.clone();
+        change(&mut changed);
+        fs::write(&path, to_bytes(&changed).unwrap()).unwrap();
+        assert!(read_config_v1(&root).is_err(), "{name}");
+    };
+    refuse("contract", &|c| c.runner_contract.clear());
+    refuse("card files", &|c| c.card_file_sha256 = ["x".into(), "y".into()]);
+    refuse("binary digest", &|c| c.identity.binary_sha256 = "x".repeat(64));
+    refuse("source digest", &|c| c.identity.binary_source_sha256.clear());
+    refuse("actor digest", &|c| c.identity.actor_producer_sha256.clear());
+    refuse("reveal digest", &|c| c.identity.reveal_producer_sha256.clear());
+    refuse("reducer digest", &|c| c.identity.reveal_reducer_sha256.clear());
+    refuse("git head", &|c| c.identity.git_head.clear());
+    refuse("hand knowledge", &|c| c.identity.hand_knowledge = "wrong".into());
+    refuse("actor profile", &|c| c.identity.actor_profile = "wrong".into());
+    refuse("pool pin", &|c| {
+        c.identity.sample_sha256_in_pool_order = "bb".repeat(32)
+    });
+    refuse("card database pin", &|c| {
+        c.identity.card_db_hash = "0000000000000000".into()
+    });
+    refuse("duplicate deck", &|c| c.train_decks[1] = c.train_decks[0].clone());
+    refuse("eval deck", &|c| c.train_decks[0].deck = "FDN_top_00265_UG".into());
+    refuse("pool order", &|c| c.train_decks.swap(0, 1));
+    refuse("empty deck", &|c| c.train_decks[0].cards = 0);
+    refuse("deck bound", &|c| {
+        c.train_decks[0].cards = MAX_CUSTOM_DECK_CARDS_V1 + 1
+    });
+    refuse("registered count", &|c| c.train_decks[0].cards = 41);
+    refuse("deck digest", &|c| c.train_decks[0].source_sha256 = "x".repeat(64));
+    refuse("oversize digest", &|c| {
+        c.train_decks
+            .iter_mut()
+            .find(|deck| deck.deck == GATE2_REQUIRED_DECK_V1)
+            .unwrap()
+            .source_sha256 = "bb".repeat(32);
+    });
+    refuse("smoke horizon", &|c| {
+        c.u_max = 3;
+        c.optimizer_config = optimizer_config_v1(LearnerKindV1::ActorCriticH32, 3);
+    });
+    refuse("smoke manifest", &|c| {
+        c.qualification_manifest_sha256 = Some("aa".repeat(32))
+    });
+    let campaign = fixture_config(ModeV1::Campaign, 100);
+    for (horizon, manifest) in [
+        (50, Some("aa".repeat(32))),
+        (100, None),
+        (100, Some("x".repeat(64))),
+        (1, Some("aa".repeat(32))),
+    ] {
+        let mut changed = campaign.clone();
+        changed.u_max = horizon;
+        changed.optimizer_config = optimizer_config_v1(LearnerKindV1::ActorCriticH32, horizon);
+        changed.qualification_manifest_sha256 = manifest;
+        fs::write(&path, to_bytes(&changed).unwrap()).unwrap();
+        assert!(read_config_v1(&root).is_err(), "campaign horizon {horizon}");
+    }
+    let qualification = fixture_config(ModeV1::Qualification, 1);
+    for horizon in [1, 2] {
+        let mut changed = qualification.clone();
+        changed.u_max = horizon;
+        changed.optimizer_config = optimizer_config_v1(LearnerKindV1::ActorCriticH32, horizon);
+        if horizon == 1 {
+            changed.qualification_manifest_sha256 = Some("aa".repeat(32));
+        }
+        fs::write(&path, to_bytes(&changed).unwrap()).unwrap();
+        assert!(read_config_v1(&root).is_err(), "qualification horizon {horizon}");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn control_update_reports_require_valid_rewards_counts_and_loss() {
+    let mut config = fixture_config(ModeV1::Smoke, 2);
+    let kind = LearnerKindV1::PairCenteredControl;
+    config.learner_contract = kind.contract().into();
+    config.objective = kind.objective().into();
+    config.feature_sha256 = kind.feature_sha256();
+    config.optimizer_config = optimizer_config_v1(kind, 2);
+    validate_config_v1(&config).unwrap();
+    let totals = GameTotals {
+        eligible: 3,
+        ..GameTotals::default()
+    };
+    let report = json!({
+        "loss": 0.0,
+        "doubled_examples": 6,
+        "reward_counts": {"-1": 2, "0": 2, "1": 2},
+    });
+    verify_update_report(&report, &config, 1, &totals).unwrap();
+    for (field, value) in [
+        ("loss", Value::Null),
+        ("doubled_examples", json!(5)),
+        ("reward_counts", json!({"2": 6})),
+        ("reward_counts", json!({"0": -1})),
+        ("reward_counts", json!({"0": 5})),
+        ("reward_counts", json!({"-1": u64::MAX, "0": 1})),
+    ] {
+        let mut changed = report.clone();
+        changed[field] = value;
+        assert!(verify_update_report(&changed, &config, 1, &totals).is_err(), "{field}");
+    }
+}
+
+#[test]
+fn verification_rejects_consecutive_truncation_receipts() {
+    let root = temp_root("consecutive-truncation");
+    let config = fixture_config(ModeV1::Campaign, 100);
+    fixture_chain(&root, &config, 1);
+    let path = iteration_dir_v1(&root, 1).join("receipt.json");
+    let mut receipt = canonical_value(&fs::read(&path).unwrap()).unwrap();
+    let truncate = |receipt: &mut Value| {
+        for game in receipt["games"].as_array_mut().unwrap().iter_mut().take(3) {
+            game["terminal"] = json!("truncated");
+            game["returns"] = Value::Null;
+            game["outcome"] = Value::Null;
+            game["truncation_reason"] = json!("max_decisions");
+        }
+        receipt["natural_games"] = json!(29);
+        receipt["truncated_games"] = json!(3);
+        receipt["truncation_gate"]["exceeded"] = json!(true);
+        receipt["update_report"]["decisions"] = json!(50);
+        receipt["update_report"]["natural_trajectories"] = json!(50);
+        receipt["update_report"]["truncated_trajectories"] = json!(6);
+    };
+    truncate(&mut receipt);
+    let parent = rebind_receipt(&root, 1, &to_bytes(&receipt).unwrap());
+    assert_eq!(verify_v1(&root).unwrap(), 1);
+    fixture_commit(&root, &config, 2, Some(parent), 0.25, None);
+    let path = iteration_dir_v1(&root, 2).join("receipt.json");
+    let mut receipt = canonical_value(&fs::read(&path).unwrap()).unwrap();
+    receipt["truncation_gate"]["previous_truncated_games"] = json!(3);
+    rebind_receipt(&root, 2, &to_bytes(&receipt).unwrap());
+    assert_eq!(verify_v1(&root).unwrap(), 2);
+    truncate(&mut receipt);
+    rebind_receipt(&root, 2, &to_bytes(&receipt).unwrap());
+    let error = verify_v1(&root).unwrap_err();
+    assert!(error.contains("passed the truncation stop"), "{error}");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn atomic_publication_refuses_dangling_staging_links() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_root("staging-link");
+    fs::create_dir(&root).unwrap();
+    let target = root.join("outside");
+    let staging = root.join(".foo.json.staging");
+    symlink(&target, &staging).unwrap();
+    assert!(publish_atomic_v1(&root, "foo.json", b"{}").is_err());
+    assert!(fs::symlink_metadata(&staging).unwrap().file_type().is_symlink());
+    assert!(!target.exists());
+    fs::remove_file(staging).unwrap();
+    fs::write(root.join(".foo.json.staging"), b"interrupted").unwrap();
+    publish_atomic_v1(&root, "foo.json", b"{}").unwrap();
+    assert_eq!(fs::read(root.join("foo.json")).unwrap(), b"{}");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn verification_requires_the_bound_campaign_and_canonical_receipts() {
     let root = temp_root("verified-records");
     let config = fixture_config(ModeV1::Smoke, 2);
@@ -1089,7 +1443,7 @@ fn verification_requires_the_bound_campaign_and_canonical_receipts() {
 #[test]
 fn verification_requires_milestone_dev_records_and_checks_their_scores() {
     let root = temp_root("dev-records");
-    fixture_chain(&root, &fixture_config(ModeV1::Smoke, 100), 20);
+    fixture_chain(&root, &fixture_config(ModeV1::Campaign, 100), 20);
     assert_eq!(verify_v1(&root).unwrap(), 20);
     let directory = iteration_dir_v1(&root, 20);
     let dev = fs::read(directory.join("dev.json")).unwrap();

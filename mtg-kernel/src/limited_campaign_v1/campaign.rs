@@ -16,9 +16,12 @@ use super::collect::{
     SeatPolicyV1, TerminalV1, CAMPAIGN_LIMITS_V1,
 };
 use super::diagnostics::{measure_phase, DiagnosticsV1, RunStagesV1};
-use super::host::{admit_receipt_host_class_v1, peak_rss_bytes_v1, HostClassV1};
+use super::host::{
+    admit_receipt_host_class_v1, peak_rss_bytes_v1, receipt_vcpus_v1, HostClassV1,
+};
 use super::inventory::{
-    load_train_decks_v1, read_inventory_v1, DeckV1, InventoryV1, DRAKE_HATCHER_TRAIN_DECKS_V1,
+    load_train_decks_v1, read_inventory_v1, DeckV1, InventoryV1, CARD_FILES_V1,
+    DRAKE_HATCHER_TRAIN_DECKS_V1, OVERSIZE_DECKS_V1, SAMPLE_SHA256_IN_POOL_ORDER_V1,
 };
 use super::schedule::{
     deal_v1, gate2_pairs_v1, is_league_pair_v1, league_opponent_step_v1, update_pairs_v1,
@@ -34,6 +37,7 @@ use crate::current_tree_learner_v2::{
     TerminalV2, TrajectoryV2,
 };
 use crate::limited_full_pool_consumer_v1 as full_pool;
+use crate::limited_session_v1::MAX_CUSTOM_DECK_CARDS_V1;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -356,9 +360,24 @@ fn sync_directory(path: &Path) {
 
 /// `.NAME.staging` + `sync_all` + rename; returns the SHA-256 of `bytes`.
 pub fn publish_atomic_v1(directory: &Path, name: &str, bytes: &[u8]) -> Result<String> {
+    let directory = if directory.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        directory
+    };
     let target = child_path(directory, name)?;
     let staging = child_path(directory, &format!(".{name}.staging"))?;
-    if staging.exists() {
+    validate_run_path(directory)?;
+    for path in [&target, &staging] {
+        match fs::symlink_metadata(path) {
+            Ok(_) => {
+                validate_run_path(path)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io_error(path)(error)),
+        }
+    }
+    if fs::symlink_metadata(&staging).is_ok() {
         fs::remove_file(&staging).map_err(io_error(&staging))?;
     }
     write_synced(&staging, bytes)?;
@@ -591,15 +610,23 @@ pub(super) fn read_config_v1(root: &Path) -> Result<(CampaignConfigV1, String)> 
     let bytes = read_bytes(&root.join("campaign.json"))?;
     let config: CampaignConfigV1 =
         serde_json::from_slice(&bytes).map_err(|error| format!("campaign.json: {error}"))?;
-    let mode = mode_of(&config)?;
+    if to_bytes(&config)? != bytes {
+        return Err("campaign.json is not in canonical form".into());
+    }
+    validate_config_v1(&config)?;
+    Ok((config, sha256_hex(&bytes)))
+}
+
+fn validate_config_v1(config: &CampaignConfigV1) -> Result<()> {
+    config.identity.validate()?;
+    let mode = mode_of(config)?;
     let learner = LearnerKindV1::from_contract(&config.learner_contract)?;
     let dev_pairs = if mode == ModeV1::Qualification {
         QUALIFICATION_DEV_PAIRS_V1
     } else {
         DEV_PAIRS_V1
     };
-    if to_bytes(&config)? != bytes
-        || config.schema != CAMPAIGN_SCHEMA_V1
+    if config.schema != CAMPAIGN_SCHEMA_V1
         || config.u_max == 0
         || config.u_max > 200
         || config.dev_interval != DEV_INTERVAL_V1
@@ -617,10 +644,59 @@ pub(super) fn read_config_v1(root: &Path) -> Result<(CampaignConfigV1, String)> 
         || config.truncation_gate_games != TRUNCATION_GATE_GAMES_V1
         || config.league_interval != LEAGUE_INTERVAL_V1
         || config.train_decks.len() != 40
+        || config.runner_contract
+            != RUNNER_CONTRACT_V1
+                .iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>()
+        || config.card_file_sha256 != CARD_FILES_V1.map(|(_, digest)| digest.to_string())
+        || config.identity.sample_sha256_in_pool_order != SAMPLE_SHA256_IN_POOL_ORDER_V1
+        || config.identity.actor_profile != full_pool::PROFILE_V1
+        || config.identity.card_db_hash != format!("{KERNEL_CARDDB_HASH:016x}")
     {
         return Err("campaign.json is not a canonical campaign configuration".into());
     }
-    let pairs = batch_pairs_v1(&config, 0)?;
+    let manifest = config.qualification_manifest_sha256.as_deref();
+    let valid_mode = match mode {
+        ModeV1::Campaign if config.u_max == 1 => manifest.is_none(),
+        ModeV1::Campaign => {
+            CAMPAIGN_HORIZON_V1.contains(&config.u_max) && manifest.is_some_and(is_sha256_hex)
+        }
+        ModeV1::Smoke => SMOKE_HORIZON_V1.contains(&config.u_max) && manifest.is_none(),
+        ModeV1::Qualification => config.u_max == 1 && manifest.is_none(),
+    };
+    if !valid_mode {
+        return Err("campaign horizon or qualification manifest differs from its mode".into());
+    }
+    let pool = include_str!("../../../data/limited/draftzero_sample_v1/pool.tsv");
+    let train = pool
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let columns = line.split('\t').collect::<Vec<_>>();
+            (columns.len() == 5 && columns[1] == "train").then_some(columns)
+        })
+        .collect::<Vec<_>>();
+    if train.len() != config.train_decks.len()
+        || train.iter().zip(&config.train_decks).any(|(row, deck)| {
+            deck.deck != row[0]
+                || row[4].parse::<usize>().ok() != Some(deck.cards)
+                || !(40..=MAX_CUSTOM_DECK_CARDS_V1).contains(&deck.cards)
+                || !is_sha256_hex(&deck.source_sha256)
+        })
+    {
+        return Err("train decks differ from pool.tsv or have invalid digests".into());
+    }
+    for (name, split, cards, digest) in OVERSIZE_DECKS_V1 {
+        if split == "train"
+            && !config.train_decks.iter().any(|deck| {
+                deck.deck == name && deck.cards == cards && deck.source_sha256 == digest
+            })
+        {
+            return Err("the oversize train deck differs from its pinned registration".into());
+        }
+    }
+    let pairs = batch_pairs_v1(config, 0)?;
     let self_play = pairs.iter().filter(|(_, league)| league.is_none()).count() as u64;
     if config.pairs_per_update != pairs.len() as u64
         || config.self_play_pairs_per_update != self_play
@@ -641,7 +717,7 @@ pub(super) fn read_config_v1(root: &Path) -> Result<(CampaignConfigV1, String)> 
     } else if config.qualification_pairs.is_some() {
         return Err("only qualification runs have qualification pairs".into());
     }
-    Ok((config, sha256_hex(&bytes)))
+    Ok(())
 }
 
 fn canonical_value(bytes: &[u8]) -> Result<Value> {
@@ -938,7 +1014,7 @@ pub(super) fn verify_dev_v1(
     checkpoint: &CheckpointV1,
     checkpoint_sha256: &str,
     qualification: bool,
-) -> Result<()> {
+) -> Result<f64> {
     let dev = canonical_value(bytes)?;
     let totals = verify_games(config, &dev["games"], checkpoint.step, true)?;
     let mut expected = json!({
@@ -958,7 +1034,38 @@ pub(super) fn verify_dev_v1(
     if dev != expected {
         return Err("dev schema, score or checkpoint bindings differ".into());
     }
-    Ok(())
+    Ok(totals.half_points as f64 / (4 * config.dev_pairs) as f64)
+}
+
+pub(super) fn dev_collapse_at_v1(
+    config: &CampaignConfigV1,
+    scores: &BTreeMap<u64, f64>,
+    head: u64,
+) -> Option<u64> {
+    scores.range(..=head).find_map(|(&step, &score)| {
+        let earlier = step
+            .checked_sub(config.dev_interval)
+            .and_then(|previous| scores.get(&previous));
+        (step >= config.dev_collapse_after_update
+            && score < config.dev_collapse_threshold
+            && earlier.is_some_and(|score| *score < config.dev_collapse_threshold))
+        .then_some(step)
+    })
+}
+
+fn completion_record_v1(
+    campaign_sha256: &str,
+    head: u64,
+    head_sha256: &str,
+    outcome: RunOutcomeV1,
+) -> Value {
+    json!({
+        "schema": COMPLETE_SCHEMA_V1,
+        "campaign_sha256": campaign_sha256,
+        "final_update": head,
+        "final_checkpoint_sha256": head_sha256,
+        "stop_reason": outcome.stop_reason(),
+    })
 }
 
 impl RunnerV1 {
@@ -1322,18 +1429,7 @@ impl RunnerV1 {
     }
 
     fn committed_stop(&self) -> Option<RunOutcomeV1> {
-        let threshold = self.config.dev_collapse_threshold;
-        let earlier = self
-            .head
-            .checked_sub(self.config.dev_interval)
-            .and_then(|step| self.dev_scores.get(&step));
-        if self.head >= self.config.dev_collapse_after_update
-            && self
-                .dev_scores
-                .get(&self.head)
-                .is_some_and(|score| *score < threshold)
-            && earlier.is_some_and(|score| *score < threshold)
-        {
+        if dev_collapse_at_v1(&self.config, &self.dev_scores, self.head).is_some() {
             Some(RunOutcomeV1::DevCollapse)
         } else {
             None
@@ -1341,13 +1437,12 @@ impl RunnerV1 {
     }
 
     fn finish_campaign(&self, outcome: RunOutcomeV1) -> Result<()> {
-        let record = json!({
-            "schema": COMPLETE_SCHEMA_V1,
-            "campaign_sha256": self.campaign_sha256,
-            "final_update": self.head,
-            "final_checkpoint_sha256": self.head_sha256,
-            "stop_reason": outcome.stop_reason(),
-        });
+        let record = completion_record_v1(
+            &self.campaign_sha256,
+            self.head,
+            &self.head_sha256,
+            outcome,
+        );
         publish_atomic_v1(&self.root, "complete.json", &to_bytes(&record)?)?;
         Ok(())
     }
@@ -1430,6 +1525,9 @@ pub fn guard_launch_v1(
     host: &HostClassV1,
     available_vcpus: usize,
 ) -> Result<Option<String>> {
+    if workers == 0 || workers > available_vcpus {
+        return Err("the launch needs at least one available CPU per worker".into());
+    }
     if u_max <= 1 {
         return match manifest {
             None => Ok(None),
@@ -1475,8 +1573,8 @@ pub fn guard_launch_v1(
     if let Some((_, name)) = checks.iter().find(|(holds, _)| !holds) {
         return Err(format!("qualification manifest refuses this run: {name}"));
     }
-    admit_receipt_host_class_v1(host, available_vcpus)?;
-    validate_manifest_v1(&parsed, available_vcpus)?;
+    admit_receipt_host_class_v1(host, receipt_vcpus_v1(host)?)?;
+    validate_manifest_v1(&parsed)?;
     Ok(Some(sha256_hex(&bytes)))
 }
 
@@ -1558,6 +1656,7 @@ fn start_runner(
         qualification_manifest_sha256: manifest_sha256,
         qualification_pairs,
     });
+    validate_config_v1(&config)?;
     prepare_fresh_root(&launch.root)?;
     let campaign_sha256 = publish_atomic_v1(&launch.root, "campaign.json", &to_bytes(&config)?)?;
     record_launch(launch, "start", None)?;
@@ -1622,7 +1721,7 @@ fn child_path(directory: &Path, name: &str) -> Result<PathBuf> {
     Ok(directory.join(name))
 }
 
-fn validate_run_tree(root: &Path) -> Result<()> {
+fn validate_run_path(root: &Path) -> Result<fs::Metadata> {
     let metadata = fs::symlink_metadata(root).map_err(io_error(root))?;
     if metadata.file_type().is_symlink() {
         return Err(format!("redirected run path: {}", root.display()));
@@ -1634,6 +1733,14 @@ fn validate_run_tree(root: &Path) -> Result<()> {
             return Err(format!("run path is a reparse point: {}", root.display()));
         }
     }
+    if !metadata.is_dir() && !metadata.is_file() {
+        return Err(format!("run path is not a regular file: {}", root.display()));
+    }
+    Ok(metadata)
+}
+
+fn validate_run_tree(root: &Path) -> Result<()> {
+    let metadata = validate_run_path(root)?;
     if metadata.is_dir() {
         let directory = fs::canonicalize(root).map_err(io_error(root))?;
         for entry in fs::read_dir(root).map_err(io_error(root))? {
@@ -1645,11 +1752,6 @@ fn validate_run_tree(root: &Path) -> Result<()> {
                 return Err(format!("redirected run path: {}", path.display()));
             }
         }
-    } else if !metadata.is_file() {
-        return Err(format!(
-            "run path is not a regular file: {}",
-            root.display()
-        ));
     }
     Ok(())
 }
@@ -1720,7 +1822,103 @@ fn clean_uncommitted(
 /// committed iteration, removes uncommitted staging, and continues at the
 /// next update with the outputs an uninterrupted run would have written.
 pub fn resume_v1(launch: &LaunchV1) -> Result<RunOutcomeV1> {
+    if let Some(outcome) = resume_stop_v1(&launch.root)? {
+        return Ok(outcome);
+    }
     resume_runner_v1(launch)?.run_to_horizon()
+}
+
+/// Recover final stops before launch validation, cleanup or collection.
+fn resume_stop_v1(root: &Path) -> Result<Option<RunOutcomeV1>> {
+    validate_run_tree(root)?;
+    let mut stopped = Vec::new();
+    for entry in fs::read_dir(root).map_err(io_error(root))? {
+        let name = entry.map_err(io_error(root))?.file_name();
+        let name = name.to_str().ok_or("run file name is not UTF-8")?;
+        if name.starts_with("failed-iteration-") && name.ends_with(".json") {
+            return Err(format!("the campaign failed: see {name}"));
+        }
+        if name.starts_with("stopped-iteration-") && name.ends_with(".json") {
+            stopped.push(name.to_string());
+        }
+    }
+    let (config, campaign_sha256) = read_config_v1(root)?;
+    if mode_of(&config)? == ModeV1::Qualification {
+        return Err("a qualification run is not resumed: run it again".into());
+    }
+    let head = committed_head(root)?.ok_or("no committed iteration: start the run again")?;
+    let chain = super::checkpoint::verify_chain_v1(root, head)?;
+    let last = chain.last().ok_or("empty chain")?;
+    let mut scores = BTreeMap::new();
+    for link in &chain {
+        if link.complete.dev_sha256.is_some() {
+            let step = link.checkpoint.step;
+            let dev = canonical_value(&read_bytes(
+                &iteration_dir_v1(root, step).join("dev.json"),
+            )?)?;
+            scores.insert(step, dev["score"].as_f64().ok_or("dev.json has no score")?);
+        }
+    }
+    let mut outcome = if dev_collapse_at_v1(&config, &scores, head).is_some() {
+        Some(RunOutcomeV1::DevCollapse)
+    } else if head == config.u_max {
+        Some(RunOutcomeV1::Horizon)
+    } else {
+        None
+    };
+    if !stopped.is_empty() {
+        let update = head + 1;
+        if outcome.is_some() || stopped != vec![format!("stopped-iteration-{update:04}.json")] {
+            return Err("truncation stop does not follow the committed head".into());
+        }
+        let record = canonical_value(&read_bytes(&root.join(&stopped[0]))?)?;
+        let totals = verify_games(&config, &record["games"], update, false)?;
+        let previous = if head == 0 {
+            None
+        } else {
+            let receipt = canonical_value(&read_bytes(
+                &iteration_dir_v1(root, head).join("receipt.json"),
+            )?)?;
+            Some(
+                receipt["truncated_games"]
+                    .as_u64()
+                    .ok_or("missing truncation count")?,
+            )
+        };
+        let gate = config.truncation_gate_games;
+        let expected = json!({
+            "schema": STOPPED_SCHEMA_V1,
+            "campaign_sha256": campaign_sha256,
+            "update": update,
+            "stop_reason": RunOutcomeV1::ExcessTruncation.stop_reason(),
+            "truncated_games": totals.truncated,
+            "previous_truncated_games": previous,
+            "games": record["games"],
+        });
+        if record != expected
+            || (totals.eligible > 0
+                && !(totals.truncated > gate && previous.is_some_and(|count| count > gate)))
+        {
+            return Err("invalid committed truncation stop".into());
+        }
+        outcome = Some(RunOutcomeV1::ExcessTruncation);
+    }
+    let complete = root.join("complete.json");
+    if let Some(outcome) = outcome {
+        let record = completion_record_v1(&campaign_sha256, head, &last.sha256, outcome);
+        if complete.exists() {
+            if canonical_value(&read_bytes(&complete)?)? != record {
+                return Err("campaign completion differs from its committed stop".into());
+            }
+        } else {
+            publish_atomic_v1(root, "complete.json", &to_bytes(&record)?)?;
+        }
+        return Ok(Some(outcome));
+    }
+    if complete.exists() {
+        return Err("campaign completion has no committed stop".into());
+    }
+    Ok(None)
 }
 
 fn resume_runner_v1(launch: &LaunchV1) -> Result<RunnerV1> {
@@ -1950,7 +2148,7 @@ fn require_qualification_training(natural_games: u64) -> Result<()> {
 }
 
 /// Rebuild from the referenced evidence; paths here are read only.
-fn validate_manifest_v1(manifest: &QualificationManifestV1, available_vcpus: usize) -> Result<()> {
+fn validate_manifest_v1(manifest: &QualificationManifestV1) -> Result<()> {
     let roots = manifest
         .runs
         .iter()
@@ -1962,7 +2160,12 @@ fn validate_manifest_v1(manifest: &QualificationManifestV1, available_vcpus: usi
                 .ok_or_else(|| "manifest run has no directory".to_string())
         })
         .collect::<Result<Vec<_>>>()?;
-    let checked = lock_manifest_v1(&roots, manifest.workers, manifest.u_max, available_vcpus)?;
+    let checked = lock_manifest_v1(
+        &roots,
+        manifest.workers,
+        manifest.u_max,
+        receipt_vcpus_v1(&manifest.host_class)?,
+    )?;
     if checked != *manifest {
         return Err("manifest differs from its qualification evidence".into());
     }
@@ -2088,8 +2291,12 @@ pub fn lock_manifest_v1(
     u_max: u64,
     available_vcpus: usize,
 ) -> Result<QualificationManifestV1> {
+    let run_roots = run_roots
+        .iter()
+        .map(|root| fs::canonicalize(root).map_err(io_error(root)))
+        .collect::<Result<Vec<_>>>()?;
     let mut runs = Vec::new();
-    for root in run_roots {
+    for root in &run_roots {
         runs.push(qualification_run_v1(root)?);
     }
     let first = runs.first().ok_or("no qualification runs")?.clone();
@@ -2123,8 +2330,15 @@ pub fn lock_manifest_v1(
     {
         return Err("the runs must include one worker, W*, and diagnostics both on and off".into());
     }
+    let host: HostClassV1 =
+        serde_json::from_value(first["host_class"].clone()).map_err(|error| error.to_string())?;
+    let qualification_vcpus = receipt_vcpus_v1(&host)?;
+    if available_vcpus != qualification_vcpus {
+        return Err("lock qualification with the host's full CPU allocation visible".into());
+    }
+    admit_receipt_host_class_v1(&host, qualification_vcpus)?;
     for count in [1, 2, 4, 8, workers] {
-        if count <= available_vcpus {
+        if count <= qualification_vcpus {
             for enabled in [false, true] {
                 if !runs
                     .iter()
@@ -2143,9 +2357,6 @@ pub fn lock_manifest_v1(
     {
         return Err("W* must be at least 2 and U_max in 100..=200".into());
     }
-    let host: HostClassV1 =
-        serde_json::from_value(first["host_class"].clone()).map_err(|error| error.to_string())?;
-    admit_receipt_host_class_v1(&host, available_vcpus)?;
     let identity: SourceIdentityV1 =
         serde_json::from_value(first["identity"].clone()).map_err(|error| error.to_string())?;
     if !is_sha256_hex(&identity.binary_sha256)
@@ -2162,7 +2373,7 @@ pub fn lock_manifest_v1(
         .unwrap_or(0);
     let run_rows = runs
         .iter()
-        .zip(run_roots)
+        .zip(&run_roots)
         .map(|(run, root)| {
             let w = run["workers"].as_u64().unwrap_or(0);
             let t = training_ns(run);
