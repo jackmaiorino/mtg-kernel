@@ -7915,6 +7915,8 @@ fn commit_cost_components_from_plan_v1(
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_cube_c3c_v1::note_discard(state, source);
                 #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cube_c6a_v1::note_discards(state, &[source]);
+                #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_premodern_p1a_v1::note_cycled(state, source);
                 event::propose_and_commit(
                     state,
@@ -14743,6 +14745,8 @@ pub(crate) fn commit_discarded_cards(state: &mut GameState, chosen: &[ObjectId])
     if chosen.is_empty() {
         return;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c6a_v1::note_discards(state, chosen);
     #[cfg(feature = "eternal-fixtures")]
     for &id in chosen {
         crate::eternal_vintage_e7b_v1::statics::note_discard(state, id);

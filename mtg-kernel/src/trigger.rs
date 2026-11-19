@@ -284,6 +284,8 @@ pub enum TriggerCondition {
     /// Event-time native wave capture, not generic per-recipient matching.
     ControlledCreatureCombatDamageDuringOwnTurnV1,
     OpponentDiscardsV72,
+    /// Captured by the shared discard transaction, including discard costs.
+    ControllerDiscardsCardV1,
 }
 
 pub struct TriggeredAbilityDef {
@@ -6747,6 +6749,7 @@ fn trigger_matches(
     match (cond, ev) {
         // The shared discard transaction captures each original observer once.
         (TriggerCondition::OpponentDiscardsV72, _) => false,
+        (TriggerCondition::ControllerDiscardsCardV1, _) => false,
         (
             TriggerCondition::TurnedFaceUp,
             CommittedEvent::TurnedFaceUp {

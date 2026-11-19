@@ -49,6 +49,7 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
         TriggerCondition::OpponentDiscardsV72 | TriggerCondition::OpponentCastsSpellV1 => {
             out.atoms.push(Atom::Opaque)
         }
+        TriggerCondition::ControllerDiscardsCardV1 => out.atoms.push(Atom::Opaque),
         TriggerCondition::BeginningControllerCombatWithCreaturePowerAtLeast(_)
         | TriggerCondition::OpponentLosesLifeBatchV49
         | TriggerCondition::OtherControlledNontokenCreatureDiesV1

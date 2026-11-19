@@ -35818,7 +35818,7 @@
   },
   {
    "name": "Ivora, Insatiable Heir",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}",
    "mana_value": 2,
    "colors": [
@@ -35843,7 +35843,7 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": ["trample", "blood_etb", "combat_damage_trigger", "discard", "add_counters"],
    "java_file": "Mage.Sets/src/mage/cards/i/IvoraInsatiableHeir.java"
   },
   {

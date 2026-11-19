@@ -1,58 +1,119 @@
-//! Card programs for the eternal catalog's Vintage Cube wave C6a
-//! (`docs/design/eternal_formats_support_v1.md`): discard, exile and impulse-draw trigger creatures.
-//!
-//! `eternal_cards_v1` forwards this module's effect leaves here, and the
-//! recipe tables of `build_eternal_c6a_v1.rs` name its programs. Every
-//! table is keyed by a printed name that occurs only in the eternal registry,
-//! so the Pauper, FDN and Standard catalogs never reach it. Behavior was read
-//! from each card's current Oracle text and, where present, its XMage source.
+//! Vintage Cube wave C6a: discard, exile and impulse-draw trigger creatures.
+//! Inti remains unsupported until all multi-card discard callers preserve
+//! instruction boundaries: ordinary cleanup, Time Stop cleanup, Breakthrough,
+//! and Cabal Therapy's legacy fallback still loop over single-card commits.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
-use crate::card_def::TargetSpec;
-use crate::effect::{EffectContinuation, EffectOp, ExecCtx};
-use crate::state::GameState;
-use crate::trigger::TriggeredAbilityDef;
+use crate::card_def::{card_id_by_name, TargetSpec};
+use crate::effect::{EffectContinuation, EffectOp, ExecCtx, ObjectRef, PlayerRef};
+use crate::ids::{ObjectId, PlayerId};
+use crate::state::{AbilitySourceContractV4, GameState, Zone};
+use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
-/// Effect leaves owned by this module, carried as
-/// `eternal_cards_v1::EternalOpV1::C6aV1`.
+/// Reserved effect leaves for this sub-wave. Ivora composes existing ops.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum C6aOpV1 {}
 
 impl C6aOpV1 {
-    /// Whether the leaf may stop for a player's choice (or a draw that a
-    /// replacement can interrupt), so it runs in the resumable interpreter.
     pub(crate) fn contains_player_choice(&self) -> bool {
         match *self {}
     }
 }
 
-// ---- Triggered abilities ------------------------------------------------------------
+const IVORA: &str = "Ivora, Insatiable Heir";
 
-/// Triggered abilities of this module's cards, falling through to wave
-/// C6b.
+/// Put the resolving creature spell onto the battlefield.
+pub fn permanent() -> EffectOp {
+    EffectOp::MoveObject {
+        object: ObjectRef::ThisSource,
+        to_zone: Zone::Battlefield,
+    }
+}
+
+/// Bloodtithe Harvester's entry effect, also used for combat player damage.
+fn blood() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: card_id_by_name("Blood Token").expect("registered Blood Token"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+fn ivora_counter() -> EffectOp {
+    EffectOp::AddPlusOneCounterToAbilitySource
+}
+
+const fn trigger(condition: TriggerCondition, effect: fn() -> EffectOp) -> TriggeredAbilityDef {
+    TriggeredAbilityDef {
+        condition,
+        home_zone: Zone::Battlefield,
+        intervening_if_kicked: false,
+        intervening_if_controls_another_source_card: false,
+        face_index: 0,
+        effect,
+    }
+}
+
+const IVORA_TRIGGERS: [TriggeredAbilityDef; 3] = [
+    trigger(TriggerCondition::Etb, blood),
+    trigger(TriggerCondition::DealsCombatDamageToPlayer, blood),
+    trigger(TriggerCondition::ControllerDiscardsCardV1, ivora_counter),
+];
+
+/// Capture observers before the discard moves any card, as Currency Converter
+/// does. This counts cards regardless of their replacement destination and
+/// retains each observer's original controller and battlefield incarnation.
+/// These triggers disclose no identity from the discarded hand.
+pub(crate) fn note_discards(state: &mut GameState, cards: &[ObjectId]) {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let sources = crate::eternal_e5a_v1::active_permanents(state, IVORA, Some(player))
+            .map(|object| AbilitySourceContractV4::capture(state, object))
+            .collect::<Vec<_>>();
+        if sources.is_empty() {
+            continue;
+        }
+        let count = cards
+            .iter()
+            .filter(|&&card| {
+                state.players[player.index()].hand.contains(&card)
+                    && state.objects.get(card).zone == Zone::Hand
+            })
+            .count();
+        for source in sources {
+            for _ in 0..count {
+                state
+                    .engine
+                    .pending_triggers
+                    .push(crate::eternal_cards_v1::delayed_trigger(
+                        source,
+                        player,
+                        ivora_counter(),
+                    ));
+            }
+        }
+    }
+}
+
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
-    crate::eternal_cube_c6b_v1::triggers_for(name)
+    match name {
+        IVORA => &IVORA_TRIGGERS,
+        _ => crate::eternal_cube_c6b_v1::triggers_for(name),
+    }
 }
 
-/// Target specs of this module's printed and queued triggered abilities.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
-    delayed_effect_matches(name, effect).then_some(TargetSpec::None)
+    (name == IVORA && (*effect == blood() || *effect == ivora_counter()))
+        .then_some(TargetSpec::None)
 }
 
-/// Queued triggers owned by this module's cards.
-pub(crate) fn delayed_effect_matches(_name: &str, _effect: &EffectOp) -> bool {
-    false
+pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
+    name == IVORA && *effect == ivora_counter()
 }
 
-// ---- Execution ----------------------------------------------------------------------
-
-/// Runs one of this module's leaves in synchronous execution.
 pub(crate) fn execute(op: &C6aOpV1, _ctx: &ExecCtx, _state: &mut GameState) {
     match *op {}
 }
 
-/// Runs one of this module's leaves in the resumable interpreter.
 pub(crate) fn drive(
     _state: &mut GameState,
     _continuation: &mut EffectContinuation,

@@ -12,9 +12,15 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
     super::build_eternal_c6b_v1::activated_ability_recipes_for(name)
 }
 
-/// No C6a spell program yet.
+/// Creature spells resolve as permanents; their abilities are trigger programs.
 pub(super) fn special_for(name: &str) -> Option<Special> {
-    super::build_eternal_c6b_v1::special_for(name)
+    match name {
+        "Ivora, Insatiable Heir" => Some(Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cube_c6a_v1::permanent",
+        }),
+        _ => super::build_eternal_c6b_v1::special_for(name),
+    }
 }
 
 /// No C6a card has kicker yet.
@@ -37,12 +43,18 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
     super::build_eternal_c6b_v1::alt_cost_for(name)
 }
 
-/// No C6a card has a printed evergreen keyword yet.
+/// Printed evergreen keywords.
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
-    super::build_eternal_c6b_v1::keywords_for(name)
+    match name {
+        "Ivora, Insatiable Heir" => &["Keywords::TRAMPLE"],
+        _ => super::build_eternal_c6b_v1::keywords_for(name),
+    }
 }
 
 /// Card-database tokens for this wave's abilities.
 pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
-    super::build_eternal_c6b_v1::trigger_recipe_for(name)
+    match name {
+        "Ivora, Insatiable Heir" => "etb:create_blood_token:1;deals_combat_damage_to_player:create_blood_token:1;controller_discards_card:source_plus_one_counter:1",
+        _ => super::build_eternal_c6b_v1::trigger_recipe_for(name),
+    }
 }
