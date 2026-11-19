@@ -617,9 +617,11 @@ fn jace_zero_draws_three_and_puts_two_in_every_order_without_shuffle() {
         on_the_stack(&mut state);
         assert_eq!(loyalty(&state, jace), Some(3));
         for pick in [library[first], library[second]] {
-            assert!(
-                matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player: P0, legal_targets, .. }) if legal_targets.contains(&Target::Object(pick)))
-            );
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { player: P0, legal_targets, .. })
+                    if legal_targets.contains(&Target::Object(pick))
+            ));
             act(&mut state, Action::ChooseEffectTarget(Target::Object(pick)));
         }
         settled(&mut state);
@@ -646,13 +648,19 @@ fn jace_zero_can_return_preexisting_hand_cards_and_replace_a_draw_with_dredge() 
     let old = put(&mut state, P0, "Mountain", Zone::Hand);
     let imp = put(&mut state, P0, "Stinkweed Imp", Zone::Graveyard);
     activate(&mut state, jace, 1, &[]);
-    assert!(
-        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player: P0, legal_targets, can_finish: true, .. }) if legal_targets == [Target::Object(imp)])
-    );
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets {
+            player: P0, legal_targets, can_finish: true, ..
+        }) if legal_targets == [Target::Object(imp)]
+    ));
     act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
-    assert!(
-        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { player: P0, legal_targets, .. }) if legal_targets.contains(&Target::Object(old)) && legal_targets.contains(&Target::Object(imp)))
-    );
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { player: P0, legal_targets, .. })
+            if legal_targets.contains(&Target::Object(old))
+                && legal_targets.contains(&Target::Object(imp))
+    ));
     assert_eq!(
         state.players[0].hand.len(),
         4,
@@ -660,9 +668,11 @@ fn jace_zero_can_return_preexisting_hand_cards_and_replace_a_draw_with_dredge() 
     );
     assert_eq!(state.players[0].graveyard.len(), 5);
     act(&mut state, Action::ChooseEffectTarget(Target::Object(old)));
-    assert!(
-        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(imp)))
-    );
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { legal_targets, .. })
+            if legal_targets.contains(&Target::Object(imp))
+    ));
     act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
     settled(&mut state);
     assert_eq!(&state.players[0].library[..2], &[imp, old]);
@@ -675,7 +685,7 @@ fn jace_minus_one_bounces_to_owner_and_fizzles_on_a_new_incarnation() {
     for departure in 0..3 {
         let mut state = plains();
         let jace = cast_jace(&mut state);
-        let creature = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+        let creature = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
         activate(&mut state, jace, 2, &[Target::Object(creature)]);
         on_the_stack(&mut state);
         assert_eq!(loyalty(&state, jace), Some(2));
@@ -703,7 +713,7 @@ fn jace_loyalty_timing_target_legality_and_insufficient_cost() {
     let mut state = plains();
     let jace = cast_jace(&mut state);
     let bogle = put(&mut state, P1, "Slippery Bogle", Zone::Battlefield);
-    let bear = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let bear = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
     assert!(!activatable(&mut state, jace, 3));
     activate(&mut state, jace, 2, &[]);
     match next(&mut state) {
@@ -747,7 +757,7 @@ fn jace_loyalty_timing_target_legality_and_insufficient_cost() {
     settled(&mut state);
     change_loyalty(&mut state, jace, -1);
     assert_eq!(loyalty(&state, jace), Some(1));
-    let last_bear = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let last_bear = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
     activate(&mut state, jace, 2, &[Target::Object(last_bear)]);
     settled(&mut state);
     assert_eq!(
@@ -978,7 +988,7 @@ fn narset_and_karn_printed_characteristics_costs_and_loyalty_timing() {
 fn narset_looks_privately_selects_or_declines_and_random_bottom_replays() {
     for take in [false, true] {
         let mut state = game(&[
-            "Grizzly Bears",
+            "Wild Mongrel",
             "Lightning Bolt",
             "Island",
             "Sol Ring",
@@ -1138,19 +1148,17 @@ fn narset_counts_draws_before_entry_and_prevents_empty_library_replacements() {
     // A single ordinary draw before Narset enters uses the allowance.
     event::propose_and_commit(&mut state, ProposedEvent::draw(P1));
     cast_walker(&mut state, P0, "Narset, Parter of Veils");
-    put(&mut state, P0, "Hullbreacher", Zone::Battlefield);
-    put(
+    let jace = put(&mut state, P1, "Jace, Wielder of Mysteries", Zone::Hand);
+    event::propose_and_commit(
         &mut state,
-        P1,
-        "Jace, Wielder of Mysteries",
-        Zone::Battlefield,
+        ProposedEvent::zone_change(jace, Zone::Battlefield),
     );
     recall(&mut state, P1);
     settled(&mut state);
     assert_eq!(state.players[1].hand.len(), 1);
     assert!(state.players[1].library.is_empty());
     assert!(!state.players[1].drew_from_empty);
-    assert!(named(&state, P0, "Treasure Token").is_empty());
+    assert_eq!(zone(&state, jace), Zone::Battlefield);
     assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
 }
 
@@ -1348,12 +1356,12 @@ fn karn_construct_has_all_characteristics_and_counts_only_controlled_artifacts()
     assert_eq!(card.subtypes, &[Subtype::Construct]);
     assert_eq!((card.power, card.toughness), (Some(0), Some(0)));
     assert!(card.colors.is_empty());
-    assert_eq!(card.keywords, Keywords::empty());
+    assert_eq!(card.keywords, Keywords::NONE);
     assert!(state.objects.get(construct).v4.is_token);
     assert!(state.objects.get(construct).summoning_sick);
     assert_eq!(power_toughness(&state, construct), (1, 1));
     put(&mut state, P1, "Sol Ring", Zone::Battlefield);
-    put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
     assert_eq!(power_toughness(&state, construct), (1, 1));
     let ring = put(&mut state, P0, "Sol Ring", Zone::Hand);
     pool(&mut state, P0, &[], 1);
@@ -1434,17 +1442,40 @@ fn narset_draw_step_cannot_dredge_after_drawing_in_upkeep() {
     assert_eq!(state.players[1].hand.len(), 1);
 }
 
+fn recall_replacing_every_draw_with_dredge(state: &mut GameState, player: PlayerId) {
+    let imps: Vec<_> = (0..3)
+        .map(|_| put(state, player, "Stinkweed Imp", Zone::Graveyard))
+        .collect();
+    recall(state, player);
+    let mut replaced = 0;
+    settle_with(state, |_, decision| match decision {
+        Decision::ChooseEffectTargets {
+            player: chooser,
+            legal_targets,
+            can_finish: true,
+            ..
+        } => {
+            assert_eq!(chooser, player);
+            assert!(legal_targets.iter().all(|target| {
+                matches!(target, Target::Object(object) if imps.contains(object))
+            }));
+            replaced += 1;
+            Action::ChooseEffectTarget(legal_targets[0])
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(replaced, 3);
+    assert!(imps.iter().all(|&imp| hand_contains(state, player, imp)));
+}
+
 #[test]
-fn narset_does_not_count_hullbreachers_replaced_draws_as_actual_draws() {
+fn narset_does_not_count_dredges_replaced_draws_as_actual_draws() {
     let mut state = plains();
     cast_walker(&mut state, P0, "Narset, Parter of Veils");
-    put(&mut state, P0, "Hullbreacher", Zone::Battlefield);
-    recall(&mut state, P1);
-    settled(&mut state);
+    recall_replacing_every_draw_with_dredge(&mut state, P1);
     assert_eq!(state.players[1].draws_this_turn, 0);
-    assert!(state.players[1].hand.is_empty());
-    assert_eq!(state.players[1].library.len(), 20);
-    assert_eq!(named(&state, P0, "Treasure Token").len(), 3);
+    assert_eq!(state.players[1].hand.len(), 3);
+    assert_eq!(state.players[1].library.len(), 5);
 }
 
 fn cast_emperor(state: &mut GameState) -> ObjectId {
@@ -1476,7 +1507,7 @@ fn emperor_printed_characteristics_flash_cost_and_starting_loyalty() {
     state.active_player = P1;
     state.step = Step::BeginCombat;
     let walker = put(&mut state, P0, card.name, Zone::Hand);
-    let ordinary = put(&mut state, P0, "Grizzly Bears", Zone::Hand);
+    let ordinary = put(&mut state, P0, "Wild Mongrel", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::W, ManaColor::G], 2);
     assert!(!castable(&mut state, walker));
     assert!(!castable(&mut state, ordinary));
@@ -1495,7 +1526,7 @@ fn emperor_all_loyalty_modes_work_in_opponent_combat_once_per_turn() {
         let mut state = plains();
         state.active_player = P1;
         state.step = Step::BeginCombat;
-        let creature = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+        let creature = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
         state.objects.get_mut(creature).tapped = true;
         let walker = cast_emperor(&mut state);
         for mode in 0..3 {
@@ -1533,7 +1564,7 @@ fn emperor_flashes_in_after_attackers_and_exiles_the_attacker_before_damage() {
     let mut state = plains();
     state.active_player = P1;
     state.priority_player = P1;
-    let attacker = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    let attacker = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
     pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
     act(&mut state, Action::DeclareAttackers(vec![attacker]));
     run_until(
@@ -1613,7 +1644,7 @@ fn emperor_entry_exception_expires_each_actual_turn_and_flicker_renews_it() {
 fn emperor_plus_one_targets_either_player_or_zero_and_only_keyword_expires() {
     for target_owner in [P0, P1] {
         let mut state = plains();
-        let creature = put(&mut state, target_owner, "Grizzly Bears", Zone::Battlefield);
+        let creature = put(&mut state, target_owner, "Wild Mongrel", Zone::Battlefield);
         let walker = cast_emperor(&mut state);
         activate(&mut state, walker, 0, &[Target::Object(creature)]);
         settled(&mut state);
@@ -1628,8 +1659,7 @@ fn emperor_plus_one_targets_either_player_or_zero_and_only_keyword_expires() {
     }
     for has_creature in [false, true] {
         let mut state = plains();
-        let creature =
-            has_creature.then(|| put(&mut state, P0, "Grizzly Bears", Zone::Battlefield));
+        let creature = has_creature.then(|| put(&mut state, P0, "Wild Mongrel", Zone::Battlefield));
         let walker = cast_emperor(&mut state);
         activate(&mut state, walker, 0, &[]);
         settle_first(&mut state);
@@ -1647,9 +1677,9 @@ fn emperor_target_rosters_exclude_illegal_targets_and_minus_two_requires_one() {
     let mut state = plains();
     let walker = cast_emperor(&mut state);
     assert!(!activatable(&mut state, walker, 2));
-    let own = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
-    let opposing = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
-    let untapped = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    let own = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
+    let opposing = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
+    let untapped = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
     let bogle = put(&mut state, P1, "Slippery Bogle", Zone::Battlefield);
     let land = put(&mut state, P1, "Plains", Zone::Battlefield);
     for object in [own, opposing, bogle, land] {
@@ -1696,7 +1726,7 @@ fn emperor_targeted_abilities_fizzle_on_departure_or_new_incarnation_and_outlive
         for departure in 0..3 {
             let mut state = plains();
             let walker = cast_emperor(&mut state);
-            let creature = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+            let creature = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
             state.objects.get_mut(creature).tapped = true;
             activate(&mut state, walker, index, &[Target::Object(creature)]);
             on_the_stack(&mut state);
@@ -1725,7 +1755,7 @@ fn emperor_targeted_abilities_fizzle_on_departure_or_new_incarnation_and_outlive
             );
             assert_eq!(
                 state.objects.get(creature).counters.plus1_plus1,
-                i16::from(index == 0 && resolved)
+                i32::from(index == 0 && resolved)
             );
             assert_eq!(
                 keyword(&state, creature, Keywords::FIRST_STRIKE),
@@ -1745,7 +1775,7 @@ fn emperor_targeted_abilities_fizzle_on_departure_or_new_incarnation_and_outlive
 fn emperor_minus_two_fizzles_if_creature_untaps_and_insufficient_loyalty_cannot_pay() {
     let mut state = plains();
     let walker = cast_emperor(&mut state);
-    let creature = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    let creature = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
     state.objects.get_mut(creature).tapped = true;
     let mut poor = state.clone();
     change_loyalty(&mut poor, walker, -2);
@@ -1863,7 +1893,7 @@ fn garruk_untaps_zero_one_or_two_distinct_lands_of_either_player() {
         let walker = cast_garruk(&mut state);
         let own = put(&mut state, P0, "Forest", Zone::Battlefield);
         let other = put(&mut state, P1, "Island", Zone::Battlefield);
-        let creature = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+        let creature = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
         state.objects.get_mut(own).tapped = true;
         state.objects.get_mut(other).tapped = true;
         activate(&mut state, walker, 0, &[]);
@@ -1946,9 +1976,11 @@ fn garruk_beast_is_green_four_four_trample_and_its_entry_draw_is_replaceable() {
         let hand = state.players[0].hand.len();
         activate(&mut state, walker, 1, &[]);
         if let Some(imp) = imp {
-            assert!(
-                matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(imp)))
-            );
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                    if legal_targets.contains(&Target::Object(imp))
+            ));
             act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
         }
         settled(&mut state);
@@ -1989,7 +2021,7 @@ fn garruk_entry_threshold_includes_counters_and_excludes_opponents_and_small_cre
     }
     let mut state = plains();
     cast_garruk(&mut state);
-    let bear = put(&mut state, P0, "Grizzly Bears", Zone::Hand);
+    let bear = put(&mut state, P0, "Wild Mongrel", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::G], 1);
     cast(&mut state, bear, &[]);
     settled(&mut state);
@@ -2043,10 +2075,10 @@ fn garruk_captures_simultaneous_entries_once_and_draws_after_source_and_entrants
 fn garruk_grant_pumps_only_creatures_attacking_the_opponent_and_expires_next_turn() {
     let mut state = plains();
     let walker = cast_garruk(&mut state);
-    let first = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
-    let second = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
-    let stay = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
-    let enemy = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    let first = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
+    let second = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
+    let stay = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
+    let enemy = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
     let opposing_walker = put(&mut state, P1, "Jace, the Mind Sculptor", Zone::Hand);
     event::propose_and_commit(
         &mut state,
@@ -2105,8 +2137,8 @@ fn garruk_grant_pumps_only_creatures_attacking_the_opponent_and_expires_next_tur
 fn garruk_attack_trigger_freezes_all_attackers_and_does_not_follow_blinked_creatures() {
     let mut state = plains();
     let walker = cast_garruk(&mut state);
-    let first = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
-    let second = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let first = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
+    let second = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
     activate(&mut state, walker, 2, &[]);
     settled(&mut state);
     pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
@@ -2182,7 +2214,7 @@ fn garruk_beast_tramples_and_zero_attackers_do_not_trigger_the_grant() {
     settled(&mut state);
     let beast = named(&state, P0, "Garruk Beast Token")[0];
     next_own_main(&mut state);
-    let blocker = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    let blocker = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
     attack_with(&mut state, vec![beast], |_, decision| match decision {
         Decision::DeclareBlockers { .. } => Some(Action::DeclareBlockers(vec![(blocker, beast)])),
         Decision::ChooseCombatDamageRange {
@@ -2243,7 +2275,7 @@ fn c6c_decks_finish_and_replay_through_public_sessions_both_seats() {
         ("Forest", 24),
         ("Garruk, Curse Breaker", 12),
         ("Karn, Scion of Urza", 12),
-        ("Grizzly Bears", 8),
+        ("Wild Mongrel", 8),
         ("Ravenous Baloth", 4),
     ]);
     let mut events = C6cEvents::default();
@@ -2394,9 +2426,11 @@ fn teferi_plus_one_dredge_replacement_still_schedules_the_untap() {
     let walker = cast_teferi(&mut state);
     let imp = put(&mut state, P0, "Stinkweed Imp", Zone::Graveyard);
     activate(&mut state, walker, 0, &[]);
-    assert!(
-        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(imp)))
-    );
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { legal_targets, .. })
+            if legal_targets.contains(&Target::Object(imp))
+    ));
     act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
     settled(&mut state);
     assert_eq!(zone(&state, imp), Zone::Hand);
@@ -2418,7 +2452,7 @@ fn teferi_minus_three_inserts_third_or_bottom_in_owners_library_and_removes_toke
         let cards = ["Island", "Mountain", "Forest"];
         let mut state = game(&cards[..size]);
         let walker = cast_teferi(&mut state);
-        let creature = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+        let creature = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
         let original = state.players[1].library.clone();
         activate(&mut state, walker, 1, &[Target::Object(creature)]);
         settled(&mut state);
@@ -2430,7 +2464,7 @@ fn teferi_minus_three_inserts_third_or_bottom_in_owners_library_and_removes_toke
     }
     let mut state = plains();
     let walker = cast_teferi(&mut state);
-    let stolen = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    let stolen = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
     event::propose_and_commit(&mut state, ProposedEvent::zone_change(stolen, Zone::Exile));
     event::propose_and_commit(
         &mut state,
@@ -2455,7 +2489,7 @@ fn teferi_minus_three_fizzles_on_departed_or_blinked_targets_and_outlives_source
     for departure in 0..=2 {
         let mut state = plains();
         let walker = cast_teferi(&mut state);
-        let creature = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+        let creature = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
         activate(&mut state, walker, 1, &[Target::Object(creature)]);
         on_the_stack(&mut state);
         event::propose_and_commit(
@@ -2538,15 +2572,15 @@ fn teferi_emblems_persist_stack_and_trigger_only_on_their_owners_actual_draws() 
 }
 
 #[test]
-fn teferi_emblem_does_not_trigger_for_draws_replaced_by_hullbreacher() {
+fn teferi_emblem_does_not_trigger_for_draws_replaced_by_dredge() {
     let mut state = plains();
     teferi_emblem(&mut state);
-    let pirate = put(&mut state, P1, "Hullbreacher", Zone::Battlefield);
-    recall(&mut state, P0);
-    settled(&mut state);
+    let target = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
+    recall_replacing_every_draw_with_dredge(&mut state, P0);
     assert_eq!(state.players[0].draws_this_turn, 0);
-    assert_eq!(named(&state, P1, "Treasure Token").len(), 3);
-    assert_eq!(zone(&state, pirate), Zone::Battlefield);
+    assert_eq!(state.players[0].hand.len(), 3);
+    assert_eq!(state.players[0].library.len(), 5);
+    assert_eq!(zone(&state, target), Zone::Battlefield);
 }
 
 #[test]
@@ -2555,11 +2589,13 @@ fn teferi_emblem_target_rechecks_departed_and_returned_incarnations() {
         let mut state = plains();
         teferi_emblem(&mut state);
         let walker = cast_teferi(&mut state);
-        let target = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+        let target = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
         activate(&mut state, walker, 0, &[]);
-        assert!(
-            matches!(settle(&mut state), Some(Decision::ChooseTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(target)))
-        );
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseTargets { legal_targets, .. })
+                if legal_targets.contains(&Target::Object(target))
+        ));
         act(&mut state, Action::ChooseTarget(Target::Object(target)));
         on_the_stack(&mut state);
         event::propose_and_commit(&mut state, ProposedEvent::zone_change(target, Zone::Exile));
