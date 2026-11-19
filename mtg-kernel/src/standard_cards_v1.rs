@@ -476,6 +476,8 @@ pub enum StandardTargetV1 {
     S1qV1(crate::eternal_sideboard_s1q_v1::targets::S1qTargetV1),
     /// Exactly one tapped creature, controlled by either player.
     TappedCreatureV1,
+    /// Zero, one or two distinct lands, controlled by either player.
+    UpToTwoLandsV1,
 }
 
 impl StandardTargetV1 {
@@ -592,6 +594,7 @@ impl StandardTargetV1 {
                 let count = creatures.saturating_add(permanents);
                 (count, count)
             }
+            Self::UpToTwoLandsV1 => (2, 0),
             _ => (1, 1),
         }
     }
@@ -1222,6 +1225,7 @@ pub(crate) fn legal_targets(
             !matches!(
                 target,
                 StandardTargetV1::UpToEightCreaturesOrPlaneswalkersV74
+                    | StandardTargetV1::UpToTwoLandsV1
                     | StandardTargetV1::UpToTwoControlledCreatures
                     | StandardTargetV1::UpToTwoControlledArtifactsOrCreatures
             ) || !prefix.contains(&Target::Object(id))
@@ -1660,6 +1664,7 @@ pub(crate) fn target_matches(
         // Answered by `eternal_sideboard_s1q_v1::targets` above.
         StandardTargetV1::S1qV1(_) => false,
         StandardTargetV1::TappedCreatureV1 => live.tapped && has(CardType::Creature),
+        StandardTargetV1::UpToTwoLandsV1 => has(CardType::Land),
     }
 }
 

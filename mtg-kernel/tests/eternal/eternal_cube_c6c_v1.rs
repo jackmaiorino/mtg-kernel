@@ -3,6 +3,7 @@
 #![cfg(feature = "eternal-fixtures")]
 #![allow(dead_code)]
 
+use crate::eternal_catalog_v1::{play_observed, Policy};
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, CARD_DEFS,
 };
@@ -13,16 +14,18 @@ use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
 use mtg_kernel::mana::{ManaColor, Pip};
 use mtg_kernel::planeswalker_v1::{change_loyalty, loyalty};
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use serde_json::Value;
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const C6C_CARDS: [&str; 5] = [
+const C6C_CARDS: [&str; 6] = [
     "Jace, the Mind Sculptor",
     "Narset, Parter of Veils",
     "Karn, Scion of Urza",
     "Teferi, Hero of Dominaria",
     "The Wandering Emperor",
+    "Garruk, Curse Breaker",
 ];
 
 fn def(name: &str) -> &'static CardDef {
@@ -1783,6 +1786,482 @@ fn emperor_samurai_has_exact_characteristics_and_attacks_without_tapping() {
     attack_with(&mut state, vec![samurai], |_, _| None);
     assert!(!state.objects.get(samurai).tapped);
     assert_eq!(state.players[1].life, 18);
+}
+
+fn cast_garruk(state: &mut GameState) -> ObjectId {
+    let walker = put(state, P0, "Garruk, Curse Breaker", Zone::Hand);
+    pool(state, P0, &[ManaColor::G, ManaColor::G], 3);
+    cast(state, walker, &[]);
+    settled(state);
+    walker
+}
+
+fn garruk_untap(state: &mut GameState, walker: ObjectId, targets: &[Target]) {
+    activate(state, walker, 0, targets);
+    if targets.len() < 2 {
+        assert!(matches!(
+            next(state),
+            Decision::ChooseEffectTargets {
+                can_finish: true,
+                ..
+            }
+        ));
+        act(state, Action::FinishEffectSelection);
+    }
+}
+
+#[test]
+fn c6c_printed_characteristics_include_garruk_and_honest_unimplemented_cards() {
+    for name in C6C_CARDS {
+        let card = def(name);
+        assert_eq!(card.types, &[CardType::Planeswalker]);
+        assert_eq!(card.supertypes, &[Supertype::Legendary]);
+        assert_eq!((card.power, card.toughness), (None, None));
+    }
+    let card = def("Garruk, Curse Breaker");
+    assert_eq!(card.subtypes, &[Subtype::Garruk]);
+    assert_eq!(card.cost.generic, 3);
+    assert_eq!(card.cost.pips, &[Pip::Colored(ManaColor::G); 2]);
+    assert_eq!(card.mana_value, 5);
+    assert_eq!(card.colors, &[ManaColor::G]);
+    assert_eq!(card.starting_loyalty, Some(5));
+    assert_eq!(card.activated_abilities.len(), 3);
+    for name in ["Chandra, Torch of Defiance", "Saheeli, Sublime Artificer"] {
+        assert!(
+            !def(name).is_executable(),
+            "{name} still requires engine support"
+        );
+    }
+    let mut state = plains();
+    let walker = put(&mut state, P0, card.name, Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 3);
+    assert!(!castable(&mut state, walker));
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    cast(&mut state, walker, &[]);
+    settled(&mut state);
+    assert_eq!(loyalty(&state, walker), Some(5));
+    assert_eq!(mana(&state, P0, ManaColor::G), 0);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0);
+    activate(&mut state, walker, 1, &[]);
+    settled(&mut state);
+    assert_eq!(loyalty(&state, walker), Some(2));
+    assert!(!activatable(&mut state, walker, 0));
+    next_own_main(&mut state);
+    assert!(activatable(&mut state, walker, 0));
+    assert!(!activatable(&mut state, walker, 1));
+    assert!(!activatable(&mut state, walker, 2));
+    pass_until(&mut state, |s| {
+        s.active_player == P1 && s.step == Step::Main1 && s.priority_player == P0
+    });
+    assert!(!activatable(&mut state, walker, 0));
+}
+
+#[test]
+fn garruk_untaps_zero_one_or_two_distinct_lands_of_either_player() {
+    for count in 0..=2 {
+        let mut state = plains();
+        let walker = cast_garruk(&mut state);
+        let own = put(&mut state, P0, "Forest", Zone::Battlefield);
+        let other = put(&mut state, P1, "Island", Zone::Battlefield);
+        let creature = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+        state.objects.get_mut(own).tapped = true;
+        state.objects.get_mut(other).tapped = true;
+        activate(&mut state, walker, 0, &[]);
+        for target in [own, other].into_iter().take(count) {
+            let Decision::ChooseEffectTargets {
+                legal_targets,
+                can_finish,
+                ..
+            } = next(&mut state)
+            else {
+                panic!("land targets")
+            };
+            assert!(can_finish);
+            assert!(!legal_targets.contains(&Target::Object(creature)));
+            if target == other {
+                assert!(!legal_targets.contains(&Target::Object(own)));
+            }
+            assert!(legal_targets.contains(&Target::Object(target)));
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(target)),
+            );
+        }
+        if count < 2 {
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseEffectTargets {
+                    can_finish: true,
+                    ..
+                }
+            ));
+            act(&mut state, Action::FinishEffectSelection);
+        }
+        on_the_stack(&mut state);
+        assert_eq!(loyalty(&state, walker), Some(7));
+        settled(&mut state);
+        assert_eq!(state.objects.get(own).tapped, count == 0);
+        assert_eq!(state.objects.get(other).tapped, count < 2);
+    }
+}
+
+#[test]
+fn garruk_untap_rechecks_targets_individually_and_survives_its_source() {
+    for both in [false, true] {
+        let mut state = plains();
+        let walker = cast_garruk(&mut state);
+        let lands = [
+            put(&mut state, P0, "Forest", Zone::Battlefield),
+            put(&mut state, P1, "Island", Zone::Battlefield),
+        ];
+        for land in lands {
+            state.objects.get_mut(land).tapped = true;
+        }
+        garruk_untap(&mut state, walker, &lands.map(Target::Object));
+        on_the_stack(&mut state);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(walker, Zone::Graveyard),
+        );
+        for land in lands.into_iter().take(if both { 2 } else { 1 }) {
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(land, Zone::Exile));
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(land, Zone::Battlefield),
+            );
+            state.objects.get_mut(land).tapped = true;
+        }
+        settled(&mut state);
+        assert!(state.objects.get(lands[0]).tapped);
+        assert_eq!(state.objects.get(lands[1]).tapped, both);
+    }
+}
+
+#[test]
+fn garruk_beast_is_green_four_four_trample_and_its_entry_draw_is_replaceable() {
+    for replace in [false, true] {
+        let mut state = plains();
+        let walker = cast_garruk(&mut state);
+        let imp = replace.then(|| put(&mut state, P0, "Stinkweed Imp", Zone::Graveyard));
+        let hand = state.players[0].hand.len();
+        activate(&mut state, walker, 1, &[]);
+        if let Some(imp) = imp {
+            assert!(
+                matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(imp)))
+            );
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+        }
+        settled(&mut state);
+        let beast = named(&state, P0, "Garruk Beast Token")[0];
+        let token_def = def("Garruk Beast Token");
+        assert_eq!(token_def.types, &[CardType::Creature]);
+        assert_eq!(token_def.subtypes, &[Subtype::Beast]);
+        assert_eq!(token_def.colors, &[ManaColor::G]);
+        assert_eq!(token_def.mana_value, 0);
+        assert!(token_def.supertypes.is_empty());
+        assert_eq!(token_def.keywords, Keywords::TRAMPLE);
+        assert_eq!(power_toughness(&state, beast), (4, 4));
+        assert!(state.objects.get(beast).v4.is_token);
+        assert!(state.objects.get(beast).summoning_sick);
+        assert!(keyword(&state, beast, Keywords::TRAMPLE));
+        assert_eq!(state.players[0].hand.len(), hand + 1);
+        assert_eq!(state.players[0].draws_this_turn, u32::from(!replace));
+        if let Some(imp) = imp {
+            assert_eq!(zone(&state, imp), Zone::Hand);
+        }
+    }
+}
+
+#[test]
+fn garruk_entry_threshold_includes_counters_and_excludes_opponents_and_small_creatures() {
+    for x in [3, 4, 5] {
+        let mut state = plains();
+        cast_garruk(&mut state);
+        let ballista = put(&mut state, P0, "Walking Ballista", Zone::Hand);
+        pool(&mut state, P0, &[], 10);
+        cast(&mut state, ballista, &[]);
+        settle_option(&mut state, x);
+        assert_eq!(
+            power_toughness(&state, ballista),
+            (i32::from(x), i32::from(x))
+        );
+        assert_eq!(state.players[0].draws_this_turn, u32::from(x >= 4));
+    }
+    let mut state = plains();
+    cast_garruk(&mut state);
+    let bear = put(&mut state, P0, "Grizzly Bears", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 1);
+    cast(&mut state, bear, &[]);
+    settled(&mut state);
+    assert_eq!(state.players[0].draws_this_turn, 0);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::create_token(id("Garruk Beast Token"), P1),
+    );
+    settled(&mut state);
+    assert_eq!(state.players[0].draws_this_turn, 0);
+    assert_eq!(state.players[1].draws_this_turn, 0);
+}
+
+#[test]
+fn garruk_last_three_loyalty_still_makes_a_beast_but_absent_garruk_does_not_draw() {
+    let mut state = plains();
+    let walker = cast_garruk(&mut state);
+    change_loyalty(&mut state, walker, -2);
+    activate(&mut state, walker, 1, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, walker), Zone::Graveyard);
+    assert_eq!(named(&state, P0, "Garruk Beast Token").len(), 1);
+    assert_eq!(state.players[0].draws_this_turn, 0);
+}
+
+#[test]
+fn garruk_captures_simultaneous_entries_once_and_draws_after_source_and_entrants_leave() {
+    let mut state = plains();
+    let walker = cast_garruk(&mut state);
+    let first = put(&mut state, P0, "Ravenous Baloth", Zone::Hand);
+    let second = put(&mut state, P0, "Ravenous Baloth", Zone::Hand);
+    event::propose_and_commit_batch(
+        &mut state,
+        vec![
+            ProposedEvent::zone_change(first, Zone::Battlefield),
+            ProposedEvent::zone_change(second, Zone::Battlefield),
+        ],
+    );
+    event::propose_and_commit_batch(
+        &mut state,
+        [walker, first, second]
+            .map(|object| ProposedEvent::zone_change(object, Zone::Graveyard))
+            .to_vec(),
+    );
+    settled(&mut state);
+    assert_eq!(state.players[0].draws_this_turn, 2);
+    assert_eq!(state.players[1].draws_this_turn, 0);
+}
+
+#[test]
+fn garruk_grant_pumps_only_creatures_attacking_the_opponent_and_expires_next_turn() {
+    let mut state = plains();
+    let walker = cast_garruk(&mut state);
+    let first = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let second = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let stay = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let enemy = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    let opposing_walker = put(&mut state, P1, "Jace, the Mind Sculptor", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(opposing_walker, Zone::Battlefield),
+    );
+    settled(&mut state);
+    activate(&mut state, walker, 2, &[]);
+    settled(&mut state);
+    assert_eq!(loyalty(&state, walker), Some(1));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(walker, Zone::Graveyard),
+    );
+    attack_with(&mut state, vec![first, second], |_, decision| {
+        if let Decision::ChooseAttackTarget { attacker, .. } = decision {
+            return Some(Action::ChooseAttackTarget(if *attacker == first {
+                Target::Player(P1)
+            } else {
+                Target::Object(opposing_walker)
+            }));
+        }
+        None
+    });
+    assert_eq!(power_toughness(&state, first), (4, 4));
+    assert!(keyword(&state, first, Keywords::TRAMPLE));
+    for object in [second, stay, enemy] {
+        assert_eq!(power_toughness(&state, object), (2, 2));
+        assert!(!keyword(&state, object, Keywords::TRAMPLE));
+    }
+    pass_until(&mut state, |s| {
+        s.active_player == P1 && s.step == Step::Main1
+    });
+    assert_eq!(power_toughness(&state, first), (2, 2));
+    assert!(!keyword(&state, first, Keywords::TRAMPLE));
+    assert_eq!(
+        state.eternal_v1.as_ref().unwrap().c6c.garruk_grants.len(),
+        1
+    );
+    attack_with(&mut state, vec![enemy], |_, _| None);
+    assert_eq!(power_toughness(&state, enemy), (2, 2));
+    pass_until(&mut state, |s| {
+        s.active_player == P0 && s.step == Step::Main1
+    });
+    assert!(state
+        .eternal_v1
+        .as_ref()
+        .unwrap()
+        .c6c
+        .garruk_grants
+        .is_empty());
+    attack_with(&mut state, vec![first], |_, _| None);
+    assert_eq!(power_toughness(&state, first), (2, 2));
+}
+
+#[test]
+fn garruk_attack_trigger_freezes_all_attackers_and_does_not_follow_blinked_creatures() {
+    let mut state = plains();
+    let walker = cast_garruk(&mut state);
+    let first = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let second = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    activate(&mut state, walker, 2, &[]);
+    settled(&mut state);
+    pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![first, second]));
+    on_the_stack(&mut state);
+    assert_eq!(state.stack.len(), 1, "one trigger for both attackers");
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(first, Zone::Exile));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(first, Zone::Battlefield),
+    );
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, first), (2, 2));
+    assert!(!keyword(&state, first, Keywords::TRAMPLE));
+    assert_eq!(power_toughness(&state, second), (4, 4));
+    assert!(keyword(&state, second, Keywords::TRAMPLE));
+}
+
+#[test]
+fn garruk_samples_entry_static_power_and_does_not_redraw_when_power_increases_later() {
+    for rings in [2, 3] {
+        let mut state = plains();
+        cast_garruk(&mut state);
+        let karn = cast_walker(&mut state, P0, "Karn, Scion of Urza");
+        for _ in 0..rings {
+            put(&mut state, P0, "Sol Ring", Zone::Battlefield);
+        }
+        activate(&mut state, karn, 2, &[]);
+        settled(&mut state);
+        let construct = named(&state, P0, "Karn Construct Token")[0];
+        assert_eq!(power_toughness(&state, construct), (rings + 1, rings + 1));
+        assert_eq!(state.players[0].draws_this_turn, u32::from(rings == 3));
+        let ring = put(&mut state, P0, "Sol Ring", Zone::Hand);
+        pool(&mut state, P0, &[], 1);
+        cast(&mut state, ring, &[]);
+        settled(&mut state);
+        assert_eq!(power_toughness(&state, construct), (rings + 2, rings + 2));
+        assert_eq!(state.players[0].draws_this_turn, u32::from(rings == 3));
+    }
+}
+
+#[test]
+fn garruk_vigilance_attack_triggers_without_events_and_multiple_grants_stack() {
+    let mut state = plains();
+    let first = cast_garruk(&mut state);
+    activate(&mut state, first, 2, &[]);
+    settled(&mut state);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(first, Zone::Graveyard),
+    );
+    let second = cast_garruk(&mut state);
+    activate(&mut state, second, 2, &[]);
+    settled(&mut state);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(second, Zone::Graveyard),
+    );
+    let samurai = token(&mut state, P0, "Samurai Token");
+    assert!(keyword(&state, samurai, Keywords::VIGILANCE));
+    attack_with(&mut state, vec![samurai], |_, _| None);
+    assert!(!state.objects.get(samurai).tapped);
+    assert_eq!(power_toughness(&state, samurai), (6, 6));
+    assert!(keyword(&state, samurai, Keywords::TRAMPLE));
+    assert_eq!(state.players[1].life, 14);
+}
+
+#[test]
+fn garruk_beast_tramples_and_zero_attackers_do_not_trigger_the_grant() {
+    let mut state = plains();
+    let walker = cast_garruk(&mut state);
+    activate(&mut state, walker, 1, &[]);
+    settled(&mut state);
+    let beast = named(&state, P0, "Garruk Beast Token")[0];
+    next_own_main(&mut state);
+    let blocker = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    attack_with(&mut state, vec![beast], |_, decision| match decision {
+        Decision::DeclareBlockers { .. } => Some(Action::DeclareBlockers(vec![(blocker, beast)])),
+        Decision::ChooseCombatDamageRange {
+            source, recipient, ..
+        } if *source == beast && *recipient == Target::Object(blocker) => {
+            Some(Action::ChooseCombatDamageRange { upper_half: false })
+        }
+        _ => None,
+    });
+    assert_eq!(state.players[1].life, 18);
+    assert_eq!(zone(&state, blocker), Zone::Graveyard);
+    next_own_main(&mut state);
+    change_loyalty(&mut state, walker, 2);
+    activate(&mut state, walker, 2, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, walker), Zone::Graveyard);
+    attack_with(&mut state, Vec::new(), |_, _| None);
+    assert_eq!(power_toughness(&state, beast), (4, 4));
+    assert_eq!(state.players[1].life, 18);
+}
+
+#[derive(Default)]
+struct C6cEvents {
+    casts: [usize; C6C_CARDS.len()],
+}
+
+impl C6cEvents {
+    fn observe(&mut self, _decision: &Value, action: &Value) {
+        let semantic = &action["semantic"];
+        if semantic["action_kind"].as_str() != Some("cast_spell") {
+            return;
+        }
+        let Some(card_id) = semantic["source"]["card_db_id"]
+            .as_u64()
+            .and_then(|id| usize::try_from(id).ok())
+        else {
+            return;
+        };
+        let name = CARD_DEFS[card_id].name;
+        if let Some(index) = C6C_CARDS.iter().position(|&card| card == name) {
+            self.casts[index] += 1;
+        }
+    }
+}
+
+#[test]
+fn c6c_decks_finish_and_replay_through_public_sessions_both_seats() {
+    let control = deck(&[
+        ("Tundra", 20),
+        ("Island", 4),
+        ("Jace, the Mind Sculptor", 8),
+        ("Narset, Parter of Veils", 8),
+        ("Teferi, Hero of Dominaria", 8),
+        ("The Wandering Emperor", 8),
+        ("Thraben Inspector", 4),
+    ]);
+    let beasts = deck(&[
+        ("Forest", 24),
+        ("Garruk, Curse Breaker", 12),
+        ("Karn, Scion of Urza", 12),
+        ("Grizzly Bears", 8),
+        ("Ravenous Baloth", 4),
+    ]);
+    let mut events = C6cEvents::default();
+    // Twelve games plus their twelve replays, with both policies and seats.
+    for pair in [[control.clone(), beasts.clone()], [beasts, control]] {
+        for seed in 0xC6C0_u64..0xC6C3 {
+            for policy in [Policy::Ranked, Policy::Random(seed + 0x100)] {
+                let played = play_observed(pair.clone(), None, seed, policy, &mut |d, a| {
+                    events.observe(d, a)
+                });
+                let replay = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
+                assert_eq!(played.transcript_sha256, replay.transcript_sha256);
+            }
+        }
+    }
+    for (name, casts) in C6C_CARDS.into_iter().zip(events.casts) {
+        assert!(casts > 0, "{name} never cast through a public session");
+    }
 }
 
 fn cast_teferi(state: &mut GameState) -> ObjectId {

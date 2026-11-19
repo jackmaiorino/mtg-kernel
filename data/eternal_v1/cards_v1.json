@@ -36585,7 +36585,8 @@
   },
   {
    "name": "Garruk, Curse Breaker",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
    "mana_cost": "{3}{G}{G}",
    "mana_value": 5,
    "colors": [
@@ -36594,7 +36595,7 @@
    "types": [
     "Planeswalker"
    ],
-   "subtypes": [],
+   "subtypes": ["Garruk"],
    "supertypes": [
     "Legendary"
    ],
@@ -36607,7 +36608,26 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": ["planeswalker", "loyalty_abilities", "token_creation"]
+  },
+  {
+   "name": "Garruk Beast Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": ["G"],
+   "types": ["Creature"],
+   "subtypes": ["Beast"],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": ["trample"],
+   "is_token": true
   }
  ]
 }

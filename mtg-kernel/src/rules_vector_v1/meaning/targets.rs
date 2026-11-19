@@ -805,6 +805,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::ControlledArtifactOrCreatureV1 => ObjF::Permanent,
         S::CreatureSpellPowerOrToughnessAtMostTwoV1 => ObjF::Spell,
         S::TappedCreatureV1 => creature(),
+        S::UpToTwoLandsV1 => typed(CardType::Land),
     }
 }
 
@@ -935,6 +936,7 @@ pub(super) fn standard_target_origin(
             (Some(ZoneF::Battlefield), None)
         }
         S::TappedCreatureV1 => (Some(ZoneF::Battlefield), None),
+        S::UpToTwoLandsV1 => (Some(ZoneF::Battlefield), None),
     }
 }
 
@@ -1449,6 +1451,11 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, creature(), relation, zone);
             // Tapped status has no facet, as for TappedOpponentCreature.
             out.atoms.push(Atom::Opaque);
+        }
+        S::UpToTwoLandsV1 => {
+            object(out, typed(CardType::Land), relation, zone);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
         }
     }
 }

@@ -531,6 +531,7 @@ pub enum Subtype {
     Mount = 602,
     /// Vintage Cube wave C6c planeswalker type.
     Narset = 720,
+    Garruk = 721,
 }
 
 impl Subtype {
@@ -1205,6 +1206,7 @@ impl Subtype {
             601 => Subtype::Horse,
             602 => Subtype::Mount,
             720 => Subtype::Narset,
+            721 => Subtype::Garruk,
             _ => return None,
         })
     }
@@ -1446,6 +1448,7 @@ impl Subtype {
             Subtype::Horse => true,
             Subtype::Mount => true,
             Subtype::Narset => false,
+            Subtype::Garruk => false,
         }
     }
 

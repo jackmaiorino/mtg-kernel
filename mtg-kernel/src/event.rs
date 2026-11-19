@@ -5364,6 +5364,7 @@ fn commit_with_entry_batch_and_source_color(
     } else {
         crate::arahbo_v1::record_single_entry(state, entry_history_index);
     }
+    crate::eternal_cube_c6c_v1::capture_single_entry(state, entry_history_index, defer_raid_entry);
     if let Some(batch) = authority_batch.as_mut() {
         batch.record(entry_history_index);
     } else {
@@ -7551,6 +7552,7 @@ fn commit_batch_survivors_native(
     }
 
     crate::raid_entry_custody_v1::capture_batch_entries(state, raid_history_start);
+    crate::eternal_cube_c6c_v1::capture_batch_entries(state, raid_history_start);
     if let Some(batch) = arahbo_batch {
         batch.finish(state);
     }

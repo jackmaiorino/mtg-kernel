@@ -342,6 +342,7 @@ fn standard_shape(filter: StandardTargetV1) -> TargetShape {
         | S::ControlledArtifactOrCreatureV1
         | S::CreatureSpellPowerOrToughnessAtMostTwoV1 => Single,
         S::TappedCreatureV1 => Single,
+        S::UpToTwoLandsV1 => SharedRoster,
     }
 }
 

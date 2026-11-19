@@ -10,7 +10,9 @@
 //! Saheeli remains no_effect: E7a's definition-only copy helper cannot transfer
 //! copiable token exceptions/abilities or retrieve those values from a departed
 //! second target. Shifting Woodland's graveyard-copy expiry does not supply
-//! those battlefield-copy semantics. No token or subtype ids are allocated here.
+//! those battlefield-copy semantics. Chandra remains no_effect because the
+//! exile resolution-cast route waives mana costs; its normal-cost cast is not
+//! representable by that route. Garruk's runtime lives in the submodule.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::card_def::{Keywords, TargetSpec, CARD_DEFS};
@@ -25,6 +27,9 @@ use crate::standard_cards_v1::{StandardOpV1, StandardTargetV1};
 use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Step, Target, Zone};
 use crate::trigger::{PendingTrigger, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
+
+mod garruk;
+pub(crate) use garruk::{begin_turn, capture_attack, capture_batch_entries, capture_single_entry};
 
 const TEFERI: &str = "Teferi, Hero of Dominaria";
 
@@ -46,11 +51,21 @@ pub struct C6cStateV1 {
     pub teferi_emblems: Vec<EmblemV1>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub untaps: Vec<DelayedUntapV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub garruk_grants: Vec<EmblemV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub garruk_pending: Vec<PendingTrigger>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub garruk_entries: Vec<usize>,
 }
 
 impl C6cStateV1 {
     pub(crate) fn is_empty(&self) -> bool {
-        self.teferi_emblems.is_empty() && self.untaps.is_empty()
+        self.teferi_emblems.is_empty()
+            && self.untaps.is_empty()
+            && self.garruk_grants.is_empty()
+            && self.garruk_pending.is_empty()
+            && self.garruk_entries.is_empty()
     }
 }
 
@@ -91,13 +106,24 @@ pub enum C6cOpV1 {
     TeferiEmblemV1,
     TeferiExileV1,
     EmperorCounterFirstStrikeV1,
+    GarrukUntapV1,
+    GarrukGrantV1,
+    GarrukPumpV1 {
+        creatures: Vec<ObjectLinkV4>,
+    },
 }
 
 impl C6cOpV1 {
     /// Whether the leaf may stop for a player's choice (or a draw that a
     /// replacement can interrupt), so it runs in the resumable interpreter.
     pub(crate) fn contains_player_choice(&self) -> bool {
-        !matches!(self, Self::EmperorCounterFirstStrikeV1)
+        !matches!(
+            self,
+            Self::EmperorCounterFirstStrikeV1
+                | Self::GarrukUntapV1
+                | Self::GarrukGrantV1
+                | Self::GarrukPumpV1 { .. }
+        )
     }
 }
 
@@ -263,6 +289,20 @@ fn teferi_untap() -> EffectOp {
     }
 }
 
+pub fn garruk_plus_two() -> EffectOp {
+    leaf(C6cOpV1::GarrukUntapV1)
+}
+pub fn garruk_minus_three() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Garruk Beast Token")
+            .expect("Garruk Beast Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+pub fn garruk_minus_four() -> EffectOp {
+    leaf(C6cOpV1::GarrukGrantV1)
+}
+
 fn teferi_exile() -> EffectOp {
     leaf(C6cOpV1::TeferiExileV1)
 }
@@ -279,7 +319,8 @@ pub(crate) fn delayed_triggers(
     }
     let now = crate::eternal_legacy_e9a_v1::TurnV1::now(state);
     let records = &mut state.eternal_v1.as_mut().expect("present above").c6c;
-    let mut triggers = Vec::new();
+    let mut triggers = std::mem::take(&mut records.garruk_pending);
+    records.garruk_entries.clear();
     for event in events {
         match event {
             CommittedEvent::Draw {
@@ -380,13 +421,21 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
 
 /// Queued triggers owned by this module's cards.
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
-    name == TEFERI && (*effect == teferi_untap() || *effect == teferi_exile())
+    (name == TEFERI && (*effect == teferi_untap() || *effect == teferi_exile()))
+        || garruk::delayed_effect_matches(name, effect)
 }
 
 // ---- Execution ----------------------------------------------------------------------
 
 /// Runs one of this module's leaves in synchronous execution.
 pub(crate) fn execute(op: &C6cOpV1, ctx: &ExecCtx, state: &mut GameState) {
+    if matches!(
+        op,
+        C6cOpV1::GarrukUntapV1 | C6cOpV1::GarrukGrantV1 | C6cOpV1::GarrukPumpV1 { .. }
+    ) {
+        garruk::execute(op, ctx, state);
+        return;
+    }
     if let C6cOpV1::EmperorCounterFirstStrikeV1 = op {
         // Do not resolve an absent optional target as the source, and do not
         // grant the keyword to a new incarnation of a departed target.
@@ -435,7 +484,10 @@ pub(crate) fn drive(
     path: Vec<u16>,
 ) -> Result<bool, String> {
     match *op {
-        C6cOpV1::EmperorCounterFirstStrikeV1 => execute(op, &continuation.ctx, state),
+        C6cOpV1::EmperorCounterFirstStrikeV1
+        | C6cOpV1::GarrukUntapV1
+        | C6cOpV1::GarrukGrantV1
+        | C6cOpV1::GarrukPumpV1 { .. } => execute(op, &continuation.ctx, state),
         C6cOpV1::TeferiScheduleUntapV1 => {
             if let Some(source) = continuation.ctx.ability_source_contract {
                 let created_in_end_step = (state.step == Step::End)
