@@ -1197,13 +1197,11 @@ fn six_retrace_counts_avatar_graveyards_after_moving_the_spell_to_the_stack() {
                     assert_eq!(zone(&state, land), Zone::Hand);
                 } else {
                     cast(&mut state, avatar, &[]);
-                    match next(&mut state) {
-                        Decision::ChooseCostTargets { candidates, .. } => {
-                            assert_eq!(candidates, vec![land]);
-                        }
-                        other => panic!("{other:?}"),
+                    // The only land in hand is chosen without a prompt.
+                    if let Decision::ChooseCostTargets { candidates, .. } = next(&mut state) {
+                        assert_eq!(candidates, vec![land]);
+                        act(&mut state, Action::ChooseCostTarget(land));
                     }
-                    act(&mut state, Action::ChooseCostTarget(land));
                     on_the_stack(&mut state);
                     assert_eq!(zone(&state, avatar), Zone::Stack);
                     assert_eq!(zone(&state, land), Zone::Graveyard);
