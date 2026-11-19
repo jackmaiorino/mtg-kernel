@@ -83,7 +83,20 @@ impl RecordEnvelopeV1 {
                 compressor
                     .set_parameter(zstd::stream::raw::CParameter::ContentSizeFlag(true))
                     .map_err(|e| e.to_string())?;
+                // The compressor allocates for the worst case (the bound for
+                // the unsealed length) and returns the frame in that
+                // allocation. The frame is kept for a long time (the
+                // verified-bytes cache and the parse-ahead store share it), so
+                // it is copied into an allocation of its own size and the
+                // large one is freed. (Shrinking in place is not enough: the
+                // allocator may keep a block that is still at least half
+                // used.)
                 let sealed = compressor.compress(bytes).map_err(|e| e.to_string())?;
+                let sealed = if sealed.capacity() > sealed.len() {
+                    sealed.as_slice().to_vec()
+                } else {
+                    sealed
+                };
                 #[cfg(debug_assertions)]
                 if open_v1(&sealed, bytes.len() as u64)?.as_ref() != bytes {
                     return Err("record envelope round trip differs".into());
@@ -280,6 +293,18 @@ mod tests {
             .into_owned();
         assert!(is_sealed_v1(&sealed));
         assert!(sealed.len() < bytes.len() / 4);
+        // The compressor's worst-case allocation (more than the record's
+        // length) is not kept: the frame's buffer has little capacity
+        // beyond its bytes. (A `Vec` reports the same capacity after an
+        // in-place shrink that the allocator did not honor, so this cannot
+        // tell the copy from `shrink_to_fit`; a trainer process's peak
+        // memory is the measurement that does.)
+        assert!(
+            sealed.capacity() <= sealed.len() + sealed.len() / 8 + 64,
+            "capacity {} for {} bytes",
+            sealed.capacity(),
+            sealed.len()
+        );
         assert_eq!(
             RecordEnvelopeV1::Zstd1.seal_v1(&bytes).unwrap().as_ref(),
             sealed.as_slice()

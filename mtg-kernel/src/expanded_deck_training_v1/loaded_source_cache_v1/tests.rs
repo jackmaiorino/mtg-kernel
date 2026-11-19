@@ -799,7 +799,7 @@ fn streaming_pin_checks_verify_multi_chunk_files_without_changing_errors() {
     for resident in [false, true] {
         let cache = VerifiedBytesCacheV1::new_v1(16 * 1024 * 1024, 64);
         if resident {
-            cache.enable_resident_v1();
+            cache.enable_resident_for_test_v1();
         }
         // Cold pass hashes by streaming 64 KiB chunks; after a full read
         // populates the memo, the warm pass streams against memoized bytes.
