@@ -1773,7 +1773,10 @@ fn each_donor_check_site_case_fails_without_that_site_both_seats() {
                     let held = with_donor_check_site_disabled(site, || {
                         check_completed_saga_sba_site_case(player, rules)
                     });
-                    assert!(!held, "{player:?} {rules:?} held without the Saga SBA check");
+                    assert!(
+                        !held,
+                        "{player:?} {rules:?} held without the Saga SBA check"
+                    );
                 }
             }
         }
