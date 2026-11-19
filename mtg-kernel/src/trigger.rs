@@ -284,6 +284,8 @@ pub enum TriggerCondition {
     /// Event-time native wave capture, not generic per-recipient matching.
     ControlledCreatureCombatDamageDuringOwnTurnV1,
     OpponentDiscardsV72,
+    /// Captured by the shared discard transaction, including discard costs.
+    ControllerDiscardsCardV1,
 }
 
 pub struct TriggeredAbilityDef {
@@ -5295,6 +5297,8 @@ pub(crate) fn capture_triggers_without_sba(state: &mut GameState) -> Vec<Pending
     // check, so match the pre-SBA batch while its sources still occupy the
     // zones from which their abilities function.
     waiting.extend(triggers_from_events(state, &events, kicked_source));
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c6a_v1::clear_collected_exile_batches(state);
     waiting
 }
 
@@ -5345,6 +5349,8 @@ pub(crate) fn collect_and_process_with_sba_result_v1(
         &sba_events,
     ));
     new_triggers.extend(triggers_from_events(state, &sba_events, None));
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c6a_v1::clear_collected_exile_batches(state);
 
     // 603.3d: a triggered ability requiring targets is removed from the
     // stack-placement queue when no complete legal target assignment exists.
@@ -5718,6 +5724,8 @@ fn triggers_from_events(
         // on the stack without committing any event (Vintage Cube wave C4b).
         #[cfg(feature = "eternal-fixtures")]
         new_triggers.extend(crate::eternal_cube_c4b_v1::delayed_triggers(state, events));
+        // Garruk observes declarations even when vigilance produces no tap event.
+        new_triggers.extend(crate::eternal_cube_c6c_v1::delayed_triggers(state, events));
         uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
         state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
         return new_triggers;
@@ -6149,6 +6157,13 @@ fn triggers_from_events(
                     ) {
                         let kicked = Some(id) == kicked_source;
                         if def.intervening_if_kicked && !kicked {
+                            continue;
+                        }
+                        if crate::eternal_cube_c6b_v1::suppress_token_death_copy(
+                            card.name,
+                            def.condition,
+                            obj.v4.is_token,
+                        ) {
                             continue;
                         }
                         // Triumph of Saint Katherine (eternal wave S1l): "put
@@ -6785,6 +6800,7 @@ fn trigger_matches(
     match (cond, ev) {
         // The shared discard transaction captures each original observer once.
         (TriggerCondition::OpponentDiscardsV72, _) => false,
+        (TriggerCondition::ControllerDiscardsCardV1, _) => false,
         (
             TriggerCondition::TurnedFaceUp,
             CommittedEvent::TurnedFaceUp {

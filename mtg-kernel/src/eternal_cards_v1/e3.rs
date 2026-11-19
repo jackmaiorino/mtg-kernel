@@ -324,6 +324,10 @@ pub enum E3ChoiceKindV1 {
     C5dV1(crate::eternal_cube_c5d_v1::C5dChoiceV1),
     /// A Vintage Cube wave C5b choice (`eternal_cube_c5b_v1`).
     C5bV1(crate::eternal_cube_c5b_v1::C5bChoiceV1),
+    /// Gut's optional sacrifice of an artifact or another creature.
+    C6aGutSacrificeV1,
+    /// Vintage Cube wave C6b's private hand discard.
+    C6bV1(crate::eternal_cube_c6b_v1::C6bChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -419,6 +423,15 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::C5dV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if matches!(
+            &self.kind,
+            E3ChoiceKindV1::C6bV1(crate::eternal_cube_c6b_v1::C6bChoiceV1::SixReturnLandV1)
+        ) {
+            return false;
+        }
+        if let E3ChoiceKindV1::C6bV1(_) = &self.kind {
+            return true;
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -501,6 +514,10 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::RetargetSpellV1 { .. } | E3ChoiceKindV1::RetargetCopyV1 { .. } => {
                 crate::rl::TargetSelectionPurposeV4::EffectTargets
             }
+            E3ChoiceKindV1::C6aGutSacrificeV1 => {
+                crate::rl::TargetSelectionPurposeV4::PermanentSelection
+            }
+            E3ChoiceKindV1::C6bV1(_) => crate::rl::TargetSelectionPurposeV4::CardSelection,
         }
     }
 
@@ -944,6 +961,12 @@ pub(crate) fn finish_selection(
             &bindings,
             crate::eternal_sideboard_s1a_v1::surgical::ExtractionV1::Extirpate,
         ),
+        E3ChoiceKindV1::C6aGutSacrificeV1 => {
+            crate::eternal_cube_c6a_v1::finish_gut_sacrifice(state, continuation, choice, bindings)
+        }
+        E3ChoiceKindV1::C6bV1(kind) => {
+            crate::eternal_cube_c6b_v1::finish_selection(state, continuation, kind, bindings)
+        }
     }
 }
 
@@ -1328,6 +1351,9 @@ pub(crate) fn drive(
         EternalOpV1::C5bV1(op) => crate::eternal_cube_c5b_v1::drive(state, continuation, op, path),
         EternalOpV1::C5cV1(op) => crate::eternal_cube_c5c_v1::drive(state, continuation, op, path),
         EternalOpV1::C5dV1(op) => crate::eternal_cube_c5d_v1::drive(state, continuation, op, path),
+        EternalOpV1::C6aV1(op) => crate::eternal_cube_c6a_v1::drive(state, continuation, op, path),
+        EternalOpV1::C6bV1(op) => crate::eternal_cube_c6b_v1::drive(state, continuation, op, path),
+        EternalOpV1::C6cV1(op) => crate::eternal_cube_c6c_v1::drive(state, continuation, op, path),
         EternalOpV1::DelayedUpkeepDrawV1 => crate::eternal_vintage_e7b_v1::dredge::drive_draws(
             state,
             continuation,

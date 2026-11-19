@@ -49,6 +49,9 @@ pub(crate) fn dredge_count(name: &str) -> Option<u8> {
 
 /// The dredge cards in `player`'s graveyard they could dredge now.
 pub(crate) fn dredge_cards(state: &GameState, player: PlayerId) -> Vec<ObjectId> {
+    if crate::eternal_cube_c6c_v1::prevents_draw(state, player) {
+        return Vec::new();
+    }
     let library = state.players[player.index()].library.len();
     graveyard_cards(state, player)
         .into_iter()
@@ -61,6 +64,9 @@ pub(crate) fn dredge_cards(state: &GameState, player: PlayerId) -> Vec<ObjectId>
 }
 
 pub(crate) fn may_need_draw_choice(state: &GameState, player: PlayerId) -> bool {
+    if crate::eternal_cube_c6c_v1::prevents_draw(state, player) {
+        return false;
+    }
     !dredge_cards(state, player).is_empty()
         || (crate::eternal_cards_v1::e3::jace_draw_replacement_source(state, player).is_some()
             && crate::eternal_sideboard_s1c_v1::statics::hullbreacher_controller(state, player)
@@ -99,6 +105,10 @@ pub(crate) fn owned_draw_needs_choice(state: &GameState, player: PlayerId, count
     use crate::eternal_sideboard_s1c_v1::statics::{
         hullbreacher_controller, hullbreacher_replaces_draw,
     };
+
+    if crate::eternal_cube_c6c_v1::prevents_draw(state, player) {
+        return false;
+    }
 
     if count == 0 {
         return false;
@@ -239,6 +249,9 @@ fn replacement_options(
     path: &[u16],
     remaining: &[EffectFrame],
 ) -> Option<(E7bChoiceV1, Vec<ObjectId>)> {
+    if crate::eternal_cube_c6c_v1::prevents_draw(state, drawer) {
+        return None;
+    }
     let cards = dredge_cards(state, drawer);
     if !cards.is_empty() {
         return Some((E7bChoiceV1::DredgeV1, cards));

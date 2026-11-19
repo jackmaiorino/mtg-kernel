@@ -930,6 +930,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         VOICE_OF_VICTORY => matches!(op, E5bOpV1::SacrificeMobilizedV1 { .. }),
         SAND_SCOUT => *op == E5bOpV1::CreateSandWarriorV1,
         STATIC_PRISON => *op == E5bOpV1::StaticPrisonUpkeepV1,
+        "Metamorphosis Fanatic" => *op == E5bOpV1::MiracleV1,
         _ => false,
     }
 }
@@ -1041,7 +1042,8 @@ pub(crate) fn trigger_matches(
         E5bTriggerV1::YourEndStepIfGainedLifeV1 => {
             matches!(
                 events[index],
-                CommittedEvent::BeginningEndStep { active_player, .. } if active_player == controller
+                CommittedEvent::BeginningEndStep { active_player, .. }
+                    if active_player == controller
             ) && gained_life_this_turn(state, controller)
         }
         E5bTriggerV1::EntersIfOpponentHasMoreLandsV1 => {
@@ -1147,7 +1149,10 @@ fn draw_ordinal_at(
     player: PlayerId,
     state: &GameState,
 ) -> u32 {
-    let is_draw = |event: &CommittedEvent| matches!(event, CommittedEvent::Draw { player: drawer, object: Some(_) } if *drawer == player);
+    let is_draw = |event: &CommittedEvent| {
+        matches!(event, CommittedEvent::Draw { player: drawer, object: Some(_) }
+            if *drawer == player)
+    };
     let in_batch = events.iter().filter(|event| is_draw(event)).count() as u32;
     let through = events[..=index]
         .iter()
@@ -1373,11 +1378,16 @@ pub(crate) fn begin_turn(state: &mut GameState, _active: PlayerId) {
 /// generic amount: Terminus, Miracle {W}, and wave S1l's Triumph of Saint
 /// Katherine, Miracle {1}{W}.
 fn miracle_cost(state: &GameState, card: ObjectId) -> Option<(&'static [ManaColor], u8)> {
+    // A catalog downgrade must also disable the first-draw reveal offer.
+    if !printed(state, card).is_executable() {
+        return None;
+    }
     match definition_name(state, card)? {
         TERMINUS => Some((&[ManaColor::W][..], 0)),
         crate::eternal_sideboard_s1l_v1::TRIUMPH_OF_SAINT_KATHERINE => {
             Some((&[ManaColor::W][..], 1))
         }
+        "Metamorphosis Fanatic" => Some((&[ManaColor::B][..], 1)),
         _ => None,
     }
 }

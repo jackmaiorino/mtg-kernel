@@ -1168,13 +1168,13 @@ const PALANTIR_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
     palantir_end_step,
 )];
 
-/// Triggered abilities of this module's cards, the tail of the trigger
-/// tables.
+/// Triggered abilities of this module's cards, falling through to wave
+/// C6a.
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         PROFTS_EIDETIC_MEMORY => &PROFT_TRIGGERS,
         PALANTIR_OF_ORTHANC => &PALANTIR_TRIGGERS,
-        _ => &[],
+        _ => crate::eternal_cube_c6a_v1::triggers_for(name),
     }
 }
 

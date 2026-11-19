@@ -35785,6 +35785,683 @@
    ],
    "java_file": "Mage.Sets/src/mage/cards/f/FanaticOfRhonas.java",
    "is_token": true
+  },
+  {
+   "name": "Ivora, Insatiable Heir",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Vampire",
+    "Warrior"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": ["trample", "blood_etb", "combat_damage_trigger", "discard", "add_counters"],
+   "java_file": "Mage.Sets/src/mage/cards/i/IvoraInsatiableHeir.java"
+  },
+  {
+   "name": "Gau, Feral Youth",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Berserker"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": ["attack_trigger", "add_counters", "damage"],
+   "java_file": "Mage.Sets/src/mage/cards/g/GauFeralYouth.java"
+  },
+  {
+   "name": "Laelia, the Blade Reforged",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Spirit",
+    "Warrior"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": ["haste", "attack_trigger", "impulse_draw", "add_counters"],
+   "java_file": "Mage.Sets/src/mage/cards/l/LaeliaTheBladeReforged.java"
+  },
+  {
+   "name": "Headliner Scarlett",
+   "engine_capability": "partial",
+   "mana_cost": "{3}{R}",
+   "mana_value": 4,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Warlock"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/h/HeadlinerScarlett.java"
+  },
+  {
+   "name": "Gandalf, Goblins' Bane",
+   "engine_capability": "partial",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Avatar",
+    "Wizard"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": []
+  },
+  {
+   "name": "Fallen Shinobi",
+   "engine_capability": "full",
+   "mana_cost": "{3}{U}{B}",
+   "mana_value": 5,
+   "colors": [
+    "U",
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Zombie",
+    "Ninja"
+   ],
+   "supertypes": [],
+   "power": 5,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "ninjutsu",
+    "combat_damage_trigger",
+    "exile_play_free"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/f/FallenShinobi.java"
+  },
+  {
+   "name": "Generous Plunderer",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}",
+   "mana_value": 2,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Rogue"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "menace",
+    "upkeep_trigger",
+    "token_creation",
+    "attack_trigger"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GenerousPlunderer.java"
+  },
+  {
+   "name": "Gut, True Soul Zealot",
+   "engine_capability": "full",
+   "mana_cost": "{2}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Goblin",
+    "Shaman"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "attack_trigger",
+    "sacrifice",
+    "token_creation"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/g/GutTrueSoulZealot.java"
+  },
+  {
+   "name": "Seasoned Cryomancer",
+   "engine_capability": "full",
+   "mana_cost": "{1}{U}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Wizard"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": ["etb_trigger", "draw_card", "discard", "stun_counters", "graveyard_ability"]
+  },
+  {
+   "name": "Seasoned Pyromancer",
+   "engine_capability": "full",
+   "mana_cost": "{1}{R}{R}",
+   "mana_value": 3,
+   "colors": [
+    "R"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Shaman"
+   ],
+   "supertypes": [],
+   "power": 2,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": ["etb_trigger", "draw_card", "discard", "token_creation", "graveyard_ability"],
+   "java_file": "Mage.Sets/src/mage/cards/s/SeasonedPyromancer.java"
+  },
+  {
+   "name": "Sphinx of False Conclusions",
+   "engine_capability": "full",
+   "mana_cost": "{2}{U}{U}",
+   "mana_value": 4,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Sphinx",
+    "Illusion"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 2,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": ["flash", "flying", "attack_trigger", "draw_card", "discard", "dies_trigger", "token_creation"]
+  },
+  {
+   "name": "Metamorphosis Fanatic",
+   "engine_capability": "partial",
+   "mana_cost": "{4}{B}{B}",
+   "mana_value": 6,
+   "colors": [
+    "B"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Cleric"
+   ],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": ["lifelink", "etb_trigger", "reanimate", "lifelink_counter", "miracle"],
+   "java_file": "Mage.Sets/src/mage/cards/m/MetamorphosisFanatic.java"
+  },
+  {
+   "name": "Night Nurse, Healer of Heroes",
+   "engine_capability": "full",
+   "mana_cost": "{1}{W}",
+   "mana_value": 2,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Human",
+    "Doctor",
+    "Hero"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": []
+  },
+  {
+   "name": "Six",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Treefolk"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": 2,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [],
+   "java_file": "Mage.Sets/src/mage/cards/s/Six.java"
+  },
+  {
+   "name": "Ursine Monstrosity",
+   "engine_capability": "full",
+   "mana_cost": "{2}{G}",
+   "mana_value": 3,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Creature"
+   ],
+   "subtypes": [
+    "Bear",
+    "Mutant"
+   ],
+   "supertypes": [],
+   "power": 3,
+   "toughness": 3,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "trample",
+    "mill"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/u/UrsineMonstrosity.java"
+  },
+  {
+   "name": "Jace, the Mind Sculptor",
+   "engine_capability": "full",
+   "starting_loyalty": 3,
+   "mana_cost": "{2}{U}{U}",
+   "mana_value": 4,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Jace"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/j/JaceTheMindSculptor.java"
+  },
+  {
+   "name": "Karn, Scion of Urza",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
+   "mana_cost": "{4}",
+   "mana_value": 4,
+   "colors": [],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Karn"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/k/KarnScionOfUrza.java"
+  },
+  {
+   "name": "Narset, Parter of Veils",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
+   "mana_cost": "{1}{U}{U}",
+   "mana_value": 3,
+   "colors": [
+    "U"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Narset"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/n/NarsetParterOfVeils.java"
+  },
+  {
+   "name": "Teferi, Hero of Dominaria",
+   "engine_capability": "full",
+   "starting_loyalty": 4,
+   "mana_cost": "{3}{W}{U}",
+   "mana_value": 5,
+   "colors": [
+    "W",
+    "U"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [
+    "Teferi"
+   ],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TeferiHeroOfDominaria.java"
+  },
+  {
+   "name": "The Wandering Emperor",
+   "engine_capability": "full",
+   "starting_loyalty": 3,
+   "mana_cost": "{2}{W}{W}",
+   "mana_value": 4,
+   "colors": [
+    "W"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": [],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "flash"
+   ],
+   "java_file": "Mage.Sets/src/mage/cards/t/TheWanderingEmperor.java"
+  },
+  {
+   "name": "Garruk, Curse Breaker",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
+   "mana_cost": "{3}{G}{G}",
+   "mana_value": 5,
+   "colors": [
+    "G"
+   ],
+   "types": [
+    "Planeswalker"
+   ],
+   "subtypes": ["Garruk"],
+   "supertypes": [
+    "Legendary"
+   ],
+   "power": null,
+   "toughness": null,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [
+    "vintage-cube"
+   ],
+   "sideboard_only": false,
+   "complexity": "moderate",
+   "mechanics": ["planeswalker", "loyalty_abilities", "token_creation"]
+  },
+  {
+   "name": "1/1 red Elemental Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": ["R"],
+   "types": ["Creature"],
+   "subtypes": ["Elemental"],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": ["token_creation"],
+   "is_token": true
+  },
+  {
+   "name": "Garruk Beast Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": ["G"],
+   "types": ["Creature"],
+   "subtypes": ["Beast"],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": ["trample"],
+   "is_token": true
   }
  ]
 }

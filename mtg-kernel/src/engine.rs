@@ -7921,6 +7921,8 @@ fn commit_cost_components_from_plan_v1(
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_cube_c3c_v1::note_discard(state, source);
                 #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cube_c6a_v1::note_discards(state, &[source]);
+                #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_premodern_p1a_v1::note_cycled(state, source);
                 event::propose_and_commit(
                     state,
@@ -9738,6 +9740,17 @@ pub(crate) fn normal_cast_reduction_count(
     targets: &[Target],
     state: &GameState,
 ) -> u32 {
+    normal_cast_reduction_count_excluding_source(count, player, targets, state, None)
+}
+
+// A quoted spell will leave its graveyard before its total cost is determined (601.2f).
+fn normal_cast_reduction_count_excluding_source(
+    count: card_def::DynamicCountDef,
+    player: PlayerId,
+    targets: &[Target],
+    state: &GameState,
+    source: Option<ObjectId>,
+) -> u32 {
     match count {
         card_def::DynamicCountDef::ControllerBattlefieldAnyType(types) => state.players
             [player.index()]
@@ -9765,6 +9778,7 @@ pub(crate) fn normal_cast_reduction_count(
             let creatures = [PlayerId::P0, PlayerId::P1]
                 .into_iter()
                 .flat_map(|owner| state.players[owner.index()].graveyard.iter().copied())
+                .filter(|&card| Some(card) != source)
                 .filter(|&card| {
                     let live = state.objects.get(card);
                     !live.v4.is_token
@@ -9779,6 +9793,7 @@ pub(crate) fn normal_cast_reduction_count(
             [player.index()]
         .graveyard
         .iter()
+        .filter(|&&object| Some(object) != source)
         .filter(|&&object| {
             let graveyard_def = &card_def::CARD_DEFS[state.objects.get(object).card_def as usize];
             graveyard_def
@@ -13163,7 +13178,8 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                     || !activated_ability_face_active(state, id, ability)
                     || !crate::standard_cards_v1::activation_allowed(state, id, def, i)
                     || (ability.is_loyalty_ability()
-                        && (!sorcery_speed_timing_ok(player, state)
+                        && ((!sorcery_speed_timing_ok(player, state)
+                            && !crate::eternal_cube_c6c_v1::emperor_instant_loyalty(state, id))
                             || loyalty_ability_activated_this_turn(state, id)))
                     || (ability.sorcery_speed_only && !sorcery_speed_timing_ok(player, state))
                     || ability.max_activations_per_turn.is_some_and(|limit| {
@@ -14767,6 +14783,8 @@ pub(crate) fn commit_discarded_cards(state: &mut GameState, chosen: &[ObjectId])
     if chosen.is_empty() {
         return;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c6a_v1::note_discards(state, chosen);
     #[cfg(feature = "eternal-fixtures")]
     for &id in chosen {
         crate::eternal_vintage_e7b_v1::statics::note_discard(state, id);
@@ -29268,6 +29286,7 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
             crate::high_society_hunter_v1::capture_attack(state, declaration);
         }
     }
+    crate::eternal_cube_c6c_v1::capture_attack(state);
     if !state.engine.combat.attackers.is_empty() {
         let attacker = state.active_player;
         // Raid history belongs to the successor Limited rules scope. Keep
@@ -29676,7 +29695,14 @@ fn play_land(
         event::propose_and_commit(state, event);
     } else if tinybones_land.is_some()
         || resolution_cast_v1::permit(state, id).is_some_and(|p| p.land)
+        || (state.objects.get(id).zone == Zone::Exile
+            && state.objects.get(id).owner != player
+            && active_permission_for(player, id, state)
+                .is_some_and(|p| p.play_or_cast == PlayOrCast::Play))
     {
+        // A land played from exile enters under its player's control (CR 305.2),
+        // even when the permission lets that player use an opponent's card.
+        // A player's own exiled land keeps the ordinary move below.
         event::propose_and_commit(
             state,
             ProposedEvent::zone_change_to_battlefield_under_controller(id, player),
@@ -30047,6 +30073,8 @@ fn materialize_begin_cast_with_quote_v1(
         .alt_cost
         .is_some_and(|alt| alt.condition == card_def::AltCostCondition::DisguiseFromHand)
         && origin_zone == Zone::Hand;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c6b_v1::note_six_cast(state, spell_id, player);
     move_to_stack(state, spell_id, origin_zone, disguised);
     if let Some(permission) = graveyard_adventure {
         state
@@ -30720,6 +30748,18 @@ fn finalize_owned_cast(
     );
     let cast_at = state.engine.event_history.len();
     event::log_spell_cast_with_targets(state, pending.spell, pending.controller, storm_targets);
+    // Casting moves directly to the stack without event::commit's zone-change hook.
+    // Record only completed casts, so an aborted attempt cannot satisfy Gau.
+    #[cfg(feature = "eternal-fixtures")]
+    if pending.origin_zone == Zone::Graveyard {
+        crate::eternal_cube_c6a_v1::note_zone_change(
+            state,
+            pending.spell,
+            Zone::Graveyard,
+            Zone::Stack,
+            None,
+        );
+    }
     crate::eternal_cards_v1::owned_draws_v1::portent::record_cast(state, stack_item_id)?;
     crate::etali_primal_storm_receipts_v1::record_cast(
         state,

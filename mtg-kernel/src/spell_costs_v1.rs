@@ -930,6 +930,31 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         player,
         state,
     )?;
+    // Cost determination follows moving the spell to the stack (601.2f).
+    // Preserve other reducers, but remove this source's graveyard contribution.
+    // Limited to the eternal build so the rated Pauper build keeps its quotes.
+    if cfg!(feature = "eternal-fixtures")
+        && (method == CastMethodV4::Normal || granted)
+        && state
+            .objects
+            .try_get(source)
+            .is_some_and(|object| object.zone == crate::state::Zone::Graveyard)
+    {
+        if let Some(reducer) = definition.generic_cost_reduction {
+            let before = normal_cast_reduction_count(reducer.count, player, targets, state);
+            let after = super::normal_cast_reduction_count_excluding_source(
+                reducer.count,
+                player,
+                targets,
+                state,
+                Some(source),
+            );
+            let excess = before
+                .saturating_sub(after)
+                .saturating_mul(u32::from(reducer.generic_per_count));
+            selected.own_generic_reduction = selected.own_generic_reduction.saturating_sub(excess);
+        }
+    }
     selected.tinybones_mana_v72 = super::tinybones_v72::mana_grant(state, source, player);
     if selected.no_mana {
         selected.no_mana_source = Some(source);
@@ -964,6 +989,12 @@ fn selected_spell_mana_costs_for_source_grant_v1(
                 && crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name)))
             && crate::eternal_vintage_e7b_v1::retrace_quote(state, source, player)
         {
+            // Delve is tracked outside component_groups, so the check for
+            // two object families below does not see it. Retrace cannot
+            // share its land-discard selection with that payment route.
+            if selected.delve {
+                return None;
+            }
             selected.components(RETRACE_COST);
             selected.retrace = true;
         }

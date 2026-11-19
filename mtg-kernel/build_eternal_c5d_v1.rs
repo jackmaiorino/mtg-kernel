@@ -1,7 +1,6 @@
 //! Card-database recipes for the eternal catalog's Vintage Cube wave C5d
 //! (each-player decision spells and hidden-zone artifacts). Wave C5c's tables fall through to these, and
-//! this module is the tail of the recipe chains: its own
-//! defaults are the chains' base values. Runtime programs live in
+//! these fall through to wave C6a's (`build_eternal_c6a_v1.rs`). Runtime programs live in
 //! `src/eternal_cube_c5d_v1.rs`. Every row is keyed by a name that occurs
 //! only in the eternal registry.
 //!
@@ -44,7 +43,7 @@ const MEMORY_JAR: [ActivatedAbilityRecipe; 1] = [instant(
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
         "Memory Jar" => &MEMORY_JAR,
-        _ => &[],
+        _ => super::build_eternal_c6a_v1::activated_ability_recipes_for(name),
     }
 }
 
@@ -71,33 +70,33 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
             "TargetSpec::NonlandPermanent",
             "crate::eternal_cube_c5d_v1::fractured_identity",
         )),
-        _ => None,
+        _ => super::build_eternal_c6a_v1::special_for(name),
     }
 }
 
 /// No C5d card has kicker.
-pub(super) fn kicker_cost_for(_name: &str) -> Option<&'static str> {
-    None
+pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
+    super::build_eternal_c6a_v1::kicker_cost_for(name)
 }
 
 /// No C5d card is an Aura or an Equipment.
-pub(super) fn attachment_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn attachment_for(name: &str) -> &'static str {
+    super::build_eternal_c6a_v1::attachment_for(name)
 }
 
 /// No C5d card has flashback.
-pub(super) fn flashback_for(_name: &str) -> String {
-    "None".to_string()
+pub(super) fn flashback_for(name: &str) -> String {
+    super::build_eternal_c6a_v1::flashback_for(name)
 }
 
 /// No C5d card has an alternative cost.
-pub(super) fn alt_cost_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn alt_cost_for(name: &str) -> &'static str {
+    super::build_eternal_c6a_v1::alt_cost_for(name)
 }
 
 /// No C5d card has a printed evergreen keyword.
-pub(super) fn keywords_for(_name: &str) -> &'static [&'static str] {
-    &[]
+pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
+    super::build_eternal_c6a_v1::keywords_for(name)
 }
 
 /// Card-database tokens for this wave's abilities.
@@ -121,6 +120,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Fractured Identity" => {
             "spell:exile_target_nonland_permanent;each_player_other_than_its_controller_creates_token_copy"
         }
-        _ => "none",
+        _ => super::build_eternal_c6a_v1::trigger_recipe_for(name),
     }
 }

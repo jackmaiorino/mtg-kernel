@@ -529,6 +529,10 @@ pub enum Subtype {
     Vedalken = 600,
     Horse = 601,
     Mount = 602,
+    Doctor = 710,
+    /// Vintage Cube wave C6c planeswalker type.
+    Narset = 720,
+    Garruk = 721,
 }
 
 impl Subtype {
@@ -941,6 +945,8 @@ impl Subtype {
         Subtype::Horse,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Mount,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Doctor,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1202,6 +1208,9 @@ impl Subtype {
             600 => Subtype::Vedalken,
             601 => Subtype::Horse,
             602 => Subtype::Mount,
+            710 => Subtype::Doctor,
+            720 => Subtype::Narset,
+            721 => Subtype::Garruk,
             _ => return None,
         })
     }
@@ -1442,6 +1451,9 @@ impl Subtype {
             Subtype::Vedalken => true,
             Subtype::Horse => true,
             Subtype::Mount => true,
+            Subtype::Doctor => true,
+            Subtype::Narset => false,
+            Subtype::Garruk => false,
         }
     }
 
@@ -1564,6 +1576,7 @@ impl Subtype {
                     | Subtype::Vedalken
                     | Subtype::Horse
                     | Subtype::Mount
+                    | Subtype::Doctor
             )
         {
             return true;
@@ -4146,7 +4159,7 @@ mod tests {
     #[test]
     #[cfg(feature = "eternal-fixtures")]
     fn card_db_hash_eternal_v1_is_frozen() {
-        const EXPECTED_ETERNAL: u64 = 0x3d70_62d6_a147_1126;
+        const EXPECTED_ETERNAL: u64 = 0xebfe_d3ef_2973_d7ff;
         assert_eq!(
             KERNEL_CARDDB_HASH, EXPECTED_ETERNAL,
             "eternal catalog hash {KERNEL_CARDDB_HASH:#018x}"
