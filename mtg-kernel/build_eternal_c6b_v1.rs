@@ -74,6 +74,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
         "Metamorphosis Fanatic" => &["Keywords::LIFELINK"],
         "Night Nurse, Healer of Heroes" => &["Keywords::FLASH", "Keywords::LIFELINK"],
         "Six" => &["Keywords::REACH"],
+        "Ursine Monstrosity" => &["Keywords::TRAMPLE"],
         _ => super::build_eternal_c6c_v1::keywords_for(name),
     }
 }
@@ -87,6 +88,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Metamorphosis Fanatic" => "lifelink;etb:return_up_to_one_target_creature_card_from_own_graveyard_to_battlefield:lifelink_counter_on_returned_incarnation;miracle:1b:first_draw_reveal_choice:trigger_pay_then_cast",
         "Night Nurse, Healer of Heroes" => "flash;lifelink;etb:return_target_permanent_card_in_own_graveyard_put_there_this_turn:exact_incarnation:to_hand",
         "Six" => "reach;attacks:mill_three:may_put_one_land_from_among_them_into_hand;own_turn:nonland_permanent_cards_in_own_graveyard:retrace:additional_discard_land_cost",
+        "Ursine Monstrosity" => "trample;beginning_of_controller_combat:mill_one:choose_random_opponent:source_attacks_that_player_this_combat_if_able:until_eot_indestructible_and_plus_one_plus_one_per_card_type_in_own_graveyard_at_resolution",
         _ => super::build_eternal_c6c_v1::trigger_recipe_for(name),
     }
 }

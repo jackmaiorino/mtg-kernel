@@ -50,6 +50,7 @@ use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
 pub(crate) mod targets;
+pub(crate) mod ursine;
 
 const CRYOMANCER: &str = "Seasoned Cryomancer";
 const PYROMANCER: &str = "Seasoned Pyromancer";
@@ -72,6 +73,8 @@ pub struct C6bStateV1 {
     pub six_mills: Vec<(StackItemId, Vec<EffectObjectBinding>)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub six_casts: Vec<(ObjectId, u32, PlayerId)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ursine_combats: Vec<ursine::CombatV1>,
 }
 
 impl C6bStateV1 {
@@ -80,6 +83,7 @@ impl C6bStateV1 {
             && self.graveyard_entries.is_empty()
             && self.six_mills.is_empty()
             && self.six_casts.is_empty()
+            && self.ursine_combats.is_empty()
     }
 }
 
@@ -99,6 +103,7 @@ pub enum C6bOpV1 {
     FanaticReturnedLifelinkV1,
     SixBindMillV1,
     SixReturnLandV1,
+    UrsineCombatV1,
 }
 
 impl C6bOpV1 {
@@ -373,6 +378,20 @@ const SIX_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
     condition: TriggerCondition::Attacks,
     ..etb(six_attack)
 }];
+const URSINE_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::BeginningOfControllerCombat,
+    ..etb(ursine_combat)
+}];
+
+pub fn ursine_combat() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::MillCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+        c6b(C6bOpV1::UrsineCombatV1),
+    ])
+}
 const SPHINX_TRIGGERS: [TriggeredAbilityDef; 2] = [
     TriggeredAbilityDef {
         condition: TriggerCondition::Attacks,
@@ -392,6 +411,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         FANATIC => &FANATIC_TRIGGERS,
         NURSE => &NURSE_TRIGGERS,
         SIX => &SIX_TRIGGERS,
+        "Ursine Monstrosity" => &URSINE_TRIGGERS,
         _ => crate::eternal_cube_c6c_v1::triggers_for(name),
     }
 }
@@ -405,6 +425,9 @@ fn stun_targets(count: u16) -> TargetSpec {
 }
 
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    if name == "Ursine Monstrosity" && *effect == ursine_combat() {
+        return Some(TargetSpec::None);
+    }
     if name == NURSE && *effect == nurse_entry() {
         return Some(nurse_target());
     }
@@ -511,6 +534,7 @@ fn discard_selected(
 
 pub(crate) fn execute(op: &C6bOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        C6bOpV1::UrsineCombatV1 => ursine::resolve(ctx, state),
         C6bOpV1::SixBindMillV1 => {
             if let Some(key) = ctx.stack_item_id {
                 let cards = state.players[ctx.controller.index()]

@@ -3,6 +3,7 @@
 #![cfg(feature = "eternal-fixtures")]
 #![allow(dead_code)]
 
+use crate::eternal_catalog_v1::{play_observed, Policy};
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, CARD_DEFS,
 };
@@ -12,17 +13,20 @@ use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
 use mtg_kernel::mana::{ManaColor, Pip};
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use serde_json::Value;
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
+const URSINE: &str = "Ursine Monstrosity";
 
-const C6B_CARDS: [&str; 6] = [
+const C6B_CARDS: [&str; 7] = [
     "Seasoned Cryomancer",
     "Seasoned Pyromancer",
     "Sphinx of False Conclusions",
     "Metamorphosis Fanatic",
     "Night Nurse, Healer of Heroes",
     "Six",
+    "Ursine Monstrosity",
 ];
 
 fn def(name: &str) -> &'static CardDef {
@@ -477,6 +481,279 @@ fn c6b_cards_are_full() {
         let card = def(name);
         assert_eq!(card.capability, CardCapability::Full, "{name}");
         assert!(card.is_executable(), "{name}");
+    }
+}
+
+#[test]
+fn ursine_printed_characteristics_and_pyrogoyf_unimplemented_boundary() {
+    let card = def(URSINE);
+    assert_eq!(card.cost.generic, 2);
+    assert_eq!(card.cost.pips, &[Pip::Colored(ManaColor::G)]);
+    assert_eq!(card.mana_value, 3);
+    assert_eq!(card.types, &[CardType::Creature]);
+    assert_eq!(card.subtypes, &[Subtype::Bear, Subtype::Mutant]);
+    assert_eq!(card.colors, &[ManaColor::G]);
+    assert!(card.supertypes.is_empty());
+    assert_eq!((card.power, card.toughness), (Some(3), Some(3)));
+    assert_eq!(card.keywords, Keywords::TRAMPLE);
+    assert!(!card.is_token);
+    assert!(!def("Pyrogoyf").is_executable());
+    assert_eq!(
+        (def("Pyrogoyf").power, def("Pyrogoyf").toughness),
+        (Some(0), Some(1))
+    );
+}
+
+fn cast_ursine(state: &mut GameState) -> ObjectId {
+    let source = put(state, P0, URSINE, Zone::Hand);
+    pool(state, P0, &[ManaColor::G], 2);
+    cast(state, source, &[]);
+    settled(state);
+    assert_eq!(zone(state, source), Zone::Battlefield);
+    source
+}
+
+#[test]
+fn ursine_mills_then_fixes_own_card_types_and_expires_on_a_real_turn() {
+    let mut state = game(&["Baleful Strix", "Plains", "Plains", "Plains", "Plains"]);
+    let top = state.players[0].library[0];
+    put(&mut state, P0, "Tarfire", Zone::Graveyard);
+    put(&mut state, P1, "Rancor", Zone::Graveyard);
+    let source = cast_ursine(&mut state);
+    state.objects.get_mut(source).summoning_sick = false;
+    pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+    assert_eq!(zone(&state, top), Zone::Graveyard);
+    assert_eq!(state.players[0].library.len(), 4);
+    // Kindred, instant, artifact, creature. The opponent's enchantment does not count.
+    assert_eq!(power_toughness(&state, source), (7, 7));
+    assert!(keyword(&state, source, Keywords::INDESTRUCTIBLE));
+    assert!(keyword(&state, source, Keywords::TRAMPLE));
+    put(&mut state, P0, "Ponder", Zone::Graveyard);
+    assert_eq!(power_toughness(&state, source), (7, 7), "boost is fixed");
+    assert!(engine::step(&mut state, Action::DeclareAttackers(Vec::new())).is_err());
+    act(&mut state, Action::DeclareAttackers(vec![source]));
+    pass_until(&mut state, |state| state.step == Step::Main2);
+    assert_eq!(life(&state, P1), 13);
+    assert_eq!(
+        power_toughness(&state, source),
+        (7, 7),
+        "lasts beyond combat"
+    );
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::Main1
+    });
+    assert_eq!(power_toughness(&state, source), (3, 3));
+    assert!(!keyword(&state, source, Keywords::INDESTRUCTIBLE));
+    let library = state.players[0].library.clone();
+    pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+    assert_eq!(
+        state.players[0].library, library,
+        "no opponent-combat trigger"
+    );
+    assert_eq!(power_toughness(&state, source), (3, 3));
+}
+
+#[test]
+fn ursine_tramples_and_survives_lethal_damage_during_its_combat() {
+    let mut state = plains();
+    let source = cast_ursine(&mut state);
+    state.objects.get_mut(source).summoning_sick = false;
+    let blocker = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+    assert_eq!(power_toughness(&state, source), (4, 4));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::damage(blocker, Target::Object(source), 10),
+    );
+    assert!(matches!(
+        next(&mut state),
+        Decision::DeclareAttackers { .. }
+    ));
+    assert_eq!(zone(&state, source), Zone::Battlefield);
+    act(&mut state, Action::DeclareAttackers(vec![source]));
+    run_until(
+        &mut state,
+        |state| state.step == Step::Main2,
+        |_, decision| {
+            if matches!(decision, Decision::DeclareBlockers { .. }) {
+                Some(Action::DeclareBlockers(vec![(blocker, source)]))
+            } else {
+                None
+            }
+        },
+    );
+    assert_eq!(zone(&state, source), Zone::Battlefield);
+    assert_eq!(zone(&state, blocker), Zone::Graveyard);
+    assert_eq!(life(&state, P1), 17, "three trample damage over a 1/1");
+}
+
+#[test]
+fn ursine_only_requires_an_attack_when_able_and_still_mills_when_sick_or_tapped() {
+    for tapped in [false, true] {
+        let mut state = plains();
+        let source = cast_ursine(&mut state);
+        state.objects.get_mut(source).tapped = tapped;
+        state.objects.get_mut(source).summoning_sick = !tapped;
+        pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+        assert_eq!(state.players[0].library.len(), 19);
+        assert_eq!(power_toughness(&state, source), (4, 4));
+        assert!(keyword(&state, source, Keywords::INDESTRUCTIBLE));
+        act(&mut state, Action::DeclareAttackers(Vec::new()));
+    }
+}
+
+#[test]
+fn ursine_requirement_selects_the_player_even_when_a_planeswalker_is_available() {
+    let mut state = plains();
+    let source = cast_ursine(&mut state);
+    state.objects.get_mut(source).summoning_sick = false;
+    let walker = put(&mut state, P1, "Oko, Thief of Crowns", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(walker, Zone::Battlefield),
+    );
+    settled(&mut state);
+    pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![source]));
+    match next(&mut state) {
+        Decision::ChooseAttackTarget {
+            attacker,
+            candidates,
+            ..
+        } => {
+            assert_eq!(attacker, source);
+            assert_eq!(candidates, vec![Target::Player(P1)]);
+        }
+        other => panic!("expected attack target, got {other:?}"),
+    }
+    assert!(engine::step(
+        &mut state,
+        Action::ChooseAttackTarget(Target::Object(walker))
+    )
+    .is_err());
+    act(&mut state, Action::ChooseAttackTarget(Target::Player(P1)));
+    pass_until(&mut state, |state| state.step == Step::Main2);
+    assert_eq!(life(&state, P1), 16);
+    assert_eq!(
+        mtg_kernel::planeswalker_v1::loyalty(&state, walker),
+        Some(4)
+    );
+}
+
+#[test]
+fn ursine_mill_survives_source_removal_but_boost_does_not_follow_a_blink() {
+    for return_source in [false, true] {
+        let mut state = plains();
+        let source = cast_ursine(&mut state);
+        pass_until(&mut state, |state| {
+            state.step == Step::BeginCombat && !state.stack.is_empty()
+        });
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Exile));
+        if return_source {
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+        }
+        settled(&mut state);
+        assert_eq!(state.players[0].library.len(), 19);
+        assert_eq!(
+            zone(&state, source),
+            if return_source {
+                Zone::Battlefield
+            } else {
+                Zone::Exile
+            }
+        );
+        assert_eq!(power_toughness(&state, source), (3, 3));
+        assert!(!keyword(&state, source, Keywords::INDESTRUCTIBLE));
+        if return_source {
+            state.objects.get_mut(source).summoning_sick = false;
+        }
+        pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+        act(&mut state, Action::DeclareAttackers(Vec::new()));
+    }
+}
+
+#[test]
+fn ursine_replaced_mill_and_empty_library_still_grant_indestructible_without_a_boost() {
+    for empty in [false, true] {
+        let mut state = if empty { game(&[]) } else { plains() };
+        let top = state.players[0].library.first().copied();
+        if !empty {
+            put(&mut state, P1, "Dauthi Voidwalker", Zone::Battlefield);
+        }
+        let source = cast_ursine(&mut state);
+        pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+        assert!(state.players[0].graveyard.is_empty());
+        if let Some(top) = top {
+            assert_eq!(zone(&state, top), Zone::Exile);
+        }
+        assert_eq!(power_toughness(&state, source), (3, 3));
+        assert!(keyword(&state, source, Keywords::INDESTRUCTIBLE));
+        act(&mut state, Action::DeclareAttackers(Vec::new()));
+    }
+}
+
+#[derive(Default)]
+struct C6bEvents {
+    casts: [usize; C6B_CARDS.len()],
+}
+
+impl C6bEvents {
+    fn observe(&mut self, _decision: &Value, action: &Value) {
+        let semantic = &action["semantic"];
+        if semantic["action_kind"].as_str() != Some("cast_spell") {
+            return;
+        }
+        let Some(card) = semantic["source"]["card_db_id"]
+            .as_u64()
+            .and_then(|id| usize::try_from(id).ok())
+            .and_then(|id| CARD_DEFS.get(id))
+        else {
+            return;
+        };
+        if let Some(index) = C6B_CARDS.iter().position(|name| *name == card.name) {
+            self.casts[index] += 1;
+        }
+    }
+}
+
+#[test]
+fn c6b_decks_finish_and_replay_through_public_sessions_both_seats() {
+    let spells = deck(&[
+        ("Volcanic Island", 20),
+        ("Seasoned Cryomancer", 6),
+        ("Seasoned Pyromancer", 6),
+        ("Sphinx of False Conclusions", 4),
+        ("Mulldrifter", 4),
+    ]);
+    let permanents = deck(&[
+        ("Bayou", 10),
+        ("Savannah", 6),
+        ("Scrubland", 4),
+        ("Metamorphosis Fanatic", 6),
+        ("Night Nurse, Healer of Heroes", 6),
+        ("Six", 4),
+        ("Ursine Monstrosity", 4),
+        ("Llanowar Elves", 4),
+    ]);
+    let mut events = C6bEvents::default();
+    // 2 seats x 3 seeds x 2 policies x (original + replay) = 24 games total.
+    for pair in [[spells.clone(), permanents.clone()], [permanents, spells]] {
+        for seed in 0x4336_4200_u64..0x4336_4203 {
+            for policy in [Policy::Ranked, Policy::Random(seed + 0x100)] {
+                let game =
+                    play_observed(pair.clone(), None, seed, policy, &mut |decision, action| {
+                        events.observe(decision, action);
+                    });
+                let replay = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
+                assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+            }
+        }
+    }
+    for (name, casts) in C6B_CARDS.into_iter().zip(events.casts) {
+        assert!(casts > 0, "{name} was never cast in a public session");
     }
 }
 

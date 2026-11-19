@@ -36323,7 +36323,7 @@
    ],
    "supertypes": [],
    "power": 0,
-   "toughness": 0,
+   "toughness": 1,
    "is_land": false,
    "produces_mana": [],
    "decks": [
@@ -36336,7 +36336,7 @@
   },
   {
    "name": "Ursine Monstrosity",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{G}",
    "mana_value": 3,
    "colors": [
@@ -36359,7 +36359,10 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "trample",
+    "mill"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/u/UrsineMonstrosity.java"
   },
   {
