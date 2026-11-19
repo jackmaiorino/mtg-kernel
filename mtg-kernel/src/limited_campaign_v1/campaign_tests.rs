@@ -563,15 +563,18 @@ fn receipt_host_classes_follow_the_ruled_names() {
         let cpu = format!("13th Gen Intel(R) Core(TM) i7-{model}");
         assert!(admit_receipt_host_class_v1(&windows("win11-13700k", &cpu), 24).is_err());
     }
-    for cpu in ["OtherCPU 13700K", "AMD Ryzen 9 9950XФ", "AMD Ryzen 9 9950X-ES"] {
+    for cpu in [
+        "OtherCPU 13700K",
+        "AMD Ryzen 9 9950XФ",
+        "AMD Ryzen 9 9950X-ES",
+    ] {
         assert!(admit_receipt_host_class_v1(&with(&|h| h.cpu_model = cpu.into()), 32).is_err());
     }
     assert!(admit_receipt_host_class_v1(&with(&|h| h.target_triple.clear()), 32).is_err());
-    assert!(admit_receipt_host_class_v1(
-        &with(&|h| h.trainer_binary_sha256 = "wrong".into()),
-        32,
-    )
-    .is_err());
+    assert!(
+        admit_receipt_host_class_v1(&with(&|h| h.trainer_binary_sha256 = "wrong".into()), 32,)
+            .is_err()
+    );
     admit_receipt_host_class_v1(
         &windows("win11-13700k", "Intel Core i7-13700k @ 3.40GHz"),
         24,
@@ -727,7 +730,10 @@ fn guarded_launcher_uses_recorded_evidence_under_a_different_cpu_allocation() {
     fs::write(&run_path, to_bytes(&run).unwrap()).unwrap();
     for available in [4, 32] {
         let error = check(available).unwrap_err();
-        assert!(error.contains("differs from its qualification evidence"), "{error}");
+        assert!(
+            error.contains("differs from its qualification evidence"),
+            "{error}"
+        );
     }
     fs::remove_dir_all(root).unwrap();
 }
@@ -1249,30 +1255,52 @@ fn configuration_reader_refuses_each_invalid_invariant() {
         assert!(read_config_v1(&root).is_err(), "{name}");
     };
     refuse("contract", &|c| c.runner_contract.clear());
-    refuse("card files", &|c| c.card_file_sha256 = ["x".into(), "y".into()]);
-    refuse("binary digest", &|c| c.identity.binary_sha256 = "x".repeat(64));
-    refuse("source digest", &|c| c.identity.binary_source_sha256.clear());
-    refuse("actor digest", &|c| c.identity.actor_producer_sha256.clear());
-    refuse("reveal digest", &|c| c.identity.reveal_producer_sha256.clear());
-    refuse("reducer digest", &|c| c.identity.reveal_reducer_sha256.clear());
+    refuse("card files", &|c| {
+        c.card_file_sha256 = ["x".into(), "y".into()]
+    });
+    refuse("binary digest", &|c| {
+        c.identity.binary_sha256 = "x".repeat(64)
+    });
+    refuse("source digest", &|c| {
+        c.identity.binary_source_sha256.clear()
+    });
+    refuse("actor digest", &|c| {
+        c.identity.actor_producer_sha256.clear()
+    });
+    refuse("reveal digest", &|c| {
+        c.identity.reveal_producer_sha256.clear()
+    });
+    refuse("reducer digest", &|c| {
+        c.identity.reveal_reducer_sha256.clear()
+    });
     refuse("git head", &|c| c.identity.git_head.clear());
-    refuse("hand knowledge", &|c| c.identity.hand_knowledge = "wrong".into());
-    refuse("actor profile", &|c| c.identity.actor_profile = "wrong".into());
+    refuse("hand knowledge", &|c| {
+        c.identity.hand_knowledge = "wrong".into()
+    });
+    refuse("actor profile", &|c| {
+        c.identity.actor_profile = "wrong".into()
+    });
     refuse("pool pin", &|c| {
         c.identity.sample_sha256_in_pool_order = "bb".repeat(32)
     });
     refuse("card database pin", &|c| {
         c.identity.card_db_hash = "0000000000000000".into()
     });
-    refuse("duplicate deck", &|c| c.train_decks[1] = c.train_decks[0].clone());
-    refuse("eval deck", &|c| c.train_decks[0].deck = "FDN_top_00265_UG".into());
+    refuse("duplicate deck", &|c| {
+        c.train_decks[1] = c.train_decks[0].clone()
+    });
+    refuse("eval deck", &|c| {
+        c.train_decks[0].deck = "FDN_top_00265_UG".into()
+    });
     refuse("pool order", &|c| c.train_decks.swap(0, 1));
     refuse("empty deck", &|c| c.train_decks[0].cards = 0);
     refuse("deck bound", &|c| {
         c.train_decks[0].cards = MAX_CUSTOM_DECK_CARDS_V1 + 1
     });
     refuse("registered count", &|c| c.train_decks[0].cards = 41);
-    refuse("deck digest", &|c| c.train_decks[0].source_sha256 = "x".repeat(64));
+    refuse("deck digest", &|c| {
+        c.train_decks[0].source_sha256 = "x".repeat(64)
+    });
     refuse("oversize digest", &|c| {
         c.train_decks
             .iter_mut()
@@ -1310,7 +1338,10 @@ fn configuration_reader_refuses_each_invalid_invariant() {
             changed.qualification_manifest_sha256 = Some("aa".repeat(32));
         }
         fs::write(&path, to_bytes(&changed).unwrap()).unwrap();
-        assert!(read_config_v1(&root).is_err(), "qualification horizon {horizon}");
+        assert!(
+            read_config_v1(&root).is_err(),
+            "qualification horizon {horizon}"
+        );
     }
     fs::remove_dir_all(root).unwrap();
 }
@@ -1344,7 +1375,10 @@ fn control_update_reports_require_valid_rewards_counts_and_loss() {
     ] {
         let mut changed = report.clone();
         changed[field] = value;
-        assert!(verify_update_report(&changed, &config, 1, &totals).is_err(), "{field}");
+        assert!(
+            verify_update_report(&changed, &config, 1, &totals).is_err(),
+            "{field}"
+        );
     }
 }
 
@@ -1396,7 +1430,10 @@ fn atomic_publication_refuses_dangling_staging_links() {
     let staging = root.join(".foo.json.staging");
     symlink(&target, &staging).unwrap();
     assert!(publish_atomic_v1(&root, "foo.json", b"{}").is_err());
-    assert!(fs::symlink_metadata(&staging).unwrap().file_type().is_symlink());
+    assert!(fs::symlink_metadata(&staging)
+        .unwrap()
+        .file_type()
+        .is_symlink());
     assert!(!target.exists());
     fs::remove_file(staging).unwrap();
     fs::write(root.join(".foo.json.staging"), b"interrupted").unwrap();

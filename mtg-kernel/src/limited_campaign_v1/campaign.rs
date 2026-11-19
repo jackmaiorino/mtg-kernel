@@ -16,9 +16,7 @@ use super::collect::{
     SeatPolicyV1, TerminalV1, CAMPAIGN_LIMITS_V1,
 };
 use super::diagnostics::{measure_phase, DiagnosticsV1, RunStagesV1};
-use super::host::{
-    admit_receipt_host_class_v1, peak_rss_bytes_v1, receipt_vcpus_v1, HostClassV1,
-};
+use super::host::{admit_receipt_host_class_v1, peak_rss_bytes_v1, receipt_vcpus_v1, HostClassV1};
 use super::inventory::{
     load_train_decks_v1, read_inventory_v1, DeckV1, InventoryV1, CARD_FILES_V1,
     DRAKE_HATCHER_TRAIN_DECKS_V1, OVERSIZE_DECKS_V1, SAMPLE_SHA256_IN_POOL_ORDER_V1,
@@ -1437,12 +1435,8 @@ impl RunnerV1 {
     }
 
     fn finish_campaign(&self, outcome: RunOutcomeV1) -> Result<()> {
-        let record = completion_record_v1(
-            &self.campaign_sha256,
-            self.head,
-            &self.head_sha256,
-            outcome,
-        );
+        let record =
+            completion_record_v1(&self.campaign_sha256, self.head, &self.head_sha256, outcome);
         publish_atomic_v1(&self.root, "complete.json", &to_bytes(&record)?)?;
         Ok(())
     }
@@ -1734,7 +1728,10 @@ fn validate_run_path(root: &Path) -> Result<fs::Metadata> {
         }
     }
     if !metadata.is_dir() && !metadata.is_file() {
-        return Err(format!("run path is not a regular file: {}", root.display()));
+        return Err(format!(
+            "run path is not a regular file: {}",
+            root.display()
+        ));
     }
     Ok(metadata)
 }
@@ -1853,9 +1850,8 @@ fn resume_stop_v1(root: &Path) -> Result<Option<RunOutcomeV1>> {
     for link in &chain {
         if link.complete.dev_sha256.is_some() {
             let step = link.checkpoint.step;
-            let dev = canonical_value(&read_bytes(
-                &iteration_dir_v1(root, step).join("dev.json"),
-            )?)?;
+            let dev =
+                canonical_value(&read_bytes(&iteration_dir_v1(root, step).join("dev.json"))?)?;
             scores.insert(step, dev["score"].as_f64().ok_or("dev.json has no score")?);
         }
     }
