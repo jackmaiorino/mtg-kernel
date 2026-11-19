@@ -57,6 +57,18 @@ pub(crate) fn validate_max_trajectory_batch_mebibytes_v1(mebibytes: usize) -> Re
 pub(crate) fn trajectory_batch_bytes_v1(mebibytes: usize) -> u64 {
     (mebibytes as u64) << 20
 }
+
+/// The physical-group bound of a prepared update whose trajectory batch bound
+/// is `batch_bytes`: the historical 65,536 up to the default batch bound, and
+/// above it in proportion (128 groups per MiB), so a raised
+/// `max_trajectory_batch_mebibytes` admits the games it admits (a 480-game
+/// update has about 64,000). At most 524,288 for 4,096 MiB. The groups' rows
+/// stay bounded by `max_prepared_tensor_mebibytes`.
+pub(crate) fn preparation_groups_bound_v1(batch_bytes: u64) -> usize {
+    let scaled =
+        (MAX_GROUPS as u64).saturating_mul(batch_bytes.max(MAX_BATCH_BYTES)) / MAX_BATCH_BYTES;
+    usize::try_from(scaled).unwrap_or(usize::MAX)
+}
 const WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 pub(crate) fn validate_preparation_workers_v1(workers: usize) -> Result<(), String> {
@@ -142,6 +154,7 @@ fn decoded_payload_bytes(t: &TensorBitsV1) -> Result<usize, String> {
 fn plan_v1(
     episodes: &[ExpandedTrajectoryV1],
     max_decoded_tensor_bytes: usize,
+    max_groups: usize,
 ) -> Result<(Vec<GroupJobV1>, Vec<ExpandedModelSourceV1>, usize), String> {
     ensure(
         !episodes.is_empty() && episodes.len() <= 1024,
@@ -184,10 +197,9 @@ fn plan_v1(
                     ));
                 }
             }
-            ensure(
-                jobs.len() < MAX_GROUPS,
-                "preparation exceeds 65536 physical groups",
-            )?;
+            if jobs.len() >= max_groups {
+                return Err(format!("preparation exceeds {max_groups} physical groups"));
+            }
             jobs.push(GroupJobV1 {
                 episode: episode_index,
                 start,
@@ -208,9 +220,19 @@ fn ordered_jobs_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
     job_count: usize,
     work: F,
 ) -> Result<(Vec<T>, Vec<WorkerTimingV1>), String> {
+    ordered_jobs_bounded_v1(workers, job_count, MAX_GROUPS, work)
+}
+
+/// [`ordered_jobs_v1`] admitting up to `max_jobs` jobs.
+fn ordered_jobs_bounded_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
+    workers: usize,
+    job_count: usize,
+    max_jobs: usize,
+    work: F,
+) -> Result<(Vec<T>, Vec<WorkerTimingV1>), String> {
     validate_preparation_workers_v1(workers)?;
     ensure(
-        job_count > 0 && job_count <= MAX_GROUPS,
+        job_count > 0 && job_count <= max_jobs,
         "invalid preparation job count",
     )?;
     let next = AtomicUsize::new(0);
@@ -531,15 +553,17 @@ pub(super) fn prepare_v1<'a>(
     learner: &ExpandedSeatBehaviorV1,
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
     training_math: TrainingMathV1,
 ) -> Result<PreparedGroupsV1<'a>, String> {
     let mut hits = 0;
-    let mut prepared = prepare_with_loader_v1(
+    let mut prepared = prepare_with_loader_bounded_v1(
         episodes,
         policy,
         learner,
         workers,
         max_prepared_tensor_mebibytes,
+        max_groups,
         |source| {
             let (mut loaded, hit) = load_opponent_cached_v1(source, true)?;
             hits += usize::from(hit);
@@ -551,12 +575,38 @@ pub(super) fn prepare_v1<'a>(
     Ok(prepared)
 }
 
+#[cfg(test)]
 fn prepare_with_loader_v1<'a, F>(
     episodes: &'a [ExpandedTrajectoryV1],
     policy: &FrozenPlayPolicyV1,
     learner: &ExpandedSeatBehaviorV1,
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    load: F,
+) -> Result<PreparedGroupsV1<'a>, String>
+where
+    F: FnMut(&ExpandedModelSourceV1) -> Result<LoadedOpponentV1, String>,
+{
+    prepare_with_loader_bounded_v1(
+        episodes,
+        policy,
+        learner,
+        workers,
+        max_prepared_tensor_mebibytes,
+        MAX_GROUPS,
+        load,
+    )
+}
+
+/// [`prepare_with_loader_v1`] with the update's physical-group bound
+/// ([`preparation_groups_bound_v1`]).
+fn prepare_with_loader_bounded_v1<'a, F>(
+    episodes: &'a [ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    workers: usize,
+    max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
     mut load: F,
 ) -> Result<PreparedGroupsV1<'a>, String>
 where
@@ -566,7 +616,7 @@ where
     validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
     let max_decoded_tensor_bytes = max_prepared_tensor_mebibytes * MEBIBYTE;
     let started = Instant::now();
-    let (jobs, sources, payload) = plan_v1(episodes, max_decoded_tensor_bytes)?;
+    let (jobs, sources, payload) = plan_v1(episodes, max_decoded_tensor_bytes, max_groups)?;
     let planning = started.elapsed().as_secs_f64();
     let loading_started = Instant::now();
     let mut loads = 0;
@@ -617,49 +667,50 @@ where
         .collect();
     let binding = binding_started.elapsed().as_secs_f64();
     let replay_started = Instant::now();
-    let (ordered, worker_timings) = ordered_jobs_v1(workers, jobs.len(), |ordinal| {
-        let job = jobs[ordinal];
-        bindings[job.episode].as_ref().map_err(Clone::clone)?;
-        let trajectory = &episodes[job.episode];
-        let first = &trajectory.decisions[job.start];
-        let opponent = job
-            .opponent
-            .map(|index| opponents[index].as_ref().map_err(Clone::clone))
-            .transpose()?;
-        let acting = if first.actor == trajectory.episode.learner_seat {
-            policy
-        } else {
-            opponent.map_or(policy, |other| &other.policy)
-        };
-        let contract = trajectory_contract_v1(trajectory)?;
-        contract.require_policy_contract_v1(policy)?;
-        let generation = contract.generation;
-        let mut rows = Vec::new();
-        for row in &trajectory.decisions[job.start..job.end] {
-            let common = row.tensor.tensor();
-            let output = acting.score_replay_tensor_v1(
-                generation,
-                common.clone(),
-                &row.tensor.pairing_node_indices,
-            )?;
-            ensure(
-                bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
-                "stored tensor does not reproduce rollout outputs",
-            )?;
-            if first.actor == trajectory.episode.learner_seat {
-                rows.push((row, common));
+    let (ordered, worker_timings) =
+        ordered_jobs_bounded_v1(workers, jobs.len(), max_groups, |ordinal| {
+            let job = jobs[ordinal];
+            bindings[job.episode].as_ref().map_err(Clone::clone)?;
+            let trajectory = &episodes[job.episode];
+            let first = &trajectory.decisions[job.start];
+            let opponent = job
+                .opponent
+                .map(|index| opponents[index].as_ref().map_err(Clone::clone))
+                .transpose()?;
+            let acting = if first.actor == trajectory.episode.learner_seat {
+                policy
+            } else {
+                opponent.map_or(policy, |other| &other.policy)
+            };
+            let contract = trajectory_contract_v1(trajectory)?;
+            contract.require_policy_contract_v1(policy)?;
+            let generation = contract.generation;
+            let mut rows = Vec::new();
+            for row in &trajectory.decisions[job.start..job.end] {
+                let common = row.tensor.tensor();
+                let output = acting.score_replay_tensor_v1(
+                    generation,
+                    common.clone(),
+                    &row.tensor.pairing_node_indices,
+                )?;
+                ensure(
+                    bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
+                    "stored tensor does not reproduce rollout outputs",
+                )?;
+                if first.actor == trajectory.episode.learner_seat {
+                    rows.push((row, common));
+                }
             }
-        }
-        Ok(if rows.is_empty() {
-            None
-        } else {
-            Some((
-                trajectory.terminal.terminal_reward[first.actor as usize] as i8,
-                job.episode,
-                rows,
-            ))
-        })
-    })?;
+            Ok(if rows.is_empty() {
+                None
+            } else {
+                Some((
+                    trajectory.terminal.terminal_reward[first.actor as usize] as i8,
+                    job.episode,
+                    rows,
+                ))
+            })
+        })?;
     let replay = replay_started.elapsed().as_secs_f64();
     drop(opponents);
     let groups = ordered.into_iter().flatten().collect();

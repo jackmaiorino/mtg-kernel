@@ -1404,6 +1404,7 @@ fn validate_preparation_execution(
     document: &Value,
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    max_preparation_groups: usize,
 ) -> Result<(), String> {
     let telemetry = document.get("update_preparation");
     if workers == 1 {
@@ -1420,7 +1421,7 @@ fn validate_preparation_execution(
     check(
         telemetry["schema"] == "mtg-kernel-ordered-update-preparation/v1"
             && telemetry["requested_workers"] == workers
-            && (1..=65_536).contains(&jobs)
+            && (1..=max_preparation_groups as u64).contains(&jobs)
             && telemetry["started_workers"] == (workers as u64).min(jobs),
         "recovered update preparation differs from run configuration",
     )?;
@@ -1450,6 +1451,7 @@ fn validate_update(
     update_backend: ExpandedUpdateBackendV1,
     preparation_workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    max_preparation_groups: usize,
     line_b_frozen_sha256: Option<&str>,
     e_supported: Option<&ESupportedTeacherOptionsV1>,
     soft_q: Option<&SoftQTeacherOptionsV1>,
@@ -1486,6 +1488,7 @@ fn validate_update(
         &document,
         preparation_workers,
         max_prepared_tensor_mebibytes,
+        max_preparation_groups,
     )?;
     check(
         document["complete"] == true
@@ -1999,6 +2002,9 @@ pub fn run_native_expanded_training_v1(
                 config.update_backend,
                 config.preparation_workers,
                 config.max_prepared_tensor_mebibytes,
+                crate::expanded_deck_training_v1::preparation_groups_bound_v1(
+                    config.trajectory_batch_bytes_v1(),
+                ),
                 line_b_frozen_sha256.as_deref(),
                 e_options.as_ref(),
                 sq_options.as_ref(),
@@ -2117,6 +2123,9 @@ pub fn run_native_expanded_training_v1(
                     config.update_backend,
                     config.preparation_workers,
                     config.max_prepared_tensor_mebibytes,
+                    crate::expanded_deck_training_v1::preparation_groups_bound_v1(
+                        config.trajectory_batch_bytes_v1(),
+                    ),
                     line_b_frozen_sha256.as_deref(),
                     e_options.as_ref(),
                     sq_options.as_ref(),
@@ -2244,6 +2253,9 @@ pub fn run_native_expanded_training_v1(
             config.update_backend,
             config.preparation_workers,
             config.max_prepared_tensor_mebibytes,
+            crate::expanded_deck_training_v1::preparation_groups_bound_v1(
+                config.trajectory_batch_bytes_v1(),
+            ),
             line_b_frozen_sha256.as_deref(),
             e_options.as_ref(),
             sq_options.as_ref(),
@@ -2708,15 +2720,36 @@ mod tests {
         }
         let legacy = json!({"update_preparation": {"schema": "mtg-kernel-ordered-update-preparation/v1",
             "requested_workers": 4, "physical_group_jobs": 10, "started_workers": 4}});
-        validate_preparation_execution(&legacy, 4, 256).unwrap();
-        assert!(validate_preparation_execution(&legacy, 4, 1024)
+        validate_preparation_execution(&legacy, 4, 256, 65_536).unwrap();
+        assert!(validate_preparation_execution(&legacy, 4, 1024, 65_536)
             .unwrap_err()
             .contains("preparation bound differs"));
         let recorded = json!({"update_preparation": {"schema": "mtg-kernel-ordered-update-preparation/v1",
             "requested_workers": 4, "physical_group_jobs": 10, "started_workers": 4,
             "max_decoded_tensor_bytes": 1024u64 * 1024 * 1024}});
-        validate_preparation_execution(&recorded, 4, 1024).unwrap();
-        assert!(validate_preparation_execution(&recorded, 4, 256).is_err());
+        validate_preparation_execution(&recorded, 4, 1024, 65_536).unwrap();
+        assert!(validate_preparation_execution(&recorded, 4, 256, 65_536).is_err());
+        // The recovered job count is bounded by the run's group bound, which
+        // follows `max_trajectory_batch_mebibytes` (65,536 by default).
+        let large = json!({"update_preparation": {"schema": "mtg-kernel-ordered-update-preparation/v1",
+            "requested_workers": 4, "physical_group_jobs": 70_000, "started_workers": 4}});
+        assert!(validate_preparation_execution(&large, 4, 256, 65_536).is_err());
+        validate_preparation_execution(&large, 4, 256, 262_144).unwrap();
+        let mut raised = schedule();
+        raised.preparation_workers = 4;
+        raised.max_trajectory_batch_mebibytes = 2048;
+        assert_eq!(
+            crate::expanded_deck_training_v1::preparation_groups_bound_v1(
+                raised.trajectory_batch_bytes_v1()
+            ),
+            262_144
+        );
+        assert_eq!(
+            crate::expanded_deck_training_v1::preparation_groups_bound_v1(
+                schedule().trajectory_batch_bytes_v1()
+            ),
+            65_536
+        );
     }
 
     /// `max_trajectory_batch_mebibytes`: absent is 512 and never serialized,
@@ -3444,14 +3477,14 @@ mod tests {
     #[test]
     fn recovered_update_must_match_actual_preparation_mode() {
         let serial = json!({});
-        validate_preparation_execution(&serial, 1, 256).unwrap();
-        assert!(validate_preparation_execution(&serial, 4, 256).is_err());
+        validate_preparation_execution(&serial, 1, 256, 65_536).unwrap();
+        assert!(validate_preparation_execution(&serial, 4, 256, 65_536).is_err());
         let prepared = json!({"update_preparation":{
             "schema":"mtg-kernel-ordered-update-preparation/v1",
             "requested_workers":4,"started_workers":3,"physical_group_jobs":3}});
-        validate_preparation_execution(&prepared, 4, 256).unwrap();
-        assert!(validate_preparation_execution(&prepared, 1, 256).is_err());
-        assert!(validate_preparation_execution(&prepared, 2, 256).is_err());
+        validate_preparation_execution(&prepared, 4, 256, 65_536).unwrap();
+        assert!(validate_preparation_execution(&prepared, 1, 256, 65_536).is_err());
+        assert!(validate_preparation_execution(&prepared, 2, 256, 65_536).is_err());
         for (field, bad) in [
             ("schema", json!("unknown")),
             ("started_workers", json!(4)),
@@ -3460,7 +3493,7 @@ mod tests {
         ] {
             let mut changed = prepared.clone();
             changed["update_preparation"][field] = bad;
-            assert!(validate_preparation_execution(&changed, 4, 256).is_err());
+            assert!(validate_preparation_execution(&changed, 4, 256, 65_536).is_err());
         }
     }
 
