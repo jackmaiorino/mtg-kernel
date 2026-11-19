@@ -850,10 +850,7 @@ fn verify_games(
                 }
                 ("truncated", None) => {
                     if game.outcome.is_some()
-                        || !game
-                            .truncation_reason
-                            .as_ref()
-                            .is_some_and(|reason| !reason.is_empty())
+                        || game.truncation_reason.as_deref().is_none_or(str::is_empty)
                     {
                         return Err("invalid truncated terminal fields".into());
                     }

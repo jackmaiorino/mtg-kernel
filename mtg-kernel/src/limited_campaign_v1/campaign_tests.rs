@@ -1616,7 +1616,7 @@ fn qualification_requires_all_sixteen_natural_training_games() {
     run["step_0001_sha256"] = json!(step);
     run["evaluation_sha256"] = json!(sha256_hex(&evaluation));
     fs::write(root.join("qualification_run.json"), to_bytes(&run).unwrap()).unwrap();
-    let error = lock_manifest_v1(&[root.clone()], 2, 100, 2).unwrap_err();
+    let error = lock_manifest_v1(std::slice::from_ref(&root), 2, 100, 2).unwrap_err();
     assert!(error.contains("16 natural training games"), "{error}");
     assert!(path.exists());
     assert!(checkpoint_path_v1(&root, 1).exists());
