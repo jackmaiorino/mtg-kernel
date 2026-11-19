@@ -5060,7 +5060,9 @@ fn sba_fixed_point_with_protected_triggers(
                 protected_triggers,
             );
             crate::event::commit_sba_death_batch_v1(state, dying);
-            if crate::graveyard_order_v1::enabled(state) && state.engine.halted.is_some() {
+            if (cfg!(feature = "eternal-fixtures") || crate::graveyard_order_v1::enabled(state))
+                && state.engine.halted.is_some()
+            {
                 return any_changed;
             }
             if crate::graveyard_order_v1::paused(state) {
@@ -5089,6 +5091,15 @@ fn sba_fixed_point_with_protected_triggers(
                     crate::event::ProposedEvent::zone_change(id, Zone::Graveyard),
                 );
                 changed = true;
+                #[cfg(feature = "eternal-fixtures")]
+                if crate::full_text_v1::donor_refusal_at(
+                    state,
+                    crate::full_text_v1::DonorCheckSiteV1::SbaBatch,
+                )
+                .is_some()
+                {
+                    return true;
+                }
             }
         }
 
@@ -5130,6 +5141,15 @@ fn sba_fixed_point_with_protected_triggers(
                 crate::event::ProposedEvent::zone_change(id, Zone::Graveyard),
             );
             changed = true;
+            #[cfg(feature = "eternal-fixtures")]
+            if crate::full_text_v1::donor_refusal_at(
+                state,
+                crate::full_text_v1::DonorCheckSiteV1::SbaBatch,
+            )
+            .is_some()
+            {
+                return true;
+            }
         }
 
         // 704.5s: after a Saga's final chapter ability leaves the stack, its
@@ -5169,6 +5189,15 @@ fn sba_fixed_point_with_protected_triggers(
                 crate::event::ProposedEvent::zone_change(id, Zone::Graveyard),
             );
             changed = true;
+            #[cfg(feature = "eternal-fixtures")]
+            if crate::full_text_v1::donor_refusal_at(
+                state,
+                crate::full_text_v1::DonorCheckSiteV1::SbaBatch,
+            )
+            .is_some()
+            {
+                return true;
+            }
         }
 
         // 704.5a: a player with 0 or less life loses. 704.5b: a player who
@@ -5208,6 +5237,15 @@ fn sba_fixed_point_with_protected_triggers(
         for id in leaving {
             if crate::event::cease_to_exist(state, id) {
                 changed = true;
+                #[cfg(feature = "eternal-fixtures")]
+                if crate::full_text_v1::donor_refusal_at(
+                    state,
+                    crate::full_text_v1::DonorCheckSiteV1::SbaBatch,
+                )
+                .is_some()
+                {
+                    return true;
+                }
             }
         }
 

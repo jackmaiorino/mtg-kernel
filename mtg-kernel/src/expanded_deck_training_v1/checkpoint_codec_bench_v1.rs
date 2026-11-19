@@ -2038,13 +2038,14 @@ pub fn measure_v1(
         )?;
     }
     let verified_bytes = verified_bytes_cache_v1::global_v1();
-    if config.resident_reads {
-        verified_bytes.enable_resident_v1();
-    }
     ensure_v1(
-        verified_bytes.resident_v1() == config.resident_reads,
+        config.resident_reads || !verified_bytes.resident_v1(),
         "resident verified reads are already on in this process",
     )?;
+    // Admitted like a training run and held for the whole measurement, so the
+    // mode cannot change under a run in this process, or under this one.
+    let mut reads = verified_bytes.enter_run_v1(config.resident_reads)?;
+    reads.accept_v1();
     let deadline = DeadlineV1 {
         started: Instant::now(),
         cap: config.max_wall_seconds.map(Duration::from_secs),

@@ -288,7 +288,8 @@ pub(crate) fn drain_or_decide(state: &mut GameState) -> Result<Option<Decision>,
             .collect(),
     );
     if crate::graveyard_order_v1::paused(state)
-        || (crate::graveyard_order_v1::enabled(state) && state.engine.halted.is_some())
+        || ((cfg!(feature = "eternal-fixtures") || crate::graveyard_order_v1::enabled(state))
+            && state.engine.halted.is_some())
     {
         return Ok(None);
     }
@@ -297,6 +298,15 @@ pub(crate) fn drain_or_decide(state: &mut GameState) -> Result<Option<Decision>,
     }
     for binding in pending.pass.ceasing {
         event::cease_to_exist(state, binding.object);
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::full_text_v1::donor_refusal_at(
+            state,
+            crate::full_text_v1::DonorCheckSiteV1::SbaBatch,
+        )
+        .is_some()
+        {
+            return Ok(None);
+        }
     }
     let triggers = trigger::collect_and_process_with_waiting(state, pending.waiting_triggers);
     state.engine.pending_triggers.extend(triggers);

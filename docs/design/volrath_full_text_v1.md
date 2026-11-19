@@ -81,6 +81,35 @@ existing immediate and final-batch entry suppression rules. Wall of Blossoms'
 donated draw and Academy Rector's donated death trigger remain outside this
 set. The ruled donor set for Full, and the typed refusal of every other donor,
 are in [premodern_shapeshifter_alter_reality_v1.md](premodern_shapeshifter_alter_reality_v1.md).
+
+The donor classes are four audited name lists in `full_text_v1`: cards with a
+donated program today, the listed additions, cards whose battlefield text is
+all keywords, and cards whose only other text works as they enter.
+`donor_supported` accepts the four; `entry_refused` marks the last class and
+Meddling Mage. A face-up Shapeshifter whose top is any other creature card
+halts the game with `UnsupportedMechanic::FullTextDonorOutsideSetV1` and the
+Shapeshifter as source. A Shapeshifter entering with Meddling Mage on top is
+refused too, since its naming is a replacement as the permanent enters; one
+entering with a part D top is refused only when the lost enters trigger would
+trigger, judged like a donated entry trigger with every simultaneous entrant
+and departure applied, so an entry under Torpor Orb plays as before. The
+check runs where the top or the reader can change (`DonorCheckSiteV1`): at
+the tails of `propose_and_commit` and `propose_and_commit_batch`, at a
+Shapeshifter's entry in `record_entry_trigger` (inside an ordered batch this
+is already the batch's final top), at a control change and at a phase-in. Two
+backstops in `advance_until_decision` guarantee that no automatic work runs
+while an unsupported donor is in place, and that no decision or terminal
+leaves the engine while one is (automatic work such as a state-based death
+can change a top without passing an event site). While an owner order is
+quoted, open or pending the check waits, because the arrivals are then in the
+graveyard in their unordered native order; it runs once the order completes.
+Each site has a fixture that fails when only that site's check is turned off. Of the listed additions, Auramancer,
+Monk Realist and Uktabi Orangutan are accepted only as part D cards and Ghitu
+Slinger and Xantid Swarm are refused, until their donated programs land.
+
+The frozen mirror's numeric and Human views, prompt by prompt with the chosen
+ordinal and with the catalog hash folded out, are pinned in both starting seats
+by `feb_jsonl_mirror_view_sequence_matches_its_pin_both_starting_seats`.
 Mainboard qualification also requires terminal play and replay evidence
 from the actual snapshot list. No card in the Premodern pool copies a
 permanent, so copies of the Shapeshifter are outside that contract.

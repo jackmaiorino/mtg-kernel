@@ -276,18 +276,43 @@ pub(super) fn offer_serialized_v1(
     Ok(())
 }
 
+/// What an entry is charged: its record length, or the capacity of the
+/// buffer it keeps alive when that is larger.
+fn retained_charge_v1(record_length: usize, capacity: usize) -> usize {
+    record_length.max(capacity)
+}
+
 fn insert_v1(sha256: &str, bytes: impl Into<Arc<Vec<u8>>>, slots: [SlotV1; 2]) {
     let bytes: Arc<Vec<u8>> = bytes.into();
     // A plain file is charged its length, as before; a sealed one its record
-    // length, and one whose header is unreadable is never held.
+    // length, and one whose header is unreadable is never held. The entry
+    // shares the publisher's buffer and keeps its whole allocation alive, so
+    // the insertion never charges it less than that allocation's capacity (a
+    // plain record's buffer can carry spare capacity from its serializer).
     let Ok(charge) = record_envelope_v1::record_length_v1(&bytes, MAX_FILE_BYTES) else {
         return;
     };
-    let charge = charge as usize;
     let shared = shared_v1();
-    let mut state = lock_v1(shared);
+    if insert_locked_v1(&mut lock_v1(shared), sha256, bytes, charge as usize, slots) {
+        // A reader waiting on a dropped entry parses its bytes itself.
+        shared.changed.notify_all();
+    }
+}
+
+/// Inserts an entry for a record of `record_length` bytes into the locked
+/// store, charged what it keeps alive (`retained_charge_v1`), dropping the
+/// oldest entries to make room. False when it is not held (too large, or
+/// already there).
+fn insert_locked_v1(
+    state: &mut StateV1,
+    sha256: &str,
+    bytes: Arc<Vec<u8>>,
+    record_length: usize,
+    slots: [SlotV1; 2],
+) -> bool {
+    let charge = retained_charge_v1(record_length, bytes.capacity());
     if charge > PARSE_AHEAD_RETAINED_BYTES_V1 || state.entries.contains_key(sha256) {
-        return;
+        return false;
     }
     while state.retained_bytes + charge > PARSE_AHEAD_RETAINED_BYTES_V1 {
         let Some(oldest) = state.order.pop_front() else {
@@ -312,8 +337,7 @@ fn insert_v1(sha256: &str, bytes: impl Into<Arc<Vec<u8>>>, slots: [SlotV1; 2]) {
             slots,
         },
     );
-    // A reader waiting on a dropped entry parses its bytes itself.
-    shared.changed.notify_all();
+    true
 }
 
 /// Starts a helper thread for the queued parses, unless none are queued or

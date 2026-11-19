@@ -257,7 +257,7 @@ fn publication_records_its_bytes_only_after_success() {
 fn resident_cache_v1() -> VerifiedBytesCacheV1 {
     let cache = VerifiedBytesCacheV1::new_v1(1 << 20, 16);
     assert!(!cache.resident_v1());
-    cache.enable_resident_v1();
+    cache.enable_resident_for_test_v1();
     assert!(cache.resident_v1());
     cache
 }
@@ -565,4 +565,145 @@ fn stream_digest_matches_and_holds_pinned_enforce_strict_and_resident_contracts(
     fs::remove_dir(&pin.path).unwrap();
     fs::write(&pin.path, &payload).unwrap();
     assert!(holds_pinned_in_v1(&held, &pinned, false));
+}
+
+/// A shared record keeps the publisher's whole allocation alive, so its
+/// spare capacity counts against the budget: two shared buffers of four bytes
+/// each with a large allocation do not both fit a budget that two four-byte
+/// copies fit.
+#[test]
+fn a_shared_record_is_charged_the_capacity_it_keeps_alive() {
+    let path = Path::new("/memo/capacity");
+    let overhead = charge_v1(path, "a", 0);
+    let roomy = |fill: u8| {
+        let mut bytes = Vec::with_capacity(4096);
+        bytes.extend_from_slice(&[fill; 4]);
+        assert!(bytes.capacity() >= 4096);
+        std::sync::Arc::new(bytes)
+    };
+    // Copies are charged their bytes: both fit.
+    let copies = VerifiedBytesCacheV1::new_v1(2 * overhead + 4096, 16);
+    copies.record_verified_v1(path, "a", &[1; 4]);
+    copies.record_verified_v1(path, "b", &[2; 4]);
+    assert_eq!(
+        held_entries_v1(&copies),
+        (vec!["a".into(), "b".into()], 2 * overhead + 8)
+    );
+    // The same bytes shared with a 4,096 byte allocation each: the second
+    // drops the first, and the charge is the capacity.
+    let shared = VerifiedBytesCacheV1::new_v1(2 * overhead + 4096, 16);
+    let first = roomy(1);
+    let second = roomy(2);
+    let second_charge = overhead + second.capacity();
+    shared.record_verified_shared_v1(path, "a", first);
+    shared.record_verified_shared_v1(path, "b", second);
+    assert_eq!(held_entries_v1(&shared), (vec!["b".into()], second_charge));
+    assert_eq!(shared.diagnostics_v1()["evictions"], 1);
+    // A shared buffer whose allocation exceeds the whole budget is not held,
+    // however few bytes it has.
+    let small = VerifiedBytesCacheV1::new_v1(overhead + 64, 16);
+    small.record_verified_shared_v1(path, "a", roomy(3));
+    assert_eq!(held_entries_v1(&small), (vec![], 0));
+    assert_eq!(small.diagnostics_v1()["records_refused"], 1);
+    // Recording a held pin again replaces its charge: a roomy buffer by a
+    // copy, and back, leaves exactly the last one's charge.
+    let again = VerifiedBytesCacheV1::new_v1(2 * overhead + 8192, 16);
+    let wide = roomy(5);
+    let wide_charge = overhead + wide.capacity();
+    again.record_verified_shared_v1(path, "a", std::sync::Arc::clone(&wide));
+    assert_eq!(held_entries_v1(&again), (vec!["a".into()], wide_charge));
+    again.record_verified_v1(path, "a", &[5; 4]);
+    assert_eq!(held_entries_v1(&again), (vec!["a".into()], overhead + 4));
+    again.record_verified_shared_v1(path, "a", wide);
+    assert_eq!(held_entries_v1(&again), (vec!["a".into()], wide_charge));
+    // A shared buffer with no spare capacity is charged as a copy is.
+    let exact = VerifiedBytesCacheV1::new_v1(2 * overhead + 4096, 16);
+    let mut tight = vec![4u8; 4];
+    tight.shrink_to_fit();
+    let tight_capacity = tight.capacity();
+    exact.record_verified_shared_v1(path, "a", std::sync::Arc::new(tight));
+    assert_eq!(
+        held_entries_v1(&exact),
+        (vec!["a".into()], overhead + tight_capacity)
+    );
+}
+
+/// One cache does not serve both read modes: resident reads do not turn on
+/// under a run without them, an admitted resident run already keeps such runs
+/// out, and a rejected one leaves the mode alone.
+#[test]
+fn a_cache_serves_one_read_mode() {
+    let cache = VerifiedBytesCacheV1::new_v1(4096, 16);
+    let first = cache.enter_run_v1(false).unwrap();
+    let second = cache.enter_run_v1(false).unwrap();
+    let refused = cache.enter_run_v1(true).err().unwrap();
+    assert!(refused.contains("in flight"), "{refused}");
+    drop(first);
+    assert!(cache.enter_run_v1(true).is_err());
+    drop(second);
+
+    // Admitted and not accepted: the mode is still off, and a run without
+    // resident reads is refused already.
+    let pending = cache.enter_run_v1(true).unwrap();
+    let beside = cache.enter_run_v1(true).unwrap();
+    assert!(!cache.resident_v1());
+    let refused = cache.enter_run_v1(false).err().unwrap();
+    assert!(refused.contains("needs its own process"), "{refused}");
+    // Both rejected before acceptance: nothing turned on, rereads run again.
+    drop(pending);
+    assert!(cache.enter_run_v1(false).is_err());
+    drop(beside);
+    assert!(!cache.resident_v1());
+    drop(cache.enter_run_v1(false).unwrap());
+
+    // Accepted: on, for good.
+    let mut resident = cache.enter_run_v1(true).unwrap();
+    assert!(!cache.resident_v1());
+    resident.accept_v1();
+    assert!(cache.resident_v1());
+    resident.accept_v1();
+    assert!(cache.enter_run_v1(false).is_err());
+    drop(resident);
+    assert!(cache.resident_v1());
+    assert!(cache.enter_run_v1(false).is_err());
+    // A later resident run is admitted, and its acceptance changes nothing.
+    let mut later = cache.enter_run_v1(true).unwrap();
+    later.accept_v1();
+    drop(later);
+    assert!(cache.resident_v1());
+    assert!(cache.enter_run_v1(false).is_err());
+}
+
+/// Across threads: while one thread's run without resident reads is in
+/// flight, another thread's resident run is refused and the mode stays off;
+/// once that run has returned, the resident run is admitted.
+#[test]
+fn a_run_in_flight_on_another_thread_keeps_resident_reads_off() {
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+    let wait = Duration::from_secs(60);
+    let cache = VerifiedBytesCacheV1::new_v1(4096, 16);
+    let (admitted, is_admitted) = channel();
+    let (release, released) = channel::<()>();
+    std::thread::scope(|scope| {
+        let shared = &cache;
+        let run = scope.spawn(move || {
+            let run = shared.enter_run_v1(false).unwrap();
+            admitted.send(()).unwrap();
+            // Held across what would be the run's reads.
+            released.recv_timeout(wait).unwrap();
+            assert!(!shared.resident_v1());
+            drop(run);
+        });
+        is_admitted.recv_timeout(wait).unwrap();
+        let refused = cache.enter_run_v1(true).err().unwrap();
+        assert!(refused.contains("in flight"), "{refused}");
+        assert!(!cache.resident_v1());
+        release.send(()).unwrap();
+        run.join().unwrap();
+    });
+    let mut resident = cache.enter_run_v1(true).unwrap();
+    resident.accept_v1();
+    assert!(cache.resident_v1());
+    assert!(cache.enter_run_v1(false).is_err());
 }

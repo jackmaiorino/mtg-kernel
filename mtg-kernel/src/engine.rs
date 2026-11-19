@@ -891,6 +891,12 @@ pub enum UnsupportedMechanic {
     /// First-life-gain matching has missing or inconsistent turn history.
     /// Appended to preserve prior unsupported-state discriminants.
     InvalidFirstLifeGainHistory,
+    /// A face-up Volrath's Shapeshifter would have the text of a creature card
+    /// outside the supported donor set (`full_text_v1::donor_supported`), or
+    /// would enter with a top card whose enters ability it cannot donate
+    /// (`full_text_v1::entry_refused`). The source is the Shapeshifter.
+    /// Appended to preserve prior unsupported-state discriminants.
+    FullTextDonorOutsideSetV1,
 }
 
 /// Issues the next 613.7 timestamp for a newly-created
@@ -13654,6 +13660,24 @@ fn native_validation_stage<T, E>(_stage: &'static str, result: Result<T, E>) -> 
 /// decision in the same pass (issue #433). Default rules keep that
 /// historical transition.
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    use crate::full_text_v1::{donor_refusal_at, DonorCheckSiteV1};
+
+    // Backstop for the Shapeshifter donor refusal: no automatic work runs
+    // while an unsupported donor is in place, whatever path changed the top.
+    if let Some((mechanic, source)) = donor_refusal_at(state, DonorCheckSiteV1::AdvanceStart) {
+        return Decision::Halted { mechanic, source };
+    }
+    let decision = advance_until_decision_unaudited(state);
+    // Automatic work (state-based deaths, upkeep, draws) can change a top
+    // without passing an event site: no decision or terminal leaves the engine
+    // while an unsupported donor is in place.
+    match donor_refusal_at(state, DonorCheckSiteV1::AdvanceDecision) {
+        Some((mechanic, source)) => Decision::Halted { mechanic, source },
+        None => decision,
+    }
+}
+
+fn advance_until_decision_unaudited(state: &mut GameState) -> Decision {
     if crate::graveyard_order_v1::owns_operation(state) {
         return crate::graveyard_order_v1::advance(state);
     }
