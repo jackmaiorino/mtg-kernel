@@ -18167,7 +18167,9 @@ impl LibraryPartitionFilter {
             LibraryPartitionFilter::ByType(_) => true,
             LibraryPartitionFilter::Pick(rule) => {
                 // Like Recruitment Officer, skip a selection with nothing to take.
-                if selectable == 0 || rule.pick == 0 {
+                // Limited to the eternal build so the rated Pauper build keeps
+                // its decision sequence.
+                if cfg!(feature = "eternal-fixtures") && (selectable == 0 || rule.pick == 0) {
                     return false;
                 }
                 if rule.selection.is_some() {
