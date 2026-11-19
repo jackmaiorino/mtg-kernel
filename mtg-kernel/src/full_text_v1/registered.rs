@@ -1,6 +1,7 @@
 //! Native fixtures using the registered physical Shapeshifter.
 
 use super::*;
+use crate::card_def::Keywords;
 use crate::engine::{self, Action, Decision, RuntimeRulesV1, UnsupportedMechanic};
 use crate::mana::ManaColor;
 use crate::state::{Step, Target};
@@ -932,16 +933,13 @@ fn volrath_native_paid_control_transfer_records_the_new_controller_both_seats() 
 // sections 2.2, 2.3 and 5.1).
 
 /// Refused donors: a sample of appendix A's refused class, among them the
-/// cards whose programs are only partly donated, and the listed additions
-/// whose programs are still pending.
-const REFUSED_SAMPLE: [&str; 7] = [
+/// cards whose programs are only partly donated.
+const REFUSED_SAMPLE: [&str; 5] = [
     "Masticore",
     "Phantom Nishoba",
     "Spike Feeder",
     "Exalted Angel",
     "Tireless Tribe",
-    "Ghitu Slinger",
-    "Xantid Swarm",
 ];
 
 /// Supported cards whose enters ability a Shapeshifter entering with one on
@@ -1815,5 +1813,632 @@ fn nested_disabled_donor_check_sites_restore_the_previous_mask() {
             }
         });
         assert!(!donor_check_site_disabled(site));
+    }
+}
+
+fn pass_until(state: &mut GameState, mut done: impl FnMut(&GameState) -> bool) {
+    for _ in 0..80 {
+        let decision = next(state);
+        if done(state) {
+            return;
+        }
+        match decision {
+            Decision::CastSpellOrPass { .. } => act(state, Action::Pass),
+            Decision::DeclareAttackers { .. } => act(state, Action::DeclareAttackers(Vec::new())),
+            Decision::DeclareBlockers { .. } => act(state, Action::DeclareBlockers(Vec::new())),
+            Decision::OrderTriggers { pending, .. } => {
+                act(state, Action::OrderTriggers((0..pending.len()).collect()))
+            }
+            Decision::ChooseEffectOption { .. } => act(state, Action::ChooseEffectOption(1)),
+            other => panic!("unexpected decision while advancing: {other:?}"),
+        }
+    }
+    panic!("fixture did not reach target state");
+}
+
+fn advance_to_next_upkeep_trigger(state: &mut GameState, player: PlayerId) {
+    let start_turn = (state.turn, state.active_player);
+    pass_until(state, |state| {
+        (state.turn, state.active_player) != start_turn
+            && state.active_player == player
+            && state.step == Step::Upkeep
+            && !state.stack.is_empty()
+    });
+}
+
+fn cast_orb_for_suppression(state: &mut GameState, player: PlayerId) {
+    let orb = put(state, player, "Torpor Orb", Zone::Hand);
+    pool(state, player, &[], 2);
+    cast(state, orb);
+    settled(state);
+    assert_eq!(state.objects.get(orb).zone, Zone::Battlefield);
+    assert_eq!(state.players[player.index()].mana_pool, [0; 6]);
+}
+
+#[test]
+fn volrath_native_auramancer_returns_enchantment_changing_top_unless_suppressed_both_seats() {
+    use crate::premodern_ordered_public_v1::FullTextProgramV1;
+
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for suppressed in [false, true] {
+            for choose_return in [true, false] {
+                if suppressed && !choose_return {
+                    continue;
+                }
+                let mut state = ordered_game(player);
+                let birds = put(&mut state, player, "Birds of Paradise", Zone::Graveyard);
+                let growth = put(&mut state, player, "Wild Growth", Zone::Graveyard);
+                let donor = put(&mut state, player, "Auramancer", Zone::Graveyard);
+                if suppressed {
+                    cast_orb_for_suppression(&mut state, player);
+                }
+                let source = cast_volrath(&mut state, player);
+                if suppressed {
+                    settled(&mut state);
+                    assert!(captured_entry(&state, source).is_none());
+                    assert_eq!(state.objects.get(growth).zone, Zone::Graveyard);
+                    continue;
+                }
+                assert!(matches!(
+                    settle(&mut state),
+                    Some(Decision::ChooseTargets { player: chooser, spell, legal_targets, .. })
+                        if chooser == player && spell == source && legal_targets == [Target::Object(growth)]
+                ));
+                act(&mut state, Action::ChooseTarget(Target::Object(growth)));
+                assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+                assert!(public_producers(&state)
+                    .unwrap()
+                    .iter()
+                    .any(|row| row.program == FullTextProgramV1::AuramancerReturnEnchantment));
+
+                // Exile the donor while the trigger is on the stack: Wild Growth becomes
+                // the temporary top (noncreature), then returning it exposes Birds of Paradise.
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(donor, Zone::Exile),
+                );
+                assert!(active_text(&state, source).is_none());
+                let option = u16::from(!choose_return);
+                assert!(matches!(
+                    settle(&mut state),
+                    Some(Decision::ChooseEffectOption { player: chooser, option_count: 2, .. })
+                        if chooser == player
+                ));
+                let mut copy = restored(&state);
+                assert!(matches!(
+                    next(&mut copy),
+                    Decision::ChooseEffectOption { player: chooser, option_count: 2, .. }
+                        if chooser == player
+                ));
+                for branch in [&mut state, &mut copy] {
+                    act(branch, Action::ChooseEffectOption(option));
+                    settled(branch);
+                    if choose_return {
+                        assert_eq!(branch.objects.get(growth).zone, Zone::Hand);
+                        assert_eq!(active_text(branch, source).unwrap().donor().object, birds);
+                        assert!(engine::has_effective_keyword(
+                            branch,
+                            source,
+                            Keywords::FLYING
+                        ));
+                    } else {
+                        assert_eq!(branch.objects.get(growth).zone, Zone::Graveyard);
+                        assert!(active_text(branch, source).is_none());
+                    }
+                }
+                assert_eq!(state.state_hash(), copy.state_hash());
+            }
+        }
+    }
+}
+
+#[test]
+fn volrath_native_monk_realist_destroys_enchantment_and_updates_top_both_seats() {
+    use crate::premodern_ordered_public_v1::FullTextProgramV1;
+
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for suppressed in [false, true] {
+            let mut state = ordered_game(player);
+            let donor = put(&mut state, player, "Monk Realist", Zone::Graveyard);
+            let target = put(&mut state, player, "Seal of Fire", Zone::Battlefield);
+            if suppressed {
+                cast_orb_for_suppression(&mut state, player);
+            }
+            let source = cast_volrath(&mut state, player);
+            if suppressed {
+                settled(&mut state);
+                assert!(captured_entry(&state, source).is_none());
+                assert_eq!(state.objects.get(target).zone, Zone::Battlefield);
+                continue;
+            }
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseTargets { player: chooser, spell, legal_targets, .. })
+                    if chooser == player && spell == source && legal_targets.contains(&Target::Object(target))
+            ));
+            act(&mut state, Action::ChooseTarget(Target::Object(target)));
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert!(public_producers(&state)
+                .unwrap()
+                .iter()
+                .any(|row| row.program == FullTextProgramV1::MonkRealistDestroyEnchantment));
+
+            let mut copy = restored(&state);
+            for branch in [&mut state, &mut copy] {
+                settled(branch);
+                assert_eq!(branch.objects.get(target).zone, Zone::Graveyard);
+                assert_eq!(branch.players[player.index()].graveyard, [donor, target]);
+                assert!(active_text(branch, source).is_none());
+            }
+            assert_eq!(state.state_hash(), copy.state_hash());
+        }
+    }
+}
+
+#[test]
+fn volrath_native_uktabi_orangutan_destroys_artifact_after_batch_and_departure_both_seats() {
+    use crate::premodern_ordered_public_v1::FullTextProgramV1;
+
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for donor_first in [false, true] {
+            let mut state = ordered_game(player);
+            let source = put(&mut state, player, VOLRATH, Zone::Hand);
+            let donor = put(&mut state, player, "Uktabi Orangutan", Zone::Graveyard);
+            let departed = put(&mut state, player, "Palinchron", Zone::Graveyard);
+            let artifact = put(
+                &mut state,
+                player.opponent(),
+                "Cursed Scroll",
+                Zone::Battlefield,
+            );
+            let mut changes = vec![
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+                ProposedEvent::zone_change(departed, Zone::Exile),
+            ];
+            if donor_first {
+                changes.reverse();
+            }
+            event::propose_and_commit_batch(&mut state, changes);
+            let capture = captured_entry(&state, source).unwrap();
+            assert_eq!(capture.donor.source, donor);
+            assert!(matches!(
+                capture.kind,
+                DonatedTriggerKindV1::UktabiOrangutanEnteredAfterBatch { .. }
+            ));
+
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseTargets { player: chooser, spell, legal_targets, .. })
+                    if chooser == player && spell == source && legal_targets.contains(&Target::Object(artifact))
+            ));
+            act(&mut state, Action::ChooseTarget(Target::Object(artifact)));
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert!(public_producers(&state)
+                .unwrap()
+                .iter()
+                .any(|row| row.program == FullTextProgramV1::UktabiOrangutanDestroyArtifact));
+
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
+            let mut copy = restored(&state);
+            for branch in [&mut state, &mut copy] {
+                settled(branch);
+                assert_eq!(branch.objects.get(artifact).zone, Zone::Graveyard);
+            }
+            assert_eq!(state.state_hash(), copy.state_hash());
+        }
+    }
+}
+
+#[test]
+fn volrath_native_ghitu_slinger_entry_and_donated_echo_both_seats() {
+    use crate::premodern_ordered_public_v1::FullTextProgramV1;
+
+    for player in [PlayerId::P0, PlayerId::P1] {
+        // Paid entry trigger with Torpor Orb suppression and donor departure.
+        for suppressed in [false, true] {
+            let mut state = ordered_game(player);
+            let donor = put(&mut state, player, "Ghitu Slinger", Zone::Graveyard);
+            if suppressed {
+                cast_orb_for_suppression(&mut state, player);
+            }
+            let source = cast_volrath(&mut state, player);
+            if suppressed {
+                settled(&mut state);
+                assert!(captured_entry(&state, source).is_none());
+                assert_eq!(state.players[player.opponent().index()].life, 20);
+                continue;
+            }
+            let target = Target::Player(player.opponent());
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseTargets { player: chooser, spell, legal_targets, .. })
+                    if chooser == player && spell == source && legal_targets.contains(&target)
+            ));
+            act(&mut state, Action::ChooseTarget(target));
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            assert!(public_producers(&state)
+                .unwrap()
+                .iter()
+                .any(|row| row.program == FullTextProgramV1::GhituSlingerDamage));
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
+            let mut copy = restored(&state);
+            for branch in [&mut state, &mut copy] {
+                settled(branch);
+                assert_eq!(branch.players[player.opponent().index()].life, 18);
+            }
+            assert_eq!(state.state_hash(), copy.state_hash());
+        }
+
+        // Paid next-upkeep DonatedEcho ({2}{R}): pay, decline, and unpayable with donor departed,
+        // both after exiling Torpor Orb and while Torpor Orb remains on the battlefield.
+        for retain_orb in [false, true] {
+            let mut state = ordered_game(player);
+            let donor = put(&mut state, player, "Ghitu Slinger", Zone::Graveyard);
+            let orb = put(&mut state, player, "Torpor Orb", Zone::Battlefield);
+            let source = cast_volrath(&mut state, player);
+            settled(&mut state);
+            assert!(captured_entry(&state, source).is_none());
+            assert_eq!(state.players[player.opponent().index()].life, 20);
+            if !retain_orb {
+                event::propose_and_commit(&mut state, ProposedEvent::zone_change(orb, Zone::Exile));
+            }
+            advance_to_next_upkeep_trigger(&mut state, player);
+            if retain_orb {
+                assert_eq!(state.objects.get(orb).zone, Zone::Battlefield);
+            }
+            assert!(state.stack.last().is_some_and(is_donated_trigger));
+            assert!(public_producers(&state)
+                .unwrap()
+                .iter()
+                .any(|row| row.program == FullTextProgramV1::DonatedEcho));
+
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
+            for (with_mana, option, destination) in [
+                (true, 0, Zone::Battlefield),
+                (true, 1, Zone::Graveyard),
+                (false, 0, Zone::Graveyard),
+            ] {
+                let mut branch = restored(&state);
+                if with_mana {
+                    pool(&mut branch, player, &[ManaColor::R], 2);
+                }
+                assert!(matches!(
+                    settle(&mut branch),
+                    Some(Decision::ChooseEffectOption { player: chooser, option_count: 2, .. })
+                        if chooser == player
+                ));
+                act(&mut branch, Action::ChooseEffectOption(option));
+                settled(&mut branch);
+                assert_eq!(branch.objects.get(source).zone, destination);
+                if retain_orb {
+                    assert_eq!(branch.objects.get(orb).zone, Zone::Battlefield);
+                }
+                let expected_red = if with_mana && option != 0 { 1 } else { 0 };
+                let expected_c = if with_mana && option != 0 { 2 } else { 0 };
+                assert_eq!(
+                    branch.players[player.index()].mana_pool[ManaColor::R.pool_index()],
+                    expected_red
+                );
+                assert_eq!(
+                    branch.players[player.index()].mana_pool[ManaColor::C.pool_index()],
+                    expected_c
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn volrath_native_xantid_swarm_attack_silences_defender_both_seats() {
+    use crate::premodern_ordered_public_v1::FullTextProgramV1;
+
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let mut state = ordered_game(player);
+        let donor = put(&mut state, player, "Xantid Swarm", Zone::Graveyard);
+        let source = cast_volrath(&mut state, player);
+        settled(&mut state);
+        assert!(engine::has_effective_keyword(
+            &state,
+            source,
+            Keywords::FLYING
+        ));
+        let opponent = player.opponent();
+        let opp_bolt = put(&mut state, opponent, "Incinerate", Zone::Hand);
+        let own_bolt = put(&mut state, player, "Incinerate", Zone::Hand);
+
+        let start = (state.turn, state.active_player);
+        pass_until(&mut state, |state| {
+            (state.turn, state.active_player) != start
+                && state.active_player == player
+                && state.step == Step::Main1
+        });
+        for _ in 0..16 {
+            match next(&mut state) {
+                Decision::DeclareAttackers { eligible, .. } => {
+                    assert!(eligible.contains(&source));
+                    act(&mut state, Action::DeclareAttackers(vec![source]));
+                    break;
+                }
+                Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+                other => panic!("expected attack declaration, got {other:?}"),
+            }
+        }
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        assert!(state.stack.last().is_some_and(is_donated_trigger));
+        assert!(public_producers(&state)
+            .unwrap()
+            .iter()
+            .any(|row| row.program == FullTextProgramV1::XantidSwarmSilence));
+
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
+        let mut copy = restored(&state);
+        for branch in [&mut state, &mut copy] {
+            settled(branch);
+            pool(branch, player, &[ManaColor::R], 1);
+            pool(branch, opponent, &[ManaColor::R], 1);
+            assert!(matches!(
+                next(branch),
+                Decision::CastSpellOrPass { player: actor, castable_spells, .. }
+                    if actor == player && castable_spells.contains(&own_bolt)
+            ));
+            act(branch, Action::Pass);
+            assert!(matches!(
+                next(branch),
+                Decision::CastSpellOrPass { player: actor, castable_spells, .. }
+                    if actor == opponent && !castable_spells.contains(&opp_bolt)
+            ));
+        }
+        assert_eq!(state.state_hash(), copy.state_hash());
+
+        // Ban lifts on the following turn.
+        let now = (state.turn, state.active_player);
+        pass_until(&mut state, |state| {
+            (state.turn, state.active_player) != now
+                && state.active_player == opponent
+                && state.step == Step::Main1
+        });
+        pool(&mut state, opponent, &[ManaColor::R], 1);
+        assert!(matches!(
+            next(&mut state),
+            Decision::CastSpellOrPass { player: actor, castable_spells, .. }
+                if actor == opponent && castable_spells.contains(&opp_bolt)
+        ));
+    }
+}
+
+#[test]
+fn volrath_native_allure_onto_meddling_mage_prohibits_nothing_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let victim = player.opponent();
+        let mut state = ordered_game(player);
+        let allure = put(&mut state, player, "Legacy's Allure", Zone::Battlefield);
+        let source = put(&mut state, victim, VOLRATH, Zone::Battlefield);
+        for _ in 0..3 {
+            let start = (state.turn, state.active_player);
+            pass_until(&mut state, |state| {
+                (state.turn, state.active_player) != start
+                    && state.active_player == player
+                    && state.step == Step::Main1
+            });
+        }
+        assert!(matches!(
+            next(&mut state),
+            Decision::CastSpellOrPass { player: actor, activatable_abilities, .. }
+                if actor == player && activatable_abilities.iter().any(|&(object, index)| object == allure && index == 0)
+        ));
+        act(&mut state, Action::ActivateAbility(allure, 0));
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseTargets { player: chooser, legal_targets, .. }
+                if chooser == player && legal_targets.contains(&Target::Object(source))
+        ));
+        act(&mut state, Action::ChooseTarget(Target::Object(source)));
+        assert!(matches!(
+            next(&mut state),
+            Decision::CastSpellOrPass { player: actor, .. }
+                if actor == player && !state.stack.is_empty()
+        ));
+        let mage = put(&mut state, player, "Meddling Mage", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(mage, Zone::Graveyard),
+        );
+        settled(&mut state);
+        assert_eq!(state.engine.halted, None);
+        assert_eq!(state.objects.get(source).controller, player);
+        assert_eq!(
+            active_definition(&state, source).unwrap().name,
+            "Meddling Mage"
+        );
+        let bolt = put(&mut state, victim, "Incinerate", Zone::Hand);
+        pool(&mut state, victim, &[ManaColor::R], 1);
+        act(&mut state, Action::Pass);
+        assert!(matches!(
+            next(&mut state),
+            Decision::CastSpellOrPass { player: actor, castable_spells, .. }
+                if actor == victim && castable_spells.contains(&bolt)
+        ));
+    }
+}
+
+#[test]
+fn volrath_native_ghitu_slinger_departed_host_preserves_lki_both_seats() {
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let opponent = player.opponent();
+
+        // 1. Bounced host remains Red LKI against Goblin Piledriver (protection from blue).
+        {
+            let mut state = ordered_game(player);
+            let donor = put(&mut state, player, "Ghitu Slinger", Zone::Graveyard);
+            let piledriver = put(&mut state, opponent, "Goblin Piledriver", Zone::Battlefield);
+            let source = cast_volrath(&mut state, player);
+            let target = Target::Object(piledriver);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseTargets { player: chooser, spell, legal_targets, .. })
+                    if chooser == player && spell == source && legal_targets.contains(&target)
+            ));
+            act(&mut state, Action::ChooseTarget(target));
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
+            let mut copy = restored(&state);
+            for branch in [&mut state, &mut copy] {
+                settled(branch);
+                assert_eq!(branch.objects.get(piledriver).zone, Zone::Graveyard);
+                assert_eq!(branch.objects.get(source).zone, Zone::Hand);
+            }
+            assert_eq!(state.state_hash(), copy.state_hash());
+        }
+
+        // 2. Bounced host uses Red LKI at target revalidation if the target gains protection from red.
+        {
+            let mut state = ordered_game(player);
+            let donor = put(&mut state, player, "Ghitu Slinger", Zone::Graveyard);
+            let opp_shifter = put(&mut state, opponent, VOLRATH, Zone::Battlefield);
+            let source = cast_volrath(&mut state, player);
+            let target = Target::Object(opp_shifter);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseTargets { player: chooser, spell, legal_targets, .. })
+                    if chooser == player && spell == source && legal_targets.contains(&target)
+            ));
+            act(&mut state, Action::ChooseTarget(target));
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
+            let akroma_donor = put(&mut state, opponent, "Akroma, Angel of Wrath", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(akroma_donor, Zone::Graveyard),
+            );
+            let mut copy = restored(&state);
+            for branch in [&mut state, &mut copy] {
+                settled(branch);
+                assert_eq!(branch.objects.get(opp_shifter).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(opp_shifter).damage, 0);
+            }
+            assert_eq!(state.state_hash(), copy.state_hash());
+        }
+
+        // 3. Sphere of Law and Akroma (via Nomads en-Kor) prevent damage from the departed Red source.
+        {
+            let mut state = ordered_game(player);
+            let donor = put(&mut state, player, "Ghitu Slinger", Zone::Graveyard);
+            let _sphere = put(&mut state, opponent, "Sphere of Law", Zone::Battlefield);
+            let source = cast_volrath(&mut state, player);
+            let target = Target::Player(opponent);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseTargets { player: chooser, spell, legal_targets, .. })
+                    if chooser == player && spell == source && legal_targets.contains(&target)
+            ));
+            act(&mut state, Action::ChooseTarget(target));
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
+            let mut copy = restored(&state);
+            for branch in [&mut state, &mut copy] {
+                settled(branch);
+                assert_eq!(branch.players[opponent.index()].life, 20);
+            }
+            assert_eq!(state.state_hash(), copy.state_hash());
+        }
+
+        {
+            let mut state = ordered_game(player);
+            let donor = put(&mut state, player, "Ghitu Slinger", Zone::Graveyard);
+            let nomads = put(&mut state, opponent, "Nomads en-Kor", Zone::Battlefield);
+            state.objects.get_mut(nomads).counters.plus1_plus1 = 1;
+            let akroma = put(
+                &mut state,
+                opponent,
+                "Akroma, Angel of Wrath",
+                Zone::Battlefield,
+            );
+            let source = cast_volrath(&mut state, player);
+            let target = Target::Object(nomads);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseTargets { player: chooser, spell, legal_targets, .. })
+                    if chooser == player && spell == source && legal_targets.contains(&target)
+            ));
+            act(&mut state, Action::ChooseTarget(target));
+            assert!(matches!(
+                next(&mut state),
+                Decision::CastSpellOrPass { player: actor, .. } if actor == player
+            ));
+            act(&mut state, Action::Pass);
+            assert!(matches!(
+                next(&mut state),
+                Decision::CastSpellOrPass { player: actor, activatable_abilities, .. }
+                    if actor == opponent
+                        && activatable_abilities
+                            .iter()
+                            .any(|&(object, index)| object == nomads && index == 0)
+            ));
+            act(&mut state, Action::ActivateAbility(nomads, 0));
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseTargets { player: chooser, legal_targets, .. }
+                    if chooser == opponent && legal_targets.contains(&Target::Object(akroma))
+            ));
+            act(&mut state, Action::ChooseTarget(Target::Object(akroma)));
+            assert!(matches!(
+                next(&mut state),
+                Decision::CastSpellOrPass { player: actor, .. } if actor == opponent
+            ));
+            act(&mut state, Action::Pass);
+            assert!(matches!(
+                next(&mut state),
+                Decision::CastSpellOrPass { player: actor, .. } if actor == player
+            ));
+            act(&mut state, Action::Pass);
+            assert!(matches!(
+                next(&mut state),
+                Decision::CastSpellOrPass { player: actor, .. }
+                    if actor == player && !state.stack.is_empty()
+            ));
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
+            let mut copy = restored(&state);
+            for branch in [&mut state, &mut copy] {
+                settled(branch);
+                assert_eq!(branch.objects.get(akroma).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(akroma).damage, 0);
+                assert_eq!(branch.objects.get(nomads).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(nomads).damage, 1);
+            }
+            assert_eq!(state.state_hash(), copy.state_hash());
+        }
+
+        // 4. Departed before target selection (trigger still in eternal.p1a.queued_triggers).
+        {
+            let mut state = ordered_game(player);
+            let donor = put(&mut state, player, "Ghitu Slinger", Zone::Graveyard);
+            let piledriver = put(&mut state, opponent, "Goblin Piledriver", Zone::Battlefield);
+            let source = put(&mut state, player, VOLRATH, Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
+            let target = Target::Object(piledriver);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseTargets { player: chooser, spell, legal_targets, .. })
+                    if chooser == player && spell == source && legal_targets.contains(&target)
+            ));
+            act(&mut state, Action::ChooseTarget(target));
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            let mut copy = restored(&state);
+            for branch in [&mut state, &mut copy] {
+                settled(branch);
+                assert_eq!(branch.objects.get(piledriver).zone, Zone::Graveyard);
+                assert_eq!(branch.objects.get(source).zone, Zone::Hand);
+            }
+            assert_eq!(state.state_hash(), copy.state_hash());
+        }
     }
 }
