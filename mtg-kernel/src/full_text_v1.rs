@@ -1386,16 +1386,30 @@ fn departed_source_for_capture(
     Ok(Some(dep))
 }
 
-pub(crate) fn departed_trigger_source(
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum TriggerSourceV1 {
+    LiveOnBattlefield,
+    Departed(DepartureV1),
+}
+
+pub(crate) fn a2_trigger_source(
     state: &GameState,
     effect: &EffectOp,
-) -> Option<Result<DepartureV1, String>> {
+) -> Option<Result<TriggerSourceV1, String>> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return None;
+    }
     let index = trigger_index(effect)?;
-    match trigger_record(state, index)
-        .and_then(|capture| departed_source_for_capture(state, capture))
-    {
-        Ok(Some(departure)) => Some(Ok(departure)),
-        Ok(None) => None,
+    let capture = match trigger_record(state, index) {
+        Ok(capture) => capture,
+        Err(err) => return Some(Err(err)),
+    };
+    if !tracks_host_departure(capture.kind) {
+        return None;
+    }
+    match departed_source_for_capture(state, capture) {
+        Ok(Some(departure)) => Some(Ok(TriggerSourceV1::Departed(departure))),
+        Ok(None) => Some(Ok(TriggerSourceV1::LiveOnBattlefield)),
         Err(err) => Some(Err(err)),
     }
 }

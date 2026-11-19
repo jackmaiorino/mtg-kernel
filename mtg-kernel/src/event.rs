@@ -3660,20 +3660,24 @@ pub(crate) fn historical_damage_prevented_by_protection(
     departed_types: Option<crate::source_type_hexproof_v1::SourceTypesV1>,
     target: Target,
 ) -> bool {
+    let Some(types) = departed_types else {
+        return match target {
+            Target::Object(id) => crate::source_power_activation_v1::protected(state, facts, id),
+            Target::Player(_) | Target::StackItem(_) => false,
+        };
+    };
     #[cfg(not(feature = "eternal-fixtures"))]
-    let _ = departed_types;
+    let _ = types;
     match target {
         Target::Player(player) => {
             #[cfg(feature = "eternal-fixtures")]
             {
                 crate::eternal_cards_v1::e3::player_protected(state, player)
-                    || departed_types.is_some_and(|types| {
-                        crate::eternal_e5a_v1::statics::protects_from_departed_types(
-                            state,
-                            Target::Player(player),
-                            types,
-                        )
-                    })
+                    || crate::eternal_e5a_v1::statics::protects_from_departed_types(
+                        state,
+                        Target::Player(player),
+                        types,
+                    )
             }
             #[cfg(not(feature = "eternal-fixtures"))]
             {
@@ -3700,15 +3704,13 @@ pub(crate) fn historical_damage_prevented_by_protection(
                     && crate::eternal_vintage_e7b_v1::statics::has_protection_from_multicolored(
                         state, id,
                     ))
-                    || departed_types.is_some_and(|types| {
-                        (types.contains(crate::card_def::CardType::Creature)
-                            && crate::eternal_vintage_v1::protected_from_creatures(state, id))
-                            || crate::eternal_e5a_v1::statics::protects_from_departed_types(
-                                state,
-                                Target::Object(id),
-                                types,
-                            )
-                    });
+                    || (types.contains(crate::card_def::CardType::Creature)
+                        && crate::eternal_vintage_v1::protected_from_creatures(state, id))
+                    || crate::eternal_e5a_v1::statics::protects_from_departed_types(
+                        state,
+                        Target::Object(id),
+                        types,
+                    );
             }
             false
         }

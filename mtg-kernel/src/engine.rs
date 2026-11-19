@@ -3776,8 +3776,9 @@ struct TargetingSource {
     /// A native dungeon uses its own color or departure LKI. The object
     /// fields still hold provenance and never supply its characteristics.
     dungeon_colors: Option<Result<u8, ()>>,
-    /// A departed full-text host preserves its exact battlefield LKI.
-    full_text_departure: Option<Result<crate::full_text_v1::DepartureV1, ()>>,
+    /// A departed full-text host preserves its exact battlefield LKI, while a
+    /// live step-A2 trigger uses the host's live copied color.
+    full_text_departure: Option<Result<crate::full_text_v1::TriggerSourceV1, ()>>,
     types_override: Option<crate::source_type_hexproof_v1::SourceTypesV1>,
     object: ObjectId,
     card_def: u16,
@@ -3930,8 +3931,8 @@ fn triggered_ability_targeting_source(
         crate::eternal_cards_v1::e3::dungeons::occurrences::source_colors(state, effect)
             .map_err(|_| ())
     });
-    let full_text_departure = crate::full_text_v1::departed_trigger_source(state, effect)
-        .map(|result| result.map_err(|_| ()));
+    let full_text_departure =
+        crate::full_text_v1::a2_trigger_source(state, effect).map(|result| result.map_err(|_| ()));
     source_contract.map(|contract| TargetingSource {
         dungeon_colors,
         full_text_departure,
@@ -4168,8 +4169,9 @@ fn legal_targets_unrestricted_v1(
         None => None,
     };
     let source = source.filter(|_| dungeon_colors.is_none());
+    let mut full_text_a2_live = false;
     match source.and_then(|source| source.full_text_departure) {
-        Some(Ok(departure)) => {
+        Some(Ok(crate::full_text_v1::TriggerSourceV1::Departed(departure))) => {
             return crate::full_text_v1::departed_trigger_legal_targets(
                 state,
                 spec,
@@ -4177,6 +4179,9 @@ fn legal_targets_unrestricted_v1(
                 controller,
                 departure,
             );
+        }
+        Some(Ok(crate::full_text_v1::TriggerSourceV1::LiveOnBattlefield)) => {
+            full_text_a2_live = true;
         }
         Some(Err(())) => return Vec::new(),
         None => {}
@@ -5050,9 +5055,7 @@ fn legal_targets_unrestricted_v1(
                     || !has_effective_keyword(state, object, Keywords::HEXPROOF)))
     });
     if source.is_some_and(|s| {
-        if cfg!(feature = "eternal-fixtures")
-            && crate::full_text_v1::active_definition(state, s.object).is_some()
-        {
+        if full_text_a2_live {
             object_is_monocolored(state, s.object)
         } else {
             targeting_source_is_monocolored(s)

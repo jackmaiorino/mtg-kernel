@@ -2442,3 +2442,291 @@ fn volrath_native_ghitu_slinger_departed_host_preserves_lki_both_seats() {
         }
     }
 }
+
+#[test]
+fn volrath_native_step_a2_departure_multicolor_and_isolation_both_seats() {
+    use crate::card_def::Keywords;
+    use crate::effect::{install_temporary_boost, EffectObjectBinding};
+    use crate::full_text_v1::active_text;
+
+    for player in [PlayerId::P0, PlayerId::P1] {
+        let opponent = player.opponent();
+
+        // 1. Departed multicolored host (Ghitu Slinger entry, then Iridescent Angel on top before bounce)
+        // targets a creature with protection from monocolored, excludes protection from multicolored,
+        // and deals 2 damage across snapshot restore.
+        {
+            let mut state = ordered_game(player);
+            let _donor = put(&mut state, player, "Ghitu Slinger", Zone::Graveyard);
+            let birds = put(&mut state, opponent, "Birds of Paradise", Zone::Battlefield);
+            let binding = EffectObjectBinding {
+                object: birds,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: state.objects.get(birds).zone_change_count,
+            };
+            install_temporary_boost(
+                &mut state,
+                binding,
+                0,
+                3,
+                Keywords::PROTECTION_FROM_MONOCOLORED,
+            );
+            let serpent = put(&mut state, opponent, "Stonecoil Serpent", Zone::Battlefield);
+            state.objects.get_mut(serpent).counters.plus1_plus1 = 3;
+
+            let source = put(&mut state, player, VOLRATH, Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            let angel = put(&mut state, player, "Iridescent Angel", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(angel, Zone::Graveyard),
+            );
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseTargets { player: chooser, spell, legal_targets, .. })
+                    if chooser == player
+                        && spell == source
+                        && legal_targets.contains(&Target::Object(birds))
+                        && !legal_targets.contains(&Target::Object(serpent))
+            ));
+            act(&mut state, Action::ChooseTarget(Target::Object(birds)));
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            let mut copy = restored(&state);
+            for branch in [&mut state, &mut copy] {
+                settled(branch);
+                assert_eq!(branch.objects.get(birds).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(birds).damage, 2);
+                assert_eq!(branch.objects.get(serpent).damage, 0);
+            }
+            assert_eq!(state.state_hash(), copy.state_hash());
+        }
+
+        // 2. Target chosen while Monocolored Red host is live fizzles at revalidation when the
+        // host becomes Multicolored White+Blue and departs before resolution.
+        {
+            let mut state = ordered_game(player);
+            let _donor = put(&mut state, player, "Ghitu Slinger", Zone::Graveyard);
+            let serpent = put(&mut state, opponent, "Stonecoil Serpent", Zone::Battlefield);
+            state.objects.get_mut(serpent).counters.plus1_plus1 = 3;
+
+            let source = cast_volrath(&mut state, player);
+            let target = Target::Object(serpent);
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseTargets { player: chooser, spell, legal_targets, .. })
+                    if chooser == player && spell == source && legal_targets.contains(&target)
+            ));
+            act(&mut state, Action::ChooseTarget(target));
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+
+            let angel = put(&mut state, player, "Iridescent Angel", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(angel, Zone::Graveyard),
+            );
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+
+            let mut copy = restored(&state);
+            for branch in [&mut state, &mut copy] {
+                settled(branch);
+                assert_eq!(branch.objects.get(serpent).zone, Zone::Battlefield);
+                assert_eq!(branch.objects.get(serpent).damage, 0);
+            }
+            assert_eq!(state.state_hash(), copy.state_hash());
+        }
+
+        // 3. Uktabi Orangutan and Monk Realist departed hosts still destroy their chosen targets.
+        for (donor_name, target_name) in [
+            ("Uktabi Orangutan", "Cursed Scroll"),
+            ("Monk Realist", "Seal of Fire"),
+        ] {
+            let mut state = ordered_game(player);
+            let donor = put(&mut state, player, donor_name, Zone::Graveyard);
+            let perm = put(&mut state, player, target_name, Zone::Battlefield);
+            let source = put(&mut state, player, VOLRATH, Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(donor, Zone::Exile));
+
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseTargets { player: chooser, spell, legal_targets, .. })
+                    if chooser == player && spell == source && legal_targets.contains(&Target::Object(perm))
+            ));
+            act(&mut state, Action::ChooseTarget(Target::Object(perm)));
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            let mut copy = restored(&state);
+            for branch in [&mut state, &mut copy] {
+                settled(branch);
+                assert_eq!(branch.objects.get(perm).zone, Zone::Graveyard);
+            }
+            assert_eq!(state.state_hash(), copy.state_hash());
+        }
+
+        // 4. Step-A2 live trigger uses live copied color for protection from monocolored, whereas
+        // Step-A1 activated abilities (Triskelion) retain physical Shapeshifter color.
+        {
+            let mut state = ordered_game(player);
+            let _donor = put(&mut state, player, "Ghitu Slinger", Zone::Graveyard);
+            let birds = put(&mut state, opponent, "Birds of Paradise", Zone::Battlefield);
+            let binding = EffectObjectBinding {
+                object: birds,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: state.objects.get(birds).zone_change_count,
+            };
+            install_temporary_boost(
+                &mut state,
+                binding,
+                0,
+                3,
+                Keywords::PROTECTION_FROM_MONOCOLORED,
+            );
+            let source = put(&mut state, player, VOLRATH, Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(source, Zone::Battlefield),
+            );
+            let angel = put(&mut state, player, "Iridescent Angel", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(angel, Zone::Graveyard),
+            );
+            assert!(matches!(
+                settle(&mut state),
+                Some(Decision::ChooseTargets { player: chooser, spell, legal_targets, .. })
+                    if chooser == player
+                        && spell == source
+                        && legal_targets.contains(&Target::Object(birds))
+            ));
+            act(&mut state, Action::ChooseTarget(Target::Object(birds)));
+            assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+            let mut copy = restored(&state);
+            for branch in [&mut state, &mut copy] {
+                settled(branch);
+                assert_eq!(branch.objects.get(birds).damage, 2);
+            }
+            assert_eq!(state.state_hash(), copy.state_hash());
+        }
+        {
+            let mut state = ordered_game(player);
+            let _donor = put(&mut state, player, "Triskelion", Zone::Graveyard);
+            let source = put(&mut state, player, VOLRATH, Zone::Battlefield);
+            state.objects.get_mut(source).counters.plus1_plus1 = 1;
+            let birds = put(&mut state, opponent, "Birds of Paradise", Zone::Battlefield);
+            let binding = EffectObjectBinding {
+                object: birds,
+                expected_zone: Zone::Battlefield,
+                expected_zone_change_count: state.objects.get(birds).zone_change_count,
+            };
+            install_temporary_boost(
+                &mut state,
+                binding,
+                0,
+                3,
+                Keywords::PROTECTION_FROM_MONOCOLORED,
+            );
+            let slot = active_text(&state, source)
+                .unwrap()
+                .first_donated_slot(&state);
+            assert!(matches!(
+                next(&mut state),
+                Decision::CastSpellOrPass { player: actor, .. } if actor == player
+            ));
+            act(&mut state, Action::ActivateAbility(source, slot));
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseTargets { player: chooser, legal_targets, .. }
+                    if chooser == player
+                        && legal_targets.contains(&Target::Player(opponent))
+                        && !legal_targets.contains(&Target::Object(birds))
+            ));
+        }
+
+        // 5. Non-FullText historical source (departed Goblin Bombardment -> Nomads en-Kor -> Akroma)
+        // keeps base historical-source protection behavior unchanged.
+        {
+            let mut state = ordered_game(player);
+            let bombardment = put(&mut state, player, "Goblin Bombardment", Zone::Battlefield);
+            let elves = put(&mut state, player, "Llanowar Elves", Zone::Battlefield);
+            let nomads = put(&mut state, opponent, "Nomads en-Kor", Zone::Battlefield);
+            state.objects.get_mut(nomads).counters.plus1_plus1 = 1;
+            let akroma = put(
+                &mut state,
+                opponent,
+                "Akroma, Angel of Wrath",
+                Zone::Battlefield,
+            );
+
+            assert!(matches!(
+                next(&mut state),
+                Decision::CastSpellOrPass { player: actor, .. } if actor == player
+            ));
+            act(&mut state, Action::Pass);
+            assert!(matches!(
+                next(&mut state),
+                Decision::CastSpellOrPass { player: actor, activatable_abilities, .. }
+                    if actor == opponent
+                        && activatable_abilities
+                            .iter()
+                            .any(|&(object, index)| object == nomads && index == 0)
+            ));
+            act(&mut state, Action::ActivateAbility(nomads, 0));
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseTargets { player: chooser, legal_targets, .. }
+                    if chooser == opponent && legal_targets.contains(&Target::Object(akroma))
+            ));
+            act(&mut state, Action::ChooseTarget(Target::Object(akroma)));
+            assert!(matches!(
+                next(&mut state),
+                Decision::CastSpellOrPass { player: actor, .. } if actor == opponent
+            ));
+            act(&mut state, Action::Pass);
+            assert!(matches!(
+                next(&mut state),
+                Decision::CastSpellOrPass { player: actor, .. } if actor == player
+            ));
+            act(&mut state, Action::Pass);
+            assert!(matches!(
+                next(&mut state),
+                Decision::CastSpellOrPass { player: actor, .. } if actor == player
+            ));
+
+            act(&mut state, Action::ActivateAbility(bombardment, 0));
+            for _ in 0..8 {
+                match next(&mut state) {
+                    Decision::ChooseTargets { legal_targets, .. } => {
+                        assert!(legal_targets.contains(&Target::Object(nomads)));
+                        act(&mut state, Action::ChooseTarget(Target::Object(nomads)));
+                    }
+                    Decision::ChooseCostTargets { candidates, .. } => {
+                        assert!(candidates.contains(&elves));
+                        act(&mut state, Action::ChooseCostTarget(elves));
+                    }
+                    Decision::CastSpellOrPass { .. } => break,
+                    other => panic!("unexpected Goblin Bombardment decision: {other:?}"),
+                }
+            }
+            assert_eq!(state.objects.get(elves).zone, Zone::Graveyard);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(bombardment, Zone::Exile),
+            );
+            let mut copy = restored(&state);
+            for branch in [&mut state, &mut copy] {
+                settled(branch);
+                assert_eq!(branch.objects.get(akroma).damage, 1);
+                assert_eq!(branch.objects.get(nomads).damage, 0);
+            }
+            assert_eq!(state.state_hash(), copy.state_hash());
+        }
+    }
+}
