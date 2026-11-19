@@ -6183,7 +6183,7 @@ fn read_trajectory_batch_v1(
     read_trajectory_batch_bounded_v1(pins, workers, MAX_BATCH_BYTES)
 }
 
-/// [`read_trajectory_batch_v1`] with the update's batch bound in bytes
+/// Reads and parses a trajectory batch within the update's batch bound in bytes
 /// (`max_trajectory_batch_mebibytes`; [`MAX_BATCH_BYTES`] by default).
 fn read_trajectory_batch_bounded_v1(
     pins: &[PinnedFileV1],

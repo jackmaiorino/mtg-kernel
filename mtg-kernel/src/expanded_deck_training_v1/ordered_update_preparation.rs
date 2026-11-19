@@ -303,7 +303,7 @@ pub(super) fn read_trajectories_v1(
     read_trajectories_bounded_v1(pins, workers, MAX_BATCH_BYTES)
 }
 
-/// [`read_trajectories_v1`] with the update's batch bound (`batch_bytes`).
+/// Reads and parses pinned trajectories in order within the batch bound `batch_bytes`.
 pub(super) fn read_trajectories_bounded_v1(
     pins: &[PinnedFileV1],
     workers: usize,
