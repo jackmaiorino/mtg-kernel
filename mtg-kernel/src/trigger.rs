@@ -6113,6 +6113,13 @@ fn triggers_from_events(
                         if def.intervening_if_kicked && !kicked {
                             continue;
                         }
+                        if crate::eternal_cube_c6b_v1::suppress_token_death_copy(
+                            card.name,
+                            def.condition,
+                            obj.v4.is_token,
+                        ) {
+                            continue;
+                        }
                         // Triumph of Saint Katherine (eternal wave S1l): "put
                         // into your graveyard" -- a card goes to its owner's
                         // graveyard, so its owner controlled it as it left.

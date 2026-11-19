@@ -16,7 +16,11 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const C6B_CARDS: [&str; 2] = ["Seasoned Cryomancer", "Seasoned Pyromancer"];
+const C6B_CARDS: [&str; 3] = [
+    "Seasoned Cryomancer",
+    "Seasoned Pyromancer",
+    "Sphinx of False Conclusions",
+];
 
 fn def(name: &str) -> &'static CardDef {
     &CARD_DEFS[id(name) as usize]
@@ -1012,6 +1016,325 @@ fn seasoned_entry_effect_survives_source_leaving_before_resolution() {
         } else {
             assert_eq!(named(&state, P0, ELEMENTAL).len(), 1);
             assert_eq!(state.players[0].hand.len(), 2);
+        }
+    }
+}
+
+const SPHINX: &str = "Sphinx of False Conclusions";
+
+fn cast_sphinx(state: &mut GameState) -> ObjectId {
+    let source = put(state, P0, SPHINX, Zone::Hand);
+    pool(state, P0, &[ManaColor::U, ManaColor::U], 2);
+    cast(state, source, &[]);
+    settled(state);
+    source
+}
+
+#[test]
+fn sphinx_characteristics_and_flash_on_opponents_turn() {
+    let card = def(SPHINX);
+    assert_eq!(card.cost.generic, 2);
+    assert_eq!(card.cost.pips, &[Pip::Colored(ManaColor::U); 2]);
+    assert_eq!(card.mana_value, 4);
+    assert_eq!(card.types, &[CardType::Creature]);
+    assert_eq!(card.subtypes, &[Subtype::Sphinx, Subtype::Illusion]);
+    assert_eq!(card.colors, &[ManaColor::U]);
+    assert!(card.supertypes.is_empty());
+    assert_eq!((card.power, card.toughness), (Some(4), Some(2)));
+    assert_eq!(card.keywords, Keywords::FLASH | Keywords::FLYING);
+
+    let mut state = plains();
+    state.active_player = P1;
+    let source = put(&mut state, P0, SPHINX, Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    assert!(!castable(&mut state, source), "two blue pips required");
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, source, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, source), Zone::Battlefield);
+    assert_eq!(power_toughness(&state, source), (4, 2));
+    assert!(keyword(&state, source, Keywords::FLASH));
+    assert!(keyword(&state, source, Keywords::FLYING));
+    assert!(state.players[0].hand.is_empty(), "no entry loot");
+    assert_eq!(state.players[0].library.len(), 20);
+}
+
+#[test]
+fn sphinx_attacks_draw_then_mandatory_discard_and_no_attack_means_no_loot() {
+    for attacks in [false, true] {
+        let mut state = plains();
+        let source = cast_sphinx(&mut state);
+        let keep = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+        state.objects.get_mut(source).summoning_sick = false;
+        let drawn = state.players[0].library[0];
+        let mut discards = 0;
+        attack_with(
+            &mut state,
+            if attacks { vec![source] } else { Vec::new() },
+            |s, decision| {
+                if let Decision::Discard {
+                    player,
+                    count,
+                    choices,
+                } = decision
+                {
+                    assert_eq!(*player, P0);
+                    assert_eq!(*count, 1);
+                    assert!(choices.contains(&drawn), "draw precedes discard");
+                    assert!(choices.contains(&keep));
+                    assert_eq!(s.players[0].library.len(), 19);
+                    discards += 1;
+                    Some(Action::Discard(vec![drawn]))
+                } else {
+                    None
+                }
+            },
+        );
+        assert_eq!(discards, usize::from(attacks));
+        assert_eq!(state.players[0].hand, vec![keep]);
+        assert_eq!(
+            state.players[0].library.len(),
+            if attacks { 19 } else { 20 }
+        );
+        assert_eq!(
+            zone(&state, drawn),
+            if attacks {
+                Zone::Graveyard
+            } else {
+                Zone::Library
+            }
+        );
+        assert_eq!(life(&state, P1), if attacks { 16 } else { 20 });
+    }
+}
+
+#[test]
+fn sphinx_attack_loot_survives_source_leaving_and_draws_with_empty_hand() {
+    let mut state = plains();
+    let source = cast_sphinx(&mut state);
+    state.objects.get_mut(source).summoning_sick = false;
+    pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![source]));
+    on_the_stack(&mut state);
+    assert_eq!(state.stack.len(), 1);
+    let drawn = state.players[0].library[0];
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Exile));
+    settle_first(&mut state);
+    assert_eq!(zone(&state, drawn), Zone::Graveyard);
+    assert!(state.players[0].hand.is_empty());
+    assert_eq!(state.players[0].library.len(), 19);
+    assert!(named(&state, P0, SPHINX).is_empty());
+}
+
+#[test]
+fn sphinx_flying_excludes_ground_blockers() {
+    let mut state = plains();
+    let source = cast_sphinx(&mut state);
+    state.objects.get_mut(source).summoning_sick = false;
+    let ground = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
+    let flyer = put(&mut state, P1, "Birds of Paradise", Zone::Battlefield);
+    pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![source]));
+    settle_first(&mut state);
+    for _ in 0..40 {
+        match next(&mut state) {
+            Decision::DeclareBlockers { legal_blockers, .. } => {
+                let blockers = &legal_blockers
+                    .iter()
+                    .find(|(object, _)| *object == source)
+                    .unwrap()
+                    .1;
+                assert!(!blockers.contains(&ground));
+                assert!(blockers.contains(&flyer));
+                return;
+            }
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => act(&mut state, first_answer(other)),
+        }
+    }
+    panic!("no blockers decision");
+}
+
+#[test]
+fn sphinx_dies_copy_is_four_two_without_counters_loots_and_does_not_recurse() {
+    let mut state = plains();
+    let source = cast_sphinx(&mut state);
+    state.objects.get_mut(source).counters.plus1_plus1 = 1;
+    opponent_bolts(&mut state, Target::Object(source));
+    settled(&mut state);
+    assert_eq!(zone(&state, source), Zone::Graveyard);
+    let copies = named(&state, P0, SPHINX);
+    assert_eq!(copies.len(), 1);
+    let copy = copies[0];
+    assert!(state.objects.get(copy).v4.is_token);
+    assert_eq!(power_toughness(&state, copy), (4, 2));
+    assert_eq!(state.objects.get(copy).counters.plus1_plus1, 0);
+    assert!(keyword(&state, copy, Keywords::FLASH));
+    assert!(keyword(&state, copy, Keywords::FLYING));
+    assert_eq!(state.players[0].library.len(), 20, "no entry loot");
+    state.objects.get_mut(copy).summoning_sick = false;
+    attack_with(&mut state, vec![copy], |_, _| None);
+    assert_eq!(state.players[0].library.len(), 19);
+    assert!(state.players[0].hand.is_empty());
+    assert_eq!(life(&state, P1), 16);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(copy, Zone::Graveyard),
+    );
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert!(state.stack.is_empty(), "token death creates no trigger");
+    assert!(state.engine.pending_triggers.is_empty());
+    assert!(named(&state, P0, SPHINX).is_empty());
+}
+
+#[test]
+fn sphinx_only_copies_on_death_and_respects_replaced_death() {
+    for destination in [Zone::Hand, Zone::Exile, Zone::Graveyard] {
+        for replaced in [false, true] {
+            let mut state = plains();
+            let source = cast_sphinx(&mut state);
+            if replaced {
+                put(&mut state, P1, "Rest in Peace", Zone::Battlefield);
+            }
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, destination));
+            settled(&mut state);
+            assert_eq!(
+                named(&state, P0, SPHINX).len(),
+                usize::from(destination == Zone::Graveyard && !replaced)
+            );
+            if destination == Zone::Graveyard && replaced {
+                assert_eq!(zone(&state, source), Zone::Exile);
+            }
+        }
+    }
+}
+
+#[test]
+fn sphinx_death_uses_departure_lki_after_source_changes_zone_again_and_replays() {
+    let mut state = plains();
+    let source = cast_sphinx(&mut state);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(source, Zone::Graveyard),
+    );
+    on_the_stack(&mut state);
+    assert_eq!(state.stack.len(), 1);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+    let snapshot = serde_json::to_string(&state).expect("serialize death trigger");
+    let mut replay: GameState = serde_json::from_str(&snapshot).expect("restore death trigger");
+    settled(&mut state);
+    settled(&mut replay);
+    assert_eq!(state, replay);
+    assert_eq!(zone(&state, source), Zone::Hand);
+    let copies = named(&state, P0, SPHINX);
+    assert_eq!(copies.len(), 1);
+    assert!(state.objects.get(copies[0]).v4.is_token);
+}
+
+#[test]
+fn sphinx_death_copy_respects_token_doubling() {
+    let mut state = plains();
+    put(&mut state, P0, "Doubling Season", Zone::Battlefield);
+    let source = cast_sphinx(&mut state);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(source, Zone::Graveyard),
+    );
+    settled(&mut state);
+    assert_eq!(named(&state, P0, SPHINX).len(), 2);
+}
+
+#[test]
+fn sphinx_replaced_draw_still_discards_as_many_as_possible() {
+    for has_card in [false, true] {
+        let mut state = plains();
+        put(&mut state, P1, "Hullbreacher", Zone::Battlefield);
+        let source = cast_sphinx(&mut state);
+        let discard = has_card.then(|| put(&mut state, P0, "Lightning Bolt", Zone::Hand));
+        state.objects.get_mut(source).summoning_sick = false;
+        attack_with(&mut state, vec![source], |_, _| None);
+        assert_eq!(state.players[0].library.len(), 20);
+        assert!(state.players[0].hand.is_empty());
+        assert_eq!(named(&state, P1, "Treasure Token").len(), 1);
+        if let Some(discard) = discard {
+            assert_eq!(zone(&state, discard), Zone::Graveyard);
+        }
+    }
+}
+
+#[test]
+fn sphinx_death_copies_a_copy_using_its_departed_definition() {
+    let mut state = plains();
+    let source = cast_sphinx(&mut state);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(source, Zone::Graveyard),
+    );
+    settled(&mut state);
+    let first_copy = named(&state, P0, SPHINX)[0];
+    let woodland = put(&mut state, P0, "Shifting Woodland", Zone::Battlefield);
+    for name in ["Lightning Bolt", "Mind Stone", "Island"] {
+        put(&mut state, P0, name, Zone::Graveyard);
+    }
+    pool(&mut state, P0, &[ManaColor::G, ManaColor::G], 2);
+    activate(&mut state, woodland, 0, &[Target::Object(source)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(woodland).card_def, id(SPHINX));
+    assert!(!state.objects.get(woodland).v4.is_token);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(woodland, Zone::Graveyard),
+    );
+    assert_eq!(
+        state.objects.get(woodland).card_def,
+        id("Shifting Woodland")
+    );
+    settled(&mut state);
+    let copies = named(&state, P0, SPHINX);
+    assert_eq!(copies.len(), 2);
+    let second_copy = *copies.iter().find(|&&object| object != first_copy).unwrap();
+    assert!(state.objects.get(second_copy).v4.is_token);
+    assert_eq!(power_toughness(&state, second_copy), (4, 2));
+    assert!(keyword(&state, second_copy, Keywords::FLYING));
+    assert!(!engine::object_has_type(
+        &state,
+        second_copy,
+        CardType::Land
+    ));
+}
+
+#[test]
+fn sphinx_loot_offers_competing_draw_replacements_and_stops_after_a_win() {
+    for win in [false, true] {
+        let mut state = game(&[]);
+        put(&mut state, P1, "Hullbreacher", Zone::Battlefield);
+        let jace = put(&mut state, P0, "Jace, Wielder of Mysteries", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(jace, Zone::Battlefield),
+        );
+        let source = cast_sphinx(&mut state);
+        let discard = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+        state.objects.get_mut(source).summoning_sick = false;
+        pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+        act(&mut state, Action::DeclareAttackers(vec![source]));
+        let choice = settle(&mut state).expect("competing draw replacements");
+        assert!(matches!(choice, Decision::ChooseEffectTargets {
+            player: P0, can_finish: true, ref legal_targets, ..
+        } if legal_targets.as_slice() == [Target::Object(jace)]));
+        assert_eq!(zone(&state, discard), Zone::Hand, "discard follows draw");
+        if win {
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(jace)));
+            assert!(matches!(
+                next(&mut state),
+                Decision::GameOver { winner: Some(P0) }
+            ));
+            assert_eq!(zone(&state, discard), Zone::Hand);
+        } else {
+            act(&mut state, Action::FinishEffectSelection);
+            settle_first(&mut state);
+            assert_eq!(zone(&state, discard), Zone::Graveyard);
+            assert_eq!(named(&state, P1, "Treasure Token").len(), 1);
         }
     }
 }

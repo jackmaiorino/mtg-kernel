@@ -6,6 +6,16 @@
 //! table is keyed by a printed name that occurs only in the eternal registry,
 //! so the Pauper, FDN and Standard catalogs never reach it. Behavior was read
 //! from each card's current Oracle text and, where present, its XMage source.
+//!
+//! Sphinx reuses Wurmcoil Engine's battlefield-to-graveyard death condition
+//! (no separate last-known creature-type check) and Homunculus Horde's copy
+//! representation. As with Horde, extra copy
+//! modifications not represented by that operation (such as Metamorph's
+//! added artifact type) are not propagated. No new token or subtype IDs.
+//!
+//! Malcolm remains no_effect: resolution_cast_v1 only supports paid graveyard
+//! casts. Its free-cast checks and E5b answer authorization accept hand/exile,
+//! not the exact graveyard incarnation of the card just discarded.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::card_def::{card_id_by_name, CardType, TargetSpec, CARD_DEFS};
@@ -22,6 +32,7 @@ use serde::{Deserialize, Serialize};
 
 const CRYOMANCER: &str = "Seasoned Cryomancer";
 const PYROMANCER: &str = "Seasoned Pyromancer";
+const SPHINX: &str = "Sphinx of False Conclusions";
 // Appended token row. Elemental already exists, so this call uses no
 // subtype IDs from the reserved C6b range 710..719.
 const ELEMENTAL: &str = "1/1 red Elemental Token";
@@ -106,6 +117,47 @@ pub fn pyromancer_entry() -> EffectOp {
     ])
 }
 
+/// Kiora's mandatory loot shape, with a root draw so competing replacements
+/// can suspend before the discard. The discard is the final instruction.
+pub fn sphinx_loot() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+        crate::eternal_cube_c1a_v1::stop_if_won(),
+        EffectOp::DiscardCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+    ])
+}
+
+/// Reuse Homunculus Horde's native current-or-departure copy operation.
+/// A death trigger always binds the departed battlefield incarnation.
+pub fn nontoken_death_copy() -> EffectOp {
+    EffectOp::CreateTokenCopyOfSourceV1
+}
+
+/// Extend the source-copy departure recorder and root validator, without
+/// selecting this creature's unrelated attack ability as a copy operation.
+pub(crate) fn has_nontoken_death_copy(card_def: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(card_def))
+        .is_some_and(|card| card.has_full_support() && card.name == SPHINX)
+}
+
+/// Token status survives zone changes and cannot change during a resolution.
+/// Checking before publication also prevents a token from producing a stack
+/// item, rather than merely making that item's resolution do nothing.
+pub(crate) fn suppress_token_death_copy(
+    name: &str,
+    condition: TriggerCondition,
+    is_token: bool,
+) -> bool {
+    name == SPHINX && is_token && condition == TriggerCondition::LeftBattlefieldToGraveyard
+}
+
 const fn etb(effect: fn() -> EffectOp) -> TriggeredAbilityDef {
     TriggeredAbilityDef {
         condition: TriggerCondition::Etb,
@@ -119,11 +171,22 @@ const fn etb(effect: fn() -> EffectOp) -> TriggeredAbilityDef {
 
 const CRYOMANCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb(cryomancer_entry)];
 const PYROMANCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb(pyromancer_entry)];
+const SPHINX_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    TriggeredAbilityDef {
+        condition: TriggerCondition::Attacks,
+        ..etb(sphinx_loot)
+    },
+    TriggeredAbilityDef {
+        condition: TriggerCondition::LeftBattlefieldToGraveyard,
+        ..etb(nontoken_death_copy)
+    },
+];
 
 pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
     match name {
         CRYOMANCER => &CRYOMANCER_TRIGGERS,
         PYROMANCER => &PYROMANCER_TRIGGERS,
+        SPHINX => &SPHINX_TRIGGERS,
         _ => crate::eternal_cube_c6c_v1::triggers_for(name),
     }
 }
@@ -139,6 +202,7 @@ fn stun_targets(count: u16) -> TargetSpec {
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
     if (name == CRYOMANCER && *effect == cryomancer_entry())
         || (name == PYROMANCER && *effect == pyromancer_entry())
+        || (name == SPHINX && (*effect == sphinx_loot() || *effect == nontoken_death_copy()))
     {
         return Some(TargetSpec::None);
     }

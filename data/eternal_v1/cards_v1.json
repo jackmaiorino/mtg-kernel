@@ -36168,7 +36168,7 @@
   },
   {
    "name": "Sphinx of False Conclusions",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{U}{U}",
    "mana_value": 4,
    "colors": [
@@ -36191,7 +36191,7 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": ["flash", "flying", "attack_trigger", "draw_card", "discard", "dies_trigger", "token_creation"]
   },
   {
    "name": "Vaultborn Tyrant",

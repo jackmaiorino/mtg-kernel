@@ -67,9 +67,12 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
     super::build_eternal_c6c_v1::alt_cost_for(name)
 }
 
-/// No C6b card has a printed evergreen keyword yet.
+/// Printed evergreen keywords.
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
-    super::build_eternal_c6c_v1::keywords_for(name)
+    match name {
+        "Sphinx of False Conclusions" => &["Keywords::FLASH", "Keywords::FLYING"],
+        _ => super::build_eternal_c6c_v1::keywords_for(name),
+    }
 }
 
 /// Card-database tokens for this wave's abilities.
@@ -77,6 +80,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
         "Seasoned Cryomancer" => "etb:draw_two_then_discard_two;reflexive:nonlands_discarded_this_way:tap_up_to_that_many_target_creatures:one_stun_counter_each;graveyard_ability:3uu:exile_self:draw_two",
         "Seasoned Pyromancer" => "etb:discard_two_then_draw_two:create_one_1_1_red_elemental_per_nonland_discarded_this_way;graveyard_ability:3rr:exile_self:create_two_1_1_red_elementals",
+        "Sphinx of False Conclusions" => "flash;flying;attacks:draw_one_then_discard_one;dies:if_nontoken:copy_source_original_battlefield_departure_copiable_values:captured_trigger_controller:replacement_batch",
         _ => super::build_eternal_c6c_v1::trigger_recipe_for(name),
     }
 }
