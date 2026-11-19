@@ -36029,7 +36029,7 @@
   },
   {
    "name": "Generous Plunderer",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}",
    "mana_value": 2,
    "colors": [
@@ -36052,12 +36052,17 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "menace",
+    "upkeep_trigger",
+    "token_creation",
+    "attack_trigger"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/g/GenerousPlunderer.java"
   },
   {
    "name": "Gut, True Soul Zealot",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{R}",
    "mana_value": 3,
    "colors": [
@@ -36082,7 +36087,11 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "attack_trigger",
+    "sacrifice",
+    "token_creation"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/g/GutTrueSoulZealot.java"
   },
   {

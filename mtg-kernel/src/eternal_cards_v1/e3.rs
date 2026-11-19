@@ -324,6 +324,8 @@ pub enum E3ChoiceKindV1 {
     C5dV1(crate::eternal_cube_c5d_v1::C5dChoiceV1),
     /// A Vintage Cube wave C5b choice (`eternal_cube_c5b_v1`).
     C5bV1(crate::eternal_cube_c5b_v1::C5bChoiceV1),
+    /// Gut's optional sacrifice of an artifact or another creature.
+    C6aGutSacrificeV1,
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -500,6 +502,9 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::ScryV1 { .. } => crate::rl::TargetSelectionPurposeV4::LibraryOrder,
             E3ChoiceKindV1::RetargetSpellV1 { .. } | E3ChoiceKindV1::RetargetCopyV1 { .. } => {
                 crate::rl::TargetSelectionPurposeV4::EffectTargets
+            }
+            E3ChoiceKindV1::C6aGutSacrificeV1 => {
+                crate::rl::TargetSelectionPurposeV4::PermanentSelection
             }
         }
     }
@@ -944,6 +949,9 @@ pub(crate) fn finish_selection(
             &bindings,
             crate::eternal_sideboard_s1a_v1::surgical::ExtractionV1::Extirpate,
         ),
+        E3ChoiceKindV1::C6aGutSacrificeV1 => {
+            crate::eternal_cube_c6a_v1::finish_gut_sacrifice(state, continuation, choice, bindings)
+        }
     }
 }
 

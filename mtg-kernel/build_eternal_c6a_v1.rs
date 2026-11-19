@@ -32,7 +32,9 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
         "Ivora, Insatiable Heir"
         | "Gau, Feral Youth"
         | "Laelia, the Blade Reforged"
-        | "Fallen Shinobi" => Some(Special::StandardProgram {
+        | "Fallen Shinobi"
+        | "Generous Plunderer"
+        | "Gut, True Soul Zealot" => Some(Special::StandardProgram {
             target_spec: "TargetSpec::None",
             program: "crate::eternal_cube_c6a_v1::permanent",
         }),
@@ -65,6 +67,7 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "Ivora, Insatiable Heir" => &["Keywords::TRAMPLE"],
         "Laelia, the Blade Reforged" => &["Keywords::HASTE"],
+        "Generous Plunderer" => &["Keywords::MENACE"],
         _ => super::build_eternal_c6b_v1::keywords_for(name),
     }
 }
@@ -79,6 +82,8 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Gandalf, Goblins' Bane" => "partial:private_face_down_play_permission_projection_missing:unbounded_wizard_conditional_permission_missing;printed:cast_noncreature:source_plus1_plus1_until_end_of_turn:damage_each_opponent:1;adventure:flameshape:1r:sorcery:look_top_two:exile_face_down:may_play_while_exiled_if_you_control_wizard",
         "Black Widow, Super Spy" => "no_effect:spell_scoped_any_type_mana_grant_missing:spy_subtype_missing;printed:menace;combat_damage_player:that_player_exiles_until_nonland:may_source_plus_one_counter:otherwise_may_cast_nonland_this_turn_spending_mana_of_any_type",
         "Fallen Shinobi" => "ninjutsu:2ub;combat_damage_player:that_player_exiles_top_two:controller_may_play_this_turn_without_mana_cost",
+        "Generous Plunderer" => "menace;your_upkeep:may_create_treasure:when_you_do:target_opponent_creates_tapped_treasure;attacks:damage_defending_player_equal_artifacts_they_control",
+        "Gut, True Soul Zealot" => "controller_attacks:may_sacrifice_another_creature_or_artifact:if_paid:create_black_4_1_skeleton_menace_tapped_attacking;choose_a_background",
         _ => super::build_eternal_c6b_v1::trigger_recipe_for(name),
     }
 }

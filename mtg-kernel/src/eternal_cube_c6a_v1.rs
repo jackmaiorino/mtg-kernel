@@ -29,16 +29,18 @@
 //! register a reduced version of Black Widow's printed abilities.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
-use crate::card_def::{card_id_by_name, TargetSpec, CARD_DEFS};
+use crate::card_def::{card_id_by_name, CardType, TargetSpec, CARD_DEFS};
 use crate::effect::{
-    EffectContinuation, EffectOp, ExecCtx, ImpulseDuration, ObjectRef, PlayerRef, TargetRef,
+    EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp, ExecCtx, ImpulseDuration,
+    ObjectRef, PlayerRef, TargetRef,
 };
+use crate::eternal_cards_v1::e3::{E3ChoiceKindV1, E3ChoiceV1};
 use crate::eternal_cards_v1::{EternalOpV1, EternalTriggerV1};
 use crate::eternal_legacy_e9a_v1::TurnV1;
 use crate::event::{CommittedEvent, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::standard_cards_v1::{StandardOpV1, StandardTriggerV1};
-use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Zone};
+use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Target, Zone};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
@@ -47,11 +49,15 @@ use serde::{Deserialize, Serialize};
 pub enum C6aOpV1 {
     GauDamageV1,
     FallenShinobiHitV1,
+    PlundererCreateV1,
+    PlundererGiftV1,
+    PlundererDamageV1,
+    GutSacrificeV1,
 }
 
 impl C6aOpV1 {
     pub(crate) fn contains_player_choice(&self) -> bool {
-        false
+        matches!(self, Self::GutSacrificeV1)
     }
 }
 
@@ -59,6 +65,8 @@ const IVORA: &str = "Ivora, Insatiable Heir";
 const GAU: &str = "Gau, Feral Youth";
 const LAELIA: &str = "Laelia, the Blade Reforged";
 const FALLEN_SHINOBI: &str = "Fallen Shinobi";
+const PLUNDERER: &str = "Generous Plunderer";
+const GUT: &str = "Gut, True Soul Zealot";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum C6aTriggerV1 {
@@ -168,6 +176,114 @@ fn fallen_shinobi_hit() -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::C6aV1(
         C6aOpV1::FallenShinobiHitV1,
     )))
+}
+
+fn c6a(op: C6aOpV1) -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::C6aV1(op)))
+}
+
+/// Guide of Souls' optional action followed by a separately targeted
+/// reflexive trigger. The opponent is not targeted until after creation.
+fn plunderer_upkeep() -> EffectOp {
+    EffectOp::Choice {
+        controller: PlayerRef::Controller,
+        options: vec![
+            c6a(C6aOpV1::PlundererCreateV1),
+            EffectOp::Sequence(Vec::new()),
+        ],
+    }
+}
+
+fn plunderer_damage() -> EffectOp {
+    c6a(C6aOpV1::PlundererDamageV1)
+}
+
+fn gut_sacrifice() -> EffectOp {
+    c6a(C6aOpV1::GutSacrificeV1)
+}
+
+/// "Another" qualifies creature only: an artifact Gut can sacrifice itself.
+/// A returned source is a new permanent, so it also counts as another creature.
+fn gut_candidate(state: &GameState, ctx: &ExecCtx, object: ObjectId) -> bool {
+    let live = state.objects.get(object);
+    let is_source = ctx.ability_source_contract.is_some_and(|source| {
+        source.source == object && source.zone_change_count == live.zone_change_count
+    });
+    live.zone == Zone::Battlefield
+        && live.controller == ctx.controller
+        && (crate::engine::object_has_type(state, object, CardType::Artifact)
+            || (!is_source && crate::engine::object_has_type(state, object, CardType::Creature)))
+}
+
+/// Balance's public E3 permanent selection, with zero meaning decline.
+fn offer_gut_sacrifice(
+    state: &GameState,
+    continuation: &mut EffectContinuation,
+    path: Vec<u16>,
+) -> bool {
+    let bindings = [PlayerId::P0, PlayerId::P1]
+        .into_iter()
+        .flat_map(|seat| state.players[seat.index()].battlefield.iter().copied())
+        .filter(|&object| gut_candidate(state, &continuation.ctx, object))
+        .map(|object| EffectObjectBinding {
+            object,
+            expected_zone: Zone::Battlefield,
+            expected_zone_change_count: state.objects.get(object).zone_change_count,
+        })
+        .collect::<Vec<_>>();
+    if bindings.is_empty() {
+        return false;
+    }
+    let choice = E3ChoiceV1 {
+        kind: E3ChoiceKindV1::C6aGutSacrificeV1,
+        player: continuation.ctx.controller,
+        candidates: bindings
+            .iter()
+            .map(|card| Target::Object(card.object))
+            .collect(),
+        bindings,
+        min: 0,
+        max: 1,
+        ordered: false,
+        path,
+        remaining: continuation.frames.clone(),
+    };
+    crate::eternal_cards_v1::e3::offer(continuation, choice);
+    true
+}
+
+pub(crate) fn finish_gut_sacrifice(
+    state: &mut GameState,
+    continuation: &mut EffectContinuation,
+    choice: &E3ChoiceV1,
+    bindings: Vec<EffectObjectBinding>,
+) -> Result<bool, String> {
+    let Some(card) = bindings.first() else {
+        return Ok(false);
+    };
+    if state.objects.get(card.object).zone_change_count != card.expected_zone_change_count
+        || !gut_candidate(state, &continuation.ctx, card.object)
+    {
+        return Ok(false);
+    }
+    // Aang's Iceberg's sacrifice convention: replacement destinations still
+    // pay the cost, but a permanent that never leaves has not been sacrificed.
+    crate::event::log_sacrifice(state, card.object);
+    crate::event::propose_and_commit(
+        state,
+        ProposedEvent::zone_change(card.object, Zone::Graveyard),
+    );
+    if state.objects.get(card.object).zone != Zone::Battlefield {
+        // Adeline's Full-card convention: this shared op enters attacking
+        // the defending player, without a separate planeswalker choice.
+        continuation.frames.push(EffectFrame::Program {
+            op: EffectOp::CreateTokenTappedAndAttacking {
+                token_def: card_id_by_name("Skeleton Token").expect("registered Skeleton Token"),
+            },
+            path: choice.path.clone(),
+        });
+    }
+    Ok(false)
 }
 
 /// Ragavan's damaged opponent convention in this two-player engine, with
@@ -335,6 +451,19 @@ const FALLEN_SHINOBI_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
     fallen_shinobi_hit,
 )];
 
+const PLUNDERER_TRIGGERS: [TriggeredAbilityDef; 2] = [
+    trigger(
+        TriggerCondition::BeginningOfUpkeep {
+            controller_only: true,
+        },
+        plunderer_upkeep,
+    ),
+    trigger(TriggerCondition::Attacks, plunderer_damage),
+];
+
+const GUT_TRIGGERS: [TriggeredAbilityDef; 1] =
+    [trigger(TriggerCondition::ControllerAttacks, gut_sacrifice)];
+
 /// Capture observers before the discard moves any card, as Currency Converter
 /// does. This counts cards regardless of their replacement destination and
 /// retains each observer's original controller and battlefield incarnation.
@@ -375,14 +504,21 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         GAU => &GAU_TRIGGERS,
         LAELIA => &LAELIA_TRIGGERS,
         FALLEN_SHINOBI => &FALLEN_SHINOBI_TRIGGERS,
+        PLUNDERER => &PLUNDERER_TRIGGERS,
+        GUT => &GUT_TRIGGERS,
         _ => crate::eternal_cube_c6b_v1::triggers_for(name),
     }
 }
 
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    if name == PLUNDERER && *effect == c6a(C6aOpV1::PlundererGiftV1) {
+        return Some(TargetSpec::TargetOpponent);
+    }
     let known = match name {
         IVORA => *effect == blood() || *effect == ivora_counter(),
         FALLEN_SHINOBI => *effect == fallen_shinobi_hit(),
+        PLUNDERER => *effect == plunderer_upkeep() || *effect == plunderer_damage(),
+        GUT => *effect == gut_sacrifice(),
         GAU | LAELIA => {
             (name == GAU && *effect == gau_damage())
                 || (name == LAELIA && *effect == laelia_impulse())
@@ -398,11 +534,84 @@ pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<Targe
 }
 
 pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
-    name == IVORA && *effect == ivora_counter()
+    (name == IVORA && *effect == ivora_counter())
+        || (name == PLUNDERER && *effect == c6a(C6aOpV1::PlundererGiftV1))
 }
 
 pub(crate) fn execute(op: &C6aOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        C6aOpV1::PlundererCreateV1 => {
+            crate::effect::execute(
+                &EffectOp::CreateToken {
+                    token_def: card_id_by_name("Treasure Token")
+                        .expect("registered Treasure Token"),
+                    controller: PlayerRef::Controller,
+                },
+                ctx,
+                state,
+            );
+            if let Some(source) = ctx.ability_source_contract {
+                let mut pending = crate::eternal_cards_v1::delayed_trigger(
+                    source,
+                    ctx.controller,
+                    c6a(C6aOpV1::PlundererGiftV1),
+                );
+                pending.target_spec = TargetSpec::TargetOpponent;
+                state.engine.pending_triggers.push(pending);
+            }
+        }
+        C6aOpV1::PlundererGiftV1 => {
+            let Some(Target::Player(player)) = ctx.targets.first().copied() else {
+                return;
+            };
+            let Some(source) = ctx.ability_source_contract else {
+                return;
+            };
+            if !ctx.target_incarnation_matches(0, state)
+                || !crate::engine::effect_target_is_legal_from_ability_source(
+                    state,
+                    source,
+                    ctx.controller,
+                    TargetSpec::TargetOpponent,
+                    &ctx.targets,
+                    0,
+                )
+            {
+                return;
+            }
+            let mut event = ProposedEvent::create_token(
+                card_id_by_name("Treasure Token").expect("registered Treasure Token"),
+                player,
+            );
+            if let ProposedEvent::CreateToken(token) = &mut event {
+                token.entry_tapped = true;
+            }
+            crate::event::propose_and_commit(state, event);
+        }
+        C6aOpV1::PlundererDamageV1 => {
+            // Two-player defending-player convention, including when the
+            // attacker attacks that opponent's planeswalker (Adeline).
+            let count = [PlayerId::P0, PlayerId::P1]
+                .into_iter()
+                .flat_map(|seat| state.players[seat.index()].battlefield.iter().copied())
+                .filter(|&object| {
+                    let live = state.objects.get(object);
+                    live.zone == Zone::Battlefield
+                        && live.controller == ctx.controller.opponent()
+                        && crate::engine::object_has_type(state, object, CardType::Artifact)
+                })
+                .count();
+            crate::effect::execute(
+                &EffectOp::DealDamage {
+                    target: TargetRef::Opponent,
+                    amount: i32::try_from(count).unwrap_or(i32::MAX),
+                },
+                ctx,
+                state,
+            );
+        }
+        // The resumable interpreter owns this leaf's selection.
+        C6aOpV1::GutSacrificeV1 => {}
         C6aOpV1::FallenShinobiHitV1 => exile_opponents_top_two(state, ctx),
         C6aOpV1::GauDamageV1 => {
             if !card_left_graveyard(state, ctx.controller) {
@@ -451,8 +660,11 @@ pub(crate) fn drive(
     state: &mut GameState,
     continuation: &mut EffectContinuation,
     op: &C6aOpV1,
-    _path: Vec<u16>,
+    path: Vec<u16>,
 ) -> Result<bool, String> {
+    if *op == C6aOpV1::GutSacrificeV1 {
+        return Ok(offer_gut_sacrifice(state, continuation, path));
+    }
     execute(op, &continuation.ctx, state);
     Ok(false)
 }

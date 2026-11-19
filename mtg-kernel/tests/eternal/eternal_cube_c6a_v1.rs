@@ -3,6 +3,7 @@
 #![cfg(feature = "eternal-fixtures")]
 #![allow(dead_code)]
 
+use crate::eternal_catalog_v1::{play_observed, Policy};
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, CARD_DEFS,
 };
@@ -12,15 +13,18 @@ use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
 use mtg_kernel::mana::{ManaColor, Pip};
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
+use serde_json::Value;
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const C6A_CARDS: [&str; 4] = [
+const C6A_CARDS: [&str; 6] = [
     "Ivora, Insatiable Heir",
     "Gau, Feral Youth",
     "Laelia, the Blade Reforged",
     "Fallen Shinobi",
+    "Generous Plunderer",
+    "Gut, True Soul Zealot",
 ];
 
 // These are admission checks for unfinished cards, not printed-text rules
@@ -560,6 +564,49 @@ fn c6a_cards_are_full_with_printed_characteristics() {
     assert_eq!(ninjutsu.activation_zone, Zone::Hand);
     assert!(!ninjutsu.sorcery_speed_only);
     assert_eq!(ninjutsu.max_activations_per_turn, None);
+    for (name, generic, subtypes, legendary, menace) in [
+        (
+            C6A_CARDS[4],
+            1,
+            [Subtype::Human, Subtype::Rogue],
+            false,
+            true,
+        ),
+        (
+            C6A_CARDS[5],
+            2,
+            [Subtype::Goblin, Subtype::Shaman],
+            true,
+            false,
+        ),
+    ] {
+        let card = def(name);
+        assert_eq!(card.capability, CardCapability::Full);
+        assert!(card.is_executable());
+        assert_eq!(card.cost.generic, generic);
+        assert_eq!(card.cost.pips, &[Pip::Colored(ManaColor::R)]);
+        assert_eq!(card.cost.x_count, 0);
+        assert_eq!(card.colors, &[ManaColor::R]);
+        assert_eq!(card.types, &[CardType::Creature]);
+        assert_eq!(card.subtypes, &subtypes);
+        assert_eq!(card.supertypes.contains(&Supertype::Legendary), legendary);
+        assert_eq!((card.power, card.toughness), (Some(2), Some(2)));
+        assert_eq!(
+            card.keywords,
+            if menace {
+                Keywords::MENACE
+            } else {
+                Keywords::NONE
+            }
+        );
+    }
+    let skeleton = def("Skeleton Token");
+    assert!(skeleton.is_token);
+    assert_eq!(skeleton.colors, &[ManaColor::B]);
+    assert_eq!(skeleton.types, &[CardType::Creature]);
+    assert_eq!(skeleton.subtypes, &[Subtype::Skeleton]);
+    assert_eq!((skeleton.power, skeleton.toughness), (Some(4), Some(1)));
+    assert_eq!(skeleton.keywords, Keywords::MENACE);
 }
 
 // ---- Fallen Shinobi -----------------------------------------------------------
@@ -1171,12 +1218,7 @@ fn ivora_counts_each_cleanup_discard_and_ignores_other_hand_zone_changes() {
 fn cast_c6a_creature(state: &mut GameState, player: PlayerId, name: &str) -> ObjectId {
     state.priority_player = player;
     let creature = put(state, player, name, Zone::Hand);
-    pool(
-        state,
-        player,
-        &[ManaColor::R],
-        if name == C6A_CARDS[2] { 2 } else { 1 },
-    );
+    pool(state, player, &[ManaColor::R], def(name).cost.generic);
     cast(state, creature, &[]);
     settled(state);
     assert_eq!(zone(state, creature), Zone::Battlefield);
@@ -1635,4 +1677,412 @@ fn laelia_impulse_permission_does_not_follow_a_card_that_leaves_and_returns_to_e
     event::propose_and_commit(&mut state, ProposedEvent::zone_change(bolt, Zone::Exile));
     settled(&mut state);
     assert!(!castable(&mut state, bolt));
+}
+
+// ---- Generous Plunderer and Gut ------------------------------------------------
+
+fn plunderer_next_upkeep(state: &mut GameState, player: PlayerId) {
+    pass_until(state, |s| s.active_player != player);
+    pass_until(state, |s| {
+        s.active_player == player && s.step == Step::Upkeep
+    });
+}
+
+#[test]
+fn plunderer_upkeep_is_optional_controller_only_and_gives_a_separate_tapped_treasure() {
+    for player in [P0, P1] {
+        for accept in [false, true] {
+            let mut state = plains();
+            state.active_player = player;
+            state.priority_player = player;
+            let plunderer = cast_c6a_creature(&mut state, player, C6A_CARDS[4]);
+            assert!(keyword(&state, plunderer, Keywords::MENACE));
+            assert!(state.objects.get(plunderer).summoning_sick);
+            next_turn_main(&mut state);
+            assert!(named(&state, player, "Treasure Token").is_empty());
+            assert!(named(&state, player.opponent(), "Treasure Token").is_empty());
+            pass_until(&mut state, |s| {
+                s.active_player == player && s.step == Step::Upkeep
+            });
+            assert!(
+                matches!(settle(&mut state), Some(Decision::ChooseEffectOption { player: chooser, .. }) if chooser == player)
+            );
+            act(
+                &mut state,
+                Action::ChooseEffectOption(if accept { 0 } else { 1 }),
+            );
+            if accept {
+                match settle(&mut state) {
+                    Some(Decision::ChooseTargets {
+                        player: chooser,
+                        legal_targets,
+                        ..
+                    }) => {
+                        assert_eq!(chooser, player);
+                        assert_eq!(legal_targets, vec![Target::Player(player.opponent())]);
+                    }
+                    other => panic!("expected reflexive target, got {other:?}"),
+                }
+                let ours = named(&state, player, "Treasure Token");
+                assert_eq!(ours.len(), 1);
+                assert!(!state.objects.get(ours[0]).tapped);
+                assert!(named(&state, player.opponent(), "Treasure Token").is_empty());
+                act(
+                    &mut state,
+                    Action::ChooseTarget(Target::Player(player.opponent())),
+                );
+                on_the_stack(&mut state);
+                assert_eq!(state.stack.len(), 1, "the gift can be responded to");
+                settled(&mut state);
+                let theirs = named(&state, player.opponent(), "Treasure Token");
+                assert_eq!(theirs.len(), 1);
+                assert!(state.objects.get(theirs[0]).tapped);
+                assert_eq!(state.objects.get(theirs[0]).owner, player.opponent());
+            } else {
+                settled(&mut state);
+                assert!(named(&state, player, "Treasure Token").is_empty());
+                assert!(named(&state, player.opponent(), "Treasure Token").is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn plunderer_gift_survives_its_source_but_rechecks_opponent_hexproof() {
+    for hexproof in [false, true] {
+        let mut state = plains();
+        let plunderer = cast_c6a_creature(&mut state, P0, C6A_CARDS[4]);
+        plunderer_next_upkeep(&mut state, P0);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption { .. })
+        ));
+        act(&mut state, Action::ChooseEffectOption(0));
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseTargets { .. })
+        ));
+        act(&mut state, Action::ChooseTarget(Target::Player(P1)));
+        on_the_stack(&mut state);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(plunderer, Zone::Graveyard),
+        );
+        if hexproof {
+            put(&mut state, P1, "Leyline of Sanctity", Zone::Battlefield);
+        }
+        settled(&mut state);
+        assert_eq!(named(&state, P0, "Treasure Token").len(), 1);
+        assert_eq!(
+            named(&state, P1, "Treasure Token").len(),
+            usize::from(!hexproof)
+        );
+    }
+}
+
+#[test]
+fn plunderer_can_create_its_treasure_even_when_no_opponent_can_be_targeted() {
+    let mut state = plains();
+    cast_c6a_creature(&mut state, P0, C6A_CARDS[4]);
+    put(&mut state, P1, "Leyline of Sanctity", Zone::Battlefield);
+    plunderer_next_upkeep(&mut state, P0);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectOption { .. })
+    ));
+    act(&mut state, Action::ChooseEffectOption(0));
+    settled(&mut state);
+    assert_eq!(named(&state, P0, "Treasure Token").len(), 1);
+    assert!(named(&state, P1, "Treasure Token").is_empty());
+}
+
+fn ready_plunderer(state: &mut GameState) -> ObjectId {
+    let source = cast_c6a_creature(state, P0, C6A_CARDS[4]);
+    next_turn_main(state);
+    run_until(
+        state,
+        |s| s.active_player == P0 && s.step == Step::Main1,
+        |_, choice| {
+            matches!(choice, Decision::ChooseEffectOption { .. })
+                .then_some(Action::ChooseEffectOption(1))
+        },
+    );
+    source
+}
+
+#[test]
+fn plunderer_attack_counts_opponents_current_artifacts_even_tapped_and_after_source_leaves() {
+    for artifact_count in [0, 2] {
+        let mut state = plains();
+        let source = ready_plunderer(&mut state);
+        token(&mut state, P0, "Treasure Token");
+        let gone = token(&mut state, P1, "Treasure Token");
+        pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+        act(&mut state, Action::DeclareAttackers(vec![source]));
+        on_the_stack(&mut state);
+        assert_eq!(state.stack.len(), 1);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(gone, Zone::Exile));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(source, Zone::Graveyard),
+        );
+        for _ in 0..artifact_count {
+            let treasure = token(&mut state, P1, "Treasure Token");
+            state.objects.get_mut(treasure).tapped = true;
+        }
+        settled(&mut state);
+        assert_eq!(life(&state, P1), 20 - artifact_count);
+    }
+    let mut state = plains();
+    cast_c6a_creature(&mut state, P0, C6A_CARDS[4]);
+    let bear = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    token(&mut state, P1, "Treasure Token");
+    attack_with(&mut state, vec![bear], |_, _| None);
+    assert_eq!(
+        life(&state, P1),
+        18,
+        "another attack does not trigger Plunderer"
+    );
+}
+
+#[test]
+fn plunderer_menace_requires_two_blockers() {
+    let mut state = plains();
+    let source = ready_plunderer(&mut state);
+    let first = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    let second = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![source]));
+    pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
+    assert!(engine::step(&mut state, Action::DeclareBlockers(vec![(first, source)])).is_err());
+    act(
+        &mut state,
+        Action::DeclareBlockers(vec![(first, source), (second, source)]),
+    );
+}
+
+#[test]
+fn gut_sacrifices_another_creature_or_artifact_once_per_attack_and_makes_an_attacking_skeleton() {
+    for sacrifice_name in ["Grizzly Bears", "Treasure Token", "Ornithopter"] {
+        let mut state = plains();
+        let gut = cast_c6a_creature(&mut state, P0, C6A_CARDS[5]);
+        let first = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+        let second = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+        let sacrifice = if sacrifice_name == "Treasure Token" {
+            token(&mut state, P0, sacrifice_name)
+        } else {
+            put(&mut state, P0, sacrifice_name, Zone::Battlefield)
+        };
+        let land = put(&mut state, P0, "Mountain", Zone::Battlefield);
+        let enemy = put(&mut state, P1, "Ornithopter", Zone::Battlefield);
+        let mut selections = 0;
+        pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+        act(&mut state, Action::DeclareAttackers(vec![first, second]));
+        run_until(
+            &mut state,
+            |s| s.step == Step::DeclareBlockers,
+            |_, choice| {
+                if let Decision::ChooseEffectTargets {
+                    player,
+                    legal_targets,
+                    ..
+                } = choice
+                {
+                    selections += 1;
+                    assert_eq!(*player, P0);
+                    assert!(legal_targets.contains(&Target::Object(sacrifice)));
+                    for excluded in [gut, land, enemy] {
+                        assert!(!legal_targets.contains(&Target::Object(excluded)));
+                    }
+                    return Some(Action::ChooseEffectTarget(Target::Object(sacrifice)));
+                }
+                None
+            },
+        );
+        assert_eq!(selections, 1, "several attackers still give one trigger");
+        assert_ne!(zone(&state, sacrifice), Zone::Battlefield);
+        assert_eq!(zone(&state, gut), Zone::Battlefield);
+        let skeletons = named(&state, P0, "Skeleton Token");
+        assert_eq!(
+            skeletons.len(),
+            1,
+            "the entering attacker does not retrigger Gut"
+        );
+        let skeleton = skeletons[0];
+        assert!(state.objects.get(skeleton).tapped);
+        assert!(state.engine.combat.attackers.contains(&skeleton));
+        assert_eq!(power_toughness(&state, skeleton), (4, 1));
+        assert!(keyword(&state, skeleton, Keywords::MENACE));
+        assert!(
+            engine::step(&mut state, Action::DeclareBlockers(vec![(enemy, skeleton)])).is_err()
+        );
+        act(&mut state, Action::DeclareBlockers(Vec::new()));
+        pass_until(&mut state, |s| s.step == Step::Main2);
+        assert_eq!(life(&state, P1), 12);
+    }
+}
+
+#[test]
+fn gut_allows_decline_and_has_no_offer_without_another_creature_or_artifact() {
+    for have_candidate in [false, true] {
+        let mut state = plains();
+        let gut = cast_c6a_creature(&mut state, P0, C6A_CARDS[5]);
+        next_turn_main(&mut state);
+        next_turn_main(&mut state);
+        let candidate =
+            have_candidate.then(|| put(&mut state, P0, "Grizzly Bears", Zone::Battlefield));
+        let mut offers = 0;
+        attack_with(&mut state, vec![gut], |_, choice| {
+            if let Decision::ChooseEffectTargets { can_finish, .. } = choice {
+                offers += 1;
+                assert!(*can_finish);
+                return Some(Action::FinishEffectSelection);
+            }
+            None
+        });
+        assert_eq!(offers, usize::from(have_candidate));
+        assert!(named(&state, P0, "Skeleton Token").is_empty());
+        assert_eq!(life(&state, P1), 18);
+        if let Some(candidate) = candidate {
+            assert_eq!(zone(&state, candidate), Zone::Battlefield);
+        }
+    }
+}
+
+#[test]
+fn gut_does_not_trigger_for_empty_attacks_or_opponents_attacks() {
+    let mut state = plains();
+    cast_c6a_creature(&mut state, P0, C6A_CARDS[5]);
+    token(&mut state, P0, "Treasure Token");
+    attack_with(&mut state, Vec::new(), |_, choice| {
+        assert!(!matches!(choice, Decision::ChooseEffectTargets { .. }));
+        None
+    });
+    assert!(named(&state, P0, "Skeleton Token").is_empty());
+    next_turn_main(&mut state);
+    let attacker = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    attack_with(&mut state, vec![attacker], |_, choice| {
+        assert!(!matches!(choice, Decision::ChooseEffectTargets { .. }));
+        None
+    });
+    assert_eq!(life(&state, P0), 18);
+    assert!(named(&state, P0, "Skeleton Token").is_empty());
+}
+
+#[test]
+fn gut_can_sacrifice_itself_as_an_artifact_and_still_creates_the_skeleton() {
+    let mut state = plains();
+    let gut = cast_c6a_creature(&mut state, P0, C6A_CARDS[5]);
+    let coating = put(&mut state, P0, "Liquimetal Coating", Zone::Battlefield);
+    activate(&mut state, coating, 0, &[Target::Object(gut)]);
+    settled(&mut state);
+    let attacker = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    attack_with(&mut state, vec![attacker], |_, choice| match choice {
+        Decision::ChooseEffectTargets { legal_targets, .. } => {
+            assert!(legal_targets.contains(&Target::Object(gut)));
+            Some(Action::ChooseEffectTarget(Target::Object(gut)))
+        }
+        _ => None,
+    });
+    assert_eq!(zone(&state, gut), Zone::Graveyard);
+    assert_eq!(named(&state, P0, "Skeleton Token").len(), 1);
+    assert_eq!(life(&state, P1), 14);
+}
+
+#[test]
+fn gut_selects_at_resolution_and_a_returned_source_is_another_creature() {
+    for return_source in [false, true] {
+        let mut state = plains();
+        let gut = cast_c6a_creature(&mut state, P0, C6A_CARDS[5]);
+        let attacker = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+        pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+        act(&mut state, Action::DeclareAttackers(vec![attacker]));
+        on_the_stack(&mut state);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(attacker, Zone::Graveyard),
+        );
+        if return_source {
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(gut, Zone::Exile));
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(gut, Zone::Battlefield),
+            );
+            settle_choosing(&mut state, gut);
+            assert_eq!(zone(&state, gut), Zone::Graveyard);
+        } else {
+            settled(&mut state);
+        }
+        assert_eq!(
+            named(&state, P0, "Skeleton Token").len(),
+            usize::from(return_source)
+        );
+    }
+}
+
+// ---- Public sessions: all six completed cards, 12 games and 12 replays ---------
+
+#[derive(Default)]
+struct C6aEvents {
+    casts: [usize; C6A_CARDS.len()],
+}
+
+impl C6aEvents {
+    fn observe(&mut self, _decision: &Value, action: &Value) {
+        let semantic = &action["semantic"];
+        if semantic["action_kind"].as_str() != Some("cast_spell") {
+            return;
+        }
+        let Some(card_id) = semantic["source"]["card_db_id"]
+            .as_u64()
+            .and_then(|id| usize::try_from(id).ok())
+        else {
+            return;
+        };
+        if let Some(index) = C6A_CARDS
+            .iter()
+            .position(|&name| name == CARD_DEFS[card_id].name)
+        {
+            self.casts[index] += 1;
+        }
+    }
+}
+
+#[test]
+fn c6a_decks_finish_and_replay_through_public_sessions_both_seats() {
+    let red = deck(&[
+        ("Mountain", 24),
+        ("Jackal Pup", 6),
+        ("Ivora, Insatiable Heir", 6),
+        ("Gau, Feral Youth", 6),
+        ("Laelia, the Blade Reforged", 6),
+        ("Generous Plunderer", 6),
+        ("Gut, True Soul Zealot", 6),
+    ]);
+    let ninjas = deck(&[
+        ("Underground Sea", 12),
+        ("Island", 4),
+        ("Swamp", 4),
+        ("Faerie Seer", 12),
+        ("Fallen Shinobi", 12),
+    ]);
+    let mut totals = C6aEvents::default();
+    for (pair, first_seed) in [
+        ([red.clone(), ninjas.clone()], 0x4336_4100_u64),
+        ([ninjas, red], 0x4336_4110_u64),
+    ] {
+        for seed in first_seed..first_seed + 3 {
+            for policy in [Policy::Ranked, Policy::Random(seed + 0x100)] {
+                let game =
+                    play_observed(pair.clone(), None, seed, policy, &mut |decision, action| {
+                        totals.observe(decision, action)
+                    });
+                let replay = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
+                assert_eq!(game.transcript_sha256, replay.transcript_sha256);
+            }
+        }
+    }
+    for (name, casts) in C6A_CARDS.into_iter().zip(totals.casts) {
+        assert!(casts > 0, "{name} never cast through the public session");
+    }
 }
