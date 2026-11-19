@@ -5682,6 +5682,8 @@ fn triggers_from_events(
         // on the stack without committing any event (Vintage Cube wave C4b).
         #[cfg(feature = "eternal-fixtures")]
         new_triggers.extend(crate::eternal_cube_c4b_v1::delayed_triggers(state, events));
+        // Garruk observes declarations even when vigilance produces no tap event.
+        new_triggers.extend(crate::eternal_cube_c6c_v1::delayed_triggers(state, events));
         uses.sort_by_key(|entry| (entry.source.object, entry.ability_index));
         state.trigger_uses_v1 = (!uses.is_empty()).then_some(uses);
         return new_triggers;

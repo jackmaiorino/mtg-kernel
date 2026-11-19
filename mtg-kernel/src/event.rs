@@ -4086,6 +4086,9 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
     // step) becomes a Treasure token for its controller (eternal wave S1c).
     #[cfg(feature = "eternal-fixtures")]
     if let ProposedEvent::Draw(draw) = &event {
+        if crate::eternal_cube_c6c_v1::prevents_draw(state, draw.player) {
+            return;
+        }
         if let Some(owner) =
             crate::eternal_sideboard_s1c_v1::statics::hullbreacher_replaces_draw(state, draw.player)
         {
@@ -5361,6 +5364,7 @@ fn commit_with_entry_batch_and_source_color(
     } else {
         crate::arahbo_v1::record_single_entry(state, entry_history_index);
     }
+    crate::eternal_cube_c6c_v1::capture_single_entry(state, entry_history_index, defer_raid_entry);
     if let Some(batch) = authority_batch.as_mut() {
         batch.record(entry_history_index);
     } else {
@@ -6291,6 +6295,12 @@ fn materialize_event_v1(
                 player: g.player,
                 amount: g.amount,
             }
+        }
+        ProposedEvent::Draw(d)
+            if cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c6c_v1::prevents_draw(state, d.player) =>
+        {
+            return None;
         }
         ProposedEvent::Draw(d)
             if cfg!(feature = "eternal-fixtures")
@@ -7548,6 +7558,7 @@ fn commit_batch_survivors_native(
     }
 
     crate::raid_entry_custody_v1::capture_batch_entries(state, raid_history_start);
+    crate::eternal_cube_c6c_v1::capture_batch_entries(state, raid_history_start);
     if let Some(batch) = arahbo_batch {
         batch.finish(state);
     }

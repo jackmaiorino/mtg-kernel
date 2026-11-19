@@ -13159,7 +13159,8 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                     || !activated_ability_face_active(state, id, ability)
                     || !crate::standard_cards_v1::activation_allowed(state, id, def, i)
                     || (ability.is_loyalty_ability()
-                        && (!sorcery_speed_timing_ok(player, state)
+                        && ((!sorcery_speed_timing_ok(player, state)
+                            && !crate::eternal_cube_c6c_v1::emperor_instant_loyalty(state, id))
                             || loyalty_ability_activated_this_turn(state, id)))
                     || (ability.sorcery_speed_only && !sorcery_speed_timing_ok(player, state))
                     || ability.max_activations_per_turn.is_some_and(|limit| {
@@ -29248,6 +29249,7 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
             crate::high_society_hunter_v1::capture_attack(state, declaration);
         }
     }
+    crate::eternal_cube_c6c_v1::capture_attack(state);
     if !state.engine.combat.attackers.is_empty() {
         let attacker = state.active_player;
         // Raid history belongs to the successor Limited rules scope. Keep

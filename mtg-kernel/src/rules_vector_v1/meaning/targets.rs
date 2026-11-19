@@ -806,6 +806,8 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::CreatureSpellPowerOrToughnessAtMostTwoV1 => ObjF::Spell,
         S::UpToOneCreatureCardInOwnGraveyardV1 => creature(),
         S::PermanentCardInOwnGraveyardThisTurnV1 => ObjF::Permanent,
+        S::TappedCreatureV1 => creature(),
+        S::UpToTwoLandsV1 => typed(CardType::Land),
     }
 }
 
@@ -937,6 +939,8 @@ pub(super) fn standard_target_origin(
         }
         S::UpToOneCreatureCardInOwnGraveyardV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
         S::PermanentCardInOwnGraveyardThisTurnV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
+        S::TappedCreatureV1 => (Some(ZoneF::Battlefield), None),
+        S::UpToTwoLandsV1 => (Some(ZoneF::Battlefield), None),
     }
 }
 
@@ -1453,6 +1457,16 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         }
         S::PermanentCardInOwnGraveyardThisTurnV1 => {
             object(out, ObjF::Permanent, relation, zone);
+        }
+        S::TappedCreatureV1 => {
+            object(out, creature(), relation, zone);
+            // Tapped status has no facet, as for TappedOpponentCreature.
+            out.atoms.push(Atom::Opaque);
+        }
+        S::UpToTwoLandsV1 => {
+            object(out, typed(CardType::Land), relation, zone);
+            out.target(TargetAtom::MultipleTargets);
+            out.target(TargetAtom::UpTo);
         }
     }
 }

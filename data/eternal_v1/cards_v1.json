@@ -36380,7 +36380,8 @@
   },
   {
    "name": "Jace, the Mind Sculptor",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 3,
    "mana_cost": "{2}{U}{U}",
    "mana_value": 4,
    "colors": [
@@ -36404,12 +36405,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/j/JaceTheMindSculptor.java"
   },
   {
    "name": "Karn, Scion of Urza",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
    "mana_cost": "{4}",
    "mana_value": 4,
    "colors": [],
@@ -36431,12 +36436,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/k/KarnScionOfUrza.java"
   },
   {
    "name": "Narset, Parter of Veils",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
    "mana_cost": "{1}{U}{U}",
    "mana_value": 3,
    "colors": [
@@ -36445,7 +36454,9 @@
    "types": [
     "Planeswalker"
    ],
-   "subtypes": [],
+   "subtypes": [
+    "Narset"
+   ],
    "supertypes": [
     "Legendary"
    ],
@@ -36458,7 +36469,10 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/n/NarsetParterOfVeils.java"
   },
   {
@@ -36491,7 +36505,8 @@
   },
   {
    "name": "Teferi, Hero of Dominaria",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 4,
    "mana_cost": "{3}{W}{U}",
    "mana_value": 5,
    "colors": [
@@ -36516,12 +36531,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/TeferiHeroOfDominaria.java"
   },
   {
    "name": "The Wandering Emperor",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 3,
    "mana_cost": "{2}{W}{W}",
    "mana_value": 4,
    "colors": [
@@ -36543,7 +36562,11 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "flash"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/TheWanderingEmperor.java"
   },
   {
@@ -36579,7 +36602,8 @@
   },
   {
    "name": "Garruk, Curse Breaker",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
    "mana_cost": "{3}{G}{G}",
    "mana_value": 5,
    "colors": [
@@ -36588,7 +36612,7 @@
    "types": [
     "Planeswalker"
    ],
-   "subtypes": [],
+   "subtypes": ["Garruk"],
    "supertypes": [
     "Legendary"
    ],
@@ -36601,7 +36625,7 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": ["planeswalker", "loyalty_abilities", "token_creation"]
   },
   {
    "name": "1/1 red Elemental Token",
@@ -36620,6 +36644,25 @@
    "sideboard_only": false,
    "complexity": "simple",
    "mechanics": ["token_creation"],
+   "is_token": true
+  },
+  {
+   "name": "Garruk Beast Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": ["G"],
+   "types": ["Creature"],
+   "subtypes": ["Beast"],
+   "supertypes": [],
+   "power": 4,
+   "toughness": 4,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": ["trample"],
    "is_token": true
   }
  ]

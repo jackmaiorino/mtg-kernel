@@ -343,6 +343,8 @@ fn standard_shape(filter: StandardTargetV1) -> TargetShape {
         | S::CreatureSpellPowerOrToughnessAtMostTwoV1 => Single,
         S::UpToOneCreatureCardInOwnGraveyardV1 => NoPermanentSlot,
         S::PermanentCardInOwnGraveyardThisTurnV1 => NoPermanentSlot,
+        S::TappedCreatureV1 => Single,
+        S::UpToTwoLandsV1 => SharedRoster,
     }
 }
 

@@ -478,6 +478,10 @@ pub enum StandardTargetV1 {
     UpToOneCreatureCardInOwnGraveyardV1,
     /// Night Nurse: a permanent card put into your graveyard this turn.
     PermanentCardInOwnGraveyardThisTurnV1,
+    /// Exactly one tapped creature, controlled by either player.
+    TappedCreatureV1,
+    /// Zero, one or two distinct lands, controlled by either player.
+    UpToTwoLandsV1,
 }
 
 impl StandardTargetV1 {
@@ -595,6 +599,7 @@ impl StandardTargetV1 {
                 (count, count)
             }
             Self::UpToOneCreatureCardInOwnGraveyardV1 => (1, 0),
+            Self::UpToTwoLandsV1 => (2, 0),
             _ => (1, 1),
         }
     }
@@ -1231,6 +1236,7 @@ pub(crate) fn legal_targets(
             !matches!(
                 target,
                 StandardTargetV1::UpToEightCreaturesOrPlaneswalkersV74
+                    | StandardTargetV1::UpToTwoLandsV1
                     | StandardTargetV1::UpToTwoControlledCreatures
                     | StandardTargetV1::UpToTwoControlledArtifactsOrCreatures
             ) || !prefix.contains(&Target::Object(id))
@@ -1675,6 +1681,8 @@ pub(crate) fn target_matches(
         StandardTargetV1::S1qV1(_) => false,
         StandardTargetV1::UpToOneCreatureCardInOwnGraveyardV1 => false,
         StandardTargetV1::PermanentCardInOwnGraveyardThisTurnV1 => false,
+        StandardTargetV1::TappedCreatureV1 => live.tapped && has(CardType::Creature),
+        StandardTargetV1::UpToTwoLandsV1 => has(CardType::Land),
     }
 }
 
