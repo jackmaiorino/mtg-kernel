@@ -1289,7 +1289,10 @@ fn sba_owner_order_halts_only_on_the_unsupported_final_top_both_seats() {
             assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
             // The first pick goes to the bottom.
             let bottom = if donor_on_top { supported } else { donor };
-            act(&mut state, Action::ChooseEffectTarget(Target::Object(bottom)));
+            act(
+                &mut state,
+                Action::ChooseEffectTarget(Target::Object(bottom)),
+            );
             if donor_on_top {
                 assert_eq!(state.engine.halted, donor_halt(source));
                 assert_halted_now(&mut state, source);
