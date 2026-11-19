@@ -15799,6 +15799,9 @@ fn drive_resumable_in_departure_scope_v1(
                 put_returning_aura_attached(state, aura, host)?;
             }
             EffectOp::Sequence(ops) => {
+                if execute_graveyard_return_tapped(&ops, &continuation.ctx, state, native_row) {
+                    continue;
+                }
                 for (index, inner) in ops.into_iter().enumerate().rev() {
                     let mut inner_path = path.clone();
                     inner_path.push(index as u16);
@@ -20815,6 +20818,76 @@ fn execute_with_native_row_v1(
     crate::eternal_premodern_p3d_v1::leave_resolution(state, enclosing);
 }
 
+/// CR 400.7: a graveyard ability refers to its source's original incarnation.
+/// Sneaky Snacker has no targets and no intervening "if" clause. If another
+/// effect moved the card, the ability resolves and does nothing because the
+/// object it refers to is gone. CR 400.7j lets an effect find objects moved
+/// to a public zone by that effect or by the spell or ability's costs.
+/// The return-and-tap pair below handles this resolution's own move. This
+/// check uses the captured ability source, so abilities that triggered on
+/// the battlefield, spells, and effects that move a target are unaffected.
+fn graveyard_ability_source_left_graveyard(
+    object: ObjectRef,
+    ctx: &ExecCtx,
+    state: &GameState,
+) -> bool {
+    object == ObjectRef::ThisSource
+        && ctx.ability_source_contract.is_some_and(|contract| {
+            contract.zone == Zone::Graveyard
+                && contract.source == ctx.source
+                && state.objects.try_get(ctx.source).is_none_or(|source| {
+                    source.zone != Zone::Graveyard
+                        || source.zone_change_count != contract.zone_change_count
+                })
+        })
+}
+
+/// Handles the return-and-tap pair without storing new resolution state.
+/// The original incarnation must be present before this pair's move, and
+/// only the battlefield incarnation created by that move can be tapped.
+fn execute_graveyard_return_tapped(
+    ops: &[EffectOp],
+    ctx: &ExecCtx,
+    state: &mut GameState,
+    native_row: Option<&NativeExecutionOwnerV1>,
+) -> bool {
+    let Some(contract) = ctx.ability_source_contract else {
+        return false;
+    };
+    if contract.zone != Zone::Graveyard
+        || !matches!(
+            ops,
+            [
+                EffectOp::MoveObject {
+                    object: ObjectRef::ThisSource,
+                    to_zone: Zone::Battlefield,
+                },
+                EffectOp::TapObject {
+                    object: ObjectRef::ThisSource,
+                },
+            ]
+        )
+    {
+        return false;
+    }
+    if contract.source != ctx.source
+        || graveyard_ability_source_left_graveyard(ObjectRef::ThisSource, ctx, state)
+    {
+        return true;
+    }
+    execute_native_child_v1(&ops[0], ctx, state, native_row);
+    if state.engine.halted.is_none()
+        && !crate::eternal_cards_v1::owned_draws_v1::program_stops_after_win(state)
+        && state.objects.try_get(ctx.source).is_some_and(|source| {
+            source.zone == Zone::Battlefield
+                && contract.zone_change_count.checked_add(1) == Some(source.zone_change_count)
+        })
+    {
+        event::propose_and_commit(state, event::ProposedEvent::tap(ctx.source));
+    }
+    true
+}
+
 fn execute_in_departure_scope_v1(
     op: &EffectOp,
     ctx: &ExecCtx,
@@ -21197,6 +21270,9 @@ fn execute_in_departure_scope_v1(
             }
         }
         EffectOp::Sequence(ops) => {
+            if execute_graveyard_return_tapped(ops, ctx, state, native_row) {
+                return;
+            }
             for inner in ops {
                 execute_native_child_v1(inner, ctx, state, native_row);
                 // A player who won the game ends it at once (104.1): the
@@ -21763,8 +21839,14 @@ fn execute_in_departure_scope_v1(
                     .expect("freshly revealed batch bindings remain valid");
             }
         }
-        EffectOp::MoveObject { object, to_zone } => {
-            let object = ctx.resolve_object(*object);
+        EffectOp::MoveObject {
+            object: object_ref,
+            to_zone,
+        } => {
+            if graveyard_ability_source_left_graveyard(*object_ref, ctx, state) {
+                return;
+            }
+            let object = ctx.resolve_object(*object_ref);
             if *to_zone != Zone::Stack {
                 match crate::engine::apply_live_stack_spell_departure(state, object, *to_zone) {
                     Ok(true) => return,
@@ -23163,6 +23245,16 @@ fn execute_in_departure_scope_v1(
             event::propose_and_commit(state, proposed);
         }
         EffectOp::TapObject { object } => {
+            // The return-and-tap pair handles graveyard sources only after
+            // verifying that this resolution returned the original object.
+            // A standalone tap cannot follow a later incarnation.
+            if *object == ObjectRef::ThisSource
+                && ctx
+                    .ability_source_contract
+                    .is_some_and(|contract| contract.zone == Zone::Graveyard)
+            {
+                return;
+            }
             let object = ctx.resolve_object(*object);
             event::propose_and_commit(state, event::ProposedEvent::tap(object));
         }
