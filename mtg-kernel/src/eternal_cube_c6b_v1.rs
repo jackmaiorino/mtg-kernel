@@ -16,6 +16,16 @@
 //! Malcolm remains no_effect: resolution_cast_v1 only supports paid graveyard
 //! casts. Its free-cast checks and E5b answer authorization accept hand/exile,
 //! not the exact graveyard incarnation of the card just discarded.
+//!
+//! Vaultborn Tyrant remains no_effect: source_token_copy_v1 and TokenEntryV48
+//! cannot carry an added artifact copy type. Metamorph's separate copy record
+//! is not a token-creation initialization or a propagated copiable value.
+//! No token or subtype IDs are reserved by this call.
+//!
+//! Fanatic follows Full Zoraline's return-then-counter convention: the counter
+//! is placed on the exact returned incarnation after the entry event, rather
+//! than being part of entry initialization. This has the same entry-observer
+//! timing limitation as Zoraline's FinalityReturnedTarget.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::card_def::{card_id_by_name, CardType, TargetSpec, CARD_DEFS};
@@ -30,9 +40,12 @@ use crate::state::{GameState, Target, Zone};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
+pub(crate) mod targets;
+
 const CRYOMANCER: &str = "Seasoned Cryomancer";
 const PYROMANCER: &str = "Seasoned Pyromancer";
 const SPHINX: &str = "Sphinx of False Conclusions";
+const FANATIC: &str = "Metamorphosis Fanatic";
 // Appended token row. Elemental already exists, so this call uses no
 // subtype IDs from the reserved C6b range 710..719.
 const ELEMENTAL: &str = "1/1 red Elemental Token";
@@ -59,6 +72,8 @@ pub enum C6bOpV1 {
     DiscardedElementalsV1,
     /// Cryomancer's separate reflexive trigger, with one or two target slots.
     CryomancerStunV1 { count: u16 },
+    /// Zoraline's exact-successor counter placement, using a lifelink counter.
+    FanaticReturnedLifelinkV1,
 }
 
 impl C6bOpV1 {
@@ -139,6 +154,24 @@ pub fn nontoken_death_copy() -> EffectOp {
     EffectOp::CreateTokenCopyOfSourceV1
 }
 
+pub fn fanatic_entry() -> EffectOp {
+    EffectOp::Conditional {
+        cond: crate::effect::EffectCond::TargetIsLegalForAbility {
+            index: 0,
+            spec: fanatic_target(),
+        },
+        then: Box::new(EffectOp::Sequence(vec![
+            EffectOp::ReturnTargetPermanentToBattlefield { target_index: 0 },
+            c6b(C6bOpV1::FanaticReturnedLifelinkV1),
+        ])),
+        else_: Box::new(EffectOp::Sequence(Vec::new())),
+    }
+}
+
+fn fanatic_target() -> TargetSpec {
+    TargetSpec::StandardV1(StandardTargetV1::UpToOneCreatureCardInOwnGraveyardV1)
+}
+
 /// Extend the source-copy departure recorder and root validator, without
 /// selecting this creature's unrelated attack ability as a copy operation.
 pub(crate) fn has_nontoken_death_copy(card_def: u16) -> bool {
@@ -171,6 +204,7 @@ const fn etb(effect: fn() -> EffectOp) -> TriggeredAbilityDef {
 
 const CRYOMANCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb(cryomancer_entry)];
 const PYROMANCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb(pyromancer_entry)];
+const FANATIC_TRIGGERS: [TriggeredAbilityDef; 1] = [etb(fanatic_entry)];
 const SPHINX_TRIGGERS: [TriggeredAbilityDef; 2] = [
     TriggeredAbilityDef {
         condition: TriggerCondition::Attacks,
@@ -187,6 +221,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         CRYOMANCER => &CRYOMANCER_TRIGGERS,
         PYROMANCER => &PYROMANCER_TRIGGERS,
         SPHINX => &SPHINX_TRIGGERS,
+        FANATIC => &FANATIC_TRIGGERS,
         _ => crate::eternal_cube_c6c_v1::triggers_for(name),
     }
 }
@@ -200,6 +235,9 @@ fn stun_targets(count: u16) -> TargetSpec {
 }
 
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    if name == FANATIC && *effect == fanatic_entry() {
+        return Some(fanatic_target());
+    }
     if (name == CRYOMANCER && *effect == cryomancer_entry())
         || (name == PYROMANCER && *effect == pyromancer_entry())
         || (name == SPHINX && (*effect == sphinx_loot() || *effect == nontoken_death_copy()))
@@ -297,6 +335,40 @@ fn discard_selected(
 
 pub(crate) fn execute(op: &C6bOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        C6bOpV1::FanaticReturnedLifelinkV1 => {
+            let Some(crate::state::StackTargetContractV4::Object {
+                object,
+                zone: Zone::Graveyard,
+                zone_change_count,
+                ..
+            }) = ctx.target_contracts.first().copied()
+            else {
+                return;
+            };
+            let Some(live) = state.objects.try_get(object) else {
+                return;
+            };
+            if live.zone != Zone::Battlefield
+                || zone_change_count.checked_add(1) != Some(live.zone_change_count)
+            {
+                return;
+            }
+            // The returned permanent need not still be a creature (devotion,
+            // for example). The general counter helper also sets timestamps
+            // and applies counter replacements on the actual recipient.
+            let _ = crate::standard_creatures_v1::place_counters_checked_v1(
+                state,
+                object,
+                ctx.controller,
+                crate::standard_creatures_v1::CounterTransferV1 {
+                    extras: crate::standard_creatures_v1::CounterExtrasV1 {
+                        lifelink: 1,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            );
+        }
         C6bOpV1::DiscardedElementalsV1 => {
             let count = state
                 .eternal_v1

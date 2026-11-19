@@ -16,10 +16,11 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const C6B_CARDS: [&str; 3] = [
+const C6B_CARDS: [&str; 4] = [
     "Seasoned Cryomancer",
     "Seasoned Pyromancer",
     "Sphinx of False Conclusions",
+    "Metamorphosis Fanatic",
 ];
 
 fn def(name: &str) -> &'static CardDef {
@@ -1336,5 +1337,324 @@ fn sphinx_loot_offers_competing_draw_replacements_and_stops_after_a_win() {
             assert_eq!(zone(&state, discard), Zone::Graveyard);
             assert_eq!(named(&state, P1, "Treasure Token").len(), 1);
         }
+    }
+}
+
+const FANATIC: &str = "Metamorphosis Fanatic";
+
+fn cast_fanatic(state: &mut GameState) -> ObjectId {
+    let source = put(state, P0, FANATIC, Zone::Hand);
+    pool(state, P0, &[ManaColor::B, ManaColor::B], 4);
+    cast(state, source, &[]);
+    on_the_stack(state);
+    source
+}
+
+#[test]
+fn fanatic_characteristics_hard_cast_cost_and_lifelink_combat() {
+    let card = def(FANATIC);
+    assert_eq!(card.cost.generic, 4);
+    assert_eq!(card.cost.pips, &[Pip::Colored(ManaColor::B); 2]);
+    assert_eq!(card.mana_value, 6);
+    assert_eq!(card.types, &[CardType::Creature]);
+    assert_eq!(card.subtypes, &[Subtype::Human, Subtype::Cleric]);
+    assert_eq!(card.colors, &[ManaColor::B]);
+    assert!(card.supertypes.is_empty());
+    assert_eq!((card.power, card.toughness), (Some(4), Some(4)));
+    assert_eq!(card.keywords, Keywords::LIFELINK);
+    assert!(!card.is_token);
+
+    let mut state = plains();
+    let source = put(&mut state, P0, FANATIC, Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 1);
+    assert!(
+        !castable(&mut state, source),
+        "miracle is not a hand discount"
+    );
+    pool(&mut state, P0, &[], 4);
+    assert!(
+        !castable(&mut state, source),
+        "hard cast needs two black pips"
+    );
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    cast(&mut state, source, &[]);
+    settle_first(&mut state);
+    assert_eq!(zone(&state, source), Zone::Battlefield);
+    assert_eq!(power_toughness(&state, source), (4, 4));
+    assert!(keyword(&state, source, Keywords::LIFELINK));
+    assert_eq!(state.objects.get(source).v4.lifelink_keyword_counters, 0);
+    state.objects.get_mut(source).summoning_sick = false;
+    attack_with(&mut state, vec![source], |_, _| None);
+    assert_eq!(life(&state, P0), 24);
+    assert_eq!(life(&state, P1), 16);
+}
+
+#[test]
+fn fanatic_reanimates_only_own_creature_with_lifelink_counter_or_chooses_zero() {
+    for choose in [false, true] {
+        let mut state = plains();
+        let creature = put(&mut state, P0, "Gurmag Angler", Zone::Graveyard);
+        put(&mut state, P0, "Plains", Zone::Graveyard);
+        put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
+        put(&mut state, P1, "Gurmag Angler", Zone::Graveyard);
+        let source = cast_fanatic(&mut state);
+        let mut offered = 0;
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseTargets {
+                legal_targets,
+                can_finish,
+                ..
+            } => {
+                offered += 1;
+                assert_eq!(legal_targets, vec![Target::Object(creature)]);
+                assert!(can_finish);
+                if choose {
+                    Action::ChooseTarget(Target::Object(creature))
+                } else {
+                    Action::FinishEffectSelection
+                }
+            }
+            other => first_answer(other),
+        });
+        assert_eq!(offered, 1);
+        assert_eq!(zone(&state, source), Zone::Battlefield);
+        assert_eq!(
+            zone(&state, creature),
+            if choose {
+                Zone::Battlefield
+            } else {
+                Zone::Graveyard
+            }
+        );
+        assert_eq!(
+            state.objects.get(creature).v4.lifelink_keyword_counters,
+            i16::from(choose)
+        );
+        if choose {
+            assert!(keyword(&state, creature, Keywords::LIFELINK));
+            assert!(!state.objects.get(creature).tapped);
+            assert!(state.objects.get(creature).summoning_sick);
+            state.objects.get_mut(creature).summoning_sick = false;
+            attack_with(&mut state, vec![creature], |_, _| None);
+            assert_eq!(life(&state, P0), 25);
+            assert_eq!(life(&state, P1), 15);
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(creature, Zone::Hand));
+            assert_eq!(state.objects.get(creature).v4.lifelink_keyword_counters, 0);
+        }
+    }
+}
+
+#[test]
+fn fanatic_target_leaving_or_blinking_fizzles_without_counter_or_return() {
+    for reenter_graveyard in [false, true] {
+        let mut state = plains();
+        let creature = put(&mut state, P0, "Gurmag Angler", Zone::Graveyard);
+        cast_fanatic(&mut state);
+        let choice = settle(&mut state).expect("entry target");
+        assert!(matches!(choice, Decision::ChooseTargets { .. }));
+        act(&mut state, Action::ChooseTarget(Target::Object(creature)));
+        on_the_stack(&mut state);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(creature, Zone::Exile),
+        );
+        if reenter_graveyard {
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(creature, Zone::Graveyard),
+            );
+        }
+        settled(&mut state);
+        assert_eq!(
+            zone(&state, creature),
+            if reenter_graveyard {
+                Zone::Graveyard
+            } else {
+                Zone::Exile
+            }
+        );
+        assert_eq!(state.objects.get(creature).v4.lifelink_keyword_counters, 0);
+    }
+}
+
+#[test]
+fn fanatic_return_survives_source_leaving_doubles_counters_and_replays() {
+    let mut state = plains();
+    put(&mut state, P0, "Doubling Season", Zone::Battlefield);
+    let creature = put(&mut state, P0, "Gurmag Angler", Zone::Graveyard);
+    let source = cast_fanatic(&mut state);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseTargets { .. })
+    ));
+    act(&mut state, Action::ChooseTarget(Target::Object(creature)));
+    on_the_stack(&mut state);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Exile));
+    let snapshot = serde_json::to_string(&state).expect("serialize reanimation");
+    let mut replay: GameState = serde_json::from_str(&snapshot).expect("restore reanimation");
+    settled(&mut state);
+    settled(&mut replay);
+    assert_eq!(state, replay);
+    assert_eq!(zone(&state, creature), Zone::Battlefield);
+    assert_eq!(state.objects.get(creature).v4.lifelink_keyword_counters, 2);
+    assert!(keyword(&state, creature, Keywords::LIFELINK));
+}
+
+#[test]
+fn fanatic_grafdiggers_cage_stops_return_and_counter() {
+    let mut state = plains();
+    put(&mut state, P1, "Grafdigger's Cage", Zone::Battlefield);
+    let creature = put(&mut state, P0, "Gurmag Angler", Zone::Graveyard);
+    cast_fanatic(&mut state);
+    settle_choosing(&mut state, creature);
+    assert_eq!(zone(&state, creature), Zone::Graveyard);
+    assert_eq!(state.objects.get(creature).v4.lifelink_keyword_counters, 0);
+}
+
+/// S1l's first-draw setup: collect the external draw before the reveal prompt.
+fn fanatic_first_draw(state: &mut GameState, player: PlayerId) -> ObjectId {
+    let card = put(state, player, FANATIC, Zone::Library);
+    event::propose_and_commit(state, ProposedEvent::draw(player));
+    assert!(hand_contains(state, player, card));
+    next(state);
+    card
+}
+
+#[test]
+fn fanatic_miracle_casts_for_one_black_on_either_turn_both_seats_then_targets() {
+    for owner in [P0, P1] {
+        for active in [P0, P1] {
+            let mut state = plains();
+            state.active_player = active;
+            state.priority_player = owner;
+            let creature = put(&mut state, owner, "Gurmag Angler", Zone::Graveyard);
+            pool(&mut state, owner, &[ManaColor::B], 1);
+            let card = fanatic_first_draw(&mut state, owner);
+            assert!(
+                matches!(next(&mut state), Decision::ChooseEffectOption { player, source, option_count: 2 } if player == owner && source == card)
+            );
+            act(&mut state, Action::ChooseEffectOption(1));
+            let mut paid_choice = 0;
+            let mut targets = 0;
+            settle_with(&mut state, |s, decision| match decision {
+                Decision::ChooseEffectOption {
+                    player,
+                    option_count: 2,
+                    ..
+                } if player == owner => {
+                    paid_choice += 1;
+                    Action::ChooseEffectOption(0)
+                }
+                Decision::ChooseEffectTargets { legal_targets, .. }
+                    if legal_targets == vec![Target::Object(card)] =>
+                {
+                    Action::ChooseEffectTarget(Target::Object(card))
+                }
+                Decision::ChooseTargets { legal_targets, .. } => {
+                    assert_eq!(
+                        zone(s, card),
+                        Zone::Battlefield,
+                        "targeting follows creature entry"
+                    );
+                    assert_eq!(legal_targets, vec![Target::Object(creature)]);
+                    targets += 1;
+                    Action::ChooseTarget(Target::Object(creature))
+                }
+                other => first_answer(other),
+            });
+            assert_eq!(paid_choice, 1);
+            assert_eq!(targets, 1);
+            assert_eq!(zone(&state, card), Zone::Battlefield);
+            assert_eq!(zone(&state, creature), Zone::Battlefield);
+            assert_eq!(state.objects.get(creature).v4.lifelink_keyword_counters, 1);
+            assert_eq!(mana(&state, owner, ManaColor::B), 0);
+            assert_eq!(mana(&state, owner, ManaColor::C), 0);
+        }
+    }
+}
+
+#[test]
+fn fanatic_miracle_reveal_and_cast_can_be_declined_and_needs_payable_cost() {
+    // Reveal decline; cast decline; no generic; no black.
+    for (reveal, accept, black, generic) in [
+        (false, false, 1, 1),
+        (true, false, 1, 1),
+        (true, true, 1, 0),
+        (true, true, 0, 2),
+    ] {
+        let mut state = plains();
+        pool(&mut state, P0, &vec![ManaColor::B; black], generic);
+        let card = fanatic_first_draw(&mut state, P0);
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption { .. }
+        ));
+        act(&mut state, Action::ChooseEffectOption(u16::from(reveal)));
+        let mut offered = false;
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectOption {
+                option_count: 2, ..
+            } => {
+                offered = true;
+                assert!(!accept, "an unpayable cast must not be offered");
+                Action::ChooseEffectOption(1)
+            }
+            other => first_answer(other),
+        });
+        assert_eq!(offered, reveal && !accept);
+        assert_eq!(zone(&state, card), Zone::Hand);
+        assert_eq!(mana(&state, P0, ManaColor::B), u8::try_from(black).unwrap());
+        assert_eq!(mana(&state, P0, ManaColor::C), generic);
+    }
+}
+
+#[test]
+fn fanatic_second_draw_has_no_miracle_and_real_turn_change_resets_first_draw() {
+    let mut state = plains();
+    event::propose_and_commit(&mut state, ProposedEvent::draw(P0));
+    next(&mut state);
+    let second = put(&mut state, P0, FANATIC, Zone::Library);
+    event::propose_and_commit(&mut state, ProposedEvent::draw(P0));
+    settled(&mut state);
+    assert!(hand_contains(&state, P0, second));
+    assert!(state.engine.pending_triggers.is_empty());
+    pass_until(&mut state, |s| {
+        s.active_player == P1 && s.step == Step::Main1
+    });
+    let first = fanatic_first_draw(&mut state, P0);
+    assert!(
+        matches!(next(&mut state), Decision::ChooseEffectOption { source, .. } if source == first)
+    );
+    act(&mut state, Action::ChooseEffectOption(0));
+    settled(&mut state);
+}
+
+#[test]
+fn fanatic_miracle_cannot_cast_a_replaced_hand_incarnation() {
+    for back_to_hand in [false, true] {
+        let mut state = plains();
+        pool(&mut state, P0, &[ManaColor::B], 1);
+        let card = fanatic_first_draw(&mut state, P0);
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption { .. }
+        ));
+        act(&mut state, Action::ChooseEffectOption(1));
+        on_the_stack(&mut state);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Exile));
+        if back_to_hand {
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Hand));
+        }
+        settled(&mut state);
+        assert_eq!(
+            zone(&state, card),
+            if back_to_hand {
+                Zone::Hand
+            } else {
+                Zone::Exile
+            }
+        );
+        assert_eq!(mana(&state, P0, ManaColor::B), 1);
+        assert_eq!(mana(&state, P0, ManaColor::C), 1);
     }
 }
