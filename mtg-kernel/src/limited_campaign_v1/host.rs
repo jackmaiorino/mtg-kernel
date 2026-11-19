@@ -122,7 +122,11 @@ pub fn measure_host_class_v1(short_name: &str, trainer_binary_sha256: &str) -> R
 
 fn parse_epyc_vcpus(name: &str, prefix: &str) -> Option<usize> {
     name.strip_prefix(prefix)
-        .filter(|count| !count.starts_with('0'))
+        .filter(|count| {
+            !count.is_empty()
+                && !count.starts_with('0')
+                && count.bytes().all(|b| b.is_ascii_digit())
+        })
         .and_then(|count| count.parse::<usize>().ok())
         .filter(|count| *count > 0)
 }

@@ -586,6 +586,25 @@ fn receipt_host_classes_follow_the_ruled_names() {
         0,
     )
     .is_err());
+    for (prefix, cpu_model) in [
+        ("runpod-epyc-", "AMD EPYC 9554 64-Core Processor"),
+        ("runpod-epyc-virtual-", "AMD EPYC-Milan Processor"),
+    ] {
+        for suffix in ["", "0", "016", "+16", "+016", "-16", "16a"] {
+            let candidate = with(&|h| {
+                h.short_name = format!("{prefix}{suffix}");
+                h.cpu_model = cpu_model.into();
+            });
+            assert!(
+                super::receipt_vcpus_v1(&candidate).is_err(),
+                "{prefix}{suffix}"
+            );
+            assert!(
+                admit_receipt_host_class_v1(&candidate, 16).is_err(),
+                "{prefix}{suffix}"
+            );
+        }
+    }
     let mac = with(&|h| {
         h.short_name = "engineering-unlisted".into();
         h.cpu_model = "Apple M3 Ultra".into();
