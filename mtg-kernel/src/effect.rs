@@ -19103,6 +19103,7 @@ pub(crate) fn battlefield_exile_until_source_leaves(card_def: u16) -> bool {
             | "Static Prison"
             | "Temporary Lockdown"
             | "Perilous Snare"
+            | "Aang's Iceberg"
     )
 }
 

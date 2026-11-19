@@ -761,6 +761,10 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             // is activated from the battlefield (build.rs recipes).
             move_self_cost(out, ZoneF::Battlefield, ZoneF::Exile);
         }
+        CostComponent::ReturnSelfToOwnersHandV1 => {
+            // The source moves from the battlefield to its owner's hand.
+            move_self_cost(out, ZoneF::Battlefield, ZoneF::Hand);
+        }
         CostComponent::DiscardSelf => {
             // The source, which must be in its owner's hand, moves to the
             // graveyard.

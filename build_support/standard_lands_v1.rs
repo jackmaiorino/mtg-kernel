@@ -255,6 +255,20 @@ pub fn fields(name: &str, executable: bool) -> StandardLandFields {
             fields.additional_mana_ability_conditions =
                 "&[Some(ManaAbilityConditionDef::SourceEnteredThisTurn)]".to_string();
         }
+        // Eternal catalog (Vintage Cube wave C5a): Delighted Halfling's "{T}:
+        // Add one mana of any color. Spend this mana only to cast a legendary
+        // spell, and that spell can't be countered." (its uncounterable half is
+        // `eternal_cube_c5a_v1::note_restricted_payment`), and Fanatic of
+        // Rhonas's ferocious ability ("Activate only if you control a creature
+        // with power 4 or greater"), on the card and on its eternalized token.
+        "Delighted Halfling" => {
+            fields.restricted_mana_abilities = format!("&[RestrictedManaAbilityDef {{ colors: {ANY_COLOR}, restriction: ManaSpendRestrictionDef::LegendarySpell }}]");
+        }
+        "Fanatic of Rhonas" | "Fanatic of Rhonas Eternalized Token" => {
+            fields.additional_mana_ability_conditions =
+                "&[Some(ManaAbilityConditionDef::ControllerControlsCreatureWithPowerAtLeastV1(4))]"
+                    .to_string();
+        }
         // Eternal catalog: "{T}: Add one mana of any color. Spend this mana
         // only to cast a creature spell of the chosen type, and that spell
         // can't be countered."

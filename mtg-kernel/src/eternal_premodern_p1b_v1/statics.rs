@@ -75,11 +75,14 @@ fn opalescence_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
     // Eligibility follows the layer 4 card types: a permanent that stopped
     // being an enchantment (an Elk of Oko's) is neither animated nor given
     // the layer 7b base power and toughness. Opalescence only adds
-    // Creature, so this Enchantment query never reaches it again.
+    // Creature, so this Enchantment query never reaches it again. A
+    // Necromancy whose entry trigger made it an Aura is an Aura too (its
+    // mark is read directly, not through the full subtype query).
     if !crate::engine::object_has_type(state, object, CardType::Enchantment)
         || def
             .subtypes_for_face(live.v4.face_index)
             .contains(&Subtype::Aura)
+        || crate::eternal_cube_c5c_v1::is_necromancy_aura(state, object)
     {
         return None;
     }

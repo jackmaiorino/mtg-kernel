@@ -404,6 +404,14 @@ fn mana_ability_condition_facts(
             Some(ObjF::ThisObject),
             AggF::EventThisTurn,
         ),
+        crate::card_def::ManaAbilityConditionDef::ControllerControlsCreatureWithPowerAtLeastV1(
+            _,
+        ) => out.read(
+            RelF::You,
+            Some(ZoneF::Battlefield),
+            Some(ObjF::Typed(CardTypeF::Creature)),
+            AggF::Any,
+        ),
     }
 }
 
