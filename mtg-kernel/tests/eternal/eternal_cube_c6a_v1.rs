@@ -16,7 +16,11 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const C6A_CARDS: [&str; 1] = ["Ivora, Insatiable Heir"];
+const C6A_CARDS: [&str; 3] = [
+    "Ivora, Insatiable Heir",
+    "Gau, Feral Youth",
+    "Laelia, the Blade Reforged",
+];
 
 fn def(name: &str) -> &'static CardDef {
     &CARD_DEFS[id(name) as usize]
@@ -474,6 +478,22 @@ fn c6a_cards_are_full_with_printed_characteristics() {
     assert_eq!(card.subtypes, &[Subtype::Vampire, Subtype::Warrior]);
     assert_eq!((card.power, card.toughness), (Some(1), Some(1)));
     assert!(card.keywords.has(Keywords::TRAMPLE));
+    for (name, generic, subtypes, haste) in [
+        (C6A_CARDS[1], 1, [Subtype::Human, Subtype::Berserker], false),
+        (C6A_CARDS[2], 2, [Subtype::Spirit, Subtype::Warrior], true),
+    ] {
+        let card = def(name);
+        assert_eq!(card.capability, CardCapability::Full);
+        assert!(card.is_executable());
+        assert_eq!(card.cost.generic, generic);
+        assert_eq!(card.cost.pips, &[Pip::Colored(ManaColor::R)]);
+        assert_eq!(card.cost.x_count, 0);
+        assert_eq!(card.types, &[CardType::Creature]);
+        assert_eq!(card.supertypes, &[Supertype::Legendary]);
+        assert_eq!(card.subtypes, &subtypes);
+        assert_eq!((card.power, card.toughness), (Some(2), Some(2)));
+        assert_eq!(card.keywords.has(Keywords::HASTE), haste);
+    }
 }
 
 fn cast_ivora(state: &mut GameState, player: PlayerId) -> ObjectId {
@@ -728,4 +748,475 @@ fn ivora_counts_each_cleanup_discard_and_ignores_other_hand_zone_changes() {
     });
     assert_eq!(state.players[0].hand.len(), 7);
     assert_eq!(power_toughness(&state, ivora), (3, 3));
+}
+
+// ---- Gau and Laelia -------------------------------------------------------------
+
+fn cast_c6a_creature(state: &mut GameState, player: PlayerId, name: &str) -> ObjectId {
+    state.priority_player = player;
+    let creature = put(state, player, name, Zone::Hand);
+    pool(
+        state,
+        player,
+        &[ManaColor::R],
+        if name == C6A_CARDS[2] { 2 } else { 1 },
+    );
+    cast(state, creature, &[]);
+    settled(state);
+    assert_eq!(zone(state, creature), Zone::Battlefield);
+    creature
+}
+
+fn end_step_settled(state: &mut GameState) {
+    pass_until(state, |s| s.step == Step::End);
+    settled(state);
+}
+
+fn next_turn_main(state: &mut GameState) {
+    let active = state.active_player;
+    pass_until(state, |s| {
+        s.active_player != active && s.step == Step::Main1
+    });
+}
+
+#[test]
+fn gau_has_no_haste_and_grows_only_when_it_attacks() {
+    let mut state = plains();
+    let gau = cast_c6a_creature(&mut state, P0, C6A_CARDS[1]);
+    assert!(state.objects.get(gau).summoning_sick);
+    assert!(!keyword(&state, gau, Keywords::HASTE));
+    pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+    let Decision::DeclareAttackers { eligible, .. } = next(&mut state) else {
+        panic!("expected attackers");
+    };
+    assert!(!eligible.contains(&gau));
+    attack_with(&mut state, Vec::new(), |_, _| None);
+    assert_eq!(power_toughness(&state, gau), (2, 2));
+    next_turn_main(&mut state);
+    next_turn_main(&mut state);
+    assert!(!state.objects.get(gau).summoning_sick);
+    attack_with(&mut state, vec![gau], |_, _| None);
+    assert_eq!(power_toughness(&state, gau), (3, 3));
+    assert_eq!(life(&state, P1), 17);
+    end_step_settled(&mut state);
+    assert_eq!(life(&state, P1), 17, "no graveyard departure, no burn");
+}
+
+#[test]
+fn gau_observes_graveyard_departures_before_entry_to_every_destination_both_seats() {
+    for player in [P0, P1] {
+        for destination in [Zone::Hand, Zone::Battlefield, Zone::Library, Zone::Exile] {
+            let mut state = plains();
+            state.active_player = player;
+            state.priority_player = player;
+            let gau = put(&mut state, player, C6A_CARDS[1], Zone::Hand);
+            let card = put(&mut state, player, "Mountain", Zone::Graveyard);
+            // Ownership of the graveyard matters, not a stale controller field.
+            state.objects.get_mut(card).controller = player.opponent();
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, destination));
+            settled(&mut state);
+            pool(&mut state, player, &[ManaColor::R], 1);
+            cast(&mut state, gau, &[]);
+            settled(&mut state);
+            assert_eq!(zone(&state, card), destination);
+            end_step_settled(&mut state);
+            assert_eq!(life(&state, player), 20);
+            assert_eq!(life(&state, player.opponent()), 18);
+        }
+    }
+}
+
+#[test]
+fn gau_end_steps_track_each_players_turn_and_ignore_opponents_graveyard() {
+    let mut state = plains();
+    let gau = cast_c6a_creature(&mut state, P0, C6A_CARDS[1]);
+    let other = put(&mut state, P1, "Mountain", Zone::Graveyard);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(other, Zone::Exile));
+    let hand = put(&mut state, P0, "Mountain", Zone::Hand);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(hand, Zone::Exile));
+    end_step_settled(&mut state);
+    assert_eq!(life(&state, P1), 20);
+    // A departure after this end step began cannot retroactively trigger Gau.
+    let late = put(&mut state, P0, "Mountain", Zone::Graveyard);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(late, Zone::Exile));
+    settled(&mut state);
+    assert_eq!(life(&state, P1), 20);
+    next_turn_main(&mut state);
+    end_step_settled(&mut state);
+    assert_eq!(life(&state, P1), 20, "previous player's turn is expired");
+    next_turn_main(&mut state);
+    let own = put(&mut state, P0, "Plains", Zone::Graveyard);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(own, Zone::Hand));
+    end_step_settled(&mut state);
+    assert_eq!(life(&state, P1), 18);
+    next_turn_main(&mut state);
+    let on_their_turn = put(&mut state, P0, "Plains", Zone::Graveyard);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(on_their_turn, Zone::Exile),
+    );
+    end_step_settled(&mut state);
+    assert_eq!(
+        life(&state, P1),
+        16,
+        "also triggers at the opponent's end step"
+    );
+    assert_eq!(power_toughness(&state, gau), (2, 2));
+    next_turn_main(&mut state);
+    end_step_settled(&mut state);
+    assert_eq!(life(&state, P1), 16, "a new turn needs a new departure");
+}
+
+#[test]
+fn gau_counts_a_card_cast_from_the_graveyard() {
+    let mut state = plains();
+    cast_c6a_creature(&mut state, P0, C6A_CARDS[1]);
+    let firebolt = put(&mut state, P0, "Firebolt", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::R], 4);
+    cast(&mut state, firebolt, &[Target::Player(P1)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, firebolt), Zone::Exile);
+    assert_eq!(life(&state, P1), 18);
+    end_step_settled(&mut state);
+    assert_eq!(life(&state, P1), 16);
+}
+
+#[test]
+fn gau_samples_current_power_and_uses_departure_power_even_after_a_blink() {
+    for departure in [None, Some(Zone::Hand), Some(Zone::Battlefield)] {
+        let mut state = plains();
+        let gau = cast_c6a_creature(&mut state, P0, C6A_CARDS[1]);
+        let card = put(&mut state, P0, "Plains", Zone::Graveyard);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Exile));
+        pass_until(&mut state, |s| s.step == Step::End && !s.stack.is_empty());
+        let growth = put(&mut state, P0, "Giant Growth", Zone::Hand);
+        state.priority_player = P0;
+        pool(&mut state, P0, &[ManaColor::G], 0);
+        cast(&mut state, growth, &[Target::Object(gau)]);
+        on_the_stack(&mut state);
+        // Resolve the pump, stopping with the original end-step trigger waiting.
+        pass_until(&mut state, |s| zone(s, growth) == Zone::Graveyard);
+        assert_eq!(power_toughness(&state, gau), (5, 5));
+        if let Some(destination) = departure {
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(gau, Zone::Hand));
+            if destination == Zone::Battlefield {
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(gau, Zone::Battlefield),
+                );
+                assert_eq!(power_toughness(&state, gau), (2, 2));
+            }
+        }
+        settled(&mut state);
+        assert_eq!(life(&state, P1), 15);
+        assert_eq!(life(&state, P0), 20);
+    }
+}
+
+#[test]
+fn gau_zero_or_negative_power_deals_no_damage() {
+    for counters in [2, 3] {
+        let mut state = plains();
+        let gau = cast_c6a_creature(&mut state, P0, C6A_CARDS[1]);
+        let card = put(&mut state, P0, "Plains", Zone::Graveyard);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Exile));
+        pass_until(&mut state, |s| s.step == Step::End && !s.stack.is_empty());
+        // A toughness boost keeps a nonpositive-power creature alive.
+        state
+            .engine
+            .until_end_of_turn
+            .push(engine::UntilEndOfTurnEffect::ResolvedObjectEffect {
+                object_id: gau,
+                object_zone_change_count: state.objects.get(gau).zone_change_count,
+                layer: engine::Layers::POWER_TOUGHNESS,
+                timestamp: 1,
+                duration: engine::EffectDuration::EndOfTurn,
+                power: -counters,
+                toughness: 1,
+                grant_haste: false,
+            });
+        settled(&mut state);
+        assert_eq!(life(&state, P1), 20);
+    }
+}
+
+#[test]
+fn laelia_haste_attack_exiles_and_grows_then_casts_the_exiled_creature_for_mana() {
+    let mut state = plains();
+    let laelia = cast_c6a_creature(&mut state, P0, C6A_CARDS[2]);
+    let bear = put(&mut state, P0, "Grizzly Bears", Zone::Library);
+    let opponents_top = state.players[1].library[0];
+    assert!(keyword(&state, laelia, Keywords::HASTE));
+    assert!(state.objects.get(laelia).summoning_sick);
+    attack_with(&mut state, vec![laelia], |_, _| None);
+    assert_eq!(zone(&state, bear), Zone::Exile);
+    assert_eq!(zone(&state, opponents_top), Zone::Library);
+    assert_eq!(power_toughness(&state, laelia), (3, 3));
+    assert_eq!(life(&state, P1), 17);
+    assert!(
+        !castable(&mut state, bear),
+        "permission does not waive mana"
+    );
+    pool(&mut state, P0, &[ManaColor::G], 1);
+    cast(&mut state, bear, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, bear), Zone::Battlefield);
+    assert_eq!(
+        power_toughness(&state, laelia),
+        (3, 3),
+        "leaving exile is not another trigger"
+    );
+}
+
+#[test]
+fn laelia_impulse_allows_land_play_but_obeys_the_land_limit() {
+    for land_already_played in [false, true] {
+        let mut state = plains();
+        let laelia = cast_c6a_creature(&mut state, P0, C6A_CARDS[2]);
+        if land_already_played {
+            let land = put(&mut state, P0, "Mountain", Zone::Hand);
+            play_land(&mut state, land);
+        }
+        let top = state.players[0].library[0];
+        attack_with(&mut state, vec![laelia], |_, _| None);
+        let Decision::CastSpellOrPass { land_drops, .. } = next(&mut state) else {
+            panic!("expected main-phase priority");
+        };
+        assert_eq!(land_drops.contains(&top), !land_already_played);
+        if !land_already_played {
+            act(&mut state, Action::PlayLand(top));
+            settled(&mut state);
+            assert_eq!(zone(&state, top), Zone::Battlefield);
+        } else {
+            assert_eq!(zone(&state, top), Zone::Exile);
+        }
+    }
+}
+
+#[test]
+fn laelia_declined_impulse_expires_on_the_actual_next_players_turn() {
+    let mut state = plains();
+    let laelia = cast_c6a_creature(&mut state, P0, C6A_CARDS[2]);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Library);
+    attack_with(&mut state, vec![laelia], |_, _| None);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    assert!(castable(&mut state, bolt));
+    end_step_settled(&mut state);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    assert!(
+        castable(&mut state, bolt),
+        "still playable during the end step"
+    );
+    next_turn_main(&mut state);
+    assert_eq!(zone(&state, bolt), Zone::Exile);
+    state.priority_player = P0;
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    assert!(
+        !castable(&mut state, bolt),
+        "expired despite same round number"
+    );
+    next_turn_main(&mut state);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    assert!(
+        !castable(&mut state, bolt),
+        "does not return on the next own turn"
+    );
+}
+
+#[test]
+fn laelia_counts_one_exile_batch_across_both_own_zones_and_ignores_other_moves_both_seats() {
+    for player in [P0, P1] {
+        let mut state = plains();
+        state.active_player = player;
+        state.priority_player = player;
+        let laelia = cast_c6a_creature(&mut state, player, C6A_CARDS[2]);
+        let library = put(&mut state, player, "Mountain", Zone::Library);
+        let graveyard = put(&mut state, player, "Lightning Bolt", Zone::Graveyard);
+        // An effect controlled by the opponent can exile a card you own.
+        state.objects.get_mut(graveyard).controller = player.opponent();
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::zone_change(library, Zone::Exile),
+                ProposedEvent::zone_change(graveyard, Zone::Exile),
+            ],
+        );
+        settled(&mut state);
+        assert_eq!(power_toughness(&state, laelia), (3, 3));
+        let other_library = put(&mut state, player.opponent(), "Mountain", Zone::Library);
+        let other_graveyard = put(&mut state, player.opponent(), "Plains", Zone::Graveyard);
+        let hand = put(&mut state, player, "Mountain", Zone::Hand);
+        let permanent = put(&mut state, player, "Plains", Zone::Battlefield);
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::zone_change(other_library, Zone::Exile),
+                ProposedEvent::zone_change(other_graveyard, Zone::Exile),
+                ProposedEvent::zone_change(hand, Zone::Exile),
+                ProposedEvent::zone_change(permanent, Zone::Exile),
+                ProposedEvent::zone_change(graveyard, Zone::Hand),
+            ],
+        );
+        settled(&mut state);
+        assert_eq!(power_toughness(&state, laelia), (3, 3));
+        let own_graveyard = put(&mut state, player, "Plains", Zone::Graveyard);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(own_graveyard, Zone::Exile),
+        );
+        settled(&mut state);
+        assert_eq!(power_toughness(&state, laelia), (4, 4));
+    }
+}
+
+#[test]
+fn laelia_empty_library_attack_does_not_grow_or_create_permission() {
+    let mut state = game(&[]);
+    let laelia = cast_c6a_creature(&mut state, P0, C6A_CARDS[2]);
+    attack_with(&mut state, vec![laelia], |_, _| None);
+    assert_eq!(power_toughness(&state, laelia), (2, 2));
+    assert_eq!(life(&state, P1), 18);
+    assert!(state.engine.exile_play_permissions.is_empty());
+}
+
+#[test]
+fn c6a_attack_counters_do_not_follow_a_departed_source_and_laelia_impulse_survives() {
+    for name in [C6A_CARDS[1], C6A_CARDS[2]] {
+        for returns in [false, true] {
+            let mut state = plains();
+            let source = cast_c6a_creature(&mut state, P0, name);
+            if name == C6A_CARDS[1] {
+                next_turn_main(&mut state);
+                next_turn_main(&mut state);
+            }
+            let top = state.players[0].library[0];
+            pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+            act(&mut state, Action::DeclareAttackers(vec![source]));
+            on_the_stack(&mut state);
+            assert!(!state.stack.is_empty());
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(source, Zone::Hand));
+            if returns {
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(source, Zone::Battlefield),
+                );
+            }
+            settled(&mut state);
+            // A returned Laelia sees the later exile as a new permanent.
+            assert_eq!(
+                state.objects.get(source).counters.plus1_plus1,
+                i32::from(name == C6A_CARDS[2] && returns)
+            );
+            assert_eq!(
+                zone(&state, top),
+                if name == C6A_CARDS[2] {
+                    Zone::Exile
+                } else {
+                    Zone::Library
+                }
+            );
+            if name == C6A_CARDS[2] {
+                pass_until(&mut state, |s| s.step == Step::Main2);
+                play_land(&mut state, top);
+                assert_eq!(zone(&state, top), Zone::Battlefield);
+            }
+        }
+    }
+}
+
+#[test]
+fn laelia_exile_counter_does_not_follow_a_blinked_source() {
+    let mut state = plains();
+    let laelia = cast_c6a_creature(&mut state, P0, C6A_CARDS[2]);
+    let grave = put(&mut state, P0, "Mountain", Zone::Graveyard);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(grave, Zone::Exile));
+    on_the_stack(&mut state);
+    assert!(!state.stack.is_empty());
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(laelia, Zone::Hand));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(laelia, Zone::Battlefield),
+    );
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, laelia), (2, 2));
+}
+
+#[test]
+fn gau_freezes_power_before_simultaneous_departure_of_its_aura() {
+    let mut state = plains();
+    let gau = cast_c6a_creature(&mut state, P0, C6A_CARDS[1]);
+    let rancor = put(&mut state, P0, "Rancor", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::G], 0);
+    cast(&mut state, rancor, &[Target::Object(gau)]);
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, gau), (4, 2));
+    let grave = put(&mut state, P0, "Mountain", Zone::Graveyard);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(grave, Zone::Hand));
+    pass_until(&mut state, |s| s.step == Step::End && !s.stack.is_empty());
+    event::propose_and_commit_batch(
+        &mut state,
+        vec![
+            ProposedEvent::zone_change(rancor, Zone::Hand),
+            ProposedEvent::zone_change(gau, Zone::Hand),
+        ],
+    );
+    settled(&mut state);
+    assert_eq!(life(&state, P1), 16);
+}
+
+#[test]
+fn opponents_crypt_exiles_multiple_cards_once_for_laelia_and_enables_gau() {
+    let mut state = plains();
+    cast_c6a_creature(&mut state, P0, C6A_CARDS[1]);
+    let laelia = cast_c6a_creature(&mut state, P0, C6A_CARDS[2]);
+    let cards = [
+        put(&mut state, P0, "Mountain", Zone::Graveyard),
+        put(&mut state, P0, "Lightning Bolt", Zone::Graveyard),
+    ];
+    let crypt = put(&mut state, P1, "Tormod's Crypt", Zone::Hand);
+    next_turn_main(&mut state);
+    cast(&mut state, crypt, &[]);
+    settled(&mut state);
+    activate(&mut state, crypt, 0, &[Target::Player(P0)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, crypt), Zone::Graveyard);
+    assert!(cards
+        .into_iter()
+        .all(|card| zone(&state, card) == Zone::Exile));
+    assert_eq!(power_toughness(&state, laelia), (3, 3));
+    end_step_settled(&mut state);
+    assert_eq!(life(&state, P1), 18);
+}
+
+#[test]
+fn laelia_does_not_impulse_when_only_another_creature_attacks() {
+    let mut state = plains();
+    let laelia = cast_c6a_creature(&mut state, P0, C6A_CARDS[2]);
+    let other = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let top = state.players[0].library[0];
+    attack_with(&mut state, vec![other], |_, _| None);
+    assert_eq!(zone(&state, top), Zone::Library);
+    assert_eq!(power_toughness(&state, laelia), (2, 2));
+    assert!(state.engine.exile_play_permissions.is_empty());
+}
+
+#[test]
+fn laelia_impulse_permission_does_not_follow_a_card_that_leaves_and_returns_to_exile() {
+    let mut state = plains();
+    let laelia = cast_c6a_creature(&mut state, P0, C6A_CARDS[2]);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Library);
+    attack_with(&mut state, vec![laelia], |_, _| None);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    assert!(castable(&mut state, bolt));
+    state.priority_player = P1;
+    pool(&mut state, P1, &[ManaColor::R], 0);
+    assert!(
+        !castable(&mut state, bolt),
+        "only the trigger's controller may play it"
+    );
+    state.priority_player = P0;
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(bolt, Zone::Hand));
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(bolt, Zone::Exile));
+    settled(&mut state);
+    assert!(!castable(&mut state, bolt));
 }

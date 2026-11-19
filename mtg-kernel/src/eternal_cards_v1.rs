@@ -334,6 +334,9 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c5c_v1::C5cStateV1::is_empty"
     )]
     pub c5c: crate::eternal_cube_c5c_v1::C5cStateV1,
+    /// Vintage Cube wave C6a's graveyard departures and source power.
+    #[serde(default, skip_serializing_if = "crate::eternal_cube_c6a_v1::C6aStateV1::is_empty")]
+    pub c6a: crate::eternal_cube_c6a_v1::C6aStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {
@@ -417,6 +420,8 @@ pub enum EternalTriggerV1 {
     /// A condition owned by Vintage Cube wave C5b's module (Worldspine
     /// Wurm's graveyard trigger, Titania's land trigger).
     C5bV1(crate::eternal_cube_c5b_v1::C5bTriggerV1),
+    /// Vintage Cube wave C6a's graveyard and exile conditions.
+    C6aV1(crate::eternal_cube_c6a_v1::C6aTriggerV1),
 }
 
 /// Effect leaves owned by this module, carried as
@@ -2651,6 +2656,9 @@ pub(crate) fn trigger_matches(
         }
         EternalTriggerV1::C5dV1(condition) => {
             crate::eternal_cube_c5d_v1::trigger_matches(condition, events, index, source, state)
+        }
+        EternalTriggerV1::C6aV1(condition) => {
+            crate::eternal_cube_c6a_v1::trigger_matches(condition, events, index, source, state)
         }
         EternalTriggerV1::InstantOrSorceryCardLeavesYourGraveyard => {
             let CommittedEvent::ZoneChange {

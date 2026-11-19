@@ -630,6 +630,10 @@ fn eternal_trigger(t: crate::eternal_cards_v1::EternalTriggerV1) -> Result<Value
             crate::eternal_legacy_e8a_v1::E8aTriggerV1::EntersUntappedV1 => "EntersUntappedV1",
             crate::eternal_legacy_e8a_v1::E8aTriggerV1::PlusOneCountersPutOnSelfV1 => "PlusOneCountersPutOnSelfV1",
         }}),
+        E::C6aV1(v) => json!({"C6aV1": match v {
+            crate::eternal_cube_c6a_v1::C6aTriggerV1::EachEndStepIfCardLeftYourGraveyardV1 => "EachEndStepIfCardLeftYourGraveyardV1",
+            crate::eternal_cube_c6a_v1::C6aTriggerV1::CardsExiledFromYourLibraryOrGraveyardV1 => "CardsExiledFromYourLibraryOrGraveyardV1",
+        }}),
         _ => return Err(unsupported()),
     })
 }

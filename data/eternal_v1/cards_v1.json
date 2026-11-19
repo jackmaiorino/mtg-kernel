@@ -35848,7 +35848,7 @@
   },
   {
    "name": "Gau, Feral Youth",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}",
    "mana_value": 2,
    "colors": [
@@ -35873,12 +35873,12 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": ["attack_trigger", "add_counters", "damage"],
    "java_file": "Mage.Sets/src/mage/cards/g/GauFeralYouth.java"
   },
   {
    "name": "Laelia, the Blade Reforged",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{R}",
    "mana_value": 3,
    "colors": [
@@ -35903,7 +35903,7 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": ["haste", "attack_trigger", "impulse_draw", "add_counters"],
    "java_file": "Mage.Sets/src/mage/cards/l/LaeliaTheBladeReforged.java"
   },
   {

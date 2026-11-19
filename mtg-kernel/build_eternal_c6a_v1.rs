@@ -15,10 +15,12 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
 /// Creature spells resolve as permanents; their abilities are trigger programs.
 pub(super) fn special_for(name: &str) -> Option<Special> {
     match name {
-        "Ivora, Insatiable Heir" => Some(Special::StandardProgram {
-            target_spec: "TargetSpec::None",
-            program: "crate::eternal_cube_c6a_v1::permanent",
-        }),
+        "Ivora, Insatiable Heir" | "Gau, Feral Youth" | "Laelia, the Blade Reforged" => {
+            Some(Special::StandardProgram {
+                target_spec: "TargetSpec::None",
+                program: "crate::eternal_cube_c6a_v1::permanent",
+            })
+        }
         _ => super::build_eternal_c6b_v1::special_for(name),
     }
 }
@@ -47,6 +49,7 @@ pub(super) fn alt_cost_for(name: &str) -> &'static str {
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "Ivora, Insatiable Heir" => &["Keywords::TRAMPLE"],
+        "Laelia, the Blade Reforged" => &["Keywords::HASTE"],
         _ => super::build_eternal_c6b_v1::keywords_for(name),
     }
 }
@@ -55,6 +58,8 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
 pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
     match name {
         "Ivora, Insatiable Heir" => "etb:create_blood_token:1;deals_combat_damage_to_player:create_blood_token:1;controller_discards_card:source_plus_one_counter:1",
+        "Gau, Feral Youth" => "attacks:source_plus_one_counter:1;each_end_step:if_card_left_your_graveyard_this_turn:damage_each_opponent_source_power",
+        "Laelia, the Blade Reforged" => "haste;attacks:impulse_top_one_end_of_turn;one_or_more_cards_exiled_from_your_library_or_graveyard:source_plus_one_counter:1",
         _ => super::build_eternal_c6b_v1::trigger_recipe_for(name),
     }
 }

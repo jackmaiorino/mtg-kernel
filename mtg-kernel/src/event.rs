@@ -6032,6 +6032,8 @@ fn materialize_event_v1(
                 // (Vintage Cube wave C4c).
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_cube_c4c_v1::note_departure(state, z.object, from, z.to_zone);
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cube_c6a_v1::note_zone_change(state, z.object, from, z.to_zone, departure_power);
                 crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
                 if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
                     crate::engine::record_different_controller_target_departure(state, z.object);
@@ -7310,6 +7312,8 @@ fn commit_batch_survivors_native(
     crate::equipment_damage_source_v4::before_batch_departures(state, &survivors);
     crate::source_power_activation_v1::bombardment::before_batch_departures(state, &survivors);
     crate::ashroot_animist_v1::before_batch_departures(state, &survivors);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c6a_v1::before_batch_departures(state, &survivors);
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
     // CR 119.9: one source damaging several recipients simultaneously is
