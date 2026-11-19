@@ -3393,3 +3393,40 @@ C5d:
 
 Keen-Eyed Curator completes Legacy Selesnya Depths' 75, which joins `PLAYABLE_75` with a seeded
 best-of-three test against Dimir Tempo.
+
+### C6: discard, exile and graveyard creatures, and planeswalkers
+
+Wave C6 adds 19 cards and two tokens, raising the cube to 484 of 540 Full. Its three sub-modules
+chain after C5d: C6a (attack, discard and exile trigger creatures, `eternal_cube_c6a_v1`), C6b
+(discard, graveyard and death-copy creatures, `eternal_cube_c6b_v1`) and C6c (six planeswalkers,
+`eternal_cube_c6c_v1`), the new tail. The card code and tests were written by GPT-6 Astra and
+checked by compiling and running them; see the pull request for the review.
+
+- C6a: Ivora, Insatiable Heir; Gau, Feral Youth; Laelia, the Blade Reforged; Fallen Shinobi;
+  Generous Plunderer; Gut, True Soul Zealot.
+- C6b: Seasoned Cryomancer; Seasoned Pyromancer (1/1 red Elemental token); Sphinx of False
+  Conclusions; Metamorphosis Fanatic; Night Nurse, Healer of Heroes; Six; Ursine Monstrosity.
+- C6c: Jace, the Mind Sculptor; Karn, Scion of Urza; Narset, Parter of Veils; Teferi, Hero of
+  Dominaria; The Wandering Emperor; Garruk, Curse Breaker (4/4 Beast token).
+
+Engine changes shared with other cards:
+
+- A land played from exile under a play permission enters under the player who played it when
+  another player owns it (rule 305.2). Dauthi Voidwalker's permission had the same defect.
+- In the eternal build an effect that puts a permanent onto the battlefield with X counters does
+  so as one entry, so entry observers (Garruk's threshold) see the counters.
+- In the eternal build a "pick from among them" choice with nothing to take is skipped, as
+  Recruitment Officer's is.
+- New subtypes Doctor, Narset and Garruk.
+
+Nine cards stay out, each for a stated missing piece:
+
+- Headliner Scarlett and Gandalf, Goblins' Bane are Partial: a face-down exiled card's play
+  permission is public (`exile_play_permissions_public_v2` shows Play or Cast), which reveals
+  whether it is a land.
+- Inti, Seneschal of the Sun (several callers commit a multi-card discard one card at a time);
+  Black Widow, Super Spy (spell-scoped mana of any type); Malcolm, Alluring Scoundrel (a free cast
+  of the exact discarded card during resolution); Vaultborn Tyrant (a death copy that keeps an
+  added artifact type); Pyrogoyf (damage by each entering creature as it last existed); Saheeli,
+  Sublime Artificer (full copiable values for a token that becomes a copy); Chandra, Torch of
+  Defiance (casting an exiled card for its mana cost).
