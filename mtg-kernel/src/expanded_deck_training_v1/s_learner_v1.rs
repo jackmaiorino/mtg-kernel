@@ -50,12 +50,12 @@
 use super::ex1_update_v1::{self, Ex1UpdateOptionsV1};
 use super::{
     compute_gae_targets_of_values_v1, ensure, err, inference_schema_v1, ordered_update_preparation,
-    publish_json, publish_json_bytes_v1, read_pinned_bytes, read_trajectory_batch_v1,
-    replay_learner_groups_v1, validate_actual_behaviors_v1, validate_trajectory,
-    CheckpointInputExpectationV1, CheckpointRecordFormatV1, CollectionSamplerV1,
-    ExpandedInferenceIdentityV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
-    ExpandedSeatBehaviorV1, ExpandedUpdateBackendV1, OpponentCacheV1, PinnedFileV1,
-    UpdateBackwardExecutionV1, GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1, MAX_BATCH_BYTES,
+    publish_json, publish_json_bytes_v1, read_pinned_bytes, read_trajectory_batch_bounded_v1,
+    record_envelope_v1, replay_learner_groups_v1, validate_actual_behaviors_v1,
+    validate_trajectory, CheckpointInputExpectationV1, CheckpointRecordFormatV1,
+    CollectionSamplerV1, ExpandedInferenceIdentityV1, ExpandedLossSelectionV1,
+    ExpandedModelSourceV1, ExpandedSeatBehaviorV1, ExpandedUpdateBackendV1, OpponentCacheV1,
+    PinnedFileV1, UpdateBackwardExecutionV1, GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1,
 };
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
@@ -373,6 +373,8 @@ pub(super) struct SUpdateInputsV1 {
     pub(super) output_directory: PathBuf,
     pub(super) preparation_workers: Option<usize>,
     pub(super) max_prepared_tensor_mebibytes: usize,
+    /// The trajectory batch bound in bytes (`max_trajectory_batch_mebibytes`).
+    pub(super) max_batch_bytes: u64,
     pub(super) unsupported: SUnsupportedOptionsV1,
     /// EX1 or W5 (`Ex1Update`); the caller validated the options and their
     /// combination.
@@ -448,6 +450,7 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         output_directory,
         preparation_workers,
         max_prepared_tensor_mebibytes,
+        max_batch_bytes,
         ex1,
         training_math,
         started,
@@ -480,12 +483,15 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         total_bytes = total_bytes
             .checked_add(fs::metadata(&pin.path).map_err(err)?.len())
             .ok_or("batch size overflow")?;
-        ensure(
-            total_bytes <= MAX_BATCH_BYTES,
-            "trajectory batch exceeds 512 MiB CPU ingestion bound",
-        )?;
+        if total_bytes > max_batch_bytes {
+            return Err(record_envelope_v1::batch_bound_error_v1(max_batch_bytes));
+        }
     }
-    let episodes = read_trajectory_batch_v1(&trajectories, preparation_workers.unwrap_or(1))?;
+    let episodes = read_trajectory_batch_bounded_v1(
+        &trajectories,
+        preparation_workers.unwrap_or(1),
+        max_batch_bytes,
+    )?;
     let mut ids = BTreeSet::new();
     for episode in &episodes {
         validate_trajectory(episode)?;

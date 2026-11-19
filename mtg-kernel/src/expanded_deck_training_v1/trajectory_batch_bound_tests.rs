@@ -201,6 +201,55 @@ fn an_update_just_over_the_default_batch_bound_runs_when_the_key_allows_it() {
             "max_trajectory_batch_mebibytes must be in 1..=4096"
         );
     }
+    // One preparation worker keeps the default, as on the run config; with
+    // the default it still runs.
+    let one_worker = |mebibytes, name: &str| match prepared(
+        &source,
+        &trajectories,
+        mebibytes,
+        root.join(name),
+    ) {
+        ExpandedTrainingCommandV1::UpdatePrepared {
+            preparation_workers: _,
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            update_backend,
+            update_backward_execution,
+            loss_selection,
+            max_prepared_tensor_mebibytes,
+            max_trajectory_batch_mebibytes,
+            line_b,
+            training_math,
+            record_format,
+            record_envelope,
+            output_directory,
+        } => execute_v1(ExpandedTrainingCommandV1::UpdatePrepared {
+            preparation_workers: 1,
+            source,
+            trajectories,
+            learning_rate,
+            value_coefficient,
+            update_backend,
+            update_backward_execution,
+            loss_selection,
+            max_prepared_tensor_mebibytes,
+            max_trajectory_batch_mebibytes,
+            line_b,
+            training_math,
+            record_format,
+            record_envelope,
+            output_directory,
+        }),
+        _ => unreachable!(),
+    };
+    assert_eq!(
+        one_worker(2048, "one-worker-raised").unwrap_err(),
+        "max_trajectory_batch_mebibytes applies to prepared updates only (preparation_workers > 1)"
+    );
+    let serial = one_worker(DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES, "one-worker").unwrap();
+    assert_eq!(serial["after_state_sha256"], plain["after_state_sha256"]);
     let _ = fs::remove_dir_all(&root);
 }
 

@@ -4316,6 +4316,12 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             validate_preparation_workers_v1(preparation_workers)?;
             validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
             validate_max_trajectory_batch_mebibytes_v1(max_trajectory_batch_mebibytes)?;
+            // As on the run config: one preparation worker keeps the default.
+            ensure(
+                preparation_workers > 1
+                    || max_trajectory_batch_mebibytes == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+                "max_trajectory_batch_mebibytes applies to prepared updates only (preparation_workers > 1)",
+            )?;
             execute_update_v1(
                 source,
                 trajectories,
@@ -4798,6 +4804,7 @@ fn execute_update_inner_v1(
             output_directory,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            max_batch_bytes,
             unsupported: s_learner_v1::SUnsupportedOptionsV1 {
                 line_b: line_b.is_some(),
                 e_supported: e_supported.is_some(),
@@ -6168,6 +6175,7 @@ fn sha(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
+#[cfg(test)]
 fn read_trajectory_batch_v1(
     pins: &[PinnedFileV1],
     workers: usize,
