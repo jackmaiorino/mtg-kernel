@@ -932,7 +932,9 @@ fn selected_spell_mana_costs_for_source_grant_v1(
     )?;
     // Cost determination follows moving the spell to the stack (601.2f).
     // Preserve other reducers, but remove this source's graveyard contribution.
-    if (method == CastMethodV4::Normal || granted)
+    // Limited to the eternal build so the rated Pauper build keeps its quotes.
+    if cfg!(feature = "eternal-fixtures")
+        && (method == CastMethodV4::Normal || granted)
         && state
             .objects
             .try_get(source)
