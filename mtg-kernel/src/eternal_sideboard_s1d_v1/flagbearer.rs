@@ -341,6 +341,7 @@ fn standard_shape(filter: StandardTargetV1) -> TargetShape {
         | S::EnchantmentCardInOwnGraveyardV1
         | S::ControlledArtifactOrCreatureV1
         | S::CreatureSpellPowerOrToughnessAtMostTwoV1 => Single,
+        S::TappedCreatureV1 => Single,
     }
 }
 

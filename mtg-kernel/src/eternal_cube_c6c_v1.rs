@@ -13,14 +13,14 @@
 //! those battlefield-copy semantics. No token or subtype ids are allocated here.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
-use crate::card_def::{TargetSpec, CARD_DEFS};
+use crate::card_def::{Keywords, TargetSpec, CARD_DEFS};
 use crate::effect::{
     EffectContinuation, EffectFrame, EffectOp, ExecCtx, LibraryLookCount, LibraryPickFilterV1,
     LibraryPickRule, LibraryPickSelectionV1, ObjectRef, PlayerRef,
 };
 use crate::eternal_cards_v1::EternalOpV1;
 use crate::event::{self, CommittedEvent, ProposedEvent};
-use crate::ids::PlayerId;
+use crate::ids::{ObjectId, PlayerId};
 use crate::standard_cards_v1::{StandardOpV1, StandardTargetV1};
 use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Step, Target, Zone};
 use crate::trigger::{PendingTrigger, TriggeredAbilityDef};
@@ -90,13 +90,14 @@ pub enum C6cOpV1 {
     TeferiThirdFromTopV1,
     TeferiEmblemV1,
     TeferiExileV1,
+    EmperorCounterFirstStrikeV1,
 }
 
 impl C6cOpV1 {
     /// Whether the leaf may stop for a player's choice (or a draw that a
     /// replacement can interrupt), so it runs in the resumable interpreter.
     pub(crate) fn contains_player_choice(&self) -> bool {
-        true
+        !matches!(self, Self::EmperorCounterFirstStrikeV1)
     }
 }
 
@@ -211,6 +212,47 @@ pub fn teferi_minus_three() -> EffectOp {
 
 pub fn teferi_minus_eight() -> EffectOp {
     leaf(C6cOpV1::TeferiEmblemV1)
+}
+
+/// This flag resets at each player's untap and on every zone change.
+/// It therefore tracks the current permanent incarnation and actual turn,
+/// unlike the round-valued entered_battlefield_turn field.
+pub(crate) fn emperor_instant_loyalty(state: &GameState, source: ObjectId) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && state.objects.try_get(source).is_some_and(|live| {
+            live.zone == Zone::Battlefield
+                && live.v4.entered_battlefield_this_turn
+                && live.v4.face_index == 0
+                && live.v4.face_down_v1.is_none()
+                && CARD_DEFS[live.card_def as usize].name == "The Wandering Emperor"
+                && CARD_DEFS[live.card_def as usize].is_executable()
+                && crate::continuous_characteristics_v1::printed_abilities_active(state, source)
+        })
+}
+
+pub fn emperor_plus_one() -> EffectOp {
+    leaf(C6cOpV1::EmperorCounterFirstStrikeV1)
+}
+
+/// Experimental Synthesizer's existing exact Samurai token.
+pub fn emperor_minus_one() -> EffectOp {
+    EffectOp::CreateToken {
+        token_def: crate::card_def::card_id_by_name("Samurai Token")
+            .expect("Samurai Token in CARD_DEFS"),
+        controller: PlayerRef::Controller,
+    }
+}
+
+pub fn emperor_minus_two() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::MoveAllTargets {
+            to_zone: Zone::Exile,
+        },
+        EffectOp::GainLife {
+            player: PlayerRef::Controller,
+            amount: 2,
+        },
+    ])
 }
 
 fn teferi_untap() -> EffectOp {
@@ -344,8 +386,45 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
 // ---- Execution ----------------------------------------------------------------------
 
 /// Runs one of this module's leaves in synchronous execution.
-pub(crate) fn execute(_op: &C6cOpV1, _ctx: &ExecCtx, _state: &mut GameState) {
-    // All current leaves use the resumable interpreter.
+pub(crate) fn execute(op: &C6cOpV1, ctx: &ExecCtx, state: &mut GameState) {
+    if let C6cOpV1::EmperorCounterFirstStrikeV1 = op {
+        // Do not resolve an absent optional target as the source, and do not
+        // grant the keyword to a new incarnation of a departed target.
+        if ctx.targets.is_empty()
+            || !ctx.target_incarnation_matches(0, state)
+            || !ctx.ability_source_contract.is_some_and(|source| {
+                crate::engine::effect_target_is_legal_from_ability_source(
+                    state,
+                    source,
+                    ctx.controller,
+                    TargetSpec::StandardV1(StandardTargetV1::UpToOneCreature),
+                    &ctx.targets,
+                    0,
+                )
+            })
+        {
+            return;
+        }
+        crate::effect::execute(
+            &EffectOp::AddCountersToTarget {
+                target_index: 0,
+                optional: true,
+                plus1_plus1: 1,
+                lifelink: 0,
+                stun: 0,
+            },
+            ctx,
+            state,
+        );
+        crate::effect::execute(
+            &EffectOp::GrantKeywordTargetUntilEndOfTurn {
+                object: ObjectRef::Target(0),
+                keyword: Keywords::FIRST_STRIKE,
+            },
+            ctx,
+            state,
+        );
+    }
 }
 
 /// Runs one of this module's leaves in the resumable interpreter.
@@ -356,6 +435,7 @@ pub(crate) fn drive(
     path: Vec<u16>,
 ) -> Result<bool, String> {
     match *op {
+        C6cOpV1::EmperorCounterFirstStrikeV1 => execute(op, &continuation.ctx, state),
         C6cOpV1::TeferiScheduleUntapV1 => {
             if let Some(source) = continuation.ctx.ability_source_contract {
                 let created_in_end_step = (state.step == Step::End)

@@ -36522,7 +36522,8 @@
   },
   {
    "name": "The Wandering Emperor",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 3,
    "mana_cost": "{2}{W}{W}",
    "mana_value": 4,
    "colors": [
@@ -36544,7 +36545,11 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities",
+    "flash"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/TheWanderingEmperor.java"
   },
   {

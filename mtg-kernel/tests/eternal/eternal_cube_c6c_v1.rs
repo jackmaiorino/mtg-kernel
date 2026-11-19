@@ -17,11 +17,12 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const C6C_CARDS: [&str; 4] = [
+const C6C_CARDS: [&str; 5] = [
     "Jace, the Mind Sculptor",
     "Narset, Parter of Veils",
     "Karn, Scion of Urza",
     "Teferi, Hero of Dominaria",
+    "The Wandering Emperor",
 ];
 
 fn def(name: &str) -> &'static CardDef {
@@ -1441,6 +1442,347 @@ fn narset_does_not_count_hullbreachers_replaced_draws_as_actual_draws() {
     assert!(state.players[1].hand.is_empty());
     assert_eq!(state.players[1].library.len(), 20);
     assert_eq!(named(&state, P0, "Treasure Token").len(), 3);
+}
+
+fn cast_emperor(state: &mut GameState) -> ObjectId {
+    let walker = put(state, P0, "The Wandering Emperor", Zone::Hand);
+    pool(state, P0, &[ManaColor::W; 2], 2);
+    cast(state, walker, &[]);
+    settled(state);
+    // On the opponent's turn, they receive priority after resolution.
+    if state.priority_player != P0 {
+        act(state, Action::Pass);
+    }
+    walker
+}
+
+#[test]
+fn emperor_printed_characteristics_flash_cost_and_starting_loyalty() {
+    let card = def("The Wandering Emperor");
+    assert_eq!(card.types, &[CardType::Planeswalker]);
+    assert!(card.subtypes.is_empty());
+    assert_eq!(card.supertypes, &[Supertype::Legendary]);
+    assert_eq!(card.cost.generic, 2);
+    assert_eq!(card.cost.pips, &[Pip::Colored(ManaColor::W); 2]);
+    assert_eq!(card.mana_value, 4);
+    assert_eq!(card.colors, &[ManaColor::W]);
+    assert_eq!((card.power, card.toughness), (None, None));
+    assert_eq!(card.starting_loyalty, Some(3));
+    assert_eq!(card.activated_abilities.len(), 3);
+    let mut state = plains();
+    state.active_player = P1;
+    state.step = Step::BeginCombat;
+    let walker = put(&mut state, P0, card.name, Zone::Hand);
+    let ordinary = put(&mut state, P0, "Grizzly Bears", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W, ManaColor::G], 2);
+    assert!(!castable(&mut state, walker));
+    assert!(!castable(&mut state, ordinary));
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    cast(&mut state, walker, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, walker), Zone::Battlefield);
+    assert_eq!(loyalty(&state, walker), Some(3));
+    assert!(keyword(&state, walker, Keywords::FLASH));
+    assert_eq!(mana(&state, P0, ManaColor::W), 0);
+}
+
+#[test]
+fn emperor_all_loyalty_modes_work_in_opponent_combat_once_per_turn() {
+    for index in 0..3 {
+        let mut state = plains();
+        state.active_player = P1;
+        state.step = Step::BeginCombat;
+        let creature = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+        state.objects.get_mut(creature).tapped = true;
+        let walker = cast_emperor(&mut state);
+        for mode in 0..3 {
+            assert!(activatable(&mut state, walker, mode));
+        }
+        let targets = if index == 1 {
+            vec![]
+        } else {
+            vec![Target::Object(creature)]
+        };
+        activate(&mut state, walker, index, &targets);
+        on_the_stack(&mut state);
+        assert_eq!(loyalty(&state, walker), Some([4, 2, 1][usize::from(index)]));
+        for mode in 0..3 {
+            assert!(!activatable(&mut state, walker, mode));
+        }
+        settled(&mut state);
+        match index {
+            0 => {
+                assert_eq!(power_toughness(&state, creature), (3, 3));
+                assert!(keyword(&state, creature, Keywords::FIRST_STRIKE));
+            }
+            1 => assert_eq!(named(&state, P0, "Samurai Token").len(), 1),
+            2 => {
+                assert_eq!(zone(&state, creature), Zone::Exile);
+                assert_eq!(state.players[0].life, 22);
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn emperor_flashes_in_after_attackers_and_exiles_the_attacker_before_damage() {
+    let mut state = plains();
+    state.active_player = P1;
+    state.priority_player = P1;
+    let attacker = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![attacker]));
+    run_until(
+        &mut state,
+        |state| state.step == Step::DeclareAttackers && state.priority_player == P0,
+        |_, _| None,
+    );
+    assert!(state.objects.get(attacker).tapped);
+    let walker = cast_emperor(&mut state);
+    activate(&mut state, walker, 2, &[Target::Object(attacker)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, attacker), Zone::Exile);
+    pass_until(&mut state, |state| state.step == Step::Main2);
+    assert_eq!(state.players[0].life, 22);
+    assert_eq!(loyalty(&state, walker), Some(1));
+}
+
+#[test]
+fn emperor_can_activate_in_response_but_other_walkers_cannot() {
+    let mut state = plains();
+    let other = cast_jace(&mut state);
+    let walker = cast_emperor(&mut state);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    cast(&mut state, bolt, &[Target::Player(P1)]);
+    on_the_stack(&mut state);
+    assert!(!activatable(&mut state, other, 0));
+    activate(&mut state, walker, 1, &[]);
+    on_the_stack(&mut state);
+    assert_eq!(state.stack.len(), 2);
+    settled(&mut state);
+    assert_eq!(named(&state, P0, "Samurai Token").len(), 1);
+    assert_eq!(state.players[1].life, 17);
+}
+
+#[test]
+fn emperor_entry_exception_expires_each_actual_turn_and_flicker_renews_it() {
+    let mut state = plains();
+    let walker = cast_emperor(&mut state);
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::Main1 && state.priority_player == P0
+    });
+    // Both players' turns can have the same round number.
+    assert!(!state.objects.get(walker).v4.entered_battlefield_this_turn);
+    for index in 0..2 {
+        assert!(!activatable(&mut state, walker, index));
+    }
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(walker, Zone::Exile));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(walker, Zone::Battlefield),
+    );
+    activate(&mut state, walker, 1, &[]);
+    settled(&mut state);
+    if state.priority_player != P0 {
+        act(&mut state, Action::Pass);
+    }
+    assert!(!activatable(&mut state, walker, 1));
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(walker, Zone::Exile));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(walker, Zone::Battlefield),
+    );
+    activate(&mut state, walker, 1, &[]);
+    settled(&mut state);
+    assert_eq!(named(&state, P0, "Samurai Token").len(), 2);
+    next_own_main(&mut state);
+    assert!(!state.objects.get(walker).v4.entered_battlefield_this_turn);
+    assert!(activatable(&mut state, walker, 1));
+    pass_until(&mut state, |state| {
+        state.step == Step::BeginCombat && state.priority_player == P0
+    });
+    assert!(!activatable(&mut state, walker, 1));
+}
+
+#[test]
+fn emperor_plus_one_targets_either_player_or_zero_and_only_keyword_expires() {
+    for target_owner in [P0, P1] {
+        let mut state = plains();
+        let creature = put(&mut state, target_owner, "Grizzly Bears", Zone::Battlefield);
+        let walker = cast_emperor(&mut state);
+        activate(&mut state, walker, 0, &[Target::Object(creature)]);
+        settled(&mut state);
+        assert_eq!(state.objects.get(creature).counters.plus1_plus1, 1);
+        assert_eq!(power_toughness(&state, creature), (3, 3));
+        assert!(keyword(&state, creature, Keywords::FIRST_STRIKE));
+        pass_until(&mut state, |state| {
+            state.active_player == P1 && state.step == Step::Main1
+        });
+        assert!(!keyword(&state, creature, Keywords::FIRST_STRIKE));
+        assert_eq!(state.objects.get(creature).counters.plus1_plus1, 1);
+    }
+    for has_creature in [false, true] {
+        let mut state = plains();
+        let creature =
+            has_creature.then(|| put(&mut state, P0, "Grizzly Bears", Zone::Battlefield));
+        let walker = cast_emperor(&mut state);
+        activate(&mut state, walker, 0, &[]);
+        settle_first(&mut state);
+        assert_eq!(loyalty(&state, walker), Some(4));
+        assert!(!keyword(&state, walker, Keywords::FIRST_STRIKE));
+        if let Some(creature) = creature {
+            assert_eq!(state.objects.get(creature).counters.plus1_plus1, 0);
+            assert!(!keyword(&state, creature, Keywords::FIRST_STRIKE));
+        }
+    }
+}
+
+#[test]
+fn emperor_target_rosters_exclude_illegal_targets_and_minus_two_requires_one() {
+    let mut state = plains();
+    let walker = cast_emperor(&mut state);
+    assert!(!activatable(&mut state, walker, 2));
+    let own = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let opposing = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    let untapped = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    let bogle = put(&mut state, P1, "Slippery Bogle", Zone::Battlefield);
+    let land = put(&mut state, P1, "Plains", Zone::Battlefield);
+    for object in [own, opposing, bogle, land] {
+        state.objects.get_mut(object).tapped = true;
+    }
+    let mut plus = state.clone();
+    activate(&mut plus, walker, 0, &[]);
+    match next(&mut plus) {
+        Decision::ChooseEffectTargets {
+            legal_targets,
+            can_finish,
+            ..
+        } => {
+            assert!(can_finish);
+            for object in [own, opposing, untapped] {
+                assert!(legal_targets.contains(&Target::Object(object)));
+            }
+            for object in [walker, land, bogle] {
+                assert!(!legal_targets.contains(&Target::Object(object)));
+            }
+        }
+        other => panic!("expected optional creature target: {other:?}"),
+    }
+    activate(&mut state, walker, 2, &[]);
+    match next(&mut state) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert_eq!(legal_targets.len(), 2);
+            assert!(legal_targets.contains(&Target::Object(own)));
+            assert!(legal_targets.contains(&Target::Object(opposing)));
+            assert!(engine::step(&mut state, Action::FinishEffectSelection).is_err());
+            act(&mut state, Action::ChooseTarget(Target::Object(own)));
+        }
+        other => panic!("expected mandatory tapped creature: {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(zone(&state, own), Zone::Exile);
+    assert_eq!(zone(&state, opposing), Zone::Battlefield);
+    assert_eq!(state.players[0].life, 22);
+}
+
+#[test]
+fn emperor_targeted_abilities_fizzle_on_departure_or_new_incarnation_and_outlive_source() {
+    for index in [0, 2] {
+        for departure in 0..3 {
+            let mut state = plains();
+            let walker = cast_emperor(&mut state);
+            let creature = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+            state.objects.get_mut(creature).tapped = true;
+            activate(&mut state, walker, index, &[Target::Object(creature)]);
+            on_the_stack(&mut state);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(walker, Zone::Graveyard),
+            );
+            if departure != 0 {
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(creature, Zone::Exile),
+                );
+            }
+            if departure == 2 {
+                event::propose_and_commit(
+                    &mut state,
+                    ProposedEvent::zone_change(creature, Zone::Battlefield),
+                );
+                state.objects.get_mut(creature).tapped = true;
+            }
+            settled(&mut state);
+            let resolved = departure == 0;
+            assert_eq!(
+                state.players[0].life,
+                if index == 2 && resolved { 22 } else { 20 }
+            );
+            assert_eq!(
+                state.objects.get(creature).counters.plus1_plus1,
+                i16::from(index == 0 && resolved)
+            );
+            assert_eq!(
+                keyword(&state, creature, Keywords::FIRST_STRIKE),
+                index == 0 && resolved
+            );
+            let expected_zone = if departure == 2 || index == 0 && resolved {
+                Zone::Battlefield
+            } else {
+                Zone::Exile
+            };
+            assert_eq!(zone(&state, creature), expected_zone);
+        }
+    }
+}
+
+#[test]
+fn emperor_minus_two_fizzles_if_creature_untaps_and_insufficient_loyalty_cannot_pay() {
+    let mut state = plains();
+    let walker = cast_emperor(&mut state);
+    let creature = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    state.objects.get_mut(creature).tapped = true;
+    let mut poor = state.clone();
+    change_loyalty(&mut poor, walker, -2);
+    assert!(activatable(&mut poor, walker, 1));
+    assert!(!activatable(&mut poor, walker, 2));
+    activate(&mut poor, walker, 1, &[]);
+    settled(&mut poor);
+    assert_eq!(zone(&poor, walker), Zone::Graveyard);
+    assert_eq!(named(&poor, P0, "Samurai Token").len(), 1);
+    activate(&mut state, walker, 2, &[Target::Object(creature)]);
+    on_the_stack(&mut state);
+    state.objects.get_mut(creature).tapped = false;
+    settled(&mut state);
+    assert_eq!(zone(&state, creature), Zone::Battlefield);
+    assert_eq!(state.players[0].life, 20);
+    assert_eq!(loyalty(&state, walker), Some(1));
+}
+
+#[test]
+fn emperor_samurai_has_exact_characteristics_and_attacks_without_tapping() {
+    let mut state = plains();
+    let walker = cast_emperor(&mut state);
+    activate(&mut state, walker, 1, &[]);
+    settled(&mut state);
+    let samurai = named(&state, P0, "Samurai Token")[0];
+    let card = &CARD_DEFS[state.objects.get(samurai).card_def as usize];
+    assert_eq!(card.types, &[CardType::Creature]);
+    assert_eq!(card.subtypes, &[Subtype::Samurai]);
+    assert_eq!(card.colors, &[ManaColor::W]);
+    assert!(card.supertypes.is_empty());
+    assert_eq!(card.mana_value, 0);
+    assert!(state.objects.get(samurai).v4.is_token);
+    assert_eq!(power_toughness(&state, samurai), (2, 2));
+    assert!(keyword(&state, samurai, Keywords::VIGILANCE));
+    assert!(!keyword(&state, samurai, Keywords::FIRST_STRIKE));
+    assert!(state.objects.get(samurai).summoning_sick);
+    next_own_main(&mut state);
+    attack_with(&mut state, vec![samurai], |_, _| None);
+    assert!(!state.objects.get(samurai).tapped);
+    assert_eq!(state.players[1].life, 18);
 }
 
 fn cast_teferi(state: &mut GameState) -> ObjectId {

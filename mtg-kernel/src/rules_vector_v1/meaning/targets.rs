@@ -804,6 +804,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         }
         S::ControlledArtifactOrCreatureV1 => ObjF::Permanent,
         S::CreatureSpellPowerOrToughnessAtMostTwoV1 => ObjF::Spell,
+        S::TappedCreatureV1 => creature(),
     }
 }
 
@@ -933,6 +934,7 @@ pub(super) fn standard_target_origin(
             // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
         }
+        S::TappedCreatureV1 => (Some(ZoneF::Battlefield), None),
     }
 }
 
@@ -1442,6 +1444,11 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, typed(CardType::Enchantment), relation, zone);
             out.target(TargetAtom::MultipleTargets);
             out.target(TargetAtom::UpTo);
+        }
+        S::TappedCreatureV1 => {
+            object(out, creature(), relation, zone);
+            // Tapped status has no facet, as for TappedOpponentCreature.
+            out.atoms.push(Atom::Opaque);
         }
     }
 }

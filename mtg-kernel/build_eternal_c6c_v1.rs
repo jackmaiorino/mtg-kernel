@@ -90,12 +90,42 @@ const TEFERI: [ActivatedAbilityRecipe; 3] = [
     ),
 ];
 
+const fn emperor_loyalty(
+    cost: &'static [AbilityCostRecipe],
+    program: &'static str,
+    target_spec: &'static str,
+) -> ActivatedAbilityRecipe {
+    let mut recipe = loyalty(cost, program, target_spec);
+    // The engine's loyalty gate checks the source's entry-turn exception.
+    recipe.sorcery_speed_only = false;
+    recipe
+}
+
+const EMPEROR: [ActivatedAbilityRecipe; 3] = [
+    emperor_loyalty(
+        &[AbilityCostRecipe::Loyalty(1)],
+        "crate::eternal_cube_c6c_v1::emperor_plus_one",
+        "StandardV1(crate::standard_cards_v1::StandardTargetV1::UpToOneCreature)",
+    ),
+    emperor_loyalty(
+        &[AbilityCostRecipe::Loyalty(-1)],
+        "crate::eternal_cube_c6c_v1::emperor_minus_one",
+        "None",
+    ),
+    emperor_loyalty(
+        &[AbilityCostRecipe::Loyalty(-2)],
+        "crate::eternal_cube_c6c_v1::emperor_minus_two",
+        "StandardV1(crate::standard_cards_v1::StandardTargetV1::TappedCreatureV1)",
+    ),
+];
+
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
         "Jace, the Mind Sculptor" => &JACE,
         "Narset, Parter of Veils" => &NARSET,
         "Karn, Scion of Urza" => &KARN,
         "Teferi, Hero of Dominaria" => &TEFERI,
+        "The Wandering Emperor" => &EMPEROR,
         _ => &[],
     }
 }
@@ -105,7 +135,8 @@ pub(super) fn special_for(name: &str) -> Option<Special> {
         "Jace, the Mind Sculptor"
         | "Narset, Parter of Veils"
         | "Karn, Scion of Urza"
-        | "Teferi, Hero of Dominaria" => Some(Special::StandardProgram {
+        | "Teferi, Hero of Dominaria"
+        | "The Wandering Emperor" => Some(Special::StandardProgram {
             target_spec: "TargetSpec::None",
             program: "crate::eternal_cube_c6c_v1::jace",
         }),
@@ -133,9 +164,11 @@ pub(super) fn alt_cost_for(_name: &str) -> &'static str {
     "None"
 }
 
-/// No C6c card has a printed evergreen keyword yet.
-pub(super) fn keywords_for(_name: &str) -> &'static [&'static str] {
-    &[]
+pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
+    match name {
+        "The Wandering Emperor" => &["Keywords::FLASH"],
+        _ => &[],
+    }
 }
 
 /// Card-database tokens for this wave's abilities.
@@ -145,6 +178,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Narset, Parter of Veils" => "loyalty_start:5;static:opponents_cannot_draw_more_than_one_card_each_turn;minus2:look_top4_may_reveal_noncreature_nonland_to_hand_rest_bottom_random",
         "Karn, Scion of Urza" => "loyalty_start:5;plus1:reveal_top2_opponent_chooses_one_to_hand_exile_other_with_silver_counter;minus1:owned_silver_counter_card_from_exile_to_hand;minus2:create_0_0_colorless_construct_artifact_creature_plus1_plus1_per_controlled_artifact",
         "Teferi, Hero of Dominaria" => "loyalty_start:4;plus1:draw1_then_next_end_step_untap_up_to_two_lands;minus3:target_nonland_permanent_owner_library_third_from_top;minus8:persistent_emblem_whenever_you_draw_exile_target_opponent_permanent",
+        "The Wandering Emperor" => "loyalty_start:3;flash;static:loyalty_at_instant_timing_only_if_this_incarnation_entered_this_turn;plus1:up_to_one_target_creature_plus1_counter_and_first_strike_until_end_of_turn;minus1:create_2_2_white_samurai_vigilance;minus2:exile_target_tapped_creature_then_gain2_life",
         _ => "none",
     }
 }

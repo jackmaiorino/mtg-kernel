@@ -474,6 +474,8 @@ pub enum StandardTargetV1 {
     S1oV1(crate::eternal_sideboard_s1o_v1::targets::S1oTargetV1),
     /// A filter of eternal wave S1q (`eternal_sideboard_s1q_v1::targets`).
     S1qV1(crate::eternal_sideboard_s1q_v1::targets::S1qTargetV1),
+    /// Exactly one tapped creature, controlled by either player.
+    TappedCreatureV1,
 }
 
 impl StandardTargetV1 {
@@ -1657,6 +1659,7 @@ pub(crate) fn target_matches(
         StandardTargetV1::S1oV1(_) => false,
         // Answered by `eternal_sideboard_s1q_v1::targets` above.
         StandardTargetV1::S1qV1(_) => false,
+        StandardTargetV1::TappedCreatureV1 => live.tapped && has(CardType::Creature),
     }
 }
 
