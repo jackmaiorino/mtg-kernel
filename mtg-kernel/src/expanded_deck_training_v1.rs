@@ -101,7 +101,9 @@ pub(crate) use bootstrapped_advantage_v1::{
 mod ordered_update_preparation;
 pub(crate) use ordered_update_preparation::validate_preparation_workers_v1;
 pub(crate) use ordered_update_preparation::{
-    validate_max_prepared_tensor_mebibytes_v1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+    trajectory_batch_bytes_v1, validate_max_prepared_tensor_mebibytes_v1,
+    validate_max_trajectory_batch_mebibytes_v1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+    DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
 };
 
 fn default_max_prepared_tensor_mebibytes() -> usize {
@@ -110,6 +112,14 @@ fn default_max_prepared_tensor_mebibytes() -> usize {
 
 fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
     *value == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES
+}
+
+fn default_max_trajectory_batch_mebibytes() -> usize {
+    DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES
+}
+
+fn is_default_max_trajectory_batch_mebibytes(value: &usize) -> bool {
+    *value == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES
 }
 pub(crate) mod checkpoint_container_v1;
 mod fresh_initialization_source;
@@ -3688,6 +3698,15 @@ pub enum ExpandedTrainingCommandV1 {
             skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
         )]
         max_prepared_tensor_mebibytes: usize,
+        /// Trajectory batch bound for this prepared update in MiB (record
+        /// bytes, decompressed for sealed files); absent means the historical
+        /// 512 (byte-identical wire for every existing command). See
+        /// `ordered_update_preparation`.
+        #[serde(
+            default = "default_max_trajectory_batch_mebibytes",
+            skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
+        )]
+        max_trajectory_batch_mebibytes: usize,
         /// G115 line (b) options (head-only optimizer mask); omitted when
         /// absent, so every existing command keeps its bytes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3881,6 +3900,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             Some(teacher),
             None,
@@ -3907,6 +3927,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             None,
             Some(teacher),
@@ -3933,6 +3954,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             None,
             None,
@@ -3961,6 +3983,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             None,
             None,
             None,
@@ -4265,6 +4288,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             output_directory,
             None,
             DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            MAX_BATCH_BYTES,
             line_b,
             None,
             None,
@@ -4282,6 +4306,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             loss_selection,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            max_trajectory_batch_mebibytes,
             line_b,
             training_math,
             record_format,
@@ -4290,6 +4315,13 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
         } => {
             validate_preparation_workers_v1(preparation_workers)?;
             validate_max_prepared_tensor_mebibytes_v1(max_prepared_tensor_mebibytes)?;
+            validate_max_trajectory_batch_mebibytes_v1(max_trajectory_batch_mebibytes)?;
+            // As on the run config: one preparation worker keeps the default.
+            ensure(
+                preparation_workers > 1
+                    || max_trajectory_batch_mebibytes == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+                "max_trajectory_batch_mebibytes applies to prepared updates only (preparation_workers > 1)",
+            )?;
             execute_update_v1(
                 source,
                 trajectories,
@@ -4301,6 +4333,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                 output_directory,
                 Some(preparation_workers),
                 max_prepared_tensor_mebibytes,
+                trajectory_batch_bytes_v1(max_trajectory_batch_mebibytes),
                 line_b,
                 None,
                 None,
@@ -4628,6 +4661,7 @@ fn execute_update_v1(
     output_directory: PathBuf,
     preparation_workers: Option<usize>,
     max_prepared_tensor_mebibytes: usize,
+    max_batch_bytes: u64,
     line_b: Option<LineBUpdateOptionsV1>,
     e_supported: Option<ESupportedTeacherOptionsV1>,
     soft_q: Option<SoftQTeacherOptionsV1>,
@@ -4646,6 +4680,7 @@ fn execute_update_v1(
         output_directory,
         preparation_workers,
         max_prepared_tensor_mebibytes,
+        max_batch_bytes,
         line_b,
         e_supported,
         soft_q,
@@ -4672,6 +4707,7 @@ fn execute_update_inner_v1(
     output_directory: PathBuf,
     preparation_workers: Option<usize>,
     max_prepared_tensor_mebibytes: usize,
+    max_batch_bytes: u64,
     line_b: Option<LineBUpdateOptionsV1>,
     e_supported: Option<ESupportedTeacherOptionsV1>,
     soft_q: Option<SoftQTeacherOptionsV1>,
@@ -4768,6 +4804,7 @@ fn execute_update_inner_v1(
             output_directory,
             preparation_workers,
             max_prepared_tensor_mebibytes,
+            max_batch_bytes,
             unsupported: s_learner_v1::SUnsupportedOptionsV1 {
                 line_b: line_b.is_some(),
                 e_supported: e_supported.is_some(),
@@ -4912,12 +4949,15 @@ fn execute_update_inner_v1(
         total_bytes = total_bytes
             .checked_add(fs::metadata(&pin.path).map_err(err)?.len())
             .ok_or("batch size overflow")?;
-        ensure(
-            total_bytes <= MAX_BATCH_BYTES,
-            "trajectory batch exceeds 512 MiB CPU ingestion bound",
-        )?;
+        if total_bytes > max_batch_bytes {
+            return Err(record_envelope_v1::batch_bound_error_v1(max_batch_bytes));
+        }
     }
-    let episodes = read_trajectory_batch_v1(&trajectories, preparation_workers.unwrap_or(1))?;
+    let episodes = read_trajectory_batch_bounded_v1(
+        &trajectories,
+        preparation_workers.unwrap_or(1),
+        max_batch_bytes,
+    )?;
     // The London keep offset (`london_keep_offset_v1`): one value per update,
     // carried by every trajectory of the batch (its episodes are one
     // iteration of a schedule), and only on the plain CPU GAE update.
@@ -6135,19 +6175,30 @@ fn sha(bytes: &[u8]) -> String {
     hex(&Sha256::digest(bytes))
 }
 
+#[cfg(test)]
 fn read_trajectory_batch_v1(
     pins: &[PinnedFileV1],
     workers: usize,
 ) -> Result<Vec<ExpandedTrajectoryV1>, String> {
-    let decoded = ordered_update_preparation::read_trajectories_v1(pins, workers)?;
+    read_trajectory_batch_bounded_v1(pins, workers, MAX_BATCH_BYTES)
+}
+
+/// Reads and parses a trajectory batch within the update's batch bound in bytes
+/// (`max_trajectory_batch_mebibytes`; [`MAX_BATCH_BYTES`] by default).
+fn read_trajectory_batch_bounded_v1(
+    pins: &[PinnedFileV1],
+    workers: usize,
+    max_batch_bytes: u64,
+) -> Result<Vec<ExpandedTrajectoryV1>, String> {
+    let decoded =
+        ordered_update_preparation::read_trajectories_bounded_v1(pins, workers, max_batch_bytes)?;
     let mut total = 0u64;
     let mut episodes = Vec::with_capacity(decoded.len());
     for (bytes, episode) in decoded {
         total = total.checked_add(bytes).ok_or("batch size overflow")?;
-        ensure(
-            total <= MAX_BATCH_BYTES,
-            "trajectory batch exceeds 512 MiB CPU ingestion bound",
-        )?;
+        if total > max_batch_bytes {
+            return Err(record_envelope_v1::batch_bound_error_v1(max_batch_bytes));
+        }
         episodes.push(episode);
     }
     Ok(episodes)
@@ -6465,6 +6516,9 @@ mod registry_evolution_dispatch_tests;
 
 #[cfg(test)]
 mod warm_cuda_timing_tests;
+
+#[cfg(test)]
+mod trajectory_batch_bound_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {

@@ -32,6 +32,31 @@ pub(crate) fn validate_max_prepared_tensor_mebibytes_v1(mebibytes: usize) -> Res
         "max_prepared_tensor_mebibytes must be in 64..=4096",
     )
 }
+/// Bound on the record bytes (decompressed, for sealed files) of one prepared
+/// update's trajectory batch. The historical constant (`MAX_BATCH_BYTES`,
+/// 512 MiB) is the default; it is config-driven through
+/// `max_trajectory_batch_mebibytes` on the run config and the prepared update
+/// command, so an update can carry more than about 190 games of about
+/// 2.7 MiB each without changing any existing config (absent means 512 and is
+/// never serialized). Admitted range 1..=4096 MiB: in bytes at most 2^32, so
+/// every sum and comparison against it, all in u64, cannot overflow. It
+/// bounds only the batch total; each file keeps its own 512 MiB bound
+/// (`MAX_FILE_BYTES`), and parse-ahead keeps its fixed retention.
+pub(crate) const DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES: usize = 512;
+pub(crate) const MAX_TRAJECTORY_BATCH_MEBIBYTES: usize = 4096;
+const _: () = assert!((DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES as u64) << 20 == MAX_BATCH_BYTES);
+
+pub(crate) fn validate_max_trajectory_batch_mebibytes_v1(mebibytes: usize) -> Result<(), String> {
+    ensure(
+        (1..=MAX_TRAJECTORY_BATCH_MEBIBYTES).contains(&mebibytes),
+        "max_trajectory_batch_mebibytes must be in 1..=4096",
+    )
+}
+
+/// The batch bound in bytes of a validated `max_trajectory_batch_mebibytes`.
+pub(crate) fn trajectory_batch_bytes_v1(mebibytes: usize) -> u64 {
+    (mebibytes as u64) << 20
+}
 const WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 pub(crate) fn validate_preparation_workers_v1(workers: usize) -> Result<(), String> {
@@ -270,19 +295,27 @@ fn ordered_jobs_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
 
 /// The same bounded, ordered worker executor for independent pinned input reads.
 /// Numeric replay and optimizer work still begin only after all inputs validate.
+#[cfg(test)]
 pub(super) fn read_trajectories_v1(
     pins: &[PinnedFileV1],
     workers: usize,
+) -> Result<Vec<(u64, ExpandedTrajectoryV1)>, String> {
+    read_trajectories_bounded_v1(pins, workers, MAX_BATCH_BYTES)
+}
+
+/// Reads and parses pinned trajectories in order within the batch bound `batch_bytes`.
+pub(super) fn read_trajectories_bounded_v1(
+    pins: &[PinnedFileV1],
+    workers: usize,
+    batch_bytes: u64,
 ) -> Result<Vec<(u64, ExpandedTrajectoryV1)>, String> {
     // A file parsed ahead by an idle collection worker yields that parse of
     // exactly these bytes instead of a second one.
     let parsed_ahead = AtomicUsize::new(0);
     // Sealed files (`record_envelope_v1`) open only within the batch bound,
     // decided in pin order before any is opened.
-    let admitted = record_envelope_v1::admit_batch_v1(
-        pins.iter().map(|pin| pin.path.as_path()),
-        MAX_BATCH_BYTES,
-    )?;
+    let admitted =
+        record_envelope_v1::admit_batch_v1(pins.iter().map(|pin| pin.path.as_path()), batch_bytes)?;
     let read = |ordinal: usize| {
         let bytes = super::read_pinned_shared_v1(&pins[ordinal])?;
         admitted[ordinal].check_v1(&bytes)?;

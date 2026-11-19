@@ -161,6 +161,22 @@ const FRAME_HEADER_MAX_BYTES_V1: usize = 18;
 pub(crate) const BATCH_BOUND_ERROR_V1: &str =
     "trajectory batch exceeds 512 MiB CPU ingestion bound";
 
+/// The batch-bound error for a bound of `bound` bytes: for the default bound
+/// exactly [`BATCH_BOUND_ERROR_V1`], for a configured whole number of MiB the
+/// same text with that number.
+pub(crate) fn batch_bound_error_v1(bound: u64) -> String {
+    if bound == super::MAX_BATCH_BYTES {
+        BATCH_BOUND_ERROR_V1.into()
+    } else if bound.is_multiple_of(1 << 20) {
+        format!(
+            "trajectory batch exceeds {} MiB CPU ingestion bound",
+            bound >> 20
+        )
+    } else {
+        format!("trajectory batch exceeds {bound}-byte CPU ingestion bound")
+    }
+}
+
 /// What [`admit_batch_v1`] saw of one file: its declared content size when
 /// it was a sealed regular file with a readable frame header, else nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,7 +249,7 @@ pub(crate) fn admit_batch_v1<'a>(
         admitted.push(seen);
     }
     if sealed && total > bound {
-        return Err(BATCH_BOUND_ERROR_V1.into());
+        return Err(batch_bound_error_v1(bound));
     }
     Ok(admitted)
 }
@@ -392,6 +408,14 @@ mod tests {
         // their own checks.
         admit_batch_v1([plain.as_path(); 3], 2000).unwrap();
         assert!(admit_batch_v1([plain.as_path(), big.as_path()], (300 << 20) + 999).is_err());
+        // A raised bound (`max_trajectory_batch_mebibytes`) admits the pair
+        // and names itself when exceeded.
+        admit_batch_v1([big.as_path(), big.as_path()], 600 << 20).unwrap();
+        assert_eq!(
+            admit_batch_v1([big.as_path(), big.as_path(), big.as_path()], 600 << 20).unwrap_err(),
+            "trajectory batch exceeds 600 MiB CPU ingestion bound"
+        );
+        assert_eq!(batch_bound_error_v1(bound), BATCH_BOUND_ERROR_V1);
         std::fs::remove_dir_all(&directory).unwrap();
     }
 

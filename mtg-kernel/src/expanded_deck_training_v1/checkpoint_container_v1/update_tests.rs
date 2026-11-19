@@ -440,6 +440,8 @@ fn the_default_record_format_is_never_serialized() {
         loss_selection: gae(),
         preparation_workers: 2,
         max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        max_trajectory_batch_mebibytes:
+            crate::expanded_deck_training_v1::DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
         line_b: None,
         training_math: TrainingMathV1::PlatformLibm,
         record_format,
