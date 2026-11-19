@@ -1213,10 +1213,8 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             JournalV72::Discarded(_) => {
                 let d = discard(state, at as u64)?;
                 for observer in 0..d.observers.len() {
-                    let pending = state
-                        .engine
-                        .pending_triggers
-                        .iter()
+                    let pending = crate::optional_trigger_public_v1::held(state)
+                        .into_iter()
                         .filter(|p| {
                             p.effect
                                 == EffectOp::TinybonesStashV72 {
@@ -1535,7 +1533,7 @@ pub(crate) fn validate_state(state: &GameState) -> Result<(), String> {
             }
         }
     }
-    for p in &state.engine.pending_triggers {
+    for p in crate::optional_trigger_public_v1::held(state) {
         if let EffectOp::TinybonesStashV72 {
             discard: index,
             observer,

@@ -488,10 +488,8 @@ fn honey_trigger_outstanding(state: &GameState, drop: ObjectId) -> bool {
         item.kind == crate::state::StackItemKind::TriggeredAbility
             && item.source == drop
             && item.inline_effect.as_ref() == Some(&effect)
-    }) || state
-        .engine
-        .pending_triggers
-        .iter()
+    }) || crate::optional_trigger_public_v1::held(state)
+        .into_iter()
         .any(|pending| pending.source == drop && pending.effect == effect)
         || state.eternal_v1.as_ref().is_some_and(|eternal| {
             eternal

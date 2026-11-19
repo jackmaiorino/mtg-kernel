@@ -3169,3 +3169,97 @@ fn miracle_reveal_mid_resolution_with_dredge_and_resolution_cast_preserves_defer
         assert!(state.stack[3..5].iter().any(|item| item.source == terminus));
     }
 }
+
+#[test]
+fn pursue_the_past_discard_against_ivora_crosses_second_dredge_decision_and_public_capture_both_seats(
+) {
+    use mtg_kernel::{rl::observe_v2, surface_v2::HarnessSurfaceV2};
+
+    for active_seat in [PlayerId::P0, PlayerId::P1] {
+        let opp = active_seat.opponent();
+        let mut state = game(&["Island"; 16]);
+        state.active_player = active_seat;
+        state.priority_player = active_seat;
+        state.step = Step::Main1;
+        let ivora = put(
+            &mut state,
+            active_seat,
+            "Ivora, Insatiable Heir",
+            Zone::Battlefield,
+        );
+        let imp = put(&mut state, active_seat, "Stinkweed Imp", Zone::Graveyard);
+        let thug = put(&mut state, active_seat, "Golgari Thug", Zone::Graveyard);
+        let chill = put(&mut state, active_seat, "Creeping Chill", Zone::Library);
+        put(&mut state, active_seat, "Island", Zone::Library);
+        let fodder = put(&mut state, active_seat, "Island", Zone::Hand);
+        let pursue = put(&mut state, active_seat, "Pursue the Past", Zone::Hand);
+        pool(&mut state, active_seat, &[ManaColor::R, ManaColor::W], 0);
+        cast(&mut state, pursue, &[]);
+
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                if legal_targets.contains(&Target::Object(fodder)) =>
+            {
+                act(
+                    &mut state,
+                    Action::ChooseEffectTarget(Target::Object(fodder)),
+                );
+            }
+            other => panic!("expected discard choice, got {other:?}"),
+        }
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                if legal_targets.contains(&Target::Object(imp)) =>
+            {
+                act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+            }
+            other => panic!("expected first dredge choice, got {other:?}"),
+        }
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets {
+                legal_targets,
+                can_finish: true,
+                ..
+            }) if legal_targets.contains(&Target::Object(thug)) => {
+                assert!(state.engine.pending_triggers.is_empty());
+                let surface = HarnessSurfaceV2::default();
+                for viewer in [active_seat, opp] {
+                    let obs = observe_v2(&state, &surface, viewer, 0).unwrap();
+                    let pending = &obs.projection.engine_context.pending_triggers;
+                    assert_eq!(pending.len(), 1);
+                    assert!(pending[0]
+                        .source
+                        .as_ref()
+                        .is_some_and(|s| s.arena_id == ivora.0));
+                }
+                act(&mut state, Action::FinishEffectSelection);
+            }
+            other => panic!("expected second dredge choice, got {other:?}"),
+        }
+        match next(&mut state) {
+            Decision::OrderTriggers { player, pending } => {
+                assert_eq!(player, active_seat);
+                assert_eq!(pending.len(), 2);
+                let chill_idx = pending
+                    .iter()
+                    .position(|trigger| trigger.source == chill)
+                    .unwrap();
+                let ivora_idx = pending
+                    .iter()
+                    .position(|trigger| trigger.source == ivora)
+                    .unwrap();
+                act(
+                    &mut state,
+                    Action::OrderTriggers(vec![chill_idx, ivora_idx]),
+                );
+            }
+            other => panic!("expected active-player OrderTriggers, got {other:?}"),
+        }
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        assert_eq!(state.stack.len(), 2);
+        assert_eq!(state.stack[0].controller, active_seat);
+        assert_eq!(state.stack[0].source, chill);
+        assert_eq!(state.stack[1].controller, active_seat);
+        assert_eq!(state.stack[1].source, ivora);
+    }
+}

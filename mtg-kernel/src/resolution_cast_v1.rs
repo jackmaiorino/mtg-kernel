@@ -499,6 +499,16 @@ pub(crate) fn stage(
     }
     let parent = continuation.resolving_item.v4.stack_item_id;
     let parent_index = state.stack.len();
+    if state
+        .standard_v1
+        .as_ref()
+        .and_then(|standard| standard.resolution_play.as_ref())
+        .is_some_and(|context| {
+            context.parent != parent || context.suspended.is_some() || context.permission.is_some()
+        })
+    {
+        return Err("resolution play overlaps another casting instruction".into());
+    }
     // Capture the parent's preceding events before a child cast can change
     // their trigger conditions. Placement still waits for the whole parent.
     let captures = trigger::capture_triggers_without_sba(state);
@@ -506,25 +516,19 @@ pub(crate) fn stage(
         return Err("resolution play could not capture preceding triggers".into());
     }
     let kicked_source = state.engine.pending_kicked_source.take();
-    let overlap = {
-        let context = state
-            .standard_v1
-            .get_or_insert_with(Default::default)
-            .resolution_play
-            .get_or_insert_with(|| ResolutionPlayV1 {
-                parent,
-                parent_index,
-                suspended: None,
-                permission: None,
-                deferred_triggers: Vec::new(),
-                kicked_source,
-                authorization: None,
-            });
-        context.parent != parent || context.suspended.is_some() || context.permission.is_some()
-    };
-    if overlap {
-        return Err("resolution play overlaps another casting instruction".into());
-    }
+    state
+        .standard_v1
+        .get_or_insert_with(Default::default)
+        .resolution_play
+        .get_or_insert_with(|| ResolutionPlayV1 {
+            parent,
+            parent_index,
+            suspended: None,
+            permission: None,
+            deferred_triggers: Vec::new(),
+            kicked_source,
+            authorization: None,
+        });
     #[cfg(feature = "eternal-fixtures")]
     let earlier_dredge = crate::eternal_vintage_e7b_v1::dredge::take_captures_keep_deferring(state);
     let pending_triggers = std::mem::take(&mut state.engine.pending_triggers);
@@ -1345,5 +1349,28 @@ mod tests {
         assert_eq!(object_mana_value(&state, room), 5);
         validate_spell_stack_source(&state, item).unwrap();
         assert_eq!(state.players[0].mana_pool, [0; 6]);
+    }
+
+    #[test]
+    fn overlapping_resolution_play_preserves_pending_kicked_source() {
+        let (mut state, child) = discover_child();
+        let second = put(&mut state, "Burst Lightning", Zone::Exile);
+        let active = context(&state).unwrap();
+        let mut continuation = (**active.suspended.as_ref().unwrap()).clone();
+        continuation.resolving_item.v4.stack_item_id = StackItemId(active.parent.0 + 1);
+        let answer = active.authorization.as_ref().unwrap().answer.clone();
+        state.engine.pending_kicked_source = Some(child);
+        let second_binding = bind(&state, second);
+        let err = stage(
+            &mut state,
+            continuation,
+            second_binding,
+            None,
+            false,
+            answer,
+        )
+        .unwrap_err();
+        assert!(err.contains("overlaps"));
+        assert_eq!(state.engine.pending_kicked_source, Some(child));
     }
 }

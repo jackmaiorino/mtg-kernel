@@ -394,7 +394,7 @@ pub fn capture(s: &GameState, v: PlayerId) -> Result<FactsV72, String> {
             JournalV72::Discarded(d) => {
                 for (observer, c) in d.observers.iter().enumerate() {
                     if let Some((position, _)) =
-                        s.engine.pending_triggers.iter().enumerate().find(|(_, p)| {
+                        public::held(s).into_iter().enumerate().find(|(_, p)| {
                             p.effect
                                 == crate::effect::EffectOp::TinybonesStashV72 {
                                     discard: at as u64,

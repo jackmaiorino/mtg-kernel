@@ -14487,7 +14487,7 @@ fn owned_draw_pending_source_ref(
     }))
 }
 
-fn dredge_waiting_triggers(
+pub(crate) fn dredge_waiting_triggers(
     state: &GameState,
 ) -> std::slice::Iter<'_, crate::trigger::PendingTrigger> {
     #[cfg(feature = "eternal-fixtures")]
