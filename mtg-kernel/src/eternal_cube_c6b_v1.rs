@@ -33,8 +33,9 @@
 //! Six follows Full Wrenn and Six's retrace conventions: another graveyard
 //! permission takes precedence over retrace, and spell_costs_v1 declines a
 //! quote requiring two independent object-cost selections. Thus retrace plus
-//! Solitude's pitch-evoke or Abhorrent Oculus's graveyard-exile cost is not
-//! offered, just as Wrenn's emblem cannot retrace Force of Will's pitch cost.
+//! delve, Solitude's pitch-evoke or Abhorrent Oculus's graveyard-exile cost
+//! is not offered. Wrenn's emblem shares this guard and cannot retrace
+//! Force of Will's pitch cost either.
 //! Native flashback/escape routes retain the same precedence as with Wrenn.
 //! No new payment subsystem is introduced.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]

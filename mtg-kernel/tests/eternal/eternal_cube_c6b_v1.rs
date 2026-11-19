@@ -1113,6 +1113,48 @@ fn six_retrace_requires_land_and_mana_and_returns_permanents_to_battlefield() {
 }
 
 #[test]
+fn six_does_not_offer_retrace_with_delve_or_repeat_failed_casts() {
+    assert_eq!(def("Gurmag Angler").capability, CardCapability::Full);
+    assert!(def("Gurmag Angler").delve);
+    for player in [P0, P1] {
+        for generic in [0, 6] {
+            let mut state = plains();
+            state.active_player = player;
+            state.priority_player = player;
+            put(&mut state, player, SIX, Zone::Battlefield);
+            let angler = put(&mut state, player, "Gurmag Angler", Zone::Graveyard);
+            let hand_angler = put(&mut state, player, "Gurmag Angler", Zone::Hand);
+            let land = put(&mut state, player, "Plains", Zone::Hand);
+            for _ in 0..6 {
+                put(&mut state, player, "Plains", Zone::Graveyard);
+            }
+            pool(&mut state, player, &[ManaColor::B], generic);
+            // Ordinary delve is payable. Only the unsupported combination
+            // with retrace is withheld, even if full mana is available.
+            assert!(castable(&mut state, hand_angler));
+            assert!(!castable(&mut state, angler));
+            let generation = state.objects.get(angler).zone_change_count;
+            run_until(
+                &mut state,
+                |state| state.active_player == player.opponent() && state.step == Step::Main1,
+                |_, decision| {
+                    if let Decision::CastSpellOrPass {
+                        castable_spells, ..
+                    } = decision
+                    {
+                        assert!(!castable_spells.contains(&angler));
+                    }
+                    None
+                },
+            );
+            assert_eq!(zone(&state, angler), Zone::Graveyard);
+            assert_eq!(state.objects.get(angler).zone_change_count, generation);
+            assert_eq!(zone(&state, land), Zone::Hand);
+        }
+    }
+}
+
+#[test]
 fn six_retrace_respects_types_controller_turn_timing_and_lost_abilities() {
     let mut state = plains();
     let six = cast_six(&mut state);
