@@ -1252,6 +1252,46 @@ fn faerie_mastermind_counts_the_draw_step_and_ignores_your_own_draws() {
     );
 }
 
+#[test]
+fn faerie_mastermind_each_player_draws_the_active_player_first() {
+    // Activated on the opponent's turn, "each player draws a card" starts
+    // with the active player (101.4). With Jace, Wielder of Mysteries on both
+    // sides and empty libraries, the first draw wins the game.
+    let mut state = plains();
+    let mastermind = put(&mut state, P0, "Faerie Mastermind", Zone::Battlefield);
+    for player in [P0, P1] {
+        let jace = put(&mut state, player, "Jace, Wielder of Mysteries", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(jace, Zone::Battlefield),
+        );
+    }
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::Main1
+    });
+    for player in [P0, P1] {
+        let library = state.players[player.index()].library.clone();
+        for card in library {
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, Zone::Exile));
+        }
+    }
+    state.priority_player = P0;
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    activate(&mut state, mastermind, 0, &[]);
+    let mut winner = None;
+    for _ in 0..40 {
+        match next(&mut state) {
+            Decision::GameOver { winner: won } => {
+                winner = Some(won);
+                break;
+            }
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            other => act(&mut state, first_answer(other)),
+        }
+    }
+    assert_eq!(winner, Some(Some(P1)), "the active player drew first");
+}
+
 // ---- Ledger Shredder -----------------------------------------------------------------
 
 /// Settles a connive: discards `discard` when it is offered.

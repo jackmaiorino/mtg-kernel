@@ -239,21 +239,45 @@ pub fn occult_epiphany() -> EffectOp {
 pub fn time_spiral() -> EffectOp {
     EffectOp::Sequence(vec![
         c1a(C1aOpV1::TimeSpiralV1),
-        EffectOp::DrawCards {
-            player: PlayerRef::Controller,
-            count: 7,
-        },
-        stop_if_won(),
-        EffectOp::DrawCards {
-            player: PlayerRef::Opponent,
-            count: 7,
-        },
-        stop_if_won(),
-        EffectOp::UntapUpToLands {
-            chooser: PlayerRef::Controller,
-            max_targets: 6,
-        },
+        each_player_draws(
+            7,
+            vec![
+                stop_if_won(),
+                EffectOp::UntapUpToLands {
+                    chooser: PlayerRef::Controller,
+                    max_targets: 6,
+                },
+            ],
+        ),
     ])
+}
+
+/// "Each player draws `count` cards", then `rest`. The active player draws
+/// first (101.4): the controller on their own turn, the opponent when the
+/// spell or ability resolves on the opponent's turn. A draw that won the
+/// game ends it before the other player draws (`stop_if_won`). Wheel of
+/// Fortune (wave C1c) and Faerie Mastermind (wave C4a) use it too.
+pub(crate) fn each_player_draws(count: u32, rest: Vec<EffectOp>) -> EffectOp {
+    let order = |first: PlayerRef, second: PlayerRef| {
+        let mut ops = vec![
+            EffectOp::DrawCards {
+                player: first,
+                count,
+            },
+            stop_if_won(),
+            EffectOp::DrawCards {
+                player: second,
+                count,
+            },
+        ];
+        ops.extend(rest.iter().cloned());
+        EffectOp::Sequence(ops)
+    };
+    EffectOp::Conditional {
+        cond: crate::effect::EffectCond::ControllersTurnV1,
+        then: Box::new(order(PlayerRef::Controller, PlayerRef::Opponent)),
+        else_: Box::new(order(PlayerRef::Opponent, PlayerRef::Controller)),
+    }
 }
 
 /// An instruction between the draws of two players: a draw that won the game
