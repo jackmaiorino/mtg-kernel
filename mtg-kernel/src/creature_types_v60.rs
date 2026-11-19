@@ -642,6 +642,7 @@ pub const fn canonical_native_type(subtype: Subtype) -> Option<CreatureTypeV60> 
         Subtype::Mount => Some(CreatureTypeV60::Mount),
         Subtype::Doctor => Some(CreatureTypeV60::Doctor),
         Subtype::Narset => None,
+        Subtype::Garruk => None,
     }
 }
 
