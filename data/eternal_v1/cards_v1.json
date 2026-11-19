@@ -36222,7 +36222,7 @@
   },
   {
    "name": "Metamorphosis Fanatic",
-   "engine_capability": "full",
+   "engine_capability": "no_effect",
    "mana_cost": "{4}{B}{B}",
    "mana_value": 6,
    "colors": [
@@ -36245,7 +36245,7 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": ["lifelink", "etb_trigger", "reanimate", "lifelink_counter", "miracle"],
+   "mechanics": [],
    "java_file": "Mage.Sets/src/mage/cards/m/MetamorphosisFanatic.java"
   },
   {

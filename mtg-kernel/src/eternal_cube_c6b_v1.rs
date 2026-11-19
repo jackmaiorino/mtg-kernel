@@ -22,10 +22,13 @@
 //! is not a token-creation initialization or a propagated copiable value.
 //! Call 4 reserves Doctor subtype ID 710; no new token rows are needed.
 //!
-//! Fanatic follows Full Zoraline's return-then-counter convention: the counter
-//! is placed on the exact returned incarnation after the entry event, rather
-//! than being part of entry initialization. This has the same entry-observer
-//! timing limitation as Zoraline's FinalityReturnedTarget.
+//! Fanatic is restored to no_effect. Its retained, inactive program bypasses
+//! Metamorph's entry copy choice and places the lifelink counter after entry.
+//! Reanimate's prepare_reanimated_metamorph is not a generic return helper:
+//! it requires a paid Reanimate spell and restricts the copy menu to supported
+//! entry forms (excluding Fanatic itself). Extending its replay ownership and
+//! entry initialization is outside the small additive shared-edit scope.
+//! Re-enable only with a trigger-owned copy choice and an entry-time counter.
 //!
 //! Six follows Full Wrenn and Six's retrace conventions: another graveyard
 //! permission takes precedence over retrace, and spell_costs_v1 declines a
