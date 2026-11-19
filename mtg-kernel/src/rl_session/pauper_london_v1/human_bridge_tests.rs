@@ -37,7 +37,8 @@ fn pair(
     )
     .unwrap();
     let lockstep =
-        FlatV4LockstepV1::reset_london_human(episode, seed, 2_000, 200_000, decks).unwrap();
+        FlatV4LockstepV1::reset_london_human(episode, seed, 2_000, 200_000, decks, [false; 2])
+            .unwrap();
     (raw, lockstep)
 }
 

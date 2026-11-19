@@ -190,6 +190,12 @@ enum SpellbenchRequestV1 {
         game_seed: u64,
         max_decisions: u64,
         max_steps: u64,
+        /// Human play only (`--pauper-london-human-v1`): the seats ("p0",
+        /// "p1") given every engine priority window. Absent or empty keeps
+        /// the trained surface for both seats; any other server refuses a
+        /// non-empty list.
+        #[serde(default)]
+        engine_window_seats: Vec<String>,
     },
     Step {
         #[serde(rename = "protocol")]
@@ -250,6 +256,7 @@ struct SpellbenchResetFieldsV1<'a> {
     game_seed: u64,
     max_decisions: u64,
     max_steps: u64,
+    engine_window_seats: &'a [String],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -531,6 +538,7 @@ impl SpellbenchBridgeServerV1 {
                 game_seed,
                 max_decisions,
                 max_steps,
+                engine_window_seats,
                 ..
             } => self.handle_reset(
                 request_id,
@@ -541,6 +549,7 @@ impl SpellbenchBridgeServerV1 {
                     game_seed: *game_seed,
                     max_decisions: *max_decisions,
                     max_steps: *max_steps,
+                    engine_window_seats,
                 },
             ),
             SpellbenchRequestV1::Step {
@@ -779,7 +788,31 @@ impl SpellbenchBridgeServerV1 {
             game_seed,
             max_decisions,
             max_steps,
+            engine_window_seats,
         } = reset;
+        // Per-seat engine priority windows exist for human play alone: the
+        // seat of a person sees every engine window, a bot seat never does.
+        let mut window_seats = [false; 2];
+        for seat in engine_window_seats {
+            let index = match seat.as_str() {
+                "p0" => 0,
+                "p1" => 1,
+                _ => {
+                    return error_response_value_v1(
+                        Some(request_id),
+                        "malformed_request",
+                        "engine_window_seats names a seat other than p0 or p1",
+                    );
+                }
+            };
+            if !self.london_human || std::mem::replace(&mut window_seats[index], true) {
+                return error_response_value_v1(
+                    Some(request_id),
+                    "malformed_request",
+                    "engine_window_seats needs the human-play London server and distinct seats",
+                );
+            }
+        }
         // Spec Section 2: at most one active game per process, and game ids
         // are unique per process; a finished game frees the process.
         if self.game.as_ref().is_some_and(|game| !game.terminal_sent) {
@@ -848,6 +881,7 @@ impl SpellbenchBridgeServerV1 {
                 max_decisions,
                 max_steps,
                 deck_ids.clone(),
+                window_seats,
             ))
         } else if self.options.x_kernel_flat_v4 {
             Some(FlatV4LockstepV1::reset(
@@ -861,13 +895,14 @@ impl SpellbenchBridgeServerV1 {
             None
         };
         let session = if self.london_human {
-            RlEpisodeSessionV1::reset_pauper_london_human_v1(
+            RlEpisodeSessionV1::reset_pauper_london_human_windows_v1(
                 episode_id,
                 game_seed,
                 max_decisions,
                 max_steps,
                 deck_ids,
                 [crate::rl_session::pauper_london_v1::PauperMulliganModeV1::Learned; 2],
+                window_seats,
             )
         } else {
             RlEpisodeSessionV1::reset_with_decks_and_limits(
@@ -1721,6 +1756,12 @@ fn private_v2_support(game: &SpellbenchBridgeGameV1) -> Value {
     let RlSessionResponseV1::Decision(decision) = game.session.current_response() else {
         return support;
     };
+    // Human play with per-seat engine windows: this priority window exists
+    // only for its flagged seat (the trained surface would have passed it).
+    // Absent at every other decision, so those keep their bytes.
+    if let Some(reason) = game.session.engine_window_v1() {
+        support["engine_window"] = json!(reason);
+    }
     let actor = decision.acting_player;
     let actor_id = match actor {
         PlayerSeatV1::P0 => crate::ids::PlayerId::P0,
