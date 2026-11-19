@@ -5320,6 +5320,15 @@ pub(crate) fn collect_and_process_with_sba_result_v1(
     {
         return (Vec::new(), false, false);
     }
+    #[cfg(feature = "eternal-fixtures")]
+    let dredge_deferred = crate::eternal_vintage_e7b_v1::dredge::deferring_captures(state);
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let dredge_deferred = false;
+    if dredge_deferred {
+        #[cfg(feature = "eternal-fixtures")]
+        waiting.extend(crate::eternal_vintage_e7b_v1::dredge::take_captures(state));
+        waiting.append(&mut state.engine.pending_triggers);
+    }
     waiting.extend(capture_triggers_without_sba(state));
     // This checkpoint ends the resolving item's ownership of its kick marker.
     state.engine.pending_kicked_source = None;
@@ -5351,6 +5360,13 @@ pub(crate) fn collect_and_process_with_sba_result_v1(
     new_triggers.extend(triggers_from_events(state, &sba_events, None));
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cube_c6a_v1::clear_collected_exile_batches(state);
+    if dredge_deferred {
+        for pending in std::mem::take(&mut state.engine.pending_triggers) {
+            if !new_triggers.contains(&pending) {
+                new_triggers.push(pending);
+            }
+        }
+    }
 
     // 603.3d: a triggered ability requiring targets is removed from the
     // stack-placement queue when no complete legal target assignment exists.

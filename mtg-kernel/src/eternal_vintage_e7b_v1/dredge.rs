@@ -547,6 +547,53 @@ pub(crate) fn finish_jace_or_hullbreacher(
     Ok(())
 }
 
+pub(crate) fn deferring_captures(state: &GameState) -> bool {
+    read_state(state).is_some_and(|e7b| e7b.dredge_deferring)
+}
+
+pub(crate) fn waiting_triggers(state: &GameState) -> &[crate::trigger::PendingTrigger] {
+    read_state(state).map_or(&[], |e7b| e7b.dredge_captures.as_slice())
+}
+
+pub(crate) fn defer_captures(state: &mut GameState, captures: Vec<crate::trigger::PendingTrigger>) {
+    let mut combined = std::mem::take(&mut state.engine.pending_triggers);
+    combined.extend(captures);
+    e7b_state(state).dredge_deferring = true;
+    #[cfg(feature = "eternal-fixtures")]
+    let combined = match crate::engine::resolution_cast_v1::defer_dredge_captures(state, combined) {
+        Ok(()) => return,
+        Err(combined) => combined,
+    };
+    e7b_state(state).dredge_captures.extend(combined);
+}
+
+pub(crate) fn take_captures_keep_deferring(
+    state: &mut GameState,
+) -> Vec<crate::trigger::PendingTrigger> {
+    let Some(eternal) = state.eternal_v1.as_mut() else {
+        return Vec::new();
+    };
+    std::mem::take(&mut eternal.e7b.dredge_captures)
+}
+
+pub(crate) fn prepend_captures(
+    state: &mut GameState,
+    mut earlier: Vec<crate::trigger::PendingTrigger>,
+) {
+    let e7b = e7b_state(state);
+    e7b.dredge_deferring = true;
+    earlier.append(&mut e7b.dredge_captures);
+    e7b.dredge_captures = earlier;
+}
+
+pub(crate) fn take_captures(state: &mut GameState) -> Vec<crate::trigger::PendingTrigger> {
+    let Some(eternal) = state.eternal_v1.as_mut() else {
+        return Vec::new();
+    };
+    eternal.e7b.dredge_deferring = false;
+    std::mem::take(&mut eternal.e7b.dredge_captures)
+}
+
 /// Applies a dredge choice: no card draws, a card dredges.
 pub(crate) fn finish(
     state: &mut GameState,
@@ -559,7 +606,7 @@ pub(crate) fn finish(
         commit_resolution_draw(state, pending, player, &choice.path);
         return;
     };
-    if !dredge(state, player, card.object, binding_link(&card)) {
+    if !dredge(state, player, card.object, binding_link(&card)) && state.engine.halted.is_none() {
         commit_resolution_draw(state, pending, player, &choice.path);
     }
 }
@@ -583,6 +630,18 @@ fn dredge(
     {
         return false;
     }
+    let captures = if state.engine.event_log.is_empty() {
+        Vec::new()
+    } else {
+        let captures = crate::trigger::capture_triggers_without_sba(state);
+        if state.engine.halted.is_some() {
+            return false;
+        }
+        captures
+    };
+    // Defer mid-resolution captures until the resolution checkpoint so all
+    // simultaneous triggers order together under APNAP (CR 603.2, 603.3b).
+    defer_captures(state, captures);
     let milled = library
         .into_iter()
         .take(usize::from(count))
@@ -640,7 +699,7 @@ pub(crate) fn answer_pending_decision(state: &mut GameState, option: u16) -> Res
             dredge(state, player, card, link)
         }
     };
-    if !dredged {
+    if !dredged && state.engine.halted.is_none() {
         event::propose_and_commit(state, ProposedEvent::draw(player));
     }
     Ok(true)

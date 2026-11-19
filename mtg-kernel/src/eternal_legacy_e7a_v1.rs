@@ -2523,7 +2523,19 @@ fn dark_depths_triggers(state: &mut GameState) {
                 .engine
                 .pending_triggers
                 .iter()
-                .any(|trigger| trigger.effect == effect);
+                .any(|trigger| trigger.effect == effect)
+            || crate::eternal_vintage_e7b_v1::dredge::waiting_triggers(state)
+                .iter()
+                .any(|trigger| trigger.effect == effect)
+            || state
+                .standard_v1
+                .as_ref()
+                .and_then(|standard| standard.resolution_play.as_ref())
+                .is_some_and(|play| {
+                    play.deferred_triggers
+                        .iter()
+                        .any(|trigger| trigger.effect == effect)
+                });
         if pending {
             continue;
         }

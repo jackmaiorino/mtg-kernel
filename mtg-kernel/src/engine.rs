@@ -14435,16 +14435,7 @@ fn reset_priority(state: &mut GameState) {
     state.engine.mana_ability_count_at_round_open = state.engine.mana_ability_activations;
 }
 
-fn collect_and_queue_triggers(state: &mut GameState) {
-    if resolution_cast_v1::defer_triggers(state) {
-        return;
-    }
-    // Echoing Deeps' entry copy is chosen before the triggers of the land it
-    // copies see it enter (eternal wave E9a).
-    #[cfg(feature = "eternal-fixtures")]
-    if crate::eternal_legacy_e9a_v1::statics::defer_triggers(state) {
-        return;
-    }
+fn mid_resolution_discard_or_optional_cost(state: &GameState) -> bool {
     let resolving_discard = state
         .engine
         .pending_discard
@@ -14457,17 +14448,53 @@ fn collect_and_queue_triggers(state: &mut GameState) {
                     | DiscardResume::FinishEffectContinuation { .. }
             )
         });
-    if resolving_discard
+    resolving_discard
         || state.engine.pending_optional_cost.is_some()
         || state.engine.pending_optional_cost_sacrifice.is_some()
-    {
+}
+
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) fn mid_resolution_deferring(state: &GameState) -> bool {
+    resolution_cast_v1::active(state)
+        || state.engine.pending_effect.is_some()
+        || state.engine.pending_spell_copy.is_some()
+        || mid_resolution_discard_or_optional_cost(state)
+}
+
+fn collect_and_queue_triggers(state: &mut GameState) {
+    if resolution_cast_v1::defer_triggers(state) {
+        return;
+    }
+    // Echoing Deeps' entry copy is chosen before the triggers of the land it
+    // copies see it enter (eternal wave E9a).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_legacy_e9a_v1::statics::defer_triggers(state) {
+        return;
+    }
+    if mid_resolution_discard_or_optional_cost(state) {
         // MayPayCostThen's offer, its selected sacrifice cost, and terminal
         // discard leaves all remain inside a resolving spell or ability.
         // Capture earlier damage/draw events without an SBA or trigger-placement
         // window. Decline or complete payment resumes resolution; the ordinary
         // terminal checkpoint then checks SBAs and places captured triggers.
         let captures = trigger::capture_triggers_without_sba(state);
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::eternal_vintage_e7b_v1::dredge::deferring_captures(state) {
+            crate::eternal_vintage_e7b_v1::dredge::defer_captures(state, captures);
+            return;
+        }
         state.engine.pending_triggers.extend(captures);
+        return;
+    }
+    #[cfg(feature = "eternal-fixtures")]
+    if state.engine.pending_effect.is_some() || state.engine.pending_spell_copy.is_some() {
+        let captures = trigger::capture_triggers_without_sba(state);
+        if !captures.is_empty()
+            || !state.engine.pending_triggers.is_empty()
+            || crate::eternal_vintage_e7b_v1::dredge::deferring_captures(state)
+        {
+            crate::eternal_vintage_e7b_v1::dredge::defer_captures(state, captures);
+        }
         return;
     }
     let triggers = trigger::collect_and_process(state);
@@ -14862,6 +14889,10 @@ pub(crate) fn commit_discarded_cards(state: &mut GameState, chosen: &[ObjectId])
             });
         }
         tinybones_v72::after_discard(state, tinybones_discard);
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::eternal_vintage_e7b_v1::dredge::deferring_captures(state) {
+            crate::eternal_vintage_e7b_v1::dredge::defer_captures(state, Vec::new());
+        }
     }
 }
 

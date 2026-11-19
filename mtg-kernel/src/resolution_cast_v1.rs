@@ -37,6 +37,17 @@ fn context_mut(state: &mut GameState) -> Option<&mut ResolutionPlayV1> {
 pub(super) fn active(state: &GameState) -> bool {
     context(state).is_some()
 }
+#[cfg(feature = "eternal-fixtures")]
+pub(crate) fn defer_dredge_captures(
+    state: &mut GameState,
+    captures: Vec<PendingTrigger>,
+) -> Result<(), Vec<PendingTrigger>> {
+    let Some(context) = context_mut(state) else {
+        return Err(captures);
+    };
+    context.deferred_triggers.extend(captures);
+    Ok(())
+}
 pub(super) fn permit(state: &GameState, object: ObjectId) -> Option<ResolutionPermissionV1> {
     context(state)?
         .permission
@@ -495,22 +506,29 @@ pub(crate) fn stage(
         return Err("resolution play could not capture preceding triggers".into());
     }
     let kicked_source = state.engine.pending_kicked_source.take();
-    let context = state
-        .standard_v1
-        .get_or_insert_with(Default::default)
-        .resolution_play
-        .get_or_insert_with(|| ResolutionPlayV1 {
-            parent,
-            parent_index,
-            suspended: None,
-            permission: None,
-            deferred_triggers: Vec::new(),
-            kicked_source,
-            authorization: None,
-        });
-    if context.parent != parent || context.suspended.is_some() || context.permission.is_some() {
+    let overlap = {
+        let context = state
+            .standard_v1
+            .get_or_insert_with(Default::default)
+            .resolution_play
+            .get_or_insert_with(|| ResolutionPlayV1 {
+                parent,
+                parent_index,
+                suspended: None,
+                permission: None,
+                deferred_triggers: Vec::new(),
+                kicked_source,
+                authorization: None,
+            });
+        context.parent != parent || context.suspended.is_some() || context.permission.is_some()
+    };
+    if overlap {
         return Err("resolution play overlaps another casting instruction".into());
     }
+    #[cfg(feature = "eternal-fixtures")]
+    let earlier_dredge = crate::eternal_vintage_e7b_v1::dredge::take_captures_keep_deferring(state);
+    let pending_triggers = std::mem::take(&mut state.engine.pending_triggers);
+    let context = context_mut(state).unwrap();
     context.suspended = Some(Box::new(continuation));
     context.permission = Some(ResolutionPermissionV1 {
         card,
@@ -522,9 +540,9 @@ pub(crate) fn stage(
         answer,
         exiled_card,
     }));
-    context
-        .deferred_triggers
-        .append(&mut state.engine.pending_triggers);
+    #[cfg(feature = "eternal-fixtures")]
+    context.deferred_triggers.extend(earlier_dredge);
+    context.deferred_triggers.extend(pending_triggers);
     context.deferred_triggers.extend(captures);
     state.priority_player = controller;
     if land {
@@ -747,11 +765,19 @@ pub(super) fn finish_parent(state: &mut GameState, parent: StackItemId) {
             .resolution_play
             .take()
             .unwrap();
+        state.engine.pending_kicked_source = context.kicked_source;
+        #[cfg(feature = "eternal-fixtures")]
+        if crate::eternal_vintage_e7b_v1::dredge::deferring_captures(state) {
+            crate::eternal_vintage_e7b_v1::dredge::prepend_captures(
+                state,
+                context.deferred_triggers,
+            );
+            return;
+        }
         state
             .engine
             .pending_triggers
             .extend(context.deferred_triggers);
-        state.engine.pending_kicked_source = context.kicked_source;
     }
 }
 pub(crate) fn resolving_index(state: &GameState, parent: StackItemId) -> Option<usize> {
