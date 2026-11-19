@@ -14,11 +14,20 @@
 //! a pool is a TSV whose header starts `deck split`. Pair `p` deals two
 //! distinct playable decks of the split from `(seed, p)` and plays them twice
 //! with the policies swapped (leg 0: policy A in seat 0), sharing the deal.
+//!
+//! The campaign evaluation policies (`learner-checkpoint:<path>`,
+//! `sampled-public-heuristic/v1` and
+//! `pimc:...:closedlist-full-pool-heuristic-v1`) play only under
+//! `-session full-pool` and only with `-max-turns` and `-max-decisions`
+//! given explicitly (the design's limits are 100 and 4000, not this
+//! driver's defaults). A summary records each learner checkpoint's file
+//! SHA-256 and the learner policy contract.
 use mtg_kernel::card_def::KERNEL_CARDDB_HASH;
 use mtg_kernel::ids::PlayerId;
+use mtg_kernel::limited_match_v1::learner_policy_v1::LEARNER_POLICY_CONTRACT_V1;
 use mtg_kernel::limited_match_v1::{
-    deal_pair_v1, play_game_v1, DeckFileV1, GameLimitsV1, GameOutcomeV1, LimitedBeliefV1,
-    PolicySpecV1, RulesAdmissionV1, SessionKindV1, LIMITED_MATCH_SCHEMA_V1,
+    deal_pair_v1, play_game_in_pair_v1, DeckFileV1, GameLimitsV1, GameOutcomeV1, LimitedBeliefV1,
+    MatchStreamV1, PolicySpecV1, RulesAdmissionV1, SessionKindV1, LIMITED_MATCH_SCHEMA_V1,
 };
 use mtg_kernel::KERNEL_VERSION;
 use serde_json::json;
@@ -264,6 +273,17 @@ fn play(flags: &Flags) -> Result<(), String> {
     for policy in &policies {
         policy.validate_full_pool_session_v1(limits.session)?;
     }
+    if policies
+        .iter()
+        .any(PolicySpecV1::is_campaign_evaluation_policy_v1)
+        && (flags.opt("max-turns").is_none() || flags.opt("max-decisions").is_none())
+    {
+        return Err(
+            "campaign evaluation policies need explicit -max-turns and -max-decisions \
+             (the design's limits are -max-turns 100 -max-decisions 4000)"
+                .into(),
+        );
+    }
     let uses_closed_list = policies
         .iter()
         .any(PolicySpecV1::uses_versioned_closed_list);
@@ -357,7 +377,7 @@ fn play(flags: &Flags) -> Result<(), String> {
                 let Some(&(pair, leg)) = jobs.get(job) else {
                     break;
                 };
-                let row = play_one(
+                let (row, over_budget) = play_one(
                     &decks,
                     &policies,
                     [&spec_a, &spec_b],
@@ -381,6 +401,15 @@ fn play(flags: &Flags) -> Result<(), String> {
                         _ => "errors",
                     })
                     .or_default() += 1;
+                for (key, count) in [
+                    "a_search_decisions_over_budget",
+                    "b_search_decisions_over_budget",
+                ]
+                .into_iter()
+                .zip(over_budget)
+                {
+                    *tallies.lock().unwrap().entry(key).or_default() += count;
+                }
                 let mut guard = pending.lock().unwrap();
                 let (next, ready, file) = &mut *guard;
                 ready.insert(job, game_first(row));
@@ -422,9 +451,11 @@ fn play(flags: &Flags) -> Result<(), String> {
         "session": format!("{:?}", limits.session),
     });
     if records_search {
+        summary["a_search_decisions_over_budget"] = json!(count("a_search_decisions_over_budget"));
+        summary["b_search_decisions_over_budget"] = json!(count("b_search_decisions_over_budget"));
         summary["world_contract"] = if policies
             .iter()
-            .any(PolicySpecV1::uses_full_pool_closed_list_v1)
+            .any(PolicySpecV1::uses_full_pool_sampled_world_v1)
         {
             json!("limited-closedlist-full-pool/v1")
         } else if uses_closed_list_v3 {
@@ -438,8 +469,20 @@ fn play(flags: &Flags) -> Result<(), String> {
         };
         summary["game_deck_contents_sha256"] = json!(deck_contents_sha256(&decks));
         summary["belief_deck_contents_sha256"] = json!(belief_deck_contents_sha256);
-        summary["max_turns"] = json!(limits.max_turns);
-        summary["max_decisions"] = json!(limits.max_decisions);
+    }
+    // Every summary records its limits (the evaluation tool's Gate E0 needs them).
+    summary["max_turns"] = json!(limits.max_turns);
+    summary["max_decisions"] = json!(limits.max_decisions);
+    let mut learner = false;
+    let keys = ["a_checkpoint_sha256", "b_checkpoint_sha256"];
+    for (key, policy) in keys.into_iter().zip(&policies) {
+        if let PolicySpecV1::LearnerCheckpoint(checkpoint) = policy {
+            summary[key] = json!(checkpoint.sha256());
+            learner = true;
+        }
+    }
+    if learner {
+        summary["learner_policy_contract"] = json!(LEARNER_POLICY_CONTRACT_V1);
     }
     let summary_path = format!("{}.summary.json", out.display());
     fs::write(
@@ -496,7 +539,7 @@ fn play_one(
     legs: u64,
     first_pair: u64,
     limits: GameLimitsV1,
-) -> serde_json::Value {
+) -> (serde_json::Value, [u64; 2]) {
     let game = (pair - first_pair) * legs + leg;
     let base = |extra: serde_json::Value| {
         let mut row = json!({"game": game, "pair": pair, "leg": leg, "seed": seed});
@@ -507,7 +550,12 @@ fn play_one(
     };
     let (indices, env_seed, starting) = match deal_pair_v1(seed, pair, decks.len()) {
         Ok(deal) => deal,
-        Err(error) => return base(json!({"result": "error", "error": error, "winner": -1})),
+        Err(error) => {
+            return (
+                base(json!({"result": "error", "error": error, "winner": -1})),
+                [0; 2],
+            );
+        }
     };
     // Leg 0 seats policy A in seat 0; leg 1 swaps the policies, not the decks.
     let side = if leg == 0 { ["A", "B"] } else { ["B", "A"] };
@@ -515,7 +563,7 @@ fn play_one(
     let seat_policies = [&policies[pick(side[0])], &policies[pick(side[1])]];
     let seat_beliefs = seat_policies.map(|p| if p.needs_belief() { belief } else { None });
     let started = Instant::now();
-    let result = play_game_v1(
+    let result = play_game_in_pair_v1(
         [
             decks[indices[0]].1.as_slice(),
             decks[indices[1]].1.as_slice(),
@@ -525,6 +573,7 @@ fn play_one(
         env_seed,
         starting,
         limits,
+        MatchStreamV1 { seed, pair, leg },
     );
     let (winner, outcome, error) = match &result.outcome {
         GameOutcomeV1::Winner(p) => (p.index() as i64, side[p.index()], None),
@@ -560,5 +609,9 @@ fn play_one(
         row["search_fallbacks"] = json!(result.search_fallbacks);
         row["search_rejection_reasons"] = json!(result.rejection_reasons);
     }
-    row
+    let mut over_budget = [0; 2];
+    for seat in 0..2 {
+        over_budget[pick(side[seat])] = result.search_decisions_over_budget[seat];
+    }
+    (row, over_budget)
 }

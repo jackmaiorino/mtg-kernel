@@ -730,6 +730,13 @@ impl KaitoSessionV75 {
         }
         Ok(sampled)
     }
+    /// The game state, for the heuristic evaluator inside a sampled world.
+    /// The sealed owner calls this only on a world it received from
+    /// `sampled_full_pool_closed_list_v1`, never on a live game.
+    #[cfg(feature = "limited-fdn-fixtures")]
+    pub(crate) fn sampled_world_state_v75(&self) -> &GameState {
+        &self.inner.state
+    }
 
     pub fn validate_decision_v75(
         &self,
