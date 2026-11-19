@@ -29,7 +29,7 @@ use crate::expanded_deck_training_v1::{
     CollectionTrajectoryFieldsV1, ExpandedEpisodeV1, ExpandedInferenceIdentityV1,
     ExpandedLossSelectionV1, ExpandedModelSourceV1, ExpandedTrainingCommandV1,
     ExpandedUpdateBackendV1, LineBUpdateOptionsV1, PinnedFileV1, UpdateBackwardExecutionV1,
-    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
 };
 use crate::native_flat_tensorizer_v3::{FEATURE_CONTRACT_DIGEST_V3, FEATURE_ENCODING_DIGEST_V3};
 use crate::sideboard::RegisteredDeckV1;
@@ -473,6 +473,19 @@ pub struct NativeExpandedTrainingRunV1 {
         skip_serializing_if = "is_default_max_prepared_tensor_mebibytes"
     )]
     pub max_prepared_tensor_mebibytes: usize,
+    /// Config-driven bound (MiB) on the record bytes of one prepared update's
+    /// trajectory batch (decompressed for sealed files), checked at
+    /// collection validation and in the update; default 512 keeps every
+    /// existing config byte-identical on the wire and every bound unchanged.
+    /// Raising it admits updates of more than about 190 games of 2.7 MiB.
+    /// It changes no state: an update either fits or is refused. Recorded in
+    /// run.json when non-default. Prepared updates only. See
+    /// `ordered_update_preparation`.
+    #[serde(
+        default = "default_max_trajectory_batch_mebibytes",
+        skip_serializing_if = "is_default_max_trajectory_batch_mebibytes"
+    )]
+    pub max_trajectory_batch_mebibytes: usize,
     /// Learner collection sampler (g115 line (b)); the legacy default is
     /// omitted, so every existing config and run identity is unchanged.
     #[serde(default, skip_serializing_if = "CollectionSamplerV1::is_legacy")]
@@ -525,6 +538,14 @@ fn is_default_max_prepared_tensor_mebibytes(value: &usize) -> bool {
     *value == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES
 }
 
+fn default_max_trajectory_batch_mebibytes() -> usize {
+    DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES
+}
+
+fn is_default_max_trajectory_batch_mebibytes(value: &usize) -> bool {
+    *value == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES
+}
+
 fn check(ok: bool, message: &str) -> Result<(), String> {
     if ok {
         Ok(())
@@ -565,6 +586,13 @@ fn identity(value: &impl Serialize) -> Result<String, String> {
 }
 
 impl NativeExpandedTrainingRunV1 {
+    /// The trajectory batch bound in bytes (`max_trajectory_batch_mebibytes`).
+    fn trajectory_batch_bytes_v1(&self) -> u64 {
+        crate::expanded_deck_training_v1::trajectory_batch_bytes_v1(
+            self.max_trajectory_batch_mebibytes,
+        )
+    }
+
     /// Read-only strict decoding for explicit schedule preparation. This does
     /// not load any model, open a device or create a run directory.
     pub fn from_json_v1(input: &str) -> Result<Self, String> {
@@ -659,6 +687,14 @@ impl NativeExpandedTrainingRunV1 {
             self.preparation_workers > 1
                 || self.max_prepared_tensor_mebibytes == DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
             "max_prepared_tensor_mebibytes applies to prepared updates only (preparation_workers > 1)",
+        )?;
+        crate::expanded_deck_training_v1::validate_max_trajectory_batch_mebibytes_v1(
+            self.max_trajectory_batch_mebibytes,
+        )?;
+        check(
+            self.preparation_workers > 1
+                || self.max_trajectory_batch_mebibytes == DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+            "max_trajectory_batch_mebibytes applies to prepared updates only (preparation_workers > 1)",
         )?;
         check(
             self.output_directory.is_absolute(),
@@ -1177,6 +1213,7 @@ fn reverify_validated_collection(
 /// `input_contract` is the run's no-state-digest contract member
 /// (`no_state_digest_v1`), None for an unconverted run; the receipt and
 /// every trajectory must carry exactly it.
+#[allow(clippy::too_many_arguments)]
 fn validate_collection(
     collection: &PinnedFileV1,
     source: &ExpandedModelSourceV1,
@@ -1185,6 +1222,7 @@ fn validate_collection(
     collection_sampler: CollectionSamplerV1,
     training_math: TrainingMathV1,
     input_contract: Option<&Value>,
+    batch_bytes: u64,
 ) -> Result<Vec<PinnedFileV1>, String> {
     let document = read_pin(collection)?;
     check(
@@ -1206,12 +1244,13 @@ fn validate_collection(
         document.get("input_contract") == input_contract,
         "collection no-state-digest contract differs from the run's",
     )?;
-    validate_collection_episodes_with_sampler_v1(
+    validate_collection_episodes_bounded_v1(
         &document,
         episodes,
         collection_sampler.identity_v1(),
         training_math,
         input_contract,
+        batch_bytes,
     )
 }
 
@@ -1240,12 +1279,34 @@ fn validate_collection_episodes(
 /// Also binds every trajectory's `learner_sampler` to the configured
 /// collection sampler (absent for the legacy samplers), its
 /// `training_math` to the run's, and its `input_contract` to the run's.
+#[cfg(test)]
 fn validate_collection_episodes_with_sampler_v1(
     document: &Value,
     episodes: &[ExpandedEpisodeV1],
     learner_sampler: Option<&str>,
     training_math: TrainingMathV1,
     input_contract: Option<&Value>,
+) -> Result<Vec<PinnedFileV1>, String> {
+    validate_collection_episodes_bounded_v1(
+        document,
+        episodes,
+        learner_sampler,
+        training_math,
+        input_contract,
+        ARTIFACT_CAP,
+    )
+}
+
+/// [`validate_collection_episodes_with_sampler_v1`] with the run's trajectory
+/// batch bound (`max_trajectory_batch_mebibytes`, 512 MiB by default, which
+/// is `ARTIFACT_CAP`).
+fn validate_collection_episodes_bounded_v1(
+    document: &Value,
+    episodes: &[ExpandedEpisodeV1],
+    learner_sampler: Option<&str>,
+    training_math: TrainingMathV1,
+    input_contract: Option<&Value>,
+    batch_bytes: u64,
 ) -> Result<Vec<PinnedFileV1>, String> {
     let trajectories: Vec<PinnedFileV1> =
         serde_json::from_value(document["trajectories"].clone()).map_err(err)?;
@@ -1269,7 +1330,7 @@ fn validate_collection_episodes_with_sampler_v1(
     // bound, decided in pin order before any is opened.
     let admitted = crate::expanded_deck_training_v1::record_envelope_v1::admit_batch_v1(
         trajectories.iter().map(|pin| pin.path.as_path()),
-        ARTIFACT_CAP,
+        batch_bytes,
     )?;
     let parsed_ahead = std::sync::atomic::AtomicUsize::new(0);
     let saved: Vec<Result<CollectionTrajectoryFieldsV1, String>> = std::thread::scope(|scope| {
@@ -1634,6 +1695,9 @@ fn record_collection_execution(config: &NativeExpandedTrainingRunV1, document: &
     if config.max_prepared_tensor_mebibytes != DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES {
         document["max_prepared_tensor_mebibytes"] = json!(config.max_prepared_tensor_mebibytes);
     }
+    if config.max_trajectory_batch_mebibytes != DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES {
+        document["max_trajectory_batch_mebibytes"] = json!(config.max_trajectory_batch_mebibytes);
+    }
 }
 
 fn update_command(
@@ -1689,6 +1753,7 @@ fn update_command(
             loss_selection: config.loss_selection,
             preparation_workers: config.preparation_workers,
             max_prepared_tensor_mebibytes: config.max_prepared_tensor_mebibytes,
+            max_trajectory_batch_mebibytes: config.max_trajectory_batch_mebibytes,
             training_math: config.training_math,
             record_format: config.record_format,
             record_envelope: config.record_envelope,
@@ -1921,6 +1986,7 @@ pub fn run_native_expanded_training_v1(
                 config.collection_sampler,
                 config.training_math,
                 input_contract.as_ref(),
+                config.trajectory_batch_bytes_v1(),
             )?;
             let update = parse_pin(&receipt, "update")?;
             let (next, after) = validate_update(
@@ -2015,6 +2081,7 @@ pub fn run_native_expanded_training_v1(
                     config.collection_sampler,
                     config.training_math,
                     input_contract.as_ref(),
+                    config.trajectory_batch_bytes_v1(),
                 )?;
                 collection_validation_seconds += started.elapsed().as_secs_f64();
                 collection_pin = Some(candidate);
@@ -2036,6 +2103,7 @@ pub fn run_native_expanded_training_v1(
                     config.collection_sampler,
                     config.training_math,
                     input_contract.as_ref(),
+                    config.trajectory_batch_bytes_v1(),
                 )?;
                 collection_validation_seconds += started.elapsed().as_secs_f64();
                 let started = Instant::now();
@@ -2102,6 +2170,7 @@ pub fn run_native_expanded_training_v1(
                 config.collection_sampler,
                 config.training_math,
                 input_contract.as_ref(),
+                config.trajectory_batch_bytes_v1(),
             )?;
             collection_validation_seconds += started.elapsed().as_secs_f64();
             validated_trajectories = Some(trajectories.clone());
@@ -2160,6 +2229,7 @@ pub fn run_native_expanded_training_v1(
                 config.collection_sampler,
                 config.training_math,
                 input_contract.as_ref(),
+                config.trajectory_batch_bytes_v1(),
             )?
         };
         collection_validation_seconds += started.elapsed().as_secs_f64();
@@ -2426,6 +2496,8 @@ mod tests {
             preparation_workers: 1,
             max_non_natural_episode_fraction: 0.0,
             max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            max_trajectory_batch_mebibytes:
+                crate::expanded_deck_training_v1::DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
             collection_sampler: CollectionSamplerV1::Legacy,
             training_math: TrainingMathV1::PlatformLibm,
             line_b: None,
@@ -2645,6 +2717,87 @@ mod tests {
             "max_decoded_tensor_bytes": 1024u64 * 1024 * 1024}});
         validate_preparation_execution(&recorded, 4, 1024).unwrap();
         assert!(validate_preparation_execution(&recorded, 4, 256).is_err());
+    }
+
+    /// `max_trajectory_batch_mebibytes`: absent is 512 and never serialized,
+    /// so an existing config keeps its wire bytes and identity; an explicit
+    /// 512 shares those bytes; 1..=4096 is admitted on prepared runs; zero,
+    /// anything above 4096 and a serial run are refused; a raised bound is
+    /// recorded in run.json and reaches the prepared update command.
+    #[test]
+    fn max_trajectory_batch_mebibytes_preserves_wire_and_validates() {
+        let plan = schedule();
+        let wire = value(&plan).unwrap();
+        assert!(wire.get("max_trajectory_batch_mebibytes").is_none());
+        let decoded: NativeExpandedTrainingRunV1 = serde_json::from_value(wire).unwrap();
+        assert_eq!(decoded.max_trajectory_batch_mebibytes, 512);
+        assert_eq!(decoded.trajectory_batch_bytes_v1(), ARTIFACT_CAP);
+        let mut explicit = schedule();
+        explicit.max_trajectory_batch_mebibytes = 512;
+        assert_eq!(identity(&explicit).unwrap(), identity(&plan).unwrap());
+        assert_eq!(
+            serde_json::to_vec(&explicit).unwrap(),
+            serde_json::to_vec(&plan).unwrap()
+        );
+        let prepared = |mebibytes| {
+            let mut config = schedule();
+            config.preparation_workers = 4;
+            config.max_trajectory_batch_mebibytes = mebibytes;
+            config
+        };
+        for admitted in [1, 511, 513, 2048, 4096] {
+            prepared(admitted).validate_v1().unwrap();
+        }
+        for refused in [0, 4097, usize::MAX] {
+            assert_eq!(
+                prepared(refused).validate_v1().unwrap_err(),
+                "max_trajectory_batch_mebibytes must be in 1..=4096"
+            );
+        }
+        let raised = prepared(2048);
+        assert_eq!(raised.trajectory_batch_bytes_v1(), 2048 << 20);
+        let wire = value(&raised).unwrap();
+        assert_eq!(wire["max_trajectory_batch_mebibytes"], json!(2048));
+        assert_ne!(
+            identity(&raised).unwrap(),
+            identity(&prepared(512)).unwrap()
+        );
+        let mut serial = schedule();
+        serial.max_trajectory_batch_mebibytes = 2048;
+        assert!(serial
+            .validate_v1()
+            .unwrap_err()
+            .contains("max_trajectory_batch_mebibytes applies to prepared updates only"));
+        let mut manifest = json!({});
+        record_collection_execution(&raised, &mut manifest);
+        assert_eq!(manifest["max_trajectory_batch_mebibytes"], json!(2048));
+        let mut default_manifest = json!({});
+        record_collection_execution(&schedule(), &mut default_manifest);
+        assert!(default_manifest
+            .get("max_trajectory_batch_mebibytes")
+            .is_none());
+        let default_prepared = prepared(512);
+        for (config, expected) in [(&raised, 2048), (&default_prepared, 512)] {
+            let command = update_command(
+                config,
+                0,
+                &config.initial_source,
+                Vec::new(),
+                PathBuf::new(),
+            );
+            let wire = value(&command).unwrap();
+            assert_eq!(
+                wire.get("max_trajectory_batch_mebibytes").is_some(),
+                expected != 512
+            );
+            match command {
+                ExpandedTrainingCommandV1::UpdatePrepared {
+                    max_trajectory_batch_mebibytes,
+                    ..
+                } => assert_eq!(max_trajectory_batch_mebibytes, expected),
+                _ => panic!("prepared run must issue a prepared update"),
+            }
+        }
     }
 
     /// The default record format (`auto`, an absent field) keeps the config's
@@ -3618,6 +3771,8 @@ mod tests {
             preparation_workers: 1,
             max_non_natural_episode_fraction: 0.0,
             max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+            max_trajectory_batch_mebibytes:
+                crate::expanded_deck_training_v1::DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
             collection_sampler: CollectionSamplerV1::Legacy,
             training_math: TrainingMathV1::PlatformLibm,
             line_b: None,
