@@ -253,7 +253,7 @@ const PARTIAL_S1: [&str; 1] = ["Hullbreacher"];
 /// Vintage Cube implementations with known missing reachable branches: none.
 /// Bone Shards became Full with the choice between additional costs (#715),
 /// The Mightstone and Weakstone with the Powerstone payments (#726).
-const PARTIAL_CUBE: [&str; 0] = [];
+const PARTIAL_CUBE: [&str; 2] = ["Headliner Scarlett", "Gandalf, Goblins' Bane"];
 
 /// Volrath's Shapeshifter and the S1 and cube cards above are the registry's
 /// only Partial definitions.

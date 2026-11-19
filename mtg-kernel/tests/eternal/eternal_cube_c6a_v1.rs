@@ -63,14 +63,10 @@ fn gandalf_stays_partial_until_hidden_wizard_conditional_permissions_are_support
 }
 
 #[test]
-fn black_widow_stays_no_effect_until_spell_scoped_any_type_spending_is_supported() {
+fn black_widow_stays_out_until_spell_scoped_any_type_spending_is_supported() {
     let name = "Black Widow, Super Spy";
-    assert_eq!(def(name).capability, CardCapability::NoEffect);
+    assert!(card_id_by_name(name).is_none());
     assert!(!C6A_CARDS.contains(&name));
-    assert_eq!(
-        deck(&[(name, 1), ("Swamp", 39)]).resolve().unwrap_err(),
-        format!("card {name:?} is a token or lacks full engine support")
-    );
 }
 
 fn def(name: &str) -> &'static CardDef {

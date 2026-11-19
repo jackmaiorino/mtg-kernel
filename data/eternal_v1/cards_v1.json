@@ -35787,36 +35787,6 @@
    "is_token": true
   },
   {
-   "name": "Inti, Seneschal of the Sun",
-   "engine_capability": "no_effect",
-   "mana_cost": "{1}{R}",
-   "mana_value": 2,
-   "colors": [
-    "R"
-   ],
-   "types": [
-    "Creature"
-   ],
-   "subtypes": [
-    "Human",
-    "Knight"
-   ],
-   "supertypes": [
-    "Legendary"
-   ],
-   "power": 2,
-   "toughness": 2,
-   "is_land": false,
-   "produces_mana": [],
-   "decks": [
-    "vintage-cube"
-   ],
-   "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
-   "java_file": "Mage.Sets/src/mage/cards/i/IntiSeneschalOfTheSun.java"
-  },
-  {
    "name": "Ivora, Insatiable Heir",
    "engine_capability": "full",
    "mana_cost": "{1}{R}",
@@ -35956,35 +35926,6 @@
    ],
    "power": 2,
    "toughness": 3,
-   "is_land": false,
-   "produces_mana": [],
-   "decks": [
-    "vintage-cube"
-   ],
-   "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": []
-  },
-  {
-   "name": "Black Widow, Super Spy",
-   "engine_capability": "no_effect",
-   "mana_cost": "{1}{B}",
-   "mana_value": 2,
-   "colors": [
-    "B"
-   ],
-   "types": [
-    "Creature"
-   ],
-   "subtypes": [
-    "Human",
-    "Hero"
-   ],
-   "supertypes": [
-    "Legendary"
-   ],
-   "power": 2,
-   "toughness": 1,
    "is_land": false,
    "produces_mana": [],
    "decks": [
@@ -36150,36 +36091,6 @@
    "java_file": "Mage.Sets/src/mage/cards/s/SeasonedPyromancer.java"
   },
   {
-   "name": "Malcolm, Alluring Scoundrel",
-   "engine_capability": "no_effect",
-   "mana_cost": "{1}{U}",
-   "mana_value": 2,
-   "colors": [
-    "U"
-   ],
-   "types": [
-    "Creature"
-   ],
-   "subtypes": [
-    "Siren",
-    "Pirate"
-   ],
-   "supertypes": [
-    "Legendary"
-   ],
-   "power": 2,
-   "toughness": 1,
-   "is_land": false,
-   "produces_mana": [],
-   "decks": [
-    "vintage-cube"
-   ],
-   "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
-   "java_file": "Mage.Sets/src/mage/cards/m/MalcolmAlluringScoundrel.java"
-  },
-  {
    "name": "Sphinx of False Conclusions",
    "engine_capability": "full",
    "mana_cost": "{2}{U}{U}",
@@ -36205,33 +36116,6 @@
    "sideboard_only": false,
    "complexity": "moderate",
    "mechanics": ["flash", "flying", "attack_trigger", "draw_card", "discard", "dies_trigger", "token_creation"]
-  },
-  {
-   "name": "Vaultborn Tyrant",
-   "engine_capability": "no_effect",
-   "mana_cost": "{5}{G}{G}",
-   "mana_value": 7,
-   "colors": [
-    "G"
-   ],
-   "types": [
-    "Creature"
-   ],
-   "subtypes": [
-    "Dinosaur"
-   ],
-   "supertypes": [],
-   "power": 6,
-   "toughness": 6,
-   "is_land": false,
-   "produces_mana": [],
-   "decks": [
-    "vintage-cube"
-   ],
-   "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
-   "java_file": "Mage.Sets/src/mage/cards/v/VaultbornTyrant.java"
   },
   {
    "name": "Metamorphosis Fanatic",
@@ -36319,33 +36203,6 @@
    "complexity": "moderate",
    "mechanics": [],
    "java_file": "Mage.Sets/src/mage/cards/s/Six.java"
-  },
-  {
-   "name": "Pyrogoyf",
-   "engine_capability": "no_effect",
-   "mana_cost": "{3}{R}",
-   "mana_value": 4,
-   "colors": [
-    "R"
-   ],
-   "types": [
-    "Creature"
-   ],
-   "subtypes": [
-    "Lhurgoyf"
-   ],
-   "supertypes": [],
-   "power": 0,
-   "toughness": 1,
-   "is_land": false,
-   "produces_mana": [],
-   "decks": [
-    "vintage-cube"
-   ],
-   "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
-   "java_file": "Mage.Sets/src/mage/cards/p/Pyrogoyf.java"
   },
   {
    "name": "Ursine Monstrosity",
@@ -36476,34 +36333,6 @@
    "java_file": "Mage.Sets/src/mage/cards/n/NarsetParterOfVeils.java"
   },
   {
-   "name": "Saheeli, Sublime Artificer",
-   "engine_capability": "no_effect",
-   "mana_cost": "{1}{U/R}{U/R}",
-   "mana_value": 3,
-   "colors": [
-    "U",
-    "R"
-   ],
-   "types": [
-    "Planeswalker"
-   ],
-   "subtypes": [],
-   "supertypes": [
-    "Legendary"
-   ],
-   "power": null,
-   "toughness": null,
-   "is_land": false,
-   "produces_mana": [],
-   "decks": [
-    "vintage-cube"
-   ],
-   "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
-   "java_file": "Mage.Sets/src/mage/cards/s/SaheeliSublimeArtificer.java"
-  },
-  {
    "name": "Teferi, Hero of Dominaria",
    "engine_capability": "full",
    "starting_loyalty": 4,
@@ -36568,37 +36397,6 @@
     "flash"
    ],
    "java_file": "Mage.Sets/src/mage/cards/t/TheWanderingEmperor.java"
-  },
-  {
-   "name": "Chandra, Torch of Defiance",
-   "engine_capability": "no_effect",
-   "mana_cost": "{2}{R}{R}",
-   "mana_value": 4,
-   "colors": [
-    "R"
-   ],
-   "types": [
-    "Planeswalker"
-   ],
-   "subtypes": [
-    "Chandra"
-   ],
-   "supertypes": [
-    "Legendary"
-   ],
-   "power": null,
-   "toughness": null,
-   "is_land": false,
-   "produces_mana": [
-    "R"
-   ],
-   "decks": [
-    "vintage-cube"
-   ],
-   "sideboard_only": false,
-   "complexity": "moderate",
-   "mechanics": [],
-   "java_file": "Mage.Sets/src/mage/cards/c/ChandraTorchOfDefiance.java"
   },
   {
    "name": "Garruk, Curse Breaker",
