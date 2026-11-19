@@ -1034,8 +1034,12 @@ fn sba_donor_scene(player: PlayerId) -> (GameState, ObjectId, ObjectId) {
     (state, source, donor)
 }
 
-fn completed_saga_donor_scene(player: PlayerId) -> (GameState, ObjectId, ObjectId) {
+fn completed_saga_donor_scene(
+    player: PlayerId,
+    rules: RuntimeRulesV1,
+) -> (GameState, ObjectId, ObjectId) {
     let mut state = ordered_game(player);
+    state.engine.runtime_rules = rules;
     put(&mut state, player, "Birds of Paradise", Zone::Graveyard);
     put(&mut state, player, "Phyrexian Dreadnought", Zone::Graveyard);
     let source = put(&mut state, player, VOLRATH, Zone::Battlefield);
@@ -1044,11 +1048,38 @@ fn completed_saga_donor_scene(player: PlayerId) -> (GameState, ObjectId, ObjectI
     let donor = put(&mut state, player, "Summon: Bahamut", Zone::Battlefield);
     let definition = &CARD_DEFS[usize::from(state.objects.get(donor).card_def)];
     assert!(!donor_supported(definition));
-    let chapters = definition.saga.as_ref().unwrap().chapter_effects.len();
-    assert_eq!(chapters, 4);
-    // Model the checkpoint after the final chapter has left the stack.
-    // Fixture placement creates no chapter event or pending trigger.
-    state.objects.get_mut(donor).counters.lore = chapters as i16;
+    let chapters = definition.saga.as_ref().unwrap().chapter_effects;
+    assert_eq!(chapters.len(), 4);
+    // Start at three lore in the draw step. Passing into the main phase
+    // must create chapter IV through the Saga rules before it can resolve.
+    state.objects.get_mut(donor).counters.lore = 3;
+    state.step = Step::Draw;
+    for _ in 0..2 {
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        act(&mut state, Action::Pass);
+    }
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(state.step, Step::Main1);
+    assert_eq!(state.objects.get(donor).counters.lore, 4);
+    assert_eq!(state.objects.get(donor).zone, Zone::Battlefield);
+    assert_eq!(state.stack.len(), 1);
+    assert_eq!(state.stack[0].source, donor);
+    assert_eq!(state.stack[0].kind, StackItemKind::TriggeredAbility);
+    assert_eq!(state.stack[0].inline_effect, Some((chapters[3])()));
+    assert!(state.engine.pending_triggers.is_empty());
+    // Chapter IV has no targets or choices. Its damage will make a loss
+    // due at the same checkpoint as the sacrifice.
+    assert!(state.stack[0].targets.is_empty());
+    assert_eq!(engine::object_mana_value(&state, source), 1);
+    state.players[player.opponent().index()].life = 1;
+    act(&mut state, Action::Pass);
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    act(&mut state, Action::Pass);
+    // The next advance resolves chapter IV and runs the sacrifice SBA.
+    assert_eq!(state.objects.get(source).damage, 11);
+    assert_eq!(state.objects.get(donor).zone, Zone::Battlefield);
+    assert_eq!(state.stack.len(), 1);
+    assert_eq!(state.engine.halted, None);
     (state, source, donor)
 }
 
@@ -1233,20 +1264,27 @@ fn unsupported_sba_donor_halts_before_the_next_sweep_both_seats() {
 }
 
 #[test]
-fn unsupported_completed_saga_halts_at_the_first_advance_both_seats() {
+fn unsupported_completed_saga_halts_on_final_chapter_resolution_both_seats() {
     for player in [PlayerId::P0, PlayerId::P1] {
         for rules in [
             RuntimeRulesV1::default(),
             RuntimeRulesV1::OWNER_ORDERED_GRAVEYARD_V1,
         ] {
-            let (mut state, source, donor) = completed_saga_donor_scene(player);
-            state.engine.runtime_rules = rules;
-            assert_eq!(state.engine.halted, None);
-            assert_halted_now(&mut state, source);
+            let (mut state, source, donor) = completed_saga_donor_scene(player, rules);
+            assert_eq!(
+                engine::advance_until_decision(&mut state),
+                halted_decision(source)
+            );
+            assert_eq!(state.engine.halted, donor_halt(source));
+            assert!(state.stack.is_empty());
             assert_eq!(state.objects.get(donor).zone, Zone::Graveyard);
             assert_eq!(state.players[player.index()].graveyard.last(), Some(&donor));
             assert_eq!(state.objects.get(source).zone, Zone::Battlefield);
+            assert_eq!(state.objects.get(source).damage, 11);
             assert!(state.pending_legend_rule_v1.is_none());
+            assert_eq!(state.players[player.opponent().index()].life, 0);
+            assert!(state.players.iter().all(|seat| !seat.has_lost));
+            assert_halted_now(&mut state, source);
         }
     }
 }
@@ -1686,12 +1724,18 @@ fn check_site_case(site: DonorCheckSiteV1, player: PlayerId) -> bool {
     }
 }
 
-fn check_completed_saga_sba_site_case(player: PlayerId) -> bool {
-    let (mut state, source, donor) = completed_saga_donor_scene(player);
-    crate::trigger::sba_fixed_point(&mut state);
-    state.engine.halted == donor_halt(source)
+fn check_completed_saga_sba_site_case(player: PlayerId, rules: RuntimeRulesV1) -> bool {
+    let (mut state, source, donor) = completed_saga_donor_scene(player, rules);
+    engine::advance_until_decision(&mut state) == halted_decision(source)
+        && state.engine.halted == donor_halt(source)
+        && state.stack.is_empty()
         && state.objects.get(donor).zone == Zone::Graveyard
+        && state.players[player.index()].graveyard.last() == Some(&donor)
         && state.objects.get(source).zone == Zone::Battlefield
+        && state.objects.get(source).damage == 11
+        && state.pending_legend_rule_v1.is_none()
+        && state.players[player.opponent().index()].life == 0
+        && state.players.iter().all(|seat| !seat.has_lost)
 }
 
 #[test]
@@ -1700,7 +1744,15 @@ fn each_donor_check_site_halts_its_own_case_both_seats() {
         for player in [PlayerId::P0, PlayerId::P1] {
             assert!(check_site_case(site, player), "{site:?} {player:?}");
             if site == DonorCheckSiteV1::SbaBatch {
-                assert!(check_completed_saga_sba_site_case(player), "{player:?}");
+                for rules in [
+                    RuntimeRulesV1::default(),
+                    RuntimeRulesV1::OWNER_ORDERED_GRAVEYARD_V1,
+                ] {
+                    assert!(
+                        check_completed_saga_sba_site_case(player, rules),
+                        "{player:?} {rules:?}"
+                    );
+                }
             }
         }
     }
@@ -1714,10 +1766,15 @@ fn each_donor_check_site_case_fails_without_that_site_both_seats() {
             let held = with_donor_check_site_disabled(site, || check_site_case(site, player));
             assert!(!held, "{site:?} {player:?} held without its own check");
             if site == DonorCheckSiteV1::SbaBatch {
-                let held = with_donor_check_site_disabled(site, || {
-                    check_completed_saga_sba_site_case(player)
-                });
-                assert!(!held, "{player:?} held without the Saga SBA check");
+                for rules in [
+                    RuntimeRulesV1::default(),
+                    RuntimeRulesV1::OWNER_ORDERED_GRAVEYARD_V1,
+                ] {
+                    let held = with_donor_check_site_disabled(site, || {
+                        check_completed_saga_sba_site_case(player, rules)
+                    });
+                    assert!(!held, "{player:?} {rules:?} held without the Saga SBA check");
+                }
             }
         }
     }
