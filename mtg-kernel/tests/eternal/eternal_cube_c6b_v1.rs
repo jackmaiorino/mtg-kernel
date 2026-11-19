@@ -1151,6 +1151,106 @@ fn six_does_not_offer_retrace_with_delve_or_repeat_failed_casts() {
 }
 
 #[test]
+fn six_retrace_counts_avatar_graveyards_after_moving_the_spell_to_the_stack() {
+    assert_eq!(def("Avatar of Woe").capability, CardCapability::Full);
+    for player in [P0, P1] {
+        for creatures in [10, 11] {
+            for generic in [0, 6] {
+                let mut state = plains();
+                state.active_player = player;
+                state.priority_player = player;
+                put(&mut state, player, SIX, Zone::Battlefield);
+                let avatar = put(&mut state, player, "Avatar of Woe", Zone::Graveyard);
+                let hand_avatar = put(&mut state, player, "Avatar of Woe", Zone::Hand);
+                let land = put(&mut state, player, "Plains", Zone::Hand);
+                for index in 1..creatures {
+                    let owner = if index % 2 == 0 {
+                        player
+                    } else {
+                        player.opponent()
+                    };
+                    put(&mut state, owner, SIX, Zone::Graveyard);
+                }
+                pool(&mut state, player, &[ManaColor::B; 2], generic);
+                // Casting from hand leaves all ten (or eleven) creatures in graveyards.
+                assert!(castable(&mut state, hand_avatar));
+                if creatures == 10 && generic == 0 {
+                    assert!(!castable(&mut state, avatar));
+                    let generation = state.objects.get(avatar).zone_change_count;
+                    run_until(
+                        &mut state,
+                        |state| {
+                            state.active_player == player.opponent() && state.step == Step::Main1
+                        },
+                        |_, decision| {
+                            if let Decision::CastSpellOrPass {
+                                castable_spells, ..
+                            } = decision
+                            {
+                                assert!(!castable_spells.contains(&avatar));
+                            }
+                            None
+                        },
+                    );
+                    assert_eq!(zone(&state, avatar), Zone::Graveyard);
+                    assert_eq!(state.objects.get(avatar).zone_change_count, generation);
+                    assert_eq!(zone(&state, land), Zone::Hand);
+                } else {
+                    cast(&mut state, avatar, &[]);
+                    match next(&mut state) {
+                        Decision::ChooseCostTargets { candidates, .. } => {
+                            assert_eq!(candidates, vec![land]);
+                        }
+                        other => panic!("{other:?}"),
+                    }
+                    act(&mut state, Action::ChooseCostTarget(land));
+                    on_the_stack(&mut state);
+                    assert_eq!(zone(&state, avatar), Zone::Stack);
+                    assert_eq!(zone(&state, land), Zone::Graveyard);
+                    assert_eq!(mana(&state, player, ManaColor::B), 0);
+                    assert_eq!(
+                        mana(&state, player, ManaColor::C),
+                        if creatures == 10 { 0 } else { generic }
+                    );
+                    settled(&mut state);
+                    assert_eq!(zone(&state, avatar), Zone::Battlefield);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn six_retrace_preserves_sailors_bane_graveyard_and_exile_reduction() {
+    for name in ["Sailors' Bane", "Fatal Push", "Thoughtseize"] {
+        assert_eq!(def(name).capability, CardCapability::Full);
+    }
+    for player in [P0, P1] {
+        let mut state = plains();
+        state.active_player = player;
+        state.priority_player = player;
+        put(&mut state, player, SIX, Zone::Battlefield);
+        let bane = put(&mut state, player, "Sailors' Bane", Zone::Graveyard);
+        let land = put(&mut state, player, "Plains", Zone::Hand);
+        for _ in 0..3 {
+            put(&mut state, player, "Fatal Push", Zone::Graveyard);
+            put(&mut state, player, "Thoughtseize", Zone::Exile);
+        }
+        put(&mut state, player.opponent(), "Fatal Push", Zone::Graveyard);
+        put(&mut state, player.opponent(), "Thoughtseize", Zone::Exile);
+        pool(&mut state, player, &[ManaColor::U; 2], 0);
+        // Bane itself and the opponent's cards do not supply the seventh reduction.
+        assert!(!castable(&mut state, bane));
+        put(&mut state, player, "Thoughtseize", Zone::Graveyard);
+        cast(&mut state, bane, &[]);
+        settle_choosing(&mut state, land);
+        assert_eq!(zone(&state, bane), Zone::Battlefield);
+        assert_eq!(zone(&state, land), Zone::Graveyard);
+        assert_eq!(mana(&state, player, ManaColor::U), 0);
+    }
+}
+
+#[test]
 fn six_retrace_respects_types_controller_turn_timing_and_lost_abilities() {
     let mut state = plains();
     let six = cast_six(&mut state);

@@ -9740,6 +9740,17 @@ pub(crate) fn normal_cast_reduction_count(
     targets: &[Target],
     state: &GameState,
 ) -> u32 {
+    normal_cast_reduction_count_excluding_source(count, player, targets, state, None)
+}
+
+// A quoted spell will leave its graveyard before its total cost is determined (601.2f).
+fn normal_cast_reduction_count_excluding_source(
+    count: card_def::DynamicCountDef,
+    player: PlayerId,
+    targets: &[Target],
+    state: &GameState,
+    source: Option<ObjectId>,
+) -> u32 {
     match count {
         card_def::DynamicCountDef::ControllerBattlefieldAnyType(types) => state.players
             [player.index()]
@@ -9767,6 +9778,7 @@ pub(crate) fn normal_cast_reduction_count(
             let creatures = [PlayerId::P0, PlayerId::P1]
                 .into_iter()
                 .flat_map(|owner| state.players[owner.index()].graveyard.iter().copied())
+                .filter(|&card| Some(card) != source)
                 .filter(|&card| {
                     let live = state.objects.get(card);
                     !live.v4.is_token
@@ -9781,6 +9793,7 @@ pub(crate) fn normal_cast_reduction_count(
             [player.index()]
         .graveyard
         .iter()
+        .filter(|&&object| Some(object) != source)
         .filter(|&&object| {
             let graveyard_def = &card_def::CARD_DEFS[state.objects.get(object).card_def as usize];
             graveyard_def
