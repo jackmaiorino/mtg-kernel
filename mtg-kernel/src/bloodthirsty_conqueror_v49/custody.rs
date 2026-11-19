@@ -326,6 +326,19 @@ pub(crate) fn resolve_owned(
                 input_history_index: input,
                 borrow,
             });
+    } else if let Some(borrow) =
+        crate::linked_aura_operation_v1::capture_conqueror_runner_borrow_v49(state)
+    {
+        let gain = crate::event::ProposedEvent::life_gain(source.controller, amount);
+        if runner_needed(state, input, &gain)? {
+            state
+                .engine
+                .event_history
+                .push(CommittedEvent::ConquerorGainReplayBorrowV49 {
+                    input_history_index: input,
+                    borrow,
+                });
+        }
     }
     let start = state.engine.event_history.len();
     crate::event::propose_and_commit(
@@ -352,6 +365,44 @@ pub(crate) fn resolve_owned(
         },
     );
     Ok(())
+}
+/// Whether the Runner-less replay of a gain, the one `validate_gain` runs when
+/// no sidecar is recorded, differs from the gain that the actual enclosing
+/// Runner commits. Only then does a gain outside Drake custody record its
+/// Runner, so every gain that replay already reproduces keeps its old bytes.
+///
+/// For a LifeGain the Runner-less replay can differ only where its new Event
+/// owner adds or drops events: `BanishingAuraOperationStartedV1` when a
+/// Banishing link exists, or a refused or failed owner replay that commits
+/// nothing. Banner, Kinship and Meddling Mage operations record events only
+/// for entries, Doubling Season only for counters and tokens, and Drake
+/// enclosure is excluded here. Both gains are run, so the answer does not
+/// depend on this list.
+fn runner_needed(
+    state: &GameState,
+    input: u64,
+    gain: &crate::event::ProposedEvent,
+) -> Result<bool, String> {
+    let JournalV49::GainInput { world, .. } = journal(state, input)? else {
+        return Err("Conqueror gain lost independent actual input".into());
+    };
+    let mut plain = world.restore(state, input)?;
+    let marker = state.engine.event_history[input as usize].clone();
+    plain.engine.event_history.push(marker);
+    let start = plain.engine.event_history.len();
+    crate::event::propose_and_commit(&mut plain, gain.clone());
+    let mut real = state.clone();
+    crate::event::propose_and_commit(&mut real, gain.clone());
+    let replayed = plain.engine.event_history.range_v2(start..);
+    Ok(replayed != real.engine.event_history.range_v2(start..))
+}
+/// The history index of the saved resolution input, the latest point at
+/// which the enclosing Advance of the resolution can have begun.
+fn resolution_input(state: &GameState, removal: u64) -> Result<u64, String> {
+    let JournalV49::Removed { input, .. } = journal(state, removal)? else {
+        return Err("Conqueror removal absent".into());
+    };
+    Ok(*input)
 }
 fn validate_removal(state: &GameState, at: u64) -> Result<(u64, bool, &StackItem), String> {
     let JournalV49::Removed {
@@ -400,7 +451,7 @@ fn validate_gain(state: &GameState, at: u64) -> Result<u64, String> {
     else {
         return Err("Conqueror gain lost independent actual input".into());
     };
-    let (_, countered, item) = validate_removal(state, *removal)?;
+    let (published, countered, item) = validate_removal(state, *removal)?;
     if countered
         || *input <= *removal
         || *gain_history_index <= *input
@@ -456,6 +507,49 @@ fn validate_gain(state: &GameState, at: u64) -> Result<u64, String> {
                         replay,
                         crate::event::ProposedEvent::life_gain(source.controller, amount),
                     );
+                    Ok(())
+                },
+            )?;
+            start
+        }
+        [(position, borrow, event)]
+            if !needs_borrow && u64::try_from(*position).ok() == input.checked_add(1) =>
+        {
+            // Outside Drake custody a sidecar is genuine only where the
+            // Runner-less replay differs from the gain under the actual
+            // enclosing Runner, which must be the Runner of this resolution.
+            let resolution = resolution_input(state, *removal)?;
+            let gain = crate::event::ProposedEvent::life_gain(source.controller, amount);
+            let base = replay.engine.event_history.len();
+            let mut owned = replay.clone();
+            crate::linked_aura_operation_v1::with_conqueror_runner_borrow_v49(
+                &mut owned,
+                item,
+                published,
+                resolution,
+                borrow,
+                |owned| {
+                    crate::event::propose_and_commit(owned, gain.clone());
+                    Ok(())
+                },
+            )?;
+            let mut plain = replay.clone();
+            crate::event::propose_and_commit(&mut plain, gain.clone());
+            if owned.engine.event_history.range_v2(base..)
+                == plain.engine.event_history.range_v2(base..)
+            {
+                return Err("Conqueror gain recorded a Runner its replay does not need".into());
+            }
+            replay.engine.event_history.push((*event).clone());
+            let start = replay.engine.event_history.len();
+            crate::linked_aura_operation_v1::with_conqueror_runner_borrow_v49(
+                &mut replay,
+                item,
+                published,
+                resolution,
+                borrow,
+                |replay| {
+                    crate::event::propose_and_commit(replay, gain);
                     Ok(())
                 },
             )?;

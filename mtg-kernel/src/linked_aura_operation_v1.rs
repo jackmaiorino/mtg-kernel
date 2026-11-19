@@ -424,6 +424,68 @@ pub(crate) fn capture_conqueror_drake_replay_borrow_v49(
     (crate::drake_hatcher_v1::custody::relevant(state) && locally_owned(state))
         .then(|| capture_panda_replay_borrow_v1(state))
 }
+/// The actual enclosing Runner of a V49 gain outside Drake custody. Custody
+/// records it only where a Runner-less replay of the gain differs from the
+/// real gain, so every other gain keeps its old bytes.
+pub(crate) fn capture_conqueror_runner_borrow_v49(
+    state: &GameState,
+) -> Option<PandaReplayBorrowV1> {
+    locally_owned(state).then(|| capture_panda_replay_borrow_v1(state))
+}
+/// Borrows a recorded non-Drake V49 Runner for a disposable gain replay.
+/// Unlike the Panda helper it requires a Runner and binds it to the genuine
+/// enclosing Advance of the Conqueror resolution: an Advance without a
+/// checkpoint whose saved stack holds the resolving row exactly once, and
+/// which began after the row's publication (`published`) and no later than
+/// the saved resolution input (`resolution`). The Advance's own start world
+/// is not saved in the V49 journals (it runs its checks, refresh and
+/// state-based actions before the resolution), so its origin digest can be
+/// checked only for form.
+pub(crate) fn with_conqueror_runner_borrow_v49(
+    replay: &mut GameState,
+    original_item: &crate::state::StackItem,
+    published: u64,
+    resolution: u64,
+    input: &PandaReplayBorrowV1,
+    run: impl FnOnce(&mut GameState) -> Result<(), String>,
+) -> Result<(), String> {
+    if locally_owned(replay) || has_pending(replay) {
+        return Err("Conqueror verification cannot acquire a public operation checkpoint".into());
+    }
+    let runner = input
+        .runner
+        .as_ref()
+        .ok_or("Conqueror gain replay borrow lost its Runner")?;
+    if runner.operation != OperationV1::Advance || runner.checkpoint.is_some() {
+        return Err("Conqueror gain replay Runner is not a plain Advance".into());
+    }
+    if runner
+        .original_stack
+        .iter()
+        .filter(|item| item.v4.stack_item_id == original_item.v4.stack_item_id)
+        .count()
+        != 1
+        || !runner
+            .original_stack
+            .iter()
+            .any(|item| item == original_item)
+    {
+        return Err("Conqueror gain replay Runner lost the resolving row".into());
+    }
+    let start = u64::try_from(runner.original_history_len)
+        .map_err(|_| "Conqueror gain replay Runner start exceeds u64")?;
+    if start <= published || start > resolution {
+        return Err("Conqueror gain replay Runner began outside its resolution".into());
+    }
+    if !origin_digest_well_formed(&runner.original_sha256) {
+        return Err("Conqueror gain replay Runner lost its origin digest".into());
+    }
+    replay.engine.linked_aura_operation_v1.runtime = input.runner.clone();
+    let result = run(replay);
+    // The borrowed runner never escapes into an actual/restored game.
+    replay.engine.linked_aura_operation_v1.runtime = None;
+    result
+}
 
 pub(crate) fn with_panda_replay_borrow_v1(
     replay: &mut GameState,
