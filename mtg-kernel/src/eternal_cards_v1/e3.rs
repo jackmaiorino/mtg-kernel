@@ -964,12 +964,9 @@ pub(crate) fn finish_selection(
         E3ChoiceKindV1::C6aGutSacrificeV1 => {
             crate::eternal_cube_c6a_v1::finish_gut_sacrifice(state, continuation, choice, bindings)
         }
-        E3ChoiceKindV1::C6bV1(kind) => crate::eternal_cube_c6b_v1::finish_selection(
-            state,
-            continuation,
-            kind,
-            bindings,
-        ),
+        E3ChoiceKindV1::C6bV1(kind) => {
+            crate::eternal_cube_c6b_v1::finish_selection(state, continuation, kind, bindings)
+        }
     }
 }
 

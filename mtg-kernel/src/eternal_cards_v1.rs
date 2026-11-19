@@ -335,7 +335,10 @@ pub struct EternalStateV1 {
     )]
     pub c5c: crate::eternal_cube_c5c_v1::C5cStateV1,
     /// Vintage Cube wave C6a's graveyard departures and source power.
-    #[serde(default, skip_serializing_if = "crate::eternal_cube_c6a_v1::C6aStateV1::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c6a_v1::C6aStateV1::is_empty"
+    )]
     pub c6a: crate::eternal_cube_c6a_v1::C6aStateV1,
     /// Vintage Cube wave C6b's resolution-local discard counts.
     #[serde(
@@ -347,7 +350,10 @@ pub struct EternalStateV1 {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub c6c_silver_cards: Vec<ObjectLinkV4>,
     /// Persistent emblems and delayed end-step actions of Vintage Cube C6c.
-    #[serde(default, skip_serializing_if = "crate::eternal_cube_c6c_v1::C6cStateV1::is_empty")]
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c6c_v1::C6cStateV1::is_empty"
+    )]
     pub c6c: crate::eternal_cube_c6c_v1::C6cStateV1,
 }
 
