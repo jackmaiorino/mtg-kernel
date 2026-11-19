@@ -72,23 +72,43 @@ const KARN: [ActivatedAbilityRecipe; 3] = [
     ),
 ];
 
+const TEFERI: [ActivatedAbilityRecipe; 3] = [
+    loyalty(
+        &[AbilityCostRecipe::Loyalty(1)],
+        "crate::eternal_cube_c6c_v1::teferi_plus_one",
+        "None",
+    ),
+    loyalty(
+        &[AbilityCostRecipe::Loyalty(-3)],
+        "crate::eternal_cube_c6c_v1::teferi_minus_three",
+        "NonlandPermanent",
+    ),
+    loyalty(
+        &[AbilityCostRecipe::Loyalty(-8)],
+        "crate::eternal_cube_c6c_v1::teferi_minus_eight",
+        "None",
+    ),
+];
+
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
     match name {
         "Jace, the Mind Sculptor" => &JACE,
         "Narset, Parter of Veils" => &NARSET,
         "Karn, Scion of Urza" => &KARN,
+        "Teferi, Hero of Dominaria" => &TEFERI,
         _ => &[],
     }
 }
 
 pub(super) fn special_for(name: &str) -> Option<Special> {
     match name {
-        "Jace, the Mind Sculptor" | "Narset, Parter of Veils" | "Karn, Scion of Urza" => {
-            Some(Special::StandardProgram {
-                target_spec: "TargetSpec::None",
-                program: "crate::eternal_cube_c6c_v1::jace",
-            })
-        }
+        "Jace, the Mind Sculptor"
+        | "Narset, Parter of Veils"
+        | "Karn, Scion of Urza"
+        | "Teferi, Hero of Dominaria" => Some(Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cube_c6c_v1::jace",
+        }),
         _ => None,
     }
 }
@@ -124,6 +144,7 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Jace, the Mind Sculptor" => "loyalty_start:3;plus2:controller_privately_looks_at_target_player_library_top_may_bottom;zero:draw3_then_put2_hand_cards_on_library_top_in_any_order;minus1:return_target_creature_to_owner_hand;minus12:exile_target_player_library_simultaneously_then_shuffle_their_hand_into_library",
         "Narset, Parter of Veils" => "loyalty_start:5;static:opponents_cannot_draw_more_than_one_card_each_turn;minus2:look_top4_may_reveal_noncreature_nonland_to_hand_rest_bottom_random",
         "Karn, Scion of Urza" => "loyalty_start:5;plus1:reveal_top2_opponent_chooses_one_to_hand_exile_other_with_silver_counter;minus1:owned_silver_counter_card_from_exile_to_hand;minus2:create_0_0_colorless_construct_artifact_creature_plus1_plus1_per_controlled_artifact",
+        "Teferi, Hero of Dominaria" => "loyalty_start:4;plus1:draw1_then_next_end_step_untap_up_to_two_lands;minus3:target_nonland_permanent_owner_library_third_from_top;minus8:persistent_emblem_whenever_you_draw_exile_target_opponent_permanent",
         _ => "none",
     }
 }

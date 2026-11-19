@@ -17,10 +17,11 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const C6C_CARDS: [&str; 3] = [
+const C6C_CARDS: [&str; 4] = [
     "Jace, the Mind Sculptor",
     "Narset, Parter of Veils",
     "Karn, Scion of Urza",
+    "Teferi, Hero of Dominaria",
 ];
 
 fn def(name: &str) -> &'static CardDef {
@@ -1440,4 +1441,363 @@ fn narset_does_not_count_hullbreachers_replaced_draws_as_actual_draws() {
     assert!(state.players[1].hand.is_empty());
     assert_eq!(state.players[1].library.len(), 20);
     assert_eq!(named(&state, P0, "Treasure Token").len(), 3);
+}
+
+fn cast_teferi(state: &mut GameState) -> ObjectId {
+    let walker = put(state, P0, "Teferi, Hero of Dominaria", Zone::Hand);
+    pool(state, P0, &[ManaColor::W, ManaColor::U], 3);
+    cast(state, walker, &[]);
+    settled(state);
+    walker
+}
+
+#[test]
+fn teferi_printed_characteristics_cast_cost_and_loyalty_timing() {
+    let card = def("Teferi, Hero of Dominaria");
+    assert_eq!(card.types, &[CardType::Planeswalker]);
+    assert_eq!(card.subtypes, &[Subtype::Teferi]);
+    assert_eq!(card.supertypes, &[Supertype::Legendary]);
+    assert_eq!(card.cost.generic, 3);
+    assert_eq!(
+        card.cost.pips,
+        &[Pip::Colored(ManaColor::W), Pip::Colored(ManaColor::U)]
+    );
+    assert_eq!(card.mana_value, 5);
+    assert_eq!(card.colors, &[ManaColor::W, ManaColor::U]);
+    assert_eq!((card.power, card.toughness), (None, None));
+    assert_eq!(card.starting_loyalty, Some(4));
+    assert_eq!(card.activated_abilities.len(), 3);
+    let mut state = plains();
+    let walker = put(&mut state, P0, card.name, Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    assert!(!castable(&mut state, walker));
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    cast(&mut state, walker, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, walker), Zone::Battlefield);
+    assert_eq!(loyalty(&state, walker), Some(4));
+    for color in [ManaColor::C, ManaColor::W, ManaColor::U] {
+        assert_eq!(mana(&state, P0, color), 0);
+    }
+    assert!(!activatable(&mut state, walker, 2));
+    let land = put(&mut state, P1, "Island", Zone::Battlefield);
+    let bogle = put(&mut state, P1, "Slippery Bogle", Zone::Battlefield);
+    let mut probe = state.clone();
+    activate(&mut probe, walker, 1, &[]);
+    match next(&mut probe) {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert!(!legal_targets.contains(&Target::Object(land)));
+            assert!(!legal_targets.contains(&Target::Object(bogle)));
+            assert!(legal_targets.contains(&Target::Object(walker)));
+            act(&mut probe, Action::ChooseTarget(Target::Object(walker)));
+        }
+        other => panic!("expected nonland targets: {other:?}"),
+    }
+    settled(&mut probe);
+    assert_eq!(probe.players[0].library[2], walker);
+    activate(&mut state, walker, 0, &[]);
+    settled(&mut state);
+    assert_eq!(loyalty(&state, walker), Some(5));
+    assert!(!activatable(&mut state, walker, 0));
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::Main1 && state.priority_player == P0
+    });
+    assert!(!activatable(&mut state, walker, 0));
+    next_own_main(&mut state);
+    assert!(activatable(&mut state, walker, 0));
+}
+
+#[test]
+fn teferi_draw_then_next_end_step_untaps_zero_one_or_two_lands_of_either_player() {
+    for count in 0..=2 {
+        let mut state = plains();
+        let walker = cast_teferi(&mut state);
+        let own = put(&mut state, P0, "Island", Zone::Battlefield);
+        let opposing = put(&mut state, P1, "Forest", Zone::Battlefield);
+        let extra = put(&mut state, P0, "Plains", Zone::Battlefield);
+        for land in [own, opposing, extra] {
+            state.objects.get_mut(land).tapped = true;
+        }
+        // Main phase two still schedules this turn's end step.
+        pass_until(&mut state, |state| state.step == Step::Main2);
+        let before = state.players[0].hand.len();
+        activate(&mut state, walker, 0, &[]);
+        settled(&mut state);
+        assert_eq!(state.players[0].hand.len(), before + 1);
+        assert!([own, opposing, extra]
+            .iter()
+            .all(|&land| state.objects.get(land).tapped));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(walker, Zone::Graveyard),
+        );
+        run_until(
+            &mut state,
+            |state| {
+                state.step == Step::End
+                    && state.stack.is_empty()
+                    && state.engine.pending_triggers.is_empty()
+                    && state.engine.pending_effect.is_none()
+            },
+            |_, decision| {
+                if let Decision::ChooseEffectTargets {
+                    player,
+                    legal_targets,
+                    selected_count,
+                    can_finish,
+                    ..
+                } = decision
+                {
+                    assert_eq!(*player, P0);
+                    if usize::from(*selected_count) < count {
+                        let target = [own, opposing][usize::from(*selected_count)];
+                        assert!(legal_targets.contains(&Target::Object(target)));
+                        return Some(Action::ChooseEffectTarget(Target::Object(target)));
+                    }
+                    assert!(*can_finish);
+                    return Some(Action::FinishEffectSelection);
+                }
+                None
+            },
+        );
+        assert_eq!(state.objects.get(own).tapped, count == 0);
+        assert_eq!(state.objects.get(opposing).tapped, count < 2);
+        assert!(state.objects.get(extra).tapped);
+        assert!(state.eternal_v1.as_ref().unwrap().c6c.untaps.is_empty());
+    }
+}
+
+#[test]
+fn teferi_plus_one_dredge_replacement_still_schedules_the_untap() {
+    let mut state = plains();
+    let walker = cast_teferi(&mut state);
+    let imp = put(&mut state, P0, "Stinkweed Imp", Zone::Graveyard);
+    activate(&mut state, walker, 0, &[]);
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(imp)))
+    );
+    act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+    settled(&mut state);
+    assert_eq!(zone(&state, imp), Zone::Hand);
+    assert_eq!(state.players[0].draws_this_turn, 0);
+    assert_eq!(state.players[0].library.len(), 15);
+    assert_eq!(state.eternal_v1.as_ref().unwrap().c6c.untaps.len(), 1);
+    // With no tapped lands the delayed trigger resolves without a prompt.
+    pass_until(&mut state, |state| {
+        state.step == Step::End
+            && state.stack.is_empty()
+            && state.engine.pending_triggers.is_empty()
+    });
+    assert!(state.eternal_v1.as_ref().unwrap().c6c.untaps.is_empty());
+}
+
+#[test]
+fn teferi_minus_three_inserts_third_or_bottom_in_owners_library_and_removes_tokens() {
+    for size in 0..=3 {
+        let cards = ["Island", "Mountain", "Forest"];
+        let mut state = game(&cards[..size]);
+        let walker = cast_teferi(&mut state);
+        let creature = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+        let original = state.players[1].library.clone();
+        activate(&mut state, walker, 1, &[Target::Object(creature)]);
+        settled(&mut state);
+        let mut expected = original;
+        expected.insert(size.min(2), creature);
+        assert_eq!(state.players[1].library, expected);
+        assert_eq!(loyalty(&state, walker), Some(1));
+        assert!(!activatable(&mut state, walker, 1));
+    }
+    let mut state = plains();
+    let walker = cast_teferi(&mut state);
+    let stolen = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(stolen, Zone::Exile));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change_to_battlefield_under_controller(stolen, P0),
+    );
+    activate(&mut state, walker, 1, &[Target::Object(stolen)]);
+    settled(&mut state);
+    assert_eq!(state.players[1].library[2], stolen);
+    assert!(!state.players[0].library.contains(&stolen));
+
+    let mut tokens = plains();
+    let token_walker = cast_teferi(&mut tokens);
+    let servo = token(&mut tokens, P1, "Servo Token");
+    activate(&mut tokens, token_walker, 1, &[Target::Object(servo)]);
+    settled(&mut tokens);
+    assert!(!tokens.players[1].library.contains(&servo));
+    assert!(!tokens.players[1].battlefield.contains(&servo));
+}
+
+#[test]
+fn teferi_minus_three_fizzles_on_departed_or_blinked_targets_and_outlives_source() {
+    for departure in 0..=2 {
+        let mut state = plains();
+        let walker = cast_teferi(&mut state);
+        let creature = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+        activate(&mut state, walker, 1, &[Target::Object(creature)]);
+        on_the_stack(&mut state);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(walker, Zone::Graveyard),
+        );
+        if departure != 0 {
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(creature, Zone::Exile),
+            );
+        }
+        if departure == 2 {
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(creature, Zone::Battlefield),
+            );
+        }
+        settled(&mut state);
+        assert_eq!(
+            zone(&state, creature),
+            [Zone::Library, Zone::Exile, Zone::Battlefield][departure]
+        );
+    }
+}
+
+fn teferi_emblem(state: &mut GameState) -> ObjectId {
+    let walker = cast_teferi(state);
+    change_loyalty(state, walker, 4);
+    activate(state, walker, 2, &[]);
+    settled(state);
+    assert_eq!(zone(state, walker), Zone::Graveyard);
+    walker
+}
+
+#[test]
+fn teferi_emblems_persist_stack_and_trigger_only_on_their_owners_actual_draws() {
+    let mut state = plains();
+    let first = teferi_emblem(&mut state);
+    let second = teferi_emblem(&mut state);
+    assert_eq!(
+        state.eternal_v1.as_ref().unwrap().c6c.teferi_emblems.len(),
+        2
+    );
+    let opposing: Vec<_> = (0..6)
+        .map(|_| put(&mut state, P1, "Island", Zone::Battlefield))
+        .collect();
+    let own = put(&mut state, P0, "Island", Zone::Battlefield);
+    recall(&mut state, P1);
+    settled(&mut state);
+    assert!(opposing
+        .iter()
+        .all(|&land| zone(&state, land) == Zone::Battlefield));
+    recall(&mut state, P0);
+    let mut chosen = 0;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseTargets {
+            player,
+            legal_targets,
+            ..
+        } => {
+            assert_eq!(player, P0);
+            assert!(!legal_targets.contains(&Target::Object(own)));
+            let target = opposing[chosen];
+            chosen += 1;
+            assert!(legal_targets.contains(&Target::Object(target)));
+            Action::ChooseTarget(Target::Object(target))
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(chosen, 6);
+    assert!(opposing
+        .iter()
+        .all(|&land| zone(&state, land) == Zone::Exile));
+    assert_eq!(zone(&state, first), Zone::Graveyard);
+    assert_eq!(zone(&state, second), Zone::Graveyard);
+    // Drawing with no opposing permanents never strands target placement.
+    recall(&mut state, P0);
+    settled(&mut state);
+}
+
+#[test]
+fn teferi_emblem_does_not_trigger_for_draws_replaced_by_hullbreacher() {
+    let mut state = plains();
+    teferi_emblem(&mut state);
+    let pirate = put(&mut state, P1, "Hullbreacher", Zone::Battlefield);
+    recall(&mut state, P0);
+    settled(&mut state);
+    assert_eq!(state.players[0].draws_this_turn, 0);
+    assert_eq!(named(&state, P1, "Treasure Token").len(), 3);
+    assert_eq!(zone(&state, pirate), Zone::Battlefield);
+}
+
+#[test]
+fn teferi_emblem_target_rechecks_departed_and_returned_incarnations() {
+    for departure in 0..=2 {
+        let mut state = plains();
+        teferi_emblem(&mut state);
+        let walker = cast_teferi(&mut state);
+        let target = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+        activate(&mut state, walker, 0, &[]);
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(target)))
+        );
+        act(&mut state, Action::ChooseTarget(Target::Object(target)));
+        on_the_stack(&mut state);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(target, Zone::Exile));
+        if departure == 1 {
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(target, Zone::Battlefield),
+            );
+        }
+        if departure == 2 {
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change_to_battlefield_under_controller(target, P0),
+            );
+        }
+        settled(&mut state);
+        assert_eq!(
+            zone(&state, target),
+            if departure == 0 {
+                Zone::Exile
+            } else {
+                Zone::Battlefield
+            }
+        );
+    }
+}
+
+#[test]
+fn teferi_emblem_keeps_its_owner_when_its_maker_returns_under_opponent_control() {
+    let mut state = plains();
+    let maker = teferi_emblem(&mut state);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change_to_battlefield_under_controller(maker, P1),
+    );
+    let bogle = put(&mut state, P1, "Slippery Bogle", Zone::Battlefield);
+    recall(&mut state, P1);
+    settled(&mut state);
+    assert_eq!(zone(&state, maker), Zone::Battlefield);
+    recall(&mut state, P0);
+    let mut choices = 0;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseTargets {
+            player,
+            legal_targets,
+            ..
+        } => {
+            assert_eq!(player, P0);
+            assert_eq!(legal_targets, vec![Target::Object(maker)]);
+            assert!(!legal_targets.contains(&Target::Object(bogle)));
+            choices += 1;
+            Action::ChooseTarget(Target::Object(maker))
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(choices, 3);
+    assert_eq!(zone(&state, maker), Zone::Exile);
+    assert_eq!(
+        state.eternal_v1.as_ref().unwrap().c6c.teferi_emblems[0].controller,
+        P0
+    );
 }

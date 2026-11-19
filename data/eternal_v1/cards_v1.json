@@ -36488,7 +36488,8 @@
   },
   {
    "name": "Teferi, Hero of Dominaria",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 4,
    "mana_cost": "{3}{W}{U}",
    "mana_value": 5,
    "colors": [
@@ -36513,7 +36514,10 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/t/TeferiHeroOfDominaria.java"
   },
   {

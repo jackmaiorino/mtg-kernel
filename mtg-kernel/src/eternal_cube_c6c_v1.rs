@@ -6,6 +6,11 @@
 //! table is keyed by a printed name that occurs only in the eternal registry,
 //! so the Pauper, FDN and Standard catalogs never reach it. Behavior was read
 //! from each card's current Oracle text and, where present, its XMage source.
+//!
+//! Saheeli remains no_effect: E7a's definition-only copy helper cannot transfer
+//! copiable token exceptions/abilities or retrieve those values from a departed
+//! second target. Shifting Woodland's graveyard-copy expiry does not supply
+//! those battlefield-copy semantics. No token or subtype ids are allocated here.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::card_def::{TargetSpec, CARD_DEFS};
@@ -14,12 +19,48 @@ use crate::effect::{
     LibraryPickRule, LibraryPickSelectionV1, ObjectRef, PlayerRef,
 };
 use crate::eternal_cards_v1::EternalOpV1;
-use crate::event::{self, ProposedEvent};
+use crate::event::{self, CommittedEvent, ProposedEvent};
 use crate::ids::PlayerId;
-use crate::standard_cards_v1::StandardOpV1;
-use crate::state::{GameState, ObjectLinkV4, Target, Zone};
-use crate::trigger::TriggeredAbilityDef;
+use crate::standard_cards_v1::{StandardOpV1, StandardTargetV1};
+use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Step, Target, Zone};
+use crate::trigger::{PendingTrigger, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
+
+const TEFERI: &str = "Teferi, Hero of Dominaria";
+
+/// Player-owned records survive departure or control changes of their maker.
+/// The historical source convention is shared with Tezzeret, Cruel Captain.
+/// In particular, targeting retains the maker's source characteristics rather
+/// than introducing a separate colorless emblem source (the existing convention).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmblemV1 {
+    pub controller: PlayerId,
+    pub source: AbilitySourceContractV4,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct C6cStateV1 {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub teferi_emblems: Vec<EmblemV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub untaps: Vec<DelayedUntapV1>,
+}
+
+impl C6cStateV1 {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.teferi_emblems.is_empty() && self.untaps.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DelayedUntapV1 {
+    pub source: AbilitySourceContractV4,
+    pub controller: PlayerId,
+    pub created_in_end_step: Option<crate::eternal_legacy_e9a_v1::TurnV1>,
+}
 
 /// Effect leaves owned by this module, carried as
 /// `eternal_cards_v1::EternalOpV1::C6cV1`.
@@ -45,6 +86,10 @@ pub enum C6cOpV1 {
     KarnRecoverCardV1 {
         card: ObjectLinkV4,
     },
+    TeferiScheduleUntapV1,
+    TeferiThirdFromTopV1,
+    TeferiEmblemV1,
+    TeferiExileV1,
 }
 
 impl C6cOpV1 {
@@ -149,6 +194,88 @@ pub fn karn_minus_two() -> EffectOp {
     }
 }
 
+/// The draw is a direct root element so competing replacements can choose.
+pub fn teferi_plus_one() -> EffectOp {
+    EffectOp::Sequence(vec![
+        EffectOp::DrawCards {
+            player: PlayerRef::Controller,
+            count: 1,
+        },
+        leaf(C6cOpV1::TeferiScheduleUntapV1),
+    ])
+}
+
+pub fn teferi_minus_three() -> EffectOp {
+    leaf(C6cOpV1::TeferiThirdFromTopV1)
+}
+
+pub fn teferi_minus_eight() -> EffectOp {
+    leaf(C6cOpV1::TeferiEmblemV1)
+}
+
+fn teferi_untap() -> EffectOp {
+    // Palinchron's existing selection convention offers tapped lands only.
+    EffectOp::UntapUpToLands {
+        chooser: PlayerRef::Controller,
+        max_targets: 2,
+    }
+}
+
+fn teferi_exile() -> EffectOp {
+    leaf(C6cOpV1::TeferiExileV1)
+}
+
+/// E8a's next-end-step scheduling, independent of the source's live zone.
+pub(crate) fn delayed_triggers(
+    state: &mut GameState,
+    events: &[CommittedEvent],
+) -> Vec<PendingTrigger> {
+    if !cfg!(feature = "eternal-fixtures")
+        || state.eternal_v1.as_ref().is_none_or(|e| e.c6c.is_empty())
+    {
+        return Vec::new();
+    }
+    let now = crate::eternal_legacy_e9a_v1::TurnV1::now(state);
+    let records = &mut state.eternal_v1.as_mut().expect("present above").c6c;
+    let mut triggers = Vec::new();
+    for event in events {
+        match event {
+            CommittedEvent::Draw {
+                player,
+                object: Some(_),
+            } => {
+                for emblem in &records.teferi_emblems {
+                    if emblem.controller == *player {
+                        let mut pending = crate::eternal_cards_v1::delayed_trigger(
+                            emblem.source,
+                            emblem.controller,
+                            teferi_exile(),
+                        );
+                        pending.target_spec =
+                            TargetSpec::StandardV1(StandardTargetV1::OpponentPermanentV1);
+                        triggers.push(pending);
+                    }
+                }
+            }
+            CommittedEvent::BeginningEndStep { .. } => {
+                let (ready, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut records.untaps)
+                    .into_iter()
+                    .partition(|record| record.created_in_end_step != Some(now));
+                records.untaps = waiting;
+                for record in ready {
+                    triggers.push(crate::eternal_cards_v1::delayed_trigger(
+                        record.source,
+                        record.controller,
+                        teferi_untap(),
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    triggers
+}
+
 fn live_in(state: &GameState, card: ObjectLinkV4, zone: Zone) -> bool {
     state
         .objects
@@ -200,12 +327,18 @@ pub(crate) fn triggers_for(_name: &str) -> &'static [TriggeredAbilityDef] {
 
 /// Target specs of this module's printed and queued triggered abilities.
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
-    delayed_effect_matches(name, effect).then_some(TargetSpec::None)
+    if name == TEFERI && *effect == teferi_exile() {
+        Some(TargetSpec::StandardV1(
+            StandardTargetV1::OpponentPermanentV1,
+        ))
+    } else {
+        delayed_effect_matches(name, effect).then_some(TargetSpec::None)
+    }
 }
 
 /// Queued triggers owned by this module's cards.
-pub(crate) fn delayed_effect_matches(_name: &str, _effect: &EffectOp) -> bool {
-    false
+pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
+    name == TEFERI && (*effect == teferi_untap() || *effect == teferi_exile())
 }
 
 // ---- Execution ----------------------------------------------------------------------
@@ -223,6 +356,68 @@ pub(crate) fn drive(
     path: Vec<u16>,
 ) -> Result<bool, String> {
     match *op {
+        C6cOpV1::TeferiScheduleUntapV1 => {
+            if let Some(source) = continuation.ctx.ability_source_contract {
+                let created_in_end_step = (state.step == Step::End)
+                    .then(|| crate::eternal_legacy_e9a_v1::TurnV1::now(state));
+                state
+                    .eternal_v1
+                    .get_or_insert_with(Default::default)
+                    .c6c
+                    .untaps
+                    .push(DelayedUntapV1 {
+                        source,
+                        controller: continuation.ctx.controller,
+                        created_in_end_step,
+                    });
+            }
+        }
+        C6cOpV1::TeferiEmblemV1 => {
+            if let Some(source) = continuation.ctx.ability_source_contract {
+                state
+                    .eternal_v1
+                    .get_or_insert_with(Default::default)
+                    .c6c
+                    .teferi_emblems
+                    .push(EmblemV1 {
+                        controller: continuation.ctx.controller,
+                        source,
+                    });
+            }
+        }
+        C6cOpV1::TeferiThirdFromTopV1 | C6cOpV1::TeferiExileV1 => {
+            let ctx = &continuation.ctx;
+            let Some(Target::Object(object)) = ctx.targets.first().copied() else {
+                return Ok(false);
+            };
+            let spec = if matches!(op, C6cOpV1::TeferiThirdFromTopV1) {
+                TargetSpec::NonlandPermanent
+            } else {
+                TargetSpec::StandardV1(StandardTargetV1::OpponentPermanentV1)
+            };
+            if ctx.target_incarnation_matches(0, state)
+                && ctx.ability_source_contract.is_some_and(|source| {
+                    crate::engine::effect_target_is_legal_from_ability_source(
+                        state,
+                        source,
+                        ctx.controller,
+                        spec,
+                        &ctx.targets,
+                        0,
+                    )
+                })
+            {
+                let proposal = if matches!(op, C6cOpV1::TeferiThirdFromTopV1) {
+                    ProposedEvent::public_library_insert(
+                        object,
+                        event::LibraryPlacement::ThirdFromTop,
+                    )
+                } else {
+                    ProposedEvent::zone_change(object, Zone::Exile)
+                };
+                event::propose_and_commit(state, proposal);
+            }
+        }
         C6cOpV1::KarnRevealV1 => {
             let player = continuation.ctx.controller;
             let cards: Vec<ObjectLinkV4> = state.players[player.index()]
