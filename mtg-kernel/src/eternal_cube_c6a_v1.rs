@@ -2,6 +2,23 @@
 //! Inti remains unsupported until all multi-card discard callers preserve
 //! instruction boundaries: ordinary cleanup, Time Stop cleanup, Breakthrough,
 //! and Cabal Therapy's legacy fallback still loop over single-card commits.
+//!
+//! Headliner Scarlett and Gandalf, Goblins' Bane remain Partial. Do not
+//! attach their triggers or Flameshape until concealed play permissions
+//! have a private projection. `rl::exile_play_permissions_public_v2` has
+//! no observer argument and publishes `play_or_cast` for every permission:
+//! a land and a spell exiled face down produce distinguishable opponent
+//! observations, even when their object references use a neutral sentinel.
+//! Shelldock Isle / Collector's Cage hideaway does not grant an ordinary
+//! play permission. Its linked-card projection accepts only those sources,
+//! and its lookers follow the source's controllers, unlike these cards.
+//! `standard_exile::finish_hideaway` also sets the face-down marker after
+//! the move records public event visibility. Memory Jar's explicit private
+//! journal mask is needed for a concealed move, but does not fix the play
+//! permission projection. Gandalf additionally needs an unbounded grant
+//! conditional on controlling a Wizard at each play attempt. No ability
+//! implementation is registered for either Partial card; the catalog's
+//! ordinary-permanent fallback is not a claim of printed-text support.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::card_def::{card_id_by_name, TargetSpec, CARD_DEFS};

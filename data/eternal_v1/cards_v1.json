@@ -35908,7 +35908,7 @@
   },
   {
    "name": "Headliner Scarlett",
-   "engine_capability": "no_effect",
+   "engine_capability": "partial",
    "mana_cost": "{3}{R}",
    "mana_value": 4,
    "colors": [
@@ -35938,7 +35938,7 @@
   },
   {
    "name": "Gandalf, Goblins' Bane",
-   "engine_capability": "no_effect",
+   "engine_capability": "partial",
    "mana_cost": "{2}{R}",
    "mana_value": 3,
    "colors": [

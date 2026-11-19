@@ -22,6 +22,41 @@ const C6A_CARDS: [&str; 3] = [
     "Laelia, the Blade Reforged",
 ];
 
+// These are admission checks for unfinished cards, not printed-text rules
+// tests. Concealed play permissions currently reveal land versus spell in
+// the opponent's observation. Keep both cards out of Full session decks.
+fn assert_private_impulse_card_is_partial(name: &str) {
+    assert_eq!(def(name).capability, CardCapability::Partial);
+    assert!(!C6A_CARDS.contains(&name));
+    let deck = CustomDeckV1 {
+        cards: vec![
+            CustomCardCountV1 {
+                name: name.into(),
+                count: 1,
+            },
+            CustomCardCountV1 {
+                name: "Mountain".into(),
+                count: 39,
+            },
+        ],
+        companion: None,
+    };
+    assert_eq!(
+        deck.resolve().unwrap_err(),
+        format!("card {name:?} is a token or lacks full engine support")
+    );
+}
+
+#[test]
+fn headliner_scarlett_stays_partial_until_impulse_permissions_preserve_hidden_information() {
+    assert_private_impulse_card_is_partial("Headliner Scarlett");
+}
+
+#[test]
+fn gandalf_stays_partial_until_hidden_wizard_conditional_permissions_are_supported() {
+    assert_private_impulse_card_is_partial("Gandalf, Goblins' Bane");
+}
+
 fn def(name: &str) -> &'static CardDef {
     &CARD_DEFS[id(name) as usize]
 }
