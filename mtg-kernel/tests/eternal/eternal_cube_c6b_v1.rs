@@ -19,11 +19,10 @@ const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 const URSINE: &str = "Ursine Monstrosity";
 
-const C6B_CARDS: [&str; 7] = [
+const C6B_CARDS: [&str; 6] = [
     "Seasoned Cryomancer",
     "Seasoned Pyromancer",
     "Sphinx of False Conclusions",
-    "Metamorphosis Fanatic",
     "Night Nurse, Healer of Heroes",
     "Six",
     "Ursine Monstrosity",
@@ -728,7 +727,7 @@ fn c6b_decks_finish_and_replay_through_public_sessions_both_seats() {
         ("Bayou", 10),
         ("Savannah", 6),
         ("Scrubland", 4),
-        ("Metamorphosis Fanatic", 6),
+        ("Gurmag Angler", 6),
         ("Night Nurse, Healer of Heroes", 6),
         ("Six", 4),
         ("Ursine Monstrosity", 4),
@@ -2283,6 +2282,33 @@ fn sphinx_loot_offers_competing_draw_replacements_and_stops_after_a_win() {
 
 const FANATIC: &str = "Metamorphosis Fanatic";
 
+#[test]
+fn fanatic_is_no_effect_until_copy_entry_and_entry_counter_are_supported() {
+    assert_eq!(def(FANATIC).capability, CardCapability::NoEffect);
+    assert!(!def(FANATIC).is_executable());
+    assert!(!def(FANATIC).has_full_support());
+    for player in [P0, P1] {
+        let mut state = plains();
+        state.active_player = player;
+        state.priority_player = player;
+        put(&mut state, player, "Phyrexian Metamorph", Zone::Graveyard);
+        let card = put(&mut state, player, FANATIC, Zone::Library);
+        pool(&mut state, player, &[ManaColor::B, ManaColor::B], 4);
+        event::propose_and_commit(&mut state, ProposedEvent::draw(player));
+        assert!(hand_contains(&state, player, card));
+        let Decision::CastSpellOrPass {
+            castable_spells, ..
+        } = next(&mut state)
+        else {
+            panic!("no_effect Fanatic must not offer a miracle reveal");
+        };
+        assert!(!castable_spells.contains(&card));
+        assert!(engine::step(&mut state, Action::CastSpell(card)).is_err());
+    }
+}
+
+// Preserve the Full behavior assertions as explicitly ignored restoration tests.
+// These are not passing evidence for the downgraded card.
 fn cast_fanatic(state: &mut GameState) -> ObjectId {
     let source = put(state, P0, FANATIC, Zone::Hand);
     pool(state, P0, &[ManaColor::B, ManaColor::B], 4);
@@ -2292,6 +2318,67 @@ fn cast_fanatic(state: &mut GameState) -> ObjectId {
 }
 
 #[test]
+#[ignore = "Fanatic restored to no_effect: requires trigger-owned Metamorph entry choice"]
+fn fanatic_returning_metamorph_offers_copy_before_entry_and_replays() {
+    let mut state = plains();
+    for name in ["Phyrexian Metamorph", "Wall of Blossoms"] {
+        assert!(
+            def(name).has_full_support(),
+            "{name} must be a Full fixture"
+        );
+    }
+    let wall = put(&mut state, P1, "Wall of Blossoms", Zone::Battlefield);
+    let metamorph = put(&mut state, P0, "Phyrexian Metamorph", Zone::Graveyard);
+    let generation = state.objects.get(metamorph).zone_change_count;
+    let source = cast_fanatic(&mut state);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseTargets { .. })
+    ));
+    act(&mut state, Action::ChooseTarget(Target::Object(metamorph)));
+    let choice = settle(&mut state).expect("Metamorph must choose before it enters");
+    let Decision::ChooseEffectTargets {
+        player,
+        min_targets: 0,
+        max_targets: 1,
+        can_finish: true,
+        ref legal_targets,
+        ..
+    } = choice
+    else {
+        panic!("expected an optional copy choice, got {choice:?}");
+    };
+    assert_eq!(player, P0);
+    assert!(legal_targets.contains(&Target::Object(wall)));
+    assert!(legal_targets.contains(&Target::Object(source)));
+    assert_eq!(zone(&state, metamorph), Zone::Graveyard);
+    assert_eq!(state.objects.get(metamorph).zone_change_count, generation);
+    assert_eq!(state.objects.get(metamorph).v4.lifelink_keyword_counters, 0);
+    let mut replay: GameState =
+        serde_json::from_str(&serde_json::to_string(&state).unwrap()).unwrap();
+    assert_eq!(next(&mut replay), choice);
+    let hand_before = state.players[0].hand.len();
+    for game in [&mut state, &mut replay] {
+        act(game, Action::ChooseEffectTarget(Target::Object(wall)));
+        settled(game);
+        assert_eq!(zone(game, metamorph), Zone::Battlefield);
+        assert_eq!(game.objects.get(metamorph).card_def, id("Wall of Blossoms"));
+        assert_eq!(
+            game.objects.get(metamorph).zone_change_count,
+            generation + 1
+        );
+        assert_eq!(game.objects.get(metamorph).controller, P0);
+        assert_eq!(power_toughness(game, metamorph), (0, 4));
+        assert!(engine::object_has_type(game, metamorph, CardType::Artifact));
+        assert_eq!(game.objects.get(metamorph).v4.lifelink_keyword_counters, 1);
+        assert!(keyword(game, metamorph, Keywords::LIFELINK));
+        assert_eq!(game.players[0].hand.len(), hand_before + 1);
+    }
+    assert_eq!(state, replay);
+}
+
+#[test]
+#[ignore = "Fanatic restored to no_effect: unsupported copy entry and entry counter"]
 fn fanatic_characteristics_hard_cast_cost_and_lifelink_combat() {
     let card = def(FANATIC);
     assert_eq!(card.cost.generic, 4);
@@ -2331,6 +2418,7 @@ fn fanatic_characteristics_hard_cast_cost_and_lifelink_combat() {
 }
 
 #[test]
+#[ignore = "Fanatic restored to no_effect: unsupported copy entry and entry counter"]
 fn fanatic_reanimates_only_own_creature_with_lifelink_counter_or_chooses_zero() {
     for choose in [false, true] {
         let mut state = plains();
@@ -2386,6 +2474,7 @@ fn fanatic_reanimates_only_own_creature_with_lifelink_counter_or_chooses_zero() 
 }
 
 #[test]
+#[ignore = "Fanatic restored to no_effect: unsupported copy entry and entry counter"]
 fn fanatic_target_leaving_or_blinking_fizzles_without_counter_or_return() {
     for reenter_graveyard in [false, true] {
         let mut state = plains();
@@ -2419,6 +2508,7 @@ fn fanatic_target_leaving_or_blinking_fizzles_without_counter_or_return() {
 }
 
 #[test]
+#[ignore = "Fanatic restored to no_effect: unsupported copy entry and entry counter"]
 fn fanatic_return_survives_source_leaving_with_lifelink_counter_and_replays() {
     let mut state = plains();
     let creature = put(&mut state, P0, "Gurmag Angler", Zone::Graveyard);
@@ -2441,6 +2531,7 @@ fn fanatic_return_survives_source_leaving_with_lifelink_counter_and_replays() {
 }
 
 #[test]
+#[ignore = "Fanatic restored to no_effect: unsupported copy entry and entry counter"]
 fn fanatic_grafdiggers_cage_stops_return_and_counter() {
     let mut state = plains();
     put(&mut state, P1, "Grafdigger's Cage", Zone::Battlefield);
@@ -2461,6 +2552,7 @@ fn fanatic_first_draw(state: &mut GameState, player: PlayerId) -> ObjectId {
 }
 
 #[test]
+#[ignore = "Fanatic restored to no_effect: unsupported copy entry and entry counter"]
 fn fanatic_miracle_casts_for_one_black_on_either_turn_both_seats_then_targets() {
     for owner in [P0, P1] {
         for active in [P0, P1] {
@@ -2519,6 +2611,7 @@ fn fanatic_miracle_casts_for_one_black_on_either_turn_both_seats_then_targets() 
 }
 
 #[test]
+#[ignore = "Fanatic restored to no_effect: unsupported copy entry and entry counter"]
 fn fanatic_miracle_reveal_and_cast_can_be_declined_and_needs_payable_cost() {
     // Reveal decline; cast decline; no generic; no black.
     for (reveal, accept, black, generic) in [
@@ -2554,6 +2647,7 @@ fn fanatic_miracle_reveal_and_cast_can_be_declined_and_needs_payable_cost() {
 }
 
 #[test]
+#[ignore = "Fanatic restored to no_effect: unsupported copy entry and entry counter"]
 fn fanatic_second_draw_has_no_miracle_and_real_turn_change_resets_first_draw() {
     let mut state = plains();
     event::propose_and_commit(&mut state, ProposedEvent::draw(P0));
@@ -2575,6 +2669,7 @@ fn fanatic_second_draw_has_no_miracle_and_real_turn_change_resets_first_draw() {
 }
 
 #[test]
+#[ignore = "Fanatic restored to no_effect: unsupported copy entry and entry counter"]
 fn fanatic_miracle_cannot_cast_a_replaced_hand_incarnation() {
     for back_to_hand in [false, true] {
         let mut state = plains();
