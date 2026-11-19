@@ -36083,7 +36083,7 @@
   },
   {
    "name": "Seasoned Cryomancer",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}{U}",
    "mana_value": 3,
    "colors": [
@@ -36106,11 +36106,11 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": ["etb_trigger", "draw_card", "discard", "stun_counters", "graveyard_ability"]
   },
   {
    "name": "Seasoned Pyromancer",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}{R}",
    "mana_value": 3,
    "colors": [
@@ -36133,7 +36133,7 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": ["etb_trigger", "draw_card", "discard", "token_creation", "graveyard_ability"],
    "java_file": "Mage.Sets/src/mage/cards/s/SeasonedPyromancer.java"
   },
   {
@@ -36585,6 +36585,25 @@
    "sideboard_only": false,
    "complexity": "moderate",
    "mechanics": []
+  },
+  {
+   "name": "1/1 red Elemental Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": ["R"],
+   "types": ["Creature"],
+   "subtypes": ["Elemental"],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": ["token_creation"],
+   "is_token": true
   }
  ]
 }

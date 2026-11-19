@@ -334,6 +334,12 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c5c_v1::C5cStateV1::is_empty"
     )]
     pub c5c: crate::eternal_cube_c5c_v1::C5cStateV1,
+    /// Vintage Cube wave C6b's resolution-local discard counts.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c6b_v1::C6bStateV1::is_empty"
+    )]
+    pub c6b: crate::eternal_cube_c6b_v1::C6bStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {

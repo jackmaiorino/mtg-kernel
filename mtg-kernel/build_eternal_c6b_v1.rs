@@ -5,11 +5,41 @@
 //! `src/eternal_cube_c6b_v1.rs`. Every row is keyed by a name that occurs
 //! only in the eternal registry.
 
-use super::{ActivatedAbilityRecipe, Special};
+use super::{AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, Special};
 
-/// No C6b card has an activated ability yet.
+const CRYOMANCER: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
+    cost: &[
+        AbilityCostRecipe::ManaCost("{3}{U}{U}"),
+        AbilityCostRecipe::ExileSelf,
+    ],
+    effect: AbilityEffectRecipe::StandardProgram("crate::eternal_cube_c6b_v1::draw_two"),
+    activation_zone: "Graveyard",
+    sorcery_speed_only: false,
+    target_spec: "None",
+    activation_target_filter: "TargetSpecOnly",
+    max_activations_per_turn: None,
+}];
+
+const PYROMANCER: [ActivatedAbilityRecipe; 1] = [ActivatedAbilityRecipe {
+    cost: &[
+        AbilityCostRecipe::ManaCost("{3}{R}{R}"),
+        AbilityCostRecipe::ExileSelf,
+    ],
+    effect: AbilityEffectRecipe::StandardProgram("crate::eternal_cube_c6b_v1::two_elementals"),
+    activation_zone: "Graveyard",
+    sorcery_speed_only: false,
+    target_spec: "None",
+    activation_target_filter: "TargetSpecOnly",
+    max_activations_per_turn: None,
+}];
+
+/// Graveyard activations use Bramble Wurm's exile-self cost.
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
-    super::build_eternal_c6c_v1::activated_ability_recipes_for(name)
+    match name {
+        "Seasoned Cryomancer" => &CRYOMANCER,
+        "Seasoned Pyromancer" => &PYROMANCER,
+        _ => super::build_eternal_c6c_v1::activated_ability_recipes_for(name),
+    }
 }
 
 /// No C6b spell program yet.
@@ -44,5 +74,9 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
 
 /// Card-database tokens for this wave's abilities.
 pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
-    super::build_eternal_c6c_v1::trigger_recipe_for(name)
+    match name {
+        "Seasoned Cryomancer" => "etb:draw_two_then_discard_two;reflexive:nonlands_discarded_this_way:tap_up_to_that_many_target_creatures:one_stun_counter_each;graveyard_ability:3uu:exile_self:draw_two",
+        "Seasoned Pyromancer" => "etb:discard_two_then_draw_two:create_one_1_1_red_elemental_per_nonland_discarded_this_way;graveyard_ability:3rr:exile_self:create_two_1_1_red_elementals",
+        _ => super::build_eternal_c6c_v1::trigger_recipe_for(name),
+    }
 }

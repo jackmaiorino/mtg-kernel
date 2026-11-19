@@ -1,35 +1,22 @@
 //! Vintage Cube wave C6b: native rules and public-session tests for the
 //! discard counts, dies copies and graveyard plays.
 #![cfg(feature = "eternal-fixtures")]
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code)]
 
-use crate::eternal_catalog_v1::{play_observed, Policy};
 use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, TargetSpec,
-    CARD_DEFS,
+    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
+use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
-use mtg_kernel::mana::ManaColor;
+use mtg_kernel::mana::{ManaColor, Pip};
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
-use serde_json::Value;
 
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const C6B_CARDS: [&str; 10] = [
-    "Seasoned Cryomancer",
-    "Seasoned Pyromancer",
-    "Malcolm, Alluring Scoundrel",
-    "Sphinx of False Conclusions",
-    "Vaultborn Tyrant",
-    "Metamorphosis Fanatic",
-    "Night Nurse, Healer of Heroes",
-    "Six",
-    "Pyrogoyf",
-    "Ursine Monstrosity",
-];
+const C6B_CARDS: [&str; 2] = ["Seasoned Cryomancer", "Seasoned Pyromancer"];
 
 fn def(name: &str) -> &'static CardDef {
     &CARD_DEFS[id(name) as usize]
@@ -174,6 +161,9 @@ fn settled(state: &mut GameState) {
 /// finishing a selection that may finish, declining a Boolean or cost.
 fn first_answer(decision: Decision) -> Action {
     match decision {
+        Decision::ChooseTargets {
+            can_finish: true, ..
+        } => Action::FinishEffectSelection,
         Decision::ChooseTargets { legal_targets, .. } => Action::ChooseTarget(legal_targets[0]),
         Decision::ChooseEffectTargets {
             can_finish: true, ..
@@ -480,5 +470,548 @@ fn c6b_cards_are_full() {
         let card = def(name);
         assert_eq!(card.capability, CardCapability::Full, "{name}");
         assert!(card.is_executable(), "{name}");
+    }
+}
+
+const ELEMENTAL: &str = "1/1 red Elemental Token";
+
+fn on_the_stack(state: &mut GameState) {
+    for _ in 0..20 {
+        match next(state) {
+            Decision::CastSpellOrPass { .. } => return,
+            other => act(state, first_answer(other)),
+        }
+    }
+    panic!("pending action did not finish");
+}
+
+#[test]
+fn seasoned_characteristics_and_graveyard_costs() {
+    for (name, color, subtype) in [
+        ("Seasoned Cryomancer", ManaColor::U, Subtype::Wizard),
+        ("Seasoned Pyromancer", ManaColor::R, Subtype::Shaman),
+    ] {
+        let card = def(name);
+        assert_eq!(card.cost.generic, 1);
+        assert_eq!(card.cost.pips, &[Pip::Colored(color), Pip::Colored(color)]);
+        assert_eq!(card.mana_value, 3);
+        assert_eq!(card.types, &[CardType::Creature]);
+        assert_eq!(card.subtypes, &[Subtype::Human, subtype]);
+        assert_eq!(card.colors, &[color]);
+        assert!(card.supertypes.is_empty());
+        assert_eq!((card.power, card.toughness), (Some(2), Some(2)));
+        assert_eq!(card.keywords, Keywords::NONE);
+    }
+    let token_def = def(ELEMENTAL);
+    assert_eq!(token_def.types, &[CardType::Creature]);
+    assert_eq!(token_def.subtypes, &[Subtype::Elemental]);
+    assert_eq!(token_def.colors, &[ManaColor::R]);
+    assert_eq!((token_def.power, token_def.toughness), (Some(1), Some(1)));
+    assert_eq!(token_def.keywords, Keywords::NONE);
+}
+
+#[test]
+fn pyromancer_discards_before_drawing_and_counts_only_nonlands() {
+    for nonlands in 0..=2 {
+        let mut state = plains();
+        let source = put(&mut state, P0, "Seasoned Pyromancer", Zone::Hand);
+        let discarded: Vec<_> = (0..2)
+            .map(|index| {
+                put(
+                    &mut state,
+                    P0,
+                    if index < nonlands {
+                        "Lightning Bolt"
+                    } else {
+                        "Island"
+                    },
+                    Zone::Hand,
+                )
+            })
+            .collect();
+        pool(&mut state, P0, &[ManaColor::R, ManaColor::R], 1);
+        cast(&mut state, source, &[]);
+        settled(&mut state);
+        assert_eq!(zone(&state, source), Zone::Battlefield);
+        assert_eq!(state.players[0].hand.len(), 2);
+        assert_eq!(state.players[0].library.len(), 18);
+        assert!(state.players[0]
+            .hand
+            .iter()
+            .all(|&card| state.objects.get(card).card_def == id("Plains")));
+        assert!(discarded
+            .iter()
+            .all(|&card| zone(&state, card) == Zone::Graveyard));
+        let tokens = named(&state, P0, ELEMENTAL);
+        assert_eq!(tokens.len(), nonlands);
+        for object in tokens {
+            assert_eq!(power_toughness(&state, object), (1, 1));
+            assert!(state.objects.get(object).v4.is_token);
+            assert!(state.objects.get(object).summoning_sick);
+        }
+        assert!(state
+            .eternal_v1
+            .as_ref()
+            .is_none_or(|eternal| eternal.c6b.discarded_nonlands.is_empty()));
+    }
+}
+
+#[test]
+fn pyromancer_empty_or_short_hand_still_draws_two() {
+    for hand in [vec![], vec!["Island"], vec!["Lightning Bolt"]] {
+        let mut state = plains();
+        let source = put(&mut state, P0, "Seasoned Pyromancer", Zone::Hand);
+        for name in &hand {
+            put(&mut state, P0, name, Zone::Hand);
+        }
+        pool(&mut state, P0, &[ManaColor::R, ManaColor::R], 1);
+        cast(&mut state, source, &[]);
+        settled(&mut state);
+        assert_eq!(state.players[0].hand.len(), 2);
+        assert_eq!(state.players[0].graveyard.len(), hand.len());
+        assert_eq!(
+            named(&state, P0, ELEMENTAL).len(),
+            usize::from(hand.contains(&"Lightning Bolt"))
+        );
+    }
+}
+
+#[test]
+fn pyromancer_controller_selects_exactly_two_from_original_hand() {
+    let mut state = plains();
+    let source = put(&mut state, P0, "Seasoned Pyromancer", Zone::Hand);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    let island = put(&mut state, P0, "Island", Zone::Hand);
+    let keep = put(&mut state, P0, "Mountain", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R, ManaColor::R], 1);
+    cast(&mut state, source, &[]);
+    let choice = settle(&mut state).expect("choose discards before drawing");
+    assert!(matches!(
+        choice,
+        Decision::ChooseEffectTargets {
+            player: P0,
+            can_finish: false,
+            ..
+        }
+    ));
+    assert_eq!(state.players[0].library.len(), 20);
+    act(&mut state, Action::ChooseEffectTarget(Target::Object(bolt)));
+    choose_target(&mut state, Target::Object(island));
+    settled(&mut state);
+    assert_eq!(zone(&state, bolt), Zone::Graveyard);
+    assert_eq!(zone(&state, island), Zone::Graveyard);
+    assert!(hand_contains(&state, P0, keep));
+    assert_eq!(state.players[0].hand.len(), 3);
+    assert_eq!(named(&state, P0, ELEMENTAL).len(), 1);
+}
+
+#[test]
+fn cryomancer_draws_first_then_targets_up_to_the_nonland_discard_count() {
+    for count in 0..=2 {
+        let library = match count {
+            0 => ["Plains", "Island", "Plains", "Plains"],
+            1 => ["Lightning Bolt", "Island", "Plains", "Plains"],
+            _ => ["Lightning Bolt", "Llanowar Elves", "Plains", "Plains"],
+        };
+        let mut state = game(&library);
+        let source = put(&mut state, P0, "Seasoned Cryomancer", Zone::Hand);
+        let own = put(&mut state, P0, "Gurmag Angler", Zone::Battlefield);
+        let enemy = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
+        let protected = put(&mut state, P1, "Slippery Bogle", Zone::Battlefield);
+        pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 1);
+        cast(&mut state, source, &[]);
+        if count == 0 {
+            settled(&mut state);
+        } else {
+            let choice = settle(&mut state).expect("reflexive target choice");
+            assert!(matches!(choice, Decision::ChooseTargets {
+                player: P0, remaining, can_finish: true, ref legal_targets, ..
+            } if usize::from(remaining) == count
+                && legal_targets.contains(&Target::Object(own))
+                && legal_targets.contains(&Target::Object(source))
+                && legal_targets.contains(&Target::Object(enemy))
+                && !legal_targets.contains(&Target::Object(protected))));
+            assert_eq!(state.players[0].hand.len(), 0);
+            assert_eq!(state.players[0].graveyard.len(), 2);
+            act(&mut state, Action::ChooseTarget(Target::Object(own)));
+            if count == 2 {
+                match next(&mut state) {
+                    Decision::ChooseTargets { legal_targets, .. } => {
+                        assert!(!legal_targets.contains(&Target::Object(own)));
+                        assert!(legal_targets.contains(&Target::Object(enemy)));
+                    }
+                    other => panic!("second target: {other:?}"),
+                }
+                act(&mut state, Action::ChooseTarget(Target::Object(enemy)));
+            }
+            on_the_stack(&mut state);
+            assert_eq!(state.stack.len(), 1, "separate reflexive trigger");
+            assert!(
+                !state.objects.get(own).tapped,
+                "response window before tapping"
+            );
+            settled(&mut state);
+        }
+        assert_eq!(state.players[0].library.len(), 2);
+        assert_eq!(state.objects.get(own).tapped, count > 0);
+        assert_eq!(state.objects.get(own).counters.stun, i16::from(count > 0));
+        assert_eq!(state.objects.get(enemy).tapped, count == 2);
+        assert_eq!(
+            state.objects.get(enemy).counters.stun,
+            i16::from(count == 2)
+        );
+    }
+}
+
+#[test]
+fn cryomancer_can_choose_zero_or_fewer_targets_and_stun_prevents_next_untap() {
+    for chosen in 0..=1 {
+        let mut state = game(&[
+            "Lightning Bolt",
+            "Llanowar Elves",
+            "Plains",
+            "Plains",
+            "Plains",
+            "Plains",
+        ]);
+        let source = put(&mut state, P0, "Seasoned Cryomancer", Zone::Hand);
+        let victim = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
+        state.objects.get_mut(victim).tapped = true;
+        pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 1);
+        cast(&mut state, source, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseTargets {
+                can_finish: true,
+                ..
+            })
+        ));
+        if chosen == 1 {
+            act(&mut state, Action::ChooseTarget(Target::Object(victim)));
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseTargets {
+                    can_finish: true,
+                    ..
+                }
+            ));
+        }
+        act(&mut state, Action::FinishEffectSelection);
+        settled(&mut state);
+        assert_eq!(state.objects.get(victim).counters.stun, chosen);
+        pass_until(&mut state, |s| {
+            s.active_player == P1 && s.step == Step::Main1
+        });
+        assert_eq!(state.objects.get(victim).tapped, chosen == 1);
+        assert_eq!(state.objects.get(victim).counters.stun, 0);
+    }
+}
+
+#[test]
+fn cryomancer_chooses_discards_from_cards_just_drawn() {
+    let mut state = game(&["Lightning Bolt", "Llanowar Elves", "Plains", "Plains"]);
+    let drawn = state.players[0].library[..2].to_vec();
+    let source = put(&mut state, P0, "Seasoned Cryomancer", Zone::Hand);
+    let keep = put(&mut state, P0, "Mountain", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 1);
+    cast(&mut state, source, &[]);
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseEffectTargets { player: P0, .. })
+    ));
+    assert_eq!(state.players[0].library.len(), 2);
+    for card in &drawn {
+        choose_target(&mut state, Target::Object(*card));
+    }
+    assert!(matches!(
+        settle(&mut state),
+        Some(Decision::ChooseTargets { remaining: 2, .. })
+    ));
+    act(&mut state, Action::FinishEffectSelection);
+    settled(&mut state);
+    assert_eq!(state.players[0].hand, vec![keep]);
+    assert!(drawn
+        .iter()
+        .all(|&card| zone(&state, card) == Zone::Graveyard));
+}
+
+#[test]
+fn cryomancer_reflexive_trigger_rechecks_vanished_and_changed_incarnations() {
+    for remove_both in [false, true] {
+        let mut state = game(&["Lightning Bolt", "Llanowar Elves", "Plains", "Plains"]);
+        let source = put(&mut state, P0, "Seasoned Cryomancer", Zone::Hand);
+        let first = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
+        let second = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
+        pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 1);
+        cast(&mut state, source, &[]);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseTargets { .. })
+        ));
+        act(&mut state, Action::ChooseTarget(Target::Object(first)));
+        choose_target(&mut state, Target::Object(second));
+        on_the_stack(&mut state);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(first, Zone::Hand));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(first, Zone::Battlefield),
+        );
+        if remove_both {
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(second, Zone::Graveyard),
+            );
+        }
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(source, Zone::Graveyard),
+        );
+        settled(&mut state);
+        assert!(!state.objects.get(first).tapped);
+        assert_eq!(state.objects.get(first).counters.stun, 0);
+        assert_eq!(
+            state.objects.get(second).counters.stun,
+            i16::from(!remove_both)
+        );
+        assert_eq!(state.objects.get(second).tapped, !remove_both);
+    }
+}
+
+#[test]
+fn seasoned_graveyard_abilities_exile_as_cost_work_at_instant_speed_and_only_in_graveyard() {
+    for (name, color) in [
+        ("Seasoned Cryomancer", ManaColor::U),
+        ("Seasoned Pyromancer", ManaColor::R),
+    ] {
+        for wrong_zone in [Zone::Hand, Zone::Battlefield, Zone::Exile] {
+            let mut state = plains();
+            let card = put(&mut state, P0, name, wrong_zone);
+            pool(&mut state, P0, &[color, color], 3);
+            assert!(!activatable(&mut state, card, 0));
+        }
+        let mut wrong_colors = plains();
+        let unpaid = put(&mut wrong_colors, P0, name, Zone::Graveyard);
+        pool(&mut wrong_colors, P0, &[color], 4);
+        assert!(
+            !activatable(&mut wrong_colors, unpaid, 0),
+            "two colored pips required"
+        );
+        let mut state = plains();
+        state.active_player = P1;
+        state.priority_player = P0;
+        let card = put(&mut state, P0, name, Zone::Graveyard);
+        pool(&mut state, P0, &[color, color], 2);
+        assert!(!activatable(&mut state, card, 0), "five mana required");
+        pool(&mut state, P0, &[], 1);
+        activate(&mut state, card, 0, &[]);
+        on_the_stack(&mut state);
+        assert_eq!(zone(&state, card), Zone::Exile);
+        assert_eq!(mana(&state, P0, color), 0);
+        assert_eq!(mana(&state, P0, ManaColor::C), 0);
+        assert!(state.players[0].hand.is_empty());
+        assert!(named(&state, P0, ELEMENTAL).is_empty());
+        settled(&mut state);
+        if color == ManaColor::U {
+            assert_eq!(state.players[0].hand.len(), 2);
+            assert_eq!(state.players[0].library.len(), 18);
+        } else {
+            assert_eq!(named(&state, P0, ELEMENTAL).len(), 2);
+            assert_eq!(state.players[0].library.len(), 20);
+        }
+        pool(&mut state, P0, &[color, color], 3);
+        assert!(
+            !activatable(&mut state, card, 0),
+            "cannot reuse exiled source"
+        );
+    }
+}
+
+#[test]
+fn seasoned_draws_offer_competing_replacements_and_preserve_discard_counts() {
+    for (name, color, graveyard) in [
+        ("Seasoned Cryomancer", ManaColor::U, false),
+        ("Seasoned Pyromancer", ManaColor::R, false),
+        ("Seasoned Cryomancer", ManaColor::U, true),
+    ] {
+        for win in [false, true] {
+            let mut state = game(&[]);
+            put(&mut state, P1, "Hullbreacher", Zone::Battlefield);
+            let jace = put(&mut state, P0, "Jace, Wielder of Mysteries", Zone::Hand);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(jace, Zone::Battlefield),
+            );
+            let source = put(
+                &mut state,
+                P0,
+                name,
+                if graveyard {
+                    Zone::Graveyard
+                } else {
+                    Zone::Hand
+                },
+            );
+            let discarded = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+            pool(
+                &mut state,
+                P0,
+                &[color, color],
+                if graveyard { 3 } else { 1 },
+            );
+            if graveyard {
+                activate(&mut state, source, 0, &[]);
+            } else {
+                cast(&mut state, source, &[]);
+            }
+            let choice = settle(&mut state).expect("Jace competes with Hullbreacher");
+            assert!(
+                matches!(choice, Decision::ChooseEffectTargets { player: P0, can_finish: true, ref legal_targets, .. }
+                if legal_targets.as_slice() == [Target::Object(jace)])
+            );
+            assert!(
+                named(&state, P0, ELEMENTAL).is_empty(),
+                "tokens follow draw"
+            );
+            assert_eq!(
+                zone(&state, discarded),
+                if color == ManaColor::R {
+                    Zone::Graveyard
+                } else {
+                    Zone::Hand
+                }
+            );
+            // A suspended draw must preserve Pyromancer's count and the
+            // exact unchanged root frames through a state round trip.
+            let snapshot = serde_json::to_string(&state).expect("serialize draw choice");
+            state = serde_json::from_str(&snapshot).expect("restore draw choice");
+            if win {
+                act(&mut state, Action::ChooseEffectTarget(Target::Object(jace)));
+                assert!(matches!(
+                    next(&mut state),
+                    Decision::GameOver { winner: Some(P0) }
+                ));
+            } else {
+                let mut replacements = 0;
+                settle_with(&mut state, |_, decision| {
+                    if matches!(decision, Decision::ChooseEffectTargets { .. }) {
+                        replacements += 1;
+                        Action::FinishEffectSelection
+                    } else {
+                        first_answer(decision)
+                    }
+                });
+                assert_eq!(replacements, 2);
+                assert_eq!(named(&state, P1, "Treasure Token").len(), 2);
+                assert_eq!(
+                    named(&state, P0, ELEMENTAL).len(),
+                    usize::from(color == ManaColor::R)
+                );
+                assert_eq!(
+                    zone(&state, discarded),
+                    if graveyard {
+                        Zone::Hand
+                    } else {
+                        Zone::Graveyard
+                    }
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn seasoned_count_discards_replaced_by_exile() {
+    for (name, color) in [
+        ("Seasoned Cryomancer", ManaColor::U),
+        ("Seasoned Pyromancer", ManaColor::R),
+    ] {
+        let mut state = plains();
+        put(&mut state, P1, "Rest in Peace", Zone::Battlefield);
+        let source = put(&mut state, P0, name, Zone::Hand);
+        let discard = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+        pool(&mut state, P0, &[color, color], 1);
+        cast(&mut state, source, &[]);
+        let mut stun_targets = 0;
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Object(discard)) =>
+            {
+                Action::ChooseEffectTarget(Target::Object(discard))
+            }
+            Decision::ChooseTargets { remaining, .. } => {
+                stun_targets = remaining;
+                Action::ChooseTarget(Target::Object(source))
+            }
+            other => first_answer(other),
+        });
+        assert_eq!(zone(&state, discard), Zone::Exile);
+        if color == ManaColor::U {
+            assert_eq!(stun_targets, 1);
+            assert!(state.objects.get(source).tapped);
+            assert_eq!(state.objects.get(source).counters.stun, 1);
+        } else {
+            assert_eq!(named(&state, P0, ELEMENTAL).len(), 1);
+        }
+    }
+}
+
+#[test]
+fn cryomancer_with_replaced_draws_and_empty_hand_has_no_reflexive_trigger() {
+    let mut state = plains();
+    put(&mut state, P1, "Hullbreacher", Zone::Battlefield);
+    let source = put(&mut state, P0, "Seasoned Cryomancer", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 1);
+    cast(&mut state, source, &[]);
+    settled(&mut state);
+    assert!(state.players[0].hand.is_empty());
+    assert!(state.players[0].graveyard.is_empty());
+    assert_eq!(state.players[0].library.len(), 20);
+    assert_eq!(named(&state, P1, "Treasure Token").len(), 2);
+    assert!(!state.objects.get(source).tapped);
+    assert_eq!(state.objects.get(source).counters.stun, 0);
+}
+
+#[test]
+fn seasoned_entry_effect_survives_source_leaving_before_resolution() {
+    for (name, color) in [
+        ("Seasoned Cryomancer", ManaColor::U),
+        ("Seasoned Pyromancer", ManaColor::R),
+    ] {
+        let mut state = plains();
+        let source = put(&mut state, P0, name, Zone::Hand);
+        let discard = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+        let creature = put(&mut state, P1, "Gurmag Angler", Zone::Battlefield);
+        pool(&mut state, P0, &[color, color], 1);
+        cast(&mut state, source, &[]);
+        on_the_stack(&mut state);
+        // Resolve the creature spell, then stop at the ETB's response window.
+        run_until(
+            &mut state,
+            |s| zone(s, source) == Zone::Battlefield && !s.stack.is_empty(),
+            |_, _| None,
+        );
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(source, Zone::Graveyard),
+        );
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectTargets { legal_targets, .. }
+                if legal_targets.contains(&Target::Object(discard)) =>
+            {
+                Action::ChooseEffectTarget(Target::Object(discard))
+            }
+            Decision::ChooseTargets { .. } => Action::ChooseTarget(Target::Object(creature)),
+            other => first_answer(other),
+        });
+        assert_eq!(zone(&state, discard), Zone::Graveyard);
+        assert_eq!(state.players[0].library.len(), 18);
+        if color == ManaColor::U {
+            assert_eq!(state.objects.get(creature).counters.stun, 1);
+            assert!(state.objects.get(creature).tapped);
+            assert_eq!(state.players[0].hand.len(), 1);
+        } else {
+            assert_eq!(named(&state, P0, ELEMENTAL).len(), 1);
+            assert_eq!(state.players[0].hand.len(), 2);
+        }
     }
 }
