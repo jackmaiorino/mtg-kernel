@@ -949,10 +949,12 @@ fn collection_entry_charge_v1(entry: &LoadedOpponentV1) -> usize {
 }
 
 /// What one entry charges in an otherwise empty collection or replay cache:
-/// its own bytes and its whole model.
+/// its own bytes and its whole model allocations.
 fn collection_entry_standalone_charge_v1(entry: &LoadedOpponentV1) -> usize {
-    collection_entry_charge_v1(entry)
-        .saturating_add(opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy).1)
+    opponent_cache_diagnostics_v1::model_allocations_v1(&entry.policy)
+        .fold(collection_entry_charge_v1(entry), |acc, (_, bytes)| {
+            acc.saturating_add(bytes)
+        })
 }
 
 struct OpponentCacheV1 {
@@ -1055,27 +1057,26 @@ impl OpponentCacheV1 {
             .any(|entry| entry.behavior.source == *source)
     }
 
-    /// The model bytes `entry` adds to this cache: none when another entry
-    /// already holds its model.
+    /// The model bytes `entry` adds to this cache: none for each allocation
+    /// another entry already holds.
     fn model_charge_v1(&self, entry: &LoadedOpponentV1) -> usize {
-        let (model, bytes) = opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy);
-        if self.models.iter().any(|held| held.0 == model) {
-            0
-        } else {
-            bytes
-        }
+        opponent_cache_diagnostics_v1::model_allocations_v1(&entry.policy)
+            .filter(|(model, _)| !self.models.iter().any(|held| held.0 == *model))
+            .map(|(_, bytes)| bytes)
+            .fold(0usize, usize::saturating_add)
     }
 
-    /// Charge a kept entry: its own bytes, and its model if no other entry
-    /// holds it.
+    /// Charge a kept entry: its own bytes, and each shared model allocation not
+    /// already held by another entry.
     fn charge_v1(&mut self, entry: &LoadedOpponentV1) {
-        let (model, bytes) = opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy);
         let mut charge = collection_entry_charge_v1(entry);
-        match self.models.iter_mut().find(|held| held.0 == model) {
-            Some(held) => held.2 += 1,
-            None => {
-                self.models.push((model, bytes, 1));
-                charge = charge.saturating_add(bytes);
+        for (model, bytes) in opponent_cache_diagnostics_v1::model_allocations_v1(&entry.policy) {
+            match self.models.iter_mut().find(|held| held.0 == model) {
+                Some(held) => held.2 += 1,
+                None => {
+                    self.models.push((model, bytes, 1));
+                    charge = charge.saturating_add(bytes);
+                }
             }
         }
         self.charged_bytes = self.charged_bytes.saturating_add(charge);
@@ -1084,15 +1085,16 @@ impl OpponentCacheV1 {
             .charged_v1(charge);
     }
 
-    /// Release a dropped entry's charge, and its model's once no entry holds
-    /// it.
+    /// Release a dropped entry's charge, and each shared model allocation once
+    /// no entry holds it.
     fn uncharge_v1(&mut self, entry: &LoadedOpponentV1) {
-        let (model, _) = opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy);
         let mut charge = collection_entry_charge_v1(entry);
-        if let Some(index) = self.models.iter().position(|held| held.0 == model) {
-            self.models[index].2 -= 1;
-            if self.models[index].2 == 0 {
-                charge = charge.saturating_add(self.models.swap_remove(index).1);
+        for (model, _) in opponent_cache_diagnostics_v1::model_allocations_v1(&entry.policy) {
+            if let Some(index) = self.models.iter().position(|held| held.0 == model) {
+                self.models[index].2 -= 1;
+                if self.models[index].2 == 0 {
+                    charge = charge.saturating_add(self.models.swap_remove(index).1);
+                }
             }
         }
         self.charged_bytes = self.charged_bytes.saturating_sub(charge);

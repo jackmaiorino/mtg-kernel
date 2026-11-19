@@ -622,6 +622,12 @@ impl SModelV1 {
         &self.values
     }
 
+    /// The `f32` values this model allocates in memory: its parameter vector
+    /// and its pre-transposed linear weights.
+    pub(crate) fn owned_f32_len_v1(&self) -> usize {
+        self.values.len() + self.wt.len()
+    }
+
     #[cfg(feature = "gpu-exact-v1")]
     pub(crate) fn wt_v1(&self) -> &[f32] {
         &self.wt

@@ -2668,6 +2668,25 @@ impl NativePolicyValueNetWideV1 {
         Ok(())
     }
 
+    /// The `f32` values a clone of this wide net holds: every parameter and
+    /// each linear layer's transposed weight.
+    pub(crate) fn owned_f32_len_v1(&self) -> usize {
+        let linear =
+            |layer: &LinearV1| layer.weight.len() + layer.bias.len() + layer.weight_t.len();
+        let two = |layers: &TwoLayerTanhWideV1| linear(&layers.first) + linear(&layers.second);
+        self.card_embedding.len()
+            + two(&self.object_encoder)
+            + two(&self.edge_encoder)
+            + two(&self.node_update)
+            + two(&self.state_encoder)
+            + two(&self.action_ref_encoder)
+            + two(&self.action_encoder)
+            + linear(&self.scorer_first)
+            + linear(&self.scorer_second)
+            + linear(&self.value_first)
+            + linear(&self.value_second)
+    }
+
     pub(crate) fn parameter_count_wide_v1(&self) -> usize {
         let mut count = 0usize;
         self.visit_parameters_wide_v1(|_, _, values| count += values.len());

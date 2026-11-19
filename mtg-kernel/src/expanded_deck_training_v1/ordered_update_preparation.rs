@@ -470,9 +470,12 @@ fn live_charge_bytes_v1(
                 &entry.policy,
             ))
             .saturating_add(entry_metadata_bytes_v1(entry));
-        let (model_id, model_bytes) = opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy);
-        if models.insert(model_id) {
-            total = total.saturating_add(model_bytes);
+        for (model_id, model_bytes) in
+            opponent_cache_diagnostics_v1::model_allocations_v1(&entry.policy)
+        {
+            if models.insert(model_id) {
+                total = total.saturating_add(model_bytes);
+            }
         }
     }
     total
@@ -553,9 +556,11 @@ impl ProcessOpponentCacheV1 {
                     .saturating_add(opponent_cache_diagnostics_v1::policy_bytes_v1(
                         &entry.policy,
                     ));
-            let (model, bytes) = opponent_cache_diagnostics_v1::model_bytes_v1(&entry.policy);
-            if models.insert(model) {
-                held.model_bytes = held.model_bytes.saturating_add(bytes);
+            for (model, bytes) in opponent_cache_diagnostics_v1::model_allocations_v1(&entry.policy)
+            {
+                if models.insert(model) {
+                    held.model_bytes = held.model_bytes.saturating_add(bytes);
+                }
             }
         }
         held.models = models.len();
