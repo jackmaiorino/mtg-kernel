@@ -199,12 +199,11 @@ fn pass_through(
             // The model input of a new window still encodes (the advisor
             // reads it).
             tensor(&windows_copy, &rows, &mut scratch);
+            let kind = window_kind(&windows, reason, person);
             let pass = pass_row(decision, &rows);
             answer(&mut windows, &mut windows_copy, decision, &rows, pass);
             out.new_windows += 1;
-            *out.reasons
-                .entry(window_kind(&windows, reason, person))
-                .or_default() += 1;
+            *out.reasons.entry(kind).or_default() += 1;
             continue;
         }
         let plain_response = plain.current_response();
@@ -344,13 +343,17 @@ fn a_person_who_passes_every_new_window_plays_the_unflagged_game() {
         "{}",
         total.other_seat_decisions
     );
-    // Every forced pass of the trained surface became a window somewhere in
-    // the sweep, each in the place it applies.
+    // The forced passes of the trained surface that became windows in the
+    // sweep, each in the place it applies. The fourth forced pass, one
+    // action per combat priority round already spent, does not occur in
+    // these games at all (every action that reopens a combat round also
+    // re-arms the throttle or is caught by the caster's-own rule first), so
+    // the sweep cannot cover its early exit; a count above zero here would
+    // only add coverage.
     for kind in [
         "step_gated:outside_combat",
         "no_real_option:outside_combat",
         "no_real_option:combat",
-        "combat_priority_action_spent:combat",
         "stack_top_is_casters_own:combat:own_stack_object",
         "stack_top_is_casters_own:combat:own_mana_ability",
         "stack_top_is_casters_own:outside_combat:own_stack_object",
@@ -361,6 +364,14 @@ fn a_person_who_passes_every_new_window_plays_the_unflagged_game() {
             total.reasons
         );
     }
+    assert!(
+        total
+            .reasons
+            .keys()
+            .all(|kind| !kind.starts_with("step_gated:combat")),
+        "a declare step was gated: {:?}",
+        total.reasons
+    );
 }
 
 #[test]
@@ -499,11 +510,12 @@ struct Scripted {
 }
 
 /// One game: the person (flagged seat) plays lands, keeps their spells for
-/// the new windows and casts an instant in the other seat's end step and in
-/// their own upkeep whenever one is offered; once, in a main phase, they
-/// hold priority and cast a second spell on top of their own. The other seat
-/// answers at random. Asserts what the other seat is and is not asked.
-fn scripted_game(seed: u64, person: usize, tally: &mut Scripted) {
+/// the new windows and casts an instant whenever one is offered in
+/// `cast_in` (the other seat's end step, or their own upkeep); once, in a
+/// main phase, they hold priority and cast a second spell on top of their
+/// own. The other seat answers at random. Asserts what the other seat is and
+/// is not asked.
+fn scripted_game(seed: u64, person: usize, cast_in: Step, tally: &mut Scripted) {
     let mut seats = [false; 2];
     seats[person] = true;
     let (mut raw, mut copy) = pair(["Burn", "Burn"], seed, 0xE07_1000 + seed, seats);
@@ -580,6 +592,7 @@ fn scripted_game(seed: u64, person: usize, tally: &mut Scripted) {
         }
         let gated_cast = window == Some("step_gated")
             && stack == 0
+            && step == cast_in
             && ((step == Step::End && !mine_turn) || (step == Step::Upkeep && mine_turn));
         if gated_cast {
             if let Some(cast) = instant_row(&raw, &decision, &rows) {
@@ -606,7 +619,7 @@ fn scripted_game(seed: u64, person: usize, tally: &mut Scripted) {
                 continue;
             }
             // Late in the game, once: cast in the main phase and hold.
-            if tally.held_priority == 0 && turn >= 8 {
+            if tally.held_priority == 0 && turn >= 6 {
                 if let Some(cast) = instant_row(&raw, &decision, &rows) {
                     holding = Some(stack);
                     answer(&mut raw, &mut copy, &decision, &rows, cast);
@@ -622,9 +635,18 @@ fn scripted_game(seed: u64, person: usize, tally: &mut Scripted) {
 #[test]
 fn a_person_casts_an_instant_in_the_other_seats_end_step_and_in_their_own_upkeep() {
     let mut tally = Scripted::default();
-    for seed in [3_u64, 5, 8, 13, 21, 34] {
-        scripted_game(seed, (seed % 2) as usize, &mut tally);
+    for (index, seed) in [3_u64, 5, 8, 13, 21, 34, 55, 89].into_iter().enumerate() {
+        let cast_in = if index % 2 == 0 {
+            Step::End
+        } else {
+            Step::Upkeep
+        };
+        scripted_game(seed, (index / 2) % 2, cast_in, &mut tally);
     }
+    eprintln!(
+        "scripted games: {} end step casts, {} upkeep casts, {} times priority held, {} decisions of the other seat",
+        tally.end_step_casts, tally.upkeep_casts, tally.held_priority, tally.other_seat_decisions
+    );
     assert!(
         tally.end_step_casts >= 3,
         "end step casts: {}",
