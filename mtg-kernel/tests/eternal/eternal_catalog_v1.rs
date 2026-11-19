@@ -14,7 +14,11 @@ use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1, LimitedJso
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Condvar, Mutex, OnceLock, PoisonError};
+use std::thread::available_parallelism;
 
 /// Snapshot archetypes the eternal build plays, by format. A wave that
 /// completes a deck adds it here; a regression removes one and fails. A
@@ -784,7 +788,7 @@ fn informed_s1m_option<'a>(actions: &[&'a Value], decision: &Value) -> Option<&'
 /// but activates no ability other than an Extinguisher Battleship's station;
 /// `Random` reaches activations, so lands, mana rocks and activated abilities
 /// run too.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum Policy {
     Ranked,
     Random(u64),
@@ -796,6 +800,190 @@ pub(crate) fn splitmix64(state: &mut u64) -> u64 {
     z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     z ^ (z >> 31)
+}
+
+/// Games that play at one time through `in_parallel` in this test process,
+/// across every test that calls it: `MTG_ETERNAL_TEST_THREADS` when it is
+/// set (1 plays every game in order on its test's own thread), otherwise the
+/// machine's available parallelism, at most 8. A test that plays one game
+/// directly (`play`, `play_observed`, `play_match`) holds no permit and is
+/// bounded only by libtest's `--test-threads`, so the games playing at one
+/// time are at most this count plus the test threads. Either way the count is
+/// no more than the cores a self-hosted CI job was given (a count in
+/// `MTG_CI_JOB_CORES`, or the core list of a host_slots claim in
+/// `HOST_SLOTS_CORES`) when either is set.
+pub(crate) fn game_threads() -> usize {
+    let mut threads = match std::env::var("MTG_ETERNAL_TEST_THREADS") {
+        Ok(value) => value
+            .parse::<usize>()
+            .ok()
+            .filter(|&threads| threads >= 1)
+            .unwrap_or_else(|| panic!("MTG_ETERNAL_TEST_THREADS: {value:?}")),
+        Err(_) => available_parallelism().map_or(1, usize::from).min(8),
+    };
+    if let Ok(value) = std::env::var("MTG_CI_JOB_CORES") {
+        if let Ok(cores) = value.trim().parse::<usize>() {
+            threads = threads.min(cores.max(1));
+        }
+    }
+    if let Ok(value) = std::env::var("HOST_SLOTS_CORES") {
+        if let Some(cores) = listed_cores(&value) {
+            threads = threads.min(cores);
+        }
+    }
+    threads
+}
+
+/// The number of cores in a list such as `0-3,8`, or `None` if the text is
+/// not such a list.
+fn listed_cores(list: &str) -> Option<usize> {
+    let mut count = 0;
+    for part in list.split(',') {
+        let part = part.trim();
+        let (first, last) = part.split_once('-').unwrap_or((part, part));
+        let first: usize = first.parse().ok()?;
+        let last: usize = last.parse().ok()?;
+        count += first.abs_diff(last) + 1;
+    }
+    Some(count)
+}
+
+#[test]
+fn core_lists_count_their_cores() {
+    assert_eq!(listed_cores("0-3,8"), Some(5));
+    assert_eq!(listed_cores("11-10"), Some(2));
+    assert_eq!(listed_cores("5"), Some(1));
+    assert_eq!(listed_cores(""), None);
+    assert_eq!(listed_cores("0-x"), None);
+}
+
+/// `game_threads()`, read once per process.
+fn game_capacity() -> usize {
+    static CAPACITY: OnceLock<usize> = OnceLock::new();
+    *CAPACITY.get_or_init(game_threads)
+}
+
+static BUSY_GAMES: Mutex<usize> = Mutex::new(0);
+static GAME_FINISHED: Condvar = Condvar::new();
+
+/// One of the process's `game_capacity()` places to play a game, held while
+/// the game plays and given back when it ends, by a panic too.
+struct GamePermit;
+
+impl GamePermit {
+    fn acquire() -> Self {
+        let mut busy = BUSY_GAMES.lock().unwrap_or_else(PoisonError::into_inner);
+        while *busy >= game_capacity() {
+            busy = GAME_FINISHED
+                .wait(busy)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        *busy += 1;
+        GamePermit
+    }
+}
+
+impl Drop for GamePermit {
+    fn drop(&mut self) {
+        *BUSY_GAMES.lock().unwrap_or_else(PoisonError::into_inner) -= 1;
+        GAME_FINISHED.notify_one();
+    }
+}
+
+/// Runs `run` on every item and returns the results in item order, so a
+/// test reads them exactly as its sequential loop produced them. Up to
+/// `game_capacity()` scoped worker threads each take the next unstarted
+/// item, and every item holds a `GamePermit` while it runs, so at most
+/// `game_capacity()` games played through `in_parallel` play at once in the
+/// whole process, however many tests libtest runs side by side. A test that
+/// plays one game directly holds no permit and is bounded by libtest's
+/// `--test-threads`, so the games playing at one time are at most the permit
+/// count plus the test threads. A panic is caught per item, and once
+/// every item has run the panic of the first failing item is raised again,
+/// as the loop would have raised it first. With one thread the items run in
+/// order on the calling thread.
+///
+/// This is safe for the games these tests play: each game owns all of its
+/// state (its session, engine and seeded random choices); the library has
+/// no `static mut` and no global random source, its `OnceLock` statics
+/// cache fixed values, and its thread-locals are call frames restored on
+/// exit, memos of values it would compute anyway, or test and profiling
+/// counters, so a game's result does not depend on the thread that plays
+/// it; no game path sets an environment variable; and libtest already runs
+/// this suite's other tests on parallel threads in the same process. To
+/// check it, run the best-of-three and catalog modules with
+/// `--nocapture` once with `MTG_ETERNAL_TEST_THREADS=1` and once without:
+/// their per-game lines, transcript hashes included, are the same.
+pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], run: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let threads = game_capacity().min(items.len());
+    if threads <= 1 {
+        return items
+            .iter()
+            .map(|item| {
+                let _permit = GamePermit::acquire();
+                run(item)
+            })
+            .collect();
+    }
+    let next = AtomicUsize::new(0);
+    let finished: Vec<(usize, std::thread::Result<R>)> = std::thread::scope(|scope| {
+        let mut workers = Vec::new();
+        for _ in 0..threads {
+            workers.push(scope.spawn(|| {
+                let mut done = Vec::new();
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(item) = items.get(index) else {
+                        return done;
+                    };
+                    let _permit = GamePermit::acquire();
+                    done.push((index, catch_unwind(AssertUnwindSafe(|| run(item)))));
+                }
+            }));
+        }
+        let mut finished = Vec::new();
+        for worker in workers {
+            finished.extend(worker.join().expect("worker panicked"));
+        }
+        finished
+    });
+    let mut results: Vec<Option<std::thread::Result<R>>> = items.iter().map(|_| None).collect();
+    for (index, result) in finished {
+        results[index] = Some(result);
+    }
+    results
+        .into_iter()
+        .map(|result| match result.expect("every item ran") {
+            Ok(value) => value,
+            Err(panic) => resume_unwind(panic),
+        })
+        .collect()
+}
+
+#[test]
+fn in_parallel_keeps_item_order_and_the_process_game_limit() {
+    let active = AtomicUsize::new(0);
+    let most = AtomicUsize::new(0);
+    let play = |item: &usize| {
+        let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+        most.fetch_max(now, Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        active.fetch_sub(1, Ordering::SeqCst);
+        *item * 2
+    };
+    let items: Vec<usize> = (0..24).collect();
+    // Two tests at once share the one limit on the games played through
+    // `in_parallel`. A game played directly holds no permit, so this does
+    // not bound those.
+    let (first, second) = std::thread::scope(|scope| {
+        let first = scope.spawn(|| in_parallel(&items, play));
+        let second = scope.spawn(|| in_parallel(&items, play));
+        (first.join().unwrap(), second.join().unwrap())
+    });
+    let doubled: Vec<usize> = items.iter().map(|item| item * 2).collect();
+    assert_eq!(first, doubled);
+    assert_eq!(second, doubled);
+    assert!(most.load(Ordering::SeqCst) <= game_capacity());
 }
 
 pub(crate) struct Game {
@@ -1182,49 +1370,56 @@ fn playable_snapshot_decks_finish_and_replay_through_public_sessions() {
     // single shuffle can leave one seat without a castable spell.
     let mut ranked_casts: BTreeMap<&str, usize> = BTreeMap::new();
     let mut failures: Vec<String> = Vec::new();
+    let mut games = Vec::new();
     for index in 0..decks.len() {
         let (first, second) = (&decks[index], &decks[(index + 1) % decks.len()]);
-        let pair = [first.deck.clone(), second.deck.clone()];
         let seed = 0x4554_4552_0000 + index as u64;
         for policy in [Policy::Ranked, Policy::Random(seed)] {
-            // Every pairing runs even after one fails, so a single run
-            // reports all failing games (each panic message is printed).
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let game = play(pair.clone(), seed, policy);
-                let replay = play(pair.clone(), seed, policy);
-                assert_eq!(
-                    game.transcript_sha256, replay.transcript_sha256,
-                    "{} / {}",
-                    first.archetype, second.archetype
-                );
-                game
-            }));
-            let Ok(game) = outcome else {
-                failures.push(format!(
-                    "{} / {} seed={seed} random={}",
-                    first.archetype,
-                    second.archetype,
-                    matches!(policy, Policy::Random(_))
-                ));
-                continue;
-            };
-            companion_actions += game.companion_actions;
-            if let Policy::Ranked = policy {
-                *ranked_casts.entry(first.archetype.as_str()).or_default() += game.casts_by_seat[0];
-                *ranked_casts.entry(second.archetype.as_str()).or_default() +=
-                    game.casts_by_seat[1];
-            } else {
-                random_activations += game.action_counts.get("activate_ability").unwrap_or(&0);
-            }
-            println!(
-                "{} / {} seed={seed} random={} transcript_sha256={} actions={:?}",
+            games.push((first, second, seed, policy));
+        }
+    }
+    // Every pairing runs even after one fails, so a single run reports all
+    // failing games (each panic message is printed). The games run on worker
+    // threads (`in_parallel`); everything below takes their results in this
+    // loop's order.
+    let outcomes = in_parallel(&games, |&(first, second, seed, policy)| {
+        let pair = [first.deck.clone(), second.deck.clone()];
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let game = play(pair.clone(), seed, policy);
+            let replay = play(pair.clone(), seed, policy);
+            assert_eq!(
+                game.transcript_sha256, replay.transcript_sha256,
+                "{} / {}",
+                first.archetype, second.archetype
+            );
+            game
+        }))
+    });
+    for (&(first, second, seed, policy), outcome) in games.iter().zip(outcomes) {
+        let Ok(game) = outcome else {
+            failures.push(format!(
+                "{} / {} seed={seed} random={}",
                 first.archetype,
                 second.archetype,
-                matches!(policy, Policy::Random(_)),
-                game.transcript_sha256,
-                game.action_counts
-            );
+                matches!(policy, Policy::Random(_))
+            ));
+            continue;
+        };
+        companion_actions += game.companion_actions;
+        if let Policy::Ranked = policy {
+            *ranked_casts.entry(first.archetype.as_str()).or_default() += game.casts_by_seat[0];
+            *ranked_casts.entry(second.archetype.as_str()).or_default() += game.casts_by_seat[1];
+        } else {
+            random_activations += game.action_counts.get("activate_ability").unwrap_or(&0);
         }
+        println!(
+            "{} / {} seed={seed} random={} transcript_sha256={} actions={:?}",
+            first.archetype,
+            second.archetype,
+            matches!(policy, Policy::Random(_)),
+            game.transcript_sha256,
+            game.action_counts
+        );
     }
     assert!(
         failures.is_empty(),
