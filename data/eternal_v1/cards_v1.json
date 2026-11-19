@@ -36363,7 +36363,8 @@
   },
   {
    "name": "Jace, the Mind Sculptor",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 3,
    "mana_cost": "{2}{U}{U}",
    "mana_value": 4,
    "colors": [
@@ -36387,7 +36388,10 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/j/JaceTheMindSculptor.java"
   },
   {
