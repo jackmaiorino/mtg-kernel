@@ -30700,6 +30700,18 @@ fn finalize_owned_cast(
     );
     let cast_at = state.engine.event_history.len();
     event::log_spell_cast_with_targets(state, pending.spell, pending.controller, storm_targets);
+    // Casting moves directly to the stack without event::commit's zone-change hook.
+    // Record only completed casts, so an aborted attempt cannot satisfy Gau.
+    #[cfg(feature = "eternal-fixtures")]
+    if pending.origin_zone == Zone::Graveyard {
+        crate::eternal_cube_c6a_v1::note_zone_change(
+            state,
+            pending.spell,
+            Zone::Graveyard,
+            Zone::Stack,
+            None,
+        );
+    }
     crate::eternal_cards_v1::owned_draws_v1::portent::record_cast(state, stack_item_id)?;
     crate::etali_primal_storm_receipts_v1::record_cast(
         state,
