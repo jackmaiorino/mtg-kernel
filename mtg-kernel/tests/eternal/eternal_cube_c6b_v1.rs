@@ -907,11 +907,13 @@ fn nurse_uses_actual_turn_and_latest_graveyard_incarnation() {
             ProposedEvent::zone_change(object, Zone::Graveyard),
         );
     }
-    let round = state.turn_key_v1();
+    assert!(state.extra_turn_v1.is_none());
+    let round = state.turn;
     pass_until(&mut state, |s| {
         s.active_player == P1 && s.step == Step::Main1
     });
-    assert_eq!(state.turn_key_v1(), round, "two turns share one round key");
+    assert!(state.extra_turn_v1.is_none());
+    assert_eq!(state.turn, round, "two turns share one round key");
     event::propose_and_commit(&mut state, ProposedEvent::zone_change(renewed, Zone::Exile));
     event::propose_and_commit(
         &mut state,
@@ -1802,10 +1804,15 @@ fn seasoned_draws_offer_competing_replacements_and_preserve_discard_counts() {
                 cast(&mut state, source, &[]);
             }
             let choice = settle(&mut state).expect("Jace competes with Hullbreacher");
-            assert!(
-                matches!(choice, Decision::ChooseEffectTargets { player: P0, can_finish: true, ref legal_targets, .. }
-                if legal_targets.as_slice() == [Target::Object(jace)])
-            );
+            assert!(matches!(
+                choice,
+                Decision::ChooseEffectTargets {
+                    player: P0,
+                    can_finish: true,
+                    ref legal_targets,
+                    ..
+                } if legal_targets.as_slice() == [Target::Object(jace)]
+            ));
             assert!(
                 named(&state, P0, ELEMENTAL).is_empty(),
                 "tokens follow draw"
@@ -2463,9 +2470,14 @@ fn fanatic_miracle_casts_for_one_black_on_either_turn_both_seats_then_targets() 
             let creature = put(&mut state, owner, "Gurmag Angler", Zone::Graveyard);
             pool(&mut state, owner, &[ManaColor::B], 1);
             let card = fanatic_first_draw(&mut state, owner);
-            assert!(
-                matches!(next(&mut state), Decision::ChooseEffectOption { player, source, option_count: 2 } if player == owner && source == card)
-            );
+            assert!(matches!(
+                next(&mut state),
+                Decision::ChooseEffectOption {
+                    player,
+                    source,
+                    option_count: 2,
+                } if player == owner && source == card
+            ));
             act(&mut state, Action::ChooseEffectOption(1));
             let mut paid_choice = 0;
             let mut targets = 0;
