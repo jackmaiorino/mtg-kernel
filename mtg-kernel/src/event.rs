@@ -6033,7 +6033,13 @@ fn materialize_event_v1(
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_cube_c4c_v1::note_departure(state, z.object, from, z.to_zone);
                 #[cfg(feature = "eternal-fixtures")]
-                crate::eternal_cube_c6a_v1::note_zone_change(state, z.object, from, z.to_zone, departure_power);
+                crate::eternal_cube_c6a_v1::note_zone_change(
+                    state,
+                    z.object,
+                    from,
+                    z.to_zone,
+                    departure_power,
+                );
                 crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
                 if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
                     crate::engine::record_different_controller_target_departure(state, z.object);
@@ -7403,6 +7409,8 @@ fn commit_batch_survivors_native(
         return;
     }
     crate::linked_aura_operation_v1::begin_batch(state);
+    #[cfg(feature = "eternal-fixtures")]
+    let exile_batch = crate::eternal_cube_c6a_v1::ExileBatchV1::capture(state, &survivors);
     if cfg!(feature = "limited-fdn-fixtures") {
         let ability_removals = survivors
             .iter()
@@ -7479,6 +7487,8 @@ fn commit_batch_survivors_native(
         }
     }
 
+    #[cfg(feature = "eternal-fixtures")]
+    exile_batch.finish(state);
     if state.engine.halted.is_none() {
         if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
             halt_zone_pt_v1(state, source);
