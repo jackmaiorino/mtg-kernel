@@ -29659,11 +29659,13 @@ fn play_land(
     } else if tinybones_land.is_some()
         || resolution_cast_v1::permit(state, id).is_some_and(|p| p.land)
         || (state.objects.get(id).zone == Zone::Exile
+            && state.objects.get(id).owner != player
             && active_permission_for(player, id, state)
                 .is_some_and(|p| p.play_or_cast == PlayOrCast::Play))
     {
         // A land played from exile enters under its player's control (CR 305.2),
         // even when the permission lets that player use an opponent's card.
+        // A player's own exiled land keeps the ordinary move below.
         event::propose_and_commit(
             state,
             ProposedEvent::zone_change_to_battlefield_under_controller(id, player),
