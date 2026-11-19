@@ -864,6 +864,8 @@ fn fallen_shinobi_permissions_survive_source_departure_and_obey_timing_and_land_
             play_land(&mut state, land);
             assert_eq!(state.objects.get(land).controller, P0);
             assert_eq!(state.objects.get(land).owner, P1);
+            assert!(state.players[P0.index()].battlefield.contains(&land));
+            assert!(!state.players[P1.index()].battlefield.contains(&land));
             let other = put(&mut state, P0, "Island", Zone::Hand);
             let Decision::CastSpellOrPass { land_drops, .. } = next(&mut state) else {
                 panic!("main-phase priority");
@@ -1864,7 +1866,7 @@ fn plunderer_menace_requires_two_blockers() {
 
 #[test]
 fn gut_sacrifices_another_creature_or_artifact_once_per_attack_and_makes_an_attacking_skeleton() {
-    for sacrifice_name in ["Wild Mongrel", "Treasure Token", "Ornithopter"] {
+    for sacrifice_name in ["Wild Mongrel", "Treasure Token", "Hollow One"] {
         let mut state = plains();
         let gut = cast_c6a_creature(&mut state, P0, C6A_CARDS[5]);
         let first = put(&mut state, P0, "Wild Mongrel", Zone::Battlefield);
@@ -1875,7 +1877,7 @@ fn gut_sacrifices_another_creature_or_artifact_once_per_attack_and_makes_an_atta
             put(&mut state, P0, sacrifice_name, Zone::Battlefield)
         };
         let land = put(&mut state, P0, "Mountain", Zone::Battlefield);
-        let enemy = put(&mut state, P1, "Ornithopter", Zone::Battlefield);
+        let enemy = put(&mut state, P1, "Hollow One", Zone::Battlefield);
         let mut selections = 0;
         pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
         act(&mut state, Action::DeclareAttackers(vec![first, second]));
