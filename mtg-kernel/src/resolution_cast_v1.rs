@@ -310,13 +310,23 @@ pub(super) fn form_completable(
         method: CastMethodV4,
         spec: TargetSpec,
     ) -> bool {
-        if pending.targets_chosen.len() >= usize::from(target_min_count(spec))
+        let enough = pending.targets_chosen.len() >= usize::from(target_min_count(spec));
+        if enough
             && pending_cast_quote_v1(def, pending, method, pending.kicked == Some(true), 0, state)
                 .is_some()
         {
             return true;
         }
         if pending.targets_chosen.len() >= usize::from(target_count(spec)) {
+            return false;
+        }
+        // An optional further target never makes an unpayable cast payable
+        // (in the current catalog a further target only adds a cost, such as
+        // strive; the target-dependent discounts are all single-target), and an
+        // "any number of targets" spec would otherwise try every ordering
+        // of its candidates: Paradoxical Outcome over a dozen permanents
+        // never finished. Specs of at most two targets keep the full search.
+        if enough && target_count(spec) > 2 {
             return false;
         }
         for target in completable_next_cast_targets(def, pending, spec, state) {
