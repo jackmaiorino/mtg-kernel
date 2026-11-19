@@ -334,6 +334,9 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c5c_v1::C5cStateV1::is_empty"
     )]
     pub c5c: crate::eternal_cube_c5c_v1::C5cStateV1,
+    /// Silver counters on exact exiled card incarnations, independent of Karn.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub c6c_silver_cards: Vec<ObjectLinkV4>,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {

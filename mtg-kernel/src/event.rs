@@ -4086,6 +4086,9 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
     // step) becomes a Treasure token for its controller (eternal wave S1c).
     #[cfg(feature = "eternal-fixtures")]
     if let ProposedEvent::Draw(draw) = &event {
+        if crate::eternal_cube_c6c_v1::prevents_draw(state, draw.player) {
+            return;
+        }
         if let Some(owner) =
             crate::eternal_sideboard_s1c_v1::statics::hullbreacher_replaces_draw(state, draw.player)
         {
@@ -6287,6 +6290,12 @@ fn materialize_event_v1(
                 player: g.player,
                 amount: g.amount,
             }
+        }
+        ProposedEvent::Draw(d)
+            if cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c6c_v1::prevents_draw(state, d.player) =>
+        {
+            return None;
         }
         ProposedEvent::Draw(d)
             if cfg!(feature = "eternal-fixtures")

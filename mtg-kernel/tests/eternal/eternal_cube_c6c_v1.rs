@@ -17,7 +17,11 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const C6C_CARDS: [&str; 1] = ["Jace, the Mind Sculptor"];
+const C6C_CARDS: [&str; 3] = [
+    "Jace, the Mind Sculptor",
+    "Narset, Parter of Veils",
+    "Karn, Scion of Urza",
+];
 
 fn def(name: &str) -> &'static CardDef {
     &CARD_DEFS[id(name) as usize]
@@ -883,4 +887,557 @@ fn jace_player_abilities_fizzle_if_the_target_gains_hexproof() {
         assert!(state.exile.is_empty());
         assert!(state.known_library_cards(P0, P1).is_empty());
     }
+}
+
+fn cast_walker(state: &mut GameState, player: PlayerId, name: &str) -> ObjectId {
+    let walker = put(state, player, name, Zone::Hand);
+    if name == "Narset, Parter of Veils" {
+        pool(state, player, &[ManaColor::U, ManaColor::U], 1);
+    } else {
+        pool(state, player, &[], 4);
+    }
+    cast(state, walker, &[]);
+    settled(state);
+    walker
+}
+
+fn recall(state: &mut GameState, player: PlayerId) {
+    let spell = put(state, P0, "Ancestral Recall", Zone::Hand);
+    pool(state, P0, &[ManaColor::U], 0);
+    cast(state, spell, &[Target::Player(player)]);
+}
+
+#[test]
+fn narset_and_karn_printed_characteristics_costs_and_loyalty_timing() {
+    for (name, subtype, generic, blue, abilities) in [
+        ("Narset, Parter of Veils", Subtype::Narset, 1, 2, 1),
+        ("Karn, Scion of Urza", Subtype::Karn, 4, 0, 3),
+    ] {
+        let card = def(name);
+        assert_eq!(card.types, &[CardType::Planeswalker]);
+        assert_eq!(card.subtypes, &[subtype]);
+        assert_eq!(card.supertypes, &[Supertype::Legendary]);
+        assert_eq!(card.cost.generic, generic);
+        assert_eq!(card.cost.pips, vec![Pip::Colored(ManaColor::U); blue]);
+        assert_eq!(card.mana_value, if blue == 0 { 4 } else { 3 });
+        assert_eq!(
+            card.colors,
+            if blue == 0 {
+                &[][..]
+            } else {
+                &[ManaColor::U][..]
+            }
+        );
+        assert_eq!((card.power, card.toughness), (None, None));
+        assert_eq!(card.starting_loyalty, Some(5));
+        assert_eq!(card.activated_abilities.len(), abilities);
+        let mut state = plains();
+        let walker = put(&mut state, P0, name, Zone::Hand);
+        let colors = vec![ManaColor::U; blue];
+        pool(&mut state, P0, &colors, generic - 1);
+        assert!(!castable(&mut state, walker));
+        pool(&mut state, P0, &[], 1);
+        cast(&mut state, walker, &[]);
+        settled(&mut state);
+        assert_eq!(zone(&state, walker), Zone::Battlefield);
+        assert_eq!(loyalty(&state, walker), Some(5));
+        assert_eq!(mana(&state, P0, ManaColor::U), 0);
+        assert_eq!(mana(&state, P0, ManaColor::C), 0);
+        activate(&mut state, walker, 0, &[]);
+        settle_first(&mut state);
+        for index in 0..u8::try_from(abilities).unwrap() {
+            assert!(!activatable(&mut state, walker, index));
+        }
+        pass_until(&mut state, |state| {
+            state.active_player == P1 && state.step == Step::Main1 && state.priority_player == P0
+        });
+        assert!(!activatable(&mut state, walker, 0));
+        pass_until(&mut state, |state| {
+            state.active_player == P0 && state.step == Step::Upkeep
+        });
+        assert!(!activatable(&mut state, walker, 0));
+        pass_until(&mut state, |state| {
+            state.active_player == P0 && state.step == Step::Main1
+        });
+        assert!(activatable(&mut state, walker, 0));
+        recall(&mut state, P0);
+        on_the_stack(&mut state);
+        assert!(!activatable(&mut state, walker, 0));
+        settled(&mut state);
+    }
+    assert_eq!(Subtype::Narset.stable_id(), 720);
+    assert!(!Subtype::Narset.is_creature_type());
+}
+
+#[test]
+fn narset_looks_privately_selects_or_declines_and_random_bottom_replays() {
+    for take in [false, true] {
+        let mut state = game(&[
+            "Grizzly Bears",
+            "Lightning Bolt",
+            "Island",
+            "Sol Ring",
+            "Forest",
+            "Mountain",
+        ]);
+        let narset = cast_walker(&mut state, P0, "Narset, Parter of Veils");
+        let library = state.players[0].library.clone();
+        let mut replay = state.clone();
+        for branch in [&mut state, &mut replay] {
+            activate(branch, narset, 0, &[]);
+            on_the_stack(branch);
+            assert_eq!(loyalty(branch, narset), Some(3));
+            match settle(branch) {
+                Some(Decision::ChooseEffectTargets {
+                    player,
+                    legal_targets,
+                    can_finish,
+                    ..
+                }) => {
+                    assert_eq!(player, P0);
+                    assert!(can_finish);
+                    assert_eq!(
+                        legal_targets,
+                        vec![Target::Object(library[1]), Target::Object(library[3])]
+                    );
+                    assert!(branch.known_library_cards(P1, P0).is_empty());
+                    act(
+                        branch,
+                        if take {
+                            Action::ChooseEffectTarget(Target::Object(library[1]))
+                        } else {
+                            Action::FinishEffectSelection
+                        },
+                    );
+                }
+                other => panic!("expected optional selection: {other:?}"),
+            }
+            settled(branch);
+            assert_eq!(&branch.players[0].library[..2], &library[4..]);
+            let mut bottom = branch.players[0].library[2..].to_vec();
+            bottom.sort();
+            let mut expected = library[..4].to_vec();
+            if take {
+                expected.retain(|card| *card != library[1]);
+            }
+            expected.sort();
+            assert_eq!(bottom, expected);
+            assert_eq!(hand_contains(branch, P0, library[1]), take);
+            assert_eq!(
+                branch.players[0].draws_this_turn, 0,
+                "putting into hand is not drawing"
+            );
+            if take {
+                assert!(branch
+                    .known_hand_cards(P1, P0)
+                    .iter()
+                    .any(|entry| entry.object == library[1]));
+            }
+        }
+        assert_eq!(state.players[0].library, replay.players[0].library);
+    }
+}
+
+#[test]
+fn narset_short_or_ineligible_libraries_and_last_loyalty() {
+    for count in 0..=4 {
+        let cards = ["Plains"; 4];
+        let mut state = game(&cards[..count]);
+        let narset = cast_walker(&mut state, P0, "Narset, Parter of Veils");
+        change_loyalty(&mut state, narset, -3);
+        activate(&mut state, narset, 0, &[]);
+        on_the_stack(&mut state);
+        assert_eq!(zone(&state, narset), Zone::Graveyard);
+        settled(&mut state);
+        assert_eq!(state.players[0].library.len(), count);
+        assert!(state.players[0].hand.is_empty());
+        assert!(!state.players[0].drew_from_empty);
+    }
+    let mut state = plains();
+    let narset = cast_walker(&mut state, P0, "Narset, Parter of Veils");
+    for _ in 0..2 {
+        activate(&mut state, narset, 0, &[]);
+        settled(&mut state);
+        next_own_main(&mut state);
+    }
+    assert_eq!(loyalty(&state, narset), Some(1));
+    assert!(!activatable(&mut state, narset, 0));
+}
+
+#[test]
+fn narset_limits_only_opponents_and_resets_on_each_players_real_turn() {
+    let mut state = plains();
+    let narset = cast_walker(&mut state, P0, "Narset, Parter of Veils");
+    recall(&mut state, P1);
+    settled(&mut state);
+    assert_eq!(state.players[1].hand.len(), 1);
+    assert_eq!(state.players[1].draws_this_turn, 1);
+    recall(&mut state, P1);
+    settled(&mut state);
+    assert_eq!(state.players[1].hand.len(), 1);
+    recall(&mut state, P0);
+    settled(&mut state);
+    assert_eq!(state.players[0].hand.len(), 3);
+    assert_eq!(state.players[0].draws_this_turn, 3);
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::Main1 && state.priority_player == P0
+    });
+    assert_eq!(
+        state.players[1].hand.len(),
+        2,
+        "new turn allows the draw step draw"
+    );
+    assert_eq!(state.players[1].draws_this_turn, 1);
+    recall(&mut state, P1);
+    settled(&mut state);
+    assert_eq!(
+        state.players[1].hand.len(),
+        2,
+        "draw step used the allowance"
+    );
+    pass_until(&mut state, |state| {
+        state.active_player == P0 && state.step == Step::Main1
+    });
+    assert_eq!(state.players[1].draws_this_turn, 0);
+    recall(&mut state, P1);
+    settled(&mut state);
+    assert_eq!(
+        state.players[1].hand.len(),
+        3,
+        "opponent also gets one on this turn"
+    );
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(narset, Zone::Graveyard),
+    );
+    recall(&mut state, P1);
+    settled(&mut state);
+    assert_eq!(
+        state.players[1].hand.len(),
+        6,
+        "restriction ends with its source"
+    );
+}
+
+#[test]
+fn narset_counts_draws_before_entry_and_prevents_empty_library_replacements() {
+    let mut short = game(&["Island"]);
+    cast_walker(&mut short, P0, "Narset, Parter of Veils");
+    recall(&mut short, P1);
+    settled(&mut short);
+    assert_eq!(short.players[1].hand.len(), 1);
+    assert!(short.players[1].library.is_empty());
+    assert!(!short.players[1].drew_from_empty);
+
+    let mut state = game(&["Island"]);
+    // A single ordinary draw before Narset enters uses the allowance.
+    event::propose_and_commit(&mut state, ProposedEvent::draw(P1));
+    cast_walker(&mut state, P0, "Narset, Parter of Veils");
+    put(&mut state, P0, "Hullbreacher", Zone::Battlefield);
+    put(
+        &mut state,
+        P1,
+        "Jace, Wielder of Mysteries",
+        Zone::Battlefield,
+    );
+    recall(&mut state, P1);
+    settled(&mut state);
+    assert_eq!(state.players[1].hand.len(), 1);
+    assert!(state.players[1].library.is_empty());
+    assert!(!state.players[1].drew_from_empty);
+    assert!(named(&state, P0, "Treasure Token").is_empty());
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+}
+
+#[test]
+fn narset_allows_replacing_first_draw_but_never_offers_dredge_after_an_actual_draw() {
+    for dredge in [false, true] {
+        let mut state = plains();
+        cast_walker(&mut state, P0, "Narset, Parter of Veils");
+        let imp = put(&mut state, P1, "Stinkweed Imp", Zone::Graveyard);
+        recall(&mut state, P1);
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseEffectTargets {
+            player: P1, legal_targets, can_finish: true, ..
+        }) if legal_targets == vec![Target::Object(imp)])
+        );
+        act(
+            &mut state,
+            if dredge {
+                Action::ChooseEffectTarget(Target::Object(imp))
+            } else {
+                Action::FinishEffectSelection
+            },
+        );
+        settled(&mut state);
+        assert_eq!(state.players[1].draws_this_turn, 1);
+        assert_eq!(state.players[1].hand.len(), if dredge { 2 } else { 1 });
+        assert_eq!(state.players[1].library.len(), if dredge { 14 } else { 19 });
+        assert_eq!(
+            zone(&state, imp),
+            if dredge { Zone::Hand } else { Zone::Graveyard }
+        );
+        recall(&mut state, P1);
+        settled(&mut state);
+        assert_eq!(state.players[1].draws_this_turn, 1);
+    }
+}
+
+#[test]
+fn karn_plus_reveals_both_cards_opponent_chooses_and_source_can_leave() {
+    for option in [0, 1] {
+        let mut state = game(&["Island", "Mountain", "Forest"]);
+        let karn = cast_walker(&mut state, P0, "Karn, Scion of Urza");
+        let cards = state.players[0].library.clone();
+        // Neither ability targets the opponent or draws cards.
+        put(&mut state, P1, "Leyline of Sanctity", Zone::Battlefield);
+        put(&mut state, P1, "Narset, Parter of Veils", Zone::Battlefield);
+        activate(&mut state, karn, 0, &[]);
+        on_the_stack(&mut state);
+        assert_eq!(loyalty(&state, karn), Some(6));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(karn, Zone::Graveyard),
+        );
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption {
+                player: P1,
+                option_count: 2,
+                ..
+            })
+        ));
+        for observer in [P0, P1] {
+            for card in &cards[..2] {
+                assert!(state
+                    .known_library_cards(observer, P0)
+                    .iter()
+                    .any(|entry| entry.object == *card));
+            }
+        }
+        act(&mut state, Action::ChooseEffectOption(option));
+        settled(&mut state);
+        assert_eq!(zone(&state, cards[usize::from(option)]), Zone::Hand);
+        assert!(state
+            .known_hand_cards(P1, P0)
+            .iter()
+            .any(|entry| entry.object == cards[usize::from(option)]));
+        assert_eq!(zone(&state, cards[1 - usize::from(option)]), Zone::Exile);
+        assert_eq!(state.players[0].library, vec![cards[2]]);
+        assert_eq!(state.players[0].draws_this_turn, 0);
+        let silver = &state.eternal_v1.as_ref().unwrap().c6c_silver_cards;
+        assert_eq!(silver.len(), 1);
+        assert_eq!(silver[0].object, cards[1 - usize::from(option)]);
+        assert_eq!(
+            silver[0].zone_change_count,
+            state.objects.get(silver[0].object).zone_change_count
+        );
+    }
+}
+
+#[test]
+fn karn_plus_zero_or_one_card_and_minus_one_with_no_silver() {
+    for count in 0..=1 {
+        let cards = ["Island"];
+        let mut state = game(&cards[..count]);
+        let karn = cast_walker(&mut state, P0, "Karn, Scion of Urza");
+        activate(&mut state, karn, 0, &[]);
+        settled(&mut state);
+        assert_eq!(state.players[0].hand.len(), count);
+        assert!(state.players[0].library.is_empty());
+        assert!(state.exile.is_empty());
+        assert!(!state.players[0].drew_from_empty);
+    }
+    let mut state = plains();
+    let karn = cast_walker(&mut state, P0, "Karn, Scion of Urza");
+    let unmarked = put(&mut state, P0, "Island", Zone::Exile);
+    activate(&mut state, karn, 1, &[]);
+    settled(&mut state);
+    assert_eq!(loyalty(&state, karn), Some(4));
+    assert_eq!(zone(&state, unmarked), Zone::Exile);
+}
+
+#[test]
+fn karn_silver_survives_source_departure_and_later_karn_chooses_either_card() {
+    for option in [0, 1] {
+        let mut state = plains();
+        let mut exiled = Vec::new();
+        for _ in 0..2 {
+            let karn = cast_walker(&mut state, P0, "Karn, Scion of Urza");
+            exiled.push(state.players[0].library[1]);
+            activate(&mut state, karn, 0, &[]);
+            settle_option(&mut state, 0);
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(karn, Zone::Graveyard),
+            );
+        }
+        let later = cast_walker(&mut state, P0, "Karn, Scion of Urza");
+        activate(&mut state, later, 1, &[]);
+        on_the_stack(&mut state);
+        assert_eq!(loyalty(&state, later), Some(4));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(later, Zone::Graveyard),
+        );
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseEffectOption {
+                player: P0,
+                option_count: 2,
+                ..
+            })
+        ));
+        act(&mut state, Action::ChooseEffectOption(option));
+        settled(&mut state);
+        assert_eq!(zone(&state, exiled[usize::from(option)]), Zone::Hand);
+        assert_eq!(zone(&state, exiled[1 - usize::from(option)]), Zone::Exile);
+    }
+}
+
+#[test]
+fn karn_silver_is_owned_not_controlled_and_does_not_follow_a_reexiled_card() {
+    let mut state = plains();
+    state.active_player = P1;
+    state.priority_player = P1;
+    let opponent_karn = cast_walker(&mut state, P1, "Karn, Scion of Urza");
+    let opponents_card = state.players[1].library[1];
+    activate(&mut state, opponent_karn, 0, &[]);
+    settle_option(&mut state, 0);
+    pass_until(&mut state, |state| {
+        state.active_player == P0 && state.step == Step::Main1
+    });
+    let karn = cast_walker(&mut state, P0, "Karn, Scion of Urza");
+    activate(&mut state, karn, 1, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, opponents_card), Zone::Exile);
+    next_own_main(&mut state);
+    let card = state.players[0].library[1];
+    activate(&mut state, karn, 0, &[]);
+    settle_option(&mut state, 0);
+    for destination in [Zone::Hand, Zone::Exile] {
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(card, destination));
+    }
+    next_own_main(&mut state);
+    activate(&mut state, karn, 1, &[]);
+    settled(&mut state);
+    assert_eq!(
+        zone(&state, card),
+        Zone::Exile,
+        "new incarnation has no silver counter"
+    );
+    assert_eq!(zone(&state, opponents_card), Zone::Exile);
+}
+
+#[test]
+fn karn_construct_has_all_characteristics_and_counts_only_controlled_artifacts() {
+    let mut state = plains();
+    let karn = cast_walker(&mut state, P0, "Karn, Scion of Urza");
+    activate(&mut state, karn, 2, &[]);
+    settled(&mut state);
+    assert_eq!(loyalty(&state, karn), Some(3));
+    let construct = named(&state, P0, "Karn Construct Token")[0];
+    let card = &CARD_DEFS[state.objects.get(construct).card_def as usize];
+    assert!(card.types.contains(&CardType::Artifact));
+    assert!(card.types.contains(&CardType::Creature));
+    assert_eq!(card.subtypes, &[Subtype::Construct]);
+    assert_eq!((card.power, card.toughness), (Some(0), Some(0)));
+    assert!(card.colors.is_empty());
+    assert_eq!(card.keywords, Keywords::empty());
+    assert!(state.objects.get(construct).v4.is_token);
+    assert!(state.objects.get(construct).summoning_sick);
+    assert_eq!(power_toughness(&state, construct), (1, 1));
+    put(&mut state, P1, "Sol Ring", Zone::Battlefield);
+    put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    assert_eq!(power_toughness(&state, construct), (1, 1));
+    let ring = put(&mut state, P0, "Sol Ring", Zone::Hand);
+    pool(&mut state, P0, &[], 1);
+    cast(&mut state, ring, &[]);
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, construct), (2, 2));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(ring, Zone::Graveyard),
+    );
+    assert_eq!(power_toughness(&state, construct), (1, 1));
+    next_own_main(&mut state);
+    activate(&mut state, karn, 2, &[]);
+    on_the_stack(&mut state);
+    assert_eq!(loyalty(&state, karn), Some(1));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(karn, Zone::Graveyard),
+    );
+    settled(&mut state);
+    let constructs = named(&state, P0, "Karn Construct Token");
+    assert_eq!(constructs.len(), 2);
+    for token in constructs {
+        assert_eq!(power_toughness(&state, token), (2, 2));
+    }
+}
+
+#[test]
+fn karn_one_silver_card_returns_automatically_even_when_last_loyalty_is_paid() {
+    let mut state = plains();
+    let karn = cast_walker(&mut state, P0, "Karn, Scion of Urza");
+    let card = state.players[0].library[1];
+    activate(&mut state, karn, 0, &[]);
+    settle_option(&mut state, 0);
+    next_own_main(&mut state);
+    change_loyalty(&mut state, karn, -5);
+    assert_eq!(loyalty(&state, karn), Some(1));
+    assert!(!activatable(&mut state, karn, 2));
+    activate(&mut state, karn, 1, &[]);
+    on_the_stack(&mut state);
+    assert_eq!(zone(&state, karn), Zone::Graveyard);
+    settled(&mut state);
+    assert_eq!(zone(&state, card), Zone::Hand);
+    assert!(state
+        .known_hand_cards(P1, P0)
+        .iter()
+        .any(|entry| entry.object == card));
+}
+
+#[test]
+fn narset_draw_step_cannot_dredge_after_drawing_in_upkeep() {
+    let mut state = plains();
+    cast_walker(&mut state, P0, "Narset, Parter of Veils");
+    pass_until(&mut state, |state| {
+        state.active_player == P1 && state.step == Step::Upkeep && state.priority_player == P0
+    });
+    recall(&mut state, P1);
+    settled(&mut state);
+    assert_eq!(state.players[1].draws_this_turn, 1);
+    let imp = put(&mut state, P1, "Stinkweed Imp", Zone::Graveyard);
+    let library = state.players[1].library.clone();
+    run_until(
+        &mut state,
+        |state| state.step == Step::Main1,
+        |_, decision| {
+            assert!(
+                !matches!(
+                    decision,
+                    Decision::ChooseEffectOption { .. } | Decision::ChooseEffectTargets { .. }
+                ),
+                "the forbidden draw must not offer a replacement"
+            );
+            None
+        },
+    );
+    assert_eq!(state.players[1].library, library);
+    assert_eq!(zone(&state, imp), Zone::Graveyard);
+    assert_eq!(state.players[1].hand.len(), 1);
+}
+
+#[test]
+fn narset_does_not_count_hullbreachers_replaced_draws_as_actual_draws() {
+    let mut state = plains();
+    cast_walker(&mut state, P0, "Narset, Parter of Veils");
+    put(&mut state, P0, "Hullbreacher", Zone::Battlefield);
+    recall(&mut state, P1);
+    settled(&mut state);
+    assert_eq!(state.players[1].draws_this_turn, 0);
+    assert!(state.players[1].hand.is_empty());
+    assert_eq!(state.players[1].library.len(), 20);
+    assert_eq!(named(&state, P0, "Treasure Token").len(), 3);
 }

@@ -36396,7 +36396,8 @@
   },
   {
    "name": "Karn, Scion of Urza",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
    "mana_cost": "{4}",
    "mana_value": 4,
    "colors": [],
@@ -36418,12 +36419,16 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/k/KarnScionOfUrza.java"
   },
   {
    "name": "Narset, Parter of Veils",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
+   "starting_loyalty": 5,
    "mana_cost": "{1}{U}{U}",
    "mana_value": 3,
    "colors": [
@@ -36432,7 +36437,9 @@
    "types": [
     "Planeswalker"
    ],
-   "subtypes": [],
+   "subtypes": [
+    "Narset"
+   ],
    "supertypes": [
     "Legendary"
    ],
@@ -36445,7 +36452,10 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "planeswalker",
+    "loyalty_abilities"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/n/NarsetParterOfVeils.java"
   },
   {
