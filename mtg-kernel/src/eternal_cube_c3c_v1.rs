@@ -26,11 +26,13 @@
 //! - Staff of the Storyteller: story counters are charge counters (Extinguisher
 //!   Battleship's station counters are the same stand-in). The "one or more
 //!   creature tokens" trigger is `delayed_triggers` over the committed token
-//!   events of one trigger collection.
+//!   events of one trigger collection; `note_token_created` (called as each
+//!   token creation commits) records the Staffs its controller had then.
 //! - Currency Converter: `note_discard` (called from the engine's discard
-//!   commits, as Tourach's is) queues the discards, `delayed_triggers` makes one
-//!   "may exile" trigger per Converter, and the cards exiled with each Converter
-//!   incarnation are a ledger in `C3cStateV1`.
+//!   commits, as Tourach's is) queues the discards with the Converters the
+//!   discarder had then, `delayed_triggers` makes one "may exile" trigger per
+//!   such Converter, and the cards exiled with each Converter incarnation are
+//!   a ledger in `C3cStateV1`.
 //! - The Mightstone and Weakstone: a modal entry trigger (`trigger_modes`) and
 //!   mana that is restricted by `ManaSpendRestrictionDef::PowerstoneV1`, which
 //!   `restrict_produced_mana` applies as the ability resolves.
@@ -46,6 +48,7 @@ use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Zone};
 use crate::trigger::{PendingTrigger, TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
 
 pub(crate) const ECHOVERSE_FULCRUM: &str = "The Echoverse Fulcrum";
 pub(crate) const STAFF_OF_THE_STORYTELLER: &str = "Staff of the Storyteller";
@@ -61,7 +64,7 @@ const ROGUE_TOKEN: &str = "Rogue Token";
 /// Per-game state for this module's cards, kept inside
 /// `eternal_cards_v1::EternalStateV1`. Default (and absent from snapshots)
 /// until a card of this wave needs it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct C3cStateV1 {
     /// Cards discarded by a player who controls a Currency Converter, noted
@@ -71,6 +74,11 @@ pub struct C3cStateV1 {
     /// The cards exiled with each Currency Converter incarnation.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub converter_exiled: Vec<LinkedExileV1>,
+    /// Tokens created by a player who controls a Staff of the
+    /// Storyteller, noted as each token was created and waiting for the next
+    /// trigger collection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub staff_tokens: Vec<StaffTokenV1>,
 }
 
 impl C3cStateV1 {
@@ -79,12 +87,58 @@ impl C3cStateV1 {
     }
 }
 
+/// The first two fields hash as the derived hash did before the Staff's
+/// notes existed; the notes are hashed under their own tag, and only when
+/// present, so a state without them hashes as before.
+impl Hash for C3cStateV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.converter_discards.hash(state);
+        self.converter_exiled.hash(state);
+        if !self.staff_tokens.is_empty() {
+            b"eternal-cube-c3c/staff-tokens/v1".hash(state);
+            self.staff_tokens.hash(state);
+        }
+    }
+}
+
 /// One card a player discarded while controlling a Currency Converter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DiscardedCardV1 {
     pub card: ObjectId,
     pub discarder: PlayerId,
+    /// The discarder's Converters as the card was discarded (603.2: a
+    /// Converter destroyed later in the same resolution still triggers). Empty
+    /// only in a record written before this field existed, which reads the
+    /// Converters at collection instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub converters: Vec<AbilitySourceContractV4>,
+}
+
+/// The card and the discarder hash as the derived hash did before the
+/// Converters were recorded; the Converters only when present.
+impl Hash for DiscardedCardV1 {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.card.hash(state);
+        self.discarder.hash(state);
+        if !self.converters.is_empty() {
+            b"converters/v1".hash(state);
+            self.converters.hash(state);
+        }
+    }
+}
+
+/// One token created by a player who controlled a Staff of the
+/// Storyteller, with that player's Staffs as the token was created.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StaffTokenV1 {
+    pub token: ObjectId,
+    pub controller: PlayerId,
+    pub staffs: Vec<AbilitySourceContractV4>,
+    /// Whether the token was a creature as it was created (with the face a
+    /// copy enters with, `token_face_initialized`).
+    pub creature: bool,
 }
 
 /// One card exiled with a Currency Converter: the Converter's incarnation and
@@ -306,7 +360,8 @@ pub(crate) fn restrict_produced_mana(
 
 /// Currency Converter: a card is being discarded from a hand. Called before
 /// the card leaves the hand, like Tourach's note; it queues the discard when
-/// the discarding player controls a Converter.
+/// the discarding player controls a Converter, with those Converters as they
+/// are now, since the trigger condition is checked as the event happens.
 pub(crate) fn note_discard(state: &mut GameState, card: ObjectId) {
     let Some(live) = state.objects.try_get(card) else {
         return;
@@ -320,15 +375,80 @@ pub(crate) fn note_discard(state: &mut GameState, card: ObjectId) {
     else {
         return;
     };
-    if crate::eternal_e5a_v1::active_permanents(state, CURRENCY_CONVERTER, Some(discarder))
-        .next()
-        .is_none()
-    {
+    let converters = sources_controlled_by(state, CURRENCY_CONVERTER, discarder);
+    if converters.is_empty() {
         return;
     }
-    c3c_state(state)
-        .converter_discards
-        .push(DiscardedCardV1 { card, discarder });
+    c3c_state(state).converter_discards.push(DiscardedCardV1 {
+        card,
+        discarder,
+        converters,
+    });
+}
+
+/// Staff of the Storyteller: a token has just been created. When its
+/// controller controls a Staff, the token is noted with those Staffs as they
+/// are now, since the trigger condition is checked as the event happens
+/// (603.2): a Staff that leaves later in the same resolution still triggers,
+/// and one that arrives later does not. Whether the token is a creature is
+/// recorded now too, as it was created, and never read again later: a token
+/// that becomes a creature afterwards, or stops being one (a copied back face
+/// lost in a zone change), keeps its creation status. The one creator that
+/// gives a token its entry face after committing it, the plain branch of
+/// `standard_cards_v1::create_token_copy_without_banner_owner` (a copy of a
+/// transformed permanent enters with its back face up, 707.8a), settles the
+/// status through `token_face_initialized`.
+pub(crate) fn note_token_created(state: &mut GameState, token: ObjectId, controller: PlayerId) {
+    let staffs = sources_controlled_by(state, STAFF_OF_THE_STORYTELLER, controller);
+    if staffs.is_empty() {
+        return;
+    }
+    let creature = creature_token(state, token, state.objects.get(token).card_def);
+    c3c_state(state).staff_tokens.push(StaffTokenV1 {
+        token,
+        controller,
+        staffs,
+        creature,
+    });
+}
+
+/// Staff of the Storyteller: a token copy just took the face it enters with
+/// (part of its creation, 707.8a), so its noted creature status is read
+/// again from that face.
+pub(crate) fn token_face_initialized(state: &mut GameState, token: ObjectId) {
+    let Some(eternal) = state.eternal_v1.as_ref() else {
+        return;
+    };
+    let Some(index) = eternal
+        .c3c
+        .staff_tokens
+        .iter()
+        .rposition(|note| note.token == token)
+    else {
+        return;
+    };
+    let creature = creature_token(state, token, state.objects.get(token).card_def);
+    c3c_state(state).staff_tokens[index].creature = creature;
+}
+
+/// The ability sources of the active permanents named `name` that `player`
+/// controls, captured now.
+fn sources_controlled_by(
+    state: &GameState,
+    name: &str,
+    player: PlayerId,
+) -> Vec<AbilitySourceContractV4> {
+    crate::eternal_e5a_v1::active_permanents(state, name, Some(player))
+        .map(|permanent| AbilitySourceContractV4::capture(state, permanent))
+        .collect()
+}
+
+/// Whether a created token is a creature token.
+fn creature_token(state: &GameState, token: ObjectId, token_def: u16) -> bool {
+    CARD_DEFS
+        .get(usize::from(token_def))
+        .is_some_and(|def| def.has_type(CardType::Creature))
+        || crate::engine::object_has_type(state, token, CardType::Creature)
 }
 
 /// The triggers this collection puts on the stack that no printed trigger
@@ -347,45 +467,56 @@ pub(crate) fn delayed_triggers(
 
 /// Staff of the Storyteller: "Whenever you create one or more creature
 /// tokens, put a story counter on this artifact." One trigger per Staff for
-/// the creature tokens its controller created since the last collection.
-fn staff_triggers(state: &GameState, events: &[CommittedEvent], out: &mut Vec<PendingTrigger>) {
-    let mut makers: Vec<PlayerId> = Vec::new();
+/// the creature tokens its controller created since the last collection,
+/// for each Staff that controller had as one of those tokens was created
+/// (`note_token_created`, which also records whether the token was a
+/// creature as it was created). Every committed token creation is noted, so a
+/// token without a note was created while its controller had no Staff. The
+/// notes are consumed by this collection; a note whose event this
+/// collection does not see (a discarded event log) is dropped with it. A
+/// snapshot written before the notes existed, in the middle of a resolution
+/// after a token was created, has no note for that token and loses its
+/// Staff trigger: that pending state is not carried across this change (a
+/// fallback to the Staffs at collection would bring back the Staff that
+/// arrives later).
+fn staff_triggers(state: &mut GameState, events: &[CommittedEvent], out: &mut Vec<PendingTrigger>) {
+    let notes = match state.eternal_v1.as_mut() {
+        Some(eternal) if !eternal.c3c.staff_tokens.is_empty() => {
+            std::mem::take(&mut eternal.c3c.staff_tokens)
+        }
+        _ => return,
+    };
+    let mut fired: Vec<(PlayerId, AbilitySourceContractV4)> = Vec::new();
     for event in events {
-        let CommittedEvent::CreateToken {
-            object,
-            token_def,
-            controller,
-            ..
-        } = event
+        let CommittedEvent::CreateToken { object, .. } = event else {
+            continue;
+        };
+        let Some(note) = notes
+            .iter()
+            .find(|note| note.token == *object && note.creature)
         else {
             continue;
         };
-        let creature = CARD_DEFS
-            .get(usize::from(*token_def))
-            .is_some_and(|def| def.has_type(CardType::Creature))
-            || crate::engine::object_has_type(state, *object, CardType::Creature);
-        if creature && !makers.contains(controller) {
-            makers.push(*controller);
+        for staff in &note.staffs {
+            let entry = (note.controller, *staff);
+            if !fired.contains(&entry) {
+                fired.push(entry);
+            }
         }
     }
-    for player in makers {
-        let staffs =
-            crate::eternal_e5a_v1::active_permanents(state, STAFF_OF_THE_STORYTELLER, Some(player))
-                .collect::<Vec<_>>();
-        for staff in staffs {
-            let source = AbilitySourceContractV4::capture(state, staff);
-            out.push(crate::eternal_cards_v1::delayed_trigger(
-                source,
-                player,
-                story_counter(),
-            ));
-        }
+    for (player, source) in fired {
+        out.push(crate::eternal_cards_v1::delayed_trigger(
+            source,
+            player,
+            story_counter(),
+        ));
     }
 }
 
 /// Currency Converter: "Whenever you discard a card, you may exile that card
 /// from your graveyard." A card that did not reach a graveyard (a replacement
-/// exiled it) has nothing to exile and queues no trigger.
+/// exiled it) has nothing to exile and queues no trigger. The Converters are
+/// the ones the discarder controlled as the card was discarded.
 fn converter_triggers(state: &mut GameState, out: &mut Vec<PendingTrigger>) {
     let discards = match state.eternal_v1.as_mut() {
         Some(eternal) if !eternal.c3c.converter_discards.is_empty() => {
@@ -401,14 +532,12 @@ fn converter_triggers(state: &mut GameState, out: &mut Vec<PendingTrigger>) {
             continue;
         }
         let count = live.zone_change_count;
-        let converters = crate::eternal_e5a_v1::active_permanents(
-            state,
-            CURRENCY_CONVERTER,
-            Some(discarded.discarder),
-        )
-        .collect::<Vec<_>>();
-        for converter in converters {
-            let source = AbilitySourceContractV4::capture(state, converter);
+        let converters = if discarded.converters.is_empty() {
+            sources_controlled_by(state, CURRENCY_CONVERTER, discarded.discarder)
+        } else {
+            discarded.converters
+        };
+        for source in converters {
             out.push(crate::eternal_cards_v1::delayed_trigger(
                 source,
                 discarded.discarder,
@@ -537,7 +666,11 @@ pub(crate) fn execute(op: &C3cOpV1, ctx: &ExecCtx, state: &mut GameState) {
 
 /// Currency Converter's "exile that card from your graveyard": the card is
 /// exiled only while it is still the card that was discarded, and is linked
-/// to the Converter while that Converter is still on the battlefield.
+/// to the Converter incarnation whose ability this is, also when that
+/// Converter has left the battlefield since (607.2a): a release ability of
+/// that incarnation already on the stack still finds the card. A link of a
+/// gone incarnation is never read again by a new object, since each new
+/// incarnation has its own zone change count.
 fn run_converter_exile(ctx: &ExecCtx, state: &mut GameState, card: ObjectId, count: u32) {
     if !in_graveyard(state, card, count) {
         return;
@@ -553,17 +686,12 @@ fn run_converter_exile(ctx: &ExecCtx, state: &mut GameState, card: ObjectId, cou
         return;
     }
     let card_zone_change_count = moved.zone_change_count;
-    let converter_live = state.objects.try_get(contract.source).is_some_and(|live| {
-        live.zone == Zone::Battlefield && live.zone_change_count == contract.zone_change_count
+    c3c_state(state).converter_exiled.push(LinkedExileV1 {
+        converter: contract.source,
+        converter_zone_change_count: contract.zone_change_count,
+        card,
+        card_zone_change_count,
     });
-    if converter_live {
-        c3c_state(state).converter_exiled.push(LinkedExileV1 {
-            converter: contract.source,
-            converter_zone_change_count: contract.zone_change_count,
-            card,
-            card_zone_change_count,
-        });
-    }
 }
 
 /// Currency Converter: "Put a card exiled with this artifact into its

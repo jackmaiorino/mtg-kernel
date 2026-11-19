@@ -433,16 +433,7 @@ pub fn malevolent_rumble() -> EffectOp {
 
 /// "You may discard a card. If you do, draw two cards."
 fn may_discard_then_draw_two() -> EffectOp {
-    EffectOp::MayPayCostThen {
-        discard: 1,
-        sacrifice_lands: 0,
-        return_permanent: None,
-        then: Box::new(EffectOp::DrawCards {
-            player: PlayerRef::Controller,
-            count: 2,
-        }),
-        otherwise: None,
-    }
+    crate::eternal_vintage_e7b_v1::may_discard_then_draw(2)
 }
 
 /// Pursue the Past: "You gain 2 life. You may discard a card. If you do,
@@ -1504,14 +1495,24 @@ pub(crate) fn controlled_boost(state: &GameState, object: ObjectId) -> (i128, i1
 fn protection_mask(state: &GameState, host: ObjectId) -> u8 {
     // Sejiri Steppe's protection until end of turn (wave E9a).
     let granted = crate::eternal_legacy_e9a_v1::statics::protection_mask(state, host);
-    attached_named(state, host, BENEVOLENT_BLESSING).fold(granted, |mask, blessing| {
-        mask | state
-            .objects
-            .get(blessing)
-            .v4
-            .chosen_color
-            .map_or(0, crate::card_def::mana_color_mask)
-    })
+    // The Aura's grant has the timestamp of its attachment, so a later
+    // ability removal on the host takes it away (613.7).
+    attached_named(state, host, BENEVOLENT_BLESSING)
+        .filter(|&blessing| {
+            crate::continuous_characteristics_v1::granted_ability_survives(
+                state,
+                host,
+                state.objects.get(blessing).v4.layer_timestamp.unwrap_or(0),
+            )
+        })
+        .fold(granted, |mask, blessing| {
+            mask | state
+                .objects
+                .get(blessing)
+                .v4
+                .chosen_color
+                .map_or(0, crate::card_def::mana_color_mask)
+        })
 }
 
 /// Benevolent Blessing: whether `object` has protection from `source`'s
@@ -1571,6 +1572,11 @@ pub(crate) fn protection_removes_attachment(
     attached_named(state, host, BENEVOLENT_BLESSING).any(|blessing| {
         let live = state.objects.get(blessing);
         live.controller != controller
+            && crate::continuous_characteristics_v1::granted_ability_survives(
+                state,
+                host,
+                live.v4.layer_timestamp.unwrap_or(0),
+            )
             && live
                 .v4
                 .chosen_color
@@ -1655,9 +1661,25 @@ pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<Ma
         return Vec::new();
     }
     let live = state.objects.get(object);
+    let printed_active =
+        crate::continuous_characteristics_v1::printed_abilities_active(state, object);
+    // While the land's printed abilities are removed, the Aura's grant still
+    // applies unless a removal of all abilities is later than it (613.7); a
+    // land-type setter removes none (305.7).
+    if !printed_active
+        && !attached_named(state, object, ABUNDANT_GROWTH).any(|growth| {
+            crate::continuous_characteristics_v1::grant_survives_land_type_setters(
+                state,
+                object,
+                state.objects.get(growth).v4.layer_timestamp.unwrap_or(0),
+            )
+        })
+    {
+        return Vec::new();
+    }
     let own = definition(state, object)
         .map(|def| {
-            if crate::continuous_characteristics_v1::printed_abilities_active(state, object) {
+            if printed_active {
                 def.primary_mana_ability_choices(live.v4.chosen_color)
             } else {
                 Vec::new()

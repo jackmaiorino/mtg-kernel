@@ -1469,6 +1469,102 @@ fn benevolent_blessing_gives_protection_from_the_chosen_color() {
 }
 
 #[test]
+fn a_later_ability_removal_ends_benevolent_blessings_protection() {
+    let mut state = plains();
+    let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
+    let blessing = put(&mut state, P0, "Benevolent Blessing", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 1);
+    cast(&mut state, blessing, &[Target::Object(inspector)]);
+    // Red.
+    settle_option(&mut state, 3);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    assert!(!cast_targets(&state, bolt).contains(&Target::Object(inspector)));
+    // Unable to Scream is later than the Aura's grant (613.7).
+    let scream = put(&mut state, P0, "Unable to Scream", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, scream, &[Target::Object(inspector)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, scream), Zone::Battlefield);
+    assert_eq!(zone(&state, blessing), Zone::Battlefield);
+    assert!(cast_targets(&state, bolt).contains(&Target::Object(inspector)));
+}
+
+#[test]
+fn benevolent_blessing_attachment_protection_follows_timestamps() {
+    for controller in [P0, P1] {
+        for removal_first in [false, true] {
+            let opponent = controller.opponent();
+            let mut state = plains();
+            state.active_player = opponent;
+            state.priority_player = opponent;
+            let inspector = put(
+                &mut state,
+                controller,
+                "Thraben Inspector",
+                Zone::Battlefield,
+            );
+            let other = put(&mut state, opponent, "Thraben Inspector", Zone::Battlefield);
+            let blessing = put(&mut state, controller, "Benevolent Blessing", Zone::Hand);
+            let dress = put(&mut state, opponent, "Dress Down", Zone::Hand);
+
+            if removal_first {
+                pool(&mut state, opponent, &[ManaColor::U], 1);
+                cast(&mut state, dress, &[]);
+                settled(&mut state);
+            }
+
+            pass_until(&mut state, |state| state.priority_player == controller);
+            pool(&mut state, controller, &[ManaColor::W], 1);
+            cast(&mut state, blessing, &[Target::Object(inspector)]);
+            // Choose blue.
+            settle_option(&mut state, 1);
+            assert_eq!(
+                state.objects.get(blessing).v4.chosen_color,
+                Some(ManaColor::U)
+            );
+
+            if !removal_first {
+                pool(&mut state, opponent, &[ManaColor::U], 1);
+                cast(&mut state, dress, &[]);
+                settled(&mut state);
+            }
+
+            assert_eq!(state.active_player, opponent);
+            assert_eq!(state.priority_player, opponent);
+            assert_eq!(state.step, Step::Main1);
+            assert_eq!(zone(&state, dress), Zone::Battlefield);
+            assert_eq!(zone(&state, blessing), Zone::Battlefield);
+            let scream = put(&mut state, opponent, "Unable to Scream", Zone::Hand);
+            pool(&mut state, opponent, &[ManaColor::U], 0);
+            let targets = cast_targets(&state, scream);
+            assert!(targets.contains(&Target::Object(other)));
+            if removal_first {
+                // The later Blessing still grants protection from blue.
+                assert!(!targets.contains(&Target::Object(inspector)));
+                assert_eq!(zone(&state, scream), Zone::Hand);
+            } else {
+                assert!(targets.contains(&Target::Object(inspector)));
+                cast(&mut state, scream, &[Target::Object(inspector)]);
+                settled(&mut state);
+                assert_eq!(zone(&state, scream), Zone::Battlefield);
+                assert_eq!(zone(&state, blessing), Zone::Battlefield);
+                assert_eq!(
+                    state
+                        .objects
+                        .get(scream)
+                        .v4
+                        .attached_to
+                        .map(|link| link.object),
+                    Some(inspector)
+                );
+                assert!(state.objects.get(inspector).attachments.contains(&scream));
+            }
+        }
+    }
+}
+
+#[test]
 fn benevolent_blessing_has_flash() {
     let mut state = plains();
     let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
@@ -1582,13 +1678,7 @@ fn ragged_short_spear_loots_on_entry_and_equips_for_three() {
     let spear = put(&mut state, P0, "Ragged Short Spear", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R], 1);
     cast(&mut state, spear, &[]);
-    settle_with(&mut state, |_, decision| match decision {
-        Decision::ChooseOptionalCost { .. } => {
-            Action::ChooseOptionalCost(OptionalCostChoice::Discard)
-        }
-        Decision::Discard { .. } => Action::Discard(vec![fodder]),
-        other => first_answer(other),
-    });
+    settle_choosing(&mut state, fodder);
     assert_eq!(zone(&state, fodder), Zone::Graveyard);
     assert_eq!(state.players[0].hand.len(), 2);
     let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
@@ -1718,13 +1808,7 @@ fn pursue_the_past_gains_two_may_loot_and_has_flashback() {
     let pursue = put(&mut state, P0, "Pursue the Past", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::R, ManaColor::W], 0);
     cast(&mut state, pursue, &[]);
-    settle_with(&mut state, |_, decision| match decision {
-        Decision::ChooseOptionalCost { .. } => {
-            Action::ChooseOptionalCost(OptionalCostChoice::Discard)
-        }
-        Decision::Discard { .. } => Action::Discard(vec![fodder]),
-        other => first_answer(other),
-    });
+    settle_choosing(&mut state, fodder);
     assert_eq!(state.players[0].life, 22);
     assert_eq!(zone(&state, fodder), Zone::Graveyard);
     assert_eq!(state.players[0].hand.len(), 2);
@@ -1733,6 +1817,92 @@ fn pursue_the_past_gains_two_may_loot_and_has_flashback() {
     settle_first(&mut state);
     assert_eq!(zone(&state, pursue), Zone::Exile, "flashback");
     assert_eq!(state.players[0].life, 24);
+}
+
+#[test]
+fn pursue_the_past_draws_offer_competing_draw_replacements() {
+    // Its controller draws from an empty library with Jace, Wielder of
+    // Mysteries while the opponent controls Hullbreacher: after the discard,
+    // the drawing player chooses which replacement applies (616.1).
+    let mut state = game(&[]);
+    put(&mut state, P1, "Hullbreacher", Zone::Battlefield);
+    let jace = put(&mut state, P0, "Jace, Wielder of Mysteries", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(jace, Zone::Battlefield),
+    );
+    let fodder = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    let pursue = put(&mut state, P0, "Pursue the Past", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R, ManaColor::W], 0);
+    cast(&mut state, pursue, &[]);
+    let discarded = Target::Object(fodder);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. })
+            if legal_targets.contains(&discarded) =>
+        {
+            act(&mut state, Action::ChooseEffectTarget(discarded));
+        }
+        other => panic!("expected the optional discard, got {other:?}"),
+    }
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            can_finish: true,
+            ..
+        }) => {
+            assert_eq!(player, P0);
+            assert_eq!(legal_targets, vec![Target::Object(jace)]);
+        }
+        other => panic!("expected the Jace or Hullbreacher choice, got {other:?}"),
+    }
+    act(&mut state, Action::ChooseEffectTarget(Target::Object(jace)));
+    assert!(matches!(
+        next(&mut state),
+        Decision::GameOver { winner: Some(P0) }
+    ));
+}
+
+#[test]
+fn pursue_the_past_draws_after_its_discard_may_be_dredged() {
+    // "If you do, draw two cards": each of the two draws may be replaced by
+    // dredge (702.52), here Golgari Thug's dredge 4 and then a plain draw.
+    let mut state = plains();
+    let thug = put(&mut state, P0, "Golgari Thug", Zone::Graveyard);
+    let fodder = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    let pursue = put(&mut state, P0, "Pursue the Past", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R, ManaColor::W], 0);
+    cast(&mut state, pursue, &[]);
+    let discarded = Target::Object(fodder);
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets { legal_targets, .. })
+            if legal_targets.contains(&discarded) =>
+        {
+            act(&mut state, Action::ChooseEffectTarget(discarded));
+        }
+        other => panic!("expected the optional discard, got {other:?}"),
+    }
+    match settle(&mut state) {
+        Some(Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            can_finish: true,
+            ..
+        }) => {
+            assert_eq!(player, P0);
+            assert_eq!(legal_targets, vec![Target::Object(thug)], "dredge");
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(thug)));
+        }
+        other => panic!("expected the dredge choice for the first draw, got {other:?}"),
+    }
+    // The library still holds four cards for the Thug's dredge, but the Thug
+    // is in hand now: the second draw is a plain draw.
+    settled(&mut state);
+    assert_eq!(zone(&state, fodder), Zone::Graveyard, "discarded");
+    assert_eq!(zone(&state, thug), Zone::Hand, "dredged back");
+    assert_eq!(state.players[0].hand.len(), 2, "the Thug and one draw");
+    assert_eq!(state.players[0].library.len(), 20 - 4 - 1);
+    assert_eq!(state.players[0].life, 22);
 }
 
 #[test]

@@ -1098,6 +1098,9 @@ pub(crate) fn enter_as_copy(
             return;
         }
     }
+    // The colors of mana spent to cast the Metamorph, read while it is still
+    // the spell (0 when it was not cast), for a copied sunburst.
+    let colors_spent = crate::eternal_lurrus_v1::colors_spent_on(state, ctx.source);
     enter_battlefield(ctx, state);
     let host = ctx.source;
     if state.objects.get(host).zone != Zone::Battlefield {
@@ -1128,6 +1131,17 @@ pub(crate) fn enter_as_copy(
     // A copy of a permanent that enters tapped enters tapped.
     if CARD_DEFS[copied_def as usize].enters_battlefield_tapped {
         state.objects.get_mut(host).tapped = true;
+    }
+    // A copy of a sunburst artifact has sunburst as it enters (702.44a), so it
+    // gets a charge counter for each color of mana spent to cast it.
+    match CARD_DEFS[copied_def as usize].name {
+        "Engineered Explosives" => {
+            crate::eternal_sideboard_s1b_v1::explosives_entered(state, link, colors_spent);
+        }
+        crate::eternal_cube_c2c_v1::PENTAD_PRISM => {
+            state.objects.get_mut(host).counters.charge = i32::from(colors_spent);
+        }
+        _ => {}
     }
     // A copy of a Saga enters with its lore counter (715.3a), which the entry
     // could not give it while it still had the Metamorph's definition

@@ -1386,12 +1386,13 @@ pub(crate) fn mana_abilities_active(
     Some(artifacts >= 3)
 }
 
-/// Records how many colors of mana were spent to cast `spell` (converge),
-/// for Prismatic Ending only.
+/// Records how many colors of mana were spent to cast `spell`: Prismatic
+/// Ending's converge, the sunburst of Engineered Explosives and Pentad Prism,
+/// and Phyrexian Metamorph, which may enter as a copy of a sunburst artifact.
 pub(crate) fn note_colors_spent(state: &mut GameState, spell: ObjectId, colors: u8) {
     if !matches!(
         definition_name(state, spell),
-        Some(PRISMATIC_ENDING | "Engineered Explosives" | "Pentad Prism")
+        Some(PRISMATIC_ENDING | "Engineered Explosives" | "Pentad Prism" | "Phyrexian Metamorph")
     ) {
         return;
     }

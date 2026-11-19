@@ -1650,6 +1650,77 @@ fn currency_converter_triggers_once_per_converter_for_a_discard() {
     assert_eq!(named(&state, P0, "Rogue Token").len(), 1);
 }
 
+/// Kolaghan's Command's mode pairs used here, in printed order: discard (B)
+/// and destroy an artifact (C), destroy an artifact and 2 damage (D).
+const KC_BC: u8 = 3;
+const KC_CD: u8 = 5;
+
+#[test]
+fn currency_converter_release_on_the_stack_finds_a_card_exiled_after_the_converter_left() {
+    // 607.2a: P0 activates the release with nothing exiled yet and holds
+    // priority, cycles Hollow One (the discard trigger goes above the
+    // release) and destroys the Converter with Kolaghan's Command. The
+    // trigger still exiles Hollow One, linked to that Converter, and the
+    // release of the same Converter, still on the stack, puts it back.
+    let (mut state, converter, hand) = converter_game(&["Hollow One", "Kolaghan's Command"]);
+    let (hollow, command) = (hand[0], hand[1]);
+    activate(&mut state, converter, 1, &[]);
+    pool(&mut state, P0, &[], 2);
+    activate(&mut state, hollow, 0, &[]);
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::R], 1);
+    cast_mode(
+        &mut state,
+        command,
+        KC_CD,
+        &[Target::Object(converter), Target::Player(P1)],
+    );
+    let mut asked = 0;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption { .. } => {
+            asked += 1;
+            Action::ChooseEffectOption(0)
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(asked, 1, "the may-exile choice");
+    assert_eq!(zone(&state, converter), Zone::Graveyard);
+    assert_eq!(life(&state, P1), 18);
+    assert_eq!(
+        zone(&state, hollow),
+        Zone::Graveyard,
+        "the release put it back"
+    );
+    assert_eq!(named(&state, P0, "Rogue Token").len(), 1);
+}
+
+#[test]
+fn currency_converter_triggers_for_a_discard_although_the_same_spell_then_destroys_it() {
+    // 603.2: the trigger condition is checked as the card is discarded.
+    // Kolaghan's Command makes P0 discard first and then destroys the
+    // Converter, and the Converter's trigger is still put on the stack.
+    let (mut state, converter, hand) = converter_game(&["Kolaghan's Command", "Lightning Bolt"]);
+    let (command, bolt) = (hand[0], hand[1]);
+    pool(&mut state, P0, &[ManaColor::B, ManaColor::R], 1);
+    cast_mode(
+        &mut state,
+        command,
+        KC_BC,
+        &[Target::Player(P0), Target::Object(converter)],
+    );
+    let mut asked = 0;
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::Discard { .. } => Action::Discard(vec![bolt]),
+        Decision::ChooseEffectOption { .. } => {
+            asked += 1;
+            Action::ChooseEffectOption(0)
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, converter), Zone::Graveyard);
+    assert_eq!(asked, 1, "the destroyed Converter's trigger");
+    assert_eq!(zone(&state, bolt), Zone::Exile);
+}
+
 // ---- Staff of the Storyteller --------------------------------------------------------
 
 #[test]
@@ -1750,6 +1821,230 @@ fn staff_of_the_storyteller_ignores_noncreature_tokens_and_opponents_tokens() {
     settled(&mut state);
     assert_eq!(charge(&state, first), 1);
     assert_eq!(charge(&state, second), 1);
+}
+
+#[test]
+fn staff_of_the_storyteller_sees_the_battlefield_as_the_token_is_created() {
+    // 603.2: the trigger condition is checked as the token is created. The
+    // two commits stand in for one resolution that creates a creature token
+    // and then destroys the Staff: its trigger is still put on the stack (and
+    // finds no Staff to put a counter on).
+    let mut state = plains();
+    let staff = put(
+        &mut state,
+        P0,
+        "Staff of the Storyteller",
+        Zone::Battlefield,
+    );
+    next(&mut state);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::create_token(id("Servo Token"), P0),
+    );
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(staff, Zone::Graveyard),
+    );
+    next(&mut state);
+    assert!(
+        state.stack.iter().any(|item| item.source == staff),
+        "the departed Staff's trigger: {:#?}",
+        state.stack
+    );
+    settled(&mut state);
+    assert_eq!(named(&state, P0, "Servo Token").len(), 1);
+
+    // A Staff that arrives after the token was created, before the
+    // collection, does not trigger for it.
+    let mut state = plains();
+    next(&mut state);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::create_token(id("Servo Token"), P0),
+    );
+    let staff = put(
+        &mut state,
+        P0,
+        "Staff of the Storyteller",
+        Zone::Battlefield,
+    );
+    settled(&mut state);
+    assert_eq!(charge(&state, staff), 0);
+}
+
+#[test]
+fn staff_of_the_storyteller_counts_a_token_copy_of_a_transformed_reflection_both_seats() {
+    // Reflection of Kiki-Jiki copies another Reflection: the copy of a
+    // transformed permanent enters with its back face up (707.8a), so it is a
+    // creature token and the Staff triggers once.
+    for actor in [P0, P1] {
+        let mut state = plains();
+        state.active_player = actor;
+        state.priority_player = actor;
+        let staff = put(
+            &mut state,
+            actor,
+            "Staff of the Storyteller",
+            Zone::Battlefield,
+        );
+        let [first, second] = [0, 1].map(|_| {
+            let fable = put(
+                &mut state,
+                actor,
+                "Fable of the Mirror-Breaker",
+                Zone::Battlefield,
+            );
+            event::propose_and_commit(&mut state, ProposedEvent::transform_in_place(fable, 1));
+            fable
+        });
+        settled(&mut state);
+        assert!(engine::object_has_type(&state, second, CardType::Creature));
+        pool(&mut state, actor, &[ManaColor::R], 0);
+        activate(&mut state, first, 0, &[Target::Object(second)]);
+        settled(&mut state);
+        let copies = [P0, P1]
+            .into_iter()
+            .flat_map(|seat| state.players[seat.index()].battlefield.clone())
+            .filter(|&object| {
+                let live = state.objects.get(object);
+                live.v4.is_token && live.controller == actor
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(copies.len(), 1, "{actor:?}");
+        assert!(engine::object_has_type(
+            &state,
+            copies[0],
+            CardType::Creature
+        ));
+        assert_eq!(charge(&state, staff), 1, "{actor:?}");
+    }
+}
+
+/// The token `actor` controls with definition `name` (the newest one).
+fn newest_token(state: &GameState, actor: PlayerId, name: &str) -> ObjectId {
+    *state.players[actor.index()]
+        .battlefield
+        .iter()
+        .rev()
+        .find(|&&object| {
+            let live = state.objects.get(object);
+            live.v4.is_token && live.card_def == id(name)
+        })
+        .expect("the token")
+}
+
+#[test]
+fn staff_of_the_storyteller_reads_whether_a_token_is_a_creature_as_it_is_created_both_seats() {
+    // 603.2: "Whenever you create one or more creature tokens" looks at the
+    // token as it is created. The commits stand in for one resolution.
+    for actor in [P0, P1] {
+        // A noncreature token (Fable of the Mirror-Breaker's front face)
+        // that a later operation turns into a creature was not created as
+        // a creature token: the Staff, which left meanwhile, does not
+        // trigger.
+        let mut state = plains();
+        let staff = put(
+            &mut state,
+            actor,
+            "Staff of the Storyteller",
+            Zone::Battlefield,
+        );
+        next(&mut state);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::create_token(id("Fable of the Mirror-Breaker"), actor),
+        );
+        let fable = newest_token(&state, actor, "Fable of the Mirror-Breaker");
+        assert!(!engine::object_has_type(&state, fable, CardType::Creature));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(staff, Zone::Graveyard),
+        );
+        event::propose_and_commit(&mut state, ProposedEvent::transform_in_place(fable, 1));
+        assert!(engine::object_has_type(&state, fable, CardType::Creature));
+        next(&mut state);
+        assert!(
+            !state.stack.iter().any(|item| item.source == staff)
+                && !state
+                    .engine
+                    .pending_triggers
+                    .iter()
+                    .any(|pending| pending.source == staff),
+            "{actor:?}: no creature token was created"
+        );
+
+        // A token copy created with its back face up (Reflection of
+        // Kiki-Jiki) is a creature token as it is created, also when it has
+        // left the battlefield, losing that face, before the collection.
+        let mut state = plains();
+        let staff = put(
+            &mut state,
+            actor,
+            "Staff of the Storyteller",
+            Zone::Battlefield,
+        );
+        next(&mut state);
+        let mut proposal = ProposedEvent::create_token(id("Fable of the Mirror-Breaker"), actor);
+        if let ProposedEvent::CreateToken(token) = &mut proposal {
+            token.entry_face_index = Some(1);
+        }
+        event::propose_and_commit(&mut state, proposal);
+        let reflection = newest_token(&state, actor, "Fable of the Mirror-Breaker");
+        assert!(engine::object_has_type(
+            &state,
+            reflection,
+            CardType::Creature
+        ));
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(reflection, Zone::Graveyard),
+        );
+        next(&mut state);
+        assert!(
+            state.stack.iter().any(|item| item.source == staff)
+                || state
+                    .engine
+                    .pending_triggers
+                    .iter()
+                    .any(|pending| pending.source == staff),
+            "{actor:?}: the Reflection token was a creature token"
+        );
+        settled(&mut state);
+        assert_eq!(charge(&state, staff), 1, "{actor:?}");
+    }
+}
+
+/// Innkeeper's Talent at level 3 for P0, levelled through its own abilities.
+fn innkeepers_talent_at_level_three(state: &mut GameState) -> ObjectId {
+    let class = put(state, P0, "Innkeeper's Talent", Zone::Battlefield);
+    pool(state, P0, &[ManaColor::G], 0);
+    activate(state, class, 0, &[]);
+    settled(state);
+    pool(state, P0, &[ManaColor::G], 3);
+    activate(state, class, 1, &[]);
+    settled(state);
+    class
+}
+
+#[test]
+fn staff_of_the_storyteller_story_counters_are_doubled_by_innkeepers_talent() {
+    // Innkeeper's Talent: "If you would put one or more counters on a
+    // permanent or player, put twice that many ... instead." The story
+    // counter is put by an effect.
+    let mut state = plains();
+    innkeepers_talent_at_level_three(&mut state);
+    let staff = put(
+        &mut state,
+        P0,
+        "Staff of the Storyteller",
+        Zone::Battlefield,
+    );
+    let foundry = put(&mut state, P0, "Retrofitter Foundry", Zone::Battlefield);
+    pool(&mut state, P0, &[], 2);
+    activate(&mut state, foundry, 1, &[]);
+    settled(&mut state);
+    assert_eq!(named(&state, P0, "Servo Token").len(), 1);
+    assert_eq!(charge(&state, staff), 2);
 }
 
 #[test]

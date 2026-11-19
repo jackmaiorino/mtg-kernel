@@ -53,6 +53,30 @@ pub(crate) fn granted_ability_removal_timestamp(state: &GameState, host: ObjectI
     removal_timestamp_with(state, host, false)
 }
 
+/// Whether an ability granted to `host` by an effect with `timestamp` still
+/// applies: no removal that reaches granted abilities is later (613.7). A
+/// land-type setter never removes it (305.7).
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+pub(crate) fn grant_survives_land_type_setters(
+    state: &GameState,
+    host: ObjectId,
+    timestamp: u64,
+) -> bool {
+    granted_ability_removal_timestamp(state, host).is_none_or(|removed_at| timestamp > removed_at)
+}
+
+/// Whether `host` keeps the mana ability that comes with a basic land type
+/// it has (305.6). That ability is intrinsic to the type, not a grant, so it
+/// does not compete with a removal of all abilities by timestamp: any such
+/// removal (Dress Down, Alpine Moon, an Elk) takes it away, because layer 6
+/// applies after every type change of layer 4 (613.1). A land-type setter is
+/// not such a removal (305.7). Only a true layer-6 grant (Abundant Growth's,
+/// Petrified Hamlet's) uses `grant_survives_land_type_setters` instead.
+#[cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+pub(crate) fn land_type_mana_survives(state: &GameState, host: ObjectId) -> bool {
+    granted_ability_removal_timestamp(state, host).is_none()
+}
+
 fn removal_timestamp_with(
     state: &GameState,
     host: ObjectId,
@@ -281,6 +305,50 @@ pub(crate) fn printed_cant_block(state: &GameState, source: ObjectId) -> bool {
 
 pub(crate) fn grant_survives(state: &GameState, host: ObjectId, timestamp: u64) -> bool {
     removal_timestamp(state, host).is_none_or(|removed_at| timestamp > removed_at)
+}
+
+/// Whether an ability that an effect with `timestamp` gave `host` in layer 6
+/// still applies: no later effect removed the abilities other effects
+/// granted it (613.7). A land-type setter is no such effect (305.7), so a
+/// grant to a land under a moon keeps applying.
+pub(crate) fn granted_ability_survives(state: &GameState, host: ObjectId, timestamp: u64) -> bool {
+    granted_ability_removal_timestamp(state, host).is_none_or(|removed_at| timestamp > removed_at)
+}
+
+/// The keywords the active animation gives `id`. In the eternal build each
+/// is a layer-6 grant at the timestamp of the ability that applied the
+/// animation, so a later ability removal takes it away (613.7). "Can't be
+/// blocked this turn" (Creeping Tar Pit) is a rule effect of the resolved
+/// ability, not an ability: neither a removal nor an Aura creature override
+/// that replaces the animation takes it away. Other builds keep every
+/// keyword of the active animation.
+pub(crate) fn animation_keywords(state: &GameState, id: ObjectId) -> crate::card_def::Keywords {
+    use crate::card_def::Keywords;
+    let active = animation(state, id);
+    if !cfg!(feature = "eternal-fixtures") {
+        return active.map_or(Keywords::NONE, |(animation, _)| animation.keywords);
+    }
+    let rule_effects = Keywords::CANT_BE_BLOCKED;
+    let granted = active.map_or(Keywords::NONE, |(animation, timestamp)| {
+        if granted_ability_survives(state, id, timestamp) {
+            animation.keywords
+        } else {
+            Keywords(animation.keywords.0 & rule_effects.0)
+        }
+    });
+    let own = state
+        .objects
+        .try_get(id)
+        .filter(|object| {
+            object.zone == Zone::Battlefield && object.v4.animation_timestamp.is_some()
+        })
+        .and_then(|object| CARD_DEFS.get(object.card_def as usize))
+        .filter(|definition| definition.is_executable())
+        .and_then(|definition| definition.animation)
+        .map_or(Keywords::NONE, |animation| {
+            Keywords(animation.keywords.0 & rule_effects.0)
+        });
+    granted | own
 }
 
 /// The active `CardDef::animation` of a battlefield incarnation and the

@@ -3,7 +3,7 @@
 #![cfg(feature = "eternal-fixtures")]
 #![allow(dead_code)]
 
-use crate::eternal_catalog_v1::{play_observed, Policy};
+use crate::eternal_catalog_v1::{in_parallel, play_observed, Policy};
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, CARD_DEFS,
 };
@@ -1962,6 +1962,63 @@ fn smugglers_copter_loots_when_it_blocks() {
     assert_eq!(state.players[1].graveyard.len(), 1);
 }
 
+#[test]
+fn smugglers_copter_loot_draw_offers_competing_draw_replacements() {
+    // The loot's draw sits inside the "you may" choice, below the root of
+    // the trigger's program. Its controller draws from an empty library
+    // with Jace, Wielder of Mysteries while the opponent controls
+    // Hullbreacher, so the drawing player chooses which replacement applies.
+    let mut state = game(&[]);
+    let copter = put(&mut state, P0, "Smuggler's Copter", Zone::Battlefield);
+    let elves = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    put(&mut state, P0, "Plains", Zone::Hand);
+    put(&mut state, P1, "Hullbreacher", Zone::Battlefield);
+    let jace = put(&mut state, P0, "Jace, Wielder of Mysteries", Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(jace, Zone::Battlefield),
+    );
+    crew(&mut state, copter, 0, &[elves]);
+    pass_until(&mut state, |state| state.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![copter]));
+    let mut offered = None;
+    let mut winner = None;
+    for _ in 0..100 {
+        match next(&mut state) {
+            Decision::GameOver { winner: won } => {
+                winner = Some(won);
+                break;
+            }
+            Decision::ChooseEffectOption { .. } => act(&mut state, Action::ChooseEffectOption(1)),
+            Decision::ChooseEffectTargets {
+                player,
+                legal_targets,
+                can_finish,
+                ..
+            } if legal_targets.contains(&Target::Object(jace)) => {
+                offered = Some((player, legal_targets, can_finish));
+                act(&mut state, Action::ChooseEffectTarget(Target::Object(jace)));
+            }
+            Decision::CastSpellOrPass { .. } => act(&mut state, Action::Pass),
+            Decision::DeclareBlockers { .. } => {
+                act(&mut state, Action::DeclareBlockers(Vec::new()))
+            }
+            Decision::OrderTriggers { pending, .. } => act(
+                &mut state,
+                Action::OrderTriggers((0..pending.len()).collect()),
+            ),
+            other => act(&mut state, first_answer(other)),
+        }
+    }
+    assert_eq!(
+        offered,
+        Some((P0, vec![Target::Object(jace)], true)),
+        "the drawing player chooses between Jace and Hullbreacher"
+    );
+    assert_eq!(winner, Some(Some(P0)), "Jace's replacement wins the game");
+    assert!(named(&state, P1, "Treasure Token").is_empty());
+}
+
 // ---- Esika's Chariot -----------------------------------------------------------------
 
 #[test]
@@ -2154,20 +2211,32 @@ fn c4c_decks_finish_and_replay_through_public_sessions_both_seats() {
     ]);
 
     let mut casts = std::collections::BTreeMap::<u16, usize>::new();
+    let mut games = Vec::new();
     for (pair, first_seed) in [
         ([colored.clone(), colorless.clone()], 0x4334_4300_u64),
         ([colorless, colored], 0x4334_4310),
     ] {
         for seed in first_seed..first_seed + 3 {
             for policy in [Policy::Ranked, Policy::Random(seed + 0x100)] {
-                let game = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
-                let replay = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
-                assert_eq!(game.transcript_sha256, replay.transcript_sha256);
-                for seat in &game.cast_cards {
-                    for (&card, &count) in seat {
-                        *casts.entry(card).or_default() += count;
-                    }
-                }
+                games.push((pair.clone(), seed, policy));
+            }
+        }
+    }
+    // The games run on worker threads (`in_parallel`); the totals add their
+    // casts in this loop's order.
+    let cast_cards = in_parallel(&games, |(pair, seed, policy)| {
+        let game = play_observed(pair.clone(), None, *seed, *policy, &mut |_, _| {});
+        let replay = play_observed(pair.clone(), None, *seed, *policy, &mut |_, _| {});
+        assert_eq!(
+            game.transcript_sha256, replay.transcript_sha256,
+            "seed={seed} policy={policy:?}"
+        );
+        game.cast_cards
+    });
+    for game_cast_cards in &cast_cards {
+        for seat in game_cast_cards {
+            for (&card, &count) in seat {
+                *casts.entry(card).or_default() += count;
             }
         }
     }
