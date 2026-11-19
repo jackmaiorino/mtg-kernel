@@ -12,6 +12,10 @@ pub(crate) fn active(state: &GameState, source: ObjectId) -> CombatStaticRulesDe
         return CombatStaticRulesDef::NONE;
     };
     #[cfg(feature = "eternal-fixtures")]
+    if let Some(rules) = crate::eternal_cube_c6b_v1::ursine::combat_rules(state, source) {
+        return rules;
+    }
+    #[cfg(feature = "eternal-fixtures")]
     if let Some(rules) = crate::eternal_cards_v1::combat_static_rules(state, source) {
         return rules;
     }

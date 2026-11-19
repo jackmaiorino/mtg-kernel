@@ -30027,6 +30027,8 @@ fn materialize_begin_cast_with_quote_v1(
         .alt_cost
         .is_some_and(|alt| alt.condition == card_def::AltCostCondition::DisguiseFromHand)
         && origin_zone == Zone::Hand;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c6b_v1::note_six_cast(state, spell_id, player);
     move_to_stack(state, spell_id, origin_zone, disguised);
     if let Some(permission) = graveyard_adventure {
         state

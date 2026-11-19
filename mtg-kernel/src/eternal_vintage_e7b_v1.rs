@@ -848,6 +848,9 @@ pub fn wrenn_minus_seven() -> EffectOp {
 /// that way: an instant or sorcery card they own while they have the
 /// emblem. Callers check the graveyard incarnation.
 pub(crate) fn retrace_permission(state: &GameState, object: ObjectId, holder: PlayerId) -> bool {
+    if crate::eternal_cube_c6b_v1::six_retrace_permission(state, object, holder) {
+        return true;
+    }
     read_state(state).is_some_and(|e7b| e7b.wrenn_emblems[holder.index()] > 0)
         && state.objects.try_get(object).is_some_and(|live| {
             live.owner == holder

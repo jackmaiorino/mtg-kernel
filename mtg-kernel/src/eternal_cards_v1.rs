@@ -337,6 +337,12 @@ pub struct EternalStateV1 {
     /// Vintage Cube wave C6a's graveyard departures and source power.
     #[serde(default, skip_serializing_if = "crate::eternal_cube_c6a_v1::C6aStateV1::is_empty")]
     pub c6a: crate::eternal_cube_c6a_v1::C6aStateV1,
+    /// Vintage Cube wave C6b's resolution-local discard counts.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_cube_c6b_v1::C6bStateV1::is_empty"
+    )]
+    pub c6b: crate::eternal_cube_c6b_v1::C6bStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {

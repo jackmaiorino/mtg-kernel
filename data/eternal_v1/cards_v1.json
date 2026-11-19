@@ -36096,7 +36096,7 @@
   },
   {
    "name": "Seasoned Cryomancer",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{U}{U}",
    "mana_value": 3,
    "colors": [
@@ -36119,11 +36119,11 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": ["etb_trigger", "draw_card", "discard", "stun_counters", "graveyard_ability"]
   },
   {
    "name": "Seasoned Pyromancer",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}{R}",
    "mana_value": 3,
    "colors": [
@@ -36146,7 +36146,7 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": ["etb_trigger", "draw_card", "discard", "token_creation", "graveyard_ability"],
    "java_file": "Mage.Sets/src/mage/cards/s/SeasonedPyromancer.java"
   },
   {
@@ -36181,7 +36181,7 @@
   },
   {
    "name": "Sphinx of False Conclusions",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{U}{U}",
    "mana_value": 4,
    "colors": [
@@ -36204,7 +36204,7 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": []
+   "mechanics": ["flash", "flying", "attack_trigger", "draw_card", "discard", "dies_trigger", "token_creation"]
   },
   {
    "name": "Vaultborn Tyrant",
@@ -36235,7 +36235,7 @@
   },
   {
    "name": "Metamorphosis Fanatic",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{4}{B}{B}",
    "mana_value": 6,
    "colors": [
@@ -36258,12 +36258,12 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": ["lifelink", "etb_trigger", "reanimate", "lifelink_counter", "miracle"],
    "java_file": "Mage.Sets/src/mage/cards/m/MetamorphosisFanatic.java"
   },
   {
    "name": "Night Nurse, Healer of Heroes",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{W}",
    "mana_value": 2,
    "colors": [
@@ -36274,6 +36274,7 @@
    ],
    "subtypes": [
     "Human",
+    "Doctor",
     "Hero"
    ],
    "supertypes": [
@@ -36292,7 +36293,7 @@
   },
   {
    "name": "Six",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{G}",
    "mana_value": 3,
    "colors": [
@@ -36335,7 +36336,7 @@
    ],
    "supertypes": [],
    "power": 0,
-   "toughness": 0,
+   "toughness": 1,
    "is_land": false,
    "produces_mana": [],
    "decks": [
@@ -36348,7 +36349,7 @@
   },
   {
    "name": "Ursine Monstrosity",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{G}",
    "mana_value": 3,
    "colors": [
@@ -36371,7 +36372,10 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "trample",
+    "mill"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/u/UrsineMonstrosity.java"
   },
   {
@@ -36598,6 +36602,25 @@
    "sideboard_only": false,
    "complexity": "moderate",
    "mechanics": []
+  },
+  {
+   "name": "1/1 red Elemental Token",
+   "engine_capability": "full",
+   "mana_cost": "",
+   "mana_value": 0,
+   "colors": ["R"],
+   "types": ["Creature"],
+   "subtypes": ["Elemental"],
+   "supertypes": [],
+   "power": 1,
+   "toughness": 1,
+   "is_land": false,
+   "produces_mana": [],
+   "decks": [],
+   "sideboard_only": false,
+   "complexity": "simple",
+   "mechanics": ["token_creation"],
+   "is_token": true
   }
  ]
 }

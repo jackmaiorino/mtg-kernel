@@ -150,7 +150,8 @@ pub(crate) fn departure_input(
     }
     // An unknown face-down printing does not select a receipt. A previously
     // published face-up source ability may still need its now-neutral LKI.
-    let printed = definition(o.card_def)
+    let printed = (definition(o.card_def)
+        || crate::eternal_cube_c6b_v1::has_nontoken_death_copy(o.card_def))
         && o.v4.face_down_v1.is_none()
         && crate::continuous_characteristics_v1::printed_abilities_active(state, change.object);
     let same = |s: AbilitySourceContractV4| {
@@ -213,7 +214,10 @@ pub(crate) fn validate_root(
         return Ok(());
     }
     let source = source.ok_or("source copy lost original ability contract")?;
-    if !definition(source.card_def) || source.zone != Zone::Battlefield {
+    if !(definition(source.card_def)
+        || crate::eternal_cube_c6b_v1::has_nontoken_death_copy(source.card_def))
+        || source.zone != Zone::Battlefield
+    {
         return Err("source copy changed original printed source".into());
     }
     crate::engine::validate_historical_ability_source_contract(state, source)?;

@@ -87,6 +87,16 @@ fn candidates(state: &GameState) -> Vec<Target> {
                 .into_iter()
                 .map(Target::Object),
         )
+        .filter(|&target| {
+            !cfg!(feature = "eternal-fixtures")
+                || pending(state).is_ok_and(|pending| {
+                    crate::eternal_cube_c6b_v1::ursine::attack_target_allowed(
+                        state,
+                        pending.attackers[pending.chosen.len()],
+                        target,
+                    )
+                })
+        })
         .collect()
 }
 

@@ -529,6 +529,7 @@ pub enum Subtype {
     Vedalken = 600,
     Horse = 601,
     Mount = 602,
+    Doctor = 710,
 }
 
 impl Subtype {
@@ -941,6 +942,8 @@ impl Subtype {
         Subtype::Horse,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Mount,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Doctor,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1202,6 +1205,7 @@ impl Subtype {
             600 => Subtype::Vedalken,
             601 => Subtype::Horse,
             602 => Subtype::Mount,
+            710 => Subtype::Doctor,
             _ => return None,
         })
     }
@@ -1442,6 +1446,7 @@ impl Subtype {
             Subtype::Vedalken => true,
             Subtype::Horse => true,
             Subtype::Mount => true,
+            Subtype::Doctor => true,
         }
     }
 
@@ -1564,6 +1569,7 @@ impl Subtype {
                     | Subtype::Vedalken
                     | Subtype::Horse
                     | Subtype::Mount
+                    | Subtype::Doctor
             )
         {
             return true;

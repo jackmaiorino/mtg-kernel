@@ -930,6 +930,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         VOICE_OF_VICTORY => matches!(op, E5bOpV1::SacrificeMobilizedV1 { .. }),
         SAND_SCOUT => *op == E5bOpV1::CreateSandWarriorV1,
         STATIC_PRISON => *op == E5bOpV1::StaticPrisonUpkeepV1,
+        "Metamorphosis Fanatic" => *op == E5bOpV1::MiracleV1,
         _ => false,
     }
 }
@@ -1378,6 +1379,7 @@ fn miracle_cost(state: &GameState, card: ObjectId) -> Option<(&'static [ManaColo
         crate::eternal_sideboard_s1l_v1::TRIUMPH_OF_SAINT_KATHERINE => {
             Some((&[ManaColor::W][..], 1))
         }
+        "Metamorphosis Fanatic" => Some((&[ManaColor::B][..], 1)),
         _ => None,
     }
 }

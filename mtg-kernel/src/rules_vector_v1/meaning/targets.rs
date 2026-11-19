@@ -804,6 +804,8 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         }
         S::ControlledArtifactOrCreatureV1 => ObjF::Permanent,
         S::CreatureSpellPowerOrToughnessAtMostTwoV1 => ObjF::Spell,
+        S::UpToOneCreatureCardInOwnGraveyardV1 => creature(),
+        S::PermanentCardInOwnGraveyardThisTurnV1 => ObjF::Permanent,
     }
 }
 
@@ -933,6 +935,8 @@ pub(super) fn standard_target_origin(
             // A crew member may have changed controller since it crewed.
             (Some(ZoneF::Battlefield), None)
         }
+        S::UpToOneCreatureCardInOwnGraveyardV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
+        S::PermanentCardInOwnGraveyardThisTurnV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
     }
 }
 
@@ -1442,6 +1446,13 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
             object(out, typed(CardType::Enchantment), relation, zone);
             out.target(TargetAtom::MultipleTargets);
             out.target(TargetAtom::UpTo);
+        }
+        S::UpToOneCreatureCardInOwnGraveyardV1 => {
+            object(out, creature(), relation, zone);
+            out.target(TargetAtom::UpTo);
+        }
+        S::PermanentCardInOwnGraveyardThisTurnV1 => {
+            object(out, ObjF::Permanent, relation, zone);
         }
     }
 }
