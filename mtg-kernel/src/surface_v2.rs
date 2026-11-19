@@ -460,6 +460,15 @@ pub struct HarnessSurfaceScalarsV1 {
 #[derive(Clone)]
 pub struct HarnessSurfaceV2 {
     priority_mode: PriorityModeV1,
+    /// Human play only (`set_engine_window_seats_v1`): a seat that is given
+    /// every engine priority window. `[false, false]` everywhere else, and
+    /// then nothing below reads it. Not part of the public context: no
+    /// observation, tensor or hash carries it.
+    engine_window_seats: [bool; 2],
+    /// Why `HarnessV2` would have passed the decision `next_decision` last
+    /// returned for its seat; None for every decision it would have
+    /// surfaced anyway.
+    engine_window: Option<SuppressionReason>,
     suppression_audit_mode: SuppressionAuditMode,
     suppression_counts: SuppressionCounts,
     suppressions: Vec<Suppression>,
@@ -845,6 +854,8 @@ impl HarnessSurfaceV2 {
             && std::env::var("REPLAY_DEBUG_SURFACE_WALK").is_ok();
         HarnessSurfaceV2 {
             priority_mode,
+            engine_window_seats: [false; 2],
+            engine_window: None,
             suppression_audit_mode,
             suppression_counts: SuppressionCounts::default(),
             suppressions: Vec::new(),
@@ -871,6 +882,42 @@ impl HarnessSurfaceV2 {
 
     pub const fn priority_mode_v1(&self) -> PriorityModeV1 {
         self.priority_mode
+    }
+
+    /// Human play: give each flagged seat every engine priority window,
+    /// while the other seat keeps `HarnessV2` exactly.
+    ///
+    /// The `HarnessV2` arm of `next_decision` still runs in full for a
+    /// flagged seat, so the throttle and activity bookkeeping (which the
+    /// other seat's suppression and model input read) advances by the same
+    /// rules as before. Only the forced pass differs: the decision goes to
+    /// the seat instead. A flagged seat that answers Pass at such a window
+    /// therefore leaves the game exactly where the forced pass left it.
+    ///
+    /// What does differ: a returned window is a decision of its session (it
+    /// advances the session's step and decision counters and counts toward
+    /// its caps), and it is not a suppression, so the suppression audit
+    /// (`Full`, `CountOnly`) has no record of it.
+    ///
+    /// Refused under `EngineWindowsV1`, which already bypasses the arm for
+    /// both seats.
+    pub fn set_engine_window_seats_v1(&mut self, seats: [bool; 2]) -> Result<(), String> {
+        if seats != [false; 2] && self.priority_mode != PriorityModeV1::HarnessV2 {
+            return Err("per-seat engine windows need the HarnessV2 priority mode".to_string());
+        }
+        self.engine_window_seats = seats;
+        Ok(())
+    }
+
+    pub const fn engine_window_seats_v1(&self) -> [bool; 2] {
+        self.engine_window_seats
+    }
+
+    /// The suppression `HarnessV2` would have applied to the decision last
+    /// returned by `next_decision`, when that decision was surfaced only
+    /// because its seat is flagged (`set_engine_window_seats_v1`).
+    pub const fn engine_window_v1(&self) -> Option<SuppressionReason> {
+        self.engine_window
     }
 
     /// Returns reason counts without adding work to the `Full` or `Off` hot
@@ -1045,7 +1092,8 @@ impl HarnessSurfaceV2 {
     }
 
     fn next_decision_inner(&mut self, state: &mut GameState) -> SurfaceDecision {
-        loop {
+        self.engine_window = None;
+        'decisions: loop {
             if let Some(sd) = self.next_blockers_subdecision(state) {
                 return sd;
             }
@@ -1074,7 +1122,13 @@ impl HarnessSurfaceV2 {
                     land_drops,
                     activatable_abilities,
                     ..
-                } if self.priority_mode == PriorityModeV1::HarnessV2 => {
+                } if self.priority_mode == PriorityModeV1::HarnessV2 => 'harness: {
+                    // A flagged seat (human play) is handed every decision
+                    // this arm would answer with a forced pass; see
+                    // `set_engine_window_seats_v1`. Each site leaves the arm
+                    // exactly where the forced pass did, before any later
+                    // bookkeeping of the arm.
+                    let own_windows = self.engine_window_seats[player.index()];
                     if self.stack_len_round_seen != Some(state.engine.priority_round) {
                         self.round_opening_stack_len = state.stack.len();
                         self.stack_len_round_seen = Some(state.engine.priority_round);
@@ -1206,6 +1260,10 @@ impl HarnessSurfaceV2 {
                         // never gets a chance to look "un-spent" for them
                         // (see `combat_priority_stack_len_seen`'s doc).
                         if stack_top_is_fresh_own_item || mana_ability_is_fresh_own_action {
+                            if own_windows {
+                                self.engine_window = Some(SuppressionReason::StackTopIsCastersOwn);
+                                break 'harness;
+                            }
                             engine::step(state, Action::Pass)
                                 .expect("Pass is always legal in an offered priority window");
                             self.record(
@@ -1214,7 +1272,7 @@ impl HarnessSurfaceV2 {
                                 before,
                                 state,
                             );
-                            continue;
+                            continue 'decisions;
                         }
                         // A new stack item appeared this round (either
                         // player's cast/activation) -- Java's `PlayerImpl.
@@ -1243,6 +1301,11 @@ impl HarnessSurfaceV2 {
                                 state.engine.mana_ability_activations;
                         }
                         if self.combat_priority_spent[player.index()] {
+                            if own_windows {
+                                self.engine_window =
+                                    Some(SuppressionReason::CombatPriorityActionSpent);
+                                break 'harness;
+                            }
                             engine::step(state, Action::Pass)
                                 .expect("Pass is always legal in an offered priority window");
                             self.record(
@@ -1251,10 +1314,14 @@ impl HarnessSurfaceV2 {
                                 before,
                                 state,
                             );
-                            continue;
+                            continue 'decisions;
                         }
                         self.combat_priority_spent[player.index()] = true;
                     } else if stack_top_is_fresh_own_item {
+                        if own_windows {
+                            self.engine_window = Some(SuppressionReason::StackTopIsCastersOwn);
+                            break 'harness;
+                        }
                         engine::step(state, Action::Pass)
                             .expect("Pass is always legal in an offered priority window");
                         self.record(
@@ -1263,7 +1330,7 @@ impl HarnessSurfaceV2 {
                             before,
                             state,
                         );
-                        continue;
+                        continue 'decisions;
                     }
                     let no_real_option = castable_spells.is_empty()
                         && mana_abilities.is_empty()
@@ -1271,19 +1338,19 @@ impl HarnessSurfaceV2 {
                         && activatable_abilities.is_empty();
                     let step_gated = harness_never_offers_priority(state.step);
                     if step_gated || no_real_option {
+                        let reason = if step_gated {
+                            SuppressionReason::StepGated
+                        } else {
+                            SuppressionReason::NoRealOption
+                        };
+                        if own_windows {
+                            self.engine_window = Some(reason);
+                            break 'harness;
+                        }
                         engine::step(state, Action::Pass)
                             .expect("Pass is always legal in an offered priority window");
-                        self.record(
-                            if step_gated {
-                                SuppressionReason::StepGated
-                            } else {
-                                SuppressionReason::NoRealOption
-                            },
-                            || "Pass".to_string(),
-                            before,
-                            state,
-                        );
-                        continue;
+                        self.record(reason, || "Pass".to_string(), before, state);
+                        continue 'decisions;
                     }
                 }
                 Decision::DeclareAttackers { eligible, .. } => {
