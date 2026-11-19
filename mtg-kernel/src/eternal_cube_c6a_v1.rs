@@ -19,6 +19,14 @@
 //! conditional on controlling a Wizard at each play attempt. No ability
 //! implementation is registered for either Partial card; the catalog's
 //! ordinary-permanent fallback is not a claim of printed-text support.
+//!
+//! Black Widow, Super Spy remains NoEffect. PlayPermission has no mana
+//! spending rider. The any-type payment grant in engine::tinybones_v72
+//! requires that Partial card's definition, stash counters and live source;
+//! it is not a reusable spell-scoped grant. Agatha's Soul Cauldron only
+//! changes activation payments and excludes colorless symbols. Also, the
+//! staged registry omits Spy, which has no native Subtype entry. Do not
+//! register a reduced version of Black Widow's printed abilities.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::card_def::{card_id_by_name, TargetSpec, CARD_DEFS};
@@ -34,10 +42,11 @@ use crate::state::{AbilitySourceContractV4, GameState, ObjectLinkV4, Zone};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
 use serde::{Deserialize, Serialize};
 
-/// Gau's intervening condition and resolution-time power.
+/// Wave-specific resolution leaves.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum C6aOpV1 {
     GauDamageV1,
+    FallenShinobiHitV1,
 }
 
 impl C6aOpV1 {
@@ -49,6 +58,7 @@ impl C6aOpV1 {
 const IVORA: &str = "Ivora, Insatiable Heir";
 const GAU: &str = "Gau, Feral Youth";
 const LAELIA: &str = "Laelia, the Blade Reforged";
+const FALLEN_SHINOBI: &str = "Fallen Shinobi";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum C6aTriggerV1 {
@@ -152,6 +162,59 @@ fn gau_damage() -> EffectOp {
     EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::C6aV1(
         C6aOpV1::GauDamageV1,
     )))
+}
+
+fn fallen_shinobi_hit() -> EffectOp {
+    EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::C6aV1(
+        C6aOpV1::FallenShinobiHitV1,
+    )))
+}
+
+/// Ragavan's damaged opponent convention in this two-player engine, with
+/// Golos's batch exile and ordinary-timing free-play permission. As with
+/// Golos, the permission chooses Play for a playable land, otherwise Cast.
+fn exile_opponents_top_two(state: &mut GameState, ctx: &ExecCtx) {
+    let top = state.players[ctx.controller.opponent().index()]
+        .library
+        .iter()
+        .take(2)
+        .copied()
+        .collect::<Vec<_>>();
+    if top.is_empty() {
+        return;
+    }
+    crate::event::propose_and_commit_batch(
+        state,
+        top.iter()
+            .map(|&object| ProposedEvent::zone_change(object, Zone::Exile))
+            .collect(),
+    );
+    for object in top {
+        let live = state.objects.get(object);
+        if live.zone != Zone::Exile {
+            continue;
+        }
+        let def = &CARD_DEFS[usize::from(live.card_def)];
+        let play_or_cast = if def.is_playable_land() {
+            crate::engine::PlayOrCast::Play
+        } else if def.is_castable() {
+            crate::engine::PlayOrCast::Cast
+        } else {
+            continue;
+        };
+        let zone_change_generation = live.zone_change_count;
+        state
+            .engine
+            .exile_play_permissions
+            .push(crate::engine::PlayPermission {
+                without_mana_cost: crate::engine::FreeCastV1(true),
+                object,
+                holder: ctx.controller,
+                zone_change_generation,
+                play_or_cast,
+                expiry: crate::engine::PlayPermissionExpiry::EndOfTurn,
+            });
+    }
 }
 
 /// Experimental Synthesizer's identical impulse permission.
@@ -267,6 +330,11 @@ const LAELIA_TRIGGERS: [TriggeredAbilityDef; 2] = [
     ),
 ];
 
+const FALLEN_SHINOBI_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
+    TriggerCondition::DealsCombatDamageToPlayer,
+    fallen_shinobi_hit,
+)];
+
 /// Capture observers before the discard moves any card, as Currency Converter
 /// does. This counts cards regardless of their replacement destination and
 /// retains each observer's original controller and battlefield incarnation.
@@ -306,6 +374,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         IVORA => &IVORA_TRIGGERS,
         GAU => &GAU_TRIGGERS,
         LAELIA => &LAELIA_TRIGGERS,
+        FALLEN_SHINOBI => &FALLEN_SHINOBI_TRIGGERS,
         _ => crate::eternal_cube_c6b_v1::triggers_for(name),
     }
 }
@@ -313,6 +382,7 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
     let known = match name {
         IVORA => *effect == blood() || *effect == ivora_counter(),
+        FALLEN_SHINOBI => *effect == fallen_shinobi_hit(),
         GAU | LAELIA => {
             (name == GAU && *effect == gau_damage())
                 || (name == LAELIA && *effect == laelia_impulse())
@@ -333,6 +403,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
 
 pub(crate) fn execute(op: &C6aOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        C6aOpV1::FallenShinobiHitV1 => exile_opponents_top_two(state, ctx),
         C6aOpV1::GauDamageV1 => {
             if !card_left_graveyard(state, ctx.controller) {
                 return;

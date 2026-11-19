@@ -35996,7 +35996,7 @@
   },
   {
    "name": "Fallen Shinobi",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{3}{U}{B}",
    "mana_value": 5,
    "colors": [
@@ -36020,7 +36020,11 @@
    ],
    "sideboard_only": false,
    "complexity": "moderate",
-   "mechanics": [],
+   "mechanics": [
+    "ninjutsu",
+    "combat_damage_trigger",
+    "exile_play_free"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/f/FallenShinobi.java"
   },
   {

@@ -5,22 +5,37 @@
 //! `src/eternal_cube_c6a_v1.rs`. Every row is keyed by a name that occurs
 //! only in the eternal registry.
 
-use super::{ActivatedAbilityRecipe, Special};
+use super::{AbilityCostRecipe, AbilityEffectRecipe, ActivatedAbilityRecipe, Special};
 
-/// No C6a card has an activated ability yet.
+/// Fallen Shinobi uses Ninja of the Deep Hours' hand-zone ninjutsu recipe.
 pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAbilityRecipe] {
-    super::build_eternal_c6b_v1::activated_ability_recipes_for(name)
+    match name {
+        "Fallen Shinobi" => &[ActivatedAbilityRecipe {
+            cost: &[
+                AbilityCostRecipe::ManaCost("{2}{U}{B}"),
+                AbilityCostRecipe::ReturnControlledUnblockedAttacker,
+            ],
+            effect: AbilityEffectRecipe::PutSourceOntoBattlefieldTappedAndAttacking,
+            activation_zone: "Hand",
+            sorcery_speed_only: false,
+            target_spec: "None",
+            activation_target_filter: "TargetSpecOnly",
+            max_activations_per_turn: None,
+        }],
+        _ => super::build_eternal_c6b_v1::activated_ability_recipes_for(name),
+    }
 }
 
 /// Creature spells resolve as permanents; their abilities are trigger programs.
 pub(super) fn special_for(name: &str) -> Option<Special> {
     match name {
-        "Ivora, Insatiable Heir" | "Gau, Feral Youth" | "Laelia, the Blade Reforged" => {
-            Some(Special::StandardProgram {
-                target_spec: "TargetSpec::None",
-                program: "crate::eternal_cube_c6a_v1::permanent",
-            })
-        }
+        "Ivora, Insatiable Heir"
+        | "Gau, Feral Youth"
+        | "Laelia, the Blade Reforged"
+        | "Fallen Shinobi" => Some(Special::StandardProgram {
+            target_spec: "TargetSpec::None",
+            program: "crate::eternal_cube_c6a_v1::permanent",
+        }),
         _ => super::build_eternal_c6b_v1::special_for(name),
     }
 }
@@ -62,6 +77,8 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Laelia, the Blade Reforged" => "haste;attacks:impulse_top_one_end_of_turn;one_or_more_cards_exiled_from_your_library_or_graveyard:source_plus_one_counter:1",
         "Headliner Scarlett" => "partial:private_face_down_play_permission_projection_missing;printed:haste;etb:target_players_creatures_cannot_block_this_turn;your_upkeep:exile_top_one_face_down:controller_may_look_and_play_this_turn",
         "Gandalf, Goblins' Bane" => "partial:private_face_down_play_permission_projection_missing:unbounded_wizard_conditional_permission_missing;printed:cast_noncreature:source_plus1_plus1_until_end_of_turn:damage_each_opponent:1;adventure:flameshape:1r:sorcery:look_top_two:exile_face_down:may_play_while_exiled_if_you_control_wizard",
+        "Black Widow, Super Spy" => "no_effect:spell_scoped_any_type_mana_grant_missing:spy_subtype_missing;printed:menace;combat_damage_player:that_player_exiles_until_nonland:may_source_plus_one_counter:otherwise_may_cast_nonland_this_turn_spending_mana_of_any_type",
+        "Fallen Shinobi" => "ninjutsu:2ub;combat_damage_player:that_player_exiles_top_two:controller_may_play_this_turn_without_mana_cost",
         _ => super::build_eternal_c6b_v1::trigger_recipe_for(name),
     }
 }

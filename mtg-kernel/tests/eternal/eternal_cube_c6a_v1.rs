@@ -16,10 +16,11 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const C6A_CARDS: [&str; 3] = [
+const C6A_CARDS: [&str; 4] = [
     "Ivora, Insatiable Heir",
     "Gau, Feral Youth",
     "Laelia, the Blade Reforged",
+    "Fallen Shinobi",
 ];
 
 // These are admission checks for unfinished cards, not printed-text rules
@@ -55,6 +56,17 @@ fn headliner_scarlett_stays_partial_until_impulse_permissions_preserve_hidden_in
 #[test]
 fn gandalf_stays_partial_until_hidden_wizard_conditional_permissions_are_supported() {
     assert_private_impulse_card_is_partial("Gandalf, Goblins' Bane");
+}
+
+#[test]
+fn black_widow_stays_no_effect_until_spell_scoped_any_type_spending_is_supported() {
+    let name = "Black Widow, Super Spy";
+    assert_eq!(def(name).capability, CardCapability::NoEffect);
+    assert!(!C6A_CARDS.contains(&name));
+    assert_eq!(
+        deck(&[(name, 1), ("Swamp", 39)]).resolve().unwrap_err(),
+        format!("card {name:?} is a token or lacks full engine support")
+    );
 }
 
 fn def(name: &str) -> &'static CardDef {
@@ -528,6 +540,375 @@ fn c6a_cards_are_full_with_printed_characteristics() {
         assert_eq!(card.subtypes, &subtypes);
         assert_eq!((card.power, card.toughness), (Some(2), Some(2)));
         assert_eq!(card.keywords.has(Keywords::HASTE), haste);
+    }
+    let shinobi = def("Fallen Shinobi");
+    assert_eq!(shinobi.capability, CardCapability::Full);
+    assert!(shinobi.is_executable());
+    assert_eq!(shinobi.cost.generic, 3);
+    assert_eq!(
+        shinobi.cost.pips,
+        &[Pip::Colored(ManaColor::U), Pip::Colored(ManaColor::B)]
+    );
+    assert_eq!(shinobi.cost.x_count, 0);
+    assert_eq!(shinobi.types, &[CardType::Creature]);
+    assert!(shinobi.supertypes.is_empty());
+    assert_eq!(shinobi.subtypes, &[Subtype::Zombie, Subtype::Ninja]);
+    assert_eq!((shinobi.power, shinobi.toughness), (Some(5), Some(4)));
+    assert_eq!(shinobi.keywords, Keywords::NONE);
+    assert_eq!(shinobi.activated_abilities.len(), 1);
+    let ninjutsu = &shinobi.activated_abilities[0];
+    assert_eq!(ninjutsu.activation_zone, Zone::Hand);
+    assert!(!ninjutsu.sorcery_speed_only);
+    assert_eq!(ninjutsu.max_activations_per_turn, None);
+}
+
+// ---- Fallen Shinobi -----------------------------------------------------------
+
+fn cast_shinobi(state: &mut GameState) -> ObjectId {
+    let shinobi = put(state, P0, "Fallen Shinobi", Zone::Hand);
+    assert!(!castable(state, shinobi));
+    pool(state, P0, &[ManaColor::U, ManaColor::B], 3);
+    cast(state, shinobi, &[]);
+    settled(state);
+    assert_eq!(zone(state, shinobi), Zone::Battlefield);
+    assert_eq!(power_toughness(state, shinobi), (5, 4));
+    assert!(state.objects.get(shinobi).summoning_sick);
+    assert!(!keyword(state, shinobi, Keywords::HASTE));
+    shinobi
+}
+
+fn ready_shinobi(state: &mut GameState) -> ObjectId {
+    let shinobi = cast_shinobi(state);
+    next_turn_main(state);
+    next_turn_main(state);
+    assert!(!state.objects.get(shinobi).summoning_sick);
+    shinobi
+}
+
+#[test]
+fn fallen_shinobi_exiles_two_opposing_cards_and_casts_them_free_under_its_controller() {
+    let mut state = plains();
+    let shinobi = ready_shinobi(&mut state);
+    let own_top = state.players[0].library[0];
+    let bear = put(&mut state, P1, "Grizzly Bears", Zone::Library);
+    let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Library);
+    let third = state.players[1].library[2];
+    attack_with(&mut state, vec![shinobi], |_, _| None);
+    assert_eq!(life(&state, P1), 15);
+    assert_eq!(zone(&state, bolt), Zone::Exile);
+    assert_eq!(zone(&state, bear), Zone::Exile);
+    assert_eq!(zone(&state, third), Zone::Library);
+    assert_eq!(zone(&state, own_top), Zone::Library);
+    assert_eq!(state.engine.exile_play_permissions.len(), 2);
+    assert!(state
+        .engine
+        .exile_play_permissions
+        .iter()
+        .all(|permission| { permission.holder == P0 && permission.without_mana_cost.0 }));
+    state.priority_player = P1;
+    pool(&mut state, P1, &[ManaColor::R, ManaColor::G], 1);
+    assert!(!castable(&mut state, bolt), "owner has no permission");
+    state.priority_player = P0;
+    assert!(state.players[0].mana_pool.iter().all(|amount| *amount == 0));
+    cast(&mut state, bolt, &[Target::Player(P1)]);
+    settled(&mut state);
+    assert_eq!(life(&state, P1), 12);
+    assert!(state.players[1].graveyard.contains(&bolt));
+    cast(&mut state, bear, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, bear), Zone::Battlefield);
+    assert_eq!(state.objects.get(bear).controller, P0);
+    assert_eq!(state.objects.get(bear).owner, P1);
+    assert!(state.players[0].mana_pool.iter().all(|amount| *amount == 0));
+}
+
+#[test]
+fn fallen_shinobi_ninjutsu_pays_four_mana_returns_an_unblocked_attacker_and_hits() {
+    let mut state = plains();
+    let attacker = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let shinobi = put(&mut state, P0, "Fallen Shinobi", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::B], 2);
+    assert!(!activatable(&mut state, shinobi, 0), "not in combat");
+    pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![attacker]));
+    on_the_stack(&mut state);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::B], 2);
+    assert!(
+        !activatable(&mut state, shinobi, 0),
+        "blockers not declared"
+    );
+    pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
+    act(&mut state, Action::DeclareBlockers(vec![]));
+    // The main-phase pool emptied when combat began.
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::B], 2);
+    activate(&mut state, shinobi, 0, &[]);
+    on_the_stack(&mut state);
+    assert_eq!(zone(&state, attacker), Zone::Hand);
+    assert_eq!(zone(&state, shinobi), Zone::Hand);
+    assert!(state.players[0].mana_pool.iter().all(|amount| *amount == 0));
+    assert!(!state.stack.is_empty());
+    settled(&mut state);
+    assert_eq!(zone(&state, shinobi), Zone::Battlefield);
+    assert!(state.objects.get(shinobi).tapped);
+    assert!(state.engine.combat.attackers.contains(&shinobi));
+    pass_until(&mut state, |s| s.step == Step::Main2 && s.stack.is_empty());
+    assert_eq!(life(&state, P1), 15);
+    assert_eq!(state.engine.exile_play_permissions.len(), 2);
+}
+
+#[test]
+fn fallen_shinobi_ninjutsu_requires_mana_and_an_unblocked_attacker() {
+    for blocked in [false, true] {
+        let mut state = plains();
+        let attacker = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+        let blocker = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+        let shinobi = put(&mut state, P0, "Fallen Shinobi", Zone::Hand);
+        pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+        act(&mut state, Action::DeclareAttackers(vec![attacker]));
+        pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
+        act(
+            &mut state,
+            Action::DeclareBlockers(if blocked {
+                vec![(blocker, attacker)]
+            } else {
+                vec![]
+            }),
+        );
+        assert!(!activatable(&mut state, shinobi, 0), "no mana");
+        pool(&mut state, P0, &[ManaColor::U, ManaColor::B], 1);
+        assert!(!activatable(&mut state, shinobi, 0), "one mana short");
+        pool(&mut state, P0, &[], 1);
+        assert_eq!(activatable(&mut state, shinobi, 0), !blocked);
+        assert_eq!(
+            zone(&state, attacker),
+            Zone::Battlefield,
+            "declining pays nothing"
+        );
+        assert_eq!(zone(&state, shinobi), Zone::Hand);
+        assert!(state.engine.exile_play_permissions.is_empty());
+    }
+}
+
+#[test]
+fn fallen_shinobi_uses_the_correct_opponent_and_exiles_in_one_batch_in_both_seats() {
+    for player in [P0, P1] {
+        let mut state = plains();
+        state.active_player = player;
+        state.priority_player = player;
+        let shinobi = put(&mut state, player, "Fallen Shinobi", Zone::Hand);
+        pool(&mut state, player, &[ManaColor::U, ManaColor::B], 3);
+        cast(&mut state, shinobi, &[]);
+        settled(&mut state);
+        next_turn_main(&mut state);
+        next_turn_main(&mut state);
+        let opponent = player.opponent();
+        let laelia = put(
+            &mut state,
+            opponent,
+            "Laelia, the Blade Reforged",
+            Zone::Battlefield,
+        );
+        let bolt = put(&mut state, opponent, "Lightning Bolt", Zone::Library);
+        let land = put(&mut state, opponent, "Swamp", Zone::Library);
+        let own_top = state.players[player.index()].library[0];
+        attack_with(&mut state, vec![shinobi], |_, _| None);
+        assert_eq!(zone(&state, own_top), Zone::Library);
+        assert_eq!(zone(&state, land), Zone::Exile);
+        assert_eq!(zone(&state, bolt), Zone::Exile);
+        assert_eq!(state.objects.get(laelia).counters.plus1_plus1, 1);
+        assert!(state
+            .engine
+            .exile_play_permissions
+            .iter()
+            .all(|permission| permission.holder == player));
+        cast(&mut state, bolt, &[Target::Player(opponent)]);
+        settled(&mut state);
+        assert_eq!(life(&state, opponent), 12);
+    }
+}
+
+#[test]
+fn fallen_shinobi_ninjutsu_does_not_recover_a_source_that_left_hand() {
+    let mut state = plains();
+    let attacker = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+    let shinobi = put(&mut state, P0, "Fallen Shinobi", Zone::Hand);
+    pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![attacker]));
+    pass_until(&mut state, |s| s.step == Step::DeclareBlockers);
+    act(&mut state, Action::DeclareBlockers(vec![]));
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::B], 2);
+    activate(&mut state, shinobi, 0, &[]);
+    on_the_stack(&mut state);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(shinobi, Zone::Exile));
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(shinobi, Zone::Hand));
+    settled(&mut state);
+    assert_eq!(zone(&state, shinobi), Zone::Hand);
+    assert_eq!(zone(&state, attacker), Zone::Hand);
+    assert!(!state.engine.combat.attackers.contains(&shinobi));
+}
+
+#[test]
+fn fallen_shinobi_ignores_noncombat_damage_other_attackers_and_blocked_damage() {
+    for blocked in [false, true] {
+        let mut state = plains();
+        let shinobi = ready_shinobi(&mut state);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::damage(shinobi, Target::Player(P1), 1),
+        );
+        settled(&mut state);
+        assert!(state.engine.exile_play_permissions.is_empty());
+        let bear = put(&mut state, P0, "Grizzly Bears", Zone::Battlefield);
+        let blocker = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+        let top = state.players[1].library[0];
+        attack_with(
+            &mut state,
+            vec![if blocked { shinobi } else { bear }],
+            |_, decision| {
+                if blocked && matches!(decision, Decision::DeclareBlockers { .. }) {
+                    Some(Action::DeclareBlockers(vec![(blocker, shinobi)]))
+                } else {
+                    None
+                }
+            },
+        );
+        assert_eq!(zone(&state, top), Zone::Library);
+        assert!(state.engine.exile_play_permissions.is_empty());
+        assert_eq!(life(&state, P1), if blocked { 19 } else { 17 });
+    }
+}
+
+#[test]
+fn fallen_shinobi_permissions_survive_source_departure_and_obey_timing_and_land_limit() {
+    for used_land in [false, true] {
+        let mut state = plains();
+        let shinobi = ready_shinobi(&mut state);
+        if used_land {
+            let land = put(&mut state, P0, "Island", Zone::Hand);
+            play_land(&mut state, land);
+        }
+        let bear = put(&mut state, P1, "Grizzly Bears", Zone::Library);
+        let land = put(&mut state, P1, "Swamp", Zone::Library);
+        pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+        act(&mut state, Action::DeclareAttackers(vec![shinobi]));
+        pass_until(&mut state, |s| {
+            s.step == Step::CombatDamage && !s.stack.is_empty()
+        });
+        // Removal in response cannot erase the already-triggered ability.
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(shinobi, Zone::Graveyard),
+        );
+        settled(&mut state);
+        assert_eq!(zone(&state, land), Zone::Exile);
+        assert_eq!(zone(&state, bear), Zone::Exile);
+        assert!(!castable(&mut state, bear), "creature timing still applies");
+        let Decision::CastSpellOrPass { land_drops, .. } = next(&mut state) else {
+            panic!("combat priority");
+        };
+        assert!(!land_drops.contains(&land));
+        pass_until(&mut state, |s| s.step == Step::Main2);
+        assert!(castable(&mut state, bear));
+        let Decision::CastSpellOrPass { land_drops, .. } = next(&mut state) else {
+            panic!("main-phase priority");
+        };
+        assert_eq!(land_drops.contains(&land), !used_land);
+        if !used_land {
+            play_land(&mut state, land);
+            assert_eq!(state.objects.get(land).controller, P0);
+            assert_eq!(state.objects.get(land).owner, P1);
+            let other = put(&mut state, P0, "Island", Zone::Hand);
+            let Decision::CastSpellOrPass { land_drops, .. } = next(&mut state) else {
+                panic!("main-phase priority");
+            };
+            assert!(
+                !land_drops.contains(&other),
+                "foreign land used the land drop"
+            );
+        }
+    }
+}
+
+#[test]
+fn fallen_shinobi_declined_permissions_expire_at_cleanup_and_never_follow_reexile() {
+    let mut state = plains();
+    let shinobi = ready_shinobi(&mut state);
+    let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Library);
+    let other = put(&mut state, P1, "Lightning Bolt", Zone::Library);
+    attack_with(&mut state, vec![shinobi], |_, _| None);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(other, Zone::Graveyard),
+    );
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(other, Zone::Exile));
+    settled(&mut state);
+    assert!(
+        !castable(&mut state, other),
+        "permission is incarnation scoped"
+    );
+    end_step_settled(&mut state);
+    assert!(castable(&mut state, bolt), "end step is still this turn");
+    let round = state.turn;
+    next_turn_main(&mut state);
+    assert_eq!(state.turn, round, "both players share the round key");
+    state.priority_player = P0;
+    assert!(
+        !castable(&mut state, bolt),
+        "cleanup expired the permission"
+    );
+    assert_eq!(zone(&state, bolt), Zone::Exile);
+    assert_eq!(zone(&state, other), Zone::Exile);
+    next_turn_main(&mut state);
+    assert!(!castable(&mut state, bolt));
+}
+
+#[test]
+fn fallen_shinobi_free_cast_forces_x_zero_and_still_requires_additional_costs() {
+    let mut state = plains();
+    let shinobi = ready_shinobi(&mut state);
+    let ballista = put(&mut state, P1, "Walking Ballista", Zone::Library);
+    let raze = put(&mut state, P1, "Raze", Zone::Library);
+    let target = put(&mut state, P1, "Island", Zone::Battlefield);
+    attack_with(&mut state, vec![shinobi], |_, _| None);
+    pool(&mut state, P0, &[], 10);
+    cast(&mut state, ballista, &[]);
+    // No X choice is allowed, even when mana is available for a positive X.
+    settled(&mut state);
+    assert_eq!(zone(&state, ballista), Zone::Graveyard);
+    assert_eq!(state.players[0].mana_pool[ManaColor::C.pool_index()], 10);
+    assert!(!castable(&mut state, raze), "no land to sacrifice");
+    let sacrifice = put(&mut state, P0, "Swamp", Zone::Hand);
+    play_land(&mut state, sacrifice);
+    cast(&mut state, raze, &[Target::Object(target)]);
+    settle_choosing(&mut state, sacrifice);
+    assert_eq!(zone(&state, sacrifice), Zone::Graveyard);
+    assert_eq!(zone(&state, target), Zone::Graveyard);
+    assert!(state.players[1].graveyard.contains(&raze));
+}
+
+#[test]
+fn fallen_shinobi_empty_and_one_card_libraries_exile_only_available_cards() {
+    for count in 0..=1 {
+        let mut state = plains();
+        let shinobi = ready_shinobi(&mut state);
+        let library = state.players[1].library.clone();
+        event::propose_and_commit_batch(
+            &mut state,
+            library
+                .iter()
+                .map(|&card| ProposedEvent::zone_change(card, Zone::Graveyard))
+                .collect(),
+        );
+        settled(&mut state);
+        let last = (count == 1).then(|| put(&mut state, P1, "Lightning Bolt", Zone::Library));
+        attack_with(&mut state, vec![shinobi], |_, _| None);
+        assert!(state.players[1].library.is_empty());
+        assert_eq!(state.engine.exile_play_permissions.len(), count);
+        assert_eq!(life(&state, P1), 15);
+        if let Some(card) = last {
+            assert_eq!(zone(&state, card), Zone::Exile);
+            assert!(castable(&mut state, card));
+        }
     }
 }
 
