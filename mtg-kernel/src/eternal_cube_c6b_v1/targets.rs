@@ -1,4 +1,4 @@
-//! Fanatic's optional own-graveyard creature target, following P3h's
+//! Own-graveyard targets for Fanatic and Night Nurse, following P3h's
 //! Auramancer filter and excluding tokens and spell copies.
 
 use crate::card_def::{CardType, CARD_DEFS};
@@ -7,7 +7,11 @@ use crate::standard_cards_v1::StandardTargetV1;
 use crate::state::{GameState, Target, Zone};
 
 pub(crate) fn owns(target: StandardTargetV1) -> bool {
-    target == StandardTargetV1::UpToOneCreatureCardInOwnGraveyardV1
+    matches!(
+        target,
+        StandardTargetV1::UpToOneCreatureCardInOwnGraveyardV1
+            | StandardTargetV1::PermanentCardInOwnGraveyardThisTurnV1
+    )
 }
 
 pub(crate) fn target_matches(
@@ -24,7 +28,12 @@ pub(crate) fn target_matches(
             && live.owner == controller
             && !live.v4.is_token
             && live.spell_copy_origin.is_none()
-            && CARD_DEFS[usize::from(live.card_def)].has_type(CardType::Creature)
+            && if target == StandardTargetV1::PermanentCardInOwnGraveyardThisTurnV1 {
+                super::permanent_card(live.card_def)
+                    && super::entered_graveyard_this_turn(state, object)
+            } else {
+                CARD_DEFS[usize::from(live.card_def)].has_type(CardType::Creature)
+            }
     }))
 }
 

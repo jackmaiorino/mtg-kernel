@@ -805,6 +805,7 @@ fn standard_target_obj(filter: crate::standard_cards_v1::StandardTargetV1) -> Ob
         S::ControlledArtifactOrCreatureV1 => ObjF::Permanent,
         S::CreatureSpellPowerOrToughnessAtMostTwoV1 => ObjF::Spell,
         S::UpToOneCreatureCardInOwnGraveyardV1 => creature(),
+        S::PermanentCardInOwnGraveyardThisTurnV1 => ObjF::Permanent,
     }
 }
 
@@ -935,6 +936,7 @@ pub(super) fn standard_target_origin(
             (Some(ZoneF::Battlefield), None)
         }
         S::UpToOneCreatureCardInOwnGraveyardV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
+        S::PermanentCardInOwnGraveyardThisTurnV1 => (Some(ZoneF::Graveyard), Some(RelF::You)),
     }
 }
 
@@ -1448,6 +1450,9 @@ fn standard_target_spec(filter: crate::standard_cards_v1::StandardTargetV1, out:
         S::UpToOneCreatureCardInOwnGraveyardV1 => {
             object(out, creature(), relation, zone);
             out.target(TargetAtom::UpTo);
+        }
+        S::PermanentCardInOwnGraveyardThisTurnV1 => {
+            object(out, ObjF::Permanent, relation, zone);
         }
     }
 }

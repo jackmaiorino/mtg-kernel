@@ -6208,6 +6208,8 @@ fn materialize_event_v1(
                     z.battlefield_revival_v1,
                 ),
             );
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_cube_c6b_v1::record_graveyard_entry(state, z.object, from);
             #[cfg(feature = "limited-fdn-fixtures")]
             if !mode.is_scene()
                 && creature_died

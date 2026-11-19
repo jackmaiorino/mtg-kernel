@@ -36250,7 +36250,7 @@
   },
   {
    "name": "Night Nurse, Healer of Heroes",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{W}",
    "mana_value": 2,
    "colors": [
@@ -36261,6 +36261,7 @@
    ],
    "subtypes": [
     "Human",
+    "Doctor",
     "Hero"
    ],
    "supertypes": [
@@ -36279,7 +36280,7 @@
   },
   {
    "name": "Six",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{2}{G}",
    "mana_value": 3,
    "colors": [

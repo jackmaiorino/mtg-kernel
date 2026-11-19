@@ -421,6 +421,12 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::C5dV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if matches!(
+            &self.kind,
+            E3ChoiceKindV1::C6bV1(crate::eternal_cube_c6b_v1::C6bChoiceV1::SixReturnLandV1)
+        ) {
+            return false;
+        }
         if let E3ChoiceKindV1::C6bV1(_) = &self.kind {
             return true;
         }

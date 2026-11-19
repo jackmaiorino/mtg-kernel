@@ -72,6 +72,8 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "Sphinx of False Conclusions" => &["Keywords::FLASH", "Keywords::FLYING"],
         "Metamorphosis Fanatic" => &["Keywords::LIFELINK"],
+        "Night Nurse, Healer of Heroes" => &["Keywords::FLASH", "Keywords::LIFELINK"],
+        "Six" => &["Keywords::REACH"],
         _ => super::build_eternal_c6c_v1::keywords_for(name),
     }
 }
@@ -83,6 +85,8 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Seasoned Pyromancer" => "etb:discard_two_then_draw_two:create_one_1_1_red_elemental_per_nonland_discarded_this_way;graveyard_ability:3rr:exile_self:create_two_1_1_red_elementals",
         "Sphinx of False Conclusions" => "flash;flying;attacks:draw_one_then_discard_one;dies:if_nontoken:copy_source_original_battlefield_departure_copiable_values:captured_trigger_controller:replacement_batch",
         "Metamorphosis Fanatic" => "lifelink;etb:return_up_to_one_target_creature_card_from_own_graveyard_to_battlefield:lifelink_counter_on_returned_incarnation;miracle:1b:first_draw_reveal_choice:trigger_pay_then_cast",
+        "Night Nurse, Healer of Heroes" => "flash;lifelink;etb:return_target_permanent_card_in_own_graveyard_put_there_this_turn:exact_incarnation:to_hand",
+        "Six" => "reach;attacks:mill_three:may_put_one_land_from_among_them_into_hand;own_turn:nonland_permanent_cards_in_own_graveyard:retrace:additional_discard_land_cost",
         _ => super::build_eternal_c6c_v1::trigger_recipe_for(name),
     }
 }

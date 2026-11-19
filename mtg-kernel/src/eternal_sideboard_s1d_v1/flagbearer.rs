@@ -342,6 +342,7 @@ fn standard_shape(filter: StandardTargetV1) -> TargetShape {
         | S::ControlledArtifactOrCreatureV1
         | S::CreatureSpellPowerOrToughnessAtMostTwoV1 => Single,
         S::UpToOneCreatureCardInOwnGraveyardV1 => NoPermanentSlot,
+        S::PermanentCardInOwnGraveyardThisTurnV1 => NoPermanentSlot,
     }
 }
 

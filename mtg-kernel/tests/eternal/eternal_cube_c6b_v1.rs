@@ -16,11 +16,13 @@ use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone
 const P0: PlayerId = PlayerId::P0;
 const P1: PlayerId = PlayerId::P1;
 
-const C6B_CARDS: [&str; 4] = [
+const C6B_CARDS: [&str; 6] = [
     "Seasoned Cryomancer",
     "Seasoned Pyromancer",
     "Sphinx of False Conclusions",
     "Metamorphosis Fanatic",
+    "Night Nurse, Healer of Heroes",
+    "Six",
 ];
 
 fn def(name: &str) -> &'static CardDef {
@@ -475,6 +477,660 @@ fn c6b_cards_are_full() {
         let card = def(name);
         assert_eq!(card.capability, CardCapability::Full, "{name}");
         assert!(card.is_executable(), "{name}");
+    }
+}
+
+const NURSE: &str = "Night Nurse, Healer of Heroes";
+const SIX: &str = "Six";
+
+#[test]
+fn nurse_and_six_printed_characteristics() {
+    for (name, generic, color, subtypes, pt, keywords) in [
+        (
+            NURSE,
+            1,
+            ManaColor::W,
+            vec![Subtype::Human, Subtype::Doctor, Subtype::Hero],
+            (2, 1),
+            Keywords::FLASH | Keywords::LIFELINK,
+        ),
+        (
+            SIX,
+            2,
+            ManaColor::G,
+            vec![Subtype::Treefolk],
+            (2, 4),
+            Keywords::REACH,
+        ),
+    ] {
+        let card = def(name);
+        assert_eq!(card.cost.generic, generic);
+        assert_eq!(card.cost.pips, &[Pip::Colored(color)]);
+        assert_eq!(card.mana_value, u16::from(generic) + 1);
+        assert_eq!(card.types, &[CardType::Creature]);
+        assert_eq!(card.subtypes, subtypes.as_slice());
+        assert_eq!(
+            card.supertypes,
+            &[mtg_kernel::card_def::Supertype::Legendary]
+        );
+        assert_eq!(card.colors, &[color]);
+        assert_eq!((card.power, card.toughness), (Some(pt.0), Some(pt.1)));
+        assert_eq!(card.keywords, keywords);
+        assert!(!card.is_token);
+    }
+    assert_eq!(Subtype::Doctor as u16, 710);
+}
+
+fn cast_nurse(state: &mut GameState, source: ObjectId) {
+    pool(state, P0, &[ManaColor::W], 1);
+    cast(state, source, &[]);
+}
+
+fn cast_six(state: &mut GameState) -> ObjectId {
+    let source = put(state, P0, SIX, Zone::Hand);
+    pool(state, P0, &[ManaColor::G], 2);
+    cast(state, source, &[]);
+    settled(state);
+    source
+}
+
+#[test]
+fn nurse_returns_each_permanent_type_from_anywhere_and_only_eligible_cards() {
+    for (name, origin) in [
+        ("Plains", Zone::Hand),
+        ("Gurmag Angler", Zone::Battlefield),
+        ("Lotus Petal", Zone::Library),
+        ("Rancor", Zone::Exile),
+        ("Wrenn and Six", Zone::Hand),
+    ] {
+        let mut state = plains();
+        let nurse = put(&mut state, P0, NURSE, Zone::Hand);
+        let target = put(&mut state, P0, name, origin);
+        let old = put(&mut state, P0, "Plains", Zone::Graveyard);
+        let instant = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+        let theirs = put(&mut state, P1, "Plains", Zone::Hand);
+        let token = token(&mut state, P0, "1/1 red Elemental Token");
+        for object in [target, instant, theirs, token] {
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(object, Zone::Graveyard),
+            );
+        }
+        cast_nurse(&mut state, nurse);
+        let mut choices = 0;
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseTargets {
+                legal_targets,
+                can_finish,
+                ..
+            } => {
+                choices += 1;
+                assert!(!can_finish, "Night Nurse is mandatory");
+                assert_eq!(legal_targets, vec![Target::Object(target)]);
+                Action::ChooseTarget(Target::Object(target))
+            }
+            other => first_answer(other),
+        });
+        assert_eq!(choices, 1);
+        assert_eq!(zone(&state, target), Zone::Hand);
+        assert_eq!(zone(&state, nurse), Zone::Battlefield);
+        assert_eq!(zone(&state, old), Zone::Graveyard);
+    }
+}
+
+#[test]
+fn nurse_can_return_a_countered_permanent_spell() {
+    let mut state = plains();
+    let nurse = put(&mut state, P0, NURSE, Zone::Hand);
+    let petal = put(&mut state, P0, "Lotus Petal", Zone::Hand);
+    cast(&mut state, petal, &[]);
+    on_the_stack(&mut state);
+    act(&mut state, Action::Pass);
+    let counter = put(&mut state, P1, "Counterspell", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::U; 2], 0);
+    cast(&mut state, counter, &[Target::Object(petal)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, petal), Zone::Graveyard);
+    cast_nurse(&mut state, nurse);
+    settle_choosing(&mut state, petal);
+    assert_eq!(zone(&state, petal), Zone::Hand);
+}
+
+#[test]
+fn nurse_flash_lifelink_and_no_eligible_target() {
+    let mut state = plains();
+    state.active_player = P1;
+    let nurse = put(&mut state, P0, NURSE, Zone::Hand);
+    pool(&mut state, P0, &[], 2);
+    assert!(!castable(&mut state, nurse), "white mana is required");
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    cast(&mut state, nurse, &[]);
+    settled(&mut state);
+    assert_eq!(power_toughness(&state, nurse), (2, 1));
+    assert!(keyword(&state, nurse, Keywords::FLASH));
+    assert!(keyword(&state, nurse, Keywords::LIFELINK));
+    pass_until(&mut state, |s| {
+        s.active_player == P0 && s.step == Step::Main1
+    });
+    let before = life(&state, P0);
+    attack_with(&mut state, vec![nurse], |_, _| None);
+    assert_eq!(life(&state, P0), before + 2);
+    assert_eq!(life(&state, P1), 18);
+}
+
+#[test]
+fn nurse_uses_actual_turn_and_latest_graveyard_incarnation() {
+    let mut state = plains();
+    let nurse = put(&mut state, P0, NURSE, Zone::Hand);
+    let old = put(&mut state, P0, "Plains", Zone::Hand);
+    let renewed = put(&mut state, P0, "Island", Zone::Hand);
+    for object in [old, renewed] {
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(object, Zone::Graveyard),
+        );
+    }
+    let round = state.turn_key_v1();
+    pass_until(&mut state, |s| {
+        s.active_player == P1 && s.step == Step::Main1
+    });
+    assert_eq!(state.turn_key_v1(), round, "two turns share one round key");
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(renewed, Zone::Exile));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(renewed, Zone::Graveyard),
+    );
+    act(&mut state, Action::Pass);
+    cast_nurse(&mut state, nurse);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseTargets { legal_targets, .. } => {
+            assert_eq!(legal_targets, vec![Target::Object(renewed)]);
+            Action::ChooseTarget(Target::Object(renewed))
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(zone(&state, old), Zone::Graveyard);
+    assert_eq!(zone(&state, renewed), Zone::Hand);
+}
+
+#[test]
+fn nurse_target_leaving_or_returning_fizzles_but_source_leaving_does_not() {
+    for (blink_target, remove_source) in [(false, false), (true, false), (false, true)] {
+        let mut state = plains();
+        let nurse = put(&mut state, P0, NURSE, Zone::Hand);
+        let target = put(&mut state, P0, "Plains", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(target, Zone::Graveyard),
+        );
+        cast_nurse(&mut state, nurse);
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseTargets { .. })
+        ));
+        act(&mut state, Action::ChooseTarget(Target::Object(target)));
+        on_the_stack(&mut state);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(if remove_source { nurse } else { target }, Zone::Exile),
+        );
+        if blink_target {
+            event::propose_and_commit(
+                &mut state,
+                ProposedEvent::zone_change(target, Zone::Graveyard),
+            );
+        }
+        let mut replay = state.clone();
+        settled(&mut state);
+        settled(&mut replay);
+        assert_eq!(state, replay);
+        assert_eq!(
+            zone(&state, target),
+            if remove_source {
+                Zone::Hand
+            } else if blink_target {
+                Zone::Graveyard
+            } else {
+                Zone::Exile
+            }
+        );
+    }
+}
+
+#[test]
+fn six_attacks_mills_three_and_may_take_only_one_of_those_lands() {
+    for (attacks, take) in [(false, false), (true, false), (true, true)] {
+        let mut state = game(&["Plains", "Lightning Bolt", "Island", "Forest"]);
+        let milled = state.players[0].library[..3].to_vec();
+        let old = put(&mut state, P0, "Forest", Zone::Graveyard);
+        let six = cast_six(&mut state);
+        assert_eq!(state.players[0].library.len(), 4, "no entry mill");
+        state.objects.get_mut(six).summoning_sick = false;
+        let mut saw_land_choice = false;
+        attack_with(
+            &mut state,
+            if attacks { vec![six] } else { Vec::new() },
+            |s, decision| {
+                if let Decision::ChooseEffectTargets {
+                    legal_targets,
+                    can_finish: true,
+                    ..
+                } = decision
+                {
+                    saw_land_choice = true;
+                    assert_eq!(s.players[0].library.len(), 1);
+                    assert!(!legal_targets.contains(&Target::Object(old)));
+                    assert!(!legal_targets.contains(&Target::Object(milled[1])));
+                    assert_eq!(legal_targets.len(), 2);
+                    return Some(if take {
+                        Action::ChooseEffectTarget(Target::Object(milled[2]))
+                    } else {
+                        Action::FinishEffectSelection
+                    });
+                }
+                None
+            },
+        );
+        assert_eq!(saw_land_choice, attacks);
+        assert_eq!(state.players[0].library.len(), if attacks { 1 } else { 4 });
+        assert_eq!(
+            zone(&state, milled[2]),
+            if take {
+                Zone::Hand
+            } else if attacks {
+                Zone::Graveyard
+            } else {
+                Zone::Library
+            }
+        );
+        assert_eq!(zone(&state, old), Zone::Graveyard);
+        assert_eq!(life(&state, P1), if attacks { 18 } else { 20 });
+    }
+}
+
+#[test]
+fn six_mill_empty_short_no_land_and_public_replacement_destinations() {
+    for (library, leyline) in [
+        (vec![], false),
+        (vec!["Lightning Bolt"], false),
+        (vec!["Plains"], false),
+        (vec!["Plains", "Island", "Lightning Bolt"], true),
+    ] {
+        let mut state = game(&library);
+        if leyline {
+            put(&mut state, P1, "Leyline of the Void", Zone::Battlefield);
+        }
+        let cards = state.players[0].library.clone();
+        let six = cast_six(&mut state);
+        state.objects.get_mut(six).summoning_sick = false;
+        attack_with(&mut state, vec![six], |_, decision| {
+            if let Decision::ChooseEffectTargets {
+                legal_targets,
+                can_finish: true,
+                ..
+            } = decision
+            {
+                return Some(Action::ChooseEffectTarget(legal_targets[0]));
+            }
+            None
+        });
+        assert!(state.players[0].library.is_empty());
+        for (index, card) in cards.iter().enumerate() {
+            assert_eq!(
+                zone(&state, *card),
+                if index == 0 && library[0] == "Plains" {
+                    Zone::Hand
+                } else if leyline {
+                    Zone::Exile
+                } else {
+                    Zone::Graveyard
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn six_retrace_requires_land_and_mana_and_returns_permanents_to_battlefield() {
+    let mut state = plains();
+    cast_six(&mut state);
+    let nurse = put(&mut state, P0, NURSE, Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::W], 1);
+    assert!(!castable(&mut state, nurse), "no land to discard");
+    let nonland = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    assert!(!castable(&mut state, nurse), "nonlands cannot pay retrace");
+    let land = put(&mut state, P0, "Plains", Zone::Hand);
+    let spare = put(&mut state, P0, "Island", Zone::Hand);
+    cast(&mut state, nurse, &[]);
+    match next(&mut state) {
+        Decision::ChooseCostTargets { candidates, .. } => {
+            assert!(candidates.contains(&land) && candidates.contains(&spare));
+            assert!(!candidates.contains(&nonland));
+        }
+        other => panic!("{other:?}"),
+    }
+    act(&mut state, Action::ChooseCostTarget(land));
+    on_the_stack(&mut state);
+    assert_eq!(zone(&state, land), Zone::Graveyard);
+    assert_eq!(mana(&state, P0, ManaColor::W), 0);
+    assert_eq!(mana(&state, P0, ManaColor::C), 0);
+    // Night Nurse can recover the land just discarded to pay its retrace.
+    settle_choosing(&mut state, land);
+    assert_eq!(zone(&state, land), Zone::Hand);
+    assert_eq!(zone(&state, nurse), Zone::Battlefield);
+    assert_eq!(zone(&state, spare), Zone::Hand);
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(nurse, Zone::Graveyard),
+    );
+    assert!(!castable(&mut state, nurse), "retrace still needs mana");
+    pool(&mut state, P0, &[ManaColor::W], 1);
+    cast(&mut state, nurse, &[]);
+    settle_choosing(&mut state, land);
+    assert_eq!(
+        zone(&state, nurse),
+        Zone::Battlefield,
+        "retrace can be repeated"
+    );
+}
+
+#[test]
+fn six_retrace_respects_types_controller_turn_timing_and_lost_abilities() {
+    let mut state = plains();
+    let six = cast_six(&mut state);
+    let creature = put(&mut state, P0, "Llanowar Elves", Zone::Graveyard);
+    let flash = put(&mut state, P0, NURSE, Zone::Graveyard);
+    let artifact = put(&mut state, P0, "Lotus Petal", Zone::Graveyard);
+    let enchantment = put(&mut state, P0, "Exploration", Zone::Graveyard);
+    let walker = put(&mut state, P0, "Wrenn and Six", Zone::Graveyard);
+    let instant = put(&mut state, P0, "Lightning Bolt", Zone::Graveyard);
+    let sorcery = put(&mut state, P0, "Ponder", Zone::Graveyard);
+    let land = put(&mut state, P0, "Plains", Zone::Graveyard);
+    let theirs = put(&mut state, P1, "Lotus Petal", Zone::Graveyard);
+    put(&mut state, P0, "Plains", Zone::Hand);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::G, ManaColor::W, ManaColor::R, ManaColor::U],
+        5,
+    );
+    for card in [creature, flash, artifact, enchantment, walker] {
+        assert!(castable(&mut state, card));
+    }
+    for card in [instant, sorcery, land, theirs] {
+        assert!(!castable(&mut state, card));
+    }
+    let dress = put(&mut state, P1, "Dress Down", Zone::Battlefield);
+    assert!(!castable(&mut state, creature));
+    event::propose_and_commit(
+        &mut state,
+        ProposedEvent::zone_change(dress, Zone::Graveyard),
+    );
+    assert!(castable(&mut state, creature));
+    pass_until(&mut state, |s| s.step == Step::BeginCombat);
+    pool(&mut state, P0, &[ManaColor::G, ManaColor::W], 2);
+    assert!(
+        !castable(&mut state, creature),
+        "normal timing still applies"
+    );
+    assert!(castable(&mut state, flash), "flash works during own combat");
+    pass_until(&mut state, |s| {
+        s.active_player == P1 && s.step == Step::Main1
+    });
+    act(&mut state, Action::Pass);
+    pool(&mut state, P0, &[ManaColor::W], 1);
+    assert!(
+        !castable(&mut state, flash),
+        "no retrace on another player's turn"
+    );
+    pass_until(&mut state, |s| {
+        s.active_player == P0 && s.step == Step::Main1
+    });
+    pool(&mut state, P0, &[ManaColor::W], 1);
+    assert!(castable(&mut state, flash));
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(six, Zone::Hand));
+    assert!(
+        !castable(&mut state, flash),
+        "permission ends with its source"
+    );
+}
+
+#[test]
+fn six_reach_blocks_flying() {
+    let mut state = plains();
+    state.active_player = P1;
+    state.priority_player = P1;
+    let six = put(&mut state, P1, SIX, Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::G], 2);
+    cast(&mut state, six, &[]);
+    settled(&mut state);
+    pass_until(&mut state, |s| {
+        s.active_player == P0 && s.step == Step::Main1
+    });
+    let flyer = put(
+        &mut state,
+        P0,
+        "Sphinx of False Conclusions",
+        Zone::Battlefield,
+    );
+    let ground = put(&mut state, P1, "Llanowar Elves", Zone::Battlefield);
+    pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![flyer]));
+    run_until(&mut state, |s| s.step == Step::DeclareBlockers, |_, _| None);
+    match next(&mut state) {
+        Decision::DeclareBlockers { legal_blockers, .. } => {
+            let blockers = &legal_blockers
+                .iter()
+                .find(|(id, _)| *id == flyer)
+                .unwrap()
+                .1;
+            assert!(blockers.contains(&six));
+            assert!(!blockers.contains(&ground));
+        }
+        other => panic!("{other:?}"),
+    }
+    act(&mut state, Action::DeclareBlockers(vec![(six, flyer)]));
+    pass_until(&mut state, |s| s.step == Step::Main2);
+    assert_eq!(life(&state, P1), 20);
+    assert_eq!(zone(&state, flyer), Zone::Graveyard);
+    assert_eq!(zone(&state, six), Zone::Graveyard);
+}
+
+#[test]
+fn six_retraces_all_supported_nonland_permanent_types() {
+    for (name, colors, generic) in [
+        ("Llanowar Elves", vec![ManaColor::G], 0),
+        ("Lotus Petal", vec![], 0),
+        ("Exploration", vec![ManaColor::G], 0),
+        ("Wrenn and Six", vec![ManaColor::R, ManaColor::G], 0),
+    ] {
+        let mut state = plains();
+        cast_six(&mut state);
+        let card = put(&mut state, P0, name, Zone::Graveyard);
+        let land = put(&mut state, P0, "Plains", Zone::Hand);
+        pool(&mut state, P0, &colors, generic);
+        cast(&mut state, card, &[]);
+        settle_choosing(&mut state, land);
+        assert_eq!(zone(&state, card), Zone::Battlefield, "{name}");
+        assert_eq!(zone(&state, land), Zone::Graveyard, "{name}");
+    }
+}
+
+#[test]
+fn six_cast_remains_legal_after_source_leaves_and_a_countered_card_can_be_retraced_again() {
+    for remove_source in [false, true] {
+        let mut state = plains();
+        let six = cast_six(&mut state);
+        let card = put(&mut state, P0, "Lotus Petal", Zone::Graveyard);
+        let land = put(&mut state, P0, "Plains", Zone::Hand);
+        cast(&mut state, card, &[]);
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseCostTargets { .. }
+        ));
+        act(&mut state, Action::ChooseCostTarget(land));
+        on_the_stack(&mut state);
+        if remove_source {
+            event::propose_and_commit(&mut state, ProposedEvent::zone_change(six, Zone::Exile));
+            let mut replay = state.clone();
+            settled(&mut state);
+            settled(&mut replay);
+            assert_eq!(state, replay);
+            assert_eq!(zone(&state, card), Zone::Battlefield);
+        } else {
+            act(&mut state, Action::Pass);
+            let counter = put(&mut state, P1, "Counterspell", Zone::Hand);
+            pool(&mut state, P1, &[ManaColor::U; 2], 0);
+            cast(&mut state, counter, &[Target::Object(card)]);
+            settled(&mut state);
+            assert_eq!(zone(&state, card), Zone::Graveyard);
+            assert!(
+                !castable(&mut state, card),
+                "the old discard cannot pay a new cast"
+            );
+            let second_land = put(&mut state, P0, "Forest", Zone::Hand);
+            cast(&mut state, card, &[]);
+            settle_choosing(&mut state, second_land);
+            assert_eq!(zone(&state, card), Zone::Battlefield);
+            assert_eq!(zone(&state, second_land), Zone::Graveyard);
+        }
+    }
+}
+
+#[test]
+fn six_attack_survives_source_leaving_and_replays_its_optional_choice() {
+    let mut state = game(&["Plains", "Lightning Bolt", "Island", "Forest"]);
+    let land = state.players[0].library[0];
+    let six = cast_six(&mut state);
+    state.objects.get_mut(six).summoning_sick = false;
+    pass_until(&mut state, |s| s.step == Step::DeclareAttackers);
+    act(&mut state, Action::DeclareAttackers(vec![six]));
+    on_the_stack(&mut state);
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(six, Zone::Exile));
+    loop {
+        let choice = settle(&mut state).expect("mill order or optional land selection");
+        if matches!(
+            choice,
+            Decision::ChooseEffectTargets {
+                can_finish: true,
+                ..
+            }
+        ) {
+            break;
+        }
+        act(&mut state, first_answer(choice));
+    }
+    let mut replay = state.clone();
+    for game in [&mut state, &mut replay] {
+        act(game, Action::ChooseEffectTarget(Target::Object(land)));
+        settled(game);
+        assert_eq!(zone(game, land), Zone::Hand);
+        assert_eq!(game.players[0].library.len(), 1);
+    }
+    assert_eq!(state, replay);
+}
+
+#[test]
+fn six_grant_belongs_to_its_controller_in_either_seat() {
+    for player in [P0, P1] {
+        let mut state = plains();
+        state.active_player = player;
+        state.priority_player = player;
+        let six = put(&mut state, player, SIX, Zone::Hand);
+        pool(&mut state, player, &[ManaColor::G], 2);
+        cast(&mut state, six, &[]);
+        settled(&mut state);
+        let card = put(&mut state, player, "Lotus Petal", Zone::Graveyard);
+        let land = put(&mut state, player, "Plains", Zone::Hand);
+        let opponent_card = put(
+            &mut state,
+            player.opponent(),
+            "Lotus Petal",
+            Zone::Graveyard,
+        );
+        cast(&mut state, card, &[]);
+        settle_choosing(&mut state, land);
+        assert_eq!(zone(&state, card), Zone::Battlefield);
+        assert_eq!(zone(&state, land), Zone::Graveyard);
+        assert_eq!(zone(&state, opponent_card), Zone::Graveyard);
+    }
+}
+
+#[test]
+fn six_retrace_can_pay_a_mana_only_alternative_cost_in_addition_to_discarding_land() {
+    for evoke in [false, true] {
+        let mut state = plains();
+        cast_six(&mut state);
+        let card = put(&mut state, P0, "Mulldrifter", Zone::Graveyard);
+        let land = put(&mut state, P0, "Plains", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::U], if evoke { 2 } else { 4 });
+        cast(&mut state, card, &[]);
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseCastMode { options, .. } => {
+                let mode = if evoke {
+                    engine::CastMode::Alternative
+                } else {
+                    engine::CastMode::Normal
+                };
+                assert!(options.contains(&mode));
+                Action::ChooseCastMode(mode)
+            }
+            Decision::ChooseCostTargets { candidates, .. } => {
+                assert_eq!(candidates, vec![land]);
+                Action::ChooseCostTarget(land)
+            }
+            other => first_answer(other),
+        });
+        assert_eq!(zone(&state, land), Zone::Graveyard);
+        assert_eq!(
+            zone(&state, card),
+            if evoke {
+                Zone::Graveyard
+            } else {
+                Zone::Battlefield
+            }
+        );
+        assert_eq!(state.players[0].hand.len(), 2);
+        assert_eq!(state.players[0].library.len(), 18);
+    }
+}
+
+#[test]
+fn nurse_ignores_replaced_graveyard_entries_and_works_in_either_seat() {
+    for player in [P0, P1] {
+        let mut state = plains();
+        state.active_player = player;
+        state.priority_player = player;
+        let nurse = put(&mut state, player, NURSE, Zone::Hand);
+        let leyline = put(
+            &mut state,
+            player.opponent(),
+            "Leyline of the Void",
+            Zone::Battlefield,
+        );
+        let replaced = put(&mut state, player, "Plains", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(replaced, Zone::Graveyard),
+        );
+        assert_eq!(zone(&state, replaced), Zone::Exile);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(leyline, Zone::Exile));
+        let actual = put(&mut state, player, "Island", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(actual, Zone::Graveyard),
+        );
+        pool(&mut state, player, &[ManaColor::W], 1);
+        cast(&mut state, nurse, &[]);
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseTargets { legal_targets, .. } => {
+                assert_eq!(legal_targets, vec![Target::Object(actual)]);
+                Action::ChooseTarget(Target::Object(actual))
+            }
+            other => first_answer(other),
+        });
+        assert_eq!(zone(&state, actual), Zone::Hand);
+        assert_eq!(zone(&state, replaced), Zone::Exile);
     }
 }
 

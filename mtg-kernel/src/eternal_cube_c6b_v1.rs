@@ -20,12 +20,20 @@
 //! Vaultborn Tyrant remains no_effect: source_token_copy_v1 and TokenEntryV48
 //! cannot carry an added artifact copy type. Metamorph's separate copy record
 //! is not a token-creation initialization or a propagated copiable value.
-//! No token or subtype IDs are reserved by this call.
+//! Call 4 reserves Doctor subtype ID 710; no new token rows are needed.
 //!
 //! Fanatic follows Full Zoraline's return-then-counter convention: the counter
 //! is placed on the exact returned incarnation after the entry event, rather
 //! than being part of entry initialization. This has the same entry-observer
 //! timing limitation as Zoraline's FinalityReturnedTarget.
+//!
+//! Six follows Full Wrenn and Six's retrace conventions: another graveyard
+//! permission takes precedence over retrace, and spell_costs_v1 declines a
+//! quote requiring two independent object-cost selections. Thus retrace plus
+//! Solitude's pitch-evoke or Abhorrent Oculus's graveyard-exile cost is not
+//! offered, just as Wrenn's emblem cannot retrace Force of Will's pitch cost.
+//! Native flashback/escape routes retain the same precedence as with Wrenn.
+//! No new payment subsystem is introduced.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::card_def::{card_id_by_name, CardType, TargetSpec, CARD_DEFS};
@@ -34,7 +42,8 @@ use crate::effect::{
 };
 use crate::eternal_cards_v1::e3::{E3ChoiceKindV1, E3ChoiceV1};
 use crate::eternal_cards_v1::EternalOpV1;
-use crate::ids::StackItemId;
+use crate::eternal_legacy_e9a_v1::TurnV1;
+use crate::ids::{ObjectId, PlayerId, StackItemId};
 use crate::standard_cards_v1::{StandardOpV1, StandardTargetV1};
 use crate::state::{GameState, Target, Zone};
 use crate::trigger::{TriggerCondition, TriggeredAbilityDef};
@@ -46,8 +55,9 @@ const CRYOMANCER: &str = "Seasoned Cryomancer";
 const PYROMANCER: &str = "Seasoned Pyromancer";
 const SPHINX: &str = "Sphinx of False Conclusions";
 const FANATIC: &str = "Metamorphosis Fanatic";
-// Appended token row. Elemental already exists, so this call uses no
-// subtype IDs from the reserved C6b range 710..719.
+const NURSE: &str = "Night Nurse, Healer of Heroes";
+const SIX: &str = "Six";
+// Elemental already exists; the token row required no new subtype ID.
 const ELEMENTAL: &str = "1/1 red Elemental Token";
 
 /// Pyromancer's count survives its replaceable draw without changing the
@@ -56,35 +66,188 @@ const ELEMENTAL: &str = "1/1 red Elemental Token";
 pub struct C6bStateV1 {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub discarded_nonlands: Vec<(StackItemId, u16)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub graveyard_entries: Vec<(ObjectId, u32, TurnV1)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub six_mills: Vec<(StackItemId, Vec<EffectObjectBinding>)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub six_casts: Vec<(ObjectId, u32, PlayerId)>,
 }
 
 impl C6bStateV1 {
     pub(crate) fn is_empty(&self) -> bool {
         self.discarded_nonlands.is_empty()
+            && self.graveyard_entries.is_empty()
+            && self.six_mills.is_empty()
+            && self.six_casts.is_empty()
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum C6bOpV1 {
     /// Mandatory discard, as many as possible, with a resolution-local count.
-    DiscardTwoV1 { cryomancer: bool },
+    DiscardTwoV1 {
+        cryomancer: bool,
+    },
     /// Pyromancer's final instruction, after its static draw instruction.
     DiscardedElementalsV1,
     /// Cryomancer's separate reflexive trigger, with one or two target slots.
-    CryomancerStunV1 { count: u16 },
+    CryomancerStunV1 {
+        count: u16,
+    },
     /// Zoraline's exact-successor counter placement, using a lifelink counter.
     FanaticReturnedLifelinkV1,
+    SixBindMillV1,
+    SixReturnLandV1,
 }
 
 impl C6bOpV1 {
     pub(crate) fn contains_player_choice(&self) -> bool {
-        matches!(self, Self::DiscardTwoV1 { .. })
+        matches!(self, Self::DiscardTwoV1 { .. } | Self::SixReturnLandV1)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum C6bChoiceV1 {
     DiscardTwoV1 { cryomancer: bool },
+    SixReturnLandV1,
+}
+
+pub(crate) fn permanent_card(card_def: u16) -> bool {
+    CARD_DEFS.get(usize::from(card_def)).is_some_and(|card| {
+        [
+            CardType::Land,
+            CardType::Creature,
+            CardType::Artifact,
+            CardType::Enchantment,
+            CardType::Planeswalker,
+        ]
+        .into_iter()
+        .any(|kind| card.has_type(kind))
+    })
+}
+
+/// After the committed zone change, record the actual destination incarnation.
+/// This must also observe entries while Night Nurse is in a library or hand.
+pub(crate) fn record_graveyard_entry(state: &mut GameState, object: ObjectId, from: Zone) {
+    let live = state.objects.get(object);
+    if from == Zone::Graveyard
+        || live.zone != Zone::Graveyard
+        || live.v4.is_token
+        || live.spell_copy_origin.is_some()
+        || !permanent_card(live.card_def)
+    {
+        return;
+    }
+    if !state
+        .objects
+        .iter()
+        .any(|(_, card)| CARD_DEFS[usize::from(card.card_def)].name == NURSE)
+    {
+        return;
+    }
+    let generation = live.zone_change_count;
+    let now = TurnV1::now(state);
+    // Entry history is needed even before the granting creature is drawn.
+    let entries = &mut state
+        .eternal_v1
+        .get_or_insert_with(Default::default)
+        .c6b
+        .graveyard_entries;
+    entries.retain(|(id, _, turn)| *turn == now && *id != object);
+    entries.push((object, generation, now));
+}
+
+pub(crate) fn entered_graveyard_this_turn(state: &GameState, object: ObjectId) -> bool {
+    state.objects.try_get(object).is_some_and(|live| {
+        state.eternal_v1.as_ref().is_some_and(|eternal| {
+            eternal.c6b.graveyard_entries.contains(&(
+                object,
+                live.zone_change_count,
+                TurnV1::now(state),
+            ))
+        })
+    })
+}
+
+/// Like Wrenn's emblem, this is also queried after the spell reaches the stack
+/// while its costs are being assembled. The caller validates the origin zone.
+pub(crate) fn six_retrace_permission(
+    state: &GameState,
+    object: ObjectId,
+    holder: PlayerId,
+) -> bool {
+    if state.objects.try_get(object).is_some_and(|live| {
+        live.zone == Zone::Stack
+            && state.eternal_v1.as_ref().is_some_and(|eternal| {
+                eternal
+                    .c6b
+                    .six_casts
+                    .contains(&(object, live.zone_change_count, holder))
+            })
+    }) {
+        return true;
+    }
+    state.active_player == holder
+        && state.objects.try_get(object).is_some_and(|live| {
+            live.owner == holder
+                && !live.v4.is_token
+                && live.spell_copy_origin.is_none()
+                && permanent_card(live.card_def)
+                && !CARD_DEFS[usize::from(live.card_def)].has_type(CardType::Land)
+        })
+        && crate::eternal_legacy_e9a_v1::active_permanents(state, SIX, Some(holder))
+            .next()
+            .is_some()
+}
+
+/// Freeze the announced stack incarnation as Underworld Breach does for escape.
+/// Removing Six in response cannot invalidate a spell already cast legally.
+pub(crate) fn note_six_cast(state: &mut GameState, object: ObjectId, player: PlayerId) {
+    let live = state.objects.get(object);
+    if live.zone != Zone::Graveyard || !six_retrace_permission(state, object, player) {
+        return;
+    }
+    let Some(generation) = live.zone_change_count.checked_add(1) else {
+        return;
+    };
+    let casts = &mut state
+        .eternal_v1
+        .get_or_insert_with(Default::default)
+        .c6b
+        .six_casts;
+    casts.retain(|(id, _, _)| *id != object);
+    casts.push((object, generation, player));
+}
+
+pub fn nurse_entry() -> EffectOp {
+    EffectOp::Conditional {
+        cond: crate::effect::EffectCond::TargetIsLegalForAbility {
+            index: 0,
+            spec: nurse_target(),
+        },
+        then: Box::new(EffectOp::MoveAllTargets {
+            to_zone: Zone::Hand,
+        }),
+        else_: Box::new(EffectOp::Sequence(Vec::new())),
+    }
+}
+
+fn nurse_target() -> TargetSpec {
+    TargetSpec::StandardV1(StandardTargetV1::PermanentCardInOwnGraveyardThisTurnV1)
+}
+
+/// Native mill preserves private graveyard ordering. The final choice follows
+/// only exact successor incarnations, including public replacement destinations.
+pub fn six_attack() -> EffectOp {
+    EffectOp::Sequence(vec![
+        c6b(C6bOpV1::SixBindMillV1),
+        EffectOp::MillCards {
+            player: PlayerRef::Controller,
+            count: 3,
+        },
+        c6b(C6bOpV1::SixReturnLandV1),
+    ])
 }
 
 fn c6b(op: C6bOpV1) -> EffectOp {
@@ -205,6 +368,11 @@ const fn etb(effect: fn() -> EffectOp) -> TriggeredAbilityDef {
 const CRYOMANCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb(cryomancer_entry)];
 const PYROMANCER_TRIGGERS: [TriggeredAbilityDef; 1] = [etb(pyromancer_entry)];
 const FANATIC_TRIGGERS: [TriggeredAbilityDef; 1] = [etb(fanatic_entry)];
+const NURSE_TRIGGERS: [TriggeredAbilityDef; 1] = [etb(nurse_entry)];
+const SIX_TRIGGERS: [TriggeredAbilityDef; 1] = [TriggeredAbilityDef {
+    condition: TriggerCondition::Attacks,
+    ..etb(six_attack)
+}];
 const SPHINX_TRIGGERS: [TriggeredAbilityDef; 2] = [
     TriggeredAbilityDef {
         condition: TriggerCondition::Attacks,
@@ -222,6 +390,8 @@ pub(crate) fn triggers_for(name: &str) -> &'static [TriggeredAbilityDef] {
         PYROMANCER => &PYROMANCER_TRIGGERS,
         SPHINX => &SPHINX_TRIGGERS,
         FANATIC => &FANATIC_TRIGGERS,
+        NURSE => &NURSE_TRIGGERS,
+        SIX => &SIX_TRIGGERS,
         _ => crate::eternal_cube_c6c_v1::triggers_for(name),
     }
 }
@@ -235,6 +405,12 @@ fn stun_targets(count: u16) -> TargetSpec {
 }
 
 pub(crate) fn trigger_target_spec(name: &str, effect: &EffectOp) -> Option<TargetSpec> {
+    if name == NURSE && *effect == nurse_entry() {
+        return Some(nurse_target());
+    }
+    if name == SIX && *effect == six_attack() {
+        return Some(TargetSpec::None);
+    }
     if name == FANATIC && *effect == fanatic_entry() {
         return Some(fanatic_target());
     }
@@ -335,6 +511,27 @@ fn discard_selected(
 
 pub(crate) fn execute(op: &C6bOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
+        C6bOpV1::SixBindMillV1 => {
+            if let Some(key) = ctx.stack_item_id {
+                let cards = state.players[ctx.controller.index()]
+                    .library
+                    .iter()
+                    .take(3)
+                    .map(|&object| EffectObjectBinding {
+                        object,
+                        expected_zone: Zone::Library,
+                        expected_zone_change_count: state.objects.get(object).zone_change_count,
+                    })
+                    .collect();
+                let mills = &mut state
+                    .eternal_v1
+                    .get_or_insert_with(Default::default)
+                    .c6b
+                    .six_mills;
+                mills.retain(|(item, _)| *item != key);
+                mills.push((key, cards));
+            }
+        }
         C6bOpV1::FanaticReturnedLifelinkV1 => {
             let Some(crate::state::StackTargetContractV4::Object {
                 object,
@@ -427,7 +624,7 @@ pub(crate) fn execute(op: &C6bOpV1, ctx: &ExecCtx, state: &mut GameState) {
             }
         }
         // Choice leaves are dispatched to drive by contains_player_choice.
-        C6bOpV1::DiscardTwoV1 { .. } => {}
+        C6bOpV1::DiscardTwoV1 { .. } | C6bOpV1::SixReturnLandV1 => {}
     }
 }
 
@@ -437,6 +634,52 @@ pub(crate) fn drive(
     op: &C6bOpV1,
     path: Vec<u16>,
 ) -> Result<bool, String> {
+    if *op == C6bOpV1::SixReturnLandV1 {
+        let key = continuation.resolving_item.v4.stack_item_id;
+        let cards = state
+            .eternal_v1
+            .as_mut()
+            .and_then(|eternal| {
+                let mills = &mut eternal.c6b.six_mills;
+                let index = mills.iter().position(|(item, _)| *item == key)?;
+                Some(mills.remove(index).1)
+            })
+            .unwrap_or_default();
+        let bindings: Vec<_> = cards
+            .into_iter()
+            .filter_map(|old| {
+                let live = state.objects.try_get(old.object)?;
+                (old.expected_zone_change_count.checked_add(1) == Some(live.zone_change_count)
+                    && live.v4.face_down_v1.is_none()
+                    && matches!(
+                        live.zone,
+                        Zone::Graveyard | Zone::Exile | Zone::Battlefield | Zone::Stack
+                    )
+                    && CARD_DEFS[usize::from(live.card_def)].has_type(CardType::Land))
+                .then_some(EffectObjectBinding {
+                    object: old.object,
+                    expected_zone: live.zone,
+                    expected_zone_change_count: live.zone_change_count,
+                })
+            })
+            .collect();
+        if bindings.is_empty() {
+            return Ok(false);
+        }
+        let choice = E3ChoiceV1 {
+            kind: E3ChoiceKindV1::C6bV1(C6bChoiceV1::SixReturnLandV1),
+            player: continuation.ctx.controller,
+            candidates: bindings.iter().map(|b| Target::Object(b.object)).collect(),
+            bindings,
+            min: 0,
+            max: 1,
+            ordered: false,
+            path,
+            remaining: continuation.frames.clone(),
+        };
+        crate::eternal_cards_v1::e3::offer(continuation, choice);
+        return Ok(true);
+    }
     if let C6bOpV1::DiscardTwoV1 { cryomancer } = op {
         let player = continuation.ctx.controller;
         let bindings: Vec<_> = state.players[player.index()]
@@ -482,7 +725,23 @@ pub(crate) fn finish_selection(
     kind: &C6bChoiceV1,
     bindings: Vec<EffectObjectBinding>,
 ) -> Result<bool, String> {
-    let C6bChoiceV1::DiscardTwoV1 { cryomancer } = kind;
-    discard_selected(state, continuation, *cryomancer, &bindings);
+    match kind {
+        C6bChoiceV1::DiscardTwoV1 { cryomancer } => {
+            discard_selected(state, continuation, *cryomancer, &bindings);
+        }
+        C6bChoiceV1::SixReturnLandV1 => {
+            if let Some(binding) = bindings.first() {
+                if state.objects.try_get(binding.object).is_some_and(|live| {
+                    live.zone == binding.expected_zone
+                        && live.zone_change_count == binding.expected_zone_change_count
+                }) {
+                    crate::event::propose_and_commit(
+                        state,
+                        crate::event::ProposedEvent::zone_change(binding.object, Zone::Hand),
+                    );
+                }
+            }
+        }
+    }
     Ok(false)
 }

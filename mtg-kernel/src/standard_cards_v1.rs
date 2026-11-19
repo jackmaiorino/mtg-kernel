@@ -476,6 +476,8 @@ pub enum StandardTargetV1 {
     S1qV1(crate::eternal_sideboard_s1q_v1::targets::S1qTargetV1),
     /// Metamorphosis Fanatic: zero or one creature card from your graveyard.
     UpToOneCreatureCardInOwnGraveyardV1,
+    /// Night Nurse: a permanent card put into your graveyard this turn.
+    PermanentCardInOwnGraveyardThisTurnV1,
 }
 
 impl StandardTargetV1 {
@@ -1672,6 +1674,7 @@ pub(crate) fn target_matches(
         // Answered by `eternal_sideboard_s1q_v1::targets` above.
         StandardTargetV1::S1qV1(_) => false,
         StandardTargetV1::UpToOneCreatureCardInOwnGraveyardV1 => false,
+        StandardTargetV1::PermanentCardInOwnGraveyardThisTurnV1 => false,
     }
 }
 
