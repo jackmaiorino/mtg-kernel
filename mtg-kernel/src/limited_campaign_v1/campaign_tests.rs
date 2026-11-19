@@ -547,6 +547,45 @@ fn receipt_host_classes_follow_the_ruled_names() {
     });
     admit_receipt_host_class_v1(&epyc, 16).unwrap();
     assert!(admit_receipt_host_class_v1(&epyc, 32).is_err());
+    let virtual_epyc = with(&|h| {
+        h.short_name = "runpod-epyc-virtual-16".into();
+        h.cpu_model = "AMD EPYC-Milan Processor".into();
+    });
+    admit_receipt_host_class_v1(&virtual_epyc, 16).unwrap();
+    assert!(admit_receipt_host_class_v1(&virtual_epyc, 32).is_err());
+    // Bare-metal EPYC and virtual EPYC classes are mutually exclusive.
+    assert!(admit_receipt_host_class_v1(
+        &with(&|h| {
+            h.short_name = "runpod-epyc-16".into();
+            h.cpu_model = "AMD EPYC-Milan Processor".into();
+        }),
+        16,
+    )
+    .is_err());
+    assert!(admit_receipt_host_class_v1(
+        &with(&|h| {
+            h.short_name = "runpod-epyc-virtual-16".into();
+            h.cpu_model = "AMD EPYC 9554 64-Core Processor".into();
+        }),
+        16,
+    )
+    .is_err());
+    assert!(admit_receipt_host_class_v1(
+        &with(&|h| {
+            h.short_name = "runpod-epyc-virtual-16".into();
+            h.cpu_model = "AMD EPYC- Processor".into();
+        }),
+        16,
+    )
+    .is_err());
+    assert!(admit_receipt_host_class_v1(
+        &with(&|h| {
+            h.short_name = "runpod-epyc-virtual-0".into();
+            h.cpu_model = "AMD EPYC-Milan Processor".into();
+        }),
+        0,
+    )
+    .is_err());
     let mac = with(&|h| {
         h.short_name = "engineering-unlisted".into();
         h.cpu_model = "Apple M3 Ultra".into();
@@ -749,6 +788,9 @@ fn runner_contract_states_what_the_rulings_require() {
         "index 7 (then 6)",
         "(CPU model, OS family, target triple, trainer binary SHA-256)",
         "identical for any worker count",
+        "A batch with no eligible decision stops at once with stop_reason stopped_excess_truncation.",
+        "runpod-epyc-virtual-<vcpus> is separate from bare-metal runpod-epyc-<vcpus>",
+        "paid use stays behind the owner's word",
     ] {
         assert!(text.contains(phrase), "{phrase}");
     }

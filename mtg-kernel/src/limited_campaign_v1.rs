@@ -49,7 +49,8 @@ pub const RUNNER_CONTRACT_V1: [&str; 11] = [
      failed-iteration-UUUU.json and exits with code 2.",
     "Truncation gate: more than 2 truncated games in one batch on two consecutive updates stops \
      the campaign with stop_reason stopped_excess_truncation, before the second such update is \
-     applied.",
+     applied. A batch with no eligible decision stops at once with stop_reason \
+     stopped_excess_truncation.",
     "Determinism: each game is a function of its deal, its seat policies and its seat streams \
      derive_seed(mtg-kernel/limited-campaign-actor-rng/v1, [schedule_seed, pair, leg, seat]). \
      Games are gathered in (pair, leg) order and the update reduces in (pair, leg, seat, \
@@ -61,9 +62,12 @@ pub const RUNNER_CONTRACT_V1: [&str; 11] = [
      replayable within one host class only, its runs and their replay stay on one class, its \
      launch records name the class, and it is a diagnostic that carries no strength claim.",
     "Host class: the tuple (CPU model, OS family, target triple, trainer binary SHA-256), \
-     written in full, with the short name win11-13700k, win11-5900xt, linux-9950x or \
-     runpod-epyc-<vcpus>. A qualification receipt is valid for its class only; other hosts \
-     run the workload as engineering verification only.",
+     written in full, with the short name win11-13700k, win11-5900xt, linux-9950x, \
+     runpod-epyc-<vcpus> or runpod-epyc-virtual-<vcpus>. runpod-epyc-virtual-<vcpus> is \
+     separate from bare-metal runpod-epyc-<vcpus>, stays unqualified until a throughput and \
+     determinism qualification has run on it, and paid use stays behind the owner's word. A \
+     qualification receipt is valid for its class only; other hosts run the workload as \
+     engineering verification only.",
     "Gate 2 pairs: pair indices 0 to 7 at seed 657_001. If the set lacks FDN_top_09446_URpG \
      or lacks every Drake Hatcher train deck, index 7 (then 6) is replaced by the lowest index \
      of 8 or more whose pair contains the missing deck. The rule and the indices are recorded \
