@@ -101,9 +101,9 @@ pub(crate) use bootstrapped_advantage_v1::{
 mod ordered_update_preparation;
 pub(crate) use ordered_update_preparation::validate_preparation_workers_v1;
 pub(crate) use ordered_update_preparation::{
-    trajectory_batch_bytes_v1, validate_max_prepared_tensor_mebibytes_v1,
-    validate_max_trajectory_batch_mebibytes_v1, DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
-    DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
+    preparation_groups_bound_v1, trajectory_batch_bytes_v1,
+    validate_max_prepared_tensor_mebibytes_v1, validate_max_trajectory_batch_mebibytes_v1,
+    DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES, DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
 };
 
 fn default_max_prepared_tensor_mebibytes() -> usize {
@@ -5071,6 +5071,7 @@ fn execute_update_inner_v1(
             &learner,
             workers,
             max_prepared_tensor_mebibytes,
+            ordered_update_preparation::preparation_groups_bound_v1(max_batch_bytes),
             training_math,
         )?;
         (prepared.groups, Some(prepared.telemetry))

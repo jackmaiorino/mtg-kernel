@@ -400,6 +400,32 @@ fn phase1_preparation_limits_reject_before_dispatch_or_opponent_load() {
         })
         .is_err()
     );
+    // The physical-group bound follows `max_trajectory_batch_mebibytes`:
+    // 65,536 up to the default batch bound, then 128 groups per MiB.
+    assert_eq!(MAX_GROUPS, 65_536);
+    for (mebibytes, groups) in [
+        (1, 65_536),
+        (511, 65_536),
+        (DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES, 65_536),
+        (513, 65_664),
+        (2048, 262_144),
+        (MAX_TRAJECTORY_BATCH_MEBIBYTES, 524_288),
+    ] {
+        assert_eq!(
+            preparation_groups_bound_v1(trajectory_batch_bytes_v1(mebibytes)),
+            groups
+        );
+    }
+    let raised = preparation_groups_bound_v1(trajectory_batch_bytes_v1(2048));
+    let (done, _) =
+        ordered_jobs_bounded_v1(4, MAX_GROUPS + 1, raised, Ok::<usize, String>).unwrap();
+    assert_eq!(done, (0..MAX_GROUPS + 1).collect::<Vec<_>>());
+    assert!(
+        ordered_jobs_bounded_v1(1, raised + 1, raised, |_| -> Result<(), String> {
+            panic!("must not dispatch")
+        })
+        .is_err()
+    );
     let mut policy = FrozenPlayPolicyV1::training_fixture_v3();
     let mut opponent = FrozenPlayPolicyV1::training_fixture_v3();
     let (template, learner, _) = replay_fixture(&mut policy, Some(&mut opponent), 0, &[0]);
