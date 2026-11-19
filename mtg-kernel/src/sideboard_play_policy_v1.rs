@@ -183,7 +183,7 @@ pub struct FrozenPlayDecisionScoresV1 {
 /// The only input to the model is the existing actor-relative flat projection.
 /// This type exposes immutable copied embeddings, never mutable play weights.
 pub struct FrozenPlayPolicyV1 {
-    model: NativePolicyValueNetV1,
+    model: std::sync::Arc<NativePolicyValueNetV1>,
     forward_scratch: NativePolicyValueForwardScratchV1,
     /// Exact per-row forward cache for `model`, made on first use (boxed: it
     /// must not grow this struct, which moves by value) and dropped when the
@@ -569,7 +569,7 @@ impl FrozenPlayPolicyV1 {
             FRESH_FEATURE_IDENTITY_V3,
         )?;
         Ok(Self {
-            model,
+            model: std::sync::Arc::new(model),
             embeddings,
             identity,
             encoder: FlatDecisionEncoderV2::default(),
@@ -624,7 +624,7 @@ impl FrozenPlayPolicyV1 {
             identity.feature_encoding_digest_v1(),
         )?;
         Ok(Self {
-            model,
+            model: std::sync::Arc::new(model),
             embeddings,
             identity,
             encoder: FlatDecisionEncoderV2::default(),
@@ -720,7 +720,7 @@ impl FrozenPlayPolicyV1 {
             transfer.receipt_v1().initializer
         );
         Ok(Self {
-            model,
+            model: std::sync::Arc::new(model),
             embeddings,
             identity: identity.into(),
             encoder: FlatDecisionEncoderV2::default(),
@@ -792,7 +792,7 @@ impl FrozenPlayPolicyV1 {
             transfer_envelope_sha256: envelope_sha256.into(),
         };
         Ok(Self {
-            model,
+            model: std::sync::Arc::new(model),
             embeddings,
             identity: PlayPolicyOriginV1::transferred_fresh_v1(identity)?,
             encoder: FlatDecisionEncoderV2::default(),
@@ -840,7 +840,7 @@ impl FrozenPlayPolicyV1 {
             .values
             .clone();
         let mut policy = Self {
-            model,
+            model: std::sync::Arc::new(model),
             embeddings,
             identity: FrozenPlayPolicyIdentityV1 {
                 schema: "test-only-import-ancestry".into(),
@@ -924,7 +924,7 @@ impl FrozenPlayPolicyV1 {
             .values
             .clone();
         let mut policy = Self {
-            model,
+            model: std::sync::Arc::new(model),
             embeddings,
             identity: FrozenPlayPolicyIdentityV1 {
                 schema: "test-only-import-ancestry".into(),
@@ -1137,7 +1137,7 @@ impl FrozenPlayPolicyV1 {
             observation_successor: None,
         };
         Ok(Self {
-            model,
+            model: std::sync::Arc::new(model),
             embeddings,
             identity: identity.into(),
             encoder: FlatDecisionEncoderV2::default(),
@@ -1229,7 +1229,7 @@ impl FrozenPlayPolicyV1 {
             "parallel collection requires explicit successor features",
         )?;
         Ok(Self {
-            model: self.model.clone(),
+            model: std::sync::Arc::clone(&self.model),
             embeddings: self.embeddings.clone(),
             identity: self.identity.clone(),
             encoder: FlatDecisionEncoderV2::default(),
@@ -1331,15 +1331,16 @@ impl FrozenPlayPolicyV1 {
             flat_v8: true,
             ..FrozenPlayFreshSuccessorStateV1::default()
         };
-        self.model = self
-            .model
-            .clone()
-            .into_v8_inclusion_v1(vec![
-                0.0;
-                crate::native_policy_value_net_v1::HIDDEN_DIM_V1
-                    * crate::native_policy_value_net_v1::v8_inclusion_v1::V8_PAIRING_INPUT_DIM_V1
-            ])
-            .map_err(|e| e.to_string())?;
+        self.model = std::sync::Arc::new(
+            (*self.model)
+                .clone()
+                .into_v8_inclusion_v1(vec![
+                    0.0;
+                    crate::native_policy_value_net_v1::HIDDEN_DIM_V1
+                        * crate::native_policy_value_net_v1::v8_inclusion_v1::V8_PAIRING_INPUT_DIM_V1
+                ])
+                .map_err(|e| e.to_string())?,
+        );
         // Cached predictions and rows belong to the old net.
         self.inference_cache = None;
         self.inference_probe = None;
@@ -1543,7 +1544,7 @@ impl FrozenPlayPolicyV1 {
             self.s_model.is_none(),
             "training_model_v3 is net-8's; a policy with native S has no net-8 training model"
         );
-        self.model.clone()
+        (*self.model).clone()
     }
 
     pub(crate) fn training_parameters_v3(&self) -> Vec<NativeNamedParameterV1> {
@@ -1608,8 +1609,8 @@ impl FrozenPlayPolicyV1 {
             bias.values.len() == rows && no_negative_zero_v1(&bias.values),
             "a state encoder bias of -0.0 has no exact no-state-digest conversion",
         )?;
-        let unconverted = check.then(|| Box::new(self.model.clone()));
-        self.model
+        let unconverted = check.then(|| Box::new((*self.model).clone()));
+        std::sync::Arc::make_mut(&mut self.model)
             .replace_parameter_snapshot_v1(&parameters)
             .map_err(|e| e.to_string())?;
         // Cached predictions and rows belong to the old parameters.
@@ -1744,7 +1745,7 @@ impl FrozenPlayPolicyV1 {
                 }
             }
         };
-        self.model
+        std::sync::Arc::make_mut(&mut self.model)
             .replace_parameter_snapshot_v1(parameters)
             .map_err(|e| e.to_string())?;
         if check_model.is_some() {

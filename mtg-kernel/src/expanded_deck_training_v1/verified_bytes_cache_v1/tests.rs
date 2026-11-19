@@ -2,7 +2,10 @@
 //! on what other tests hold or on `MTG_KERNEL_VERIFIED_BYTES_CACHE_MIB`.
 
 use super::super::fresh_initialization_source::read_actual_in_v1;
-use super::super::{publish_json_bytes_in_v1, read_pinned_bytes_in_v1, sha, PinnedFileV1};
+use super::super::no_state_digest_v1::holds_bytes_in_v1;
+use super::super::{
+    check_pinned_in_v1, publish_json_bytes_in_v1, read_pinned_bytes_in_v1, sha, PinnedFileV1,
+};
 use super::{charge_v1, VerifiedBytesCacheV1};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -253,4 +256,274 @@ fn publication_records_its_bytes_only_after_success() {
     );
     assert_eq!(cache.hashed_for_test_v1(), 1);
     fs::remove_dir_all(directory).unwrap();
+}
+
+fn resident_cache_v1() -> VerifiedBytesCacheV1 {
+    let cache = VerifiedBytesCacheV1::new_v1(1 << 20, 16);
+    assert!(!cache.resident_v1());
+    cache.enable_resident_for_test_v1();
+    assert!(cache.resident_v1());
+    cache
+}
+
+#[test]
+fn resident_bytes_need_the_mode_the_pin_and_the_exact_length() {
+    let path = Path::new("/memo/resident");
+    let off = VerifiedBytesCacheV1::new_v1(1 << 20, 16);
+    off.record_verified_v1(path, "x", b"alpha");
+    assert!(off.resident_bytes_v1(path, "x", 5).is_none());
+    let cache = resident_cache_v1();
+    assert!(cache.resident_bytes_v1(path, "x", 5).is_none());
+    cache.record_verified_v1(path, "x", b"alpha");
+    assert_eq!(
+        cache.resident_bytes_v1(path, "x", 5).unwrap().as_slice(),
+        b"alpha"
+    );
+    for (sha256, length) in [("x", 4), ("x", 6), ("y", 5)] {
+        assert!(cache.resident_bytes_v1(path, sha256, length).is_none());
+    }
+    assert!(cache
+        .resident_bytes_v1(Path::new("/memo/other"), "x", 5)
+        .is_none());
+}
+
+#[test]
+fn resident_pinned_reads_reuse_verified_bytes_and_keep_the_metadata_checks() {
+    let cache = resident_cache_v1();
+    let bytes = br#"{"verified":"original"}"#.to_vec();
+    let pin = pinned_file_v1("resident-reads", &bytes);
+    // The first read verifies in full; later reads and checks reuse its bytes.
+    assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap(), bytes);
+    assert_eq!(cache.hashed_for_test_v1(), 1);
+    // The mode's contract: a same-length rewrite later in this process is not
+    // reread, and the verified bytes, which have the pinned digest, are served.
+    fs::write(&pin.path, br#"{"verified":"changed!"}"#).unwrap();
+    for _ in 0..2 {
+        assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap(), bytes);
+        check_pinned_in_v1(&cache, &pin).unwrap();
+        assert_eq!(read_actual_in_v1(&cache, &pin, 1024).unwrap(), bytes);
+    }
+    assert_eq!(cache.hashed_for_test_v1(), 1);
+    // A changed length is read in full and fails as before, as does a pin
+    // the cache holds nothing for.
+    fs::write(&pin.path, br#"{"verified":"longer, changed"}"#).unwrap();
+    assert_eq!(
+        read_pinned_bytes_in_v1(&cache, &pin).unwrap_err(),
+        "input file SHA differs"
+    );
+    assert_eq!(
+        check_pinned_in_v1(&cache, &pin).unwrap_err(),
+        "input file SHA differs"
+    );
+    let wrong = PinnedFileV1 {
+        path: pin.path.clone(),
+        sha256: "0".repeat(64),
+    };
+    assert_eq!(
+        check_pinned_in_v1(&cache, &wrong).unwrap_err(),
+        "input file SHA differs"
+    );
+    // The size bound and a deleted file still fail first.
+    fs::write(&pin.path, &bytes).unwrap();
+    assert_eq!(
+        read_actual_in_v1(&cache, &pin, bytes.len() - 1).unwrap_err(),
+        "fresh input is not a bounded regular file"
+    );
+    fs::remove_file(&pin.path).unwrap();
+    let missing = fs::metadata(&pin.path).unwrap_err().to_string();
+    assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap_err(), missing);
+    assert_eq!(check_pinned_in_v1(&cache, &pin).unwrap_err(), missing);
+    fs::create_dir(&pin.path).unwrap();
+    assert_eq!(
+        read_pinned_bytes_in_v1(&cache, &pin).unwrap_err(),
+        "input is not a bounded regular file"
+    );
+    assert_eq!(
+        check_pinned_in_v1(&cache, &pin).unwrap_err(),
+        "input is not a bounded regular file"
+    );
+    fs::remove_dir_all(pin.path.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn resident_publication_holds_its_bytes_and_later_reads_reuse_them() {
+    let cache = resident_cache_v1();
+    let directory = temp_directory_v1("resident-publish");
+    let bytes = br#"{"published":1}"#.to_vec();
+    let pin = publish_json_bytes_in_v1(&cache, &directory, "document.json", &bytes).unwrap();
+    assert_eq!(pin.sha256, sha(&bytes));
+    assert_eq!(fs::read(&pin.path).unwrap(), bytes);
+    assert_eq!(read_pinned_bytes_in_v1(&cache, &pin).unwrap(), bytes);
+    check_pinned_in_v1(&cache, &pin).unwrap();
+    assert_eq!(cache.hashed_for_test_v1(), 0);
+    // A second publication under the same name still fails, unheld.
+    let other = br#"{"published":2}"#.to_vec();
+    assert!(publish_json_bytes_in_v1(&cache, &directory, "document.json", &other).is_err());
+    assert!(cache.held_v1(&pin.path, &sha(&other)).is_none());
+    assert_eq!(fs::read(&pin.path).unwrap(), bytes);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn resident_cache_comparisons_check_metadata_without_reading() {
+    let bytes = br#"{"cached":"original"}"#.to_vec();
+    let pin = pinned_file_v1("resident-holds", &bytes);
+    for resident in [false, true] {
+        assert!(holds_bytes_in_v1(&pin.path, &bytes, resident));
+    }
+    fs::write(&pin.path, br#"{"cached":"changed!"}"#).unwrap();
+    assert!(!holds_bytes_in_v1(&pin.path, &bytes, false));
+    assert!(holds_bytes_in_v1(&pin.path, &bytes, true));
+    fs::write(&pin.path, br#"{"cached":"longer, changed"}"#).unwrap();
+    for resident in [false, true] {
+        assert!(!holds_bytes_in_v1(&pin.path, &bytes, resident));
+    }
+    fs::remove_file(&pin.path).unwrap();
+    for resident in [false, true] {
+        assert!(!holds_bytes_in_v1(&pin.path, &bytes, resident));
+    }
+    fs::create_dir(&pin.path).unwrap();
+    for resident in [false, true] {
+        assert!(!holds_bytes_in_v1(&pin.path, &bytes, resident));
+    }
+    fs::remove_dir_all(pin.path.parent().unwrap()).unwrap();
+}
+
+/// A shared record keeps the publisher's whole allocation alive, so its
+/// spare capacity counts against the budget: two shared buffers of four bytes
+/// each with a large allocation do not both fit a budget that two four-byte
+/// copies fit.
+#[test]
+fn a_shared_record_is_charged_the_capacity_it_keeps_alive() {
+    let path = Path::new("/memo/capacity");
+    let overhead = charge_v1(path, "a", 0);
+    let roomy = |fill: u8| {
+        let mut bytes = Vec::with_capacity(4096);
+        bytes.extend_from_slice(&[fill; 4]);
+        assert!(bytes.capacity() >= 4096);
+        std::sync::Arc::new(bytes)
+    };
+    // Copies are charged their bytes: both fit.
+    let copies = VerifiedBytesCacheV1::new_v1(2 * overhead + 4096, 16);
+    copies.record_verified_v1(path, "a", &[1; 4]);
+    copies.record_verified_v1(path, "b", &[2; 4]);
+    assert_eq!(
+        held_entries_v1(&copies),
+        (vec!["a".into(), "b".into()], 2 * overhead + 8)
+    );
+    // The same bytes shared with a 4,096 byte allocation each: the second
+    // drops the first, and the charge is the capacity.
+    let shared = VerifiedBytesCacheV1::new_v1(2 * overhead + 4096, 16);
+    let first = roomy(1);
+    let second = roomy(2);
+    let second_charge = overhead + second.capacity();
+    shared.record_verified_shared_v1(path, "a", first);
+    shared.record_verified_shared_v1(path, "b", second);
+    assert_eq!(held_entries_v1(&shared), (vec!["b".into()], second_charge));
+    // A shared buffer whose allocation exceeds the whole budget is not held,
+    // however few bytes it has.
+    let small = VerifiedBytesCacheV1::new_v1(overhead + 64, 16);
+    small.record_verified_shared_v1(path, "a", roomy(3));
+    assert_eq!(held_entries_v1(&small), (vec![], 0));
+    // Recording a held pin again replaces its charge: a roomy buffer by a
+    // copy, and back, leaves exactly the last one's charge.
+    let again = VerifiedBytesCacheV1::new_v1(2 * overhead + 8192, 16);
+    let wide = roomy(5);
+    let wide_charge = overhead + wide.capacity();
+    again.record_verified_shared_v1(path, "a", std::sync::Arc::clone(&wide));
+    assert_eq!(held_entries_v1(&again), (vec!["a".into()], wide_charge));
+    again.record_verified_v1(path, "a", &[5; 4]);
+    assert_eq!(held_entries_v1(&again), (vec!["a".into()], overhead + 4));
+    again.record_verified_shared_v1(path, "a", wide);
+    assert_eq!(held_entries_v1(&again), (vec!["a".into()], wide_charge));
+    // A shared buffer with no spare capacity is charged as a copy is.
+    let exact = VerifiedBytesCacheV1::new_v1(2 * overhead + 4096, 16);
+    let mut tight = vec![4u8; 4];
+    tight.shrink_to_fit();
+    let tight_capacity = tight.capacity();
+    exact.record_verified_shared_v1(path, "a", std::sync::Arc::new(tight));
+    assert_eq!(
+        held_entries_v1(&exact),
+        (vec!["a".into()], overhead + tight_capacity)
+    );
+}
+
+/// One cache does not serve both read modes: resident reads do not turn on
+/// under a run without them, an admitted resident run already keeps such runs
+/// out, and a rejected one leaves the mode alone.
+#[test]
+fn a_cache_serves_one_read_mode() {
+    let cache = VerifiedBytesCacheV1::new_v1(4096, 16);
+    let first = cache.enter_run_v1(false).unwrap();
+    let second = cache.enter_run_v1(false).unwrap();
+    let refused = cache.enter_run_v1(true).err().unwrap();
+    assert!(refused.contains("in flight"), "{refused}");
+    drop(first);
+    assert!(cache.enter_run_v1(true).is_err());
+    drop(second);
+
+    // Admitted and not accepted: the mode is still off, and a run without
+    // resident reads is refused already.
+    let pending = cache.enter_run_v1(true).unwrap();
+    let beside = cache.enter_run_v1(true).unwrap();
+    assert!(!cache.resident_v1());
+    let refused = cache.enter_run_v1(false).err().unwrap();
+    assert!(refused.contains("needs its own process"), "{refused}");
+    // Both rejected before acceptance: nothing turned on, rereads run again.
+    drop(pending);
+    assert!(cache.enter_run_v1(false).is_err());
+    drop(beside);
+    assert!(!cache.resident_v1());
+    drop(cache.enter_run_v1(false).unwrap());
+
+    // Accepted: on, for good.
+    let mut resident = cache.enter_run_v1(true).unwrap();
+    assert!(!cache.resident_v1());
+    resident.accept_v1();
+    assert!(cache.resident_v1());
+    resident.accept_v1();
+    assert!(cache.enter_run_v1(false).is_err());
+    drop(resident);
+    assert!(cache.resident_v1());
+    assert!(cache.enter_run_v1(false).is_err());
+    // A later resident run is admitted, and its acceptance changes nothing.
+    let mut later = cache.enter_run_v1(true).unwrap();
+    later.accept_v1();
+    drop(later);
+    assert!(cache.resident_v1());
+    assert!(cache.enter_run_v1(false).is_err());
+}
+
+/// Across threads: while one thread's run without resident reads is in
+/// flight, another thread's resident run is refused and the mode stays off;
+/// once that run has returned, the resident run is admitted.
+#[test]
+fn a_run_in_flight_on_another_thread_keeps_resident_reads_off() {
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+    let wait = Duration::from_secs(60);
+    let cache = VerifiedBytesCacheV1::new_v1(4096, 16);
+    let (admitted, is_admitted) = channel();
+    let (release, released) = channel::<()>();
+    std::thread::scope(|scope| {
+        let shared = &cache;
+        let run = scope.spawn(move || {
+            let run = shared.enter_run_v1(false).unwrap();
+            admitted.send(()).unwrap();
+            // Held across what would be the run's reads.
+            released.recv_timeout(wait).unwrap();
+            assert!(!shared.resident_v1());
+            drop(run);
+        });
+        is_admitted.recv_timeout(wait).unwrap();
+        let refused = cache.enter_run_v1(true).err().unwrap();
+        assert!(refused.contains("in flight"), "{refused}");
+        assert!(!cache.resident_v1());
+        release.send(()).unwrap();
+        run.join().unwrap();
+    });
+    let mut resident = cache.enter_run_v1(true).unwrap();
+    resident.accept_v1();
+    assert!(cache.resident_v1());
+    assert!(cache.enter_run_v1(false).is_err());
 }
