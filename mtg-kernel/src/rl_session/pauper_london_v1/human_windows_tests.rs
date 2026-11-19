@@ -317,6 +317,11 @@ fn a_person_who_passes_every_new_window_plays_the_unflagged_game() {
             for person in [0, 1] {
                 let episode = 0xE07_0000 + index as u64 * 1_000 + seed * 2 + person as u64;
                 let played = pass_through(deck, seed, episode, person, 6_000);
+                assert!(
+                    played.finished,
+                    "{deck} seed {seed} person p{person}: not finished after {} shared decisions",
+                    played.shared_decisions
+                );
                 assert!(played.shared_decisions > 20, "{deck} seed {seed}");
                 assert!(
                     played.new_windows > 10,
@@ -337,7 +342,7 @@ fn a_person_who_passes_every_new_window_plays_the_unflagged_game() {
         "pass-through sweep: {finished} of 32 games finished, {} shared decisions ({} of the other seat), {} new windows passed: {:?}",
         total.shared_decisions, total.other_seat_decisions, total.new_windows, total.reasons
     );
-    assert!(finished >= 24, "only {finished} of 32 games finished");
+    assert_eq!(finished, 32, "every game is compared to its end");
     assert!(
         total.other_seat_decisions > 2_000,
         "{}",
