@@ -136,6 +136,272 @@ pub(crate) fn owns_definition(definition: &CardDef) -> bool {
     cfg!(feature = "eternal-fixtures") && definition.name == VOLRATH && definition.is_executable()
 }
 
+// Donor classes (docs/design/premodern_shapeshifter_alter_reality_v1.md,
+// section 2.2 and appendix A). A donor is recognized by its printed name in
+// one of these audited lists, never by a guess from its definition. Every
+// other creature card is refused as a donor.
+
+/// Part A: every card with a donated program today. Their battlefield text
+/// is complete on a Shapeshifter through the generic characteristic queries
+/// and the programs of this module and the Premodern static modules.
+pub(crate) const DONATED_PROGRAM_DONORS_V1: [&str; 15] = [
+    "Akroma, Angel of Wrath",
+    "Battlefield Scrounger",
+    "Birds of Paradise",
+    "Hermit Druid",
+    "Ihsan's Shade",
+    "Iridescent Angel",
+    "Karmic Guide",
+    "Mogg Fanatic",
+    "Palinchron",
+    "Phyrexian Devourer",
+    "Psychatog",
+    "Ravenous Rats",
+    "Triskelion",
+    "Volrath's Shapeshifter",
+    "Wall of Roots",
+];
+
+/// Part B: the listed additions (the mirror donors, the sideboard creatures
+/// of the Full English Breakfast and the creature reached through Legacy's
+/// Allure).
+pub(crate) const LISTED_DONORS_V1: [&str; 8] = [
+    "Elvish Spirit Guide",
+    "Squee, Goblin Nabob",
+    "Auramancer",
+    "Monk Realist",
+    "Uktabi Orangutan",
+    "Ghitu Slinger",
+    "Xantid Swarm",
+    "Meddling Mage",
+];
+
+/// Listed additions whose only other battlefield text is an enters trigger
+/// that has no donated program yet. Until it lands, each is accepted like a
+/// part D card: on a Shapeshifter already on the battlefield nothing is lost,
+/// and a Shapeshifter entering with one on top is refused.
+pub(crate) const LISTED_ENTRY_PROGRAMS_PENDING_V1: [&str; 3] =
+    ["Auramancer", "Monk Realist", "Uktabi Orangutan"];
+
+/// Listed additions with battlefield text beyond an entry (Ghitu Slinger's
+/// echo, Xantid Swarm's attack trigger) whose donated programs have not
+/// landed yet. Until they do, each is refused like any unlisted donor.
+pub(crate) const LISTED_PROGRAMS_PENDING_V1: [&str; 2] = ["Ghitu Slinger", "Xantid Swarm"];
+
+/// Part C: every battlefield ability is a keyword in `CardDef.keywords`, and
+/// every other ability works only from the hand, from the graveyard, while
+/// the card is face down or as it is turned face up.
+pub(crate) const GENERIC_TEXT_DONORS_V1: [&str; 11] = [
+    "Anger",
+    "Arrogant Wurm",
+    "Bane of the Living",
+    "Eternal Dragon",
+    "Gempalm Incinerator",
+    "Genesis",
+    "Glory",
+    "Krosan Tusker",
+    "Nantuko Vigilante",
+    "Nether Spirit",
+    "Thornscape Battlemage",
+];
+
+/// Part D: every battlefield ability is a keyword except abilities that work
+/// only as the permanent enters, with no leaves-the-battlefield half. Such a
+/// card plays correctly once the Shapeshifter is on the battlefield, and
+/// wrongly only when a Shapeshifter enters with it on top.
+pub(crate) const ENTRY_ONLY_DONORS_V1: [&str; 5] = [
+    "Caller of the Claw",
+    "Goblin Matron",
+    "Goblin Ringleader",
+    "Phyrexian Dreadnought",
+    "Wall of Blossoms",
+];
+
+/// Meddling Mage's only ability is its "as enters" name choice (614.12),
+/// which a Shapeshifter already on the battlefield never makes.
+const MEDDLING_MAGE: &str = "Meddling Mage";
+
+/// True for a card whose text a Shapeshifter already on the battlefield can
+/// have without losing any of it: parts A to D, less the listed additions
+/// whose programs are still pending.
+pub(crate) fn donor_supported(definition: &CardDef) -> bool {
+    let name = definition.name;
+    !LISTED_PROGRAMS_PENDING_V1.contains(&name)
+        && (DONATED_PROGRAM_DONORS_V1.contains(&name)
+            || LISTED_DONORS_V1.contains(&name)
+            || GENERIC_TEXT_DONORS_V1.contains(&name)
+            || ENTRY_ONLY_DONORS_V1.contains(&name))
+}
+
+/// True for a supported card whose enters ability a Shapeshifter entering
+/// with it on top would lose.
+pub(crate) fn entry_refused(definition: &CardDef) -> bool {
+    entry_replacement_refused(definition)
+        || ENTRY_ONLY_DONORS_V1.contains(&definition.name)
+        || LISTED_ENTRY_PROGRAMS_PENDING_V1.contains(&definition.name)
+}
+
+/// True when the enters ability lost at entry is a replacement effect that
+/// applies as the permanent enters (614.12), not a trigger, so an
+/// entry-trigger suppressor such as Torpor Orb does not cover it.
+pub(crate) fn entry_replacement_refused(definition: &CardDef) -> bool {
+    definition.name == MEDDLING_MAGE
+}
+
+/// Where the donor refusal is checked. Each site has its own fixture, which
+/// fails when only that site's check is removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DonorCheckSiteV1 {
+    CommitTail,
+    BatchTail,
+    SbaBatch,
+    Entry,
+    ControlChange,
+    PhaseIn,
+    AdvanceStart,
+    AdvanceDecision,
+}
+
+impl DonorCheckSiteV1 {
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 8] = [
+        Self::CommitTail,
+        Self::BatchTail,
+        Self::SbaBatch,
+        Self::Entry,
+        Self::ControlChange,
+        Self::PhaseIn,
+        Self::AdvanceStart,
+        Self::AdvanceDecision,
+    ];
+}
+
+#[cfg(test)]
+thread_local! {
+    static DISABLED_DONOR_CHECK_SITES: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
+}
+
+/// Test instrumentation: runs `body` with one check site turned off, on this
+/// thread only, to show that the site's fixture depends on it.
+#[cfg(test)]
+pub(crate) fn with_donor_check_site_disabled<R>(
+    site: DonorCheckSiteV1,
+    body: impl FnOnce() -> R,
+) -> R {
+    struct RestoreDonorCheckSites(u8);
+
+    impl Drop for RestoreDonorCheckSites {
+        fn drop(&mut self) {
+            DISABLED_DONOR_CHECK_SITES.with(|sites| sites.set(self.0));
+        }
+    }
+
+    let bit = 1_u8 << site as u8;
+    let previous = DISABLED_DONOR_CHECK_SITES.with(|sites| sites.get());
+    let _restore = RestoreDonorCheckSites(previous);
+    DISABLED_DONOR_CHECK_SITES.with(|sites| sites.set(previous | bit));
+    body()
+}
+
+fn donor_check_site_disabled(site: DonorCheckSiteV1) -> bool {
+    #[cfg(test)]
+    {
+        DISABLED_DONOR_CHECK_SITES.with(|sites| sites.get() & (1_u8 << site as u8) != 0)
+    }
+    #[cfg(not(test))]
+    {
+        let _ = site;
+        false
+    }
+}
+
+/// `donor_refusal` at one named check site.
+pub(crate) fn donor_refusal_at(
+    state: &mut GameState,
+    site: DonorCheckSiteV1,
+) -> Option<(crate::engine::UnsupportedMechanic, ObjectId)> {
+    if donor_check_site_disabled(site) {
+        return None;
+    }
+    donor_refusal(state)
+}
+
+/// Refuses a Shapeshifter's entry with the typed donor halt.
+fn refuse_entry(state: &mut GameState, source: ObjectId) {
+    if !donor_check_site_disabled(DonorCheckSiteV1::Entry) && state.engine.halted.is_none() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::FullTextDonorOutsideSetV1,
+            source,
+        ));
+    }
+}
+
+/// An entry whose lost enters trigger can be suppressed by the final
+/// simultaneous-entry scene is checked at the end of its batch. The deferred
+/// check shares the batch's list of entry markers, tagged by this bit; a
+/// history index never reaches it.
+const DEFERRED_ENTRY_CHECK_V1: u64 = 1 << 63;
+
+fn deferred_entry_check(marker: u64) -> Option<u64> {
+    (marker & DEFERRED_ENTRY_CHECK_V1 != 0).then_some(marker & !DEFERRED_ENTRY_CHECK_V1)
+}
+
+/// The first face-up Shapeshifter whose current top card is outside the
+/// supported donor set. One battlefield pass; it returns at once in a build
+/// without the Eternal catalog.
+pub(crate) fn refused_donor(state: &GameState) -> Option<ObjectId> {
+    if !cfg!(feature = "eternal-fixtures") {
+        return None;
+    }
+    state
+        .players
+        .iter()
+        .flat_map(|player| player.battlefield.iter().copied())
+        .find(|&source| {
+            state.objects.try_get(source).is_some_and(|object| {
+                object.v4.face_down_v1.is_none()
+                    && CARD_DEFS
+                        .get(usize::from(object.card_def))
+                        .is_some_and(owns_definition)
+            }) && top_creature_text(state, AbilitySourceContractV4::capture(state, source))
+                .is_some_and(|text| !donor_supported(text.definition()))
+        })
+}
+
+/// While an owner order is quoted, suspended or pending, the visible top is
+/// not final: the arrivals are in the graveyard in their unordered native
+/// order. The final top is audited once the order completes.
+fn donor_refusal_deferred(state: &GameState) -> bool {
+    crate::graveyard_order_v1::quoting_entry_scene(state)
+        || crate::graveyard_order_v1::paused(state)
+        || !state.engine.graveyard_order_v1.is_empty()
+}
+
+/// Halt with the typed donor refusal when an unsupported donor is in place.
+/// Returns the halt when the game is halted by it, now or earlier, so that a
+/// caller can report it before any other decision or terminal.
+pub(crate) fn donor_refusal(
+    state: &mut GameState,
+) -> Option<(crate::engine::UnsupportedMechanic, ObjectId)> {
+    use crate::engine::UnsupportedMechanic;
+
+    if !cfg!(feature = "eternal-fixtures") {
+        return None;
+    }
+    match state.engine.halted {
+        Some(halt @ (UnsupportedMechanic::FullTextDonorOutsideSetV1, _)) => return Some(halt),
+        Some(_) => return None,
+        None => {}
+    }
+    if donor_refusal_deferred(state) {
+        return None;
+    }
+    let host = refused_donor(state)?;
+    let halt = (UnsupportedMechanic::FullTextDonorOutsideSetV1, host);
+    state.engine.halted = Some(halt);
+    Some(halt)
+}
+
 impl FullTextV1 {
     /// Printed full text, before layers 4-7, counters or CDA evaluation.
     /// The receiver must evaluate copied self-references on `host`, not donor.
@@ -429,20 +695,21 @@ fn entry_trigger_suppressed(state: &GameState, index: usize, source: ObjectId) -
 /// echo. This record describes only the public transfer, independent of its
 /// printing, face and current donor.
 pub(crate) fn record_control_gained(state: &mut GameState, object: ObjectId) {
-    if !crate::graveyard_order_v1::enabled(state) {
-        return;
+    if crate::graveyard_order_v1::enabled(state) {
+        let live = state.objects.get(object);
+        state
+            .engine
+            .event_history
+            .push(CommittedEvent::OrderedGraveyardControlGainedV1 {
+                permanent: ObjectLinkV4 {
+                    object,
+                    zone_change_count: live.zone_change_count,
+                },
+                controller: live.controller,
+            });
     }
-    let live = state.objects.get(object);
-    state
-        .engine
-        .event_history
-        .push(CommittedEvent::OrderedGraveyardControlGainedV1 {
-            permanent: ObjectLinkV4 {
-                object,
-                zone_change_count: live.zone_change_count,
-            },
-            controller: live.controller,
-        });
+    // A new controller makes a Shapeshifter read that player's graveyard.
+    let _ = donor_refusal_at(state, DonorCheckSiteV1::ControlChange);
 }
 
 fn echo_custody(state: &GameState, host: AbilitySourceContractV4, upkeep: u64) -> Option<u64> {
@@ -556,6 +823,29 @@ pub(crate) fn record_entry_trigger(
         return Ok(());
     };
     let entry = u64::try_from(index).map_err(|_| source)?;
+    // The text at entry is fixed here (inside an ordered batch it is already
+    // the batch's final top). A Shapeshifter entering with a donor whose
+    // battlefield text or "as enters" replacement it cannot donate is refused
+    // at this entry.
+    let definition = text.definition();
+    if !donor_supported(definition) || entry_replacement_refused(definition) {
+        refuse_entry(state, source);
+        return Ok(());
+    }
+    // A lost enters trigger is refused only when it would trigger: with every
+    // simultaneous entrant and departure applied, no suppressor applies.
+    if entry_refused(definition) {
+        let check = entry | DEFERRED_ENTRY_CHECK_V1;
+        if crate::graveyard_order_v1::defer_entry_check(state, check) {
+            return Ok(());
+        }
+        match batch {
+            Some(batch) => batch.push(check),
+            None if !entry_trigger_suppressed(state, index, source) => refuse_entry(state, source),
+            None => {}
+        }
+        return Ok(());
+    }
     let Some(kind) = DonatedTriggerKindV1::entry(text, entry, None) else {
         return Ok(());
     };
@@ -582,6 +872,15 @@ pub(crate) fn record_entry_trigger(
 }
 
 pub(crate) fn record_batch_entry_trigger(state: &mut GameState, marker: u64) -> Result<(), String> {
+    if let Some(entry) = deferred_entry_check(marker) {
+        let index = usize::try_from(entry).map_err(|_| "deferred entry index overflow")?;
+        let source =
+            entry_source(state, index).ok_or("deferred entry check lost its native entry")?;
+        if !entry_trigger_suppressed(state, index, source) {
+            refuse_entry(state, source);
+        }
+        return Ok(());
+    }
     let (entry, text) = batch_entry(state, marker)?;
     if active_text(state, text.host.source) != Some(text) {
         return Err("batched entry lost the selected final graveyard text".into());

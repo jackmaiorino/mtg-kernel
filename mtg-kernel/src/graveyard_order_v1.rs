@@ -457,6 +457,24 @@ pub(crate) fn defer_donated_entry(
     Ok(true)
 }
 
+/// Defers a Shapeshifter entry's donor check to the end of the ordered entry
+/// scene, where trigger suppression is judged with every simultaneous entrant
+/// and departure applied. Writes no history.
+pub(crate) fn defer_entry_check(state: &mut GameState, check: u64) -> bool {
+    let Some(scene) = state
+        .engine
+        .graveyard_order_v1
+        .runner
+        .as_mut()
+        .and_then(|runner| runner.text_scenes.last_mut())
+        .filter(|scene| scene.entering.is_some())
+    else {
+        return false;
+    };
+    scene.deferred_triggers.push(check);
+    true
+}
+
 type ArrivalsV1 = [Vec<(usize, ArrivalCardV1)>; 2];
 
 pub(crate) struct OrderedEntrySceneV1 {

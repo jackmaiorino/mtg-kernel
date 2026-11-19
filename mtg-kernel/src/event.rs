@@ -3676,6 +3676,11 @@ fn preflight_wide_life_v59(state: &mut GameState, event: &ProposedEvent) -> bool
 
 pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
     propose_event(state, event, false);
+    // A committed event can change the graveyard top a Shapeshifter reads.
+    let _ = crate::full_text_v1::donor_refusal_at(
+        state,
+        crate::full_text_v1::DonorCheckSiteV1::CommitTail,
+    );
 }
 
 fn propose_event(state: &mut GameState, event: ProposedEvent, individual_draw: bool) {
@@ -6755,6 +6760,16 @@ fn pre_apply_batch_zone_replacements_v1(state: &mut GameState, events: &mut [Pro
 }
 
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
+    propose_and_commit_batch_unaudited(state, events);
+    // Audited after the batch, once an owner order has selected its final
+    // graveyard top (the check defers while the order is still open).
+    let _ = crate::full_text_v1::donor_refusal_at(
+        state,
+        crate::full_text_v1::DonorCheckSiteV1::BatchTail,
+    );
+}
+
+fn propose_and_commit_batch_unaudited(state: &mut GameState, events: Vec<ProposedEvent>) {
     if events
         .iter()
         .any(|event| refuse_unowned_donated_damage(state, event))
@@ -7854,6 +7869,10 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         }
         crate::linked_aura_operation_v1::end_batch(state);
         finish_graveyard_order_batch(state, graveyard_batch, None);
+        let _ = crate::full_text_v1::donor_refusal_at(
+            state,
+            crate::full_text_v1::DonorCheckSiteV1::SbaBatch,
+        );
         return;
     }
     let events = dying
@@ -7906,6 +7925,10 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
     }
     crate::linked_aura_operation_v1::end_batch(state);
     finish_graveyard_order_batch(state, graveyard_batch, None);
+    let _ = crate::full_text_v1::donor_refusal_at(
+        state,
+        crate::full_text_v1::DonorCheckSiteV1::SbaBatch,
+    );
 }
 
 /// Logs a `SpellCast` marker with no accompanying state mutation (casting
