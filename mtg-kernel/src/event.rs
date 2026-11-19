@@ -3676,6 +3676,11 @@ fn preflight_wide_life_v59(state: &mut GameState, event: &ProposedEvent) -> bool
 
 pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
     propose_event(state, event, false);
+    // A committed event can change the graveyard top a Shapeshifter reads.
+    let _ = crate::full_text_v1::donor_refusal_at(
+        state,
+        crate::full_text_v1::DonorCheckSiteV1::CommitTail,
+    );
 }
 
 fn propose_event(state: &mut GameState, event: ProposedEvent, individual_draw: bool) {
@@ -4086,6 +4091,9 @@ fn propose_and_commit_inner(state: &mut GameState, event: ProposedEvent) {
     // step) becomes a Treasure token for its controller (eternal wave S1c).
     #[cfg(feature = "eternal-fixtures")]
     if let ProposedEvent::Draw(draw) = &event {
+        if crate::eternal_cube_c6c_v1::prevents_draw(state, draw.player) {
+            return;
+        }
         if let Some(owner) =
             crate::eternal_sideboard_s1c_v1::statics::hullbreacher_replaces_draw(state, draw.player)
         {
@@ -5361,6 +5369,7 @@ fn commit_with_entry_batch_and_source_color(
     } else {
         crate::arahbo_v1::record_single_entry(state, entry_history_index);
     }
+    crate::eternal_cube_c6c_v1::capture_single_entry(state, entry_history_index, defer_raid_entry);
     if let Some(batch) = authority_batch.as_mut() {
         batch.record(entry_history_index);
     } else {
@@ -6032,6 +6041,14 @@ fn materialize_event_v1(
                 // (Vintage Cube wave C4c).
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_cube_c4c_v1::note_departure(state, z.object, from, z.to_zone);
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cube_c6a_v1::note_zone_change(
+                    state,
+                    z.object,
+                    from,
+                    z.to_zone,
+                    departure_power,
+                );
                 crate::standard_legends_v1::before_zone_change(state, z.object, z.to_zone);
                 if from == Zone::Battlefield && z.to_zone != Zone::Battlefield {
                     crate::engine::record_different_controller_target_departure(state, z.object);
@@ -6208,6 +6225,8 @@ fn materialize_event_v1(
                     z.battlefield_revival_v1,
                 ),
             );
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_cube_c6b_v1::record_graveyard_entry(state, z.object, from);
             #[cfg(feature = "limited-fdn-fixtures")]
             if !mode.is_scene()
                 && creature_died
@@ -6287,6 +6306,12 @@ fn materialize_event_v1(
                 player: g.player,
                 amount: g.amount,
             }
+        }
+        ProposedEvent::Draw(d)
+            if cfg!(feature = "eternal-fixtures")
+                && crate::eternal_cube_c6c_v1::prevents_draw(state, d.player) =>
+        {
+            return None;
         }
         ProposedEvent::Draw(d)
             if cfg!(feature = "eternal-fixtures")
@@ -6522,6 +6547,10 @@ fn materialize_event_v1(
             // Sword of the Meek (Vintage Cube wave C4c) reads the power and
             // toughness a creature enters with, after its entry counters.
             crate::eternal_cube_c4c_v1::apply_entry(state, object);
+            // Staff of the Storyteller (Vintage Cube wave C3c) notes the
+            // Staffs that see this token being created.
+            #[cfg(feature = "eternal-fixtures")]
+            crate::eternal_cube_c3c_v1::note_token_created(state, object, t.controller);
             if crate::ajani_full_v42::selected_definition(t.token_def) {
                 crate::planeswalker_v1::after_zone_change(state, object, counter_input.as_ref());
                 crate::ajani_full_v42::lifecycle::initialize_entry(state, object);
@@ -6751,6 +6780,16 @@ fn pre_apply_batch_zone_replacements_v1(state: &mut GameState, events: &mut [Pro
 }
 
 pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent>) {
+    propose_and_commit_batch_unaudited(state, events);
+    // Audited after the batch, once an owner order has selected its final
+    // graveyard top (the check defers while the order is still open).
+    let _ = crate::full_text_v1::donor_refusal_at(
+        state,
+        crate::full_text_v1::DonorCheckSiteV1::BatchTail,
+    );
+}
+
+fn propose_and_commit_batch_unaudited(state: &mut GameState, events: Vec<ProposedEvent>) {
     if events
         .iter()
         .any(|event| refuse_unowned_donated_damage(state, event))
@@ -7306,6 +7345,8 @@ fn commit_batch_survivors_native(
     crate::equipment_damage_source_v4::before_batch_departures(state, &survivors);
     crate::source_power_activation_v1::bombardment::before_batch_departures(state, &survivors);
     crate::ashroot_animist_v1::before_batch_departures(state, &survivors);
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c6a_v1::before_batch_departures(state, &survivors);
     // Lifelink changes life at the same time as the damage. Capture every
     // source/controller before any member of the simultaneous batch can die.
     // CR 119.9: one source damaging several recipients simultaneously is
@@ -7395,6 +7436,8 @@ fn commit_batch_survivors_native(
         return;
     }
     crate::linked_aura_operation_v1::begin_batch(state);
+    #[cfg(feature = "eternal-fixtures")]
+    let exile_batch = crate::eternal_cube_c6a_v1::ExileBatchV1::capture(state, &survivors);
     if cfg!(feature = "limited-fdn-fixtures") {
         let ability_removals = survivors
             .iter()
@@ -7471,6 +7514,8 @@ fn commit_batch_survivors_native(
         }
     }
 
+    #[cfg(feature = "eternal-fixtures")]
+    exile_batch.finish(state);
     if state.engine.halted.is_none() {
         if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
             halt_zone_pt_v1(state, source);
@@ -7538,6 +7583,7 @@ fn commit_batch_survivors_native(
     }
 
     crate::raid_entry_custody_v1::capture_batch_entries(state, raid_history_start);
+    crate::eternal_cube_c6c_v1::capture_batch_entries(state, raid_history_start);
     if let Some(batch) = arahbo_batch {
         batch.finish(state);
     }
@@ -7850,6 +7896,10 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
         }
         crate::linked_aura_operation_v1::end_batch(state);
         finish_graveyard_order_batch(state, graveyard_batch, None);
+        let _ = crate::full_text_v1::donor_refusal_at(
+            state,
+            crate::full_text_v1::DonorCheckSiteV1::SbaBatch,
+        );
         return;
     }
     let events = dying
@@ -7902,6 +7952,10 @@ pub(crate) fn commit_sba_death_batch_v1(state: &mut GameState, dying: Vec<Object
     }
     crate::linked_aura_operation_v1::end_batch(state);
     finish_graveyard_order_batch(state, graveyard_batch, None);
+    let _ = crate::full_text_v1::donor_refusal_at(
+        state,
+        crate::full_text_v1::DonorCheckSiteV1::SbaBatch,
+    );
 }
 
 /// Logs a `SpellCast` marker with no accompanying state mutation (casting

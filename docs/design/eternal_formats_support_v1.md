@@ -593,7 +593,9 @@ New, each built once in the first wave that needs it:
   actual completed attempts when the replacement continuation runs. Restore
   checks saved progress against that native evidence.
   An affected player can also choose between Jace's empty-library win and
-  Hullbreacher on fixed-count draw instructions and the covered owned draws.
+  Hullbreacher on fixed-count draw instructions and the covered owned draws,
+  on definition-owned draws nested below the root of their program, and on
+  the draws Occult Epiphany and the pay-then-draw leaf stage (#717).
   Niv-Mizzet, Visionary and Hullbreacher are in separate shipped registries.
   Their damage-draw interaction has no native qualification.
   Curie's combat trigger binds the original source and controller. It uses
@@ -1520,7 +1522,8 @@ notes for station, 2015-11-04 for Fiery Confluence), checked against the XMage s
     Metamorph copy has the Battleship's abilities with its own counters.
   - Dress Down's "Creatures lose all abilities" reads printed creature types, so that types and
     abilities don't depend on each other. A stationed Battleship's creature type doesn't depend
-    on its abilities, so Dress Down now applies to it too.
+    on its abilities, so Dress Down now applies to it too, and so does an animated land's or
+    artifact's (Celestial Colonnade), which a resolved ability gave it.
   - Found in the fixtures: wave S1e's trigger target specs answered "no target" for every
     trigger in the tables chained after its own (S1g's, S1l's and the Battleship's). S1g's and
     S1l's triggers have no target, so only the Battleship's was affected. S1e now answers only
@@ -2821,7 +2824,8 @@ C1a:
   Spirit for each card type among them.
 - Timetwister has Echo of Eons' text and program. Time Spiral marks itself to be exiled as it
   finishes resolving, shuffles both hands and graveyards into their libraries, then each player
-  draws seven through `DrawCards` and its controller untaps up to six lands. Between the two
+  draws seven through `DrawCards`, the active player first (see "Each player draws" below), and
+  its controller untaps up to six lands. Between the two
   players' draws, `C1aOpV1::StopIfWonV1` drops the rest of the program if a draw won the game
   (Jace, Wielder of Mysteries). Both interpreters now stop on their own after such a win (see
   the program stop below), so this local stop is kept but no longer needed.
@@ -2858,7 +2862,7 @@ C1c:
   subtype (the Kindred type arrived with #716). Traumatic Critique deals X, then draws two and
   discards one.
 - Wheel of Fortune: each player discards their hand, the active player first, then each draws
-  seven, with the same stop between the draws as Time Spiral.
+  seven, the active player first, with the same stop between the draws as Time Spiral.
 - Lingering Souls: two Spirit tokens (the new "White Flying Spirit Token" row, shared with Occult
   Epiphany) and flashback {1}{B}.
 - No More Lies: pay {3} or the spell is countered and exiled
@@ -2886,10 +2890,7 @@ C1c:
   (`LibraryLookCount::ControllerLandsTwiceV1`), and plot {1}{B}{G}.
 
 Known limits shared with earlier waves, tracked in #710: a granted flashback does not add a
-second cost to a card that has flashback (Flashback, as Snapcaster Mage); "each player draws" from
-a sorcery cast outside its controller's turn draws for the controller first (Wheel of Fortune,
-Time Spiral); and a draw that a leaf stages at resolution (Occult Epiphany's X cards) does not
-offer the choice between two competing draw replacements, which is Hullbreacher's Partial branch.
+second cost to a card that has flashback (Flashback, as Snapcaster Mage).
 
 Conventions fixed under #717:
 
@@ -2919,6 +2920,67 @@ Conventions fixed under #717:
   effect, so "each player draws" still lets both players draw. Scrawling Crawler's "each player
   draws" is the shape that needed it; the local stops of Time Spiral, Wheel of Fortune and the
   owned draws stay.
+- Draw replacement origins. The choice between two competing draw replacements (Jace, Wielder of
+  Mysteries and Hullbreacher, 616.1) finds a definition-owned draw anywhere below the root of its
+  program (`effect::jace_draw_replacement_origin`): through a `Sequence`, a `Choice` option, the
+  unpaid branch of a payment, and a `Conditional` only through the branch its condition selects
+  at that moment. Smuggler's Copter's loot is the first draw this reaches.
+- Pay-then-draw. "You may discard a card. If you do, draw N cards" (Improvised Act, Pursue the
+  Past, Melded Moxite, Ragged Short Spear) is the eternal leaf `E7bOpV1::MayDiscardThenDrawV1`
+  instead of the legacy optional cost: its controller picks up to one card from hand
+  (`E7bChoiceV1::DiscardThenDrawV1`, hidden from the opponent; finishing with none declines, and
+  an empty hand asks nothing), and after the discard the draw is the leaf's next instruction, so
+  dredge (702.52) and the choice between competing draw replacements are offered for it as for
+  any other draw of the program. Quantum Riddler's extra draw on such a draw follows the limit
+  recorded for nested draws above.
+- Leaf-staged draws. A definition-owned leaf that stages its draw at its own path as it resolves
+  declares that draw to the origin check (`effect::leaf_staged_draw`: the drawer, the most cards
+  and the frames it stages below the draw), so the choice between Jace and Hullbreacher is
+  offered on each of its draws: Occult Epiphany's X cards (above its discard stage) and the
+  pay-then-draw leaf.
+- Each player draws. "Each player draws" (Wheel of Fortune, Time Spiral, Faerie Mastermind's
+  ability) starts with the active player (101.4): `eternal_cube_c1a_v1::each_player_draws` is a
+  `Conditional` on `EffectCond::ControllersTurnV1` whose branches draw for the controller first
+  on their own turn and for the opponent first otherwise (a flashed sorcery, or the Mastermind
+  activated on the opponent's turn), with the stop between the two draws in both. With Jace on
+  both sides this decides the winner, and with dredge or Hullbreacher who chooses first.
+- Linked exile after the source left. A card exiled by Currency Converter's "may exile" trigger
+  is linked to the Converter incarnation whose trigger it is, also when that Converter left the
+  battlefield before the trigger resolved (607.2a): a release ability of that incarnation already
+  on the stack still finds the card. A later incarnation never reads the link.
+- Delayed triggers see the event. Currency Converter's discard trigger and Staff of the
+  Storyteller's token trigger check their sources as the event happens (603.2), not when the
+  triggers are collected: `note_discard` and `note_token_created` (called as each token creation
+  commits) record the Converters and Staffs their player controlled then, so a source destroyed
+  later in the same resolution (Kolaghan's Command making its controller discard and then
+  destroying the Converter) still triggers, and a Staff that arrives later does not. Whether a
+  token is a creature is recorded as it is created too, and not read again at the collection: a
+  token made a creature by a later operation does not count, and a creature token that loses
+  that status before the collection still does. A token copy of a transformed permanent enters
+  with its back face up (707.8a); the copy helper that commits it with its front face and turns
+  it right after settles the recorded status once that face is on (Reflection of Kiki-Jiki
+  copying another Reflection). A snapshot written before this
+  change in the middle of a resolution, after a token was created and before the next trigger
+  collection, has no note and loses that Staff trigger; such a pending state is not carried
+  across the change. Known limit: Staff triggers once per trigger collection in which its
+  controller created creature tokens, so two separate token-creating instructions of one
+  resolution give one story counter. Ocelot Pride with the city's blessing does that: its end
+  step ability creates a Cat and then, as a second instruction, copies of the tokens that
+  entered this turn, which should be two Staff triggers.
+- Counter costs and the charge leaf. Devoted Druid's -1/-1 cost counter and the charge counters
+  of `E7aOpV1::AddChargeCountersV1` (Blast Zone's X, Staff of the Storyteller's story counter)
+  always go through `doubling_season_v48::counter_amount`, as a cost and as an effect, so a
+  replacement that names any counter being put (Innkeeper's Talent at level 3) applies to both
+  and Doubling Season's "an effect" only to the second. Counters a permanent enters with
+  (sunburst, Blast Zone's entry counter) are not yet modified.
+- Sunburst on a copy. Phyrexian Metamorph's cast records its colors spent, like Engineered
+  Explosives' and Pentad Prism's, and a Metamorph that enters as a copy of either gets a charge
+  counter for each color spent to cast it (702.44a); a copy of Engineered Explosives also keeps
+  that count for its sacrifice ability. By the rules a Metamorph put onto the battlefield without
+  being cast would enter as such a copy with no counters, since no mana was spent to cast it. The
+  engine does not offer that copy: the guarded copy menu of a Metamorph that was not cast (Reanimate)
+  refuses Pentad Prism and Engineered Explosives as unsupported entry forms, and Animate Dead and
+  Shallow Grave put a Metamorph onto the battlefield without any copy choice (an existing limit).
 
 A batch is one event for replacement effects (614.1, 614.6): the name-keyed graveyard
 replacements (Rest in Peace, Leyline of the Void, Dauthi Voidwalker, with Yawgmoth's Will, Suplex,
@@ -2933,6 +2995,25 @@ Voidwalker destroyed in the batch still exiles the other members (Pest Infestati
 sweeper, Pestilence). Containment Priest's entry replacement is still applied as each member
 enters, so a Priest entering earlier in one entry batch exiles a later nontoken creature of the
 same batch.
+
+Granted abilities follow the timestamps of the effects that remove abilities (613.7), with the
+check `continuous_characteristics_v1::granted_ability_survives`, which leaves out a land-type
+setter (305.7). A static keyword grant from another permanent has that permanent's timestamp:
+Samut, Hazoret's Champion's haste, Marwyn, the Preserver's hexproof, Goblin Warchief's haste and
+Sterling Grove's shroud end on a host whose abilities a later Dress Down, Unable to Scream or
+Azure Beastbinder removes, and apply on a host whose abilities an earlier one removed. An
+animated land's keywords (Celestial Colonnade's flying and vigilance) have the timestamp of the
+animation (`animation_keywords`), and Dress Down applies to an animated land, whose creature type
+comes from the resolved ability. Creeping Tar Pit's "can't be blocked this turn" is a rule effect
+of the resolved ability, not an ability, so it stays under a removal and under an Aura that
+replaces the animation's characteristics (Witness Protection). Protection from a color until end
+of turn (Sejiri Steppe, Mother of Runes, Giver of Runes' colors and colorless, Glory, Crimson
+Acolyte, Eowyn, Fearless Knight) is stored with the timestamp of its effect in E9a's
+`timed_protections` (appended to the state and hashed under its own tag only when it holds a
+record), so a later removal ends it and an earlier one does not; Benevolent Blessing's
+protection has the Aura's timestamp. Anger's haste from a graveyard keeps applying under a
+removal: its effect's timestamp would be the time Anger entered the graveyard (613.7d), which is
+not recorded.
 
 Each sub-module's test file covers every card's printed text in rules tests (costs, both sides of
 each condition, illegal targets) and plays decks of its cards through public schema-5 sessions
@@ -3147,7 +3228,7 @@ C4a:
   the total is paid, so colored mana is never reduced as generic.
 - Faerie Mastermind (`OpponentDrawsSecondCardEachTurnV1`) and Ledger Shredder
   (`PlayerCastsSecondSpellEachTurnV1`, connive) read the engine's per-player draw and cast
-  counters. The Mastermind's shared draw is controller first, with the stop between the two
+  counters. The Mastermind's shared draw is active player first, with the stop between the two
   players' draws.
 - Jacked Rabbit enters with X counters, draws when cast with X of 5 or more, and makes Rabbit
   tokens equal to its power when it attacks. Bristly Bill, Spine Sower puts a counter on a creature
@@ -3225,3 +3306,129 @@ literal list, so a Kindred object lists Kindred and every other object is unchan
 Limited validators accept only the seven earlier names, so they refuse a Kindred form.
 `rules_vector_v1` has no Kindred facet and refuses a Kindred card. The eternal printed-program
 encoder admits only its named card pool, which has no Kindred card.
+
+### C5: statics, token makers, reanimation and each-player spells
+
+Wave C5 adds 25 cards and seven tokens, raising the cube to 465 of 540 Full. It is four sub-modules
+chained after C4c: C5a (seven creatures with statics, mana and counter state,
+`eternal_cube_c5a_v1`), C5b (six token makers, `eternal_cube_c5b_v1`), C5c (reanimation spells and
+enchantments, a sweeper and a land, `eternal_cube_c5c_v1`) and C5d (each-player decision spells and
+hidden-zone artifacts, `eternal_cube_c5d_v1`), the new tail. Orcish Lumberjack, Urza, Lord High
+Artificer and Vivi Ornitier wait for extended mana ability definitions, and Springheart Nantuko for
+a bestow cast without X.
+
+C5a:
+
+- Delighted Halfling taps for {C}, or for one mana of any color under
+  `ManaSpendRestrictionDef::LegendarySpell` (Plaza of Heroes' rows); a legendary spell paid with
+  that mana is marked uncounterable (Cavern of Souls' list).
+- Fanatic of Rhonas: ferocious is an additional mana ability that makes {G}{G}{G}{G} under
+  `ManaAbilityConditionDef::ControllerControlsCreatureWithPowerAtLeastV1(4)`. It is keyed by {C},
+  a color it does not make, because the primary ability owns {G} (Relic of Sauron's convention).
+  Eternalize is Sacred Cat's embalm recipe with a 4/4 black Zombie token row that keeps both mana
+  abilities.
+- Carnage Interpreter discards its controller's hand and investigates four times; its +2/+2 and
+  menace are read live while that player has one or fewer cards in hand. Keen-Eyed Curator keeps a
+  ledger of the cards exiled with it and reads its +4/+4 and trample from the card types among
+  those still in exile.
+- Baloth Prime enters tapped with six stun counters (none when it enters without its abilities)
+  and, whenever its controller sacrifices a land, makes a tapped Beast token and untaps, which
+  removes a stun counter instead (122.1g). Alpha Deathclaw's monstrosity is a mark on its
+  incarnation, and its entry and becomes-monstrous triggers are one leaf; the second is queued
+  for the creature's controller as it becomes monstrous, if it still has its abilities. Ginger,
+  Queen of Sweets makes its controller the monarch and creates a Gingerbrute token (a {1}
+  artifact creature) at the beginning of each upkeep while they are the monarch.
+
+C5b:
+
+- Worldspine Wurm makes three Wurm tokens when it dies and shuffles itself into its owner's
+  library when it is put into a graveyard from anywhere
+  (`C5bTriggerV1::PutIntoGraveyardFromAnywhereV1`, which functions from the graveyard).
+- Myr Battlesphere makes four Myr tokens; its attack trigger is the module's own choice of any
+  number of untapped Myr to tap, then the pump and the damage to the player or planeswalker it
+  attacks.
+- Mole Man, Moloid Master lets its controller play lands from their graveyard (a land-play source
+  next to Crucible of Worlds') and makes a Moloid token on landfall. Torsten, Founder of Benalia
+  reveals seven cards for a multiple choice (Atraxa's shape), puts the rest on the bottom in a
+  random order and makes seven Soldier tokens when it dies.
+- Titania, Protector of Argoth returns a land card, and makes a 5/3 Elemental whenever a land its
+  controller controls is put into a graveyard from the battlefield
+  (`C5bTriggerV1::ControlledLandToGraveyardV1`, which also sees a land that leaves together with
+  Titania, unless Titania had lost its abilities). Otharri, Suns' Glory keeps experience counters
+  in `C5bStateV1::experience` and makes its Rebel tokens tapped and attacking.
+
+C5c:
+
+- Sunfall exiles every creature as one batch and incubates for the number that left the
+  battlefield. Recurring Nightmare's return to its owner's hand is a cost
+  (`CostComponent::ReturnSelfToOwnersHandV1`); both costs are always paid, so the creature it
+  sacrifices is another creature.
+- Corpse Dance uses the kicker slot for buyback: a paid cast marks the resolving spell, which goes
+  to its owner's hand instead of the graveyard, and the returned creature's exile at the next end
+  step is the module's own delayed trigger.
+- Necromancy records a cast at a time a sorcery could not be cast and is sacrificed at the next
+  cleanup step. Once its entry trigger has resolved it is an Aura, in its subtypes
+  (`is_necromancy_aura`) and for state-based actions (`invalid_necromancy_aura`).
+- Aang's Iceberg exiles up to one other nonland permanent until it leaves the battlefield;
+  waterbend is four activated abilities, one for each number of permanents tapped to help pay.
+  Shifting Woodland becomes a copy of a permanent card in its controller's graveyard through wave
+  E7a's `become_copy`, ended at cleanup.
+
+C5d:
+
+- Balance is three leaves in printed order (lands, cards in hand, creatures). Each counts anew,
+  lets every player with more than the fewest choose what to keep (active player first, the hand
+  choice private to its chooser) and removes the rest of both players' cards in one batch.
+- Council's Judgment is a series of votes (`C5dChoiceV1::VoteV1`, the caster first) and one exile
+  of every permanent with the most votes. It does not target.
+- Palantir of Orthanc keeps its influence counters in a ledger. The opponent chooses between its
+  controller drawing a card and its controller milling X cards with life loss equal to their total
+  mana value. Proft's Eidetic Memory removes the hand limit and reads the cards drawn this turn
+  when combat begins and again as its trigger resolves.
+- Fractured Identity exiles its target and gives each other player a token copy made from the
+  permanent's copiable values as it last existed; an Aura copy asks its controller what it
+  enchants.
+- Memory Jar exiles both hands face down, visible only to their owners (foretell's hidden exile),
+  and returns them at the beginning of the next end step even when the Jar has left.
+
+Keen-Eyed Curator completes Legacy Selesnya Depths' 75, which joins `PLAYABLE_75` with a seeded
+best-of-three test against Dimir Tempo.
+
+### C6: discard, exile and graveyard creatures, and planeswalkers
+
+Wave C6 adds 18 cards and two tokens, raising the cube to 483 of 540 Full. Its three sub-modules
+chain after C5d: C6a (attack, discard and exile trigger creatures, `eternal_cube_c6a_v1`), C6b
+(discard, graveyard and death-copy creatures, `eternal_cube_c6b_v1`) and C6c (six planeswalkers,
+`eternal_cube_c6c_v1`), the new tail. The card code and tests were written by GPT-6 Astra and
+checked by compiling and running them; see the pull request for the review.
+
+- C6a: Ivora, Insatiable Heir; Gau, Feral Youth; Laelia, the Blade Reforged; Fallen Shinobi;
+  Generous Plunderer; Gut, True Soul Zealot.
+- C6b: Seasoned Cryomancer; Seasoned Pyromancer (1/1 red Elemental token); Sphinx of False
+  Conclusions; Night Nurse, Healer of Heroes; Six; Ursine Monstrosity.
+- C6c: Jace, the Mind Sculptor; Karn, Scion of Urza; Narset, Parter of Veils; Teferi, Hero of
+  Dominaria; The Wandering Emperor; Garruk, Curse Breaker (4/4 Beast token).
+
+Engine changes shared with other cards:
+
+- A land played from exile under a play permission enters under the player who played it when
+  another player owns it (rule 305.2). Dauthi Voidwalker's permission had the same defect.
+- In the eternal build an effect that puts a permanent onto the battlefield with X counters does
+  so as one entry, so entry observers (Garruk's threshold) see the counters.
+- In the eternal build a "pick from among them" choice with nothing to take is skipped, as
+  Recruitment Officer's is.
+- New subtypes Doctor, Narset and Garruk.
+
+Ten cards stay out, each for a stated missing piece:
+
+- Headliner Scarlett and Gandalf, Goblins' Bane are Partial: a face-down exiled card's play
+  permission is public (`exile_play_permissions_public_v2` shows Play or Cast), which reveals
+  whether it is a land.
+- Metamorphosis Fanatic is Partial: its return bypasses Phyrexian Metamorph's copy choice, and
+  the lifelink counter is placed after the creature enters.
+- Inti, Seneschal of the Sun (several callers commit a multi-card discard one card at a time);
+  Black Widow, Super Spy (spell-scoped mana of any type); Malcolm, Alluring Scoundrel (a free cast
+  of the exact discarded card during resolution); Vaultborn Tyrant (a death copy that keeps an
+  added artifact type); Pyrogoyf (damage by each entering creature as it last existed); Saheeli,
+  Sublime Artificer (full copiable values for a token that becomes a copy); Chandra, Torch of
+  Defiance (casting an exiled card for its mana cost).

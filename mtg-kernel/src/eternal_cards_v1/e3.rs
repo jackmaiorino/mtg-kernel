@@ -320,6 +320,14 @@ pub enum E3ChoiceKindV1 {
     /// A sideboard wave S1o choice (`eternal_sideboard_s1o_v1`). Appended to
     /// preserve existing hashes.
     S1oV1(crate::eternal_sideboard_s1o_v1::S1oChoiceV1),
+    /// A Vintage Cube wave C5d choice (`eternal_cube_c5d_v1`).
+    C5dV1(crate::eternal_cube_c5d_v1::C5dChoiceV1),
+    /// A Vintage Cube wave C5b choice (`eternal_cube_c5b_v1`).
+    C5bV1(crate::eternal_cube_c5b_v1::C5bChoiceV1),
+    /// Gut's optional sacrifice of an artifact or another creature.
+    C6aGutSacrificeV1,
+    /// Vintage Cube wave C6b's private hand discard.
+    C6bV1(crate::eternal_cube_c6b_v1::C6bChoiceV1),
 }
 
 /// One staged E3 resolution choice. `candidates` are the offered targets in
@@ -412,6 +420,18 @@ impl E3ChoiceV1 {
         if let E3ChoiceKindV1::S1oV1(kind) = &self.kind {
             return kind.chooser_private();
         }
+        if let E3ChoiceKindV1::C5dV1(kind) = &self.kind {
+            return kind.chooser_private();
+        }
+        if matches!(
+            &self.kind,
+            E3ChoiceKindV1::C6bV1(crate::eternal_cube_c6b_v1::C6bChoiceV1::SixReturnLandV1)
+        ) {
+            return false;
+        }
+        if let E3ChoiceKindV1::C6bV1(_) = &self.kind {
+            return true;
+        }
         matches!(
             self.kind,
             E3ChoiceKindV1::ImprintV1 { .. }
@@ -464,6 +484,8 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::C1bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::C3aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::S1oV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::C5bV1(kind) => kind.public_purpose(),
+            E3ChoiceKindV1::C5dV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::E9aV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P1bV1(kind) => kind.public_purpose(),
             E3ChoiceKindV1::P2aV1(kind) => kind.public_purpose(),
@@ -492,6 +514,10 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::RetargetSpellV1 { .. } | E3ChoiceKindV1::RetargetCopyV1 { .. } => {
                 crate::rl::TargetSelectionPurposeV4::EffectTargets
             }
+            E3ChoiceKindV1::C6aGutSacrificeV1 => {
+                crate::rl::TargetSelectionPurposeV4::PermanentSelection
+            }
+            E3ChoiceKindV1::C6bV1(_) => crate::rl::TargetSelectionPurposeV4::CardSelection,
         }
     }
 
@@ -528,6 +554,8 @@ impl E3ChoiceV1 {
             E3ChoiceKindV1::C1bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::C3aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::S1oV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::C5bV1(kind) => out.extend(kind.referenced_bindings()),
+            E3ChoiceKindV1::C5dV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::E9aV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P1bV1(kind) => out.extend(kind.referenced_bindings()),
             E3ChoiceKindV1::P2aV1(kind) => out.extend(kind.referenced_bindings()),
@@ -905,6 +933,20 @@ pub(crate) fn finish_selection(
             kind,
             bindings,
         ),
+        E3ChoiceKindV1::C5dV1(kind) => crate::eternal_cube_c5d_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
+        E3ChoiceKindV1::C5bV1(kind) => crate::eternal_cube_c5b_v1::finish_selection(
+            state,
+            continuation,
+            choice,
+            kind,
+            bindings,
+        ),
         E3ChoiceKindV1::SurgicalExtractionV1 => crate::eternal_sideboard_s1a_v1::surgical::finish(
             state,
             continuation,
@@ -919,6 +961,12 @@ pub(crate) fn finish_selection(
             &bindings,
             crate::eternal_sideboard_s1a_v1::surgical::ExtractionV1::Extirpate,
         ),
+        E3ChoiceKindV1::C6aGutSacrificeV1 => {
+            crate::eternal_cube_c6a_v1::finish_gut_sacrifice(state, continuation, choice, bindings)
+        }
+        E3ChoiceKindV1::C6bV1(kind) => {
+            crate::eternal_cube_c6b_v1::finish_selection(state, continuation, kind, bindings)
+        }
     }
 }
 
@@ -1299,6 +1347,13 @@ pub(crate) fn drive(
         EternalOpV1::S1qV1(op) => {
             crate::eternal_sideboard_s1q_v1::drive(state, continuation, op, path)
         }
+        EternalOpV1::C5aV1(op) => crate::eternal_cube_c5a_v1::drive(state, continuation, op, path),
+        EternalOpV1::C5bV1(op) => crate::eternal_cube_c5b_v1::drive(state, continuation, op, path),
+        EternalOpV1::C5cV1(op) => crate::eternal_cube_c5c_v1::drive(state, continuation, op, path),
+        EternalOpV1::C5dV1(op) => crate::eternal_cube_c5d_v1::drive(state, continuation, op, path),
+        EternalOpV1::C6aV1(op) => crate::eternal_cube_c6a_v1::drive(state, continuation, op, path),
+        EternalOpV1::C6bV1(op) => crate::eternal_cube_c6b_v1::drive(state, continuation, op, path),
+        EternalOpV1::C6cV1(op) => crate::eternal_cube_c6c_v1::drive(state, continuation, op, path),
         EternalOpV1::DelayedUpkeepDrawV1 => crate::eternal_vintage_e7b_v1::dredge::drive_draws(
             state,
             continuation,
@@ -2117,6 +2172,16 @@ pub(crate) fn note_spell_payment(
     if paid_with_cavern {
         let spell = link(state, spell);
         e3_mut(state).uncounterable_spells.push(spell);
+    }
+}
+
+/// Marks the spell `spell` on the stack as one that can't be countered, as a
+/// Cavern of Souls does (Delighted Halfling, Vintage Cube wave C5a).
+pub(crate) fn mark_spell_uncounterable(state: &mut GameState, spell: ObjectId) {
+    let spell = link(state, spell);
+    let e3 = e3_mut(state);
+    if !e3.uncounterable_spells.contains(&spell) {
+        e3.uncounterable_spells.push(spell);
     }
 }
 

@@ -233,20 +233,11 @@ pub fn mastermind_draw_trigger() -> EffectOp {
 }
 
 /// Faerie Mastermind: "{3}{U}: Each player draws a card." Each draw is its
-/// own instruction; a draw that won the game ends it before the next. Wheel
-/// of Fortune's order (the controller first) is followed.
+/// own instruction; a draw that won the game ends it before the next. As
+/// for Wheel of Fortune, the active player draws first, which is the
+/// opponent when the ability resolves on the opponent's turn.
 pub fn mastermind_each_player_draws() -> EffectOp {
-    EffectOp::Sequence(vec![
-        EffectOp::DrawCards {
-            player: PlayerRef::Controller,
-            count: 1,
-        },
-        crate::eternal_cube_c1a_v1::stop_if_won(),
-        EffectOp::DrawCards {
-            player: PlayerRef::Opponent,
-            count: 1,
-        },
-    ])
+    crate::eternal_cube_c1a_v1::each_player_draws(1, Vec::new())
 }
 
 /// Ledger Shredder: "this creature connives. (Draw a card, then discard a

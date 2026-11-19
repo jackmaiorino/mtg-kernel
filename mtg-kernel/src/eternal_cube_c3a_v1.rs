@@ -229,27 +229,25 @@ fn offer(
 }
 
 /// Puts one -1/-1 counter on `object` as a cost (122.1, 614.16): the amount
-/// goes through the placement replacements Doubling Season's family adds.
+/// always goes through the shared placement replacements, so one that names
+/// any counter being put (Innkeeper's Talent) applies, while Doubling
+/// Season's "an effect" leaves a cost alone (`counter_amount`).
 fn put_minus_one_counter_as_cost(state: &mut GameState, object: ObjectId, actor: PlayerId) {
-    let placed = if crate::doubling_season_v48::requires_successor(state) {
-        match crate::doubling_season_v48::counter_amount(
-            state,
-            object,
-            actor,
-            crate::doubling_season_v48::CounterOriginV48::Cost,
-            1,
-        )
-        .ok()
-        .and_then(|count| i16::try_from(count).ok())
-        {
-            Some(count) => count,
-            None => {
-                halt(state, object);
-                return;
-            }
+    let placed = match crate::doubling_season_v48::counter_amount(
+        state,
+        object,
+        actor,
+        crate::doubling_season_v48::CounterOriginV48::Cost,
+        1,
+    )
+    .ok()
+    .and_then(|count| i16::try_from(count).ok())
+    {
+        Some(count) => count,
+        None => {
+            halt(state, object);
+            return;
         }
-    } else {
-        1
     };
     let Some(next) = state
         .objects
@@ -273,15 +271,7 @@ fn grant_colorless_protection(state: &mut GameState, creature: ObjectId) {
         object: creature,
         zone_change_count: state.objects.get(creature).zone_change_count,
     };
-    let record = (
-        link,
-        ManaColor::C,
-        crate::eternal_legacy_e9a_v1::TurnV1::now(state),
-    );
-    let protections = &mut crate::eternal_legacy_e9a_v1::e9a_state(state).protections;
-    if !protections.contains(&record) {
-        protections.push(record);
-    }
+    crate::eternal_legacy_e9a_v1::grant_protections(state, &[link], &[ManaColor::C]);
 }
 
 // ---- Activation costs -----------------------------------------------------------------
@@ -325,23 +315,11 @@ pub(crate) fn activation_paid(
 /// Giver of Runes' protection from colorless, as a test the E6b protection
 /// checks ask: whether `host` has it until end of turn.
 pub(crate) fn has_colorless_protection(state: &GameState, host: ObjectId) -> bool {
-    // Free when no Giver of Runes has used its ability.
-    let Some(e9a) = crate::eternal_legacy_e9a_v1::read_state(state) else {
-        return false;
-    };
-    if e9a.protections.is_empty() {
-        return false;
-    }
-    let Some(live) = state.objects.try_get(host) else {
-        return false;
-    };
-    let now = crate::eternal_legacy_e9a_v1::TurnV1::now(state);
-    e9a.protections.iter().any(|(link, color, turn)| {
-        *color == ManaColor::C
-            && link.object == host
-            && link.zone_change_count == live.zone_change_count
-            && *turn == now
-    })
+    // Free when no protection record exists; a later ability removal takes
+    // the protection away (613.7).
+    crate::eternal_legacy_e9a_v1::protection_record_mask(state, host)
+        & crate::card_def::mana_color_mask(ManaColor::C)
+        != 0
 }
 
 // ---- Triggered abilities ------------------------------------------------------------

@@ -1313,6 +1313,28 @@ fn pentad_prism_removes_a_counter_to_add_one_mana_of_any_color() {
 }
 
 #[test]
+fn phyrexian_metamorph_entering_as_pentad_prism_gets_a_counter_for_each_color_spent() {
+    // 702.44a: a Metamorph that enters as a copy of Pentad Prism has
+    // sunburst as it enters, and counts the colors spent to cast it.
+    for (colored, colorless, expected) in [
+        (vec![ManaColor::U], 3u8, 1),
+        (vec![ManaColor::U, ManaColor::W, ManaColor::R], 1, 3),
+    ] {
+        let mut state = plains();
+        let prism = put(&mut state, P0, "Pentad Prism", Zone::Battlefield);
+        let metamorph = put(&mut state, P0, "Phyrexian Metamorph", Zone::Hand);
+        pool(&mut state, P0, &colored, colorless);
+        cast(&mut state, metamorph, &[]);
+        settle_choosing(&mut state, prism);
+        assert_eq!(zone(&state, metamorph), Zone::Battlefield);
+        assert_eq!(state.objects.get(metamorph).card_def, id("Pentad Prism"));
+        assert_eq!(state.players[0].mana_pool, [0; 6], "all of it was spent");
+        assert_eq!(charge(&state, metamorph), expected, "{colored:?}");
+        assert_eq!(charge(&state, prism), 0, "the original was not cast");
+    }
+}
+
+#[test]
 fn pentad_prism_that_was_not_cast_has_no_counters_and_no_mana() {
     let mut state = plains();
     let prism = put(&mut state, P0, "Pentad Prism", Zone::Battlefield);

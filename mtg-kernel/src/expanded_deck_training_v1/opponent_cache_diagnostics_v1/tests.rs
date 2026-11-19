@@ -873,3 +873,168 @@ fn the_process_opponent_cache_counts_checkpoint_decodes_v1() {
     );
     fs::remove_dir_all(&root).unwrap();
 }
+
+/// An S model or wide net installed on an opponent policy is charged against
+/// both `OpponentCacheV1` and `ProcessOpponentCacheV1` alongside its base
+/// net-8 shell, counted once per distinct shared `Arc`, and released on
+/// eviction.
+#[test]
+fn installed_s_and_wide_models_are_charged_across_opponent_caches() {
+    on_large_stack_v1(installed_s_and_wide_models_are_charged_across_opponent_caches_v1);
+}
+
+fn installed_s_and_wide_models_are_charged_across_opponent_caches_v1() {
+    use super::super::loaded_source_profile_v1::LoadRoleV1;
+    use super::super::{
+        collection_entry_charge_v1, collection_entry_standalone_charge_v1, ExpandedSeatBehaviorV1,
+        LoadedOpponentV1, OpponentCacheV1,
+    };
+    use crate::native_policy_value_net_v1::{
+        NativePolicyValueModelConfigV1, NativePolicyValueNetWideV1,
+    };
+    use crate::s_transformer_v1::{SConfigV1, SModelV1};
+    use ordered_update_preparation::{full_load_opponent_v1, ProcessOpponentCacheV1};
+    use std::sync::Arc;
+
+    let root = std::env::temp_dir().join(format!(
+        "opponent-cache-s-wide-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let root = root.canonicalize().unwrap();
+    let (s0, _) = fresh_source_v1(&root.join("s"));
+    let (s1, _) = fresh_source_v1(&root.join("w"));
+    let (mut base_s, id_s) = full_load_opponent_v1(&s0, LoadRoleV1::Opponent).unwrap();
+    let base_s_bytes = model_bytes_v1(&base_s).1;
+    let s_model = Arc::new(SModelV1::init_parity_v1(SConfigV1::s_v1(), 1).unwrap());
+    let s_model_bytes = s_model.owned_f32_len_v1() * std::mem::size_of::<f32>();
+    assert!(s_model_bytes > 0);
+    base_s.install_s_model_v1(s_model).unwrap();
+
+    let (mut base_w, id_w) = full_load_opponent_v1(&s1, LoadRoleV1::Opponent).unwrap();
+    let base_w_bytes = model_bytes_v1(&base_w).1;
+    let w_model = Arc::new(
+        NativePolicyValueNetWideV1::runner_fixed_wide_v1(
+            NativePolicyValueModelConfigV1::contract_wide_v1(),
+        )
+        .unwrap(),
+    );
+    let w_model_bytes = w_model.owned_f32_len_v1() * std::mem::size_of::<f32>();
+    assert!(w_model_bytes > base_w_bytes);
+    base_w.install_wide_model_v1(w_model).unwrap();
+
+    // Collection OpponentCacheV1 charges both the net-8 shell and installed
+    // S / wide model, deduplicates shared Arcs across forks, and refuses an
+    // entry when budget allows only the net-8 shell.
+    let s_fork = base_s.fork_for_collection_v3().unwrap();
+    let s_entry = LoadedOpponentV1 {
+        policy: s_fork,
+        behavior: ExpandedSeatBehaviorV1 {
+            source: s0.clone(),
+            identity: id_s.clone(),
+        },
+    };
+    let s_own = collection_entry_charge_v1(&s_entry);
+    let s_standalone = collection_entry_standalone_charge_v1(&s_entry);
+    assert_eq!(s_standalone, s_own + base_s_bytes + s_model_bytes);
+
+    let s_twin = LoadedOpponentV1 {
+        policy: base_s.fork_for_collection_v3().unwrap(),
+        behavior: ExpandedSeatBehaviorV1 {
+            source: s1.clone(),
+            identity: id_s.clone(),
+        },
+    };
+    let s_twin_own = collection_entry_charge_v1(&s_twin);
+
+    let counters = counters_v1();
+    let charged_before = counters.collection_opponent.live_charged_bytes.get();
+    {
+        let mut exact_col = OpponentCacheV1::with_limits_v1(8, s_standalone);
+        assert!(exact_col.insert(s_entry));
+        assert_eq!(exact_col.charged_bytes, s_standalone);
+        assert!(exact_col.evict_oldest_v1());
+        assert_eq!(exact_col.charged_bytes, 0);
+
+        let mut net8_only_col = OpponentCacheV1::with_limits_v1(8, s_own + base_s_bytes);
+        let under_budget = LoadedOpponentV1 {
+            policy: base_s.fork_for_collection_v3().unwrap(),
+            behavior: ExpandedSeatBehaviorV1 {
+                source: s0.clone(),
+                identity: id_s.clone(),
+            },
+        };
+        assert!(!net8_only_col.insert(under_budget));
+        assert_eq!(net8_only_col.charged_bytes, 0);
+
+        let mut shared_col = OpponentCacheV1::with_limits_v1(8, 256 << 20);
+        let first = LoadedOpponentV1 {
+            policy: base_s.fork_for_collection_v3().unwrap(),
+            behavior: ExpandedSeatBehaviorV1 {
+                source: s0.clone(),
+                identity: id_s.clone(),
+            },
+        };
+        assert!(shared_col.insert(first));
+        assert!(shared_col.insert(s_twin));
+        assert_eq!(
+            shared_col.charged_bytes,
+            s_own + s_twin_own + base_s_bytes + s_model_bytes
+        );
+        assert!(shared_col.evict_oldest_v1());
+        assert_eq!(
+            shared_col.charged_bytes,
+            s_twin_own + base_s_bytes + s_model_bytes
+        );
+        assert!(shared_col.evict_oldest_v1());
+        assert_eq!(shared_col.charged_bytes, 0);
+    }
+    assert_eq!(
+        counters.collection_opponent.live_charged_bytes.get(),
+        charged_before
+    );
+
+    let w_entry = LoadedOpponentV1 {
+        policy: base_w.fork_for_collection_v3().unwrap(),
+        behavior: ExpandedSeatBehaviorV1 {
+            source: s1.clone(),
+            identity: id_w.clone(),
+        },
+    };
+    let w_standalone = collection_entry_standalone_charge_v1(&w_entry);
+    assert_eq!(
+        w_standalone,
+        collection_entry_charge_v1(&w_entry) + base_w_bytes + w_model_bytes
+    );
+    {
+        let mut wide_col = OpponentCacheV1::with_limits_v1(8, w_standalone);
+        assert!(wide_col.insert(w_entry));
+        assert_eq!(wide_col.charged_bytes, w_standalone);
+    }
+
+    // ProcessOpponentCacheV1 also includes S / wide model bytes in held_v1 and
+    // enforces budget_bytes over them.
+    let process = ProcessOpponentCacheV1::new_v1(8, 256 << 20);
+    let _ = process.admit_v1(&s0, base_s, id_s).unwrap();
+    let held_s = process.held_v1();
+    assert_eq!(held_s.entries, 1);
+    assert_eq!(held_s.models, 2);
+    assert_eq!(held_s.model_bytes, base_s_bytes + s_model_bytes);
+    let _ = process.admit_v1(&s1, base_w, id_w).unwrap();
+    let held_both = process.held_v1();
+    assert_eq!(held_both.entries, 2);
+    assert_eq!(held_both.models, 4);
+    assert_eq!(
+        held_both.model_bytes,
+        base_s_bytes + s_model_bytes + base_w_bytes + w_model_bytes
+    );
+    process.configure_v1(None, Some(0));
+    assert_eq!(process.held_v1().entries, 0);
+    assert_eq!(process.held_v1().charged_bytes, 0);
+
+    fs::remove_dir_all(&root).unwrap();
+}

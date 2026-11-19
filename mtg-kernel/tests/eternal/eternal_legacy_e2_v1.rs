@@ -1662,6 +1662,37 @@ fn bilbo_attacks(state: &mut GameState, colors: &[ManaColor], generic: u8) -> Ve
     }
 }
 
+#[test]
+fn bilbo_skips_an_unpayable_paradoxical_outcome_over_many_permanents_quickly() {
+    // Paradoxical Outcome targets any number of permanents. Unpayable, it
+    // once made the offer try every ordering of its targets, and a seeded
+    // Vintage game with a dozen permanents never left the attack step.
+    let mut state = islands();
+    put(
+        &mut state,
+        P0,
+        "Bilbo, Thief in the Night",
+        Zone::Battlefield,
+    );
+    for _ in 0..14 {
+        put(&mut state, P0, "Mishra's Bauble", Zone::Battlefield);
+    }
+    put(&mut state, P0, "Paradoxical Outcome", Zone::Graveyard);
+    let ponder = put(&mut state, P0, "Ponder", Zone::Graveyard);
+    let started = std::time::Instant::now();
+    let candidates = bilbo_attacks(&mut state, &[ManaColor::U], 0);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(30),
+        "the offer took {:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        candidates,
+        vec![Target::Object(ponder)],
+        "Paradoxical Outcome needs {{2}}{{U}} after Bilbo's reduction"
+    );
+}
+
 /// Answers the rest of a chosen graveyard cast: each cast target from
 /// `targets`, and declines every resolution choice.
 fn finish_bilbo_cast(state: &mut GameState, targets: &[Target]) {

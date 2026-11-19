@@ -6,7 +6,7 @@
 use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, CARD_DEFS,
 };
-use mtg_kernel::engine::{self, Action, CostKind, Decision, OptionalCostChoice};
+use mtg_kernel::engine::{self, Action, CostKind, Decision};
 use mtg_kernel::eternal_cards_v1::{energy, replicate_cost};
 use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
@@ -980,32 +980,28 @@ fn melded_moxite_may_discard_to_draw_two() {
         let fodder = put(&mut state, P0, "Island", Zone::Hand);
         pool(&mut state, P0, &[ManaColor::R], 1);
         cast(&mut state, moxite, &[]);
+        // The discard is the choice of up to one card from hand; finishing
+        // with none declines.
         match settle(&mut state) {
-            Some(Decision::ChooseOptionalCost {
+            Some(Decision::ChooseEffectTargets {
                 player,
-                discard_payable,
+                legal_targets,
+                min_targets: 0,
+                max_targets: 1,
                 ..
             }) => {
                 assert_eq!(player, P0);
-                assert!(discard_payable);
+                assert_eq!(legal_targets, vec![Target::Object(fodder)]);
             }
             other => panic!("expected the optional discard, got {other:?}"),
         }
         let choice = if accept {
-            OptionalCostChoice::Discard
+            Action::ChooseEffectTarget(Target::Object(fodder))
         } else {
-            OptionalCostChoice::Decline
+            Action::FinishEffectSelection
         };
-        act(&mut state, Action::ChooseOptionalCost(choice));
-        while let Some(decision) = settle(&mut state) {
-            match decision {
-                Decision::Discard { choices, .. } => {
-                    assert!(choices.contains(&fodder));
-                    act(&mut state, Action::Discard(vec![fodder]));
-                }
-                other => panic!("unexpected choice: {other:?}"),
-            }
-        }
+        act(&mut state, choice);
+        settled(&mut state);
         assert_eq!(state.objects.get(moxite).zone, Zone::Battlefield);
         if accept {
             assert_eq!(state.objects.get(fodder).zone, Zone::Graveyard);

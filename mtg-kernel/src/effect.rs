@@ -8171,19 +8171,81 @@ pub(crate) fn jace_draw_replacement_origin(
                 state, pending, path, remaining,
             );
     }
-    let Some(EffectOp::DrawCards { player, count }) =
-        path.iter().try_fold(root.as_ref(), |op, ordinal| match op {
-            EffectOp::Sequence(steps) => steps.get(usize::from(*ordinal)),
-            _ => None,
-        })
-    else {
-        return false;
+    let ctx = &pending.ctx;
+    let (player, count, staged_below) = match resolved_definition_op_at(&root, path, ctx, state) {
+        Some(EffectOp::DrawCards { player, count }) => (*player, *count, Vec::new()),
+        Some(leaf) => match leaf_staged_draw(leaf, path, ctx) {
+            Some(staged) => staged,
+            None => return false,
+        },
+        None => return false,
     };
-    if *count == 0 || pending.ctx.resolve_player(*player, state) != drawer {
+    if count == 0 || pending.ctx.resolve_player(player, state) != drawer {
         return false;
     }
-    nonland_sacrifice_payment_v1::remaining(&root, path)
-        .is_ok_and(|siblings| draw_remainder_matches(remaining, &siblings, path, *player, *count))
+    nonland_sacrifice_payment_v1::remaining(&root, path).is_ok_and(|mut below| {
+        below.extend(staged_below);
+        draw_remainder_matches(remaining, &below, path, player, count)
+    })
+}
+
+/// The draw a definition-owned leaf stages at its own path when it resolves:
+/// its drawer, the most cards it draws, and the frames it pushes below the
+/// draw. Only the leaf itself pushes a frame at its path, so a draw found
+/// there with these frames below it is that leaf's draw.
+fn leaf_staged_draw(
+    leaf: &EffectOp,
+    path: &[u16],
+    ctx: &ExecCtx,
+) -> Option<(PlayerRef, u32, Vec<EffectFrame>)> {
+    use crate::eternal_cards_v1::EternalOpV1 as E;
+    use crate::eternal_cube_c1a_v1::C1aOpV1;
+    use crate::eternal_vintage_e7b_v1::E7bOpV1;
+    use crate::standard_cards_v1::StandardOpV1;
+    let EffectOp::StandardV1(StandardOpV1::EternalV1(leaf)) = leaf else {
+        return None;
+    };
+    match leaf {
+        // Occult Epiphany: "Draw X cards, then discard X cards", the discard
+        // stage staged below the draw.
+        E::C1aV1(C1aOpV1::OccultEpiphanyV1) => {
+            let count = ctx.x_value;
+            let discard = E::C1aV1(C1aOpV1::OccultDiscardV1 { count });
+            let below = EffectFrame::Program {
+                op: EffectOp::StandardV1(StandardOpV1::EternalV1(discard)),
+                path: path.to_vec(),
+            };
+            Some((PlayerRef::Controller, u32::from(count), vec![below]))
+        }
+        // "You may discard a card. If you do, draw N cards."
+        E::E7bV1(E7bOpV1::MayDiscardThenDrawV1 { draws }) => {
+            Some((PlayerRef::Controller, u32::from(*draws), Vec::new()))
+        }
+        _ => None,
+    }
+}
+
+/// The definition-owned instruction at `path`, walked through every
+/// structural parent a resolution enters (`Sequence`, `Choice`, the unpaid
+/// branch of a payment), so a draw below the root of its program is found. A
+/// `Conditional` is walked only through the branch its condition selects
+/// now; the conditions that order draws (`ControllersTurnV1`) cannot change
+/// while the program resolves, and a condition that did change only loses
+/// the replacement choice.
+fn resolved_definition_op_at<'a>(
+    root: &'a EffectOp,
+    path: &[u16],
+    ctx: &ExecCtx,
+    state: &GameState,
+) -> Option<&'a EffectOp> {
+    path.iter().try_fold(root, |op, &ordinal| match op {
+        EffectOp::Conditional { cond, .. }
+            if ordinal != u16::from(!eval_cond(cond, ctx, state)) =>
+        {
+            None
+        }
+        _ => effect_op_at_structural_path(op, &[ordinal]),
+    })
 }
 
 fn draw_remainder_matches(
@@ -18104,6 +18166,12 @@ impl LibraryPartitionFilter {
         match self {
             LibraryPartitionFilter::ByType(_) => true,
             LibraryPartitionFilter::Pick(rule) => {
+                // Like Recruitment Officer, skip a selection with nothing to take.
+                // Limited to the eternal build so the rated Pauper build keeps
+                // its decision sequence.
+                if cfg!(feature = "eternal-fixtures") && (selectable == 0 || rule.pick == 0) {
+                    return false;
+                }
                 if rule.selection.is_some() {
                     return true;
                 }
@@ -19041,6 +19109,7 @@ pub(crate) fn battlefield_exile_until_source_leaves(card_def: u16) -> bool {
             | "Static Prison"
             | "Temporary Lockdown"
             | "Perilous Snare"
+            | "Aang's Iceberg"
     )
 }
 
@@ -24924,7 +24993,10 @@ fn execute_in_departure_scope_v1(
                 ));
                 return;
             }
-            if crate::doubling_season_v48::requires_successor(state) {
+            // Eternal entry observers must see X counters as part of entering.
+            if crate::doubling_season_v48::requires_successor(state)
+                || cfg!(feature = "eternal-fixtures")
+            {
                 let mut proposal = event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield);
                 if let event::ProposedEvent::ZoneChange(change) = &mut proposal {
                     change.battlefield_x_v48 = Some(crate::doubling_season_v48::EffectXEntryV48 {

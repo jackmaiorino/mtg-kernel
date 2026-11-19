@@ -1,7 +1,6 @@
 //! Card-database recipes for the eternal catalog's Vintage Cube wave C4c
 //! (Equipment and Vehicles). Wave C4b's tables fall through to these, and
-//! this module is the tail of the recipe chains: its own
-//! defaults are the chains' base values. Runtime programs live in
+//! these fall through to wave C5a's (`build_eternal_c5a_v1.rs`). Runtime programs live in
 //! `src/eternal_cube_c4c_v1.rs`. Every row is keyed by a name that occurs
 //! only in the eternal registry.
 //!
@@ -145,41 +144,41 @@ pub(super) fn activated_ability_recipes_for(name: &str) -> &'static [ActivatedAb
         "Astrologian's Planisphere" => &ASTROLOGIANS_PLANISPHERE,
         "Smuggler's Copter" => &SMUGGLERS_COPTER,
         "Esika's Chariot" => &ESIKAS_CHARIOT,
-        _ => &[],
+        _ => super::build_eternal_c5a_v1::activated_ability_recipes_for(name),
     }
 }
 
 /// No C4c spell program: every card of this wave is a permanent.
-pub(super) fn special_for(_name: &str) -> Option<Special> {
-    None
+pub(super) fn special_for(name: &str) -> Option<Special> {
+    super::build_eternal_c5a_v1::special_for(name)
 }
 
 /// No C4c card has kicker.
-pub(super) fn kicker_cost_for(_name: &str) -> Option<&'static str> {
-    None
+pub(super) fn kicker_cost_for(name: &str) -> Option<&'static str> {
+    super::build_eternal_c5a_v1::kicker_cost_for(name)
 }
 
 /// No C4c card is an Aura (the Equipment profiles are wave E9a's
 /// `equipment_for`).
-pub(super) fn attachment_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn attachment_for(name: &str) -> &'static str {
+    super::build_eternal_c5a_v1::attachment_for(name)
 }
 
 /// No C4c card has flashback.
-pub(super) fn flashback_for(_name: &str) -> String {
-    "None".to_string()
+pub(super) fn flashback_for(name: &str) -> String {
+    super::build_eternal_c5a_v1::flashback_for(name)
 }
 
 /// No C4c card has an alternative cost.
-pub(super) fn alt_cost_for(_name: &str) -> &'static str {
-    "None"
+pub(super) fn alt_cost_for(name: &str) -> &'static str {
+    super::build_eternal_c5a_v1::alt_cost_for(name)
 }
 
 /// Printed evergreen keywords: Smuggler's Copter flies.
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "Smuggler's Copter" => &["Keywords::FLYING"],
-        _ => &[],
+        _ => super::build_eternal_c5a_v1::keywords_for(name),
     }
 }
 
@@ -216,6 +215,6 @@ pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
         "Esika's Chariot" => {
             "vehicle:4_4;etb:create_two_green_cat_tokens;attacks:create_token_copy_of_target_token_you_control;crew:4"
         }
-        _ => "none",
+        _ => super::build_eternal_c5a_v1::trigger_recipe_for(name),
     }
 }

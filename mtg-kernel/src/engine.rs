@@ -891,6 +891,12 @@ pub enum UnsupportedMechanic {
     /// First-life-gain matching has missing or inconsistent turn history.
     /// Appended to preserve prior unsupported-state discriminants.
     InvalidFirstLifeGainHistory,
+    /// A face-up Volrath's Shapeshifter would have the text of a creature card
+    /// outside the supported donor set (`full_text_v1::donor_supported`), or
+    /// would enter with a top card whose enters ability it cannot donate
+    /// (`full_text_v1::entry_refused`). The source is the Shapeshifter.
+    /// Appended to preserve prior unsupported-state discriminants.
+    FullTextDonorOutsideSetV1,
 }
 
 /// Issues the next 613.7 timestamp for a newly-created
@@ -6746,7 +6752,8 @@ fn component_payment_shape_supported(components: &[CostComponent]) -> bool {
             }
             CostComponent::SacrificeSelf
             | CostComponent::ExileSelf
-            | CostComponent::DiscardSelf => {
+            | CostComponent::DiscardSelf
+            | CostComponent::ReturnSelfToOwnersHandV1 => {
                 source_departure_count += 1;
                 saw_source_changing_component = true;
             }
@@ -7130,6 +7137,9 @@ fn can_pay_components(
                         && !has_effective_keyword(state, source, Keywords::HASTE)))
             }
             CostComponent::SacrificeSelf | CostComponent::ExileSelf => true,
+            CostComponent::ReturnSelfToOwnersHandV1 => {
+                state.objects.get(source).zone == Zone::Battlefield
+            }
             CostComponent::DiscardSelf => {
                 let object = state.objects.get(source);
                 object.owner == player
@@ -7483,6 +7493,7 @@ fn validate_cost_component_choices_v1(
                     CostComponent::SacrificeSelf
                         | CostComponent::ExileSelf
                         | CostComponent::DiscardSelf
+                        | CostComponent::ReturnSelfToOwnersHandV1
                 )
             });
         if object_cost_chosen.len() != needed
@@ -7549,6 +7560,7 @@ fn validate_cost_component_choices_v1(
                         CostComponent::SacrificeSelf
                             | CostComponent::ExileSelf
                             | CostComponent::DiscardSelf
+                            | CostComponent::ReturnSelfToOwnersHandV1
                     )
                 }));
         if object_cost_chosen.len() != needed || duplicate || invalid || aliases_source_departure {
@@ -7587,6 +7599,7 @@ fn validate_cost_component_choices_v1(
                         CostComponent::SacrificeSelf
                             | CostComponent::ExileSelf
                             | CostComponent::DiscardSelf
+                            | CostComponent::ReturnSelfToOwnersHandV1
                     )
                 }));
         if invalid {
@@ -7895,6 +7908,9 @@ fn commit_cost_components_from_plan_v1(
             CostComponent::ExileSelf => {
                 event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Exile))
             }
+            CostComponent::ReturnSelfToOwnersHandV1 => {
+                event::propose_and_commit(state, ProposedEvent::zone_change(source, Zone::Hand))
+            }
             CostComponent::DiscardSelf => {
                 // Cycling discards its card (Hollow One counts it; Gempalm
                 // Incinerator's cycle trigger sees it).
@@ -7904,6 +7920,8 @@ fn commit_cost_components_from_plan_v1(
                 crate::eternal_sideboard_s1b_v1::note_discard(state, source);
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_cube_c3c_v1::note_discard(state, source);
+                #[cfg(feature = "eternal-fixtures")]
+                crate::eternal_cube_c6a_v1::note_discards(state, &[source]);
                 #[cfg(feature = "eternal-fixtures")]
                 crate::eternal_premodern_p1a_v1::note_cycled(state, source);
                 event::propose_and_commit(
@@ -8419,7 +8437,7 @@ fn validate_optional_additional_paid_refs(
                 || def.has_type(CardType::Enchantment)
                 || (cfg!(feature = "eternal-fixtures") && has_permanent_card_type(def));
             if paid.controller != controller
-                || paid.zone != Zone::Graveyard
+                || !sacrifice_destination(paid.zone)
                 || paid.visible_to_mask != 0b11
                 || !eligible
             {
@@ -8436,7 +8454,7 @@ fn validate_optional_additional_paid_refs(
                 .get(paid.card_def as usize)
                 .ok_or("Casualty paid creature definition is missing")?;
             if paid.controller != controller
-                || paid.zone != Zone::Graveyard
+                || !sacrifice_destination(paid.zone)
                 || paid.visible_to_mask != 0b11
                 || !(def.has_type(CardType::Creature)
                     || def
@@ -8449,6 +8467,13 @@ fn validate_optional_additional_paid_refs(
         }
     }
     Ok(())
+}
+
+/// Whether a sacrificed permanent's recorded destination is one a sacrifice
+/// can reach: its owner's graveyard, or exile when a replacement such as
+/// Leyline of the Void or Rest in Peace moves it there instead.
+fn sacrifice_destination(zone: Zone) -> bool {
+    matches!(zone, Zone::Graveyard | Zone::Exile)
 }
 
 /// Whether either face of `def` has a permanent card type.
@@ -9715,6 +9740,17 @@ pub(crate) fn normal_cast_reduction_count(
     targets: &[Target],
     state: &GameState,
 ) -> u32 {
+    normal_cast_reduction_count_excluding_source(count, player, targets, state, None)
+}
+
+// A quoted spell will leave its graveyard before its total cost is determined (601.2f).
+fn normal_cast_reduction_count_excluding_source(
+    count: card_def::DynamicCountDef,
+    player: PlayerId,
+    targets: &[Target],
+    state: &GameState,
+    source: Option<ObjectId>,
+) -> u32 {
     match count {
         card_def::DynamicCountDef::ControllerBattlefieldAnyType(types) => state.players
             [player.index()]
@@ -9742,6 +9778,7 @@ pub(crate) fn normal_cast_reduction_count(
             let creatures = [PlayerId::P0, PlayerId::P1]
                 .into_iter()
                 .flat_map(|owner| state.players[owner.index()].graveyard.iter().copied())
+                .filter(|&card| Some(card) != source)
                 .filter(|&card| {
                     let live = state.objects.get(card);
                     !live.v4.is_token
@@ -9756,6 +9793,7 @@ pub(crate) fn normal_cast_reduction_count(
             [player.index()]
         .graveyard
         .iter()
+        .filter(|&&object| Some(object) != source)
         .filter(|&&object| {
             let graveyard_def = &card_def::CARD_DEFS[state.objects.get(object).card_def as usize];
             graveyard_def
@@ -11971,6 +12009,13 @@ pub(crate) fn mana_ability_condition_holds(
                     state, player, color,
                 )
         }
+        // Fanatic of Rhonas's ferocious ability (Vintage Cube wave C5a).
+        card_def::ManaAbilityConditionDef::ControllerControlsCreatureWithPowerAtLeastV1(power) => {
+            state.players[player.index()].battlefield.iter().any(|&id| {
+                object_has_type(state, id, CardType::Creature)
+                    && effective_power(state, id) >= i32::from(power)
+            })
+        }
     }
 }
 
@@ -13133,7 +13178,8 @@ fn available_activatable_abilities(player: PlayerId, state: &GameState) -> Vec<(
                     || !activated_ability_face_active(state, id, ability)
                     || !crate::standard_cards_v1::activation_allowed(state, id, def, i)
                     || (ability.is_loyalty_ability()
-                        && (!sorcery_speed_timing_ok(player, state)
+                        && ((!sorcery_speed_timing_ok(player, state)
+                            && !crate::eternal_cube_c6c_v1::emperor_instant_loyalty(state, id))
                             || loyalty_ability_activated_this_turn(state, id)))
                     || (ability.sorcery_speed_only && !sorcery_speed_timing_ok(player, state))
                     || ability.max_activations_per_turn.is_some_and(|limit| {
@@ -13342,6 +13388,13 @@ fn land_drop_candidates(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
     // Crucible of Worlds (wave E7b).
     #[cfg(feature = "eternal-fixtures")]
     for id in crate::eternal_vintage_e7b_v1::statics::extra_land_candidates(state, player) {
+        if !out.contains(&id) {
+            out.push(id);
+        }
+    }
+    // Mole Man, Moloid Master (Vintage Cube wave C5b).
+    #[cfg(feature = "eternal-fixtures")]
+    for id in crate::eternal_cube_c5b_v1::extra_land_candidates(state, player) {
         if !out.contains(&id) {
             out.push(id);
         }
@@ -13620,6 +13673,24 @@ fn native_validation_stage<T, E>(_stage: &'static str, result: Result<T, E>) -> 
 /// decision in the same pass (issue #433). Default rules keep that
 /// historical transition.
 pub fn advance_until_decision(state: &mut GameState) -> Decision {
+    use crate::full_text_v1::{donor_refusal_at, DonorCheckSiteV1};
+
+    // Backstop for the Shapeshifter donor refusal: no automatic work runs
+    // while an unsupported donor is in place, whatever path changed the top.
+    if let Some((mechanic, source)) = donor_refusal_at(state, DonorCheckSiteV1::AdvanceStart) {
+        return Decision::Halted { mechanic, source };
+    }
+    let decision = advance_until_decision_unaudited(state);
+    // Automatic work (state-based deaths, upkeep, draws) can change a top
+    // without passing an event site: no decision or terminal leaves the engine
+    // while an unsupported donor is in place.
+    match donor_refusal_at(state, DonorCheckSiteV1::AdvanceDecision) {
+        Some((mechanic, source)) => Decision::Halted { mechanic, source },
+        None => decision,
+    }
+}
+
+fn advance_until_decision_unaudited(state: &mut GameState) -> Decision {
     if crate::graveyard_order_v1::owns_operation(state) {
         return crate::graveyard_order_v1::advance(state);
     }
@@ -14712,6 +14783,8 @@ pub(crate) fn commit_discarded_cards(state: &mut GameState, chosen: &[ObjectId])
     if chosen.is_empty() {
         return;
     }
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c6a_v1::note_discards(state, chosen);
     #[cfg(feature = "eternal-fixtures")]
     for &id in chosen {
         crate::eternal_vintage_e7b_v1::statics::note_discard(state, id);
@@ -20657,6 +20730,12 @@ fn plan_spell_departure(
             {
                 // Green Sun's Zenith shuffles itself into its owner's library.
                 Zone::Library
+            } else if cfg!(feature = "eternal-fixtures")
+                && requested_zone == Zone::Graveyard
+                && crate::eternal_cube_c5c_v1::returns_to_hand_on_departure(state, item)
+            {
+                // Buyback (Corpse Dance) puts the spell into its owner's hand.
+                Zone::Hand
             } else {
                 requested_zone
             },
@@ -23344,6 +23423,10 @@ fn run_step_entry_action(state: &mut GameState, step: Step) {
 /// the turn can stage the discard first without copying the expiration work.
 fn expire_cleanup_effects_v1(state: &mut GameState) -> Result<(), ()> {
     crate::standard_cards_v1::cleanup(state);
+    // Necromancy's cleanup sacrifice and Shifting Woodland's copy ending
+    // (Vintage Cube wave C5c).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c5c_v1::begin_cleanup(state);
     for player in &mut state.players {
         player.poison_prevention_v1.0 = false;
     }
@@ -24574,9 +24657,7 @@ pub fn has_effective_keyword(state: &GameState, id: ObjectId, kw: Keywords) -> b
     {
         return true;
     }
-    if crate::continuous_characteristics_v1::animation(state, id)
-        .is_some_and(|(animation, _)| animation.keywords.has(kw))
-    {
+    if crate::continuous_characteristics_v1::animation_keywords(state, id).has(kw) {
         return true;
     }
     #[cfg(feature = "standard-magezero-fixtures")]
@@ -24876,9 +24957,7 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
             found = found | keyword;
         }
     }
-    if let Some((animation, _)) = crate::continuous_characteristics_v1::animation(state, id) {
-        found = found | animation.keywords;
-    }
+    found = found | crate::continuous_characteristics_v1::animation_keywords(state, id);
     #[cfg(feature = "standard-magezero-fixtures")]
     {
         if printed_active {
@@ -24895,6 +24974,12 @@ fn effective_keywords_unchecked(state: &GameState, id: ObjectId, wanted: Keyword
             | crate::eternal_legacy_e9a_v1::statics::granted_keywords(state, id)
             | crate::eternal_premodern_p1b_v1::statics::granted_keywords(state, id)
             | crate::eternal_sideboard_s1m_v1::granted_keywords(state, id);
+        // Carnage Interpreter's menace and Keen-Eyed Curator's trample
+        // (Vintage Cube wave C5a); `has_effective_keyword` reads them through
+        // `eternal_cards_v1::conditional_self_keywords`.
+        if printed_active {
+            found = found | crate::eternal_cube_c5a_v1::conditional_keywords(state, id);
+        }
     }
     if printed_active && obj.zone == Zone::Battlefield {
         if let Some((minimum, keyword)) = static_graveyard_threshold_keyword_for(def.name) {
@@ -25504,6 +25589,12 @@ pub fn effective_subtype_ids(state: &GameState, id: ObjectId) -> Vec<u16> {
     #[cfg(feature = "standard-magezero-fixtures")]
     if crate::standard_cards_v1::is_everflame(state, id) {
         subtype_ids.push(card_def::Subtype::Equipment.stable_id());
+    }
+    // Necromancy, once its entry trigger has resolved: "it becomes an Aura"
+    // (Vintage Cube wave C5c).
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_cube_c5c_v1::is_necromancy_aura(state, id) {
+        subtype_ids.push(card_def::Subtype::Aura.stable_id());
     }
     // Yavimaya, Cradle of Growth: "Each land is a Forest in addition to its
     // other land types."
@@ -29195,6 +29286,7 @@ fn commit_attack_declaration(state: &mut GameState, attackers: Vec<ObjectId>) {
             crate::high_society_hunter_v1::capture_attack(state, declaration);
         }
     }
+    crate::eternal_cube_c6c_v1::capture_attack(state);
     if !state.engine.combat.attackers.is_empty() {
         let attacker = state.active_player;
         // Raid history belongs to the successor Limited rules scope. Keep
@@ -29603,7 +29695,14 @@ fn play_land(
         event::propose_and_commit(state, event);
     } else if tinybones_land.is_some()
         || resolution_cast_v1::permit(state, id).is_some_and(|p| p.land)
+        || (state.objects.get(id).zone == Zone::Exile
+            && state.objects.get(id).owner != player
+            && active_permission_for(player, id, state)
+                .is_some_and(|p| p.play_or_cast == PlayOrCast::Play))
     {
+        // A land played from exile enters under its player's control (CR 305.2),
+        // even when the permission lets that player use an opponent's card.
+        // A player's own exiled land keeps the ordinary move below.
         event::propose_and_commit(
             state,
             ProposedEvent::zone_change_to_battlefield_under_controller(id, player),
@@ -29974,6 +30073,8 @@ fn materialize_begin_cast_with_quote_v1(
         .alt_cost
         .is_some_and(|alt| alt.condition == card_def::AltCostCondition::DisguiseFromHand)
         && origin_zone == Zone::Hand;
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c6b_v1::note_six_cast(state, spell_id, player);
     move_to_stack(state, spell_id, origin_zone, disguised);
     if let Some(permission) = graveyard_adventure {
         state
@@ -30402,6 +30503,16 @@ fn finalize_owned_cast(
         pending.spell,
         payment.restricted_pool_used(),
     );
+    // Delighted Halfling: a legendary spell paid with its mana can't be
+    // countered (Vintage Cube wave C5a).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c5a_v1::note_restricted_payment(
+        state,
+        pending.controller,
+        pending.spell,
+        payment.restricted_pool_used(),
+        &mana_taps,
+    );
     let storm_targets = payment.storm_targets.take();
     let mana_spent = payment.commit(state, pending.controller, pending.spell);
     if let Some((creatures, quoted)) = edict_input {
@@ -30637,6 +30748,18 @@ fn finalize_owned_cast(
     );
     let cast_at = state.engine.event_history.len();
     event::log_spell_cast_with_targets(state, pending.spell, pending.controller, storm_targets);
+    // Casting moves directly to the stack without event::commit's zone-change hook.
+    // Record only completed casts, so an aborted attempt cannot satisfy Gau.
+    #[cfg(feature = "eternal-fixtures")]
+    if pending.origin_zone == Zone::Graveyard {
+        crate::eternal_cube_c6a_v1::note_zone_change(
+            state,
+            pending.spell,
+            Zone::Graveyard,
+            Zone::Stack,
+            None,
+        );
+    }
     crate::eternal_cards_v1::owned_draws_v1::portent::record_cast(state, stack_item_id)?;
     crate::etali_primal_storm_receipts_v1::record_cast(
         state,
@@ -31453,7 +31576,10 @@ fn push_paid_activation(
     if ability.cost.iter().any(|component| {
         matches!(
             component,
-            CostComponent::SacrificeSelf | CostComponent::ExileSelf | CostComponent::DiscardSelf
+            CostComponent::SacrificeSelf
+                | CostComponent::ExileSelf
+                | CostComponent::DiscardSelf
+                | CostComponent::ReturnSelfToOwnersHandV1
         )
     }) && !paid_cost_objects.contains(&pending.source)
     {

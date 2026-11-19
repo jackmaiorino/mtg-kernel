@@ -245,6 +245,54 @@ fn wide_learner_end_to_end_v1() {
     let record: WLearnerCheckpointV1 = read_pinned(&checkpoint).unwrap();
     assert_eq!(record.trajectories, trajectories);
     assert_eq!(record.architecture, W_MODEL_ARCHITECTURE_VERSION_V1);
+    // The update itself held its state under the container it wrote; a load
+    // decoding the file never marks this. (Whether a later load is served
+    // from that entry is not asserted: the two-entry cache is shared with
+    // every test in this process.)
+    assert!(W_HELD_BY_UPDATE_FOR_TEST_V1
+        .lock()
+        .unwrap()
+        .contains(&record.state.sha256));
+    // The decode cache: the container the update held (its in-memory state)
+    // gives exactly a fresh decode of the file, and a changed file is refused
+    // by its pin before any lookup.
+    let held = decode_pinned_w_state_v1(&record.state, false).unwrap();
+    let decoded = decode_pinned_w_state_v1(&record.state, true).unwrap();
+    assert_eq!(held.1, decoded.1);
+    assert_eq!(held.1, record.state_sha256);
+    assert_eq!(
+        held.0.snapshot_v1().unwrap(),
+        decoded.0.snapshot_v1().unwrap()
+    );
+    let written = fs::read(&record.state.path).unwrap();
+    let mut changed = written.clone();
+    let last = changed.len() - 1;
+    changed[last] ^= 1;
+    fs::write(&record.state.path, &changed).unwrap();
+    assert!(decode_pinned_w_state_v1(&record.state, false).is_err());
+    assert!(load_inference_v1(&next).is_err());
+    fs::write(&record.state.path, &written).unwrap();
+    // A continuation refuses an initial file that is not a wide container,
+    // even when the source pin and the record both name its bytes.
+    let bogus = root.join("bogus-initial.bin");
+    fs::write(&bogus, b"MTGW128\0 not a container").unwrap();
+    let bogus_pin = PinnedFileV1 {
+        path: bogus.clone(),
+        sha256: crate::expanded_deck_training_v1::sha(&fs::read(&bogus).unwrap()),
+    };
+    let mut bogus_record = record.clone();
+    bogus_record.initial_sha256 = bogus_pin.sha256.clone();
+    let bogus_record_bytes = serde_json::to_vec(&bogus_record).unwrap();
+    let bogus_record_path = root.join("bogus-checkpoint.json");
+    fs::write(&bogus_record_path, &bogus_record_bytes).unwrap();
+    let mut bogus_source = next.clone();
+    bogus_source.checkpoint = Some(PinnedFileV1 {
+        path: bogus_record_path,
+        sha256: crate::expanded_deck_training_v1::sha(&bogus_record_bytes),
+    });
+    bogus_source.w_learner.as_mut().unwrap().initial = bogus_pin;
+    let refused = load_inference_v1(&bogus_source).err().unwrap();
+    assert!(refused.contains("container"), "{refused}");
     let expectation = CheckpointInputExpectationV1 {
         trajectories: &trajectories,
         learning_rate_bits: 1.0e-3f32.to_bits(),

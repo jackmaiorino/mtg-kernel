@@ -930,6 +930,7 @@ pub(crate) fn delayed_effect_matches(name: &str, effect: &EffectOp) -> bool {
         VOICE_OF_VICTORY => matches!(op, E5bOpV1::SacrificeMobilizedV1 { .. }),
         SAND_SCOUT => *op == E5bOpV1::CreateSandWarriorV1,
         STATIC_PRISON => *op == E5bOpV1::StaticPrisonUpkeepV1,
+        "Metamorphosis Fanatic" => *op == E5bOpV1::MiracleV1,
         _ => false,
     }
 }
@@ -1041,7 +1042,8 @@ pub(crate) fn trigger_matches(
         E5bTriggerV1::YourEndStepIfGainedLifeV1 => {
             matches!(
                 events[index],
-                CommittedEvent::BeginningEndStep { active_player, .. } if active_player == controller
+                CommittedEvent::BeginningEndStep { active_player, .. }
+                    if active_player == controller
             ) && gained_life_this_turn(state, controller)
         }
         E5bTriggerV1::EntersIfOpponentHasMoreLandsV1 => {
@@ -1147,7 +1149,10 @@ fn draw_ordinal_at(
     player: PlayerId,
     state: &GameState,
 ) -> u32 {
-    let is_draw = |event: &CommittedEvent| matches!(event, CommittedEvent::Draw { player: drawer, object: Some(_) } if *drawer == player);
+    let is_draw = |event: &CommittedEvent| {
+        matches!(event, CommittedEvent::Draw { player: drawer, object: Some(_) }
+            if *drawer == player)
+    };
     let in_batch = events.iter().filter(|event| is_draw(event)).count() as u32;
     let through = events[..=index]
         .iter()
@@ -1373,11 +1378,16 @@ pub(crate) fn begin_turn(state: &mut GameState, _active: PlayerId) {
 /// generic amount: Terminus, Miracle {W}, and wave S1l's Triumph of Saint
 /// Katherine, Miracle {1}{W}.
 fn miracle_cost(state: &GameState, card: ObjectId) -> Option<(&'static [ManaColor], u8)> {
+    // A catalog downgrade must also disable the first-draw reveal offer.
+    if !printed(state, card).is_executable() {
+        return None;
+    }
     match definition_name(state, card)? {
         TERMINUS => Some((&[ManaColor::W][..], 0)),
         crate::eternal_sideboard_s1l_v1::TRIUMPH_OF_SAINT_KATHERINE => {
             Some((&[ManaColor::W][..], 1))
         }
+        "Metamorphosis Fanatic" => Some((&[ManaColor::B][..], 1)),
         _ => None,
     }
 }
@@ -1549,25 +1559,49 @@ pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<Ma
         return Vec::new();
     }
     // A land whose own mana abilities already add {C} keeps them; the
-    // granted ability adds nothing they lack.
+    // granted ability adds nothing they lack. Once an effect removed those
+    // abilities (Spreading Seas, a moon), the grant is all that adds {C}.
+    let printed_active =
+        crate::continuous_characteristics_v1::printed_abilities_active(state, object);
     let def = printed(state, object);
-    if def.mana_ability_def.is_some()
-        || def
-            .primary_mana_ability_choices(state.objects.get(object).v4.chosen_color)
-            .contains(&ManaColor::C)
+    if printed_active
+        && (def.mana_ability_def.is_some()
+            || def
+                .primary_mana_ability_choices(state.objects.get(object).v4.chosen_color)
+                .contains(&ManaColor::C))
     {
         return Vec::new();
     }
     let name = crate::engine::effective_name(state, object);
-    let granted = e5b.hamlet_names.iter().any(|(hamlet, named)| {
-        link_live_in(state, *hamlet, Zone::Battlefield)
-            && active_named(state, hamlet.object, PETRIFIED_HAMLET)
-            && CARD_DEFS[usize::from(*named)].object_name == name
-    });
-    if granted {
-        vec![ManaColor::C]
-    } else {
-        Vec::new()
+    let granted_at = e5b
+        .hamlet_names
+        .iter()
+        .filter(|(hamlet, named)| {
+            link_live_in(state, *hamlet, Zone::Battlefield)
+                && active_named(state, hamlet.object, PETRIFIED_HAMLET)
+                && CARD_DEFS[usize::from(*named)].object_name == name
+        })
+        .map(|(hamlet, _)| {
+            state
+                .objects
+                .get(hamlet.object)
+                .v4
+                .layer_timestamp
+                .unwrap_or(0)
+        })
+        .max();
+    // A removal of all abilities removes an earlier grant (613.7); a
+    // land-type setter removes none (305.7).
+    match granted_at {
+        Some(timestamp)
+            if printed_active
+                || crate::continuous_characteristics_v1::grant_survives_land_type_setters(
+                    state, object, timestamp,
+                ) =>
+        {
+            vec![ManaColor::C]
+        }
+        _ => Vec::new(),
     }
 }
 

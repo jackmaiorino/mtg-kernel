@@ -200,7 +200,7 @@ pub enum E7aTriggerV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum E7aOpV1 {
     /// Blast Zone: put `count` charge counters on the ability's source
-    /// incarnation.
+    /// incarnation, as modified by the counter placement replacements.
     AddChargeCountersV1 { count: u8 },
     /// Blast Zone: destroy each nonland permanent with mana value equal to
     /// the number of charge counters the sacrificed land had.
@@ -1218,10 +1218,26 @@ pub(crate) fn trigger_matches(
 pub(crate) fn execute(op: &E7aOpV1, ctx: &ExecCtx, state: &mut GameState) {
     match op {
         E7aOpV1::AddChargeCountersV1 { count } => {
-            if let Some(source) = live_ability_source(ctx, state) {
-                let counters = &mut state.objects.get_mut(source).counters.charge;
-                *counters = counters.saturating_add(i32::from(*count));
+            let Some(source) = live_ability_source(ctx, state) else {
+                return;
+            };
+            if *count == 0 {
+                return;
             }
+            // An effect's placement goes through the shared counter
+            // replacements (Innkeeper's Talent, Doubling Season).
+            let Ok(placed) = crate::doubling_season_v48::counter_amount(
+                state,
+                source,
+                ctx.controller,
+                crate::doubling_season_v48::CounterOriginV48::Effect,
+                i32::from(*count),
+            ) else {
+                halt(state, source);
+                return;
+            };
+            let counters = &mut state.objects.get_mut(source).counters.charge;
+            *counters = counters.saturating_add(placed);
         }
         E7aOpV1::BlastZoneDestroyV1 => {
             let Some(contract) = ctx.ability_source_contract else {
@@ -2894,11 +2910,13 @@ pub(crate) fn removal_timestamp(state: &GameState, object: ObjectId) -> Option<u
     let live = state.objects.try_get(object)?;
     // A stationed Extinguisher Battleship's creature type doesn't depend on
     // its abilities either (wave S1m), nor does an Invasion Submersible's
-    // after its exhaust ability (wave S1q).
+    // after its exhaust ability (wave S1q), nor an animated land's or
+    // artifact's, which a resolved ability gave it (Celestial Colonnade).
     if live.zone != Zone::Battlefield
         || !(CARD_DEFS.get(live.card_def as usize).is_some_and(|def| {
             def.types_for_face(live.v4.face_index)
                 .contains(&CardType::Creature)
+                || (live.v4.animation_timestamp.is_some() && def.animation.is_some())
         }) || crate::eternal_sideboard_s1m_v1::stationed(state, object)
             || crate::eternal_sideboard_s1q_v1::animated(state, object))
     {
@@ -2944,10 +2962,36 @@ pub(crate) fn is_extra_forest(state: &GameState, object: ObjectId) -> bool {
     }) && any_active(state, YAVIMAYA)
 }
 
+/// The timestamp of the latest Yavimaya, Cradle of Growth whose ability
+/// makes `object` a Forest (613.7).
+pub(crate) fn extra_forest_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
+    if !is_extra_forest(state, object) {
+        return None;
+    }
+    active_permanents(state, YAVIMAYA, None)
+        .map(|yavimaya| state.objects.get(yavimaya).v4.layer_timestamp.unwrap_or(0))
+        .max()
+}
+
 /// Yavimaya: a land that is a Forest only through it has "{T}: Add {G}."
+/// While an effect has removed the land's printed abilities, its own green
+/// is gone: it has the Forest's "{T}: Add {G}." if it is still a Forest
+/// after the land type effects (a later land-type setter takes the Forest
+/// away) and no removal of all abilities applies, whatever the timestamps:
+/// the ability is the type's own, not a grant (305.6).
 pub(crate) fn granted_mana_colors(state: &GameState, object: ObjectId) -> Vec<ManaColor> {
     if !is_extra_forest(state, object) {
         return Vec::new();
+    }
+    if !crate::continuous_characteristics_v1::printed_abilities_active(state, object) {
+        let keeps =
+            crate::engine::has_effective_subtype(state, object, crate::card_def::Subtype::Forest)
+                && crate::continuous_characteristics_v1::land_type_mana_survives(state, object);
+        return if keeps {
+            vec![ManaColor::G]
+        } else {
+            Vec::new()
+        };
     }
     let live = state.objects.get(object);
     let def = &CARD_DEFS[live.card_def as usize];

@@ -28,6 +28,20 @@ mod eternal_cube_c4a_v1;
 mod eternal_cube_c4b_v1;
 #[path = "eternal/eternal_cube_c4c_v1.rs"]
 mod eternal_cube_c4c_v1;
+#[path = "eternal/eternal_cube_c5a_v1.rs"]
+mod eternal_cube_c5a_v1;
+#[path = "eternal/eternal_cube_c5b_v1.rs"]
+mod eternal_cube_c5b_v1;
+#[path = "eternal/eternal_cube_c5c_v1.rs"]
+mod eternal_cube_c5c_v1;
+#[path = "eternal/eternal_cube_c5d_v1.rs"]
+mod eternal_cube_c5d_v1;
+#[path = "eternal/eternal_cube_c6a_v1.rs"]
+mod eternal_cube_c6a_v1;
+#[path = "eternal/eternal_cube_c6b_v1.rs"]
+mod eternal_cube_c6b_v1;
+#[path = "eternal/eternal_cube_c6c_v1.rs"]
+mod eternal_cube_c6c_v1;
 #[path = "eternal/eternal_e9b_v1.rs"]
 mod eternal_e9b_v1;
 #[path = "eternal/eternal_kindred_v1.rs"]
@@ -44,6 +58,8 @@ mod eternal_legacy_e7a_v1;
 mod eternal_legacy_e8a_v1;
 #[path = "eternal/eternal_legacy_e9a_v1.rs"]
 mod eternal_legacy_e9a_v1;
+#[path = "eternal/eternal_moon_payment_v1.rs"]
+mod eternal_moon_payment_v1;
 #[path = "eternal/eternal_opening_v1.rs"]
 mod eternal_opening_v1;
 #[path = "eternal/eternal_outside_game_v1.rs"]

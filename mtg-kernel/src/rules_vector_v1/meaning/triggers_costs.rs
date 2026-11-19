@@ -49,6 +49,7 @@ pub(crate) fn trigger_condition(condition: TriggerCondition, out: &mut Collector
         TriggerCondition::OpponentDiscardsV72 | TriggerCondition::OpponentCastsSpellV1 => {
             out.atoms.push(Atom::Opaque)
         }
+        TriggerCondition::ControllerDiscardsCardV1 => out.atoms.push(Atom::Opaque),
         TriggerCondition::BeginningControllerCombatWithCreaturePowerAtLeast(_)
         | TriggerCondition::OpponentLosesLifeBatchV49
         | TriggerCondition::OtherControlledNontokenCreatureDiesV1
@@ -760,6 +761,10 @@ pub(crate) fn cost_component(component: CostComponent, out: &mut Collector) {
             // `ActivatedFrom` zone. Every pool ability with this component
             // is activated from the battlefield (build.rs recipes).
             move_self_cost(out, ZoneF::Battlefield, ZoneF::Exile);
+        }
+        CostComponent::ReturnSelfToOwnersHandV1 => {
+            // The source moves from the battlefield to its owner's hand.
+            move_self_cost(out, ZoneF::Battlefield, ZoneF::Hand);
         }
         CostComponent::DiscardSelf => {
             // The source, which must be in its owner's hand, moves to the

@@ -373,14 +373,28 @@ pub(crate) fn policy_bytes_v1(
     policy.owned_f32_len_v1() * std::mem::size_of::<f32>()
 }
 
-/// The model `policy` shares with its forks: an identity that tells live
-/// models apart, and its bytes, with each linear layer's transposed weight
-/// (`FrozenPlayPolicyV1::shared_model_f32_v1`).
+/// The net-8 model `policy` shares with its forks: an identity that tells
+/// live models apart, and its bytes, with each linear layer's transposed
+/// weight (`FrozenPlayPolicyV1::shared_model_f32_v1`).
+#[cfg(test)]
 pub(crate) fn model_bytes_v1(
     policy: &crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
 ) -> (usize, usize) {
     let (identity, values) = policy.shared_model_f32_v1();
     (identity, values * std::mem::size_of::<f32>())
+}
+
+/// Every shared model allocation `policy` holds (its base net-8 shell and
+/// any installed S model or wide net), each yielded once as
+/// `(identity, bytes)`.
+pub(crate) fn model_allocations_v1(
+    policy: &crate::sideboard_play_policy_v1::FrozenPlayPolicyV1,
+) -> impl Iterator<Item = (usize, usize)> {
+    policy
+        .shared_models_f32_v1()
+        .into_iter()
+        .filter(|&(identity, _)| identity != 0)
+        .map(|(identity, values)| (identity, values.saturating_mul(std::mem::size_of::<f32>())))
 }
 
 /// The collection boundary's pin check of a collection's opponent sources

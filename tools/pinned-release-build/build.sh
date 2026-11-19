@@ -9,6 +9,31 @@ if [[ $# != 2 || ! $1 =~ ^[0-9a-f]{40}$ || $2 != /work/out ]]; then
     printf 'Usage: build.sh SOURCE_COMMIT /work/out\n' >&2
     exit 2
 fi
+# PINNED_TARGET_CPU selects rustc target flags (default: none, the portable x86-64 build, unchanged). The flags
+# reach every crate compiled for the target, dependencies included, but not the precompiled standard library; an
+# explicit --target keeps them off build scripts and proc macros, which run on the build host. A variant binary runs
+# only on CPUs with the named features. Its manifest carries another schema id, the variant name and the flags, so
+# that nothing written for the portable build accepts it as one.
+variant=${PINNED_TARGET_CPU:-default}
+manifest_schema=fleet-combined-trainer-build/v1
+case "$variant" in
+    default) rustflags= ;;
+    x86-64-v3-no-fma) rustflags='-C target-cpu=x86-64-v3 -C target-feature=-fma' ;;
+    x86-64-v3) rustflags='-C target-cpu=x86-64-v3' ;;
+    znver5) rustflags='-C target-cpu=znver5' ;;
+    znver3) rustflags='-C target-cpu=znver3' ;;
+    *) printf 'Unknown PINNED_TARGET_CPU\n' >&2; exit 2 ;;
+esac
+variant_args=()
+variant_env=()
+if [[ -n $rustflags ]]; then
+    variant_args=(--target x86_64-unknown-linux-gnu)
+    variant_env=(CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="$rustflags")
+    manifest_schema=fleet-combined-trainer-build-target-variant/v1
+fi
+export PINNED_RUSTFLAGS="$rustflags" PINNED_VARIANT="$variant" PINNED_MANIFEST_SCHEMA="$manifest_schema"
+printf 'Build variant: %s; manifest schema: %s; target flags: %s
+' "$variant" "$manifest_schema" "${rustflags:-none}" >&2
 [[ $EUID == 0 && $(uname -m) == x86_64 ]]
 grep -qx 'VERSION_CODENAME=bookworm' /etc/os-release
 [[ $(realpath -e -- /work) == /work && -d /work && -w /work ]]
@@ -136,20 +161,24 @@ for bin in "${bins[@]}"; do
             GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
             SOURCE_DATE_EPOCH="$source_epoch" CARGO_HOME="$cargo_home" CARGO_TARGET_DIR="$target" \
             CARGO_INCREMENTAL=0 CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=/usr/bin/gcc \
-            cargo build --release --locked --jobs 2 -p mtg-kernel --bin "$bin"
+            "${variant_env[@]}" \
+            cargo build --release --locked --jobs 2 -p mtg-kernel --bin "$bin" "${variant_args[@]}"
     )
 done
 
 check_stop
 check_checkout
+release_dir=$target/release
+[[ -z $rustflags ]] || release_dir=$target/x86_64-unknown-linux-gnu/release
 for bin in "${bins[@]}"; do
-    install -m 0755 -- "$target/release/$bin" "$out/$bin"
-    cmp -- "$target/release/$bin" "$out/$bin"
+    install -m 0755 -- "$release_dir/$bin" "$out/$bin"
+    cmp -- "$release_dir/$bin" "$out/$bin"
 done
 
 "$python" -B - "$repo" "$out" "$commit" "$origin" "$source_epoch" "${bins[@]}" <<'PY'
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -180,15 +209,19 @@ ld = Path(cmd("gcc", "-print-prog-name=ld"))
 if not ld.is_absolute():
     ld = Path("/usr/bin") / ld
 manifest = {
-    "schema": "fleet-combined-trainer-build/v1",
+    "schema": os.environ["PINNED_MANIFEST_SCHEMA"],
     "source_commit": commit,
     "source_tree": cmd("git", "-C", repo, "rev-parse", "HEAD^{tree}"),
     "source_origin": origin,
     "source_checkout_clean": True,
     "source_date_epoch": int(epoch),
     "cargo_lock": pin(repo / "Cargo.lock"),
-    "build": {"profile": "release", "lto": "thin", "codegen_units": 1, "jobs": 2,
-              "locked": True, "incremental": False, "binaries": binaries},
+    "build": dict({"profile": "release", "lto": "thin", "codegen_units": 1, "jobs": 2,
+                   "locked": True, "incremental": False, "binaries": binaries},
+                  **({"target_cpu": os.environ["PINNED_VARIANT"],
+                      "target_rustflags": os.environ["PINNED_RUSTFLAGS"],
+                      "explicit_target": "x86_64-unknown-linux-gnu"}
+                     if os.environ["PINNED_RUSTFLAGS"] else {})),
     "tools": {
         "rustc": cmd("rustc", "-vV"), "cargo": cmd("cargo", "--version"),
         "gcc": cmd("gcc", "--version").splitlines()[0],

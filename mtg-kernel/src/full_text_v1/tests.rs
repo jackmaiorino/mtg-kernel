@@ -640,6 +640,345 @@ fn full_text_rejects_graveyard_only_ability_and_out_of_range_selectors() {
         .is_ok());
 }
 
+/// Appendix A's refused class: creature cards of the Premodern pool that
+/// lose a battlefield ability as donors today.
+const REFUSED_DONORS: [&str; 62] = [
+    "Academy Rector",
+    "Anurid Brushhopper",
+    "Argothian Enchantress",
+    "Avalanche Riders",
+    "Avatar of Woe",
+    "Ball Lightning",
+    "Basking Rootwalla",
+    "Beloved Chaplain",
+    "Birchlore Rangers",
+    "Blastoderm",
+    "Crimson Acolyte",
+    "Deranged Hermit",
+    "Devoted Caretaker",
+    "Druid Lyrist",
+    "Exalted Angel",
+    "Fyndhorn Elves",
+    "Glowrider",
+    "Goblin Goon",
+    "Goblin Lackey",
+    "Goblin Piledriver",
+    "Goblin Sharpshooter",
+    "Goblin Tinkerer",
+    "Goblin Vandal",
+    "Goblin Warchief",
+    "Graveborn Muse",
+    "Grim Lavamancer",
+    "Hypnotic Specter",
+    "Jackal Pup",
+    "Knight of Stromgald",
+    "Llanowar Elves",
+    "Masticore",
+    "Mother of Runes",
+    "Multani's Acolyte",
+    "Multani, Maro-Sorcerer",
+    "Mystic Enforcer",
+    "Nantuko Shade",
+    "Nova Cleric",
+    "Petradon",
+    "Phantom Nishoba",
+    "Plaguebearer",
+    "Priest of Titania",
+    "Putrid Imp",
+    "Quirion Dryad",
+    "Quirion Ranger",
+    "Ravenous Baloth",
+    "Siege-Gang Commander",
+    "Skirk Prospector",
+    "Soltari Monk",
+    "Soltari Priest",
+    "Spike Feeder",
+    "Terravore",
+    "Tireless Tribe",
+    "True Believer",
+    "Verdant Force",
+    "Veteran Brawlers",
+    "Veteran Explorer",
+    "Vintara Snapper",
+    "Weathered Wayfarer",
+    "Wild Mongrel",
+    "Wirewood Symbiote",
+    "Withered Wretch",
+    "Yavimaya Granger",
+];
+
+/// How a Shapeshifter must treat a pool creature as its top card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expect {
+    /// Its whole battlefield text is donated, entering or not.
+    Supported,
+    /// Accepted in play; at entry it loses an enters trigger, so the entry is
+    /// refused unless that trigger would not trigger anyway.
+    EntryTrigger,
+    /// Accepted in play; at entry it loses an "as enters" replacement, so the
+    /// entry is always refused.
+    EntryReplacement,
+    /// Refused in every case.
+    Refused,
+}
+
+/// Every pool creature outside `REFUSED_DONORS`, with its expected behavior,
+/// written out from the design's appendix A independently of the production
+/// lists. Auramancer, Monk Realist and Uktabi Orangutan are entry triggers
+/// and Ghitu Slinger and Xantid Swarm are refused until their donated
+/// programs land.
+const EXPECTED_DONORS: [(&str, Expect); 39] = [
+    ("Akroma, Angel of Wrath", Expect::Supported),
+    ("Battlefield Scrounger", Expect::Supported),
+    ("Birds of Paradise", Expect::Supported),
+    ("Hermit Druid", Expect::Supported),
+    ("Ihsan's Shade", Expect::Supported),
+    ("Iridescent Angel", Expect::Supported),
+    ("Karmic Guide", Expect::Supported),
+    ("Mogg Fanatic", Expect::Supported),
+    ("Palinchron", Expect::Supported),
+    ("Phyrexian Devourer", Expect::Supported),
+    ("Psychatog", Expect::Supported),
+    ("Ravenous Rats", Expect::Supported),
+    ("Triskelion", Expect::Supported),
+    ("Volrath's Shapeshifter", Expect::Supported),
+    ("Wall of Roots", Expect::Supported),
+    ("Elvish Spirit Guide", Expect::Supported),
+    ("Squee, Goblin Nabob", Expect::Supported),
+    ("Auramancer", Expect::EntryTrigger),
+    ("Monk Realist", Expect::EntryTrigger),
+    ("Uktabi Orangutan", Expect::EntryTrigger),
+    ("Ghitu Slinger", Expect::Refused),
+    ("Xantid Swarm", Expect::Refused),
+    ("Meddling Mage", Expect::EntryReplacement),
+    ("Anger", Expect::Supported),
+    ("Arrogant Wurm", Expect::Supported),
+    ("Bane of the Living", Expect::Supported),
+    ("Eternal Dragon", Expect::Supported),
+    ("Gempalm Incinerator", Expect::Supported),
+    ("Genesis", Expect::Supported),
+    ("Glory", Expect::Supported),
+    ("Krosan Tusker", Expect::Supported),
+    ("Nantuko Vigilante", Expect::Supported),
+    ("Nether Spirit", Expect::Supported),
+    ("Thornscape Battlemage", Expect::Supported),
+    ("Caller of the Claw", Expect::EntryTrigger),
+    ("Goblin Matron", Expect::EntryTrigger),
+    ("Goblin Ringleader", Expect::EntryTrigger),
+    ("Phyrexian Dreadnought", Expect::EntryTrigger),
+    ("Wall of Blossoms", Expect::EntryTrigger),
+];
+
+fn expect_of(name: &str) -> Expect {
+    EXPECTED_DONORS
+        .iter()
+        .find(|&&(listed, _)| listed == name)
+        .map_or(Expect::Refused, |&(_, expect)| expect)
+}
+
+/// Fixture cases, written out here so that a fixture never takes its cases
+/// from the production lists it checks.
+const GENERIC_FIXTURE_DONORS: [&str; 11] = [
+    "Anger",
+    "Arrogant Wurm",
+    "Bane of the Living",
+    "Eternal Dragon",
+    "Gempalm Incinerator",
+    "Genesis",
+    "Glory",
+    "Krosan Tusker",
+    "Nantuko Vigilante",
+    "Nether Spirit",
+    "Thornscape Battlemage",
+];
+
+const ENTRY_TRIGGER_FIXTURE_DONORS: [&str; 8] = [
+    "Caller of the Claw",
+    "Goblin Matron",
+    "Goblin Ringleader",
+    "Phyrexian Dreadnought",
+    "Wall of Blossoms",
+    "Auramancer",
+    "Monk Realist",
+    "Uktabi Orangutan",
+];
+
+#[test]
+fn every_premodern_pool_creature_is_in_exactly_one_donor_class() {
+    use std::collections::BTreeSet;
+
+    let snapshot: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../data/eternal_v1/meta_snapshot_mtgtop8_premodern_20261101.json"
+    )))
+    .unwrap();
+    let decks = snapshot["formats"]["premodern"].as_array().unwrap();
+    let names = |zone: &str, archetype: Option<&str>| {
+        decks
+            .iter()
+            .filter(|deck| archetype.is_none_or(|wanted| deck["archetype"] == wanted))
+            .flat_map(|deck| deck[zone].as_array().unwrap().iter())
+            .map(|row| row[1].as_str().unwrap().to_owned())
+            .collect::<BTreeSet<_>>()
+    };
+    let mut pool = names("mainboard", None);
+    pool.extend(names("sideboard", None));
+    assert_eq!(pool.len(), 305);
+    let creature = |name: &str| {
+        card_id_by_name(name).is_some_and(|card| {
+            CARD_DEFS[usize::from(card)]
+                .types
+                .contains(&CardType::Creature)
+        })
+    };
+    let creatures = pool
+        .iter()
+        .filter(|name| creature(name.as_str()))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert_eq!(creatures.len(), 101);
+
+    let classes: [&[&str]; 5] = [
+        &DONATED_PROGRAM_DONORS_V1,
+        &LISTED_DONORS_V1,
+        &GENERIC_TEXT_DONORS_V1,
+        &ENTRY_ONLY_DONORS_V1,
+        &REFUSED_DONORS,
+    ];
+    assert_eq!(classes.iter().map(|class| class.len()).sum::<usize>(), 101);
+    for name in &creatures {
+        let found = classes
+            .iter()
+            .filter(|class| class.contains(&name.as_str()))
+            .count();
+        assert_eq!(found, 1, "{name} is in {found} donor classes");
+    }
+    for name in classes.iter().flat_map(|class| class.iter()) {
+        assert!(creatures.contains(*name), "{name} is not a pool creature");
+    }
+    for name in LISTED_ENTRY_PROGRAMS_PENDING_V1
+        .iter()
+        .chain(&LISTED_PROGRAMS_PENDING_V1)
+    {
+        assert!(LISTED_DONORS_V1.contains(name), "{name}");
+    }
+
+    // The expected behavior of every pool creature, written out here
+    // independently of the production lists (design appendix A, with the
+    // listed additions whose programs are still pending).
+    let definition = |name: &str| &CARD_DEFS[usize::from(id(name))];
+    let expected = EXPECTED_DONORS
+        .iter()
+        .map(|&(name, _)| name)
+        .chain(REFUSED_DONORS)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        expected,
+        creatures
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>()
+    );
+    for (name, expect) in EXPECTED_DONORS
+        .into_iter()
+        .chain(REFUSED_DONORS.map(|name| (name, Expect::Refused)))
+    {
+        let card = definition(name);
+        assert_eq!(
+            (donor_supported(card), entry_refused(card)),
+            match expect {
+                Expect::Supported => (true, false),
+                Expect::EntryTrigger | Expect::EntryReplacement => (true, true),
+                Expect::Refused => (false, false),
+            },
+            "{name} should be {expect:?}"
+        );
+        assert_eq!(
+            entry_replacement_refused(card),
+            expect == Expect::EntryReplacement,
+            "{name}"
+        );
+    }
+    for name in GENERIC_FIXTURE_DONORS {
+        assert_eq!(expect_of(name), Expect::Supported, "{name}");
+    }
+    for name in ENTRY_TRIGGER_FIXTURE_DONORS {
+        assert_eq!(expect_of(name), Expect::EntryTrigger, "{name}");
+    }
+    // Every creature of the frozen mirror's mainboard plays as it does today,
+    // and so do the two donors the amended ruling keeps.
+    let mirror = names("mainboard", Some("premodern-full-english-breakfast"));
+    let mirror = mirror
+        .iter()
+        .filter(|name| creature(name.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(mirror.len(), 13);
+    for name in mirror
+        .into_iter()
+        .map(String::as_str)
+        .chain(["Mogg Fanatic", "Ravenous Rats"])
+    {
+        let card = definition(name);
+        assert!(donor_supported(card) && !entry_refused(card), "{name}");
+    }
+    // A creature outside the pool is refused.
+    assert!(!donor_supported(definition("Dauthi Voidwalker")));
+}
+
+/// Measures the donor check that runs at every commit tail. Run by hand:
+/// `cargo test --release -p mtg-kernel --features eternal-fixtures --lib
+/// donor_check_cost -- --ignored --nocapture`.
+#[test]
+#[ignore = "timing measurement, run by hand"]
+fn donor_check_cost_at_a_commit_tail() {
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    const ROUNDS: u32 = 2_000_000;
+    let time = |state: &GameState| {
+        let start = Instant::now();
+        let mut refused = 0_u32;
+        for _ in 0..ROUNDS {
+            refused += u32::from(refused_donor(black_box(state)).is_some());
+        }
+        black_box(refused);
+        start.elapsed().as_secs_f64() * 1e9 / f64::from(ROUNDS)
+    };
+    let mut state = game();
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for _ in 0..12 {
+            put(&mut state, player, "Island", Zone::Battlefield);
+        }
+        for _ in 0..10 {
+            put(&mut state, player, "Island", Zone::Graveyard);
+        }
+    }
+    let without = time(&state);
+    put(&mut state, PlayerId::P0, VOLRATH, Zone::Battlefield);
+    put(
+        &mut state,
+        PlayerId::P0,
+        "Birds of Paradise",
+        Zone::Graveyard,
+    );
+    assert_eq!(refused_donor(&state), None);
+    let with = time(&state);
+    // A larger board: 80 more permanents and a second Shapeshifter.
+    for player in [PlayerId::P0, PlayerId::P1] {
+        for _ in 0..40 {
+            put(&mut state, player, "Island", Zone::Battlefield);
+        }
+    }
+    put(&mut state, PlayerId::P0, VOLRATH, Zone::Battlefield);
+    assert_eq!(refused_donor(&state), None);
+    let large = time(&state);
+    eprintln!(
+        "donor check: {without:.1} ns with 24 permanents and no Shapeshifter, \
+         {with:.1} ns with one Shapeshifter on a supported top, \
+         {large:.1} ns with 106 permanents and two Shapeshifters"
+    );
+}
+
 #[test]
 fn full_text_registration_is_partial() {
     assert_eq!(

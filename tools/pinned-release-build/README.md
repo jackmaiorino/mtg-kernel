@@ -16,4 +16,18 @@ The first hosted attempt passed capacity admission but its compiler was killed u
 
 The workflow preserves capacity evidence, `guard.json`, logs, binaries and build manifests for seven days. Download and hash-verify those artifacts into the required durable storage before using a binary in native qualification. Retain failed-attempt receipts and logs. Compiler caches are disposable and are excluded from the artifact upload.
 
+A dispatch may name a target-flag variant (`target_cpu`: `x86-64-v3-no-fma`, `x86-64-v3`, `znver5`, `znver3`; default `default`, the portable x86-64 build, unchanged). `build.sh` then compiles every crate built for the target, dependencies included, with the named `-C target-cpu` (and `-C target-feature=-fma` for the no-FMA variant) through an explicit `--target`. The flags do not reach the precompiled standard library, build scripts or proc macros.
+
+A variant bundle is not a portable pin and says so: its `BUILD-MANIFEST.json` has the schema `fleet-combined-trainer-build-target-variant/v1` and names the variant and flags (`build.target_cpu`, `build.target_rustflags`, `build.explicit_target`), its upload artifact is `pinned-release-<run id>-<target_cpu>`, and `guard.json` records `target_cpu`. The portable build's manifest, artifact name and binaries are unchanged; its receipts record a new `build_helper_sha256` because `build.sh` changed.
+
+A variant binary runs only on CPUs with those features and is qualified like any other pin: first-updates equality against chain records on the execution host, then throughput. It does not meet the build-flag contract of `model_guided_search_contract_digests_v1.rs` (target rustflags, and the `fma` and `avx` target features), so never use one where `ModelGuidedSearchAuthorityV1` is validated.
+
+Four prototype variant builds on `release/mull-c5719e1cf` were built and qualified on a Zen 5 node from a temporary guard branch carrying an earlier version of this change (using the previous `fleet-combined-trainer-build/v1` manifest schema with `build.target_rustflags`):
+- Run `44201511056` (`x86-64-v3-no-fma`, `-C target-cpu=x86-64-v3 -C target-feature=-fma`): source `77908fee6f2f647cf0cfa7a95ceaeefc4dd3e429` (`--settle-vector-tanh`).
+- Run `44201513959` (`znver5`, `-C target-cpu=znver5`): source `77908fee6f2f647cf0cfa7a95ceaeefc4dd3e429`.
+- Run `44201516871` (`znver3`, `-C target-cpu=znver3`): source `77908fee6f2f647cf0cfa7a95ceaeefc4dd3e429`.
+- Run `44262085652` (`znver5`, `-C target-cpu=znver5`): source `675e2c038ecdcd94a2901080ef8ad16098c57ddb` (PR #592 backport on the mulligan release line).
+
+Neither `77908fee6f2f647cf0cfa7a95ceaeefc4dd3e429` nor `675e2c038ecdcd94a2901080ef8ad16098c57ddb` is in `hosted.py`'s `SOURCES` list on `main`. With this change merged, `main` can build variants only of the listed sources; rebuilding either qualified source requires adding it to `SOURCES` in a separate change, and the qualification measurements above apply only to those two release-line sources.
+
 Local checks: `bash -n tools/pinned-release-build/build.sh` and `python3 -B -m unittest discover -s tools/pinned-release-build -p 'test_*.py'`. A passing build still needs workload-specific correctness and throughput checks on the intended execution host.

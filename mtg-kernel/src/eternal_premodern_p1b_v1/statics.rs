@@ -75,11 +75,14 @@ fn opalescence_timestamp(state: &GameState, object: ObjectId) -> Option<u64> {
     // Eligibility follows the layer 4 card types: a permanent that stopped
     // being an enchantment (an Elk of Oko's) is neither animated nor given
     // the layer 7b base power and toughness. Opalescence only adds
-    // Creature, so this Enchantment query never reaches it again.
+    // Creature, so this Enchantment query never reaches it again. A
+    // Necromancy whose entry trigger made it an Aura is an Aura too (its
+    // mark is read directly, not through the full subtype query).
     if !crate::engine::object_has_type(state, object, CardType::Enchantment)
         || def
             .subtypes_for_face(live.v4.face_index)
             .contains(&Subtype::Aura)
+        || crate::eternal_cube_c5c_v1::is_necromancy_aura(state, object)
     {
         return None;
     }
@@ -322,11 +325,23 @@ pub(crate) fn granted_keywords(state: &GameState, object: ObjectId) -> Keywords 
         return Keywords::NONE;
     }
     let controller = live.controller;
+    // Each Grove's grant has its timestamp, so a later ability removal on
+    // the enchantment takes the shroud away (613.7).
     let granted = groves.iter().any(|grove| {
         grove.object != object
             && link_live_in(state, *grove, Zone::Battlefield)
             && state.objects.get(grove.object).controller == controller
             && active_named(state, grove.object, STERLING_GROVE)
+            && crate::continuous_characteristics_v1::granted_ability_survives(
+                state,
+                object,
+                state
+                    .objects
+                    .get(grove.object)
+                    .v4
+                    .layer_timestamp
+                    .unwrap_or(0),
+            )
     });
     if granted && crate::engine::object_has_type(state, object, CardType::Enchantment) {
         Keywords::SHROUD
