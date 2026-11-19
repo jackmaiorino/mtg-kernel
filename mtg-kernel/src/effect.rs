@@ -18166,6 +18166,10 @@ impl LibraryPartitionFilter {
         match self {
             LibraryPartitionFilter::ByType(_) => true,
             LibraryPartitionFilter::Pick(rule) => {
+                // Like Recruitment Officer, skip a selection with nothing to take.
+                if selectable == 0 || rule.pick == 0 {
+                    return false;
+                }
                 if rule.selection.is_some() {
                     return true;
                 }
@@ -24987,7 +24991,10 @@ fn execute_in_departure_scope_v1(
                 ));
                 return;
             }
-            if crate::doubling_season_v48::requires_successor(state) {
+            // Eternal entry observers must see X counters as part of entering.
+            if crate::doubling_season_v48::requires_successor(state)
+                || cfg!(feature = "eternal-fixtures")
+            {
                 let mut proposal = event::ProposedEvent::zone_change(ctx.source, Zone::Battlefield);
                 if let event::ProposedEvent::ZoneChange(change) = &mut proposal {
                     change.battlefield_x_v48 = Some(crate::doubling_season_v48::EffectXEntryV48 {
