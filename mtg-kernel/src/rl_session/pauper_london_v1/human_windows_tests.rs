@@ -5,9 +5,13 @@
 //! seat keeps the trained surface. Proven here:
 //!
 //! 1. A person who passes at every new window plays the game of the
-//!    unflagged sessions bit for bit: equal game state at every shared
-//!    decision, equal menus, equal observations (but for the two session
-//!    counters the extra decisions advance) and equal model input.
+//!    unflagged sessions: equal game state at every shared decision, equal
+//!    menus, equal model input, and equal observations but for the two
+//!    session counters (`step_index`, `physical_decision_id`), which are
+//!    ahead by exactly the number of new windows passed so far, and the
+//!    hash that covers them. A new window is an ordinary decision: it
+//!    counts toward the session's caps, so a capped flagged game is
+//!    truncated earlier (also shown here). The human bridge runs uncapped.
 //! 2. With no seat flagged the windows reset is the plain reset.
 //! 3. A scripted game: the person casts an instant in the other seat's end
 //!    step and in their own upkeep, and holds priority with a spell on the
@@ -97,14 +101,45 @@ fn pass_row(decision: &RlSessionDecisionV1, rows: &[u32]) -> u32 {
         .expect("a priority window always offers Pass")
 }
 
-/// The observation without the two session counters that the person's extra
-/// decisions advance (and the hash over them). Nothing else may differ.
-fn without_session_counters(decision: &RlSessionDecisionV1) -> ObservationV5 {
+/// The observation with the two session counters moved back by `ahead` (the
+/// new windows the flagged game has passed so far; 0 for the unflagged game)
+/// and without the hash that covers them. After this nothing may differ: the
+/// counters of the flagged game are ahead by exactly `ahead`, no more.
+fn with_counters_moved_back(decision: &RlSessionDecisionV1, ahead: u64) -> ObservationV5 {
     let mut observation = (*decision.observation).clone();
-    observation.step_index = 0;
-    observation.physical_decision_id = 0;
+    observation.step_index = observation
+        .step_index
+        .checked_sub(ahead)
+        .expect("the step counter is at least the new windows passed");
+    observation.physical_decision_id = observation
+        .physical_decision_id
+        .checked_sub(ahead)
+        .expect("the decision counter is at least the new windows passed");
     observation.visible_projection_hash = 0;
     observation
+}
+
+/// Which forced pass a new window replaced, by where it happened: the reason,
+/// whether a combat declare step, and for the caster's-own suppression
+/// whether the seat's own object is on top of the stack (else its own mana
+/// ability reopened the round).
+fn window_kind(raw: &RlEpisodeSessionV1, reason: &'static str, person: usize) -> String {
+    let state = raw.game_state();
+    let combat = matches!(state.step, Step::DeclareAttackers | Step::DeclareBlockers);
+    let place = if combat { "combat" } else { "outside_combat" };
+    if reason == "stack_top_is_casters_own" {
+        let own_top = state
+            .stack
+            .last()
+            .is_some_and(|item| item.controller.index() == person);
+        let what = if own_top {
+            "own_stack_object"
+        } else {
+            "own_mana_ability"
+        };
+        return format!("{reason}:{place}:{what}");
+    }
+    format!("{reason}:{place}")
 }
 
 fn tensor(lockstep: &FlatV4LockstepV1, rows: &[u32], scratch: &mut FlatV4EncodeScratchV1) -> Value {
@@ -118,7 +153,7 @@ struct PassThrough {
     shared_decisions: u64,
     other_seat_decisions: u64,
     new_windows: u64,
-    reasons: std::collections::BTreeMap<&'static str, u64>,
+    reasons: std::collections::BTreeMap<String, u64>,
     finished: bool,
 }
 
@@ -167,7 +202,9 @@ fn pass_through(
             let pass = pass_row(decision, &rows);
             answer(&mut windows, &mut windows_copy, decision, &rows, pass);
             out.new_windows += 1;
-            *out.reasons.entry(reason).or_default() += 1;
+            *out.reasons
+                .entry(window_kind(&windows, reason, person))
+                .or_default() += 1;
             continue;
         }
         let plain_response = plain.current_response();
@@ -234,8 +271,8 @@ fn pass_through(
             context("menu", out.shared_decisions)
         );
         assert_eq!(
-            without_session_counters(&theirs),
-            without_session_counters(&ours),
+            with_counters_moved_back(&theirs, 0),
+            with_counters_moved_back(&ours, out.new_windows),
             "{}",
             context("observation", out.shared_decisions)
         );
@@ -247,6 +284,23 @@ fn pass_through(
             "{}",
             context("model input", out.shared_decisions)
         );
+        // The session's own counters are ahead by the new windows, exactly.
+        assert_eq!(
+            (
+                plain.policy_step_count() + out.new_windows,
+                plain.physical_decision_count() + out.new_windows,
+                theirs.step + out.new_windows,
+                theirs.physical_decision_id + out.new_windows
+            ),
+            (
+                windows.policy_step_count(),
+                windows.physical_decision_count(),
+                ours.step,
+                ours.physical_decision_id
+            ),
+            "{}",
+            context("session counters", out.shared_decisions)
+        );
         let pick = rows[(rng.next_u64() % rows.len() as u64) as usize];
         answer(&mut plain, &mut plain_copy, &theirs, &rows, pick);
         answer(&mut windows, &mut windows_copy, &ours, &rows, pick);
@@ -256,14 +310,14 @@ fn pass_through(
 }
 
 #[test]
-fn a_person_who_passes_every_new_window_plays_the_unflagged_game_bit_for_bit() {
+fn a_person_who_passes_every_new_window_plays_the_unflagged_game() {
     let mut total = PassThrough::default();
     let mut finished = 0;
     for (index, deck) in DECKS.iter().enumerate() {
         for seed in [11_u64, 29] {
             for person in [0, 1] {
                 let episode = 0xE07_0000 + index as u64 * 1_000 + seed * 2 + person as u64;
-                let played = pass_through(deck, seed, episode, person, 1_500);
+                let played = pass_through(deck, seed, episode, person, 6_000);
                 assert!(played.shared_decisions > 20, "{deck} seed {seed}");
                 assert!(
                     played.new_windows > 10,
@@ -280,25 +334,113 @@ fn a_person_who_passes_every_new_window_plays_the_unflagged_game_bit_for_bit() {
             }
         }
     }
-    assert!(finished >= 8, "only {finished} of 32 games finished");
+    eprintln!(
+        "pass-through sweep: {finished} of 32 games finished, {} shared decisions ({} of the other seat), {} new windows passed: {:?}",
+        total.shared_decisions, total.other_seat_decisions, total.new_windows, total.reasons
+    );
+    assert!(finished >= 24, "only {finished} of 32 games finished");
     assert!(
         total.other_seat_decisions > 2_000,
         "{}",
         total.other_seat_decisions
     );
-    // Every kind of forced pass became a window somewhere in the sweep.
-    for reason in [
-        "step_gated",
-        "no_real_option",
-        "combat_priority_action_spent",
-        "stack_top_is_casters_own",
+    // Every forced pass of the trained surface became a window somewhere in
+    // the sweep, each in the place it applies.
+    for kind in [
+        "step_gated:outside_combat",
+        "no_real_option:outside_combat",
+        "no_real_option:combat",
+        "combat_priority_action_spent:combat",
+        "stack_top_is_casters_own:combat:own_stack_object",
+        "stack_top_is_casters_own:combat:own_mana_ability",
+        "stack_top_is_casters_own:outside_combat:own_stack_object",
     ] {
         assert!(
-            total.reasons.get(reason).copied().unwrap_or(0) > 0,
-            "no new window of kind {reason}: {:?}",
+            total.reasons.get(kind).copied().unwrap_or(0) > 0,
+            "no new window of kind {kind}: {:?}",
             total.reasons
         );
     }
+}
+
+#[test]
+fn a_new_window_is_a_decision_and_counts_toward_the_session_caps() {
+    // Both games capped at the same number of decisions; the flagged game
+    // spends some of them on new windows (all passed) and is truncated
+    // while the unflagged game still has a decision to give.
+    const CAP: u64 = 60;
+    let decks: SessionDeckIdsV1 = ["Burn".to_string(), "Burn".to_string()];
+    let reset = |seats| {
+        RlEpisodeSessionV1::reset_pauper_london_human_windows_v1(
+            0xE07_2000,
+            19,
+            CAP,
+            LIMITS.1,
+            decks.clone(),
+            LEARNED,
+            seats,
+        )
+        .unwrap()
+    };
+    let (mut plain, mut windows) = (reset([false; 2]), reset([true, false]));
+    let mut rng = SplitMix64::seed(0xCA9);
+    let (mut shared, mut passed) = (0_u64, 0_u64);
+    let terminal = loop {
+        let ours = match windows.current_response() {
+            RlSessionResponseV1::Decision(ours) => ours,
+            RlSessionResponseV1::Terminal(terminal) => break terminal,
+        };
+        if windows.engine_window_v1().is_some() {
+            let pass = ours
+                .legal_actions
+                .iter()
+                .position(|action| matches!(action.semantic, ActionSemanticV1::Pass { .. }))
+                .unwrap();
+            windows
+                .step(
+                    ours.episode_id,
+                    ours.step,
+                    pass as u32,
+                    &ours.legal_actions[pass].stable_id,
+                )
+                .unwrap();
+            passed += 1;
+            continue;
+        }
+        let theirs = decision_of(&plain).expect("the unflagged game has not reached its cap");
+        assert_eq!(theirs.legal_actions.len(), ours.legal_actions.len());
+        let pick = (rng.next_u64() % ours.legal_actions.len() as u64) as usize;
+        plain
+            .step(
+                theirs.episode_id,
+                theirs.step,
+                pick as u32,
+                &theirs.legal_actions[pick].stable_id,
+            )
+            .unwrap();
+        windows
+            .step(
+                ours.episode_id,
+                ours.step,
+                pick as u32,
+                &ours.legal_actions[pick].stable_id,
+            )
+            .unwrap();
+        shared += 1;
+    };
+    assert_eq!(
+        terminal.terminal_reason,
+        format!("physical_decision_cap_reached:{CAP}")
+    );
+    assert!(
+        passed > 0 && shared + passed == CAP,
+        "{shared} shared, {passed} passed"
+    );
+    assert_eq!(plain.physical_decision_count(), shared);
+    assert!(
+        decision_of(&plain).is_some(),
+        "the unflagged game still has decisions under the same cap"
+    );
 }
 
 #[test]

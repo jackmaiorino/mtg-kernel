@@ -894,6 +894,11 @@ impl HarnessSurfaceV2 {
     /// the seat instead. A flagged seat that answers Pass at such a window
     /// therefore leaves the game exactly where the forced pass left it.
     ///
+    /// What does differ: a returned window is a decision of its session (it
+    /// advances the session's step and decision counters and counts toward
+    /// its caps), and it is not a suppression, so the suppression audit
+    /// (`Full`, `CountOnly`) has no record of it.
+    ///
     /// Refused under `EngineWindowsV1`, which already bypasses the arm for
     /// both seats.
     pub fn set_engine_window_seats_v1(&mut self, seats: [bool; 2]) -> Result<(), String> {
@@ -1088,7 +1093,7 @@ impl HarnessSurfaceV2 {
 
     fn next_decision_inner(&mut self, state: &mut GameState) -> SurfaceDecision {
         self.engine_window = None;
-        loop {
+        'decisions: loop {
             if let Some(sd) = self.next_blockers_subdecision(state) {
                 return sd;
             }
@@ -1267,7 +1272,7 @@ impl HarnessSurfaceV2 {
                                 before,
                                 state,
                             );
-                            continue;
+                            continue 'decisions;
                         }
                         // A new stack item appeared this round (either
                         // player's cast/activation) -- Java's `PlayerImpl.
@@ -1309,7 +1314,7 @@ impl HarnessSurfaceV2 {
                                 before,
                                 state,
                             );
-                            continue;
+                            continue 'decisions;
                         }
                         self.combat_priority_spent[player.index()] = true;
                     } else if stack_top_is_fresh_own_item {
@@ -1325,7 +1330,7 @@ impl HarnessSurfaceV2 {
                             before,
                             state,
                         );
-                        continue;
+                        continue 'decisions;
                     }
                     let no_real_option = castable_spells.is_empty()
                         && mana_abilities.is_empty()
@@ -1345,7 +1350,7 @@ impl HarnessSurfaceV2 {
                         engine::step(state, Action::Pass)
                             .expect("Pass is always legal in an offered priority window");
                         self.record(reason, || "Pass".to_string(), before, state);
-                        continue;
+                        continue 'decisions;
                     }
                 }
                 Decision::DeclareAttackers { eligible, .. } => {
