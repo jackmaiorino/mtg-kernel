@@ -1452,7 +1452,7 @@ impl FrozenPlayPolicyV1 {
 
     /// The `f32` values `duplicate_loaded_v1` copies: the embedding table and
     /// any boxed no-state-digest check model. The duplicate shares the model
-    /// and any S model (`Arc`), so their weights are not copied
+    /// and any S model or wide net (`Arc`), so their weights are not copied
     /// (`loaded_source_profile_v1`).
     pub(crate) fn owned_f32_len_v1(&self) -> usize {
         self.embeddings.len()
@@ -1462,17 +1462,35 @@ impl FrozenPlayPolicyV1 {
                 .map_or(0, |model| model.owned_f32_len_v1())
     }
 
-    /// The model this policy shares with its duplicates and forks: its
+    /// The net-8 model this policy shares with its duplicates and forks: its
     /// allocation's address, which tells live shared models apart, and the
-    /// `f32` values it holds (`opponent_cache_diagnostics_v1` counts each
-    /// held model once). This is the net-8 model only: a native S model or
-    /// wide net installed on the policy (`s_model`, `w_model`) is counted
-    /// neither here nor in `owned_f32_len_v1`, so no opponent cache charges it.
+    /// `f32` values it holds. Any installed S model or wide net is reported
+    /// separately in [`Self::shared_models_f32_v1`].
     pub(crate) fn shared_model_f32_v1(&self) -> (usize, usize) {
         (
             std::sync::Arc::as_ptr(&self.model) as usize,
             self.model.owned_f32_len_v1(),
         )
+    }
+
+    /// Every shared model allocation held by this policy: its base net-8
+    /// model and any installed native S model or wide net, each as
+    /// `(allocation_identity, f32_len)`.
+    pub(crate) fn shared_models_f32_v1(&self) -> [(usize, usize); 2] {
+        let extra = if let Some(s_model) = &self.s_model {
+            (
+                std::sync::Arc::as_ptr(s_model) as usize,
+                s_model.owned_f32_len_v1(),
+            )
+        } else if let Some(w_model) = &self.w_model {
+            (
+                std::sync::Arc::as_ptr(w_model) as usize,
+                w_model.owned_f32_len_v1(),
+            )
+        } else {
+            (0, 0)
+        };
+        [self.shared_model_f32_v1(), extra]
     }
 
     /// An exact duplicate of a policy in the state its loader returned it:
