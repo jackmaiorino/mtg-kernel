@@ -1480,6 +1480,67 @@ fn laelia_declined_impulse_expires_on_the_actual_next_players_turn() {
 }
 
 #[test]
+fn laelia_counts_separate_exile_instructions_in_one_resolution_both_seats() {
+    use mtg_kernel::effect::{self, EffectOp, ExecCtx, ObjectRef};
+
+    for player in [P0, P1] {
+        let mut state = plains();
+        state.active_player = player;
+        state.priority_player = player;
+        let laelia = cast_c6a_creature(&mut state, player, C6A_CARDS[2]);
+        let library = put(&mut state, player, C6A_CARDS[0], Zone::Library);
+        let graveyard = put(&mut state, player, C6A_CARDS[3], Zone::Graveyard);
+        let mut ctx = ExecCtx::no_targets(laelia, player);
+        ctx.targets = vec![Target::Object(library), Target::Object(graveyard)];
+        // One resolution, two instructions, with no trigger collection between them.
+        effect::execute(
+            &EffectOp::Sequence(vec![
+                EffectOp::MoveObject {
+                    object: ObjectRef::Target(0),
+                    to_zone: Zone::Exile,
+                },
+                EffectOp::MoveObject {
+                    object: ObjectRef::Target(1),
+                    to_zone: Zone::Exile,
+                },
+            ]),
+            &ctx,
+            &mut state,
+        );
+        assert_eq!(zone(&state, library), Zone::Exile);
+        assert_eq!(zone(&state, graveyard), Zone::Exile);
+        assert_eq!(state.objects.get(laelia).counters.plus1_plus1, 0);
+        settled(&mut state);
+        assert_eq!(state.objects.get(laelia).counters.plus1_plus1, 2);
+    }
+}
+
+#[test]
+fn laelia_counts_each_batch_and_a_separate_exile_before_one_collection_both_seats() {
+    for player in [P0, P1] {
+        let mut state = plains();
+        state.active_player = player;
+        state.priority_player = player;
+        let laelia = cast_c6a_creature(&mut state, player, C6A_CARDS[2]);
+        for _ in 0..2 {
+            let library = put(&mut state, player, C6A_CARDS[0], Zone::Library);
+            let graveyard = put(&mut state, player, C6A_CARDS[3], Zone::Graveyard);
+            event::propose_and_commit_batch(
+                &mut state,
+                vec![
+                    ProposedEvent::zone_change(library, Zone::Exile),
+                    ProposedEvent::zone_change(graveyard, Zone::Exile),
+                ],
+            );
+        }
+        let last = put(&mut state, player, C6A_CARDS[1], Zone::Library);
+        event::propose_and_commit(&mut state, ProposedEvent::zone_change(last, Zone::Exile));
+        settled(&mut state);
+        assert_eq!(state.objects.get(laelia).counters.plus1_plus1, 3);
+    }
+}
+
+#[test]
 fn laelia_counts_one_exile_batch_across_both_own_zones_and_ignores_other_moves_both_seats() {
     for player in [P0, P1] {
         let mut state = plains();

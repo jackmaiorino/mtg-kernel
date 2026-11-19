@@ -7436,6 +7436,8 @@ fn commit_batch_survivors_native(
         return;
     }
     crate::linked_aura_operation_v1::begin_batch(state);
+    #[cfg(feature = "eternal-fixtures")]
+    let exile_batch = crate::eternal_cube_c6a_v1::ExileBatchV1::capture(state, &survivors);
     if cfg!(feature = "limited-fdn-fixtures") {
         let ability_removals = survivors
             .iter()
@@ -7512,6 +7514,8 @@ fn commit_batch_survivors_native(
         }
     }
 
+    #[cfg(feature = "eternal-fixtures")]
+    exile_batch.finish(state);
     if state.engine.halted.is_none() {
         if let Err(source) = crate::progenitus_v1::finish_batch(state, progenitus_completions) {
             halt_zone_pt_v1(state, source);

@@ -5297,6 +5297,8 @@ pub(crate) fn capture_triggers_without_sba(state: &mut GameState) -> Vec<Pending
     // check, so match the pre-SBA batch while its sources still occupy the
     // zones from which their abilities function.
     waiting.extend(triggers_from_events(state, &events, kicked_source));
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c6a_v1::clear_collected_exile_batches(state);
     waiting
 }
 
@@ -5347,6 +5349,8 @@ pub(crate) fn collect_and_process_with_sba_result_v1(
         &sba_events,
     ));
     new_triggers.extend(triggers_from_events(state, &sba_events, None));
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_cube_c6a_v1::clear_collected_exile_batches(state);
 
     // 603.3d: a triggered ability requiring targets is removed from the
     // stack-placement queue when no complete legal target assignment exists.

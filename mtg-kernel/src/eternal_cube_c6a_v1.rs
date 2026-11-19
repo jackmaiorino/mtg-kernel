@@ -81,11 +81,83 @@ pub struct C6aStateV1 {
     pub graveyard_departures: [Option<TurnV1>; 2],
     /// Ouroboroid's incarnation-scoped last-known-power convention.
     pub departed_power: Vec<(ObjectLinkV4, i32)>,
+    /// Event-log indices of additional exiles for an owner in one simultaneous batch.
+    /// Cleared when that log is collected, rather than at the end of a resolution.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exile_batch_followers: Vec<usize>,
 }
 
 impl C6aStateV1 {
     pub(crate) fn is_empty(&self) -> bool {
         *self == Self::default()
+    }
+}
+
+/// Track only the batch's zone-change members, not incidental nested events.
+pub(crate) struct ExileBatchV1 {
+    start: usize,
+    objects: Vec<ObjectId>,
+}
+
+impl ExileBatchV1 {
+    pub(crate) fn capture(state: &GameState, events: &[ProposedEvent]) -> Self {
+        let objects = events
+            .iter()
+            .filter_map(|event| {
+                let ProposedEvent::ZoneChange(change) = event else {
+                    return None;
+                };
+                let card = state.objects.get(change.object);
+                (matches!(card.zone, Zone::Library | Zone::Graveyard)
+                    && !card.v4.is_token
+                    && card.spell_copy_origin.is_none())
+                .then_some(change.object)
+            })
+            .collect();
+        Self {
+            start: state.engine.event_log.len(),
+            objects,
+        }
+    }
+
+    pub(crate) fn finish(self, state: &mut GameState) {
+        if self.objects.len() < 2 {
+            return;
+        }
+        let mut seen = [false; 2];
+        let mut remaining = self.objects;
+        let mut followers = Vec::new();
+        for (index, event) in state.engine.event_log.iter().enumerate().skip(self.start) {
+            let CommittedEvent::ZoneChange { object, .. } = event else {
+                continue;
+            };
+            let Some(member) = remaining.iter().position(|candidate| candidate == object) else {
+                continue;
+            };
+            // Only the member's first move belongs to this simultaneous instruction.
+            remaining.swap_remove(member);
+            let owner = state.objects.get(*object).owner;
+            if qualifying_exile(state, event, owner) {
+                if seen[owner.index()] {
+                    followers.push(index);
+                }
+                seen[owner.index()] = true;
+            }
+        }
+        if !followers.is_empty() {
+            state
+                .eternal_v1
+                .get_or_insert_with(Default::default)
+                .c6a
+                .exile_batch_followers
+                .extend(followers);
+        }
+    }
+}
+
+pub(crate) fn clear_collected_exile_batches(state: &mut GameState) {
+    if let Some(eternal) = state.eternal_v1.as_mut() {
+        eternal.c6a.exile_batch_followers.clear();
     }
 }
 
@@ -376,13 +448,13 @@ pub(crate) fn trigger_matches(
                 && card_left_graveyard(state, controller)
         }
         C6aTriggerV1::CardsExiledFromYourLibraryOrGraveyardV1 => {
-            // Moonshadow's Full-card convention: one trigger per collected
-            // event batch, including both source zones in the same batch.
-            // Separate instructions collected together are also coalesced.
+            // Collection can include several separate instructions. Only actual
+            // simultaneous batch members share a trigger, across both source zones.
             qualifying_exile(state, &events[index], controller)
-                && !events[..index]
-                    .iter()
-                    .any(|event| qualifying_exile(state, event, controller))
+                && !state
+                    .eternal_v1
+                    .as_ref()
+                    .is_some_and(|eternal| eternal.c6a.exile_batch_followers.contains(&index))
         }
     }
 }
