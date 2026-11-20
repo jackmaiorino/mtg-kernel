@@ -14,6 +14,11 @@
 //! abilities): it is offered only when tapping could make something castable
 //! ([`mana_enables_action_v1`]), in every step.
 //!
+//! The mana test searches activations that autopay does not make (a source
+//! that is not a plain tap for mana, a color outside a source's primary
+//! ability, an activation with a cost target), each run by the engine on a
+//! cloned state.
+//!
 //! Hand-blind: every test reads only the acting player's own legal options as
 //! the rules engine lists them. Nothing here is a judgment about what is
 //! worth casting.
@@ -128,15 +133,42 @@ fn has_action_or_enabling_mana_v1(state: &GameState, options: &PriorityOptionsV1
             && mana_enables_action_v1(state, options.player, options.mana_abilities, false).enables)
 }
 
-/// One mana activation the player could make now (one per key of card,
-/// color and cost-target card: identical sources are interchangeable).
+/// One mana activation the player could make now.
 struct ManaActivationV1 {
     action: Action,
 }
 
-fn hand_only_source_v1(state: &GameState, id: ObjectId) -> bool {
-    let def = &crate::card_def::CARD_DEFS[state.objects.get(id).card_def as usize];
-    !def.is_automatic_payment_mana_source()
+/// Whether autopay already uses this activation of `id`: the source is an
+/// automatic payment source (a plain tap for mana, see
+/// `mana::gather_sources_for_spell_restrictions_v1`), the color is one of its
+/// primary ability's colors, and the activation has no cost target. Anything
+/// else (a sacrifice or life cost, a paid filtering ability on a land whose
+/// primary ability is automatic, a cost that taps or sacrifices another
+/// object) pays only by hand.
+fn autopay_covers_v1(
+    state: &GameState,
+    id: ObjectId,
+    choice: crate::mana::ManaColor,
+    has_cost_target: bool,
+) -> bool {
+    let object = state.objects.get(id);
+    let def = &crate::card_def::CARD_DEFS[object.card_def as usize];
+    def.is_automatic_payment_mana_source()
+        && !has_cost_target
+        && def
+            .primary_mana_ability_choices(object.v4.chosen_color)
+            .contains(&choice)
+}
+
+/// Whether any listed activation of `id` pays only by hand.
+fn hand_only_source_v1(state: &GameState, player: PlayerId, id: ObjectId) -> bool {
+    engine::available_mana_ability_choices(player, id, state)
+        .into_iter()
+        .any(|choice| {
+            let has_target =
+                !engine::mana_ability_cost_targets_for_choice(player, id, choice, state).is_empty();
+            !autopay_covers_v1(state, id, choice, has_target)
+        })
 }
 
 fn activations_v1(
@@ -150,13 +182,17 @@ fn activations_v1(
     let mut ordered = sources.to_vec();
     ordered.sort();
     for id in ordered {
-        if !all_sources && !hand_only_source_v1(state, id) {
-            continue;
-        }
         let card = state.objects.get(id).card_def;
         let choices = engine::available_mana_ability_choices(player, id, state);
         for &choice in &choices {
             let targets = engine::mana_ability_cost_targets_for_choice(player, id, choice, state);
+            if !all_sources && autopay_covers_v1(state, id, choice, !targets.is_empty()) {
+                continue;
+            }
+            // Sources of one card with no cost target are interchangeable for
+            // the mana they make; a cost target is kept by object (two
+            // objects of one card can differ, for example in summoning
+            // sickness).
             if targets.is_empty() {
                 let key = (card, choice, None);
                 if !seen_keys.contains(&key) {
@@ -170,7 +206,7 @@ fn activations_v1(
                 }
             } else {
                 for &target in &targets {
-                    let key = (card, choice, Some(state.objects.get(target).card_def));
+                    let key = (card, choice, Some(target));
                     if !seen_keys.contains(&key) {
                         seen_keys.push(key);
                         out.push(ManaActivationV1 {
@@ -203,7 +239,7 @@ pub fn mana_enables_action_v1(
     let mut test = ManaTestV1 {
         hand_only_sources: mana_abilities
             .iter()
-            .filter(|&&id| all_sources || hand_only_source_v1(state, id))
+            .filter(|&&id| all_sources || hand_only_source_v1(state, player, id))
             .count() as u32,
         ..ManaTestV1::default()
     };
@@ -505,6 +541,62 @@ mod tests {
                 serde_json::from_str::<SeatPriorityWindowsV1>(name).unwrap(),
                 rule
             );
+        }
+    }
+
+    /// Review finding 1: a land whose primary ability autopay uses can still
+    /// have a paid ability that only a hand activation reaches (Heap Gate's
+    /// colored mana); the mana test must try it.
+    #[test]
+    fn a_paid_ability_of_an_automatic_land_is_tried_by_the_mana_test() {
+        let mut state = game();
+        put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
+        let gate = put(&mut state, PlayerId::P0, "Heap Gate", Zone::Battlefield);
+        let island = put(&mut state, PlayerId::P0, "Island", Zone::Battlefield);
+        at(&mut state, Step::Main1, PlayerId::P0, PlayerId::P0);
+        let test = mana_enables_action_v1(&state, PlayerId::P0, &[gate, island], false);
+        assert!(test.enables, "{test:?}");
+        let mut ruled = surface(P0_ACTS);
+        let decision = ruled.next_decision(&mut state);
+        assert_eq!(asked(&decision, Step::Main1, &state), Some(PlayerId::P0));
+        assert!(ruled.suppressions().is_empty());
+    }
+
+    /// Review finding 2: two objects of one card are not interchangeable as
+    /// cost targets. Saruli Caretaker taps another creature as its cost; only
+    /// tapping the summoning-sick Elf leaves the other Elf to pay, in either
+    /// object order.
+    #[test]
+    fn cost_targets_of_one_card_are_tried_by_object() {
+        for sick_first in [false, true] {
+            let mut state = game();
+            put(&mut state, PlayerId::P0, "Winding Way", Zone::Hand);
+            let caretaker = put(
+                &mut state,
+                PlayerId::P0,
+                "Saruli Caretaker",
+                Zone::Battlefield,
+            );
+            let first = put(
+                &mut state,
+                PlayerId::P0,
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            let second = put(
+                &mut state,
+                PlayerId::P0,
+                "Llanowar Elves",
+                Zone::Battlefield,
+            );
+            state
+                .objects
+                .get_mut(if sick_first { first } else { second })
+                .summoning_sick = true;
+            at(&mut state, Step::Main1, PlayerId::P0, PlayerId::P0);
+            let test =
+                mana_enables_action_v1(&state, PlayerId::P0, &[caretaker, first, second], false);
+            assert!(test.enables, "sick first {sick_first}: {test:?}");
         }
     }
 }
