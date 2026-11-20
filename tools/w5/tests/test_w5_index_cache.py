@@ -394,9 +394,23 @@ class CompactRecordsTests(unittest.TestCase):
         self.assertTrue(view and not view[40:])
         with self.assertRaises(IndexError):
             view[40]
-        # A whole read settles the records with no file on disk: `active` holds only the others.
+        # A whole read settles nothing (plan and guard settle, as before): `active` is every record, until the guard.
+        self.assertEqual(len(cache.active), 40)
+        self.assertEqual(len(cache.settled), 0)
+        retention.guard([self.t], 10**12, 0, [path], {Path(path).as_posix(): cache})
         self.assertEqual([r['boundary'] for r in cache.active], [1, 8, 40])
         self.assertEqual(len(cache.settled), 37)
+        # The supported interface, and nothing else (a list's mutation raises; never equal to a tuple).
+        self.assertFalse(view == tuple(listed))
+        self.assertTrue(view != tuple(listed))
+        self.assertFalse(view != listed)
+        self.assertTrue(listed[3] in view)
+        self.assertEqual(view.index(listed[3]), 3)
+        self.assertEqual(view.count(listed[3]), 1)
+        for attempt in (lambda: view.append(1), lambda: view.extend([]), lambda: view.sort(), lambda: view + [],
+                        lambda: view.__setitem__(0, {}), lambda: view.__delitem__(0), lambda: view < listed):
+            with self.assertRaises((AttributeError, TypeError)):
+                attempt()
 
     def test_compact_reads_equal_reading_every_record(self):
         """first_at_or_past, ledger_series, project, decide, select, valid_records, protected_paths, the pair's
@@ -467,14 +481,28 @@ class CompactRecordsTests(unittest.TestCase):
         self.assertIsNone(retention.first_at_or_past(view, 2**70 + 1))
         self.assertEqual(retention.first_at_or_past(view, 100), recs[0])
         self.assertEqual(retention.first_at_or_past(view, 7), retention.first_at_or_past(listed, 7))
+        # A missing field is missing for that record alone: the column still serves every other record.
         recs.append({k: v for k, v in self.record(3).items() if k != 'ledger_usec'})
-        path = self.chain(recs, length=4)
+        recs.append(self.record(4))
+        path = self.chain(recs, length=5)
         _, view = retention.IndexCache(path).refresh()
-        self.assertIsNone(retention.fields(view, 'ledger_usec'))
-        self.assertIsNotNone(retention.fields(view, 'boundary'))
+        self.assertEqual(list(retention.fields(view, 'ledger_usec')[0]), [2**70, 7.5, 3000, None, 5000])
+        with self.assertRaises(KeyError):
+            list(retention.fields(view, 'ledger_usec', absent='raise')[0])
         listed = retention.index(path)[1]
+        self.assertEqual(view, listed)
         self.assertEqual(retention.ledger_series(view), retention.ledger_series(listed))
-        self.assertEqual(retention.first_at_or_past(view, 10**30), retention.first_at_or_past(listed, 10**30))
+        for target in (4000, 4500, 10**30):
+            self.assertEqual(retention.first_at_or_past(view, target), retention.first_at_or_past(listed, target))
+        # A missing boundary raises where reading every record raises.
+        recs[3] = {k: v for k, v in self.record(3).items() if k != 'boundary'}
+        path = self.chain(recs, length=5)
+        cache = retention.IndexCache(path)
+        with self.assertRaises(KeyError):  # `active` is every record whose boundary is not settled
+            cache.refresh()
+        listed = retention.index(path)[1]
+        with self.assertRaises(KeyError):
+            chains.protected_paths({'records': listed}, {5})
 
     def test_lines_are_split_as_index_reads_them(self):
         """CRLF line ends, empty lines, a line holding two records split by another line break character, and a
@@ -532,7 +560,209 @@ class CompactRecordsTests(unittest.TestCase):
         print(json.dumps(timing), file=sys.stderr)
         self.assertLess(per_record, 100, timing)
         self.assertLess(peak - base, 0.25 * parsed * updates, timing)
+        self.assertEqual(len(cache.active), updates)  # nothing is settled before the first plan and guard
+        # The first plan and guard over every record stay far below the parsed index too.
+        tracemalloc.start()
+        try:
+            base, _ = tracemalloc.get_traced_memory()
+            doc = retention.plan(path, None, cache)
+            retention.guard([self.t], 10**12, 0, [path], {Path(path).as_posix(): cache})
+            _, first = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(doc['checkpoints'], [])
         self.assertEqual(len(cache.active), 0)
+        self.assertLess(first - base, 0.25 * parsed * updates, {'first_cycle_peak_bytes': first - base})
+
+
+    def test_duplicate_boundaries_keep_what_the_first_plan_kept(self):
+        """Two records at boundary 64, one whose checkpoint is gone and one holding the file `shared`, which
+        boundary 65 also names (latest 66): the first cached plan keeps `shared`, as reading everything does."""
+        (self.t / 'ck').mkdir()
+        shared = self.t / 'ck' / 'shared.json'
+        shared.write_text('s')
+        pin = {'path': shared.as_posix(), 'sha256': '5' * 64}
+        recs = [self.record(u, segment=0) for u in range(63)]
+        recs += [self.record(63, segment=0), self.record(63, segment=0, checkpoint=pin),
+                 self.record(64, segment=0, checkpoint=pin), self.record(65, segment=1)]
+        Path(recs[-1]['checkpoint']['path']).write_text('latest')
+        path = self.chain(recs, segments=3, length=66)
+        cache = retention.IndexCache(path)
+        uncached = retention.plan(path)
+        cached = retention.plan(path, None, cache)
+        self.assertEqual(cached, uncached)
+        self.assertNotIn(shared.as_posix(), [i['path'] for i in cached['checkpoints']])
+        self.assertTrue(shared.exists())
+
+    def test_a_line_rewritten_in_place_stops_before_any_decision(self):
+        """The index is append-only: a cached line overwritten with one of the same size (here the latest
+        boundary, 4097 made 9999) raises IndexChanged at the next refresh, before any plan or deletion. The old
+        cache ignored such a rewrite (it kept its parsed records until a whole read)."""
+        (self.t / 'ck').mkdir()
+        recs = [self.record(63), self.record(4096)]
+        for r in recs:
+            Path(r['checkpoint']['path']).write_text('x')
+        path = self.chain(recs, length=5000)
+        cache = retention.IndexCache(path)
+        cache.refresh()
+        index_file = retention.index_path(path)
+        data = index_file.read_bytes()
+        self.assertIn(b'"boundary": 4097', data)
+        with open(index_file, 'r+b') as f:  # same inode, same size
+            f.write(data.replace(b'"boundary": 4097', b'"boundary": 9999'))
+        with mock.patch.object(retention, 'apply', side_effect=AssertionError('no deletion')), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            with self.assertRaises(retention.IndexChanged):
+                retention.plan(path, None, cache)
+        self.assertIn('"boundary": 4097', err.getvalue())  # the log line names the chain and boundary
+        self.assertIn('"chain": "chain"', err.getvalue())
+        self.assertTrue(all(Path(r['checkpoint']['path']).exists() for r in recs))
+        # A rewrite of an older line is caught when that record is read.
+        index_file.write_bytes(data)
+        cache = retention.IndexCache(path)
+        cache.refresh()
+        with open(index_file, 'r+b') as f:
+            f.write(data.replace(b'"update": 63,', b'"update": 64,'))
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(retention.IndexChanged):
+            retention.plan(path, None, cache)
+
+    def test_cr_only_and_long_lines_with_bounded_memory(self):
+        """A CR-only index (which index() reads through splitlines) and a 5 MB record line are read as index() reads
+        them, holding a line at a time rather than the file."""
+        import tracemalloc
+        recs = [self.record(u) for u in range(100_000)]
+        path = self.chain([json.dumps(r).encode() + b'\r' for r in recs], length=100_000)
+        size = retention.index_path(path).stat().st_size
+        tracemalloc.start()
+        try:
+            base, _ = tracemalloc.get_traced_memory()
+            cache = retention.IndexCache(path)
+            _, view = cache.refresh()
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(view, retention.index(path)[1])
+        self.assertEqual(len(view), 100_000)
+        self.assertLess(peak - base, size / 3, {"peak": peak - base, "file": size})
+        long = self.record(1, note='n' * 5_000_000)
+        path = self.chain([json.dumps(self.record(0)).encode() + b'\n', json.dumps(long).encode() + b'\n',
+                           json.dumps(self.record(2)).encode() + b'\n'], length=3)
+        tracemalloc.start()
+        try:
+            base, _ = tracemalloc.get_traced_memory()
+            _, view = retention.IndexCache(path).refresh()
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual([r['update'] for r in view], [0, 1, 2])
+        self.assertEqual(view[1], long)
+        self.assertLess(peak - base, 40_000_000, {'peak': peak - base})
+
+    def test_snapshots_read_the_cache_not_the_whole_index(self):
+        """snapshot() with the cache picks the same boundaries as without it and never reads the index whole."""
+        (self.t / 'ck').mkdir()
+        recs = [self.record(u) for u in range(200)]
+        for r in recs:
+            Path(r['checkpoint']['path']).write_text('x')
+
+        def fake(args, **kwargs):
+            out = Path(args[args.index('--output') + 1])
+            out.write_text('w')
+            pin = args[args.index('--sha256') + 1]
+            return mock.Mock(returncode=0, stdout=json.dumps({
+                'cut_from_state_sha256': pin, 'output': {'path': out.as_posix(), 'sha256': retention.sha(out)},
+                'snapshot_bytes': 1, 'parameters_sha256': '0' * 64}))
+        made = []
+        for cached in (False, True):
+            path = self.chain(recs, length=200)
+            retention.snapshot_index_path(path).unlink(missing_ok=True)
+            shutil.rmtree(self.t / 'chain' / 'chain-snapshots', ignore_errors=True)
+            cache = retention.IndexCache(path) if cached else None
+            if cache:
+                cache.refresh()
+            whole = mock.patch.object(retention, 'index', side_effect=AssertionError('whole read')) if cached \
+                else contextlib.nullcontext()
+            with mock.patch.object(retention.subprocess, 'run', side_effect=fake), whole:
+                got = [retention.snapshot(path, 'bin', 120, max_new=3, cache=cache) for _ in range(2)]
+            made.append([[e['boundary'] for e in batch] for batch in got])
+        self.assertEqual(made[0], made[1])
+        self.assertEqual(made[0], [[120, 121, 122], [123, 124, 125]])
+
+    def test_a_read_only_cache_writes_nothing(self):
+        """A dry cycle's cache: no lock file, no append, no newline; records past the file's end (receipts the
+        supervisor has not indexed yet) are the ones index() then appends."""
+        node = Node(tempfile.mkdtemp(dir=self.t))
+        with mock.patch.dict(os.environ, {'FAKE_CPU_STEP': str(STEP_C), 'FAKE_CPU_STEP_X': str(STEP_X)}), \
+                mock.patch.object(chains, 'GUARD_WAIT', 0.0), mock.patch.object(chains, 'GUARD_POLL', 0.0):
+            _, plan = node.stage0(c_wall=600.0)
+            path = plan['chains']['c1']['manifest']
+            node.guard(ceilings={'c1': 2})
+            self.assertEqual(node.drive(plan, 'c1'), chains.EXIT_ROOM)
+            retention.index(path)
+            node.guard(ceilings={'c1': chains.admitted(node.root / 'chains' / 'c1') + 1})
+            self.assertEqual(node.drive(plan, 'c1'), chains.EXIT_ROOM)
+        index_file = retention.index_path(path)
+        lock_file = Path(path).with_suffix('.index.lock')
+        lock_file.unlink()
+        before = (index_file.read_bytes(), index_file.stat().st_mtime_ns)
+        ro = retention.IndexCache(path, read_only=True)
+        _, dry = ro.refresh()
+        _, again = ro.refresh()
+        retention.plan(path, None, ro)
+        self.assertEqual((index_file.read_bytes(), index_file.stat().st_mtime_ns), before)
+        self.assertFalse(lock_file.exists())
+        self.assertEqual(list(again), list(dry))
+        written = retention.index(path)[1]
+        self.assertGreater(len(written), before[0].count(b'\n'))
+        self.assertEqual(list(dry), written)
+
+    def test_guard_only_cycle_publishes_the_guard_and_deletes_nothing(self):
+        node = Node(tempfile.mkdtemp(dir=self.t))
+        for name, value in SMALL.items():
+            patch = mock.patch.object(retention, name, value)
+            patch.start()
+            self.addCleanup(patch.stop)
+        with mock.patch.dict(os.environ, {'FAKE_CPU_STEP': str(STEP_C), 'FAKE_CPU_STEP_X': str(STEP_X)}), \
+                mock.patch.object(chains, 'GUARD_WAIT', 0.0), mock.patch.object(chains, 'GUARD_POLL', 0.0):
+            path, plan = node.plan('0', {'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'oc/c1'},
+                                         'c2': {'arm': 'C', 'slot': 1, 'seed_root': 'oc/c2'}},
+                                   c_wall_seconds=600.0, independent=True, label='g')
+            node.guard(ceilings={'c1': 6, 'c2': 0})
+            self.assertEqual(node.drive(plan, 'c1'), chains.EXIT_ROOM)
+            files = sorted(p for p in (node.root / 'chains').rglob('*') if p.is_file() and 'index' not in p.name)
+            (node.root / 'GUARD.json').unlink()
+            caches = {}
+            report = chains.cycle(chains.load_plan(path), path, caches=caches, guard_only=True)
+            after = sorted(p for p in (node.root / 'chains').rglob('*') if p.is_file() and 'index' not in p.name)
+            self.assertTrue(report['guard_only'])
+            self.assertEqual(report['retention'], {})
+            self.assertIsNone(report['purged'])
+            self.assertTrue(json.loads((node.root / 'GUARD.json').read_text())['ok'])
+            self.assertEqual(set(files) - set(after), set())  # nothing deleted
+            self.assertGreater(len(retention.index(plan['chains']['c1']['manifest'])[1]), 0)
+            normal = chains.cycle(chains.load_plan(path), path, caches=caches)
+            self.assertGreater(normal['retention']['c1']['removed'], 0)  # the same state: a normal cycle prunes
+
+    def test_the_streamed_migration_writes_what_index_writes(self):
+        node = Node(tempfile.mkdtemp(dir=self.t))
+        with mock.patch.dict(os.environ, {'FAKE_CPU_STEP': str(STEP_C), 'FAKE_CPU_STEP_X': str(STEP_X)}), \
+                mock.patch.object(chains, 'GUARD_WAIT', 0.0), mock.patch.object(chains, 'GUARD_POLL', 0.0):
+            _, plan = node.stage0(c_wall=600.0)
+            path = plan['chains']['c1']['manifest']
+            node.guard(ceilings={'c1': 3})
+            self.assertEqual(node.drive(plan, 'c1'), chains.EXIT_ROOM)
+        index_file = retention.index_path(path)
+        retention.index(path)
+        legacy = ''.join(json.dumps({k: v for k, v in json.loads(x).items() if k != 'state'}) + '\n'
+                         for x in index_file.read_text().splitlines()).encode()
+        outputs = []
+        for read in (lambda: retention.index(path), lambda: retention.IndexCache(path).refresh()):
+            index_file.unlink()
+            index_file.write_bytes(legacy)
+            records = read()[1]
+            outputs.append((index_file.read_bytes(), list(records)))
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertTrue(all('state' in r for r in outputs[1][1]))
 
 
 if __name__ == '__main__':

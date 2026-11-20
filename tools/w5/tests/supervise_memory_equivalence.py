@@ -122,7 +122,9 @@ class Fixture:
             assert Path(plan['chains'][name]['manifest']).resolve() == (cdir / 'chain.json').resolve()
             new_prefix = (cdir.as_posix() + '/').encode()
             with open(a.index, 'rb') as src, open(cdir / 'chain.index.jsonl', 'wb') as dst:
-                for line in src:
+                for k, line in enumerate(src):
+                    if name == 'c2' and a.ended_lines and k >= a.ended_lines:
+                        break
                     dst.write(line.replace(prefix, new_prefix))
                     lines += name == 'c1'
             real = json.loads(Path(a.manifest).read_text(encoding='utf-8').replace(a.prefix, cdir.as_posix() + '/'))
@@ -351,6 +353,7 @@ def main():
     p = sub.add_parser('run')
     for k in ('tools', 'index', 'manifest', 'prefix', 'work', 'out'):
         p.add_argument('--' + k, required=True)
+    p.add_argument('--ended-lines', type=int, help='the ended chain c2 keeps only this many index lines')
     p = sub.add_parser('compare')
     p.add_argument('old')
     p.add_argument('new')

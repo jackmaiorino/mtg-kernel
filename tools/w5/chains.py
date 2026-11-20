@@ -135,8 +135,10 @@ through `w5box.py fill`, which stops once all measured chains have ended); the b
   the index file's new lines and the receipts past them, and the rolling plan and the guard skip records whose
   full-state files are all gone and old segments whose trajectories are gone (nothing writes into a completed
   iteration again), with the same decisions as reading everything. A one-shot `supervise` reads everything. The
-  cache keeps each record's line offset and scalar fields (about 50 bytes a record) and parses a whole record from
-  its line only when it is read, so the supervisor's memory stays small for chains of millions of updates.
+  cache keeps each record's line offset and length and its scalar fields (56 bytes a record) and parses a whole
+  record from its line only when it is read, so the supervisor's memory stays small for chains of millions of
+  updates; a cached line rewritten in place stops the cycle (the index is append-only). `supervise --guard-only`
+  is a recovery mode that keeps the guard published with no retention, deletion or pair step (`cycle`).
 
 **Box throughput** (`throughput`, Stage 0, COMPUTE-POLICY items 2 to 5): writes the `w5-box-throughput/v1` record
 w5box's guard requires for one arm of a plan. Each phase (default: one box, then every box of the layout) is a
@@ -1914,13 +1916,17 @@ def valid_records(info):
         return info['records']
     last = end['last_valid_boundary']
     if isinstance(info['records'], retention.IndexView):  # a view of the same records, from the compact fields
-        valid = info['records'].where('boundary', lambda b: b <= last)
-        if valid is not None:
-            return valid
+        return info['records'].where('boundary', lambda b: b <= last)
     return [r for r in info['records'] if r['boundary'] <= last]
 
 
 def ledger_at(records, boundary):
+    columns = retention.fields(records, 'boundary', absent='raise')
+    if columns is not None:  # an IndexCache view: only the record found is parsed
+        for j, b in enumerate(columns[0]):
+            if b == boundary:
+                return records[j]['ledger_usec']
+        raise StopIteration
     return next(r['ledger_usec'] for r in records if r['boundary'] == boundary)
 
 
@@ -1954,7 +1960,7 @@ def chain_info(root, name, caches=None):
 def protected_paths(info, boundaries):
     out = set()
     records = info['records']
-    columns = retention.fields(records, 'boundary')
+    columns = retention.fields(records, 'boundary', absent='raise')
     if columns is not None:  # an IndexCache view: only the protected records are parsed
         records = [records[j] for j, b in enumerate(columns[0]) if b in boundaries]
     for r in records:
@@ -2067,7 +2073,7 @@ def pair_decide(plan, info_c, info_x, st, now, budget):
 SNAPSHOT_MARGIN = 1.05  # a weights-only container's size varies only by its metadata
 
 
-def cut_snapshots(plan, x, st, size, budget):
+def cut_snapshots(plan, x, st, size, budget, cache=None):
     """Weights-only snapshots one at a time, each reserved first at the largest size seen plus a margin and
     reconciled with its actual bytes, while the chain's snapshots stay within 30 GB and the cycle's guard budget
     holds one more. A snapshot file left without its index record (a supervise that died mid-cut) is regenerable
@@ -2095,7 +2101,8 @@ def cut_snapshots(plan, x, st, size, budget):
         if budget['headroom'] < est:
             break
         spend(budget, est)
-        new = retention.snapshot(x['path'], plan['container_tool']['path'], st['snapshot_from'], max_new=1)
+        new = retention.snapshot(x['path'], plan['container_tool']['path'], st['snapshot_from'], max_new=1,
+                                 cache=cache)
         if not new:
             spend(budget, -est)
             break
@@ -2626,11 +2633,18 @@ def counter_safe(plan, root):
     return not any(inside_segment(p, root) for p in places)
 
 
-def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None):
+def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None, guard_only=False):
     """One supervise cycle. `caches` (manifest path to `retention.IndexCache`, kept by `supervise --loop` across
     cycles) gives the same decisions without reading every index record and file again; `fills=False` (the box
     throughput command) starts no fillers. `counter` (a `retention.ByteCounter`, kept across cycles too) gives the
-    guard's used bytes without walking finished segments again; every deletion here is reported to it."""
+    guard's used bytes without walking finished segments again; every deletion here is reported to it.
+
+    `guard_only` (`supervise --guard-only`, a recovery mode) keeps the chains admitted and nothing else: it closes
+    dead supervisors' instances and records OOM ends, refreshes every index (appending rows), records looks, kills
+    ended chains, releases ended chains' boxes (independent plans), and publishes GUARD.json and SUPERVISE.json. It
+    makes no pair decision, snapshot or selection, stages no replay sample, runs no rolling retention and purges
+    no hold folder (nothing is deleted), and starts no filler. Without retention the used bytes only grow, so the
+    guard refuses admission once the cap is reached."""
     now = time.time() if now is None else now
     root = Path(plan['root'])
     names = {n for n, c in plan['chains'].items() if c['arm'] in MEASURED}
@@ -2641,7 +2655,8 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None):
     looks = {n: look(i, plan['r_nom_usec']) for n, i in infos.items()}
     report = {'unix': now, 'pairs': {}, 'retention': {}, 'recovered': recovered, 'oom_failures': oom_failures}
     budget = load_budget(root)
-    for key, pair in sorted(plan['pairs'].items()):
+    pairs = {} if guard_only else plan['pairs']
+    for key, pair in sorted(pairs.items()):
         c, x = infos[pair['C']], infos[pair['X']]
         pdir = root / 'pairs' / f'{pair["C"]}--{pair["X"]}'
         st = read(pdir / 'PAIR.json') if (pdir / 'PAIR.json').exists() else {
@@ -2660,14 +2675,14 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None):
             write(pdir / 'PAIR.json', st)
         report['pairs'][key] = {k: st.get(k) for k in ('label', 'r_usec', 'endpoints', 'done', 'waiting', 'blocked')}
         report['pairs'][key]['action'] = (st.get('last_decision') or {}).get('action')
-    for key, pair in sorted(plan['pairs'].items()):  # snapshots, once every pair's requests are out
+    for key, pair in sorted(pairs.items()):  # snapshots, once every pair's requests are out
         pdir = root / 'pairs' / f'{pair["C"]}--{pair["X"]}'
         st = read(pdir / 'PAIR.json') if (pdir / 'PAIR.json').exists() else {}
         if st.get('done') or not st.get('snapshotting') or not st.get('snapshot_size'):
             continue
         try:
-            report['pairs'][key]['snapshots_made'] = cut_snapshots(plan, infos[pair['X']], st, st['snapshot_size'],
-                                                                   budget)
+            report['pairs'][key]['snapshots_made'] = cut_snapshots(
+                plan, infos[pair['X']], st, st['snapshot_size'], budget, index_cache(caches, infos[pair['X']]['path']))
             st.pop('snapshot_error', None)
         except (Stop, SystemExit) as exc:
             st['snapshot_error'] = str(exc)
@@ -2681,8 +2696,8 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None):
     # GUARD_SEGMENTS more) is inside the next verdict's reservation and the per-chain hot cap.
     ceilings = {n: admitted(chain_dir(root, n)) + GUARD_SEGMENTS for n, c in plan['chains'].items()
                 if c['arm'] in MEASURED and writing(root, n)}
-    report['replay_sample'] = sample_cycle(plan, root, infos)
-    for n in sorted(n for n in names if n in plan['chains']):
+    report['replay_sample'] = None if guard_only else sample_cycle(plan, root, infos)
+    for n in sorted(n for n in names if n in plan['chains'] and not guard_only):
         info = infos[n]
         if info['end'] is not None or read_end(root, n) is not None or not info['records']:
             continue
@@ -2711,8 +2726,10 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None):
         report['fills'] = None
         report['released_boxes'] = release_ended_boxes(plan, root)
     else:
-        report['fills'] = occupancy(plan, root) if fills else None
-    report['purged'] = purge_hold(root, plan['hold_days'], now)
+        report['fills'] = occupancy(plan, root) if fills and not guard_only else None
+    report['purged'] = None if guard_only else purge_hold(root, plan['hold_days'], now)
+    if guard_only:
+        report['guard_only'] = True
     next_bytes = guard_reservation(plan, root)
     manifests = [c['manifest'] for c in plan['chains'].values() if c['manifest']]
     safe = counter is not None and counter_safe(plan, root)
@@ -2739,7 +2756,8 @@ def supervise(a):
         caches = {}  # each chain's index records and settled state, kept across cycles
         counter = retention.ByteCounter()  # finished segments' byte totals, kept across cycles
         while True:
-            report = cycle(plan, Path(a.plan).resolve(), caches=caches, counter=counter)
+            report = cycle(plan, Path(a.plan).resolve(), caches=caches, counter=counter,
+                           guard_only=getattr(a, 'guard_only', False))
             print(json.dumps(report, sort_keys=True), flush=True)
             if not a.loop:
                 return 0
@@ -3851,6 +3869,8 @@ def main(argv=None):
     p = sub.add_parser('supervise')
     p.add_argument('--plan', required=True)
     p.add_argument('--loop', type=float, nargs='?', const=SUPERVISE_EVERY, default=None)
+    p.add_argument('--guard-only', action='store_true',
+                   help='recovery mode: refresh the indexes and publish the guard; no retention, deletion or pair step')
     sub.add_parser('status').add_argument('--plan', required=True)
     p = sub.add_parser('end')
     p.add_argument('--plan', required=True)

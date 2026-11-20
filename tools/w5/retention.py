@@ -56,8 +56,10 @@ Commands:
   retention.py guard --cap-bytes N [--next-bytes M] [--chain CHAIN.json ...] ROOT [ROOT ...]
 """
 import argparse
+import codecs
 import contextlib
 import hashlib
+import io
 import math
 import json
 import os
@@ -272,17 +274,45 @@ def terminate(f):
                 f.write(b'\n')
 
 
-def parse_lines(data, start):
-    """(record, offset, part) for every record of `data`, index file bytes from file offset `start` that end at a
-    line end or the file's end, read as `index` reads them (the text's `splitlines`, empty lines skipped): `offset`
-    is where the record's line starts and `part` its place among the line's non-empty `splitlines` pieces (0 unless
-    the line holds another line break character, which no index writer leaves)."""
-    out, pos = [], 0
-    for piece in data.split(b'\n'):
-        for part, text in enumerate(t for t in piece.decode('utf-8').splitlines() if t):
-            out.append((json.loads(text), start + pos, part))
-        pos += len(piece) + 1
-    return out
+LINE_BREAK = re.compile('[\n\r\x0b\x0c\x1c\x1d\x1e\x85  ]')  # what str.splitlines splits on
+
+
+def byte_length(text):
+    return len(text) if text.isascii() else len(text.encode('utf-8'))
+
+
+def stream_lines(f, start=0, chunk=1 << 20):
+    """(text, byte offset, byte length) of every non-empty line of `f` from byte `start` on, split as `index` splits
+    the file (`read_text(encoding='utf-8').splitlines()`, empty lines skipped), holding one chunk and the line being
+    read at a time (a CR-only file or a long line costs that line, not the file)."""
+    decoder = codecs.getincrementaldecoder('utf-8')()
+    f.seek(start)
+    pos, carry, carry_cr = start, [], False
+    while True:
+        block = f.read(chunk)
+        final = not block
+        new = decoder.decode(block, final=final)
+        if not final and not carry_cr and not LINE_BREAK.search(new):
+            carry.append(new)  # still inside one line
+            continue
+        pieces = (''.join(carry) + new).splitlines(keepends=True)
+        carry, carry_cr = [], False
+        if not final and pieces:
+            last = pieces[-1]
+            if last.endswith('\r') or not LINE_BREAK.search(last[-1]):  # unfinished, or a CR a LF may follow
+                carry, carry_cr = [pieces.pop()], last.endswith('\r')
+        for piece in pieces:
+            text = piece.splitlines()[0] if piece else ''
+            if text:
+                yield text, pos, byte_length(text)
+            pos += byte_length(piece)
+        if final:
+            return
+
+
+def parse_bytes(data, start):
+    """(record, offset, length) for every record of index file bytes `data` read from file offset `start`."""
+    return [(json.loads(text), start + offset, length) for text, offset, length in stream_lines(io.BytesIO(data))]
 
 
 class Boundaries:
@@ -341,49 +371,63 @@ class Boundaries:
         yield from self.other
 
 
-class IndexRecords:
-    """The records of one chain index file as `IndexCache` keeps them: each record's line offset in the file and the
-    scalar fields that scans over every record read (`FIELDS`) in typed arrays, about 50 bytes a record; a whole
-    record is parsed again from its line when it is read. A value an array cannot hold exactly (None, an integer
-    past 64 bits, a float in an integer field) is kept as itself beside the array, and a field some record lacks is
-    not served from the arrays at all, so every value reads back exactly as it was parsed.
+class Missing:
+    """A field a record does not have (`IndexRecords` columns)."""
+    __slots__ = ()
 
-    The file only grows by appends while one IndexRecords indexes it (a replaced or shortened file is read whole into
-    a new one), so a line read again holds the record parsed from it. On POSIX the indexed file stays open (a
-    replacement cannot change what is read); on Windows, which refuses to replace an open file, it is opened for
-    each read and must still be the indexed file."""
+    def __repr__(self):
+        return 'MISSING'
+
+
+MISSING = Missing()
+
+
+class IndexChanged(RuntimeError):
+    """A cached index line no longer reads as it did: the file was rewritten in place (it is append-only)."""
+
+
+class IndexRecords:
+    """The records of one chain index file as `IndexCache` keeps them: each record's line offset and length in the
+    file and the scalar fields that scans over every record read (`FIELDS`) in typed arrays, 56 bytes a record; a
+    whole record is parsed again from its line when it is read. A value an array cannot hold exactly (None, an
+    integer past 64 bits, a float in an integer field) or a field the record lacks (`MISSING`) is kept beside the
+    array for that record alone, so every value reads back exactly as it was parsed.
+
+    The index is append-only. A line read again must hold the record parsed from it: its length, its one line and
+    all five cached fields are checked, and a difference raises `IndexChanged` (logged with the chain and boundary)
+    before the record is used. On POSIX the indexed file stays open, so a replacement cannot change what is read; on
+    Windows, which refuses to replace an open file, it is opened for each read and must still be the indexed file.
+    Records a read-only cache found but did not write are kept parsed (`extra`)."""
 
     FIELDS = (('update', 'q'), ('boundary', 'q'), ('ledger_usec', 'q'), ('unix_seconds', 'd'), ('instance', 'q'))
 
     def __init__(self, path):
         self.path = Path(path)
-        self.offsets = array('q')
-        self.parts = {}  # record number to its `part` when not 0
+        self.offsets, self.lengths = array('q'), array('q')
         self.values = {name: array(code) for name, code in self.FIELDS}
         self.other = {name: {} for name, _ in self.FIELDS}  # record number to a value its array cannot hold
-        self.missing = set()  # fields some record lacks
+        self.extra = {}  # record number to a record not in the file (read-only caches)
         self.handle, self.ident = None, None
 
     def __len__(self):
         return len(self.offsets)
 
-    def append(self, rec, offset, part=0):
+    def append(self, rec, offset, length):
         n = len(self.offsets)
         self.offsets.append(offset)
-        if part:
-            self.parts[n] = part
+        self.lengths.append(length)
         for name, code in self.FIELDS:
-            values = self.values[name]
-            if name not in rec:
-                self.missing.add(name)
-                values.append(0)
-                continue
-            v = rec[name]
+            v = rec.get(name, MISSING)
             if type(v) is (int if code == 'q' else float) and (code == 'd' or -(1 << 63) <= v < 1 << 63):
-                values.append(v)
+                self.values[name].append(v)
             else:
-                values.append(0)
+                self.values[name].append(0)
                 self.other[name][n] = v
+
+    def append_unwritten(self, rec):
+        """A record a read-only cache found past the file's end (kept parsed; it is not in the file)."""
+        self.extra[len(self.offsets)] = rec
+        self.append(rec, -1, -1)
 
     def attach(self, ident):
         """The records index the file now at the path, whose (st_dev, st_ino) is `ident` (None: no file)."""
@@ -393,7 +437,7 @@ class IndexRecords:
             st = os.fstat(f.fileno())
             if (st.st_dev, st.st_ino) != ident:
                 f.close()
-                raise SystemExit(f'stop: {self.path} was replaced while it was read')
+                raise IndexChanged(f'stop: {self.path} was replaced while it was read')
             self.handle = f
 
     @contextlib.contextmanager
@@ -401,35 +445,88 @@ class IndexRecords:
         if self.handle is not None:
             yield self.handle
             return
+        if self.ident is None:  # no file: only unwritten records
+            yield None
+            return
         with open(self.path, 'rb') as f:
             st = os.fstat(f.fileno())
             if (st.st_dev, st.st_ino) != self.ident:
-                raise SystemExit(f'stop: {self.path} was replaced under its cached records')
+                raise IndexChanged(f'stop: {self.path} was replaced under its cached records')
             yield f
 
-    def read(self, f, n):
-        f.seek(self.offsets[n])
-        texts = [t for t in f.readline().decode('utf-8').splitlines() if t]
-        return json.loads(texts[self.parts.get(n, 0)])
+    def value(self, name, n):
+        other = self.other[name]
+        return other[n] if n in other else self.values[name][n]
 
-    def column(self, name, numbers):
-        """The field's values of the given record numbers, in order (None: some record lacks the field)."""
-        if name in self.missing:
-            return None
+    def read(self, f, n):
+        if n in self.extra:
+            return self.extra[n]
+        f.seek(self.offsets[n])
+        data = f.read(self.lengths[n])
+        try:
+            text = data.decode('utf-8')
+            rec = json.loads(text) if len(data) == self.lengths[n] and len(text.splitlines()) == 1 else None
+        except ValueError:
+            rec = None
+        bad = rec is None or not isinstance(rec, dict) or any(
+            not same(rec.get(name, MISSING), self.value(name, n)) for name, _ in self.FIELDS)
+        if bad:
+            boundary = self.value('boundary', n)
+            print(json.dumps({'event': 'index-changed', 'chain': self.path.parent.name, 'index': self.path.as_posix(),
+                              'record': n, 'boundary': None if boundary is MISSING else boundary,
+                              'offset': self.offsets[n]}, default=str), file=sys.stderr, flush=True)
+            raise IndexChanged(f'stop: {self.path}: the line of record {n} (boundary {boundary}) at byte '
+                               f'{self.offsets[n]} changed after it was read; the index is append-only (supervise '
+                               f'reads it whole again when restarted)')
+        return rec
+
+    def check(self, n):
+        """Reads record `n` again (raises `IndexChanged` if its line changed)."""
+        with self.reader() as f:
+            return self.read(f, n)
+
+    def column(self, name, numbers, absent):
+        """The field's values of the given record numbers, in order. A record without the field gives None
+        (`absent='get'`, as `rec.get`) or raises KeyError when it is reached (`absent='raise'`, as `rec[name]`)."""
         values, other = self.values[name], self.other[name]
         if isinstance(numbers, range) and numbers.step == 1:
             chunk = values[numbers.start:numbers.stop]
-            return iter(chunk) if not other else (other.get(n, v) for n, v in zip(numbers, chunk))
-        return (other.get(n, values[n]) for n in numbers) if other else (values[n] for n in numbers)
+            pairs = zip(numbers, chunk) if other else None
+            if pairs is None:
+                return iter(chunk)
+        else:
+            pairs = ((n, values[n]) for n in numbers)
+            if not other:
+                return (v for _, v in pairs)
+
+        def read():
+            for n, v in pairs:
+                if n in other:
+                    v = other[n]
+                    if v is MISSING:
+                        if absent == 'raise':
+                            raise KeyError(name)
+                        v = None
+                yield v
+        return read()
 
     def view(self):
         return IndexView(self, range(len(self.offsets)))
 
 
+def same(a, b):
+    """Equal and of one type (True is not 1), NaN equal to itself."""
+    return type(a) is type(b) and (a == b or (isinstance(a, float) and a != a and b != b))
+
+
 class IndexView(Sequence):
-    """A fixed list of `IndexRecords` records (what `IndexCache.refresh` returns): it reads like the list of record
-    dicts `index` returns, parsing each record from its line when it is read; `column` and `where` serve the compact
-    fields without parsing. Records appended to the cache later are not in it, as with a copied list."""
+    """A fixed list of `IndexRecords` records (what `IndexCache.refresh` returns, and `IndexCache.active`). It
+    supports what the supervise cycle and the pair code do with the list `index` returns: len, truth, an integer
+    index (negative too), slices (a view), iteration, reversed, `in`, `index`, `count`, and == / != against a list
+    or a view (never equal to a tuple, as a list is not). Each read parses the record from its line (a fresh dict
+    each time). It has no list mutation (append, extend, sort, del, item assignment raise), and records appended to
+    the cache later are not in it, as with a copied list. `column`, `where` and `lookup` serve the compact fields
+    without parsing records."""
 
     def __init__(self, store, numbers):
         self.store, self.numbers = store, numbers
@@ -456,7 +553,7 @@ class IndexView(Sequence):
             yield self[j]
 
     def __eq__(self, other):
-        if not isinstance(other, (list, tuple, IndexView)):
+        if not isinstance(other, (list, IndexView)):
             return NotImplemented
         return len(self) == len(other) and all(a == b for a, b in zip(self, other))
 
@@ -465,28 +562,26 @@ class IndexView(Sequence):
     def __repr__(self):
         return f'IndexView({len(self)} records of {self.store.path})'
 
-    def column(self, name):
-        """The field of every record, in order, without parsing them (None: some record lacks the field)."""
-        return self.store.column(name, self.numbers)
+    def column(self, name, absent='raise'):
+        """The field of every record, in order, without parsing them (see `IndexRecords.column`)."""
+        return self.store.column(name, self.numbers, absent)
 
-    def where(self, name, keep):
-        """The records whose field `name` satisfies `keep`, in order, as a view (None: some record lacks it)."""
-        values = self.column(name)
-        if values is None:
-            return None
-        picked = array('q', (n for n, v in zip(self.numbers, values) if keep(v)))
+    def where(self, name, keep, absent='raise'):
+        """The records whose field `name` satisfies `keep`, in order, as a view."""
+        picked = array('q', (n for n, v in zip(self.numbers, self.column(name, absent)) if keep(v)))
         if picked and picked[-1] - picked[0] + 1 == len(picked) and all(
                 b - a == 1 for a, b in zip(picked, picked[1:])):
             return IndexView(self.store, range(picked[0], picked[-1] + 1))
         return IndexView(self.store, picked)
 
+    def pick(self, positions):
+        """The records at the given positions of this view, in that order, as a view."""
+        return IndexView(self.store, array('q', (self.numbers[j] for j in positions)))
+
     def lookup(self, name):
         """A mapping from each value of the field to the last record holding it (as a dict comprehension over the
-        records builds it), parsing only the records looked up (None: some record lacks the field)."""
-        values = self.column(name)
-        if values is None:
-            return None
-        return LazyRecords(self.store, {v: n for n, v in zip(self.numbers, values)})
+        records builds it), parsing only the records looked up."""
+        return LazyRecords(self.store, {v: n for n, v in zip(self.numbers, self.column(name))})
 
 
 class LazyRecords:
@@ -506,13 +601,33 @@ class LazyRecords:
         return self[key] if key in self.numbers else default
 
 
-def fields(records, *names):
+def fields(records, *names, absent='get'):
     """Iterators over the named fields of every record, in order, from an `IndexView`'s compact columns without
-    parsing the records; None for any other sequence or a field some record lacks (then read the records)."""
+    parsing the records (a record without a field: None with `absent='get'`, KeyError with `absent='raise'`); None
+    for any other sequence (then read the records)."""
     if not isinstance(records, IndexView):
         return None
-    columns = [records.column(name) for name in names]
-    return None if any(c is None for c in columns) else columns
+    return [records.column(name, absent) for name in names]
+
+
+def migrate(chain_path, chain):
+    """`index_locked`'s one-time migration of a cache written before S containers were tracked (each record's
+    container pin read from its durable update receipt, the file rewritten), streamed: the same bytes, one record in
+    memory at a time. Every line is parsed first, so a file that does not parse is left as it is."""
+    cache = index_path(chain_path)
+    with open(cache, 'rb') as f:
+        for text, _, _ in stream_lines(f):
+            json.loads(text)
+    tmp = cache.with_suffix(cache.suffix + '.tmp')
+    with open(cache, 'rb') as f, open(tmp, 'w', encoding='utf-8') as out:
+        for text, _, _ in stream_lines(f):
+            rec = json.loads(text)
+            if 'state' not in rec:
+                seg = chain['segments'][rec['segment']]
+                complete = Path(seg['root'], 'iterations', f"{rec['iteration']:06d}", 'complete.json')
+                rec['state'] = state_pin(read(read(complete)['update']['path']))
+            out.write(json.dumps(rec) + '\n')
+    os.replace(tmp, cache)
 
 
 class IndexCache:
@@ -521,90 +636,88 @@ class IndexCache:
     it returns the same records. A cache file that was replaced or shortened, whose last line lacks its newline, or
     that does not end at the cursor, is read whole again (streamed, as `index` reads it) instead.
 
-    The records are kept compactly (`IndexRecords`: line offsets and the scalar fields scans read) and returned as
-    an `IndexView`, which parses a record from its line when it is read, so memory grows by about 50 bytes a record
-    rather than a parsed record's kilobyte or more.
+    The records are kept compactly (`IndexRecords`: line offsets and lengths and the scalar fields scans read) and
+    returned as an `IndexView`, which parses a record from its line when it is read, so memory grows by about 56
+    bytes a record rather than a parsed record's kilobyte or more. Each refresh reads the last cached line again: a
+    line rewritten in place raises `IndexChanged` before the cycle decides anything from it.
 
     It also keeps what `plan` and `guard` need not look at again:
     - `settled`: boundaries every file of whose full state was found absent. Nothing writes into a completed
       iteration again, so they stay absent; an absent file is never a plan item or a guard count, and it cannot
-      shadow an existing one in `plan`'s set of files surviving states use. `active` is the other records (parsed
-      dicts), rebuilt whenever the records are read whole: a whole read settles the records whose files are all
-      absent as it streams past them (as the guard would in the same cycle), so `active` never holds the whole index.
+      shadow an existing one in `plan`'s set of files surviving states use. `active` is the other records (a view),
+      rebuilt whenever the records are read whole; boundaries are settled where they always were (`plan`, `guard`).
     - `complete`: segments found with completion.json (never removed).
-    - `swept`: complete segments older than the trajectory window whose trajectories were found gone."""
+    - `swept`: complete segments older than the trajectory window whose trajectories were found gone.
 
-    CHUNK = 1 << 20
+    `read_only` (a dry cycle): no lock, nothing written; records found past the file's end are kept parsed."""
 
-    def __init__(self, chain_path):
+    def __init__(self, chain_path, read_only=False):
         self.chain_path = Path(chain_path)
-        self.records, self.active, self.offset, self.ident = None, [], 0, None
+        self.read_only = read_only
+        self.records, self.active, self.offset, self.ident = None, None, 0, None
         self.settled, self.complete, self.swept = Boundaries(), set(), set()
 
     def _stream(self, cache, store):
-        """Reads the cache file into `store` a chunk at a time, returning the records that are not settled and have a
-        file of their full state on disk, and the boundaries of the others whose files are all absent; None when a
-        record lacks its S-container pin (the file needs `index`'s migration)."""
-        candidates, absent = [], Boundaries()
+        """Reads the cache file into `store` one line at a time; False when a record lacks its S-container pin (the
+        file needs `index`'s migration)."""
         with open(cache, 'rb') as f:
-            start, rest = 0, b''
-            while True:
-                block = f.read(self.CHUNK)
-                data = rest + block
-                cut = len(data) if not block else data.rfind(b'\n') + 1
-                for rec, offset, part in parse_lines(data[:cut], start) if cut else ():
-                    if 'state' not in rec:
-                        return None
-                    store.append(rec, offset, part)
-                    if rec['boundary'] in self.settled:
-                        continue
-                    if state_present_any(rec['checkpoint'], rec.get('state')):
-                        candidates.append(rec)
-                    else:
-                        absent.add(rec['boundary'])
-                start, rest = start + cut, data[cut:]
-                if not block:
-                    return candidates, absent
+            for text, offset, length in stream_lines(f):
+                rec = json.loads(text)
+                if 'state' not in rec:
+                    return False
+                store.append(rec, offset, length)
+        return True
+
+    def _keep(self, view):
+        """`active`: the view's records whose boundary is not settled (record numbers, so appends extend it)."""
+        settled = self.settled
+        return IndexView(view.store, array('q', (n for n, b in zip(view.numbers, view.column('boundary'))
+                                                 if b not in settled)))
 
     def _whole(self):
         """Every record as `index` reads them (the lock is held), streamed; the cursor is then the file's end."""
         chain = load_chain(self.chain_path)
         cache = index_path(self.chain_path)
         store = IndexRecords(cache)
-        candidates, absent = [], Boundaries()
-        if cache.exists():
-            streamed = self._stream(cache, store)
-            if streamed is None:  # a cache written before S containers were tracked: index() migrates it (once)
-                index_locked(self.chain_path)
-                return self._whole()
-            candidates, absent = streamed
+        if cache.exists() and not self._stream(cache, store):
+            if self.read_only:
+                raise SystemExit(f'stop: {cache} needs its S-container migration, which a read-only cache does not do')
+            migrate(self.chain_path, chain)  # a cache written before S containers were tracked (once)
+            return self._whole()
         new = scan(chain, len(store))
-        if new:
-            lines = [(json.dumps(rec) + '\n').encode('utf-8') for rec in new]
-            with open(cache, 'ab') as f:
-                terminate(f)
-                f.flush()
-                at = os.fstat(f.fileno()).st_size
-                f.write(b''.join(lines))
-            for rec, line in zip(new, lines):
-                store.append(rec, at)
-                at += len(line)
-                candidates.append(rec)
-        if cache.exists():
-            with open(cache, 'ab') as f:
-                terminate(f)
-                st = os.fstat(f.fileno())
-            self.offset, self.ident = st.st_size, (st.st_dev, st.st_ino)
+        if self.read_only:
+            st = os.stat(cache) if cache.exists() else None
+            self.offset, self.ident = (st.st_size, (st.st_dev, st.st_ino)) if st else (0, None)
+            store.attach(self.ident if len(store) else None)
+            for rec in new:
+                store.append_unwritten(rec)
         else:
-            self.offset, self.ident = 0, None
-        store.attach(self.ident if len(store) else None)
+            if new:
+                lines = [(json.dumps(rec) + '\n').encode('utf-8') for rec in new]
+                with open(cache, 'ab') as f:
+                    terminate(f)
+                    f.flush()
+                    at = os.fstat(f.fileno()).st_size
+                    f.write(b''.join(lines))
+                for rec, line in zip(new, lines):
+                    store.append(rec, at, len(line) - 1)
+                    at += len(line)
+            if cache.exists():
+                with open(cache, 'ab') as f:
+                    terminate(f)
+                    st = os.fstat(f.fileno())
+                self.offset, self.ident = st.st_size, (st.st_dev, st.st_ino)
+            else:
+                self.offset, self.ident = 0, None
+            store.attach(self.ident if len(store) else None)
         self.records = store
-        self.settled |= absent
-        self.active = [r for r in candidates if r['boundary'] not in self.settled]
+        self.active = self._keep(store.view())
         return chain, store.view()
 
     def refresh(self):
         """(chain, records), equal to `index(chain_path)` at the same moment (records: an `IndexView`)."""
+        if self.read_only:
+            return self._refresh()
         with index_lock(self.chain_path):
             return self._refresh()
 
@@ -626,12 +739,15 @@ class IndexCache:
             return self._whole()  # replaced or shortened
         if data and not data.endswith(b'\n'):
             return self._whole()  # a last line without its newline: read as index() reads it
-        added = parse_lines(data, self.offset)
+        written = len(self.records) - len(self.records.extra)
+        if written:
+            self.records.check(written - 1)  # the last cached line still reads as cached
+        added = parse_bytes(data, self.offset)
         if any('state' not in r for r, _, _ in added):
             return self._whole()  # index() migrates the file first
         chain = load_chain(self.chain_path)
         new = scan(chain, len(self.records) + len(added))
-        if new:
+        if new and not self.read_only:
             lines = [(json.dumps(r) + '\n').encode('utf-8') for r in new]
             with open(cache, 'ab') as f:
                 before = os.fstat(f.fileno())
@@ -643,22 +759,29 @@ class IndexCache:
                 return self._whole()  # not the file just read (a writer outside the lock): append nothing
             at = self.offset + len(data)
             for rec, line in zip(new, lines):
-                added.append((rec, at, 0))
+                added.append((rec, at, len(line) - 1))
                 at += len(line)
             data += b''.join(lines)
         if self.records.ident is None and added:  # the file's first records
             self.records.attach(self.ident)
         self.offset += len(data)
-        for rec, offset, part in added:
-            self.records.append(rec, offset, part)
-        self.active.extend(r for r, _, _ in added if r['boundary'] not in self.settled)
+        for rec, offset, length in added:
+            n = len(self.records)
+            self.records.append(rec, offset, length)
+            if rec['boundary'] not in self.settled:
+                self.active.numbers.append(n)
+        for rec in new if self.read_only else ():
+            n = len(self.records)
+            self.records.append_unwritten(rec)
+            if rec['boundary'] not in self.settled:
+                self.active.numbers.append(n)
         return chain, self.records.view()
 
     def settle(self, boundaries):
         """Records whose full-state files were all found absent leave `active`."""
         if boundaries:
             self.settled |= boundaries
-            self.active = [r for r in self.active if r['boundary'] not in self.settled]
+            self.active = self._keep(self.active)
 
 
 def keeps_full_state(arm, boundary, latest):
@@ -691,22 +814,31 @@ def snapshots(chain_path):
     return {b: r for b, r in out.items() if Path(r['path']).exists()}
 
 
-def snapshot(chain_path, binary, snapshot_from, max_new=None):
+def snapshot(chain_path, binary, snapshot_from, max_new=None, cache=None):
     """Cuts a weights-only snapshot of every unpruned checkpoint at or past `snapshot_from` that keeps no full
     state and has none yet (the binary verifies the checkpoint against its pin), earliest first and at most
-    `max_new` of them. Each snapshot must have been cut from the recorded after-state."""
-    chain, records = index(chain_path)
+    `max_new` of them. Each snapshot must have been cut from the recorded after-state. With an `IndexCache` the
+    records come from it (as `index` would return them) and only the boundaries are read until one qualifies."""
+    chain, records = index(chain_path) if cache is None else cache.refresh()
     latest = records[-1]['boundary'] if records else 0
     have = snapshots(chain_path)
     directory = snapshot_dir(chain_path, chain)
     directory.mkdir(parents=True, exist_ok=True)
     made = []
-    for rec in records:
-        b = rec['boundary']
+
+    def walk():  # (boundary, its record when wanted), in order
+        if isinstance(records, IndexView):
+            for j, b in enumerate(records.column('boundary')):
+                yield b, (lambda j=j: records[j])
+        else:
+            for r in records:
+                yield r['boundary'], (lambda r=r: r)
+    for b, record in walk():
         if max_new is not None and len(made) >= max_new:
             break
         if b < snapshot_from or b in have or keeps_full_state(chain['arm'], b, latest):
             continue
+        rec = record()
         if not Path(rec['checkpoint']['path']).exists():
             continue
         out = directory / f'b{b:09d}.weights'
@@ -759,7 +891,13 @@ def plan(chain_path, snapshot_from=None, cache=None):
     chain, records = index(chain_path) if cache is None else cache.refresh()
     candidates = records if cache is None else cache.active
     have = snapshots(chain_path)
-    after = {r['boundary']: r['after_state_sha256'] for r in candidates}
+    # Each boundary's after-state hash (the last candidate of a boundary wins); `verified` asks only inside the
+    # snapshot window, so only those boundaries are kept.
+    after = {}
+    if snapshot_from is not None:
+        for r in candidates:
+            if r['boundary'] >= snapshot_from:
+                after[r['boundary']] = r['after_state_sha256']
 
     def verified(b):
         snap = have.get(b)
@@ -772,21 +910,23 @@ def plan(chain_path, snapshot_from=None, cache=None):
         cache.complete |= {i for i, s in enumerate(segs) if i not in cache.complete and segment_complete(s)}
         complete = [i in cache.complete for i in range(len(segs))]
     checkpoints, trajectories = [], []
-    prunable = []
-    for rec in candidates:
+    # One pass over the candidates (a cache's are parsed one at a time) finds the prunable ones and their
+    # boundaries; the others' files survive unless their boundary is pruned too. A cache's are kept by position.
+    view = isinstance(candidates, IndexView)
+    prunable, pruned, others = (array('q'), Boundaries(), array('q')) if view else ([], set(), [])
+    for j, rec in enumerate(candidates):
         s = rec['segment']
-        if keeps_full_state(chain['arm'], rec['boundary'], latest) or rec['boundary'] == latest:
+        keep = keeps_full_state(chain['arm'], rec['boundary'], latest) or rec['boundary'] == latest or (
+            snapshot_from is not None and rec['boundary'] >= snapshot_from and not verified(rec['boundary']))
+        if keep or not (complete[s] and s + 1 < len(segs) and complete[s + 1]):
+            others.append(j if view else rec)
             continue
-        if snapshot_from is not None and rec['boundary'] >= snapshot_from and not verified(rec['boundary']):
-            continue
-        if not (complete[s] and s + 1 < len(segs) and complete[s + 1]):
-            continue
-        prunable.append(rec)
-    pruned = {r['boundary'] for r in prunable}
-    surviving = {Path(p['path']).as_posix() for r in candidates if r['boundary'] not in pruned
-                 for p in record_parts(r)}
+        prunable.append(j if view else rec)
+        pruned.add(rec['boundary'])
+    surviving = {Path(p['path']).as_posix() for r in (candidates.pick(others) if view else others)
+                 if r['boundary'] not in pruned for p in record_parts(r)}
     seen, gone = set(), []
-    for rec in prunable:
+    for rec in candidates.pick(prunable) if view else prunable:
         for part in record_parts(rec):
             path = Path(part['path'])
             if part['path'] in surviving or part['path'] in seen or not path.exists():
@@ -931,9 +1071,7 @@ def select(chain, records, r_usec, weights=None):
     if not hit:
         raise SystemExit('stop: no boundary reaches R yet')
     endpoint = hit['boundary']
-    by_boundary = records.lookup('boundary') if isinstance(records, IndexView) else None
-    if by_boundary is None:
-        by_boundary = {r['boundary']: r for r in records}
+    by_boundary = records.lookup('boundary') if isinstance(records, IndexView) else {r['boundary']: r for r in records}
     if state_intact(hit['checkpoint'], hit.get('state')):
         return {'endpoint_boundary': endpoint, 'r_usec': r_usec, 'checkpoint': hit['checkpoint'], 'replay': None}
     snap = (weights or {}).get(endpoint)
