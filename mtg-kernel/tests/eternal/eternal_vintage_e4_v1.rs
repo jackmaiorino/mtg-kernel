@@ -3031,6 +3031,108 @@ fn phyrexian_metamorph_enters_as_an_artifact_copy_and_leaves_as_itself() {
     assert_eq!(state.objects.get(metamorph).zone, Zone::Graveyard);
 }
 
+#[test]
+fn fiend_returns_its_other_card_after_an_exiled_metamorph_is_recast_as_a_copy() {
+    use mtg_kernel::rl::observe_v2;
+    use mtg_kernel::surface_v2::HarnessSurfaceV2;
+
+    let mut state = islands();
+    let target = put(&mut state, P1, "Fume Spitter", Zone::Battlefield);
+    let fiend = put(&mut state, P1, "Mesmeric Fiend", Zone::Hand);
+    let meta = put(&mut state, P0, "Phyrexian Metamorph", Zone::Hand);
+    let other = put(&mut state, P0, "Counterspell", Zone::Hand);
+    event_move(&mut state, fiend, Zone::Battlefield);
+    let triggers = mtg_kernel::trigger::collect_and_process(&mut state);
+    assert_eq!(triggers.len(), 1);
+    state.engine.pending_triggers.extend(triggers.clone());
+    for (i, card) in [meta, other].into_iter().enumerate() {
+        if i == 1 {
+            state.engine.pending_triggers.extend(triggers.clone());
+        }
+        assert!(matches!(
+            settle(&mut state),
+            Some(Decision::ChooseTargets { .. })
+        ));
+        act(&mut state, Action::ChooseTarget(Target::Player(P0)));
+        if let Some(decision) = settle(&mut state) {
+            assert!(
+                matches!(decision, Decision::ChooseEffectTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(card)))
+            );
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(card)));
+            settled(&mut state);
+        }
+        assert_eq!(state.objects.get(card).zone, Zone::Exile);
+        assert_eq!(state.engine.linked_exile_records.len(), i + 1);
+    }
+    event_move(&mut state, meta, Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    cast(&mut state, meta, &[]);
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(target)))
+    );
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(target)),
+    );
+    settled(&mut state);
+    assert_eq!(
+        state.objects.get(meta).card_def,
+        state.objects.get(target).card_def
+    );
+    assert_eq!(state.objects.get(meta).zone, Zone::Battlefield);
+    assert_eq!(state.objects.get(other).zone, Zone::Exile);
+    let record = state
+        .engine
+        .linked_exile_records
+        .iter()
+        .find(|r| r.exiled == meta)
+        .unwrap();
+    assert!(state.objects.get(meta).zone_change_count > record.exiled_zone_change_count);
+    let mut restored: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    let surface = HarnessSurfaceV2::default();
+    observe_v2(&restored, &surface, P0, 17).unwrap();
+
+    // Substituting the copied creature for the original physical card must
+    // still reject the link before returning either object.
+    let mut forged = restored.clone();
+    let copied_def = forged.objects.get(target).card_def;
+    forged
+        .engine
+        .linked_exile_records
+        .iter_mut()
+        .find(|r| r.exiled == meta)
+        .unwrap()
+        .exiled_card_def = copied_def;
+    assert!(observe_v2(&forged, &surface, P0, 17).is_err());
+    let leave = |state: &mut GameState| {
+        event_move(state, fiend, Zone::Graveyard);
+        let triggers = mtg_kernel::trigger::collect_and_process(state);
+        assert_eq!(triggers.len(), 1);
+        state.engine.pending_triggers.extend(triggers);
+    };
+    leave(&mut forged);
+    for _ in 0..16 {
+        match engine::advance_until_decision(&mut forged) {
+            Decision::Halted {
+                mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
+                source,
+            } if source == fiend => break,
+            Decision::CastSpellOrPass { .. } => act(&mut forged, Action::Pass),
+            decision => panic!("unexpected forged link decision: {decision:?}"),
+        }
+    }
+    assert!(forged.engine.halted.is_some());
+    assert_eq!(forged.objects.get(other).zone, Zone::Exile);
+    assert_eq!(forged.engine.linked_exile_records.len(), 2);
+
+    leave(&mut restored);
+    settled(&mut restored);
+    assert_eq!(restored.objects.get(meta).zone, Zone::Battlefield);
+    assert_eq!(restored.objects.get(other).zone, Zone::Hand);
+    assert!(restored.engine.linked_exile_records.is_empty());
+}
+
 fn event_move(state: &mut GameState, object: ObjectId, zone: Zone) {
     mtg_kernel::event::propose_and_commit(
         state,

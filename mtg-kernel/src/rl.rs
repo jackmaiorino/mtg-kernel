@@ -11502,9 +11502,7 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
         if source.card_def != record.source.card_def
             || source.owner != record.source.owner
             || source.zone_change_count < record.source.zone_change_count
-            || exiled.card_def != record.exiled_card_def
-            || exiled.owner != record.exiled_owner
-            || exiled.zone_change_count < record.exiled_zone_change_count
+            || !crate::effect::linked_exile_target_matches(state, record, exiled)
         {
             return Err(RlContractError(
                 "linked-exile record no longer matches its physical objects".to_string(),
