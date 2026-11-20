@@ -24798,9 +24798,11 @@ fn execute_in_departure_scope_v1(
                 ));
                 return;
             }
-            if live.zone != Zone::Graveyard || live.zone_change_count != expected_generation {
-                return;
-            }
+            let same_incarnation = live.zone == Zone::Graveyard
+                && live.zone_change_count == expected_generation
+                && state.players[source.owner.index()]
+                    .graveyard
+                    .contains(&source.source);
             let mut staged = state.clone();
             let Ok(shuffle_token) = staged.preflight_library_shuffle(source.owner) else {
                 state.engine.halted = Some((
@@ -24809,13 +24811,16 @@ fn execute_in_departure_scope_v1(
                 ));
                 return;
             };
-            event::propose_and_commit(
-                &mut staged,
-                event::ProposedEvent::public_library_insert(
-                    source.source,
-                    event::LibraryPlacement::Top,
-                ),
-            );
+            // CR 701.24c still shuffles the library if the named object has left.
+            if same_incarnation {
+                event::propose_and_commit(
+                    &mut staged,
+                    event::ProposedEvent::public_library_insert(
+                        source.source,
+                        event::LibraryPlacement::Top,
+                    ),
+                );
+            }
             if staged
                 .commit_library_shuffle(source.owner, shuffle_token)
                 .is_err()
