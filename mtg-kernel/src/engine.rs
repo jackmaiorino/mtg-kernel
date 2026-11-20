@@ -28952,6 +28952,28 @@ fn finish_pending_spell_copy_resolution(
     Ok(())
 }
 
+thread_local! {
+    static LEGACY_ROLLOUT_SPELL_COPY_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Seeded-uniform rollout V1 and V2 preserve their original decision stream.
+/// Keep their payment mode on the dedicated worker thread and out of the
+/// game state, action encodings, and persisted history.
+pub(crate) fn with_legacy_rollout_spell_copy_v1<T>(run: impl FnOnce() -> T) -> T {
+    struct RestoreMode<'a>(&'a std::cell::Cell<bool>, bool);
+
+    impl Drop for RestoreMode<'_> {
+        fn drop(&mut self) {
+            self.0.set(self.1);
+        }
+    }
+
+    LEGACY_ROLLOUT_SPELL_COPY_V1.with(|mode| {
+        let _restore = RestoreMode(mode, mode.replace(true));
+        run()
+    })
+}
+
 fn apply_choose_spell_copy_payment(state: &mut GameState, pay: bool) -> Result<(), String> {
     let pending = state
         .engine
@@ -28971,6 +28993,10 @@ fn apply_choose_spell_copy_payment(state: &mut GameState, pay: bool) -> Result<(
         return finish_pending_spell_copy_resolution(state, &pending);
     };
     pay_plan(state, pending.player, &plan);
+    if LEGACY_ROLLOUT_SPELL_COPY_V1.with(std::cell::Cell::get) {
+        enter_spell_copy_retarget(state, &pending);
+        return Ok(());
+    }
     state
         .engine
         .event_history
@@ -29000,7 +29026,12 @@ fn apply_choose_paid_spell_copy(state: &mut GameState, option: u16) -> Result<()
         1 => (),
         _ => return Err("invalid paid spell-copy option".to_string()),
     }
-    let (copy_source, copy_stack_item) = create_spell_copy(state, &pending);
+    enter_spell_copy_retarget(state, &pending);
+    Ok(())
+}
+
+fn enter_spell_copy_retarget(state: &mut GameState, pending: &PendingSpellCopy) {
+    let (copy_source, copy_stack_item) = create_spell_copy(state, pending);
     let live = state
         .engine
         .pending_spell_copy
@@ -29009,7 +29040,6 @@ fn apply_choose_paid_spell_copy(state: &mut GameState, option: u16) -> Result<()
     live.stage = SpellCopyStage::Retarget;
     live.copy_source = Some(copy_source);
     live.copy_stack_item = Some(copy_stack_item);
-    Ok(())
 }
 
 fn apply_choose_spell_copy_retarget(
