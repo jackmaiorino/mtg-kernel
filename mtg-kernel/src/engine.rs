@@ -1009,7 +1009,7 @@ pub struct PendingCast {
     pub origin_zone: Zone,
     /// Objects chosen so far for this cast's one interactive object-cost
     /// component. The privileged serialized compatibility name predates Escape:
-    /// Fireblast/Lava Dart store lands selected for `SacrificeLands`, while
+    /// Fireblast and Lava Dart store selected Mountains here, while
     /// an Escape cast stores cards selected for
     /// `ExileOtherCardsFromOwnGraveyard`. Supported cost shapes make those
     /// two families mutually exclusive. The current public semantic/flat
@@ -8580,14 +8580,8 @@ fn alt_cost_condition_met(
     }
 }
 
-/// How many lands (0 if none) the cast currently staged in `pending`
-/// still needs sacrificed to pay its cost: Fireblast's alt cost, once
-/// `cast_mode` has resolved to `Alternative`; Lava Dart's flashback cost,
-/// unconditionally (a flashback cast has no alternative payment path to
-/// resolve first). A bare `u8` rather than `Option<u8>` -- no card in
-/// this pool has `SacrificeLands(0)`, so "not applicable" and "applicable
-/// but zero" are not a real ambiguity here -- mirrors `target_count`'s own
-/// shape.
+/// The unrestricted land sacrifices on the selected alternative or flashback cost.
+/// Filtered land costs are staged by `controlled_permanent_sacrifice_needed`.
 fn sacrifice_lands_needed(pending: &PendingCast, def: &card_def::CardDef) -> u8 {
     if pending.is_flashback && !sphinx_lore_cast_v1::granted(pending) {
         return def
@@ -16908,29 +16902,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
             return None;
         }
         if candidates.len() <= 1 && !state.engine.spellbench_neutral_v1.choices {
-            // No real choice for *this single pick* (0 or 1 legal
-            // candidate) -- auto-resolve just this one and let the next
-            // loop pass re-derive whether the *following* pick (if any)
-            // is still real. Deliberately per-pick, not "auto-resolve the
-            // whole remaining batch whenever candidates.len() <=
-            // remaining": empirically, the reference always logs a real
-            // decision for every pick whose own candidate pool has 2+
-            // legal choices, even when the *aggregate* choice is forced
-            // (e.g. exactly 2 Mountains for Fireblast's 2-land cost still
-            // logs one real 2-candidate pick before the final,
-            // now-1-candidate pick goes silent) -- root-caused against the
-            // v4 corpus's own `(candidate_count...)` sequence per Fireblast/
-            // Lava Dart episode (e.g. Fireblast's dominant shape is exactly
-            // 2 post-target records, `(target=N, sac1=2)`, never a 3rd
-            // `sac2=1` record; Lava Dart with exactly 1 controlled Mountain
-            // logs *zero* post-target records at all -- both match "ask
-            // until this pick's own pool is <= 1", not "ask until the
-            // aggregate is forced"). A first version of this auto-resolve
-            // used the aggregate `candidates.len() <= remaining` test and
-            // silently over-suppressed exactly this shape (verified against
-            // `game_20260713_002152_0008.txt` decision 42: kernel skipped
-            // straight past a real 2-candidate Fireblast sacrifice pick the
-            // trace logs).
+            // Stage this pick using the same single-candidate rule as filtered sacrifices.
             state
                 .engine
                 .pending_cast
@@ -17044,6 +17016,9 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                 abort_cast(state, pending, cast_method);
                 return None;
             }
+            // Exactly two Mountains still produce a choice for the first Fireblast pick.
+            // The reference replay game_20260713_002152_0008.txt, decision 42,
+            // suppresses only the last pick, when it has a single candidate.
             if candidates.len() <= 1 && !state.engine.spellbench_neutral_v1.choices {
                 if let Some(&object) = candidates.first() {
                     mandatory_cast_cost_v1::bind_creature(state, &pending, object)
