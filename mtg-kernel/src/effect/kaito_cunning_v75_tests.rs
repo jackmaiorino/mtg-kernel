@@ -228,6 +228,36 @@ pub(super) fn combat_trigger(s: &mut GameState, p: PlayerId, attacker: ObjectId)
 }
 
 #[test]
+fn third_draw_matches_snacker_before_kaitos_discard_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        for snacker_zone in [Zone::Hand, Zone::Graveyard] {
+            let mut s = ready(p);
+            let k = walker(&mut s, p);
+            let snacker = put(&mut s, p, "Sneaky Snacker", snacker_zone);
+            let spare = put(&mut s, p, "Island", Zone::Hand);
+            s.players[p.index()].draws_this_turn = 2;
+            activate(&mut s, p, k, 0, None);
+            let choices = discard_prompt(&mut s, p);
+            assert_eq!(s.players[p.index()].draws_this_turn, 3);
+            let discard = if snacker_zone == Zone::Hand {
+                snacker
+            } else {
+                spare
+            };
+            assert!(choices.contains(&discard));
+            engine::step(&mut s, Action::Discard(vec![discard])).unwrap();
+            finish(&mut s);
+            if snacker_zone == Zone::Hand {
+                assert_eq!(s.objects.get(snacker).zone, Zone::Graveyard);
+            } else {
+                assert_eq!(s.objects.get(snacker).zone, Zone::Battlefield);
+                assert!(s.objects.get(snacker).tapped);
+            }
+        }
+    }
+}
+
+#[test]
 fn genuine_paid_zero_or_one_target_draw_discard_and_waiting_restore_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         for choose in [false, true] {
