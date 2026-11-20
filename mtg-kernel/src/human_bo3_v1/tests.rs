@@ -1235,6 +1235,11 @@ fn human_chain_payment_copy_and_retarget_are_distinct_bound_choices() {
         assert_eq!(visible.state.public.life_totals[1], 17);
         if pay {
             assert_eq!(session.game_state().stack.len(), 1);
+            // Declining the copy can advance the session through the payer's untap step.
+            assert!(session.game_state().players[1]
+                .battlefield
+                .iter()
+                .all(|id| session.game_state().objects.get(*id).tapped));
             let copy_choice = submit_label(&mut session, &mut adapter, |label| {
                 label.strip_suffix(" [c1]")
                     == Some(if copy {
@@ -1244,10 +1249,6 @@ fn human_chain_payment_copy_and_retarget_are_distinct_bound_choices() {
                     })
             });
             assert_no_private_keys(&serde_json::to_value(copy_choice).unwrap());
-            assert!(session.game_state().players[1]
-                .battlefield
-                .iter()
-                .all(|id| session.game_state().objects.get(*id).tapped));
         } else {
             assert!(session.game_state().players[1]
                 .battlefield
