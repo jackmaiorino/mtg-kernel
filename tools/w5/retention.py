@@ -680,13 +680,15 @@ class IndexCache:
 
     def _stream(self, cache, store):
         """Reads the cache file into `store` one line at a time; False when a record lacks its S-container pin (the
-        file needs `index`'s migration)."""
+        file needs `index`'s migration). `self.consumed` is then (bytes read, (st_dev, st_ino)) of that read itself."""
         with open(cache, 'rb') as f:
+            st = os.fstat(f.fileno())
             for text, offset, length in stream_lines(f):
                 rec = json.loads(text)
                 if 'state' not in rec:
                     return False
                 store.append(rec, offset, length, zlib.crc32(text.encode('utf-8')))
+            self.consumed = (f.tell(), (st.st_dev, st.st_ino))
         return True
 
     def _keep(self, view):
@@ -700,6 +702,7 @@ class IndexCache:
         chain = load_chain(self.chain_path)
         cache = index_path(self.chain_path)
         store = IndexRecords(cache)
+        self.consumed = (0, None)
         if cache.exists() and not self._stream(cache, store):
             if self.read_only:
                 raise SystemExit(f'stop: {cache} needs its S-container migration, which a read-only cache does not do')
@@ -707,8 +710,9 @@ class IndexCache:
             return self._whole()
         new = scan(chain, len(store))
         if self.read_only:
-            st = os.stat(cache) if cache.exists() else None
-            self.offset, self.ident = (st.st_size, (st.st_dev, st.st_ino)) if st else (0, None)
+            # The cursor is the end of what was read, not a later size: a row another writer appends meanwhile is
+            # read at the next refresh, which then reconciles the unwritten records found past it.
+            self.offset, self.ident = self.consumed
             store.attach(self.ident if len(store) else None)
             for rec in new:
                 store.append_unwritten(rec)

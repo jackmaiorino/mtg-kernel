@@ -105,6 +105,9 @@ def main():
     env = {'C': str(c), 'ROOT': str(root), 'PY': PY, 'LOOP': str(LOOP), 'PAUSE': str(PAUSE), 'SWAP': str(swap_sh)}
     say('plan', plan=str(path), root=str(root), step_file=str(swap_sh))
     node.ledger_source('c1')
+    bystander = subprocess.Popen(['bash', '-c', f"echo 'supervise --plan {path}'; sleep 1400"],
+                                 stdout=subprocess.DEVNULL, start_new_session=True)  # must never be signalled
+    STARTED.append(bystander.pid)
     old_loop = start(env, t_old / 'w5', path)
     time.sleep(LOOP + 2)
     arm = plan['arms']['C']['file']['path']
@@ -134,8 +137,10 @@ def main():
     say('dry cycle', exit=dry.returncode, refused=result.get('refused') if isinstance(result, dict) else result,
         cycles=[{k: x[k] for k in ('cycle', 'mode', 'seconds', 'guard_at_seconds')} for x in result['cycles']]
         if isinstance(result, dict) else None)
-    # step 3: stop the old loop between cycles, check the tails, start the new loop
+    # step 3: before the stop, the watch's first line (admitted against ceiling); stop between cycles; tails; start
+    swap(env, 'watch_swap', path, time.time() + 3600, '1', '1', check=False)
     swap(env, 'stop_between_cycles', path)
+    t0 = time.time()
     say('gap begins', guard_age_seconds=guard_age(root)[0], driver=driver_state(root),
         driver_alive=driver.poll() is None)
     index_file = root / 'chains' / 'c1' / 'chain.index.jsonl'
@@ -145,12 +150,19 @@ def main():
         f.write(torn)
     code, _ = swap(env, 'check_tails', check=False)
     say('torn tail injected', check_tails_exit=code)
+    code, _ = swap(env, 'start_loop', t_new / 'w5', p2, check=False)
+    say('start_loop refuses a torn tail', exit=code, loops=swap(env, 'pids', p2)[1])
     swap(env, 'cut_partial_tail', index_file)
     swap(env, 'check_tails')
-    say('tail cut back', same_bytes_as_before=index_file.read_bytes() == rows_before)
+    say('tail cut back', same_bytes_as_before=index_file.read_bytes() == rows_before,
+        saved=[x.read_bytes() == torn for x in (c / 'records').glob('torn-tail-c1-*.bin')])
     t_start = time.time()
+    watcher = subprocess.Popen(['bash', str(swap_sh), 'watch_swap', str(p2), str(t0), '1'],
+                               env=dict(os.environ, **env), stdout=subprocess.PIPE, text=True)
     new_loop = start(env, t_new / 'w5', p2)
     say('new loop: first GUARD', seconds=wait_for_guard(root, t_start, 120))
+    out, _ = watcher.communicate(timeout=300)
+    say('watch_swap during the swap', exit=watcher.returncode, lines=out.strip().splitlines()[-2:])
     watch(c, root, 'new supervisor, 3-minute check (scaled)', 15)
     watch(c, root, 'new supervisor, 10-minute check (scaled)', 30)
     # forward recovery: a supervisor that raises before every GUARD write
@@ -166,10 +178,16 @@ def main():
     p3 = path.with_name('CHAINS-PLAN.supervise-faulty.json')
     swap(env, 'plan_copy', path, p3, t_bad / 'w5')
     last_good = guard_age(root)[1]['unix']
+    t0 = time.time()
+    watcher = subprocess.Popen(['bash', str(swap_sh), 'watch_swap', str(p3), str(t0), '1'],
+                               env=dict(os.environ, **env), stdout=subprocess.PIPE, text=True)
     start(env, t_bad / 'w5', p3)
     watch(c, root, 'faulty supervisor (raises before every GUARD write)', 20)
     say('faulty loop never published', guard_unchanged=guard_age(root)[1]['unix'] == last_good)
+    out, _ = watcher.communicate(timeout=300)
+    say('watch_swap on the faulty loop', exit=watcher.returncode, lines=out.strip().splitlines()[-1:])
     swap(env, 'stop_failing', p3, timeout=120)
+    swap(env, 'check_tails')
     files_before = sorted(str(p) for p in (root / 'chains').rglob('*') if p.is_file())
     t_start = time.time()
     guard_loop = start(env, t_bad / 'w5', p3, '--guard-only')
@@ -184,7 +202,8 @@ def main():
     swap(env, 'stop_between_cycles', p2)
     driver.send_signal(signal.SIGTERM)
     driver.wait(30)
-    say('done', driver=driver_state(root), guard_loop=guard_loop, new_loop=new_loop)
+    say('done', driver=driver_state(root), guard_loop=guard_loop, new_loop=new_loop,
+        bystander_alive=bystander.poll() is None)
 
 
 if __name__ == '__main__':

@@ -2648,6 +2648,8 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None, guar
     release of ended chains' boxes. It makes no pair decision, snapshot or selection, stages no replay sample, runs
     no rolling retention and purges no hold folder, and starts no filler. Without retention the used bytes only
     grow, so the guard refuses admission once the cap is reached."""
+    if guard_only:
+        guard_only_allowed(plan)  # every cycle: a reloaded plan or a direct call is checked too
     now = time.time() if now is None else now
     root = Path(plan['root'])
     names = {n for n, c in plan['chains'].items() if c['arm'] in MEASURED}
@@ -2751,10 +2753,13 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None, guar
 
 
 def guard_only_allowed(plan):
-    """`supervise --guard-only` runs only for an independent plan without pairs: it makes no pair decision or
-    resume and starts no filler, which a pair plan or a plan with fillers would wait on."""
+    """`supervise --guard-only` runs only for an independent plan without pairs and without filler chains: it makes
+    no pair decision or resume and starts no filler, which such a plan would wait on. `cycle` checks it on every
+    guard-only cycle (a reloaded plan included)."""
     require(not plan['pairs'], '--guard-only refuses a plan with pairs (it makes no pair decision or resume)')
-    require(plan.get('independent'), '--guard-only refuses a plan with filler boxes (it starts no filler)')
+    require(plan.get('independent') is True, '--guard-only refuses a plan that is not independent (fillers)')
+    fillers = sorted(n for n, c in plan['chains'].items() if c['arm'] == 'F')
+    require(not fillers, f'--guard-only refuses a plan with filler chains {fillers} (it starts no filler)')
 
 
 def supervise(a):
