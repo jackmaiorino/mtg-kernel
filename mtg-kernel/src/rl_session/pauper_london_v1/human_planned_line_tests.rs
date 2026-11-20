@@ -225,11 +225,14 @@ fn differing_paths(a: &Value, b: &Value, at: String) -> Vec<String> {
     }
 }
 
-/// A decision of the pregame (a mulligan or a bottom): the planner starts no
-/// line there, and a hidden-card swap there would break the pregame's own
-/// bookkeeping of the hand.
+/// A decision while either seat is still in the pregame (the London phase is
+/// not done, or a mulligan or a bottom is asked): the planner starts no line
+/// in the person's pregame, and a hidden-card swap before the opponent has
+/// kept would break the pregame's own bookkeeping of their hand.
 fn pregame(response: &Value) -> bool {
-    response["candidates"]
+    let phase = &response["extensions"]["x_kernel_v2_support"]["london"]["phase"];
+    (phase.is_string() && phase != "done")
+        || response["candidates"]
         .as_array()
         .unwrap()
         .iter()
@@ -259,8 +262,10 @@ fn hand_blind(seed: u64, tally: &mut Tally, differing: &mut u64) {
                 let second = whole_line(&mut other, &game, &response, 8);
                 assert!(
                     first == second,
-                    "seed {seed}: decision {n}: the line shows the opponent's hand at {:?}",
-                    differing_paths(&json!(first), &json!(second), String::new())
+                    "seed {seed}: decision {n}: the line shows the opponent's hand at {:?}: {} against {}",
+                    differing_paths(&json!(first), &json!(second), String::new()),
+                    json!(first.iter().map(|v| v.get("stop").cloned().unwrap_or(json!("view"))).collect::<Vec<_>>()),
+                    json!(second.iter().map(|v| v.get("stop").cloned().unwrap_or(json!("view"))).collect::<Vec<_>>())
                 );
                 tally.add(&first);
             }
