@@ -351,10 +351,13 @@ pub struct SpellbenchBridgeServerV1 {
 
 /// Purposes of a private choice that show cards of a library to the chooser
 /// (a search, a look, a reveal, scry, surveil, explore, a library position,
-/// a shuffle) or that the adapter does not know: the planned line stops
-/// before such a choice of the line's seat.
+/// a shuffle, milled or revealed cards, Undercity's throne) or that the
+/// adapter does not know: the planned line stops before such a choice of the
+/// line's seat.
 const LINE_HIDDEN_PURPOSES_V1: &[&str] = &[
     "search",
+    "mill",
+    "undercity_throne",
     "look_select",
     "reveal_partition",
     "look",
@@ -827,7 +830,7 @@ impl SpellbenchBridgeServerV1 {
     /// to what the line's seat knows of a hidden card, or leads to a choice
     /// of the line's seat that shows library cards (a search, a look, a
     /// reveal, `LINE_HIDDEN_PURPOSES_V1`) ends the line with that chunk
-    /// withheld. Answers either the line seat's next decision on the clone
+    /// withheld, all with the one reason `unseen`. Answers either the line seat's next decision on the clone
     /// (`private_line`, `view`: the decision the seat would be sent) or
     /// `private_line_stop` with a reason from a fixed list and, for a game
     /// end, its result for the line seat. Nothing in either depends on
@@ -920,12 +923,13 @@ impl SpellbenchBridgeServerV1 {
                     Err(message) => return reject(message),
                 };
             }
+            // A random outcome and a hidden card are one published reason: which
+            // of the two a resolution produced can depend on the hidden cards
+            // themselves (a reveal that finds a creature against a shuffle
+            // when it finds none).
             let after = line_fingerprint_v1(copy.game.as_ref().unwrap(), seat);
-            if after.randomness != before.randomness {
-                return stop("chance", None);
-            }
-            if after.hidden != before.hidden {
-                return stop("hidden", None);
+            if after.randomness != before.randomness || after.hidden != before.hidden {
+                return stop("unseen", None);
             }
             if other_decision {
                 return stop("opponent_decision", None);
@@ -951,7 +955,16 @@ impl SpellbenchBridgeServerV1 {
             // it, as before a draw.
             let purpose = response["extensions"]["x_kernel_v2_support"]["choice"]["purpose"].as_str();
             if purpose.is_some_and(|purpose| LINE_HIDDEN_PURPOSES_V1.contains(&purpose)) {
-                return stop("hidden", None);
+                return stop("unseen", None);
+            }
+            // The view is the decision the seat would be sent, without the
+            // support block's history slice (omniscient engine events the
+            // planner has no use for).
+            if let Some(support) = response
+                .pointer_mut("/extensions/x_kernel_v2_support")
+                .and_then(Value::as_object_mut)
+            {
+                support.remove("history");
             }
             view = response;
         }
@@ -1487,6 +1500,43 @@ impl SpellbenchBridgeServerV1 {
         copy.london_human = self.london_human;
         copy.game = self.game.as_ref().map(game_copy_v1);
         copy
+    }
+
+    /// Test only: swaps two cards of seat `owner`'s library that neither
+    /// seat knows of and that have different names (the first unknown card
+    /// and the first unknown card of another name after it), in both
+    /// sessions. False when there is no such pair.
+    pub(crate) fn swap_library_cards_for_test(&mut self, owner: usize) -> bool {
+        let game = self.game.as_mut().unwrap();
+        let pair = {
+            let state = game.session.game_state();
+            let known: HashSet<crate::ids::ObjectId> = (0..2)
+                .flat_map(|viewer| state.library_knowledge[viewer][owner].iter().map(|entry| entry.object))
+                .collect();
+            let library: Vec<_> =
+                state.players[owner].library.iter().copied().filter(|id| !known.contains(id)).collect();
+            library.first().and_then(|&first| {
+                let name = &state.objects.get(first).name;
+                library
+                    .iter()
+                    .find(|id| &state.objects.get(**id).name != name)
+                    .map(|&other| (first, other))
+            })
+        };
+        let Some((a, b)) = pair else {
+            return false;
+        };
+        let swap = |state: &mut crate::state::GameState| {
+            let library = &mut state.players[owner].library;
+            let i = library.iter().position(|id| *id == a).unwrap();
+            let j = library.iter().position(|id| *id == b).unwrap();
+            library.swap(i, j);
+        };
+        swap(game.session.game_state_mut_for_test());
+        if let Some(lockstep) = game.flat_v4.as_mut() {
+            swap(lockstep.game_state_mut_for_test());
+        }
+        true
     }
 
     /// Test only: makes seat `owner`'s hidden hand differ by a Lightning Bolt.

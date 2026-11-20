@@ -118,8 +118,9 @@ fn shown(answer: &Value) -> Value {
             // Never a view of a choice that shows library cards.
             let purpose = view["extensions"]["x_kernel_v2_support"]["choice"]["purpose"].as_str();
             assert!(
-                !matches!(purpose, Some("search" | "look_select" | "reveal_partition" | "look" | "scry"
-                    | "reveal" | "explore" | "surveil" | "owner_library_position" | "shuffle" | "other")),
+                !matches!(purpose, Some("search" | "mill" | "undercity_throne" | "look_select" | "reveal_partition"
+                    | "look" | "scry" | "reveal" | "explore" | "surveil" | "owner_library_position" | "shuffle"
+                    | "other")),
                 "a line view shows library cards: {purpose:?}"
             );
             let mut model_input = view["extensions"]["x_kernel_flat_v7"].clone();
@@ -268,7 +269,14 @@ fn hand_blind(seed: u64, tally: &mut Tally, differing: &mut u64) {
         if response["acting_seat"] == PERSON && !pregame(&response) {
             let mut same = live.clone_game_for_test();
             let mut other = live.clone_game_for_test();
-            if other.swap_opponent_bolt_for_test(1) {
+            // In turn: the opponent's hand differs by a Bolt; the order of the
+            // person's library differs; the order of the opponent's does.
+            let differs = match n % 3 {
+                0 => other.swap_opponent_bolt_for_test(1),
+                1 => other.swap_library_cards_for_test(0),
+                _ => other.swap_library_cards_for_test(1),
+            };
+            if differs {
                 *differing += 1;
                 let first = whole_line(&mut same, &game, &response, 8);
                 let second = whole_line(&mut other, &game, &response, 8);
@@ -325,7 +333,7 @@ fn a_planned_line_stops_before_a_library_search() {
                 if let Some(grant) = grant {
                     grants += 1;
                     let steps = line_from(&mut live, &game, &response, grant, 8);
-                    stopped_hidden += u64::from(steps.last().unwrap()["stop"] == "hidden");
+                    stopped_hidden += u64::from(steps.last().unwrap()["stop"] == "unseen");
                 }
             }
             let row = seeded(&response, &mut rng);
