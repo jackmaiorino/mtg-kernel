@@ -1996,21 +1996,16 @@ pub(crate) fn refuse_legacy(state: &GameState) -> Result<(), String> {
             EventKindV1::EternalOwnedDrawV1,
         ])
         .iter()
-        .any(|event| {
-            matches!(
-                event,
-                CommittedEvent::FullTextTriggerCapturedV1 { .. }
-                    | CommittedEvent::FullTextBatchEntryV1 { .. }
-                    | CommittedEvent::FullTextRestrictedUseV1 { .. }
-                    | CommittedEvent::OrderedGraveyardControlGainedV1 { .. }
-            ) || matches!(
-                event,
-                CommittedEvent::EternalOwnedDrawV1 { journal }
-                    if matches!(
-                        **journal,
-                        crate::eternal_cards_v1::owned_draws_v1::JournalV1::FullTextDeparture { .. }
-                    )
-            )
+        .any(|event| match event {
+            CommittedEvent::FullTextTriggerCapturedV1 { .. }
+            | CommittedEvent::FullTextBatchEntryV1 { .. }
+            | CommittedEvent::FullTextRestrictedUseV1 { .. }
+            | CommittedEvent::OrderedGraveyardControlGainedV1 { .. } => true,
+            CommittedEvent::EternalOwnedDrawV1 { journal } => matches!(
+                **journal,
+                crate::eternal_cards_v1::owned_draws_v1::JournalV1::FullTextDeparture { .. }
+            ),
+            _ => false,
         })
     {
         return Err(
