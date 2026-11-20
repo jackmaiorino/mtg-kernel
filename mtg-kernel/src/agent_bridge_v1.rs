@@ -214,6 +214,16 @@ enum SpellbenchRequestV1 {
         expected_step: u64,
         selection: SpellbenchSelectionV1,
     },
+    /// Human play only: the advisor's planned line, played on a clone of
+    /// the game (`handle_private_line`). Never an agent wire method.
+    PrivateLine {
+        #[serde(rename = "protocol")]
+        _protocol: String,
+        request_id: String,
+        game_id: String,
+        expected_step: u64,
+        candidate_ids: Vec<u32>,
+    },
     /// Private decomposition view on a clone. Never an agent wire method.
     PreviewSteps {
         #[serde(rename = "protocol")]
@@ -231,7 +241,8 @@ impl SpellbenchRequestV1 {
             SpellbenchRequestV1::Hello { request_id, .. }
             | SpellbenchRequestV1::Reset { request_id, .. }
             | SpellbenchRequestV1::Step { request_id, .. }
-            | SpellbenchRequestV1::PreviewSteps { request_id, .. } => request_id,
+            | SpellbenchRequestV1::PreviewSteps { request_id, .. }
+            | SpellbenchRequestV1::PrivateLine { request_id, .. } => request_id,
         }
     }
 }
@@ -582,6 +593,13 @@ impl SpellbenchBridgeServerV1 {
                 candidate_ids,
                 ..
             } => self.handle_preview_steps(request_id, game_id, *expected_step, candidate_ids),
+            SpellbenchRequestV1::PrivateLine {
+                request_id,
+                game_id,
+                expected_step,
+                candidate_ids,
+                ..
+            } => self.handle_private_line(request_id, game_id, *expected_step, candidate_ids),
         }
     }
 
@@ -646,27 +664,7 @@ impl SpellbenchBridgeServerV1 {
         } else {
             let mut copy = Self::with_options(self.identity.clone(), self.options);
             copy.london_human = self.london_human;
-            copy.game = Some(SpellbenchBridgeGameV1 {
-                game_id: game.game_id.clone(),
-                episode_id: game.episode_id,
-                session: game.session.clone(),
-                terminal_sent: false,
-                flat_v4: game.flat_v4.clone(),
-                flat_v7: game.flat_v7,
-                flat_v4_rows: game.flat_v4_rows.clone(),
-                flat_v4_scratch: FlatV4EncodeScratchV1::default(),
-                private_block_root_step: game.private_block_root_step,
-                history_cursor: game.history_cursor,
-                // A private preview carries no payload, but presents the
-                // same flat-v4 extension as the committed point.
-                infoset: None,
-                masked_observation: game.masked_observation,
-                graveyard_order: game.graveyard_order,
-                #[cfg(test)]
-                force_flat_v4_encode_error: game.force_flat_v4_encode_error,
-                #[cfg(test)]
-                force_session_action_id: None,
-            });
+            copy.game = Some(game_copy_v1(game));
             (copy, 0)
         };
         let complete = || {
@@ -795,6 +793,141 @@ impl SpellbenchBridgeServerV1 {
             });
         }
         answer
+    }
+
+    /// Human play: the advisor's planned line. On a CLONE of the game (the
+    /// live sessions are never touched), from the pending decision of the
+    /// line's seat (its acting seat), applies `ids` as that seat's choices,
+    /// one per decision of that seat. Between them only a bare priority pass
+    /// of the other seat is taken, always and for that seat whether or not
+    /// it had a response; any other decision of the other seat ends the line.
+    /// A chunk (one choice and the passes after it) that draws from the
+    /// random stream, changes a library, changes the other seat's hand, or
+    /// adds to what the line's seat knows of a hidden card ends the line with
+    /// that chunk withheld. Answers either the line seat's next decision on
+    /// the clone (`private_line`, `view`) or `private_line_stop` with a
+    /// reason from a fixed list and, for a game end, its result for the line
+    /// seat. Nothing in either depends on whether the other seat's priority
+    /// was posed to it or passed by the trained surface: both end in the same
+    /// Pass, and the counters that record the difference are the planner's
+    /// to drop (they are not model input).
+    fn handle_private_line(
+        &mut self,
+        request_id: &str,
+        game_id: &str,
+        expected_step: u64,
+        ids: &[u32],
+    ) -> Value {
+        let reject =
+            |message| error_response_value_v1(Some(request_id), "malformed_request", message);
+        if !self.london_human || !self.options.private_v2_support {
+            return reject("the planned line is for the human-play London server");
+        }
+        let Some(game) = self.game.as_ref() else {
+            return reject("the planned line requires an active game");
+        };
+        let RlSessionResponseV1::Decision(root) = game.session.current_response() else {
+            return reject("the planned line requires a pending decision");
+        };
+        if game.game_id != game_id || root.step != expected_step || game.terminal_sent || ids.len() > 64 {
+            return reject("planned line game, step or length bound mismatch");
+        }
+        let seat = root.acting_player;
+        let turn = game.session.game_state().turn;
+        let mut copy = Self::with_options(self.identity.clone(), self.options);
+        copy.london_human = true;
+        copy.game = Some(game_copy_v1(game));
+        let stop = |reason: &str, result: Option<&str>| {
+            json!({"response_type": "private_line_stop", "protocol": SPELLBENCH_PROTOCOL_V1,
+                   "request_id": request_id, "game_id": game_id, "expected_step": expected_step,
+                   "reason": reason, "result": result})
+        };
+        for &id in ids {
+            let before = line_fingerprint_v1(copy.game.as_ref().unwrap(), seat);
+            let current = match copy.game.as_ref().unwrap().session.current_response() {
+                RlSessionResponseV1::Decision(value) if value.acting_player == seat => value,
+                _ => return reject("planned line choice for a seat that has no decision"),
+            };
+            let mut response = match line_step_v1(&mut copy, request_id, game_id, &current, id) {
+                Ok(response) => response,
+                Err(message) => return reject(message),
+            };
+            // The other seat's bare priority passes, taken for it.
+            let mut other_decision = false;
+            while response["response_type"] == "decision" {
+                let RlSessionResponseV1::Decision(next) =
+                    copy.game.as_ref().unwrap().session.current_response()
+                else {
+                    break;
+                };
+                if next.acting_player == seat {
+                    break;
+                }
+                let Some(pass) = next
+                    .legal_actions
+                    .iter()
+                    .position(|action| matches!(action.semantic, ActionSemanticV1::Pass { .. }))
+                else {
+                    other_decision = true;
+                    break;
+                };
+                response = match line_step_v1(&mut copy, request_id, game_id, &next, pass as u32) {
+                    Ok(response) => response,
+                    Err(message) => return reject(message),
+                };
+            }
+            let after = line_fingerprint_v1(copy.game.as_ref().unwrap(), seat);
+            if after.randomness != before.randomness {
+                return stop("chance", None);
+            }
+            if after.hidden != before.hidden {
+                return stop("hidden", None);
+            }
+            if other_decision {
+                return stop("opponent_decision", None);
+            }
+            if response["response_type"] != "decision" {
+                if response["classification"] != "natural" {
+                    return stop("no_result", None);
+                }
+                let mine = seat_str_v1(seat);
+                let result = match response["winner"].as_str() {
+                    None => "draw",
+                    Some(winner) if winner == mine => "win",
+                    Some(_) => "loss",
+                };
+                let this_turn = copy.game.as_ref().unwrap().session.game_state().turn == turn;
+                return stop(if this_turn { "game_end" } else { "game_end_later_turn" }, Some(result));
+            }
+            if copy.game.as_ref().unwrap().session.game_state().turn != turn {
+                return stop("turn_ends", None);
+            }
+        }
+        let game = copy.game.as_mut().unwrap();
+        let response = game.session.current_response();
+        let counts = (
+            game.session.policy_step_count(),
+            game.session.physical_decision_count(),
+        );
+        let extension = match flat_v4_extension_v1(game, &response) {
+            Ok(value) => value,
+            Err(_) => return reject("planned line failed encoding"),
+        };
+        let support = private_v2_support(game);
+        match copy.session_response_to_wire(
+            request_id,
+            game_id,
+            response,
+            counts,
+            extension,
+            Some(support),
+        ) {
+            WireResponseV1::Decision(view) => {
+                json!({"response_type": "private_line", "protocol": SPELLBENCH_PROTOCOL_V1,
+                       "request_id": request_id, "view": view})
+            }
+            WireResponseV1::Terminal(_) => stop("no_result", None),
+        }
     }
 
     fn handle_reset(&mut self, request_id: &str, reset: SpellbenchResetFieldsV1<'_>) -> Value {
@@ -1280,6 +1413,147 @@ impl SpellbenchBridgeServerV1 {
             "decision_count": decision_count,
             "provenance": self.identity().provenance_value(),
         })
+    }
+}
+
+/// A copy of a bridge game to play forward on a clone (the private
+/// previews, the planned line): both sessions and the encoder state. A copy
+/// carries no infoset payload, but presents the same flat-v4 extension as the
+/// game it copies.
+fn game_copy_v1(game: &SpellbenchBridgeGameV1) -> SpellbenchBridgeGameV1 {
+    SpellbenchBridgeGameV1 {
+        game_id: game.game_id.clone(),
+        episode_id: game.episode_id,
+        session: game.session.clone(),
+        terminal_sent: false,
+        flat_v4: game.flat_v4.clone(),
+        flat_v7: game.flat_v7,
+        flat_v4_rows: game.flat_v4_rows.clone(),
+        flat_v4_scratch: FlatV4EncodeScratchV1::default(),
+        private_block_root_step: game.private_block_root_step,
+        history_cursor: game.history_cursor,
+        infoset: None,
+        masked_observation: game.masked_observation,
+        graveyard_order: game.graveyard_order,
+        #[cfg(test)]
+        force_flat_v4_encode_error: game.force_flat_v4_encode_error,
+        #[cfg(test)]
+        force_session_action_id: None,
+    }
+}
+
+#[cfg(test)]
+impl SpellbenchBridgeServerV1 {
+    /// Test only: a server holding a copy of this server's game.
+    pub(crate) fn clone_game_for_test(&self) -> Self {
+        let mut copy = Self::with_options(self.identity.clone(), self.options);
+        copy.london_human = self.london_human;
+        copy.game = self.game.as_ref().map(game_copy_v1);
+        copy
+    }
+
+    /// Test only: makes seat `owner`'s hidden hand differ by a Lightning Bolt.
+    /// A Bolt in their hand is swapped with a non-Bolt card of their library,
+    /// or, with none in hand, a non-Bolt card of their hand with a Bolt of
+    /// their library; only cards the other seat knows nothing of, in both
+    /// sessions alike. False when no such pair exists.
+    pub(crate) fn swap_opponent_bolt_for_test(&mut self, owner: usize) -> bool {
+        let game = self.game.as_mut().unwrap();
+        let viewer = 1 - owner;
+        let pair = {
+            let state = game.session.game_state();
+            let known: HashSet<crate::ids::ObjectId> = state.hand_knowledge[viewer][owner]
+                .iter()
+                .map(|entry| entry.object)
+                .chain(state.library_knowledge[viewer][owner].iter().map(|entry| entry.object))
+                .collect();
+            let bolt = |id: &crate::ids::ObjectId| state.objects.get(*id).name == "Lightning Bolt";
+            let hand: Vec<_> = state.players[owner].hand.iter().copied().filter(|id| !known.contains(id)).collect();
+            let library: Vec<_> =
+                state.players[owner].library.iter().copied().filter(|id| !known.contains(id)).collect();
+            match hand.iter().find(|id| bolt(id)) {
+                Some(&in_hand) => library.iter().find(|id| !bolt(id)).map(|&out| (in_hand, out)),
+                None => hand
+                    .first()
+                    .and_then(|&in_hand| library.iter().find(|id| bolt(id)).map(|&out| (in_hand, out))),
+            }
+        };
+        let Some((in_hand, in_library)) = pair else {
+            return false;
+        };
+        let swap = |state: &mut crate::state::GameState| {
+            let player = &mut state.players[owner];
+            let h = player.hand.iter().position(|id| *id == in_hand).unwrap();
+            let l = player.library.iter().position(|id| *id == in_library).unwrap();
+            player.hand[h] = in_library;
+            player.library[l] = in_hand;
+            let hand_zone = state.objects.get(in_hand).zone;
+            let library_zone = state.objects.get(in_library).zone;
+            state.objects.get_mut(in_hand).zone = library_zone;
+            state.objects.get_mut(in_library).zone = hand_zone;
+        };
+        swap(game.session.game_state_mut_for_test());
+        if let Some(lockstep) = game.flat_v4.as_mut() {
+            swap(lockstep.game_state_mut_for_test());
+        }
+        true
+    }
+}
+
+/// What a planned-line chunk may not change without ending the line: the
+/// position of the random stream, and the hidden state the line's seat could
+/// learn from (both libraries, the other seat's hand, and what the line's
+/// seat knows of hidden cards).
+struct LineFingerprintV1 {
+    randomness: u64,
+    hidden: Value,
+}
+
+fn line_fingerprint_v1(game: &SpellbenchBridgeGameV1, seat: PlayerSeatV1) -> LineFingerprintV1 {
+    let state = game.session.game_state();
+    let (me, other) = match seat {
+        PlayerSeatV1::P0 => (0, 1),
+        PlayerSeatV1::P1 => (1, 0),
+    };
+    LineFingerprintV1 {
+        randomness: state.randomness_digest_v1(),
+        hidden: json!({
+            "libraries": [state.players[0].library, state.players[1].library],
+            "other_hand": state.players[other].hand,
+            "library_knowledge": state.library_knowledge[me],
+            "hand_knowledge": state.hand_knowledge[me][other],
+        }),
+    }
+}
+
+/// One choice of the planned line on the clone `copy`: the candidate `id`
+/// of `decision`, through the bridge's own step (lockstep checks included).
+fn line_step_v1(
+    copy: &mut SpellbenchBridgeServerV1,
+    request_id: &str,
+    game_id: &str,
+    decision: &RlSessionDecisionV1,
+    id: u32,
+) -> Result<Value, &'static str> {
+    let chosen = decision
+        .legal_actions
+        .get(id as usize)
+        .ok_or("planned line candidate is out of range")?;
+    let semantic_echo = NeutralObserverV1::from_observation(&decision.observation)
+        .and_then(|observer| neutral_semantic_v1(&chosen.semantic, &observer))
+        .map_err(|_| "planned line choice cannot be represented")?;
+    let response = copy.handle_step(
+        request_id,
+        game_id,
+        decision.step,
+        &SpellbenchSelectionV1 {
+            candidate_id: id,
+            semantic_echo,
+        },
+    );
+    match response["response_type"].as_str() {
+        Some("decision") | Some("terminal") => Ok(response),
+        _ => Err("planned line step failed on the clone"),
     }
 }
 

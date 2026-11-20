@@ -25,6 +25,8 @@ mod human_bridge_tests;
 #[cfg(test)]
 mod human_graveyard_order_tests;
 #[cfg(test)]
+mod human_planned_line_tests;
+#[cfg(test)]
 mod human_windows_tests;
 // Binds the Pauper registry (its parity fixture), so the appended-registry
 // builds leave it out.

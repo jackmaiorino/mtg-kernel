@@ -6343,6 +6343,13 @@ impl RlEpisodeSessionV1 {
         &self.state
     }
 
+    /// Test only: the game state, for tests that build two games differing in
+    /// one hidden card.
+    #[cfg(test)]
+    pub(crate) fn game_state_mut_for_test(&mut self) -> &mut crate::state::GameState {
+        &mut self.state
+    }
+
     pub(crate) fn enable_spellbench_neutral_choices(&mut self) {
         assert_eq!(
             self.policy_step_count, 0,
@@ -8001,6 +8008,13 @@ impl FastActorSessionV1 {
     /// never `&mut`: the extractor watches, it does not drive.
     pub fn game_state(&self) -> &crate::state::GameState {
         &self.state
+    }
+
+    /// Test only: the game state, for tests that build two games differing in
+    /// one hidden card.
+    #[cfg(test)]
+    pub(crate) fn game_state_mut_for_test(&mut self) -> &mut crate::state::GameState {
+        &mut self.state
     }
 
     pub(crate) fn enable_spellbench_neutral_choices(&mut self) {

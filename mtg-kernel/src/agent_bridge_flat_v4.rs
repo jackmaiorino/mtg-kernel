@@ -126,6 +126,13 @@ pub(crate) struct FlatV4LockstepV1 {
 }
 
 impl FlatV4LockstepV1 {
+    /// Test only: the lockstep copy's game state, to edit it alike with the
+    /// raw session's (`swap_opponent_bolt_for_test`).
+    #[cfg(test)]
+    pub(crate) fn game_state_mut_for_test(&mut self) -> &mut crate::state::GameState {
+        self.fast.game_state_mut_for_test()
+    }
+
     pub(crate) fn reset(
         episode_id: u64,
         env_seed: u64,

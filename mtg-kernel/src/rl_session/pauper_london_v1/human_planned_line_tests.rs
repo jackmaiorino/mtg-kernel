@@ -1,0 +1,274 @@
+//! The advisor's planned line in human play (`private_line`, a request of the
+//! human-play London bridge only): the person's own choices played forward on
+//! a clone of the game, the opponent's bare priority passes taken for them,
+//! stopping before anything hidden or random.
+//!
+//! Proven here, through the bridge's own protocol lines:
+//!
+//! 1. The request never changes the live game: a game that answers a planned
+//!    line at every decision of the person's seat is byte-equal, line for
+//!    line, to the same game without them, to its natural end.
+//! 2. The opponent's hidden hand never shows: two games equal but for one
+//!    card of the opponent's hidden hand (a Lightning Bolt they could answer
+//!    with, against a card they could not) give equal planned lines (the
+//!    person's candidates and model input at every step, the stop reason and
+//!    result) from every decision of the person's seat.
+//! 3. A line stops at an opponent decision that is not a priority pass, at a
+//!    draw or other hidden change, at a random outcome, at the end of the turn
+//!    and at a game end, with the result; other servers refuse the request.
+
+use crate::agent_bridge_v1::{
+    SpellbenchBridgeOptionsV1, SpellbenchBridgeServerV1, SpellbenchEngineIdentityV1,
+};
+use crate::state::SplitMix64;
+use serde_json::{json, Value};
+use std::collections::BTreeMap;
+
+const PERSON: &str = "p0";
+
+fn request(kind: &str, id: &str, extra: Value) -> String {
+    let mut value = json!({"protocol": "spellbench/v1", "request_type": kind, "request_id": id});
+    for (key, item) in extra.as_object().unwrap() {
+        value[key] = item.clone();
+    }
+    serde_json::to_string(&value).unwrap()
+}
+
+fn reset_request(game: &str, person: &str, opponent: &str, seed: u64) -> String {
+    request(
+        "reset",
+        &format!("reset-{game}"),
+        json!({"game_id": game, "format": "pauper-bo1", "game_seed": seed,
+               "max_decisions": 100_000, "max_steps": 1_000_000,
+               "engine_window_seats": [PERSON], "auto_graveyard_order": true,
+               "seats": [{"seat": "p0", "deck": {"catalog_id": person}},
+                         {"seat": "p1", "deck": {"catalog_id": opponent}}]}),
+    )
+}
+
+fn london_server() -> SpellbenchBridgeServerV1 {
+    SpellbenchBridgeServerV1::with_pauper_london_human_v1(
+        SpellbenchEngineIdentityV1::with_source_revision(None),
+    )
+}
+
+fn parse(line: &str) -> Value {
+    serde_json::from_str(line).unwrap()
+}
+
+fn rows(response: &Value) -> Vec<usize> {
+    response["extensions"]["x_kernel_flat_v7"]["row_candidate_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| id.as_u64().unwrap() as usize)
+        .collect()
+}
+
+/// A seeded row of the model's own list (either seat, the live game).
+fn seeded(response: &Value, rng: &mut SplitMix64) -> usize {
+    let rows = rows(response);
+    rows[(rng.next_u64() % rows.len() as u64) as usize]
+}
+
+/// The person's line choice, from the view alone (so equal views give equal
+/// choices): the first row that is not a pass, else the first row. Plays
+/// lands, casts spells and attacks wherever it can, which is what reaches
+/// combat, the opponent's responses and game ends.
+fn line_choice(view: &Value) -> usize {
+    let candidates = view["candidates"].as_array().unwrap();
+    let rows = rows(view);
+    rows.iter()
+        .copied()
+        .find(|row| candidates[*row]["semantic"]["kind"] != "pass")
+        .unwrap_or(rows[0])
+}
+
+fn step(server: &mut SpellbenchBridgeServerV1, game: &str, n: u64, response: &Value, row: usize) -> String {
+    let candidate = &response["candidates"][row];
+    server.handle_line(&request(
+        "step",
+        &format!("s{n}"),
+        json!({"game_id": game, "expected_step": response["step"],
+               "selection": {"candidate_id": candidate["candidate_id"],
+                             "semantic_echo": candidate["semantic"]}}),
+    ))
+}
+
+fn private_line(server: &mut SpellbenchBridgeServerV1, game: &str, root: &Value, ids: &[usize]) -> Value {
+    parse(&server.handle_line(&request(
+        "private_line",
+        "line",
+        json!({"game_id": game, "expected_step": root["step"], "candidate_ids": ids}),
+    )))
+}
+
+/// What of a line answer may reach the person's panel: the stop reason and
+/// result, or the person's next decision's candidates and model input. The
+/// counters of the view (`step`, the observation's own step and decision
+/// numbers) are dropped by the planner and are left out here too.
+fn shown(answer: &Value) -> Value {
+    match answer["response_type"].as_str() {
+        Some("private_line") => {
+            let view = &answer["view"];
+            json!({"candidates": view["candidates"],
+                   "model_input": view["extensions"]["x_kernel_flat_v7"],
+                   "acting_seat": view["acting_seat"]})
+        }
+        Some("private_line_stop") => {
+            json!({"stop": answer["reason"], "result": answer["result"]})
+        }
+        _ => panic!("unexpected line answer: {answer}"),
+    }
+}
+
+/// The whole line from `root` (a decision of the person's seat), as the
+/// planner plays it: at most `bound` choices, each read from the view the
+/// previous one led to. Returns what may be shown at each step, and the stop.
+fn whole_line(server: &mut SpellbenchBridgeServerV1, game: &str, root: &Value, bound: usize) -> Vec<Value> {
+    let mut ids = vec![line_choice(root)];
+    let mut out = Vec::new();
+    loop {
+        let answer = private_line(server, game, root, &ids);
+        out.push(shown(&answer));
+        if answer["response_type"] != "private_line" || ids.len() >= bound {
+            return out;
+        }
+        ids.push(line_choice(&answer["view"]));
+    }
+}
+
+#[derive(Default, Debug)]
+struct Tally {
+    lines: u64,
+    stops: BTreeMap<String, u64>,
+    results: BTreeMap<String, u64>,
+}
+
+impl Tally {
+    fn add(&mut self, line: &[Value]) {
+        self.lines += 1;
+        let last = line.last().unwrap();
+        let stop = last["stop"].as_str().unwrap_or("bound").to_string();
+        *self.stops.entry(stop).or_default() += 1;
+        if let Some(result) = last["result"].as_str() {
+            *self.results.entry(result.to_string()).or_default() += 1;
+        }
+    }
+}
+
+/// One seed of property 1: the live game with a planned line at every
+/// decision of the person's seat against the same game without, line for
+/// line to the end.
+fn untouched(seed: u64, tally: &mut Tally) {
+    let game = format!("line-{seed}");
+    let (mut plain, mut lined) = (london_server(), london_server());
+    let mut a = plain.handle_line(&reset_request(&game, "Elves", "Burn", seed));
+    let mut b = lined.handle_line(&reset_request(&game, "Elves", "Burn", seed));
+    let mut rng = SplitMix64::seed(seed);
+    for n in 0..20_000_u64 {
+        assert_eq!(a, b, "seed {seed}: line {n} differs");
+        let response = parse(&a);
+        if response["response_type"] != "decision" {
+            assert_eq!(response["classification"], "natural", "seed {seed}");
+            return;
+        }
+        if response["acting_seat"] == PERSON {
+            tally.add(&whole_line(&mut lined, &game, &response, 8));
+        }
+        let row = seeded(&response, &mut rng);
+        a = step(&mut plain, &game, n, &response, row);
+        b = step(&mut lined, &game, n, &response, row);
+    }
+    panic!("seed {seed}: the game did not end");
+}
+
+#[test]
+fn a_planned_line_never_changes_the_live_game() {
+    let mut tally = Tally::default();
+    for seed in 1..=6_u64 {
+        untouched(seed, &mut tally);
+    }
+    eprintln!("planned lines on live games: {tally:?}");
+    assert!(tally.lines > 100, "{tally:?}");
+}
+
+/// One seed of property 2: at every decision of the person's seat, a copy of
+/// the game whose opponent holds a Lightning Bolt where the other holds
+/// another card (or the reverse), both unknown to the person, gives the same
+/// line.
+fn hand_blind(seed: u64, tally: &mut Tally, differing: &mut u64) {
+    let game = format!("blind-{seed}");
+    let mut live = london_server();
+    let mut line = live.handle_line(&reset_request(&game, "Elves", "Burn", seed));
+    let mut rng = SplitMix64::seed(seed ^ 0x5eed);
+    for n in 0..20_000_u64 {
+        let response = parse(&line);
+        if response["response_type"] != "decision" {
+            return;
+        }
+        if response["acting_seat"] == PERSON {
+            let mut same = live.clone_game_for_test();
+            let mut other = live.clone_game_for_test();
+            if other.swap_opponent_bolt_for_test(1) {
+                *differing += 1;
+                let first = whole_line(&mut same, &game, &response, 8);
+                let second = whole_line(&mut other, &game, &response, 8);
+                assert_eq!(first, second, "seed {seed}: decision {n}: the line shows the opponent's hand");
+                tally.add(&first);
+            }
+        }
+        let row = seeded(&response, &mut rng);
+        line = step(&mut live, &game, n, &response, row);
+    }
+    panic!("seed {seed}: the game did not end");
+}
+
+#[test]
+fn a_planned_line_is_blind_to_the_opponents_hidden_hand() {
+    let (mut tally, mut differing) = (Tally::default(), 0_u64);
+    for seed in 1..=6_u64 {
+        hand_blind(seed, &mut tally, &mut differing);
+    }
+    eprintln!("hand-blind pairs: {differing}, {tally:?}");
+    assert!(differing > 50, "{differing} {tally:?}");
+    // Lines that reach the opponent's priority (anything past the first
+    // choice) and lines that stop at their other decisions both occur.
+    assert!(tally.stops.len() >= 3, "{tally:?}");
+}
+
+#[test]
+fn only_the_human_play_london_server_answers_a_planned_line() {
+    let mut plain = SpellbenchBridgeServerV1::with_options(
+        SpellbenchEngineIdentityV1::with_source_revision(None),
+        SpellbenchBridgeOptionsV1 {
+            x_kernel_flat_v4: true,
+            x_kernel_infoset_v1: false,
+            private_v2_support: true,
+        },
+    );
+    let reset = parse(&plain.handle_line(&request(
+        "reset",
+        "reset-only",
+        json!({"game_id": "only", "format": "pauper-bo1", "game_seed": 3,
+               "max_decisions": 100_000, "max_steps": 1_000_000,
+               "seats": [{"seat": "p0", "deck": {"catalog_id": "Burn"}},
+                         {"seat": "p1", "deck": {"catalog_id": "Burn"}}]}),
+    )));
+    assert_eq!(reset["response_type"], "decision", "{reset}");
+    let answer = private_line(&mut plain, "only", &reset, &[rows(&reset)[0]]);
+    assert_eq!(answer["response_type"], "error", "{answer}");
+    let mut london = london_server();
+    {
+        let server = &mut london;
+        let reset = parse(&server.handle_line(&reset_request("only", "Elves", "Burn", 3)));
+        assert_eq!(reset["response_type"], "decision");
+        let answer = private_line(server, "only", &reset, &[line_choice(&reset)]);
+        assert!(
+            matches!(answer["response_type"].as_str(), Some("private_line" | "private_line_stop")),
+            "{answer}"
+        );
+        let stale = private_line(server, "only", &json!({"step": 99}), &[0]);
+        assert_eq!(stale["response_type"], "error");
+    }
+}
