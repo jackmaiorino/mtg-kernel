@@ -14,10 +14,9 @@
 //! abilities): it is offered only when tapping could make something castable
 //! ([`mana_enables_action_v1`]), in every step.
 //!
-//! The mana test searches activations that autopay does not make (a source
-//! that is not a plain tap for mana, a color outside a source's primary
-//! ability, an activation with a cost target), each run by the engine on a
-//! cloned state.
+//! The mana test searches the activations autopay does not make (the engine's
+//! own autopay source list decides), each run by the engine on a cloned
+//! state.
 //!
 //! Hand-blind: every test reads only the acting player's own legal options as
 //! the rules engine lists them. Nothing here is a judgment about what is
@@ -138,46 +137,44 @@ struct ManaActivationV1 {
     action: Action,
 }
 
-/// Whether autopay already uses this activation of `id`, mirroring the colors
-/// `mana::gather_sources_for_spell_restrictions_v1` gives a source: an
-/// activation without a cost target whose color is one of the primary
-/// ability's colors of an automatic payment source (a plain tap for mana), a
-/// granted color, or a color of a restricted ability whose restriction
-/// resolves (restricted mana floated by hand pays exactly the spells autopay
-/// would pay with it). Anything else (a sacrifice or life cost, a paid
-/// filtering ability on a land whose primary ability is automatic, a cost
-/// that taps or sacrifices another object) pays only by hand.
-fn autopay_covers_v1(
+/// The (source, color) pairs autopay can pay with for `player` right now,
+/// read from the engine itself: `mana::gather_sources_for_spell` for a
+/// noncreature and for a creature spell (some sources pay creature spells
+/// only). An activation of one of these pairs without a cost target adds
+/// nothing autopay could not already use, so the mana test skips it; every
+/// other activation (a sacrifice or life cost, a paid filtering ability, a
+/// cost that taps or sacrifices another object, mana autopay only gives a
+/// spell with particular subtypes) is searched. Searching an activation
+/// autopay could have made is never wrong, only slower.
+fn autopay_pairs_v1(
     state: &GameState,
-    id: ObjectId,
-    choice: crate::mana::ManaColor,
-    has_cost_target: bool,
-) -> bool {
-    if has_cost_target {
-        return false;
+    player: PlayerId,
+) -> Vec<(ObjectId, crate::mana::ManaColor)> {
+    let mut pairs = Vec::new();
+    for creature_spell in [false, true] {
+        for source in crate::mana::gather_sources_for_spell(player, state, creature_spell) {
+            for &color in &source.choices {
+                if !pairs.contains(&(source.id, color)) {
+                    pairs.push((source.id, color));
+                }
+            }
+        }
     }
-    let object = state.objects.get(id);
-    let def = &crate::card_def::CARD_DEFS[object.card_def as usize];
-    (def.is_automatic_payment_mana_source()
-        && def
-            .primary_mana_ability_choices(object.v4.chosen_color)
-            .contains(&choice))
-        || crate::standard_legends_v1::katilda_mana_colors(state, id).contains(&choice)
-        || def.restricted_mana_abilities.iter().any(|restricted| {
-            restricted.colors.contains(&choice)
-                && crate::mana::resolved_source_restriction_v60(state, id, restricted.restriction)
-                    .is_some()
-        })
+    pairs
 }
 
-/// Whether any listed activation of `id` pays only by hand.
-fn hand_only_source_v1(state: &GameState, player: PlayerId, id: ObjectId) -> bool {
+/// Whether any listed activation of `id` is one autopay cannot make.
+fn hand_only_source_v1(
+    state: &GameState,
+    player: PlayerId,
+    id: ObjectId,
+    autopay: &[(ObjectId, crate::mana::ManaColor)],
+) -> bool {
     engine::available_mana_ability_choices(player, id, state)
         .into_iter()
         .any(|choice| {
-            let has_target =
-                !engine::mana_ability_cost_targets_for_choice(player, id, choice, state).is_empty();
-            !autopay_covers_v1(state, id, choice, has_target)
+            !engine::mana_ability_cost_targets_for_choice(player, id, choice, state).is_empty()
+                || !autopay.contains(&(id, choice))
         })
 }
 
@@ -189,6 +186,11 @@ fn activations_v1(
 ) -> Vec<ManaActivationV1> {
     let mut out = Vec::new();
     let mut seen_keys = Vec::new();
+    let autopay = if all_sources {
+        Vec::new()
+    } else {
+        autopay_pairs_v1(state, player)
+    };
     let mut ordered = sources.to_vec();
     ordered.sort();
     for id in ordered {
@@ -196,7 +198,7 @@ fn activations_v1(
         let choices = engine::available_mana_ability_choices(player, id, state);
         for &choice in &choices {
             let targets = engine::mana_ability_cost_targets_for_choice(player, id, choice, state);
-            if !all_sources && autopay_covers_v1(state, id, choice, !targets.is_empty()) {
+            if !all_sources && targets.is_empty() && autopay.contains(&(id, choice)) {
                 continue;
             }
             // Sources of one card with no cost target are interchangeable for
@@ -246,10 +248,11 @@ pub fn mana_enables_action_v1(
     all_sources: bool,
 ) -> ManaTestV1 {
     let root = activations_v1(state, player, mana_abilities, all_sources);
+    let autopay = autopay_pairs_v1(state, player);
     let mut test = ManaTestV1 {
         hand_only_sources: mana_abilities
             .iter()
-            .filter(|&&id| all_sources || hand_only_source_v1(state, player, id))
+            .filter(|&&id| all_sources || hand_only_source_v1(state, player, id, &autopay))
             .count() as u32,
         ..ManaTestV1::default()
     };
@@ -608,5 +611,30 @@ mod tests {
                 mana_enables_action_v1(&state, PlayerId::P0, &[caretaker, first, second], false);
             assert!(test.enables, "sick first {sick_first}: {test:?}");
         }
+    }
+
+    /// Review round 3: activations autopay already makes are skipped, read
+    /// from the engine's own autopay source list; an inert board of plain
+    /// mana sources costs no simulated activation.
+    #[test]
+    fn an_inert_board_of_autopay_sources_searches_nothing() {
+        let mut state = game();
+        let mut sources = Vec::new();
+        for name in [
+            "Mountain",
+            "Island",
+            "Forest",
+            "Llanowar Elves",
+            "Heap Gate",
+        ] {
+            sources.push(put(&mut state, PlayerId::P0, name, Zone::Battlefield));
+        }
+        at(&mut state, Step::Main1, PlayerId::P0, PlayerId::P0);
+        let test = mana_enables_action_v1(&state, PlayerId::P0, &sources, false);
+        assert!(!test.enables, "{test:?}");
+        assert!(!test.cap_reached, "{test:?}");
+        // Only Heap Gate's paid colored ability is outside autopay.
+        assert_eq!(test.hand_only_sources, 1, "{test:?}");
+        assert!(test.activations <= 5, "{test:?}");
     }
 }
