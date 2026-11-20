@@ -4161,6 +4161,16 @@ fn current_target_spec(spec: TargetSpec, source_card_def: Option<u16>) -> Target
     }
 }
 
+fn current_stack_target_spec(item: &StackItem) -> Option<TargetSpec> {
+    let source = item
+        .v4
+        .ability_source_contract
+        .map(|contract| contract.card_def);
+    item.v4
+        .target_spec
+        .map(|spec| current_target_spec(spec, source))
+}
+
 fn legal_targets_unrestricted_v1(
     spec: TargetSpec,
     targets_chosen: &[Target],
@@ -19013,7 +19023,7 @@ pub(crate) fn validate_pending_trigger_identity(
         },
     };
     let expected = triggered_stack_item_expected_target_spec(&candidate, state, false)?;
-    if expected != candidate.v4.target_spec {
+    if expected != current_stack_target_spec(&candidate) {
         return Err("pending trigger target specification is not definition-owned".to_string());
     }
     Ok(())
@@ -20300,10 +20310,7 @@ fn validated_stack_item_target_metadata(
         }
         return Ok(None);
     };
-    let stored_spec = item.v4.target_spec.map(|stored| {
-        current_target_spec(stored, item.v4.ability_source_contract.map(|c| c.card_def))
-    });
-    if stored_spec != Some(spec) {
+    if current_stack_target_spec(item) != Some(spec) {
         return Err("stack target specification does not match its definition".to_string());
     }
     if let Some(EffectOp::DistributePlusOneCounters {
