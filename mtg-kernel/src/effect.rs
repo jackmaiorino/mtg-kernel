@@ -19078,6 +19078,11 @@ fn return_linked_exiles(
             });
         }
     }
+    if state.engine.linked_exile_records.iter().any(|record| {
+        !belongs(record) && seen.contains(&(record.exiled, record.exiled_zone_change_count))
+    }) {
+        return Err("linked-exile incarnation is claimed by two sources".into());
+    }
     state
         .engine
         .linked_exile_records
