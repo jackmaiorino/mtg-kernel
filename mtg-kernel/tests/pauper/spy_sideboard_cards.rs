@@ -739,6 +739,27 @@ fn repeated_linked_enters_return_each_matching_card_from_one_incarnation() {
                 assert_historical_exile_relation(&state, source, 1, target);
             }
 
+            let mut duplicate = state.clone();
+            duplicate
+                .engine
+                .linked_exile_records
+                .push(state.engine.linked_exile_records[0]);
+            assert!(observe_v2(&duplicate, &HarnessSurfaceV2::default(), owner, 18).is_err());
+
+            // The same physical card can enter exile again before the source leaves.
+            let mut later = state.clone();
+            event::propose_and_commit(
+                &mut later,
+                ProposedEvent::zone_change(first, Zone::Graveyard),
+            );
+            event::propose_and_commit(&mut later, ProposedEvent::zone_change(first, Zone::Exile));
+            queue_move_triggers(&mut later, source, Zone::Graveyard);
+            pass_until_idle(&mut later);
+            assert!(later.engine.halted.is_none());
+            assert_eq!(later.objects.get(first).zone, Zone::Exile);
+            assert_eq!(later.objects.get(second).zone, origin);
+            assert!(later.engine.linked_exile_records.is_empty());
+
             queue_move_triggers(&mut state, source, Zone::Graveyard);
             let mut restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();

@@ -11483,7 +11483,10 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
                         && other.exiled_zone_change_count == record.exiled_zone_change_count)
                         || (other.source == record.source
                             && !until_leaves
-                            && definition.name != "Lagrella, the Magpie")
+                            && !matches!(
+                                definition.name,
+                                "Journey to Nowhere" | "Mesmeric Fiend" | "Lagrella, the Magpie"
+                            ))
                 })
         {
             return Err(RlContractError(

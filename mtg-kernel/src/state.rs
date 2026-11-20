@@ -1108,6 +1108,15 @@ pub struct AbilitySourceContractV4 {
 }
 
 impl AbilitySourceContractV4 {
+    /// Linked abilities follow the same object across changes of controller.
+    pub(crate) fn same_incarnation(&self, other: &Self) -> bool {
+        self.source == other.source
+            && self.zone_change_count == other.zone_change_count
+            && self.zone == other.zone
+            && self.owner == other.owner
+            && self.card_def == other.card_def
+    }
+
     pub fn capture(state: &GameState, source: ObjectId) -> AbilitySourceContractV4 {
         let object = state.objects.get(source);
         AbilitySourceContractV4 {
