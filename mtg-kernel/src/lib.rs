@@ -784,6 +784,7 @@ pub(crate) mod life_loss_turn_v1;
 pub mod own_registration_v1;
 pub mod phase_profile;
 pub mod policy_surface_v5;
+pub mod priority_action_windows_v1;
 pub(crate) mod private_physical_trajectory_core;
 pub(crate) mod private_physical_trajectory_v1;
 pub(crate) mod private_physical_trajectory_v2;

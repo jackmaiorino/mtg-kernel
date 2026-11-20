@@ -63,6 +63,7 @@ fn episode(learner_seat: u8, kind: Option<ExpandedOpponentKindV1>) -> ExpandedEp
         opening: None,
         mulligan_modes: None,
         london_keep_offset: None,
+        priority_windows: None,
     }
 }
 
