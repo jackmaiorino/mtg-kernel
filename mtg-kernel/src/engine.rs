@@ -8680,6 +8680,10 @@ pub(crate) fn permanent_matches_filter(
                 || object_has_type(state, id, CardType::Creature)
         }
         PermanentFilter::Token => state.objects.get(id).v4.is_token,
+        PermanentFilter::MountainV1 => {
+            object_has_type(state, id, CardType::Land)
+                && has_effective_subtype(state, id, card_def::Subtype::Mountain)
+        }
         PermanentFilter::DesertV1 => {
             object_has_type(state, id, CardType::Land)
                 && has_effective_subtype(state, id, card_def::Subtype::Desert)
@@ -9407,9 +9411,10 @@ fn cost_kind_for_permanent_filter(filter: PermanentFilter) -> CostKind {
         PermanentFilter::NonlandV1 | PermanentFilter::AnotherArtifactOrCreatureV1 => {
             CostKind::SacrificePermanents
         }
-        PermanentFilter::Land | PermanentFilter::DesertV1 | PermanentFilter::ForestOrPlainsV1 => {
-            CostKind::SacrificeLands
-        }
+        PermanentFilter::Land
+        | PermanentFilter::MountainV1
+        | PermanentFilter::DesertV1
+        | PermanentFilter::ForestOrPlainsV1 => CostKind::SacrificeLands,
     }
 }
 
@@ -9432,8 +9437,7 @@ fn controlled_permanent_sacrifice_needed(
     {
         return Some((1, PermanentFilter::Creature));
     }
-    // An alternative cost that sacrifices permanents (Mine Collapse).
-    #[cfg(feature = "eternal-fixtures")]
+    // Alternative costs can sacrifice filtered permanents, including Mountains.
     if pending.cast_mode == Some(CastMode::Alternative) {
         if let Some(sacrifice) = def
             .alt_cost
@@ -17072,6 +17076,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
                         CostKind::SacrificePermanents
                     }
                     PermanentFilter::Land
+                    | PermanentFilter::MountainV1
                     | PermanentFilter::DesertV1
                     | PermanentFilter::ForestOrPlainsV1 => CostKind::SacrificeLands,
                 },

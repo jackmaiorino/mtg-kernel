@@ -157,6 +157,7 @@ pub enum CostV1 {
     SacrificeLands(u8),
     PayLife(u8),
     ExileOtherOwnGraveyardCards(u8),
+    SacrificeMountains(u8),
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -282,6 +283,10 @@ pub(crate) fn costs(values: &[CostComponent]) -> Result<Vec<CostV1>, String> {
                 CostComponent::Mana(m) => CostV1::Mana((*m).into()),
                 CostComponent::DiscardCards(n) => CostV1::DiscardCards(*n),
                 CostComponent::SacrificeLands(n) => CostV1::SacrificeLands(*n),
+                CostComponent::SacrificeControlled {
+                    count,
+                    filter: card_def::PermanentFilter::MountainV1,
+                } => CostV1::SacrificeMountains(*count),
                 CostComponent::PayLife(n) => CostV1::PayLife(*n),
                 CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
                     CostV1::ExileOtherOwnGraveyardCards(*n)

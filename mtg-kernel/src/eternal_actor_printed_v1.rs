@@ -332,6 +332,10 @@ fn costs(items: &[CostComponent]) -> Result<Vec<Value>> {
                     count,
                     filter: PermanentFilter::Land,
                 } => json!({"SacrificeControlledLands": count}),
+                CostComponent::SacrificeControlled {
+                    count,
+                    filter: PermanentFilter::MountainV1,
+                } => json!({"SacrificeControlledMountains": count}),
                 _ => return Err(unsupported()),
             })
         })

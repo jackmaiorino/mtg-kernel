@@ -1305,7 +1305,7 @@ fn render_cost(cost: &Cost) -> String {
     s
 }
 
-/// `CostComponent::SacrificeLands(1)` -> `"sacrifice a Mountain"` is
+/// The text `"sacrifice a Mountain"` for a one-Mountain flashback cost is
 /// confirmed against real evidence (Lava Dart's flashback candidate text,
 /// same `summary_offset1.csv` sample: `"Flashback sacrifice a Mountain"`).
 /// When the ordered cost begins with mana, XMage's AIRL display uses the
@@ -1319,7 +1319,15 @@ fn render_flashback_cost(components: &[CostComponent]) -> String {
         return render_cost(cost);
     }
     match components {
-        [CostComponent::SacrificeLands(1)] => "sacrifice a Mountain".to_string(),
+        [CostComponent::SacrificeControlled {
+            count: 1,
+            filter: card_def::PermanentFilter::MountainV1,
+        }] => "sacrifice a Mountain".to_string(),
+        [CostComponent::SacrificeControlled {
+            count,
+            filter: card_def::PermanentFilter::MountainV1,
+        }] => format!("sacrifice {count} Mountains"),
+        [CostComponent::SacrificeLands(1)] => "sacrifice a land".to_string(),
         [CostComponent::SacrificeLands(n)] => format!("sacrifice {n} lands"),
         [CostComponent::PayLife(1)] => "pay 1 life".to_string(),
         [CostComponent::PayLife(n)] => format!("pay {n} life"),
@@ -1708,6 +1716,8 @@ fn render_activated_ability_text(state: &GameState, id: ObjectId, ability_idx: u
             card_def::CostComponent::DiscardSelf => "Discard this card".to_string(),
             card_def::CostComponent::DiscardCards(1) => "Discard a card".to_string(),
             card_def::CostComponent::DiscardCards(n) => format!("Discard {n} cards"),
+            card_def::CostComponent::SacrificeControlled { count: 1, filter: card_def::PermanentFilter::MountainV1 } => "Sacrifice a Mountain".to_string(),
+            card_def::CostComponent::SacrificeControlled { count, filter: card_def::PermanentFilter::MountainV1 } => format!("Sacrifice {count} Mountains"),
             card_def::CostComponent::SacrificeLands(1) => "Sacrifice a land".to_string(),
             card_def::CostComponent::SacrificeLands(n) => format!("Sacrifice {n} lands"),
             card_def::CostComponent::ExileOtherCardsFromOwnGraveyard(1) => {

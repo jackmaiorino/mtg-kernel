@@ -2095,7 +2095,13 @@ mod tests {
             .component_groups
             .iter()
             .flat_map(|group| group.iter())
-            .any(|component| matches!(component, CostComponent::SacrificeLands(2))));
+            .any(|component| matches!(
+                component,
+                CostComponent::SacrificeControlled {
+                    count: 2,
+                    filter: card_def::PermanentFilter::MountainV1
+                }
+            )));
         let mut state = ready();
         assert!(selected
             .mana_only_plan(0, PlayerId::P0, &state, 1, 0)
