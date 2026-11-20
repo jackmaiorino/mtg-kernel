@@ -258,6 +258,26 @@ fn third_draw_matches_snacker_before_kaitos_discard_both_seats() {
 }
 
 #[test]
+fn kaito_draw_and_madness_discard_order_together_both_seats() {
+    for p in [PlayerId::P0, PlayerId::P1] {
+        let mut s = ready(p);
+        let k = walker(&mut s, p);
+        let crawler = put(&mut s, p.opponent(), "Scrawling Crawler", Zone::Battlefield);
+        let temper = put(&mut s, p, "Fiery Temper", Zone::Hand);
+        activate(&mut s, p, k, 0, None);
+        let choices = discard_prompt(&mut s, p);
+        assert!(choices.contains(&temper));
+        engine::step(&mut s, Action::Discard(vec![temper])).unwrap();
+        assert!(matches!(next(&mut s), Decision::CastSpellOrPass { .. }));
+        assert_eq!(
+            s.stack.iter().map(|item| item.source).collect::<Vec<_>>(),
+            [temper, crawler],
+            "the active player's Madness offer goes below the opponent's draw trigger"
+        );
+    }
+}
+
+#[test]
 fn genuine_paid_zero_or_one_target_draw_discard_and_waiting_restore_both_seats() {
     for p in [PlayerId::P0, PlayerId::P1] {
         for choose in [false, true] {
