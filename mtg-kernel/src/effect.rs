@@ -24795,7 +24795,9 @@ fn execute_in_departure_scope_v1(
                 ));
                 return;
             };
-            if live.card_def != source.card_def || live.owner != source.owner {
+            if !crate::engine::source_card_def_matches(state, source, live.card_def)
+                || live.owner != source.owner
+            {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
