@@ -90,19 +90,28 @@ pub struct ManaTestV1 {
 /// Whether the HarnessV2 window that `rule` would otherwise pass for
 /// `options.player` is handed to the seat. `state` is the live state at the
 /// pending decision; it is only read.
-pub fn offer_v1(rule: SeatPriorityWindowsV1, state: &GameState, options: &PriorityOptionsV1) -> bool {
+pub fn offer_v1(
+    rule: SeatPriorityWindowsV1,
+    state: &GameState,
+    options: &PriorityOptionsV1,
+) -> bool {
     match rule {
         SeatPriorityWindowsV1::HarnessV2 => false,
         SeatPriorityWindowsV1::ActionWindowsV1 => has_action_or_enabling_mana_v1(state, options),
         SeatPriorityWindowsV1::ActionWindowsEndStepV1 => {
-            end_step_scope_v1(state, options.player) && has_action_or_enabling_mana_v1(state, options)
+            end_step_scope_v1(state, options.player)
+                && has_action_or_enabling_mana_v1(state, options)
         }
     }
 }
 
 /// Whether `rule` takes back a window HarnessV2 would surface: an
 /// `ActionWindowsV1` seat's mana-only window that fails the mana test.
-pub fn withhold_v1(rule: SeatPriorityWindowsV1, state: &GameState, options: &PriorityOptionsV1) -> bool {
+pub fn withhold_v1(
+    rule: SeatPriorityWindowsV1,
+    state: &GameState,
+    options: &PriorityOptionsV1,
+) -> bool {
     rule == SeatPriorityWindowsV1::ActionWindowsV1
         && options.is_mana_only()
         && !mana_enables_action_v1(state, options.player, options.mana_abilities, false).enables
@@ -266,7 +275,12 @@ mod tests {
         GameState::new_from_libraries(&[], &[], |c| format!("card-{c}"), 1)
     }
 
-    fn put(state: &mut GameState, player: PlayerId, name: &str, zone: crate::state::Zone) -> ObjectId {
+    fn put(
+        state: &mut GameState,
+        player: PlayerId,
+        name: &str,
+        zone: crate::state::Zone,
+    ) -> ObjectId {
         let card =
             card_def::card_id_by_name(name).unwrap_or_else(|| panic!("{name} not in CARD_DEFS"));
         let id = state.objects.push(crate::state::GameObject {
@@ -477,14 +491,20 @@ mod tests {
     fn rule_names_are_the_config_strings() {
         for (rule, name) in [
             (SeatPriorityWindowsV1::HarnessV2, "\"harness-v2\""),
-            (SeatPriorityWindowsV1::ActionWindowsV1, "\"action-windows-v1\""),
+            (
+                SeatPriorityWindowsV1::ActionWindowsV1,
+                "\"action-windows-v1\"",
+            ),
             (
                 SeatPriorityWindowsV1::ActionWindowsEndStepV1,
                 "\"action-windows-end-step-v1\"",
             ),
         ] {
             assert_eq!(serde_json::to_string(&rule).unwrap(), name);
-            assert_eq!(serde_json::from_str::<SeatPriorityWindowsV1>(name).unwrap(), rule);
+            assert_eq!(
+                serde_json::from_str::<SeatPriorityWindowsV1>(name).unwrap(),
+                rule
+            );
         }
     }
 }

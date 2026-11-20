@@ -33,7 +33,15 @@ fn session(
     let labels = decks.map(str::to_owned);
     if london {
         FastActorSessionV1::reset_pauper_london_windows_v1(
-            3, seed, LIMITS.0, LIMITS.1, labels, card_ids, starting, [Learned, Learned], windows,
+            3,
+            seed,
+            LIMITS.0,
+            LIMITS.1,
+            labels,
+            card_ids,
+            starting,
+            [Learned, Learned],
+            windows,
         )
         .unwrap()
     } else {
@@ -45,7 +53,11 @@ fn session(
 }
 
 fn candidates(session: &FastActorSessionV1) -> &[crate::rl::CorePolicyActionCandidateV1] {
-    &session.current.as_ref().expect("a pending decision").candidates
+    &session
+        .current
+        .as_ref()
+        .expect("a pending decision")
+        .candidates
 }
 
 fn pass_index(session: &FastActorSessionV1) -> Option<u32> {
@@ -110,17 +122,30 @@ fn pass_through(
 ) -> Outcome {
     let mut windows = [SeatPriorityWindowsV1::HarnessV2; 2];
     windows[seat] = SeatPriorityWindowsV1::ActionWindowsV1;
-    let mut plain = session(london, decks, seed, starting, [SeatPriorityWindowsV1::HarnessV2; 2]);
+    let mut plain = session(
+        london,
+        decks,
+        seed,
+        starting,
+        [SeatPriorityWindowsV1::HarnessV2; 2],
+    );
     let mut ruled = session(london, decks, seed, starting, windows);
     let mut rng = SplitMix64::seed(seed ^ 0xA11D);
     let mut out = Outcome::default();
     let mut plain_added = 0;
-    let context = |shared: u64| format!("{decks:?} seed {seed} seat {seat} london {london}: shared decision {shared}");
+    let context = |shared: u64| {
+        format!("{decks:?} seed {seed} seat {seat} london {london}: shared decision {shared}")
+    };
     loop {
         let theirs = next_shared(&mut plain, &mut plain_added);
         let ours = next_shared(&mut ruled, &mut out.added);
         assert_eq!(plain_added, 0, "{}", context(out.shared));
-        assert_eq!(plain.game_state(), ruled.game_state(), "{}", context(out.shared));
+        assert_eq!(
+            plain.game_state(),
+            ruled.game_state(),
+            "{}",
+            context(out.shared)
+        );
         let (Some(theirs), Some(ours)) = (theirs, ours) else {
             assert_eq!(
                 plain.current_response(),
@@ -131,10 +156,26 @@ fn pass_through(
             out.finished = true;
             return out;
         };
-        assert_eq!(theirs.acting_player, ours.acting_player, "{}", context(out.shared));
-        assert_eq!(theirs.decision_kind, ours.decision_kind, "{}", context(out.shared));
-        let menu: Vec<_> = candidates(&plain).iter().map(|c| c.semantic.clone()).collect();
-        let menu_ruled: Vec<_> = candidates(&ruled).iter().map(|c| c.semantic.clone()).collect();
+        assert_eq!(
+            theirs.acting_player,
+            ours.acting_player,
+            "{}",
+            context(out.shared)
+        );
+        assert_eq!(
+            theirs.decision_kind,
+            ours.decision_kind,
+            "{}",
+            context(out.shared)
+        );
+        let menu: Vec<_> = candidates(&plain)
+            .iter()
+            .map(|c| c.semantic.clone())
+            .collect();
+        let menu_ruled: Vec<_> = candidates(&ruled)
+            .iter()
+            .map(|c| c.semantic.clone())
+            .collect();
         assert_eq!(menu, menu_ruled, "{}", context(out.shared));
         if out.shared >= MAX_SHARED {
             return out;
@@ -180,7 +221,14 @@ fn both_seats_harness_v2_is_the_plain_reset() {
             let labels = decks.map(str::to_owned);
             let plain = if london {
                 FastActorSessionV1::reset_pauper_london_v1(
-                    3, seed, LIMITS.0, LIMITS.1, labels, card_ids, starting, [Learned, Learned],
+                    3,
+                    seed,
+                    LIMITS.0,
+                    LIMITS.1,
+                    labels,
+                    card_ids,
+                    starting,
+                    [Learned, Learned],
                 )
                 .unwrap()
             } else {
@@ -189,7 +237,13 @@ fn both_seats_harness_v2_is_the_plain_reset() {
                 )
                 .unwrap()
             };
-            let ruled = session(london, decks, seed, starting, [SeatPriorityWindowsV1::HarnessV2; 2]);
+            let ruled = session(
+                london,
+                decks,
+                seed,
+                starting,
+                [SeatPriorityWindowsV1::HarnessV2; 2],
+            );
             assert_eq!(plain.game_state(), ruled.game_state());
             assert_eq!(plain.current_response(), ruled.current_response());
         }

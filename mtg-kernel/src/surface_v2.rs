@@ -1415,7 +1415,10 @@ impl HarnessSurfaceV2 {
                             .expect("Pass is always legal in an offered priority window");
                         self.record(
                             SuppressionReason::NoRealOption,
-                            || "Pass (action windows: mana-only window, mana test failed)".to_string(),
+                            || {
+                                "Pass (action windows: mana-only window, mana test failed)"
+                                    .to_string()
+                            },
                             before,
                             state,
                         );

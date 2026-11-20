@@ -1038,12 +1038,9 @@ impl PolicySurfaceV5 {
         &self.inner
     }
 
-    /// Human play: see `HarnessSurfaceV2::set_engine_window_seats_v1`.
-    pub(crate) fn set_engine_window_seats_v1(&mut self, seats: [bool; 2]) -> Result<(), String> {
-        self.inner.set_engine_window_seats_v1(seats)
-    }
-
-    /// Training: see `HarnessSurfaceV2::set_action_window_seats_v1`.
+    /// Training: see `HarnessSurfaceV2::set_action_window_seats_v1`. (The
+    /// human-play wrapper of `set_engine_window_seats_v1` stays on the London
+    /// human release line, where its bridge uses it.)
     pub(crate) fn set_action_window_seats_v1(
         &mut self,
         rules: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
@@ -1051,14 +1048,10 @@ impl PolicySurfaceV5 {
         self.inner.set_action_window_seats_v1(rules)
     }
 
-    pub(crate) fn action_window_seats_v1(
-        &self,
-    ) -> [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2] {
-        self.inner.action_window_seats_v1()
-    }
-
     /// Whether the pending decision is a priority window `HarnessV2` would
     /// have passed for its seat, and why. A combat scan substep is never one.
+    /// Tests read it on this line; the human bridge reads it on its line.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn engine_window_v1(&self) -> Option<crate::surface::SuppressionReason> {
         if self.scan.is_some() || self.hunter_order_v45.is_some() {
             return None;
