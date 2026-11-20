@@ -146,10 +146,18 @@ struct ManaActivationV1 {
 /// cost that taps or sacrifices another object, mana autopay only gives a
 /// spell with particular subtypes) is searched. Searching an activation
 /// autopay could have made is never wrong, only slower.
+///
+/// Builds with `eternal-fixtures` skip nothing: their cards add mana on a tap
+/// outside the payment planner (Utopia Sprawl, Wild Growth: the eternal hooks
+/// of `engine::activate_mana_ability_for`), so a source autopay lists can make
+/// more by hand there. The default build has no such hook.
 fn autopay_pairs_v1(
     state: &GameState,
     player: PlayerId,
 ) -> Vec<(ObjectId, crate::mana::ManaColor)> {
+    if cfg!(feature = "eternal-fixtures") {
+        return Vec::new();
+    }
     let mut pairs = Vec::new();
     for creature_spell in [false, true] {
         for source in crate::mana::gather_sources_for_spell(player, state, creature_spell) {
@@ -419,7 +427,9 @@ mod tests {
         let mountain = put(&mut state, PlayerId::P0, "Mountain", Zone::Battlefield);
         at(&mut state, Step::Upkeep, PlayerId::P0, PlayerId::P0);
         let test = mana_enables_action_v1(&state, PlayerId::P0, &[mountain], false);
-        assert_eq!(test.hand_only_sources, 0);
+        if !cfg!(feature = "eternal-fixtures") {
+            assert_eq!(test.hand_only_sources, 0);
+        }
         assert!(!test.enables);
         let mut ruled = surface(P0_ACTS);
         let decision = ruled.next_decision(&mut state);
@@ -634,7 +644,9 @@ mod tests {
         assert!(!test.enables, "{test:?}");
         assert!(!test.cap_reached, "{test:?}");
         // Only Heap Gate's paid colored ability is outside autopay.
-        assert_eq!(test.hand_only_sources, 1, "{test:?}");
-        assert!(test.activations <= 5, "{test:?}");
+        if !cfg!(feature = "eternal-fixtures") {
+            assert_eq!(test.hand_only_sources, 1, "{test:?}");
+            assert!(test.activations <= 5, "{test:?}");
+        }
     }
 }
