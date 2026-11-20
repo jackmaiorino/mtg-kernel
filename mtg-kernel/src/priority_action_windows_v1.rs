@@ -201,20 +201,23 @@ fn activations_v1(
     };
     let mut ordered = sources.to_vec();
     ordered.sort();
+    let combat = &state.engine.combat;
     for id in ordered {
-        let card = state.objects.get(id).card_def;
+        // A particular attacker or blocker may be needed for a later action.
+        let in_combat = combat.attackers.contains(&id)
+            || combat
+                .blocked_by
+                .iter()
+                .any(|(_, blockers)| blockers.contains(&id));
+        let source = (state.objects.get(id).card_def, in_combat.then_some(id));
         let choices = engine::available_mana_ability_choices(player, id, state);
         for &choice in &choices {
             let targets = engine::mana_ability_cost_targets_for_choice(player, id, choice, state);
             if !all_sources && targets.is_empty() && autopay.contains(&(id, choice)) {
                 continue;
             }
-            // Sources of one card with no cost target are interchangeable for
-            // the mana they make; a cost target is kept by object (two
-            // objects of one card can differ, for example in summoning
-            // sickness).
             if targets.is_empty() {
-                let key = (card, choice, None);
+                let key = (source, choice, None);
                 if !seen_keys.contains(&key) {
                     seen_keys.push(key);
                     let action = if choices.len() == 1 {
@@ -226,7 +229,7 @@ fn activations_v1(
                 }
             } else {
                 for &target in &targets {
-                    let key = (card, choice, Some(target));
+                    let key = (source, choice, Some(target));
                     if !seen_keys.contains(&key) {
                         seen_keys.push(key);
                         out.push(ManaActivationV1 {
@@ -245,9 +248,10 @@ fn activations_v1(
 /// after which the engine lists a castable spell or a non-mana activated
 /// ability for `player`? Each step is the engine's own: the activation is
 /// applied with `engine::step` to a clone of the state and the next decision
-/// is computed with `engine::advance_until_decision`. Identical sources
-/// (same card, same color, same cost target card) are tried once per node;
-/// states already seen are skipped; past [`MANA_TEST_ACTIVATION_CAP_V1`]
+/// is computed with `engine::advance_until_decision`. Sources of the same card
+/// that are neither attacking nor blocking are grouped by color and cost-target object.
+/// Attackers and blockers are tried individually. States already seen are
+/// skipped. Past [`MANA_TEST_ACTIVATION_CAP_V1`]
 /// activations the answer is "enables" (the window is offered).
 pub fn mana_enables_action_v1(
     state: &GameState,
@@ -440,7 +444,13 @@ mod tests {
     #[test]
     fn the_end_step_rule_offers_the_opponents_end_step_only() {
         let fixture = |step: Step, active: PlayerId| {
-            let mut state = game();
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[],
+                &[],
+                |c| format!("card-{c}"),
+                1,
+                active,
+            );
             put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
             put(&mut state, PlayerId::P0, "Mountain", Zone::Battlefield);
             at(&mut state, step, active, PlayerId::P0);
@@ -583,6 +593,122 @@ mod tests {
         let decision = ruled.next_decision(&mut state);
         assert_eq!(asked(&decision, Step::Main1, &state), Some(PlayerId::P0));
         assert!(ruled.suppressions().is_empty());
+    }
+
+    #[test]
+    fn tinder_wall_action_window_keeps_both_mana_source_ids() {
+        use crate::event::CommittedEvent;
+        use crate::mana::ManaColor;
+        use crate::state::Target;
+
+        let mut windows = Vec::new();
+        for defender in [PlayerId::P0, PlayerId::P1] {
+            for blocking_first in [true, false] {
+                let active = defender.opponent();
+                let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                    &[],
+                    &[],
+                    |c| format!("card-{c}"),
+                    1,
+                    active,
+                );
+                let first = put(&mut state, defender, "Tinder Wall", Zone::Battlefield);
+                let second = put(&mut state, defender, "Tinder Wall", Zone::Battlefield);
+                assert!(first < second);
+                let (blocker, spare) = if blocking_first {
+                    (first, second)
+                } else {
+                    (second, first)
+                };
+                let attacker = put(&mut state, active, "Elvish Mystic", Zone::Battlefield);
+                state.objects.get_mut(attacker).tapped = true;
+                at(&mut state, Step::DeclareBlockers, active, defender);
+                state.engine.combat.attackers = vec![attacker];
+                state.engine.combat.attackers_declared = true;
+                state.engine.combat.blocked_by = vec![(attacker, vec![blocker])];
+                state.engine.combat.blockers_declared = true;
+
+                let Decision::CastSpellOrPass {
+                    player,
+                    mana_abilities,
+                    activatable_abilities,
+                    castable_spells,
+                    ..
+                } = engine::advance_until_decision(&mut state)
+                else {
+                    panic!("expected the defender's combat priority");
+                };
+                assert_eq!(player, defender);
+                assert!(activatable_abilities.is_empty() && castable_spells.is_empty());
+                assert_eq!(mana_abilities.len(), 2);
+                assert!(mana_abilities.contains(&first) && mana_abilities.contains(&second));
+
+                let mana = mana_enables_action_v1(&state, defender, &mana_abilities, false);
+                let mut ruled_state = state.clone();
+                let mut rules = [SeatPriorityWindowsV1::HarnessV2; 2];
+                rules[defender.index()] = SeatPriorityWindowsV1::ActionWindowsV1;
+                let decision = surface(rules).next_decision(&mut ruled_state);
+                let offered =
+                    asked(&decision, Step::DeclareBlockers, &ruled_state) == Some(defender);
+
+                // The source identity is decisive: only sacrificing the spare
+                // leaves the blocking Wall in play to pay R and deal damage.
+                let mut wrong = state.clone();
+                engine::step(&mut wrong, Action::ActivateManaAbility(blocker)).unwrap();
+                assert!(matches!(
+                    engine::advance_until_decision(&mut wrong),
+                    Decision::CastSpellOrPass { player, activatable_abilities, .. }
+                    if player == defender && activatable_abilities.is_empty()
+                ));
+                let red = ManaColor::R.pool_index();
+                engine::step(&mut state, Action::ActivateManaAbility(spare)).unwrap();
+                assert_eq!(state.players[defender.index()].mana_pool[red], 2);
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::CastSpellOrPass { player, activatable_abilities, .. }
+                    if player == defender && activatable_abilities.contains(&(blocker, 0))
+                ));
+                engine::step(&mut state, Action::ActivateAbility(blocker, 0)).unwrap();
+                assert!(matches!(
+                    engine::advance_until_decision(&mut state),
+                    Decision::ChooseTargets { player, legal_targets, .. }
+                    if player == defender && legal_targets == vec![Target::Object(attacker)]
+                ));
+                engine::step(&mut state, Action::ChooseTarget(Target::Object(attacker))).unwrap();
+                let _ = engine::advance_until_decision(&mut state);
+                assert_eq!(state.objects.get(blocker).zone, Zone::Graveyard);
+                assert_eq!(state.players[defender.index()].mana_pool[red], 1);
+                assert_eq!(state.stack.len(), 1);
+                for _ in 0..4 {
+                    if state.stack.is_empty() {
+                        break;
+                    }
+                    match engine::advance_until_decision(&mut state) {
+                        Decision::CastSpellOrPass { .. } => {
+                            engine::step(&mut state, Action::Pass).unwrap()
+                        }
+                        other => panic!("unexpected decision resolving Tinder Wall {other:?}"),
+                    }
+                }
+                assert!(state.stack.is_empty());
+                assert_eq!(state.objects.get(attacker).zone, Zone::Graveyard);
+                assert!(state
+                    .engine
+                    .event_history
+                    .iter()
+                    .any(|event| matches!(event,
+                        CommittedEvent::Damage { source, target: Target::Object(id), amount: 2 }
+                        if *source == blocker && *id == attacker
+                    )));
+                windows.push((defender, blocking_first, mana, offered));
+            }
+        }
+        assert!(
+            windows
+                .iter()
+                .all(|(_, _, mana, offered)| mana.enables && !mana.cap_reached && *offered),
+            "both seats and source orders must offer the legal action: {windows:?}"
+        );
     }
 
     /// Review finding 2: two objects of one card are not interchangeable as
