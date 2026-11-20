@@ -1048,6 +1048,82 @@ fn kozilek_command_makes_spawn_and_scries_or_exiles_a_creature_and_cards() {
     assert_eq!(zone(&state, second), Zone::Exile);
 }
 
+#[test]
+fn kozilek_command_draws_the_third_card_before_exiling_sneaky_snacker() {
+    for player in [P0, P1] {
+        let mut state = islands();
+        state.active_player = player;
+        state.priority_player = player;
+        state.players[player.index()].draws_this_turn = 2;
+        let snacker = put(&mut state, player, "Sneaky Snacker", Zone::Graveyard);
+        let graveyard_generation = state.objects.get(snacker).zone_change_count;
+        let command = put(&mut state, player, "Kozilek's Command", Zone::Hand);
+        pool(&mut state, player, &[ManaColor::C, ManaColor::C], 1);
+        act(&mut state, Action::CastSpell(command));
+        assert!(
+            matches!(next(&mut state), Decision::ChooseSpellMode { legal_modes, .. } if legal_modes.contains(&4))
+        );
+        act(&mut state, Action::ChooseSpellMode(4));
+        choose_target(&mut state, Target::Player(player));
+        choose_target(&mut state, Target::Object(snacker));
+        let mut decision = next(&mut state);
+        if matches!(
+            decision,
+            Decision::ChooseTargets {
+                can_finish: true,
+                ..
+            }
+        ) {
+            act(&mut state, Action::FinishEffectSelection);
+            decision = next(&mut state);
+        }
+        if matches!(
+            decision,
+            Decision::ChooseEffectOption {
+                option_count: 1,
+                ..
+            }
+        ) {
+            act(&mut state, Action::ChooseEffectOption(0));
+            decision = next(&mut state);
+        }
+        assert!(matches!(decision, Decision::CastSpellOrPass { .. }));
+        assert_eq!(state.stack.last().unwrap().v4.x_value, 1);
+
+        for _ in 0..16 {
+            let decision = next(&mut state);
+            if zone(&state, command) == Zone::Graveyard {
+                break;
+            }
+            let action = match decision {
+                Decision::CastSpellOrPass { .. } => Action::Pass,
+                Decision::ChooseEffectTargets {
+                    can_finish: true, ..
+                } => Action::FinishEffectSelection,
+                other => panic!("unexpected Command resolution decision {other:?}"),
+            };
+            act(&mut state, action);
+        }
+        assert_eq!(zone(&state, command), Zone::Graveyard);
+        assert_eq!(state.players[player.index()].draws_this_turn, 3);
+        assert_eq!(zone(&state, snacker), Zone::Exile);
+        let [trigger] = state.stack.as_slice() else {
+            panic!(
+                "expected one Snacker trigger after Command, got {:?}",
+                state.stack
+            );
+        };
+        assert_eq!(trigger.source, snacker);
+        let source = trigger.v4.ability_source_contract.unwrap();
+        assert_eq!(
+            (source.zone, source.zone_change_count),
+            (Zone::Graveyard, graveyard_generation)
+        );
+        settle_first(&mut state);
+        assert_eq!(zone(&state, snacker), Zone::Exile);
+    }
+}
+
 // ---- Triggered abilities -------------------------------------------------------
 
 #[test]
