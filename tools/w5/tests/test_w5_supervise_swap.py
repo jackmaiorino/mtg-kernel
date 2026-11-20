@@ -88,14 +88,36 @@ class ProcessIdentityTests(unittest.TestCase):
         del table[1568730]  # in the loop's 30 s pause: the loop alone, still found
         self.assertEqual(swap.select(table, plan), ([1568722], []))
 
-    def test_a_recycled_pid_is_never_signalled(self):
+    def test_signals_go_through_a_pidfd_checked_after_it_opens(self):
+        """Each pid: the pidfd is opened first, then that process's argv is read and checked, then the signal goes
+        through the pidfd. A pid now running something else (a reused pid) is refused; a gone one is skipped."""
         table = self.table()
-        sent = []
+        calls = []
+
+        def opener(pid):
+            if pid == 999:
+                raise ProcessLookupError
+            calls.append(('open', pid))
+            return 1000 + pid
+
+        def read_argv(pid):
+            calls.append(('argv', pid))
+            return table[pid][1] if pid in table else None
         with contextlib.redirect_stderr(io.StringIO()) as err:
-            got = swap.signal_verified(PLAN, 15, [10, 11, 30, 21, 999], table, lambda pid, sig: sent.append(pid))
-        self.assertEqual(got, [10, 11])
-        self.assertEqual(sent, [10, 11])
-        self.assertEqual(err.getvalue().count('not signalled'), 3)
+            sent, refused = swap.signal_verified(PLAN, 15, [10, 11, 30, 21, 999], opener, read_argv,
+                                                 lambda fd, sig: calls.append(('send', fd)), lambda fd: None)
+        self.assertEqual((sent, refused), ([10, 11], [30, 21]))
+        self.assertEqual(calls[:3], [('open', 10), ('argv', 10), ('send', 1010)])
+        self.assertNotIn(('send', 1030), calls)
+        self.assertEqual(err.getvalue().count('not signalled'), 2)
+
+    def test_no_pidfd_means_no_signal(self):
+        with mock.patch.object(swap, 'os', mock.Mock(spec=['close'])), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            sent, refused = swap.signal_verified(PLAN, 15, [10, 11], read_argv=lambda pid: self.table()[pid][1],
+                                                 send=lambda fd, sig: self.fail('signalled'))
+        self.assertEqual((sent, refused), ([], [10, 11]))
+        self.assertIn('no pidfd_open', err.getvalue())
 
     @unittest.skipUnless(Path('/proc/self/cmdline').exists() and os.name != 'nt', 'needs /proc')
     def test_real_processes(self):
@@ -199,8 +221,17 @@ class TailTests(unittest.TestCase):
         self.assertEqual(self.out(swap.cut_tail, self.index, self.records, block=64)[0], 0)
         self.assertEqual(self.index.read_bytes(), data)
         self.assertEqual(list(self.records.iterdir()), [])
-        self.index.write_bytes(b''.join(self.lines) + b'\n\r\n  \n')  # blank trailing lines: index() skips them
+        self.index.write_bytes(b''.join(self.lines) + b'\n\r\n\x0c\n')  # empty lines: index() skips them
         self.assertEqual(swap.tail_state(self.index, block=8), 'ok')
+        self.assertEqual(len([t for t in self.index.read_text().splitlines() if t]), len(self.lines))
+
+    def test_a_last_line_of_spaces_is_torn_as_the_reader_sees_it(self):
+        """index() and the cache parse a line of spaces (not an empty line) and fail on it: so is it torn here."""
+        self.index.write_bytes(b''.join(self.lines) + b'   \n')
+        self.assertEqual(swap.tail_state(self.index, block=8), 'torn')
+        with open(self.index, 'rb') as f, self.assertRaises(ValueError):
+            for text, _, _ in retention.stream_lines(f):
+                json.loads(text)
 
     def test_a_writer_that_finishes_its_line_before_the_lock(self):
         whole = b''.join(self.lines)
@@ -212,7 +243,7 @@ class TailTests(unittest.TestCase):
                 f.write(self.lines[-1][30:])
         code, text = self.out(swap.cut_tail, self.index, self.records, block=64, before_lock=finish)
         self.assertEqual(code, 0)
-        self.assertIn('whole now', text)
+        self.assertIn('nothing to cut', text)
         self.assertEqual(self.index.read_bytes(), whole)
         self.assertEqual(list(self.records.iterdir()), [])
 
@@ -255,44 +286,58 @@ class WatchTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def guard(self, unix, ok=True, ceilings=None):
-        jwrite(self.root / 'GUARD.json', {'unix': unix, 'ok': ok, 'ceilings': ceilings or {'c1': 8160, 'c2': 7922}})
+    def guard(self, unix, gid, ok=True, ceilings=None):
+        jwrite(self.root / 'GUARD.json', {'unix': unix, 'id': gid, 'ok': ok,
+                                          'ceilings': ceilings or {'c1': 8160, 'c2': 7922}})
 
-    def run_watch(self, t0, now):
+    def events(self, *rows):
+        with open(self.root / 'LOG.jsonl', 'a') as f:
+            for row in rows:
+                f.write(json.dumps(row) + '\n')
+
+    def run_watch(self, gid, now, mode='swap'):
         with contextlib.redirect_stdout(io.StringIO()) as buf:
-            code = swap.watch(self.root, 'plan', t0, 723, every=0, log=self.log, rounds=1, now=lambda: now)
+            code = swap.watch(self.root, gid, mode, 723, every=0, log=self.log, rounds=1, now=lambda: now)
         return code, json.loads(buf.getvalue().splitlines()[-1])
 
-    def test_wait_escalate_and_success(self):
-        t0 = 1000.0
-        self.guard(990.0)
-        code, state = self.run_watch(t0, 1100.0)
+    def test_unknowns_and_waits_that_began_before_the_stop(self):
+        self.guard(990.0, 7)
+        code, state = self.run_watch(7, 1100.0)  # no LOG.jsonl yet
         self.assertEqual((code, state['verdict']), (1, 'WAIT'))
-        self.assertEqual(state['chains']['c1'], {'admitted': 8156, 'ceiling': 8160, 'may_start': 4,
-                                                 'guard_wait_since': None})
+        self.assertEqual(state['chains']['c1']['guard_wait_since'], 'unknown (no LOG.jsonl)')
+        self.assertEqual(state['chains']['c1']['may_start'], 4)
         self.assertNotIn('c4', state['chains'])
-        self.assertIsNone(state['escalate_in_s'])
-        with open(self.root / 'LOG.jsonl', 'a') as f:  # c2 refused at 1600, c1 at 1700 then admitted again
-            for row in ({'event': 'guard-wait', 'chain': 'c2', 'unix': 1600.0},
-                        {'event': 'guard-wait', 'chain': 'c1', 'unix': 1700.0},
-                        {'event': 'segment', 'chain': 'c1', 'unix': 1720.0},
-                        {'event': 'guard-wait', 'chain': 'c1', 'unix': 500.0}):  # before T0: not this swap's
-                f.write(json.dumps(row) + '\n')
-        code, state = self.run_watch(t0, 1800.0)
-        self.assertEqual(state['chains']['c2']['guard_wait_since'], 1600.0)
-        self.assertIsNone(state['chains']['c1']['guard_wait_since'])
-        self.assertEqual(state['escalate_in_s'], 1600 + 1800 - 723 - 300 - 1800)
-        code, state = self.run_watch(t0, 1600 + 1800 - 723 - 300)
-        self.assertEqual((code, state['verdict']), (2, 'ESCALATE'))
-        self.guard(2000.0, ceilings={'c1': 8160})
-        self.assertEqual(self.run_watch(t0, 2000.5)[1]['verdict'], 'WAIT')  # c2 has no ceiling: no success
-        self.guard(2000.0)
-        self.assertEqual(self.run_watch(t0, 2000.5)[0], 0)
-        self.guard(2000.0, ok=False)
-        self.assertNotEqual(self.run_watch(t0, 2000.5)[1]['verdict'], 'SUCCESS')
+        self.events({'event': 'segment', 'chain': 'c1', 'unix': 400.0},
+                    {'event': 'guard-wait', 'chain': 'c2', 'unix': 500.0},  # before the stop: still open
+                    {'event': 'guard-wait', 'chain': 'c1', 'unix': 600.0},
+                    {'event': 'no-room', 'chain': 'c1', 'unix': 650.0})  # c1's driver exited: not waiting
+        code, state = self.run_watch(7, 1100.0)
+        self.assertEqual(state['chains']['c2']['guard_wait_since'], 500.0)
+        self.assertEqual(state['chains']['c1']['guard_wait_since'], 'not waiting')
+        self.assertEqual(state['first_driver_exit_in_s'], 500 + 1800 - 1100)
+        self.assertEqual(state['escalate_in_s'], 500 + 1800 - 723 - 300 - 1100)
+        self.assertEqual(self.run_watch(7, 500 + 1800 - 1023)[1]['verdict'], 'ESCALATE')
+        with open(self.root / 'LOG.jsonl', 'a') as f:  # a line still being written is read when complete
+            f.write('{"event": "segment", "chain": "c2", "un')
+        self.assertEqual(self.run_watch(7, 1100.0)[1]['chains']['c2']['guard_wait_since'], 500.0)
+        jwrite(self.root / 'chains' / 'c3' / 'chain.json', {})
+        self.assertEqual(self.run_watch(7, 1100.0)[1]['chains']['c3']['guard_wait_since'],
+                         'unknown (no driver event for this chain)')
 
-    def test_a_traceback_after_the_start_escalates(self):
-        self.guard(990.0)
+    def test_success_means_admission_works(self):
+        self.guard(1001.0, 7)
+        self.assertEqual(self.run_watch(7, 1002.0)[1]['verdict'], 'WAIT')  # the GUARD recorded after the stop
+        self.guard(1001.0, 8, ceilings={'c1': 8156, 'c2': 7922})
+        self.assertEqual(self.run_watch(7, 1002.0)[1]['verdict'], 'WAIT')  # c1 has no admission left
+        self.guard(1001.0, 8, ok=False)
+        self.assertEqual(self.run_watch(7, 1002.0)[1]['verdict'], 'WAIT')
+        self.guard(1001.0, 8)
+        self.assertEqual(self.run_watch(7, 1001.0 + 900)[1]['verdict'], 'WAIT')  # stale for the drivers
+        self.assertEqual(self.run_watch(7, 1002.0), (0, self.run_watch(7, 1002.0)[1]))
+        self.assertEqual(self.run_watch(7, 1002.0)[1]['verdict'], 'SUCCESS')
+
+    def test_a_traceback_blocks_success_and_is_shown(self):
+        self.guard(1001.0, 8)
         calls = []
 
         def now():
@@ -300,10 +345,179 @@ class WatchTests(unittest.TestCase):
             if len(calls) == 1:
                 with open(self.log, 'a') as f:
                     f.write('Traceback (most recent call last):\n')
-            return 1100.0
-        with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(swap.watch(self.root, 'plan', 1000.0, 723, every=0, log=self.log, rounds=3,
-                                        now=now), 2)
+            return 1002.0
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            self.assertEqual(swap.watch(self.root, 7, 'swap', 723, every=0, log=self.log, rounds=3, now=now), 2)
+        last = json.loads(buf.getvalue().splitlines()[-1])
+        self.assertEqual((last['verdict'], last['traceback']), ('ESCALATE', True))
+        calls.clear()
+        with contextlib.redirect_stdout(io.StringIO()) as buf:  # a later watch starts after that Traceback
+            self.assertEqual(swap.watch(self.root, 7, 'recovery', 723, every=0, log=self.log, rounds=3,
+                                        now=lambda: 1002.0), 0)
+
+    def test_a_supervisor_exit_without_a_traceback_is_a_failure(self):
+        """A supervisor that refuses (`stop:` or `refused:`, no Traceback) exits, and the loop logs it in
+        supervise-restarts.log: no SUCCESS, and swap mode escalates on it."""
+        self.guard(1001.0, 8)
+        restarts = Path(self.tmp.name) / 'supervise-restarts.log'
+        restarts.write_text('2026-11-20T10:00:00-05:00 supervise exited 0\n')  # before the watch: not counted
+        calls = []
+
+        def now():
+            calls.append(1)
+            if len(calls) == 1:
+                with open(restarts, 'a') as f:
+                    f.write('2026-11-20T17:00:00-05:00 supervise exited 2\n')
+            return 1002.0
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            code = swap.watch(self.root, 7, 'swap', 723, every=0, log=self.log, rounds=3, now=now, restarts=restarts)
+        last = json.loads(buf.getvalue().splitlines()[-1])
+        self.assertEqual((code, last['verdict']), (2, 'ESCALATE'))
+        self.assertIn('supervise exited 2', last['failure'][0])
+        calls.clear()
+        with contextlib.redirect_stdout(io.StringIO()) as buf:  # recovery mode: shown, no SUCCESS, no escalation
+            code = swap.watch(self.root, 7, 'recovery', 723, every=0, log=self.log, rounds=2, now=now,
+                              restarts=restarts)
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(buf.getvalue().splitlines()[-1])['verdict'], 'WAIT')
+
+    def test_after_stop_records_t0_and_the_guard_id(self):
+        self.guard(990.0, 123456789012345678)
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            self.assertEqual(swap.main(['after-stop', str(self.root)]), 0)
+        t0, gid = buf.getvalue().split()
+        self.assertTrue(t0.startswith('T0=') and '.' in t0)
+        self.assertEqual(gid, 'GID=123456789012345678')
+
+    def test_recovery_mode_does_not_escalate(self):
+        self.guard(990.0, 7)
+        self.events({'event': 'guard-wait', 'chain': 'c2', 'unix': 500.0})
+        code, state = self.run_watch(7, 500 + 1800 - 1023, mode='recovery')  # past the swap escalation time
+        self.assertEqual((code, state['verdict']), (1, 'WAIT'))
+        self.assertIsNone(state['escalate_in_s'])
+        self.assertEqual(state['first_driver_exit_in_s'], 1023.0)
+        self.assertEqual(self.run_watch(7, 2300.0, mode='recovery')[:1], (3,))  # DEADLINE: c2's driver exited
+        self.guard(2000.0, 9)
+        self.assertEqual(self.run_watch(7, 2001.0, mode='recovery')[1]['verdict'], 'SUCCESS')
+
+    def test_unreadable_files_are_unknown_not_a_crash(self):
+        (self.root / 'GUARD.json').write_text('{"unix": 10')
+        code, state = self.run_watch(7, 1100.0)
+        self.assertEqual((code, state['verdict']), (1, 'WAIT'))
+        self.assertEqual(state['guard'], 'unknown (GUARD.json unreadable)')
+        (self.root / 'chains' / 'c1' / 'ADMITTED.json').write_text('{"cou')
+        self.assertEqual(self.run_watch(7, 1100.0)[1]['chains']['c1']['admitted'], 'unknown')
+
+
+class CheckTailsLockTests(unittest.TestCase):
+    def test_each_tail_is_read_under_its_index_lock(self):
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            for name in ('c1', 'c2'):
+                (root / 'chains' / name).mkdir(parents=True)
+                (root / 'chains' / name / 'chain.index.jsonl').write_bytes(b'{"a": 1}\n')
+            held = []
+            real = retention.index_lock
+
+            @contextlib.contextmanager
+            def watching(chain_path):
+                with real(chain_path):
+                    held.append(Path(chain_path).parent.name)
+                    yield
+            with mock.patch.object(retention, 'index_lock', watching), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(swap.check_tails(root), 0)
+            self.assertEqual(held, ['c1', 'c2'])
+
+
+@unittest.skipUnless(Path('/proc/self/cmdline').exists() and os.name != 'nt' and hasattr(os, 'pidfd_open'),
+                     'needs /proc and pidfd')
+class StepFileTests(unittest.TestCase):
+    """The step file itself on Linux, with stand-in supervisors."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        t = Path(self.tmp.name)
+        self.w5 = t / 'w5'
+        self.w5.mkdir()
+        self.root = t / 'oc'
+        (self.root / 'plan' / 'p').mkdir(parents=True)
+        self.plan = str(self.root / 'plan' / 'p' / 'CHAINS-PLAN.json')
+        (t / 'records').mkdir()
+        self.env = dict(os.environ, C=str(t), ROOT=str(self.root), PY=sys.executable, LOOP='10', PAUSE='3')
+        self.procs = []
+
+    def tearDown(self):
+        for p in self.procs:
+            try:
+                os.killpg(p.pid, 9)
+            except OSError:
+                pass
+            p.wait(10)
+        self.tmp.cleanup()
+
+    def spawn(self, argv):
+        p = subprocess.Popen(argv, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.procs.append(p)
+        return p
+
+    def step(self, *args, timeout=120):
+        run = subprocess.run(['bash', str(HERE.parent / 'supervise_swap.sh'), *args], env=self.env,
+                             capture_output=True, text=True, timeout=timeout)
+        return run.returncode, run.stdout + run.stderr
+
+    def test_two_supervisors_refuse_and_nothing_is_signalled(self):
+        (self.w5 / 'chains.py').write_text('import time\ntime.sleep(120)\n')
+        a = self.spawn([sys.executable, str(self.w5 / 'chains.py'), 'supervise', '--plan', self.plan])
+        b = self.spawn([sys.executable, str(self.w5 / 'chains.py'), 'supervise', '--plan', self.plan])
+        time.sleep(1)
+        code, out = self.step('stop_between_cycles', self.plan)
+        self.assertEqual(code, 1, out)
+        self.assertIn('STOP REFUSED: nothing signalled, nothing changed', out)
+        self.assertIsNone(a.poll())
+        self.assertIsNone(b.poll())
+        code, out = self.step('stop_failing', self.plan)
+        self.assertEqual(code, 0, out)
+        self.assertIn('stopped', out)
+
+    def test_never_asleep_means_never_signalled(self):
+        """A supervisor that is always busy: its report keeps changing, but asleep never passes on three tries,
+        so the stop refuses with nothing signalled (the loop never falls through to the kill)."""
+        (self.w5 / 'chains.py').write_text('while True:\n    pass\n')
+        sup = Path(self.plan).with_name('SUPERVISE.json')
+        sup.write_text('{}')
+        loop = self.spawn(['bash', '-c', swap.LOOP_TEXT, 'swap-loop', sys.executable, str(self.w5), self.plan, '10',
+                           str(Path(self.env['C']) / 'records'), '3', ''])
+        toucher = self.spawn(['bash', '-c', f'while true; do touch {sup}; sleep 1; done'])
+        time.sleep(1.5)
+        code, out = self.step('stop_between_cycles', self.plan, timeout=200)
+        self.assertEqual(code, 1, out)
+        self.assertIn('not asleep on three tries', out)
+        self.assertIn('STOP REFUSED: nothing signalled, nothing changed', out)
+        self.assertIsNone(loop.poll())
+        toucher.kill()
+        code, out = self.step('stop_failing', self.plan)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.step('pids', self.plan)[1].strip(), 'LOOP_PIDS ; PYTHON_PIDS')
+
+    def test_a_supervisor_that_ignores_sigterm_is_killed_and_the_rescan_decides(self):
+        (self.w5 / 'chains.py').write_text('import signal, time\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+                                           'time.sleep(300)\n')
+        self.spawn([sys.executable, str(self.w5 / 'chains.py'), 'supervise', '--plan', self.plan])
+        time.sleep(1)
+        code, out = self.step('stop_failing', self.plan)
+        self.assertEqual(code, 0, out)
+        self.assertIn('still running after round 1', out)
+        self.assertIn('signal 9', out)
+        self.assertEqual(self.step('pids', self.plan)[1].strip(), 'LOOP_PIDS ; PYTHON_PIDS')
+
+    def test_start_loop_refuses_a_running_plan_and_stop_failing_an_idle_one(self):
+        (self.w5 / 'chains.py').write_text('import time\ntime.sleep(120)\n')
+        self.assertEqual(self.step('stop_failing', self.plan)[0], 1)
+        self.spawn([sys.executable, str(self.w5 / 'chains.py'), 'supervise', '--plan', self.plan])
+        time.sleep(1)
+        code, out = self.step('start_loop', str(self.w5), self.plan)
+        self.assertEqual(code, 1)
+        self.assertIn('already runs', out)
 
 
 class GuardOnlyTests(unittest.TestCase):
