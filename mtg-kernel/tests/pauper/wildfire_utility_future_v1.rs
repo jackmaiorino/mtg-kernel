@@ -799,6 +799,94 @@ fn lembas_scries_then_draws_and_its_food_payment_uses_incarnation_bound_shuffle(
 }
 
 #[test]
+fn lembas_rejects_another_owners_trigger_contract_before_shuffling() {
+    let mut state = ready_game(0x004c_454d_4241_5303);
+    let [first, second] = [PlayerId::P0, PlayerId::P1].map(|owner| {
+        put_object(&mut state, owner, owner, "Forest", Zone::Library);
+        state.players[owner.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+        put_object(&mut state, owner, owner, "Lembas", Zone::Battlefield)
+    });
+    engine::step(&mut state, Action::ActivateAbility(first, 0)).unwrap();
+    if matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass {
+            player: PlayerId::P0,
+            ..
+        }
+    ) {
+        engine::step(&mut state, Action::Pass).unwrap();
+    }
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass {
+            player: PlayerId::P1,
+            ..
+        }
+    ));
+    engine::step(&mut state, Action::ActivateAbility(second, 0)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    let [first_trigger, second_trigger] = [first, second].map(|object| {
+        state
+            .stack
+            .iter()
+            .find(|item| {
+                item.source == object
+                    && item.inline_effect == Some(EffectOp::ShuffleTriggerSourceIntoOwnersLibrary)
+            })
+            .expect("each paid Food activation put its own Lembas trigger on the stack")
+            .clone()
+    });
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(second, Zone::Exile));
+    for owner in [PlayerId::P0, PlayerId::P1] {
+        state.reveal_library_top(owner.opponent(), owner, 1);
+        assert_eq!(state.known_library_cards(owner.opponent(), owner).len(), 1);
+    }
+    // Resolving B's native trigger while B is exiled shuffles only B's library.
+    let mut genuine = state.clone();
+    assert_eq!(
+        genuine.stack.last().unwrap().v4.stack_item_id,
+        second_trigger.v4.stack_item_id
+    );
+    resolve_top_without_choice(&mut genuine);
+    assert!(genuine
+        .known_library_cards(PlayerId::P0, PlayerId::P1)
+        .is_empty());
+    assert_eq!(
+        genuine
+            .known_library_cards(PlayerId::P1, PlayerId::P0)
+            .len(),
+        1
+    );
+    assert_eq!(genuine.objects.get(second).zone, Zone::Exile);
+
+    let mut ctx = mtg_kernel::effect::ExecCtx::no_targets(first, first_trigger.controller);
+    ctx.stack_item_id = Some(first_trigger.v4.stack_item_id);
+    ctx.ability_source_contract = second_trigger.v4.ability_source_contract;
+    mtg_kernel::effect::execute(
+        first_trigger.inline_effect.as_ref().unwrap(),
+        &ctx,
+        &mut state,
+    );
+    assert_eq!(
+        state.known_library_cards(PlayerId::P0, PlayerId::P1).len(),
+        1,
+        "the other owner's library was shuffled by a mismatched source contract"
+    );
+    assert_eq!(
+        state.known_library_cards(PlayerId::P1, PlayerId::P0).len(),
+        1
+    );
+    assert_eq!(state.objects.get(second).zone, Zone::Exile);
+    assert_eq!(
+        state.engine.halted,
+        Some((UnsupportedMechanic::InvalidEffectContinuation, first))
+    );
+}
+
+#[test]
 fn toxin_analysis_binds_keywords_and_investigates_with_an_exact_clue_payment() {
     let mut state = ready_game(0x544f_5849_4e01);
     let draw = put_object(

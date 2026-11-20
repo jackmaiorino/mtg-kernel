@@ -24795,7 +24795,11 @@ fn execute_in_departure_scope_v1(
                 ));
                 return;
             };
-            if !crate::engine::source_card_def_matches(state, source, live.card_def)
+            if source.source != ctx.source
+                || source.controller != ctx.controller
+                || source.zone != Zone::Battlefield
+                || crate::card_def::card_id_by_name("Lembas") != Some(source.card_def)
+                || !crate::engine::source_card_def_matches(state, source, live.card_def)
                 || live.owner != source.owner
                 || live.zone_change_count < expected_generation
                 || (live.zone_change_count == expected_generation && live.zone != Zone::Graveyard)
@@ -24810,6 +24814,13 @@ fn execute_in_departure_scope_v1(
                 live.zone == Zone::Graveyard && live.zone_change_count == expected_generation;
             // A ceased token keeps its arena record, but cannot move again (CR 111.8).
             let same_incarnation = graveyard_incarnation && !live.v4.is_token;
+            let Ok(shuffle_token) = state.preflight_library_shuffle(source.owner) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            };
             if same_incarnation
                 && state.players[source.owner.index()]
                     .graveyard
@@ -24825,13 +24836,6 @@ fn execute_in_departure_scope_v1(
                 return;
             }
             let mut staged = state.clone();
-            let Ok(shuffle_token) = staged.preflight_library_shuffle(source.owner) else {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    ctx.source,
-                ));
-                return;
-            };
             // CR 701.24c still shuffles the library if the named object has left.
             if same_incarnation {
                 event::propose_and_commit(
