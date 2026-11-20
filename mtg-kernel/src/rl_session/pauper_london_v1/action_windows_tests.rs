@@ -147,9 +147,20 @@ fn pass_through(
             context(out.shared)
         );
         let (Some(theirs), Some(ours)) = (theirs, ours) else {
+            // The same terminal but for the two session counters: the ruled
+            // game counts the added windows it passed and not the mana-only
+            // windows its rule passed for it.
+            let counters_cleared = |response: FastActorResponseV1| match response {
+                FastActorResponseV1::Terminal(mut terminal) => {
+                    terminal.policy_step_count = 0;
+                    terminal.physical_decision_count = 0;
+                    FastActorResponseV1::Terminal(terminal)
+                }
+                decision => decision,
+            };
             assert_eq!(
-                plain.current_response(),
-                ruled.current_response(),
+                counters_cleared(plain.current_response()),
+                counters_cleared(ruled.current_response()),
                 "{}",
                 context(out.shared)
             );
