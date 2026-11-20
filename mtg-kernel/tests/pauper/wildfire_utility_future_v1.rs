@@ -702,6 +702,27 @@ fn lembas_scries_then_draws_and_its_food_payment_uses_incarnation_bound_shuffle(
     corrupted.reveal_library_top(PlayerId::P1, PlayerId::P0, 1);
     let mut corrupted: GameState =
         serde_json::from_slice(&serde_json::to_vec(&corrupted).unwrap()).unwrap();
+    // A catalog-wide restore check can reject this state before the trigger resolves.
+    // Exercise the captured trigger separately to check its own source attribution.
+    let mut effect_state = corrupted.clone();
+    let mut ctx =
+        mtg_kernel::effect::ExecCtx::no_targets(leave_trigger.source, leave_trigger.controller);
+    ctx.stack_item_id = Some(leave_trigger.v4.stack_item_id);
+    ctx.ability_source_contract = leave_trigger.v4.ability_source_contract;
+    mtg_kernel::effect::execute(
+        leave_trigger.inline_effect.as_ref().unwrap(),
+        &ctx,
+        &mut effect_state,
+    );
+    assert_eq!(
+        effect_state.engine.halted,
+        Some((UnsupportedMechanic::InvalidEffectContinuation, lembas))
+    );
+    assert_eq!(
+        effect_state.known_library_cards(PlayerId::P1, PlayerId::P0),
+        corrupted.known_library_cards(PlayerId::P1, PlayerId::P0)
+    );
+
     for _ in 0..4 {
         match engine::advance_until_decision(&mut corrupted) {
             Decision::CastSpellOrPass { .. } => engine::step(&mut corrupted, Action::Pass).unwrap(),
@@ -709,10 +730,10 @@ fn lembas_scries_then_draws_and_its_food_payment_uses_incarnation_bound_shuffle(
             other => panic!("unexpected decision for malformed Lembas generation: {other:?}"),
         }
     }
-    assert_eq!(
+    assert!(matches!(
         corrupted.engine.halted,
-        Some((UnsupportedMechanic::InvalidEffectContinuation, lembas))
-    );
+        Some((UnsupportedMechanic::InvalidEffectContinuation, _))
+    ));
     assert_eq!(
         corrupted
             .known_library_cards(PlayerId::P1, PlayerId::P0)
