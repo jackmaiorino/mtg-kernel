@@ -39,11 +39,15 @@ fn request(kind: &str, id: &str, extra: Value) -> String {
 }
 
 fn reset_request(game: &str, person: &str, opponent: &str, seed: u64) -> String {
+    capped_reset_request(game, person, opponent, seed, 100_000)
+}
+
+fn capped_reset_request(game: &str, person: &str, opponent: &str, seed: u64, cap: u64) -> String {
     request(
         "reset",
         &format!("reset-{game}"),
         json!({"game_id": game, "format": "pauper-bo1", "game_seed": seed,
-               "max_decisions": 100_000, "max_steps": 1_000_000,
+               "max_decisions": cap, "max_steps": cap * 10,
                "engine_window_seats": [PERSON], "auto_graveyard_order": true,
                "seats": [{"seat": "p0", "deck": {"catalog_id": person}},
                          {"seat": "p1", "deck": {"catalog_id": opponent}}]}),
@@ -145,12 +149,27 @@ fn whole_line(server: &mut SpellbenchBridgeServerV1, game: &str, root: &Value, b
     line_from(server, game, root, line_choice(root), bound)
 }
 
+/// The turn of a decision: the turn counter and the active player of its
+/// observation (the counter moves only when play returns to the starting
+/// player, so the active player tells the two turns of one round apart).
+fn turn_of(decision: &Value) -> Value {
+    let observation: Value = serde_json::from_str(
+        decision["extensions"]["x_kernel_v5"]["observation_json"].as_str().unwrap(),
+    )
+    .unwrap();
+    json!([observation["projection"]["turn"], observation["projection"]["active_player"]])
+}
+
 /// The line from `root` whose first choice is `first`.
 fn line_from(server: &mut SpellbenchBridgeServerV1, game: &str, root: &Value, first: usize, bound: usize) -> Vec<Value> {
     let mut ids = vec![first];
     let mut out = Vec::new();
     loop {
         let answer = private_line(server, game, root, &ids);
+        if answer["response_type"] == "private_line" {
+            // Never a step of another turn than the root's.
+            assert_eq!(turn_of(&answer["view"]), turn_of(root), "a line view of another turn");
+        }
         out.push(shown(&answer));
         if answer["response_type"] != "private_line" || ids.len() >= bound {
             return out;
@@ -357,6 +376,43 @@ fn a_planned_line_stops_before_a_library_search() {
     }
     eprintln!("Land Grant lines: {grants}, stopped as hidden: {stopped_hidden}");
     assert!(grants > 0 && stopped_hidden > 0, "{grants} {stopped_hidden}");
+}
+
+/// The live game's caps never end a line: near a game's decision cap, lines
+/// from copies that differ only by a Bolt in the opponent's hand are equal
+/// (a cap reached on the clone would count the opponent's posed windows) and
+/// none ends without a result.
+#[test]
+fn a_planned_line_ignores_the_live_games_caps() {
+    let mut compared = 0_u64;
+    for seed in 1..=6_u64 {
+        let game = format!("capped-{seed}");
+        let cap = 60_u64;
+        let mut live = london_server();
+        let mut line = live.handle_line(&capped_reset_request(&game, "Elves", "Burn", seed, cap));
+        let mut rng = SplitMix64::seed(seed);
+        for n in 0..10_000_u64 {
+            let response = parse(&line);
+            if response["response_type"] != "decision" {
+                break;
+            }
+            if response["acting_seat"] == PERSON && !pregame(&response) {
+                let mut same = live.clone_game_for_test();
+                let mut other = live.clone_game_for_test();
+                if other.swap_opponent_bolt_for_test(1) {
+                    compared += 1;
+                    let first = whole_line(&mut same, &game, &response, 8);
+                    let second = whole_line(&mut other, &game, &response, 8);
+                    assert_eq!(first, second, "seed {seed}: decision {n}");
+                    assert_ne!(first.last().unwrap()["stop"], "no_result", "seed {seed}: decision {n}");
+                }
+            }
+            let row = seeded(&response, &mut rng);
+            line = step(&mut live, &game, n, &response, row);
+        }
+    }
+    eprintln!("lines compared near a 60-decision cap: {compared}");
+    assert!(compared > 10, "{compared}");
 }
 
 #[test]

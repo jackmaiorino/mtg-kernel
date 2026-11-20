@@ -6350,6 +6350,15 @@ impl RlEpisodeSessionV1 {
         &mut self.state
     }
 
+    /// The planned line's clone (`agent_bridge_v1`, `handle_private_line`):
+    /// no session cap ends it. A cap reached on the clone would depend on how
+    /// many decisions the other seat was posed there, which depends on its
+    /// hidden hand; the line has its own bound of the seat's choices.
+    pub(crate) fn lift_caps_for_private_line_v1(&mut self) {
+        self.max_physical_decisions = u64::MAX;
+        self.max_policy_steps = u64::MAX;
+    }
+
     pub(crate) fn enable_spellbench_neutral_choices(&mut self) {
         assert_eq!(
             self.policy_step_count, 0,
@@ -8015,6 +8024,15 @@ impl FastActorSessionV1 {
     #[cfg(test)]
     pub(crate) fn game_state_mut_for_test(&mut self) -> &mut crate::state::GameState {
         &mut self.state
+    }
+
+    /// The planned line's clone (`agent_bridge_v1`, `handle_private_line`):
+    /// no session cap ends it. A cap reached on the clone would depend on how
+    /// many decisions the other seat was posed there, which depends on its
+    /// hidden hand; the line has its own bound of the seat's choices.
+    pub(crate) fn lift_caps_for_private_line_v1(&mut self) {
+        self.max_physical_decisions = u64::MAX;
+        self.max_policy_steps = u64::MAX;
     }
 
     pub(crate) fn enable_spellbench_neutral_choices(&mut self) {

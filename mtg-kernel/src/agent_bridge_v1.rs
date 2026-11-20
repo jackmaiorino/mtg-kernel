@@ -867,7 +867,10 @@ impl SpellbenchBridgeServerV1 {
             return reject("planned line game, step or length bound mismatch");
         }
         let seat = root.acting_player;
-        let turn = game.session.game_state().turn;
+        // The root's turn: its counter and its active player (the counter
+        // moves only when play returns to the starting player).
+        let turn_of = |state: &crate::state::GameState| (state.turn, state.active_player);
+        let turn = turn_of(game.session.game_state());
         let cached = self.private_line.take().filter(|cache| {
             cache.game_id == game_id
                 && cache.root_step == expected_step
@@ -879,7 +882,12 @@ impl SpellbenchBridgeServerV1 {
             None => {
                 let mut copy = Self::with_options(self.identity.clone(), self.options);
                 copy.london_human = true;
-                copy.game = Some(game_copy_v1(game));
+                let mut clone = game_copy_v1(game);
+                clone.session.lift_caps_for_private_line_v1();
+                if let Some(lockstep) = clone.flat_v4.as_mut() {
+                    lockstep.lift_caps_for_private_line_v1();
+                }
+                copy.game = Some(clone);
                 (copy, 0)
             }
         };
@@ -944,10 +952,10 @@ impl SpellbenchBridgeServerV1 {
                     Some(winner) if winner == mine => "win",
                     Some(_) => "loss",
                 };
-                let this_turn = copy.game.as_ref().unwrap().session.game_state().turn == turn;
+                let this_turn = turn_of(copy.game.as_ref().unwrap().session.game_state()) == turn;
                 return stop(if this_turn { "game_end" } else { "game_end_later_turn" }, Some(result));
             }
-            if copy.game.as_ref().unwrap().session.game_state().turn != turn {
+            if turn_of(copy.game.as_ref().unwrap().session.game_state()) != turn {
                 return stop("turn_ends", None);
             }
             // A choice of the line's seat that shows library cards (or one
