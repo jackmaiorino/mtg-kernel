@@ -777,6 +777,22 @@ fn fireblast_and_lava_dart_require_mountains_controlled_by_the_caster() {
             };
             assert_eq!(cost_kind, CostKind::SacrificeLands);
             assert_eq!(candidates, [a, b]);
+            let mut forged = state.clone();
+            forged
+                .engine
+                .pending_cast
+                .as_mut()
+                .unwrap()
+                .sacrifice_chosen
+                .push(island);
+            let mut forged: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&forged).unwrap()).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut forged),
+                Decision::Halted { mechanic: UnsupportedMechanic::InvalidEffectContinuation, source } if source == spell
+            ));
+            assert_eq!(forged.objects.get(island).zone, Zone::Battlefield);
+
             let mut restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             assert!(engine::step(&mut restored, Action::ChooseCostTarget(island)).is_err());
