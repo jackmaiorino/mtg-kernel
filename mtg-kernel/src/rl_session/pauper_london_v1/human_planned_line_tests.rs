@@ -271,15 +271,30 @@ fn hand_blind(seed: u64, tally: &mut Tally, differing: &mut u64) {
             let mut other = live.clone_game_for_test();
             // In turn: the opponent's hand differs by a Bolt; the order of the
             // person's library differs; the order of the opponent's does.
+            // No library swap while an effect choice is pending (a search binds
+            // the library it shows; the person sees their library there).
+            let effect_choice = response["extensions"]["x_kernel_v2_support"]["choice"].is_object();
             let differs = match n % 3 {
                 0 => other.swap_opponent_bolt_for_test(1),
-                1 => other.swap_library_cards_for_test(0),
-                _ => other.swap_library_cards_for_test(1),
+                1 if !effect_choice => other.swap_library_cards_for_test(0),
+                2 if !effect_choice => other.swap_library_cards_for_test(1),
+                _ => false,
             };
             if differs {
                 *differing += 1;
                 let first = whole_line(&mut same, &game, &response, 8);
                 let second = whole_line(&mut other, &game, &response, 8);
+                if first != second {
+                    // Diagnosis: the altered copy's own first step, as the live game would play it.
+                    let mut probe = live.clone_game_for_test();
+                    match n % 3 {
+                        0 => probe.swap_opponent_bolt_for_test(1),
+                        1 => probe.swap_library_cards_for_test(0),
+                        _ => probe.swap_library_cards_for_test(1),
+                    };
+                    let answer = step(&mut probe, &game, n, &response, line_choice(&response));
+                    eprintln!("seed {seed}: decision {n}: altered copy, first step: {}", &answer[..answer.len().min(1500)]);
+                }
                 assert!(
                     first == second,
                     "seed {seed}: decision {n}: the line shows the opponent's hand at {:?}: {} against {}",
