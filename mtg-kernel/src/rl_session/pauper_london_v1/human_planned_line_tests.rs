@@ -115,6 +115,13 @@ fn shown(answer: &Value) -> Value {
     match answer["response_type"].as_str() {
         Some("private_line") => {
             let view = &answer["view"];
+            // Never a view of a choice that shows library cards.
+            let purpose = view["extensions"]["x_kernel_v2_support"]["choice"]["purpose"].as_str();
+            assert!(
+                !matches!(purpose, Some("search" | "look_select" | "reveal_partition" | "look" | "scry"
+                    | "reveal" | "explore" | "surveil" | "owner_library_position" | "shuffle" | "other")),
+                "a line view shows library cards: {purpose:?}"
+            );
             let mut model_input = view["extensions"]["x_kernel_flat_v7"].clone();
             // A counter, like the view's own: the planner's scorer requests
             // never carry it (their step is a constant).
@@ -134,7 +141,12 @@ fn shown(answer: &Value) -> Value {
 /// planner plays it: at most `bound` choices, each read from the view the
 /// previous one led to. Returns what may be shown at each step, and the stop.
 fn whole_line(server: &mut SpellbenchBridgeServerV1, game: &str, root: &Value, bound: usize) -> Vec<Value> {
-    let mut ids = vec![line_choice(root)];
+    line_from(server, game, root, line_choice(root), bound)
+}
+
+/// The line from `root` whose first choice is `first`.
+fn line_from(server: &mut SpellbenchBridgeServerV1, game: &str, root: &Value, first: usize, bound: usize) -> Vec<Value> {
+    let mut ids = vec![first];
     let mut out = Vec::new();
     loop {
         let answer = private_line(server, game, root, &ids);
@@ -287,6 +299,41 @@ fn a_planned_line_is_blind_to_the_opponents_hidden_hand() {
     // Lines that reach the opponent's priority (anything past the first
     // choice) and lines that stop at their other decisions both occur.
     assert!(tally.stops.len() >= 3, "{tally:?}");
+}
+
+/// A line that casts Land Grant stops before its library search: the search
+/// stages the library's cards without moving any, so only the choice's
+/// purpose shows it (`LINE_HIDDEN_PURPOSES_V1`).
+#[test]
+fn a_planned_line_stops_before_a_library_search() {
+    let (mut grants, mut stopped_hidden) = (0_u64, 0_u64);
+    for seed in 1..=10_u64 {
+        let game = format!("grant-{seed}");
+        let mut live = london_server();
+        let mut line = live.handle_line(&reset_request(&game, "Spy", "Burn", seed));
+        let mut rng = SplitMix64::seed(seed);
+        for n in 0..20_000_u64 {
+            let response = parse(&line);
+            if response["response_type"] != "decision" {
+                break;
+            }
+            if response["acting_seat"] == PERSON && !pregame(&response) {
+                let grant = rows(&response).into_iter().find(|row| {
+                    let semantic = &response["candidates"][*row]["semantic"];
+                    semantic["kind"] == "cast_spell" && semantic["source"]["card_name"] == "Land Grant"
+                });
+                if let Some(grant) = grant {
+                    grants += 1;
+                    let steps = line_from(&mut live, &game, &response, grant, 8);
+                    stopped_hidden += u64::from(steps.last().unwrap()["stop"] == "hidden");
+                }
+            }
+            let row = seeded(&response, &mut rng);
+            line = step(&mut live, &game, n, &response, row);
+        }
+    }
+    eprintln!("Land Grant lines: {grants}, stopped as hidden: {stopped_hidden}");
+    assert!(grants > 0 && stopped_hidden > 0, "{grants} {stopped_hidden}");
 }
 
 #[test]

@@ -345,7 +345,27 @@ pub struct SpellbenchBridgeServerV1 {
     used_game_ids: HashSet<String>,
     last_exchange: Option<CachedSpellbenchExchangeV1>,
     private_preview: Option<PrivatePreviewCacheV1>,
+    /// The clone of the planned line being built (`handle_private_line`).
+    private_line: Option<PrivatePreviewCacheV1>,
 }
+
+/// Purposes of a private choice that show cards of a library to the chooser
+/// (a search, a look, a reveal, scry, surveil, explore, a library position,
+/// a shuffle) or that the adapter does not know: the planned line stops
+/// before such a choice of the line's seat.
+const LINE_HIDDEN_PURPOSES_V1: &[&str] = &[
+    "search",
+    "look_select",
+    "reveal_partition",
+    "look",
+    "scry",
+    "reveal",
+    "explore",
+    "surveil",
+    "owner_library_position",
+    "shuffle",
+    "other",
+];
 
 struct PrivatePreviewCacheV1 {
     game_id: String,
@@ -387,6 +407,7 @@ impl SpellbenchBridgeServerV1 {
             used_game_ids: HashSet::new(),
             last_exchange: None,
             private_preview: None,
+            private_line: None,
         }
     }
 
@@ -802,15 +823,20 @@ impl SpellbenchBridgeServerV1 {
     /// of the other seat is taken, always and for that seat whether or not
     /// it had a response; any other decision of the other seat ends the line.
     /// A chunk (one choice and the passes after it) that draws from the
-    /// random stream, changes a library, changes the other seat's hand, or
-    /// adds to what the line's seat knows of a hidden card ends the line with
-    /// that chunk withheld. Answers either the line seat's next decision on
-    /// the clone (`private_line`, `view`) or `private_line_stop` with a
-    /// reason from a fixed list and, for a game end, its result for the line
-    /// seat. Nothing in either depends on whether the other seat's priority
-    /// was posed to it or passed by the trained surface: both end in the same
-    /// Pass, and the counters that record the difference are the planner's
-    /// to drop (they are not model input).
+    /// random stream, changes a library, changes the other seat's hand, adds
+    /// to what the line's seat knows of a hidden card, or leads to a choice
+    /// of the line's seat that shows library cards (a search, a look, a
+    /// reveal, `LINE_HIDDEN_PURPOSES_V1`) ends the line with that chunk
+    /// withheld. Answers either the line seat's next decision on the clone
+    /// (`private_line`, `view`: the decision the seat would be sent) or
+    /// `private_line_stop` with a reason from a fixed list and, for a game
+    /// end, its result for the line seat. Nothing in either depends on
+    /// whether the other seat's priority was posed to it or passed by the
+    /// trained surface (both end in the same Pass), except the counters that
+    /// record the difference, which are not model input and which the planner
+    /// drops. The clone is kept for the next request of the same line, which
+    /// extends `ids` by one choice, so a line of n choices plays each step
+    /// once.
     fn handle_private_line(
         &mut self,
         request_id: &str,
@@ -829,20 +855,38 @@ impl SpellbenchBridgeServerV1 {
         let RlSessionResponseV1::Decision(root) = game.session.current_response() else {
             return reject("the planned line requires a pending decision");
         };
-        if game.game_id != game_id || root.step != expected_step || game.terminal_sent || ids.len() > 64 {
+        if game.game_id != game_id
+            || root.step != expected_step
+            || game.terminal_sent
+            || ids.is_empty()
+            || ids.len() > 64
+        {
             return reject("planned line game, step or length bound mismatch");
         }
         let seat = root.acting_player;
         let turn = game.session.game_state().turn;
-        let mut copy = Self::with_options(self.identity.clone(), self.options);
-        copy.london_human = true;
-        copy.game = Some(game_copy_v1(game));
+        let cached = self.private_line.take().filter(|cache| {
+            cache.game_id == game_id
+                && cache.root_step == expected_step
+                && ids.len() > cache.prefix.len()
+                && ids.starts_with(&cache.prefix)
+        });
+        let (mut copy, start) = match cached {
+            Some(cache) => (*cache.copy, cache.prefix.len()),
+            None => {
+                let mut copy = Self::with_options(self.identity.clone(), self.options);
+                copy.london_human = true;
+                copy.game = Some(game_copy_v1(game));
+                (copy, 0)
+            }
+        };
         let stop = |reason: &str, result: Option<&str>| {
             json!({"response_type": "private_line_stop", "protocol": SPELLBENCH_PROTOCOL_V1,
                    "request_id": request_id, "game_id": game_id, "expected_step": expected_step,
                    "reason": reason, "result": result})
         };
-        for &id in ids {
+        let mut view = Value::Null;
+        for &id in &ids[start..] {
             let before = line_fingerprint_v1(copy.game.as_ref().unwrap(), seat);
             let current = match copy.game.as_ref().unwrap().session.current_response() {
                 RlSessionResponseV1::Decision(value) if value.acting_player == seat => value,
@@ -902,32 +946,23 @@ impl SpellbenchBridgeServerV1 {
             if copy.game.as_ref().unwrap().session.game_state().turn != turn {
                 return stop("turn_ends", None);
             }
-        }
-        let game = copy.game.as_mut().unwrap();
-        let response = game.session.current_response();
-        let counts = (
-            game.session.policy_step_count(),
-            game.session.physical_decision_count(),
-        );
-        let extension = match flat_v4_extension_v1(game, &response) {
-            Ok(value) => value,
-            Err(_) => return reject("planned line failed encoding"),
-        };
-        let support = private_v2_support(game);
-        match copy.session_response_to_wire(
-            request_id,
-            game_id,
-            response,
-            counts,
-            extension,
-            Some(support),
-        ) {
-            WireResponseV1::Decision(view) => {
-                json!({"response_type": "private_line", "protocol": SPELLBENCH_PROTOCOL_V1,
-                       "request_id": request_id, "view": view})
+            // A choice of the line's seat that shows library cards (or one
+            // whose purpose the adapter does not know): the line stops before
+            // it, as before a draw.
+            let purpose = response["extensions"]["x_kernel_v2_support"]["choice"]["purpose"].as_str();
+            if purpose.is_some_and(|purpose| LINE_HIDDEN_PURPOSES_V1.contains(&purpose)) {
+                return stop("hidden", None);
             }
-            WireResponseV1::Terminal(_) => stop("no_result", None),
+            view = response;
         }
+        self.private_line = Some(PrivatePreviewCacheV1 {
+            game_id: game_id.to_string(),
+            root_step: expected_step,
+            prefix: ids.to_vec(),
+            copy: Box::new(copy),
+        });
+        json!({"response_type": "private_line", "protocol": SPELLBENCH_PROTOCOL_V1,
+               "request_id": request_id, "view": view})
     }
 
     fn handle_reset(&mut self, request_id: &str, reset: SpellbenchResetFieldsV1<'_>) -> Value {
@@ -1163,6 +1198,7 @@ impl SpellbenchBridgeServerV1 {
         game.terminal_sent = matches!(wire, WireResponseV1::Terminal(_));
         self.used_game_ids.insert(game_id.to_string());
         self.private_preview = None;
+        self.private_line = None;
         self.game = Some(game);
         match wire {
             WireResponseV1::Decision(value) | WireResponseV1::Terminal(value) => value,
@@ -1177,6 +1213,7 @@ impl SpellbenchBridgeServerV1 {
         selection: &SpellbenchSelectionV1,
     ) -> Value {
         self.private_preview = None;
+        self.private_line = None;
         let Some(game) = self.game.as_mut() else {
             return error_response_value_v1(
                 Some(request_id),
