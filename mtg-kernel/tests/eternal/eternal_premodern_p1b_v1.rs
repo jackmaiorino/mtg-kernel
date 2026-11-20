@@ -1126,6 +1126,59 @@ fn mirris_guile_may_reorder_the_top_three_at_upkeep() {
 }
 
 #[test]
+fn animated_journey_can_exile_itself_and_return_as_a_new_incarnation_both_seats() {
+    for seat in [P0, P1] {
+        let mut state = islands();
+        state.active_player = seat;
+        state.priority_player = seat;
+        let opalescence = put(&mut state, seat, "Opalescence", Zone::Hand);
+        pool(&mut state, seat, &[ManaColor::W, ManaColor::W], 2);
+        cast(&mut state, opalescence, &[]);
+        settled(&mut state);
+
+        let creature = put(
+            &mut state,
+            seat.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let journey = put(&mut state, seat, "Journey to Nowhere", Zone::Hand);
+        pool(&mut state, seat, &[ManaColor::W], 1);
+        cast(&mut state, journey, &[]);
+        let mut generations = Vec::new();
+        settle_with(&mut state, |s, decision| {
+            let Decision::ChooseTargets {
+                spell,
+                legal_targets,
+                ..
+            } = decision
+            else {
+                panic!("unexpected Journey decision {decision:?}")
+            };
+            assert_eq!(spell, journey);
+            assert!(is_creature(s, journey));
+            assert!(legal_targets.contains(&Target::Object(journey)));
+            assert!(legal_targets.contains(&Target::Object(creature)));
+            generations.push(s.objects.get(journey).zone_change_count);
+            Action::ChooseTarget(Target::Object(match generations.len() {
+                1 => journey,
+                2 => creature,
+                _ => panic!("unexpected third Journey entry"),
+            }))
+        });
+        assert_eq!(generations.len(), 2);
+        assert_eq!(generations[1], generations[0] + 2);
+        assert_eq!(zone(&state, journey), Zone::Battlefield);
+        assert_eq!(zone(&state, creature), Zone::Exile);
+        let links = &state.engine.linked_exile_records;
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].source.source, journey);
+        assert_eq!(links[0].source.zone_change_count, generations[1]);
+        assert_eq!(links[0].exiled, creature);
+    }
+}
+
+#[test]
 fn opalescence_animates_the_other_non_aura_enchantments() {
     let mut state = islands();
     let opalescence = put(&mut state, P0, "Opalescence", Zone::Hand);
