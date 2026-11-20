@@ -1,9 +1,10 @@
 """Rehearsal of moving a running supervisor to new W5 tools (docs/W5-SUPERVISE-MEMORY-20261120.md), on Linux, in a
-throwaway root: a chain driver keeps running segments (stand-in trainer) under an old-tools supervise loop started
-as node1's start script starts it; the swap then follows the procedure step by step (stage the tree, write and check
-the supervisor's plan copy, stop the old loop between cycles and prove it exited, start the new loop with an
-absolute python), and the forward recovery is exercised: a new supervisor that raises on every cycle is replaced by
-`supervise --guard-only`. Every step and check is printed as a transcript line.
+throwaway root, running the procedure's own step file (tools/w5/supervise_swap.sh): a chain driver keeps running
+segments (stand-in trainer) under an old-tools supervise loop; the swap stages the tree, writes and checks the plan
+copy, runs the dry cycle, stops the old loop between cycles (it must be asleep), checks every index tail (and cuts
+an injected torn last line), and starts the new loop. Then a supervisor that fails before every GUARD write is
+started and stopped with the bounded stop for a failing loop, and replaced by `supervise --guard-only` (its time to
+the first GUARD is measured). Every step is a transcript line. The whole run is under an alarm.
 
   python3 supervise_swap_rehearsal.py OLD_TOOLS NEW_TOOLS SCRATCH   (tools: directories holding w5/ and ex1/)
 
@@ -20,53 +21,22 @@ from pathlib import Path
 PY = '/usr/bin/python3'
 LOOP, PAUSE = 5, 3
 T0 = time.time()
+STARTED = []
 
 
 def say(step, **detail):
     print(json.dumps(dict({'t': round(time.time() - T0, 1), 'step': step}, **detail), default=str), flush=True)
 
 
-def sh(cmd, check=True):
-    run = subprocess.run(['bash', '-c', cmd], capture_output=True, text=True)
+def swap(env, step, *args, check=True, timeout=600):
+    """One step of the procedure's step file, as the lead runs it."""
+    run = subprocess.run(['bash', str(env['SWAP']), step, *map(str, args)], env=dict(os.environ, **env),
+                         capture_output=True, text=True, timeout=timeout)
+    out = (run.stdout + run.stderr).strip().splitlines()
+    say(f'swap.sh {step}', args=[str(a) for a in args], exit=run.returncode, out=out[-12:])
     if check and run.returncode:
-        raise SystemExit(f'failed: {cmd}\n{run.stdout}\n{run.stderr}')
-    return run.stdout.strip()
-
-
-STARTED = []
-
-
-def pids(pattern):
-    """Live processes whose command line holds `pattern` (read from /proc; no shell of our own matches)."""
-    out = []
-    for d in Path('/proc').iterdir():
-        if d.name.isdigit() and int(d.name) != os.getpid():
-            try:
-                if pattern.encode() in (d / 'cmdline').read_bytes().replace(b'\0', b' '):
-                    out.append(int(d.name))
-            except OSError:
-                pass
-    return sorted(out)
-
-
-def start_loop(c, tree, plan, label, extra=''):
-    """The supervise restart loop, as start-node1.sh line 9 starts it (absolute python, scaled times)."""
-    cmd = (f'while true; do {PY} {tree}/w5/chains.py supervise --plan {plan} --loop {LOOP} {extra} >> '
-           f'{c}/records/supervise.log 2>&1; echo "$(date -Is) supervise exited $?" >> '
-           f'{c}/records/supervise-restarts.log; sleep {PAUSE}; done')
-    proc = subprocess.Popen(['setsid', 'nohup', 'bash', '-c', cmd], stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)  # setsid and nohup exec: one pid
-    STARTED.append(proc.pid)
-    time.sleep(1)
-    cmdline = Path(f'/proc/{proc.pid}/cmdline').read_bytes().split(b'\0')
-    say('loop started', label=label, loop_pid=proc.pid, loop=[x.decode()[:60] for x in cmdline[:2]],
-        supervisor=supervisor_python(proc.pid), python=PY, extra=extra)
-    return proc.pid
-
-
-def supervisor_python(loop_pid):
-    out = sh(f'pgrep -P {loop_pid} || true', check=False)
-    return [int(p) for p in out.split()]
+        raise SystemExit(f'step {step} failed')
+    return run.returncode, out
 
 
 def guard_age(root):
@@ -74,90 +44,48 @@ def guard_age(root):
     return round(time.time() - g['unix'], 1), g
 
 
-def wait_cycle_end(root, label):
-    sup = next((root / 'plan').glob('*/SUPERVISE.json'))
-    t0 = sup.stat().st_mtime_ns
-    while sup.stat().st_mtime_ns == t0:
-        time.sleep(0.2)
-    time.sleep(0.5)
-    say('a cycle just ended', label=label)
-
-
-def stop_loop(root, loop_pid, label):
-    """Procedure step 3: between cycles, the loop first, then its supervisor; both must be gone."""
-    wait_cycle_end(root, label)
-    children = supervisor_python(loop_pid)
-    os.kill(loop_pid, signal.SIGTERM)
-    for p in children:
-        os.kill(p, signal.SIGTERM)
-    for p in [loop_pid] + children:
-        for _ in range(100):
-            if not Path(f'/proc/{p}').exists() or 'Z' in Path(f'/proc/{p}/stat').read_text().split()[2]:
-                break
-            time.sleep(0.1)
-    alive = [p for p in [loop_pid] + children if Path(f'/proc/{p}').exists()
-             and 'Z' not in Path(f'/proc/{p}/stat').read_text().split()[2]]
-    say('loop stopped', label=label, killed=[loop_pid] + children, still_alive=alive)
-    if alive:
-        raise SystemExit('the old loop or supervisor is still alive: abort (it could take SUPERVISE.lock back)')
-
-
-def plan_copy(plan, plan2, tree):
-    """Procedure step 2, the same code."""
-    code = r'''
-import json, sys
-sys.path.insert(0, sys.argv[3]); import chains
-plan = json.load(open(sys.argv[1]))
-new = chains.tools_shas()
-changed = sorted(k for k in new if plan['tools'].get(k) != new[k])
-assert changed == ['chains.py', 'replay_sample.py', 'retention.py'] and set(new) == set(plan['tools']), changed
-print(changed)
-plan['tools'] = new
-with open(sys.argv[2], 'x') as f:
-    f.write(json.dumps(plan, indent=1) + '\n')
-chains.load_plan(sys.argv[2])
-print('ok')
-'''
-    out = subprocess.run([PY, '-B', '-', str(plan), str(plan2), f'{tree}/w5'], input=code, capture_output=True,
-                         text=True)
-    say('plan copy', plan=str(plan2), stdout=out.stdout.strip(), stderr=out.stderr.strip()[-300:], exit=out.returncode)
-    if out.returncode:
-        raise SystemExit('plan copy failed')
-
-
-def stage_tree(old, new, dest, files=('chains.py', 'retention.py', 'replay_sample.py')):
-    """Procedure step 1: the old tree with the three files replaced; the diff must list exactly those."""
-    shutil.copytree(old, dest, ignore=shutil.ignore_patterns('__pycache__'))
-    for f in files:
-        shutil.copy2(Path(new, 'w5', f), Path(dest, 'w5', f))
-    diff = sh(f'diff -rq -x __pycache__ {old} {dest} || true', check=False)
-    say('tree staged', tree=str(dest), sha256=sh(f'cd {dest}/w5 && sha256sum {" ".join(files)}').splitlines(),
-        diff=diff.splitlines())
-
-
-def driver_state(c, name='c1'):
-    cdir = c / 'oc' / 'chains' / name
+def driver_state(root, name='c1'):
+    cdir = root / 'chains' / name
     idx = cdir / 'chain.index.jsonl'
+    rows = [json.loads(x) for x in open(idx)] if idx.exists() else []
     return {'admitted': json.loads((cdir / 'ADMITTED.json').read_text())['count'] if (cdir / 'ADMITTED.json').exists()
-            else 0, 'index_rows': sum(1 for _ in open(idx)) if idx.exists() else 0,
+            else 0, 'index_rows': len(rows),
+            'boundaries_contiguous': [r['boundary'] for r in rows] == list(range(1, len(rows) + 1)),
             'segments': len(json.loads((cdir / 'chain.json').read_text())['segments'])}
 
 
 def watch(c, root, label, seconds):
-    t_end = time.time() + seconds
-    first = driver_state(c)
-    while time.time() < t_end:
-        time.sleep(2)
-    restarts = (c / 'records' / 'supervise-restarts.log')
+    first = driver_state(root)
+    time.sleep(seconds)
+    restarts = c / 'records' / 'supervise-restarts.log'
     log = (c / 'records' / 'supervise.log').read_text().splitlines()
-    say('check', label=label, guard_age_seconds=guard_age(root)[0], guard_ok=guard_age(root)[1]['ok'],
-        driver_before=first, driver_after=driver_state(c),
-        restarts=restarts.read_text().splitlines()[-3:] if restarts.exists() else [],
-        tracebacks=sum('Traceback' in x for x in log), last_report=(log[-1][:300] if log else None))
+    age, g = guard_age(root)
+    say('check', label=label, guard_age_seconds=age, guard_ok=g['ok'], driver_before=first,
+        driver_after=driver_state(root), restarts=restarts.read_text().splitlines()[-3:] if restarts.exists() else [],
+        tracebacks=sum('Traceback' in x for x in log), last_report=(log[-1][:240] if log else None))
+
+
+def start(env, w5, plan, extra=None):
+    _, out = swap(env, 'start_loop', w5, plan, *([extra] if extra else []))
+    pid = int(next(x for x in out if x.startswith('LOOP_PID')).split()[1])
+    STARTED.append(pid)
+    return pid
+
+
+def wait_for_guard(root, after, limit):
+    """Seconds from `after` (the loop's start) to the first GUARD written after it."""
+    while time.time() - after < limit:
+        if (root / 'GUARD.json').exists():
+            unix = json.loads((root / 'GUARD.json').read_text())['unix']
+            if unix > after:
+                return round(unix - after, 1)
+        time.sleep(0.2)
+    return None
 
 
 def main():
     old, new, scratch = (Path(p).resolve() for p in sys.argv[1:4])
+    swap_sh = Path(__file__).resolve().parent.parent / 'supervise_swap.sh'
     shutil.rmtree(scratch, ignore_errors=True)
     scratch.mkdir(parents=True)
     c = scratch / 'chains-rehearsal'
@@ -166,7 +94,6 @@ def main():
     shutil.copytree(old, t_old, ignore=shutil.ignore_patterns('__pycache__'))
     sys.path[:0] = [str(t_old / 'w5' / 'tests'), str(t_old / 'w5')]
     os.environ.update({'FAKE_CPU_STEP': '1000000', 'FAKE_CPU_STEP_X': '3000000', 'FAKE_SLEEP': '0.5'})
-    import chains
     from test_w5_chains import Node
     (c / 'oc-inputs').mkdir()
     node = Node(c / 'oc-inputs')
@@ -175,70 +102,93 @@ def main():
                                  'c2': {'arm': 'C', 'slot': 1, 'seed_root': 'oc/c2'}},
                            c_wall_seconds=10**7, independent=True, label='oc-rehearsal')
     root = Path(plan['root'])
-    say('plan', plan=str(path), root=str(root), tools=plan['tools'])
+    env = {'C': str(c), 'ROOT': str(root), 'PY': PY, 'LOOP': str(LOOP), 'PAUSE': str(PAUSE), 'SWAP': str(swap_sh)}
+    say('plan', plan=str(path), root=str(root), step_file=str(swap_sh))
     node.ledger_source('c1')
-    old_loop = start_loop(c, t_old, path, 'old')
+    old_loop = start(env, t_old / 'w5', path)
     time.sleep(LOOP + 2)
-    jsrc = root / 'state' / 'c1' / 'ledger-source.json'
     arm = plan['arms']['C']['file']['path']
     driver = subprocess.Popen([PY, str(t_old / 'w5' / 'chains.py'), '_drive', '--arm-file', arm, '--chain', 'c1',
                                '--seed-root', 'oc/c1', '--state', str(root / 'state' / 'c1'), '--ledger-source',
-                               str(jsrc)], stdout=open(c / 'records' / 'run-c1.log', 'w'), stderr=subprocess.STDOUT,
+                               str(root / 'state' / 'c1' / 'ledger-source.json')],
+                              stdout=open(c / 'records' / 'run-c1.log', 'w'), stderr=subprocess.STDOUT,
                               start_new_session=True)
     STARTED.append(driver.pid)
-    say('driver started', pid=driver.pid, tree='old')
+    say('driver started', pid=driver.pid, tree='old', old_loop=old_loop)
     watch(c, root, 'old supervisor running', 25)
-    # procedure step 1 and 2
+    # step 1: stage the tree (the old tree with the three files replaced)
     t_new = c / 'tools-mem-new'
-    stage_tree(t_old, new, t_new)
+    shutil.copytree(t_old, t_new, ignore=shutil.ignore_patterns('__pycache__'))
+    for f in ('chains.py', 'retention.py', 'replay_sample.py'):
+        shutil.copy2(new / 'w5' / f, t_new / 'w5' / f)
+    say('tree staged', diff=subprocess.run(['diff', '-rq', '-x', '__pycache__', str(t_old), str(t_new)],
+                                           capture_output=True, text=True).stdout.splitlines())
+    # step 2: the plan copy
     p2 = path.with_name('CHAINS-PLAN.supervise-new.json')
-    plan_copy(path, p2, t_new)
-    # procedure step 2a: the no-write dry cycle of the new tools against the live plan
+    swap(env, 'plan_copy', path, p2, t_new / 'w5')
+    # step 2a: the dry cycle, full and guard-only
     dry = subprocess.run([PY, '-B', str(Path(__file__).resolve().with_name('supervise_dry_cycle.py')), '--plan',
                           str(path), '--tools-src', f'{t_old}/w5', '--new-tools', f'{t_new}/w5'],
-                         capture_output=True, text=True)
-    say('dry cycle', exit=dry.returncode,
-        result=json.loads(dry.stdout) if dry.returncode == 0 and dry.stdout.strip() else dry.stderr[-1500:])
-    # procedure step 3: swap
-    stop_loop(root, old_loop, 'old')
-    age, _ = guard_age(root)
-    say('gap begins', guard_age_seconds=age, driver=driver_state(c), driver_alive=driver.poll() is None)
-    new_loop = start_loop(c, t_new, p2, 'new')
+                         capture_output=True, text=True, timeout=600)
+    result = json.loads(dry.stdout) if dry.returncode == 0 and dry.stdout.strip() else dry.stderr[-1500:]
+    say('dry cycle', exit=dry.returncode, refused=result.get('refused') if isinstance(result, dict) else result,
+        cycles=[{k: x[k] for k in ('cycle', 'mode', 'seconds', 'guard_at_seconds')} for x in result['cycles']]
+        if isinstance(result, dict) else None)
+    # step 3: stop the old loop between cycles, check the tails, start the new loop
+    swap(env, 'stop_between_cycles', path)
+    say('gap begins', guard_age_seconds=guard_age(root)[0], driver=driver_state(root),
+        driver_alive=driver.poll() is None)
+    index_file = root / 'chains' / 'c1' / 'chain.index.jsonl'
+    rows_before = index_file.read_bytes()
+    torn = rows_before.splitlines(keepends=True)[-1][:57]
+    with open(index_file, 'ab') as f:  # a supervisor killed inside an append leaves a torn last line
+        f.write(torn)
+    code, _ = swap(env, 'check_tails', check=False)
+    say('torn tail injected', check_tails_exit=code)
+    swap(env, 'cut_partial_tail', index_file)
+    swap(env, 'check_tails')
+    say('tail cut back', same_bytes_as_before=index_file.read_bytes() == rows_before)
+    t_start = time.time()
+    new_loop = start(env, t_new / 'w5', p2)
+    say('new loop: first GUARD', seconds=wait_for_guard(root, t_start, 120))
     watch(c, root, 'new supervisor, 3-minute check (scaled)', 15)
     watch(c, root, 'new supervisor, 10-minute check (scaled)', 30)
-    # forward recovery: a new supervisor that raises on every cycle (retention.plan made to raise)
-    stop_loop(root, new_loop, 'new')
+    # forward recovery: a supervisor that raises before every GUARD write
+    swap(env, 'stop_between_cycles', p2)
     t_bad = c / 'tools-mem-faulty'
     shutil.copytree(t_new, t_bad, ignore=shutil.ignore_patterns('__pycache__'))
     rpy = t_bad / 'w5' / 'retention.py'
     rpy.write_text(rpy.read_text().replace(
         'def plan(chain_path, snapshot_from=None, cache=None):\n',
-        'def plan(chain_path, snapshot_from=None, cache=None):\n    raise RuntimeError("rehearsal fault")\n', 1))
+        'def plan(chain_path, snapshot_from=None, cache=None):\n    time.sleep(6)\n'
+        '    raise RuntimeError("rehearsal fault before GUARD")\n',
+        1))
     p3 = path.with_name('CHAINS-PLAN.supervise-faulty.json')
-    plan_copy(path, p3, t_bad)
-    bad_loop = start_loop(c, t_bad, p3, 'faulty')
-    watch(c, root, 'faulty supervisor (raises every cycle)', 20)
-    os.kill(bad_loop, signal.SIGTERM)
-    for p in supervisor_python(bad_loop):
-        os.kill(p, signal.SIGTERM)
-    time.sleep(1)
-    say('faulty loop stopped', alive=pids(f'supervise --plan {p3}'))
+    swap(env, 'plan_copy', path, p3, t_bad / 'w5')
+    last_good = guard_age(root)[1]['unix']
+    start(env, t_bad / 'w5', p3)
+    watch(c, root, 'faulty supervisor (raises before every GUARD write)', 20)
+    say('faulty loop never published', guard_unchanged=guard_age(root)[1]['unix'] == last_good)
+    swap(env, 'stop_failing', p3, timeout=120)
     files_before = sorted(str(p) for p in (root / 'chains').rglob('*') if p.is_file())
-    guard_loop = start_loop(c, t_bad, p3, 'guard-only', extra='--guard-only')
+    t_start = time.time()
+    guard_loop = start(env, t_bad / 'w5', p3, '--guard-only')
+    say('guard-only: first GUARD', seconds=wait_for_guard(root, t_start, 120))
     watch(c, root, 'guard-only recovery on the faulty tree', 25)
     files_after = sorted(str(p) for p in (root / 'chains').rglob('*') if p.is_file())
     say('guard-only deleted nothing', deleted=len(set(files_before) - set(files_after)),
         added=len(set(files_after) - set(files_before)))
-    stop_loop(root, guard_loop, 'guard-only')
-    final = start_loop(c, t_new, p2, 'new again')
+    swap(env, 'stop_between_cycles', p3)
+    start(env, t_new / 'w5', p2)
     watch(c, root, 'back on the new tree', 20)
-    stop_loop(root, final, 'new again')
+    swap(env, 'stop_between_cycles', p2)
     driver.send_signal(signal.SIGTERM)
     driver.wait(30)
-    say('done', driver=driver_state(c), log_tail=(c / 'records' / 'supervise.log').read_text().splitlines()[-1][:300])
+    say('done', driver=driver_state(root), guard_loop=guard_loop, new_loop=new_loop)
 
 
 if __name__ == '__main__':
+    signal.alarm(1500)  # the rehearsal never outlives 25 minutes
     try:
         main()
     finally:  # nothing of the rehearsal outlives it

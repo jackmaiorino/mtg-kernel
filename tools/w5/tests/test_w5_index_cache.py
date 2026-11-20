@@ -765,5 +765,124 @@ class CompactRecordsTests(unittest.TestCase):
         self.assertTrue(all('state' in r for r in outputs[1][1]))
 
 
+    def test_a_checkpoint_path_rewritten_in_place_stops_the_plan(self):
+        """Boundary 64 holds /ck/A, prunable 65 also holds /ck/A, latest 66: a rewrite of 64's path to /ck/B (same
+        length, the five cached fields unchanged) is caught by the line's CRC-32 before the plan uses it; a rewrite
+        of the last line too."""
+        ck = self.t / 'ck'
+        ck.mkdir()
+        a, b = ck / 'A', ck / 'B'
+        a.write_text('a')
+        latest = ck / 'latest'
+        latest.write_text('l')
+        pin = {'path': a.as_posix(), 'sha256': '5' * 64}
+        recs = [self.record(u, segment=0) for u in range(63)]
+        recs += [self.record(63, segment=0, checkpoint=pin), self.record(64, segment=0, checkpoint=pin),
+                 self.record(65, segment=1, checkpoint={'path': latest.as_posix(), 'sha256': '6' * 64})]
+        path = self.chain(recs, segments=3, length=66)
+        index_file = retention.index_path(path)
+        data = index_file.read_bytes()
+        uncached = retention.plan(path)
+        self.assertNotIn(a.as_posix(), [i['path'] for i in uncached['checkpoints']])
+        cases = []
+        for line in (63, 65):  # boundary 64 (not the last line), boundary 66 (the last)
+            index_file.write_bytes(data)
+            cache = retention.IndexCache(path)
+            cache.refresh()
+            lines = data.splitlines(keepends=True)
+            old = a.as_posix().encode() if line == 63 else latest.as_posix().encode()
+            new = b.as_posix().encode() if line == 63 else (ck / 'latesX').as_posix().encode()
+            self.assertEqual(len(old), len(new))
+            lines[line] = lines[line].replace(old, new)
+            with open(index_file, 'r+b') as f:  # same inode, same size, same five fields
+                f.write(b''.join(lines))
+            with mock.patch.object(retention, 'apply', side_effect=AssertionError('no deletion')), \
+                    contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(retention.IndexChanged):
+                retention.plan(path, None, cache)
+            cases.append(json.loads(err.getvalue().splitlines()[-1])['boundary'])
+        self.assertEqual(cases, [64, 66])
+        self.assertTrue(a.exists())
+
+    def test_cutting_a_torn_last_line_back_is_safe(self):
+        """A supervisor killed inside an append leaves a torn last line, which index() and the cache both refuse.
+        Cut back to the previous newline, the next read finds that record again from its receipt and writes the
+        same line: the file ends as it would have."""
+        node = Node(tempfile.mkdtemp(dir=self.t))
+        with mock.patch.dict(os.environ, {'FAKE_CPU_STEP': str(STEP_C), 'FAKE_CPU_STEP_X': str(STEP_X)}), \
+                mock.patch.object(chains, 'GUARD_WAIT', 0.0), mock.patch.object(chains, 'GUARD_POLL', 0.0):
+            _, plan = node.stage0(c_wall=600.0)
+            path = plan['chains']['c1']['manifest']
+            node.guard(ceilings={'c1': 3})
+            self.assertEqual(node.drive(plan, 'c1'), chains.EXIT_ROOM)
+        index_file = retention.index_path(path)
+        retention.index(path)
+        whole = index_file.read_bytes()
+        lines = whole.splitlines(keepends=True)
+        torn = b''.join(lines[:-1]) + lines[-1][:40]
+        for read in (lambda: retention.index(path), lambda: retention.IndexCache(path).refresh()):
+            index_file.write_bytes(torn)
+            with self.assertRaises(ValueError):
+                read()
+        index_file.write_bytes(torn[:torn.rfind(b'\n') + 1])  # cut_partial_tail
+        records = retention.IndexCache(path).refresh()[1]
+        self.assertEqual(index_file.read_bytes(), whole)
+        self.assertEqual(list(records), [json.loads(x) for x in lines])
+
+    def test_a_read_only_cache_reconciles_an_outside_append(self):
+        """One written record and one found but unwritten; another writer then appends record 2 and receipt 3
+        appears: the dry cache reads [1, 2, 3], not [1, 2, 2]."""
+        segs = []
+        root = self.t / 'chain' / 'seg-00000'
+        segs.append({'config': (self.t / 'unused.json').as_posix(), 'offset': 0, 'root': root.as_posix(),
+                     'updates': 8})
+        path = jwrite(self.t / 'chain' / 'chain.json', {'schema': 'w5-chain/v1', 'chain': 'c', 'arm': 'C',
+                                                        'launched_unix': 1.0, 'segments': segs})
+
+        def receipt(i):
+            d = root / 'iterations' / f'{i:06d}'
+            (d / 'u').mkdir(parents=True)
+            ck = jwrite(d / 'u' / 'checkpoint.json', {'i': i})
+            upd = jwrite(d / 'u' / 'update.json', {'after_state_sha256': f'{i:064x}', 'checkpoint': {
+                'path': ck.as_posix(), 'sha256': retention.sha(ck)}})
+            jwrite(d / 'complete.json', {'update': {'path': upd.as_posix()},
+                                         'chain_ledger': {'usec': 1000 * (i + 1), 'unix_seconds': 5.0 + i,
+                                                          'instance': 0}})
+        receipt(0)
+        retention.index(path)  # record 1 written
+        receipt(1)
+        ro = retention.IndexCache(path, read_only=True)
+        self.assertEqual([r['boundary'] for r in ro.refresh()[1]], [1, 2])
+        self.assertEqual(len(ro.records.extra), 1)
+        full = retention.index(path)[1]  # the other writer appends record 2
+        self.assertEqual(len(full), 2)
+        receipt(2)
+        got = ro.refresh()[1]
+        self.assertEqual([r['boundary'] for r in got], [1, 2, 3])
+        self.assertEqual(list(got)[:2], full)
+        self.assertEqual(len(ro.records.extra), 1)
+        self.assertEqual(sorted(ro.active.numbers), [0, 1, 2])
+
+    def test_a_record_without_its_after_state_hash_raises_as_before(self):
+        (self.t / 'ck').mkdir()
+        recs = [self.record(u) for u in range(10)]
+        del recs[4]['after_state_sha256']
+        path = self.chain(recs, segments=3, length=10)
+        with self.assertRaises(KeyError):
+            retention.plan(path)
+        with self.assertRaises(KeyError):
+            retention.plan(path, None, retention.IndexCache(path))
+
+    def test_guard_only_refuses_plans_with_pairs_or_fillers(self):
+        node = Node(tempfile.mkdtemp(dir=self.t))
+        path, plan = node.stage0(c_wall=600.0)  # a C/X pair and a filler box
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            code = chains.main(['supervise', '--plan', str(path), '--guard-only'])
+        self.assertEqual(code, chains.w5box.EXIT_REFUSED)
+        self.assertFalse((node.root / 'GUARD.json').exists())
+        with self.assertRaises(chains.Stop):
+            chains.guard_only_allowed(dict(plan, pairs={}, independent=False))
+        chains.guard_only_allowed(dict(plan, pairs={}, independent=True))
+
+
 if __name__ == '__main__':
     unittest.main()

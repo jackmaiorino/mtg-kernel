@@ -68,6 +68,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zlib
 from array import array
 from collections.abc import Sequence
 from pathlib import Path
@@ -311,8 +312,9 @@ def stream_lines(f, start=0, chunk=1 << 20):
 
 
 def parse_bytes(data, start):
-    """(record, offset, length) for every record of index file bytes `data` read from file offset `start`."""
-    return [(json.loads(text), start + offset, length) for text, offset, length in stream_lines(io.BytesIO(data))]
+    """(record, offset, length, crc) for every record of index file bytes `data` read from file offset `start`."""
+    return [(json.loads(text), start + offset, length, zlib.crc32(text.encode('utf-8')))
+            for text, offset, length in stream_lines(io.BytesIO(data))]
 
 
 class Boundaries:
@@ -387,15 +389,16 @@ class IndexChanged(RuntimeError):
 
 
 class IndexRecords:
-    """The records of one chain index file as `IndexCache` keeps them: each record's line offset and length in the
-    file and the scalar fields that scans over every record read (`FIELDS`) in typed arrays, 56 bytes a record; a
-    whole record is parsed again from its line when it is read. A value an array cannot hold exactly (None, an
-    integer past 64 bits, a float in an integer field) or a field the record lacks (`MISSING`) is kept beside the
-    array for that record alone, so every value reads back exactly as it was parsed.
+    """The records of one chain index file as `IndexCache` keeps them: each record's line offset, length and CRC-32
+    in the file and the scalar fields that scans over every record read (`FIELDS`) in typed arrays, 60 bytes a
+    record; a whole record is parsed again from its line when it is read. A value an array cannot hold exactly
+    (None, an integer past 64 bits, a float in an integer field) or a field the record lacks (`MISSING`) is kept
+    beside the array for that record alone, so every value reads back exactly as it was parsed. Records without an
+    `after_state_sha256` are listed (`lacks_after`: `plan` raises KeyError on them as it always did).
 
-    The index is append-only. A line read again must hold the record parsed from it: its length, its one line and
-    all five cached fields are checked, and a difference raises `IndexChanged` (logged with the chain and boundary)
-    before the record is used. On POSIX the indexed file stays open, so a replacement cannot change what is read; on
+    The index is append-only. A line read again must hold the bytes parsed from it: its length and the CRC-32 of its
+    bytes (taken when the record was appended), its one line and all five cached fields are checked, and a
+    difference raises `IndexChanged` (logged with the chain and boundary) before the record is used. On POSIX the indexed file stays open, so a replacement cannot change what is read; on
     Windows, which refuses to replace an open file, it is opened for each read and must still be the indexed file.
     Records a read-only cache found but did not write are kept parsed (`extra`)."""
 
@@ -403,7 +406,8 @@ class IndexRecords:
 
     def __init__(self, path):
         self.path = Path(path)
-        self.offsets, self.lengths = array('q'), array('q')
+        self.offsets, self.lengths, self.crcs = array('q'), array('q'), array('I')
+        self.lacks_after = set()
         self.values = {name: array(code) for name, code in self.FIELDS}
         self.other = {name: {} for name, _ in self.FIELDS}  # record number to a value its array cannot hold
         self.extra = {}  # record number to a record not in the file (read-only caches)
@@ -412,10 +416,13 @@ class IndexRecords:
     def __len__(self):
         return len(self.offsets)
 
-    def append(self, rec, offset, length):
+    def append(self, rec, offset, length, crc):
         n = len(self.offsets)
         self.offsets.append(offset)
         self.lengths.append(length)
+        self.crcs.append(crc)
+        if 'after_state_sha256' not in rec:
+            self.lacks_after.add(n)
         for name, code in self.FIELDS:
             v = rec.get(name, MISSING)
             if type(v) is (int if code == 'q' else float) and (code == 'd' or -(1 << 63) <= v < 1 << 63):
@@ -427,7 +434,20 @@ class IndexRecords:
     def append_unwritten(self, rec):
         """A record a read-only cache found past the file's end (kept parsed; it is not in the file)."""
         self.extra[len(self.offsets)] = rec
-        self.append(rec, -1, -1)
+        self.append(rec, -1, -1, 0)
+
+    def drop_unwritten(self):
+        """Forgets the unwritten records (all at the end): the file may now hold them."""
+        if not self.extra:
+            return
+        n = min(self.extra)
+        for column in [self.offsets, self.lengths, self.crcs] + list(self.values.values()):
+            del column[n:]
+        for other in self.other.values():
+            for k in [k for k in other if k >= n]:
+                del other[k]
+        self.lacks_after = {k for k in self.lacks_after if k < n}
+        self.extra = {}
 
     def attach(self, ident):
         """The records index the file now at the path, whose (st_dev, st_ino) is `ident` (None: no file)."""
@@ -465,7 +485,8 @@ class IndexRecords:
         data = f.read(self.lengths[n])
         try:
             text = data.decode('utf-8')
-            rec = json.loads(text) if len(data) == self.lengths[n] and len(text.splitlines()) == 1 else None
+            rec = json.loads(text) if len(data) == self.lengths[n] and zlib.crc32(data) == self.crcs[n] and len(
+                text.splitlines()) == 1 else None
         except ValueError:
             rec = None
         bad = rec is None or not isinstance(rec, dict) or any(
@@ -636,9 +657,9 @@ class IndexCache:
     it returns the same records. A cache file that was replaced or shortened, whose last line lacks its newline, or
     that does not end at the cursor, is read whole again (streamed, as `index` reads it) instead.
 
-    The records are kept compactly (`IndexRecords`: line offsets and lengths and the scalar fields scans read) and
-    returned as an `IndexView`, which parses a record from its line when it is read, so memory grows by about 56
-    bytes a record rather than a parsed record's kilobyte or more. Each refresh reads the last cached line again: a
+    The records are kept compactly (`IndexRecords`: line offsets, lengths and CRC-32s and the scalar fields scans
+    read) and returned as an `IndexView`, which parses a record from its line when it is read, so memory grows by
+    about 60 bytes a record rather than a parsed record's kilobyte or more. Each refresh reads the last cached line again: a
     line rewritten in place raises `IndexChanged` before the cycle decides anything from it.
 
     It also keeps what `plan` and `guard` need not look at again:
@@ -665,7 +686,7 @@ class IndexCache:
                 rec = json.loads(text)
                 if 'state' not in rec:
                     return False
-                store.append(rec, offset, length)
+                store.append(rec, offset, length, zlib.crc32(text.encode('utf-8')))
         return True
 
     def _keep(self, view):
@@ -700,7 +721,7 @@ class IndexCache:
                     at = os.fstat(f.fileno()).st_size
                     f.write(b''.join(lines))
                 for rec, line in zip(new, lines):
-                    store.append(rec, at, len(line) - 1)
+                    store.append(rec, at, len(line) - 1, zlib.crc32(line[:-1]))
                     at += len(line)
             if cache.exists():
                 with open(cache, 'ab') as f:
@@ -743,8 +764,14 @@ class IndexCache:
         if written:
             self.records.check(written - 1)  # the last cached line still reads as cached
         added = parse_bytes(data, self.offset)
-        if any('state' not in r for r, _, _ in added):
+        if any('state' not in r for r, _, _, _ in added):
             return self._whole()  # index() migrates the file first
+        if self.read_only and added and self.records.extra:
+            # The file grew past records this cache found but did not write: forget them, read the file's rows,
+            # and find the rest from the receipts again (no record twice, none skipped).
+            first = min(self.records.extra)
+            self.records.drop_unwritten()
+            self.active = IndexView(self.records, array('q', (n for n in self.active.numbers if n < first)))
         chain = load_chain(self.chain_path)
         new = scan(chain, len(self.records) + len(added))
         if new and not self.read_only:
@@ -759,15 +786,15 @@ class IndexCache:
                 return self._whole()  # not the file just read (a writer outside the lock): append nothing
             at = self.offset + len(data)
             for rec, line in zip(new, lines):
-                added.append((rec, at, len(line) - 1))
+                added.append((rec, at, len(line) - 1, zlib.crc32(line[:-1])))
                 at += len(line)
             data += b''.join(lines)
         if self.records.ident is None and added:  # the file's first records
             self.records.attach(self.ident)
         self.offset += len(data)
-        for rec, offset, length in added:
+        for rec, offset, length, crc in added:
             n = len(self.records)
-            self.records.append(rec, offset, length)
+            self.records.append(rec, offset, length, crc)
             if rec['boundary'] not in self.settled:
                 self.active.numbers.append(n)
         for rec in new if self.read_only else ():
@@ -894,7 +921,13 @@ def plan(chain_path, snapshot_from=None, cache=None):
     # Each boundary's after-state hash (the last candidate of a boundary wins); `verified` asks only inside the
     # snapshot window, so only those boundaries are kept.
     after = {}
-    if snapshot_from is not None:
+    if isinstance(candidates, IndexView):
+        lacking = candidates.store.lacks_after
+        if lacking and any(n in lacking for n in candidates.numbers):
+            raise KeyError('after_state_sha256')  # as the old {boundary: after-state} over every candidate raised
+    else:
+        after = {r['boundary']: r['after_state_sha256'] for r in candidates}
+    if snapshot_from is not None and isinstance(candidates, IndexView):
         for r in candidates:
             if r['boundary'] >= snapshot_from:
                 after[r['boundary']] = r['after_state_sha256']

@@ -135,10 +135,11 @@ through `w5box.py fill`, which stops once all measured chains have ended); the b
   the index file's new lines and the receipts past them, and the rolling plan and the guard skip records whose
   full-state files are all gone and old segments whose trajectories are gone (nothing writes into a completed
   iteration again), with the same decisions as reading everything. A one-shot `supervise` reads everything. The
-  cache keeps each record's line offset and length and its scalar fields (56 bytes a record) and parses a whole
-  record from its line only when it is read, so the supervisor's memory stays small for chains of millions of
-  updates; a cached line rewritten in place stops the cycle (the index is append-only). `supervise --guard-only`
-  is a recovery mode that keeps the guard published with no retention, deletion or pair step (`cycle`).
+  cache keeps each record's line offset, length and CRC-32 and its scalar fields (60 bytes a record) and parses a
+  whole record from its line only when it is read, so the supervisor's memory stays small for chains of millions
+  of updates; a cached line rewritten in place stops the cycle (the index is append-only). `supervise
+  --guard-only` is a recovery mode for independent plans without pairs that keeps the guard published with no
+  retention, pair step or hold purge (`cycle`).
 
 **Box throughput** (`throughput`, Stage 0, COMPUTE-POLICY items 2 to 5): writes the `w5-box-throughput/v1` record
 w5box's guard requires for one arm of a plan. Each phase (default: one box, then every box of the layout) is a
@@ -2639,12 +2640,14 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None, guar
     throughput command) starts no fillers. `counter` (a `retention.ByteCounter`, kept across cycles too) gives the
     guard's used bytes without walking finished segments again; every deletion here is reported to it.
 
-    `guard_only` (`supervise --guard-only`, a recovery mode) keeps the chains admitted and nothing else: it closes
-    dead supervisors' instances and records OOM ends, refreshes every index (appending rows), records looks, kills
-    ended chains, releases ended chains' boxes (independent plans), and publishes GUARD.json and SUPERVISE.json. It
-    makes no pair decision, snapshot or selection, stages no replay sample, runs no rolling retention and purges
-    no hold folder (nothing is deleted), and starts no filler. Without retention the used bytes only grow, so the
-    guard refuses admission once the cap is reached."""
+    `guard_only` (`supervise --guard-only`, a recovery mode for independent plans without pairs) keeps the chains
+    admitted: it refreshes every index (appending rows), records looks, and publishes GUARD.json and SUPERVISE.json.
+    It still runs the cycle's safety steps, which can act on processes and files: `w5box.py recover` for a chain
+    whose w5box supervisor died (it stops a running instance), OOM ends (END.json, and for a box with no driver
+    left the unmount and removal of its unpersisted scratch segment), kill requests for ended chains, and the
+    release of ended chains' boxes. It makes no pair decision, snapshot or selection, stages no replay sample, runs
+    no rolling retention and purges no hold folder, and starts no filler. Without retention the used bytes only
+    grow, so the guard refuses admission once the cap is reached."""
     now = time.time() if now is None else now
     root = Path(plan['root'])
     names = {n for n, c in plan['chains'].items() if c['arm'] in MEASURED}
@@ -2747,8 +2750,17 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None, guar
     return report
 
 
+def guard_only_allowed(plan):
+    """`supervise --guard-only` runs only for an independent plan without pairs: it makes no pair decision or
+    resume and starts no filler, which a pair plan or a plan with fillers would wait on."""
+    require(not plan['pairs'], '--guard-only refuses a plan with pairs (it makes no pair decision or resume)')
+    require(plan.get('independent'), '--guard-only refuses a plan with filler boxes (it starts no filler)')
+
+
 def supervise(a):
     plan = load_plan(a.plan)
+    if getattr(a, 'guard_only', False):
+        guard_only_allowed(plan)
     root = Path(plan['root'])
     held = lock(root / 'SUPERVISE.lock')
     require(held is not None, 'another supervise holds this node')
