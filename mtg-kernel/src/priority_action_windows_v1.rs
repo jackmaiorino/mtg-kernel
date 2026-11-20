@@ -444,7 +444,13 @@ mod tests {
     #[test]
     fn the_end_step_rule_offers_the_opponents_end_step_only() {
         let fixture = |step: Step, active: PlayerId| {
-            let mut state = game();
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[],
+                &[],
+                |c| format!("card-{c}"),
+                1,
+                active,
+            );
             put(&mut state, PlayerId::P0, "Lightning Bolt", Zone::Hand);
             put(&mut state, PlayerId::P0, "Mountain", Zone::Battlefield);
             at(&mut state, step, active, PlayerId::P0);
