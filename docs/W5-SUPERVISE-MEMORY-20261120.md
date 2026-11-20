@@ -1,4 +1,4 @@
-# W5 supervise index memory (2026-11-20, review round 5)
+# W5 supervise index memory (2026-11-20, review round 6)
 
 ## Problem
 
@@ -48,6 +48,28 @@ a restart on that code needs about 16 GB.
 - `supervise --guard-only` (recovery mode, below) and `IndexCache(read_only=True)` (the dry cycle) are new. A
   read-only cache keeps receipts past the file's end in memory and forgets them when the file grows, so an outside
   append gives no duplicate and no gap; its cursor is the end of what it read.
+
+## Review round 5 findings (GPT-6 Astra, DEPLOY WITH CHANGES, 95; Gemini 4 Carbon, DEPLOY WITH CHANGES, 94) and their disposition
+
+Round 6 changed only `supervise_swap.py`, `supervise_swap.sh`, their tests, the rehearsal and this record (node line
+commits c33072661 and 9afddf945; the main branch carries the same four files). chains.py (c2a2fbea...),
+retention.py (b2d6c17a...) and replay_sample.py (15ed4a80...) keep their round 4 hashes, so the node1 dry cycles
+and the old-against-new equivalence stand.
+
+| # | Finding | Fixed | Test |
+|---|---|---|---|
+| 1, Carbon a | `after_stop` failed when GUARD.json was missing or unreadable; `stop_failing` dead-ended on a plan whose processes had already gone | `after_stop` prints `GID=unknown` with the post-stop time, and the watch accepts it (SUCCESS then needs a GUARD written after T0, any id); `stop_failing` finding nothing prints `verified empty: nothing runs PLAN` and exits 0, so the sequence goes on with `after_stop`, `check_tails`, `start_loop`; it still exits 1 if anything is left after its stop | `test_an_unknown_guard_baseline_needs_a_guard_written_after_t0`, `test_start_loop_refuses_a_running_plan_and_stop_failing_finds_an_idle_one_verified_empty` |
+| 2, Carbon c | an exited driver vanished from the watch (and could turn DEADLINE into SUCCESS or an endless WAIT) | a chain whose last driver event is `no-room`, `run-exit`, `stop`, `segment-failed`, `recover-unsupervised` or `w5box-kill` (the names chains.py logs; `w5box-kill` is `request`'s event) shows `exited, needs run (event at unix)` every round in both modes until a later `run` (or `segment`); with a usable GUARD the verdict is RESUME NEEDED (exit 4, the chains named), never plain SUCCESS; in recovery mode a failure while a chain is exited ends the watch with FAILURE, RESUME NEEDED (exit 5) | `test_an_exited_driver_needs_run_and_blocks_plain_success`, `test_a_wait_closed_by_recover_unsupervised_needs_run`, `test_segment_failed_and_w5box_kill_close_a_driver`, `test_recovery_ends_on_a_failure_while_a_driver_has_exited` |
+| 3 | one baseline for several starts | `after_stop` runs after every completed stop and prints `T0=<float> GID=<id or unknown> LOG=<bytes> RESTARTS=<bytes>`; each `watch_swap PLAN "$B"` takes the baseline of the stop before its start and counts failures from those offsets (a failure inside `start_loop`, before the first watch round, counts); the rehearsal records a baseline after every stop and watches after every start | `test_a_failure_inside_start_loop_is_seen_through_the_baseline_offsets`, `test_a_full_mode_guard_before_the_failure_gives_recovery_no_instant_success`, `test_after_stop_records_t0_the_guard_id_and_the_log_offsets`; rehearsal |
+| 4, Carbon b, e | procedure text did not execute as written (the INCOMPLETE branch had no GID line) | every branch assigns `B=$(bash $S after_stop)` and passes `"$B"` quoted; the replacement resume script (step 6) sets and exports C, ROOT, PY and sets T, P, N, S, P2 at its top, and is shown in full; an exited chain's full old-tree `run` command, in the resume script's shape, run only once a supervisor publishes | (procedure text, checked against the step file's argument order) |
+| Carbon d | `live_chains` globbed every folder under chains/ | live chains are the plan's chains without END.json (`watch_swap` takes the plan); a leftover folder does not block SUCCESS | `test_live_chains_are_the_plans_chains_without_end` |
+| small | SENT set before the helper ran; the first log read was one read | SENT is 1 only when the helper's `SIGNALLED` list is non-empty, `unknown` when its output cannot be read (STOP UNCERTAIN); LOG.jsonl is streamed line by line from the first read | `test_sent_is_what_the_helper_reports_it_signalled`, `test_the_first_read_streams_lines` |
+
+Documented limits (items 8 and 9, unchanged): `check_tails` and `cut_partial_tail` split the last line on LF only,
+so they serve LF-terminated indexes (what `index_locked` writes; node1's are LF only); a CR inside the last line is
+not reported. `check_tails` takes each chain's index lock and so waits while a writer holds it (a hung lock holder
+stalls the step; it prints nothing until it gets the lock). The rehearsal now also cleans up its processes on an
+alarm or a TERM.
 
 ## Review round 4 findings (GPT-6 Astra, head e86223129, DEPLOY WITH CHANGES) and their disposition
 
@@ -198,20 +220,28 @@ Expected timeline of the swap (dry-cycle speeds, observations): the new loop sta
 its first GUARD about 900 s after the stop. Drivers reach their ceilings from about 509 s after the last census and
 wait (each live chain idles about 6 to 7 minutes).
 
-The deadline rule (read off the host by `supervise_swap.sh watch_swap`, which prints every 30 s):
-- before the stop: each live chain's admitted count against its GUARD ceiling (how many more segments it may start);
-- success: a GUARD.json whose `id` differs from the id recorded right after the stop (`after_stop`, which also
-  records T0 as a float from the same clock read; ids are nanosecond times, so the old supervisor's last
-  publication can never pass), `ok` true, younger than `GUARD_MAX_AGE` (900 s), a ceiling above the admitted count
-  for every live chain, and no failure since the watch began: a Traceback in supervise.log, or a line in
-  supervise-restarts.log (the loop logs every supervisor exit, a refusal that prints `stop:` or `refused:` and no
-  Traceback included); a failure is printed with any verdict, naming which it was;
-- a chain's open wait: its latest `guard-wait` in LOG.jsonl not followed by its `segment`, `no-room`, `stop` or
-  `end` (logged by its driver, chains.py `drive_locked`) or `run-exit` or `run` (logged by `run`), whenever it began (before the stop included: a driver logs it once); a chain with no such
-  event, or a LOG.jsonl that cannot be read, is printed as unknown, never as "not waiting";
+The deadline rule (read off the host by `supervise_swap.sh watch_swap PLAN "$B"`, which prints every 30 s):
+- the baseline `$B`: `after_stop` runs after every completed stop and prints one line, `T0=<float> GID=<GUARD id or
+  unknown> LOG=<supervise.log bytes> RESTARTS=<supervise-restarts.log bytes>`, from one clock read; each watch
+  takes the baseline of the stop before its start;
+- live chains: the plan's chains without END.json; for each, the admitted count against its GUARD ceiling (how
+  many more segments it may start) and its driver state;
+- success: a GUARD.json written after T0 whose `id` differs from GID (any id when GID is `unknown`, which
+  `after_stop` prints when GUARD.json is missing or unreadable; ids are nanosecond times, so the old supervisor's
+  last publication can never pass), `ok` true, younger than `GUARD_MAX_AGE` (900 s), a ceiling above the admitted
+  count for every live chain, no failure after the baseline's offsets (a Traceback in supervise.log, or a line in
+  supervise-restarts.log: the loop logs every supervisor exit, a refusal that prints `stop:` or `refused:` and no
+  Traceback included; a failure inside `start_loop`, before the first round, counts), and every live chain running
+  or waiting; a failure is printed with any verdict, naming which it was;
+- a driver's state from its last driver event in LOG.jsonl, whenever it was logged (before the stop included):
+  `guard-wait` waiting (a driver logs it once); `segment` or `run` running; `no-room`, `run-exit`, `stop`,
+  `segment-failed`, `recover-unsupervised` or `w5box-kill` exited: printed `exited, needs run` every round, in both
+  modes, until a later `run`; with a usable GUARD the verdict is then RESUME NEEDED (exit 4, the chains named),
+  never plain SUCCESS; a chain with no such event, or a LOG.jsonl that cannot be read, is printed as unknown;
 - the hard exit of a waiting chain: its wait start plus 1800 s; swap mode escalates (exit 2) at the earliest open
   wait plus 1800 s minus the measured guard-only start (723 s) minus 300 s, or at once on a failure; recovery mode
-  (after guard-only is started) never escalates and ends with SUCCESS or DEADLINE (the earliest hard exit passed).
+  (after guard-only is started) never escalates and ends with SUCCESS, RESUME NEEDED, DEADLINE (exit 3: the
+  earliest hard exit passed) or FAILURE, RESUME NEEDED (exit 5: a failure while a chain's driver has exited).
 - GUARD.json, ADMITTED.json and LOG.jsonl are read tolerantly: a file that does not parse is printed as unknown and
   read again on the next round; a LOG.jsonl line still being written is read once it is complete.
 
@@ -241,6 +271,8 @@ Unit tests (this PC, Python 3.14, 2 host-slot cores):
 | node line e86223129, WSL Ubuntu, Python 3.10.12 | supervise_swap (with the real-process test) | 14 | 0 | 0 |
 | round 5 (a3ff9cb57 and 65115bb99, identical test files) | supervise_swap, this PC | 26 | 0 | 5 (Linux only) |
 | round 5, node line 65115bb99, WSL Ubuntu, Python 3.10.12 | supervise_swap (real processes, pidfd, the step file) | 26 | 0 | 0 |
+| round 6 (main and node line 9afddf945, identical test files) | supervise_swap, this PC | 36 | 0 | 6 (Linux only) |
+| round 6, both lines, WSL Ubuntu, Python 3.10.12 | supervise_swap (real processes, pidfd, the step file) | 36 | 0 | 0 |
 
 New in round 3 (`CompactRecordsTests`): `test_a_checkpoint_path_rewritten_in_place_stops_the_plan`,
 `test_cutting_a_torn_last_line_back_is_safe`, `test_a_read_only_cache_reconciles_an_outside_append`,
@@ -302,13 +334,13 @@ recorded identity changes.
 
 ### Pins
 
-Branch `claude/w5-supervise-index-memory-eb005f0`, commit 65115bb99 (parent eb005f097). sha256:
+Branch `claude/w5-supervise-index-memory-eb005f0`, commit 9afddf945 (parent eb005f097). sha256:
 
     chains.py          c2a2fbeab90a51c50f04d0040e3258af96eda80a485c5d507e8aad3821cde3d6   (round 4, unchanged)
     retention.py       b2d6c17ad91e792645006fe31a3f3f3eb56b87eaa08793cc86e95bff553566cb   (round 4, unchanged)
     replay_sample.py   15ed4a801c696b64468d1e3d71b4e972950c3072591a26a598e46633fbe51b2a   (unchanged)
-    supervise_swap.sh  30ab6974ee5cb661aa7aad7ac1adda135bb4b101608539475e076ddde743cc6a   (step file; not a pinned tool)
-    supervise_swap.py  47b263da760b25dcfaf46d7d801244bc0b6fae7b039c8efeb31326910d1de59a   (step helpers; not pinned)
+    supervise_swap.sh  bd268aa4920d0eb62f6e4576a63cf84ee04b2fce1907d8b9ac2d21cf8ddaa9e6   (step file; not a pinned tool)
+    supervise_swap.py  a2eb3474e3ec665ef79a1b772f596ac9dd0a9d5f71bd2db8f611f107bdf00130   (step helpers; not pinned)
 
 ### Procedure (as root, `sudo -i`; times Eastern)
 
@@ -316,24 +348,29 @@ The steps are functions of one file, `tools/w5/supervise_swap.sh` (its helpers i
 which the rehearsal runs as written. Both are staged into the new tree (step 1); neither is a pinned tool. A plan
 path given to a step must be spelled exactly as in the running process's argv (no relative form, no symlink
 alias): node1's supervisor runs `--plan /srv/work/chains-20261107/oc/plan/oc-node1/CHAINS-PLAN.json`.
-Environment for every step:
+Environment for every step (one root shell; the resume script in step 6 sets its own):
 
         C=/srv/work/chains-20261107; ROOT=$C/oc; PY=/usr/bin/python3.11; export C ROOT PY
-        P=$ROOT/plan/oc-node1/CHAINS-PLAN.json; N=$C/tools-mem-65115bb99; S=$N/tools/w5/supervise_swap.sh
-        P2=$ROOT/plan/oc-node1/CHAINS-PLAN.supervise-65115bb99.json
+        P=$ROOT/plan/oc-node1/CHAINS-PLAN.json; N=$C/tools-mem-9afddf945; S=$N/tools/w5/supervise_swap.sh
+        P2=$ROOT/plan/oc-node1/CHAINS-PLAN.supervise-9afddf945.json
+
+Argument order (as the step file reads them): `stop_between_cycles PLAN`, `stop_failing PLAN`, `after_stop` (no
+arguments; prints the baseline line), `check_tails`, `cut_partial_tail INDEX`, `start_loop W5 PLAN [--guard-only]`,
+`watch_swap PLAN "BASELINE" [swap|recovery] [EVERY] [ROUNDS]`. The baseline is always passed quoted (`"$B"`): it is
+one line with four fields.
 
 0. State: `ps -o pid,ppid,rss,etimes,args -p 1568722,1568730` (loop bash and python, RSS about 10.3 GB),
    `readlink /proc/1568730/exe` (/usr/bin/python3.11), `free -g`.
 
 1. Stage the tree. From Jack's PC:
 
-        git -C D:/w5-supervise-mem-20261120-eb005f0 archive 65115bb99 tools/w5/chains.py tools/w5/retention.py tools/w5/replay_sample.py tools/w5/supervise_swap.sh tools/w5/supervise_swap.py | ssh mtg@10.0.0.36 'mkdir /tmp/mem-65115bb99 && tar -x -C /tmp/mem-65115bb99'
+        git -C D:/w5-supervise-mem-20261120-eb005f0 archive 9afddf945 tools/w5/chains.py tools/w5/retention.py tools/w5/replay_sample.py tools/w5/supervise_swap.sh tools/w5/supervise_swap.py | ssh mtg@10.0.0.36 'mkdir /tmp/mem-9afddf945 && tar -x -C /tmp/mem-9afddf945'
 
    On node1:
 
         mkdir $N && cp -a $C/tools-src/tools $N/tools && find $N/tools -name __pycache__ -prune -exec rm -r {} +
-        install -o root -g root -m 644 /tmp/mem-65115bb99/tools/w5/{chains,retention,replay_sample,supervise_swap}.py $N/tools/w5/
-        install -o root -g root -m 755 /tmp/mem-65115bb99/tools/w5/supervise_swap.sh $N/tools/w5/
+        install -o root -g root -m 644 /tmp/mem-9afddf945/tools/w5/{chains,retention,replay_sample,supervise_swap}.py $N/tools/w5/
+        install -o root -g root -m 755 /tmp/mem-9afddf945/tools/w5/supervise_swap.sh $N/tools/w5/
         sha256sum $N/tools/w5/{chains,retention,replay_sample}.py $N/tools/w5/supervise_swap.{sh,py}   # the pins
         diff -rq -x __pycache__ $C/tools-src/tools $N/tools   # the three changed files and the two step files only
         bash $S pids $P                          # exactly: LOOP_PIDS 1568722 ; PYTHON_PIDS 1568730
@@ -356,58 +393,98 @@ Environment for every step:
 3. Swap:
 
         bash $S pids $P                          # exactly: LOOP_PIDS 1568722 ; PYTHON_PIDS 1568730; else stop here
-        bash $S watch_swap $(bash $S guard_id) swap 30 1   # one line: admitted, ceiling, open wait per live chain
+        bash $S watch_swap $P "$(bash $S after_stop)" swap 30 1   # a look before the stop (its baseline is now):
+                                                 # one line, admitted, ceiling and driver state per live chain
         bash $S stop_between_cycles $P           # needs exactly one loop and one supervisor (read again each try);
                                                  # waits for a cycle's end; asleep (state S before and after 2 s, the
                                                  # same CPU ticks, report 0 to 55 s old) on the very pids it then
                                                  # signals, each through a pidfd with its argv checked after the pidfd
                                                  # opens; "nothing left" is a fresh scan of $P (what is still found
                                                  # after 20 s gets SIGKILL, then one more round)
-        bash $S after_stop                       # T0=<float> GID=<id>: one clock read and the GUARD id after the
-                                                 # stop; record both (success needs a GUARD id other than GID)
-        GID=<the GID it printed>
+        B=$(bash $S after_stop); echo "$B"       # the baseline of this stop: record the line
         bash $S check_tails                      # every index's last line parses (each read under its index lock)
         # only for an index check_tails names `torn`:  bash $S cut_partial_tail <that index>; bash $S check_tails
         bash $S start_loop $N/tools/w5 $P2       # refuses if $P2 already runs or a tail is torn; prints LOOP_PID
-        bash $S watch_swap $GID swap             # every 30 s until SUCCESS (exit 0) or ESCALATE (exit 2)
+        bash $S watch_swap $P2 "$B" swap         # every 30 s until SUCCESS (0), RESUME NEEDED (4) or ESCALATE (2)
 
    If `stop_between_cycles` fails, its last line says which case it is. `STOP REFUSED: nothing signalled, nothing
    changed`: the old supervisor still runs; investigate, and retry the step or abandon the swap. `STOP INCOMPLETE:
-   signals were sent`: do exactly
+   signals were sent` or `STOP UNCERTAIN: the signal helper's result could not be read`: do exactly
 
-        bash $S stop_failing $P                  # rescans $P, finishes the stop (pidfd, argv checked), verifies
-        bash $S after_stop                       # record T0 and GID as above
+        bash $S pids $P                          # what still runs (for the record)
+        bash $S stop_failing $P                  # rescans $P and finishes the stop (pidfd, argv checked), or prints
+                                                 # "verified empty: nothing runs $P" (exit 0); exit 1: something is
+                                                 # left: stop here
+        B=$(bash $S after_stop); echo "$B"       # the baseline of this stop
         bash $S check_tails                      # cut_partial_tail a torn index, then check_tails again
         bash $S start_loop $N/tools/w5 $P2
-        bash $S watch_swap $GID swap
+        bash $S watch_swap $P2 "$B" swap
 
    The loop logs each exit with its real code (`rc=$?` first; the current loop's `echo "$(date -Is) ... $?"`
    always logs 0, because `$(date)` runs before `$?` is expanded).
 
 4. While `watch_swap` waits: `bash $S pids $P2` (one loop, one python), RSS under 1 GB, the three drivers
-   3867287..9 alive.
+   3867287..9 alive. Every round shows each live chain's driver: running, waiting since, or `exited, needs run`.
 
 5. On SUCCESS: a report line in supervise.log with `"ok": true`, `used_bytes` within a few GB of step 0,
    `recovered`, `kills`, `oom_failures` empty; RSS steady (0.7 to 0.9 GB) across two readings; index files growing.
-   On ESCALATE (a Traceback, or the escalation time of the deadline rule reached): the recovery below.
+   On RESUME NEEDED: the new supervisor publishes and the named chains' drivers have exited; start each with the
+   exited-chain command below, then `bash $S watch_swap $P2 "$B" swap` again until SUCCESS. On ESCALATE (a
+   failure, or the escalation time of the deadline rule reached): the recovery below.
 
-6. Record: copy `resume-node1.sh` to `resume-node1-mem.sh`, its supervise line replaced by
-   `bash $S start_loop $N/tools/w5 $P2` (with `$S` the root-owned copy in the new tree, which refuses a plan that
-   already runs) and its pgrep check removed; the chain `run` lines keep the old tree and `$P`. Do not run the old
-   `resume-node1.sh` after the swap.
+   Exited chain (old tree and plan, as `resume-node1.sh` starts it; replace `cN` by the chain the watch names, for
+   example c2). Run it only once a supervisor is publishing (the watch shows RESUME NEEDED, or SUCCESS before the
+   driver exited); a driver started without a usable GUARD only waits and exits again 1800 s later:
+
+        cd /srv/work/chains-20261107 && setsid nohup python3 /srv/work/chains-20261107/tools-src/tools/w5/chains.py run --plan /srv/work/chains-20261107/oc/plan/oc-node1/CHAINS-PLAN.json --chain cN >> records/run-cN.log 2>&1 < /dev/null &
+
+6. Record: write `$C/resume-node1-mem.sh` with exactly this text (it replaces `resume-node1.sh`, which must not be
+   run after the swap: its supervise line would start the old loop). It runs from a fresh root shell
+   (`bash /srv/work/chains-20261107/resume-node1-mem.sh`):
+
+        #!/bin/bash
+        # chains-20261107 node1 after the supervise memory swap: (re)start supervise (new tree, its plan copy) and the
+        # 6 chains (old tree and plan) after a stop (run as root). Chains resume at their last persisted segment end;
+        # an unfinished scratch segment is discarded and rerun (deterministic).
+        set -u
+        C=/srv/work/chains-20261107; ROOT=$C/oc; PY=/usr/bin/python3.11; export C ROOT PY
+        T=$C/tools-src/tools/w5; P=$ROOT/plan/oc-node1/CHAINS-PLAN.json
+        N=$C/tools-mem-9afddf945; S=$N/tools/w5/supervise_swap.sh
+        P2=$ROOT/plan/oc-node1/CHAINS-PLAN.supervise-9afddf945.json
+        cd $C || exit 1
+        [ -e $ROOT/STOP ] && { echo "remove oc/STOP first"; exit 1; }
+        [ "$(bash $S pids $P)" = "LOOP_PIDS ; PYTHON_PIDS" ] || { echo "the old supervisor runs: $(bash $S pids $P)"; exit 1; }
+        B=$(bash $S after_stop) || exit 1
+        echo "baseline: $B"
+        bash $S start_loop $N/tools/w5 $P2 || { echo "supervise not started"; exit 1; }
+        for i in 1 2 3 4 5 6; do
+          setsid nohup python3 $T/chains.py run --plan $P --chain c$i >> records/run-c$i.log 2>&1 < /dev/null &
+        done
+        echo "resumed $(date -Is); watch: bash $S watch_swap $P2 \"$B\" swap"
+
+   `start_loop` refuses a plan that already runs and a torn index tail (`check_tails` first). As in
+   `resume-node1.sh`, the chains start at once and wait for the new supervisor's first GUARD (about 900 s on a
+   fresh start, inside their 1800 s wait); ended chains (c4..c6) return at once (`ended-already`). The printed
+   watch line runs from a root shell with the step 3 environment set.
 
 ### Forward recovery: the new supervisor fails before publishing (rehearsed)
 
-        bash $S stop_failing $P2                 # bounded: loop, then supervisor, SIGKILL after 20 s, verified
+        bash $S stop_failing $P2                 # bounded: loop, then supervisor, SIGKILL after 20 s, verified;
+                                                 # "verified empty" (exit 0) if it had already gone; exit 1: stop here
+        B=$(bash $S after_stop); echo "$B"       # the baseline of this stop: a GUARD the failed loop wrote is old now
         bash $S check_tails                      # always, after any stop: a killed supervisor may have torn a line
         # only for an index check_tails names `torn`:  bash $S cut_partial_tail <that index>; bash $S check_tails
         bash $S start_loop $N/tools/w5 $P2 --guard-only   # refuses while a tail is torn
-        bash $S watch_swap $GID recovery         # no escalation: SUCCESS (0), or DEADLINE (3) once the earliest open
-                                                 # guard wait + 1800 s has passed (a driver has exited)
+        bash $S watch_swap $P2 "$B" recovery     # never escalates: SUCCESS (0), RESUME NEEDED (4), DEADLINE (3) once
+                                                 # the earliest open guard wait + 1800 s has passed, or FAILURE,
+                                                 # RESUME NEEDED (5): a failure while a driver has exited
 
-The recovery watch keeps `$GID` (the id recorded after the stop), so guard-only's first GUARD counts as success,
-and it never escalates again: following the recovery text does not stop guard-only before it publishes. On
-DEADLINE the exited chains are restarted with `chains.py run --plan $P --chain cN` once a supervisor publishes.
+The recovery watch takes the baseline of the `stop_failing` before guard-only's start, so guard-only's first GUARD
+counts as success and a GUARD the failed loop wrote before its failure does not; it never escalates, so following
+the recovery text does not stop guard-only before it publishes. On RESUME NEEDED start the named chains with the
+exited-chain command (step 5) and watch again until SUCCESS. On DEADLINE run `bash $S watch_swap $P2 "$B" recovery`
+again a minute later (the driver logs `no-room` at its next 30 s poll): the chain whose wait ran out shows `exited, needs run` and the watch ends with RESUME NEEDED once guard-only
+publishes. On FAILURE, RESUME NEEDED guard-only fails too: see the end of the next paragraph.
 
 `--guard-only` (refused, at every cycle, for a plan with pairs, a plan that is not independent, or any filler
 chain) refreshes every index (appending rows), records looks, and publishes GUARD.json and SUPERVISE.json
@@ -428,54 +505,66 @@ Going back to the old code is not safe on node1: its fresh start parses every re
 
 | t (s) | step | result |
 |---|---|---|
-| 2.8 | `start_loop` | exit 0: started: loop 30455 LOOP_PIDS 30455 ; PYTHON_PIDS 30612 / LOOP_PID 30455 |
-| 16.9 | driver started | pid 459 (old tree) |
-| 41.9 | check: old supervisor running | GUARD age 4.9 s; segments 0 -> 8, rows contiguous True; tracebacks 0 |
-| 42.1 | `plan_copy` | exit 0: ['chains.py', 'replay_sample.py', 'retention.py'] / ok |
-| 42.4 | dry cycle | exit 0, refused [], modes ['full', 'full', 'guard-only'] |
-| 42.7 | `watch_swap` | exit 1: WAIT; failure []; first driver exit in 1790.8 s; escalate in 767.8 |
-| 54.1 | `stop_between_cycles` | exit 0: signal 15: SIGNALLED 30612 ; REFUSED / stopped: /tmp/w5-swap-rehearsal/chains-rehearsal/oc/plan/oc-rehearsal/CHAINS-PLAN.json (run check_tails before any start) |
-| 54.2 | `after_stop` | exit 0: T0=1795213300.191469 GID=1795213295004416982 |
-| 54.2 | gap begins | GUARD age 5.2 s, driver alive True |
+| 2.8 | `start_loop` | exit 0: started: loop 17183 LOOP_PIDS 17183 ; PYTHON_PIDS 17185 / LOOP_PID 17183 |
+| 16.8 | driver started | pid 20849; tree old; old_loop 17183 |
+| 41.8 | check: old supervisor running | GUARD age 4.9 s; segments 0 -> 8, rows contiguous True; tracebacks 0 |
+| 41.9 | tree staged | diff: chains.py, replay_sample.py, retention.py only |
+| 42.0 | `plan_copy` | exit 0: ['chains.py', 'replay_sample.py', 'retention.py'] / ok |
+| 42.3 | dry cycle | exit 0, refused [], modes ['full', 'full', 'guard-only'] |
+| 42.4 | `after_stop` | exit 0: T0=1795214987.777028 GID=1795214982324137314 LOG=1158 RESTARTS=0 |
+| 42.6 | `watch_swap` | exit 1: WAIT; drivers c1 waiting since 1795214978.595, c2 unknown (no driver event for this chain) |
+| 54.2 | `stop_between_cycles` | exit 0: signal 15: SIGNALLED 17185 ; REFUSED / stopped: /tmp/w5-swap-rehearsal/chains-rehearsal/oc/plan/oc-rehearsal/CHAINS-PLAN.json (next: after_stop, check_tails, start_loop) |
+| 54.2 | `after_stop` | exit 0: T0=1795214999.605816 GID=1795214994350733232 LOG=1461 RESTARTS=0 |
+| 54.2 | gap begins | guard_age_seconds 5.3; driver {'admitted': 8, 'index_rows': 32, 'boundaries_contiguous': True, 'segments': 8}; driver_alive True |
 | 54.3 | `check_tails` | exit 1: torn /tmp/w5-swap-rehearsal/chains-rehearsal/oc/chains/c1/chain.index.jsonl |
-| 54.3 | torn tail injected | check_tails exit 1 |
-| 54.4 | `start_loop` | exit 1: torn /tmp/w5-swap-rehearsal/chains-rehearsal/oc/chains/c1/chain.index.jsonl / an index's last line does not parse: cut_partial_tail it first |
+| 54.3 | torn tail injected | check_tails_exit 1 |
+| 54.5 | `start_loop` | exit 1: torn /tmp/w5-swap-rehearsal/chains-rehearsal/oc/chains/c1/chain.index.jsonl / an index's last line does not parse: cut_partial_tail it first |
 | 54.5 | `pids` | exit 0: LOOP_PIDS ; PYTHON_PIDS |
-| 54.5 | start_loop refuses a torn tail | exit 1, LOOP_PIDS ; PYTHON_PIDS |
-| 54.6 | `cut_partial_tail` | exit 0: cut /tmp/w5-swap-rehearsal/chains-rehearsal/oc/chains/c1/chain.index.jsonl from 14931 to 14874 bytes; the 57 cut bytes are in /tmp/w5-swap-rehearsal/chains-rehearsal/records/torn-tail-c1-20261120T172140.bin |
+| 54.5 | start_loop refuses a torn tail | exit 1; loops ['LOOP_PIDS ; PYTHON_PIDS'] |
+| 54.6 | `cut_partial_tail` | exit 0: cut /tmp/w5-swap-rehearsal/chains-rehearsal/oc/chains/c1/chain.index.jsonl from 14935 to 14878 bytes; the 57 cut bytes are in /tmp/w5-swap-rehearsal/chains-rehearsal/records/torn-tail-c1-20261120T174959.bin |
 | 54.7 | `check_tails` | exit 0: ok /tmp/w5-swap-rehearsal/chains-rehearsal/oc/chains/c1/chain.index.jsonl |
-| 54.7 | tail cut back | same bytes as before the tear True, cut bytes saved [True] |
-| 57.0 | `start_loop` | exit 0: started: loop 7556 LOOP_PIDS 7556 ; PYTHON_PIDS 7558 / LOOP_PID 7556 |
-| 57.0 | watch_swap during the swap | exit 0, SUCCESS; failure []; first driver exit in 1777.6 s; escalate in 754.6 |
-| 72.0 | check: new supervisor, 3-minute check (scaled) | GUARD age 4.9 s; segments 8 -> 13, rows contiguous True; tracebacks 0 |
-| 102.0 | check: new supervisor, 10-minute check (scaled) | GUARD age 10.8 s; segments 13 -> 14, rows contiguous True; tracebacks 0 |
-| 108.4 | `stop_between_cycles` | exit 0: signal 15: SIGNALLED 7558 ; REFUSED / stopped: /tmp/w5-swap-rehearsal/chains-rehearsal/oc/plan/oc-rehearsal/CHAINS-PLAN.supervise-new.json (run check_tails before any start) |
-| 108.6 | `plan_copy` | exit 0: ['chains.py', 'replay_sample.py', 'retention.py'] / ok |
-| 108.6 | `after_stop` | exit 0: T0=1795213354.665660 GID=1795213349208818874 |
-| 110.9 | `start_loop` | exit 0: started: loop 17488 LOOP_PIDS 17488 ; PYTHON_PIDS 17490 / LOOP_PID 17488 |
-| 130.9 | check: faulty supervisor (raises before every GUARD write) | GUARD age 27.7 s; segments 17 -> 18, rows contiguous True; tracebacks 2 |
-| 130.9 | faulty loop never published | GUARD unchanged True |
-| 130.9 | watch_swap on the faulty loop | exit 2, ESCALATE; failure ['Traceback in supervise.log', "supervisor exits: ['2026-11-20T17:22:41-05:00 supervise exited 1']"]; first driver exit in 1798.4 s; escalate in 775.4 |
-| 131.1 | `stop_failing` | exit 0: signal 15: SIGNALLED 20935 ; REFUSED / stopped: /tmp/w5-swap-rehearsal/chains-rehearsal/oc/plan/oc-rehearsal/CHAINS-PLAN.supervise-faulty.json (run check_tails before any start) |
-| 131.2 | `check_tails` | exit 0: ok /tmp/w5-swap-rehearsal/chains-rehearsal/oc/chains/c1/chain.index.jsonl |
-| 133.5 | `start_loop` | exit 0: started: loop 22347 LOOP_PIDS 22347 ; PYTHON_PIDS 22349 / LOOP_PID 22347 |
-| 133.5 | watch_swap recovery mode after guard-only | exit 0, SUCCESS; failure []; first driver exit in 1781.8 s; escalate in None |
-| 158.5 | check: guard-only recovery on the faulty tree | GUARD age 2.9 s; segments 18 -> 22, rows contiguous True; tracebacks 2 |
-| 158.5 | guard-only deletions | deleted 0, added 88 |
-| 172.9 | `stop_between_cycles` | exit 0: signal 15: SIGNALLED 22349 ; REFUSED / stopped: /tmp/w5-swap-rehearsal/chains-rehearsal/oc/plan/oc-rehearsal/CHAINS-PLAN.supervise-faulty.json (run check_tails before any start) |
-| 175.1 | `start_loop` | exit 0: started: loop 30500 LOOP_PIDS 30500 ; PYTHON_PIDS 30502 / LOOP_PID 30500 |
-| 195.2 | check: back on the new tree | GUARD age 9.9 s; segments 22 -> 28, rows contiguous True; tracebacks 2 |
-| 202.8 | `stop_between_cycles` | exit 0: signal 15: SIGNALLED 30502 ; REFUSED / stopped: /tmp/w5-swap-rehearsal/chains-rehearsal/oc/plan/oc-rehearsal/CHAINS-PLAN.supervise-new.json (run check_tails before any start) |
-| 202.8 | done | segments 28, index rows 112, contiguous True; bystander bash alive True |
+| 54.7 | tail cut back | same_bytes_as_before True; saved [True] |
+| 57.1 | `start_loop` | exit 0: started: loop 29387 LOOP_PIDS 29387 ; PYTHON_PIDS 29389 / LOOP_PID 29387 |
+| 57.1 | new loop: first GUARD | seconds 0.3 |
+| 57.3 | watch_swap "$B" swap after the new start | exit 0, SUCCESS; failure []; resume needed []; drivers {'c1': 'waiting since 1795214978.595', 'c2': 'unknown (no driver event for this chain)'}; GUARD new since stop True |
+| 72.3 | check: new supervisor, 3-minute check (scaled) | GUARD age 5.3 s; segments 8 -> 13, rows contiguous True; tracebacks 0 |
+| 102.3 | check: new supervisor, 10-minute check (scaled) | GUARD age 11.2 s; segments 13 -> 14, rows contiguous True; tracebacks 0 |
+| 107.7 | `stop_between_cycles` | exit 0: signal 15: SIGNALLED 29389 ; REFUSED / stopped: /tmp/w5-swap-rehearsal/chains-rehearsal/oc/plan/oc-rehearsal/CHAINS-PLAN.supervise-new.json (next: after_stop, check_tails, start_loop) |
+| 107.8 | `plan_copy` | exit 0: ['chains.py', 'replay_sample.py', 'retention.py'] / ok |
+| 107.8 | `after_stop` | exit 0: T0=1795215053.221722 GID=1795215048514889769 LOG=2990 RESTARTS=0 |
+| 107.9 | `check_tails` | exit 0: ok /tmp/w5-swap-rehearsal/chains-rehearsal/oc/chains/c1/chain.index.jsonl |
+| 110.2 | `start_loop` | exit 0: started: loop 8859 LOOP_PIDS 8859 ; PYTHON_PIDS 8861 / LOOP_PID 8859 |
+| 130.2 | check: faulty supervisor (raises before every GUARD write) | GUARD age 27.1 s; segments 17 -> 18, rows contiguous True; tracebacks 2 |
+| 130.2 | faulty loop never published | guard_unchanged True |
+| 130.2 | watch_swap "$B" swap on the faulty loop | exit 2, ESCALATE; failure ['Traceback in supervise.log', "supervisor exits: ['2026-11-20T17:50:59-05:00 supervise exited 1']"]; resume needed []; drivers {'c1': 'waiting since 1795215059.042', 'c2': 'unknown (no driver event for this chain)'}; GUARD new since stop False |
+| 130.4 | `stop_failing` | exit 0: signal 15: SIGNALLED 12775 ; REFUSED / stopped: /tmp/w5-swap-rehearsal/chains-rehearsal/oc/plan/oc-rehearsal/CHAINS-PLAN.supervise-faulty.json (next: after_stop, check_tails, start_loop) |
+| 130.4 | `after_stop` | exit 0: T0=1795215075.829688 GID=1795215048514889769 LOG=4860 RESTARTS=90 |
+| 130.5 | `check_tails` | exit 0: ok /tmp/w5-swap-rehearsal/chains-rehearsal/oc/chains/c1/chain.index.jsonl |
+| 132.7 | `start_loop` | exit 0: started: loop 13669 LOOP_PIDS 13669 ; PYTHON_PIDS 13671 / LOOP_PID 13669 |
+| 132.7 | guard-only: first GUARD | seconds 0.3 |
+| 132.9 | watch_swap "$B" recovery after guard-only | exit 0, SUCCESS; failure []; resume needed []; drivers {'c1': 'waiting since 1795215059.042', 'c2': 'unknown (no driver event for this chain)'}; GUARD new since stop True |
+| 158.0 | check: guard-only recovery on the faulty tree | GUARD age 3.1 s; segments 18 -> 22, rows contiguous True; tracebacks 2 |
+| 158.0 | guard-only deleted nothing | deleted 0; added 88 |
+| 171.3 | `stop_between_cycles` | exit 0: signal 15: SIGNALLED 13671 ; REFUSED / stopped: /tmp/w5-swap-rehearsal/chains-rehearsal/oc/plan/oc-rehearsal/CHAINS-PLAN.supervise-faulty.json (next: after_stop, check_tails, start_loop) |
+| 171.3 | `after_stop` | exit 0: T0=1795215116.709190 GID=1795215112265983420 LOG=6051 RESTARTS=90 |
+| 171.4 | `check_tails` | exit 0: ok /tmp/w5-swap-rehearsal/chains-rehearsal/oc/chains/c1/chain.index.jsonl |
+| 173.5 | `start_loop` | exit 0: started: loop 23301 LOOP_PIDS 23301 ; PYTHON_PIDS 23303 / LOOP_PID 23301 |
+| 173.7 | watch_swap "$B" swap back on the new tree | exit 0, SUCCESS; failure []; resume needed []; drivers {'c1': 'waiting since 1795215097.268', 'c2': 'unknown (no driver event for this chain)'}; GUARD new since stop True |
+| 193.8 | check: back on the new tree | GUARD age 10.1 s; segments 22 -> 27, rows contiguous True; tracebacks 2 |
+| 200.0 | `stop_between_cycles` | exit 0: signal 15: SIGNALLED 23303 ; REFUSED / stopped: /tmp/w5-swap-rehearsal/chains-rehearsal/oc/plan/oc-rehearsal/CHAINS-PLAN.supervise-new.json (next: after_stop, check_tails, start_loop) |
+| 200.0 | done | driver {'admitted': 27, 'index_rows': 108, 'boundaries_contiguous': True, 'segments': 27}; guard_loop 13669; new_loop 29387; bystander_alive True |
 
-The old tree is node1's (eb005f097), the new one 65115bb99's step file and modules, run as written; one live chain
-(stand-in trainer, 4-update segments) and one never-started chain; a bystander bash whose command line holds
-`supervise --plan <the plan>` ran throughout and was never signalled. Every signal went through a pidfd. The faulty
-tree is the new tree with `retention.plan` made to sleep 6 s and raise, so it fails before every GUARD write: the
-swap-mode watch reported ESCALATE and named both failure signals (the Traceback and the loop's `supervise exited
-1` line); `stop_failing` stopped it, `check_tails` passed, guard-only was started, and the recovery-mode watch
-(same GUARD id) reported SUCCESS on guard-only's first GUARD instead of escalating again. Full transcript:
-`N:/w5-supervise-mem-20261120/swap-rehearsal-r5.transcript.jsonl`.
+The old tree is node1's (eb005f097), the new one 9afddf945's step file and modules, run as written and in the
+procedure's order: every stop is followed by `after_stop`, whose line is the baseline of the next start, and every
+`watch_swap PLAN "$B"` runs after its `start_loop`. One live chain (stand-in trainer, 4-update segments) and one
+never-started chain (driver state unknown); a bystander bash whose command line holds `supervise --plan <the
+plan>` ran throughout and was never signalled. Every signal went through a pidfd. c1 reached its ceiling in each gap
+and was shown `waiting since` until the new GUARD admitted it. The faulty tree is the new tree with
+`retention.plan` made to sleep 6 s and raise, so it fails before every GUARD write: the swap-mode watch (baseline
+of the new loop's stop) reported ESCALATE and named both failure signals; `stop_failing` stopped it, its
+`after_stop` gave the recovery baseline (LOG and RESTARTS offsets past the faulty loop's failures), guard-only was
+started, and the recovery-mode watch reported SUCCESS on guard-only's first GUARD. Full transcript:
+`N:/w5-supervise-mem-20261120/swap-rehearsal-r6.transcript.jsonl`.
 
 ### Not verified
 

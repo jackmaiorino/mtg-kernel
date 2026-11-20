@@ -1,10 +1,12 @@
 """Rehearsal of moving a running supervisor to new W5 tools (docs/W5-SUPERVISE-MEMORY-20261120.md), on Linux, in a
 throwaway root, running the procedure's own step file (tools/w5/supervise_swap.sh): a chain driver keeps running
 segments (stand-in trainer) under an old-tools supervise loop; the swap stages the tree, writes and checks the plan
-copy, runs the dry cycle, stops the old loop between cycles (it must be asleep), checks every index tail (and cuts
-an injected torn last line), and starts the new loop. Then a supervisor that fails before every GUARD write is
-started and stopped with the bounded stop for a failing loop, and replaced by `supervise --guard-only` (its time to
-the first GUARD is measured). Every step is a transcript line. The whole run is under an alarm.
+copy, runs the dry cycle, stops the old loop between cycles (it must be asleep), records the after_stop baseline,
+checks every index tail (and cuts an injected torn last line), starts the new loop and then watches it with that
+baseline, in the procedure's order. Then a supervisor that fails before every GUARD write is started (after its
+own stop's baseline) and stopped with the bounded stop for a failing loop, a new baseline is recorded, and
+`supervise --guard-only` is started and watched in recovery mode with it (its time to the first GUARD is
+measured). Every step is a transcript line. The whole run is under an alarm.
 
   python3 supervise_swap_rehearsal.py OLD_TOOLS NEW_TOOLS SCRATCH   (tools: directories holding w5/ and ex1/)
 
@@ -73,6 +75,26 @@ def start(env, w5, plan, extra=None):
     return pid
 
 
+def after_stop(env):
+    """The procedure's `B=$(bash $S after_stop)`: the one line it prints."""
+    return swap(env, 'after_stop')[1][-1]
+
+
+def watch_after_start(env, plan, baseline, mode):
+    """The procedure's `bash $S watch_swap PLAN "$B" MODE`, started after start_loop returned."""
+    return subprocess.Popen(['bash', env['SWAP'], 'watch_swap', str(plan), baseline, mode, '1'],
+                            env=dict(os.environ, **env), stdout=subprocess.PIPE, text=True)
+
+
+def watch_result(label, watcher):
+    out, _ = watcher.communicate(timeout=300)
+    lines = out.strip().splitlines()
+    last = json.loads(lines[-1]) if lines else {}
+    say(label, exit=watcher.returncode, verdict=last.get('verdict'), failure=last.get('failure'),
+        resume_needed=last.get('resume_needed'), drivers={k: v['driver'] for k, v in last.get('chains', {}).items()},
+        guard=last.get('guard'), rounds=len(lines))
+
+
 def wait_for_guard(root, after, limit):
     """Seconds from `after` (the loop's start) to the first GUARD written after it."""
     while time.time() - after < limit:
@@ -138,11 +160,11 @@ def main():
     say('dry cycle', exit=dry.returncode, refused=result.get('refused') if isinstance(result, dict) else result,
         cycles=[{k: x[k] for k in ('cycle', 'mode', 'seconds', 'guard_at_seconds')} for x in result['cycles']]
         if isinstance(result, dict) else None)
-    # step 3: before the stop, the watch's first line (admitted against ceiling); stop between cycles; tails; start
-    swap(env, 'watch_swap', guard_age(root)[1]['id'], 'swap', '1', '1', check=False)
+    # step 3: a look before the stop (admitted against ceiling, driver states); stop between cycles; baseline;
+    # tails; start; then watch with the baseline
+    swap(env, 'watch_swap', path, after_stop(env), 'swap', '1', '1', check=False)
     swap(env, 'stop_between_cycles', path)
-    # one clock read right after the stop; success needs a GUARD id other than this one
-    t0, gid = (x.split('=')[1] for x in swap(env, 'after_stop')[1][-1].split())
+    b_old = after_stop(env)  # B=$(bash $S after_stop): the old loop's stop
     say('gap begins', guard_age_seconds=guard_age(root)[0], driver=driver_state(root),
         driver_alive=driver.poll() is None)
     index_file = root / 'chains' / 'c1' / 'chain.index.jsonl'
@@ -159,12 +181,10 @@ def main():
     say('tail cut back', same_bytes_as_before=index_file.read_bytes() == rows_before,
         saved=[x.read_bytes() == torn for x in (c / 'records').glob('torn-tail-c1-*.bin')])
     t_start = time.time()
-    watcher = subprocess.Popen(['bash', str(swap_sh), 'watch_swap', gid, 'swap', '1'],
-                               env=dict(os.environ, **env), stdout=subprocess.PIPE, text=True)
     new_loop = start(env, t_new / 'w5', p2)
+    watcher = watch_after_start(env, p2, b_old, 'swap')
     say('new loop: first GUARD', seconds=wait_for_guard(root, t_start, 120))
-    out, _ = watcher.communicate(timeout=300)
-    say('watch_swap during the swap', exit=watcher.returncode, lines=out.strip().splitlines()[-2:])
+    watch_result('watch_swap "$B" swap after the new start', watcher)
     watch(c, root, 'new supervisor, 3-minute check (scaled)', 15)
     watch(c, root, 'new supervisor, 10-minute check (scaled)', 30)
     # forward recovery: a supervisor that raises before every GUARD write
@@ -180,30 +200,31 @@ def main():
     p3 = path.with_name('CHAINS-PLAN.supervise-faulty.json')
     swap(env, 'plan_copy', path, p3, t_bad / 'w5')
     last_good = guard_age(root)[1]['unix']
-    t0, gid = (x.split('=')[1] for x in swap(env, 'after_stop')[1][-1].split())
-    watcher = subprocess.Popen(['bash', str(swap_sh), 'watch_swap', gid, 'swap', '1'],
-                               env=dict(os.environ, **env), stdout=subprocess.PIPE, text=True)
+    b_new = after_stop(env)  # the new loop's stop
+    swap(env, 'check_tails')
     start(env, t_bad / 'w5', p3)
+    watcher = watch_after_start(env, p3, b_new, 'swap')
     watch(c, root, 'faulty supervisor (raises before every GUARD write)', 20)
     say('faulty loop never published', guard_unchanged=guard_age(root)[1]['unix'] == last_good)
-    out, _ = watcher.communicate(timeout=300)
-    say('watch_swap on the faulty loop', exit=watcher.returncode, lines=out.strip().splitlines()[-1:])
+    watch_result('watch_swap "$B" swap on the faulty loop', watcher)
     swap(env, 'stop_failing', p3, timeout=120)
+    b_fail = after_stop(env)  # the stop_failing's baseline: the recovery watch takes this one
     swap(env, 'check_tails')
     files_before = sorted(str(p) for p in (root / 'chains').rglob('*') if p.is_file())
     t_start = time.time()
-    watcher = subprocess.Popen(['bash', str(swap_sh), 'watch_swap', gid, 'recovery', '1'],
-                               env=dict(os.environ, **env), stdout=subprocess.PIPE, text=True)
     guard_loop = start(env, t_bad / 'w5', p3, '--guard-only')
+    watcher = watch_after_start(env, p3, b_fail, 'recovery')
     say('guard-only: first GUARD', seconds=wait_for_guard(root, t_start, 120))
-    out, _ = watcher.communicate(timeout=300)
-    say('watch_swap recovery mode after guard-only', exit=watcher.returncode, lines=out.strip().splitlines()[-2:])
+    watch_result('watch_swap "$B" recovery after guard-only', watcher)
     watch(c, root, 'guard-only recovery on the faulty tree', 25)
     files_after = sorted(str(p) for p in (root / 'chains').rglob('*') if p.is_file())
     say('guard-only deleted nothing', deleted=len(set(files_before) - set(files_after)),
         added=len(set(files_after) - set(files_before)))
     swap(env, 'stop_between_cycles', p3)
+    b_guard = after_stop(env)
+    swap(env, 'check_tails')
     start(env, t_new / 'w5', p2)
+    watch_result('watch_swap "$B" swap back on the new tree', watch_after_start(env, p2, b_guard, 'swap'))
     watch(c, root, 'back on the new tree', 20)
     swap(env, 'stop_between_cycles', p2)
     driver.send_signal(signal.SIGTERM)
@@ -213,6 +234,8 @@ def main():
 
 
 if __name__ == '__main__':
+    for sig in (signal.SIGALRM, signal.SIGTERM):  # an alarm or a TERM still runs the cleanup below
+        signal.signal(sig, lambda n, f: sys.exit(f'stopped by signal {n}'))
     signal.alarm(1500)  # the rehearsal never outlives 25 minutes
     try:
         main()

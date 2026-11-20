@@ -6,11 +6,13 @@
   supervise_swap.py signal PLAN SIG PID...    signal through a pidfd, each process's argv checked after the pidfd opens
   supervise_swap.py alive PLAN PID...         the pids still a loop or supervisor for exactly PLAN
   supervise_swap.py guard-id ROOT             GUARD.json's id
-  supervise_swap.py after-stop ROOT           T0=<float time> GID=<GUARD id>, recorded right after the stop
-  supervise_swap.py watch ROOT GUARD_ID GUARD_ONLY_SECONDS [--mode swap|recovery] [--every 30] [--log LOG]
+  supervise_swap.py after-stop ROOT RECORDS   the baseline after a completed stop: T0=<float> GID=<id or unknown>
+                                              LOG=<supervise.log bytes> RESTARTS=<supervise-restarts.log bytes>
+  supervise_swap.py watch ROOT PLAN BASELINE GUARD_ONLY_SECONDS [--mode swap|recovery] [--every 30] [--log LOG]
                     [--restarts RESTARTS_LOG] [--rounds N]
-                                              the swap's state every 30 s: SUCCESS (0), ESCALATE (2, swap mode),
-                                              DEADLINE (3, recovery mode), 1 after N rounds of none
+                                              the swap's state every 30 s: SUCCESS (0), RESUME NEEDED (4), ESCALATE
+                                              (2, swap mode), DEADLINE (3, recovery mode), FAILURE, RESUME NEEDED (5,
+                                              recovery mode), 1 after N rounds of none
 
 Process identity (`pids`): a supervisor is a process whose argv is a python running `.../chains.py supervise` with
 `--plan` followed by exactly PLAN (read from /proc/<pid>/cmdline, compared as strings, never as a pattern). Its loop
@@ -115,8 +117,10 @@ def pidfd_signal(fd, sig):
 
 def signal_verified(plan, sig, pids, opener=None, read_argv=argv_of, send=pidfd_signal, close=os.close):
     """Signals each pid only through a pidfd opened first, and only if the argv of that process, read after the pidfd
-    is open, is a loop or a supervisor for exactly PLAN (the pidfd pins the process: its pid cannot be reused while
-    the pidfd is open, so the process checked is the process signalled). Without pidfd support nothing is signalled.
+    is open, is a loop or a supervisor for exactly PLAN. The signal goes to the process the pidfd refers to and to no
+    other: if that process exited and its pid was reused before the argv was read, the argv read may be the
+    successor's, but the pidfd cannot signal the successor (the send then finds no process). Without pidfd support
+    nothing is signalled.
     Returns (signalled pids, refused pids)."""
     opener = getattr(os, 'pidfd_open', None) if opener is None else opener
     sent, refused = [], []
@@ -247,47 +251,64 @@ def cut_tail(index_file, records, block=BLOCK, before_lock=None):
 
 # ---------------------------------------------------------------- watching the swap
 
-# The events after which a chain no longer waits, as chains.py logs them: the driver's `segment` (admitted),
-# `no-room` (it gave up), `stop` (a STOP file) and `end`, and `run`'s `run-exit` and `run` (a driver ended or
-# a new one started).
-CLOSING = ('segment', 'no-room', 'stop', 'end', 'run-exit', 'run')
+# Driver states from LOG.jsonl, as chains.py logs the events: `guard-wait` (the driver begins to wait; logged once),
+# `segment` (admitted: running), `run` (a new driver starts: running); `no-room` (the driver gave up), `run-exit` (the
+# `run` command's driver ended), `stop` (a STOP file), `segment-failed` (the driver returns EXIT_FAILED),
+# `recover-unsupervised` (the supervisor stopped an orphaned instance) and `w5box-kill` (a kill request for the
+# chain's instance, logged by `request`): the chain needs `run` again; `end`: the chain ended.
+RUNNING = ('segment', 'run')
+EXITED = ('no-room', 'run-exit', 'stop', 'segment-failed', 'recover-unsupervised', 'w5box-kill')
+EVENTS = ('guard-wait', 'end') + RUNNING + EXITED
+VERDICT_EXIT = {'SUCCESS': 0, 'ESCALATE': 2, 'DEADLINE': 3, 'RESUME NEEDED': 4, 'FAILURE, RESUME NEEDED': 5}
 
 
-def live_chains(root):
-    return sorted(p.parent.name for p in Path(root).glob('chains/*/chain.json')
-                  if not (p.parent / 'END.json').exists())
+def plan_chains(plan):
+    """The plan's chain names (read once; a plan that does not parse refuses the watch)."""
+    doc = read_json(plan)
+    if not isinstance(doc, dict) or not isinstance(doc.get('chains'), dict):
+        raise SystemExit(f'refused: {plan} does not parse as a plan with chains')
+    return sorted(doc['chains'])
+
+
+def live_chains(root, names):
+    """The plan's chains without END.json (a folder under chains/ that is not in the plan is not a chain here)."""
+    return [n for n in names if not (Path(root) / 'chains' / n / 'END.json').exists()]
 
 
 class Waits:
-    """Each chain's last driver event in LOG.jsonl, read incrementally (complete lines only: a line still being
-    written is read on the next call). A chain waits when its last such event is `guard-wait` (drivers log it once,
-    when a wait begins; any of `CLOSING` ends it), whenever that wait began, before the stop included."""
+    """Each chain's last driver event in LOG.jsonl, streamed line by line and read incrementally (complete lines
+    only: a line still being written is read on the next call). A chain is waiting when its last such event is
+    `guard-wait`, whenever that wait began (before the stop included); exited (needs `run`) after an EXITED event
+    until a later `run` or `segment`."""
 
     def __init__(self, root):
         self.path = Path(root) / 'LOG.jsonl'
         self.offset, self.last, self.bad_lines = 0, {}, 0
 
     def read(self):
-        """chain to ('waiting', since) or ('running', None); None when LOG.jsonl cannot be read."""
+        """chain to (state, unix, event): state 'waiting', 'running', 'exited' or 'ended'; None when LOG.jsonl
+        cannot be read."""
         try:
             with open(self.path, 'rb') as f:
                 f.seek(self.offset)
-                data = f.read()
+                while True:
+                    line = f.readline()
+                    if not line.endswith(b'\n'):
+                        break  # the end, or a line still being written: read it next time
+                    self.offset += len(line)
+                    try:
+                        r = json.loads(line)
+                    except ValueError:
+                        self.bad_lines += 1
+                        continue
+                    event, chain = r.get('event'), r.get('chain')
+                    if chain and event in EVENTS:
+                        self.last[chain] = (event, r.get('unix'))
         except OSError:
             return None
-        end = data.rfind(b'\n') + 1
-        for line in data[:end].splitlines():
-            try:
-                r = json.loads(line)
-            except ValueError:
-                self.bad_lines += 1
-                continue
-            event, chain = r.get('event'), r.get('chain')
-            if chain and (event == 'guard-wait' or event in CLOSING):
-                self.last[chain] = (event, r.get('unix'))
-        self.offset += end
-        return {c: ('waiting', unix) if event == 'guard-wait' else ('running', None)
-                for c, (event, unix) in self.last.items()}
+        state = {'guard-wait': 'waiting', 'end': 'ended'}
+        return {c: (state.get(e, 'running' if e in RUNNING else 'exited'), unix, e)
+                for c, (e, unix) in self.last.items()}
 
 
 def admitted_of(cdir):
@@ -306,99 +327,131 @@ def read_json(path):
         return None
 
 
-def watch(root, guard_id, mode='swap', guard_only_seconds=723, every=30.0, log=None, rounds=None, now=time.time,
-          restarts=None):
-    """Prints the swap's state every `every` s.
+def size_of(path):
+    try:
+        return Path(path).stat().st_size
+    except OSError:
+        return 0
 
-    SUCCESS (exit 0): a GUARD.json whose `id` differs from `guard_id` (the one recorded after the stop), `ok` true,
-    younger than GUARD_MAX_AGE, with a ceiling above the admitted count for every live chain, and no failure since
-    the watch started: a Traceback in the supervise log, or a line in `restarts` (the loop logs every supervisor
-    exit, a refusal that prints `stop:` or `refused:` without a Traceback included). Mode `swap`: ESCALATE (exit 2)
-    on a failure, or at the earliest open guard wait + GUARD_WAIT - `guard_only_seconds` - 300 s. Mode `recovery`
-    (after guard-only is started): no escalation; DEADLINE (exit 3) once the earliest open guard wait + GUARD_WAIT
-    has passed (a driver has exited). Exit 1 after `rounds` rounds of none. What cannot be read is printed as
-    unknown and read again next round."""
+
+def after_stop(root, records, now=time.time):
+    """The baseline of the start that follows a completed stop, from one clock read: T0 (float), the GUARD id
+    (`unknown` if GUARD.json is missing or unreadable: success then needs a GUARD written after T0), and the byte
+    sizes of supervise.log and supervise-restarts.log (failures after them count, those inside start_loop included)."""
+    t0 = now()
+    g = read_json(Path(root) / 'GUARD.json')
+    gid = g.get('id') if isinstance(g, dict) and g.get('id') is not None else 'unknown'
+    return (f'T0={t0:.6f} GID={gid} LOG={size_of(Path(records) / "supervise.log")} '
+            f'RESTARTS={size_of(Path(records) / "supervise-restarts.log")}')
+
+
+def parse_baseline(text):
+    fields = dict(x.split('=', 1) for x in text.split())
+    gid = fields['GID']
+    return {'t0': float(fields['T0']), 'gid': None if gid == 'unknown' else int(gid), 'log': int(fields['LOG']),
+            'restarts': int(fields['RESTARTS'])}
+
+
+def watch(root, plan, baseline, mode='swap', guard_only_seconds=723, every=30.0, log=None, rounds=None,
+          now=time.time, restarts=None):
+    """Prints the swap's state every `every` s, from the `after_stop` baseline of the stop before the start.
+
+    A usable GUARD: written after the baseline's T0 with an `id` other than its GID (any id when GID is unknown),
+    `ok` true, younger than GUARD_MAX_AGE, with a ceiling above the admitted count for every live chain. A failure:
+    a Traceback in the supervise log, or a line in `restarts` (the loop logs every supervisor exit, a refusal that
+    prints `stop:` or `refused:` without a Traceback included), after the baseline's offsets. Every round prints each
+    live chain's state: running, waiting since, exited (needs `run`, until a later `run`), or unknown. Live chains:
+    the plan's chains without END.json.
+
+    SUCCESS (exit 0): a usable GUARD, no failure, every live chain running or waiting. RESUME NEEDED (exit 4): the
+    same, but some live chain's driver exited; they are named and need `run`. Mode `swap`: ESCALATE (exit 2) on a
+    failure, or at the earliest open guard wait + GUARD_WAIT - `guard_only_seconds` - 300 s. Mode `recovery` (after
+    guard-only is started): no escalation; DEADLINE (exit 3) once the earliest open guard wait + GUARD_WAIT has
+    passed, or FAILURE, RESUME NEEDED (exit 5) on a failure while some live chain's driver has exited (it ends the
+    watch: guard-only failed too and chains need `run`). Exit 1 after `rounds` rounds of none. What cannot be read
+    is printed as unknown and read again."""
     sys.path.insert(0, str(HERE))
     import chains
     root = Path(root)
+    base = parse_baseline(baseline) if isinstance(baseline, str) else baseline
+    names = plan_chains(plan)
     log_path = Path(log) if log else None
-    try:
-        log_offset = log_path.stat().st_size if log_path else 0
-    except OSError:
-        log_offset = 0
     restarts_path = Path(restarts) if restarts else None
-    try:
-        restarts_offset = restarts_path.stat().st_size if restarts_path else 0
-    except OSError:
-        restarts_offset = 0
     waits = Waits(root)
     traceback, exits = False, []
     n = 0
     while True:
         t = now()
         g = read_json(root / 'GUARD.json')
-        live = live_chains(root)
+        live = live_chains(root, names)
         admitted = {c: admitted_of(root / 'chains' / c) for c in live}
         state_of = waits.read()
         if log_path is not None and not traceback:
             try:
                 with open(log_path, 'rb') as f:
-                    f.seek(log_offset)
+                    f.seek(base['log'])
                     traceback = b'Traceback' in f.read()
             except OSError:
                 pass
         if restarts_path is not None:
             try:
                 with open(restarts_path, 'rb') as f:
-                    f.seek(restarts_offset)
+                    f.seek(base['restarts'])
                     exits = [x.decode('utf-8', 'replace') for x in f.read().splitlines() if x.strip()]
             except OSError:
                 pass
-        failure = [x for x in (['Traceback in supervise.log'] if traceback else []) +
-                   ([f'supervisor exits: {exits[-3:]}'] if exits else [])]
+        failure = (['Traceback in supervise.log'] if traceback else []) + \
+            ([f'supervisor exits: {exits[-3:]}'] if exits else [])
         ceilings = (g or {}).get('ceilings') or {}
-        chains_out, open_since = {}, []
+        chains_out, open_since, resume = {}, [], []
         for c in live:
             if state_of is None:
-                wait = 'unknown (no LOG.jsonl)'
+                state = 'unknown (no LOG.jsonl)'
             elif c not in state_of:
-                wait = 'unknown (no driver event for this chain)'
-            elif state_of[c][0] == 'waiting':
-                wait = state_of[c][1]
-                if isinstance(wait, (int, float)):
-                    open_since.append(wait)
-                else:
-                    wait = 'unknown (a guard-wait without its time)'
+                state = 'unknown (no driver event for this chain)'
             else:
-                wait = 'not waiting'
+                kind, unix, event = state_of[c]
+                if kind == 'waiting' and isinstance(unix, (int, float)):
+                    state = f'waiting since {unix}'
+                    open_since.append(unix)
+                elif kind == 'waiting':
+                    state = 'unknown (a guard-wait without its time)'
+                elif kind == 'exited':
+                    state = f'exited, needs run ({event} at {unix})'
+                    resume.append(c)
+                else:
+                    state = kind
             ceiling = ceilings.get(c, 'unknown')
-            chains_out[c] = {'admitted': admitted[c], 'ceiling': ceiling, 'guard_wait_since': wait,
+            chains_out[c] = {'admitted': admitted[c], 'ceiling': ceiling, 'driver': state,
                              'may_start': ceiling - admitted[c] if isinstance(ceiling, int)
                              and isinstance(admitted[c], int) else 'unknown'}
         first_exit = min(open_since) + chains.GUARD_WAIT if open_since else None
         escalate_at = first_exit - guard_only_seconds - 300 if first_exit is not None else None
+        new_guard = g is not None and isinstance(g.get('unix'), (int, float)) and g['unix'] > base['t0'] and \
+            (base['gid'] is None or g.get('id') != base['gid'])
         guard = 'unknown (GUARD.json unreadable)' if g is None else {
-            'id_changed': g.get('id') != guard_id, 'ok': g.get('ok'), 'age_s': round(t - g.get('unix', 0), 1)}
-        usable = g is not None and g.get('id') != guard_id and g.get('ok') is True and \
-            t - g.get('unix', 0) < chains.GUARD_MAX_AGE and \
+            'new_since_stop': new_guard, 'ok': g.get('ok'), 'age_s': round(t - g.get('unix', 0), 1)}
+        usable = new_guard and g.get('ok') is True and t - g['unix'] < chains.GUARD_MAX_AGE and \
             all(isinstance(x['may_start'], int) and x['may_start'] > 0 for x in chains_out.values())
         if usable and not failure:
-            verdict = 'SUCCESS'
+            verdict = 'RESUME NEEDED' if resume else 'SUCCESS'
         elif mode == 'swap' and (failure or (escalate_at is not None and t >= escalate_at)):
             verdict = 'ESCALATE'
+        elif mode == 'recovery' and failure and resume:
+            verdict = 'FAILURE, RESUME NEEDED'
         elif mode == 'recovery' and first_exit is not None and t >= first_exit:
             verdict = 'DEADLINE'
         else:
             verdict = 'WAIT'
-        state = {'unix': round(t, 1), 'mode': mode, 'guard': guard, 'chains': chains_out, 'traceback': traceback,
-                 'failure': failure,
+        state = {'unix': round(t, 1), 'mode': mode, 'guard': guard, 'chains': chains_out, 'failure': failure,
+                 'resume_needed': resume,
                  'first_driver_exit_in_s': None if first_exit is None else round(first_exit - t, 1),
                  'escalate_in_s': None if escalate_at is None or mode != 'swap' else round(escalate_at - t, 1),
                  'log_lines_unparsed': waits.bad_lines, 'verdict': verdict}
         print(json.dumps(state, sort_keys=True), flush=True)
         n += 1
         if verdict != 'WAIT':
-            return {'SUCCESS': 0, 'ESCALATE': 2, 'DEADLINE': 3}[verdict]
+            return VERDICT_EXIT[verdict]
         if rounds is not None and n >= rounds:
             return 1
         time.sleep(every)
@@ -426,12 +479,8 @@ def main(argv=None):
         loops, pys = select(process_table(), args[0])
         print('LOOP_PIDS' + ''.join(f' {p}' for p in loops) + ' ; PYTHON_PIDS' + ''.join(f' {p}' for p in pys))
         return 0
-    if cmd == 'after-stop':  # one clock read, with the GUARD id after the stop
-        t0 = time.time()
-        g = read_json(Path(args[0]) / 'GUARD.json')
-        if g is None or 'id' not in g:
-            raise SystemExit('stop: GUARD.json has no readable id')
-        print(f'T0={t0:.6f} GID={g["id"]}')
+    if cmd == 'after-stop':
+        print(after_stop(args[0], args[1]))
         return 0
     if cmd == 'guard-id':
         g = read_json(Path(args[0]) / 'GUARD.json')
@@ -451,7 +500,7 @@ def main(argv=None):
         restarts = args[args.index('--restarts') + 1] if '--restarts' in args else None
         if mode not in ('swap', 'recovery'):
             raise SystemExit(f'unknown mode {mode}')
-        return watch(args[0], int(args[1]), mode, float(args[2]), every, log, rounds, restarts=restarts)
+        return watch(args[0], args[1], args[2], mode, float(args[3]), every, log, rounds, restarts=restarts)
     raise SystemExit(f'unknown step {cmd}')
 
 

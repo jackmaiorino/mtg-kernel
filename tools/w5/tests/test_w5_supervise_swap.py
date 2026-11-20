@@ -282,6 +282,11 @@ class WatchTests(unittest.TestCase):
         jwrite(self.root / 'chains' / 'c4' / 'END.json', {})
         self.log = Path(self.tmp.name) / 'supervise.log'
         self.log.write_text('old Traceback before the watch\n')
+        self.plan = Path(self.tmp.name) / 'CHAINS-PLAN.json'
+        self.plan_chains('c1', 'c2', 'c4')
+
+    def plan_chains(self, *names):
+        jwrite(self.plan, {'chains': {n: {'arm': 'C'} for n in names}})
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -295,38 +300,47 @@ class WatchTests(unittest.TestCase):
             for row in rows:
                 f.write(json.dumps(row) + '\n')
 
-    def run_watch(self, gid, now, mode='swap'):
+    def base(self, gid, t0=1000.0, restarts=0):
+        """The after_stop baseline: the supervise.log offset is its size now (the old Traceback is before it)."""
+        return {'t0': t0, 'gid': gid, 'log': self.log.stat().st_size, 'restarts': restarts}
+
+    def run_watch(self, gid, now, mode='swap', t0=1000.0):
         with contextlib.redirect_stdout(io.StringIO()) as buf:
-            code = swap.watch(self.root, gid, mode, 723, every=0, log=self.log, rounds=1, now=lambda: now)
+            code = swap.watch(self.root, self.plan, self.base(gid, t0), mode, 723, every=0, log=self.log, rounds=1,
+                              now=lambda: now)
         return code, json.loads(buf.getvalue().splitlines()[-1])
 
     def test_unknowns_and_waits_that_began_before_the_stop(self):
         self.guard(990.0, 7)
         code, state = self.run_watch(7, 1100.0)  # no LOG.jsonl yet
         self.assertEqual((code, state['verdict']), (1, 'WAIT'))
-        self.assertEqual(state['chains']['c1']['guard_wait_since'], 'unknown (no LOG.jsonl)')
+        self.assertEqual(state['chains']['c1']['driver'], 'unknown (no LOG.jsonl)')
         self.assertEqual(state['chains']['c1']['may_start'], 4)
         self.assertNotIn('c4', state['chains'])
         self.events({'event': 'segment', 'chain': 'c1', 'unix': 400.0},
                     {'event': 'guard-wait', 'chain': 'c2', 'unix': 500.0},  # before the stop: still open
                     {'event': 'guard-wait', 'chain': 'c1', 'unix': 600.0},
-                    {'event': 'no-room', 'chain': 'c1', 'unix': 650.0})  # c1's driver exited: not waiting
+                    {'event': 'segment', 'chain': 'c1', 'unix': 650.0})  # c1 admitted: running
         code, state = self.run_watch(7, 1100.0)
-        self.assertEqual(state['chains']['c2']['guard_wait_since'], 500.0)
-        self.assertEqual(state['chains']['c1']['guard_wait_since'], 'not waiting')
+        self.assertEqual(state['chains']['c2']['driver'], 'waiting since 500.0')
+        self.assertEqual(state['chains']['c1']['driver'], 'running')
+        self.assertEqual(state['resume_needed'], [])
         self.assertEqual(state['first_driver_exit_in_s'], 500 + 1800 - 1100)
         self.assertEqual(state['escalate_in_s'], 500 + 1800 - 723 - 300 - 1100)
         self.assertEqual(self.run_watch(7, 500 + 1800 - 1023)[1]['verdict'], 'ESCALATE')
         with open(self.root / 'LOG.jsonl', 'a') as f:  # a line still being written is read when complete
             f.write('{"event": "segment", "chain": "c2", "un')
-        self.assertEqual(self.run_watch(7, 1100.0)[1]['chains']['c2']['guard_wait_since'], 500.0)
+        self.assertEqual(self.run_watch(7, 1100.0)[1]['chains']['c2']['driver'], 'waiting since 500.0')
         jwrite(self.root / 'chains' / 'c3' / 'chain.json', {})
-        self.assertEqual(self.run_watch(7, 1100.0)[1]['chains']['c3']['guard_wait_since'],
+        self.plan_chains('c1', 'c2', 'c3', 'c4')
+        self.assertEqual(self.run_watch(7, 1100.0)[1]['chains']['c3']['driver'],
                          'unknown (no driver event for this chain)')
 
     def test_success_means_admission_works(self):
         self.guard(1001.0, 7)
         self.assertEqual(self.run_watch(7, 1002.0)[1]['verdict'], 'WAIT')  # the GUARD recorded after the stop
+        self.guard(999.0, 8)
+        self.assertEqual(self.run_watch(7, 1002.0)[1]['verdict'], 'WAIT')  # a new id, but written before T0
         self.guard(1001.0, 8, ceilings={'c1': 8156, 'c2': 7922})
         self.assertEqual(self.run_watch(7, 1002.0)[1]['verdict'], 'WAIT')  # c1 has no admission left
         self.guard(1001.0, 8, ok=False)
@@ -337,31 +351,55 @@ class WatchTests(unittest.TestCase):
         self.assertEqual(self.run_watch(7, 1002.0)[1]['verdict'], 'SUCCESS')
 
     def test_a_traceback_blocks_success_and_is_shown(self):
-        self.guard(1001.0, 8)
-        calls = []
+        self.guard(990.0, 7)  # round 1: no new GUARD yet
+        base, calls = self.base(7), []
 
         def now():
             calls.append(1)
-            if len(calls) == 1:
+            if len(calls) == 2:
                 with open(self.log, 'a') as f:
                     f.write('Traceback (most recent call last):\n')
             return 1002.0
         with contextlib.redirect_stdout(io.StringIO()) as buf:
-            self.assertEqual(swap.watch(self.root, 7, 'swap', 723, every=0, log=self.log, rounds=3, now=now), 2)
-        last = json.loads(buf.getvalue().splitlines()[-1])
-        self.assertEqual((last['verdict'], last['traceback']), ('ESCALATE', True))
-        calls.clear()
-        with contextlib.redirect_stdout(io.StringIO()) as buf:  # a later watch starts after that Traceback
-            self.assertEqual(swap.watch(self.root, 7, 'recovery', 723, every=0, log=self.log, rounds=3,
+            self.assertEqual(swap.watch(self.root, self.plan, base, 'swap', 723, every=0, log=self.log, rounds=3,
+                                        now=now), 2)
+        rounds = [json.loads(x) for x in buf.getvalue().splitlines()]
+        self.assertEqual([r['verdict'] for r in rounds], ['WAIT', 'ESCALATE'])
+        self.assertEqual(rounds[-1]['failure'], ['Traceback in supervise.log'])
+        self.guard(1001.0, 8)
+        with contextlib.redirect_stdout(io.StringIO()):  # a later stop's baseline starts after that Traceback
+            self.assertEqual(swap.watch(self.root, self.plan, self.base(7), 'recovery', 723, every=0, log=self.log,
+                                        rounds=3,
                                         now=lambda: 1002.0), 0)
+
+    def test_a_failure_inside_start_loop_is_seen_through_the_baseline_offsets(self):
+        """Item 3: the offsets come from after_stop, so a supervisor that fails between the start and the first
+        watch round (inside start_loop) is still a failure."""
+        self.guard(1001.0, 8)
+        restarts = Path(self.tmp.name) / 'supervise-restarts.log'
+        restarts.write_text('2026-11-20T10:00:00-05:00 supervise exited 0\n')  # before the stop: not counted
+        base = self.base(7, restarts=restarts.stat().st_size)
+        with open(self.log, 'a') as f:  # written after the stop, before the watch starts
+            f.write('Traceback (most recent call last):\n')
+        with open(restarts, 'a') as f:
+            f.write('2026-11-20T17:00:00-05:00 supervise exited 1\n')
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            code = swap.watch(self.root, self.plan, base, 'swap', 723, every=0, log=self.log, rounds=1,
+                              now=lambda: 1002.0,
+                              restarts=restarts)
+        last = json.loads(buf.getvalue().splitlines()[-1])
+        self.assertEqual((code, last['verdict']), (2, 'ESCALATE'))
+        self.assertEqual(last['failure'][0], 'Traceback in supervise.log')
+        self.assertIn('supervise exited 1', last['failure'][1])
+        self.assertNotIn('exited 0', last['failure'][1])
 
     def test_a_supervisor_exit_without_a_traceback_is_a_failure(self):
         """A supervisor that refuses (`stop:` or `refused:`, no Traceback) exits, and the loop logs it in
         supervise-restarts.log: no SUCCESS, and swap mode escalates on it."""
         self.guard(1001.0, 8)
         restarts = Path(self.tmp.name) / 'supervise-restarts.log'
-        restarts.write_text('2026-11-20T10:00:00-05:00 supervise exited 0\n')  # before the watch: not counted
-        calls = []
+        restarts.write_text('2026-11-20T10:00:00-05:00 supervise exited 0\n')  # before the stop: not counted
+        base, calls = self.base(7, restarts=restarts.stat().st_size), []
 
         def now():
             calls.append(1)
@@ -370,28 +408,157 @@ class WatchTests(unittest.TestCase):
                     f.write('2026-11-20T17:00:00-05:00 supervise exited 2\n')
             return 1002.0
         with contextlib.redirect_stdout(io.StringIO()) as buf:
-            code = swap.watch(self.root, 7, 'swap', 723, every=0, log=self.log, rounds=3, now=now, restarts=restarts)
+            code = swap.watch(self.root, self.plan, base, 'swap', 723, every=0, log=self.log, rounds=3, now=now,
+                              restarts=restarts)
         last = json.loads(buf.getvalue().splitlines()[-1])
         self.assertEqual((code, last['verdict']), (2, 'ESCALATE'))
         self.assertIn('supervise exited 2', last['failure'][0])
-        calls.clear()
         with contextlib.redirect_stdout(io.StringIO()) as buf:  # recovery mode: shown, no SUCCESS, no escalation
-            code = swap.watch(self.root, 7, 'recovery', 723, every=0, log=self.log, rounds=2, now=now,
+            code = swap.watch(self.root, self.plan, base, 'recovery', 723, every=0, log=self.log, rounds=2, now=now,
                               restarts=restarts)
         self.assertEqual(code, 1)
         self.assertEqual(json.loads(buf.getvalue().splitlines()[-1])['verdict'], 'WAIT')
 
-    def test_after_stop_records_t0_and_the_guard_id(self):
+    def test_a_full_mode_guard_before_the_failure_gives_recovery_no_instant_success(self):
+        """Item 3: the new loop publishes a GUARD (id 8) and then fails; the recovery watch takes the baseline of
+        the stop_failing that followed (GID 8, a later T0), so that GUARD, still fresh, is not a success."""
+        records = Path(self.tmp.name)
+        self.guard(1001.0, 8)
+        with open(self.log, 'a') as f:
+            f.write('Traceback (most recent call last):\n')
+        line = swap.after_stop(self.root, records, now=lambda: 1500.0)  # after stop_failing
+        self.assertEqual(swap.parse_baseline(line)['gid'], 8)
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            code = swap.watch(self.root, self.plan, line, 'recovery', 723, every=0, log=self.log, rounds=1,
+                              now=lambda: 1502.0)
+        last = json.loads(buf.getvalue().splitlines()[-1])
+        self.assertEqual((code, last['verdict'], last['failure']), (1, 'WAIT', []))
+        self.assertFalse(last['guard']['new_since_stop'])
+        self.guard(1600.0, 9)  # guard-only publishes
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(swap.watch(self.root, self.plan, line, 'recovery', 723, every=0, log=self.log, rounds=1,
+                                        now=lambda: 1601.0), 0)
+
+    def test_after_stop_records_t0_the_guard_id_and_the_log_offsets(self):
+        records = Path(self.tmp.name)
         self.guard(990.0, 123456789012345678)
         with contextlib.redirect_stdout(io.StringIO()) as buf:
-            self.assertEqual(swap.main(['after-stop', str(self.root)]), 0)
-        t0, gid = buf.getvalue().split()
+            self.assertEqual(swap.main(['after-stop', str(self.root), str(records)]), 0)
+        t0, gid, log, restarts = buf.getvalue().split()
         self.assertTrue(t0.startswith('T0=') and '.' in t0)
         self.assertEqual(gid, 'GID=123456789012345678')
+        self.assertEqual(log, f'LOG={self.log.stat().st_size}')
+        self.assertEqual(restarts, 'RESTARTS=0')  # no restarts log yet
+        self.assertEqual(swap.parse_baseline(buf.getvalue())['gid'], 123456789012345678)
+
+    def test_an_unknown_guard_baseline_needs_a_guard_written_after_t0(self):
+        """Item 1: GUARD.json missing or unreadable after the stop: GID=unknown with the post-stop time; the watch
+        accepts it, and SUCCESS needs a GUARD written after T0 (any id)."""
+        records = Path(self.tmp.name)
+        for broken in (None, '{"unix": 10', '{"unix": 10, "ok": true}'):
+            if broken is None:
+                (self.root / 'GUARD.json').unlink(missing_ok=True)
+            else:
+                (self.root / 'GUARD.json').write_text(broken)
+            line = swap.after_stop(self.root, records, now=lambda: 1000.25)
+            self.assertTrue(line.startswith('T0=1000.250000 GID=unknown LOG='), line)
+            self.assertIsNone(swap.parse_baseline(line)['gid'])
+        self.guard(999.0, 7)  # an old GUARD reappears: written before T0
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            self.assertEqual(swap.watch(self.root, self.plan, line, 'swap', 723, every=0, log=self.log, rounds=1,
+                                        now=lambda: 1002.0), 1)
+        self.assertFalse(json.loads(buf.getvalue())['guard']['new_since_stop'])
+        self.guard(1001.0, 7)  # written after T0: any id is new
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(swap.watch(self.root, self.plan, line, 'swap', 723, every=0, log=self.log, rounds=1,
+                                        now=lambda: 1002.0), 0)
+
+    def test_an_exited_driver_needs_run_and_blocks_plain_success(self):
+        """Item 2: a chain closed by `no-room` or `run-exit` shows `exited, needs run` every round, in both modes,
+        until a later `run`; while any live chain is exited the verdict is RESUME NEEDED (exit 4), never SUCCESS."""
+        self.events({'event': 'guard-wait', 'chain': 'c1', 'unix': 500.0},
+                    {'event': 'no-room', 'chain': 'c1', 'unix': 900.0, 'reason': 'guard'},
+                    {'event': 'segment', 'chain': 'c2', 'unix': 950.0})
+        self.guard(990.0, 7)
+        for mode in ('swap', 'recovery'):  # no new GUARD yet: WAIT, and the exited driver is shown
+            code, state = self.run_watch(7, 1002.0, mode)
+            self.assertEqual((code, state['verdict'], state['resume_needed']), (1, 'WAIT', ['c1']))
+            self.assertEqual(state['chains']['c1']['driver'], 'exited, needs run (no-room at 900.0)')
+            self.assertIsNone(state['first_driver_exit_in_s'])  # c1 no longer waits
+        self.guard(1001.0, 8)
+        for mode in ('swap', 'recovery'):
+            code, state = self.run_watch(7, 1002.0, mode)
+            self.assertEqual((code, state['verdict'], state['resume_needed']), (4, 'RESUME NEEDED', ['c1']))
+        self.events({'event': 'run-exit', 'chain': 'c2', 'unix': 1001.5, 'exit': 0})
+        self.assertEqual(self.run_watch(7, 1002.0)[1]['resume_needed'], ['c1', 'c2'])
+        self.events({'event': 'run', 'chain': 'c1', 'unix': 1001.6})
+        code, state = self.run_watch(7, 1002.0)
+        self.assertEqual((code, state['resume_needed'], state['chains']['c1']['driver']), (4, ['c2'], 'running'))
+        self.events({'event': 'run', 'chain': 'c2', 'unix': 1001.7})
+        self.assertEqual(self.run_watch(7, 1002.0)[:1], (0,))
+
+    def test_a_wait_closed_by_recover_unsupervised_needs_run(self):
+        """Item 2: a wait followed only by `recover-unsupervised` (the supervisor stopped the orphaned instance)
+        is an exited driver, like no-room."""
+        self.events({'event': 'guard-wait', 'chain': 'c1', 'unix': 500.0},
+                    {'event': 'recover-unsupervised', 'chain': 'c1', 'unix': 1001.0, 'exit': -9},
+                    {'event': 'segment', 'chain': 'c2', 'unix': 950.0})
+        self.guard(1001.0, 8)
+        code, state = self.run_watch(7, 1002.0, 'recovery')
+        self.assertEqual((code, state['verdict'], state['resume_needed']), (4, 'RESUME NEEDED', ['c1']))
+        self.assertEqual(state['chains']['c1']['driver'], 'exited, needs run (recover-unsupervised at 1001.0)')
+
+    def test_segment_failed_and_w5box_kill_close_a_driver(self):
+        """Addendum c: the other events after which chains.py's driver is gone (`segment-failed`: EXIT_FAILED;
+        `w5box-kill`: `request` killed the chain's instance) are exited states too."""
+        self.events({'event': 'segment', 'chain': 'c1', 'unix': 900.0},
+                    {'event': 'segment-failed', 'chain': 'c1', 'unix': 950.0, 'exit': 1},
+                    {'event': 'guard-wait', 'chain': 'c2', 'unix': 960.0},
+                    {'event': 'w5box-kill', 'chain': 'c2', 'unix': 970.0, 'exit': 0},
+                    {'event': 'w5box-pause', 'chain': 'c2', 'unix': 975.0, 'exit': 0})  # not a driver event
+        self.guard(1001.0, 8)
+        code, state = self.run_watch(7, 1002.0)
+        self.assertEqual((code, state['resume_needed']), (4, ['c1', 'c2']))
+        self.assertEqual(state['chains']['c2']['driver'], 'exited, needs run (w5box-kill at 970.0)')
+
+    def test_recovery_ends_on_a_failure_while_a_driver_has_exited(self):
+        """Addendum c: in recovery mode an exited chain plus a failure ends the watch (exit 5), never an endless
+        WAIT; without an exited chain a failure is shown and the watch goes on to SUCCESS or DEADLINE."""
+        restarts = Path(self.tmp.name) / 'supervise-restarts.log'
+        base = self.base(7)
+        self.events({'event': 'guard-wait', 'chain': 'c1', 'unix': 500.0},
+                    {'event': 'run-exit', 'chain': 'c1', 'unix': 900.0, 'exit': 3},
+                    {'event': 'segment', 'chain': 'c2', 'unix': 950.0})
+        self.guard(990.0, 7)
+        restarts.write_text('2026-11-20T17:00:00-05:00 supervise exited 1\n')
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            code = swap.watch(self.root, self.plan, base, 'recovery', 723, every=0, log=self.log, rounds=5,
+                              now=lambda: 1002.0, restarts=restarts)
+        last = json.loads(buf.getvalue().splitlines()[-1])
+        self.assertEqual((code, last['verdict'], last['resume_needed']), (5, 'FAILURE, RESUME NEEDED', ['c1']))
+        self.events({'event': 'run', 'chain': 'c1', 'unix': 1001.0})  # c1 restarted: the failure alone waits
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = swap.watch(self.root, self.plan, base, 'recovery', 723, every=0, log=self.log, rounds=2,
+                              now=lambda: 1002.0, restarts=restarts)
+        self.assertEqual(code, 1)
+
+    def test_live_chains_are_the_plans_chains_without_end(self):
+        """Addendum d: a leftover folder under chains/ that is not in the plan (no END.json) is not a live chain and
+        does not block SUCCESS; a plan chain with END.json is not live either."""
+        jwrite(self.root / 'chains' / 'c9' / 'chain.json', {})  # leftover, not in the plan, no ceiling
+        self.events({'event': 'segment', 'chain': 'c1', 'unix': 950.0},
+                    {'event': 'segment', 'chain': 'c2', 'unix': 950.0})
+        self.guard(1001.0, 8)
+        code, state = self.run_watch(7, 1002.0)
+        self.assertEqual((code, sorted(state['chains'])), (0, ['c1', 'c2']))
+        (self.plan).write_text('{"chains": ')
+        with self.assertRaises(SystemExit):
+            self.run_watch(7, 1002.0)
 
     def test_recovery_mode_does_not_escalate(self):
         self.guard(990.0, 7)
-        self.events({'event': 'guard-wait', 'chain': 'c2', 'unix': 500.0})
+        self.events({'event': 'guard-wait', 'chain': 'c2', 'unix': 500.0},
+                    {'event': 'segment', 'chain': 'c1', 'unix': 600.0})
         code, state = self.run_watch(7, 500 + 1800 - 1023, mode='recovery')  # past the swap escalation time
         self.assertEqual((code, state['verdict']), (1, 'WAIT'))
         self.assertIsNone(state['escalate_in_s'])
@@ -407,6 +574,37 @@ class WatchTests(unittest.TestCase):
         self.assertEqual(state['guard'], 'unknown (GUARD.json unreadable)')
         (self.root / 'chains' / 'c1' / 'ADMITTED.json').write_text('{"cou')
         self.assertEqual(self.run_watch(7, 1100.0)[1]['chains']['c1']['admitted'], 'unknown')
+
+    def test_the_first_read_streams_lines(self):
+        """The first LOG.jsonl read goes line by line (readline), never one read of the whole file."""
+        self.events(*({'event': 'segment', 'chain': 'c1', 'unix': float(i)} for i in range(2000)))
+        self.events({'event': 'guard-wait', 'chain': 'c2', 'unix': 5000.0})
+        waits = swap.Waits(self.root)
+        real_open = open
+
+        class NoWholeRead:
+            def __init__(self, f):
+                self.f = f
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                self.f.close()
+
+            def seek(self, n):
+                return self.f.seek(n)
+
+            def readline(self):
+                return self.f.readline()
+
+            def read(self, n=-1):
+                raise AssertionError('a whole-file read')
+        with mock.patch('builtins.open', lambda p, m='r', *a, **k: NoWholeRead(real_open(p, m, *a, **k))):
+            got = waits.read()
+        self.assertEqual(got['c2'], ('waiting', 5000.0, 'guard-wait'))
+        self.assertEqual(got['c1'], ('running', 1999.0, 'segment'))
+        self.assertEqual(waits.offset, (self.root / 'LOG.jsonl').stat().st_size)
 
 
 class CheckTailsLockTests(unittest.TestCase):
@@ -510,14 +708,41 @@ class StepFileTests(unittest.TestCase):
         self.assertIn('signal 9', out)
         self.assertEqual(self.step('pids', self.plan)[1].strip(), 'LOOP_PIDS ; PYTHON_PIDS')
 
-    def test_start_loop_refuses_a_running_plan_and_stop_failing_an_idle_one(self):
+    def test_start_loop_refuses_a_running_plan_and_stop_failing_finds_an_idle_one_verified_empty(self):
         (self.w5 / 'chains.py').write_text('import time\ntime.sleep(120)\n')
-        self.assertEqual(self.step('stop_failing', self.plan)[0], 1)
+        code, out = self.step('stop_failing', self.plan)
+        self.assertEqual(code, 0, out)  # item 1: nothing running is verified empty, and the sequence goes on
+        self.assertIn(f'verified empty: nothing runs {self.plan}', out)
+        self.assertIn('after_stop, check_tails, start_loop', out)
         self.spawn([sys.executable, str(self.w5 / 'chains.py'), 'supervise', '--plan', self.plan])
         time.sleep(1)
         code, out = self.step('start_loop', str(self.w5), self.plan)
         self.assertEqual(code, 1)
         self.assertIn('already runs', out)
+
+
+    def test_sent_is_what_the_helper_reports_it_signalled(self):
+        """SENT follows the helper's SIGNALLED list: refused only means STOP REFUSED, a signalled pid means STOP
+        INCOMPLETE, and an unreadable helper result means STOP UNCERTAIN."""
+        (self.w5 / 'chains.py').write_text('import time\ntime.sleep(120)\n')
+        sup = self.spawn([sys.executable, str(self.w5 / 'chains.py'), 'supervise', '--plan', self.plan])
+        other = self.spawn(['sleep', '120'])
+        time.sleep(1)
+        step_file = str(HERE.parent / 'supervise_swap.sh')
+        def run(body):
+            r = subprocess.run(['bash', '-c', f'. {step_file} true; {body}'], env=self.env, capture_output=True,
+                               text=True, timeout=60)
+            return r.stdout + r.stderr
+        out = run(f'send {self.plan} 0 {other.pid}; partial {self.plan}')
+        self.assertIn(f'REFUSED {other.pid}', out)
+        self.assertIn('STOP REFUSED: nothing signalled', out)
+        out = run(f'send {self.plan} 0 {sup.pid}; partial {self.plan}')  # signal 0: checked, nothing changes
+        self.assertIn(f'SIGNALLED {sup.pid} ;', out)
+        self.assertIn('STOP INCOMPLETE: signals were sent', out)
+        out = run(f'PY=false send {self.plan} 0 {sup.pid}; partial {self.plan}')
+        self.assertIn('STOP UNCERTAIN', out)
+        self.assertIsNone(sup.poll())
+        self.assertIsNone(other.poll())
 
 
 class GuardOnlyTests(unittest.TestCase):

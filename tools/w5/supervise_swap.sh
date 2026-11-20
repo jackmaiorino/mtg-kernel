@@ -17,19 +17,26 @@
 #                                       the pids just found asleep (each through a pidfd, its argv checked after the
 #                                       pidfd opens); verifies; on failure says whether any signal was sent
 #   stop_failing PLAN                   bounded stop of a loop that may never publish: loop, then supervisor, SIGKILL
-#                                       after 20 s, verifies nothing of PLAN is left
+#                                       after 20 s, verifies nothing of PLAN is left (exit 1 if anything is); nothing
+#                                       running: "verified empty", exit 0 (go on as after a stop)
 #   check_tails                         every chain index's last line parses (a missing final newline is fine)
 #   cut_partial_tail INDEX              under the chain's index lock: an unparseable unterminated last line is saved
 #                                       to records/ and cut back to the previous newline
-#   after_stop                          T0=<float> GID=<GUARD id>, from one clock read, right after the stop
+#   after_stop                          after every completed stop, before the start: one line, the baseline
+#                                       T0=<float> GID=<GUARD id or unknown> LOG=<bytes> RESTARTS=<bytes>
 #   guard_id                            GUARD.json's id
-#   watch_swap GUARD_ID [MODE] [EVERY] [ROUNDS]
-#                                       read only, every EVERY s (30): GUARD (id changed, ok, age), each live chain's
-#                                       admitted count, ceiling and open guard wait, the time to the first driver exit
-#                                       and (MODE swap) to escalation. SUCCESS (0) needs a new GUARD id, ok, age under
-#                                       900 s, a free admission for every live chain and no failure (a Traceback, or
-#                                       a supervisor exit in supervise-restarts.log) since the watch began; swap mode
-#                                       ESCALATE (2); recovery mode DEADLINE (3); 1 after ROUNDS
+#   watch_swap PLAN "BASELINE" [MODE] [EVERY] [ROUNDS]
+#                                       read only, every EVERY s (30), from the after_stop baseline of the stop
+#                                       before the start: GUARD (new since the stop, ok, age), each live chain's (the
+#                                       plan's chains without END.json)
+#                                       admitted count, ceiling and driver state (running, waiting since, exited and
+#                                       needing run), the time to the first driver exit and (MODE swap) to escalation.
+#                                       SUCCESS (0): a GUARD written after T0 with a new id, ok, under 900 s old, a
+#                                       free admission for every live chain, no failure (a Traceback or a supervisor
+#                                       exit after the baseline's offsets) and every live chain running or waiting;
+#                                       RESUME NEEDED (4): the same with some chains' drivers exited (named); swap
+#                                       mode ESCALATE (2); recovery mode DEADLINE (3), or FAILURE, RESUME NEEDED (5)
+#                                       on a failure with exited drivers; 1 after ROUNDS
 set -u
 C=${C:?}; ROOT=${ROOT:-$C/oc}; PY=${PY:?}; LOOP=${LOOP:-60}; PAUSE=${PAUSE:-30}
 RECORDS=$C/records
@@ -64,12 +71,17 @@ asleep() {  # state S before and after 2 s, the same CPU ticks, a report written
 }
 
 SENT=0
-send() {  # PLAN SIG PID...: through a pidfd, each process's argv checked after the pidfd is open
-    local plan=$1 sig=$2 out; shift 2
-    [ $# -gt 0 ] || return 0
-    SENT=1
-    out=$("$PY" -B "$HELPER" signal "$plan" "$sig" "$@"); local rc=$?
+send() {  # PLAN SIG PID...: through a pidfd, each process's argv checked after the pidfd is open. SENT becomes 1
+    local plan=$1 sig=$2 out rc signalled; shift 2   # when the helper reports a signalled pid, unknown when the
+    [ $# -gt 0 ] || return 0                          # helper's own result cannot be read
+    out=$("$PY" -B "$HELPER" signal "$plan" "$sig" "$@"); rc=$?
     say "signal $sig: $out"
+    case "$out" in
+        SIGNALLED*)
+            signalled=${out#SIGNALLED}; signalled=$(echo ${signalled%%;*})
+            [ -n "$signalled" ] && SENT=1 ;;
+        *) [ "$SENT" = 1 ] || SENT=unknown ;;
+    esac
     return $rc
 }
 
@@ -92,11 +104,12 @@ kill_and_verify() {  # PLAN LOOPS PYS: SIGTERM the loops, then the supervisors; 
 }
 
 partial() {  # how a failed stop ended
-    if [ "$SENT" = 1 ]; then
-        say "STOP INCOMPLETE: signals were sent: run stop_failing $1, then check_tails, then start_loop"
-    else
-        say "STOP REFUSED: nothing signalled, nothing changed"
-    fi
+    case "$SENT" in
+        1) say "STOP INCOMPLETE: signals were sent: run stop_failing $1, then after_stop, check_tails, start_loop" ;;
+        unknown) say "STOP UNCERTAIN: the signal helper's result could not be read: run pids $1;" \
+                     "if anything is listed, stop_failing $1; then after_stop, check_tails, start_loop" ;;
+        *) say "STOP REFUSED: nothing signalled, nothing changed" ;;
+    esac
     return 1
 }
 
@@ -123,16 +136,19 @@ stop_between_cycles() {  # exactly one loop and one supervisor for PLAN, read ag
     [ $ok = 1 ] || { say "not asleep on three tries"; partial "$plan"; return 1; }
     kill_and_verify "$plan" "$loops" "$pys" || { partial "$plan"; return 1; }
     line=$(pids "$plan"); [ "$line" = "LOOP_PIDS ; PYTHON_PIDS" ] || { say "left: $line"; partial "$plan"; return 1; }
-    say "stopped: $plan (run check_tails before any start)"
+    say "stopped: $plan (next: after_stop, check_tails, start_loop)"
 }
 
 stop_failing() {  # PLAN: whatever runs PLAN now (a fresh scan), stopped and verified as in kill_and_verify
     local plan=$1
     split_pids "$plan" || return 1
     say "stop_failing: loops [$LOOPS] supervisors [$PYS]"
-    [ -n "$LOOPS$PYS" ] || { say "refused: nothing runs $plan"; return 1; }
+    if [ -z "$LOOPS$PYS" ]; then
+        say "verified empty: nothing runs $plan (next: after_stop, check_tails, start_loop)"
+        return 0
+    fi
     kill_and_verify "$plan" "$LOOPS" "$PYS" || return 1
-    say "stopped: $plan (run check_tails before any start)"
+    say "stopped: $plan (next: after_stop, check_tails, start_loop)"
 }
 
 check_tails() { "$PY" -B "$HELPER" check-tails "$ROOT"; }
@@ -175,11 +191,11 @@ EOF
 
 guard_id() { "$PY" -B "$HELPER" guard-id "$ROOT"; }
 
-after_stop() { "$PY" -B "$HELPER" after-stop "$ROOT"; }  # T0=<float> GID=<id>, one clock read, right after the stop
+after_stop() { "$PY" -B "$HELPER" after-stop "$ROOT" "$RECORDS"; }  # the baseline of the next start (one line)
 
-watch_swap() {  # GUARD_ID [swap|recovery] [EVERY] [ROUNDS]
-    "$PY" -B "$HELPER" watch "$ROOT" "$1" "$GUARD_ONLY_SECONDS" --mode "${2:-swap}" --every "${3:-30}" \
-        --log "$RECORDS/supervise.log" --restarts "$RECORDS/supervise-restarts.log" ${4:+--rounds "$4"}
+watch_swap() {  # PLAN "BASELINE" (the after_stop line, quoted) [swap|recovery] [EVERY] [ROUNDS]
+    "$PY" -B "$HELPER" watch "$ROOT" "$1" "$2" "$GUARD_ONLY_SECONDS" --mode "${3:-swap}" --every "${4:-30}" \
+        --log "$RECORDS/supervise.log" --restarts "$RECORDS/supervise-restarts.log" ${5:+--rounds "$5"}
 }
 
 step=$1; shift
