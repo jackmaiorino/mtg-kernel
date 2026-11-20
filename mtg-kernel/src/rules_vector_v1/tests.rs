@@ -1177,6 +1177,7 @@ const TRIGGER_RS_KEYED_NAMES: &[&str] = &[
 
 /// Other rules-module name branches and how each is accounted for.
 const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
+    ("engine.rs", "Journey to Nowhere", "restore the creature target read from the trigger definition for historical source-excluding triggers"),
     ("engine.rs", "Exsanguinate", "exact registered wide-X casting route; numeric meaning preserves the paid X while frozen V1 remains opaque"),
     ("engine.rs", "Alesha, Who Laughs at Fate", "exact native source-incarnation power and departure LKI authentication; frozen V1 root remains opaque"),
     ("engine.rs", "Nine-Lives Familiar", "exact native captured counters and deferred return source binding; frozen V1 root remains opaque"),
