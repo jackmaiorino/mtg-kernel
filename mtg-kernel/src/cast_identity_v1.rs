@@ -135,10 +135,11 @@ pub(crate) fn archived_battlefield_cast(
             CommittedEvent::PublishedCastIdentityV1 { receipt } if receipt.spell == spell => {
                 let current =
                     receipt.stack_zone_change_count.checked_add(1) == Some(live.zone_change_count);
-                if current || before_entry(at) {
-                    if !current || !before_entry(at) || candidate.replace((at, receipt)).is_some() {
-                        return Err(());
-                    }
+                if current != before_entry(at) {
+                    return Err(());
+                }
+                if current && candidate.replace((at, receipt)).is_some() {
+                    return Err(());
                 }
             }
             CommittedEvent::SpellCast { spell: cast, .. } if *cast == spell && before_entry(at) => {
