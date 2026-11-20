@@ -1360,6 +1360,7 @@ mod tests {
         continuation.resolving_item.v4.stack_item_id = StackItemId(active.parent.0 + 1);
         let answer = active.authorization.as_ref().unwrap().answer.clone();
         state.engine.pending_kicked_source = Some(child);
+        let before = state.clone();
         let second_binding = bind(&state, second);
         let err = stage(
             &mut state,
@@ -1372,5 +1373,6 @@ mod tests {
         .unwrap_err();
         assert!(err.contains("overlaps"));
         assert_eq!(state.engine.pending_kicked_source, Some(child));
+        assert_eq!(state, before);
     }
 }

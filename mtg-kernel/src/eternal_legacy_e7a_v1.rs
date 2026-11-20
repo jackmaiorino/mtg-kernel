@@ -2519,23 +2519,9 @@ fn dark_depths_triggers(state: &mut GameState) {
             .stack
             .iter()
             .any(|item| item.inline_effect.as_ref() == Some(&effect))
-            || state
-                .engine
-                .pending_triggers
-                .iter()
-                .any(|trigger| trigger.effect == effect)
-            || crate::eternal_vintage_e7b_v1::dredge::waiting_triggers(state)
-                .iter()
-                .any(|trigger| trigger.effect == effect)
-            || state
-                .standard_v1
-                .as_ref()
-                .and_then(|standard| standard.resolution_play.as_ref())
-                .is_some_and(|play| {
-                    play.deferred_triggers
-                        .iter()
-                        .any(|trigger| trigger.effect == effect)
-                });
+            || crate::optional_trigger_public_v1::held(state)
+                .into_iter()
+                .any(|trigger| trigger.effect == effect);
         if pending {
             continue;
         }
@@ -2581,17 +2567,8 @@ pub(crate) fn animate_dead_leaves_source(
                 .and_then(|pending| item_source(&pending.resolving_item))
         })
         .or_else(|| {
-            state
-                .engine
-                .pending_triggers
-                .iter()
-                .find_map(pending_source)
-        })
-        .or_else(|| {
-            state
-                .pending_legend_rule_v1
-                .iter()
-                .flat_map(|pending| pending.waiting_triggers())
+            crate::optional_trigger_public_v1::held(state)
+                .into_iter()
                 .find_map(pending_source)
         })
 }

@@ -594,6 +594,37 @@ pub(crate) fn take_captures(state: &mut GameState) -> Vec<crate::trigger::Pendin
     std::mem::take(&mut eternal.e7b.dredge_captures)
 }
 
+pub(crate) fn stop_deferring(state: &mut GameState) {
+    if let Some(eternal) = state.eternal_v1.as_mut() {
+        eternal.e7b.dredge_deferring = false;
+    }
+}
+
+pub(crate) fn prepend_checkpoint_captures(
+    state: &mut GameState,
+    mut earlier: Vec<crate::trigger::PendingTrigger>,
+) {
+    if earlier.is_empty() {
+        return;
+    }
+    let e7b = e7b_state(state);
+    e7b.dredge_deferring = false;
+    earlier.append(&mut e7b.dredge_captures);
+    e7b.dredge_captures = earlier;
+}
+
+pub(crate) fn store_checkpoint_captures(
+    state: &mut GameState,
+    captures: Vec<crate::trigger::PendingTrigger>,
+) {
+    if captures.is_empty() {
+        return;
+    }
+    let e7b = e7b_state(state);
+    e7b.dredge_deferring = false;
+    e7b.dredge_captures = captures;
+}
+
 /// Applies a dredge choice: no card draws, a card dredges.
 pub(crate) fn finish(
     state: &mut GameState,

@@ -3263,3 +3263,100 @@ fn pursue_the_past_discard_against_ivora_crosses_second_dredge_decision_and_publ
         assert_eq!(state.stack[1].source, ivora);
     }
 }
+
+#[test]
+fn decree_of_pain_with_drop_of_honey_and_dredge_queues_single_state_trigger_both_seats() {
+    for seat in [PlayerId::P0, PlayerId::P1] {
+        let mut state = game(&["Island"; 16]);
+        state.active_player = seat;
+        state.priority_player = seat;
+        state.step = Step::Main1;
+        let honey = put(&mut state, seat, "Drop of Honey", Zone::Battlefield);
+        let imp = put(&mut state, seat, "Stinkweed Imp", Zone::Battlefield);
+        let decree = put(&mut state, seat, "Decree of Pain", Zone::Hand);
+        pool(&mut state, seat, &[ManaColor::B, ManaColor::B], 6);
+        cast(&mut state, decree, &[]);
+
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                if legal_targets.contains(&Target::Object(imp)) =>
+            {
+                act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+            }
+            other => panic!("expected dredge choice, got {other:?}"),
+        }
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(state.stack[0].source, honey);
+        settled(&mut state);
+        assert_eq!(zone(&state, honey), Zone::Graveyard);
+    }
+}
+
+#[test]
+fn paradoxical_outcome_returning_animate_dead_across_dredge_preserves_public_link_and_sacrifices_creature_both_seats(
+) {
+    for seat in [PlayerId::P0, PlayerId::P1] {
+        let mut state = game(&["Island"; 16]);
+        state.active_player = seat;
+        state.priority_player = seat;
+        state.step = Step::Main1;
+        let guide = put(&mut state, seat, "Elvish Spirit Guide", Zone::Graveyard);
+        let ring = put(&mut state, seat, "Sol Ring", Zone::Battlefield);
+        let aura = put(&mut state, seat, "Animate Dead", Zone::Hand);
+        pool(&mut state, seat, &[ManaColor::B], 1);
+        cast(&mut state, aura, &[Target::Object(guide)]);
+        settled(&mut state);
+        assert_eq!(zone(&state, aura), Zone::Battlefield);
+        assert_eq!(zone(&state, guide), Zone::Battlefield);
+        let aura_bf_generation = state.objects.get(aura).zone_change_count;
+
+        let imp = put(&mut state, seat, "Stinkweed Imp", Zone::Graveyard);
+        let thug = put(&mut state, seat, "Golgari Thug", Zone::Graveyard);
+        let outcome = put(&mut state, seat, "Paradoxical Outcome", Zone::Hand);
+        pool(&mut state, seat, &[ManaColor::U], 3);
+        cast(
+            &mut state,
+            outcome,
+            &[Target::Object(aura), Target::Object(ring)],
+        );
+        if matches!(
+            next(&mut state),
+            Decision::ChooseTargets {
+                can_finish: true,
+                ..
+            }
+        ) {
+            act(&mut state, Action::FinishEffectSelection);
+        }
+
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets { legal_targets, .. })
+                if legal_targets.contains(&Target::Object(imp)) =>
+            {
+                act(&mut state, Action::ChooseEffectTarget(Target::Object(imp)));
+            }
+            other => panic!("expected first dredge choice, got {other:?}"),
+        }
+        match settle(&mut state) {
+            Some(Decision::ChooseEffectTargets {
+                legal_targets,
+                can_finish: true,
+                ..
+            }) if legal_targets.contains(&Target::Object(thug)) => {
+                assert_eq!(zone(&state, aura), Zone::Hand);
+                assert_eq!(zone(&state, guide), Zone::Battlefield);
+                let dynamic = mtg_kernel::eternal_actor_public_v1::capture_v1(&state).unwrap();
+                assert_eq!(dynamic.animate_dead_attached.len(), 1);
+                assert_eq!(
+                    dynamic.animate_dead_attached[0].source.zone_change_count,
+                    aura_bf_generation
+                );
+                act(&mut state, Action::FinishEffectSelection);
+            }
+            other => panic!("expected second dredge choice, got {other:?}"),
+        }
+        settled(&mut state);
+        assert_eq!(zone(&state, guide), Zone::Graveyard);
+    }
+}
