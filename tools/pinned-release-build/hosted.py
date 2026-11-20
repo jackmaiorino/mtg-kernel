@@ -35,6 +35,8 @@ ANNOUNCE_STEP_SOURCE_MERGED = "b6516e6f578109194c496768222ca97cdf5f0191"
 BATCHBOUND_SOURCE_MERGED = "66b532ed669cff0c9713d4e96b1f1bdbc20a81be"
 # The merge commit of PR 792 (the same key scales the physical-group bound) on release/mull-c5719e1cf.
 BATCHBOUND_GROUPS_SOURCE_MERGED = "a9388d185a53815f114528c805ef4e15b33c3722"
+# The merge commit of PR 799 (per-seat priority-window rules) on release/mull-c5719e1cf (this guard branch only).
+PRIORITY_WINDOWS_SOURCE_MERGED = "fe06baa32227b9319a1f53d1d11f9d2abe916e27"
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
 # scripts or proc macros) and writes a manifest with another schema id, the name and the flags. A variant binary runs
@@ -54,6 +56,7 @@ SOURCES = (
     ANNOUNCE_STEP_SOURCE_MERGED,
     BATCHBOUND_SOURCE_MERGED,
     BATCHBOUND_GROUPS_SOURCE_MERGED,
+    PRIORITY_WINDOWS_SOURCE_MERGED,
 )
 IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
 GIB = 2**30
