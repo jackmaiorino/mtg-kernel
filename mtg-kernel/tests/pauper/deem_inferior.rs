@@ -737,10 +737,14 @@ fn spell_inline_effect_tamper_halts_before_executing_forged_program() {
 fn fireblast_and_lava_dart_require_mountains_controlled_by_the_caster() {
     for (name, zone) in [("Fireblast", Zone::Hand), ("Lava Dart", Zone::Graveyard)] {
         for caster in [PlayerId::P0, PlayerId::P1] {
-            let mut state = GameState::new_from_libraries(&[], &[], card_name, 774);
+            let mut state = GameState::new_from_libraries_with_starting_player_v1(
+                &[],
+                &[],
+                card_name,
+                774,
+                caster,
+            );
             state.step = Step::Main1;
-            state.active_player = caster;
-            state.priority_player = caster;
             let spell = put_object(&mut state, caster, name, zone);
             let island = put_object(&mut state, caster, "Island", Zone::Battlefield);
             put_object(&mut state, caster, "Forest", Zone::Battlefield);
