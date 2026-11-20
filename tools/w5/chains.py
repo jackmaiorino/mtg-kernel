@@ -134,7 +134,9 @@ through `w5box.py fill`, which stops once all measured chains have ended); the b
 - `supervise --loop` keeps each chain's index in memory across cycles (`retention.IndexCache`): a cycle reads only
   the index file's new lines and the receipts past them, and the rolling plan and the guard skip records whose
   full-state files are all gone and old segments whose trajectories are gone (nothing writes into a completed
-  iteration again), with the same decisions as reading everything. A one-shot `supervise` reads everything.
+  iteration again), with the same decisions as reading everything. A one-shot `supervise` reads everything. The
+  cache keeps each record's line offset and scalar fields (about 50 bytes a record) and parses a whole record from
+  its line only when it is read, so the supervisor's memory stays small for chains of millions of updates.
 
 **Box throughput** (`throughput`, Stage 0, COMPUTE-POLICY items 2 to 5): writes the `w5-box-throughput/v1` record
 w5box's guard requires for one arm of a plan. Each phase (default: one box, then every box of the layout) is a
@@ -1910,7 +1912,12 @@ def valid_records(info):
     end = info['end']
     if end is None or end.get('last_valid_boundary') is None:
         return info['records']
-    return [r for r in info['records'] if r['boundary'] <= end['last_valid_boundary']]
+    last = end['last_valid_boundary']
+    if isinstance(info['records'], retention.IndexView):  # a view of the same records, from the compact fields
+        valid = info['records'].where('boundary', lambda b: b <= last)
+        if valid is not None:
+            return valid
+    return [r for r in info['records'] if r['boundary'] <= last]
 
 
 def ledger_at(records, boundary):
@@ -1946,7 +1953,11 @@ def chain_info(root, name, caches=None):
 
 def protected_paths(info, boundaries):
     out = set()
-    for r in info['records']:
+    records = info['records']
+    columns = retention.fields(records, 'boundary')
+    if columns is not None:  # an IndexCache view: only the protected records are parsed
+        records = [records[j] for j, b in enumerate(columns[0]) if b in boundaries]
+    for r in records:
         if r['boundary'] in boundaries:
             out |= {p['path'] for p in retention.record_parts(r)}
     return out
@@ -1986,9 +1997,12 @@ def pair_decide(plan, info_c, info_x, st, now, budget):
     c_valid = valid_records(c)
     c_ended = c['end'] is not None
     evidence = {}
-    for rec in x['records']:
-        if rec.get('instance') is not None and rec.get('unix_seconds') is not None:
-            evidence[rec['instance']] = max(evidence.get(rec['instance'], 0), rec['unix_seconds'])
+    columns = retention.fields(x['records'], 'instance', 'unix_seconds')
+    pairs = zip(*columns) if columns is not None else (
+        (rec.get('instance'), rec.get('unix_seconds')) for rec in x['records'])
+    for instance, unix in pairs:
+        if instance is not None and unix is not None:
+            evidence[instance] = max(evidence.get(instance, 0), unix)
     running = running_seconds(x['ledger'], now, frozen_intervals(root, now), x['state'], evidence)
     x_cap = float(x['chain'].get('x_cap_seconds', retention.X_CAP_SECONDS))
     if c_ended:  # R_i is final once C's instance has closed

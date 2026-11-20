@@ -336,5 +336,204 @@ class LargeIndexTests(unittest.TestCase):
         self.assertLess(t3 - t2, 0.25 * (t1 - t0), timing)
 
 
+class CompactRecordsTests(unittest.TestCase):
+    """The cache's compact records (`retention.IndexRecords`, `IndexView`): a view reads exactly like the list of
+    dicts `index` returns, the compact-field reads of the supervise cycle and the pair code equal their reads of
+    every record, odd values read back exactly, and memory stays at the offsets and fields."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.t = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def chain(self, records, segments=1, length=None):
+        """A chain manifest whose segments are complete and whose index file holds `records` (dicts or raw lines)."""
+        segs = []
+        length = length or max(1, len(records))
+        for s in range(segments):
+            root = self.t / 'chain' / f'seg-{s:05d}'
+            root.mkdir(parents=True, exist_ok=True)
+            (root / 'completion.json').write_text('{}')
+            segs.append({'config': (self.t / 'unused.json').as_posix(), 'offset': s * length,
+                         'root': root.as_posix(), 'updates': length})
+        path = jwrite(self.t / 'chain' / 'chain.json', {'schema': 'w5-chain/v1', 'chain': 'c', 'arm': 'C',
+                                                        'launched_unix': 1.0, 'segments': segs})
+        with open(retention.index_path(path), 'wb') as f:
+            for r in records:
+                f.write(r if isinstance(r, bytes) else json.dumps(r).encode() + b'\n')
+        return path
+
+    def record(self, u, **changes):
+        ck = self.t / 'ck' / f'{u}.json'
+        rec = {'update': u, 'boundary': u + 1, 'segment': 0, 'iteration': u, 'after_state_sha256': f'{u:064x}',
+               'checkpoint': {'path': ck.as_posix(), 'sha256': f'{u:064x}'}, 'state': None,
+               'ledger_usec': (u + 1) * 1000, 'unix_seconds': 10.0 + u / 4, 'instance': u // 7}
+        rec.update(changes)
+        return rec
+
+    def test_a_view_reads_as_the_index_list(self):
+        recs = [self.record(u) for u in range(40)]
+        path = self.chain(recs, length=40)
+        (self.t / 'ck').mkdir()
+        for u in (0, 7, 39):
+            Path(recs[u]['checkpoint']['path']).write_text('x')
+        cache = retention.IndexCache(path)
+        _, view = cache.refresh()
+        listed = retention.index(path)[1]
+        self.assertIsInstance(view, retention.IndexView)
+        self.assertEqual(view, listed)
+        self.assertEqual(listed, list(view))
+        self.assertEqual(len(view), 40)
+        self.assertEqual(view[-1], listed[-1])
+        self.assertEqual(view[5], listed[5])
+        self.assertEqual(list(view[-7:]), listed[-7:])
+        self.assertEqual(list(view[3:30:4]), listed[3:30:4])
+        self.assertEqual(list(reversed(view)), listed[::-1])
+        self.assertTrue(view and not view[40:])
+        with self.assertRaises(IndexError):
+            view[40]
+        # A whole read settles the records with no file on disk: `active` holds only the others.
+        self.assertEqual([r['boundary'] for r in cache.active], [1, 8, 40])
+        self.assertEqual(len(cache.settled), 37)
+
+    def test_compact_reads_equal_reading_every_record(self):
+        """first_at_or_past, ledger_series, project, decide, select, valid_records, protected_paths, the pair's
+        running evidence and the replay sample's selection, over a view and over the same list."""
+        import replay_sample
+        (self.t / 'ck').mkdir()
+        recs = [self.record(u, instance=u // 9) for u in range(300)]
+        recs[11]['ledger_usec'] = None
+        recs[12]['unix_seconds'] = None
+        recs[13]['instance'] = None
+        path = self.chain(recs, length=300)
+        for u in range(0, 300, 16):
+            Path(recs[u]['checkpoint']['path']).write_text('x')
+        _, view = retention.IndexCache(path).refresh()
+        listed = list(view)
+        self.assertEqual(listed, retention.index(path)[1])
+        self.assertIsNotNone(retention.fields(view, 'ledger_usec'))
+        for target in (0, 1000, 12_000, 12_001, 150_000, 300_000, 300_001):
+            self.assertEqual(retention.first_at_or_past(view, target), retention.first_at_or_past(listed, target))
+        self.assertEqual(retention.ledger_series(view), retention.ledger_series(listed))
+        self.assertEqual(retention.project(view, 1.0, 100.0), retention.project(listed, 1.0, 100.0))
+        chain = retention.load_chain(path)
+        for ended in (False, True):
+            self.assertEqual(retention.decide(chain, view, chain, view[:200], ended, 5.0, 90.0, 10),
+                             retention.decide(chain, listed, chain, listed[:200], ended, 5.0, 90.0, 10))
+        for target in (17_000, 100_000, 299_000):
+            self.assertEqual(retention.select(chain, view, target, {}), retention.select(chain, listed, target, {}))
+        self.assertEqual(retention.prune_manifest(chain, view, 0), retention.prune_manifest(chain, listed, 0))
+        for last in (None, 0, 150, 300, 10**6):
+            end = None if last is None else {'last_valid_boundary': last}
+            got = chains.valid_records({'records': view, 'end': end})
+            self.assertEqual(list(got), chains.valid_records({'records': listed, 'end': end}))
+        for keep in (set(), {17}, {1, 300, 5000}):
+            self.assertEqual(chains.protected_paths({'records': view}, keep),
+                             chains.protected_paths({'records': listed}, keep))
+        self.assertEqual(chains.ledger_at(view, 77), chains.ledger_at(listed, 77))
+        for nxt in (0, 150, 299, 300, 400):
+            self.assertEqual(list(replay_sample.since(view, nxt)), replay_sample.since(listed, nxt))
+            self.assertEqual(replay_sample.protected(self.t / 'sample', 'X8', 'c', 'w5/q', chain, view),
+                             replay_sample.protected(self.t / 'sample', 'X8', 'c', 'w5/q', chain, listed))
+        # The pair decision's running evidence: the latest receipt time per instance.
+        evidence = {}
+        with mock.patch.object(chains, 'running_seconds', side_effect=lambda led, now, fr, st, ev: evidence.update(
+                {id(ev): dict(ev)}) or 0.0), mock.patch.object(chains, 'frozen_intervals', return_value=[]):
+            for records in (view, listed):
+                x = {'records': records, 'ledger': [], 'state': self.t / 'state', 'chain': chain, 'end': None,
+                     'name': 'x', 'path': path, 'live': False, 'paused': False, 'stop_at': None}
+                c = {'records': [], 'end': None, 'chain': chain}
+                chains.pair_decide({'root': self.t.as_posix(), 'chains': {}}, c, x, {}, 100.0, {})
+        a, b = evidence.values()
+        self.assertEqual(a, b)
+        self.assertEqual(a[0], 12.0)  # update 8's receipt; update 12's time is None
+        self.assertNotIn(None, a)
+
+    def test_odd_values_read_back_exactly_and_a_missing_field_reads_every_record(self):
+        recs = [self.record(0, ledger_usec=2**70, unix_seconds=5, instance=True),
+                self.record(1, ledger_usec=7.5, boundary=2.0),
+                self.record(2, instance='i')]
+        path = self.chain(recs, length=3)
+        _, view = retention.IndexCache(path).refresh()
+        self.assertEqual(list(retention.fields(view, 'ledger_usec')[0]), [2**70, 7.5, 3000])
+        self.assertEqual([type(v) for v in retention.fields(view, 'unix_seconds')[0]], [int, float, float])
+        self.assertEqual(list(retention.fields(view, 'instance')[0]), [True, 0, 'i'])
+        self.assertIs(list(retention.fields(view, 'instance')[0])[0], True)
+        self.assertEqual(view, retention.index(path)[1])
+        listed = retention.index(path)[1]
+        self.assertEqual(retention.first_at_or_past(view, 7), recs[0])
+        self.assertIsNone(retention.first_at_or_past(view, 2**70 + 1))
+        self.assertEqual(retention.first_at_or_past(view, 100), recs[0])
+        self.assertEqual(retention.first_at_or_past(view, 7), retention.first_at_or_past(listed, 7))
+        recs.append({k: v for k, v in self.record(3).items() if k != 'ledger_usec'})
+        path = self.chain(recs, length=4)
+        _, view = retention.IndexCache(path).refresh()
+        self.assertIsNone(retention.fields(view, 'ledger_usec'))
+        self.assertIsNotNone(retention.fields(view, 'boundary'))
+        listed = retention.index(path)[1]
+        self.assertEqual(retention.ledger_series(view), retention.ledger_series(listed))
+        self.assertEqual(retention.first_at_or_past(view, 10**30), retention.first_at_or_past(listed, 10**30))
+
+    def test_lines_are_split_as_index_reads_them(self):
+        """CRLF line ends, empty lines, a line holding two records split by another line break character, and a
+        last line without its newline."""
+        a, b, c, d = (json.dumps(self.record(u)).encode() for u in range(4))
+        path = self.chain([a + b'\r\n', b'\n', b + b'\x1e' + c + b'\n', b'\r\n', d], length=4)
+        cache = retention.IndexCache(path)
+        _, view = cache.refresh()
+        self.assertEqual([r['update'] for r in view], [0, 1, 2, 3])
+        self.assertEqual(view, retention.index(path)[1])
+        self.assertEqual(view[2], self.record(2))
+        self.assertTrue(retention.index_path(path).read_bytes().endswith(d + b'\n'))
+
+    def test_boundaries_behave_as_a_set(self):
+        got, want = retention.Boundaries(), set()
+        for values in ([5, 9, 5], [0, 2**28 + 3, -1], [True, 2.0, 2.5, 'x', None], range(1000, 1100)):
+            got |= values
+            want |= set(values)
+            self.assertEqual(len(got), len(want))
+        for probe in (5, 5.0, 1, True, 2, 2.5, 3, 'x', None, -1, 2**28 + 3, 2**28 + 4, 1050, 10**9, float('nan'),
+                      float('inf'), [1]):
+            try:
+                expected = probe in want
+            except TypeError:
+                expected = False
+            self.assertEqual(probe in got, expected, probe)
+        self.assertEqual(set(got), want)
+
+    def test_memory_stays_at_offsets_and_fields(self):
+        """200,000 records: the kept records cost under 100 bytes each, and a whole read never holds them parsed
+        (its peak stays far below the parsed index's size)."""
+        import tracemalloc
+        updates = 200_000
+        lines = [json.dumps(self.record(u, segment=u // 256, iteration=u % 256)).encode() + b'\n'
+                 for u in range(updates)]
+        path = self.chain(lines, segments=updates // 256 + 1, length=256)
+        del lines
+        gc_free = __import__('gc').collect
+        gc_free()
+        tracemalloc.start()
+        try:
+            cache = retention.IndexCache(path)
+            base, _ = tracemalloc.get_traced_memory()
+            tracemalloc.reset_peak()
+            _, view = cache.refresh()
+            kept, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+        self.assertEqual(len(view), updates)
+        sample = retention.index(path)[1][:1000]
+        parsed = sum(len(json.dumps(r)) for r in sample) / len(sample) * 2.5  # a parsed record's dicts and strings
+        per_record = (kept - base) / updates
+        timing = {'kept_bytes_per_record': round(per_record, 1), 'peak_bytes': peak - base,
+                  'parsed_index_estimate_bytes': int(parsed * updates)}
+        print(json.dumps(timing), file=sys.stderr)
+        self.assertLess(per_record, 100, timing)
+        self.assertLess(peak - base, 0.25 * parsed * updates, timing)
+        self.assertEqual(len(cache.active), 0)
+
+
 if __name__ == '__main__':
     unittest.main()
