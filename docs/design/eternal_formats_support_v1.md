@@ -757,7 +757,9 @@ New, each built once in the first wave that needs it:
   historical damage to the chosen source incarnation. A native Stack-to-Battlefield
   entry records the exact permanent that a chosen physical cast becomes, bound
   to its published cast identity and first committed departure; later blinks do
-  not retarget its shield. Virtual permanent spell copies still need this binding.
+  not retarget its shield. A virtual permanent spell starts on the stack with
+  its own object identity. Its shield follows that copy through its first
+  stack-to-battlefield move to the token it becomes.
   Wave P3g records departed sources' last-known color and marks the card Full (see P3g).
   The choice menu includes blue permanents, stack spells, face-up command
   objects and supported public references from stack items and waiting effects.
