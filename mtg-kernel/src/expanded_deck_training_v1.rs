@@ -1169,6 +1169,13 @@ pub struct ExpandedEpisodeV1 {
     /// and every behavior.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub london_keep_offset: Option<london_keep_offset_v1::LondonKeepOffsetV1>,
+    /// Some gives each physical seat a priority-window rule
+    /// (`priority_action_windows_v1`: `"harness-v2"`, `"action-windows-v1"`,
+    /// `"action-windows-end-step-v1"`), set on the surface before the first
+    /// decision. Refused with a reset start and with a search opponent. None
+    /// keeps every prior serialized byte and today's surface.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority_windows: Option<[crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2]>,
 }
 
 /// Named game-level runtime rules profiles an episode may select.
@@ -1232,6 +1239,27 @@ impl ExpandedEpisodeV1 {
     /// The opt-in opening's own refusals (design section 3). The feature
     /// identity refusal needs the loaded policies and is checked by the
     /// collector (`require_opening_feature_identity_v1`).
+    /// Each seat's priority-window rule; both `HarnessV2` when the field is
+    /// absent. Refused with a reset start (its recorded prefix was played on
+    /// today's surface) and with a search opponent (its simulations build
+    /// their own sessions).
+    pub(crate) fn priority_windows_v1(
+        &self,
+    ) -> Result<[crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2], String> {
+        let Some(windows) = self.priority_windows else {
+            return Ok([crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2; 2]);
+        };
+        ensure(
+            self.reset.is_none(),
+            "priority_windows is refused with a reset start",
+        )?;
+        ensure(
+            self.opponent_search.is_none(),
+            "priority_windows is refused with a search opponent",
+        )?;
+        Ok(windows)
+    }
+
     pub(crate) fn validate_opening_v1(&self) -> Result<(), String> {
         ensure(
             self.opening.is_some() == self.mulligan_modes.is_some(),
@@ -2438,10 +2466,11 @@ fn episode_session_v1(
 ) -> Result<FastActorSessionV1, String> {
     let (steps, physical) = episode.reset_offsets_v1();
     let game_seed = episode.reset.as_ref().map_or(episode.seed, |r| r.game_seed);
+    let windows = episode.priority_windows_v1()?;
     let mut session = if let Some(modes) = episode.mulligan_modes {
         // `opening` (London v1) with its refusals; never a reset start.
         episode.validate_opening_v1()?;
-        FastActorSessionV1::reset_pauper_london_v1(
+        FastActorSessionV1::reset_pauper_london_windows_v1(
             1,
             game_seed,
             episode.max_physical_decisions,
@@ -2450,13 +2479,14 @@ fn episode_session_v1(
             configs.each_ref().map(|d| d.mainboard().to_vec()),
             PlayerId(episode.starting_player),
             modes,
+            windows,
         )
         .map_err(err)?
     } else {
         episode.validate_opening_v1()?;
-        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
+        FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_and_windows_v1(
         1, game_seed, physical + episode.max_physical_decisions, steps + episode.max_policy_steps,
-        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player)).map_err(err)?
+        episode.selected.each_ref().map(|d| d.label.clone()), configs.each_ref().map(|d| d.mainboard().to_vec()), PlayerId(episode.starting_player), windows).map_err(err)?
     };
     if let Some(rules) = episode.runtime_rules {
         session.set_runtime_rules_v1(rules.rules())?;
@@ -7063,6 +7093,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         }
     }
 
@@ -7598,6 +7629,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         assert!(e.configurations().is_ok());
         let selected = &mut e.selected[0];
@@ -7709,6 +7741,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -7848,6 +7881,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -7989,6 +8023,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8127,6 +8162,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8248,6 +8284,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8383,6 +8420,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8529,6 +8567,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8665,6 +8704,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8818,6 +8858,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -8973,6 +9014,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, Some(&mut opponent), &episode)
             .unwrap_or_else(|error| {
@@ -9016,6 +9058,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         }
     }
 
@@ -9971,6 +10014,7 @@ pub(crate) mod tests {
                 opening: None,
                 mulligan_modes: None,
                 london_keep_offset: None,
+                priority_windows: None,
             };
             if let Err(error) = collect_episode(&mut policy, &learner, None, &episode) {
                 failures.push(format!(
@@ -10032,6 +10076,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -10076,6 +10121,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         collect_episode(&mut policy, &learner, None, &episode).unwrap();
     }
@@ -10201,6 +10247,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -10260,6 +10307,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -10305,6 +10353,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).expect(
             "V4 self-play must complete this real game without an actor-visible encoding error",
@@ -10365,6 +10414,7 @@ pub(crate) mod tests {
                 opening: None,
                 mulligan_modes: None,
                 london_keep_offset: None,
+                priority_windows: None,
             };
             let trajectory =
                 collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -10440,6 +10490,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -10477,6 +10528,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -10532,6 +10584,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory =
             collect_episode(&mut policy, &learner, None, &episode).unwrap_or_else(|e| {
@@ -10570,6 +10623,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode)
             .unwrap_or_else(|e| panic!("V3 self-play must never fail on this seed/decks: {e}"));
@@ -10718,6 +10772,7 @@ pub(crate) mod tests {
                 mulligan_modes: opening
                     .then_some([PauperMulliganModeV1::Learned, PauperMulliganModeV1::Learned]),
                 london_keep_offset: None,
+                priority_windows: None,
             };
             let collect_result = execute_v1(ExpandedTrainingCommandV1::Collect {
                 source: source.clone(),
@@ -11100,6 +11155,7 @@ pub(crate) mod tests {
                     opening: None,
                     mulligan_modes: None,
                     london_keep_offset: None,
+                    priority_windows: None,
                 }],
                 max_non_natural_episode_fraction: 0.0,
                 collection_sampler: CollectionSamplerV1::Legacy,
@@ -11530,6 +11586,7 @@ pub(crate) mod tests {
                     opening: None,
                     mulligan_modes: None,
                     london_keep_offset: None,
+                    priority_windows: None,
                 };
                 let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
                     source: source.clone(),
@@ -11679,6 +11736,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
 
@@ -11804,6 +11862,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut policy, &learner, None, &episode).unwrap();
         assert_eq!(
@@ -12273,6 +12332,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let collected = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -12749,6 +12809,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),
@@ -12899,6 +12960,7 @@ pub(crate) mod tests {
             opening: None,
             mulligan_modes: None,
             london_keep_offset: None,
+            priority_windows: None,
         };
         let collection = execute_v1(ExpandedTrainingCommandV1::Collect {
             source: source.clone(),

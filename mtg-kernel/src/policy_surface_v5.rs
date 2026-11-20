@@ -1043,6 +1043,20 @@ impl PolicySurfaceV5 {
         self.inner.set_engine_window_seats_v1(seats)
     }
 
+    /// Training: see `HarnessSurfaceV2::set_action_window_seats_v1`.
+    pub(crate) fn set_action_window_seats_v1(
+        &mut self,
+        rules: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+    ) -> Result<(), String> {
+        self.inner.set_action_window_seats_v1(rules)
+    }
+
+    pub(crate) fn action_window_seats_v1(
+        &self,
+    ) -> [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2] {
+        self.inner.action_window_seats_v1()
+    }
+
     /// Whether the pending decision is a priority window `HarnessV2` would
     /// have passed for its seat, and why. A combat scan substep is never one.
     pub(crate) fn engine_window_v1(&self) -> Option<crate::surface::SuppressionReason> {
@@ -1063,12 +1077,16 @@ impl PolicySurfaceV5 {
     #[cfg(test)]
     pub(crate) fn reset_harness_context_for_test(&mut self) {
         let seats = self.inner.engine_window_seats_v1();
+        let rules = self.inner.action_window_seats_v1();
         self.inner = HarnessSurfaceV2::new_with_priority_mode_v1(
             self.inner.priority_mode_v1(),
             self.inner.suppression_audit_mode(),
         );
         self.inner
             .set_engine_window_seats_v1(seats)
+            .expect("the rebuilt surface keeps its priority mode");
+        self.inner
+            .set_action_window_seats_v1(rules)
             .expect("the rebuilt surface keeps its priority mode");
     }
 

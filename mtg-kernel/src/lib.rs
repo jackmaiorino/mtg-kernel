@@ -812,6 +812,7 @@ pub(crate) mod stromkirk_bloodthief_v1;
 pub(crate) mod stromkirk_dispatch_v1;
 pub mod stromkirk_public_v1;
 pub mod surface;
+pub mod priority_action_windows_v1;
 pub mod surface_v2;
 pub mod trace;
 pub mod trigger;

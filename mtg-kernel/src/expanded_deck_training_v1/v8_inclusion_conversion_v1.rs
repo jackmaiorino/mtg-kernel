@@ -290,6 +290,7 @@ fn preservation_check_v1(
                 .london
                 .then_some([PauperMulliganModeV1::Learned, PauperMulliganModeV1::Learned]),
             london_keep_offset: None,
+            priority_windows: None,
         };
         let trajectory = collect_episode(&mut child_policy, &learner, None, &episode)?;
         ensure(
