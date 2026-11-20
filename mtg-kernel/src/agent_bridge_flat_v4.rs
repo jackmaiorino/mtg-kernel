@@ -177,6 +177,15 @@ impl FlatV4LockstepV1 {
         self.fast.enable_spellbench_neutral_choices();
     }
 
+    /// The game-level runtime rules of the copy, set beside the raw
+    /// session's so the lockstep check keeps comparing equal states.
+    pub(crate) fn set_runtime_rules_v1(
+        &mut self,
+        rules: crate::engine::RuntimeRulesV1,
+    ) -> Result<(), String> {
+        self.fast.set_runtime_rules_v1(rules)
+    }
+
     #[cfg(test)]
     pub(crate) fn fast_session_mut_for_test(&mut self) -> &mut FastActorSessionV1 {
         &mut self.fast

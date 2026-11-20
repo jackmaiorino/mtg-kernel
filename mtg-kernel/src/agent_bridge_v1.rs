@@ -196,6 +196,15 @@ enum SpellbenchRequestV1 {
         /// non-empty list.
         #[serde(default)]
         engine_window_seats: Vec<String>,
+        /// Human play only: settle graveyard order for both seats with the
+        /// training runtime rule (`resolution-boundary-v1`): a batch of cards
+        /// put into a graveyard at once is never posed and keeps the order
+        /// the effect bound it in. The engine refuses the rule for a game in
+        /// which a card reads graveyard order; then both seats are asked
+        /// (`graveyard_order` in the private support block says which).
+        /// Absent or false keeps every byte; any other server refuses true.
+        #[serde(default)]
+        auto_graveyard_order: bool,
     },
     Step {
         #[serde(rename = "protocol")]
@@ -257,6 +266,7 @@ struct SpellbenchResetFieldsV1<'a> {
     max_decisions: u64,
     max_steps: u64,
     engine_window_seats: &'a [String],
+    auto_graveyard_order: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,6 +309,10 @@ struct SpellbenchBridgeGameV1 {
     /// on). A private preview copies it, though it carries no payload, so a
     /// previewed point's extension equals the committed one (spellbench G6).
     masked_observation: bool,
+    /// Human play: Some when the reset asked for `auto_graveyard_order`:
+    /// "settled" (the training rule is on, nobody is asked) or "asked" (the
+    /// engine refused it: a card in the game reads graveyard order).
+    graveyard_order: Option<&'static str>,
     #[cfg(test)]
     force_flat_v4_encode_error: bool,
     /// Test hook: the action id handed to the session on the next step, so
@@ -539,6 +553,7 @@ impl SpellbenchBridgeServerV1 {
                 max_decisions,
                 max_steps,
                 engine_window_seats,
+                auto_graveyard_order,
                 ..
             } => self.handle_reset(
                 request_id,
@@ -550,6 +565,7 @@ impl SpellbenchBridgeServerV1 {
                     max_decisions: *max_decisions,
                     max_steps: *max_steps,
                     engine_window_seats,
+                    auto_graveyard_order: *auto_graveyard_order,
                 },
             ),
             SpellbenchRequestV1::Step {
@@ -645,6 +661,7 @@ impl SpellbenchBridgeServerV1 {
                 // same flat-v4 extension as the committed point.
                 infoset: None,
                 masked_observation: game.masked_observation,
+                graveyard_order: game.graveyard_order,
                 #[cfg(test)]
                 force_flat_v4_encode_error: game.force_flat_v4_encode_error,
                 #[cfg(test)]
@@ -789,7 +806,15 @@ impl SpellbenchBridgeServerV1 {
             max_decisions,
             max_steps,
             engine_window_seats,
+            auto_graveyard_order,
         } = reset;
+        if auto_graveyard_order && !self.london_human {
+            return error_response_value_v1(
+                Some(request_id),
+                "malformed_request",
+                "auto_graveyard_order needs the human-play London server",
+            );
+        }
         // Per-seat engine priority windows exist for human play alone: the
         // seat of a person sees every engine window, a bot seat never does.
         let mut window_seats = [false; 2];
@@ -934,6 +959,30 @@ impl SpellbenchBridgeServerV1 {
                 copy.enable_spellbench_neutral_choices();
             }
         }
+        // The training runtime rule for graveyard order, on both sessions
+        // before any step (the first decision is the pregame, which no rule
+        // touches). Refused by the engine when a card reads graveyard order:
+        // then both seats are asked, as the rules say.
+        let graveyard_order = if auto_graveyard_order {
+            let rules = crate::engine::RuntimeRulesV1::RESOLUTION_BOUNDARY_V1;
+            match session.set_runtime_rules_v1(rules) {
+                Ok(()) => {
+                    if let Some(copy) = lockstep.as_mut() {
+                        if let Err(error) = copy.set_runtime_rules_v1(rules) {
+                            return error_response_value_v1(
+                                Some(request_id),
+                                "malformed_request",
+                                &format!("the lockstep copy refused the graveyard rule: {error}"),
+                            );
+                        }
+                    }
+                    Some("settled")
+                }
+                Err(_) => Some("asked"),
+            }
+        } else {
+            None
+        };
         let counts = (
             session.policy_step_count(),
             session.physical_decision_count(),
@@ -953,6 +1002,7 @@ impl SpellbenchBridgeServerV1 {
             infoset: (self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1)
                 .then(InfosetBridgeV1::default),
             masked_observation: self.options.x_kernel_flat_v4 && self.options.x_kernel_infoset_v1,
+            graveyard_order,
             #[cfg(test)]
             force_flat_v4_encode_error: false,
             #[cfg(test)]
@@ -1384,6 +1434,7 @@ impl BridgeMirrorV1 {
             history_cursor: self.history_cursor,
             infoset: None,
             masked_observation: false,
+            graveyard_order: None,
             force_flat_v4_encode_error: false,
             force_session_action_id: None,
         };
@@ -1752,6 +1803,12 @@ fn private_v2_support(game: &SpellbenchBridgeGameV1) -> Value {
             "mulligans_taken": london.mulligans_taken,
             "kept": london.kept,
         });
+    }
+    // Human play: how graveyard order is handled in this game, when the
+    // reset asked. Absent otherwise, so every other support block keeps its
+    // bytes.
+    if let Some(how) = game.graveyard_order {
+        support["graveyard_order"] = json!(how);
     }
     let RlSessionResponseV1::Decision(decision) = game.session.current_response() else {
         return support;
@@ -4439,6 +4496,7 @@ imported {:#?}",
             history_cursor: (0, 0, 0),
             infoset: None,
             masked_observation: false,
+            graveyard_order: None,
             force_flat_v4_encode_error: false,
             force_session_action_id: None,
         };

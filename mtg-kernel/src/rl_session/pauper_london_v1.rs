@@ -23,6 +23,8 @@ mod flat_v7_tests;
 #[cfg(test)]
 mod human_bridge_tests;
 #[cfg(test)]
+mod human_graveyard_order_tests;
+#[cfg(test)]
 mod human_windows_tests;
 // Binds the Pauper registry (its parity fixture), so the appended-registry
 // builds leave it out.
@@ -454,6 +456,27 @@ impl RlEpisodeSessionV1 {
         self.pauper_london_v1
             .as_ref()
             .and_then(|london| london.record.as_ref())
+    }
+
+    /// The game-level runtime rules profile of the human-play bridge: the
+    /// raw session's twin of `FastActorSessionV1::set_runtime_rules_v1`,
+    /// with its refusal (`resolution-boundary-v1` is refused for a game in
+    /// which any card, in any zone, reads graveyard order). Set before any
+    /// step, on both lockstep sessions, as training sets it after its reset.
+    pub fn set_runtime_rules_v1(
+        &mut self,
+        rules: crate::engine::RuntimeRulesV1,
+    ) -> Result<(), String> {
+        if rules.auto_unobservable_graveyard_order
+            && crate::engine::graveyard_order_readers_present(&self.state)
+        {
+            return Err(
+                "resolution-boundary profile refused: a card in this game reads graveyard order (Delve)"
+                    .into(),
+            );
+        }
+        self.state.engine.runtime_rules = rules;
+        Ok(())
     }
 
     /// Human play with per-seat engine windows: why the trained surface
