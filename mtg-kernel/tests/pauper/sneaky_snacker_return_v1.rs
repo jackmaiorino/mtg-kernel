@@ -231,6 +231,26 @@ fn sneaky_snacker_stays_exiled_when_relic_of_progenitus_answers_its_trigger() {
     }
 }
 
+#[test]
+fn sneaky_snacker_cast_from_hand_enters_untapped() {
+    for (me, seed) in [
+        (PlayerId::P0, 0x534e_4143_4b00_000d),
+        (PlayerId::P1, 0x534e_4143_4b00_000e),
+    ] {
+        let mut state = ready_main(seed, me);
+        let snacker = put_object(&mut state, me, "Sneaky Snacker", Zone::Hand);
+        state.players[me.index()].mana_pool[ManaColor::U.pool_index()] = 1;
+        state.players[me.index()].mana_pool[ManaColor::B.pool_index()] = 1;
+
+        engine::step(&mut state, Action::CastSpell(snacker)).unwrap();
+        assert!(pass_until_idle_watching(&mut state, snacker));
+
+        assert_eq!(state.objects.get(snacker).zone, Zone::Battlefield);
+        assert!(state.players[me.index()].battlefield.contains(&snacker));
+        assert!(!state.objects.get(snacker).tapped);
+    }
+}
+
 /// Control: with no response the trigger returns Sneaky Snacker tapped.
 #[test]
 fn sneaky_snacker_returns_tapped_when_nobody_responds() {
@@ -328,10 +348,7 @@ fn sneaky_snacker_returned_by_another_effect_stays_untapped() {
         assert_eq!(returned.zone, Zone::Battlefield);
         let after_move = returned.zone_change_count;
         assert!(after_move > before);
-        // The card's definition taps it on every entry today (its
-        // `enters_tapped` tag), so the new incarnation is untapped by hand:
-        // the question here is only whether the old trigger taps it.
-        game.state.objects.get_mut(game.snacker).tapped = false;
+        assert!(!returned.tapped);
         pass_until_idle_watching(&mut game.state, game.snacker);
         let state = &game.state;
         assert!(state.engine.halted.is_none());
