@@ -3031,106 +3031,228 @@ fn phyrexian_metamorph_enters_as_an_artifact_copy_and_leaves_as_itself() {
     assert_eq!(state.objects.get(metamorph).zone, Zone::Graveyard);
 }
 
-#[test]
-fn fiend_returns_its_other_card_after_an_exiled_metamorph_is_recast_as_a_copy() {
-    use mtg_kernel::rl::observe_v2;
-    use mtg_kernel::surface_v2::HarnessSurfaceV2;
+#[derive(Clone, Copy)]
+enum FiendCopy {
+    Metamorph,
+    Curie,
+    EquippedMyr,
+    MetamorphAsCurie,
+}
 
-    let mut state = islands();
-    let target = put(&mut state, P1, "Fume Spitter", Zone::Battlefield);
-    let fiend = put(&mut state, P1, "Mesmeric Fiend", Zone::Hand);
-    let meta = put(&mut state, P0, "Phyrexian Metamorph", Zone::Hand);
-    let other = put(&mut state, P0, "Counterspell", Zone::Hand);
-    event_move(&mut state, fiend, Zone::Battlefield);
-    let triggers = mtg_kernel::trigger::collect_and_process(&mut state);
+fn exile_two_with_fiend(state: &mut GameState, fiend: ObjectId, cards: [ObjectId; 2]) {
+    event_move(state, fiend, Zone::Battlefield);
+    let triggers = mtg_kernel::trigger::collect_and_process(state);
     assert_eq!(triggers.len(), 1);
-    state.engine.pending_triggers.extend(triggers.clone());
-    for (i, card) in [meta, other].into_iter().enumerate() {
-        if i == 1 {
-            state.engine.pending_triggers.extend(triggers.clone());
-        }
+    // Resolve two instances of the same native enter trigger.
+    for card in cards {
+        state.engine.pending_triggers.extend(triggers.clone());
         assert!(matches!(
-            settle(&mut state),
+            settle(state),
             Some(Decision::ChooseTargets { .. })
         ));
-        act(&mut state, Action::ChooseTarget(Target::Player(P0)));
-        if let Some(decision) = settle(&mut state) {
-            assert!(
-                matches!(decision, Decision::ChooseEffectTargets { legal_targets, .. } if legal_targets.contains(&Target::Object(card)))
-            );
-            act(&mut state, Action::ChooseEffectTarget(Target::Object(card)));
-            settled(&mut state);
+        choose_target(state, Target::Player(P0));
+        if let Some(Decision::ChooseEffectTargets { .. }) = settle(state) {
+            choose_target(state, Target::Object(card));
+            settled(state);
         }
         assert_eq!(state.objects.get(card).zone, Zone::Exile);
-        assert_eq!(state.engine.linked_exile_records.len(), i + 1);
     }
-    event_move(&mut state, meta, Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::U], 3);
-    cast(&mut state, meta, &[]);
-    assert!(
-        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets { legal_targets, .. }) if legal_targets.contains(&Target::Object(target)))
-    );
-    act(
-        &mut state,
-        Action::ChooseEffectTarget(Target::Object(target)),
-    );
-    settled(&mut state);
-    assert_eq!(
-        state.objects.get(meta).card_def,
-        state.objects.get(target).card_def
-    );
-    assert_eq!(state.objects.get(meta).zone, Zone::Battlefield);
-    assert_eq!(state.objects.get(other).zone, Zone::Exile);
-    let record = state
-        .engine
-        .linked_exile_records
-        .iter()
-        .find(|r| r.exiled == meta)
-        .unwrap();
-    assert!(state.objects.get(meta).zone_change_count > record.exiled_zone_change_count);
-    let mut restored: GameState =
-        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
-    let surface = HarnessSurfaceV2::default();
-    observe_v2(&restored, &surface, P0, 17).unwrap();
+}
 
-    // Substituting the copied creature for the original physical card must
-    // still reject the link before returning either object.
-    let mut forged = restored.clone();
-    let copied_def = forged.objects.get(target).card_def;
-    forged
-        .engine
-        .linked_exile_records
-        .iter_mut()
-        .find(|r| r.exiled == meta)
-        .unwrap()
-        .exiled_card_def = copied_def;
-    assert!(observe_v2(&forged, &surface, P0, 17).is_err());
-    let leave = |state: &mut GameState| {
-        event_move(state, fiend, Zone::Graveyard);
-        let triggers = mtg_kernel::trigger::collect_and_process(state);
-        assert_eq!(triggers.len(), 1);
-        state.engine.pending_triggers.extend(triggers);
+fn recast_fiend_card_as_copy(state: &mut GameState, host: ObjectId, case: FiendCopy) -> u16 {
+    let karn = put(state, P0, "Karn, the Great Creator", Zone::Hand);
+    pool(state, P0, &[], 4);
+    cast(state, karn, &[]);
+    settled(state);
+    activate(state, karn, 1, &[]);
+    assert!(matches!(
+        settle(state),
+        Some(Decision::ChooseEffectTargets { .. })
+    ));
+    choose_target(state, Target::Object(host));
+    settled(state);
+    assert_eq!(state.objects.get(host).zone, Zone::Hand);
+
+    let intermediate = match case {
+        FiendCopy::Metamorph => Some(put(state, P1, "Fume Spitter", Zone::Battlefield)),
+        FiendCopy::MetamorphAsCurie => Some(put(
+            state,
+            P1,
+            "Curie, Emergent Intelligence",
+            Zone::Battlefield,
+        )),
+        _ => None,
     };
-    leave(&mut forged);
-    for _ in 0..16 {
-        match engine::advance_until_decision(&mut forged) {
-            Decision::Halted {
-                mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
-                source,
-            } if source == fiend => break,
-            Decision::CastSpellOrPass { .. } => act(&mut forged, Action::Pass),
-            decision => panic!("unexpected forged link decision: {decision:?}"),
-        }
+    let generic = match case {
+        FiendCopy::EquippedMyr => 7,
+        FiendCopy::Curie => 2,
+        _ => 3,
+    };
+    pool(state, P0, &[ManaColor::U], generic);
+    cast(state, host, &[]);
+    if let Some(target) = intermediate {
+        assert!(matches!(
+            settle(state),
+            Some(Decision::ChooseEffectTargets { .. })
+        ));
+        choose_target(state, Target::Object(target));
     }
-    assert!(forged.engine.halted.is_some());
-    assert_eq!(forged.objects.get(other).zone, Zone::Exile);
-    assert_eq!(forged.engine.linked_exile_records.len(), 2);
+    settled(state);
 
-    leave(&mut restored);
-    settled(&mut restored);
-    assert_eq!(restored.objects.get(meta).zone, Zone::Battlefield);
-    assert_eq!(restored.objects.get(other).zone, Zone::Hand);
-    assert!(restored.engine.linked_exile_records.is_empty());
+    let model = match case {
+        FiendCopy::Metamorph => intermediate.unwrap(),
+        FiendCopy::Curie | FiendCopy::MetamorphAsCurie => {
+            let donor = put(state, P0, "Phyrexian Dreadnought", Zone::Battlefield);
+            pool(state, P0, &[ManaColor::U], 1);
+            activate(state, host, 0, &[]);
+            settled(state);
+            assert_eq!(state.objects.get(donor).zone, Zone::Exile);
+            donor
+        }
+        FiendCopy::EquippedMyr => {
+            let model = put(state, P1, "Llanowar Elves", Zone::Battlefield);
+            let aegis = put(state, P0, "Assimilation Aegis", Zone::Hand);
+            pool(state, P0, &[ManaColor::U, ManaColor::W], 1);
+            cast(state, aegis, &[]);
+            assert!(matches!(
+                settle(state),
+                Some(Decision::ChooseTargets { .. })
+            ));
+            choose_target(state, Target::Object(model));
+            settled(state);
+            assert_eq!(state.objects.get(model).zone, Zone::Exile);
+            pool(state, P0, &[ManaColor::W; 2], 0);
+            activate(state, aegis, 0, &[Target::Object(host)]);
+            settled(state);
+            model
+        }
+    };
+    assert_eq!(state.objects.get(host).zone, Zone::Battlefield);
+    assert_eq!(
+        state.objects.get(host).card_def,
+        state.objects.get(model).card_def
+    );
+    state.objects.get(model).card_def
+}
+
+fn fiend_copy_return(case: FiendCopy) {
+    use mtg_kernel::{rl::observe_v2, surface_v2::HarnessSurfaceV2};
+    let mut state = islands();
+    let printed = match case {
+        FiendCopy::Metamorph | FiendCopy::MetamorphAsCurie => "Phyrexian Metamorph",
+        FiendCopy::Curie => "Curie, Emergent Intelligence",
+        FiendCopy::EquippedMyr => "Myr Enforcer",
+    };
+    let fiend = put(&mut state, P1, "Mesmeric Fiend", Zone::Hand);
+    let host = put(&mut state, P0, printed, Zone::Hand);
+    let other = put(&mut state, P0, "Counterspell", Zone::Hand);
+    exile_two_with_fiend(&mut state, fiend, [host, other]);
+    let copied = recast_fiend_card_as_copy(&mut state, host, case);
+    let bounce = put(&mut state, P0, "Echoing Truth", Zone::Hand);
+    let moves: Vec<_> = state
+        .engine
+        .event_history
+        .iter()
+        .enumerate()
+        .filter_map(|(at, event)| match event {
+            event::CommittedEvent::LinkedExileDepartureV1 {
+                exiled,
+                owner,
+                card_def,
+                move_history_index,
+            } if exiled.object == host => {
+                assert_eq!((*owner, *card_def), (P0, card_id_by_name(printed).unwrap()));
+                assert_eq!(*move_history_index + 1, at as u64);
+                Some(at)
+            }
+            _ => None,
+        })
+        .collect();
+    let [departure] = moves.as_slice() else {
+        panic!("expected one independent exile departure")
+    };
+    let mut relinked = state.clone();
+    if let event::CommittedEvent::LinkedExileDepartureV1 {
+        move_history_index, ..
+    } = &mut relinked.engine.event_history[*departure]
+    {
+        *move_history_index += 1;
+    }
+    assert!(observe_v2(&relinked, &HarnessSurfaceV2::default(), P0, 17).is_err());
+    let saved = serde_json::to_vec(&state).unwrap();
+
+    let check_return = |forged| {
+        let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+        let record = restored
+            .engine
+            .linked_exile_records
+            .iter_mut()
+            .find(|r| r.exiled == host)
+            .unwrap();
+        assert_eq!(record.exiled_card_def, card_id_by_name(printed).unwrap());
+        assert_ne!(record.exiled_card_def, copied);
+        assert!(restored.objects.get(host).zone_change_count > record.exiled_zone_change_count);
+        if forged {
+            record.exiled_card_def = copied;
+        }
+        let observable = observe_v2(&restored, &HarnessSurfaceV2::default(), P0, 17).is_ok();
+        pool(&mut restored, P0, &[ManaColor::U], 1);
+        cast(&mut restored, bounce, &[Target::Object(fiend)]);
+        for _ in 0..32 {
+            match engine::advance_until_decision(&mut restored) {
+                Decision::Halted {
+                    mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    source,
+                } if source == fiend => break,
+                Decision::CastSpellOrPass { .. }
+                    if restored.stack.is_empty() && restored.engine.pending_triggers.is_empty() =>
+                {
+                    break
+                }
+                Decision::CastSpellOrPass { .. } => act(&mut restored, Action::Pass),
+                decision => panic!("unexpected Fiend leave decision: {decision:?}"),
+            }
+        }
+        assert_eq!(restored.objects.get(fiend).zone, Zone::Hand);
+        assert_eq!(restored.objects.get(host).zone, Zone::Battlefield);
+        assert_eq!(restored.objects.get(host).card_def, copied);
+        let links = restored
+            .engine
+            .linked_exile_records
+            .iter()
+            .filter(|r| r.source.source == fiend)
+            .count();
+        (
+            observable,
+            restored.engine.halted.is_some(),
+            restored.objects.get(other).zone,
+            links,
+        )
+    };
+    assert_eq!(
+        [check_return(false), check_return(true)],
+        [(true, false, Zone::Hand, 0), (false, true, Zone::Exile, 2)]
+    );
+}
+
+#[test]
+fn fiend_returns_other_card_after_metamorph_copies_a_creature() {
+    fiend_copy_return(FiendCopy::Metamorph);
+}
+
+#[test]
+fn fiend_returns_other_card_after_curie_copies_a_creature() {
+    fiend_copy_return(FiendCopy::Curie);
+}
+
+#[test]
+fn fiend_returns_other_card_after_aegis_copies_an_equipped_creature() {
+    fiend_copy_return(FiendCopy::EquippedMyr);
+}
+
+#[test]
+fn fiend_returns_other_card_after_metamorph_copies_curie_then_dreadnought() {
+    fiend_copy_return(FiendCopy::MetamorphAsCurie);
 }
 
 fn event_move(state: &mut GameState, object: ObjectId, zone: Zone) {

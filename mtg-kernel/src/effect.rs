@@ -19021,38 +19021,6 @@ fn stage_creature_sacrifice_choice(
     });
 }
 
-/// An exiled Metamorph can leave exile and enter again as a different creature.
-/// Its current copy record retains the physical definition used when it was exiled.
-pub(crate) fn linked_exile_target_matches(
-    state: &GameState,
-    record: &LinkedExileRecordV4,
-    live: &crate::state::GameObject,
-) -> bool {
-    if live.owner != record.exiled_owner || live.zone_change_count < record.exiled_zone_change_count
-    {
-        return false;
-    }
-    if live.zone == Zone::Battlefield && live.zone_change_count > record.exiled_zone_change_count {
-        let host = ObjectLinkV4 {
-            object: record.exiled,
-            zone_change_count: live.zone_change_count,
-        };
-        let mut copies = state
-            .eternal_v1
-            .iter()
-            .flat_map(|eternal| &eternal.vintage.copies)
-            .filter(|copy| copy.host == host);
-        if let Some(copy) = copies.next() {
-            return copies.next().is_none()
-                && crate::card_def::CARD_DEFS
-                    .get(usize::from(copy.card_def))
-                    .is_some_and(|def| def.name == "Phyrexian Metamorph")
-                && record.exiled_card_def == copy.card_def;
-        }
-    }
-    live.card_def == record.exiled_card_def
-}
-
 /// A linked leave ability returns all cards still exiled by its source incarnation (CR 607.3).
 fn return_linked_exiles(
     state: &mut GameState,
@@ -19082,7 +19050,7 @@ fn return_linked_exiles(
             || record.source.owner != source.owner
             || record.source.zone != source.zone
             || record.source.attached_to.is_some()
-            || !linked_exile_target_matches(state, record, live)
+            || !crate::linked_exile_v4::target_matches(state, record, live)
             || !seen.insert((record.exiled, record.exiled_zone_change_count))
         {
             return Err("linked-exile record is structurally inconsistent".into());
