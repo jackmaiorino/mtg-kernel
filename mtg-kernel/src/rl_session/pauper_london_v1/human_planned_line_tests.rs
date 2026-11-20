@@ -115,8 +115,12 @@ fn shown(answer: &Value) -> Value {
     match answer["response_type"].as_str() {
         Some("private_line") => {
             let view = &answer["view"];
+            let mut model_input = view["extensions"]["x_kernel_flat_v7"].clone();
+            // A counter, like the view's own: the planner's scorer requests
+            // never carry it (their step is a constant).
+            model_input.as_object_mut().unwrap().remove("step");
             json!({"candidates": view["candidates"],
-                   "model_input": view["extensions"]["x_kernel_flat_v7"],
+                   "model_input": model_input,
                    "acting_seat": view["acting_seat"]})
         }
         Some("private_line_stop") => {
@@ -197,6 +201,30 @@ fn a_planned_line_never_changes_the_live_game() {
     assert!(tally.lines > 100, "{tally:?}");
 }
 
+/// The JSON paths at which two values differ (at most 20).
+fn differing_paths(a: &Value, b: &Value, at: String) -> Vec<String> {
+    match (a, b) {
+        (Value::Object(x), Value::Object(y)) => {
+            let mut keys: Vec<&String> = x.keys().chain(y.keys()).collect();
+            keys.sort();
+            keys.dedup();
+            keys.into_iter()
+                .flat_map(|k| differing_paths(&x.get(k).cloned().unwrap_or(Value::Null), &y.get(k).cloned().unwrap_or(Value::Null), format!("{at}/{k}")))
+                .take(20)
+                .collect()
+        }
+        (Value::Array(x), Value::Array(y)) if x.len() == y.len() => x
+            .iter()
+            .zip(y)
+            .enumerate()
+            .flat_map(|(i, (p, q))| differing_paths(p, q, format!("{at}/{i}")))
+            .take(20)
+            .collect(),
+        _ if a == b => Vec::new(),
+        _ => vec![at],
+    }
+}
+
 /// A decision of the pregame (a mulligan or a bottom): the planner starts no
 /// line there, and a hidden-card swap there would break the pregame's own
 /// bookkeeping of the hand.
@@ -229,7 +257,11 @@ fn hand_blind(seed: u64, tally: &mut Tally, differing: &mut u64) {
                 *differing += 1;
                 let first = whole_line(&mut same, &game, &response, 8);
                 let second = whole_line(&mut other, &game, &response, 8);
-                assert_eq!(first, second, "seed {seed}: decision {n}: the line shows the opponent's hand");
+                assert!(
+                    first == second,
+                    "seed {seed}: decision {n}: the line shows the opponent's hand at {:?}",
+                    differing_paths(&json!(first), &json!(second), String::new())
+                );
                 tally.add(&first);
             }
         }
