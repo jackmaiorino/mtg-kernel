@@ -1236,12 +1236,12 @@ fn human_chain_payment_copy_and_retarget_are_distinct_bound_choices() {
         if pay {
             assert_eq!(session.game_state().stack.len(), 1);
             let copy_choice = submit_label(&mut session, &mut adapter, |label| {
-                label
-                    == if copy {
+                label.strip_suffix(" [c1]")
+                    == Some(if copy {
                         "Copy Chain Lightning"
                     } else {
                         "Decline to copy Chain Lightning"
-                    }
+                    })
             });
             assert_no_private_keys(&serde_json::to_value(copy_choice).unwrap());
             assert!(session.game_state().players[1]
