@@ -16946,36 +16946,7 @@ fn drive_resumable_in_departure_scope_v1(
                 {
                     return Err("linked-exile return has the wrong source contract".to_string());
                 }
-                let matches = |record: &LinkedExileRecordV4| record.source.same_incarnation(&source);
-                let mut seen = std::collections::BTreeSet::new();
-                let mut events = Vec::new();
-                for record in state.engine.linked_exile_records.iter().filter(|record| matches(record)) {
-                    let live = state.objects.try_get(record.exiled)
-                        .ok_or("linked-exile record names a missing object")?;
-                    if live.card_def != record.exiled_card_def
-                        || live.owner != record.exiled_owner
-                        || live.zone_change_count < record.exiled_zone_change_count
-                        || !seen.insert((record.exiled, record.exiled_zone_change_count))
-                    {
-                        return Err("linked-exile record is structurally inconsistent".into());
-                    }
-                    if live.zone_change_count == record.exiled_zone_change_count {
-                        if live.zone != Zone::Exile
-                            || state.exile.iter().filter(|&&id| id == record.exiled).count() != 1
-                        {
-                            return Err("linked-exile exact incarnation lost its exile membership".into());
-                        }
-                        events.push(event::ProposedEvent::zone_change_preserving_known_identity(
-                            record.exiled, Zone::Hand,
-                        ));
-                    }
-                }
-                state.engine.linked_exile_records.retain(|record| !matches(record));
-                match events.len() {
-                    0 => {}
-                    1 => event::propose_and_commit(state, events.pop().unwrap()),
-                    _ => event::propose_and_commit_batch(state, events),
-                }
+                return_linked_exiles(state, source, Zone::Hand)?;
             }
             EffectOp::PreventDamageFromChosenColorUntilEndOfTurn { player } => {
                 let player = continuation.ctx.resolve_player(player, state);
@@ -19048,6 +19019,75 @@ fn stage_creature_sacrifice_choice(
             canonical_path,
         },
     });
+}
+
+/// A linked leave ability returns all cards still exiled by its source incarnation (CR 607.3).
+fn return_linked_exiles(
+    state: &mut GameState,
+    source: AbilitySourceContractV4,
+    destination: Zone,
+) -> Result<(), String> {
+    if source.zone != Zone::Battlefield || source.attached_to.is_some() {
+        return Err("linked return has an invalid source".into());
+    }
+    let belongs = |record: &LinkedExileRecordV4| {
+        record.source.source == source.source
+            && record.source.zone_change_count == source.zone_change_count
+    };
+    let mut events = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for record in state
+        .engine
+        .linked_exile_records
+        .iter()
+        .filter(|record| belongs(record))
+    {
+        let live = state
+            .objects
+            .try_get(record.exiled)
+            .ok_or("linked-exile object is missing")?;
+        if record.source.card_def != source.card_def
+            || record.source.owner != source.owner
+            || record.source.zone != source.zone
+            || record.source.attached_to.is_some()
+            || live.card_def != record.exiled_card_def
+            || live.owner != record.exiled_owner
+            || live.zone_change_count < record.exiled_zone_change_count
+            || !seen.insert((record.exiled, record.exiled_zone_change_count))
+        {
+            return Err("linked-exile record is structurally inconsistent".into());
+        }
+        if live.zone_change_count == record.exiled_zone_change_count {
+            if live.zone != Zone::Exile
+                || state
+                    .exile
+                    .iter()
+                    .filter(|&&id| id == record.exiled)
+                    .count()
+                    != 1
+            {
+                return Err("linked-exile exact incarnation lost its exile membership".into());
+            }
+            events.push(if destination == Zone::Hand {
+                event::ProposedEvent::zone_change_preserving_known_identity(
+                    record.exiled,
+                    destination,
+                )
+            } else {
+                event::ProposedEvent::zone_change(record.exiled, destination)
+            });
+        }
+    }
+    state
+        .engine
+        .linked_exile_records
+        .retain(|record| !belongs(record));
+    match events.len() {
+        0 => {}
+        1 if destination == Zone::Hand => event::propose_and_commit(state, events.pop().unwrap()),
+        _ => event::propose_and_commit_batch(state, events),
+    }
+    Ok(())
 }
 
 /// How a linked hand-exile source gets its card back. Mesmeric Fiend's exile
@@ -24941,49 +24981,14 @@ fn execute_in_departure_scope_v1(
                 ));
                 return;
             };
-            let same_source_incarnation = |record: &LinkedExileRecordV4| {
-                record.source.source == ctx.source
-                    && record.source.zone == Zone::Battlefield
-                    && record.source.same_incarnation(&source_contract)
-            };
-            let matching = state
-                .engine
-                .linked_exile_records
-                .iter()
-                .copied()
-                .filter(same_source_incarnation)
-                .collect::<Vec<_>>();
-            let structurally_valid = matching.iter().all(|record| {
-                record.source.zone == source_contract.zone
-                    && state.objects.try_get(record.exiled).is_some_and(|exiled| {
-                        exiled.card_def == record.exiled_card_def
-                            && exiled.owner == record.exiled_owner
-                            && exiled.zone_change_count >= record.exiled_zone_change_count
-                            && (exiled.zone_change_count != record.exiled_zone_change_count
-                                || exiled.zone == Zone::Exile)
-                    })
-            });
-            if !structurally_valid {
+            if source_contract.source != ctx.source
+                || return_linked_exiles(state, source_contract, Zone::Battlefield).is_err()
+            {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
                     ctx.source,
                 ));
-                return;
             }
-            state
-                .engine
-                .linked_exile_records
-                .retain(|record| !same_source_incarnation(record));
-            let events = matching
-                .iter()
-                .filter(|record| {
-                    let live = state.objects.get(record.exiled);
-                    live.zone == Zone::Exile
-                        && live.zone_change_count == record.exiled_zone_change_count
-                })
-                .map(|record| event::ProposedEvent::zone_change(record.exiled, Zone::Battlefield))
-                .collect::<Vec<_>>();
-            event::propose_and_commit_batch(state, events);
         }
         EffectOp::InstallDamagePreventionFromColor { player, color } => {
             if *player != ctx.controller

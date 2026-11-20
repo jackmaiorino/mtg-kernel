@@ -761,6 +761,33 @@ fn repeated_linked_enters_return_each_matching_card_from_one_incarnation() {
             assert!(later.engine.linked_exile_records.is_empty());
 
             queue_move_triggers(&mut state, source, Zone::Graveyard);
+            for corruption in ["duplicate", "missing exile membership", "forged attachment"] {
+                let mut broken = state.clone();
+                match corruption {
+                    "duplicate" => broken
+                        .engine
+                        .linked_exile_records
+                        .push(state.engine.linked_exile_records[1]),
+                    "missing exile membership" => broken.exile.retain(|id| *id != second),
+                    _ => {
+                        broken.engine.linked_exile_records[1].source.attached_to =
+                            Some(mtg_kernel::state::ObjectLinkV4 {
+                                object: first,
+                                zone_change_count: 0,
+                            });
+                    }
+                }
+                let mut broken: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&broken).unwrap()).unwrap();
+                let records = broken.engine.linked_exile_records.clone();
+                assert!(
+                    matches!(pass_until_idle(&mut broken), Decision::Halted { .. }),
+                    "{name}: {corruption}"
+                );
+                assert_eq!(broken.engine.linked_exile_records, records);
+                assert_eq!(broken.objects.get(first).zone, Zone::Exile);
+                assert_eq!(broken.objects.get(second).zone, Zone::Exile);
+            }
             let mut restored: GameState =
                 serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
             pass_until_idle(&mut restored);
