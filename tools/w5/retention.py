@@ -58,6 +58,7 @@ Commands:
 import argparse
 import codecs
 import contextlib
+import copy
 import hashlib
 import io
 import math
@@ -267,6 +268,7 @@ def index_locked(chain_path):
 def terminate(f):
     """Before an append (`f` open in 'ab'): a last line left without its newline (an interrupted append whose record
     is complete, which `index` reads as a line) gets one, so the new lines never join it."""
+    f.flush()  # the size on disk includes what this handle wrote
     size = os.fstat(f.fileno()).st_size
     if size:
         with open(f.name, 'rb') as r:
@@ -480,7 +482,7 @@ class IndexRecords:
 
     def read(self, f, n):
         if n in self.extra:
-            return self.extra[n]
+            return copy.deepcopy(self.extra[n])  # a fresh dict, as a record parsed from its line
         f.seek(self.offsets[n])
         data = f.read(self.lengths[n])
         try:
@@ -503,6 +505,8 @@ class IndexRecords:
 
     def check(self, n):
         """Reads record `n` again (raises `IndexChanged` if its line changed)."""
+        if not 0 <= n < len(self.offsets):
+            raise IndexError(f'record {n} of {len(self.offsets)}')
         with self.reader() as f:
             return self.read(f, n)
 

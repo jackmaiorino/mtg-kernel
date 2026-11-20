@@ -862,6 +862,21 @@ class CompactRecordsTests(unittest.TestCase):
         self.assertEqual(len(ro.records.extra), 1)
         self.assertEqual(sorted(ro.active.numbers), [0, 1, 2])
 
+    def test_records_read_fresh_and_bad_numbers_refused(self):
+        """An unwritten (read-only) record is returned as a copy, like a parsed one; check refuses a negative or
+        past-the-end record number."""
+        recs = [self.record(0)]
+        path = self.chain(recs, length=5)
+        ro = retention.IndexCache(path, read_only=True)
+        _, view = ro.refresh()
+        ro.records.append_unwritten(self.record(1))
+        first = ro.records.view()[1]
+        first['checkpoint']['path'] = 'changed'
+        self.assertEqual(ro.records.view()[1], self.record(1))
+        for n in (-1, 2):
+            with self.assertRaises(IndexError):
+                ro.records.check(n)
+
     def test_a_record_without_its_after_state_hash_raises_as_before(self):
         (self.t / 'ck').mkdir()
         recs = [self.record(u) for u in range(10)]
@@ -881,7 +896,10 @@ class CompactRecordsTests(unittest.TestCase):
         self.assertFalse((node.root / 'GUARD.json').exists())
         with self.assertRaises(chains.Stop):
             chains.guard_only_allowed(dict(plan, pairs={}, independent=False))
-        chains.guard_only_allowed(dict(plan, pairs={}, independent=True))
+        with self.assertRaises(chains.Stop):  # its filler chain f2
+            chains.guard_only_allowed(dict(plan, pairs={}, independent=True))
+        chains.guard_only_allowed(dict(plan, pairs={}, independent=True,
+                                       chains={n: c for n, c in plan['chains'].items() if c['arm'] != 'F'}))
 
 
 if __name__ == '__main__':

@@ -8,7 +8,8 @@ the first GUARD is measured). Every step is a transcript line. The whole run is 
 
   python3 supervise_swap_rehearsal.py OLD_TOOLS NEW_TOOLS SCRATCH   (tools: directories holding w5/ and ex1/)
 
-Times are scaled down: supervise --loop 5 and a 3 s restart pause (node1: 60 and 30)."""
+Times are scaled down: supervise --loop 12 (the step file refuses less than 10) and a 3 s restart pause (node1: 60
+and 30)."""
 import json
 import os
 import shutil
@@ -19,7 +20,7 @@ import time
 from pathlib import Path
 
 PY = '/usr/bin/python3'
-LOOP, PAUSE = 5, 3
+LOOP, PAUSE = 12, 3
 T0 = time.time()
 STARTED = []
 

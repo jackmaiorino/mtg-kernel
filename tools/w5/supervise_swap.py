@@ -88,6 +88,24 @@ def process_table():
     return table
 
 
+def signal_verified(plan, sig, pids, table=None, kill=os.kill):
+    """Signals each pid only if, read again now, it is still a loop or a supervisor for exactly PLAN (a recycled
+    pid is never signalled); returns the pids signalled."""
+    table = process_table() if table is None else table
+    sent = []
+    for pid in pids:
+        entry = table.get(pid)
+        if entry and (is_loop(entry[1], plan) or is_supervisor(entry[1], plan)):
+            try:
+                kill(pid, sig)
+                sent.append(pid)
+            except ProcessLookupError:
+                pass
+        else:
+            print(f'not signalled: {pid} is no longer a loop or supervisor for {plan}', file=sys.stderr)
+    return sent
+
+
 # ---------------------------------------------------------------- index tails
 
 def last_line(path, block=BLOCK):
@@ -256,6 +274,10 @@ def main(argv=None):
     cmd, args = argv[0], argv[1:]
     if cmd == 'loop-text':
         print(LOOP_TEXT)
+        return 0
+    if cmd == 'signal':
+        sent = signal_verified(args[0], int(args[1]), [int(x) for x in args[2:]])
+        print('SIGNALLED' + ''.join(f' {p}' for p in sent))
         return 0
     if cmd == 'pids':
         loops, pys = select(process_table(), args[0])

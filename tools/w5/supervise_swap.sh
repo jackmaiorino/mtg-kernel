@@ -9,11 +9,12 @@
 # LOOP (supervise --loop seconds, default 60), PAUSE (restart pause, default 30).
 # Steps:
 #   plan_copy PLAN PLAN2 NEW_W5        the supervisor's plan copy: only `tools` changes (three files), pins checked
-#   start_loop W5 PLAN [--guard-only]   checks every index tail first; starts the restart loop (paths passed as
+#   start_loop W5 PLAN [--guard-only]   refuses if PLAN already runs; checks every index tail; starts the loop (paths as
 #                                       arguments, exit code logged); prints LOOP_PID
 #   pids PLAN                           "LOOP_PIDS ... ; PYTHON_PIDS ..." running exactly PLAN (argv compared exactly)
 #   asleep PID SUPERVISE_JSON           the supervisor sleeps between cycles (state S, no CPU in 2 s, report < 10 s old)
-#   stop_between_cycles PLAN            waits for a cycle's end, checks asleep, stops loop then supervisor, verifies
+#   stop_between_cycles PLAN            exactly one loop and one supervisor; waits for a cycle's end, checks asleep,
+#                                       stops loop then supervisor (each re-verified before its signal), verifies
 #   stop_failing PLAN                   bounded stop of a loop that may never publish: loop, then supervisor, SIGKILL
 #                                       after 20 s, verifies nothing of PLAN is left
 #   check_tails                         every chain index's last line parses (a missing final newline is fine)
@@ -30,14 +31,18 @@ GUARD_ONLY_SECONDS=${GUARD_ONLY_SECONDS:-723}
 
 say() { echo "$(date -Is) $*"; }
 
+[ "$LOOP" -ge 10 ] || { say "LOOP must be at least 10 s (asleep bounds the report age by LOOP - 5)"; exit 1; }
+
 pids() { "$PY" -B "$HELPER" pids "$1"; }
 
-split_pids() {  # sets LOOPS and PYS from `pids PLAN`
+split_pids() {  # sets LOOPS and PYS (trimmed: no pid is an empty list) from `pids PLAN`
     local line
     line=$(pids "$1") || return 1
     LOOPS=${line#LOOP_PIDS}; LOOPS=${LOOPS%%;*}; PYS=${line##*PYTHON_PIDS}
     LOOPS=$(echo $LOOPS); PYS=$(echo $PYS)
 }
+
+count() { set -- $1; echo $#; }
 
 alive() {  # the pids of $@ that still exist and are not zombies
     local p out=""
@@ -49,21 +54,22 @@ alive() {  # the pids of $@ that still exist and are not zombies
     echo $out
 }
 
-cpu_ticks() { awk '{print $14 + $15}' /proc/$1/stat; }
+proc_state() { awk '{print $3}' /proc/$1/stat 2>/dev/null; }
+cpu_ticks() { awk '{print $14 + $15}' /proc/$1/stat 2>/dev/null; }
 
-asleep() {
-    local pid=$1 sup=$2 state t0 t1 age
-    state=$(awk '{print $3}' /proc/$pid/stat 2>/dev/null) || { say "asleep: $pid is gone"; return 1; }
-    t0=$(cpu_ticks $pid); sleep 2; t1=$(cpu_ticks $pid)
+asleep() {  # state S before and after 2 s, the same CPU ticks, a report written 0 to LOOP - 5 s ago
+    local pid=$1 sup=$2 s0 s1 t0 t1 age
+    s0=$(proc_state $pid); t0=$(cpu_ticks $pid); sleep 2; s1=$(proc_state $pid); t1=$(cpu_ticks $pid)
     age=$(( $(date +%s) - $(stat -c %Y "$sup") ))
-    say "asleep: pid $pid state $state cpu_ticks $t0 -> $t1 report_age ${age}s"
-    [ "$state" = S ] && [ "$t0" = "$t1" ] && [ "$age" -lt 10 ]
+    say "asleep: pid $pid state $s0 -> $s1 cpu_ticks $t0 -> $t1 report_age ${age}s (bound 0 to $(( LOOP - 5 )))"
+    [ -n "$t0" ] && [ -n "$t1" ] && [ "$s0" = S ] && [ "$s1" = S ] && [ "$t0" = "$t1" ] \
+        && [ "$age" -ge 0 ] && [ "$age" -lt $(( LOOP - 5 )) ]
 }
 
-kill_and_verify() {  # SIGTERM the loops, then the supervisors; SIGKILL after 20 s; nothing may be left
-    local loops=$1 pys=$2 left i
-    [ -n "$loops" ] && kill $loops 2>/dev/null
-    [ -n "$pys" ] && kill $pys 2>/dev/null
+kill_and_verify() {  # PLAN LOOPS PYS: SIGTERM the loops, then the supervisors, each re-verified (its argv for PLAN)
+    local plan=$1 loops=$2 pys=$3 left i       # just before the signal; SIGKILL after 20 s; nothing may be left
+    [ -n "$loops" ] && "$PY" -B "$HELPER" signal "$plan" 15 $loops
+    [ -n "$pys" ] && "$PY" -B "$HELPER" signal "$plan" 15 $pys
     for i in $(seq 1 20); do
         left=$(alive $loops $pys)
         [ -z "$left" ] && break
@@ -72,27 +78,30 @@ kill_and_verify() {  # SIGTERM the loops, then the supervisors; SIGKILL after 20
     left=$(alive $loops $pys)
     if [ -n "$left" ]; then
         say "SIGKILL $left"
-        kill -9 $left 2>/dev/null; sleep 1
+        "$PY" -B "$HELPER" signal "$plan" 9 $left; sleep 1
         left=$(alive $loops $pys)
     fi
     [ -z "$left" ] || { say "STILL ALIVE: $left"; return 1; }
 }
 
-stop_between_cycles() {
+stop_between_cycles() {  # requires exactly one loop and one supervisor for PLAN, read again on every try
     local plan=$1 sup try t0 line
     sup=$(dirname "$plan")/SUPERVISE.json
-    split_pids "$plan" || return 1
-    say "stop_between_cycles: loops [$LOOPS] supervisors [$PYS]"
-    [ -n "$PYS" ] || { say "no supervisor running $plan"; return 1; }
     for try in 1 2 3; do
+        split_pids "$plan" || return 1
+        say "stop_between_cycles: loops [$LOOPS] supervisors [$PYS]"
+        [ "$(count "$LOOPS")" = 1 ] && [ "$(count "$PYS")" = 1 ] \
+            || { say "refused: need exactly one loop and one supervisor for $plan"; return 1; }
         t0=$(stat -c %Y "$sup")
         timeout $(( LOOP * 3 + 600 )) bash -c 'while [ "$(stat -c %Y "$1")" = "$2" ]; do sleep 1; done' _ "$sup" "$t0" \
             || { say "no cycle ended in time: use stop_failing"; return 1; }
         sleep 2
-        asleep ${PYS%% *} "$sup" && break
+        split_pids "$plan" || return 1
+        [ "$(count "$LOOPS")" = 1 ] && [ "$(count "$PYS")" = 1 ] || continue
+        asleep $PYS "$sup" && break
         [ $try = 3 ] && { say "not asleep after three cycles: stop"; return 1; }
     done
-    kill_and_verify "$LOOPS" "$PYS" || return 1
+    kill_and_verify "$plan" "$LOOPS" "$PYS" || return 1
     line=$(pids "$plan"); [ "$line" = "LOOP_PIDS ; PYTHON_PIDS" ] || { say "left: $line"; return 1; }
     say "stopped: $plan (run check_tails before any start)"
 }
@@ -101,11 +110,12 @@ stop_failing() {
     local plan=$1 line
     split_pids "$plan" || return 1
     say "stop_failing: loops [$LOOPS] supervisors [$PYS]"
-    kill_and_verify "$LOOPS" "$PYS" || return 1
+    [ -n "$LOOPS$PYS" ] || { say "refused: nothing runs $plan"; return 1; }
+    kill_and_verify "$plan" "$LOOPS" "$PYS" || return 1
     line=$(pids "$plan")
     if [ "$line" != "LOOP_PIDS ; PYTHON_PIDS" ]; then  # a supervisor the loop restarted in between
         split_pids "$plan"
-        kill_and_verify "$LOOPS" "$PYS" || return 1
+        kill_and_verify "$plan" "$LOOPS" "$PYS" || return 1
     fi
     line=$(pids "$plan"); [ "$line" = "LOOP_PIDS ; PYTHON_PIDS" ] || { say "left: $line"; return 1; }
     say "stopped: $plan (run check_tails before any start)"
@@ -117,6 +127,8 @@ cut_partial_tail() { "$PY" -B "$HELPER" cut-tail "$1" "$RECORDS"; }
 
 start_loop() {
     local w5=$1 plan=$2 extra=${3:-} text line
+    line=$(pids "$plan")
+    [ "$line" = "LOOP_PIDS ; PYTHON_PIDS" ] || { say "refused: $plan already runs: $line"; return 1; }
     check_tails || { say "an index's last line does not parse: cut_partial_tail it first"; return 1; }
     text=$("$PY" -B "$HELPER" loop-text) || return 1
     setsid nohup bash -c "$text" swap-loop "$PY" "$w5" "$plan" "$LOOP" "$RECORDS" "$PAUSE" "$extra" \

@@ -70,6 +70,33 @@ class ProcessIdentityTests(unittest.TestCase):
         self.assertEqual(swap.select(table, plan), ([5], [6]))
         self.assertEqual(swap.select(table, plan[:-1]), ([], []))
 
+    def test_node1_shapes(self):
+        """The real node1 loop and supervisor (pid 1568722 and 1568730), argv as /proc shows them."""
+        c = '/srv/work/chains-20261107'
+        plan = f'{c}/oc/plan/oc-node1/CHAINS-PLAN.json'
+        loop = ['bash', '-c', f'while true; do python3 {c}/tools-src/tools/w5/chains.py supervise --plan {plan} --loop '
+                              f'60 >> {c}/records/supervise.log 2>&1; echo "$(date -Is) supervise exited $?" >> '
+                              f'{c}/records/supervise-restarts.log; sleep 30; done']
+        py = ['python3', f'{c}/tools-src/tools/w5/chains.py', 'supervise', '--plan', plan, '--loop', '60']
+        copy = f'{c}/oc/plan/oc-node1/CHAINS-PLAN.supervise-92d226374.json'
+        table = {1568722: (1, loop), 1568730: (1568722, py),
+                 1751025: (1, ['bash', '-c', f'fails=(); while true; do /usr/bin/python3.11 -B /srv/work/batch-ladder/'
+                                             f'tools/w5/chains.py supervise --plan /srv/work/batch-ladder/wf/oc/plan/'
+                                             f'bladder-f/CHAINS-PLAN.json --loop 60; done'])}
+        self.assertEqual(swap.select(table, plan), ([1568722], [1568730]))
+        self.assertEqual(swap.select(table, copy), ([], []))
+        del table[1568730]  # in the loop's 30 s pause: the loop alone, still found
+        self.assertEqual(swap.select(table, plan), ([1568722], []))
+
+    def test_a_recycled_pid_is_never_signalled(self):
+        table = self.table()
+        sent = []
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            got = swap.signal_verified(PLAN, 15, [10, 11, 30, 21, 999], table, lambda pid, sig: sent.append(pid))
+        self.assertEqual(got, [10, 11])
+        self.assertEqual(sent, [10, 11])
+        self.assertEqual(err.getvalue().count('not signalled'), 3)
+
     @unittest.skipUnless(Path('/proc/self/cmdline').exists() and os.name != 'nt', 'needs /proc')
     def test_real_processes(self):
         """Real processes: a loop of the step file's form running a stand-in chains.py, the same for a plan one
