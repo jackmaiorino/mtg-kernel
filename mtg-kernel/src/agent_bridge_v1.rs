@@ -953,7 +953,14 @@ impl SpellbenchBridgeServerV1 {
                     Some(_) => "loss",
                 };
                 let this_turn = turn_of(copy.game.as_ref().unwrap().session.game_state()) == turn;
-                return stop(if this_turn { "game_end" } else { "game_end_later_turn" }, Some(result));
+                return stop(
+                    if this_turn {
+                        "game_end"
+                    } else {
+                        "game_end_later_turn"
+                    },
+                    Some(result),
+                );
             }
             if turn_of(copy.game.as_ref().unwrap().session.game_state()) != turn {
                 return stop("turn_ends", None);
@@ -961,7 +968,8 @@ impl SpellbenchBridgeServerV1 {
             // A choice of the line's seat that shows library cards (or one
             // whose purpose the adapter does not know): the line stops before
             // it, as before a draw.
-            let purpose = response["extensions"]["x_kernel_v2_support"]["choice"]["purpose"].as_str();
+            let purpose =
+                response["extensions"]["x_kernel_v2_support"]["choice"]["purpose"].as_str();
             if purpose.is_some_and(|purpose| LINE_HIDDEN_PURPOSES_V1.contains(&purpose)) {
                 return stop("unseen", None);
             }
@@ -1519,10 +1527,18 @@ impl SpellbenchBridgeServerV1 {
         let pair = {
             let state = game.session.game_state();
             let known: HashSet<crate::ids::ObjectId> = (0..2)
-                .flat_map(|viewer| state.library_knowledge[viewer][owner].iter().map(|entry| entry.object))
+                .flat_map(|viewer| {
+                    state.library_knowledge[viewer][owner]
+                        .iter()
+                        .map(|entry| entry.object)
+                })
                 .collect();
-            let library: Vec<_> =
-                state.players[owner].library.iter().copied().filter(|id| !known.contains(id)).collect();
+            let library: Vec<_> = state.players[owner]
+                .library
+                .iter()
+                .copied()
+                .filter(|id| !known.contains(id))
+                .collect();
             library.first().and_then(|&first| {
                 let name = &state.objects.get(first).name;
                 library
@@ -1560,17 +1576,36 @@ impl SpellbenchBridgeServerV1 {
             let known: HashSet<crate::ids::ObjectId> = state.hand_knowledge[viewer][owner]
                 .iter()
                 .map(|entry| entry.object)
-                .chain(state.library_knowledge[viewer][owner].iter().map(|entry| entry.object))
+                .chain(
+                    state.library_knowledge[viewer][owner]
+                        .iter()
+                        .map(|entry| entry.object),
+                )
                 .collect();
             let bolt = |id: &crate::ids::ObjectId| state.objects.get(*id).name == "Lightning Bolt";
-            let hand: Vec<_> = state.players[owner].hand.iter().copied().filter(|id| !known.contains(id)).collect();
-            let library: Vec<_> =
-                state.players[owner].library.iter().copied().filter(|id| !known.contains(id)).collect();
+            let hand: Vec<_> = state.players[owner]
+                .hand
+                .iter()
+                .copied()
+                .filter(|id| !known.contains(id))
+                .collect();
+            let library: Vec<_> = state.players[owner]
+                .library
+                .iter()
+                .copied()
+                .filter(|id| !known.contains(id))
+                .collect();
             match hand.iter().find(|id| bolt(id)) {
-                Some(&in_hand) => library.iter().find(|id| !bolt(id)).map(|&out| (in_hand, out)),
-                None => hand
-                    .first()
-                    .and_then(|&in_hand| library.iter().find(|id| bolt(id)).map(|&out| (in_hand, out))),
+                Some(&in_hand) => library
+                    .iter()
+                    .find(|id| !bolt(id))
+                    .map(|&out| (in_hand, out)),
+                None => hand.first().and_then(|&in_hand| {
+                    library
+                        .iter()
+                        .find(|id| bolt(id))
+                        .map(|&out| (in_hand, out))
+                }),
             }
         };
         let Some((in_hand, in_library)) = pair else {
@@ -1579,7 +1614,11 @@ impl SpellbenchBridgeServerV1 {
         let swap = |state: &mut crate::state::GameState| {
             let player = &mut state.players[owner];
             let h = player.hand.iter().position(|id| *id == in_hand).unwrap();
-            let l = player.library.iter().position(|id| *id == in_library).unwrap();
+            let l = player
+                .library
+                .iter()
+                .position(|id| *id == in_library)
+                .unwrap();
             player.hand[h] = in_library;
             player.library[l] = in_hand;
             let hand_zone = state.objects.get(in_hand).zone;

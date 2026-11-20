@@ -92,7 +92,13 @@ fn line_choice(view: &Value) -> usize {
         .unwrap_or(rows[0])
 }
 
-fn step(server: &mut SpellbenchBridgeServerV1, game: &str, n: u64, response: &Value, row: usize) -> String {
+fn step(
+    server: &mut SpellbenchBridgeServerV1,
+    game: &str,
+    n: u64,
+    response: &Value,
+    row: usize,
+) -> String {
     let candidate = &response["candidates"][row];
     server.handle_line(&request(
         "step",
@@ -103,7 +109,12 @@ fn step(server: &mut SpellbenchBridgeServerV1, game: &str, n: u64, response: &Va
     ))
 }
 
-fn private_line(server: &mut SpellbenchBridgeServerV1, game: &str, root: &Value, ids: &[usize]) -> Value {
+fn private_line(
+    server: &mut SpellbenchBridgeServerV1,
+    game: &str,
+    root: &Value,
+    ids: &[usize],
+) -> Value {
     parse(&server.handle_line(&request(
         "private_line",
         &format!("line-{}", REQUESTS.fetch_add(1, Ordering::Relaxed)),
@@ -122,9 +133,24 @@ fn shown(answer: &Value) -> Value {
             // Never a view of a choice that shows library cards.
             let purpose = view["extensions"]["x_kernel_v2_support"]["choice"]["purpose"].as_str();
             assert!(
-                !matches!(purpose, Some("search" | "mill" | "undercity_throne" | "look_select" | "reveal_partition"
-                    | "look" | "scry" | "reveal" | "explore" | "surveil" | "owner_library_position" | "shuffle"
-                    | "other")),
+                !matches!(
+                    purpose,
+                    Some(
+                        "search"
+                            | "mill"
+                            | "undercity_throne"
+                            | "look_select"
+                            | "reveal_partition"
+                            | "look"
+                            | "scry"
+                            | "reveal"
+                            | "explore"
+                            | "surveil"
+                            | "owner_library_position"
+                            | "shuffle"
+                            | "other"
+                    )
+                ),
                 "a line view shows library cards: {purpose:?}"
             );
             let mut model_input = view["extensions"]["x_kernel_flat_v7"].clone();
@@ -145,7 +171,12 @@ fn shown(answer: &Value) -> Value {
 /// The whole line from `root` (a decision of the person's seat), as the
 /// planner plays it: at most `bound` choices, each read from the view the
 /// previous one led to. Returns what may be shown at each step, and the stop.
-fn whole_line(server: &mut SpellbenchBridgeServerV1, game: &str, root: &Value, bound: usize) -> Vec<Value> {
+fn whole_line(
+    server: &mut SpellbenchBridgeServerV1,
+    game: &str,
+    root: &Value,
+    bound: usize,
+) -> Vec<Value> {
     line_from(server, game, root, line_choice(root), bound)
 }
 
@@ -154,21 +185,36 @@ fn whole_line(server: &mut SpellbenchBridgeServerV1, game: &str, root: &Value, b
 /// player, so the active player tells the two turns of one round apart).
 fn turn_of(decision: &Value) -> Value {
     let observation: Value = serde_json::from_str(
-        decision["extensions"]["x_kernel_v5"]["observation_json"].as_str().unwrap(),
+        decision["extensions"]["x_kernel_v5"]["observation_json"]
+            .as_str()
+            .unwrap(),
     )
     .unwrap();
-    json!([observation["projection"]["turn"], observation["projection"]["active_player"]])
+    json!([
+        observation["projection"]["turn"],
+        observation["projection"]["active_player"]
+    ])
 }
 
 /// The line from `root` whose first choice is `first`.
-fn line_from(server: &mut SpellbenchBridgeServerV1, game: &str, root: &Value, first: usize, bound: usize) -> Vec<Value> {
+fn line_from(
+    server: &mut SpellbenchBridgeServerV1,
+    game: &str,
+    root: &Value,
+    first: usize,
+    bound: usize,
+) -> Vec<Value> {
     let mut ids = vec![first];
     let mut out = Vec::new();
     loop {
         let answer = private_line(server, game, root, &ids);
         if answer["response_type"] == "private_line" {
             // Never a step of another turn than the root's.
-            assert_eq!(turn_of(&answer["view"]), turn_of(root), "a line view of another turn");
+            assert_eq!(
+                turn_of(&answer["view"]),
+                turn_of(root),
+                "a line view of another turn"
+            );
         }
         out.push(shown(&answer));
         if answer["response_type"] != "private_line" || ids.len() >= bound {
@@ -241,7 +287,13 @@ fn differing_paths(a: &Value, b: &Value, at: String) -> Vec<String> {
             keys.sort();
             keys.dedup();
             keys.into_iter()
-                .flat_map(|k| differing_paths(&x.get(k).cloned().unwrap_or(Value::Null), &y.get(k).cloned().unwrap_or(Value::Null), format!("{at}/{k}")))
+                .flat_map(|k| {
+                    differing_paths(
+                        &x.get(k).cloned().unwrap_or(Value::Null),
+                        &y.get(k).cloned().unwrap_or(Value::Null),
+                        format!("{at}/{k}"),
+                    )
+                })
                 .take(20)
                 .collect()
         }
@@ -265,10 +317,10 @@ fn pregame(response: &Value) -> bool {
     let phase = &response["extensions"]["x_kernel_v2_support"]["london"]["phase"];
     (phase.is_string() && phase != "done")
         || response["candidates"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|candidate| candidate["semantic"].to_string().contains("ulligan"))
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|candidate| candidate["semantic"].to_string().contains("ulligan"))
 }
 
 /// One seed of property 2: at every decision of the person's seat, a copy of
@@ -312,7 +364,10 @@ fn hand_blind(seed: u64, tally: &mut Tally, differing: &mut u64) {
                         _ => probe.swap_library_cards_for_test(1),
                     };
                     let answer = step(&mut probe, &game, n, &response, line_choice(&response));
-                    eprintln!("seed {seed}: decision {n}: altered copy, first step: {}", &answer[..answer.len().min(1500)]);
+                    eprintln!(
+                        "seed {seed}: decision {n}: altered copy, first step: {}",
+                        &answer[..answer.len().min(1500)]
+                    );
                 }
                 assert!(
                     first == second,
@@ -362,7 +417,8 @@ fn a_planned_line_stops_before_a_library_search() {
             if response["acting_seat"] == PERSON && !pregame(&response) {
                 let grant = rows(&response).into_iter().find(|row| {
                     let semantic = &response["candidates"][*row]["semantic"];
-                    semantic["kind"] == "cast_spell" && semantic["source"]["card_name"] == "Land Grant"
+                    semantic["kind"] == "cast_spell"
+                        && semantic["source"]["card_name"] == "Land Grant"
                 });
                 if let Some(grant) = grant {
                     grants += 1;
@@ -375,7 +431,10 @@ fn a_planned_line_stops_before_a_library_search() {
         }
     }
     eprintln!("Land Grant lines: {grants}, stopped as hidden: {stopped_hidden}");
-    assert!(grants > 0 && stopped_hidden > 0, "{grants} {stopped_hidden}");
+    assert!(
+        grants > 0 && stopped_hidden > 0,
+        "{grants} {stopped_hidden}"
+    );
 }
 
 /// The live game's caps never end a line: near a game's decision cap, lines
@@ -404,7 +463,11 @@ fn a_planned_line_ignores_the_live_games_caps() {
                     let first = whole_line(&mut same, &game, &response, 8);
                     let second = whole_line(&mut other, &game, &response, 8);
                     assert_eq!(first, second, "seed {seed}: decision {n}");
-                    assert_ne!(first.last().unwrap()["stop"], "no_result", "seed {seed}: decision {n}");
+                    assert_ne!(
+                        first.last().unwrap()["stop"],
+                        "no_result",
+                        "seed {seed}: decision {n}"
+                    );
                 }
             }
             let row = seeded(&response, &mut rng);
@@ -443,7 +506,10 @@ fn only_the_human_play_london_server_answers_a_planned_line() {
         assert_eq!(reset["response_type"], "decision");
         let answer = private_line(server, "only", &reset, &[line_choice(&reset)]);
         assert!(
-            matches!(answer["response_type"].as_str(), Some("private_line" | "private_line_stop")),
+            matches!(
+                answer["response_type"].as_str(),
+                Some("private_line" | "private_line_stop")
+            ),
             "{answer}"
         );
         let stale = private_line(server, "only", &json!({"step": 99}), &[0]);
