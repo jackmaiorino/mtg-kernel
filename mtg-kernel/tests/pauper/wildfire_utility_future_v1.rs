@@ -697,6 +697,29 @@ fn lembas_scries_then_draws_and_its_food_payment_uses_incarnation_bound_shuffle(
         state
     );
 
+    let mut corrupted = state.clone();
+    corrupted.objects.get_mut(lembas).zone_change_count = 0;
+    corrupted.reveal_library_top(PlayerId::P1, PlayerId::P0, 1);
+    let mut corrupted: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&corrupted).unwrap()).unwrap();
+    for _ in 0..4 {
+        match engine::advance_until_decision(&mut corrupted) {
+            Decision::CastSpellOrPass { .. } => engine::step(&mut corrupted, Action::Pass).unwrap(),
+            Decision::Halted { .. } => break,
+            other => panic!("unexpected decision for malformed Lembas generation: {other:?}"),
+        }
+    }
+    assert_eq!(
+        corrupted.engine.halted,
+        Some((UnsupportedMechanic::InvalidEffectContinuation, lembas))
+    );
+    assert_eq!(
+        corrupted
+            .known_library_cards(PlayerId::P1, PlayerId::P0)
+            .len(),
+        1
+    );
+
     let mut ceased = state.clone();
     ceased.objects.get_mut(lembas).v4.is_token = true;
     assert!(event::cease_to_exist(&mut ceased, lembas));

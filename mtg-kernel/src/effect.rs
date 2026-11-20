@@ -24797,6 +24797,8 @@ fn execute_in_departure_scope_v1(
             };
             if !crate::engine::source_card_def_matches(state, source, live.card_def)
                 || live.owner != source.owner
+                || live.zone_change_count < expected_generation
+                || (live.zone_change_count == expected_generation && live.zone != Zone::Graveyard)
             {
                 state.engine.halted = Some((
                     crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
