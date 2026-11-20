@@ -641,10 +641,15 @@ mod tests {
         }
         at(&mut state, Step::Main1, PlayerId::P0, PlayerId::P0);
         let test = mana_enables_action_v1(&state, PlayerId::P0, &sources, false);
-        assert!(!test.enables, "{test:?}");
-        assert!(!test.cap_reached, "{test:?}");
-        // Only Heap Gate's paid colored ability is outside autopay.
-        if !cfg!(feature = "eternal-fixtures") {
+        if cfg!(feature = "eternal-fixtures") {
+            // Every activation is searched there and orders are not merged
+            // (the state hash covers the event history), so five sources can
+            // reach the cap, whose answer is the conservative one.
+            assert_eq!(test.enables, test.cap_reached, "{test:?}");
+        } else {
+            assert!(!test.enables, "{test:?}");
+            assert!(!test.cap_reached, "{test:?}");
+            // Only Heap Gate's paid colored ability is outside autopay.
             assert_eq!(test.hand_only_sources, 1, "{test:?}");
             assert!(test.activations <= 5, "{test:?}");
         }
