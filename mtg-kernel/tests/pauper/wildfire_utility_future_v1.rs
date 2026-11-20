@@ -697,6 +697,16 @@ fn lembas_scries_then_draws_and_its_food_payment_uses_incarnation_bound_shuffle(
         state
     );
 
+    let mut ceased = state.clone();
+    ceased.objects.get_mut(lembas).v4.is_token = true;
+    assert!(event::cease_to_exist(&mut ceased, lembas));
+    ceased.reveal_library_top(PlayerId::P1, PlayerId::P0, 1);
+    resolve_top_without_choice(&mut ceased);
+    assert!(ceased
+        .known_library_cards(PlayerId::P1, PlayerId::P0)
+        .is_empty());
+    assert!(!ceased.players[0].library.contains(&lembas));
+
     for destination in [Zone::Exile, Zone::Hand, Zone::Graveyard] {
         let mut later_incarnation = state.clone();
         let second = put_object(

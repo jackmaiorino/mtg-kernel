@@ -24789,6 +24789,10 @@ fn execute_in_departure_scope_v1(
                 return;
             };
             let Some(live) = state.objects.try_get(source.source) else {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
                 return;
             };
             if live.card_def != source.card_def || live.owner != source.owner {
@@ -24798,11 +24802,24 @@ fn execute_in_departure_scope_v1(
                 ));
                 return;
             }
-            let same_incarnation = live.zone == Zone::Graveyard
-                && live.zone_change_count == expected_generation
+            let graveyard_incarnation =
+                live.zone == Zone::Graveyard && live.zone_change_count == expected_generation;
+            // A ceased token keeps its arena record, but cannot move again (CR 111.8).
+            let same_incarnation = graveyard_incarnation && !live.v4.is_token;
+            if same_incarnation
                 && state.players[source.owner.index()]
                     .graveyard
-                    .contains(&source.source);
+                    .iter()
+                    .filter(|&&id| id == source.source)
+                    .count()
+                    != 1
+            {
+                state.engine.halted = Some((
+                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ctx.source,
+                ));
+                return;
+            }
             let mut staged = state.clone();
             let Ok(shuffle_token) = staged.preflight_library_shuffle(source.owner) else {
                 state.engine.halted = Some((
