@@ -700,11 +700,24 @@ fn lembas_scries_then_draws_and_its_food_payment_uses_incarnation_bound_shuffle(
     let mut later_incarnation = state.clone();
     event::propose_and_commit(
         &mut later_incarnation,
-        ProposedEvent::zone_change(lembas, Zone::Hand),
+        ProposedEvent::zone_change(lembas, Zone::Exile),
+    );
+    later_incarnation.reveal_library_top(PlayerId::P1, PlayerId::P0, 1);
+    assert_eq!(
+        later_incarnation
+            .known_library_cards(PlayerId::P1, PlayerId::P0)
+            .len(),
+        1
     );
     resolve_top_without_choice(&mut later_incarnation);
-    assert_eq!(later_incarnation.objects.get(lembas).zone, Zone::Hand);
-    assert!(!later_incarnation.players[0].library.contains(&lembas));
+    assert_eq!(later_incarnation.objects.get(lembas).zone, Zone::Exile);
+    assert_eq!(later_incarnation.players[0].library, [filler]);
+    assert!(
+        later_incarnation
+            .known_library_cards(PlayerId::P1, PlayerId::P0)
+            .is_empty(),
+        "shuffling clears knowledge even when Lembas has already left the graveyard"
+    );
 
     resolve_top_without_choice(&mut state);
     assert_eq!(state.objects.get(lembas).zone, Zone::Library);
