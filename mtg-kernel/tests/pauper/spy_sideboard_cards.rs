@@ -761,13 +761,25 @@ fn repeated_linked_enters_return_each_matching_card_from_one_incarnation() {
             assert!(later.engine.linked_exile_records.is_empty());
 
             queue_move_triggers(&mut state, source, Zone::Graveyard);
-            for corruption in ["duplicate", "missing exile membership", "forged attachment"] {
+            for corruption in [
+                "duplicate",
+                "second source claims the same card",
+                "missing exile membership",
+                "forged attachment",
+            ] {
                 let mut broken = state.clone();
                 match corruption {
                     "duplicate" => broken
                         .engine
                         .linked_exile_records
                         .push(state.engine.linked_exile_records[1]),
+                    "second source claims the same card" => {
+                        let other = put_object(&mut broken, owner, name, Zone::Battlefield);
+                        let mut record = broken.engine.linked_exile_records[1];
+                        record.source =
+                            mtg_kernel::state::AbilitySourceContractV4::capture(&broken, other);
+                        broken.engine.linked_exile_records.push(record);
+                    }
                     "missing exile membership" => broken.exile.retain(|id| *id != second),
                     _ => {
                         broken.engine.linked_exile_records[1].source.attached_to =
