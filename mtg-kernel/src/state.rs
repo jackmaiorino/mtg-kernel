@@ -2571,6 +2571,16 @@ pub struct CreatureStatsLkiV1 {
 }
 
 impl GameState {
+    /// A digest of the position of the game's random stream: equal before
+    /// and after a step exactly when the step drew no random number (a
+    /// shuffle, a random choice). For the human-play planned line, which
+    /// stops before any chance outcome (`agent_bridge_v1`).
+    pub(crate) fn randomness_digest_v1(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.randomness.hash(&mut hasher);
+        hasher.finish()
+    }
+
     /// Legacy round key until the selected extra-turn scheduler is installed.
     pub(crate) fn turn_key_v1(&self) -> u32 {
         self.extra_turn_v1
