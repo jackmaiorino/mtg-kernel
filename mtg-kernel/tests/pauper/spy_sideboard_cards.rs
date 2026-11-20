@@ -671,6 +671,89 @@ fn mesmeric_fiend_reveals_publicly_exiles_nonland_and_returns_exact_linked_card(
 }
 
 #[test]
+fn fiend_returns_the_exiled_card_after_changing_controller() {
+    let mut state = ready_main(774);
+    let fiend = put_object(&mut state, PlayerId::P0, "Mesmeric Fiend", Zone::Hand);
+    let card = put_object(&mut state, PlayerId::P1, "Fume Spitter", Zone::Hand);
+    queue_move_triggers(&mut state, fiend, Zone::Battlefield);
+    choose_fiend_trigger_target(&mut state, fiend);
+    pass_until_idle(&mut state);
+    assert_eq!(state.objects.get(card).zone, Zone::Exile);
+
+    state.players[0].battlefield.retain(|id| *id != fiend);
+    state.players[1].battlefield.push(fiend);
+    state.objects.get_mut(fiend).controller = PlayerId::P1;
+    queue_move_triggers(&mut state, fiend, Zone::Graveyard);
+    assert_eq!(state.engine.pending_triggers[0].controller, PlayerId::P1);
+    let mut restored: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    pass_until_idle(&mut restored);
+    assert!(restored.players[1].hand.contains(&card));
+    assert!(restored.engine.linked_exile_records.is_empty());
+}
+
+#[test]
+fn repeated_linked_enters_return_each_matching_card_from_one_incarnation() {
+    for (name, origin) in [
+        ("Mesmeric Fiend", Zone::Hand),
+        ("Journey to Nowhere", Zone::Battlefield),
+    ] {
+        for owner in [PlayerId::P0, PlayerId::P1] {
+            let opponent = owner.opponent();
+            let mut state = ready_main(775);
+            state.active_player = owner;
+            state.priority_player = owner;
+            let source = put_object(&mut state, owner, name, Zone::Hand);
+            let first = put_object(&mut state, opponent, "Fume Spitter", origin);
+            let second = put_object(&mut state, opponent, "Cryptic Serpent", origin);
+            queue_move_triggers(&mut state, source, Zone::Battlefield);
+            let enter = state.engine.pending_triggers[0].clone();
+            for (index, target) in [first, second].into_iter().enumerate() {
+                // Exercise an additional instance of the native enter ability for the same source.
+                if index == 1 {
+                    state.engine.pending_triggers.push(enter.clone());
+                }
+                for _ in 0..32 {
+                    let decision = engine::advance_until_decision(&mut state);
+                    if state.objects.get(target).zone == Zone::Exile && state.stack.is_empty() {
+                        break;
+                    }
+                    let action = match decision {
+                        Decision::ChooseTargets { .. } => {
+                            Action::ChooseTarget(if origin == Zone::Hand {
+                                Target::Player(opponent)
+                            } else {
+                                Target::Object(target)
+                            })
+                        }
+                        Decision::ChooseEffectTargets { .. } => {
+                            Action::ChooseEffectTarget(Target::Object(target))
+                        }
+                        Decision::CastSpellOrPass { .. } => Action::Pass,
+                        other => panic!("{name} failed to exile card {index}: {other:?}"),
+                    };
+                    engine::step(&mut state, action).unwrap();
+                }
+                assert_eq!(state.objects.get(target).zone, Zone::Exile);
+                assert_eq!(state.engine.linked_exile_records.len(), index + 1);
+                assert_historical_exile_relation(&state, source, 1, target);
+            }
+
+            queue_move_triggers(&mut state, source, Zone::Graveyard);
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            pass_until_idle(&mut restored);
+            assert!(restored.engine.halted.is_none());
+            for target in [first, second] {
+                assert_eq!(restored.objects.get(target).zone, origin);
+                assert_eq!(restored.objects.get(target).owner, opponent);
+            }
+            assert!(restored.engine.linked_exile_records.is_empty());
+        }
+    }
+}
+
+#[test]
 fn mesmeric_fiend_classic_leave_before_etb_permanently_exiles_and_all_land_is_noop() {
     let mut state = ready_main(0x4d45_534d_4552_0002);
     let fiend = put_object(&mut state, PlayerId::P0, "Mesmeric Fiend", Zone::Hand);
