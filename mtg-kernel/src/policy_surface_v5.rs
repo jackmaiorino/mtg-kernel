@@ -1051,7 +1051,9 @@ impl PolicySurfaceV5 {
     /// Whether the pending decision is a priority window `HarnessV2` would
     /// have passed for its seat, and why. A combat scan substep is never one.
     /// Tests read it on this line; the human bridge reads it on its line.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Its test callers are cfg'd out of the fixture-feature builds, so the
+    /// allow is unconditional.
+    #[allow(dead_code)]
     pub(crate) fn engine_window_v1(&self) -> Option<crate::surface::SuppressionReason> {
         if self.scan.is_some() || self.hunter_order_v45.is_some() {
             return None;
