@@ -4147,6 +4147,20 @@ fn legal_targets_for_controller_from_source_unframed(
     legal
 }
 
+// Old snapshots stored Journey's printed "target creature" trigger using the
+// source-excluding tag. All other printings retain the tag's usual meaning.
+fn current_target_spec(spec: TargetSpec, source_card_def: Option<u16>) -> TargetSpec {
+    if spec == TargetSpec::CreatureOtherThanSource
+        && source_card_def
+            .and_then(|id| card_def::CARD_DEFS.get(usize::from(id)))
+            .is_some_and(|definition| definition.name == "Journey to Nowhere")
+    {
+        TargetSpec::Creature
+    } else {
+        spec
+    }
+}
+
 fn legal_targets_unrestricted_v1(
     spec: TargetSpec,
     targets_chosen: &[Target],
@@ -4160,6 +4174,7 @@ fn legal_targets_unrestricted_v1(
         None => None,
     };
     let source = source.filter(|_| dungeon_colors.is_none());
+    let spec = current_target_spec(spec, source.map(|s| s.card_def));
     if spec
         == TargetSpec::StandardV1(
             crate::standard_cards_v1::StandardTargetV1::OneToThreeDistinctAnyTargetsV1,
@@ -18586,7 +18601,10 @@ pub(crate) fn validate_pending_trigger(
             )
         })
         .ok_or("pending targeted trigger has no matching definition-owned ability")?;
-    if pending.target_spec != expected {
+    let source_card_def = pending
+        .source_contract
+        .map_or(source.card_def, |c| c.card_def);
+    if current_target_spec(pending.target_spec, Some(source_card_def)) != expected {
         return Err("pending trigger target specification changed".to_string());
     }
     if (expected != TargetSpec::CounterDistribution
@@ -20282,7 +20300,10 @@ fn validated_stack_item_target_metadata(
         }
         return Ok(None);
     };
-    if item.v4.target_spec != Some(spec) {
+    let stored_spec = item.v4.target_spec.map(|stored| {
+        current_target_spec(stored, item.v4.ability_source_contract.map(|c| c.card_def))
+    });
+    if stored_spec != Some(spec) {
         return Err("stack target specification does not match its definition".to_string());
     }
     if let Some(EffectOp::DistributePlusOneCounters {

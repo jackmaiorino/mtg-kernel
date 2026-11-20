@@ -166,7 +166,7 @@ fn definitions_ids_hash_and_generated_programs_are_exact() {
     );
     assert_eq!(
         trigger::target_spec_for_trigger(61, &(journey_triggers[0].effect)()),
-        Some(TargetSpec::CreatureOtherThanSource)
+        Some(TargetSpec::Creature)
     );
     assert_eq!(
         (journey_triggers[0].effect)(),

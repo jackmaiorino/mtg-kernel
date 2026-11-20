@@ -3,7 +3,7 @@
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, CARD_DEFS,
+    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, TargetSpec, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::eternal_premodern_p1b_v1::statics as p1b;
@@ -1146,7 +1146,7 @@ fn animated_journey_can_exile_itself_and_return_as_a_new_incarnation_both_seats(
         pool(&mut state, seat, &[ManaColor::W], 1);
         cast(&mut state, journey, &[]);
         let mut generations = Vec::new();
-        settle_with(&mut state, |s, decision| {
+        while let Some(decision) = settle(&mut state) {
             let Decision::ChooseTargets {
                 spell,
                 legal_targets,
@@ -1156,16 +1156,26 @@ fn animated_journey_can_exile_itself_and_return_as_a_new_incarnation_both_seats(
                 panic!("unexpected Journey decision {decision:?}")
             };
             assert_eq!(spell, journey);
-            assert!(is_creature(s, journey));
+            assert!(is_creature(&state, journey));
             assert!(legal_targets.contains(&Target::Object(journey)));
             assert!(legal_targets.contains(&Target::Object(creature)));
-            generations.push(s.objects.get(journey).zone_change_count);
-            Action::ChooseTarget(Target::Object(match generations.len() {
+            generations.push(state.objects.get(journey).zone_change_count);
+            let target = match generations.len() {
                 1 => journey,
                 2 => creature,
                 _ => panic!("unexpected third Journey entry"),
-            }))
-        });
+            };
+            assert_eq!(
+                state.engine.pending_triggers[0].target_spec,
+                TargetSpec::Creature
+            );
+            if seat == P1 {
+                // Also resume a stored trigger encoded with the former target tag.
+                state.engine.pending_triggers[0].target_spec = TargetSpec::CreatureOtherThanSource;
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            }
+            choose_target(&mut state, Target::Object(target));
+        }
         assert_eq!(generations.len(), 2);
         assert_eq!(generations[1], generations[0] + 2);
         assert_eq!(zone(&state, journey), Zone::Battlefield);
