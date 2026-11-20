@@ -1217,8 +1217,8 @@ fn human_chain_payment_state() -> GameState {
 }
 
 #[test]
-fn human_chain_copy_payment_and_retarget_are_distinct_bound_choices() {
-    for pay in [false, true] {
+fn human_chain_payment_copy_and_retarget_are_distinct_bound_choices() {
+    for (pay, copy) in [(false, false), (true, false), (true, true)] {
         let mut session = FastActorSessionV1::from_v3_fixture_state(human_chain_payment_state());
         let mut adapter = HumanDecisionProjectorV1::new(PlayerSeatV1::P1);
         let visible = submit_label(&mut session, &mut adapter, |label| {
@@ -1234,6 +1234,27 @@ fn human_chain_copy_payment_and_retarget_are_distinct_bound_choices() {
             .all(|action| action.label.contains("inherited target: you")));
         assert_eq!(visible.state.public.life_totals[1], 17);
         if pay {
+            assert_eq!(session.game_state().stack.len(), 1);
+            let copy_choice = submit_label(&mut session, &mut adapter, |label| {
+                label
+                    == if copy {
+                        "Copy Chain Lightning"
+                    } else {
+                        "Decline to copy Chain Lightning"
+                    }
+            });
+            assert_no_private_keys(&serde_json::to_value(copy_choice).unwrap());
+            assert!(session.game_state().players[1]
+                .battlefield
+                .iter()
+                .all(|id| session.game_state().objects.get(*id).tapped));
+        } else {
+            assert!(session.game_state().players[1]
+                .battlefield
+                .iter()
+                .all(|id| !session.game_state().objects.get(*id).tapped));
+        }
+        if copy {
             let retarget = adapter
                 .project_current(&session, decision(&session))
                 .unwrap();
@@ -1253,16 +1274,9 @@ fn human_chain_copy_payment_and_retarget_are_distinct_bound_choices() {
                 .unwrap()
                 .copy_source
                 .is_some());
-            assert!(session.game_state().players[1]
-                .battlefield
-                .iter()
-                .all(|id| session.game_state().objects.get(*id).tapped));
         } else {
             assert!(session.game_state().engine.pending_spell_copy.is_none());
-            assert!(session.game_state().players[1]
-                .battlefield
-                .iter()
-                .all(|id| !session.game_state().objects.get(*id).tapped));
+            assert!(session.game_state().stack.is_empty());
         }
         assert_no_private_keys(&serde_json::to_value(visible).unwrap());
     }

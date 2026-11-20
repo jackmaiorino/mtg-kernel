@@ -1598,9 +1598,9 @@ pub enum EffectOp {
     /// controller may pay {R}{R}" branch. XMage asks this choice before it
     /// attempts payment, even when payment will fail, so this always
     /// suspends the current resolution in the engine's dedicated spell-copy
-    /// state machine; no SBA, trigger placement, zone
-    /// move, or priority window can occur until payment and optional
-    /// retargeting finish. This leaf must remain last in Chain Lightning's
+    /// state machine; no SBA, trigger placement, zone move, or priority
+    /// window can occur while the affected player answers payment, copying,
+    /// or retargeting. This leaf must remain last in Chain Lightning's
     /// generated sequence for the same reason `DiscardCards` must remain
     /// last in its sequence.
     OfferAffectedPlayerSpellCopy {

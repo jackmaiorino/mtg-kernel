@@ -330,6 +330,7 @@ fn guardian_protection_filters_monocolored_targets_blockers_and_damage() {
         }
     ));
     engine::step(&mut copied, Action::ChooseSpellCopyPayment(true)).unwrap();
+    engine::step(&mut copied, Action::ChooseEffectOption(1)).unwrap();
     engine::step(&mut copied, Action::ChooseSpellCopyRetarget(true)).unwrap();
     let copy_targets = engine::advance_until_decision(&mut copied);
     assert!(matches!(
