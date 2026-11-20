@@ -23,6 +23,10 @@ use crate::agent_bridge_v1::{
 use crate::state::SplitMix64;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Every request carries its own id (the server answers a repeated id from its cache).
+static REQUESTS: AtomicU64 = AtomicU64::new(0);
 
 const PERSON: &str = "p0";
 
@@ -98,7 +102,7 @@ fn step(server: &mut SpellbenchBridgeServerV1, game: &str, n: u64, response: &Va
 fn private_line(server: &mut SpellbenchBridgeServerV1, game: &str, root: &Value, ids: &[usize]) -> Value {
     parse(&server.handle_line(&request(
         "private_line",
-        "line",
+        &format!("line-{}", REQUESTS.fetch_add(1, Ordering::Relaxed)),
         json!({"game_id": game, "expected_step": root["step"], "candidate_ids": ids}),
     )))
 }
@@ -193,6 +197,17 @@ fn a_planned_line_never_changes_the_live_game() {
     assert!(tally.lines > 100, "{tally:?}");
 }
 
+/// A decision of the pregame (a mulligan or a bottom): the planner starts no
+/// line there, and a hidden-card swap there would break the pregame's own
+/// bookkeeping of the hand.
+fn pregame(response: &Value) -> bool {
+    response["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|candidate| candidate["semantic"].to_string().contains("ulligan"))
+}
+
 /// One seed of property 2: at every decision of the person's seat, a copy of
 /// the game whose opponent holds a Lightning Bolt where the other holds
 /// another card (or the reverse), both unknown to the person, gives the same
@@ -207,7 +222,7 @@ fn hand_blind(seed: u64, tally: &mut Tally, differing: &mut u64) {
         if response["response_type"] != "decision" {
             return;
         }
-        if response["acting_seat"] == PERSON {
+        if response["acting_seat"] == PERSON && !pregame(&response) {
             let mut same = live.clone_game_for_test();
             let mut other = live.clone_game_for_test();
             if other.swap_opponent_bolt_for_test(1) {
@@ -256,7 +271,7 @@ fn only_the_human_play_london_server_answers_a_planned_line() {
                          {"seat": "p1", "deck": {"catalog_id": "Burn"}}]}),
     )));
     assert_eq!(reset["response_type"], "decision", "{reset}");
-    let answer = private_line(&mut plain, "only", &reset, &[rows(&reset)[0]]);
+    let answer = private_line(&mut plain, "only", &reset, &[0]);
     assert_eq!(answer["response_type"], "error", "{answer}");
     let mut london = london_server();
     {
