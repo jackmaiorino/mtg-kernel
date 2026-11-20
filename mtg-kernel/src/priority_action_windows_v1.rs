@@ -138,26 +138,36 @@ struct ManaActivationV1 {
     action: Action,
 }
 
-/// Whether autopay already uses this activation of `id`: the source is an
-/// automatic payment source (a plain tap for mana, see
-/// `mana::gather_sources_for_spell_restrictions_v1`), the color is one of its
-/// primary ability's colors, and the activation has no cost target. Anything
-/// else (a sacrifice or life cost, a paid filtering ability on a land whose
-/// primary ability is automatic, a cost that taps or sacrifices another
-/// object) pays only by hand.
+/// Whether autopay already uses this activation of `id`, mirroring the colors
+/// `mana::gather_sources_for_spell_restrictions_v1` gives a source: an
+/// activation without a cost target whose color is one of the primary
+/// ability's colors of an automatic payment source (a plain tap for mana), a
+/// granted color, or a color of a restricted ability whose restriction
+/// resolves (restricted mana floated by hand pays exactly the spells autopay
+/// would pay with it). Anything else (a sacrifice or life cost, a paid
+/// filtering ability on a land whose primary ability is automatic, a cost
+/// that taps or sacrifices another object) pays only by hand.
 fn autopay_covers_v1(
     state: &GameState,
     id: ObjectId,
     choice: crate::mana::ManaColor,
     has_cost_target: bool,
 ) -> bool {
+    if has_cost_target {
+        return false;
+    }
     let object = state.objects.get(id);
     let def = &crate::card_def::CARD_DEFS[object.card_def as usize];
-    def.is_automatic_payment_mana_source()
-        && !has_cost_target
+    (def.is_automatic_payment_mana_source()
         && def
             .primary_mana_ability_choices(object.v4.chosen_color)
-            .contains(&choice)
+            .contains(&choice))
+        || crate::standard_legends_v1::katilda_mana_colors(state, id).contains(&choice)
+        || def.restricted_mana_abilities.iter().any(|restricted| {
+            restricted.colors.contains(&choice)
+                && crate::mana::resolved_source_restriction_v60(state, id, restricted.restriction)
+                    .is_some()
+        })
 }
 
 /// Whether any listed activation of `id` pays only by hand.
