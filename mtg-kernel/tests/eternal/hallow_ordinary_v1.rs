@@ -138,7 +138,7 @@ fn confirmed_packet_keeps_its_prevention_when_a_later_redirect_consumes_a_shared
     let mut state = turn_of(P0);
     let first = put(&mut state, P1, "Nomads en-Kor", Zone::Battlefield);
     let second = put(&mut state, P1, "Nomads en-Kor", Zone::Battlefield);
-    let third = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    let third = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
     give_priority(&mut state, P1);
     super::activate(&mut state, first, 0, &[Target::Object(second)]);
     settled(&mut state);
@@ -147,7 +147,8 @@ fn confirmed_packet_keeps_its_prevention_when_a_later_redirect_consumes_a_shared
     settled(&mut state);
     give_priority(&mut state, P0);
     let dominate = put(&mut state, P0, "Dominate", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 3);
+    // Dominate a one-mana Nomads with exactly enough mana for X = 1.
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 2);
     cast(&mut state, dominate, &[Target::Object(second)]);
     settled(&mut state);
     assert_eq!(state.objects.get(second).controller, P0);
@@ -185,7 +186,7 @@ fn hallowed_and_uncovered_blockers_share_one_nishoba_counter_for_the_combat_batc
             let mut state = turn_of(P0);
             let nishoba = put(&mut state, P0, "Phantom Nishoba", Zone::Battlefield);
             state.objects.get_mut(nishoba).counters.plus1_plus1 = 7;
-            let bears = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+            let mongrel = put(&mut state, P1, "Wild Mongrel", Zone::Battlefield);
             give_priority(&mut state, P1);
             let sprite = put(&mut state, P1, "Spellstutter Sprite", Zone::Hand);
             pool(&mut state, P1, &[ManaColor::U], 1);
@@ -200,9 +201,9 @@ fn hallowed_and_uncovered_blockers_share_one_nishoba_counter_for_the_combat_batc
             act(&mut state, Action::DeclareAttackers(vec![nishoba]));
             super::pass_until(&mut state, |state| state.step == Step::DeclareBlockers);
             let blockers = if sprite_first {
-                [sprite, bears]
+                [sprite, mongrel]
             } else {
-                [bears, sprite]
+                [mongrel, sprite]
             };
             act(
                 &mut state,
@@ -231,7 +232,7 @@ fn hallowed_and_uncovered_blockers_share_one_nishoba_counter_for_the_combat_batc
                         source,
                         option_count: 2,
                     } if shield_sprite && source == sprite => {
-                        // Nishoba prevents Sprite's covered damage; Bears'
+                        // Nishoba prevents Sprite's covered damage; Mongrel's
                         // ordinary damage is simultaneous with that point.
                         state = restored(&state);
                         act(&mut state, Action::ChooseEffectOption(1));
@@ -247,7 +248,7 @@ fn hallowed_and_uncovered_blockers_share_one_nishoba_counter_for_the_combat_batc
             assert_eq!(
                 state.objects.get(nishoba).counters.plus1_plus1,
                 6,
-                "Sprite and Bears deal one simultaneous combat batch"
+                "Sprite and Mongrel deal one simultaneous combat batch"
             );
         }
     }
