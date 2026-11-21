@@ -32,6 +32,17 @@ KNOWN_FAILURES_PATH = Path(__file__).with_name("rust_limited_only_known_failures
 # Recorded seconds per isolated case on a hosted Linux runner, used only to
 # balance shards; refresh with update_rust_case_seconds.py.
 CASE_SECONDS_PATH = Path(__file__).with_name("rust_case_seconds.json")
+# Exact isolated cases whose time limit differs from the --filter-timeout-seconds
+# default, in seconds. A case that hangs still fails at its own limit.
+CASE_TIMEOUTS_PATH = Path(__file__).with_name("rust_case_timeout_seconds.json")
+
+
+def case_timeouts() -> dict[str, int]:
+    table = json.loads(CASE_TIMEOUTS_PATH.read_text()) if CASE_TIMEOUTS_PATH.is_file() else {}
+    table = {name: value for name, value in table.items() if not name.startswith("_")}
+    if not all(isinstance(value, int) and value > 0 for value in table.values()):
+        raise ValueError(f"{CASE_TIMEOUTS_PATH.name}: every limit must be a positive whole number of seconds")
+    return table
 
 
 def case_seconds() -> tuple[dict[str, float], float]:
@@ -266,8 +277,9 @@ def case_resources() -> tuple[int, dict]:
 
 def run_isolated_cases(executable: str, selected: list[str], timeout: int, ignored: list[str]) -> int:
     workers, telemetry = case_resources()
+    overrides = {name: limit for name, limit in case_timeouts().items() if name in selected}
     print(json.dumps({"isolated_case_workers": workers, "case_timeout_seconds": timeout,
-                      "resources": telemetry}), flush=True)
+                      "case_timeout_overrides": overrides, "resources": telemetry}), flush=True)
     active: dict[str, subprocess.Popen] = {}
     lock, output_lock, stopping = threading.Lock(), threading.Lock(), threading.Event()
 
@@ -297,8 +309,9 @@ def run_isolated_cases(executable: str, selected: list[str], timeout: int, ignor
                 child = subprocess.Popen(command)
                 active[name] = child
             started = time.monotonic()
-            emit("rust_test_case_started", case=name, pid=child.pid, timeout_seconds=timeout)
-            deadline = started + timeout
+            limit = overrides.get(name, timeout)
+            emit("rust_test_case_started", case=name, pid=child.pid, timeout_seconds=limit)
+            deadline = started + limit
             while True:
                 if stopping.is_set() or time.monotonic() >= deadline:
                     row["status"] = "interrupted" if stopping.is_set() else "timeout"

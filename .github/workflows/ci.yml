@@ -153,7 +153,7 @@ jobs:
             # markdown are irrelevant. build.rs still hashes every tracked
             # file into its provenance digest; no test pins that value.
             case "$f" in
-              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/rust_integration_module_seconds.json|python/tools/check_rust_integration_inventory.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
+              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_case_timeout_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/rust_integration_module_seconds.json|python/tools/check_rust_integration_inventory.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
                 rust_relevant=true ;;
               python/tests/*|python/tools/*|tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
