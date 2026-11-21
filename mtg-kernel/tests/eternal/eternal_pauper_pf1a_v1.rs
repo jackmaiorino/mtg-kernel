@@ -8,6 +8,7 @@ use mtg_kernel::card_def::{
     card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
+use mtg_kernel::event::{self, ProposedEvent};
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
 use mtg_kernel::mana::ManaColor;
@@ -1019,6 +1020,55 @@ fn kun_lun_warrior_sacrifices_an_artifact_and_draws() {
     assert_eq!(zone(&state, ring), Zone::Graveyard);
     assert_eq!(zone(&state, bolt), Zone::Hand, "nothing discarded");
     assert_eq!(state.players[0].hand.len(), 2, "bolt and the drawn card");
+}
+
+#[test]
+fn kun_lun_warrior_paid_draw_offers_competing_draw_replacements() {
+    for (payment, payment_zone, choose_jace) in [
+        ("Lightning Bolt", Zone::Hand, true),
+        ("Sol Ring", Zone::Battlefield, false),
+    ] {
+        let mut state = game(&[]);
+        put(&mut state, P1, "Hullbreacher", Zone::Battlefield);
+        let jace = put(&mut state, P0, "Jace, Wielder of Mysteries", Zone::Hand);
+        event::propose_and_commit(
+            &mut state,
+            ProposedEvent::zone_change(jace, Zone::Battlefield),
+        );
+        assert_eq!(mtg_kernel::planeswalker_v1::loyalty(&state, jace), Some(4));
+        let warrior = put(&mut state, P0, "K'un-Lun Warrior", Zone::Hand);
+        let payment = put(&mut state, P0, payment, payment_zone);
+        pool(&mut state, P0, &[ManaColor::R], 1);
+        cast(&mut state, warrior, &[]);
+        let choice = settle(&mut state).expect("the Warrior offers its payment");
+        assert!(matches!(choice, Decision::ChooseEffectTargets {
+            player: P0, source, legal_targets, .. }
+            if source == warrior && legal_targets.as_slice() == [Target::Object(payment)]));
+        act(
+            &mut state,
+            Action::ChooseEffectTarget(Target::Object(payment)),
+        );
+
+        let choice = settle(&mut state).expect("the drawing player chooses Jace or Hullbreacher");
+        assert_eq!(zone(&state, payment), Zone::Graveyard);
+        assert!(named(&state, P1, "Treasure Token").is_empty());
+        assert!(matches!(choice, Decision::ChooseEffectTargets {
+            player: P0, source, legal_targets, can_finish: true, .. }
+            if source == warrior && legal_targets.as_slice() == [Target::Object(jace)]));
+        if choose_jace {
+            act(&mut state, Action::ChooseEffectTarget(Target::Object(jace)));
+            assert!(matches!(
+                next(&mut state),
+                Decision::GameOver { winner: Some(P0) }
+            ));
+            assert!(named(&state, P1, "Treasure Token").is_empty());
+        } else {
+            act(&mut state, Action::FinishEffectSelection);
+            settled(&mut state);
+            assert_eq!(named(&state, P1, "Treasure Token").len(), 1);
+            assert!(state.players[P0.index()].hand.is_empty());
+        }
+    }
 }
 
 #[test]
