@@ -589,8 +589,13 @@ fn phase1_preparation_row_cached_replay_matches_the_reference_replay() {
             assert!(same(&borrowed, &reference));
         }
     }
+    // On other architectures or with the cache disabled, replay uses the
+    // reference forward and leaves both counters at zero.
+    let cache_enabled = cfg!(target_arch = "x86_64")
+        && std::env::var("MTG_KERNEL_ROW_CACHE").map_or(true, |v| v != "0");
     for rows in &storage {
-        assert!(served(rows) > 0 && computed(rows) > 0);
+        assert_eq!(served(rows) > 0, cache_enabled);
+        assert_eq!(computed(rows) > 0, cache_enabled);
     }
 
     // One storage scored by two models in turn serves neither the other's
@@ -648,7 +653,7 @@ fn phase1_preparation_row_cached_replay_matches_the_reference_replay() {
         .score_replay_tensor_ref_v1(V3, &common, &[], Some(&mut rows))
         .unwrap();
     assert!(same(&again, &before));
-    assert!(served(&rows) > 0);
+    assert_eq!(served(&rows) > 0, cache_enabled);
 
     // Replaced parameters never meet rows of the old ones, although this
     // storage still holds the old model.
@@ -667,8 +672,13 @@ fn phase1_preparation_row_cached_replay_matches_the_reference_replay() {
         .unwrap();
     assert!(same(&cached, &reference));
     assert!(!same(&cached, &before));
-    // The storage started over for the new parameters.
-    assert_eq!(served(&rows), 0);
+    // Rebinding starts with the same counts as fresh storage, including
+    // the second cached forward when MTG_KERNEL_ROW_CACHE_CHECK=1.
+    let mut fresh = ReplayForwardRowsV1::default();
+    learner
+        .score_replay_tensor_ref_v1(V3, &common, &[], Some(&mut fresh))
+        .unwrap();
+    assert_eq!(rows.counts_v1(), fresh.counts_v1());
 }
 
 /// Which rows take the row cache: none without a CPU learner step, the

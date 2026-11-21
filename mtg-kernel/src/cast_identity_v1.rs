@@ -94,6 +94,115 @@ pub(crate) fn publish(
         .push(CommittedEvent::PublishedCastIdentityV1 { receipt });
 }
 
+/// Original public casting identity of a stale link's current battlefield object.
+pub(crate) fn archived_battlefield_cast(
+    state: &GameState,
+    spell: ObjectId,
+    owner: PlayerId,
+) -> Result<Option<u16>, ()> {
+    use crate::event_history_v1::EventKindV1 as K;
+    let live = state.objects.try_get(spell).ok_or(())?;
+    if live.owner != owner || live.zone != Zone::Battlefield {
+        return Err(());
+    }
+    let history = &state.engine.event_history;
+    if !history.has_any(&[K::PublishedCastIdentityV1]) {
+        return Ok(None);
+    }
+    // Cast announcement moves directly to the stack. Resolution records a
+    // ZoneChange. Only a cast after the preceding move can explain this entry.
+    let mut prior_move = None;
+    let mut entry = None;
+    for (at, event) in history.of_kinds_v2(&[K::ZoneChange]) {
+        if let CommittedEvent::ZoneChange {
+            object, from, to, ..
+        } = event
+        {
+            if *object == spell {
+                prior_move = entry.map(|(index, _, _)| index);
+                entry = Some((at, *from, *to));
+            }
+        }
+    }
+    let before_entry = |at: usize| {
+        matches!(entry, Some((end, Zone::Stack, Zone::Battlefield)) if at < end)
+            && prior_move.is_none_or(|start| start < at)
+    };
+    let mut candidate = None;
+    let mut marker = None;
+    for (at, event) in history.of_kinds_v2(&[K::PublishedCastIdentityV1, K::SpellCast]) {
+        match event {
+            CommittedEvent::PublishedCastIdentityV1 { receipt } if receipt.spell == spell => {
+                let current =
+                    receipt.stack_zone_change_count.checked_add(1) == Some(live.zone_change_count);
+                if current != before_entry(at) {
+                    return Err(());
+                }
+                if current && candidate.replace((at, receipt)).is_some() {
+                    return Err(());
+                }
+            }
+            CommittedEvent::SpellCast { spell: cast, .. } if *cast == spell && before_entry(at) => {
+                if marker.replace(at).is_some() {
+                    return Err(());
+                }
+                if matches!(at.checked_sub(1).and_then(|prev| history.get(prev)),
+                    Some(CommittedEvent::PublishedCastIdentityV1 { receipt }) if receipt.spell != spell)
+                {
+                    return Err(());
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some((at, receipt)) = candidate else {
+        return Ok(None);
+    };
+    if marker != at.checked_add(1) {
+        return Err(());
+    }
+    checked_printing(state, at, receipt, owner)
+}
+
+/// Check the public printing against its immediately adjacent, unique finalized cast.
+pub(crate) fn checked_printing(
+    state: &GameState,
+    at: usize,
+    receipt: &ReceiptV1,
+    owner: PlayerId,
+) -> Result<Option<u16>, ()> {
+    use crate::event_history_v1::EventKindV1 as K;
+    let history = &state.engine.event_history;
+    let cast = at.checked_add(1).ok_or(())?;
+    if receipt.spell_cast_history_index != u64::try_from(cast).map_err(|_| ())?
+        || history.get(cast)
+            != Some(&CommittedEvent::SpellCast {
+                spell: receipt.spell,
+                controller: receipt.controller,
+            })
+        || receipt.owner != owner
+        || receipt.stack_item_id == StackItemId::default()
+        || receipt.origin_zone == Zone::Stack
+        || receipt.origin_zone_change_count.checked_add(1) != Some(receipt.stack_zone_change_count)
+        || history
+            .of_kinds_v2(&[K::PublishedCastIdentityV1])
+            .any(|(other, event)| {
+                other != at
+                    && matches!(event, CommittedEvent::PublishedCastIdentityV1 { receipt: another }
+                if another.stack_item_id == receipt.stack_item_id)
+            })
+    {
+        return Err(());
+    }
+    match receipt.public_identity {
+        PublicIdentityV1::Known { card_def } => crate::card_def::CARD_DEFS
+            .get(usize::from(card_def))
+            .map(|_| Some(card_def))
+            .ok_or(()),
+        PublicIdentityV1::Concealed { .. } => Ok(None),
+    }
+}
+
 /// The historical scope uses only originally published identities. Missing or
 /// malformed proof refuses the whole scope instead of rereading a later
 /// hidden physical printing. Current live sources retain their own checks.

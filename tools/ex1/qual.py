@@ -332,8 +332,108 @@ def keep_offset_value(keep_offset, u):
     return value
 
 
+PASS_OFFSET_MAX = 1.0e6  # the trainer's priority_pass_offset_v1::MAX_PASS_OFFSET_V1
+# The pinned destination pair in data/flat_policy_v3/feature_identity.rs, also used by the native loader.
+FLAT_V3_TRANSFER = {
+    "expected_feature_contract_digest": "9319fbd41e6b42ec90d565c13f3b4f75a3898dafe3816387453c08419ba9cc68",
+    "expected_feature_encoding_digest": "c4662291ca9a75525b51b51f3b5d512671340c05b69fd33fb0827c0c8af70a2b",
+}
+ACTION_WINDOW_RULES = ("action-windows-v1", "action-windows-end-step-v1")  # the trainer's action-window seat rules
+WINDOW_RULES = ("harness-v2",) + ACTION_WINDOW_RULES
+
+
+def validate_pass_offset(pass_offset, base=None):
+    """The checked, normalized priority pass offset schedule `{"b0": float, "end_update": int, "shape":
+    "linear-v1"}` (a new dict), the form of a scalar `keep_offset`: b0 a finite number in (0, 1e6], end_update an int
+    in [1, 2^53], shape "linear-v1", no other key. With `base`, also raises unless the trainer can train the base with
+    the offset (`check_windows_base`)."""
+    if not isinstance(pass_offset, dict):
+        raise ValueError("pass_offset must be an object {b0, end_update, shape}")
+    unknown = sorted(str(k) for k in set(pass_offset) - KEEP_OFFSET_KEYS)
+    if unknown:
+        raise ValueError(f"pass_offset has unknown keys {unknown}")
+    missing = sorted(KEEP_OFFSET_KEYS - set(pass_offset))
+    if missing:
+        raise ValueError(f"pass_offset lacks {missing}")
+    b0, end, shape = pass_offset["b0"], pass_offset["end_update"], pass_offset["shape"]
+    # The range test comes first: it is exact for any int, while isfinite(10**400) overflows instead of refusing.
+    if not (_is_number(b0) and 0 < b0 <= PASS_OFFSET_MAX and math.isfinite(b0)):
+        raise ValueError(f"pass_offset b0 must be a finite number in (0, {PASS_OFFSET_MAX:g}], got {b0!r}")
+    if not (type(end) is int and 1 <= end <= KEEP_OFFSET_MAX_END):
+        raise ValueError(f"pass_offset end_update must be an integer in [1, 2^53], got {end!r}")
+    if shape not in KEEP_OFFSET_SHAPES:
+        raise ValueError(f"pass_offset shape must be one of {KEEP_OFFSET_SHAPES}, got {shape!r}")
+    if base is not None:
+        check_windows_base(base)
+    return {"b0": float(b0), "end_update": end, "shape": shape}
+
+
+def check_windows_base(base):
+    """Raises ValueError unless `base` can carry a priority pass offset: the trainer reads one value per update batch
+    and refuses a batch that mixes offset and no offset, so EVERY episode of EVERY iteration needs `priority_windows`
+    (two seat rules) with at least one seat on an action-window rule; none may carry a `priority_pass_offset` already
+    (the schedule is the only writer of that field), a reset start or a search opponent (the trainer refuses priority
+    windows with either), and the update must be the plain CPU GAE one."""
+    for i, item in enumerate(base["iterations"]):
+        for j, entry in enumerate(item["episodes"]):
+            episode = entry["episode"]
+            where = f"iteration {i} episode {j}"
+            if "priority_pass_offset" in episode:
+                raise ValueError(f"{where} already carries priority_pass_offset; the pass_offset schedule writes it")
+            windows = episode.get("priority_windows")
+            if windows is None:
+                raise ValueError(f"pass_offset needs priority_windows on every episode of the base ({where} has none)")
+            if not (isinstance(windows, list) and len(windows) == 2 and all(w in WINDOW_RULES for w in windows)):
+                raise ValueError(f"{where}: priority_windows must be two of {WINDOW_RULES}, got {windows!r}")
+            if not any(w in ACTION_WINDOW_RULES for w in windows):
+                raise ValueError(f"{where}: pass_offset needs a seat on an action-window rule, got {windows!r}")
+            for key in ("reset", "opponent_search"):
+                if episode.get(key) is not None:
+                    raise ValueError(f"{where}: priority_windows are refused with {key}")
+    loss, backend = base.get("loss_selection"), base.get("update_backend", {"kind": "cpu"})
+    if not (isinstance(loss, dict) and loss.get("kind") == "gae_advantage_value_v1"):
+        raise ValueError("pass_offset trains only on the gae_advantage_value_v1 loss (the base's loss_selection)")
+    if not (isinstance(backend, dict) and backend.get("kind") == "cpu"):
+        raise ValueError("pass_offset trains only on the CPU update backend (the base's update_backend)")
+    for key in KEEP_OFFSET_REFUSED_OPTIONS:
+        if base.get(key) is not None:
+            raise ValueError(f"pass_offset trains only on the plain CPU GAE update: the base's {key} is refused")
+
+
+def check_pass_offset_source(pass_offset, source, update):
+    """Reject active offsets when source metadata establishes an unsupported learner.
+
+    Generation preflight uses the declared transfer. The native collector checks the loaded policy.
+    """
+    if pass_offset is None or update >= pass_offset["end_update"]:
+        return
+    if source.get("s_learner") is not None:
+        raise ValueError("priority pass offset is unsupported by the S learner")
+    if source.get("feature_transfer") == FLAT_V3_TRANSFER:
+        raise ValueError("priority pass offset is unsupported by FlatV3: it requires a V4-generation policy")
+
+
+def pass_offset_value(pass_offset, u):
+    """The `priority_pass_offset` an episode with `priority_windows` carries at fork update `u`, or None from
+    `end_update` on (no field at all): float32(float64(b0) * (T - u) / T), computed as `keep_offset_value` computes a
+    scalar. Raises ValueError for a negative or non-integer `u`, or a value the trainer would refuse (not finite,
+    negative or above 1e6 in binary32; the trainer accepts zero, which changes no logit)."""
+    pass_offset = validate_pass_offset(pass_offset)
+    if type(u) is not int or u < 0:
+        raise ValueError(f"pass_offset update must be a non-negative integer, got {u!r}")
+    end = pass_offset["end_update"]
+    if u >= end:
+        return None
+    value = _float32(pass_offset["b0"] * (end - u) / end)
+    if not (math.isfinite(value) and 0.0 <= value <= PASS_OFFSET_MAX):
+        raise ValueError(f"pass_offset value {value!r} at update {u} is outside the trainer's accepted range "
+                         "(finite, at least 0, at most 1e6 in binary32)")
+    return value
+
+
 def build_config(base, dose, root, run, namespace, offset, updates, workers, coefficient=None, kappa=None,
-                 prep_workers=None, keep_offset=None, pregame_advantage=None, pregame_announcement_step_scale=None):
+                 prep_workers=None, keep_offset=None, pregame_advantage=None, pregame_announcement_step_scale=None,
+                 pass_offset=None):
     """An RT1 run config from an OH1/OH2 base and a dose record: the base's schedule from global update `offset`,
     episode ids and deal seeds keyed by (namespace, run, update, slot), and EX1 when `coefficient` is given.
 
@@ -342,6 +442,9 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
     u < end_update, and no such key from there on (a number, or with a vector b0 the list of 7). A chain's global
     update counts from 0 at the fork point (its first segment's offset), so u is the fork update. Without it every
     episode is left exactly as the base has it.
+
+    `pass_offset` (`{"b0", "end_update", "shape": "linear-v1"}`, see `pass_offset_value`) stamps every episode that
+    has `priority_windows` with `priority_pass_offset = b(u)` the same way, and no such key from end_update on.
 
     `pregame_advantage` ("terminal_v1", see `validate_pregame_advantage`) adds that key to the config's
     `loss_selection`; without it the loss_selection is exactly the base's. `pregame_announcement_step_scale`
@@ -358,7 +461,14 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
             raise ValueError(f"keep_offset needs a non-negative global update offset, got {offset}")
         if coefficient is not None:
             raise ValueError("keep_offset is refused with an EX1 coefficient (the trainer refuses the offset with ex1)")
+    if pass_offset is not None:
+        pass_offset = validate_pass_offset(pass_offset, base)
+        if offset < 0:
+            raise ValueError(f"pass_offset needs a non-negative global update offset, got {offset}")
+        if coefficient is not None:
+            raise ValueError("pass_offset is refused with an EX1 coefficient (the trainer refuses the offset with ex1)")
     source = dose["source"]
+    check_pass_offset_source(pass_offset, source, offset)
     # An S source starting from its initial train state (W5's XS parent, S0) has no checkpoint; its pin is
     # `s_learner.initial` (s_learner_v1.rs). A fresh net-8 start (a dose record that says `"fresh": true`, e.g. a
     # G(i) fresh-init lineage) has no checkpoint either: the trainer builds the model from the play import's
@@ -386,6 +496,10 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
                 value = keep_offset_value(keep_offset, update)
                 if value is not None:
                     episode["london_keep_offset"] = value
+            if pass_offset is not None and episode.get("priority_windows") is not None:
+                value = pass_offset_value(pass_offset, update)
+                if value is not None:
+                    episode["priority_pass_offset"] = value
         iterations.append(item)
     cfg = {k: copy.deepcopy(v) for k, v in base.items() if k != "iterations"}
     if pregame_advantage is not None:

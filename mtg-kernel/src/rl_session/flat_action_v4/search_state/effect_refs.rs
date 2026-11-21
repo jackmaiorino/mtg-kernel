@@ -1931,7 +1931,8 @@ fn conflicts_in_scope(
             | FiendArtisanPaidV1 { .. }
             | FiendArtisanSearchStartedV1 { .. }
             | FiendArtisanSearchFinishedV1 { .. }
-            | FiendArtisanConsumerReceiptV1 { .. } => true,
+            | FiendArtisanConsumerReceiptV1 { .. }
+            | SpellCopyCostPaidV1 { .. } => true,
             DrakeJournalV1 { .. }
             | DrakeHistoryRefV1 { .. }
             | ConquerorGainReplayBorrowV49 { .. }
@@ -2244,6 +2245,7 @@ fn conflicts_in_scope(
             | GreatwurmCommitReceiptV1 { .. }
             | HarvesterCommitReceiptV1 { .. }
             | EtaliPrimalStormReceiptV1 { .. }
+            | LinkedExileDepartureV1 { .. }
             | TwinflameReplacementInputV38 {..} | TwinflameReplacementOperationV38 {..} | TwinflameDamagePreparationV38 {..} | TwinflameCombatPublishedV38 {..} | TwinflameCombatInputV38 {..} | TwinflameCombatOperationV38 {..} | TwinflameDynamicDamageSampleV38 {..} | TwinflameFieryCaptureV38 {..} | TwinflameFieryFinishedV38 {..}
             | InspirationResolutionInputV1 { .. } | InspirationResolutionOperationV1 { .. }
                 | InspirationEngineDepartureV1 { .. } | FaebloomJournalV43 { .. }

@@ -1817,9 +1817,8 @@ pub enum TargetSpec {
     /// may come from different graveyards.
     UpToTwoCardsInGraveyards,
     /// Exactly one battlefield creature other than the targeting spell or
-    /// ability's own source incarnation. Journey to Nowhere is the first
-    /// consumer. The source-relative exclusion is applied by the caller so
-    /// the stable target vocabulary remains card-name-neutral.
+    /// ability's own source incarnation. Older snapshots also used this
+    /// tag for Journey to Nowhere's "target creature" trigger.
     CreatureOtherThanSource,
     /// Zero or one tapped creature on either battlefield. Cryogen Relic may
     /// activate without a target, but any selected target must be tapped.

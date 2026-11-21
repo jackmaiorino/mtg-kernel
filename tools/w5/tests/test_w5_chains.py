@@ -234,20 +234,55 @@ class ChainTests(unittest.TestCase):
         self.assertNotIn('box_slots', whole)
         self.assertNotIn('box_slots', json.loads(Path(whole['arms']['C']['w5box_plan']['path']).read_text()))
 
+    def scratch_inputs(self, label, length, specs=None, stage='0', arm='C', **extra):
+        specs = specs or {'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'oc/c1'}}
+        extra.setdefault('independent', True)
+        if stage == '0':
+            extra.setdefault('c_wall_seconds', 1.5)
+        inputs = json.loads(Path(self.node.inputs(stage, specs, label=label, **extra)).read_text())
+        inputs['scratch_root'] = (self.node.t / 'shm').as_posix()
+        inputs['arms'][arm] = dict(inputs['arms'][arm], segment_updates=length, scratch=True)
+        return inputs
+
     def test_scratch_segment_lengths(self):
-        """A scratch segment length is a multiple of 32 that divides 4,096."""
-        specs = {'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'oc/c1'}}
-        for length, ok in ((32, True), (64, True), (4096, True), (16, False), (96, False)):
-            inputs = json.loads(Path(self.node.inputs('0', specs, label=f'scr{length}', c_wall_seconds=1.5,
-                                                      independent=True)).read_text())
-            inputs['scratch_root'] = (self.node.t / 'shm').as_posix()
-            inputs['arms']['C'] = dict(inputs['arms']['C'], segment_updates=length, scratch=True)
-            path = jwrite(self.node.t / f'scr{length}.json', inputs)
+        """A scratch segment length divides 4,096 and divides or is a multiple of 64: every power of two to 4,096,
+        so 4, 8 and 16 for 480-, 240- and 120-game updates."""
+        for length, ok in ((1, True), (4, True), (8, True), (16, True), (32, True), (64, True), (4096, True),
+                           (12, False), (48, False), (96, False), (192, False)):
+            path = jwrite(self.node.t / f'scr{length}.json', self.scratch_inputs(f'scr{length}', length))
             if ok:
-                chains.make_plan(path)
+                _, plan = chains.make_plan(path)
+                arm = json.loads(Path(plan['arms']['C']['file']['path']).read_text())
+                self.assertEqual((arm['segment_updates'], arm['scratch_root']), (length, (self.node.t / 'shm')
+                                                                                 .as_posix()))
             else:
-                with self.assertRaisesRegex(chains.Stop, 'multiple of 32'):
+                with self.assertRaisesRegex(chains.Stop, 'divides 4096 and divides or is a multiple of 64'):
                     chains.make_plan(path)
+
+    def test_short_scratch_segments_keep_every_other_scratch_refusal(self):
+        cases = {
+            'look': (self.scratch_inputs('rlook', 16, r_nom_usec=10**9), 'no look state'),
+            'stage': (self.scratch_inputs('rstage', 16, stage='1a', independent=False, specs={
+                'c1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/chain1'},
+                'x1': {'arm': 'X8', 'slot': 1, 'pair': 1, 'seed_root': 'w5/chain1'}}, r_nom_usec=10**9),
+                      'Stage 0 plans only'),
+            'x-arm': (self.scratch_inputs('rx', 16, arm='X8', independent=False, specs={
+                'c1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/q1'},
+                'x1': {'arm': 'X8', 'slot': 1, 'pair': 1, 'seed_root': 'w5/q1'}}), 'C-recipe chains'),
+            'filler': (self.scratch_inputs('rf', 16, arm='F', independent=False, specs={
+                'c1': {'arm': 'C', 'slot': 0, 'seed_root': 'w5/q1'}, 'f2': {'arm': 'F', 'slot': 1,
+                                                                            'seed_root': 'w5/qf2'}}),
+                       'C-recipe chains'),
+            'pair': (self.scratch_inputs('rpair', 16, independent=False, specs={
+                'c1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/q1'},
+                'x1': {'arm': 'X8', 'slot': 1, 'pair': 1, 'seed_root': 'w5/q1'}}), 'has no pair'),
+        }
+        relative = self.scratch_inputs('rrel', 16)
+        relative['scratch_root'] = 'shm'
+        cases['relative'] = (relative, 'absolute scratch_root')
+        for name, (inputs, message) in cases.items():
+            with self.subTest(name), self.assertRaisesRegex(chains.Stop, message):
+                chains.make_plan(jwrite(self.node.t / f'refuse-{name}.json', inputs))
 
     @unittest.skipUnless(sys.platform.startswith('linux'), 'the w5box node log is Linux only')
     def test_independent_plan_thaws_after_an_oom_end(self):

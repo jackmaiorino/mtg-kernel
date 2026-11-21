@@ -1499,6 +1499,35 @@ fn rl_contract_spell_copy_state_and_binary_actions_are_explicit() {
     ));
 
     engine::step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+    let copy_choice = observe_for_test(&state, PlayerId::P1, 5);
+    let context = &copy_choice.projection.engine_context;
+    assert!(context.pending_spell_copy.is_none());
+    let paid = context.pending_effect.as_ref().unwrap();
+    assert_eq!(paid.source.as_ref().unwrap().arena_id, parent.0);
+    assert!(matches!(
+        paid.choice,
+        Some(mtg_kernel::rl::PendingEffectChoiceSemanticV4::Options {
+            player: PlayerSeatV1::P1,
+            option_count: 2,
+            ..
+        })
+    ));
+    assert_eq!(copy_choice.projection.stack.len(), 1);
+    let decision = engine::advance_until_decision(&mut state);
+    let actions = legal_action_candidates_v1(&SurfaceDecision::Decision(decision), &state).unwrap();
+    assert_eq!(actions.len(), 2);
+    for (index, action) in actions.iter().enumerate() {
+        assert!(matches!(
+            &action.record.semantic,
+            ActionSemanticV1::ChooseEffectOption {
+                actor: PlayerSeatV1::P1,
+                option_index,
+                option_count: 2,
+                source,
+            } if source.arena_id == parent.0 && usize::from(*option_index) == index
+        ));
+    }
+    engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
     let copy = state
         .engine
         .pending_spell_copy
@@ -1635,6 +1664,7 @@ fn rl_contract_chain_copy_keeps_historical_target_through_same_generation_contro
     assert_eq!(state.objects.get(target).controller, PlayerId::P0);
 
     engine::step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+    engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
     let retarget = observe_for_test(&state, PlayerId::P0, 1);
     assert_eq!(retarget.projection.stack.len(), 2);
     assert_eq!(

@@ -7,6 +7,9 @@ name: CI
     tags:
       - '*'
   pull_request:
+    # ready_for_review: a draft runs only the light set (see detect-changes);
+    # marking it ready starts the full pull request set.
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       windows_runner:
@@ -35,7 +38,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # A draft's light run has a group of its own, so it can never cancel or
+  # replace the full run that marking the pull request ready starts. The
+  # cost: a full run still in progress when its pull request goes back to
+  # draft and gets a new push is not cancelled by that push.
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'pull_request' && github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'ci:full') && '-draft' || '' }}
   # A newer push to a pull request replaces its running CI. Runs on main,
   # tags and manual dispatches finish, because they carry the Windows
   # feature groups that pull requests skip.
@@ -70,6 +77,8 @@ jobs:
       # windows-complement: only the Windows groups the pr set leaves out.
       # windows-pr and windows-full: only the Windows part of pr or full, set
       # by a hosted fallback rerun. Linux jobs run only for full and pr.
+      # draft: a draft pull request without the ci:full label runs only the
+      # formatting and lint job.
       scope: ${{ steps.scope.outputs.scope }}
     steps:
       # Agents dispatch CI on pull request branches to get the Windows groups
@@ -86,9 +95,16 @@ jobs:
           WINDOWS_RUNNER: ${{ inputs.windows_runner }}
           FULL_MATRIX: ${{ inputs.full_matrix }}
           FALLBACK_SCOPE: ${{ inputs.fallback_scope }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+          FULL_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
         run: |
           scope=full
-          if [ "$EVENT" = pull_request ]; then
+          if [ "$EVENT" = pull_request ] && [ "$DRAFT" = true ] && [ "$FULL_LABEL" != true ]; then
+            # Draft pull requests were 29% of hosted job time on 2026-11-19..21,
+            # and 42 of their 61 runs were cancelled by the next push.
+            scope=draft
+            echo "Draft pull request: formatting and lint only. The full pull request set runs when it is marked ready for review (or with the ci:full label on the next push)." | tee -a "$GITHUB_STEP_SUMMARY"
+          elif [ "$EVENT" = pull_request ]; then
             scope=pr
           elif [ "$EVENT" = workflow_dispatch ] && [ -n "$FALLBACK_SCOPE" ]; then
             case "$FALLBACK_SCOPE" in
@@ -96,11 +112,11 @@ jobs:
               *) echo "::warning::unknown fallback_scope '$FALLBACK_SCOPE'; running every group" ;;
             esac
           elif [ "$EVENT" = workflow_dispatch ] && [ -z "$WINDOWS_RUNNER" ] && [ "$FULL_MATRIX" != true ]; then
-            # Only an open same-repository pull request whose head is this
-            # exact commit has a pull request run covering the rest. Any
-            # lookup failure keeps the full set.
+            # Only an open, ready (not draft) same-repository pull request
+            # whose head is this exact commit has a pull request run covering
+            # the rest. Any lookup failure keeps the full set.
             pr_head=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" \
-              --jq '[.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY)][0].head.sha // ""') || pr_head=
+              --jq '[.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY and (.draft | not))][0].head.sha // ""') || pr_head=
             echo "open pull request head: ${pr_head:-none}; dispatched commit: $GITHUB_SHA"
             if [ -n "$pr_head" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
               scope=windows-complement
@@ -171,7 +187,7 @@ jobs:
     # tools/** cannot change what rustfmt or Clippy see. Pushes to main
     # always run it. Windows-only group sets leave it to the run they
     # complement or rerun.
-    if: needs.detect-changes.outputs.rust_relevant == 'true' && contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope)
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && contains(fromJSON('["full", "pr", "draft"]'), needs.detect-changes.outputs.scope)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -307,7 +323,7 @@ jobs:
   rust-test-groups:
     name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})
     needs: detect-changes
-    if: needs.detect-changes.outputs.rust_relevant == 'true'
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'draft'
     # The limit includes any wait in the self-hosted job-started hook; a
     # cold Windows build has taken about 45 minutes. The Eternal groups
     # build the largest catalog and replay every playable deck: as one job
@@ -719,7 +735,7 @@ jobs:
   limited-build:
     name: Build shared Limited tests (${{ matrix.os }}, ${{ matrix.part }})
     needs: detect-changes
-    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-pr'
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-pr' && needs.detect-changes.outputs.scope != 'draft'
     timeout-minutes: 90
     defaults:
       run:
@@ -884,7 +900,7 @@ jobs:
   rust-limited-groups:
     name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})
     needs: [detect-changes, limited-build]
-    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-pr'
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-pr' && needs.detect-changes.outputs.scope != 'draft'
     # The limit includes any wait in the self-hosted job-started hook.
     timeout-minutes: 120
     defaults:
@@ -1315,7 +1331,7 @@ jobs:
   rust-tests:
     name: Rust tests (${{ matrix.os }})
     needs: [detect-changes, rust-test-groups, limited-build, rust-limited-groups]
-    if: always() && needs.detect-changes.outputs.rust_relevant == 'true'
+    if: always() && needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'draft'
     timeout-minutes: 10
     strategy:
       matrix:
@@ -1338,7 +1354,7 @@ jobs:
   python-env-build:
     name: Build Python test binaries (${{ matrix.os }})
     needs: detect-changes
-    if: needs.detect-changes.outputs.python_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement'
+    if: needs.detect-changes.outputs.python_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement' && needs.detect-changes.outputs.scope != 'draft'
     timeout-minutes: 90
     defaults:
       run:
@@ -1431,7 +1447,7 @@ jobs:
     needs: [detect-changes, python-env-build]
     # A Windows complement dispatch leaves both Python systems to the pull
     # request run at the same commit.
-    if: needs.detect-changes.outputs.python_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement'
+    if: needs.detect-changes.outputs.python_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement' && needs.detect-changes.outputs.scope != 'draft'
     # Includes waiting for the same low-priority CPU admission as Rust jobs.
     timeout-minutes: 120
     # Windows' default pwsh fails a step only on its last command's exit code, so an earlier failing command in a
@@ -1606,7 +1622,7 @@ jobs:
   hosted-fallback:
     name: Hosted fallback for self-hosted admission timeouts
     needs: [detect-changes, rust-test-groups, rust-limited-groups, python-tests]
-    if: always() && contains(needs.*.result, 'failure') && (contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') || contains(vars.MTG_CI_PR_WINDOWS_RUNNER || '', 'self-hosted')) && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always() && needs.detect-changes.result == 'success' && needs.detect-changes.outputs.scope != 'draft' && contains(needs.*.result, 'failure') && (contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') || contains(vars.MTG_CI_PR_WINDOWS_RUNNER || '', 'self-hosted')) && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

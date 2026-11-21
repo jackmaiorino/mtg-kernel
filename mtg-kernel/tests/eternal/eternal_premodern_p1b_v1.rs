@@ -3,7 +3,7 @@
 #![cfg(feature = "eternal-fixtures")]
 
 use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, CARD_DEFS,
+    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, TargetSpec, CARD_DEFS,
 };
 use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
 use mtg_kernel::eternal_premodern_p1b_v1::statics as p1b;
@@ -1123,6 +1123,69 @@ fn mirris_guile_may_reorder_the_top_three_at_upkeep() {
     // The draw step drew the new top card: Forest.
     assert_eq!(zone(&state, third), Zone::Hand);
     assert_eq!(state.players[0].library[0], second);
+}
+
+#[test]
+fn animated_journey_can_exile_itself_and_return_as_a_new_incarnation_both_seats() {
+    for seat in [P0, P1] {
+        let mut state = islands();
+        state.active_player = seat;
+        state.priority_player = seat;
+        let opalescence = put(&mut state, seat, "Opalescence", Zone::Hand);
+        pool(&mut state, seat, &[ManaColor::W, ManaColor::W], 2);
+        cast(&mut state, opalescence, &[]);
+        settled(&mut state);
+
+        let creature = put(
+            &mut state,
+            seat.opponent(),
+            "Llanowar Elves",
+            Zone::Battlefield,
+        );
+        let journey = put(&mut state, seat, "Journey to Nowhere", Zone::Hand);
+        pool(&mut state, seat, &[ManaColor::W], 1);
+        cast(&mut state, journey, &[]);
+        let mut generations = Vec::new();
+        while let Some(decision) = settle(&mut state) {
+            let Decision::ChooseTargets {
+                spell,
+                legal_targets,
+                ..
+            } = decision
+            else {
+                panic!("unexpected Journey decision {decision:?}")
+            };
+            assert_eq!(spell, journey);
+            assert!(is_creature(&state, journey));
+            assert!(legal_targets.contains(&Target::Object(journey)));
+            assert!(legal_targets.contains(&Target::Object(creature)));
+            generations.push(state.objects.get(journey).zone_change_count);
+            let target = match generations.len() {
+                1 => journey,
+                2 => creature,
+                _ => panic!("unexpected third Journey entry"),
+            };
+            assert_eq!(
+                state.engine.pending_triggers[0].target_spec,
+                TargetSpec::Creature
+            );
+            if seat == P1 {
+                // Also resume a stored trigger encoded with the former target tag.
+                state.engine.pending_triggers[0].target_spec = TargetSpec::CreatureOtherThanSource;
+                state = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            }
+            choose_target(&mut state, Target::Object(target));
+        }
+        assert_eq!(generations.len(), 2);
+        assert_eq!(generations[1], generations[0] + 2);
+        assert_eq!(zone(&state, journey), Zone::Battlefield);
+        assert_eq!(zone(&state, creature), Zone::Exile);
+        let links = &state.engine.linked_exile_records;
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].source.source, journey);
+        assert_eq!(links[0].source.zone_change_count, generations[1]);
+        assert_eq!(links[0].exiled, creature);
+    }
 }
 
 #[test]
