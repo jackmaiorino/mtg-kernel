@@ -51,14 +51,18 @@ class FollowPlan(unittest.TestCase):
         self.assertEqual(strip(plain_arm), strip(followed_arm))
         self.assertEqual(chains.recipe_identity(plain_arm).keys(), chains.recipe_identity(followed_arm).keys())
         node = Node(Path(self.tmp.name))
-        for arm, value, why in (('X8', True, 'C-recipe'), ('F', True, 'C-recipe'), ('C', 'yes', 'true or absent')):
+        for arm, value, why in (('X8', True, 'C-recipe'), ('F', True, 'C-recipe'), ('C', 'yes', 'true or absent'),
+                                ('C', 'resident', 'resident')):
             inputs = json.loads(Path(node.inputs('0', {'c1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/q1'},
                                                        'x1': {'arm': 'X8', 'slot': 1, 'pair': 1,
                                                               'seed_root': 'w5/q1'},
                                                        'f2': {'arm': 'F', 'slot': 2, 'seed_root': 'w5/qf2'}},
                                                  c_wall_seconds=600.0, label=f'bad-{arm.lower()}')).read_text())
+            if value == 'resident':
+                inputs['arms'][arm]['verified_reads'] = 'resident'
+                value = True
             inputs['arms'][arm]['follow'] = value
-            with self.subTest(arm=arm), self.assertRaisesRegex(chains.Stop, why):
+            with self.subTest(arm=arm, why=why), self.assertRaisesRegex(chains.Stop, why):
                 chains.make_plan(jwrite(node.t / f'inputs-bad-{arm.lower()}.json', inputs))
 
 
@@ -92,6 +96,25 @@ class FollowDrive(unittest.TestCase):
         lines = (node.root / 'LOG.jsonl').read_text().splitlines()
         return [row for row in map(json.loads, lines) if row.get('event') == event]
 
+    def records(self, node, plan):
+        """Every boundary's receipts (complete.json, update.json, collection.json) and every segment config, with the
+        node's directory replaced by a placeholder and the ledger's wall-clock time dropped."""
+        man = json.loads(Path(plan['chains']['c1']['manifest']).read_text())
+        out = []
+        for seg in man['segments']:
+            docs = [json.loads(Path(seg['config']).read_text())]
+            for it in sorted((Path(seg['root']) / 'iterations').glob('*/complete.json')):
+                complete = json.loads(it.read_text())
+                att = chains.attempt_dir(it.parent, complete)
+                self.assertEqual(complete['update'].pop('sha256'), retention.sha(att / 'update' / 'update.json'))
+                docs += [complete, json.loads((att / 'update' / 'update.json').read_text()),
+                         json.loads((att / 'collect' / 'collection.json').read_text())]
+            doc = json.loads(json.dumps(docs, sort_keys=True).replace(node.t.as_posix(), '<node>'))
+            for d in doc:
+                d.get('chain_ledger', {}).pop('unix_seconds', None)
+            out.append(doc)
+        return out
+
     def commits(self, node):
         return [r for r in chains.read_commits(node.root / 'chains' / 'c1')[0] if r['event'] == 'commit']
 
@@ -101,6 +124,7 @@ class FollowDrive(unittest.TestCase):
         self.assertEqual(self.drive(node, plan, segments), chains.EXIT_ROOM)
         commits = self.commits(node)
         self.assertTrue(commits and not any('trainer_pid' in r for r in commits))  # plain rows are unchanged
+        self.plain_records = self.records(node, plan)
         return self.rows(plan)
 
     def test_a_followed_chain_runs_its_segments_in_one_process_with_the_plain_chains_states(self):
@@ -111,6 +135,7 @@ class FollowDrive(unittest.TestCase):
             self.assertEqual(self.drive(node, plan, 3), chains.EXIT_ROOM)
         self.assertEqual(self.rows(plan), plain)
         self.assertEqual(len(plain), 12)
+        self.assertEqual(self.records(node, plan), self.plain_records)  # configs and receipts, document for document
         commits = self.commits(node)
         self.assertEqual([r['segment'] for r in commits], [0, 1, 2])
         self.assertEqual(len({r['trainer_pid'] for r in commits}), 1)
@@ -144,6 +169,7 @@ class FollowDrive(unittest.TestCase):
         self.assertEqual(fresh.call_count, 2)  # segments 1 and 2 in plain processes
         self.assertEqual([r.get('trainer_run') for r in self.commits(node)], [0, None, None])
         self.assertFalse((node.root / 'chains' / 'c1' / 'interrupted').exists())  # nothing of it ran
+        self.assertEqual(self.records(node, plan), self.plain_records)
 
     def test_a_crash_in_a_handed_segment_reruns_it_in_a_new_process(self):
         plain = self.plain_rows(3)
@@ -156,6 +182,11 @@ class FollowDrive(unittest.TestCase):
                          [(1, 1, False)])
         commits = self.commits(node)
         self.assertEqual([r['trainer_run'] for r in commits], [0, 0, 1])  # the rerun's process keeps following
+        self.assertEqual(self.records(node, plan), self.plain_records)
+        # Segment 1's attempts: the handed run (its first iteration completed) and the new process from iteration 1.
+        attempts = commits[1]['trainer_attempts']
+        self.assertEqual([(a['trainer_run'], a['trainer_from_iteration']) for a in attempts], [(1, 0), (0, 1)])
+        self.assertEqual(attempts[0]['trainer_pid'], commits[0]['trainer_pid'])
         self.assertEqual(commits[1]['trainer_pid'], commits[2]['trainer_pid'])
         self.assertNotEqual(commits[0]['trainer_pid'], commits[1]['trainer_pid'])
         moved = list((node.root / 'chains' / 'c1' / 'interrupted').iterdir())
@@ -177,17 +208,22 @@ class FollowDrive(unittest.TestCase):
         node.guard(ceilings={'c1': 10})
         # The clock passes the wall as soon as the second segment is handed (each update sleeps 0.2 s, so the
         # segment is in flight).
-        jump, real_time, hand = [0.0], time.time, chains.Follower.hand
+        jump, real_time, hand, spool = [0.0], time.time, chains.Follower.hand, []
 
         def handed(follower, config_path):
             hand(follower, config_path)
-            jump[0] = 10.0**6
+            spool.append(follower.spool)
+
+        def clock_time():
+            if spool and not (spool[0] / 'next.json').exists():  # the trainer has taken the config: in flight
+                jump[0] = 10.0**6
+            return real_time() + jump[0]
 
         with mock.patch.dict(os.environ, {'FAKE_SLEEP': '0.2'}), \
                 mock.patch.object(chains, 'time', wraps=time) as clock, \
                 mock.patch.object(chains.Follower, 'hand', autospec=True, side_effect=handed), \
                 mock.patch.object(chains, 'kill_group', wraps=chains.kill_group) as kill:
-            clock.time.side_effect = lambda: real_time() + jump[0]
+            clock.time.side_effect = clock_time
             self.assertEqual(node.drive(plan, 'c1'), 0)
         self.assertEqual(kill.call_count, 1)  # the wall's kill of the segment in flight; nothing else
         end = json.loads((node.root / 'chains' / 'c1' / 'END.json').read_text())
@@ -198,6 +234,23 @@ class FollowDrive(unittest.TestCase):
         self.assertTrue(4 <= end['last_valid_boundary'] < 8)
         self.assertEqual(len(self.rows(plan)), end['last_valid_boundary'])
         self.assertFalse((node.root / 'chains' / 'c1' / 'FAILURE.json').exists())
+
+    def test_an_exception_while_a_segment_is_in_flight_kills_without_the_stop_grace(self):
+        node = self.node('raise')
+        plan = follow_plan(node)
+        node.guard(ceilings={'c1': 10})
+        hand = chains.Follower.hand
+
+        def failing(follower, config_path):
+            hand(follower, config_path)
+            raise OSError('directory sync failed')
+
+        started = time.time()
+        with mock.patch.object(chains.Follower, 'hand', autospec=True, side_effect=failing),                 mock.patch.object(chains, 'kill_group', wraps=chains.kill_group) as kill,                 self.assertRaisesRegex(OSError, 'directory sync failed'):
+            node.drive(plan, 'c1')
+        self.assertEqual(kill.call_count, 1)
+        self.assertLess(time.time() - started, chains.FOLLOW_STOP_GRACE / 3)
+        self.assertEqual(list((node.root / 'chains' / 'c1' / chains.FOLLOW_SPOOLS).iterdir()), [])
 
     def test_stop_between_segments_ends_a_waiting_process_with_stop(self):
         node = self.node('stop')

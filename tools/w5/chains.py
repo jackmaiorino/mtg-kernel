@@ -34,8 +34,8 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
   verified against a pin instead of rereading them, mtg-kernel `verified_bytes_cache_v1`; same states and bytes,
   less memory traffic per update), optional `follow` (`true`: the chain's consecutive segments run in one trainer
   process, mtg-kernel `--follow`, section "followed trainer" in the code; same configs, states and receipts;
-  C-recipe chain arms without a ladder; outside the recipe identity, so a running chain can take it or drop it
-  through a re-plan), optional `keep_offset` (`{b0, end_update, shape: "linear-v1"}`, qual.py: every
+  C-recipe chain arms without a ladder or resident reads; outside the recipe identity, so a running chain can
+  take it or drop it through a re-plan), optional `keep_offset` (`{b0, end_update, shape: "linear-v1"}`, qual.py: every
   episode with an `opening` carries `london_keep_offset = b(u)` while the chain's update u (counted from 0 at its
   first segment, so from the fork point) is below `end_update`, and no such field from there on; C-recipe arms only,
   on a base whose every episode has the London opening and its modes and whose loss and backend are the plain CPU GAE
@@ -608,9 +608,12 @@ def run_trainer(arm, config_path, deadline=None, logs=None):
 #   ones are removed at a start) and a waiting trainer whose parent has ended exits, so no two processes share one.
 # - Accounting: per-update ledger_usec comes from the chain cgroup and is unchanged. A receipt's
 #   driver_process_cpu_seconds (the trainer's process CPU, record_process_cpu) is cumulative over the segments of
-#   one process: difference it within a run (qual.summarize does) or within one process, which every followed
-#   segment's commit line and segment-done log row name (`trainer_pid`, and `trainer_run`: the segment's run index in
-#   that process, 0 for its first). trainer.out holds every segment of one process; trainer.err is appended to.
+#   one process. Every followed segment's commit line (cut ones included) and segment-done log row name the process
+#   (`trainer_pid`, and `trainer_run`: the run's index in that process, 0 for its first) and the segment's attempts in
+#   this driver (`trainer_attempts`, each with `trainer_from_iteration`: the iterations it found complete), so a
+#   reader differences it only within one attempt. A segment finished after a driver restart (recovered or late
+#   commits) has no such fields, as before. qual.summarize differences within a run, which a crash and resume inside
+#   one segment already broke before this change. trainer.out holds every segment of one process.
 # - Memory: the process keeps its working set and its caches between segments; its peak is one segment's.
 
 FOLLOW_POLL = 0.05  # how often the driver looks for a followed trainer's done record or exit
@@ -631,33 +634,40 @@ class Follower:
         self.proc = self.spool = self.pid = None
         self.files = ()
         self.runs = 0  # complete runs of the current process (the next done record's index)
-        self.handed = False  # whether the segment in flight was handed to a waiting process
+        self.active = False  # a run is in flight (set before its start or hand-over, cleared at its done record)
+        self.handed = False  # whether the run in flight, or the last one, was handed to a waiting process
+        self.attempt = {}  # the last run attempted: its process and its run index there
 
     def alive(self):
         return self.proc is not None and self.proc.poll() is None
 
     def waiting(self):
-        """A live process whose last run published its done record (it waits in its spool)."""
-        return self.alive() and self.runs > 0 and (self.spool / follow_done_name(self.runs - 1)).exists()
+        """A live process whose last run published its done record and that has no run in flight."""
+        return (self.alive() and not self.active and self.runs > 0 and
+                (self.spool / follow_done_name(self.runs - 1)).exists())
 
     def detail(self):
-        """The segment just run: its process and its run index there."""
-        return {'trainer_pid': self.pid, 'trainer_run': self.runs - 1}
+        """The last run attempted: its process and its run index there (0 for a process's first), whether or not
+        it completed."""
+        return dict(self.attempt)
 
     def run(self, config_path, deadline=None):
         """Runs one segment, handed to the waiting process or in a new one. Returns (exit code, killed) as
         run_trainer does, with (0, False) once the segment's done record is published (the process then waits)."""
         check_pin(self.arm['trainer'], 'the trainer')
         if self.waiting():
-            self.handed = True
+            self.handed = self.active = True
+            self.attempt = {'trainer_pid': self.pid, 'trainer_run': self.runs}
             self.hand(config_path)
         else:
             self.close()
+            self.handed, self.active = False, True
             self.start(config_path)
-            self.handed = False
+            self.attempt = {'trainer_pid': self.pid, 'trainer_run': 0}
         while True:
             if (self.spool / follow_done_name(self.runs)).exists():
                 self.runs += 1
+                self.active = False
                 return 0, False
             code = self.proc.poll()
             if code is not None:
@@ -709,6 +719,7 @@ class Follower:
             f.close()
         self.files = ()
         self.proc = None
+        self.active = False
 
     def close(self):
         """STOP for a waiting process (killed after FOLLOW_STOP_GRACE), a kill for any other live one; then the
@@ -721,7 +732,7 @@ class Follower:
                 except subprocess.TimeoutExpired:
                     kill_group(self.proc)
             elif self.alive():
-                kill_group(self.proc)
+                kill_group(self.proc)  # a run in flight (an exception in the driver): no grace
             self.proc.wait()
             self.release()
         if self.spool is not None:
@@ -988,6 +999,8 @@ def make_plan(inputs_path):
             # initial checkpoint: a C-recipe chain arm without a ladder (whose roster changes every segment).
             require(recipe == 'C' and a != 'F' and ladder is None,
                     f'{a}: follow is for C-recipe chain arms without a ladder')
+            # The trainer never continues a resident-reads run: its rereads at a process start would be lost.
+            require(verified_reads is None, f'{a}: follow and verified_reads resident exclude each other')
             doc['follow'] = True  # absent otherwise: existing arm files unchanged; never in the recipe identity
         if ladder is not None:
             doc['ladder'] = ladder  # CG only: other arm files unchanged
@@ -1842,6 +1855,7 @@ def drive_locked(a, arm, root, cdir, man_path, follower=None):
     if arm.get('mull_monitor'):
         monitor_module()  # loaded at the driver's start, like every pinned tool file
     instance, recovered = ledger_instance(a.ledger_source), False
+    attempts, attempts_of = [], None  # follow: the current segment's process attempts in this driver
     while True:
         if (cdir / 'END.json').exists():
             return 0
@@ -1878,13 +1892,23 @@ def drive_locked(a, arm, root, cdir, man_path, follower=None):
             scratch_link(arm, cdir, native)
         moved = quarantine(native, cdir)
         log(root, chain=a.chain, event='segment', segment=s, config=pin(path), moved=moved)
+        if follower is not None:
+            if attempts_of != s:
+                attempts, attempts_of = [], s
+            first = completed(native)  # the iterations this attempt finds complete (none after a scratch reset)
         if scratch:
             code, killed, reaped = run_reaped(arm, path, deadline, cdir, native, follower)
         elif follower is not None:
             code, killed = follower.run(path, deadline)
         else:
             code, killed = run_trainer(arm, path, deadline, cdir)
-        followed = follower.detail() if follower is not None else {}  # absent otherwise: rows unchanged
+        followed = {}  # absent without follow: commit lines and log rows unchanged
+        if follower is not None:
+            attempts.append(dict(follower.detail(), trainer_from_iteration=first))
+            # The segment's process attempts in this driver, in order: iteration i's receipt was written by the last
+            # attempt whose trainer_from_iteration is at most i (an earlier driver's process when i is below the
+            # first one's); driver_process_cpu_seconds differences only within one attempt.
+            followed = dict(attempts[-1], trainer_attempts=list(attempts))
         if (native / 'completion.json').exists():
             if scratch:
                 t = time.time()
@@ -1912,10 +1936,11 @@ def drive_locked(a, arm, root, cdir, man_path, follower=None):
         if scratch and killed:  # the C wall: the cut segment's records and newest checkpoint are kept
             t = time.time()
             n = persist(arm, native, cdir)
-            record_commit(cdir, man, s, 'scratch-cut', instance, persist_seconds=time.time() - t, persist_bytes=n)
+            record_commit(cdir, man, s, 'scratch-cut', instance, persist_seconds=time.time() - t, persist_bytes=n,
+                          **followed)
             log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped, cut=True)
         elif killed:
-            record_commit(cdir, man, s, 'native-cut', instance)
+            record_commit(cdir, man, s, 'native-cut', instance, **followed)
         boundary, receipt = latest(man)
         if killed:
             write_once(cdir / 'END.json', end_doc(a.chain, arm['arm'], 'c-wall', boundary, receipt, 'driver'))
