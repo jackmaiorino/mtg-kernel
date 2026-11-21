@@ -1167,6 +1167,69 @@ fn graveyard_dynamic_retrace_reserves_its_land_for_discard_x() {
 }
 
 #[test]
+fn graveyard_dynamic_retrace_keeps_the_only_land_in_a_large_hand() {
+    let mut base = plains();
+    retrace_emblem(&mut base);
+    let spell = put(&mut base, P0, "Sickening Dreams", Zone::Graveyard);
+    let land = put(&mut base, P0, "Swamp", Zone::Hand);
+    let names = [
+        "Lightning Bolt",
+        "Dark Ritual",
+        "Duress",
+        "Brainstorm",
+        "Ponder",
+        "Preordain",
+    ];
+    let nonlands: Vec<_> = names
+        .into_iter()
+        .cycle()
+        .take(21)
+        .map(|name| put(&mut base, P0, name, Zone::Hand))
+        .collect();
+    pool(&mut base, P0, &[ManaColor::B], 1);
+    cast(&mut base, spell, &[]);
+    assert!(matches!(
+        next(&mut base),
+        Decision::ChooseEffectOption {
+            option_count: 22,
+            ..
+        }
+    ));
+    act(&mut base, Action::ChooseEffectOption(11));
+    assert!(matches!(
+        next(&mut base),
+        Decision::ChooseEffectOption {
+            option_count: 2,
+            ..
+        }
+    ));
+    for route_first in [false, true] {
+        let mut state = base.clone();
+        act(
+            &mut state,
+            Action::ChooseEffectOption(u16::from(route_first)),
+        );
+        if route_first {
+            payment_pick(&mut state, CostKind::DiscardCards, land);
+        }
+        let Decision::ChooseCostTargets { candidates, .. } = next(&mut state) else {
+            panic!("missing printed discard choices");
+        };
+        assert_eq!(sorted(candidates), sorted(nonlands.clone()));
+        for &card in &nonlands[..11] {
+            payment_pick(&mut state, CostKind::DiscardCards, card);
+        }
+        if !route_first {
+            payment_pick(&mut state, CostKind::DiscardCards, land);
+        }
+        next(&mut state);
+        assert_eq!(state.stack.last().unwrap().discarded, nonlands[..11]);
+        assert_eq!(zone(&state, land), Zone::Graveyard);
+        assert_eq!(state.players[0].hand.len(), 10);
+    }
+}
+
+#[test]
 fn graveyard_dynamic_escape_escalate_sets_the_discard_count_from_the_modes() {
     // Drain, reveal + drain, then all three. Each extra mode supplies one
     // otherwise missing escape card. Mode 6 is the only payable mode in the last case.
