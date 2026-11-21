@@ -271,6 +271,9 @@ class MonitorTests(unittest.TestCase):
             if path == f"/repos/o/r/actions/runs/{run_id}":
                 return {"id": run_id, "head_sha": head, "created_at": "2026-11-21T12:00:00Z",
                         "run_started_at": "2026-11-21T12:30:00Z", "run_attempt": 1}
+            if path.startswith("/repos/o/r/actions/workflows/ci.yml/runs") and "status=completed" in path:
+                return {"workflow_runs": [{"id": i, "head_sha": h, "conclusion": c, "created_at": t}
+                                          for i, h, c, t in runs if c != "rerun-running"]}
             if path.startswith("/repos/o/r/actions/workflows/ci.yml/runs"):
                 return {"workflow_runs": [{"id": i, "head_sha": h, "conclusion": c, "created_at": t}
                                           for i, h, c, t in runs]}
@@ -278,6 +281,11 @@ class MonitorTests(unittest.TestCase):
                 rid = int(path.split("/runs/")[1].split("/")[0])
                 ran = {i: c for i, h, c, t in runs}.get(rid) == "ran-cancelled"
                 rerun = {i: c for i, h, c, t in runs}.get(rid) == "rerun-later"
+                if {i: c for i, h, c, t in runs}.get(rid) == "rerun-running":
+                    return {"jobs": [{"name": "Rust tests (ubuntu-24.04, limited)", "started_at": "2026-11-21T11:05:00Z",
+                                      "conclusion": "success"},
+                                     {"name": "Rust tests (ubuntu-24.04, limited)", "started_at": "2026-11-21T13:00:00Z",
+                                      "conclusion": None}]}
                 return {"jobs": [{"name": "Rust tests (ubuntu-24.04, limited)", "started_at":
                                   "2026-11-21T13:00:00Z" if rerun else "2026-11-21T11:05:00Z", "conclusion":
                                   "failure" if rid == run_id else ("success" if ran or rerun or
@@ -442,6 +450,16 @@ class MonitorTests(unittest.TestCase):
         body, line, merges = self.run_report(get)
         self.assertEqual([(m["sha"], m["pull"]) for m in merges], [("c2", 836), ("c3", 837)])
         self.assertIn("first responder the author of #836", line)
+
+    def test_an_earlier_run_being_rerun_still_bounds_the_range(self):
+        # Push run 8 (c2) ran before the red run; it is being rerun now (in progress, a second attempt queued).
+        get = self.fake_api(["c0", "c1", "c2", "c3"],
+                            [(8, "c2", "rerun-running", "2026-11-21T11:30:00Z"),
+                             (6, "c1", "success", "2026-11-21T11:00:00Z")],
+                            {"c2": (836, "a"), "c3": (837, "b")})
+        body, line, merges = self.run_report(get)
+        self.assertEqual([(m["sha"], m["pull"]) for m in merges], [("c3", 837)])
+        self.assertIn("first responder the author of #837", line)
 
     def test_no_earlier_monitored_run_is_an_unbounded_range(self):
         get = self.fake_api(["c1", "c2", "c3"], [], {"c3": (837, "x")})

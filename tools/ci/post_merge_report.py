@@ -77,7 +77,9 @@ def last_monitored_commit(get: Get, repo: str, branch: str, run_id) -> tuple[str
     before = first_attempt_start(get, repo, this)
     for page in range(1, MAX_HISTORY_PAGES + 1):
         # Run ids increase with creation, so an earlier run created in the same second still counts.
-        runs = get(f"/repos/{repo}/actions/workflows/ci.yml/runs?event=push&branch={branch}&status=completed"
+        # No status filter: an earlier run being rerun is still listed, and ran() judges it only by its jobs that
+        # started before this run's first attempt.
+        runs = get(f"/repos/{repo}/actions/workflows/ci.yml/runs?event=push&branch={branch}"
                    f"&created=%3C%3D{this['created_at']}&per_page=50&page={page}")["workflow_runs"]
         earlier = [run for run in runs if run["id"] < int(run_id) and run["head_sha"] != this["head_sha"]]
         for run in earlier:
