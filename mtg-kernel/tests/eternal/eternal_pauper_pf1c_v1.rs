@@ -1088,6 +1088,170 @@ fn deprive_cast_by_a_granted_flashback_still_returns_a_land() {
     assert_eq!(life(&state, P0), 20);
 }
 
+// ---- Second review round ------------------------------------------------------------------
+
+/// P0 plays a Gemstone Mine and taps it twice, leaving it untapped with its
+/// last mining counter and P0's mana pool empty again.
+fn mine_with_last_counter(state: &mut GameState) -> ObjectId {
+    let mine = put(state, P0, "Gemstone Mine", Zone::Hand);
+    next(state);
+    act(state, Action::PlayLand(mine));
+    for _ in 0..2 {
+        state.objects.get_mut(mine).tapped = false;
+        next(state);
+        act(state, Action::ActivateManaAbilityChoice(mine, ManaColor::W));
+    }
+    state.objects.get_mut(mine).tapped = false;
+    state.players[P0.index()].mana_pool = [0; 6];
+    assert_eq!(zone(state, mine), Zone::Battlefield);
+    mine
+}
+
+/// CR 702.73a: a changeling is every creature type, Klingon included, so an
+/// Engineered Plague naming Klingon shrinks Masked Vandal.
+#[test]
+fn engineered_plague_naming_klingon_shrinks_a_changeling() {
+    let options = mtg_kernel::eternal_premodern_p3b_v1::statics::plague_type_options();
+    let klingon = options
+        .iter()
+        .position(|subtype| *subtype == Subtype::Klingon)
+        .expect("Klingon can be named");
+    let mut state = plains();
+    let vandal = put(&mut state, P1, "Masked Vandal", Zone::Battlefield);
+    let inspector = put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+    let plague = put(&mut state, P0, "Engineered Plague", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::B], 2);
+    assert_eq!(power_toughness(&state, vandal), (1, 3));
+    assert!(engine::has_effective_subtype(
+        &state,
+        vandal,
+        Subtype::Klingon
+    ));
+    cast(&mut state, plague, &[]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectOption { .. } => {
+            Action::ChooseEffectOption(u16::try_from(klingon).unwrap())
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(power_toughness(&state, vandal), (0, 2), "a Klingon");
+    assert_eq!(power_toughness(&state, inspector), (1, 2), "not a Klingon");
+}
+
+/// Deprive with one floating {U} and a Gemstone Mine holding its last
+/// counter as the only land: paying {U}{U} would sacrifice the Mine, so it
+/// can't also be returned, and Deprive isn't offered.
+#[test]
+fn deprive_is_not_offered_when_its_payment_would_sacrifice_the_only_land() {
+    let mut state = plains();
+    let mine = mine_with_last_counter(&mut state);
+    let bolt = opponent_bolts(&mut state, Target::Player(P0));
+    let deprive = put(&mut state, P0, "Deprive", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    assert!(
+        !castable(&mut state, deprive),
+        "returning the Mine leaves {{U}}"
+    );
+    assert_eq!(zone(&state, mine), Zone::Battlefield);
+    assert_eq!(zone(&state, bolt), Zone::Stack);
+}
+
+/// With an Island as well, Deprive is offered and payable: with the floating
+/// {U} the Mine may be returned (the Island pays), and without it only the
+/// Island may be returned (the Mine pays and is sacrificed).
+#[test]
+fn deprive_with_a_second_land_returns_a_land_the_payment_leaves() {
+    // Floating {U}: the Mine is a legal return, the Island pays.
+    let mut state = plains();
+    let mine = mine_with_last_counter(&mut state);
+    let island = put(&mut state, P0, "Island", Zone::Battlefield);
+    let bolt = opponent_bolts(&mut state, Target::Player(P0));
+    let deprive = put(&mut state, P0, "Deprive", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 0);
+    cast(&mut state, deprive, &[Target::Object(bolt)]);
+    match next(&mut state) {
+        Decision::ChooseCostTargets { candidates, .. } => {
+            assert_eq!(sorted(candidates), sorted(vec![mine, island]));
+            act(&mut state, Action::ChooseCostTarget(mine));
+        }
+        other => panic!("expected the land to return, got {other:?}"),
+    }
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(zone(&state, mine), Zone::Hand, "returned, not sacrificed");
+    assert!(state.objects.get(island).tapped, "the Island paid");
+    settled(&mut state);
+    assert_eq!(zone(&state, bolt), Zone::Graveyard, "countered");
+    assert_eq!(life(&state, P0), 20);
+
+    // No floating mana: both lands pay, so only the Island can be returned.
+    let mut state = plains();
+    let mine = mine_with_last_counter(&mut state);
+    let island = put(&mut state, P0, "Island", Zone::Battlefield);
+    let bolt = opponent_bolts(&mut state, Target::Player(P0));
+    let deprive = put(&mut state, P0, "Deprive", Zone::Hand);
+    cast(&mut state, deprive, &[Target::Object(bolt)]);
+    // The Island is the only return left, chosen without asking.
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(zone(&state, island), Zone::Hand);
+    assert_eq!(zone(&state, mine), Zone::Graveyard, "its last counter paid");
+    settled(&mut state);
+    assert_eq!(zone(&state, bolt), Zone::Graveyard, "countered");
+    assert_eq!(life(&state, P0), 20);
+}
+
+/// Fling reads the creature's power as it last existed, after its mana
+/// abilities ran: Gemstone Mine's last counter puts it into a graveyard
+/// before Terravore is sacrificed, so Terravore was 2/2.
+#[test]
+fn fling_reads_power_after_its_mana_abilities_changed_the_board() {
+    let mut state = plains();
+    let mine = mine_with_last_counter(&mut state);
+    put(&mut state, P1, "Plains", Zone::Graveyard);
+    let terravore = put(&mut state, P0, "Terravore", Zone::Battlefield);
+    let fling = put(&mut state, P0, "Fling", Zone::Hand);
+    assert_eq!(power_toughness(&state, terravore), (1, 1));
+    pool(&mut state, P0, &[], 1);
+    cast(&mut state, fling, &[Target::Player(P1)]);
+    settled(&mut state);
+    assert_eq!(
+        zone(&state, mine),
+        Zone::Graveyard,
+        "its last counter paid {{R}}"
+    );
+    assert_eq!(zone(&state, terravore), Zone::Graveyard);
+    assert_eq!(life(&state, P1), 18, "Terravore was 2/2 when sacrificed");
+}
+
+/// A modal spell keeps its untargeted mode while a Torch is on the stack:
+/// with exactly {3}{U}{U}, Mystic Confluence can't pay to counter the Torch
+/// but can draw three cards.
+#[test]
+fn a_modal_spell_keeps_its_untargeted_mode_while_a_torch_is_on_the_stack() {
+    let mut state = plains();
+    let torch = put(&mut state, P0, "Kaervek's Torch", Zone::Hand);
+    let mystic = put(&mut state, P1, "Mystic Confluence", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast_x(&mut state, torch, 1, &[Target::Player(P1)]);
+    pass_priority(&mut state, P0);
+    pool(&mut state, P1, &[ManaColor::U, ManaColor::U], 3);
+    assert!(
+        castable(&mut state, mystic),
+        "drawing three costs {{3}}{{U}}{{U}}"
+    );
+    act(&mut state, Action::CastSpell(mystic));
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseSpellMode { legal_modes, .. } => {
+            assert_eq!(legal_modes, vec![9], "no counter mode pays the tax");
+            Action::ChooseSpellMode(9)
+        }
+        other => first_answer(other),
+    });
+    assert_eq!(state.players[1].hand.len(), 3, "drew three");
+    assert_eq!(zone(&state, torch), Zone::Graveyard, "not countered");
+    assert_eq!(life(&state, P1), 19);
+    assert_eq!(state.players[1].mana_pool, [0; 6]);
+}
+
 // ---- Public sessions -----------------------------------------------------------------------
 
 #[derive(Default)]

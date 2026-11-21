@@ -1728,6 +1728,11 @@ impl PreparedSpellPaymentV1 {
     /// Discards have already committed through the shared Madness-aware path.
     pub(super) fn commit(self, state: &mut GameState, player: PlayerId, source: ObjectId) -> u32 {
         let spent = self.mana.commit(state, player, source);
+        // Fling: the sacrificed creature's power as it last exists on the
+        // battlefield, after mana abilities changed the board and just before
+        // the sacrifice (Pauper field wave Pf1c).
+        #[cfg(feature = "eternal-fixtures")]
+        crate::eternal_pauper_pf1c_v1::note_sacrifice_power(state, source, &self.ordered_objects);
         self.base.apply(state, player, source);
         if let Some(object) = self.chosen_reveal {
             PreparedNonmanaActionV1::RevealHandCard(object).commit(state, player, source);

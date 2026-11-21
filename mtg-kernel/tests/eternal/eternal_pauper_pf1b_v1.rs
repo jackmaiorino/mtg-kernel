@@ -639,11 +639,16 @@ fn settle_choosing_any(state: &mut GameState, wanted: &[ObjectId]) {
 }
 
 /// Settles, picking each of `wanted` once from an "up to" selection and then
-/// finishing it.
+/// finishing it. A selection that can't finish yet (a graveyard order) takes
+/// its first legal answer.
 fn settle_picking(state: &mut GameState, wanted: &[ObjectId]) {
     let mut picked: Vec<ObjectId> = Vec::new();
     settle_with(state, |_, decision| match decision {
-        Decision::ChooseEffectTargets { legal_targets, .. } => {
+        Decision::ChooseEffectTargets {
+            legal_targets,
+            can_finish,
+            ..
+        } => {
             let next_pick = wanted.iter().copied().find(|object| {
                 !picked.contains(object) && legal_targets.contains(&Target::Object(*object))
             });
@@ -652,7 +657,8 @@ fn settle_picking(state: &mut GameState, wanted: &[ObjectId]) {
                     picked.push(object);
                     Action::ChooseEffectTarget(Target::Object(object))
                 }
-                None => Action::FinishEffectSelection,
+                None if can_finish => Action::FinishEffectSelection,
+                None => Action::ChooseEffectTarget(legal_targets[0]),
             }
         }
         other => first_answer(other),
@@ -1079,6 +1085,7 @@ fn kruphixs_insight_takes_up_to_three_enchantments_and_mills_the_rest() {
             legal_targets,
             min_targets,
             max_targets,
+            can_finish,
             ..
         } => {
             if picked.is_empty() {
@@ -1092,7 +1099,9 @@ fn kruphixs_insight_takes_up_to_three_enchantments_and_mills_the_rest() {
                     picked.push(object);
                     Action::ChooseEffectTarget(Target::Object(object))
                 }
-                None => Action::FinishEffectSelection,
+                None if can_finish => Action::FinishEffectSelection,
+                // The rest's graveyard order (the default profile asks).
+                None => Action::ChooseEffectTarget(legal_targets[0]),
             }
         }
         other => first_answer(other),
@@ -1184,7 +1193,8 @@ fn kruphixs_insight_without_enchantments_just_mills_six() {
     let insight = put(&mut state, P0, "Kruphix's Insight", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::G], 2);
     cast(&mut state, insight, &[]);
-    settled(&mut state);
+    // The six revealed cards' graveyard order is the owner's choice.
+    settle_first(&mut state);
     assert_eq!(hand_len(&state, P0), 0);
     assert_eq!(graveyard_len(&state, P0), 7, "six revealed and the spell");
     assert_eq!(library_len(&state, P0), 14);
@@ -1201,6 +1211,92 @@ fn kruphixs_insight_reveals_only_what_a_short_library_holds() {
     assert!(hand_contains(&state, P0, rancor));
     assert_eq!(library_len(&state, P0), 0);
     assert_eq!(graveyard_len(&state, P0), 3, "two Plains and the spell");
+}
+
+/// CR 404.3: the rest go to the graveyard in an order their owner chooses
+/// when the runtime profile exposes graveyard order (the default), and in
+/// the automatic order when the profile orders unobservable batches itself.
+#[test]
+fn kruphixs_insight_asks_for_the_rests_graveyard_order_only_when_the_profile_does() {
+    for automatic in [false, true] {
+        let mut state = game(&library_of(
+            &[
+                "Rancor",
+                "Lightning Bolt",
+                "Plains",
+                "Plains",
+                "Plains",
+                "Plains",
+            ],
+            4,
+        ));
+        state.engine.runtime_rules.auto_unobservable_graveyard_order = automatic;
+        let library = state.players[0].library.clone();
+        let rancor = library[0];
+        let rest = library[1..6].to_vec();
+        let insight = put(&mut state, P0, "Kruphix's Insight", Zone::Hand);
+        pool(&mut state, P0, &[ManaColor::G], 2);
+        cast(&mut state, insight, &[]);
+        let mut order_prompts = 0;
+        let mut ordered: Vec<ObjectId> = Vec::new();
+        settle_with(&mut state, |_, decision| match decision {
+            Decision::ChooseEffectTargets {
+                legal_targets,
+                min_targets,
+                max_targets,
+                can_finish,
+                ..
+            } if min_targets == max_targets && min_targets >= 2 => {
+                if ordered.is_empty() {
+                    order_prompts += 1;
+                    assert_eq!(usize::from(min_targets), rest.len());
+                }
+                if can_finish {
+                    return Action::FinishEffectSelection;
+                }
+                // Choose them in reverse of the offered order.
+                let target = *legal_targets.last().unwrap();
+                if let Target::Object(object) = target {
+                    ordered.push(object);
+                }
+                Action::ChooseEffectTarget(target)
+            }
+            Decision::ChooseEffectTargets {
+                legal_targets,
+                can_finish,
+                ..
+            } => {
+                if legal_targets.contains(&Target::Object(rancor)) {
+                    Action::ChooseEffectTarget(Target::Object(rancor))
+                } else if can_finish {
+                    Action::FinishEffectSelection
+                } else {
+                    Action::ChooseEffectTarget(legal_targets[0])
+                }
+            }
+            other => first_answer(other),
+        });
+        assert!(hand_contains(&state, P0, rancor), "automatic {automatic}");
+        for card in &rest {
+            assert_eq!(
+                zone(&state, *card),
+                Zone::Graveyard,
+                "automatic {automatic}"
+            );
+        }
+        assert_eq!(graveyard_len(&state, P0), 6, "the rest and the spell");
+        if automatic {
+            assert_eq!(order_prompts, 0, "the profile orders them");
+            assert!(ordered.is_empty());
+        } else {
+            assert_eq!(order_prompts, 1, "the owner orders them");
+            let mut chosen = ordered.clone();
+            chosen.sort();
+            let mut expected = rest.clone();
+            expected.sort();
+            assert_eq!(chosen, expected, "every card of the rest ordered once");
+        }
+    }
 }
 
 // ---- Militia Bugler ----------------------------------------------------------------

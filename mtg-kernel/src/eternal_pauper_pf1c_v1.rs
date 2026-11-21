@@ -10,8 +10,9 @@
 //! Where each card lives:
 //!
 //! - Fling: the additional cost is Arbiter of Woe's `SacrificeControlled`.
-//!   The engine calls [`note_sacrifice_power`] just before the cast's payment
-//!   sacrifices the creature, so the power it last had on the battlefield is
+//!   The cast payment calls [`note_sacrifice_power`] after its mana is
+//!   produced and just before it sacrifices the creature, so the power it
+//!   last had on the battlefield is
 //!   kept for the spell's stack incarnation (and read by its copies, which
 //!   copy the cost paid for the original, 707.10).
 //! - Boarding Action: Battle Screech's token creation; "Beam me up" is a
@@ -216,8 +217,10 @@ pub fn hallow() -> EffectOp {
 
 // ---- Fling --------------------------------------------------------------------------
 
-/// Called by the cast pipeline just before the payment of `spell`'s costs
-/// commits, with the objects its costs chose. For a Fling, records the
+/// Called by the cast payment after its mana abilities resolved (a Gemstone
+/// Mine's last counter may have put a land into a graveyard) and just before
+/// its object costs are paid, with the objects its costs chose. For a Fling,
+/// records the
 /// sacrificed creature's power as it last exists on the battlefield (the
 /// card's ruling). Free for every other spell.
 pub(crate) fn note_sacrifice_power(state: &mut GameState, spell: ObjectId, chosen: &[ObjectId]) {

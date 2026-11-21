@@ -28,7 +28,7 @@
 
 use crate::card_def::{CardDef, CardType, Subtype, TargetSpec, CARD_DEFS};
 use crate::effect::{
-    EffectContinuation, EffectObjectBinding, EffectOp, ExecCtx, PlayerRef, TargetRef,
+    EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp, ExecCtx, PlayerRef, TargetRef,
 };
 use crate::eternal_cards_v1::e3::{E3ChoiceKindV1, E3ChoiceV1};
 use crate::eternal_cards_v1::EternalOpV1;
@@ -371,7 +371,7 @@ pub(crate) fn drive(
                 })
                 .collect::<Vec<_>>();
             if enchantments.is_empty() {
-                finish_insight(state, &revealed, &[]);
+                finish_insight(state, continuation, path, &revealed, &[]);
                 return Ok(false);
             }
             let max = u16::try_from(enchantments.len().min(3)).unwrap_or(3);
@@ -446,27 +446,44 @@ pub(crate) fn drive(
     }
 }
 
-/// Kruphix's Insight's end: `chosen` to the hand and the rest of `revealed`
-/// still in the library to the graveyard, together.
+/// Kruphix's Insight's end: `chosen` to the hand, then the rest of
+/// `revealed` still in the library to the graveyard as the engine's
+/// graveyard batch frame, which asks the owner for their order when the
+/// runtime profile exposes graveyard order (CR 404.3) and orders them
+/// automatically where the profile says so. The two moves mirror the reveal
+/// partition's two separate batches.
 fn finish_insight(
     state: &mut GameState,
+    continuation: &mut EffectContinuation,
+    path: Vec<u16>,
     revealed: &[EffectObjectBinding],
     chosen: &[EffectObjectBinding],
 ) {
-    let events = revealed
+    let live = revealed
         .iter()
-        .filter(|binding| binding_live(state, **binding))
-        .map(|binding| {
-            let to = if chosen.contains(binding) {
-                Zone::Hand
-            } else {
-                Zone::Graveyard
-            };
-            ProposedEvent::zone_change(binding.object, to)
-        })
+        .copied()
+        .filter(|binding| binding_live(state, *binding))
         .collect::<Vec<_>>();
-    if !events.is_empty() {
-        event::propose_and_commit_batch(state, events);
+    let to_hand = live
+        .iter()
+        .filter(|binding| chosen.contains(binding))
+        .map(|binding| ProposedEvent::zone_change(binding.object, Zone::Hand))
+        .collect::<Vec<_>>();
+    if !to_hand.is_empty() {
+        event::propose_and_commit_batch(state, to_hand);
+    }
+    let rest = live
+        .into_iter()
+        .filter(|binding| !chosen.contains(binding) && binding_live(state, *binding))
+        .collect::<Vec<_>>();
+    if !rest.is_empty() {
+        continuation.frames.push(EffectFrame::MoveObjectsBatch {
+            objects: rest,
+            to_zone: Zone::Graveyard,
+            preserve_known_identity: true,
+            order_resolved: false,
+            path,
+        });
     }
 }
 
@@ -520,7 +537,13 @@ pub(crate) fn finish_selection(
             if bindings.len() > 3 || bindings.iter().any(|binding| !revealed.contains(binding)) {
                 return Err("Kruphix's Insight chose a card it did not reveal".to_string());
             }
-            finish_insight(state, revealed, &bindings);
+            finish_insight(
+                state,
+                continuation,
+                choice.path.clone(),
+                revealed,
+                &bindings,
+            );
             Ok(false)
         }
         Pf1bChoiceV1::BuglerPickV1 { looked } => {

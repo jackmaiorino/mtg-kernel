@@ -7855,6 +7855,15 @@ fn validate_cost_component_choices_v1(
     {
         reserved.extend(object_cost_chosen.iter().copied());
     }
+    // A permanent returned to hand as a cost can't also pay mana with an
+    // ability that sacrifices it (a Gemstone Mine's last counter), so the
+    // payment doesn't use it (Pauper field wave W1 review).
+    #[cfg(feature = "eternal-fixtures")]
+    if return_filter.is_some() || returns_permanents.is_some() {
+        reserved.extend(object_cost_chosen.iter().copied().filter(|&object| {
+            crate::eternal_premodern_p1a_v1::statics::leaves_when_tapped_for_mana(state, object)
+        }));
+    }
     Some(reserved)
 }
 
@@ -9352,6 +9361,37 @@ fn cast_single_object_cost_needed(
         .or_else(additional)
 }
 
+/// Whether returning `object` as part of `pending`'s cost keeps the cast
+/// payable. Only a permanent whose mana ability would sacrifice it (a
+/// Gemstone Mine's last counter) can make a difference: once chosen it is
+/// reserved from the mana payment, so it is offered only while the rest of
+/// the payment still covers the cast (Pauper field wave W1 review). Every
+/// other choice leaves the mana sources unchanged.
+fn return_choice_keeps_cast_payable(
+    pending: &PendingCast,
+    object: ObjectId,
+    state: &GameState,
+) -> bool {
+    if !cfg!(feature = "eternal-fixtures")
+        || !crate::eternal_premodern_p1a_v1::statics::leaves_when_tapped_for_mana(state, object)
+    {
+        return true;
+    }
+    let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+    let mut projected = pending.clone();
+    projected.sacrifice_chosen.push(object);
+    let method = finalized_cast_method(&projected, pending.source_contract.cast_method, def);
+    pending_cast_quote_v1(
+        def,
+        &projected,
+        method,
+        pending.kicked == Some(true),
+        pending.selected_x_v59().unwrap_or(0),
+        state,
+    )
+    .is_some()
+}
+
 fn cast_single_object_cost_candidates(
     pending: &PendingCast,
     cost: CastSingleObjectCostV1,
@@ -9362,6 +9402,7 @@ fn cast_single_object_cost_candidates(
             return_permanent_cost_candidates(pending.controller, state, filter, &[])
                 .into_iter()
                 .map(|binding| binding.object)
+                .filter(|&object| return_choice_keeps_cast_payable(pending, object, state))
                 .collect()
         }
         CastSingleObjectCostV1::ExileHandCard(color) => {
@@ -9384,6 +9425,7 @@ fn cast_single_object_cost_candidates(
                 .into_iter()
                 .map(|binding| binding.object)
                 .filter(|object| !pending.sacrifice_chosen.contains(object))
+                .filter(|&object| return_choice_keeps_cast_payable(pending, object, state))
                 .collect()
         }
         CastSingleObjectCostV1::TapPermanents(filter, _) => tap_permanent_cost_candidates(
@@ -10335,9 +10377,10 @@ fn torch_target_payable_v1(
                 .is_some())
 }
 
-/// Kaervek's Torch (Pauper field wave Pf1c): false when every legal first
-/// target of `def`'s spell is a Torch on the stack that this cast can't pay
-/// the {2} tax to target, so the spell isn't offered.
+/// Kaervek's Torch (Pauper field wave Pf1c): false when no viable mode of
+/// `def`'s spell remains castable, a mode being lost only when every legal
+/// first target of it is a Torch on the stack that this cast can't pay the
+/// {2} tax to target. A mode without targets is never lost here.
 #[cfg(feature = "eternal-fixtures")]
 fn torch_first_target_payable_v1(
     def: &card_def::CardDef,
@@ -10346,8 +10389,36 @@ fn torch_first_target_payable_v1(
     player: PlayerId,
     state: &GameState,
 ) -> bool {
+    let modes = viable_printed_spell_modes(def, id, player, state);
+    let zone = state.objects.get(id).zone;
+    modes.is_empty()
+        || modes
+            .into_iter()
+            .any(|mode| torch_mode_payable_v1(def, id, zone, cast_method, mode, player, state))
+}
+
+/// Kaervek's Torch (Pauper field wave Pf1c): whether spell form `mode` of
+/// `def`, cast from `zone` by `cast_method` (a normal cast may still choose
+/// its alternative cost), has a legal first target that isn't an unpayable
+/// Torch. A form without targets always qualifies.
+#[cfg(feature = "eternal-fixtures")]
+fn torch_mode_payable_v1(
+    def: &card_def::CardDef,
+    id: ObjectId,
+    zone: Zone,
+    cast_method: CastMethodV4,
+    mode: u8,
+    player: PlayerId,
+    state: &GameState,
+) -> bool {
+    let Some(spec) = selected_spell_target_spec(def, mode, false) else {
+        return true;
+    };
+    if spec == TargetSpec::None {
+        return true;
+    }
     let first = completable_next_targets_for_controller_and_source(
-        def.target_spec,
+        spec,
         &[],
         player,
         targeting_source_for_object(state, id),
@@ -10365,7 +10436,6 @@ fn torch_first_target_payable_v1(
     } else {
         std::slice::from_ref(&cast_method)
     };
-    let zone = state.objects.get(id).zone;
     first.iter().any(|&target| {
         methods.iter().any(|&method| {
             spell_costs_v1::selected_spell_quote_v1(
@@ -10374,7 +10444,7 @@ fn torch_first_target_payable_v1(
                 zone,
                 method,
                 false,
-                0,
+                mode,
                 0,
                 &[target],
                 &[],
@@ -16959,6 +17029,27 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     // existing two-action schema-v4 decision unchanged.
     if has_spell_form_choice(def) && pending.mode_chosen.is_none() {
         let viable_modes = viable_pending_spell_forms(def, &pending, state);
+        // Kaervek's Torch (Pauper field wave Pf1c): a mode whose only first
+        // targets are Torches this cast can't pay the tax for isn't offered.
+        #[cfg(feature = "eternal-fixtures")]
+        let viable_modes = if crate::eternal_pauper_pf1c_v1::torch_on_stack(state) {
+            viable_modes
+                .into_iter()
+                .filter(|&mode| {
+                    torch_mode_payable_v1(
+                        def,
+                        pending.spell,
+                        pending.origin_zone,
+                        pending.source_contract.cast_method,
+                        mode,
+                        pending.controller,
+                        state,
+                    )
+                })
+                .collect::<Vec<u8>>()
+        } else {
+            viable_modes
+        };
         if viable_modes.is_empty() {
             // Defensive against a state mutation between the general gate
             // above and this mode stage (none exists in today's pipeline).
@@ -30744,10 +30835,6 @@ fn finalize_owned_cast(
     // payment. Capture provenance inputs before consuming it exactly once.
     let object_cost_chosen = payment.ordered_objects.clone();
     let chosen_power_lki = payment.chosen_power_lki;
-    // Fling: the sacrificed creature's power as it last exists on the
-    // battlefield, read before the payment sacrifices it (wave Pf1c).
-    #[cfg(feature = "eternal-fixtures")]
-    crate::eternal_pauper_pf1c_v1::note_sacrifice_power(state, pending.spell, &object_cost_chosen);
     let was_kicked = pending.kicked == Some(true);
     let paid_optional_additional_cost = if pending.optional_additional_cost_paid == Some(true) {
         Some(
