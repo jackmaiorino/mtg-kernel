@@ -566,7 +566,9 @@ class PooledCollectTests(unittest.TestCase):
         transports = self.transports(config)
         pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
         pc.Dispatcher(config, transports).collect(self.next_iteration(), fake_merge)
-        self.assertEqual(getattr(transports["a"], "removed", []), [])
+        inputs = [r for r in getattr(transports["a"], "removed", []) if "pooled-" not in Path(r).name]
+        self.assertEqual(inputs, [], "only shard command files removed, never an input")
+        self.assertIn(str(self.checkpoint), transports["a"].files)
         self.assertEqual(json.loads((self.root / "pushed.json").read_text()), {pc.Dispatcher.storage_key(host): {}})
 
     def test_hosts_file_is_checked(self):
