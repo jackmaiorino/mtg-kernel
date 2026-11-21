@@ -818,8 +818,8 @@ class Dispatcher:
 # that set, whatever the userspace checks conclude. Not enforced by the kernel: metadata (stat, lstat,
 # readlink, whether a path exists) anywhere; reads of the world-readable system files above; which
 # files inside the pin roots a request reaches (concurrent allowed requests can substitute one pin for
-# another there, which the key holder could push anyway); resource use (disk, memory, processes and
-# CPU need quotas and cgroups); a collector outliving a SIGKILLed agent beyond its parent-death signal.
+# another there, which the key holder could push anyway); resource use (see the bounds below); a
+# collector outliving a SIGKILLed agent beyond its parent-death signal.
 # "sandbox": "none" opts out explicitly, for a platform without Landlock: then only the userspace
 # checks hold, which assume the roots' namespace is private to the account, and they do NOT meet the
 # confinement contract for the collector's reads: a pinned record the key holder pushed can name, in a
@@ -830,8 +830,15 @@ class Dispatcher:
 #
 # Deployment rules the code assumes: the scratch root is exclusive to this agent and disposable (any
 # valid tag's directory and command file there may be removed or fetched by the key holder); the pin
-# roots hold only this lineage's inputs; disk, memory and process limits come from quotas and cgroups;
-# a collector descendant that calls setsid escapes the group kill (a request-scoped cgroup would end it).
+# roots hold only this lineage's inputs; memory and CPU limits come from cgroups and the prefix; a
+# collector descendant that calls setsid escapes the group kill (a request-scoped cgroup would end it).
+#
+# Agent-enforced resource bounds (userspace, best effort): a disk floor, min_free_bytes (default 20 GiB,
+# 0 disables), checked on the scratch root and the pin roots before push, put_shard and run_shard
+# accept work and rechecked during a push every FLOOR_CHECK_BYTES; and at most max_concurrent_runs
+# collectors (default 2), each holding a non-blocking slot lock under `<scratch>/.locks` that the
+# kernel releases when its agent dies. A busy or full collector refuses (exit 2); the dispatcher then
+# treats that host as failed for the collection and moves the shard on.
 #
 # The userspace checks stay because they refuse precisely and early: no-follow opens, singly linked
 # outputs, exact output and tag paths, printable ASCII paths, inputs within the pin roots with their
@@ -851,6 +858,8 @@ AGENT_PIN_BYTES = 4 * 1024 * 1024 * 1024  # one pushed input
 AGENT_FETCH_BYTES = 16 * 1024 * 1024 * 1024  # one fetched shard archive, on the learner
 AGENT_REPLY_BYTES = 1 << 20  # one JSON reply, on the learner
 AGENT_STDERR_TAIL = 4096  # stderr kept in memory, by the agent (collector) and the learner (ssh)
+AGENT_MIN_FREE_BYTES = 20 * 1024 ** 3  # default disk floor (config min_free_bytes; 0 disables)
+FLOOR_CHECK_BYTES = 64 * 1024 * 1024  # a push rechecks the floor after every this many bytes
 AGENT_TAG = re.compile(r"^pooled-[0-9]{6}-[0-9a-f]{32}(-s[0-9]{3}|-audit[0-9]{4})$")
 AGENT_FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
 WINDOWS_DEVICES = {"CON", "PRN", "AUX", "NUL"} | {f"{d}{i}" for d in ("COM", "LPT") for i in range(10)}
@@ -1102,6 +1111,10 @@ def load_agent_config(path: Path) -> dict:
         raise ValueError("agent run_paths must be canonical absolute paths outside every root")
     config["max_seconds"] = int(config.get("max_seconds", 3600))
     config["request_seconds"] = int(config.get("request_seconds", 900))
+    for key, default, least in (("min_free_bytes", AGENT_MIN_FREE_BYTES, 0), ("max_concurrent_runs", 2, 1)):
+        config[key] = config.get(key, default)
+        if not isinstance(config[key], int) or isinstance(config[key], bool) or config[key] < least:
+            raise ValueError(f"agent {key} must be an integer of at least {least}")
     return config
 
 
@@ -1166,6 +1179,62 @@ def _lock(config: dict, key: str):
     locks = os.path.join(config["scratch"], ".locks")
     os.makedirs(locks, mode=0o700, exist_ok=True)
     return state_lock(Path(locks) / hashlib.sha256(key.encode()).hexdigest())
+
+
+def _free_bytes(path: str) -> int:
+    """Bytes an unprivileged writer can still use on the filesystem holding `path`."""
+    if hasattr(os, "statvfs"):
+        info = os.statvfs(path)
+        return info.f_bavail * info.f_frsize
+    return shutil.disk_usage(path).free
+
+
+def _require_floor(config: dict, paths) -> None:
+    """Refuses work while any of `paths` sits on a filesystem with less than min_free_bytes free
+    (0 disables). Best effort: concurrent writers can still take space between checks."""
+    floor = config["min_free_bytes"]
+    for path in paths if floor else ():
+        free = _free_bytes(path)
+        if free < floor:
+            raise AgentRefusal(f"disk floor: {free} bytes free on the filesystem of {path[:200]!r}, "
+                               f"below min_free_bytes {floor}")
+
+
+class _run_slot:
+    """One of max_concurrent_runs slots, `<scratch>/.locks/run-slot-<i>`, taken with a non-blocking
+    exclusive lock held for the whole run; the kernel releases it when this process dies. No free
+    slot refuses the run ("collector busy"); runs are never queued here."""
+
+    def __init__(self, config: dict):
+        self.config, self.handle = config, None
+
+    def __enter__(self):
+        locks = os.path.join(self.config["scratch"], ".locks")
+        os.makedirs(locks, mode=0o700, exist_ok=True)
+        for index in range(self.config["max_concurrent_runs"]):
+            handle = open(os.path.join(locks, f"run-slot-{index}"), "a+b")
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                handle.close()
+                continue
+            self.handle = handle
+            return self
+        raise AgentRefusal(f"collector busy: all {self.config['max_concurrent_runs']} run slots are held")
+
+    def __exit__(self, *exc):
+        if os.name == "nt":
+            import msvcrt
+            self.handle.seek(0)
+            msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+        self.handle.close()  # closing releases a flock
+        return False
 
 
 def _agent_pins_of(document, what: str) -> set:
@@ -1263,10 +1332,13 @@ def _read_nofollow(path: str, cap: int) -> bytes:
     return data
 
 
-def _write_new(path: str, data_or_stream, cap: int) -> str:
-    """Creates `path` (exclusive, no symlink follow) from bytes or a stream; returns its sha256."""
+def _write_new(path: str, data_or_stream, cap: int, floor=None) -> str:
+    """Creates `path` (exclusive, no symlink follow) from bytes or a stream; returns its sha256.
+    With `floor` (the config), a stream rechecks the disk floor on `path`'s filesystem after every
+    FLOOR_CHECK_BYTES and refuses once free space falls under it (best effort: the check follows the
+    bytes written, so the floor can be undershot by up to one interval plus concurrent writes)."""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW | BINARY, 0o644)
-    digest, size = hashlib.sha256(), 0
+    digest, size, checked = hashlib.sha256(), 0, 0
     with os.fdopen(fd, "wb") as handle:
         if isinstance(data_or_stream, (bytes, bytearray)):
             handle.write(data_or_stream)
@@ -1278,6 +1350,10 @@ def _write_new(path: str, data_or_stream, cap: int) -> str:
                     raise AgentRefusal("payload exceeds its bound")
                 digest.update(block)
                 handle.write(block)
+                if floor is not None and size - checked >= FLOOR_CHECK_BYTES:
+                    checked = size
+                    handle.flush()
+                    _require_floor(floor, [path])
     return digest.hexdigest()
 
 
@@ -1410,13 +1486,14 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
                "sandbox": config.get("sandbox_effective", "none")})
     elif op == "push":
         path, digest = _pin_arg(args, config)
+        _require_floor(config, [scratch, next(r for r in config["pin_roots"] if path.startswith(r + os.sep))])
         parent = os.path.dirname(path)
         os.makedirs(parent, mode=0o755, exist_ok=True)
         if _canonical(path) is None:
             raise AgentRefusal("path changed under the pin roots")
         stage = os.path.join(parent, f".{os.path.basename(path)}.{uuid.uuid4().hex}.stage")
         try:
-            if _write_new(stage, stdin, AGENT_PIN_BYTES) != digest:
+            if _write_new(stage, stdin, AGENT_PIN_BYTES, floor=config) != digest:
                 raise AgentRefusal("payload differs from its sha256")
             with _lock(config, path):
                 # Ownership follows the installed inode: the witness is linked from the verified
@@ -1453,6 +1530,7 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
                 os.unlink(stage)
     elif op == "put_shard":
         tag = _tag_arg(args)
+        _require_floor(config, [scratch, *config["pin_roots"]])
         data = _read_payload(stdin, AGENT_SHARD_BYTES)
         _valid_shard_command(data, tag, config)
         _write_new(os.path.join(scratch, f"{tag}.json"), data, AGENT_SHARD_BYTES)
@@ -1472,26 +1550,28 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
         command = _valid_shard_command(data, tag, config)  # again, just before use
         if _hash_nofollow(config["collector"]) != config["collector_sha256"]:
             raise AgentRefusal("collector binary differs from its pin")
-        # `<scratch>/<tag>` is the collector's run directory, the only place it may write. It exists
-        # before the collector is confined (a Landlock rule needs an existing directory) and the
-        # collector refuses an existing output directory, so it publishes into `<tag>/out`, which it
-        # creates. Its recorded paths are its own: the merge binds only names and hashes.
-        run_dir = os.path.join(scratch, tag)
-        try:
-            os.mkdir(run_dir, 0o700)
-        except FileExistsError:
-            raise AgentRefusal("this tag's shard output already exists (remove_shard first)") from None
-        command["output_directory"] = os.path.join(run_dir, "out")
-        # Run a private copy of the validated command, so the file the collector reads is the one checked.
-        private_dir = os.path.join(scratch, ".run")
-        os.makedirs(private_dir, mode=0o700, exist_ok=True)
-        private = os.path.join(private_dir, f"{tag}.{uuid.uuid4().hex}.json")
-        _write_new(private, json.dumps(command).encode(), AGENT_SHARD_BYTES)
-        try:
-            code, tail = _run_collector(config, private, run_dir, seconds)
-            reply({"code": code, "stderr": tail})
-        finally:
-            os.unlink(private)
+        _require_floor(config, [scratch, *config["pin_roots"]])
+        with _run_slot(config):  # held until the collector is reaped; no free slot refuses
+            # `<scratch>/<tag>` is the collector's run directory, the only place it may write. It exists
+            # before the collector is confined (a Landlock rule needs an existing directory) and the
+            # collector refuses an existing output directory, so it publishes into `<tag>/out`, which it
+            # creates. Its recorded paths are its own: the merge binds only names and hashes.
+            run_dir = os.path.join(scratch, tag)
+            try:
+                os.mkdir(run_dir, 0o700)
+            except FileExistsError:
+                raise AgentRefusal("this tag's shard output already exists (remove_shard first)") from None
+            command["output_directory"] = os.path.join(run_dir, "out")
+            # Run a private copy of the validated command, so the file the collector reads is the one checked.
+            private_dir = os.path.join(scratch, ".run")
+            os.makedirs(private_dir, mode=0o700, exist_ok=True)
+            private = os.path.join(private_dir, f"{tag}.{uuid.uuid4().hex}.json")
+            _write_new(private, json.dumps(command).encode(), AGENT_SHARD_BYTES)
+            try:
+                code, tail = _run_collector(config, private, run_dir, seconds)
+                reply({"code": code, "stderr": tail})
+            finally:
+                os.unlink(private)
     elif op == "fetch_shard":
         tag = _tag_arg(args)
         _no_more_input(stdin)

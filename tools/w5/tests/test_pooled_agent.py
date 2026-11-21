@@ -15,6 +15,7 @@ import tempfile
 import textwrap
 import threading
 import time
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -123,6 +124,7 @@ class AgentCase(unittest.TestCase):
         config = {"schema": pc.AGENT_SCHEMA, "collector": str(self.collector),
                   "collector_sha256": pc.sha256_file(self.collector), "scratch": str(self.scratch),
                   "pin_roots": [str(self.pins)], "prefix": [sys.executable], "max_seconds": 120,
+                  "min_free_bytes": 0,  # the floor's own tests set it; the others never depend on this disk
                   "sandbox": "none"}  # in-process: confining the test runner itself is irreversible
         config.update(changes)
         path.write_text(json.dumps(config))
@@ -721,6 +723,125 @@ class AgentServiceTests(AgentCase):
         code, out, err = self.run_shard(seconds=10 ** 6)
         self.assertEqual((code, json.loads(out)["code"]), (0, "timeout"), err)
         self.assertLess(time.time() - started, 30)
+
+
+def fake_statvfs(free):
+    """A statvfs stand-in reporting `free` bytes (a callable gives a value per call)."""
+    def statvfs(path):
+        return types.SimpleNamespace(f_bavail=free() if callable(free) else free, f_frsize=1)
+    return statvfs
+
+
+class ResourceBoundTests(AgentCase):
+    """The disk floor (min_free_bytes) and the run slots (max_concurrent_runs)."""
+
+    TAG2 = TAG.replace("-s001", "-s002")
+
+    def floor_config(self, floor=1000, **changes):
+        return self.write_config(self.root / "floor.json", min_free_bytes=floor, **changes)
+
+    def test_the_disk_floor_refuses_push_put_shard_and_run_shard(self):
+        config, data = self.floor_config(), b"checkpoint"
+        with mock.patch.object(pc.os, "statvfs", fake_statvfs(999), create=True):
+            self.assertRefused(self.serve("push", data, path=str(self.pins / "c.bin"), sha256=sha(data),
+                                          config=config), "disk floor")
+            self.assertRefused(self.serve("put_shard", json.dumps(self.shard_command()).encode(), tag=TAG,
+                                          config=config), "disk floor")
+        self.assertEqual(list(self.pins.iterdir()), [], "nothing staged or installed")
+        with mock.patch.object(pc.os, "statvfs", fake_statvfs(10 ** 6), create=True):
+            code, out, err = self.serve("put_shard", json.dumps(self.shard_command()).encode(), tag=TAG,
+                                        config=config)
+            self.assertEqual(code, 0, err)
+        with mock.patch.object(pc.os, "statvfs", fake_statvfs(999), create=True):
+            self.assertRefused(self.run_shard(config=config), "disk floor")
+        self.assertFalse((self.scratch / TAG).exists(), "nothing ran")
+
+    def test_a_push_stops_once_free_space_falls_under_the_floor(self):
+        config, data = self.floor_config(), os.urandom(3 << 20)
+        calls = iter([10 ** 6, 10 ** 6] + [999] * 100)  # the two checks before staging pass, then space runs out
+        path = self.pins / "run" / "c.bin"
+        with mock.patch.object(pc, "FLOOR_CHECK_BYTES", 1 << 20), \
+                mock.patch.object(pc.os, "statvfs", fake_statvfs(lambda: next(calls)), create=True):
+            self.assertRefused(self.serve("push", data, path=str(path), sha256=sha(data), config=config),
+                               "disk floor")
+        self.assertEqual(os.listdir(path.parent), [], "the stage is removed and no pin installed")
+
+    def test_the_floor_defaults_to_20_gib_and_zero_disables_it(self):
+        document = json.loads(self.config_path.read_text())
+        del document["min_free_bytes"]
+        self.config_path.write_text(json.dumps(document))
+        self.assertEqual(pc.load_agent_config(self.config_path)["min_free_bytes"], 20 * 1024 ** 3)
+        self.assertEqual(pc.load_agent_config(self.config_path)["max_concurrent_runs"], 2)
+        for bad in (-1, True, "1"):
+            code, _, err = self.serve("pin_status", pins=[], config=self.floor_config(floor=bad))
+            self.assertEqual(code, 1)
+            self.assertIn("min_free_bytes", err)
+        data = b"checkpoint"
+        with mock.patch.object(pc.os, "statvfs", fake_statvfs(0), create=True):
+            code, out, err = self.serve("push", data, path=str(self.pins / "c.bin"), sha256=sha(data),
+                                        config=self.floor_config(floor=0))
+        self.assertEqual((code, json.loads(out)), (0, "created"), err)
+
+    def test_a_run_without_a_free_slot_is_refused_not_queued(self):
+        config_path = self.write_config(self.root / "one-slot.json", max_concurrent_runs=1)
+        self.put_shard()
+        with pc._run_slot(pc.load_agent_config(config_path)):  # another run holds the only slot
+            started = time.monotonic()
+            self.assertRefused(self.run_shard(config=config_path), "collector busy")
+            self.assertLess(time.monotonic() - started, 10, "refused at once, never queued")
+        self.assertFalse((self.scratch / TAG).exists(), "nothing ran")
+        code, out, err = self.run_shard(config=config_path)
+        self.assertEqual((code, json.loads(out)["code"]), (0, 0), err)
+        bad = self.write_config(self.root / "no-slot.json", max_concurrent_runs=0)
+        self.assertEqual(self.serve("pin_status", pins=[], config=bad)[0], 1)
+
+    def test_a_slot_is_released_after_each_run(self):
+        config_path = self.write_config(self.root / "one-slot.json", max_concurrent_runs=1)
+        self.put_shard()
+        self.assertEqual(json.loads(self.run_shard(config=config_path)[1])["code"], 0)
+        with pc._run_slot(pc.load_agent_config(config_path)):
+            pass  # free again: the finished run released it
+        code, out, err = self.serve("put_shard", json.dumps(self.shard_command(
+            output_directory=str(self.scratch) + "/" + self.TAG2)).encode(), tag=self.TAG2)
+        self.assertEqual(code, 0, err)
+        code, out, err = self.serve("run_shard", tag=self.TAG2, seconds=60, config=config_path,
+                                    collector_sha256=pc.sha256_file(self.collector))
+        self.assertEqual((code, json.loads(out)["code"]), (0, 0), err)
+
+    def test_a_busy_collector_is_a_failed_host_for_the_dispatcher(self):
+        # The busy host has its own scratch with its one slot held; the dispatcher moves its shard on.
+        busy_scratch = self.root / "busy-scratch"
+        busy_scratch.mkdir()
+        busy = self.write_config(self.root / "busy.json", scratch=str(busy_scratch), max_concurrent_runs=1)
+        fake_ssh = self.root / "fake_ssh.py"
+        fake_ssh.write_text(FAKE_SSH)
+
+        def host(name, config_path, scratch):
+            return pc.Host(name=name, kind="ssh", collector=str(self.collector),
+                           collector_sha256=pc.sha256_file(self.collector), workers=2, weight=1.0,
+                           scratch=str(scratch), arch="x86", ssh=[sys.executable, str(fake_ssh), str(config_path)],
+                           prefix=[sys.executable], transport="agent")
+
+        pinned = self.pins / "run" / "checkpoint.json"
+        pinned.parent.mkdir()
+        pinned.write_bytes(b"policy")
+        episodes = [{"id": f"e{i}", "seed": 100 + i} for i in range(4)]
+        command = {"mode": "collect_parallel", "workers": 2, "episodes": episodes,
+                   "source": {"checkpoint": {"path": str(pinned), "sha256": pc.sha256_file(pinned)}},
+                   "output_directory": "unused"}
+        attempt = self.root / "learner-run" / "iterations" / "000003" / "attempt-000000"
+        attempt.mkdir(parents=True)
+        command_path = attempt / "collect-command.json"
+        command_path.write_text(json.dumps(command))
+        dispatcher = pc.Dispatcher({"hosts": [host("busy", busy, busy_scratch),
+                                              host("free", self.config_path, self.scratch)]}, timeout=100)
+        with pc._run_slot(pc.load_agent_config(busy)):
+            receipt = dispatcher.collect(command_path, fake_merge)
+        self.assertEqual(receipt["merged"]["slots"], [episode_bytes(e).decode() for e in episodes])
+        self.assertEqual(receipt["failed_hosts"], ["busy"])
+        self.assertEqual([s[3] for s in receipt["shards"]], ["free", "free"])
+        failure = [e for e in receipt["events"] if e["event"] == "host-failed"]
+        self.assertIn("collector busy", failure[0]["error"])
 
 
 class SafeExtractionTests(unittest.TestCase):
