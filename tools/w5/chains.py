@@ -608,10 +608,21 @@ def carried_tree_still_ok(plan):
         return False
 
 
+def guarded(man):
+    """A carried chain, or an ordinary chain whose manifest names `guards`: its tree, segments and retention are
+    under the link and containment checks (retention.guarded)."""
+    return retention.guarded(man)
+
+
+def guarded_entry(entry):
+    """A plan chain entry whose chain is guarded (it names `carry` or `guards`)."""
+    return bool((entry or {}).get('carry') or (entry or {}).get('guards'))
+
+
 def carried_tree_held(man, root, name):
     """True unless `name` is carried and its W5 root now holds a link: then the reason goes to stderr only (the
     tree's own logs are suspect) and the caller stops without another write."""
-    if not man.get('carry'):
+    if not guarded(man):
         return True
     try:
         carried_trees_unlinked(root, name)
@@ -625,17 +636,25 @@ def carried_chain_dir_ok(plan, root, name):
     """A carried chain of a plan (its plan entry names `carry`): its chain directory is a real directory with no link
     in its path, and its manifest is that chain's carried manifest, before anything reads, indexes, ends or cleans
     it. Ordinary chains: nothing is checked."""
-    if not (plan['chains'].get(name) or {}).get('carry'):
+    entry = plan['chains'].get(name) or {}
+    if not guarded_entry(entry):
         return
     cdir = chain_dir(root, name)
     carried_trees_unlinked(root, name)
     man = read(cdir / 'chain.json')
-    require(man.get('chain') == name and isinstance(man.get('carry'), dict),
-            f'{name}: {cdir / "chain.json"} is not this carried chain\'s manifest')
-    arm_file = ((plan.get('arms') or {}).get(plan['chains'][name].get('arm')) or {}).get('file') or {}
+    require(man.get('chain') == name and (isinstance(man.get('carry'), dict) if entry.get('carry')
+                                          else man.get('guards') is True),
+            f'{name}: {cdir / "chain.json"} is not this {"carried" if entry.get("carry") else "guarded"} '
+            f'chain\'s manifest')
+    arm_file = ((plan.get('arms') or {}).get(entry.get('arm')) or {}).get('file') or {}
     if arm_file.get('path'):  # its scratch root and scratch directory: canonical, apart, and with no link inside
         scratch_root = read(arm_file['path']).get('scratch_root')
-        carried_dirs_apart(man['carry'], name, root, scratch_root)
+        if man.get('carry'):
+            carried_dirs_apart(man['carry'], name, root, scratch_root)
+        elif scratch_root:
+            absolute = os.path.abspath(scratch_root)
+            require(os.path.realpath(absolute) == absolute and '..' not in Path(scratch_root).parts,
+                    f'{name}: {scratch_root} must be a canonical path with no link in it')
         if scratch_root and Path(scratch_root).is_dir():
             for dirpath, dirnames, filenames in os.walk(scratch_root, followlinks=False):
                 for entry in dirnames + filenames:
@@ -703,12 +722,14 @@ def carried_segment_ok(man, arm, cdir, native):
     """A carried chain's concrete segment directory and its scratch directory are real directories (no link) in
     their own parents, apart from the old chain's trees, before anything mounts, settles, quarantines, persists or
     deletes them. Ordinary chains: nothing is checked."""
-    carry = man.get('carry')
-    if not carry:
+    if not guarded(man):
         return
+    carry = man.get('carry')
     cdir, native = Path(cdir), Path(native)
-    carried_dirs_apart(carry, cdir.name, cdir.parent.parent, arm.get('scratch_root'))
-    old_root, old_scratch = old_trees(carry['from']['manifest']['path'])
+    old_root, old_scratch = None, None
+    if carry:
+        carried_dirs_apart(carry, cdir.name, cdir.parent.parent, arm.get('scratch_root'))
+        old_root, old_scratch = old_trees(carry['from']['manifest']['path'])
     targets = [(native, cdir), (cdir / f'.{native.name}.persist', cdir)]
     if arm.get('scratch_root'):
         targets.append((scratch_dir(arm, cdir, native), Path(arm['scratch_root']) / cdir.name))
@@ -720,7 +741,7 @@ def carried_segment_ok(man, arm, cdir, native):
                 for entry in dirnames + filenames:
                     require(not os.path.islink(os.path.join(dirpath, entry)),
                             f'{cdir.name}: {os.path.join(dirpath, entry)} is a link inside a carried segment')
-        for t in [old_root] + ([old_scratch] if old_scratch else []):
+        for t in ([old_root] if old_root else []) + ([old_scratch] if old_scratch else []):
             require(disjoint(d.resolve(), t), f'{cdir.name}: {d} reaches the carried chain\'s {t}')
 
 
@@ -863,8 +884,9 @@ def check_repin_request(req, name, man, to_sha=None, man_path=None, arm=None):
     require(isinstance(req.get('id'), str) and req['id'], f'{name}: the re-pin request has no id')
     segs = man['segments']
     require(segs, f'{name}: a re-pin needs a started chain')
-    require(man.get('carry'), f'{name}: re-pin v1 is for carried chains (their segment and retention guards); '
-                              f'an ordinary chain needs those guards first')
+    require(guarded(man) or req.get('guards') is True,
+            f'{name}: a re-pin needs the segment and retention guards: a carried chain, or a request with '
+            f'`guards: true` (the plan then names `guards: true` for the chain too)')
     require(req.get('from_sha256') == man['recipe']['trainer_sha256'],
             f'{name}: the request re-pins from {req.get("from_sha256")}, the chain runs {man["recipe"]["trainer_sha256"]}')
     require(req.get('to_sha256') not in (None, req['from_sha256']), f'{name}: the request names no other trainer')
@@ -1234,6 +1256,9 @@ def make_plan(inputs_path):
     carry_bytes = {}  # one read of each carry record: every check, the pin and the manifest use these bytes
     repin_bytes = {name: Path(c['repin']).read_bytes() for name, c in chains_in.items()
                    if c.get('repin') is not None}  # one read of each re-pin request (absent otherwise)
+    for name, c in chains_in.items():  # before any write: an existing guarded chain's tree is real and unlinked
+        if c.get('guards') and (Path(root) / 'chains' / name / 'chain.json').exists():
+            carried_trees_unlinked(root, name)
     for name in repin_bytes:  # before any write: the chain is held, its tree real and unlinked
         require(Path(root).exists() and (Path(root) / 'chains' / name / 'chain.json').exists(),
                 f'{name}: a re-pin needs the chain\'s existing manifest in this root')
@@ -1454,6 +1479,10 @@ def make_plan(inputs_path):
             check_carry(carry_docs[name], name, seed_root, arms[a],
                         new=not Path(chains[name]['manifest']).exists())
             chains[name]['carry'] = {'path': Path(c['carry']).as_posix(), 'sha256': w5box.sha256_bytes(data)}
+        if c.get('guards') is not None:  # absent otherwise: existing plans and manifests keep their bytes
+            require(c['guards'] is True and a != 'F' and stage == '0' and independent and c.get('pair') is None,
+                    f'{name}: `guards: true` is for a chain of an independent Stage 0 plan without a pair')
+            chains[name]['guards'] = True
         if c.get('repin') is not None:  # absent otherwise: existing plans and manifests keep their bytes
             require(a != 'F', f'{name}: a filler is not re-pinned')
             data = repin_bytes[name]
@@ -1467,6 +1496,8 @@ def make_plan(inputs_path):
                     f'{name}: the re-pin {req.get("id")} is not pending with these request bytes (`repin begin` first)')
             hold = repin_held(root, name)
             require(hold is None, hold)
+            require(req.get('guards') is not True or c.get('guards') is True,
+                    f'{name}: the request switches the guards on: the plan names `guards: true` for the chain')
             if committed:  # the same request again (the plan citing the new throughput record): nothing more
                 require(have['recipe']['trainer_sha256'] == req['to_sha256'] == common['trainer']['sha256'],
                         f'{name}: the committed re-pin and the plan trainer disagree')
@@ -1550,8 +1581,11 @@ def make_plan(inputs_path):
                     f're-pin: the {a} launch plan\'s memory limits would change')
         require(sorted(old['chains']) == sorted(chains), 're-pin: the plan\'s chains would change')
         for n in chains:
-            require({k: v for k, v in old['chains'][n].items() if k != 'repin'} ==
-                    {k: v for k, v in chains[n].items() if k != 'repin'}, f're-pin: chain {n}\'s entry would change')
+            require({k: v for k, v in old['chains'][n].items() if k not in ('repin', 'guards')} ==
+                    {k: v for k, v in chains[n].items() if k not in ('repin', 'guards')},
+                    f're-pin: chain {n}\'s entry would change')
+            require(not old['chains'][n].get('guards') or chains[n].get('guards'),
+                    f're-pin: chain {n}\'s guards are on and stay on')
     # manifests
     for name, c in chains.items():
         if c['arm'] == 'F':
@@ -1564,6 +1598,8 @@ def make_plan(inputs_path):
                   'snapshot_dir': (root / 'chains' / name / 'snapshots').as_posix()}
         if c.get('carry'):
             header['carry'] = carry_docs[name]
+        if c.get('guards'):
+            header['guards'] = True
         path = Path(c['manifest'])
         if path.exists():
             have = read(path)
@@ -1593,6 +1629,8 @@ def make_plan(inputs_path):
                         'recipe'].get('pregame_announcement_step_scale') else ''))
             require(have.get('r_nom_usec') in (None, r_nom), f'{name}: R_nom is frozen in the manifest')
             have.update(recipe=header['recipe'], arm_file=pin(arm_paths[c['arm']]), r_nom_usec=r_nom)
+            if c.get('guards'):  # once on, never off: the guards only refuse, outputs are unchanged
+                have['guards'] = True
             write(path, have)
             if repin is not None:  # the commit's manifest entry made durable
                 durable_entry(path)
@@ -2067,7 +2105,7 @@ def scratch_settle(arm, root, cdir, man, instance=None):
                 with retention.index_lock(cdir / 'chain.json'):
                     os.rename(tmp, native)  # the driver stopped between the unmount and the rename
                     fsync_path(native.parent)  # as persist: the rename is durable before the commit names it
-                if man.get('carry'):  # a carried chain: its tree again before the commit line and the log
+                if guarded(man):  # a guarded chain: its tree again before the commit line and the log
                     carried_trees_unlinked(root, cdir.name)
                 record_commit(cdir, man, s, 'scratch-swap', instance)
                 log(root, chain=cdir.name, event='scratch-swap-finished', segment=native.name)
@@ -2077,7 +2115,7 @@ def scratch_settle(arm, root, cdir, man, instance=None):
         if mounted(native) and (native / 'completion.json').exists():
             t = time.time()
             n = persist(arm, native, cdir)
-            if man.get('carry'):  # a carried chain: its tree again after the copy, before any further write
+            if guarded(man):  # a guarded chain: its tree again after the copy, before any further write
                 carried_trees_unlinked(root, cdir.name)
             record_commit(cdir, man, s, 'scratch-late', instance, persist_seconds=time.time() - t, persist_bytes=n)
             t = time.time()
@@ -2300,6 +2338,7 @@ def drive(a):
     require(why is None, f'{a.chain}: {why}')
     if man.get('carry'):
         carried_dirs_apart(man['carry'], a.chain, root, arm.get('scratch_root'))
+    if guarded(man):
         carried_trees_unlinked(root, a.chain)
     held = lock(cdir / 'DRIVE.lock')
     require(held is not None, f'{a.chain} already has a driver')
@@ -2327,8 +2366,8 @@ def drive_locked(a, arm, root, cdir, man_path):
     while True:
         if (cdir / 'END.json').exists():
             return 0
-        try:  # a carried chain: its tree and the segments settle may touch are real and its own
-            if man.get('carry'):
+        try:  # a guarded chain: its tree and the segments settle may touch are real and its own
+            if guarded(man):
                 carried_trees_unlinked(root, a.chain)
             for seg in man['segments'][-2:]:
                 carried_segment_ok(man, arm, cdir, seg['root'])
@@ -2346,9 +2385,10 @@ def drive_locked(a, arm, root, cdir, man_path):
             log(root, chain=a.chain, event='stop')
             return EXIT_STOP
         hold = carried_from_stopped(man)  # None unless carried: before every segment, the old chain must stay held
-        if man.get('carry'):
+        if guarded(man):
             try:
-                carried_dirs_apart(man['carry'], a.chain, root, arm.get('scratch_root'))
+                if man.get('carry'):
+                    carried_dirs_apart(man['carry'], a.chain, root, arm.get('scratch_root'))
                 carried_trees_unlinked(root, a.chain)
             except Stop as exc:  # the tree itself is suspect: stop without writing to any of its files
                 print(f'stop: {exc}', file=sys.stderr, flush=True)
@@ -2886,7 +2926,7 @@ def launch_replay(plan, plan_path, rdir, arm, budget):
 def replay_cmd(a):
     plan = load_plan(a.plan)
     rdir = Path(a.dir)
-    if any(c.get('carry') for c in plan['chains'].values()):  # a carried plan: its trees and the replay folder
+    if any(guarded_entry(c) for c in plan['chains'].values()):  # a guarded plan: its trees and the replay folder
         carried_plan_ok(plan)
         absolute = os.path.abspath(rdir)
         require(os.path.realpath(absolute) == absolute, f'{rdir} is a link or lies under one')
@@ -3463,7 +3503,7 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None, guar
             sample = replay_sample.protected(root, c['arm'], n, c['seed_root'], info['chain'], fresh)
             doc['trajectories'] = [i for i in doc['trajectories'] if i['path'] not in sample]
         (root / 'retention').mkdir(parents=True, exist_ok=True)
-        if (info.get('chain') or {}).get('carry'):  # a carried chain deletes only its own files
+        if guarded(info.get('chain') or {}):  # a guarded chain deletes only its own files
             own = Path(info['path']).parent.resolve()
             stray = [i['path'] for i in doc['checkpoints'] + doc['trajectories']
                      if own not in Path(i['path']).resolve().parents]
@@ -3569,7 +3609,7 @@ def segcheck(a):
     """On this host: two updates of the arm's recipe as one native run and as two one-update segments; equal after
     states and trajectories (path and timing fields aside) are the regeneration receipt for segmenting."""
     plan = load_plan(a.plan)
-    require(not any(c.get('carry') for c in plan['chains'].values()),
+    require(not any(guarded_entry(c) for c in plan['chains'].values()),
             'segcheck does not run on a carried plan (use an ordinary plan of the same recipe)')
     arm = load_arm(plan['arms'][a.arm]['file']['path'])
     out = Path(plan['root']) / 'segcheck' / f'{a.arm}-{time.strftime("%Y%m%dT%H%M%S")}'
@@ -4096,7 +4136,7 @@ def throughput_run(plan_path, arm, label, updates, out, counts=None, max_wall=w5
     root = Path(target['root'])
     require(not (root / 'STOP').exists(), 'a node STOP file is present')
     carried_plan_ok(target)  # carried chains: their trees before the lock and the phase plans
-    if any(c.get('carry') for c in target['chains'].values()):  # and the record's destinations
+    if any(guarded_entry(c) for c in target['chains'].values()):  # and the record's destinations
         for dest in (Path(out), Path(f'{out}.failed.json')):
             retention.carried_output_unlinked(dest)
     held = lock(root / 'SUPERVISE.lock')
@@ -4299,7 +4339,7 @@ def mix_run(plan_path, slots, label, updates, out, counts=None, max_wall=w5box.U
     root = Path(target['root'])
     require(not (root / 'STOP').exists(), 'a node STOP file is present')
     carried_plan_ok(target)  # carried chains: their trees before the lock and the phase plans
-    if any(c.get('carry') for c in target['chains'].values()):  # and the record's destinations
+    if any(guarded_entry(c) for c in target['chains'].values()):  # and the record's destinations
         for dest in (Path(out), Path(f'{out}.failed.json')):
             retention.carried_output_unlinked(dest)
     held = lock(root / 'SUPERVISE.lock')
