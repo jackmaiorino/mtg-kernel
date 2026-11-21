@@ -673,5 +673,46 @@ class CarryTests(unittest.TestCase):
         self.assertEqual({p: p.read_bytes() for p in old_chain.rglob('*') if p.is_file()}, before)
 
 
+    def test_internal_aliases_standalone_retention_and_nested_links_are_refused(self):
+        _, old_man = self.old(3)
+        path, plan = chains.make_plan(self.cont_inputs(self.carry(old_man, 8)))
+        cont = self.t / 'cont'
+        man_path = Path(plan['chains']['c1c']['manifest'])
+        self.assertEqual(self.drive(plan, 'c1c', cont, 3), chains.EXIT_ROOM)
+        cache = retention.IndexCache(man_path)
+        cache.refresh()
+        own = man_path.parent
+        snapshot = {p: p.read_bytes() for p in list(own.rglob('*')) + list((self.node.root / 'chains' / 'c1').rglob('*'))
+                    if p.is_file()}
+        seg0, real0 = own / 'seg-00000', own / 'seg-00000.real'
+        seg0.rename(real0)
+        try:
+            seg0.symlink_to(own / 'seg-00002', target_is_directory=True)  # an alias inside the continuation
+        except OSError:
+            real0.rename(seg0)
+            self.skipTest('no symlink permission on this host')
+        with mock.patch.object(chains, 'occupancy', side_effect=AssertionError('no fills')), \
+                mock.patch.object(retention, 'C_RECENT', 0), mock.patch.object(retention, 'C_LONG_STRIDE', 10**9):
+            with self.assertRaises((chains.Stop, SystemExit)):
+                chains.cycle(plan, path, caches={man_path.as_posix(): cache})
+            with self.assertRaises(SystemExit):  # the standalone plan refuses too
+                retention.plan(man_path, None, retention.IndexCache(man_path))
+        with self.assertRaises(SystemExit):  # and a plan document naming a path through the link is refused by apply
+            retention.apply({'own_dir': own.resolve().as_posix(), 'checkpoints': [{'path': (seg0 / 'x').as_posix()}],
+                             'trajectories': []}, self.t / 'apply.log')
+        seg0.unlink()
+        real0.rename(seg0)
+        self.assertEqual({p: p.read_bytes() for p in snapshot}, snapshot)
+        # a nested link inside the next segment refuses the driver before quarantine
+        nxt = own / 'seg-00003' / 'iterations'
+        nxt.mkdir(parents=True)
+        old_attempt = next((self.node.root / 'chains' / 'c1' / 'seg-00001' / 'iterations' / '000003').glob('attempt-*'))
+        (nxt / '000000').symlink_to(old_attempt, target_is_directory=True)
+        with mock.patch.object(chains, 'quarantine', side_effect=AssertionError('no quarantine')), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.drive(plan, 'c1c', cont, 4), w5box.EXIT_REFUSED)
+        self.assertEqual({p: p.read_bytes() for p in snapshot}, snapshot)
+
+
 if __name__ == '__main__':
     unittest.main()

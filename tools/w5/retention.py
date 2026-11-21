@@ -187,6 +187,12 @@ def chain_start(chain):
     return (chain.get('carry') or {}).get('boundary', 0)
 
 
+def unlinked_inside(path, top):
+    """`path` has no symlink in any component and lies inside `top` (both made absolute, `top` resolved)."""
+    absolute = os.path.abspath(path)
+    return os.path.realpath(absolute) == absolute and Path(top).resolve() in Path(absolute).parents
+
+
 def own_files(seg_root, *paths):
     """A carried chain's segment and the files it indexes resolve inside the segment's own chain directory (no link
     out of it), so an index never labels another chain's files with the continuation's boundaries."""
@@ -1015,17 +1021,30 @@ def plan(chain_path, snapshot_from=None, cache=None):
             trajectories.append({'segment': s, 'path': path.as_posix(), 'bytes': path.stat().st_size})
         if cache is not None and not found:
             cache.swept.add(s)
+    out = {'schema': 'w5-retention-plan/v1', 'chain': chain['chain'], 'arm': chain['arm'], 'latest': latest,
+           'snapshot_from': snapshot_from, 'checkpoints': checkpoints, 'trajectories': trajectories,
+           'bytes': sum(c['bytes'] for c in checkpoints) + sum(t['bytes'] for t in trajectories)}
+    if chain.get('carry'):  # absent otherwise: an ordinary plan keeps its bytes
+        own = Path(chain_path).parent.resolve().as_posix()
+        stray = [i['path'] for i in checkpoints + trajectories if not unlinked_inside(i['path'], own)]
+        if stray:
+            raise SystemExit(f'stop: a carried chain\'s retention would delete through a link or outside its '
+                             f'chain directory: {stray[:3]}')
+        out['own_dir'] = own
     if cache is not None:
         cache.settle(gone)
-    return {'schema': 'w5-retention-plan/v1', 'chain': chain['chain'], 'arm': chain['arm'], 'latest': latest,
-            'snapshot_from': snapshot_from, 'checkpoints': checkpoints, 'trajectories': trajectories,
-            'bytes': sum(c['bytes'] for c in checkpoints) + sum(t['bytes'] for t in trajectories)}
+    return out
 
 
 def apply(plan_doc, log_path, hold=None):
     """Deletes (or moves under `hold`, same volume) every planned file, appending one log line per file.
     Checkpoints are regenerable by replay against their recorded hashes; trajectories by recollection."""
     done, touched = 0, []
+    if plan_doc.get('own_dir'):  # a carried chain's plan: every path link-free and inside its chain directory
+        stray = [i['path'] for kind in ('checkpoints', 'trajectories') for i in plan_doc[kind]
+                 if not unlinked_inside(i['path'], plan_doc['own_dir'])]
+        if stray:
+            raise SystemExit(f'stop: the plan would delete through a link or outside {plan_doc["own_dir"]}: {stray[:3]}')
     try:
         with open(log_path, 'a', encoding='utf-8') as log:
             for kind in ('checkpoints', 'trajectories'):

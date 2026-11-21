@@ -631,6 +631,11 @@ def carried_segment_ok(man, arm, cdir, native):
     for d, parent in targets:
         require(not d.is_symlink() and d.resolve().parent == parent.resolve(),
                 f'{cdir.name}: {d} is a link or resolves outside {parent}')
+        if d.is_dir():  # nothing below it may be a link either (quarantine, settle and persist walk it)
+            for dirpath, dirnames, filenames in os.walk(d, followlinks=False):
+                for entry in dirnames + filenames:
+                    require(not os.path.islink(os.path.join(dirpath, entry)),
+                            f'{cdir.name}: {os.path.join(dirpath, entry)} is a link inside a carried segment')
         for t in [old_root] + ([old_scratch] if old_scratch else []):
             require(disjoint(d.resolve(), t), f'{cdir.name}: {d} reaches the carried chain\'s {t}')
 
