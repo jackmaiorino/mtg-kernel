@@ -419,6 +419,18 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual([(m["sha"], m["pull"]) for m in merges], [("c2", 836), ("c3", 837)])
         self.assertIn("first responder the author of #836", line)
 
+    def test_later_jobs_page_is_judged_at_the_first_attempt_cutoff(self):
+        import post_merge_report as report
+        cutoff = "2026-11-21T12:30:00Z"
+        path = "/repos/o/r/actions/runs/8/jobs?per_page=100&filter=all&page="
+        for started, expected in [("2026-11-21T11:00:00Z", True), (cutoff, False)]:
+            pages = {
+                path + "1": {"jobs": [{"conclusion": "cancelled"}] * 100},
+                path + "2": {"jobs": [{"conclusion": "success", "started_at": started}]},
+            }
+            with self.subTest(started=started):
+                self.assertEqual(report.ran(pages.__getitem__, "o/r", {"id": 8}, cutoff), expected)
+
     def test_an_earlier_run_being_rerun_still_bounds_the_range(self):
         # Push run 8 (c2) ran before the red run; it is being rerun now (in progress, a second attempt queued).
         get = self.fake_api(["c0", "c1", "c2", "c3"],
