@@ -713,6 +713,11 @@ fn field_coverage_probe_v1() {
             "opening": "london-v1",
             "feature_contract_digest": base.feature_identity_v1().feature_contract_digest,
             "card_db_hash": format!("{KERNEL_CARDDB_HASH:016x}"),
+            // Source-bound identities of this build, recorded so a change
+            // that moves them is visible next to the per-game digests.
+            "mixed_policy_feature_identity": crate::current_mixed_policy_v1::feature_identity(),
+            "tree_learner_feature_identity_v1":
+                crate::current_tree_learner_v1::feature_identity_v1(),
             "pass_a_classes": classes_a,
             "pass_b_classes": classes_b,
             "disagreements": disagreements,
