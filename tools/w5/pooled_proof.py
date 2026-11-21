@@ -24,43 +24,40 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
 
 POOLED_BACKEND = "pooled-collection-shards-v1"
+# The native trainer formats its attempt number with a minimum width of six.
+ATTEMPT = r"attempt-(?:[0-9]{6}|[1-9][0-9]{6,})"
 
 
 def completion(root: Path) -> dict:
-    """The run's completion receipt: complete and planned iteration count."""
+    """Read the native trainer's ordered pins of published iteration receipts."""
     path = Path(root) / "completion.json"
     if not path.is_file():
         raise ValueError(f"{root}: no completion.json (the run did not finish)")
     document = json.loads(path.read_text())
-    return {"complete": document.get("complete") is True,
-            "planned_iterations": document.get("planned_iterations"),
-            "completed_iterations": document.get("completed_iterations")}
+    if not isinstance(document.get("iterations"), list):
+        raise ValueError(f"{path}: missing iteration receipt list")
+    return document
 
 
-def relocated(root: Path, recorded: str) -> Path:
-    """A path a receipt recorded, under this run's actual root (a reference run is moved aside
-    after it finishes): the part from `iterations/` on, joined to `root`."""
-    text = recorded.replace("\\", "/")
-    marker = "/iterations/"
-    if marker not in text:
-        raise ValueError(f"{recorded}: not inside an iterations directory")
-    return Path(root) / "iterations" / text.rsplit(marker, 1)[1]  # the run's own, the last occurrence
-
-
-def pinned_json(root: Path, pin: dict) -> dict:
-    path = relocated(root, pin["path"])
+def pinned_json(iteration: Path, pin: dict, relative_pattern: str) -> dict:
+    """Relocate a receipt only within its expected iteration and native output layout."""
+    _, marker, relative = pin["path"].replace("\\", "/").rpartition(f"/iterations/{iteration.name}/")
+    if not marker or not re.fullmatch(relative_pattern, relative):
+        raise ValueError(f"{pin['path']}: unexpected receipt path for iteration {iteration.name}")
+    path = iteration / relative
     data = path.read_bytes()
     if hashlib.sha256(data).hexdigest() != pin["sha256"]:
         raise ValueError(f"{path}: differs from the iteration receipt's pin")
     return json.loads(data)
 
 
-def iterations(root: Path) -> dict:
+def iterations(root: Path, complete_pins: list) -> dict:
     """Iteration index -> the receipts its `complete.json` pins. The collection and the update
     can sit in different attempts (a resumed iteration reuses a published collection), so
     both are followed through the completion receipt, never guessed from the attempt layout."""
@@ -68,13 +65,13 @@ def iterations(root: Path) -> dict:
     base = Path(root) / "iterations"
     if not base.is_dir():
         raise ValueError(f"{root}: no iterations directory")
-    for iteration in sorted(p for p in base.iterdir() if p.is_dir()):
-        complete = iteration / "complete.json"
-        if not complete.is_file():
-            continue  # not a completed iteration
-        receipt = json.loads(complete.read_text())
-        update = pinned_json(root, receipt["update"])
-        collection = pinned_json(root, receipt["collection"])
+    for index, pin in enumerate(complete_pins):
+        iteration = base / f"{index:06d}"
+        receipt = pinned_json(iteration, pin, r"complete\.json")
+        if type(receipt.get("iteration")) is not int or receipt["iteration"] != index:
+            raise ValueError(f"{iteration}: completion receipt names another iteration")
+        update = pinned_json(iteration, receipt["update"], rf"{ATTEMPT}/update/update\.json")
+        collection = pinned_json(iteration, receipt["collection"], rf"{ATTEMPT}/collect/collection\.json")
         out[iteration.name] = {
             "after_state_sha256": update["after_state_sha256"],
             "checkpoint_path": update.get("checkpoint", {}).get("path"),
@@ -85,12 +82,15 @@ def iterations(root: Path) -> dict:
 
 
 def compare(reference: Path, pooled: Path, same_root: bool = False) -> dict:
-    ref, pool = iterations(reference), iterations(pooled)
     done_ref, done_pool = completion(reference), completion(pooled)
+    ref = iterations(reference, done_ref["iterations"])
+    pool = iterations(pooled, done_pool["iterations"])
     rows, failures = [], 0
     planned = done_ref["planned_iterations"]
-    runs_ok = (done_ref["complete"] and done_pool["complete"] and isinstance(planned, int) and planned > 0
-               and done_pool["planned_iterations"] == planned and len(ref) == planned and len(pool) == planned)
+    runs_ok = all(done.get("complete") is True and type(done.get("planned_iterations")) is int
+                  and type(done.get("completed_iterations")) is int
+                  and done["planned_iterations"] == done["completed_iterations"] == len(done["iterations"]) == planned
+                  and planned > 0 for done in (done_ref, done_pool))
     failures += not runs_ok
     for name in sorted(set(ref) | set(pool)):
         a, b = ref.get(name), pool.get(name)

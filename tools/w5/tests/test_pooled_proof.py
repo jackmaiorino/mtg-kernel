@@ -22,8 +22,11 @@ def write_run(root: Path, recorded_root: str, states, trajectories, backend="poo
     since); iterations in `resumed` publish their update in attempt-000001 beside the collection
     of attempt-000000, as a crash-resumed iteration does."""
     root.mkdir(parents=True, exist_ok=True)
-    (root / "completion.json").write_text(json.dumps({
-        "complete": complete, "planned_iterations": planned or len(states), "completed_iterations": len(states)}))
+    def recorded(path):
+        return {"path": recorded_root + "/" + path.relative_to(root).as_posix(),
+                "sha256": _pin(path)["sha256"]}
+
+    completed = []
     for index, (state, hashes) in enumerate(zip(states, trajectories)):
         iteration = root / "iterations" / f"{index:06d}"
         collect = iteration / "attempt-000000" / "collect"
@@ -35,11 +38,13 @@ def write_run(root: Path, recorded_root: str, states, trajectories, backend="poo
             "checkpoint": {"path": f"{recorded_root}/iterations/{index:06d}/attempt-000000/update/checkpoint.json"},
             "trajectories": [{"path": "x", "sha256": h} for h in hashes]}))
         (collect / "collection.json").write_text(json.dumps({"collection_backend": backend}))
-        def recorded(path):
-            return {"path": recorded_root + "/" + path.relative_to(root).as_posix(),
-                    "sha256": _pin(path)["sha256"]}
-        (iteration / "complete.json").write_text(json.dumps({
-            "update": recorded(update_dir / "update.json"), "collection": recorded(collect / "collection.json")}))
+        receipt = iteration / "complete.json"
+        receipt.write_text(json.dumps({"iteration": index, "update": recorded(update_dir / "update.json"),
+                                      "collection": recorded(collect / "collection.json")}))
+        completed.append(recorded(receipt))
+    (root / "completion.json").write_text(json.dumps({
+        "complete": complete, "planned_iterations": planned or len(states), "completed_iterations": len(states),
+        "iterations": completed}))
 
 
 LOCAL = "native-cpu-parallel-episodes-v1"
@@ -97,6 +102,39 @@ class PooledProofTests(unittest.TestCase):
         write_ref(self.root / "ref", "/r", ["s0"], [["a"]], planned=2)
         write_run(self.root / "pool", "/r", ["s0"], [["a"]], planned=2)
         self.assertFalse(pp.compare(self.root / "ref", self.root / "pool", same_root=True)["pass"])
+
+    def test_a_backup_directory_cannot_replace_a_missing_planned_iteration(self):
+        for name, writer in [("ref", write_ref), ("pool", write_run)]:
+            root = self.root / name
+            writer(root, "/r", ["s0", "s1"], [["a"], ["b"]])
+            its = root / "iterations"
+            shutil.rmtree(its / "000000")
+            shutil.copytree(its / "000001", its / "000001.backup")
+        with self.assertRaises(FileNotFoundError):
+            pp.compare(self.root / "ref", self.root / "pool", same_root=True)
+
+    def test_pins_must_point_to_the_iteration_they_confirm(self):
+        ref = self.root / "ref"
+        write_ref(ref, "/r", ["s", "s"], [["a"], ["a"]])
+        for field in ("complete", "iteration", "collection", "update"):
+            with self.subTest(field=field):
+                pool = self.root / field
+                write_run(pool, "/r", ["s", "s"], [["a"], ["a"]], resumed=(1,))
+                completion = pool / "completion.json"
+                done = json.loads(completion.read_text())
+                if field == "complete":
+                    done["iterations"][1] = done["iterations"][0]
+                else:
+                    its = pool / "iterations"
+                    first = json.loads((its / "000000" / "complete.json").read_text())
+                    receipt = its / "000001" / "complete.json"
+                    second = json.loads(receipt.read_text())
+                    second[field] = first[field]
+                    receipt.write_text(json.dumps(second))
+                    done["iterations"][1]["sha256"] = _pin(receipt)["sha256"]
+                completion.write_text(json.dumps(done))
+                with self.assertRaises(ValueError):
+                    pp.compare(ref, pool, same_root=True)
 
     def test_an_unfinished_run_fails(self):
         write_ref(self.root / "ref", "/r", ["s0"], [["a"]])
