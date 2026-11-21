@@ -12,7 +12,9 @@ Procedure (same root, one host):
     pooled_proof.py compare --same-root ROOT.reference ROOT
 or run the two at the same ROOT on two hosts and compare copies of their receipts.
 
-`compare` passes when every iteration's after-state is equal. With `--same-root` (the operator
+`compare` passes when both runs completed every planned iteration (each run's `completion.json`
+says complete, with the same planned count), every iteration of the pooled run was collected by
+the pooled backend, and every iteration's after-state is equal. With `--same-root` (the operator
 states that both runs used the same root) every trajectory hash must be equal too; otherwise they
 are reported only. Whether the roots match is never inferred from the receipts: a retried attempt
 changes recorded paths without changing the root. Exit 0 on pass, 1 on a difference, 2 on bad input.
@@ -22,6 +24,20 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+
+
+POOLED_BACKEND = "pooled-collection-shards-v1"
+
+
+def completion(root: Path) -> dict:
+    """The run's completion receipt: complete and planned iteration count."""
+    path = Path(root) / "completion.json"
+    if not path.is_file():
+        raise ValueError(f"{root}: no completion.json (the run did not finish)")
+    document = json.loads(path.read_text())
+    return {"complete": document.get("complete") is True,
+            "planned_iterations": document.get("planned_iterations"),
+            "completed_iterations": document.get("completed_iterations")}
 
 
 def iterations(root: Path) -> dict:
@@ -34,6 +50,8 @@ def iterations(root: Path) -> dict:
         attempts = sorted(iteration.glob("attempt-*/update/update.json"))
         if not attempts:
             continue
+        if not (iteration / "complete.json").is_file():
+            continue  # not a completed iteration
         update = json.loads(attempts[-1].read_text())
         collection_path = attempts[-1].parent.parent / "collect" / "collection.json"
         collection = json.loads(collection_path.read_text()) if collection_path.exists() else {}
@@ -48,7 +66,12 @@ def iterations(root: Path) -> dict:
 
 def compare(reference: Path, pooled: Path, same_root: bool = False) -> dict:
     ref, pool = iterations(reference), iterations(pooled)
+    done_ref, done_pool = completion(reference), completion(pooled)
     rows, failures = [], 0
+    planned = done_ref["planned_iterations"]
+    runs_ok = (done_ref["complete"] and done_pool["complete"] and isinstance(planned, int) and planned > 0
+               and done_pool["planned_iterations"] == planned and len(ref) == planned and len(pool) == planned)
+    failures += not runs_ok
     for name in sorted(set(ref) | set(pool)):
         a, b = ref.get(name), pool.get(name)
         if a is None or b is None:
@@ -57,11 +80,13 @@ def compare(reference: Path, pooled: Path, same_root: bool = False) -> dict:
             continue
         states = a["after_state_sha256"] == b["after_state_sha256"]
         trajectories = a["trajectories"] == b["trajectories"]
-        ok = states and (trajectories or not same_root)
+        pooled_backend = b["collection_backend"] == POOLED_BACKEND
+        ok = states and pooled_backend and (trajectories or not same_root)
         failures += not ok
         rows.append({"iteration": name, "after_state_equal": states, "trajectories_equal": trajectories,
                      "pooled_backend": b["collection_backend"], "pass": ok})
-    return {"schema": "mtg-kernel-pooled-proof/v1", "same_root": same_root, "iterations": len(rows),
+    return {"schema": "mtg-kernel-pooled-proof/v1", "same_root": same_root, "runs_complete": runs_ok,
+            "planned_iterations": planned, "iterations": len(rows),
             "passed": len(rows) - failures, "pass": failures == 0 and bool(rows), "rows": rows}
 
 

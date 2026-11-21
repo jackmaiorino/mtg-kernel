@@ -11,7 +11,11 @@ sys.path.insert(0, str(HERE))
 import pooled_proof as pp  # noqa: E402
 
 
-def write_run(root: Path, recorded_root: str, states, trajectories, backend="native-cpu-parallel-episodes-v1"):
+def write_run(root: Path, recorded_root: str, states, trajectories, backend="pooled-collection-shards-v1",
+              planned=None, complete=True):
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "completion.json").write_text(json.dumps({
+        "complete": complete, "planned_iterations": planned or len(states), "completed_iterations": len(states)}))
     for index, (state, hashes) in enumerate(zip(states, trajectories)):
         attempt = root / "iterations" / f"{index:06d}" / "attempt-000000"
         (attempt / "update").mkdir(parents=True)
@@ -21,6 +25,7 @@ def write_run(root: Path, recorded_root: str, states, trajectories, backend="nat
             "checkpoint": {"path": f"{recorded_root}/iterations/{index:06d}/attempt-000000/update/checkpoint.json"},
             "trajectories": [{"path": "x", "sha256": h} for h in hashes]}))
         (attempt / "collect" / "collection.json").write_text(json.dumps({"collection_backend": backend}))
+        (attempt.parent / "complete.json").write_text("{}")
 
 
 class PooledProofTests(unittest.TestCase):
@@ -54,10 +59,25 @@ class PooledProofTests(unittest.TestCase):
 
     def test_a_missing_iteration_fails(self):
         write_run(self.root / "ref", "/r", ["s0", "s1"], [["a"], ["b"]])
-        write_run(self.root / "pool", "/r", ["s0"], [["a"]])
+        write_run(self.root / "pool", "/r", ["s0"], [["a"]], planned=2)
         report = pp.compare(self.root / "ref", self.root / "pool")
         self.assertFalse(report["pass"])
         self.assertEqual(report["rows"][1]["missing_in"], "pooled")
+
+    def test_the_same_iteration_missing_from_both_runs_fails(self):
+        write_run(self.root / "ref", "/r", ["s0"], [["a"]], planned=2)
+        write_run(self.root / "pool", "/r", ["s0"], [["a"]], planned=2)
+        self.assertFalse(pp.compare(self.root / "ref", self.root / "pool", same_root=True)["pass"])
+
+    def test_an_unfinished_run_fails(self):
+        write_run(self.root / "ref", "/r", ["s0"], [["a"]])
+        write_run(self.root / "pool", "/r", ["s0"], [["a"]], complete=False)
+        self.assertFalse(pp.compare(self.root / "ref", self.root / "pool")["pass"])
+
+    def test_a_pooled_tree_collected_locally_fails(self):
+        write_run(self.root / "ref", "/r", ["s0"], [["a"]])
+        write_run(self.root / "pool", "/r", ["s0"], [["a"]], backend="native-cpu-parallel-episodes-v1")
+        self.assertFalse(pp.compare(self.root / "ref", self.root / "pool", same_root=True)["pass"])
 
 
 if __name__ == "__main__":
