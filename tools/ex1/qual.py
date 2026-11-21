@@ -431,9 +431,170 @@ def pass_offset_value(pass_offset, u):
     return value
 
 
+POSTBOARD_TAG = "postboard-exposure-v1"  # the domain of every draw below
+POSTBOARD_KEYS = frozenset({"share", "max_swaps", "rule", "seats", "keep_ids"})
+POSTBOARD_RULES = ("uniform-swaps-v1",)
+POSTBOARD_SEATS = ("learner-and-current-v1",)
+POSTBOARD_MAIN, POSTBOARD_SIDE = 60, 15  # the trainer's exact registration (sideboard.rs)
+POSTBOARD_MAX_DENOMINATOR = 1 << 20
+POSTBOARD_MAX_CARD_ID = (1 << 16) - 1  # card ids are u16 in the trainer's deck lists
+POSTBOARD_OPPONENT_KINDS = ("current", "fixed", "initial")  # the seat rule reads the kind, so it must be one it knows
+
+
+def _is_index(value, low, high):
+    return type(value) is int and low <= value <= high
+
+
+def validate_postboard_exposure(spec, base=None):
+    """The checked, normalized post-board exposure `{"share": [n, d], "max_swaps": k, "rule": "uniform-swaps-v1",
+    "seats": "learner-and-current-v1", "keep_ids": [card ids]}` (a new dict). Raises ValueError for anything that is
+    not exactly that form: a non-mapping, missing or unknown keys, a share that is not two ints with
+    1 <= n <= d <= 2^20 (a bool is not an int), max_swaps not an int in [1, 15], an unknown rule or seat rule, or
+    keep_ids that is not a strictly increasing list of card ids (each an int in [0, 65535]; it may be empty).
+
+    The meaning (`postboard_exposure_episode`): a share n / d of the episodes are drawn for exposure; in such a game
+    each exposed seat exchanges k' mainboard positions for k' sideboard positions of its registered 75, k' uniform in
+    [1, max_swaps]. `keep_ids` are the card ids that are never taken out of a mainboard (the declared protected set:
+    the lands, so a random exchange cannot remove a deck's mana). The exchange counts positions, not card names: a
+    position exchanged for a copy of the same card changes nothing, so where a card id is in both lists the number of
+    cards that change can be below k', and a drawn game whose exchanges all cancel stays a game one. The share of
+    post-board games is therefore at most n / d, and equal to it when no deck has a card id in both lists.
+
+    With `base` (an OH1/OH2 base), also raises unless every episode can be a post-board game (`check_postboard_base`)."""
+    if not isinstance(spec, dict):
+        raise ValueError("postboard_exposure must be an object {share, max_swaps, rule, seats, keep_ids}")
+    unknown = sorted(str(k) for k in set(spec) - POSTBOARD_KEYS)
+    if unknown:
+        raise ValueError(f"postboard_exposure has unknown keys {unknown}")
+    missing = sorted(POSTBOARD_KEYS - set(spec))
+    if missing:
+        raise ValueError(f"postboard_exposure lacks {missing}")
+    share, swaps, rule, seats, keep = (spec[k] for k in ("share", "max_swaps", "rule", "seats", "keep_ids"))
+    if not (isinstance(share, list) and len(share) == 2 and _is_index(share[1], 1, POSTBOARD_MAX_DENOMINATOR)
+            and _is_index(share[0], 1, share[1])):
+        raise ValueError("postboard_exposure share must be [n, d], two integers with 1 <= n <= d <= 2^20, "
+                         f"got {share!r}")
+    if not _is_index(swaps, 1, POSTBOARD_SIDE):
+        raise ValueError(f"postboard_exposure max_swaps must be an integer in [1, {POSTBOARD_SIDE}], got {swaps!r}")
+    if rule not in POSTBOARD_RULES:
+        raise ValueError(f"postboard_exposure rule must be one of {POSTBOARD_RULES}, got {rule!r}")
+    if seats not in POSTBOARD_SEATS:
+        raise ValueError(f"postboard_exposure seats must be one of {POSTBOARD_SEATS}, got {seats!r}")
+    if not (isinstance(keep, list) and all(_is_index(i, 0, POSTBOARD_MAX_CARD_ID) for i in keep)
+            and all(a < b for a, b in zip(keep, keep[1:]))):
+        raise ValueError("postboard_exposure keep_ids must be a strictly increasing list of card ids in [0, 65535]")
+    normalized = {"share": list(share), "max_swaps": swaps, "rule": rule, "seats": seats, "keep_ids": list(keep)}
+    if base is not None:
+        check_postboard_base(base, normalized)
+    return normalized
+
+
+def check_postboard_base(base, spec=None):
+    """Raises ValueError unless every episode of `base` can be turned into a post-board game: it is a game one today
+    (`postboard` false, `selected` equal to `registered`), both seats register exactly 60 and 15 card ids (the
+    trainer's own registration), it has no reset start and no search opponent (a recorded prefix or a search
+    descriptor belongs to the registered 60), and its entry names an opponent kind the seat rule knows. With
+    `spec` (a normalized exposure), also raises unless every registration has at least max_swaps mainboard positions
+    outside keep_ids, so the number of positions exchanged is never cut short and stays uniform."""
+    keep = set(spec["keep_ids"]) if spec is not None else None
+    for i, item in enumerate(base["iterations"]):
+        for j, entry in enumerate(item["episodes"]):
+            episode = entry["episode"]
+            where = f"iteration {i} episode {j}"
+            if episode.get("postboard") is not False:
+                raise ValueError(f"{where}: postboard_exposure needs a game-one base (postboard false); the exposure "
+                                 "is the only writer of a post-board game")
+            registered, selected = episode.get("registered"), episode.get("selected")
+            if not (isinstance(registered, list) and len(registered) == 2 and registered == selected):
+                raise ValueError(f"{where}: postboard_exposure needs two registrations with selected equal to "
+                                 "registered")
+            for deck in registered:
+                main, side = (deck.get(k) if isinstance(deck, dict) else None for k in ("mainboard", "sideboard"))
+                if not (isinstance(main, list) and len(main) == POSTBOARD_MAIN and isinstance(side, list)
+                        and len(side) == POSTBOARD_SIDE
+                        and all(_is_index(c, 0, POSTBOARD_MAX_CARD_ID) for c in main + side)):
+                    raise ValueError(f"{where}: postboard_exposure needs registrations of exactly {POSTBOARD_MAIN} "
+                                     f"mainboard and {POSTBOARD_SIDE} sideboard card ids")
+                if keep is not None and sum(card not in keep for card in main) < spec["max_swaps"]:
+                    raise ValueError(f"{where}: postboard_exposure needs at least max_swaps ({spec['max_swaps']}) "
+                                     f"mainboard cards outside keep_ids in every registration "
+                                     f"({deck.get('label')!r} has fewer)")
+            if not _is_index(episode.get("learner_seat"), 0, 1):
+                raise ValueError(f"{where}: postboard_exposure needs a learner seat of 0 or 1")
+            for key in ("reset", "opponent_search"):
+                if episode.get(key) is not None:
+                    raise ValueError(f"{where}: postboard_exposure is refused with {key}")
+            kind = (entry.get("opponent") or {}).get("kind")
+            if kind not in POSTBOARD_OPPONENT_KINDS:
+                raise ValueError(f"{where}: postboard_exposure needs an opponent kind in {POSTBOARD_OPPONENT_KINDS}, "
+                                 f"got {kind!r}")
+
+
+def _postboard_key(parts):
+    """A 256-bit integer from the canonical JSON of `parts`: a draw is a remainder of it (the bias of a remainder
+    below 2^20 is under 2^-235) or the order of several of them (a uniform subset without replacement)."""
+    text = json.dumps(list(parts), separators=(",", ":"))
+    return int.from_bytes(hashlib.sha256(text.encode()).digest(), "big")
+
+
+def postboard_exposure_seats(entry):
+    """The physical seats the exposure may change under `learner-and-current-v1`: the learner seat, and the other
+    seat when the entry's opponent is the current policy. A fixed (or initial) opponent seat keeps its registered 60:
+    it plays the surface its checkpoint was trained on."""
+    learner = entry["episode"]["learner_seat"]
+    return [learner, 1 - learner] if entry["opponent"]["kind"] == "current" else [learner]
+
+
+def postboard_exposure_swap(deck, spec, key):
+    """`deck` (a registration `{label, mainboard, sideboard}`) with k' positions exchanged, as a new dict with both
+    lists sorted, or None when the exchange leaves the mainboard as it was (every position was exchanged for a copy
+    of the same card). k' = 1 + draw mod max_swaps; a base admitted by `check_postboard_base` always has that many
+    movable positions (a direct caller with fewer gets as many as there are). The positions out are the k' mainboard
+    positions (of those whose card id is not in keep_ids) with the smallest keys; the positions in are the k'
+    sideboard positions with the smallest keys. `key` is the list that names this seat's draws. `deck` is not
+    modified."""
+    main, side = list(deck["mainboard"]), list(deck["sideboard"])
+    keep = set(spec["keep_ids"])
+    movable = [i for i, card in enumerate(main) if card not in keep]
+    count = min(1 + _postboard_key(key + ["count"]) % spec["max_swaps"], len(movable), len(side))
+    outs = sorted(movable, key=lambda i: _postboard_key(key + ["out", i]))[:count]
+    ins = sorted(range(len(side)), key=lambda i: _postboard_key(key + ["in", i]))[:count]
+    new_main = sorted([c for i, c in enumerate(main) if i not in set(outs)] + [side[i] for i in ins])
+    new_side = sorted([c for i, c in enumerate(side) if i not in set(ins)] + [main[i] for i in outs])
+    if new_main == sorted(main):
+        return None
+    return dict(deck, mainboard=new_main, sideboard=new_side)
+
+
+def postboard_exposure_episode(entry, spec, namespace, run, update, slot):
+    """Applies the exposure to one config entry in place and returns whether it became a post-board game. The game is
+    drawn when sha256([tag, namespace, run, update, slot, "gate"]) mod d < n; then each exposed seat
+    (`postboard_exposure_seats`) gets its own exchange (`postboard_exposure_swap`). When at least one mainboard
+    changed, `selected` holds the result (new lists; a seat that did not change keeps its registration's values) and
+    `postboard` is true. `registered` never changes, so every selected 60 and 15 conserves its registered 75. A
+    drawn game whose exchanges all cancel stays a game one, byte for byte (possible only when a card id is in both
+    lists of a deck)."""
+    episode = entry["episode"]
+    key = [POSTBOARD_TAG, namespace, run, update, slot]
+    numerator, denominator = spec["share"]
+    if _postboard_key(key + ["gate"]) % denominator >= numerator:
+        return False
+    selected = [dict(deck) for deck in episode["selected"]]
+    changed = False
+    for seat in postboard_exposure_seats(entry):
+        swapped = postboard_exposure_swap(episode["registered"][seat], spec, key + ["seat", seat])
+        if swapped is not None:
+            selected[seat] = swapped
+            changed = True
+    if changed:
+        episode["selected"] = selected
+        episode["postboard"] = True
+    return changed
+
+
 def build_config(base, dose, root, run, namespace, offset, updates, workers, coefficient=None, kappa=None,
                  prep_workers=None, keep_offset=None, pregame_advantage=None, pregame_announcement_step_scale=None,
-                 pass_offset=None):
+                 pass_offset=None, postboard_exposure=None):
     """An RT1 run config from an OH1/OH2 base and a dose record: the base's schedule from global update `offset`,
     episode ids and deal seeds keyed by (namespace, run, update, slot), and EX1 when `coefficient` is given.
 
@@ -448,7 +609,12 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
 
     `pregame_advantage` ("terminal_v1", see `validate_pregame_advantage`) adds that key to the config's
     `loss_selection`; without it the loss_selection is exactly the base's. `pregame_announcement_step_scale`
-    (`validate_pregame_announcement_step_scale`) adds that key too, only with the terminal mode."""
+    (`validate_pregame_announcement_step_scale`) adds that key too, only with the terminal mode.
+
+    `postboard_exposure` (`validate_postboard_exposure`) turns a declared share of the episodes into post-board
+    games: `selected` differs from `registered` on the exposed seats and `postboard` is true
+    (`postboard_exposure_episode`), drawn per (namespace, run, update, slot), so a segment's games do not depend on
+    where the segment starts. Without it every episode is left exactly as the base has it."""
     check_base_names_no_pregame_scale(base)
     pregame_announcement_step_scale = validate_pregame_announcement_step_scale(pregame_announcement_step_scale, pregame_advantage)
     if pregame_advantage is not None:
@@ -467,6 +633,13 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
             raise ValueError(f"pass_offset needs a non-negative global update offset, got {offset}")
         if coefficient is not None:
             raise ValueError("pass_offset is refused with an EX1 coefficient (the trainer refuses the offset with ex1)")
+    if postboard_exposure is not None:
+        postboard_exposure = validate_postboard_exposure(postboard_exposure, base)
+        if offset < 0:
+            raise ValueError(f"postboard_exposure needs a non-negative global update offset, got {offset}")
+        if coefficient is not None:
+            raise ValueError("postboard_exposure is refused with an EX1 coefficient (search roots and placements "
+                             "belong to the registered 60)")
     source = dose["source"]
     check_pass_offset_source(pass_offset, source, offset)
     # An S source starting from its initial train state (W5's XS parent, S0) has no checkpoint; its pin is
@@ -500,6 +673,8 @@ def build_config(base, dose, root, run, namespace, offset, updates, workers, coe
                 value = pass_offset_value(pass_offset, update)
                 if value is not None:
                     episode["priority_pass_offset"] = value
+            if postboard_exposure is not None:
+                postboard_exposure_episode(entry, postboard_exposure, namespace, run, update, j)
         iterations.append(item)
     cfg = {k: copy.deepcopy(v) for k, v in base.items() if k != "iterations"}
     if pregame_advantage is not None:
