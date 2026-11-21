@@ -6,7 +6,10 @@ non-token card in the `eternal-fixtures` build's three registries.
 
 - ``check-registries``: no stale, duplicate or mislabelled rows; registry cards
   without a row are counted, and are problems only with ``--strict``.
-- ``deck FILE``: print each card of a plain decklist that is not ``legal``.
+- ``deck FILE``: print each card of a plain decklist that is not ``legal``. A name is
+  resolved as spelled, then through the file's ``aliases``, then with split-card slash
+  spacing normalized, then with diacritics folded; a fuzzy step must give exactly one
+  registry name, else the card is ``unlisted``.
 - ``summary``: row counts by registry and status.
 """
 
@@ -16,7 +19,9 @@ import argparse
 from collections import Counter
 import json
 from pathlib import Path
+import re
 import sys
+import unicodedata
 from typing import Any
 
 import eternal_meta_census_v1 as census
@@ -69,6 +74,12 @@ def registry_problems(legality: dict[str, Any], registries: dict[str, list[str]]
             problems.append(f"{name}: row registry {found[0]['registry']!r}, registry {label!r}")
     for name in sorted(set(rows) - set(expected)):
         problems.append(f"{name}: row without a non-token registry card")
+    row_names = set(rows)
+    for alias, target in sorted(legality.get("aliases", {}).items()):
+        if target not in row_names:
+            problems.append(f"alias {alias}: target {target} is not a row")
+        if alias in expected or alias in row_names:
+            problems.append(f"alias {alias}: equals a registry name")
     for name in legality.get("unresolved", []):
         problems.append(f"{name}: unresolved")
     names = [row["name"] for row in legality["cards"]]
@@ -77,18 +88,56 @@ def registry_problems(legality: dict[str, Any], registries: dict[str, list[str]]
     return problems
 
 
-def deck_problems(legality: dict[str, Any], text: str) -> list[tuple[str, str]]:
-    """Cards of a decklist, mainboard then sideboard, that are not legal, with their status."""
+def slash_form(name: str) -> str:
+    """Split-card spacing: ``A/B``, ``A / B`` and ``A // B`` all become ``A // B``."""
+    return re.sub(r"\s*/{1,2}\s*", " // ", name)
+
+
+def ascii_fold(name: str) -> str:
+    """Strip diacritics by Unicode decomposition."""
+    return "".join(ch for ch in unicodedata.normalize("NFD", name) if not unicodedata.combining(ch))
+
+
+def resolve_name(legality: dict[str, Any], name: str) -> tuple[str | None, str]:
+    """Registry row a decklist spelling means, and how it was found.
+
+    Order: exact name, alias, slash-spacing normalization, ASCII fold. The last two count
+    only when they give exactly one row name; otherwise the result is ``(None, "unlisted")``.
+    """
+    rows = {row["name"] for row in legality["cards"]}
+    if name in rows:
+        return name, "exact"
+    target = legality.get("aliases", {}).get(name)
+    if target in rows:
+        return target, "alias"
+    slashed = slash_form(name)
+    found = {row for row in rows if slash_form(row) == slashed}
+    if len(found) == 1:
+        return found.pop(), "slash"
+    folded = ascii_fold(slashed)
+    found = {row for row in rows if ascii_fold(slash_form(row)) == folded}
+    if len(found) == 1:
+        return found.pop(), "fold"
+    return None, "unlisted"
+
+
+def deck_problems(legality: dict[str, Any], text: str) -> list[tuple[str, str, str | None]]:
+    """Cards of a decklist, mainboard then sideboard, that are not legal.
+
+    Each entry is the name as the decklist spelled it, its status and, when an alias or
+    an ASCII fold resolved it, the registry name.
+    """
     status = {row["name"]: row["pauper"] for row in legality["cards"]}
     zones = census.parse_list(text)
     seen: set[str] = set()
     out = []
     for zone in ("mainboard", "sideboard"):
         for _, name in zones[zone]:
-            state = status.get(name, "unlisted")
+            row, how = resolve_name(legality, name)
+            state = status[row] if row is not None else "unlisted"
             if state != "legal" and name not in seen:
                 seen.add(name)
-                out.append((name, state))
+                out.append((name, state, row if how in ("alias", "fold") else None))
     return out
 
 
@@ -120,8 +169,8 @@ def main(argv: list[str] | None = None) -> int:
         return int(bool(problems))
     if args.command == "deck":
         problems = deck_problems(legality, args.file.read_text(encoding="utf-8"))
-        for name, state in problems:
-            print(f"{name}: {state}")
+        for name, state, row in problems:
+            print(f"{name}: {state}" + (f" (registry name: {row})" if row else ""))
         return int(bool(problems))
     for label, value in summary(legality).items():
         print(label, sum(value.values()), value)

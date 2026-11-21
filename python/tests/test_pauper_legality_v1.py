@@ -92,6 +92,86 @@ class PauperLegalityTest(unittest.TestCase):
         code, out = self.deck_run("4 Not A Real Card\n")
         self.assertEqual((code, out), (1, "Not A Real Card: unlisted\n"))
 
+    def test_deck_accepts_export_spellings_of_legal_cards(self):
+        legality = legality_tool.load_legality()
+        status = {row["name"]: row["pauper"] for row in legality["cards"]}
+        for line, registry_name in (("1 Fire/Ice", "Fire // Ice"),
+                                    ("4 L\u00f3rien Revealed", "Lorien Revealed"),
+                                    ("3 Troll of Khazad-d\u00fbm", "Troll of Khazad-dum")):
+            self.assertEqual(status[registry_name], "legal", registry_name)
+            self.assertEqual(self.deck_run(line + "\n"), (0, ""), line)
+        self.assertEqual(self.deck_run("1 Fire/Ice\n4 L\u00f3rien Revealed\n\nSideboard\n3 Troll of Khazad-d\u00fbm\n"),
+                         (0, ""))
+
+    def test_resolve_name_order_is_exact_alias_slash_then_fold(self):
+        legality = legality_tool.load_legality()
+        for spelled, how in (("Fire // Ice", "exact"), ("Fire/Ice", "alias"), ("Fire / Ice", "slash"),
+                             ("L\u00f3rien Revealed", "alias"), ("Lorien Revealed", "exact"),
+                             ("Palant\u00edr of Orthanc", "alias"), ("Lightning Bolt", "exact"),
+                             ("Lightning B\u00f3lt", "fold")):
+            row, found = legality_tool.resolve_name(legality, spelled)
+            self.assertIsNotNone(row, spelled)
+            self.assertEqual(found, how, spelled)
+
+    def test_deck_prints_the_registry_name_of_a_resolved_card_that_is_not_legal(self):
+        legality = {"cards": [{"name": "Troll of Khazad-dum", "registry": "eternal_v1", "pauper": "not_legal"},
+                              {"name": "Fire // Ice", "registry": "eternal_v1", "pauper": "banned"}],
+                    "aliases": {"Fire/Ice": "Fire // Ice"}}
+        text = "1 Troll of Khazad-d\u00fbm\n1 Fire/Ice\n1 Fire / Ice\n"
+        self.assertEqual(legality_tool.deck_problems(legality, text),
+                         [("Troll of Khazad-d\u00fbm", "not_legal", "Troll of Khazad-dum"),
+                          ("Fire/Ice", "banned", "Fire // Ice"),
+                          ("Fire / Ice", "banned", None)])
+        path = self.write_json(legality)
+        deck = Path(path).with_name("deck.txt")
+        deck.write_text(text, encoding="utf-8")
+        code, out, _ = run_tool("--legality", path, "deck", str(deck))
+        self.assertEqual(code, 1)
+        self.assertEqual(out.splitlines(), ["Troll of Khazad-d\u00fbm: not_legal (registry name: Troll of Khazad-dum)",
+                                            "Fire/Ice: banned (registry name: Fire // Ice)",
+                                            "Fire / Ice: banned"])
+
+    def test_deck_keeps_unknown_and_ambiguous_names_unlisted(self):
+        code, out = self.deck_run("4 Not A Real Card\n1 Fire/Ice\n")
+        self.assertEqual((code, out), (1, "Not A Real Card: unlisted\n"))
+        legality = {"cards": [{"name": "Cafe", "registry": "eternal_v1", "pauper": "legal"},
+                              {"name": "Caf\u00e9", "registry": "eternal_v1", "pauper": "legal"},
+                              {"name": "Ant // Bee", "registry": "eternal_v1", "pauper": "legal"},
+                              {"name": "Ant / Bee", "registry": "eternal_v1", "pauper": "legal"}]}
+        self.assertEqual(legality_tool.resolve_name(legality, "Caf\u00e8"), (None, "unlisted"))
+        self.assertEqual(legality_tool.resolve_name(legality, "Caf\u00e9"), ("Caf\u00e9", "exact"))
+        self.assertEqual(legality_tool.resolve_name(legality, "Ant/Bee"), (None, "unlisted"))
+        self.assertEqual(legality_tool.deck_problems(legality, "1 Caf\u00e8\n"), [("Caf\u00e8", "unlisted", None)])
+
+    def write_json(self, value: dict) -> str:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "legality.json"
+        path.write_text(json.dumps(value), encoding="utf-8")
+        return str(path)
+
+    def test_registry_problems_flag_a_dangling_alias_and_an_alias_equal_to_a_name(self):
+        registries = {"pauper_v1": ["Bolt"], "standard": ["Cut Down"], "eternal_v1": []}
+        rows = [{"name": "Bolt", "registry": "pauper_v1", "pauper": "legal"},
+                {"name": "Cut Down", "registry": "standard", "pauper": "legal"}]
+        legality = {"cards": rows,
+                    "aliases": {"Lightning Bolt": "Bolt", "Bolt/Cut": "Missing", "Cut Down": "Bolt"}}
+        problems = legality_tool.registry_problems(legality, registries)
+        self.assertEqual(sorted(problems), ["alias Bolt/Cut: target Missing is not a row",
+                                            "alias Cut Down: equals a registry name"])
+        self.assertEqual(legality_tool.registry_problems({"cards": rows}, registries), [])
+
+    def test_committed_aliases_point_at_rows_and_cover_the_known_spellings(self):
+        legality = legality_tool.load_legality()
+        aliases = legality["aliases"]
+        rows = {row["name"] for row in legality["cards"]}
+        self.assertTrue(set(aliases.values()) <= rows)
+        self.assertFalse(set(aliases) & rows)
+        self.assertEqual(aliases["Fire/Ice"], "Fire // Ice")
+        self.assertEqual(aliases["L\u00f3rien Revealed"], "Lorien Revealed")
+        self.assertEqual(aliases["Troll of Khazad-d\u00fbm"], "Troll of Khazad-dum")
+        self.assertIn("aliases", legality["note"])
+
 
 class PauperFieldSnapshotTest(unittest.TestCase):
     def test_snapshot_parses_and_the_census_runs_on_it(self):
