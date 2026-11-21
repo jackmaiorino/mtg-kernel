@@ -39,17 +39,9 @@ use crate::trigger::TriggeredAbilityDef;
 use serde::{Deserialize, Serialize};
 
 pub(crate) fn beam_me_up_cost(def: &CardDef) -> Option<&'static [crate::card_def::CostComponent]> {
-    use crate::card_def::{CostComponent, PermanentFilterDef};
-    use crate::mana::{Cost, ManaColor, Pip};
-    const COST: &[CostComponent] = &[
-        CostComponent::Mana(Cost {
-            pips: &[Pip::Colored(ManaColor::R)],
-            generic: 2,
-            x_count: 0,
-        }),
-        CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::CreatureV1),
-    ];
-    (cfg!(feature = "eternal-fixtures") && def.name == "Boarding Action").then_some(COST)
+    def.alt_cost
+        .filter(|alt| alt.condition == crate::card_def::AltCostCondition::BeamMeUpV1)
+        .map(|alt| alt.components)
 }
 
 pub(crate) const FLING: &str = "Fling";

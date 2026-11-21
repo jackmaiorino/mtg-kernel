@@ -201,9 +201,6 @@ impl SelectedSpellManaCostsV1 {
             CastMethodV4::Alternative => Some(definition.alt_cost?.components),
             CastMethodV4::Flashback if self.granted_flashback_v1 => Some(&[][..]),
             CastMethodV4::Flashback => Some(flashback_cost_v1(definition)?),
-            CastMethodV4::BeamMeUp => {
-                Some(crate::eternal_pauper_pf1c_v1::beam_me_up_cost(definition)?)
-            }
             CastMethodV4::Escape => Some(escape_cost_v1(definition)?),
             _ => None,
         };
@@ -709,9 +706,6 @@ pub(super) fn selected_spell_mana_costs_v1(
             }
         }
         CastMethodV4::Flashback => selected.components(flashback_cost_v1(definition)?),
-        CastMethodV4::BeamMeUp => {
-            selected.components(crate::eternal_pauper_pf1c_v1::beam_me_up_cost(definition)?)
-        }
         CastMethodV4::Escape => selected.components(escape_cost_v1(definition)?),
         CastMethodV4::Madness => selected.costs.push(definition.madness_cost?),
         CastMethodV4::Plotted => {
@@ -1005,6 +999,8 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         if (matches!(method, CastMethodV4::Normal | CastMethodV4::Alternative)
             || (method == CastMethodV4::Omen
                 && crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name)))
+            && !(method == CastMethodV4::Alternative
+                && crate::eternal_pauper_pf1c_v1::beam_me_up_cost(definition).is_some())
             && (grant == Some(super::sphinx_lore_cast_v1::CostGrant::Retrace)
                 || crate::eternal_vintage_e7b_v1::retrace_quote(state, source, player))
         {
@@ -1937,10 +1933,7 @@ pub(super) fn prepare_final_spell_payment_v1(
     prepared.mana.commit(&mut projected, player, source);
     let base_count = usize::from(matches!(
         method,
-        CastMethodV4::Alternative
-            | CastMethodV4::Flashback
-            | CastMethodV4::BeamMeUp
-            | CastMethodV4::Escape
+        CastMethodV4::Alternative | CastMethodV4::Flashback | CastMethodV4::Escape
     ));
     let groups = selected
         .component_groups

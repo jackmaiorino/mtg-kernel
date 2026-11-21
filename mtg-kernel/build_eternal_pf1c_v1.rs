@@ -60,9 +60,12 @@ pub(super) fn attachment_for(_name: &str) -> &'static str {
     "None"
 }
 
-/// No Pf1c card has an alternative cost yet.
-pub(super) fn alt_cost_for(_name: &str) -> &'static str {
-    "None"
+/// Boarding Action's own graveyard cast pays {2}{R} and returns a creature.
+pub(super) fn alt_cost_for(name: &str) -> &'static str {
+    match name {
+        "Boarding Action" => "Some(AltCostDef { components: &[CostComponent::Mana(Cost { pips: &[Pip::Colored(ManaColor::R)], generic: 2, x_count: 0 }), CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::CreatureV1)], condition: AltCostCondition::BeamMeUpV1 })",
+        _ => "None",
+    }
 }
 
 /// Boarding Action's Klingon Warrior token has haste. (No Pf1c card has a

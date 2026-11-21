@@ -250,7 +250,7 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
                         crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def)
                             .ok_or("Beam me up cost absent")?,
                     )?,
-                    crate::state::CastMethodV4::BeamMeUp,
+                    crate::state::CastMethodV4::Alternative,
                 ),
                 public::RouteV1::Breach => (
                     public::costs(

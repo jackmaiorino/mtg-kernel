@@ -186,7 +186,7 @@ pub(crate) fn options_record(state: &GameState, index: u64) -> Result<&OptionsV1
 fn method(route: RouteV1) -> CastMethodV4 {
     match route {
         RouteV1::Normal | RouteV1::Retrace => CastMethodV4::Normal,
-        RouteV1::BeamMeUp => CastMethodV4::BeamMeUp,
+        RouteV1::BeamMeUp => CastMethodV4::Alternative,
         RouteV1::Escape | RouteV1::Breach => CastMethodV4::Escape,
         _ => CastMethodV4::Flashback,
     }
@@ -454,6 +454,10 @@ pub(super) fn answer(state: &mut GameState, p: &PendingCast, index: u16) -> Resu
     live.source_contract = source;
     live.is_flashback = is_flashback;
     live.cast_mode = if source.cast_method == CastMethodV4::Normal
+        && crate::eternal_pauper_pf1c_v1::beam_me_up_cost(
+            &card_def::CARD_DEFS[source.card_def as usize],
+        )
+        .is_none()
         && card_def::CARD_DEFS[source.card_def as usize]
             .alt_cost
             .is_some()

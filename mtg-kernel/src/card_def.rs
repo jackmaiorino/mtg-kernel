@@ -2612,6 +2612,8 @@ pub enum AltCostCondition {
     /// "If it's your turn" (Mine Collapse, Vintage Cube wave C1c). Appended
     /// for the eternal catalog.
     YourTurnV1,
+    /// Boarding Action may pay its Beam me up cost only from its graveyard.
+    BeamMeUpV1,
 }
 
 /// The ordered cost of casting a card from the graveyard via flashback

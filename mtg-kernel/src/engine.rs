@@ -2549,7 +2549,7 @@ fn validate_physical_spell_cast_origin(
         SpellCastRouteV4::BeamMeUpV1 => {
             origin.origin_zone == Zone::Graveyard
                 && source.owner == caster
-                && cast_method == CastMethodV4::BeamMeUp
+                && cast_method == CastMethodV4::Alternative
                 && crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some()
         }
         SpellCastRouteV4::SnapcasterFlashbackV1 => {
@@ -2836,8 +2836,6 @@ fn validate_spell_source_contract_fields(
     match cast_method {
         CastMethodV4::Normal => {}
         CastMethodV4::Alternative if def.alt_cost.is_some() => {}
-        CastMethodV4::BeamMeUp if crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some() => {
-        }
         CastMethodV4::Flashback
             if has_flashback_v1(state, item.source, origin_generation, def)
                 || source.v4.spell_cast_origin.is_some_and(|o| {
@@ -2854,7 +2852,6 @@ fn validate_spell_source_contract_fields(
                     .plotted_turn
                     .is_some_and(|plotted_turn| plotted_turn < state.turn_key_v1()) => {}
         CastMethodV4::Alternative
-        | CastMethodV4::BeamMeUp
         | CastMethodV4::Flashback
         | CastMethodV4::Madness
         | CastMethodV4::Plotted
@@ -8613,7 +8610,9 @@ fn alt_cost_condition_met(
                 && state.step == Step::DeclareBlockers
                 && player == state.active_player
         }
-        card_def::AltCostCondition::DisturbV1 => origin_zone == Zone::Graveyard,
+        card_def::AltCostCondition::DisturbV1 | card_def::AltCostCondition::BeamMeUpV1 => {
+            origin_zone == Zone::Graveyard
+        }
         // Mindbreak Trap: "If an opponent cast three or more spells this
         // turn".
         card_def::AltCostCondition::OpponentCastThreeSpellsThisTurnV1 => {
@@ -9353,7 +9352,11 @@ fn cast_single_object_cost_needed(
                 _ => None,
             })
     };
-    if pending.source_contract.cast_method == CastMethodV4::BeamMeUp {
+    if pending
+        .source_contract
+        .spell_cast_origin
+        .is_some_and(|origin| origin.route == SpellCastRouteV4::BeamMeUpV1)
+    {
         return Some(CastSingleObjectCostV1::ReturnPermanent(
             card_def::PermanentFilterDef::CreatureV1,
         ));
@@ -11313,7 +11316,7 @@ fn pending_has_ordinary_graveyard_permission(pending: &PendingCast, state: &Game
 
 fn unambiguous_graveyard_cast_method(def: &card_def::CardDef) -> Option<CastMethodV4> {
     if crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some() {
-        return Some(CastMethodV4::BeamMeUp);
+        return Some(CastMethodV4::Alternative);
     }
     match (def.flashback.is_some(), def.escape.is_some()) {
         (true, false) => Some(CastMethodV4::Flashback),
@@ -11500,7 +11503,10 @@ fn is_castable_with_cost_grant(
     }
 
     match cast_method {
-        CastMethodV4::Flashback | CastMethodV4::BeamMeUp => {
+        CastMethodV4::Flashback | CastMethodV4::Alternative
+            if cast_method == CastMethodV4::Flashback
+                || crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some() =>
+        {
             // A card with a choice between two additional costs (#715) is
             // castable while either cost is payable; every other card is
             // quoted in its first mode, as before.
@@ -11588,6 +11594,9 @@ fn is_castable_with_cost_grant(
                 }
             };
             let alt_ok = || {
+                if crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some() {
+                    return false;
+                }
                 spell_costs_v1::selected_spell_quote_v1(
                     def,
                     id,
@@ -11772,7 +11781,8 @@ fn is_castable_with_cost_grant(
             };
             main_ok || omen_ok() || bestow_ok() || adventure_ok()
         }
-        CastMethodV4::Alternative
+        CastMethodV4::Flashback
+        | CastMethodV4::Alternative
         | CastMethodV4::Madness
         | CastMethodV4::Plotted
         | CastMethodV4::Bestow
@@ -16210,12 +16220,12 @@ pub(crate) fn validate_pending_cast(
                 return Err("normal cast method disagrees with its staged cast mode".to_string());
             }
         }
-        CastMethodV4::Alternative | CastMethodV4::Omen | CastMethodV4::Bestow => {
-            return Err(
-                "pending cast stamped its selected cast method before finalization".to_string(),
-            );
-        }
-        CastMethodV4::BeamMeUp => {
+        CastMethodV4::Alternative
+            if pending
+                .source_contract
+                .spell_cast_origin
+                .is_some_and(|o| o.route == SpellCastRouteV4::BeamMeUpV1) =>
+        {
             if pending.origin_zone != Zone::Graveyard
                 || source.owner != pending.controller
                 || crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_none()
@@ -16223,6 +16233,11 @@ pub(crate) fn validate_pending_cast(
             {
                 return Err("invalid Beam me up cast".into());
             }
+        }
+        CastMethodV4::Alternative | CastMethodV4::Omen | CastMethodV4::Bestow => {
+            return Err(
+                "pending cast stamped its selected cast method before finalization".to_string(),
+            );
         }
         CastMethodV4::Flashback => {
             let origin_generation = pending
@@ -21094,7 +21109,11 @@ fn plan_spell_departure(
             source: item.source,
             placement: event::LibraryPlacement::Top,
             to_zone: if item.is_flashback
-                || item.v4.cast_method == Some(CastMethodV4::BeamMeUp)
+                || item
+                    .v4
+                    .source_contract
+                    .and_then(|c| c.spell_cast_origin)
+                    .is_some_and(|o| o.route == SpellCastRouteV4::BeamMeUpV1)
                 || (cfg!(feature = "eternal-fixtures")
                     && requested_zone == Zone::Graveyard
                     && crate::eternal_cards_v1::exiled_instead_of_graveyard(state, item))
@@ -30396,7 +30415,11 @@ fn materialize_begin_cast_with_quote_v1(
                 }
             }
             CastMethodV4::Flashback => SpellCastRouteV4::GraveyardFlashback,
-            CastMethodV4::BeamMeUp => SpellCastRouteV4::BeamMeUpV1,
+            CastMethodV4::Alternative
+                if crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some() =>
+            {
+                SpellCastRouteV4::BeamMeUpV1
+            }
             CastMethodV4::Escape => SpellCastRouteV4::GraveyardEscape,
             CastMethodV4::Plotted => SpellCastRouteV4::Plotted {
                 plotted_turn: plotted_turn
@@ -30495,6 +30518,7 @@ fn materialize_begin_cast_with_quote_v1(
         || citadel_cast
         || hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost)
         || cast_method != CastMethodV4::Normal
+        || crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some()
         || def.alt_cost.is_none()
     {
         Some(CastMode::Normal)
@@ -35576,7 +35600,6 @@ mod tests {
             CastMethodV4::Normal | CastMethodV4::Alternative => {
                 (Zone::Hand, SpellCastRouteV4::Hand, None)
             }
-            CastMethodV4::BeamMeUp => (Zone::Graveyard, SpellCastRouteV4::BeamMeUpV1, None),
             CastMethodV4::Bestow | CastMethodV4::Omen => {
                 panic!("test helper cannot fabricate an unsupported cast method")
             }

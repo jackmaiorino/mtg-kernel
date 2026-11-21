@@ -904,7 +904,6 @@ pub enum CastMethodV4 {
     /// two by which of `CardDef::omen`/`CardDef::adventure` the resolving
     /// source actually carries (mutually exclusive per card).
     Omen,
-    BeamMeUp,
 }
 
 /// Independently frozen route by which a physical spell's immediately
