@@ -155,6 +155,10 @@ class ScopeTests(unittest.TestCase):
 
 
 class MonitorTests(unittest.TestCase):
+    def test_the_monitor_runs_on_a_failed_or_timed_out_dependency(self):
+        condition = workflow()["jobs"]["post-merge-report"]["if"]
+        self.assertIn("contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')", condition)
+
     def test_the_comment_names_the_merge_commit_and_pull_request_and_mentions_no_one(self):
         import post_merge_report as report
         body, line = report.compose("o/r", "https://x/run/1", "abcdef1234567", "main", "push",

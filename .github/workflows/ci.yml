@@ -1786,7 +1786,7 @@ jobs:
   post-merge-report:
     name: Report a red post-merge run
     needs: [detect-changes, rust-quality, rust-test-groups, limited-build, rust-limited-groups, rust-tests, python-env-build, python-tests]
-    if: always() && contains(needs.*.result, 'failure') && needs.detect-changes.outputs.scope != 'draft' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.windows_runner == '' && inputs.scope == '')) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
+    if: always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && needs.detect-changes.outputs.scope != 'draft' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.windows_runner == '' && inputs.scope == '')) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
