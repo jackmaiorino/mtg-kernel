@@ -572,18 +572,6 @@ def old_trees(manifest_path):
         raise Stop(f'the carried chain\'s trees cannot be established from {manifest_path} ({exc})') from exc
 
 
-def no_links_in(*dirs):
-    """No entry directly in these directories is a link (a log, receipt, lock or record opened for writing there
-    cannot lead into another tree). Missing directories are skipped."""
-    for d in dirs:
-        d = Path(d)
-        if not d.is_dir():
-            continue
-        with os.scandir(d) as entries:
-            for e in entries:
-                require(not e.is_symlink(), f'{e.path} is a link in a carried chain\'s tree')
-
-
 def carried_trees_unlinked(root, name):
     """A carried chain's W5 root has a canonical path and no link anywhere in it: plan, state (instance logs and
     locks), retention logs, segment configs, records and logs alike. Segment directories (`chains/<any>/seg-*`)
