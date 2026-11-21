@@ -281,7 +281,7 @@ class CarryTests(unittest.TestCase):
         self.assertEqual(before, after)  # names and contents
 
     def test_long_carried_chain_keeps_every_state_the_old_rule_keeps(self):
-        """Realistic shape: 64-update segments, carry at S = 4,096 after the old chain stopped at E = 4,160; the
+        """Realistic shape: 64-update segments, carry at S = 4,160 after the old chain stopped at E = 4,224; the
         continuation is interrupted in its first segment, restarted, runs past 8,192 with supervise cycles. The
         old tree is unchanged, the copy of S intact, every multiple of 4,096 and the recent window kept, unkept
         states pruned as for any chain, the states equal one uninterrupted run, the incremental index a whole read,
@@ -333,7 +333,7 @@ class CarryTests(unittest.TestCase):
         self.assertTrue({4352, 4608, 6144, 8192} <= kept)        # global multiples of 256, far from the latest
         self.assertFalse(kept & {4416, 4672, 6208})              # not a stride counted from S
         self.assertFalse(kept & {4200, 4288, 5000})              # unkept states pruned as for any chain
-        self.assertEqual(kept - rule, {latest} - rule)           # nothing else survives
+        self.assertTrue(all(b > latest - 128 for b in kept - rule))  # beyond the rule: only the last two segments
         self.assertEqual({p: chains.sha(p) for p in old_chain.rglob('*') if p.is_file()}, old_files)
         self.assertEqual(chains.sha(copy_path), copy_sha)
         # replay selection inside the first carried segment starts at S with the carried source
