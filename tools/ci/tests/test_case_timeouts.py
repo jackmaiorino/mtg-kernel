@@ -58,6 +58,16 @@ class CaseTimeoutTests(unittest.TestCase):
         raw = json.loads(runner.CASE_TIMEOUTS_PATH.read_text())
         self.assertIn("_comment", raw)
 
+    def test_a_bad_or_missing_table_stops_the_run(self):
+        import tempfile
+        for content in ('{"a::b": true}', '{"a::b": 0}', '{"a::b": 12.5}', '["a::b"]', None):
+            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "limits.json"
+                if content is not None:
+                    path.write_text(content)
+                with patch.object(runner, "CASE_TIMEOUTS_PATH", path), self.assertRaises((ValueError, OSError)):
+                    runner.case_timeouts()
+
     def run_cases(self, run_seconds, default=1800):
         clock = Clock()
         events = []

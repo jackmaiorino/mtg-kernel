@@ -38,9 +38,13 @@ CASE_TIMEOUTS_PATH = Path(__file__).with_name("rust_case_timeout_seconds.json")
 
 
 def case_timeouts() -> dict[str, int]:
-    table = json.loads(CASE_TIMEOUTS_PATH.read_text()) if CASE_TIMEOUTS_PATH.is_file() else {}
+    """The table is part of the repository; a missing or malformed table stops the run instead of silently
+    returning every case to the default."""
+    table = json.loads(CASE_TIMEOUTS_PATH.read_text())
+    if not isinstance(table, dict):
+        raise ValueError(f"{CASE_TIMEOUTS_PATH.name}: expected a JSON object")
     table = {name: value for name, value in table.items() if not name.startswith("_")}
-    if not all(isinstance(value, int) and value > 0 for value in table.values()):
+    if not all(type(value) is int and value > 0 for value in table.values()):
         raise ValueError(f"{CASE_TIMEOUTS_PATH.name}: every limit must be a positive whole number of seconds")
     return table
 
