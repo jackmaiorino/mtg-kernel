@@ -1029,7 +1029,7 @@ pub(crate) fn choose_hallow(
 
 fn request_hallow(
     state: &mut GameState,
-    choice: HallowChoiceV1,
+    mut choice: HallowChoiceV1,
 ) -> Result<Option<HallowPreventionV1>, String> {
     let runner = state
         .engine
@@ -1048,6 +1048,7 @@ fn request_hallow(
         else {
             return Err("Hallow replay changed an already confirmed choice kind".into());
         };
+        choice.use_saved_circle_menu(&expected);
         if *expected != choice || !choice.allows(prevention) {
             return Err("Hallow replay changed an already confirmed prevention effect".into());
         }
@@ -1919,12 +1920,16 @@ pub fn validate(state: &GameState) -> Result<(), String> {
     }
     if let Some(pending) = &state.engine.linked_aura_operation_v1.pending_hallow_v1 {
         return as_recorded(|| {
-            let (expected, _) = replay_general(
+            let (mut expected, _) = replay_general(
                 &pending.original,
                 &pending.operation,
                 &pending.answers,
                 pending.used_banner,
             )?;
+            if let Some(replayed) = &mut expected.engine.linked_aura_operation_v1.pending_hallow_v1
+            {
+                replayed.choice.use_saved_circle_menu(&pending.choice);
+            }
             if expected != *state || !has_pending(&expected) {
                 return Err(
                     "Hallow checkpoint changed its original operation or beneficiary menu".into(),

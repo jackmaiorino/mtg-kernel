@@ -73,3 +73,123 @@ fn opposing_hallows_and_red_circle_offer_three_distinct_prevention_choices() {
         [(23, 20, 1), (20, 23, 1), (20, 20, 0)]
     );
 }
+
+/// Hallow follows the Bombardment spell onto the battlefield. Painter makes
+/// both paid colors match until it is sacrificed for the second activation.
+fn painted_bombardment(
+    attacker: mtg_kernel::ids::PlayerId,
+    sphere: bool,
+) -> (GameState, ObjectId, ObjectId) {
+    let defender = attacker.opponent();
+    let mut state = turn_of(attacker);
+    let red = put(&mut state, defender, RED_CIRCLE, Zone::Battlefield);
+    let blue = put(&mut state, defender, super::BLUE_CIRCLE, Zone::Battlefield);
+    if sphere {
+        put(&mut state, defender, "Sphere of Law", Zone::Battlefield);
+    }
+    let spare = decoy(&mut state, attacker, CircleColorV1::Red).object;
+    let painter = put(&mut state, attacker, "Painter's Servant", Zone::Hand);
+    pool(&mut state, attacker, &[], 2);
+    cast(&mut state, painter, &[]);
+    super::settle_option(&mut state, 1);
+    let bombardment = put(&mut state, attacker, "Goblin Bombardment", Zone::Hand);
+    pool(&mut state, attacker, &[ManaColor::R], 1);
+    cast(&mut state, bombardment, &[]);
+    give_priority(&mut state, defender);
+    let hallow = put(&mut state, defender, "Hallow", Zone::Hand);
+    pool(&mut state, defender, &[ManaColor::W], 0);
+    cast(&mut state, hallow, &[Target::Object(bombardment)]);
+    settled(&mut state);
+    let source = link(&state, bombardment);
+    for circle in [red, blue, blue] {
+        shield(&mut state, defender, circle, source);
+    }
+    give_priority(&mut state, attacker);
+    super::activate_paying(
+        &mut state,
+        bombardment,
+        0,
+        &[Target::Player(defender)],
+        Some(spare),
+    );
+    (state, bombardment, painter)
+}
+
+fn expect_menu(state: &mut GameState, source: ObjectId, count: u16) {
+    let decision = settle(state);
+    assert!(
+        matches!(decision, Some(Decision::ChooseEffectOption { player, source: actual, option_count })
+        if player == state.active_player.opponent() && actual == source && option_count == count),
+        "{decision:?}"
+    );
+}
+
+#[test]
+fn hallow_offers_each_distinct_paid_color_and_rechecks_the_live_source() {
+    for attacker in [P0, P1] {
+        let defender = attacker.opponent();
+        let (mut state, source, painter) = painted_bombardment(attacker, false);
+        expect_menu(&mut state, source, 3);
+        for first in 0..3 {
+            let mut branch = restored(&state);
+            act(&mut branch, Action::ChooseEffectOption(first));
+            settled(&mut branch);
+            assert_eq!(life(&branch, defender), if first == 0 { 21 } else { 20 });
+            assert_eq!(shields(&branch), if first == 0 { 3 } else { 2 });
+            give_priority(&mut branch, attacker);
+            super::activate_paying(
+                &mut branch,
+                source,
+                0,
+                &[Target::Player(defender)],
+                Some(painter),
+            );
+            if first != 1 {
+                // The still-red source can use the red shield, now at option 1.
+                expect_menu(&mut branch, source, 2);
+                act(&mut branch, Action::ChooseEffectOption(1));
+            }
+            settled(&mut branch);
+            // Spending red first leaves only blue shields; Hallow gains the life automatically.
+            assert_eq!(life(&branch, defender), if first == 2 { 20 } else { 21 });
+            assert_eq!(shields(&branch), if first == 2 { 1 } else { 2 });
+        }
+    }
+}
+
+#[test]
+fn hallow_restores_the_original_circle_and_sphere_menu_in_order() {
+    let (mut state, source, _) = painted_bombardment(P1, true);
+    expect_menu(&mut state, source, 4);
+    let mut old = restored(&state);
+    let choice = &mut old
+        .engine
+        .linked_aura_operation_v1
+        .pending_hallow_v1
+        .as_mut()
+        .unwrap()
+        .choice;
+    assert_eq!(choice.ordinary.len(), 2);
+    // A save made before the second distinct Circle was offered.
+    choice.ordinary.pop();
+    for (index, expected_life, expected_shields) in [(0, 21, 3), (1, 20, 2), (2, 20, 3)] {
+        let mut branch = restored(&old);
+        expect_menu(&mut branch, source, 3);
+        act(&mut branch, Action::ChooseEffectOption(index));
+        settled(&mut branch);
+        assert_eq!(
+            (life(&branch, P0), shields(&branch)),
+            (expected_life, expected_shields)
+        );
+    }
+    // An omitted historical ordinary option is still rejected.
+    old.engine
+        .linked_aura_operation_v1
+        .pending_hallow_v1
+        .as_mut()
+        .unwrap()
+        .choice
+        .ordinary
+        .clear();
+    assert!(mtg_kernel::engine::step(&mut old, Action::ChooseEffectOption(0)).is_err());
+}

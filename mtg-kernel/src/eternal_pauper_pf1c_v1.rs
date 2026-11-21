@@ -147,6 +147,20 @@ pub enum HallowPreventionV1 {
 }
 
 impl HallowChoiceV1 {
+    /// Earlier Hallow checkpoints offered only the first paid Circle. That
+    /// exact menu is a prefix: new Circles follow every old ordinary option.
+    pub(crate) fn use_saved_circle_menu(&mut self, saved: &Self) {
+        if self.circle.is_some()
+            && self
+                .ordinary
+                .iter()
+                .position(|option| matches!(option, OrdinaryV1::Circle { .. }))
+                == Some(saved.ordinary.len())
+        {
+            self.ordinary.truncate(saved.ordinary.len());
+        }
+    }
+
     pub(crate) fn mixed(&self) -> bool {
         self.circle.is_some() || !self.ordinary.is_empty()
     }
@@ -614,14 +628,23 @@ fn prevent_packets(
             packet_chooser(state, damage).ok_or("Hallow packet has no affected player")?;
         let beneficiaries = hallow_beneficiaries(state, item.source, item.source_zone);
         let ordinary_only = beneficiaries.is_empty();
-        let circle = (!ordinary_only)
-            .then(|| circles::circle_shield_position(state, damage))
-            .flatten()
-            .map(|at| state.eternal_v1.as_ref().unwrap().s1d.cop_shields[at]);
-        let ordinary = if ordinary_only {
-            crate::eternal_prevention_order_v1::packet_options(state, &item.packet)
+        let (circle, ordinary) = if ordinary_only {
+            (
+                None,
+                crate::eternal_prevention_order_v1::packet_options(state, &item.packet),
+            )
         } else {
-            item.packet.options(state)
+            let mut ordinary = item.packet.options(state);
+            let mut matching = circles::matching_circle_shields(state, damage);
+            let first = matching.next().map(|(_, shield)| shield);
+            let mut distinct = Vec::new();
+            for (position, shield) in matching {
+                if Some(shield) != first && !distinct.contains(&shield) {
+                    distinct.push(shield);
+                    ordinary.push(OrdinaryV1::Circle { position, shield });
+                }
+            }
+            (first, ordinary)
         };
         let step = steps[item.event];
         steps[item.event] = step
