@@ -64,11 +64,32 @@ TRAINER_FILTERS = [
     "native_checkpoint_", "native_baseline_checkpoint_chain_v4::", "fast_sampler::", "unclamped_softmax_sampler_v1::",
     "native_opponent_sampler_v1::", "sideboard_play_policy_v1::", "rl_session::",
 ]
-# The qualifying modules compile parts of their tests only under these features (public_features and
-# stack_features under the CUDA backend's host-safe build, rl_session's Limited paths, the sideboard policy's
-# decision trace), so the filters run once per configuration, each as its own job.
-FEATURE_SETS = ["", "experimental-burn-net8-packed-cuda-v1,gpu-exact-v1", "limited-fdn-fixtures",
-                "gameplay-decision-trace-v1"]
+# The qualifying modules compile some of their tests only under other features. Each extra feature set runs, in
+# full, the filters of the qualifying modules that have tests gated on its features (FEATURE_FILTERS); the
+# default set runs every filter. tools/ci/tests/test_ci_scope.py scans the qualifying files and fails if a
+# feature gate there is not covered (Cargo feature implications included).
+FEATURE_SETS = ["", "experimental-burn-net8-packed-cuda-v1,gpu-exact-fault-injection-v1", "limited-fdn-fixtures",
+                "standard-magezero-fixtures", "eternal-fixtures",
+                "viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1"]
+FEATURE_FILTERS = {
+    "experimental-burn-net8-packed-cuda-v1,gpu-exact-fault-injection-v1": [
+        "expanded_deck_training_v1::", "native_policy_train_step_v1::", "native_policy_value_net_v1::",
+        "native_flat_tensorizer_v", "sideboard_play_policy_v1::", "rl_session::", "native_expanded_training_run_v1::"],
+    "limited-fdn-fixtures": ["expanded_deck_training_v1::", "native_flat_tensorizer_v", "rl_session::",
+                             "sideboard_play_policy_v1::", "native_policy_value_net_v1::"],
+    "standard-magezero-fixtures": ["expanded_deck_training_v1::", "native_flat_tensorizer_v", "rl_session::",
+                                   "sideboard_play_policy_v1::", "native_policy_value_net_v1::"],
+    "eternal-fixtures": ["rl_session::"],
+    "viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1": [
+        "expanded_deck_training_v1::", "native_flat_tensorizer_v", "rl_session::", "sideboard_play_policy_v1::",
+        "native_policy_value_net_v1::", "native_policy_train_step_v1::"],
+}
+
+
+def filters_for(features: str) -> list[str]:
+    return TRAINER_FILTERS if not features else FEATURE_FILTERS[features]
+
+
 BIT_IDENTITY_ROWS = [
     "the production 10-game recipe", "the production 60-game recipe", "the pilot recipe with mulligans",
     "the pilot recipe with mulligans and priority windows (keep lean present)",
@@ -137,8 +158,10 @@ def markdown() -> str:
            "## Scope to checks", "", "| scope | ci.yml jobs | what runs |", "|---|---|---|"]
     for name, spec in SCOPES.items():
         out.append(f"| {name} | {', '.join(spec['jobs']) or 'none'} | {spec['summary']} |")
-    out += ["", "Library test filters: " + ", ".join(f"`{f}`" for f in TRAINER_FILTERS) + ", run under each feature "
-            "set: " + ", ".join(f"`{f or 'default'}`" for f in FEATURE_SETS) + ".", "",
+    out += ["", "Library test filters (default features): " + ", ".join(f"`{f}`" for f in TRAINER_FILTERS) + ".", ""]
+    out += [f"Under `{features}`: " + ", ".join(f"`{f}`" for f in filters_for(features)) + "."
+            for features in FEATURE_SETS if features]
+    out += ["",
             trainer_record(), "", BLIND_NOTE, "", RULES_NOTE, ""]
     return "\n".join(out)
 
@@ -149,7 +172,8 @@ def main(argv: list[str]) -> int:
         sys.stdout.write(markdown())
         return 0
     if command == "trainer-filters":
-        print(" ".join(TRAINER_FILTERS))
+        features = argv[3] if len(argv) > 3 and argv[2] == "--features" else ""
+        print(" ".join(filters_for(features)))
         return 0
     if command == "file-scope":
         print(scope_of_files([line.strip() for line in sys.stdin if line.strip()]))
@@ -159,7 +183,7 @@ def main(argv: list[str]) -> int:
             print(f"no local command list for scope {argv[2]}", file=sys.stderr)
             return 2
         for features in FEATURE_SETS:
-            print(f'python python/tools/run_rust_lib_filters.py --features "{features}" ' + " ".join(TRAINER_FILTERS))
+            print(f'python python/tools/run_rust_lib_filters.py --features "{features}" ' + " ".join(filters_for(features)))
         return 0
     if command == "choose":
         labels = json.loads(os.environ.get("LABELS") or "[]")

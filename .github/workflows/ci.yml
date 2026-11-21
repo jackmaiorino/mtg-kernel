@@ -1177,7 +1177,7 @@ jobs:
       fail-fast: false
       matrix:
         # tools/ci/ci_scope.py FEATURE_SETS (a test keeps them equal).
-        features: ['', 'experimental-burn-net8-packed-cuda-v1,gpu-exact-v1', 'limited-fdn-fixtures', 'gameplay-decision-trace-v1']
+        features: ['', 'experimental-burn-net8-packed-cuda-v1,gpu-exact-fault-injection-v1', 'limited-fdn-fixtures', 'standard-magezero-fixtures', 'eternal-fixtures', 'viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1']
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults:
@@ -1230,9 +1230,9 @@ jobs:
 
       - name: Run the trainer library tests
         run: |
-          read -r -a filters <<< "$(python tools/ci/ci_scope.py trainer-filters)"
-          # The Limited feature build needs two Cargo jobs on a 16 GB runner (as in limited-build).
-          if [[ "$TRAINER_FEATURES" == *limited* ]]; then export CARGO_BUILD_JOBS=2; fi
+          read -r -a filters <<< "$(python tools/ci/ci_scope.py trainer-filters --features "$TRAINER_FEATURES")"
+          # The catalog feature builds need two Cargo jobs on a 16 GB runner (as in limited-build).
+          case "$TRAINER_FEATURES" in *limited*|*standard*|*eternal*) export CARGO_BUILD_JOBS=2 ;; esac
           python python/tools/run_rust_lib_filters.py --features "$TRAINER_FEATURES" "${filters[@]}"
         env:
           TRAINER_FEATURES: ${{ matrix.features }}
@@ -1247,7 +1247,7 @@ jobs:
   hosted-fallback:
     name: Hosted fallback for self-hosted admission timeouts
     needs: [rust-test-groups, rust-limited-groups, python-tests]
-    if: always() && contains(needs.*.result, 'failure') && contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -1269,7 +1269,7 @@ jobs:
   post-merge-report:
     name: Report a red post-merge run
     needs: [detect-changes, rust-quality, rust-test-groups, limited-build, rust-limited-groups, rust-tests, python-tests]
-    if: always() && contains(needs.*.result, 'failure') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.windows_runner == '' && inputs.scope == '')) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
+    if: always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.windows_runner == '' && inputs.scope == '')) && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

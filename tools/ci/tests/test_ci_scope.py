@@ -58,6 +58,38 @@ class TableTests(unittest.TestCase):
         self.assertEqual(ci_scope.scope_of("docs/reports/x/pipeline.py"), None)
         self.assertEqual(ci_scope.scope_of_files(["docs/reports/x/pipeline.py", "mtg-kernel/src/rl_session.rs"]), "pr")
 
+    def test_every_feature_gate_in_a_qualifying_file_is_covered(self):
+        cargo = (ROOT / "mtg-kernel" / "Cargo.toml").read_text(encoding="utf-8")
+        implies = {}
+        for name, deps in re.findall(r'^([a-z0-9-]+) = \[([^\]]*)\]', cargo, re.MULTILINE):
+            implies[name] = re.findall(r'"([a-z0-9-]+)"', deps)
+
+        def closure(features):
+            out, todo = set(), [f for f in features.split(",") if f]
+            while todo:
+                f = todo.pop()
+                if f not in out:
+                    out.add(f)
+                    todo += implies.get(f, [])
+            return out
+        src = ROOT / "mtg-kernel" / "src"
+        files = set()
+        for pattern in ci_scope.TRAINER_MODULES + ci_scope.SHARED_QUALIFYING:
+            for match in ROOT.glob(pattern):
+                files |= set(match.rglob("*.rs")) if match.is_dir() else {match}
+        files = sorted(p for p in files if p.suffix == ".rs")
+        self.assertGreater(len(files), 50)
+        for path in files:
+            rel = path.relative_to(src).as_posix()
+            module = rel.split("/")[0].removesuffix(".rs")
+            module_filters = [f for f in ci_scope.TRAINER_FILTERS if module.startswith(f.rstrip(":"))]
+            if not module_filters or module == "bin":
+                continue
+            for feature in set(re.findall(r'feature\s*=\s*"([a-z0-9-]+)"', path.read_text(encoding="utf-8", errors="replace"))):
+                with self.subTest(file=rel, feature=feature):
+                    self.assertTrue(any(feature in closure(fs) and set(module_filters) & set(ci_scope.filters_for(fs))
+                                        for fs in ci_scope.FEATURE_SETS), f"{rel}: {feature}")
+
     def test_the_record_names_the_mandatory_rows(self):
         record = ci_scope.trainer_record()
         for row in ci_scope.BIT_IDENTITY_ROWS:
@@ -94,6 +126,10 @@ class ScopeTests(unittest.TestCase):
 
 
 class MonitorTests(unittest.TestCase):
+    def test_the_monitor_runs_on_a_failed_or_timed_out_dependency(self):
+        condition = jobs()["post-merge-report"]
+        self.assertIn("contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')", condition)
+
     def test_the_comment_mentions_no_one(self):
         import post_merge_report as report
         body, line = report.compose("o/r", "u", "abcdef1234", "release/mull-c5719e1cf", "push", ["x by @y"], {"number": 7})
