@@ -17,6 +17,7 @@ import os
 import sys
 import time
 import unittest
+from argparse import Namespace
 from pathlib import Path
 from unittest import mock
 
@@ -143,7 +144,7 @@ class PreholdAcceptedTests(_Base):
         a = self.prehold(FAKE, new, k=2)  # gate (a) on the newest completed segment, the chain still running
         self.assertEqual(self.drive(plan, 4), chains.EXIT_ROOM)  # one more segment before the hold
         self.stop()
-        req = self.prehold_request(plan, FAKE, new, a)
+        req = self.prehold_request(plan, FAKE, new, a, c_rows=ref[24:28])
         never = AssertionError('retention.index() takes the index lock and can write: never in these checks')
         with mock.patch.object(retention, 'index', side_effect=never):
             code, err = self.repin(path, 'begin', req)
@@ -154,7 +155,12 @@ class PreholdAcceptedTests(_Base):
         entry = self.man()['trainer_history'][-1]
         self.assertEqual((entry['id'], entry['segment'], entry['boundary']), ('p1', 4, 24))
         self.assertEqual(entry['proof_a'], json.loads(req.read_text())['proof_a'])
+        self.assertIs(entry['confirm_required'], True)
         (self.cdir() / 'STOP').unlink()
+        self.assertEqual(self.drive(plan, 6), chains.EXIT_STOP)
+        self.assertEqual(len(self.man()['segments']), 5)
+        retention.index(self.cdir() / 'chain.json')
+        self.assertEqual(self.repin_x(path, 'confirm')[0], 0)
         self.assertEqual(self.drive(plan, 6), chains.EXIT_ROOM)
         _, records = retention.index(self.cdir() / 'chain.json')
         self.assertEqual([r['after_state_sha256'] for r in records], ref[8:32])
@@ -358,6 +364,27 @@ class PreholdRefusedTests(_Base):
         req = self.prehold_request(self.plan, FAKE, self.new, self.a, c_over={'tools_chains_sha256': '0' * 64})
         self.begin_refused(self.path, req, 'the two proofs ran different tools')
 
+    def test_missing_or_malformed_matching_tools_digests_are_refused(self):
+        for digest in (None, 'short'):
+            with self.subTest(digest=digest):
+                a_doc = json.loads(self.a.read_text())
+                if digest is None:
+                    a_doc.pop('tools_chains_sha256')
+                else:
+                    a_doc['tools_chains_sha256'] = digest
+                a = jwrite(self.t / 'a-tools.json', a_doc)
+                req = self.prehold_request(self.plan, FAKE, self.new, a,
+                                           c_over={'tools_chains_sha256': digest})
+                if digest is None:
+                    req_doc = json.loads(req.read_text())
+                    c_path = Path(req_doc['proof']['path'])
+                    c_doc = json.loads(c_path.read_text())
+                    c_doc.pop('tools_chains_sha256')
+                    jwrite(c_path, c_doc)
+                    req_doc['proof'] = chains.pin(c_path)
+                    jwrite(req, req_doc)
+                self.begin_refused(self.path, req, 'both proofs need a valid tools digest')
+
     def test_back_and_forth_needs_a_new_prehold_proof(self):
         # A to B with today's combined proof, one segment on B, B back to A, one segment on A; the arm file is the
         # same bytes again (same tools and trainer), but the trainer history moved on
@@ -396,12 +423,15 @@ class FirstSegmentHoldTests(_Base):
         self.a = self.prehold(FAKE, self.new, k=2)
         self.stop()
 
-    def switch_holding(self, rows):
+    def commit_switch(self, rows):
         req = self.prehold_request(self.plan, FAKE, self.new, self.a, c_rows=rows)
         code, err = self.repin(self.path, 'begin', req)
         self.assertEqual(code, 0, err)
         chains.make_plan(self.inputs(trainer=self.new, repin=req))
-        path, plan = chains.make_plan(self.inputs(trainer=self.new, repin=req, throughput=True))
+        return chains.make_plan(self.inputs(trainer=self.new, repin=req, throughput=True))
+
+    def switch_holding(self, rows):
+        path, plan = self.commit_switch(rows)
         code, err = self.repin_x(path, 'end', '--hold-first')
         self.assertEqual(code, 0, err)
         self.assertTrue(self.man()['trainer_history'][-1]['confirm_required'])
@@ -418,10 +448,98 @@ class FirstSegmentHoldTests(_Base):
         code, err = self.repin_x(path, 'confirm')
         self.assertEqual(code, 0, err)
         self.assertIsNotNone(self.man()['trainer_history'][-1].get('confirmed'))
+        manifest = self.cdir() / 'chain.json'
+        confirmed = manifest.read_bytes()
         self.assertEqual(self.repin_x(path, 'confirm')[0], 0)  # a rerun reports, rewrites nothing
+        self.assertEqual(self.repin_x(path, 'end')[0], 0)
+        self.assertEqual(self.repin_x(path, 'end', '--hold-first')[0], 0)
+        self.assertEqual(manifest.read_bytes(), confirmed)
         self.assertEqual(self.drive(plan, 6), chains.EXIT_ROOM)
         _, records = retention.index(self.cdir() / 'chain.json')
         self.assertEqual([r['after_state_sha256'] for r in records], self.ref[8:32])
+
+    def test_end_retries_after_writing_the_hold_before_clearing_pending(self):
+        path, _ = self.commit_switch(self.ref[20:24])
+        pending = self.cdir() / chains.REPIN_PENDING
+        unlink = Path.unlink
+
+        def interrupt(path, *args, **kwargs):
+            if path == pending:
+                raise OSError('interrupted before pending removal')
+            return unlink(path, *args, **kwargs)
+
+        with mock.patch.object(Path, 'unlink', interrupt):
+            with self.assertRaisesRegex(OSError, 'before pending removal'):
+                self.repin_x(path, 'end')
+        self.assertTrue(pending.exists())
+        self.assertIs(self.man()['trainer_history'][-1]['confirm_required'], True)
+        manifest = self.cdir() / 'chain.json'
+        before_retry = manifest.read_bytes()
+        self.assertEqual(self.repin_x(path, 'end')[0], 0)
+        self.assertFalse(pending.exists())
+        self.assertEqual(manifest.read_bytes(), before_retry)
+
+    def test_end_reports_a_preexisting_switch_that_omitted_the_required_hold(self):
+        path, _ = self.switch_holding(self.ref[20:24])
+        manifest = self.cdir() / 'chain.json'
+        old = self.man()
+        old['trainer_history'][-1].pop('confirm_required')
+        jwrite(manifest, old)
+        before_retry = manifest.read_bytes()
+        code, err = self.repin_x(path, 'end')
+        self.assertEqual(code, w5box.EXIT_REFUSED, err)
+        self.assertIn('did not install a first-segment hold', err)
+        self.assertEqual(manifest.read_bytes(), before_retry)
+
+    def legacy_split(self):
+        # The old end cleared pending after make_plan committed this genuine split request.
+        # It left exactly the history written by the commit when the caller omitted --hold-first.
+        path, plan = self.commit_switch(self.ref[20:24])
+        self.assertNotIn('confirm_required', self.man()['trainer_history'][-1])
+        (self.cdir() / chains.REPIN_PENDING).unlink()
+        (self.cdir() / 'STOP').unlink()
+        return path, plan
+
+    def test_legacy_split_stops_after_one_and_can_confirm(self):
+        path, plan = self.legacy_split()
+        manifest = self.cdir() / 'chain.json'
+        before = manifest.read_bytes()
+        code, err = self.repin_x(path, 'confirm')
+        self.assertEqual(code, w5box.EXIT_REFUSED, err)
+        self.assertIn('not persisted and committed yet', err)
+        self.assertEqual(manifest.read_bytes(), before)
+        self.assertEqual(self.drive(plan, 10), chains.EXIT_STOP)
+        self.assertEqual(len(self.man()['segments']), 4)
+        retention.index(manifest)
+        code, err = self.repin_x(path, 'confirm')
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.drive(plan, 6), chains.EXIT_ROOM)
+        confirmed = manifest.read_bytes()
+        for step in ['confirm', 'end']:
+            self.assertEqual(self.repin_x(path, step)[0], 0)
+        self.assertEqual(manifest.read_bytes(), confirmed)
+
+    def test_legacy_overrun_refuses_even_without_first_completion_file(self):
+        path, plan = self.legacy_split()
+        # Materialize the state the old driver produced, with two real, committed fixture segments.
+        with mock.patch.object(chains, 'repin_first_hold', return_value=None):
+            self.drive(plan, 5)
+        manifest = self.cdir() / 'chain.json'
+        man = self.man()
+        self.assertEqual(len(man['segments']), 5)
+        retention.index(manifest)
+        first_completion = Path(man['segments'][3]['root']) / 'completion.json'
+        before = manifest.read_bytes()
+        for retained in [True, False]:
+            if not retained:
+                first_completion.unlink()
+            self.assertIn('2 segments', chains.repin_first_hold(man, self.cdir()))
+            code, err = self.repin_x(path, 'confirm')
+            self.assertEqual(code, w5box.EXIT_REFUSED, err)
+            self.assertIn('2 segments', err)
+            self.assertEqual(self.drive(plan, 10), chains.EXIT_STOP)
+            self.assertEqual(manifest.read_bytes(), before)
+            self.assertFalse(list(self.cdir().glob('REPIN-CONFIRM-*.json')))
 
     def test_a_mismatch_keeps_the_hold(self):
         path, plan = self.switch_holding(['0' * 64] * 4)
@@ -540,7 +658,15 @@ class TodaysPathUnchangedTests(_Base):
         path, plan = self.start(2)
         self.stop()
         new = self.build()
-        path, plan = self.switch(plan, path, FAKE, new)
+        req = self.request(plan, FAKE, new)
+        self.assertEqual(self.repin(path, 'begin', req), (0, ''))
+        chains.make_plan(self.inputs(trainer=new, repin=req))
+        path, plan = chains.make_plan(self.inputs(trainer=new, repin=req, throughput=True))
+        args = Namespace(plan=str(path), chain='c1c', step='end')
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(chains.repin_cmd(args), 0)
+            self.assertEqual(chains.repin_cmd(args), 0)
+        self.assertEqual(self.repin_x(path, 'end', '--hold-first')[0], 0)
         entry = self.man()['trainer_history'][-1]
         self.assertEqual(sorted(entry), sorted(['id', 'segment', 'boundary', 'from_sha256', 'to_sha256', 'to_path',
                                                 'request', 'proof', 'unix']))
