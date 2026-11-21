@@ -489,6 +489,8 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
                                 pregame_advantage=pregame_advantage,
                                 pregame_announcement_step_scale=pregame_announcement_step_scale,
                                 pass_offset=pass_offset)
+        if source is not None:
+            qual.check_pass_offset_source(pass_offset, source, offset)
     except ValueError as exc:
         if keep_offset is None and pregame_advantage is None and pass_offset is None:
             raise
@@ -725,14 +727,15 @@ def make_plan(inputs_path):
         allowed = ['initial'] if initial_opponent else []
         require(not [k for k in history_relative(base_doc) if k not in allowed],
                 f'{a}: the base uses history-relative opponents, which segments would change')
-        fresh = read(spec['parent']).get('fresh') is True
+        parent = read(spec['parent'])
+        fresh = parent.get('fresh') is True
         require(not fresh or extra,
                 f'{a}: a fresh parent (no checkpoint) is for extra C-recipe arms of independent Stage 0 plans only')
         ladder = None
         if a in LADDER_ARMS:
             try:
                 ladder = pgrow.check_spec(spec.get('ladder'), base_doc, length, retention.C_LONG_STRIDE,
-                                          read(spec['parent'])['source'], pin)
+                                          parent['source'], pin)
             except ValueError as exc:
                 raise Stop(f'{a}: {exc}') from exc
             require(ladder.get('start_member', True) or initial_opponent,
@@ -777,6 +780,7 @@ def make_plan(inputs_path):
             require(recipe == 'C', f'{a}: pass_offset trains only on the plain CPU update of a C-recipe arm')
             try:
                 pass_offset = qual.validate_pass_offset(pass_offset, base_doc)
+                qual.check_pass_offset_source(pass_offset, parent['source'], 0)
             except ValueError as exc:
                 raise Stop(f'{a}: {exc}') from exc
         # pregame_advantage: the trainer's loss_selection.pregame_advantage ("terminal_v1": the pregame decisions'
