@@ -187,6 +187,24 @@ class GuardsTests(unittest.TestCase):
             chains.make_plan(jwrite(self.t / 'linked.json', doc))
         self.assertEqual(list(real.iterdir()), [])
 
+    def test_guards_survive_a_linked_manifest_and_come_from_the_existing_plan(self):
+        path, plan = chains.make_plan(self.inputs(guards=True))
+        self.assertEqual(self.drive(plan, 1), chains.EXIT_ROOM)
+        mp = self.cdir() / 'chain.json'
+        real = self.t / 'moved-chain.json'
+        doc = json.loads(mp.read_text())
+        doc.pop('guards')  # a linked manifest that no longer names the guards
+        real.write_text(json.dumps(doc))
+        mp.unlink()
+        try:
+            mp.symlink_to(real)
+        except OSError:
+            self.skipTest('no symlink permission on this host')
+        # without `guards` in the input, the existing plan (and the link itself) keep the chain guarded: refused
+        with self.assertRaisesRegex(chains.Stop, 'link'):
+            chains.make_plan(self.inputs())
+        self.assertNotIn('guards', json.loads(real.read_text()))
+
     def test_without_guards_an_ordinary_chain_is_unchanged(self):
         path, plan = chains.make_plan(self.inputs())
         self.assertEqual(self.drive(plan, 2), chains.EXIT_ROOM)

@@ -1260,10 +1260,17 @@ def make_plan(inputs_path):
     carry_bytes = {}  # one read of each carry record: every check, the pin and the manifest use these bytes
     repin_bytes = {name: Path(c['repin']).read_bytes() for name, c in chains_in.items()
                    if c.get('repin') is not None}  # one read of each re-pin request (absent otherwise)
-    guarded_names = set()  # the input's `guards`, or an existing manifest that names them (once on, never off)
+    # the input's `guards`, or an existing plan or manifest that names them (once on, never off); a linked manifest
+    # counts as guarded, so the tree check below refuses it rather than dropping the guards
+    guarded_names = set()
+    old_plan = Path(root) / 'plan' / label / 'CHAINS-PLAN.json'
+    old_guarded = set()
+    if old_plan.is_file() and not old_plan.is_symlink():
+        old_guarded = {n for n, e in (read(old_plan).get('chains') or {}).items() if isinstance(e, dict) and e.get('guards')}
     for name, c in chains_in.items():
         man_path = Path(root) / 'chains' / name / 'chain.json'
-        if c.get('guards') or (man_path.is_file() and not man_path.is_symlink() and read(man_path).get('guards')):
+        if (c.get('guards') or name in old_guarded or man_path.is_symlink()
+                or (man_path.is_file() and read(man_path).get('guards'))):
             guarded_names.add(name)
     for name in sorted(guarded_names):  # before any write: the root, existing or not, is canonical and unlinked
         if Path(root).exists() or Path(root).is_symlink():
@@ -1619,6 +1626,8 @@ def make_plan(inputs_path):
         path = Path(c['manifest'])
         if path.exists():
             have = read(path)
+            require(not have.get('guards') or name in guarded_names,
+                    f'{name}: the manifest is guarded but the plan does not guard it')
             for k in ('chain', 'arm', 'arm_name', 'seed_root', 'pair', 'stage', 'frozen', 'x_cap_seconds',
                       'c_wall_seconds', 'snapshot_dir', 'carry'):
                 require(have.get(k) == header.get(k), f'{name}: the manifest has another {k}')
