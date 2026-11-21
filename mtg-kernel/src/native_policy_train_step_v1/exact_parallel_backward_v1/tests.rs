@@ -529,17 +529,23 @@ fn the_input_gradient_from_a_first_read_column_matches_the_sequential_sink() {
                 )
                 .unwrap();
                 assert_eq!(recorded.len(), expected.len());
+                // Outside the pinned state the sink computes even the unread columns.
+                let skipped = if rounds_to_nearest_v1() {
+                    first_read
+                } else {
+                    0
+                };
                 for (recorded, expected) in recorded
                     .chunks_exact(input_dim)
                     .zip(expected.chunks_exact(input_dim))
                 {
                     assert_eq!(
-                        bits_v1(&[recorded[first_read..].to_vec()]),
-                        bits_v1(&[expected[first_read..].to_vec()]),
+                        bits_v1(&[recorded[skipped..].to_vec()]),
+                        bits_v1(&[expected[skipped..].to_vec()]),
                         "{output_dim}x{input_dim} rows={rows} first_read={first_read}"
                     );
                     // Test builds mark what was not computed.
-                    assert!(recorded[..first_read].iter().all(|value| value.is_nan()));
+                    assert!(recorded[..skipped].iter().all(|value| value.is_nan()));
                 }
             }
         }
