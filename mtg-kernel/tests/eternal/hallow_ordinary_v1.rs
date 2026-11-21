@@ -147,7 +147,8 @@ fn confirmed_packet_keeps_its_prevention_when_a_later_redirect_consumes_a_shared
     settled(&mut state);
     give_priority(&mut state, P0);
     let dominate = put(&mut state, P0, "Dominate", Zone::Hand);
-    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 3);
+    // Dominate a one-mana Nomads with exactly enough mana for X = 1.
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 2);
     cast(&mut state, dominate, &[Target::Object(second)]);
     settled(&mut state);
     assert_eq!(state.objects.get(second).controller, P0);

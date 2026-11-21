@@ -248,7 +248,7 @@ fn no_prevention_menu_for_zero_one_or_two_identical_beneficiaries() {
 }
 
 #[test]
-fn restored_hallow_checkpoint_refuses_a_changed_affected_player_without_mutation() {
+fn restored_hallow_checkpoint_rejects_a_changed_affected_player() {
     for active in SEATS {
         let target = active.opponent();
         let (mut state, source) = bolt(active, target, &[active, target]);
@@ -259,11 +259,22 @@ fn restored_hallow_checkpoint_refuses_a_changed_affected_player_without_mutation
                 serde_json::to_value(active).unwrap();
             let mut tampered: GameState = serde_json::from_value(value).unwrap();
             let before = serde_json::to_vec(&tampered).unwrap();
+            let mut advanced = tampered.clone();
             assert!(matches!(
-                engine::advance_until_decision(&mut tampered),
-                Decision::Halted { .. }
+                engine::advance_until_decision(&mut advanced),
+                Decision::Halted {
+                    mechanic: engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    source: ObjectId(0),
+                }
             ));
-            assert_eq!(serde_json::to_vec(&tampered).unwrap(), before);
+            assert_eq!(
+                advanced.engine.halted.take(),
+                Some((
+                    engine::UnsupportedMechanic::InvalidEffectContinuation,
+                    ObjectId(0)
+                ))
+            );
+            assert_eq!(serde_json::to_vec(&advanced).unwrap(), before);
             assert!(engine::step(
                 &mut tampered,
                 Action::ChooseEffectTarget(Target::Player(active))
