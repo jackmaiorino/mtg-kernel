@@ -1395,7 +1395,8 @@ def make_plan(inputs_path):
             path.parent.mkdir(parents=True, exist_ok=True)
             if repin_bytes:  # a re-pin: complete and durable before any plan or manifest names it
                 tmp = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
-                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o644)
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
+                             | getattr(os, 'O_BINARY', 0), 0o644)  # bytes as written (no newline translation)
                 try:
                     os.write(fd, text.encode('utf-8'))
                     if os.name != 'nt':
