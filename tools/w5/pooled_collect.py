@@ -125,6 +125,27 @@ def pins_of(value) -> set[tuple[str, str]]:
     return found
 
 
+NESTED_PIN_BYTES = 1 << 20
+
+
+def input_closure(command: dict) -> set[tuple[str, str]]:
+    """The command's pins plus the pins inside small pinned JSON files (a play import names its
+    initialization and parameter files). Checkpoints are larger and name only history, never read."""
+    found, queue = set(), list(pins_of(command))
+    while queue:
+        pin = queue.pop()
+        if pin in found:
+            continue
+        found.add(pin)
+        path = Path(pin[0])
+        try:
+            if path.is_file() and path.stat().st_size <= NESTED_PIN_BYTES:
+                queue.extend(pins_of(json.loads(path.read_bytes())))
+        except (ValueError, UnicodeDecodeError):
+            pass  # not JSON: a leaf
+    return found
+
+
 def iteration_of(command_path: Path) -> int:
     """.../iterations/000123/attempt-000000/collect-command.json -> 123."""
     parts = Path(command_path).parts
@@ -270,7 +291,7 @@ class Dispatcher:
         """Makes every pin of `command` present on `host`; returns bytes pushed."""
         transport = self.transports[host.name]
         pushed = 0
-        for path, digest in transport.missing_pins(pins_of(command)):
+        for path, digest in transport.missing_pins(input_closure(command)):
             local = Path(path)
             if not local.is_file() or sha256_file(local) != digest:
                 raise RuntimeError(f"learner lacks pinned input {path}")

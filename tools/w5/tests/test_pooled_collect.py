@@ -114,6 +114,19 @@ class PooledCollectTests(unittest.TestCase):
     def expected(self):
         return [episode_bytes(e).decode() for e in self.episodes]
 
+    def test_nested_pins_of_small_json_inputs_are_distributed(self):
+        leaf = self.root / "learner" / "parameters.f32le"
+        leaf.write_bytes(bytes([0, 1]) + b"binary")
+        imp = self.root / "learner" / "import.json"
+        imp.write_text(json.dumps({"parameters": {"path": str(leaf), "sha256": pc.sha256_file(leaf)}}))
+        self.command["source"]["play_import"] = {"path": str(imp), "sha256": pc.sha256_file(imp)}
+        self.command_path.write_text(json.dumps(self.command))
+        self.assertIn((str(leaf), pc.sha256_file(leaf)), pc.input_closure(self.command))
+        config = self.config([("a", 1.0, "x86")])
+        transports = self.transports(config)
+        pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
+        self.assertEqual(sorted(transports["a"].pushed), sorted([str(self.checkpoint), str(imp), str(leaf)]))
+
     def test_plan_sizes_split_by_weight_and_cover_every_episode(self):
         self.assertEqual(pc.plan_sizes(10, [1, 1]), [5, 5])
         self.assertEqual(pc.plan_sizes(480, [2, 1, 1]), [240, 120, 120])
