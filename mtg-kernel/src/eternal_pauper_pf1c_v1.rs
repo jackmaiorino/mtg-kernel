@@ -31,11 +31,14 @@ use crate::card_def::{CardDef, TargetSpec, CARD_DEFS};
 use crate::effect::{EffectContinuation, EffectOp, ExecCtx, TargetRef};
 use crate::eternal_cards_v1::EternalOpV1;
 use crate::eternal_cube_c1c_v1::C1cOpV1;
+pub mod ordinary_damage;
+use crate::eternal_sideboard_s1d_v1::{statics as circles, CopShieldV1};
 use crate::event::{self, DamageProposed, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{GameState, ObjectLinkV4, StackItemKind, Target, Zone};
 use crate::trigger::TriggeredAbilityDef;
+use ordinary_damage::{OrdinaryV1, Packet};
 use serde::{Deserialize, Serialize};
 
 pub(crate) fn beam_me_up_cost(def: &CardDef) -> Option<&'static [crate::card_def::CostComponent]> {
@@ -117,6 +120,97 @@ pub struct HallowShieldV1 {
     /// The turn the shield lasts: its round key and active player.
     pub turn: u32,
     pub active: PlayerId,
+}
+
+/// Private exact effective damage packet. Choosing a beneficiary applies one
+/// of the equivalent full-prevention shields, without targeting that player.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HallowChoiceV1 {
+    /// Original batch, event and replacement-step ordinals. Private
+    /// identity survives a newly revealed choice changing the APNAP frontier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cohort: Option<(u32, u32, u32)>,
+    pub damage: DamageProposed,
+    pub source: ObjectLinkV4,
+    pub source_zone: Zone,
+    pub chooser: PlayerId,
+    pub beneficiaries: Vec<PlayerId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub circle: Option<CopShieldV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ordinary: Vec<OrdinaryV1>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HallowPreventionV1 {
+    Hallow(PlayerId),
+    Circle,
+    Ordinary(u16),
+}
+
+impl HallowChoiceV1 {
+    pub(crate) fn mixed(&self) -> bool {
+        self.circle.is_some() || !self.ordinary.is_empty()
+    }
+
+    pub(crate) fn count(&self) -> usize {
+        self.beneficiaries.len() + usize::from(self.circle.is_some()) + self.ordinary.len()
+    }
+
+    pub(crate) fn option(&self, option: u16) -> Option<HallowPreventionV1> {
+        let index = usize::from(option);
+        if let Some(&player) = self.beneficiaries.get(index) {
+            return Some(HallowPreventionV1::Hallow(player));
+        }
+        let offset = index.checked_sub(self.beneficiaries.len())?;
+        if offset == 0 && self.circle.is_some() {
+            return Some(HallowPreventionV1::Circle);
+        }
+        let ordinary = offset.checked_sub(usize::from(self.circle.is_some()))?;
+        self.ordinary
+            .get(ordinary)
+            .map(|_| HallowPreventionV1::Ordinary(ordinary as u16))
+    }
+
+    pub(crate) fn allows(&self, prevention: HallowPreventionV1) -> bool {
+        match prevention {
+            HallowPreventionV1::Hallow(player) => self.beneficiaries.contains(&player),
+            HallowPreventionV1::Circle => self.circle.is_some(),
+            HallowPreventionV1::Ordinary(index) => usize::from(index) < self.ordinary.len(),
+        }
+    }
+}
+
+/// A potential second prevention effect enables replay. The exact options
+/// are determined at the effective damage packet, after redirection.
+pub(crate) fn may_need_hallow_choice(state: &GameState) -> bool {
+    if !cfg!(feature = "eternal-fixtures") {
+        return false;
+    }
+    let Some(pf1c) = read_state(state) else {
+        return false;
+    };
+    let turn = state.turn_key_v1();
+    pf1c.hallow_shields
+        .iter()
+        .any(|shield| shield.turn == turn && shield.active == state.active_player)
+}
+
+fn hallow_beneficiaries(state: &GameState, source: ObjectLinkV4, zone: Zone) -> Vec<PlayerId> {
+    let Some(pf1c) = read_state(state) else {
+        return Vec::new();
+    };
+    [PlayerId::P0, PlayerId::P1]
+        .into_iter()
+        .filter(|player| {
+            pf1c.hallow_shields.iter().any(|shield| {
+                shield.controller == *player
+                    && shield.turn == state.turn_key_v1()
+                    && shield.active == state.active_player
+                    && shield_covers(shield, source, zone)
+            })
+        })
+        .collect()
 }
 
 fn pf1c_state(state: &mut GameState) -> &mut Pf1cStateV1 {
@@ -415,37 +509,251 @@ fn shield_covers(shield: &HallowShieldV1, source: ObjectLinkV4, zone: Zone) -> b
             && shield.spell.zone_change_count.checked_add(1) == Some(source.zone_change_count))
 }
 
-/// Called by the damage pipeline before the damage is dealt. If a Hallow
-/// shield from this turn covers `damage`'s source, the damage is prevented
-/// and the shield's controller is owed that much life, gained as soon as the
-/// proposing event (or batch) finishes, so no event is committed from inside
-/// the replacement pass. The shield keeps preventing damage from that spell,
-/// and from the permanent it becomes, for the rest of the turn.
-pub(crate) fn hallow_prevents(state: &mut GameState, damage: &DamageProposed) -> bool {
-    let Some(pf1c) = read_state(state) else {
+/// A split may reach Nishoba without the original packet naming it. Reserve its
+/// existing once-per-simultaneous-event counter bookkeeping for both portions.
+fn redirect_may_hit_nishoba(state: &GameState, damage: &DamageProposed) -> bool {
+    use crate::eternal_legacy_e9a_v1 as e9a;
+    let Some(records) = e9a::read_state(state) else {
         return false;
     };
-    if pf1c.hallow_shields.is_empty() || damage.amount <= 0 {
+    !records.redirects.is_empty()
+        && e9a::statics::applicable_redirects(state, damage)
+            .next()
+            .is_some()
+        && records.redirects.iter().any(|record| {
+            e9a::link_live_in(state, record.to, Zone::Battlefield)
+                && e9a::active_named(
+                    state,
+                    record.to.object,
+                    crate::eternal_premodern_p2c_v1::PHANTOM_NISHOBA,
+                )
+        })
+}
+
+pub(crate) fn shielded_redirect_may_hit_nishoba(
+    state: &GameState,
+    damage: &DamageProposed,
+) -> bool {
+    if read_state(state).is_none_or(|pf| pf.hallow_shields.is_empty())
+        || !redirect_may_hit_nishoba(state, damage)
+    {
         return false;
     }
-    let Some((source, zone)) = damage_source_incarnation(state, damage) else {
-        return false;
-    };
-    let turn = state.turn_key_v1();
-    let active = state.active_player;
-    let Some(controller) = pf1c
-        .hallow_shields
-        .iter()
-        .find(|shield| {
-            shield.turn == turn && shield.active == active && shield_covers(shield, source, zone)
+    damage_source_incarnation(state, damage)
+        .is_some_and(|(source, zone)| !hallow_beneficiaries(state, source, zone).is_empty())
+}
+
+/// One original damage event or one redirected portion. The interpreter's
+/// operation replay retains the actual mutation prefix at every choice.
+struct HallowPacketV1 {
+    packet: Packet,
+    event: usize,
+    source: ObjectLinkV4,
+    source_zone: Zone,
+}
+
+fn covered_packet(
+    state: &GameState,
+    damage: &DamageProposed,
+    event: usize,
+) -> Option<HallowPacketV1> {
+    if damage.amount <= 0 {
+        return None;
+    }
+    let (source, source_zone) = damage_source_incarnation(state, damage)?;
+    if hallow_beneficiaries(state, source, source_zone).is_empty() {
+        return None;
+    }
+    Some(HallowPacketV1 {
+        packet: Packet::new(damage),
+        event,
+        source,
+        source_zone,
+    })
+}
+
+fn packet_chooser(state: &GameState, damage: &DamageProposed) -> Option<PlayerId> {
+    match damage.target {
+        Target::Object(object) => Some(state.objects.get(object).controller),
+        Target::Player(player) => Some(player),
+        Target::StackItem(_) => None,
+    }
+}
+
+/// True only once every portion is prevented or reduced to zero. State-bearing
+/// effects apply immediately in choice chronology; the next frontier is built
+/// from the resulting live state, never from a reordered speculative replay.
+fn prevent_packets(
+    state: &mut GameState,
+    mut work: Vec<HallowPacketV1>,
+    batch: Option<u32>,
+) -> Result<bool, String> {
+    let mut steps = vec![0u32; work.iter().map(|item| item.event + 1).max().unwrap_or(0)];
+    while !work.is_empty() {
+        let at = work
+            .iter()
+            .enumerate()
+            .min_by_key(|(at, item)| {
+                let chooser = packet_chooser(state, &item.packet.damage);
+                (
+                    usize::from(chooser != Some(state.active_player)),
+                    item.event,
+                    *at,
+                )
+            })
+            .map(|(at, _)| at)
+            .expect("nonempty Hallow frontier");
+        let item = work.remove(at);
+        let damage = &item.packet.damage;
+        if damage.amount <= 0 {
+            continue;
+        }
+        let chooser =
+            packet_chooser(state, damage).ok_or("Hallow packet has no affected player")?;
+        let beneficiaries = hallow_beneficiaries(state, item.source, item.source_zone);
+        if beneficiaries.is_empty() {
+            return Err("Hallow frontier lost its source-bound shield".into());
+        }
+        let circle = circles::circle_shield_position(state, damage)
+            .map(|at| state.eternal_v1.as_ref().unwrap().s1d.cop_shields[at]);
+        let step = steps[item.event];
+        steps[item.event] = step
+            .checked_add(1)
+            .ok_or("Hallow packet step ordinal overflow")?;
+        let choice = HallowChoiceV1 {
+            cohort: batch.map(|batch| {
+                (
+                    batch,
+                    u32::try_from(item.event).expect("batch event ordinal fits u32"),
+                    step,
+                )
+            }),
+            damage: damage.clone(),
+            source: item.source,
+            source_zone: item.source_zone,
+            chooser,
+            beneficiaries,
+            circle,
+            ordinary: item.packet.options(state),
+        };
+        let selected = if choice.count() == 1 {
+            HallowPreventionV1::Hallow(choice.beneficiaries[0])
+        } else {
+            if choice.count() > usize::from(u16::MAX) {
+                return Err("Hallow replacement options exceed the native decision width".into());
+            }
+            let Some(effect) =
+                crate::linked_aura_operation_v1::choose_hallow(state, choice.clone())?
+            else {
+                return Ok(false);
+            };
+            effect
+        };
+        match selected {
+            HallowPreventionV1::Hallow(controller) => pf1c_state(state)
+                .hallow_life_owed
+                .push((controller, damage.amount)),
+            HallowPreventionV1::Circle => {
+                circles::consume_circle_shield(state, damage);
+            }
+            HallowPreventionV1::Ordinary(index) => {
+                let mut children = Vec::new();
+                item.packet.apply(
+                    state,
+                    choice.ordinary[usize::from(index)].clone(),
+                    &mut children,
+                );
+                work.splice(
+                    at..at,
+                    children.into_iter().rev().map(|packet| HallowPacketV1 {
+                        packet,
+                        event: item.event,
+                        source: item.source,
+                        source_zone: item.source_zone,
+                    }),
+                );
+            }
+        }
+    }
+    Ok(true)
+}
+
+/// Whether this batch needs Hallow's scoped replacement phase. Its caller
+/// owns the Nishoba cohort across this phase and all remaining ordinary events.
+pub(crate) fn batch_has_covered_damage(state: &GameState, events: &[ProposedEvent]) -> bool {
+    may_need_hallow_choice(state)
+        && !state.engine.until_end_of_turn.iter().any(|effect| {
+            matches!(
+                effect,
+                crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+            )
         })
-        .map(|shield| shield.controller)
-    else {
+        && events.iter().any(|event| {
+            matches!(event,
+            ProposedEvent::Damage(damage) if covered_packet(state, damage, 0).is_some())
+        })
+}
+
+/// Process all covered portions of one simultaneous batch as a live frontier.
+/// Every such portion must ultimately be prevented because its Hallow remains
+/// applicable. Uncovered events retain the ordinary replacement/commit path.
+pub(crate) fn prevent_hallow_batch(
+    state: &mut GameState,
+    events: &mut Vec<ProposedEvent>,
+    batch: u32,
+) -> Result<bool, String> {
+    if state.engine.until_end_of_turn.iter().any(|effect| {
+        matches!(
+            effect,
+            crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
+        )
+    }) {
+        return Ok(false);
+    }
+    let mut work = Vec::new();
+    let mut covered = vec![false; events.len()];
+    for (at, event) in events.iter().enumerate() {
+        if let ProposedEvent::Damage(damage) = event {
+            if let Some(packet) = covered_packet(state, damage, at) {
+                if u32::try_from(at).is_err() || !event::preflight_hallow_damage_v1(state, event) {
+                    return Err("Hallow cohort rejected its original historical damage".into());
+                }
+                work.push(packet);
+                covered[at] = true;
+            }
+        }
+    }
+    if work.is_empty() {
+        return Ok(false);
+    }
+    if !prevent_packets(state, work, Some(batch))? {
+        return Ok(true);
+    }
+    let mut at = 0;
+    events.retain(|_| {
+        let keep = !covered[at];
+        at += 1;
+        keep
+    });
+    Ok(false)
+}
+
+/// The single-event path uses the same typed frontier. Its enclosing operation
+/// owns any yielded choice, and life is gained only at the existing event tail.
+pub(crate) fn hallow_prevents(state: &mut GameState, damage: &DamageProposed) -> bool {
+    let Some(packet) = covered_packet(state, damage, 0) else {
         return false;
     };
-    pf1c_state(state)
-        .hallow_life_owed
-        .push((controller, damage.amount));
+    let cohort = redirect_may_hit_nishoba(state, damage)
+        && crate::eternal_premodern_p2c_v1::statics::begin_nishoba_cohort(state);
+    let result = prevent_packets(state, vec![packet], None);
+    crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, cohort);
+    if result.is_err() {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            damage.source,
+        ));
+    }
     true
 }
 
