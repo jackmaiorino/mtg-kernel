@@ -12,17 +12,39 @@ Environment:
              Unset or empty: every named group routes, as before this budget existed.
   GH_TOKEN, GITHUB_REPOSITORY, GITHUB_RUN_ID, optional GITHUB_API_URL, GITHUB_OUTPUT, GITHUB_STEP_SUMMARY.
 
-Writes `groups=<JSON list>` to GITHUB_OUTPUT. Any error while counting the pool's jobs routes no group
-(every group stays on hosted runners). Exit 0 always.
+Writes `groups=<JSON list>` to GITHUB_OUTPUT. Any error, more than MAX_REQUESTS API calls or more than
+DEADLINE_SECONDS while counting the pool's jobs routes no group (every group stays on hosted runners).
+Exit 0 always.
+
+The budget is a snapshot, not a reservation: runs that start within the same few seconds can each take the
+same free slot, so the pool can briefly hold up to that many extra jobs. A rejected group falls through to
+MTG_CI_WINDOWS_RUNNER, which is meant to stay hosted while this budget is in use.
 """
 from __future__ import annotations
 
 import json
 import os
 import sys
+import time
 import urllib.request
 
 ACTIVE_RUN_STATUSES = ("in_progress", "queued", "waiting", "pending", "requested")
+DEADLINE_SECONDS = 60.0
+MAX_REQUESTS = 60
+
+
+class Budget:
+    """Bounds the API work so the detect-changes job always finishes well inside its timeout."""
+
+    def __init__(self, seconds: float = DEADLINE_SECONDS, requests: int = MAX_REQUESTS):
+        self.deadline, self.requests = time.monotonic() + seconds, requests
+
+    def spend(self) -> float:
+        left = self.deadline - time.monotonic()
+        self.requests -= 1
+        if left <= 0 or self.requests < 0:
+            raise TimeoutError("budget lookup exceeded its time or request limit")
+        return min(15.0, left)
 
 
 def parse_list(text: str | None) -> list[str]:
@@ -44,13 +66,16 @@ def parse_slots(text: str | None) -> int | None:
 
 
 def held_by_pool(jobs: list[dict], labels: list[str], skip_run: int | None = None) -> int:
-    """Jobs not yet completed whose runs-on labels include every pool label (case-insensitive)."""
+    """Jobs not yet completed that a pool runner could be holding or will take: self-hosted jobs whose runs-on
+    labels include every pool label, or are all among them (a broader request such as ["self-hosted",
+    "mtg-ci-windows"] can also land on a pool runner). Case-insensitive; errs toward counting."""
     want = {label.lower() for label in labels}
     count = 0
     for job in jobs:
         if job.get("status") == "completed" or (skip_run is not None and job.get("run_id") == skip_run):
             continue
-        if want and want <= {label.lower() for label in job.get("labels") or []}:
+        have = {label.lower() for label in job.get("labels") or []}
+        if want and "self-hosted" in have and (want <= have or have <= want):
             count += 1
     return count
 
@@ -61,22 +86,23 @@ def choose(groups: list[str], slots: int | None, held: int) -> list[str]:
     return list(groups[:max(0, slots - held)])
 
 
-def _get(path: str) -> dict:
+def _get(path: str, budget: Budget) -> dict:
     api = os.environ.get("GITHUB_API_URL", "https://api.github.com")
     request = urllib.request.Request(api + path, headers={
         "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
         "Authorization": "Bearer " + os.environ["GH_TOKEN"]})
-    with urllib.request.urlopen(request, timeout=30) as response:
+    with urllib.request.urlopen(request, timeout=budget.spend()) as response:
         return json.loads(response.read())
 
 
-def active_jobs(repo: str) -> list[dict]:
+def active_jobs(repo: str, budget: Budget | None = None) -> list[dict]:
     """Every job of every active run in the repository (any workflow can target the pool)."""
+    budget = budget or Budget()
     run_ids = set()
     for status in ACTIVE_RUN_STATUSES:
         page = 1
         while True:
-            rows = _get(f"/repos/{repo}/actions/runs?status={status}&per_page=100&page={page}")["workflow_runs"]
+            rows = _get(f"/repos/{repo}/actions/runs?status={status}&per_page=100&page={page}", budget)["workflow_runs"]
             run_ids.update(row["id"] for row in rows)
             if len(rows) < 100:
                 break
@@ -85,7 +111,8 @@ def active_jobs(repo: str) -> list[dict]:
     for run_id in sorted(run_ids):
         page = 1
         while True:
-            rows = _get(f"/repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100&page={page}")["jobs"]
+            rows = _get(f"/repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100&page={page}",
+                        budget)["jobs"]
             jobs += rows
             if len(rows) < 100:
                 break

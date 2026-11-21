@@ -18,13 +18,26 @@ def job(status, labels, run_id=1):
 
 
 class BudgetTests(unittest.TestCase):
-    def test_only_unfinished_jobs_with_every_pool_label_count(self):
+    def test_unfinished_self_hosted_jobs_a_pool_runner_could_take_count(self):
         jobs = [job("queued", POOL), job("in_progress", ["self-hosted", "MTG-CI-WINDOWS", "bn6"]),
-                job("completed", POOL), job("queued", ["self-hosted", "mtg-ci-windows"]),
-                job("queued", ["windows-2025"]), job("in_progress", POOL, run_id=7)]
-        self.assertEqual(budget.held_by_pool(jobs, POOL), 3)
-        self.assertEqual(budget.held_by_pool(jobs, POOL, skip_run=7), 2)
+                job("completed", POOL),
+                job("queued", ["self-hosted", "mtg-ci-windows"]),             # broader: may land on the pool
+                job("queued", POOL + ["gpu"]),                                # narrower: only the pool can take it
+                job("queued", ["self-hosted", "mtg-ci-linux"]),               # another pool
+                job("queued", ["windows-2025"]), job("queued", ["bn6"]),      # hosted, or not self-hosted
+                job("in_progress", POOL, run_id=7)]
+        self.assertEqual(budget.held_by_pool(jobs, POOL), 5)
+        self.assertEqual(budget.held_by_pool(jobs, POOL, skip_run=7), 4)
         self.assertEqual(budget.held_by_pool(jobs, []), 0)
+
+    def test_the_lookup_has_a_time_and_request_limit(self):
+        tight = budget.Budget(seconds=60, requests=2)
+        self.assertLessEqual(tight.spend(), 15.0)
+        tight.spend()
+        with self.assertRaises(TimeoutError):
+            tight.spend()
+        with self.assertRaises(TimeoutError):
+            budget.Budget(seconds=0).spend()
 
     def test_groups_route_in_order_of_preference_up_to_the_free_slots(self):
         groups = ["workspace-targets", "workspace-lib", "native-store"]
@@ -73,6 +86,7 @@ class BudgetTests(unittest.TestCase):
 
     def test_any_error_keeps_every_group_hosted(self):
         for env, error in (({"PR_GROUPS": '["workspace-lib"]', "PR_RUNNER": '["bn6"]', "PR_SLOTS": "2"}, OSError("api down")),
+                           ({"PR_GROUPS": '["workspace-lib"]', "PR_RUNNER": '["bn6"]', "PR_SLOTS": "2"}, TimeoutError("slow")),
                            ({"PR_GROUPS": "not json", "PR_SLOTS": "2"}, None),
                            ({"PR_GROUPS": '["workspace-lib"]', "PR_SLOTS": "two"}, None)):
             with self.subTest(env=env):

@@ -123,9 +123,14 @@ jobs:
       # preference. With MTG_CI_PR_WINDOWS_SLOTS set, only as many route as the
       # pool has free: that many minus the jobs already queued or running on
       # MTG_CI_PR_WINDOWS_RUNNER, so routed groups never wait in GitHub's queue
-      # behind other runs. Unset, every named group routes. An error routes none.
+      # behind other runs. Unset, every named group routes. An error or a slow
+      # lookup routes none. The count is a snapshot: runs starting together
+      # can share a free slot. Rejected groups fall through to
+      # MTG_CI_WINDOWS_RUNNER, which stays hosted while the budget is used.
       - name: Choose the self-hosted pull request groups
         id: budget
+        timeout-minutes: 2
+        continue-on-error: true
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner
         env:
           GH_TOKEN: ${{ github.token }}
@@ -726,10 +731,14 @@ jobs:
       - name: Report a self-hosted CPU preemption
         if: failure() && runner.environment == 'self-hosted' && runner.os == 'Windows'
         run: |
-          # The step's own text must not contain hosted-fallback's marker.
+          # The step's own text must not contain hosted-fallback's marker, and
+          # only a marker naming this run, attempt, job and runner counts.
           marker_name=MTG_CI_ADMISSION
           for marker in "$(cygpath -u "${RUNNER_TEMP:?}")"/ci-job-slots/*.preempted.json; do
-            if [ -f "$marker" ]; then echo "${marker_name}_TIMEOUT: CPU claim preempted: $(cat "$marker")"; fi
+            [ -f "$marker" ] || continue
+            if python -c 'import json, os, sys; m = json.load(open(sys.argv[1])); sys.exit([m.get(k) for k in ("run_id", "run_attempt", "job", "runner")] != [os.environ.get(k) for k in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB", "RUNNER_NAME")])' "$(cygpath -w "$marker")"; then
+              echo "${marker_name}_TIMEOUT: CPU claim preempted: $(cat "$marker")"
+            fi
           done
 
       - name: Save compiled test output
@@ -1345,10 +1354,14 @@ jobs:
       - name: Report a self-hosted CPU preemption
         if: failure() && runner.environment == 'self-hosted' && runner.os == 'Windows'
         run: |
-          # The step's own text must not contain hosted-fallback's marker.
+          # The step's own text must not contain hosted-fallback's marker, and
+          # only a marker naming this run, attempt, job and runner counts.
           marker_name=MTG_CI_ADMISSION
           for marker in "$(cygpath -u "${RUNNER_TEMP:?}")"/ci-job-slots/*.preempted.json; do
-            if [ -f "$marker" ]; then echo "${marker_name}_TIMEOUT: CPU claim preempted: $(cat "$marker")"; fi
+            [ -f "$marker" ] || continue
+            if python -c 'import json, os, sys; m = json.load(open(sys.argv[1])); sys.exit([m.get(k) for k in ("run_id", "run_attempt", "job", "runner")] != [os.environ.get(k) for k in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB", "RUNNER_NAME")])' "$(cygpath -w "$marker")"; then
+              echo "${marker_name}_TIMEOUT: CPU claim preempted: $(cat "$marker")"
+            fi
           done
 
       - name: Report the hosted Linux runner's memory use
@@ -1644,10 +1657,14 @@ jobs:
       - name: Report a self-hosted CPU preemption
         if: failure() && runner.environment == 'self-hosted' && runner.os == 'Windows'
         run: |
-          # The step's own text must not contain hosted-fallback's marker.
+          # The step's own text must not contain hosted-fallback's marker, and
+          # only a marker naming this run, attempt, job and runner counts.
           marker_name=MTG_CI_ADMISSION
           for marker in "$(cygpath -u "${RUNNER_TEMP:?}")"/ci-job-slots/*.preempted.json; do
-            if [ -f "$marker" ]; then echo "${marker_name}_TIMEOUT: CPU claim preempted: $(cat "$marker")"; fi
+            [ -f "$marker" ] || continue
+            if python -c 'import json, os, sys; m = json.load(open(sys.argv[1])); sys.exit([m.get(k) for k in ("run_id", "run_attempt", "job", "runner")] != [os.environ.get(k) for k in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB", "RUNNER_NAME")])' "$(cygpath -w "$marker")"; then
+              echo "${marker_name}_TIMEOUT: CPU claim preempted: $(cat "$marker")"
+            fi
           done
 
   # A self-hosted runner's job-started hook waits for host_slots CPU admission

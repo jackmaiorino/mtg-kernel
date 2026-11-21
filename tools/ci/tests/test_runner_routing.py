@@ -183,6 +183,7 @@ class RoutingTests(unittest.TestCase):
             self.assertIn(line, step)
         self.assertIn("pr_windows_groups: ${{ steps.budget.outputs.groups }}", block)
         self.assertIn("      actions: read\n", block)
+        self.assertIn("timeout-minutes: 2\n        continue-on-error: true\n", step)
 
     def test_named_linux_groups_go_to_the_linux_runner_for_trusted_events(self):
         for trusted in (event(), event("push"), event("workflow_dispatch")):
@@ -359,6 +360,8 @@ class MatrixTests(unittest.TestCase):
                 self.assertNotIn("MTG_CI_ADMISSION_TIMEOUT", step)
                 self.assertIn('marker_name=MTG_CI_ADMISSION', step)
                 self.assertIn('"${marker_name}_TIMEOUT: ', step)
+                for key in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_JOB", "RUNNER_NAME"):
+                    self.assertIn(key, step)
 
     def test_the_parts_of_a_group_share_one_build_cache(self):
         block = job_block("rust-test-groups", "limited-build")
