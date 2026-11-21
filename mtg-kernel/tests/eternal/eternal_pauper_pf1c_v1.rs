@@ -804,6 +804,175 @@ fn boarding_action_beamed_up_and_countered_is_still_exiled() {
     assert!(named(&state, P0, "Klingon Warrior Token").is_empty());
 }
 
+fn install_snapcaster(state: &mut GameState, spell: ObjectId) -> ObjectId {
+    let mage = put(state, P0, "Snapcaster Mage", Zone::Hand);
+    pool(state, P0, &[ManaColor::U], 1);
+    cast(state, mage, &[]);
+    settle_choosing(state, spell);
+    mage
+}
+
+fn choose_graveyard_route(
+    state: &mut GameState,
+    spell: ObjectId,
+    route: engine::sphinx_lore_cast_v1::RouteV1,
+) {
+    cast(state, spell, &[]);
+    let Decision::ChooseEffectOption {
+        source,
+        option_count,
+        ..
+    } = next(state)
+    else {
+        panic!("missing cast route choice")
+    };
+    assert_eq!(source, spell);
+    let options = state
+        .engine
+        .event_history
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            mtg_kernel::event::CommittedEvent::SphinxLoreCastOptionsV1 { options }
+                if options.spell == spell =>
+            {
+                Some(options)
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(usize::from(option_count), options.routes.len());
+    let index = options
+        .routes
+        .iter()
+        .position(|&r| r == route)
+        .expect("requested route was offered");
+    act(state, Action::ChooseEffectOption(index as u16));
+}
+
+#[test]
+fn snapcaster_and_printed_flashback_charge_the_selected_cost() {
+    use engine::sphinx_lore_cast_v1::RouteV1;
+    let mut base = plains();
+    let card = put(&mut base, P0, "Think Twice", Zone::Graveyard);
+    install_snapcaster(&mut base, card);
+    for (route, remaining) in [(RouteV1::Snapcaster, 1), (RouteV1::PrintedFlashback, 0)] {
+        let mut state = base.clone();
+        pool(&mut state, P0, &[ManaColor::U], 2);
+        choose_graveyard_route(&mut state, card, route);
+        settled(&mut state);
+        assert_eq!(
+            state.players[0].mana_pool[ManaColor::C.pool_index()],
+            remaining
+        );
+        assert_eq!(zone(&state, card), Zone::Exile);
+        assert_eq!(state.players[0].hand.len(), 1);
+    }
+    pool(&mut base, P0, &[ManaColor::U], 1);
+    cast(&mut base, card, &[]);
+    settled(&mut base);
+    assert_eq!(
+        zone(&base, card),
+        Zone::Exile,
+        "the cheaper grant works as the sole payable method"
+    );
+}
+
+#[test]
+fn boarding_action_beam_and_snapcaster_distinguish_bounce_payment_and_flashback() {
+    use engine::sphinx_lore_cast_v1::RouteV1;
+    use mtg_kernel::state::CastMethodV4;
+    let mut base = plains();
+    let card = put(&mut base, P0, "Boarding Action", Zone::Graveyard);
+    let mage = install_snapcaster(&mut base, card);
+    for (route, method, mage_zone, remaining) in [
+        (RouteV1::BeamMeUp, CastMethodV4::Alternative, Zone::Hand, 0),
+        (
+            RouteV1::Snapcaster,
+            CastMethodV4::Flashback,
+            Zone::Battlefield,
+            1,
+        ),
+    ] {
+        let mut state = base.clone();
+        pool(&mut state, P0, &[ManaColor::R], 2);
+        choose_graveyard_route(&mut state, card, route);
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        let row = state.stack.last().unwrap();
+        assert_eq!(row.v4.cast_method, Some(method));
+        assert_eq!(row.is_flashback, route == RouteV1::Snapcaster);
+        settled(&mut state);
+        assert_eq!(zone(&state, mage), mage_zone);
+        assert_eq!(zone(&state, card), Zone::Exile);
+        assert_eq!(
+            state.players[0].mana_pool[ManaColor::C.pool_index()],
+            remaining
+        );
+    }
+}
+
+#[test]
+fn boarding_action_can_escape_or_retrace_without_returning_a_creature() {
+    use engine::sphinx_lore_cast_v1::RouteV1;
+    for route in [RouteV1::Breach, RouteV1::Retrace, RouteV1::Normal] {
+        let mut state = plains();
+        let creature = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
+        let card = put(&mut state, P0, "Boarding Action", Zone::Graveyard);
+        let land = put(&mut state, P0, "Forest", Zone::Hand);
+        let fodder: Vec<_> = (0..3)
+            .map(|_| put(&mut state, P0, "Plains", Zone::Graveyard))
+            .collect();
+        match route {
+            RouteV1::Breach => {
+                put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+            }
+            RouteV1::Retrace => {
+                let wrenn = put(&mut state, P0, "Wrenn and Six", Zone::Hand);
+                pool(&mut state, P0, &[ManaColor::R, ManaColor::G], 0);
+                cast(&mut state, wrenn, &[]);
+                settled(&mut state);
+                mtg_kernel::planeswalker_v1::change_loyalty(&mut state, wrenn, 4);
+                activate(&mut state, wrenn, 2, &[]);
+                settled(&mut state);
+            }
+            RouteV1::Normal => {
+                let will = put(&mut state, P0, "Yawgmoth's Will", Zone::Hand);
+                pool(&mut state, P0, &[ManaColor::B], 2);
+                cast(&mut state, will, &[]);
+                settled(&mut state);
+            }
+            _ => unreachable!(),
+        }
+        pool(&mut state, P0, &[ManaColor::R], 2);
+        choose_graveyard_route(&mut state, card, route);
+        settle_first(&mut state);
+        assert_eq!(zone(&state, creature), Zone::Battlefield);
+        assert_eq!(
+            zone(&state, land),
+            if route == RouteV1::Retrace {
+                Zone::Graveyard
+            } else {
+                Zone::Hand
+            }
+        );
+        assert!(fodder.iter().all(|&f| zone(&state, f)
+            == if route == RouteV1::Breach {
+                Zone::Exile
+            } else {
+                Zone::Graveyard
+            }));
+        assert_eq!(
+            zone(&state, card),
+            if route == RouteV1::Normal {
+                Zone::Exile
+            } else {
+                Zone::Graveyard
+            }
+        );
+        assert_eq!(state.players[0].mana_pool[ManaColor::C.pool_index()], 1);
+    }
+}
+
 // ---- Kaervek's Torch -----------------------------------------------------------------------
 
 #[test]

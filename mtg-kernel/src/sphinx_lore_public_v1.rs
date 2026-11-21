@@ -161,7 +161,11 @@ pub enum CostV1 {
     SacrificeLands(u8),
     PayLife(u8),
     ExileOtherOwnGraveyardCards(u8),
-    PrintedComponent(serde_json::Value),
+    SacrificeControlled(u8, card_def::PermanentFilter),
+    TapControlled(u8, card_def::PermanentFilterDef),
+    ReturnControlled(card_def::PermanentFilterDef),
+    ExileGraveyardX { blue_only: bool },
+    ExileGraveyardCardTypes(u8),
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -291,9 +295,27 @@ pub(crate) fn costs(values: &[CostComponent]) -> Result<Vec<CostV1>, String> {
                 CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
                     CostV1::ExileOtherOwnGraveyardCards(*n)
                 }
-                other => CostV1::PrintedComponent(
-                    serde_json::to_value(other).map_err(|e| e.to_string())?,
-                ),
+                CostComponent::SacrificeControlled { count, filter } => {
+                    CostV1::SacrificeControlled(*count, *filter)
+                }
+                CostComponent::TapUntappedControlledPermanent(filter) => {
+                    CostV1::TapControlled(1, *filter)
+                }
+                CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
+                    CostV1::TapControlled(*count, *filter)
+                }
+                CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
+                    CostV1::ReturnControlled(*filter)
+                }
+                CostComponent::ExileXCardsFromOwnGraveyardV1 { blue_only } => {
+                    CostV1::ExileGraveyardX {
+                        blue_only: *blue_only,
+                    }
+                }
+                CostComponent::ExileOtherGraveyardCardsWithCardTypesV1(count) => {
+                    CostV1::ExileGraveyardCardTypes(*count)
+                }
+                _ => return Err("unrepresented graveyard casting cost component".into()),
             })
         })
         .collect()
