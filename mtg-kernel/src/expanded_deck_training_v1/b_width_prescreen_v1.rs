@@ -608,6 +608,7 @@ pub(crate) fn episode_v1(
         mulligan_modes: None,
         london_keep_offset: None,
         priority_windows: None,
+        priority_pass_offset: None,
     }
 }
 

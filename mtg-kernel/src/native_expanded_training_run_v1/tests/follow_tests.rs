@@ -335,19 +335,31 @@ fn the_spool_reads_stop_first_then_one_whole_next_config() {
     );
     fs::remove_file(spool_dir.join(STOP_NAME)).unwrap();
     fs::remove_file(spool_dir.join(NEXT_NAME)).unwrap();
-    // A next.json that is not a config is refused (status 3 in the binary) and removed.
+    // A next.json that is not a config is refused (status 3 in the binary)
+    // and left where it is: a directory and its contents are never deleted.
     fs::create_dir(spool_dir.join(NEXT_NAME)).unwrap();
+    fs::write(spool_dir.join(NEXT_NAME).join("kept"), b"x").unwrap();
     assert!(matches!(
         spool.wait_v1().unwrap(),
         FollowNextV1::Unusable(_)
     ));
-    assert!(!spool_dir.join(NEXT_NAME).exists());
+    assert!(spool_dir.join(NEXT_NAME).join("kept").exists());
+    fs::remove_dir_all(spool_dir.join(NEXT_NAME)).unwrap();
     fs::write(spool_dir.join(NEXT_NAME), b"{\"schema\":").unwrap();
     assert!(matches!(
         spool.wait_v1().unwrap(),
         FollowNextV1::Unusable(_)
     ));
-    assert!(!spool_dir.join(NEXT_NAME).exists());
+    fs::remove_file(spool_dir.join(NEXT_NAME)).unwrap();
+    let oversized = fs::File::create(spool_dir.join(NEXT_NAME)).unwrap();
+    oversized.set_len(SMALL_CAP + 1).unwrap();
+    drop(oversized);
+    assert!(matches!(
+        spool.wait_v1().unwrap(),
+        FollowNextV1::Unusable(_)
+    ));
+    assert!(spool_dir.join(NEXT_NAME).exists());
+    fs::remove_file(spool_dir.join(NEXT_NAME)).unwrap();
     // A spool that is not empty belongs to another process.
     fs::write(spool_dir.join("done-000000.json"), b"{}").unwrap();
     assert!(SpoolV1::open_v1(&spool_dir).is_err());

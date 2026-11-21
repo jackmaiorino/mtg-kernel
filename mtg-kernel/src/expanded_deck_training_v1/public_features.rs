@@ -658,6 +658,7 @@ fn collect_with_opponent(
                     sampler_identity: sampler_identity.or_else(|| {
                         decision_sampler_identity_v1(scores.logits.len()).map(str::to_owned)
                     }),
+                    pass_offset_action: None,
                 });
                 session.step(d.episode_id, d.step, selected).map_err(err)?;
             }

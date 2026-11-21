@@ -99,6 +99,7 @@ fn fixture(tag: &str) -> (PathBuf, ExpandedModelSourceV1, Vec<PinnedFileV1>) {
             mulligan_modes: None,
             london_keep_offset: None,
             priority_windows: None,
+            priority_pass_offset: None,
         })
         .collect();
     let collection = execute_v1(ExpandedTrainingCommandV1::Collect {

@@ -31,10 +31,11 @@
 //!   admitted) or `next.json` (the next config, published whole by a rename);
 //!   `STOP` wins when both files are present; while a run is in flight
 //!   neither is looked at, as a fresh process does not look either;
-//! - `next.json` is read and removed, then admitted only if it parses and
-//!   continues the run just finished (`check_continuation_v1`); anything else
-//!   ends the process with `REFUSED_EXIT_CODE` before any of its work, so the
-//!   driver can run that config in a fresh process.
+//! - `next.json` is read, parsed and removed, then admitted only if it
+//!   continues the run just finished (`check_continuation_v1`); anything
+//!   else (a next.json that cannot be read, parsed or removed included, which
+//!   stays where it is) ends the process with `REFUSED_EXIT_CODE` before any
+//!   of its work, so the driver can run that config in a fresh process.
 //!
 //! An incomplete run (a chain ledger stop) or a failed run ends the process
 //! as it ends a fresh one, without a done record.
@@ -101,7 +102,8 @@ pub enum FollowErrorV1 {
 /// Admits `next` after the complete run of `previous` that returned
 /// `previous_result` only if it continues that run: every field equal to
 /// `previous`'s in its serialized bytes (so float bits count, `-0.0` is not
-/// `0.0`) except `output_directory` (which must differ), `iterations` and
+/// `0.0`, except in a field whose serialization omits a default zero of
+/// either sign, such as `max_non_natural_episode_fraction`) except `output_directory` (which must differ), `iterations` and
 /// `initial_source.checkpoint`, and that checkpoint the pin (path and
 /// SHA-256) of the run's last output checkpoint, which is the check the chain
 /// driver makes before it builds the next config (`chains.next_source`). A
@@ -243,39 +245,35 @@ impl SpoolV1 {
             return Ok(Some(FollowNextV1::Orphaned));
         }
         let path = self.directory.join(NEXT_NAME);
+        // Every failure to take the request is a refusal (the process ends
+        // with status 3 and the driver uses a fresh process); a refused
+        // request is left where it is (a directory is never deleted).
+        let refuse = |why: String| Ok(Some(FollowNextV1::Unusable(why)));
         let meta = match fs::symlink_metadata(&path) {
             Ok(meta) => meta,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(err(error)),
+            Err(error) => return refuse(format!("next config cannot be inspected: {error}")),
         };
-        let bytes = if meta.is_file() && meta.len() <= SMALL_CAP {
-            let mut bytes = Vec::new();
-            fs::File::open(&path)
-                .map_err(err)?
-                .take(SMALL_CAP + 1)
-                .read_to_end(&mut bytes)
-                .map_err(err)?;
-            Some(bytes)
-        } else {
-            None
-        };
-        if meta.is_dir() {
-            fs::remove_dir_all(&path).map_err(err)?;
-        } else {
-            fs::remove_file(&path).map_err(err)?;
+        if !meta.is_file() || meta.len() > SMALL_CAP {
+            return refuse("next config is not a regular file of at most 16 MiB".into());
         }
-        let Some(bytes) = bytes.filter(|bytes| bytes.len() as u64 <= SMALL_CAP) else {
-            return Ok(Some(FollowNextV1::Unusable(
-                "next config is not a regular file of at most 16 MiB".into(),
-            )));
+        let mut bytes = Vec::new();
+        if let Err(error) =
+            fs::File::open(&path).and_then(|file| file.take(SMALL_CAP + 1).read_to_end(&mut bytes))
+        {
+            return refuse(format!("next config cannot be read: {error}"));
+        }
+        if bytes.len() as u64 > SMALL_CAP {
+            return refuse("next config exceeds 16 MiB".into());
+        }
+        let config = match serde_json::from_slice::<NativeExpandedTrainingRunV1>(&bytes) {
+            Ok(config) => config,
+            Err(error) => return refuse(format!("next config does not parse: {error}")),
         };
-        Ok(Some(
-            match serde_json::from_slice::<NativeExpandedTrainingRunV1>(&bytes) {
-                Ok(config) => FollowNextV1::Config(Box::new(config)),
-                Err(error) => {
-                    FollowNextV1::Unusable(format!("next config does not parse: {error}"))
-                }
-            },
-        ))
+        // Taken: removed, so that it is never read again.
+        if let Err(error) = fs::remove_file(&path) {
+            return refuse(format!("next config cannot be removed: {error}"));
+        }
+        Ok(Some(FollowNextV1::Config(Box::new(config))))
     }
 }

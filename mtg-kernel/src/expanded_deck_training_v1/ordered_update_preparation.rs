@@ -3,6 +3,7 @@
 //! original order. No model/RNG state is mutated by these workers.
 
 use super::*;
+use crate::sideboard_play_policy_v1::ReplayForwardRowsV1;
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -230,6 +231,50 @@ fn ordered_jobs_bounded_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
     max_jobs: usize,
     work: F,
 ) -> Result<(Vec<T>, Vec<WorkerTimingV1>), String> {
+    ordered_jobs_with_state_bounded_v1(
+        workers,
+        job_count,
+        max_jobs,
+        || (),
+        |_, ordinal| work(ordinal),
+    )
+}
+
+/// [`ordered_jobs_v1`] whose jobs also get their worker's own state: made by
+/// `state` on that worker's thread, handed to each of its jobs in turn and
+/// dropped there. A job's result must not depend on which worker ran it or on
+/// what that worker ran before, so state may only hold storage and exact
+/// caches. A worker takes no job after one of its own fails or panics (every
+/// later ordinal is past the first error), so no job sees state such a job
+/// left behind.
+#[cfg(test)]
+fn ordered_jobs_with_state_v1<S, T, M, F>(
+    workers: usize,
+    job_count: usize,
+    state: M,
+    work: F,
+) -> Result<(Vec<T>, Vec<WorkerTimingV1>), String>
+where
+    T: Send,
+    M: Fn() -> S + Sync,
+    F: Fn(&mut S, usize) -> Result<T, String> + Sync,
+{
+    ordered_jobs_with_state_bounded_v1(workers, job_count, MAX_GROUPS, state, work)
+}
+
+/// [`ordered_jobs_with_state_v1`] admitting up to `max_jobs` jobs.
+fn ordered_jobs_with_state_bounded_v1<S, T, M, F>(
+    workers: usize,
+    job_count: usize,
+    max_jobs: usize,
+    state: M,
+    work: F,
+) -> Result<(Vec<T>, Vec<WorkerTimingV1>), String>
+where
+    T: Send,
+    M: Fn() -> S + Sync,
+    F: Fn(&mut S, usize) -> Result<T, String> + Sync,
+{
     validate_preparation_workers_v1(workers)?;
     ensure(
         job_count > 0 && job_count <= max_jobs,
@@ -243,11 +288,13 @@ fn ordered_jobs_bounded_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
         for worker in 0..workers.min(job_count) {
             let next = &next;
             let first_error = &first_error;
+            let state = &state;
             let work = &work;
             match thread::Builder::new()
                 .name(format!("expanded-preparation-{worker}"))
                 .stack_size(WORKER_STACK_BYTES)
                 .spawn_scoped(scope, move || {
+                    let mut state = state();
                     let mut values = Vec::new();
                     let mut busy = 0.0;
                     loop {
@@ -256,7 +303,7 @@ fn ordered_jobs_bounded_v1<T: Send, F: Fn(usize) -> Result<T, String> + Sync>(
                             break;
                         }
                         let started = Instant::now();
-                        let result = catch_unwind(AssertUnwindSafe(|| work(ordinal)))
+                        let result = catch_unwind(AssertUnwindSafe(|| work(&mut state, ordinal)))
                             .unwrap_or_else(|_| Err("preparation worker panicked".into()));
                         busy += started.elapsed().as_secs_f64();
                         if result.is_err() {
@@ -547,6 +594,23 @@ pub(super) fn load_opponent_cached_v1(
     }
 }
 
+/// Which replayed rows may take a worker's exact row cache
+/// (`FrozenPlayPolicyV1::score_replay_tensor_ref_v1`) in place of the
+/// reference forward. The row-cached forward is the one collection ran, so a
+/// row replayed through it needs another forward to check it as well.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ReplayRowCacheV1 {
+    /// No row: every row takes the reference forward.
+    Off,
+    /// The learner's rows, for a caller whose learner step derives every
+    /// learner row's outputs again with its own forward and refuses any bit
+    /// that differs from the stored row (the native CPU steps:
+    /// `validate_forward_output_bits_v1`). The other seat's rows have no
+    /// second check and keep the reference forward.
+    LearnerRows,
+}
+
+/// The prepared replay with every row through the reference forward.
 pub(super) fn prepare_v1<'a>(
     episodes: &'a [ExpandedTrajectoryV1],
     policy: &FrozenPlayPolicyV1,
@@ -556,6 +620,34 @@ pub(super) fn prepare_v1<'a>(
     max_groups: usize,
     training_math: TrainingMathV1,
 ) -> Result<PreparedGroupsV1<'a>, String> {
+    prepare_with_row_cache_v1(
+        episodes,
+        policy,
+        learner,
+        workers,
+        max_prepared_tensor_mebibytes,
+        max_groups,
+        training_math,
+        ReplayRowCacheV1::Off,
+    )
+}
+
+/// [`prepare_v1`] with `row_cache`'s rows replayed through each worker's
+/// exact row cache: the same groups, telemetry and errors.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "prepare_v1's inputs and the row cache choice"
+)]
+pub(super) fn prepare_with_row_cache_v1<'a>(
+    episodes: &'a [ExpandedTrajectoryV1],
+    policy: &FrozenPlayPolicyV1,
+    learner: &ExpandedSeatBehaviorV1,
+    workers: usize,
+    max_prepared_tensor_mebibytes: usize,
+    max_groups: usize,
+    training_math: TrainingMathV1,
+    row_cache: ReplayRowCacheV1,
+) -> Result<PreparedGroupsV1<'a>, String> {
     let mut hits = 0;
     let mut prepared = prepare_with_loader_bounded_v1(
         episodes,
@@ -564,6 +656,7 @@ pub(super) fn prepare_v1<'a>(
         workers,
         max_prepared_tensor_mebibytes,
         max_groups,
+        row_cache,
         |source| {
             let (mut loaded, hit) = load_opponent_cached_v1(source, true)?;
             hits += usize::from(hit);
@@ -582,6 +675,7 @@ fn prepare_with_loader_v1<'a, F>(
     learner: &ExpandedSeatBehaviorV1,
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
+    row_cache: ReplayRowCacheV1,
     load: F,
 ) -> Result<PreparedGroupsV1<'a>, String>
 where
@@ -594,12 +688,17 @@ where
         workers,
         max_prepared_tensor_mebibytes,
         MAX_GROUPS,
+        row_cache,
         load,
     )
 }
 
 /// [`prepare_with_loader_v1`] with the update's physical-group bound
 /// ([`preparation_groups_bound_v1`]).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "prepare_with_loader_v1's inputs, the group bound and the row cache choice"
+)]
 fn prepare_with_loader_bounded_v1<'a, F>(
     episodes: &'a [ExpandedTrajectoryV1],
     policy: &FrozenPlayPolicyV1,
@@ -607,6 +706,7 @@ fn prepare_with_loader_bounded_v1<'a, F>(
     workers: usize,
     max_prepared_tensor_mebibytes: usize,
     max_groups: usize,
+    row_cache: ReplayRowCacheV1,
     mut load: F,
 ) -> Result<PreparedGroupsV1<'a>, String>
 where
@@ -667,50 +767,61 @@ where
         .collect();
     let binding = binding_started.elapsed().as_secs_f64();
     let replay_started = Instant::now();
-    let (ordered, worker_timings) =
-        ordered_jobs_bounded_v1(workers, jobs.len(), max_groups, |ordinal| {
-            let job = jobs[ordinal];
-            bindings[job.episode].as_ref().map_err(Clone::clone)?;
-            let trajectory = &episodes[job.episode];
-            let first = &trajectory.decisions[job.start];
-            let opponent = job
-                .opponent
-                .map(|index| opponents[index].as_ref().map_err(Clone::clone))
-                .transpose()?;
-            let acting = if first.actor == trajectory.episode.learner_seat {
-                policy
-            } else {
-                opponent.map_or(policy, |other| &other.policy)
-            };
-            let contract = trajectory_contract_v1(trajectory)?;
-            contract.require_policy_contract_v1(policy)?;
-            let generation = contract.generation;
-            let mut rows = Vec::new();
-            for row in &trajectory.decisions[job.start..job.end] {
-                let common = row.tensor.tensor();
-                let output = acting.score_replay_tensor_v1(
-                    generation,
-                    common.clone(),
-                    &row.tensor.pairing_node_indices,
-                )?;
-                ensure(
-                    bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
-                    "stored tensor does not reproduce rollout outputs",
-                )?;
-                if first.actor == trajectory.episode.learner_seat {
-                    rows.push((row, common));
-                }
+    // A worker replays the rows `row_cache` names through its own exact row
+    // cache: the same outputs, bit for bit, for a fraction of the work.
+    let replay_group = |cache: &mut ReplayForwardRowsV1, ordinal: usize| -> Result<_, String> {
+        let job = jobs[ordinal];
+        bindings[job.episode].as_ref().map_err(Clone::clone)?;
+        let trajectory = &episodes[job.episode];
+        let first = &trajectory.decisions[job.start];
+        let opponent = job
+            .opponent
+            .map(|index| opponents[index].as_ref().map_err(Clone::clone))
+            .transpose()?;
+        let learner_rows = first.actor == trajectory.episode.learner_seat;
+        let acting = if learner_rows {
+            policy
+        } else {
+            opponent.map_or(policy, |other| &other.policy)
+        };
+        let contract = trajectory_contract_v1(trajectory)?;
+        contract.require_policy_contract_v1(policy)?;
+        let generation = contract.generation;
+        let cached = learner_rows && row_cache == ReplayRowCacheV1::LearnerRows;
+        let mut rows = Vec::new();
+        for row in &trajectory.decisions[job.start..job.end] {
+            let common = row.tensor.tensor();
+            let output = acting.score_replay_tensor_ref_v1(
+                generation,
+                &common,
+                &row.tensor.pairing_node_indices,
+                cached.then_some(&mut *cache),
+            )?;
+            ensure(
+                bits(&output.logits) == row.logits && output.value.to_bits() == row.value,
+                "stored tensor does not reproduce rollout outputs",
+            )?;
+            if learner_rows {
+                rows.push((row, common));
             }
-            Ok(if rows.is_empty() {
-                None
-            } else {
-                Some((
-                    trajectory.terminal.terminal_reward[first.actor as usize] as i8,
-                    job.episode,
-                    rows,
-                ))
-            })
-        })?;
+        }
+        Ok(if rows.is_empty() {
+            None
+        } else {
+            Some((
+                trajectory.terminal.terminal_reward[first.actor as usize] as i8,
+                job.episode,
+                rows,
+            ))
+        })
+    };
+    let (ordered, worker_timings) = ordered_jobs_with_state_bounded_v1(
+        workers,
+        jobs.len(),
+        max_groups,
+        ReplayForwardRowsV1::default,
+        replay_group,
+    )?;
     let replay = replay_started.elapsed().as_secs_f64();
     drop(opponents);
     let groups = ordered.into_iter().flatten().collect();

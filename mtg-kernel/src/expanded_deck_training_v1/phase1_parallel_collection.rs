@@ -193,6 +193,7 @@ pub(super) fn collect_parallel_v1(
         "output directory already exists",
     )?;
     let (policy, learner, state_hash) = if source.s_learner.is_some() {
+        super::refuse_priority_pass_offset_v1(&episodes, "an S learner collection")?;
         super::s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
     } else {
         let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
@@ -557,6 +558,7 @@ mod tests {
                 mulligan_modes: None,
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         let result = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
@@ -714,6 +716,7 @@ mod tests {
                 mulligan_modes: None,
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
 
@@ -834,6 +837,7 @@ mod tests {
                 mulligan_modes: None,
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         let context = || {
@@ -925,6 +929,7 @@ mod tests {
                 mulligan_modes: None,
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         // The separate opponent seat gets its own parameters, so the service
@@ -1050,6 +1055,7 @@ mod tests {
                 mulligan_modes: None,
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         let run = |label: &str, workers: usize| {
@@ -1175,6 +1181,7 @@ mod tests {
                 mulligan_modes: None,
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         let run = |label: &str, sampler: CollectionSamplerV1, workers: usize| {
