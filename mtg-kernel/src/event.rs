@@ -3094,12 +3094,6 @@ fn apply_replacements_inner(
         {
             return None;
         }
-        #[cfg(feature = "eternal-fixtures")]
-        if !damage_cannot_be_prevented
-            && crate::eternal_prevention_order_v1::prevents_damage(state, damage)
-        {
-            return None;
-        }
         // Sphere of Law (Premodern sideboard wave P3a) applies first: before
         // the increases, the redirection and every shield.
         #[cfg(feature = "eternal-fixtures")]
@@ -7101,18 +7095,6 @@ fn batch_with_aura_token_hosts_v1(
         let mut events = events;
         #[cfg(feature = "eternal-fixtures")]
         match crate::linked_aura_operation_v1::prepare_hallow_batch(state, &mut events) {
-            Ok(true) => return,
-            Ok(false) => {}
-            Err(_) => {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    ObjectId(0),
-                ));
-                return;
-            }
-        }
-        #[cfg(feature = "eternal-fixtures")]
-        match crate::eternal_prevention_order_v1::prepare_batch(state, &mut events) {
             Ok(true) => return,
             Ok(false) => {}
             Err(_) => {

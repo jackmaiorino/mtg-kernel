@@ -245,3 +245,103 @@ fn simultaneous_player_damage_uses_independent_apnap_choices() {
         assert_eq!(remaining[0].player, active.opponent());
     }
 }
+
+#[test]
+fn finite_registered_shield_can_be_spent_before_either_complete_prevention() {
+    use mtg_kernel::event::{ActiveReplacement, ReplacementEffectKind};
+    let (mut start, attacker) = combat_board(P0, 1, Some(("Moment's Peace", ManaColor::G)));
+    // This replacement has no printed producer in the current registry. It is
+    // still an existing supported private state and must not be silently skipped.
+    start.engine.active_replacements.push(ActiveReplacement {
+        id: 900,
+        source: attacker,
+        kind: ReplacementEffectKind::PreventNextDamage {
+            target: Target::Player(P1),
+            remaining: 1,
+        },
+    });
+    start_attack(&mut start, attacker);
+    assert!(matches!(
+        combat_choice(&mut start),
+        Some(Decision::ChooseEffectOption {
+            option_count: 3,
+            ..
+        })
+    ));
+    for consume in [false, true] {
+        for finish in 0..2 {
+            let mut state = restored(&start);
+            if consume {
+                choose_public(&mut state, P1, attacker, 2, 3);
+                assert!(matches!(
+                    combat_choice(&mut state),
+                    Some(Decision::ChooseEffectOption {
+                        option_count: 2,
+                        ..
+                    })
+                ));
+            }
+            choose_public(
+                &mut state,
+                P1,
+                attacker,
+                finish,
+                if consume { 2 } else { 3 },
+            );
+            assert!(combat_choice(&mut state).is_none());
+            assert_eq!(life(&state, P1), 20);
+            assert_eq!(shields(&state), usize::from(finish == 1));
+            assert_eq!(
+                state
+                    .engine
+                    .active_replacements
+                    .iter()
+                    .any(|replacement| replacement.id == 900),
+                !consume
+            );
+        }
+    }
+}
+
+#[test]
+fn mixed_source_batch_shares_apnap_frontier_with_hallow() {
+    use mtg_kernel::event::{self, ProposedEvent};
+    for active in [P0, P1] {
+        let other = active.opponent();
+        let mut state = turn_of(active);
+        let protected = put(&mut state, active, "Jackal Pup", Zone::Hand);
+        pool(&mut state, active, &[ManaColor::R], 0);
+        cast(&mut state, protected, &[]);
+        give_priority(&mut state, other);
+        let hallow = put(&mut state, other, "Hallow", Zone::Hand);
+        pool(&mut state, other, &[ManaColor::W], 0);
+        cast(&mut state, hallow, &[Target::Object(protected)]);
+        settled(&mut state);
+        let ordinary = put(&mut state, other, "Jackal Pup", Zone::Battlefield);
+        let circle = put(&mut state, active, RED_CIRCLE, Zone::Battlefield);
+        let source = link(&state, ordinary);
+        shield(&mut state, active, circle, source);
+        global_prevention(&mut state, other, "Ethereal Haze", ManaColor::W);
+        // Exercise the engine's supported heterogeneous batch boundary. The
+        // first physical event belongs to NAP; AP must still answer first.
+        event::propose_and_commit_batch(
+            &mut state,
+            vec![
+                ProposedEvent::damage(protected, Target::Player(other), 2),
+                ProposedEvent::damage(ordinary, Target::Player(active), 2),
+            ],
+        );
+        assert!(
+            matches!(next(&mut state), Decision::ChooseEffectOption { player, source, option_count: 2 } if player == active && source == ordinary)
+        );
+        choose_public(&mut state, active, ordinary, 0, 2);
+        assert!(
+            matches!(next(&mut state), Decision::ChooseEffectOption { player, source, option_count: 2 } if player == other && source == protected)
+        );
+        choose_public(&mut state, other, protected, 0, 2);
+        settled(&mut state);
+        assert_eq!(life(&state, active), 20);
+        assert_eq!(life(&state, other), 22);
+        assert_eq!(shields(&state), 0);
+    }
+}

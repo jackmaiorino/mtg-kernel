@@ -1106,7 +1106,8 @@ pub(crate) fn prepare_hallow_batch(
     state: &mut GameState,
     events: &mut Vec<ProposedEvent>,
 ) -> Result<bool, String> {
-    if !crate::eternal_pauper_pf1c_v1::may_need_hallow_choice(state)
+    if !(crate::eternal_pauper_pf1c_v1::may_need_hallow_choice(state)
+        || crate::eternal_prevention_order_v1::may_need_choice(state))
         || !events
             .iter()
             .any(|event| matches!(event, ProposedEvent::Damage(_)))

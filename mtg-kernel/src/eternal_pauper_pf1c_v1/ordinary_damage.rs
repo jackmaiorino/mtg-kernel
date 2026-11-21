@@ -52,7 +52,7 @@ fn prevention_without_cost(state: &GameState, damage: &DamageProposed) -> bool {
 /// Applied static abilities follow both portions of a split event (CR 614.5).
 /// Registered effects use the proposal's existing touched-by list.
 #[derive(Clone)]
-pub(super) struct Packet {
+pub(crate) struct Packet {
     pub damage: DamageProposed,
     used: Vec<OrdinaryV1>,
 }

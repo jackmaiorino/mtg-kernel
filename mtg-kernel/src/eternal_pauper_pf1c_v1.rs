@@ -469,7 +469,7 @@ fn hallow_shield(ctx: &ExecCtx, state: &mut GameState) {
 /// The incarnation that deals `damage` and the zone it was in: its
 /// historical source, else the source of the resolving ability that deals
 /// it as that source last existed (113.7a), else the live object.
-pub(crate) fn damage_source_incarnation(
+fn damage_source_incarnation(
     state: &GameState,
     damage: &DamageProposed,
 ) -> Option<(ObjectLinkV4, Zone)> {
@@ -559,7 +559,9 @@ fn covered_packet(
         return None;
     }
     let (source, source_zone) = damage_source_incarnation(state, damage)?;
-    if hallow_beneficiaries(state, source, source_zone).is_empty() {
+    if hallow_beneficiaries(state, source, source_zone).is_empty()
+        && !crate::eternal_prevention_order_v1::eligible(state, damage)
+    {
         return None;
     }
     Some(HallowPacketV1 {
@@ -609,11 +611,16 @@ fn prevent_packets(
         let chooser =
             packet_chooser(state, damage).ok_or("Hallow packet has no affected player")?;
         let beneficiaries = hallow_beneficiaries(state, item.source, item.source_zone);
-        if beneficiaries.is_empty() {
-            return Err("Hallow frontier lost its source-bound shield".into());
-        }
-        let circle = circles::circle_shield_position(state, damage)
+        let complete_prevention = beneficiaries.is_empty();
+        let circle = (!complete_prevention)
+            .then(|| circles::circle_shield_position(state, damage))
+            .flatten()
             .map(|at| state.eternal_v1.as_ref().unwrap().s1d.cop_shields[at]);
+        let ordinary = if complete_prevention {
+            crate::eternal_prevention_order_v1::packet_options(state, &item.packet)
+        } else {
+            item.packet.options(state)
+        };
         let step = steps[item.event];
         steps[item.event] = step
             .checked_add(1)
@@ -632,10 +639,16 @@ fn prevent_packets(
             chooser,
             beneficiaries,
             circle,
-            ordinary: item.packet.options(state),
+            ordinary,
         };
-        let selected = if choice.count() == 1 {
-            HallowPreventionV1::Hallow(choice.beneficiaries[0])
+        let selected = if choice.count() == 0 {
+            return Err("covered frontier lost every complete prevention".into());
+        } else if choice.count() == 1 {
+            if complete_prevention {
+                HallowPreventionV1::Ordinary(0)
+            } else {
+                HallowPreventionV1::Hallow(choice.beneficiaries[0])
+            }
         } else {
             if choice.count() > usize::from(u16::MAX) {
                 return Err("Hallow replacement options exceed the native decision width".into());
