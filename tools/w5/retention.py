@@ -193,20 +193,26 @@ def unlinked_inside(path, top):
     return os.path.realpath(absolute) == absolute and Path(top).resolve() in Path(absolute).parents
 
 
-def own_files(seg_root, *paths):
+def own_files(seg_root, *paths, own_dir=None):
     """A carried chain's segment and the files it indexes resolve inside the segment's own chain directory (no link
-    out of it), so an index never labels another chain's files with the continuation's boundaries."""
+    out of it), so an index never labels another chain's files with the continuation's boundaries. The segment has
+    no link in its path and, given `own_dir` (the manifest's directory), is a direct child of it; every file has no
+    link in its path and lies inside the segment (an iteration linked to another iteration is refused)."""
     seg_root = Path(seg_root)
     chain_dir_real = seg_root.parent.resolve()
     real_seg = seg_root.resolve()
     if seg_root.is_symlink() or real_seg.parent != chain_dir_real:
         raise SystemExit(f'stop: {seg_root} is a link or resolves outside its chain directory')
+    seg_abs = os.path.abspath(seg_root)
+    if os.path.realpath(seg_abs) != seg_abs or (
+            own_dir is not None and os.path.dirname(seg_abs) != os.path.abspath(own_dir)):
+        raise SystemExit(f'stop: {seg_root} has a link in its path or is not a segment of {own_dir}')
     for p in paths:
-        if real_seg not in Path(p).resolve().parents:
-            raise SystemExit(f'stop: {p} resolves outside its segment {seg_root}')
+        if real_seg not in Path(p).resolve().parents or not unlinked_inside(p, seg_root):
+            raise SystemExit(f'stop: {p} resolves outside its segment {seg_root} or has a link in its path')
 
 
-def scan(chain, known):
+def scan(chain, known, own_dir=None):
     """Index records of the completed updates after the first `known` ones (the records already indexed), in order,
     stopping at the first update without its receipt (a segment's iterations complete in order)."""
     known += chain_start(chain)  # a boundary from here on: a carried chain's records start at update B
@@ -223,10 +229,10 @@ def scan(chain, known):
                 return new
             receipt = read(complete)
             if carried:  # a carried chain indexes only its own files (a link to another tree is refused)
-                own_files(seg['root'], complete, receipt['update']['path'])
+                own_files(seg['root'], complete, receipt['update']['path'], own_dir=own_dir)
             doc = read(receipt['update']['path'])
             if carried:
-                own_files(seg['root'], doc['checkpoint']['path'])
+                own_files(seg['root'], doc['checkpoint']['path'], own_dir=own_dir)
             ledger = receipt.get('chain_ledger') or {}
             new.append({'update': seg['offset'] + i, 'boundary': seg['offset'] + i + 1, 'segment': s, 'iteration': i,
                         'after_state_sha256': doc['after_state_sha256'], 'checkpoint': doc['checkpoint'],
@@ -312,7 +318,7 @@ def index_locked(chain_path):
         tmp = cache.with_suffix(cache.suffix + '.tmp')
         tmp.write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
         os.replace(tmp, cache)
-    new = scan(chain, len(records))
+    new = scan(chain, len(records), Path(chain_path).parent)
     if new:
         with open(cache, 'ab') as f:
             terminate(f)
@@ -767,7 +773,7 @@ class IndexCache:
                 raise SystemExit(f'stop: {cache} needs its S-container migration, which a read-only cache does not do')
             migrate(self.chain_path, chain)  # a cache written before S containers were tracked (once)
             return self._whole()
-        new = scan(chain, len(store))
+        new = scan(chain, len(store), Path(self.chain_path).parent)
         if self.read_only:
             # The cursor is the end of what was read, not a later size: a row another writer appends meanwhile is
             # read at the next refresh, which then reconciles the unwritten records found past it.
@@ -840,7 +846,7 @@ class IndexCache:
             self.records.drop_unwritten()
             self.active = IndexView(self.records, array('q', (n for n in self.active.numbers if n < first)))
         chain = load_chain(self.chain_path)
-        new = scan(chain, len(self.records) + len(added))
+        new = scan(chain, len(self.records) + len(added), Path(self.chain_path).parent)
         if new and not self.read_only:
             lines = [(json.dumps(r) + '\n').encode('utf-8') for r in new]
             with open(cache, 'ab') as f:
@@ -1076,6 +1082,10 @@ def apply(plan_doc, log_path, hold=None):
         log_abs = os.path.abspath(log_path)
         if os.path.realpath(log_abs) != log_abs:
             raise SystemExit(f'stop: the retention log {log_path} is a link or lies under one')
+        if hold:
+            hold_abs = os.path.abspath(hold)
+            if os.path.realpath(hold_abs) != hold_abs:
+                raise SystemExit(f'stop: the hold folder {hold} is a link or lies under one')
     try:
         with open(log_path, 'a', encoding='utf-8') as log:
             for kind in ('checkpoints', 'trajectories'):

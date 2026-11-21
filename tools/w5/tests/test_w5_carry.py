@@ -997,5 +997,49 @@ class CarryTests(unittest.TestCase):
         self.assertEqual(snap(), before)
 
 
+    def test_entry_points_intra_segment_links_and_hold_links_are_refused(self):
+        _, old_man = self.old(3)
+        path, plan = chains.make_plan(self.cont_inputs(self.carry(old_man, 8)))
+        cont = self.t / 'cont'
+        self.assertEqual(self.drive(plan, 'c1c', cont, 1), chains.EXIT_ROOM)
+        old_root = self.node.root
+        old_ck = next((old_root / 'chains' / 'c1' / 'seg-00001' / 'iterations' / '000003').glob(
+            'attempt-*/update/checkpoint.json'))
+        snap = lambda: {p: p.read_bytes() for p in old_root.rglob('*') if p.is_file() and not p.is_symlink()}
+        before = snap()
+        # a dangling SUPERVISE.lock link into the old tree: supervise refuses before the lock
+        lock = cont / 'SUPERVISE.lock'
+        lock.unlink(missing_ok=True)
+        try:
+            lock.symlink_to(old_root / 'chains' / 'c1' / 'NEW-FILE')
+        except OSError:
+            self.skipTest('no symlink permission on this host')
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(chains.main(['supervise', '--plan', str(path)]), w5box.EXIT_REFUSED)
+        self.assertFalse((old_root / 'chains' / 'c1' / 'NEW-FILE').exists())
+        lock.unlink()
+        self.assertEqual(snap(), before)
+        # an iteration linked to another iteration of the same segment: indexing refuses
+        cman = cont / 'chains' / 'c1c' / 'chain.json'
+        cindex = cont / 'chains' / 'c1c' / 'chain.index.jsonl'
+        cindex.unlink(missing_ok=True)
+        its = cont / 'chains' / 'c1c' / 'seg-00000' / 'iterations'
+        names = sorted(p.name for p in its.iterdir())
+        victim = its / names[-1]
+        victim.rename(its / (names[-1] + '.moved'))
+        victim.symlink_to(its / names[0], target_is_directory=True)
+        with self.assertRaises(SystemExit):
+            retention.index(cman)
+        victim.unlink()
+        (its / (names[-1] + '.moved')).rename(victim)
+        # a carried plan's linked hold folder
+        (self.t / 'hold-real').mkdir()
+        (self.t / 'hold-link').symlink_to(self.t / 'hold-real', target_is_directory=True)
+        with self.assertRaisesRegex(SystemExit, 'hold folder'):
+            retention.apply({'own_dir': (cont / 'chains' / 'c1c').resolve().as_posix(), 'checkpoints': [],
+                             'trajectories': []}, cont / 'retention-test.jsonl', hold=self.t / 'hold-link')
+        self.assertEqual(snap(), before)
+
+
 if __name__ == '__main__':
     unittest.main()

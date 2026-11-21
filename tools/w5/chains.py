@@ -602,6 +602,12 @@ def carried_trees_unlinked(root, name):
             dirnames[:] = [d for d in dirnames if not retention.SEGMENT_DIR.fullmatch(d)]
 
 
+def carried_plan_ok(plan):
+    """Every carried chain of the plan: its tree checked (`carried_chain_dir_ok`). A no-op for a plan without carry."""
+    for n in sorted(plan['chains']):
+        carried_chain_dir_ok(plan, Path(plan['root']), n)
+
+
 def carried_tree_held(man, root, name):
     """True unless `name` is carried and its W5 root now holds a link: then the reason goes to stderr only (the
     tree's own logs are suspect) and the caller stops without another write."""
@@ -2037,7 +2043,7 @@ def drive_locked(a, arm, root, cdir, man_path):
             log(root, chain=a.chain, event='stop')
             return EXIT_STOP
         hold = carried_from_stopped(man)  # None unless carried: before every segment, the old chain must stay held
-        if hold is None and man.get('carry'):
+        if man.get('carry'):
             try:
                 carried_dirs_apart(man['carry'], a.chain, root, arm.get('scratch_root'))
                 carried_trees_unlinked(root, a.chain)
@@ -2916,11 +2922,9 @@ def launch(a):
     box is occupied: a chain's start restores its own box, a verified filler a filler box."""
     plan = load_plan(a.plan)
     root = Path(plan['root'])
-    for n in sorted(plan['chains']):  # carried chains: their trees before the witness, node lock or launch log
-        carried_chain_dir_ok(plan, root, n)
+    carried_plan_ok(plan)  # carried chains: their trees before the witness, node lock or launch log
     settle_vector_tanh(plan['trainer'], root)
-    for n in sorted(plan['chains']):  # and again after the witness, before the node lock
-        carried_chain_dir_ok(plan, root, n)
+    carried_plan_ok(plan)  # and again after the witness, before the node lock
     node = w5box.NodeLog(root / 'state')
     opened = []
     with node.locked():
@@ -3195,6 +3199,7 @@ def supervise(a):
     if getattr(a, 'guard_only', False):
         guard_only_allowed(plan)
     root = Path(plan['root'])
+    carried_plan_ok(plan)  # carried chains: their trees before the supervise lock
     held = lock(root / 'SUPERVISE.lock')
     require(held is not None, 'another supervise holds this node')
     try:
@@ -3249,6 +3254,7 @@ def segcheck(a):
     """On this host: two updates of the arm's recipe as one native run and as two one-update segments; equal after
     states and trajectories (path and timing fields aside) are the regeneration receipt for segmenting."""
     plan = load_plan(a.plan)
+    carried_plan_ok(plan)
     arm = load_arm(plan['arms'][a.arm]['file']['path'])
     out = Path(plan['root']) / 'segcheck' / f'{a.arm}-{time.strftime("%Y%m%dT%H%M%S")}'
     seed = 'w5/segcheck'
@@ -3281,6 +3287,7 @@ def segcheck(a):
 def clean_fillers(a):
     """A stage's end: every filler tree (`<root>/fillers/slot<k>`) whose filler is not running."""
     plan = load_plan(a.plan, check=False)
+    carried_plan_ok(plan)
     root = Path(plan['root'])
     trees = []
     paused = {c['slot'] for n, c in plan['chains'].items() if (root / 'state' / n / 'paused.json').exists()}
@@ -3772,6 +3779,7 @@ def throughput_run(plan_path, arm, label, updates, out, counts=None, max_wall=w5
     require(0 < max_wall <= w5box.UNQUALIFIED_MAX_WALL, 'a phase wall cap is at most the unqualified 6 hours')
     root = Path(target['root'])
     require(not (root / 'STOP').exists(), 'a node STOP file is present')
+    carried_plan_ok(target)  # carried chains: their trees before the lock and the phase plans
     held = lock(root / 'SUPERVISE.lock')
     require(held is not None, 'another supervise holds this node')
     phases, plans, started, failure, failed_durable = [], [], time.time(), None, None
@@ -3968,6 +3976,7 @@ def mix_run(plan_path, slots, label, updates, out, counts=None, max_wall=w5box.U
     require(0 < max_wall <= w5box.UNQUALIFIED_MAX_WALL, 'a phase wall cap is at most the unqualified 6 hours')
     root = Path(target['root'])
     require(not (root / 'STOP').exists(), 'a node STOP file is present')
+    carried_plan_ok(target)  # carried chains: their trees before the lock and the phase plans
     held = lock(root / 'SUPERVISE.lock')
     require(held is not None, 'another supervise holds this node')
     phases, plans, bindings, started, failure, failed_durable = [], [], {}, time.time(), None, None
