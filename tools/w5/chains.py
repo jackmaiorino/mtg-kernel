@@ -596,6 +596,17 @@ def carried_plan_ok(plan):
         carried_chain_dir_ok(plan, Path(plan['root']), n)
 
 
+def carried_tree_still_ok(plan):
+    """`carried_plan_ok` that reports instead of raising: False (reason on stderr) when a carried tree now holds a
+    link; True for an ordinary plan."""
+    try:
+        carried_plan_ok(plan)
+        return True
+    except Stop as exc:
+        print(f'stop: {exc}', file=sys.stderr, flush=True)
+        return False
+
+
 def carried_tree_held(man, root, name):
     """True unless `name` is carried and its W5 root now holds a link: then the reason goes to stderr only (the
     tree's own logs are suspect) and the caller stops without another write."""
@@ -3264,7 +3275,8 @@ def segcheck(a):
     """On this host: two updates of the arm's recipe as one native run and as two one-update segments; equal after
     states and trajectories (path and timing fields aside) are the regeneration receipt for segmenting."""
     plan = load_plan(a.plan)
-    carried_plan_ok(plan)
+    require(not any(c.get('carry') for c in plan['chains'].values()),
+            'segcheck does not run on a carried plan (use an ordinary plan of the same recipe)')
     arm = load_arm(plan['arms'][a.arm]['file']['path'])
     out = Path(plan['root']) / 'segcheck' / f'{a.arm}-{time.strftime("%Y%m%dT%H%M%S")}'
     seed = 'w5/segcheck'
@@ -3805,9 +3817,12 @@ def throughput_run(plan_path, arm, label, updates, out, counts=None, max_wall=w5
         failure = f'phase {plans[-1]["label"]}: {exc}'
         failed_durable = getattr(exc, 'durable', None)
     finally:
-        for phase in plans:
-            close_handoffs(phase, root)
+        tree_ok = carried_tree_still_ok(target)  # a carried plan: its trees again before any closing write
+        if tree_ok:
+            for phase in plans:
+                close_handoffs(phase, root)
         unlock(held)
+        require(tree_ok, 'a carried plan\'s tree holds a link after the qualification: nothing more written')
     uname = os.uname() if hasattr(os, 'uname') else None
     meta = {'plan': pin(plan_path), 'label': label, 'arm': arm, 'updates': updates, 'seed_root': seed_root,
             'counts': counts, 'segment_updates': length, 'box_threads': box_threads(target, slots[0]),
@@ -4004,9 +4019,12 @@ def mix_run(plan_path, slots, label, updates, out, counts=None, max_wall=w5box.U
         failure = f'phase {plans[-1]["label"]}: {exc}'
         failed_durable = getattr(exc, 'durable', None)
     finally:
-        for phase in plans:
-            close_handoffs(phase, root)
+        tree_ok = carried_tree_still_ok(target)  # a carried plan: its trees again before any closing write
+        if tree_ok:
+            for phase in plans:
+                close_handoffs(phase, root)
         unlock(held)
+        require(tree_ok, 'a carried plan\'s tree holds a link after the qualification: nothing more written')
     uname = os.uname() if hasattr(os, 'uname') else None
     meta = {'plan': pin(plan_path), 'label': label, 'slots': slots, 'updates': updates, 'seed_root': seed_root,
             'counts': counts, 'segment_updates': lengths, 'box_threads': box_threads(target, 0),

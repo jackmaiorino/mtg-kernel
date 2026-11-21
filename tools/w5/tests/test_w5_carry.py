@@ -1126,5 +1126,39 @@ class CarryTests(unittest.TestCase):
         self.assertEqual(snap(), before)
 
 
+    def test_delta_head_check_blank_lines_empty_cache_and_dotdot_outputs(self):
+        _, old_man = self.old(3)
+        path, plan = chains.make_plan(self.cont_inputs(self.carry(old_man, 8)))
+        cont = self.t / 'cont'
+        old_root = self.node.root
+        retention.index(old_root / 'chains' / 'c1' / 'chain.json')
+        old_rows = (old_root / 'chains' / 'c1' / 'chain.index.jsonl').read_bytes()
+        cman = cont / 'chains' / 'c1c' / 'chain.json'
+        cindex = cont / 'chains' / 'c1c' / 'chain.index.jsonl'
+        # a leading blank line before copied predecessor rows
+        cindex.write_bytes(b'\n' + old_rows)
+        with self.assertRaisesRegex(SystemExit, 'carried boundary'):
+            retention.index(cman)
+        with self.assertRaisesRegex(SystemExit, 'carried boundary'):
+            retention.IndexCache(cman, read_only=True).refresh()
+        # an empty cached index, then predecessor rows written into the same file
+        cindex.write_bytes(b'')
+        cache = retention.IndexCache(cman)
+        cache.refresh()
+        with open(cindex, 'ab') as f:
+            f.write(old_rows)
+        with self.assertRaisesRegex(SystemExit, 'carried boundary'):
+            cache.refresh()
+        cindex.unlink()
+        # standalone outputs with a '..' component
+        with self.assertRaisesRegex(SystemExit, 'component'):
+            retention.carried_output_unlinked(cont / 'x' / '..' / 'config.json')
+        # segcheck refuses a carried plan
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(chains.main(['segcheck', '--plan', str(path), '--arm', 'C', '--out', str(self.t / 'sc.json')]), w5box.EXIT_REFUSED)
+        self.assertIn('carried plan', err.getvalue())
+
+
 if __name__ == '__main__':
     unittest.main()

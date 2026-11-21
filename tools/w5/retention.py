@@ -286,8 +286,8 @@ def carried_output_unlinked(out, *dirs):
     paths = [out, out.with_suffix(out.suffix + '.tmp'), *[Path(d) for d in dirs if d]]
     for p in paths:
         absolute = os.path.abspath(p)
-        if os.path.islink(p) or os.path.realpath(absolute) != absolute:
-            raise SystemExit(f'stop: {p} is a link or lies under one (a carried chain)')
+        if '..' in Path(p).parts or os.path.islink(p) or os.path.realpath(absolute) != absolute:
+            raise SystemExit(f'stop: {p} is a link, lies under one or has a ".." component (a carried chain)')
     for d in dirs:
         if d and Path(d).is_dir():
             for dirpath, dirnames, filenames in os.walk(d, followlinks=False):
@@ -324,6 +324,8 @@ def carried_index_head_ok(chain, chain_path, cache):
         return
     with open(cache, 'rb') as f:
         line = f.readline()
+        while line and not line.strip():  # the readers skip blank lines: so does this check
+            line = f.readline()
     if not line.strip():
         return
     rec = json.loads(line)
@@ -860,8 +862,8 @@ class IndexCache:
 
     def _refresh(self):
         cache = index_path(self.chain_path)
-        if self.records is None:
-            return self._whole()
+        if self.records is None or (getattr(self, 'carried', False) and not len(self.records)):
+            return self._whole()  # a carried chain's first rows always pass the head check of a full read
         try:
             f = open(cache, 'rb')
         except FileNotFoundError:
