@@ -37,7 +37,11 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
   first segment, so from the fork point) is below `end_update`, and no such field from there on; C-recipe arms only,
   on a base whose every episode has the London opening and its modes and whose loss and backend are the plain CPU GAE
   update; part of the recipe identity only when present, so a started chain refuses a changed schedule; `b0` is a
-  number or a list of 7, one lean per number of mulligans the acting seat has already taken), optional
+  number or a list of 7, one lean per number of mulligans the acting seat has already taken), optional `pass_offset`
+  (`{b0, end_update, shape: "linear-v1"}`, qual.py: every episode with `priority_windows` carries the trainer's
+  `priority_pass_offset = b(u)` on the same terms; C-recipe arms only, on a base whose every episode has
+  `priority_windows` with an action-window seat and the plain CPU GAE update; recipe identity only when present),
+  optional
   `pregame_advantage` (`"terminal_v1"`, qual.py: the trainer's loss_selection key, the pregame decisions' advantage
   and value target from the terminal result; C-recipe arms on a London base with gamma 1.0; recipe identity only when
   present), optional `pregame_announcement_step_scale` (a number s, 0 < s < 1, only with `pregame_advantage`: the
@@ -458,6 +462,7 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
     x = arm['x'] or {}
     parent = read(arm['parent']['path'])
     keep_offset = arm.get('keep_offset')  # absent otherwise: the config is exactly what it was
+    pass_offset = arm.get('pass_offset')  # absent otherwise, as keep_offset
     pregame_advantage = arm.get('pregame_advantage')  # absent otherwise, as keep_offset
     pregame_announcement_step_scale = arm.get('pregame_announcement_step_scale')  # absent otherwise, as keep_offset
     try:
@@ -466,9 +471,10 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
                                 x.get('dose', 'primary'), ledger_source,
                                 prep_workers=arm.get('preparation_workers'), keep_offset=keep_offset,
                                 pregame_advantage=pregame_advantage,
-                                pregame_announcement_step_scale=pregame_announcement_step_scale)
+                                pregame_announcement_step_scale=pregame_announcement_step_scale,
+                                pass_offset=pass_offset)
     except ValueError as exc:
-        if keep_offset is None and pregame_advantage is None:
+        if keep_offset is None and pregame_advantage is None and pass_offset is None:
             raise
         raise Stop(f'{arm["arm"]}: {exc}') from exc
     if source is not None:
@@ -588,6 +594,8 @@ def recipe_identity(arm):
         identity['initial_opponent'] = arm['initial_opponent']
     if arm.get('keep_offset') is not None:
         identity['keep_offset'] = arm['keep_offset']  # absent otherwise: existing manifests unchanged
+    if arm.get('pass_offset') is not None:
+        identity['pass_offset'] = arm['pass_offset']  # absent otherwise: existing manifests unchanged
     if arm.get('pregame_advantage') is not None:
         identity['pregame_advantage'] = arm['pregame_advantage']  # absent otherwise: existing manifests unchanged
     if arm.get('pregame_announcement_step_scale') is not None:
@@ -744,6 +752,17 @@ def make_plan(inputs_path):
                 keep_offset = qual.validate_keep_offset(keep_offset, base_doc)
             except ValueError as exc:
                 raise Stop(f'{a}: {exc}') from exc
+        # pass_offset: the priority pass offset schedule {b0, end_update, shape} (qual.validate_pass_offset), stamped
+        # by update into each episode with priority_windows as the trainer's priority_pass_offset. It needs a base
+        # whose every episode has priority_windows with an action-window seat and is part of the arm's frozen recipe.
+        # Absent (or null): nothing changes.
+        pass_offset = spec.get('pass_offset')
+        if pass_offset is not None:
+            require(recipe == 'C', f'{a}: pass_offset trains only on the plain CPU update of a C-recipe arm')
+            try:
+                pass_offset = qual.validate_pass_offset(pass_offset, base_doc)
+            except ValueError as exc:
+                raise Stop(f'{a}: {exc}') from exc
         # pregame_advantage: the trainer's loss_selection.pregame_advantage ("terminal_v1": the pregame decisions'
         # advantage and value target come from the game's terminal result; qual.validate_pregame_advantage). Part of
         # the arm's frozen recipe, C-recipe arms on a London base with gamma 1.0 only. Absent (or null): nothing changes.
@@ -805,6 +824,8 @@ def make_plan(inputs_path):
             doc['verified_reads'] = verified_reads
         if keep_offset is not None:  # absent otherwise, as record_envelope
             doc['keep_offset'] = keep_offset
+        if pass_offset is not None:  # absent otherwise, as record_envelope
+            doc['pass_offset'] = pass_offset
         if pregame_advantage is not None:  # absent otherwise, as record_envelope
             doc['pregame_advantage'] = pregame_advantage
         if pregame_announcement_step_scale is not None:  # absent otherwise, as record_envelope
@@ -917,6 +938,8 @@ def make_plan(inputs_path):
                     f'{name}: the recipe changed after the chain started' +
                     (' (keep_offset differs)' if have['recipe'].get('keep_offset') != header['recipe'].get(
                         'keep_offset') else '') +
+                    (' (pass_offset differs)' if have['recipe'].get('pass_offset') != header['recipe'].get(
+                        'pass_offset') else '') +
                     (' (pregame_advantage differs)' if have['recipe'].get('pregame_advantage') != header[
                         'recipe'].get('pregame_advantage') else '') +
                     (' (pregame_announcement_step_scale differs)' if have['recipe'].get('pregame_announcement_step_scale') != header[
