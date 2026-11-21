@@ -529,21 +529,100 @@ fn the_input_gradient_from_a_first_read_column_matches_the_sequential_sink() {
                 )
                 .unwrap();
                 assert_eq!(recorded.len(), expected.len());
+                // Outside the pinned state the sink computes even the unread columns.
+                let skipped = if rounds_to_nearest_v1() {
+                    first_read
+                } else {
+                    0
+                };
                 for (recorded, expected) in recorded
                     .chunks_exact(input_dim)
                     .zip(expected.chunks_exact(input_dim))
                 {
                     assert_eq!(
-                        bits_v1(&[recorded[first_read..].to_vec()]),
-                        bits_v1(&[expected[first_read..].to_vec()]),
+                        bits_v1(&[recorded[skipped..].to_vec()]),
+                        bits_v1(&[expected[skipped..].to_vec()]),
                         "{output_dim}x{input_dim} rows={rows} first_read={first_read}"
                     );
                     // Test builds mark what was not computed.
-                    assert!(recorded[..first_read].iter().all(|value| value.is_nan()));
+                    assert!(recorded[..skipped].iter().all(|value| value.is_nan()));
                 }
             }
         }
     }
+}
+
+/// With a floating-point exception unmasked, the kernels leave out nothing:
+/// the zero-skip gate is off and `linear_read_from_v1` computes every
+/// column, so no reference operation that could trap is left out. Only the
+/// denormal-operand exception is unmasked, and the values are normal, so
+/// nothing here traps.
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn an_unmasked_exception_leaves_out_no_term_and_no_column() {
+    use crate::deterministic_math_v1::{read_mxcsr_v1, write_mxcsr_v1};
+    const DENORMAL_MASK: u32 = 1 << 8;
+    let saved = read_mxcsr_v1();
+    assert!(rounds_to_nearest_v1(), "the test thread starts pinned");
+    let mut bits = TestBitsV1(0x5d1c_7e2a_93b4_0f61);
+    let (output_dim, input_dim, rows, first_read) = (64, 114, 3, 41);
+    let tensor = |shape: Vec<usize>, bits: &mut TestBitsV1| NativeNamedParameterV1 {
+        name: "synthetic",
+        values: bits.values(shape.iter().product()),
+        shape,
+    };
+    let parameters = vec![
+        tensor(vec![2, CARD_EMBEDDING_DIM_V1], &mut bits),
+        tensor(vec![output_dim, input_dim], &mut bits),
+        tensor(vec![output_dim], &mut bits),
+    ];
+    let input = bits.values(rows * input_dim);
+    let d_output = bits.values(rows * output_dim);
+    let mut gradients = parameters
+        .iter()
+        .map(|parameter| vec![0.0f32; parameter.values.len()])
+        .collect::<Vec<_>>();
+    let mut expected = Vec::new();
+    AccumulateGradientsV1(&mut gradients)
+        .linear_v1(
+            &parameters,
+            1,
+            2,
+            &input,
+            rows,
+            input_dim,
+            output_dim,
+            &d_output,
+            &mut expected,
+        )
+        .unwrap();
+    let mut terms = SubstepTermsV1::default();
+    let mut recorded = Vec::new();
+    write_mxcsr_v1(saved & !DENORMAL_MASK);
+    let gate = rounds_to_nearest_v1();
+    let result = RecordTermsV1 {
+        terms: &mut terms,
+        card_embedding_len: parameters[CARD_EMBEDDING].values.len(),
+    }
+    .linear_read_from_v1(
+        &parameters,
+        1,
+        2,
+        &input,
+        rows,
+        input_dim,
+        output_dim,
+        &d_output,
+        first_read,
+        &mut recorded,
+    );
+    write_mxcsr_v1(saved);
+    result.unwrap();
+    assert!(!gate, "an unmasked exception turns the zero-skip gate off");
+    assert!(rounds_to_nearest_v1(), "the saved state is restored");
+    // Every column was computed, the unread ones included, with the
+    // reference's bits.
+    assert_eq!(bits_v1(&[recorded]), bits_v1(&[expected]));
 }
 
 /// The reference sink and the transposed sequential sink on the same calls.

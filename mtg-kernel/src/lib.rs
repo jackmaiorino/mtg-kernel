@@ -223,6 +223,7 @@ mod librarian_activation_v1;
 pub mod librarian_public_v1;
 pub mod linked_aura_operation_v1;
 pub mod linked_aura_return_v1;
+mod linked_exile_v4;
 pub mod mild_mannered_librarian_v1;
 pub mod native_search_collection_v3;
 pub mod native_search_trajectory_v3;

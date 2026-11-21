@@ -697,14 +697,98 @@ fn lembas_scries_then_draws_and_its_food_payment_uses_incarnation_bound_shuffle(
         state
     );
 
-    let mut later_incarnation = state.clone();
-    event::propose_and_commit(
-        &mut later_incarnation,
-        ProposedEvent::zone_change(lembas, Zone::Hand),
+    let mut corrupted = state.clone();
+    corrupted.objects.get_mut(lembas).zone_change_count = 0;
+    corrupted.reveal_library_top(PlayerId::P1, PlayerId::P0, 1);
+    let mut corrupted: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&corrupted).unwrap()).unwrap();
+    // A catalog-wide restore check can reject this state before the trigger resolves.
+    // Exercise the captured trigger separately to check its own source attribution.
+    let mut effect_state = corrupted.clone();
+    let mut ctx =
+        mtg_kernel::effect::ExecCtx::no_targets(leave_trigger.source, leave_trigger.controller);
+    ctx.stack_item_id = Some(leave_trigger.v4.stack_item_id);
+    ctx.ability_source_contract = leave_trigger.v4.ability_source_contract;
+    mtg_kernel::effect::execute(
+        leave_trigger.inline_effect.as_ref().unwrap(),
+        &ctx,
+        &mut effect_state,
     );
-    resolve_top_without_choice(&mut later_incarnation);
-    assert_eq!(later_incarnation.objects.get(lembas).zone, Zone::Hand);
-    assert!(!later_incarnation.players[0].library.contains(&lembas));
+    assert_eq!(
+        effect_state.engine.halted,
+        Some((UnsupportedMechanic::InvalidEffectContinuation, lembas))
+    );
+    assert_eq!(
+        effect_state.known_library_cards(PlayerId::P1, PlayerId::P0),
+        corrupted.known_library_cards(PlayerId::P1, PlayerId::P0)
+    );
+
+    for _ in 0..4 {
+        match engine::advance_until_decision(&mut corrupted) {
+            Decision::CastSpellOrPass { .. } => engine::step(&mut corrupted, Action::Pass).unwrap(),
+            Decision::Halted { .. } => break,
+            other => panic!("unexpected decision for malformed Lembas generation: {other:?}"),
+        }
+    }
+    assert!(matches!(
+        corrupted.engine.halted,
+        Some((UnsupportedMechanic::InvalidEffectContinuation, _))
+    ));
+    assert_eq!(
+        corrupted
+            .known_library_cards(PlayerId::P1, PlayerId::P0)
+            .len(),
+        1
+    );
+
+    let mut ceased = state.clone();
+    ceased.objects.get_mut(lembas).v4.is_token = true;
+    assert!(event::cease_to_exist(&mut ceased, lembas));
+    ceased.reveal_library_top(PlayerId::P1, PlayerId::P0, 1);
+    resolve_top_without_choice(&mut ceased);
+    assert!(ceased
+        .known_library_cards(PlayerId::P1, PlayerId::P0)
+        .is_empty());
+    assert!(!ceased.players[0].library.contains(&lembas));
+
+    for destination in [Zone::Exile, Zone::Hand, Zone::Graveyard] {
+        let mut later_incarnation = state.clone();
+        let second = put_object(
+            &mut later_incarnation,
+            PlayerId::P0,
+            PlayerId::P0,
+            "Island",
+            Zone::Library,
+        );
+        if destination == Zone::Graveyard {
+            event::propose_and_commit(
+                &mut later_incarnation,
+                ProposedEvent::zone_change(lembas, Zone::Exile),
+            );
+        }
+        event::propose_and_commit(
+            &mut later_incarnation,
+            ProposedEvent::zone_change(lembas, destination),
+        );
+        later_incarnation.reveal_library_top(PlayerId::P1, PlayerId::P0, 2);
+        assert_eq!(
+            later_incarnation
+                .known_library_cards(PlayerId::P1, PlayerId::P0)
+                .len(),
+            2
+        );
+        resolve_top_without_choice(&mut later_incarnation);
+        assert_eq!(later_incarnation.objects.get(lembas).zone, destination);
+        let library = &later_incarnation.players[0].library;
+        assert_eq!(library.len(), 2);
+        assert!(library.contains(&filler) && library.contains(&second));
+        assert!(
+            later_incarnation
+                .known_library_cards(PlayerId::P1, PlayerId::P0)
+                .is_empty(),
+            "shuffling clears knowledge even when Lembas has already left the graveyard"
+        );
+    }
 
     resolve_top_without_choice(&mut state);
     assert_eq!(state.objects.get(lembas).zone, Zone::Library);
@@ -712,6 +796,94 @@ fn lembas_scries_then_draws_and_its_food_payment_uses_incarnation_bound_shuffle(
     assert!(state.players[0].library.contains(&filler));
     resolve_top_without_choice(&mut state);
     assert_eq!(state.players[0].life, 20);
+}
+
+#[test]
+fn lembas_rejects_another_owners_trigger_contract_before_shuffling() {
+    let mut state = ready_game(0x004c_454d_4241_5303);
+    let [first, second] = [PlayerId::P0, PlayerId::P1].map(|owner| {
+        put_object(&mut state, owner, owner, "Forest", Zone::Library);
+        state.players[owner.index()].mana_pool[ManaColor::C.pool_index()] = 2;
+        put_object(&mut state, owner, owner, "Lembas", Zone::Battlefield)
+    });
+    engine::step(&mut state, Action::ActivateAbility(first, 0)).unwrap();
+    if matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass {
+            player: PlayerId::P0,
+            ..
+        }
+    ) {
+        engine::step(&mut state, Action::Pass).unwrap();
+    }
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass {
+            player: PlayerId::P1,
+            ..
+        }
+    ));
+    engine::step(&mut state, Action::ActivateAbility(second, 0)).unwrap();
+    assert!(matches!(
+        engine::advance_until_decision(&mut state),
+        Decision::CastSpellOrPass { .. }
+    ));
+    let [first_trigger, second_trigger] = [first, second].map(|object| {
+        state
+            .stack
+            .iter()
+            .find(|item| {
+                item.source == object
+                    && item.inline_effect == Some(EffectOp::ShuffleTriggerSourceIntoOwnersLibrary)
+            })
+            .expect("each paid Food activation put its own Lembas trigger on the stack")
+            .clone()
+    });
+    event::propose_and_commit(&mut state, ProposedEvent::zone_change(second, Zone::Exile));
+    for owner in [PlayerId::P0, PlayerId::P1] {
+        state.reveal_library_top(owner.opponent(), owner, 1);
+        assert_eq!(state.known_library_cards(owner.opponent(), owner).len(), 1);
+    }
+    // Resolving B's native trigger while B is exiled shuffles only B's library.
+    let mut genuine = state.clone();
+    assert_eq!(
+        genuine.stack.last().unwrap().v4.stack_item_id,
+        second_trigger.v4.stack_item_id
+    );
+    resolve_top_without_choice(&mut genuine);
+    assert!(genuine
+        .known_library_cards(PlayerId::P0, PlayerId::P1)
+        .is_empty());
+    assert_eq!(
+        genuine
+            .known_library_cards(PlayerId::P1, PlayerId::P0)
+            .len(),
+        1
+    );
+    assert_eq!(genuine.objects.get(second).zone, Zone::Exile);
+
+    let mut ctx = mtg_kernel::effect::ExecCtx::no_targets(first, first_trigger.controller);
+    ctx.stack_item_id = Some(first_trigger.v4.stack_item_id);
+    ctx.ability_source_contract = second_trigger.v4.ability_source_contract;
+    mtg_kernel::effect::execute(
+        first_trigger.inline_effect.as_ref().unwrap(),
+        &ctx,
+        &mut state,
+    );
+    assert_eq!(
+        state.known_library_cards(PlayerId::P0, PlayerId::P1).len(),
+        1,
+        "the other owner's library was shuffled by a mismatched source contract"
+    );
+    assert_eq!(
+        state.known_library_cards(PlayerId::P1, PlayerId::P0).len(),
+        1
+    );
+    assert_eq!(state.objects.get(second).zone, Zone::Exile);
+    assert_eq!(
+        state.engine.halted,
+        Some((UnsupportedMechanic::InvalidEffectContinuation, first))
+    );
 }
 
 #[test]

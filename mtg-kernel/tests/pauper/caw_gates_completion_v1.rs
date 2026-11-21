@@ -166,7 +166,7 @@ fn definitions_ids_hash_and_generated_programs_are_exact() {
     );
     assert_eq!(
         trigger::target_spec_for_trigger(61, &(journey_triggers[0].effect)()),
-        Some(TargetSpec::CreatureOtherThanSource)
+        Some(TargetSpec::Creature)
     );
     assert_eq!(
         (journey_triggers[0].effect)(),
@@ -330,6 +330,7 @@ fn guardian_protection_filters_monocolored_targets_blockers_and_damage() {
         }
     ));
     engine::step(&mut copied, Action::ChooseSpellCopyPayment(true)).unwrap();
+    engine::step(&mut copied, Action::ChooseEffectOption(1)).unwrap();
     engine::step(&mut copied, Action::ChooseSpellCopyRetarget(true)).unwrap();
     let copy_targets = engine::advance_until_decision(&mut copied);
     assert!(matches!(

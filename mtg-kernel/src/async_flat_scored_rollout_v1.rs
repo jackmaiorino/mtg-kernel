@@ -3067,7 +3067,16 @@ fn worker_entry<F: FlatScoredFamilyCore>(
     control_rx: Receiver<WorkerControlCore<F>>,
 ) {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        worker_loop(worker_id, &config, &runtime, &message_tx, &control_rx)
+        let run_worker = || worker_loop(worker_id, &config, &runtime, &message_tx, &control_rx);
+        // Native V1 collection and checkpoint evaluation share the archived decision stream.
+        if matches!(
+            runtime.execution_schedule,
+            FlatScoredExecutionScheduleV1::NativeTrainerV1 { .. }
+        ) {
+            crate::engine::with_legacy_rollout_spell_copy_v1(run_worker)
+        } else {
+            run_worker()
+        }
     }));
     match result {
         Ok(Ok(())) => {}
