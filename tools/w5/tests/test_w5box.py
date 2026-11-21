@@ -2,6 +2,7 @@
 from contextlib import nullcontext
 import errno
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -253,6 +254,69 @@ class GuardTests(unittest.TestCase):
 
 
 class NodeStateTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the launcher uses Linux no-follow file descriptors")
+    def test_read_requires_plain_parent_and_leaf(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            records = root / "records"
+            records.mkdir()
+            original = records / "sample"
+            original.write_bytes(b"sample")
+            self.assertEqual(w5box.read_state(original), b"sample")
+            (root / "file-alias").symlink_to(original)
+            (root / "directory-alias").symlink_to(records, target_is_directory=True)
+            for path in (root / "file-alias", root / "directory-alias" / "sample"):
+                with self.subTest(path=path), self.assertRaises(w5box.Refusal):
+                    w5box.read_state(path)
+            self.assertEqual(original.read_bytes(), b"sample")
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the supervisor uses Linux flock")
+    def test_each_poll_opens_the_node_lock_without_following_links_or_truncating(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec = dict(box_slot=0, arm="C", argv=[], binary={}, config={}, memory_max_bytes=1, seed_root="test")
+            plan = dict(state_root=str(root / "state"), cgroup_root=str(root / "cgroups"), chains={"c1": spec})
+            sup = w5box.Supervisor(plan, "plan", "c1", None, None, {"boxes": [{"slot": 0}]}, "host", None)
+            sup.node.lock_path.parent.mkdir()
+            sup.node.lock_path.write_bytes(b"existing lock contents")
+            sup.follow_node()
+            self.assertEqual(sup.node.lock_path.read_bytes(), b"existing lock contents")
+            real_open = os.open
+
+            def refuse_link(name, flags, *args, **kwargs):
+                if name == "occupancy.lock":
+                    self.assertTrue(flags & os.O_NOFOLLOW)
+                    self.assertTrue(flags & os.O_RDWR)
+                    self.assertFalse(flags & os.O_TRUNC)
+                    raise OSError(errno.ELOOP, "link refused by kernel")
+                return real_open(name, flags, *args, **kwargs)
+
+            with patch.object(w5box.os, "open", side_effect=refuse_link):
+                with self.assertRaisesRegex(w5box.Refusal, "linked state file"):
+                    sup.follow_node()
+            self.assertEqual(sup.node.lock_path.read_bytes(), b"existing lock contents")
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the supervisor uses Linux flock")
+    def test_nonblocking_box_lock_keeps_its_contents_and_exclusivity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = Path(tmp) / "box0.lock"
+            lock.write_bytes(b"box 0")
+            with w5box.flock(lock, "box"):
+                with self.assertRaisesRegex(w5box.Refusal, "held by another supervisor"):
+                    w5box.flock(lock, "box")
+            with w5box.flock(lock, "box"):
+                self.assertEqual(lock.read_bytes(), b"box 0")
+
+    def test_failed_atomic_publish_retains_state_and_cleans_temporary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state" / "owner.json"
+            w5box.write_json_atomic(path, {"owner": 1}, durable=True)
+            with patch.object(w5box.os, "replace", side_effect=OSError(errno.ENOSPC, "full")):
+                with self.assertRaises(OSError):
+                    w5box.write_json_atomic(path, {"owner": 2}, durable=True)
+            self.assertEqual(path.read_bytes(), b'{\n  "owner": 1\n}\n')
+            self.assertEqual(list(path.parent.iterdir()), [path])
+
     def test_enforcement_skips_cgroup_removed_during_kernfs_read(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

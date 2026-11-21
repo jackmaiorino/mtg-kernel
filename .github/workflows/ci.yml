@@ -7,6 +7,9 @@ name: CI
     tags:
       - '*'
   pull_request:
+    # ready_for_review: a draft runs only the light set (see detect-changes);
+    # marking it ready starts the full pull request set.
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
       windows_runner:
@@ -35,7 +38,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # A draft's light run has a group of its own, so it can never cancel or
+  # replace the full run that marking the pull request ready starts. The
+  # cost: a full run still in progress when its pull request goes back to
+  # draft and gets a new push is not cancelled by that push.
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'pull_request' && github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'ci:full') && '-draft' || '' }}
   # A newer push to a pull request replaces its running CI. Runs on main,
   # tags and manual dispatches finish, because they carry the Windows
   # feature groups that pull requests skip.
@@ -70,6 +77,8 @@ jobs:
       # windows-complement: only the Windows groups the pr set leaves out.
       # windows-pr and windows-full: only the Windows part of pr or full, set
       # by a hosted fallback rerun. Linux jobs run only for full and pr.
+      # draft: a draft pull request without the ci:full label runs only the
+      # formatting and lint job.
       scope: ${{ steps.scope.outputs.scope }}
     steps:
       # Agents dispatch CI on pull request branches to get the Windows groups
@@ -86,9 +95,16 @@ jobs:
           WINDOWS_RUNNER: ${{ inputs.windows_runner }}
           FULL_MATRIX: ${{ inputs.full_matrix }}
           FALLBACK_SCOPE: ${{ inputs.fallback_scope }}
+          DRAFT: ${{ github.event.pull_request.draft }}
+          FULL_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}
         run: |
           scope=full
-          if [ "$EVENT" = pull_request ]; then
+          if [ "$EVENT" = pull_request ] && [ "$DRAFT" = true ] && [ "$FULL_LABEL" != true ]; then
+            # Draft pull requests were 29% of hosted job time on 2026-11-19..21,
+            # and 42 of their 61 runs were cancelled by the next push.
+            scope=draft
+            echo "Draft pull request: formatting and lint only. The full pull request set runs when it is marked ready for review (or with the ci:full label on the next push)." | tee -a "$GITHUB_STEP_SUMMARY"
+          elif [ "$EVENT" = pull_request ]; then
             scope=pr
           elif [ "$EVENT" = workflow_dispatch ] && [ -n "$FALLBACK_SCOPE" ]; then
             case "$FALLBACK_SCOPE" in
@@ -96,11 +112,11 @@ jobs:
               *) echo "::warning::unknown fallback_scope '$FALLBACK_SCOPE'; running every group" ;;
             esac
           elif [ "$EVENT" = workflow_dispatch ] && [ -z "$WINDOWS_RUNNER" ] && [ "$FULL_MATRIX" != true ]; then
-            # Only an open same-repository pull request whose head is this
-            # exact commit has a pull request run covering the rest. Any
-            # lookup failure keeps the full set.
+            # Only an open, ready (not draft) same-repository pull request
+            # whose head is this exact commit has a pull request run covering
+            # the rest. Any lookup failure keeps the full set.
             pr_head=$(gh api "repos/$GITHUB_REPOSITORY/pulls?state=open&head=$GITHUB_REPOSITORY_OWNER:$GITHUB_REF_NAME" \
-              --jq '[.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY)][0].head.sha // ""') || pr_head=
+              --jq '[.[] | select(.head.repo.full_name == env.GITHUB_REPOSITORY and (.draft | not))][0].head.sha // ""') || pr_head=
             echo "open pull request head: ${pr_head:-none}; dispatched commit: $GITHUB_SHA"
             if [ -n "$pr_head" ] && [ "$pr_head" = "$GITHUB_SHA" ]; then
               scope=windows-complement
@@ -153,7 +169,7 @@ jobs:
             # markdown are irrelevant. build.rs still hashes every tracked
             # file into its provenance digest; no test pins that value.
             case "$f" in
-              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/rust_integration_module_seconds.json|python/tools/check_rust_integration_inventory.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
+              python/tools/run_rust_workspace_tests.py|python/tools/run_rust_lib_filters.py|python/tools/rust_case_seconds.json|python/tools/rust_case_timeout_seconds.json|python/tools/rust_limited_only_known_failures.json|python/tools/run_rust_integration_tests.py|python/tools/rust_integration_module_seconds.json|python/tools/check_rust_integration_inventory.py|python/tools/limited_muldrotha_session_v12.py|python/tools/limited_tinybones_session_v13.py|python/tools/limited_liliana_session_v14.py|python/tools/limited_chandra_session_v15.py|python/tools/limited_kaito_session_v16.py)
                 rust_relevant=true ;;
               python/tests/*|python/tools/*|tools/*|docs/*|*.md) : ;;
               *) rust_relevant=true ;;
@@ -171,7 +187,7 @@ jobs:
     # tools/** cannot change what rustfmt or Clippy see. Pushes to main
     # always run it. Windows-only group sets leave it to the run they
     # complement or rerun.
-    if: needs.detect-changes.outputs.rust_relevant == 'true' && contains(fromJSON('["full", "pr"]'), needs.detect-changes.outputs.scope)
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && contains(fromJSON('["full", "pr", "draft"]'), needs.detect-changes.outputs.scope)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -307,7 +323,7 @@ jobs:
   rust-test-groups:
     name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})
     needs: detect-changes
-    if: needs.detect-changes.outputs.rust_relevant == 'true'
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'draft'
     # The limit includes any wait in the self-hosted job-started hook; a
     # cold Windows build has taken about 45 minutes. The Eternal groups
     # build the largest catalog and replay every playable deck: as one job
@@ -719,7 +735,7 @@ jobs:
   limited-build:
     name: Build shared Limited tests (${{ matrix.os }}, ${{ matrix.part }})
     needs: detect-changes
-    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-pr'
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-pr' && needs.detect-changes.outputs.scope != 'draft'
     timeout-minutes: 90
     defaults:
       run:
@@ -884,7 +900,7 @@ jobs:
   rust-limited-groups:
     name: Rust tests (${{ matrix.os }}, ${{ matrix.group }})
     needs: [detect-changes, limited-build]
-    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-pr'
+    if: needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-pr' && needs.detect-changes.outputs.scope != 'draft'
     # The limit includes any wait in the self-hosted job-started hook.
     timeout-minutes: 120
     defaults:
@@ -920,13 +936,7 @@ jobs:
           - limited-only-2
           - limited-v5
           - limited
-          - limited-v2
-          - limited-v3
-          - limited-v1
-          - limited-v4
-          - limited-v6
-          - limited-v7
-          - limited-v8
+          - limited-protocols
     # Windows follows the routing variable of the other groups. Linux uses
     # hosted runners except the groups named in MTG_CI_LINUX_GROUPS, which run
     # on MTG_CI_LINUX_RUNNER as in rust-test-groups (both must be set; names
@@ -1156,10 +1166,15 @@ jobs:
         if: matrix.group == 'limited'
         run: cargo test --release --locked -p mtg-kernel --features limited-fdn-fixtures --lib rules_vector_v1::tests
 
-      # Each protocol keeps its complete checks in a separate job. Serial
-      # gameplay plus the three process replays exceeded the two-hour limit.
+      # The V1-V4 and V6-V8 protocol checks share one job (limited-protocols):
+      # as seven jobs they ran 2 to 5 minutes each, about half of it setup and
+      # the shared-build download (2026-11-21). Each check is its own step and
+      # runs even when an earlier one failed, and stops at 15 minutes so a
+      # stalled check cannot use up the job's 120 (seven steps, at most 105).
+      # V5 keeps its own job.
       - name: Validate Limited common server and Python client
-        if: ${{ !cancelled() && matrix.group == 'limited-v1' }}
+        if: ${{ !cancelled() && matrix.group == 'limited-protocols' }}
+        timeout-minutes: 15
         run: |
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures limited_common_session_v1::
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_common_env
@@ -1171,7 +1186,8 @@ jobs:
           MTG_LIMITED_COMMON_TIMING_V1=1 python -m cProfile -s cumulative python/tools/check_limited_common_client_v1.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_common_env$binary_suffix"
 
       - name: Validate current Limited V2 server and complete Fake consumers
-        if: ${{ !cancelled() && matrix.group == 'limited-v2' }}
+        if: ${{ !cancelled() && matrix.group == 'limited-protocols' }}
+        timeout-minutes: 15
         run: |
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures fake_full_engine_admission_v1_tests:: fake_observation_v50:: rules_meaning_fake_your_own_death_v50:: rl_session::fake_v50:: human_bo3_v1::fake_v50:: limited_common_session_v2::
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_common_env_v2
@@ -1182,7 +1198,8 @@ jobs:
           MTG_LIMITED_COMMON_TIMING_V2=1 python python/tools/check_limited_common_client_v2.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_common_env_v2$binary_suffix"
 
       - name: Validate Ravenous V51 consumers and Limited V3 process
-        if: ${{ !cancelled() && matrix.group == 'limited-v3' }}
+        if: ${{ !cancelled() && matrix.group == 'limited-protocols' }}
+        timeout-minutes: 15
         run: |
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures ravenous_full_engine_admission_v1_tests:: elenda_public_v52:: elenda_observation_v52:: rl_session::elenda_v52:: human_bo3_v1::elenda_v52:: limited_elenda_session_v4:: rules_meaning_elenda_v52:: state::soul_counter_storage_v1_tests:: event::soul_placement_primitive_v1_tests:: event::ravenous_amulet_paid_future_tests:: soul_transfer_preserves_value_restore_and_overflow_refusal ravenous_amulet_v1:: soul_counters_v1:: ravenous_public_v51:: rules_meaning_ravenous_amulet_v51:: ravenous_observation_v51:: rl_session::ravenous_v51:: limited_common_session_v3::
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin kernel_limited_common_env_v3
@@ -1193,7 +1210,8 @@ jobs:
           MTG_LIMITED_COMMON_TIMING_V3=1 python python/tools/check_limited_common_client_v3.py --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_common_env_v3$binary_suffix"
 
       - name: Validate Limited V4 Elenda process
-        if: ${{ !cancelled() && matrix.group == 'limited-v4' }}
+        if: ${{ !cancelled() && matrix.group == 'limited-protocols' }}
+        timeout-minutes: 15
         run: |
           binary_suffix=""
           if [ "$RUNNER_OS" = Windows ]; then
@@ -1220,18 +1238,43 @@ jobs:
           python python/tools/limited_match_v1.py smoke --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_match_v1$binary_suffix"
           python python/tools/limited_match_v1.py draftzero --binary "${CARGO_TARGET_DIR:-target}/release/kernel_limited_match_v1$binary_suffix"
 
-      - name: Validate successor Limited process plumbing
-        if: ${{ !cancelled() && (matrix.group == 'limited-v6' || matrix.group == 'limited-v7' || matrix.group == 'limited-v8') }}
+      - name: Validate successor Limited V6 process plumbing
+        if: ${{ !cancelled() && matrix.group == 'limited-protocols' }}
+        timeout-minutes: 15
         run: |
           binary_suffix=""
           if [ "$RUNNER_OS" = Windows ]; then
             binary_suffix=".exe"
           fi
-          case '${{ matrix.group }}' in
-            limited-v6) binary=kernel_limited_next_five_env_v6; client=check_limited_next_five_client_v6.py ;;
-            limited-v7) binary=kernel_limited_graveyard_return_env_v7; client=check_limited_graveyard_return_client_v7.py ;;
-            limited-v8) binary=kernel_limited_call_env_v8; client=check_limited_call_client_v8.py ;;
-          esac
+          binary=kernel_limited_next_five_env_v6; client=check_limited_next_five_client_v6.py
+          cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin "$binary"
+          # Seed-123 Full-basic-deck plumbing. Paid Partial-family gameplay
+          # remains covered by the complete Limited-only library inventory.
+          python "python/tools/$client" --binary "${CARGO_TARGET_DIR:-target}/release/$binary$binary_suffix"
+
+      - name: Validate successor Limited V7 process plumbing
+        if: ${{ !cancelled() && matrix.group == 'limited-protocols' }}
+        timeout-minutes: 15
+        run: |
+          binary_suffix=""
+          if [ "$RUNNER_OS" = Windows ]; then
+            binary_suffix=".exe"
+          fi
+          binary=kernel_limited_graveyard_return_env_v7; client=check_limited_graveyard_return_client_v7.py
+          cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin "$binary"
+          # Seed-123 Full-basic-deck plumbing. Paid Partial-family gameplay
+          # remains covered by the complete Limited-only library inventory.
+          python "python/tools/$client" --binary "${CARGO_TARGET_DIR:-target}/release/$binary$binary_suffix"
+
+      - name: Validate successor Limited V8 process plumbing
+        if: ${{ !cancelled() && matrix.group == 'limited-protocols' }}
+        timeout-minutes: 15
+        run: |
+          binary_suffix=""
+          if [ "$RUNNER_OS" = Windows ]; then
+            binary_suffix=".exe"
+          fi
+          binary=kernel_limited_call_env_v8; client=check_limited_call_client_v8.py
           cargo build --release --locked -p mtg-kernel --features limited-fdn-fixtures --bin "$binary"
           # Seed-123 Full-basic-deck plumbing. Paid Partial-family gameplay
           # remains covered by the complete Limited-only library inventory.
@@ -1239,8 +1282,9 @@ jobs:
 
       # Enumerate both compiled subtrees in each job and partition their exact
       # names by recorded duration (python/tools/rust_case_seconds.json).
-      # Give each exact case its own 30-minute bound with at most four children,
-      # retaining immediate panic details and the complete original inventories.
+      # Run up to four cases at once. Each gets 30 minutes by default, with
+      # per-case exceptions listed in python/tools/rust_case_timeout_seconds.json.
+      # This retains immediate panic details and the complete original inventories.
       # Ten shards: with eight, the longest shard ran 37 and 43 minutes in the
       # two runs of 2026-11-18 and ended near minute 60 and 65.
       - name: Validate complete current mixed model and Human subtrees
@@ -1315,7 +1359,7 @@ jobs:
   rust-tests:
     name: Rust tests (${{ matrix.os }})
     needs: [detect-changes, rust-test-groups, limited-build, rust-limited-groups]
-    if: always() && needs.detect-changes.outputs.rust_relevant == 'true'
+    if: always() && needs.detect-changes.outputs.rust_relevant == 'true' && needs.detect-changes.outputs.scope != 'draft'
     timeout-minutes: 10
     strategy:
       matrix:
@@ -1338,7 +1382,7 @@ jobs:
   python-env-build:
     name: Build Python test binaries (${{ matrix.os }})
     needs: detect-changes
-    if: needs.detect-changes.outputs.python_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement'
+    if: needs.detect-changes.outputs.python_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement' && needs.detect-changes.outputs.scope != 'draft'
     timeout-minutes: 90
     defaults:
       run:
@@ -1431,7 +1475,7 @@ jobs:
     needs: [detect-changes, python-env-build]
     # A Windows complement dispatch leaves both Python systems to the pull
     # request run at the same commit.
-    if: needs.detect-changes.outputs.python_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement'
+    if: needs.detect-changes.outputs.python_relevant == 'true' && needs.detect-changes.outputs.scope != 'windows-complement' && needs.detect-changes.outputs.scope != 'draft'
     # Includes waiting for the same low-priority CPU admission as Rust jobs.
     timeout-minutes: 120
     # Windows' default pwsh fails a step only on its last command's exit code, so an earlier failing command in a
@@ -1606,7 +1650,7 @@ jobs:
   hosted-fallback:
     name: Hosted fallback for self-hosted admission timeouts
     needs: [detect-changes, rust-test-groups, rust-limited-groups, python-tests]
-    if: always() && contains(needs.*.result, 'failure') && (contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') || contains(vars.MTG_CI_PR_WINDOWS_RUNNER || '', 'self-hosted')) && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: always() && needs.detect-changes.result == 'success' && needs.detect-changes.outputs.scope != 'draft' && contains(needs.*.result, 'failure') && (contains(vars.MTG_CI_WINDOWS_RUNNER || '', 'self-hosted') || contains(vars.MTG_CI_PR_WINDOWS_RUNNER || '', 'self-hosted')) && inputs.windows_runner == '' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

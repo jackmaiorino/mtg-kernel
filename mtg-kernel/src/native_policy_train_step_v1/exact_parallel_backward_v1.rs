@@ -137,7 +137,14 @@ impl<'t> ReverseGradientSinkV1<'t> for RecordTermsV1<'_, 't> {
         {
             return Err(NativePolicyTrainErrorV1::ParameterManifest);
         }
-        let first_read = first_read.min(input_dim);
+        // The columns before `first_read` are left out only in the pinned
+        // state (`rounds_to_nearest_v1`: every exception masked); elsewhere
+        // every column is computed, as the reference does.
+        let first_read = if rounds_to_nearest_v1() {
+            first_read.min(input_dim)
+        } else {
+            0
+        };
         resize_zeroed_v1(d_input, rows * input_dim);
         input_gradient_rows_v1(weight, input_dim, output_dim, d_output, first_read, d_input);
         // A test that reads a column this sink did not compute meets a NaN.
