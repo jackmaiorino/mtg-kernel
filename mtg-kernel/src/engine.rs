@@ -9600,8 +9600,10 @@ fn additional_discard_count(def: &card_def::CardDef, pending: &PendingCast) -> O
     if crate::eternal_legacy_e8a_v1::alternative_skips_additional_cost(
         def,
         pending.cast_mode == Some(CastMode::Alternative),
-    ) || crate::eternal_pauper_e8b_v1::skips_additional_cost(def, pending.is_flashback)
-    {
+    ) || crate::eternal_pauper_e8b_v1::skips_additional_cost(
+        def,
+        pending.is_flashback && !sphinx_lore_cast_v1::granted(pending),
+    ) {
         return None;
     }
     if let Some(count) =
@@ -11559,7 +11561,8 @@ fn is_castable_with_cost_grant(
         }
         CastMethodV4::Escape => {
             (def.escape.is_some() || crate::eternal_lurrus_v1::granted_escape_cost(def).is_some())
-                && def.additional_cost.is_none()
+                && spell_costs_v1::additional_cost_for_method_v1(def, CastMethodV4::Escape, 0)
+                    .is_none()
                 && def.kicker_cost.is_none()
                 && def.generic_cost_reduction.is_none()
                 && spell_costs_v1::selected_spell_quote_with_grant_v1(
@@ -16299,7 +16302,8 @@ pub(crate) fn validate_pending_cast(
                     && !origin_generation.is_some_and(|generation| {
                         crate::eternal_lurrus_v1::escape_granted(state, pending.spell, generation)
                     }))
-                || def.additional_cost.is_some()
+                || spell_costs_v1::additional_cost_for_method_v1(def, CastMethodV4::Escape, 0)
+                    .is_some()
                 || def.kicker_cost.is_some()
                 || def.generic_cost_reduction.is_some()
                 || pending.cast_mode != Some(CastMode::Normal)

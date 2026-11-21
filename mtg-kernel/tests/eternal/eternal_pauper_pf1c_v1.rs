@@ -921,6 +921,55 @@ fn breach_and_printed_flashback_accept_each_payable_method_without_snapcaster() 
 }
 
 #[test]
+fn twinned_vision_discards_only_for_its_printed_flashback() {
+    use engine::sphinx_lore_cast_v1::RouteV1;
+    for route in [
+        RouteV1::PrintedFlashback,
+        RouteV1::Breach,
+        RouteV1::Snapcaster,
+    ] {
+        let mut state = plains();
+        let card = put(&mut state, P0, "Twinned Vision", Zone::Graveyard);
+        let discard = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+        let fodder =
+            ["Island", "Forest", "Mountain"].map(|name| put(&mut state, P0, name, Zone::Graveyard));
+        if route == RouteV1::Snapcaster {
+            install_snapcaster(&mut state, card);
+        } else {
+            put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+        }
+        pool(&mut state, P0, &[ManaColor::U, ManaColor::R], 1);
+        choose_graveyard_route(&mut state, card, route);
+        settle_first(&mut state);
+        let printed = route == RouteV1::PrintedFlashback;
+        let escaped = route == RouteV1::Breach;
+        assert_eq!(
+            zone(&state, card),
+            if escaped {
+                Zone::Graveyard
+            } else {
+                Zone::Exile
+            }
+        );
+        assert_eq!(
+            zone(&state, discard),
+            if printed { Zone::Graveyard } else { Zone::Hand }
+        );
+        assert!(fodder.iter().all(|&f| zone(&state, f)
+            == if escaped {
+                Zone::Exile
+            } else {
+                Zone::Graveyard
+            }));
+        assert_eq!(state.players[0].hand.len(), if printed { 2 } else { 3 });
+        assert_eq!(
+            state.players[0].mana_pool.iter().sum::<u8>(),
+            if printed { 0 } else { 1 }
+        );
+    }
+}
+
+#[test]
 fn printed_flashback_keeps_the_ordinary_and_retrace_permissions_independent() {
     use engine::sphinx_lore_cast_v1::RouteV1;
     for route in [RouteV1::Normal, RouteV1::Retrace] {

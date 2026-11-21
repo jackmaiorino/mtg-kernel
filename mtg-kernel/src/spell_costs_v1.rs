@@ -207,7 +207,12 @@ impl SelectedSpellManaCostsV1 {
         // A card with a choice between additional costs (#715) has one of two
         // groups here; the selected group below is the chosen mode's, and it
         // must be one of the card's two costs.
-        let additional_cost = additional_cost_for_method_v1(definition, method, 0);
+        let printed_method = if self.granted_flashback_v1 {
+            CastMethodV4::Normal
+        } else {
+            method
+        };
+        let additional_cost = additional_cost_for_method_v1(definition, printed_method, 0);
         let retrace = self.retrace.then_some(RETRACE_COST);
         let additional_slot = self
             .component_groups
@@ -888,7 +893,7 @@ const RETRACE_COST: &[CostComponent] = &[CostComponent::DiscardLandCardsV1(1)];
 /// (`eternal_legacy_e8a_v1::alternative_skips_additional_cost`). A card
 /// with a choice between two additional costs (Bone Shards, Demand Answers)
 /// pays the one its mode names (`eternal_cost_choice_v1`).
-fn additional_cost_for_method_v1(
+pub(super) fn additional_cost_for_method_v1(
     definition: &card_def::CardDef,
     method: CastMethodV4,
     mode: u8,
