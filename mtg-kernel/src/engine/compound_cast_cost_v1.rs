@@ -311,16 +311,43 @@ impl Costs {
                 {
                     return None;
                 }
-                ctx.complete(projected, groups[0], first, |mut first_picks| {
-                    let mut after = projected.clone();
-                    ctx.pay(&mut after, groups[0], &mut first_picks);
-                    ctx.complete(&after, groups[1], second, |mut second_picks| {
-                        ctx.canonicalize(&after, groups[1], &mut second_picks);
-                        Some(Payment {
-                            groups: [(groups[0], first_picks.clone()), (groups[1], second_picks)],
+                let reserved_land = if matches!(
+                    groups,
+                    [
+                        Group::Component(CostComponent::DiscardCards(_)),
+                        Group::Component(CostComponent::DiscardLandCardsV1(1)),
+                    ]
+                ) {
+                    // A printed discard cannot supply retrace's land. Keep one
+                    // unchosen land while completing this prefix, so trying the
+                    // last land never enumerates the remaining hand subsets.
+                    Some(
+                        ctx.candidates(projected, self.route)?
+                            .into_iter()
+                            .find(|id| !first.contains(id))?,
+                    )
+                } else {
+                    None
+                };
+                ctx.complete(
+                    projected,
+                    groups[0],
+                    first,
+                    reserved_land,
+                    |mut first_picks| {
+                        let mut after = projected.clone();
+                        ctx.pay(&mut after, groups[0], &mut first_picks);
+                        ctx.complete(&after, groups[1], second, None, |mut second_picks| {
+                            ctx.canonicalize(&after, groups[1], &mut second_picks);
+                            Some(Payment {
+                                groups: [
+                                    (groups[0], first_picks.clone()),
+                                    (groups[1], second_picks),
+                                ],
+                            })
                         })
-                    })
-                })
+                    },
+                )
             };
             if let Some(plan) = complete(&projected) {
                 return Some((mana, plan));
@@ -328,15 +355,17 @@ impl Costs {
             if !lost.is_empty() {
                 // Only protect permanents actually lost to the first mana
                 // plan. Other selected lands may still tap before returning.
-                if let Some(plan) = ctx.complete(state, self.printed, printed_picks, |picks| {
-                    let protect: Vec<_> =
-                        picks.into_iter().filter(|id| lost.contains(id)).collect();
-                    if protect.is_empty() {
-                        return None;
-                    }
-                    let (mana, projected) = project_mana(&protect)?;
-                    Some((mana, complete(&projected)?))
-                }) {
+                if let Some(plan) =
+                    ctx.complete(state, self.printed, printed_picks, None, |picks| {
+                        let protect: Vec<_> =
+                            picks.into_iter().filter(|id| lost.contains(id)).collect();
+                        if protect.is_empty() {
+                            return None;
+                        }
+                        let (mana, projected) = project_mana(&protect)?;
+                        Some((mana, complete(&projected)?))
+                    })
+                {
                     return Some(plan);
                 }
             }
@@ -542,11 +571,16 @@ impl Context<'_> {
         state: &GameState,
         group: Group,
         prefix: &[ObjectId],
+        reserved_land: Option<ObjectId>,
         mut finish: impl FnMut(Vec<ObjectId>) -> Option<T>,
     ) -> Option<T> {
-        let candidates = self.candidates(state, group)?;
+        let mut candidates = self.candidates(state, group)?;
+        if let Some(land) = reserved_land {
+            candidates.retain(|id| *id != land);
+        }
         let needed = usize::from(group.count());
-        if prefix.len() > needed
+        if candidates.len() < needed
+            || prefix.len() > needed
             || prefix
                 .iter()
                 .enumerate()
