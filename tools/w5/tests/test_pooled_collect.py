@@ -214,3 +214,45 @@ class PooledCollectTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChainsPassThroughTests(unittest.TestCase):
+    """The chain driver passes a pooled arm's pinned dispatcher and hosts file to the trainer, and the
+    pooled-collection setting stays outside recipe_identity (execution only)."""
+
+    def setUp(self):
+        import chains  # noqa: E402  (heavy import, only for these tests)
+        self.chains = chains
+        self.root = Path(tempfile.mkdtemp(prefix="pooled-chains-test-"))
+        for name in ("trainer", "pooled_collect.py", "hosts.json"):
+            (self.root / name).write_text(name)
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def arm(self, pooled=True):
+        c = self.chains
+        arm = {"arm": "C", "recipe": "C", "base": {"path": "b", "sha256": "1"}, "parent": {"path": "p", "sha256": "2"},
+               "x": None, "workers": 4, "segment_updates": 16, "c_wall_seconds": None,
+               "trainer": c.pin(self.root / "trainer")}
+        if pooled:
+            arm["pooled_collect"] = {"dispatcher": c.pin(self.root / "pooled_collect.py"),
+                                     "hosts": c.pin(self.root / "hosts.json")}
+        return arm
+
+    def test_a_pooled_arm_runs_the_trainer_with_its_dispatcher_and_hosts(self):
+        argv, env = self.chains.trainer_command(self.arm(), "/cfg.json")
+        self.assertEqual(argv[-3:], ["/cfg.json", "--collect-external", (self.root / "pooled_collect.py").as_posix()])
+        self.assertEqual(env[self.chains.POOLED_COLLECT_ENV], (self.root / "hosts.json").as_posix())
+        argv, env = self.chains.trainer_command(self.arm(pooled=False), "/cfg.json")
+        self.assertEqual(argv[-1], "/cfg.json")
+        self.assertIsNone(env)
+
+    def test_a_changed_dispatcher_is_refused(self):
+        arm = self.arm()
+        (self.root / "pooled_collect.py").write_text("changed")
+        with self.assertRaises(Exception):
+            self.chains.trainer_command(arm, "/cfg.json")
+
+    def test_pooled_collection_is_outside_recipe_identity(self):
+        self.assertEqual(self.chains.recipe_identity(self.arm()), self.chains.recipe_identity(self.arm(pooled=False)))

@@ -10,18 +10,18 @@ trainer publishes `collect-command.json` and calls this program with its path.
 The program:
 
 1. splits the command's episodes into contiguous shards, one per host, sized by
-   host weight (`pooled_collection_v1 shard`);
+   host weight (the shards `pooled_collection_v1::shard_commands_v1` makes);
 2. makes every pinned input of the shard commands (the current checkpoint, the
    play imports, opponents) present at the same absolute path with the same
    SHA-256 on every collector host; that is how the policy reaches collectors;
-3. runs each shard with the host's pinned `expanded_deck_training_v1`;
+3. runs each shard with the host's pinned trainer (`--execute-collect-shard`);
 4. copies each shard's output back into a staging directory beside the attempt;
 5. on a failed or unreachable host, reruns that shard on the next host (a
    shard's bytes do not depend on where it runs);
 6. on audit iterations, replays chosen slots on a host of another architecture
    class and requires identical trajectory bytes;
-7. merges the shards into the attempt's `collect/` (`pooled_collection_v1
-   merge`), which re-hashes every trajectory and applies the non-natural cap.
+7. merges the shards into the attempt's `collect/` (the trainer's
+   `--merge-collection-shards`), which re-hashes every trajectory and applies the non-natural cap.
 
 The trainer then validates the merged collection exactly as a local one and
 replays every decision in the update. Nothing here changes a result: a
@@ -53,7 +53,7 @@ SCHEMA = "mtg-kernel-pooled-collect-hosts/v1"
 class Host:
     name: str
     kind: str  # "local" or "ssh"
-    collector: str  # absolute path of expanded_deck_training_v1 on that host
+    collector: str  # absolute path of the pinned trainer on that host
     collector_sha256: str
     workers: int
     weight: float
@@ -237,8 +237,8 @@ class Transport:
 
 
 def shard_command_for(whole: dict, first: int, count: int, workers: int, output: str) -> dict:
-    """The shard command `pooled_collection_v1 shard` writes, built directly (audits and
-    reruns need single shards with their own output directory)."""
+    """The shard command `pooled_collection_v1::shard_commands_v1` makes, built here so
+    audits and reruns get single shards with their own output directory."""
     shard = json.loads(json.dumps(whole))
     shard["episodes"] = whole["episodes"][first:first + count]
     shard["workers"] = workers
@@ -293,7 +293,7 @@ class Dispatcher:
         command_path = str(PurePosixPath(host.scratch) / f"{tag}.json")
         transport.put_text(command_path, json.dumps(command))
         started = time.time()
-        result = transport.run(host.prefix + [host.collector, command_path], self.timeout)
+        result = transport.run(host.prefix + [host.collector, "--execute-collect-shard", command_path], self.timeout)
         if result.returncode != 0:
             raise RuntimeError(f"{host.name}: shard {tag} exit {result.returncode}: {result.stderr[-400:]}")
         played = time.time() - started
@@ -431,7 +431,7 @@ class Dispatcher:
 
 def merge_with_binary(binary: str):
     def run_merge(command_path: Path, directories: list[Path]) -> dict:
-        result = subprocess.run([binary, "merge", str(command_path)] + [str(d) for d in directories],
+        result = subprocess.run([binary, "--merge-collection-shards", str(command_path)] + [str(d) for d in directories],
                                 capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError(f"merge failed: {result.stderr.strip()[-800:]}")

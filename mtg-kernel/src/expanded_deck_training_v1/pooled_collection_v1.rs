@@ -58,7 +58,7 @@ pub struct ShardSpecV1 {
     pub output_directory: PathBuf,
 }
 
-/// The shard plan file of `pooled_collection_v1 shard`.
+/// A shard plan: one entry per shard, in schedule order.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShardPlanV1 {
@@ -394,6 +394,35 @@ pub fn merge_shards_v1(
     }
     publish_json(whole.output_directory, "collection.json", &result)?;
     Ok(result)
+}
+
+/// A command file of at most 16 MiB (the trainer's config bound).
+fn read_command_file_v1(path: &Path) -> Result<ExpandedTrainingCommandV1, String> {
+    let bytes = fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    ensure(bytes.len() <= 16 * 1024 * 1024, "command exceeds 16 MiB")?;
+    serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+/// Executes one shard command file: only a `collect_parallel` command that
+/// names its schedule position is accepted.
+pub fn execute_shard_file_v1(path: &Path) -> Result<Value, String> {
+    let command = read_command_file_v1(path)?;
+    ensure(
+        matches!(
+            command,
+            ExpandedTrainingCommandV1::CollectParallel { shard: Some(_), .. }
+        ),
+        "a shard file must hold a collect_parallel command with its shard",
+    )?;
+    execute_v1(command)
+}
+
+/// [`merge_shards_v1`] for the whole command in `command_path`.
+pub fn merge_shards_file_v1(
+    command_path: &Path,
+    shard_directories: &[PathBuf],
+) -> Result<Value, String> {
+    merge_shards_v1(&read_command_file_v1(command_path)?, shard_directories)
 }
 
 #[cfg(test)]

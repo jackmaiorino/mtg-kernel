@@ -395,10 +395,29 @@ def chain_ladder(arm, man, cdir, offset):
         raise Stop(str(exc)) from exc
 
 
+POOLED_COLLECT_ENV = 'MTG_POOLED_COLLECT_CONFIG'
+
+
+def trainer_command(arm, config_path):
+    """The trainer's argv and environment for one segment. A pooled arm (`pooled_collect`, execution only and
+    outside `recipe_identity`) hands each iteration's collection to its pinned dispatcher, with its pinned
+    hosts file in the environment (tools/w5/pooled_collect.py)."""
+    check_pin(arm['trainer'], 'the trainer')
+    argv = exe(arm['trainer']['path']) + [str(config_path)]
+    env = None
+    pooled = arm.get('pooled_collect')
+    if pooled:
+        check_pin(pooled['dispatcher'], 'the pooled-collection dispatcher')
+        check_pin(pooled['hosts'], 'the pooled-collection hosts file')
+        argv += ['--collect-external', pooled['dispatcher']['path']]
+        env = dict(os.environ, **{POOLED_COLLECT_ENV: pooled['hosts']['path']})
+    return argv, env
+
+
 def run_trainer(arm, config_path, deadline=None, logs=None):
     """Runs one native segment in its own process group; at `deadline` (C's wall) the group is killed. With
     `logs` (a directory) the segment's stdout replaces `trainer.out` and stderr is appended to `trainer.err`."""
-    check_pin(arm['trainer'], 'the trainer')
+    argv, env = trainer_command(arm, config_path)
     kwargs = {'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else \
         {'start_new_session': True}
     if logs:
@@ -406,8 +425,7 @@ def run_trainer(arm, config_path, deadline=None, logs=None):
     out = open(Path(logs) / 'trainer.out', 'wb') if logs else None
     err = open(Path(logs) / 'trainer.err', 'ab') if logs else None
     try:
-        proc = subprocess.Popen(exe(arm['trainer']['path']) + [str(config_path)], stdout=out, stderr=err,
-                                stdin=subprocess.DEVNULL, **kwargs)
+        proc = subprocess.Popen(argv, stdout=out, stderr=err, stdin=subprocess.DEVNULL, env=env, **kwargs)
         if deadline is None:
             return proc.wait(), False
         while True:
@@ -557,6 +575,13 @@ def make_plan(inputs_path):
         verified_reads = spec.get('verified_reads')
         require(verified_reads is None or (verified_reads in VERIFIED_READS and recipe == 'C'),
                 f'{a}: verified_reads is one of {VERIFIED_READS}, for C-recipe arms only')
+        pooled = spec.get('pooled_collect')
+        if pooled is not None:
+            require(isinstance(pooled, dict) and set(pooled) == {'dispatcher', 'hosts'} and recipe == 'C'
+                    and int(spec['workers']) >= 2
+                    and all(Path(pooled[k]).is_absolute() and Path(pooled[k]).is_file() for k in pooled),
+                    f'{a}: pooled_collect names an absolute dispatcher and hosts file, for C-recipe arms '
+                    f'with at least two workers')
         doc = {'schema': ARM_SCHEMA, 'arm': a, 'recipe': recipe, 'retention_arm': ret, 'root': root.as_posix(),
                'trainer': common['trainer'], 'base': base, 'parent': pin(spec['parent']), 'frozen': frozen_pin,
                'x': x, 'workers': int(spec['workers']), 'segment_updates': length, 'bytes_per_update': bpu,
@@ -577,6 +602,8 @@ def make_plan(inputs_path):
             doc['record_envelope'] = envelope
         if verified_reads is not None:  # absent otherwise, as record_envelope
             doc['verified_reads'] = verified_reads
+        if pooled is not None:  # execution only: absent otherwise, and never part of recipe_identity
+            doc['pooled_collect'] = {k: pin(pooled[k]) for k in ('dispatcher', 'hosts')}
         text = json.dumps(doc, indent=1, sort_keys=True) + '\n'
         digest = w5box.sha256_bytes(text.encode('utf-8'))
         path = root / 'plan' / 'arms' / f'{a}-{digest[:12]}.json'
