@@ -135,6 +135,7 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
         root.join("v1"),
     )
     .unwrap();
+    checkpoint_metadata_memo_v1::clear_for_test_v1();
     let v2 = update(
         &source,
         &trajectories,
@@ -142,6 +143,17 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
         root.join("v2"),
     )
     .unwrap();
+    // The v2 update itself remembered its container's metadata view after
+    // its readback (no metadata probe has run since the memo was cleared).
+    let pin_v2_now: PinnedFileV1 = serde_json::from_value(v2["checkpoint"].clone()).unwrap();
+    let remembered = checkpoint_metadata_memo_v1::lookup_v1(&pin_v2_now.sha256)
+        .expect("the update remembers its container's metadata view");
+    assert_eq!(
+        remembered.as_slice(),
+        checkpoint_container_v1::metadata_view_v1(&fs::read(&pin_v2_now.path).unwrap())
+            .unwrap()
+            .as_ref()
+    );
     // The default (an absent field) publishes the same container as an
     // explicit v2 for this in-scope kind.
     let auto = update(
@@ -176,6 +188,54 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
     );
     let probe: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(&pin_v2).unwrap();
     assert!(probe.e_supported.is_none() && probe.ex1.is_none());
+    // What the update remembers (the record's document, taken before
+    // sealing) is the view a fresh probe takes from a sealed file too.
+    let sealed = record_envelope_v1::RecordEnvelopeV1::Zstd1
+        .seal_v1(&bytes_v2)
+        .unwrap();
+    assert!(record_envelope_v1::is_sealed_v1(&sealed));
+    assert_eq!(
+        checkpoint_container_v1::metadata_view_v1(&sealed)
+            .unwrap()
+            .as_ref(),
+        checkpoint_container_v1::document_v1(&bytes_v2).unwrap()
+    );
+    // The remembered view is exactly the view a fresh probe takes from the
+    // file.
+    let view = checkpoint_container_v1::metadata_view_v1(&bytes_v2).unwrap();
+    assert_eq!(
+        checkpoint_metadata_memo_v1::lookup_v1(&pin_v2.sha256).as_deref(),
+        Some(&view.to_vec())
+    );
+    // A probe parses the remembered view only after the file check: a copy
+    // with one byte changed under the same pin is refused, with or without
+    // the memo, and a probe without the memo gives the remembered answer.
+    let changed = root.join("changed.ckpt");
+    let mut altered = bytes_v2.clone();
+    let last = altered.len() - 1;
+    altered[last] ^= 1;
+    fs::write(&changed, &altered).unwrap();
+    let changed_pin = PinnedFileV1 {
+        path: changed.clone(),
+        sha256: pin_v2.sha256.clone(),
+    };
+    assert!(read_checkpoint_metadata_v1::<CheckpointESupportedProbeV1>(&changed_pin).is_err());
+    checkpoint_metadata_memo_v1::clear_for_test_v1();
+    assert!(read_checkpoint_metadata_v1::<CheckpointESupportedProbeV1>(&changed_pin).is_err());
+    let cold: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(&pin_v2).unwrap();
+    assert_eq!(
+        (cold.e_supported, cold.soft_q, cold.search_targets, cold.ex1),
+        (
+            probe.e_supported,
+            probe.soft_q,
+            probe.search_targets,
+            probe.ex1
+        )
+    );
+    assert_eq!(
+        checkpoint_metadata_memo_v1::lookup_v1(&pin_v2.sha256).as_deref(),
+        Some(&view.to_vec())
+    );
     assert!(!no_state_digest_v1::names_another_file_v1(&bytes_v2).unwrap());
     // A truncated container is refused by the metadata view as by a load.
     let header_end = bytes_v2.len() - 4;

@@ -6140,6 +6140,14 @@ fn execute_update_inner_v1(
         }
         CheckpointRecordFormatV1::V2 => checkpoint_container_v1::encode_v1(&checkpoint)?,
     };
+    // A container's metadata view is its JSON document (`metadata_view_v1`,
+    // sealed or not): kept for the next update's metadata probe of this pin.
+    let metadata_document = match record_format {
+        CheckpointRecordFormatV1::V2 => {
+            Some(checkpoint_container_v1::document_v1(&record)?.to_vec())
+        }
+        CheckpointRecordFormatV1::V1 | CheckpointRecordFormatV1::Auto => None,
+    };
     let checkpoint_pin = publish_json_shared_v1(
         &output_directory,
         "checkpoint.json",
@@ -6156,6 +6164,9 @@ fn execute_update_inner_v1(
             && restored.training_math_v1() == training_math,
         "published checkpoint round trip differs",
     )?;
+    if let Some(document) = metadata_document {
+        checkpoint_metadata_memo_v1::remember_v1(&checkpoint_pin.sha256, &document);
+    }
     if record_format == CheckpointRecordFormatV1::V2 {
         // Design section 3: the restored state equals the published one item
         // for item (Adam step, anchor, every tensor's name, shape and bits),
@@ -6405,8 +6416,81 @@ fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String
 fn read_checkpoint_metadata_v1<T: for<'de> Deserialize<'de>>(
     pin: &PinnedFileV1,
 ) -> Result<T, String> {
+    // The pinned file's check runs every time; only its view, a pure function
+    // of the checked bytes, may come from the memo.
     let bytes = read_pinned_shared_v1(pin)?;
-    serde_json::from_slice(&checkpoint_container_v1::metadata_view_v1(&bytes)?).map_err(err)
+    if let Some(document) = checkpoint_metadata_memo_v1::lookup_v1(&pin.sha256) {
+        return serde_json::from_slice(&document).map_err(err);
+    }
+    let view = checkpoint_container_v1::metadata_view_v1(&bytes)?;
+    checkpoint_metadata_memo_v1::remember_v1(&pin.sha256, &view);
+    serde_json::from_slice(&view).map_err(err)
+}
+
+/// Metadata views (`checkpoint_container_v1::metadata_view_v1`) of checkpoint
+/// files this process checked, by their pinned SHA-256: a view is a pure
+/// function of the file's bytes, so a probe of the same pin (after the same
+/// file check) parses the remembered view instead of opening the envelope and
+/// container again. Only views up to 1 MiB are kept: a container's JSON
+/// document, not a production v1 JSON checkpoint (about 20 MB, whose view is
+/// the whole file). Invocation-local, never persisted.
+mod checkpoint_metadata_memo_v1 {
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+
+    /// The newest checkpoints a run probes: its current one and the one before.
+    const ENTRIES_V1: usize = 4;
+    /// A view larger than this is a v1 JSON checkpoint's whole file.
+    const MAX_VIEW_BYTES_V1: usize = 1 << 20;
+
+    type EntriesV1 = VecDeque<(String, Arc<Vec<u8>>)>;
+
+    #[cfg(not(test))]
+    fn with_entries_v1<R>(f: impl FnOnce(&mut EntriesV1) -> R) -> R {
+        use std::sync::{Mutex, PoisonError};
+        static ENTRIES: Mutex<EntriesV1> = Mutex::new(VecDeque::new());
+        f(&mut ENTRIES.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Unit tests run in parallel threads: each keeps its own entries.
+    #[cfg(test)]
+    fn with_entries_v1<R>(f: impl FnOnce(&mut EntriesV1) -> R) -> R {
+        thread_local! {
+            static ENTRIES: std::cell::RefCell<EntriesV1> = const {
+                std::cell::RefCell::new(VecDeque::new())
+            };
+        }
+        ENTRIES.with(|entries| f(&mut entries.borrow_mut()))
+    }
+
+    pub(super) fn lookup_v1(sha256: &str) -> Option<Arc<Vec<u8>>> {
+        with_entries_v1(|entries| {
+            let index = entries.iter().position(|(key, _)| key == sha256)?;
+            let entry = entries.remove(index)?;
+            let view = Arc::clone(&entry.1);
+            entries.push_back(entry);
+            Some(view)
+        })
+    }
+
+    pub(super) fn remember_v1(sha256: &str, view: &[u8]) {
+        if view.len() > MAX_VIEW_BYTES_V1 {
+            return;
+        }
+        let view = view.to_vec();
+        with_entries_v1(|entries| {
+            entries.retain(|(key, _)| key != sha256);
+            while entries.len() >= ENTRIES_V1 {
+                entries.pop_front();
+            }
+            entries.push_back((sha256.to_owned(), Arc::new(view)));
+        });
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_for_test_v1() {
+        with_entries_v1(VecDeque::clear);
+    }
 }
 
 fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
