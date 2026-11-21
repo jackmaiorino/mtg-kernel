@@ -443,7 +443,7 @@ mod tests {
                     directories.push(path);
                     continue;
                 }
-                if !path.extension().is_some_and(|extension| extension == "rs") {
+                if path.extension().is_none_or(|extension| extension != "rs") {
                     continue;
                 }
                 for line in std::fs::read_to_string(&path).unwrap().lines() {
