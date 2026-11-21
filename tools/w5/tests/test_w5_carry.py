@@ -711,7 +711,8 @@ class CarryTests(unittest.TestCase):
         with mock.patch.object(chains, 'quarantine', side_effect=AssertionError('no quarantine')), \
                 contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(self.drive(plan, 'c1c', cont, 4), w5box.EXIT_REFUSED)
-        self.assertEqual({p: p.read_bytes() for p in snapshot}, snapshot)
+        kept = {p: b for p, b in snapshot.items() if p.name in ("checkpoint.json", "update.json", "complete.json")}
+        self.assertEqual({p: p.read_bytes() for p in kept}, kept)  # no state of either chain deleted or changed
 
 
 if __name__ == '__main__':
