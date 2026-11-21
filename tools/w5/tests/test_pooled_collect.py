@@ -3,6 +3,7 @@ fake collector writes each slot's bytes as a function of its episode alone (as t
 does), so any host split, failover or audit must merge to the same files."""
 import hashlib
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -31,16 +32,21 @@ class FakeTransport:
         self.pushed, self.runs = [], []
 
     def missing_pins(self, pins):
-        return sorted(p for p in pins if self.files.get(p[0]) != p[1])
+        for path, digest in pins:
+            if path in self.files and self.files[path] != digest:
+                raise RuntimeError(f"existing pin differs: {path}")
+        return sorted(pin for pin in pins if pin[0] not in self.files)
 
-    def push(self, local, remote):
-        self.files[remote] = pc.sha256_file(Path(local))
+    def push(self, local, remote, digest):
+        if pc.sha256_file(Path(local)) != digest or self.files.setdefault(remote, digest) != digest:
+            raise RuntimeError(f"existing pin differs: {remote}")
         self.pushed.append(remote)
 
     def put_text(self, remote, text):
         self.files[remote] = text
 
     def run(self, argv, timeout):
+        assert argv[-2] == "--execute-collect-shard"
         command = json.loads(self.files[argv[-1]])
         self.runs.append(command["shard"]["first_slot"])
         if self.fail:
@@ -205,7 +211,8 @@ class PooledCollectTests(unittest.TestCase):
 
         with mock.patch.object(pc.shutil, "copyfile", side_effect=copy_and_wait), \
                 ThreadPoolExecutor(max_workers=2) as pool:
-            tasks = [pool.submit(transport.push, self.checkpoint, str(remote)) for _ in range(2)]
+            digest = pc.sha256_file(self.checkpoint)
+            tasks = [pool.submit(transport.push, self.checkpoint, str(remote), digest) for _ in range(2)]
             for task in tasks:
                 task.result(timeout=15)
 
@@ -226,10 +233,61 @@ class PooledCollectTests(unittest.TestCase):
 
         with mock.patch.object(pc.shutil, "copyfile", side_effect=interrupted):
             with self.assertRaisesRegex(OSError, "copy interrupted"):
-                transport.push(self.checkpoint, str(remote))
+                transport.push(self.checkpoint, str(remote), pc.sha256_file(self.checkpoint))
 
         self.assertEqual(list(remote.parent.iterdir()), [remote])
         self.assertEqual(remote.read_bytes(), b"existing pin")
+
+    def test_two_absent_observations_cannot_replace_a_conflicting_first_pin(self):
+        host = self.config([("a", 1.0, "x86")])["hosts"][0]
+        first, second = pc.Transport(host), pc.Transport(host)
+        remote = self.root / "collector" / "pin.json"
+        different = self.root / "different.json"
+        different.write_bytes(b"other learner's checkpoint")
+        first_pin = str(remote), pc.sha256_file(self.checkpoint)
+        second_pin = str(remote), pc.sha256_file(different)
+        self.assertEqual(first.missing_pins({first_pin}), [first_pin])
+        self.assertEqual(second.missing_pins({second_pin}), [second_pin])
+
+        # Both check while the path is absent. Publication order is fixed so
+        # the second cannot hide a lost update by winning the race instead.
+        first.push(self.checkpoint, *first_pin)
+        with self.assertRaisesRegex(RuntimeError, "existing pin differs"):
+            second.push(different, *second_pin)
+        with self.assertRaisesRegex(RuntimeError, "existing pin differs"):
+            second.missing_pins({second_pin})
+        self.assertEqual(first.missing_pins({first_pin}), [])
+        self.assertEqual(remote.read_bytes(), self.checkpoint.read_bytes())
+        self.assertEqual(list(remote.parent.iterdir()), [remote])
+
+    def test_fake_ssh_preserves_a_canonical_pin_installed_after_discovery(self):
+        host = self.config([("a", 1.0, "x86")])["hosts"][0]
+        host.kind, host.ssh = "ssh", ["fake-ssh", "collector"]
+        transport = pc.Transport(host)
+        remote = self.root / "collector's scratch" / "pin.json"
+        different = self.root / "different.json"
+        different.write_bytes(b"other learner's checkpoint")
+        good_pin = remote.as_posix(), pc.sha256_file(self.checkpoint)
+        conflicting_pin = remote.as_posix(), pc.sha256_file(different)
+        local_run = subprocess.run
+
+        def emulate_ssh(argv, **kwargs):
+            self.assertEqual(argv[:-1], host.ssh)
+            command = shlex.split(argv[-1])
+            self.assertEqual(command[:2], ["python3", "-c"])
+            return local_run([sys.executable, *command[1:]], **kwargs)
+
+        with mock.patch.object(pc.subprocess, "run", side_effect=emulate_ssh):
+            self.assertEqual(transport.missing_pins({conflicting_pin}), [conflicting_pin])
+            transport.push(self.checkpoint, *good_pin)
+            transport.push(self.checkpoint, *good_pin)
+            with self.assertRaisesRegex(RuntimeError, "existing pin differs"):
+                transport.push(different, *conflicting_pin)
+            self.assertEqual(transport.missing_pins({good_pin}), [])
+            with self.assertRaisesRegex(RuntimeError, "existing pin differs"):
+                transport.missing_pins({conflicting_pin})
+        self.assertEqual(remote.read_bytes(), self.checkpoint.read_bytes())
+        self.assertEqual(list(remote.parent.iterdir()), [remote])
 
     def test_every_host_failing_fails_the_collection(self):
         config = self.config([("a", 1.0, "x86"), ("b", 1.0, "x86")])
@@ -306,9 +364,16 @@ class PooledCollectTests(unittest.TestCase):
         path.write_text(json.dumps({"schema": pc.SCHEMA, "hosts": [entry], "merge_binary": "/bin/m"}))
         self.assertEqual(pc.load_hosts(path)["hosts"][0].name, "a")
 
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_merge_uses_the_native_trainer_mode_in_schedule_order(self):
+        shards = [self.root / "first-shard", self.root / "second-shard"]
+        trainer = str(self.root / "native-trainer")
+        output = {"trajectories": ["first", "second"], "behavior_state_sha256": "state"}
+        result = subprocess.CompletedProcess([], 0, json.dumps(output), "")
+        with mock.patch.object(pc.subprocess, "run", return_value=result) as run:
+            report = pc.merge_with_binary(trainer)(self.command_path, shards)
+        run.assert_called_once_with([trainer, "--merge-collection-shards", str(self.command_path),
+                                     *map(str, shards)], capture_output=True, text=True)
+        self.assertEqual(report, {"trajectories": 2, "behavior_state_sha256": "state"})
 
 
 class ChainsPassThroughTests(unittest.TestCase):
@@ -351,3 +416,7 @@ class ChainsPassThroughTests(unittest.TestCase):
 
     def test_pooled_collection_is_outside_recipe_identity(self):
         self.assertEqual(self.chains.recipe_identity(self.arm()), self.chains.recipe_identity(self.arm(pooled=False)))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -32,7 +32,8 @@ of its sources, so every collector must see the recipe's inputs at the paths
 the learner uses (a common root such as /srv/work/pooled-20261120 on every
 Linux host, WSL guest and the Mac's Linux VM).
 Collector scratch is private to one dispatch. Published input pins can be
-shared by other dispatches or forks and are retained.
+shared by other dispatches or forks and are retained. An existing pin is
+reused only if it matches the required digest.
 """
 from __future__ import annotations
 
@@ -169,52 +170,89 @@ class Transport:
                               timeout=timeout, stdin=subprocess.DEVNULL)
 
     def missing_pins(self, pins: set[tuple[str, str]]) -> list[tuple[str, str]]:
-        """Pins whose file is absent or differs on the host."""
-        if self.host.kind == "local":
-            return sorted(p for p in pins if not Path(p[0]).is_file() or sha256_file(Path(p[0])) != p[1])
-        script = ("import hashlib,json,os,sys\n"
-                  "out=[]\n"
-                  "for p,s in json.load(sys.stdin):\n"
-                  "  ok=os.path.isfile(p) and hashlib.sha256(open(p,'rb').read()).hexdigest()==s\n"
-                  "  out.append(ok)\n"
-                  "print(json.dumps(out))\n")
+        """Pins absent on the host. An existing divergent file is a conflict."""
         ordered = sorted(pins)
-        result = subprocess.run(self.host.ssh + ["python3 -c " + shlex.quote(script)],
-                                input=json.dumps(ordered), capture_output=True, text=True, timeout=300)
-        if result.returncode != 0:
-            raise RuntimeError(f"{self.host.name}: pin check failed: {result.stderr.strip()}")
-        return [p for p, ok in zip(ordered, json.loads(result.stdout)) if not ok]
-
-    def push(self, local: Path, remote: str) -> None:
-        """Copies one file to the same absolute path on the host (staged, then renamed)."""
-        stage = f"{remote}.{uuid.uuid4().hex}.stage"
         if self.host.kind == "local":
-            if Path(local) == Path(remote):
+            statuses = []
+            for path, digest in ordered:
+                file = Path(path)
+                if not os.path.lexists(file):
+                    statuses.append("absent")
+                else:
+                    statuses.append("match" if file.is_file() and sha256_file(file) == digest else "conflict")
+        else:
+            script = ("import hashlib,json,os,sys\n"
+                      "out=[]\n"
+                      "for p,s in json.load(sys.stdin):\n"
+                      "  if not os.path.lexists(p):\n"
+                      "    out.append('absent'); continue\n"
+                      "  if not os.path.isfile(p):\n"
+                      "    out.append('conflict'); continue\n"
+                      "  h=hashlib.sha256()\n"
+                      "  with open(p,'rb') as f:\n"
+                      "    for chunk in iter(lambda: f.read(1 << 20), b''): h.update(chunk)\n"
+                      "  out.append('match' if h.hexdigest()==s else 'conflict')\n"
+                      "print(json.dumps(out))\n")
+            result = subprocess.run(self.host.ssh + ["python3 -c " + shlex.quote(script)],
+                                    input=json.dumps(ordered), capture_output=True, text=True, timeout=300)
+            if result.returncode != 0:
+                raise RuntimeError(f"{self.host.name}: pin check failed: {result.stderr.strip()}")
+            statuses = json.loads(result.stdout)
+        missing = []
+        for pin, status in zip(ordered, statuses, strict=True):
+            if status == "absent":
+                missing.append(pin)
+            elif status != "match":
+                raise RuntimeError(f"{self.host.name}: existing pin differs: {pin[0]}")
+        return missing
+
+    def push(self, local: Path, remote: str, digest: str) -> None:
+        """Installs an immutable pin without replacing any established file."""
+        stage_name = f"{remote}.{uuid.uuid4().hex}.stage"
+        if self.host.kind == "local":
+            destination = Path(remote)
+            stage = Path(stage_name)
+            if local == destination:
+                if sha256_file(local) != digest:
+                    raise RuntimeError(f"{self.host.name}: existing pin differs: {remote}")
                 return
-            Path(remote).parent.mkdir(parents=True, exist_ok=True)
+            destination.parent.mkdir(parents=True, exist_ok=True)
             try:
                 shutil.copyfile(local, stage)
-                for attempt in range(100):
-                    try:
-                        os.replace(stage, remote)
-                        return
-                    except PermissionError:
-                        if os.name != "nt" or attempt == 99:
-                            raise
-                        # Windows can briefly lock the destination during another replace.
-                        time.sleep(0.01)
+                if sha256_file(stage) != digest:
+                    raise RuntimeError(f"{self.host.name}: staged pin differs: {remote}")
+                try:
+                    os.link(stage, destination)
+                except FileExistsError:
+                    if not destination.is_file() or sha256_file(destination) != digest:
+                        raise RuntimeError(f"{self.host.name}: existing pin differs: {remote}") from None
             finally:
-                Path(stage).unlink(missing_ok=True)
-        parent = str(PurePosixPath(remote).parent)
-        quoted_stage = shlex.quote(stage)
-        cleanup = shlex.quote(f"rm -f -- {quoted_stage}")
+                stage.unlink(missing_ok=True)
+            return
+        script = ("import hashlib,os,shutil,sys\n"
+                  "from pathlib import Path\n"
+                  "dest,stage,expected=Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3]\n"
+                  "def digest(path):\n"
+                  "  h=hashlib.sha256()\n"
+                  "  with path.open('rb') as f:\n"
+                  "    for block in iter(lambda: f.read(1 << 20), b''): h.update(block)\n"
+                  "  return h.hexdigest()\n"
+                  "dest.parent.mkdir(parents=True,exist_ok=True)\n"
+                  "f=stage.open('xb')\n"
+                  "try:\n"
+                  "  with f: shutil.copyfileobj(sys.stdin.buffer,f)\n"
+                  "  if digest(stage)!=expected: sys.exit('staged pin differs: '+str(dest))\n"
+                  "  try: os.link(stage,dest)\n"
+                  "  except FileExistsError:\n"
+                  "    if not dest.is_file() or digest(dest)!=expected:\n"
+                  "      sys.exit('existing pin differs: '+str(dest))\n"
+                  "finally: stage.unlink(missing_ok=True)\n")
+        command = " ".join(shlex.quote(arg) for arg in ("python3", "-c", script, remote, stage_name, digest))
         with open(local, "rb") as handle:
-            result = subprocess.run(self.host.ssh + [f"mkdir -p {shlex.quote(parent)} && "
-                                                     f"(trap {cleanup} EXIT; cat > {quoted_stage}"
-                                                     f" && mv {quoted_stage} {shlex.quote(remote)})"],
-                                    stdin=handle, capture_output=True, timeout=600)
+            result = subprocess.run(self.host.ssh + [command], stdin=handle, capture_output=True, timeout=600)
         if result.returncode != 0:
-            raise RuntimeError(f"{self.host.name}: push of {remote} failed")
+            reason = result.stderr.decode(errors="replace").strip().splitlines()[-1:]
+            raise RuntimeError(f"{self.host.name}: push of {remote} failed: {' '.join(reason)}")
 
     def put_text(self, remote: str, text: str) -> None:
         if self.host.kind == "local":
@@ -297,7 +335,7 @@ class Dispatcher:
                 local = Path(path)
                 if not local.is_file() or sha256_file(local) != digest:
                     raise RuntimeError(f"learner lacks pinned input {path}")
-                transport.push(local, path)
+                transport.push(local, path, digest)
                 pushed += local.stat().st_size
         return pushed
 
