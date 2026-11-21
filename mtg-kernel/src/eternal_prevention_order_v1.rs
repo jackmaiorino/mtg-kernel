@@ -53,9 +53,9 @@ fn cannot_prevent(state: &GameState) -> bool {
 
 pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
     damage.amount > 0
+        && circles::circle_shield_position(state, damage).is_some()
         && !cannot_prevent(state)
         && full_prevention(state, damage)
-        && circles::circle_shield_position(state, damage).is_some()
 }
 
 /// Re-evaluate all state-bearing replacements after each chosen effect. The
