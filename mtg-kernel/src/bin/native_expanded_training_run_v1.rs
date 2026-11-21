@@ -13,6 +13,7 @@ fn main() {
     // SAFETY: first statement of main; no other thread exists yet.
     unsafe { mtg_kernel::retain_freed_memory_v1() };
     mtg_kernel::opt_out_of_power_throttling_v1();
+    mtg_kernel::set_default_digest_memo_mib_v1(16);
     if let Err(error) = run() {
         eprintln!("native expanded training: {error}");
         std::process::exit(1);
