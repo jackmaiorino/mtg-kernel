@@ -97,6 +97,33 @@ impl Costs {
             source,
             reserved,
         };
+        let project_mana = |protected: &[ObjectId]| {
+            let mut excluded = reserved.to_vec();
+            excluded.extend_from_slice(protected);
+            let mana =
+                selected.payment_plan(x, player, state, modifiers.0, modifiers.1, &excluded)?;
+            checked_spell_mana_plan_v59(state, player, &mana.mana)?;
+            let mut projected = state.clone();
+            projected.engine.pending_cast = None;
+            projected.engine.pending_discard = None;
+            mana.commit(&mut projected, player, source);
+            projected
+                .engine
+                .halted
+                .is_none()
+                .then_some((mana, projected))
+        };
+        let (mana, projected) = project_mana(&[])?;
+        let survivors = ctx.candidates(&projected, self.permanent)?;
+        let lost: Vec<_> = ctx
+            .candidates(state, self.permanent)?
+            .into_iter()
+            .filter(|id| {
+                !survivors.contains(id)
+                    || state.objects.get(*id).zone_change_count
+                        != projected.objects.get(*id).zone_change_count
+            })
+            .collect();
         for route_first in [false, true] {
             if order.is_some_and(|wanted| wanted != route_first) {
                 continue;
@@ -105,22 +132,18 @@ impl Costs {
             let split = prefix.len().min(usize::from(count(groups[0])));
             let (first, second) = prefix.split_at(split);
             let permanent_picks = if route_first { second } else { first };
-            let leaves_for_mana = |id| {
-                state.objects.try_get(id).is_some()
-                    && crate::eternal_premodern_p1a_v1::statics::leaves_when_tapped_for_mana(
-                        state, id,
-                    )
-            };
-            let quote = |permanents: &[ObjectId]| {
-                let mut excluded = reserved.to_vec();
-                excluded.extend(permanents.iter().copied().filter(|&id| leaves_for_mana(id)));
-                let mana =
-                    selected.payment_plan(x, player, state, modifiers.0, modifiers.1, &excluded)?;
-                checked_spell_mana_plan_v59(state, player, &mana.mana)?;
-                let mut projected = state.clone();
-                projected.engine.pending_cast = None;
-                mana.commit(&mut projected, player, source);
-                let plan = ctx.complete(&projected, groups[0], first, |mut first_picks| {
+            let complete = |projected: &GameState| {
+                // Neither exiling other cards nor discarding a land supplies a
+                // permanent for these costs. Check the permanent family before
+                // trying graveyard subsets. The inverse remains possible: a
+                // returned or sacrificed permanent can supply the route cost.
+                let candidates = ctx.candidates(projected, self.permanent)?;
+                if candidates.len() < usize::from(count(self.permanent))
+                    || permanent_picks.iter().any(|id| !candidates.contains(id))
+                {
+                    return None;
+                }
+                ctx.complete(projected, groups[0], first, |mut first_picks| {
                     let mut after = projected.clone();
                     ctx.pay(&mut after, groups[0], &mut first_picks);
                     ctx.complete(&after, groups[1], second, |mut second_picks| {
@@ -129,22 +152,22 @@ impl Costs {
                             groups: [(groups[0], first_picks.clone()), (groups[1], second_picks)],
                         })
                     })
-                })?;
-                Some((mana, plan))
+                })
             };
-            if let Some(plan) = quote(permanent_picks) {
-                return Some(plan);
+            if let Some(plan) = complete(&projected) {
+                return Some((mana, plan));
             }
-            // An unrestricted mana plan may use the last mining counter of a
-            // permanent that must survive for payment. Reserve that permanent
-            // and retry with the other available mana sources.
-            if permanent_picks.len() < usize::from(count(self.permanent)) {
+            if !lost.is_empty() {
+                // Only protect permanents actually lost to the first mana
+                // plan. Other selected lands may still tap before returning.
                 if let Some(plan) = ctx.complete(state, self.permanent, permanent_picks, |picks| {
-                    picks
-                        .iter()
-                        .any(|id| !permanent_picks.contains(id) && leaves_for_mana(*id))
-                        .then(|| quote(&picks))
-                        .flatten()
+                    let protect: Vec<_> =
+                        picks.into_iter().filter(|id| lost.contains(id)).collect();
+                    if protect.is_empty() {
+                        return None;
+                    }
+                    let (mana, projected) = project_mana(&protect)?;
+                    Some((mana, complete(&projected)?))
                 }) {
                     return Some(plan);
                 }
