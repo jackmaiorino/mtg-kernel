@@ -306,6 +306,7 @@ fn chain_lightning_copy_is_not_cast_and_does_not_create_a_second_bird() {
         } if spell == chain
     ));
     engine::step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+    engine::step(&mut state, Action::ChooseEffectOption(1)).unwrap();
     let retarget = engine::advance_until_decision(&mut state);
     let copy = match retarget {
         Decision::ChooseSpellCopyRetarget {
