@@ -631,7 +631,9 @@ New, each built once in the first wave that needs it:
   show a bound Undercity room like a bound Forgotten Realms room, as its
   venture source's trigger with the engine's legal targets. Infoset exports
   still refuse bound Undercity rooms.
-  Serra's Emissary's existing type choices still omit Dungeon.
+  Serra's Emissary appends Dungeon after its seven historical type choices.
+  Native room abilities check that protection at target selection and
+  resolution, including when the room outlasts its dungeon.
   Temple of Dumathoin and Mad Wizard's Lair bind each draw attempt to the
   native venture entry and published room ability. The Lair reveals and
   offers only cards actually drawn, and an immediate Jace win ends the
