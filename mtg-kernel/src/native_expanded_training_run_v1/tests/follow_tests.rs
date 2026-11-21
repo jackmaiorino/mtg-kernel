@@ -368,16 +368,25 @@ fn a_followed_chain_publishes_the_trees_and_states_of_fresh_processes() {
     let fresh_first = fresh_run_v1(&first).unwrap();
     let second = segment_v1(&base, &chain, 1, Some(checkpoint_pin_v1(&fresh_first)));
     let fresh_second = fresh_run_v1(&second).unwrap();
+    // Read through the receipts' pins, so before the tree moves.
+    let fresh_states = [
+        receipt_states_v1(&fresh_first),
+        receipt_states_v1(&fresh_second),
+    ];
     fs::rename(&chain, &fresh_chain).unwrap();
 
     let spool = chain.join("spool");
     let (ended, results) = followed_v1(&base, &chain, 0, 2, &spool, &mut |_| {}).unwrap();
     assert_eq!(ended, FollowEndV1::Stopped);
     assert_eq!(results.len(), 2);
-    for (followed, fresh) in results.iter().zip([&fresh_first, &fresh_second]) {
+    for ((followed, fresh), states) in results
+        .iter()
+        .zip([&fresh_first, &fresh_second])
+        .zip(&fresh_states)
+    {
         assert_eq!(followed["actual_identity"], fresh["actual_identity"]);
         assert_eq!(followed["source"], fresh["source"]);
-        assert_eq!(receipt_states_v1(followed), receipt_states_v1(fresh));
+        assert_eq!(&receipt_states_v1(followed), states);
     }
     for (index, result) in results.iter().enumerate() {
         let done = read_json(&spool.join(done_name_v1(index)), SMALL_CAP).unwrap();
@@ -434,6 +443,15 @@ fn a_crash_in_a_followed_segment_resumes_in_a_new_process_with_the_same_states()
     let reference_first = fresh_run_v1(&first).unwrap();
     let second = segment_v1(&base, &chain, 1, Some(checkpoint_pin_v1(&reference_first)));
     let reference_second = fresh_run_v1(&second).unwrap();
+    // The rerun update publishes in a new attempt, whose paths its checkpoint
+    // names, so states are compared (as the plain-run counterpart does).
+    let states = |result: &Value| -> Vec<(Value, Value)> {
+        receipt_states_v1(result)
+            .into_iter()
+            .map(|(_, _, after)| (after["state_sha256"].clone(), after["adam_step"].clone()))
+            .collect()
+    };
+    let reference_states = states(&reference_second);
     fs::remove_dir_all(&chain).unwrap();
     let spool = chain.join("spool");
     let error = followed_v1(&base, &chain, 0, 2, &spool, &mut |_| {
@@ -449,14 +467,13 @@ fn a_crash_in_a_followed_segment_resumes_in_a_new_process_with_the_same_states()
     assert!(spool.join(done_name_v1(0)).exists());
     assert!(!spool.join(done_name_v1(1)).exists());
     let resumed = fresh_run_v1(&second).unwrap();
-    assert_eq!(
-        resumed["actual_identity"],
-        reference_second["actual_identity"]
-    );
-    assert_eq!(
-        receipt_states_v1(&resumed),
-        receipt_states_v1(&reference_second)
-    );
+    for field in ["state_sha256", "adam_step"] {
+        assert_eq!(
+            resumed["actual_identity"][field],
+            reference_second["actual_identity"][field]
+        );
+    }
+    assert_eq!(states(&resumed), reference_states);
     fs::remove_dir_all(&chain).unwrap();
 }
 
@@ -490,9 +507,9 @@ fn a_crash_at_any_publication_of_a_followed_chain_resumes_to_the_uninterrupted_r
     assert_eq!(ended, FollowEndV1::Stopped);
     assert_eq!(reference.len(), 2);
     fs::rename(&chain, &reference_chain).unwrap();
-    // Per segment: two iterations of ten publications, its plan and
+    // Per segment: two iterations of nine publications, its plan and
     // completion; and one done record.
-    assert!(publications >= 2 * 23, "{publications} publications");
+    assert!(publications >= 2 * 20 + 2, "{publications} publications");
     for index in 0..publications {
         for point in [CrashPointV1::BeforeFinal, CrashPointV1::AfterFinal] {
             let case = format!("publication {index} {point:?}");
