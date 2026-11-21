@@ -1665,6 +1665,7 @@ fn collection_command(
             training_math: config.training_math,
             ex1,
             record_envelope: config.record_envelope,
+            shard: None,
             output_directory,
         }
     }
@@ -1824,6 +1825,47 @@ fn flat_identity_declared_v1(
         transfer.expected_feature_contract_digest == *contract
             && transfer.expected_feature_encoding_digest == *encoding
     })
+}
+
+/// Pooled collection (pooled-lineage stage 1): a program that executes an
+/// iteration's published `collect-command.json` across collector processes or
+/// hosts and publishes the merged `collect/collection.json` beside it
+/// (`expanded_deck_training_v1::pooled_collection_v1`). Execution only, like
+/// the exact GPU backends: it sits outside the run identity, and the run
+/// checks its output exactly as it checks a local collection (receipt,
+/// schedule, every trajectory, then the update's replay of every decision).
+static EXTERNAL_COLLECTOR_V1: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Installs the external collector for this process. Once only.
+pub fn install_external_collector_v1(program: PathBuf) -> Result<(), String> {
+    check(
+        program.is_absolute(),
+        "external collector path must be absolute",
+    )?;
+    EXTERNAL_COLLECTOR_V1
+        .set(program)
+        .map_err(|_| "external collector already installed".to_string())
+}
+
+/// Runs an iteration's collection: in this process, or through the installed
+/// external collector, which gets the attempt's published command path.
+fn execute_collection_v1(command: ExpandedTrainingCommandV1, attempt: &Path) -> Result<(), String> {
+    let Some(program) = EXTERNAL_COLLECTOR_V1.get() else {
+        return execute_v1(command).map(|_| ());
+    };
+    check(
+        matches!(command, ExpandedTrainingCommandV1::CollectParallel { .. }),
+        "an external collector needs collection_workers above 1",
+    )?;
+    let status = std::process::Command::new(program)
+        .arg(attempt.join("collect-command.json"))
+        .status()
+        .map_err(|error| format!("external collector: {error}"))?;
+    check(status.success(), "external collector failed")?;
+    check(
+        attempt.join("collect/collection.json").is_file(),
+        "external collector published no collection",
+    )
 }
 
 /// Runs or resumes a declared schedule. The optional invocation limit pauses
@@ -2165,7 +2207,7 @@ pub fn run_native_expanded_training_v1(
             publish(&attempt, "collect-command.json", &collect_command)?;
             if collection_pin.is_none() {
                 let started = Instant::now();
-                execute_v1(collect_command)?;
+                execute_collection_v1(collect_command, &attempt)?;
                 collection_execution_seconds += started.elapsed().as_secs_f64();
                 collection_pin = Some(pin(&attempt.join("collect/collection.json"))?);
             }
