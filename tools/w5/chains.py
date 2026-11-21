@@ -252,10 +252,11 @@ MEASURED = ('C', 'X8', 'XS') + EXTRA_C
 STAGES = ('0', '1a', '1b')
 SEGMENT_UPDATES = {'C': 256, 'X8': 16, 'XS': 16, 'F': 64, 'CS': 256, 'CP': 256, 'CG': 256, 'CH': 256, 'FBA': 256,
                    'FBB': 256}
-# A scratch segment ends on a multiple of 32 updates that divides the 4,096-update ladder stride. 32 (below retention's
-# 64-update full-state stride) lets a large-batch arm keep its segment config under the trainer's 16 MiB cap; an odd
-# 32-update end is pruned like any other non-full state, only once its segment and the next are complete.
-SCRATCH_MIN_UPDATES = 32
+# A scratch chain keeps full states at its segment ends only, so its segment length divides the 4,096-update ladder
+# stride and either divides retention's 64-update full-state stride or is a multiple of it. A length below 64 (32 for
+# a 60-game update; 16, 8 or 4 for 120, 240 or 480 games, which keep a segment config under the trainer's 16 MiB cap)
+# then has every state retention keeps at a segment end, as a plain chain of that length has; its other ends are
+# pruned like any other non-full state, only once their segment and the next are complete.
 HOT_CAP_BYTES = 60 * 10**9
 BYTE_CAP = 560 * 10**9
 HOLD_DAYS = 7
@@ -788,9 +789,10 @@ def make_plan(inputs_path):
             require(recipe == 'C' and a != 'F' and stage == '0',
                     f'{a}: scratch segments are for C-recipe chains (net-8 or S parent) in Stage 0 plans only')
             require(scratch_root and Path(scratch_root).is_absolute(), f'{a}: scratch needs an absolute scratch_root')
-            require(length % SCRATCH_MIN_UPDATES == 0 and retention.C_LONG_STRIDE % length == 0,
-                    f'{a}: a scratch segment length divides {retention.C_LONG_STRIDE} and is a multiple of '
-                    f'{SCRATCH_MIN_UPDATES}, so segment ends hold every ladder state')
+            full = retention.FULL_STRIDE
+            require(retention.C_LONG_STRIDE % length == 0 and (full % length == 0 or length % full == 0),
+                    f'{a}: a scratch segment length divides {retention.C_LONG_STRIDE} and divides or is a multiple of '
+                    f'{full}, so segment ends hold every ladder state')
             require(r_nom is None, f'{a}: scratch keeps no look state (no r_nom_usec)')
             doc['scratch_root'] = Path(scratch_root).as_posix()  # absent otherwise: existing arm files unchanged
         if ladder is not None:
@@ -1124,9 +1126,11 @@ def current_segment(arm, man, man_path, ledger_source):
 # on the root's volume, the mount is removed, and the copy replaces the (empty) segment directory by one rename.
 # An unfinished scratch segment found at a driver start is discarded and rerun from the previous segment's
 # persisted checkpoint (native runs are deterministic; a reaped run cannot resume natively). Full states are kept
-# at segment ends only, so the recent-window stride of a scratch C chain is its segment length, or 64 for 32-update
-# segments (odd ends are pruned; at most 255 updates of replay rebuild any boundary) and the 4,096 ladder is exact; scratch chains therefore take no pair (W5 selection)
-# and no look. An END (wall, operator, OOM) names a persisted boundary only.
+# at segment ends only: for a segment length below 64 (it divides 64) every state rolling retention keeps is a segment
+# end, so the chain keeps what a plain chain of that length keeps and its other ends are pruned; for a longer one the
+# recent-window stride is the segment length (at most 255 updates of replay rebuild any boundary). Either way the
+# 4,096 ladder is exact; scratch chains take no pair (W5 selection) and no look. An END (wall, operator, OOM) names a
+# persisted boundary only.
 
 SCRATCH_BULK = ('episode-', 'ex1-')
 REAP_EVERY = 0.5
