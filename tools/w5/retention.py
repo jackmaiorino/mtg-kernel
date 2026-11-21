@@ -849,6 +849,11 @@ class IndexCache:
         self.active = self._keep(store.view())
         return chain, store.view()
 
+    def file_rows(self):
+        """How many held records come from the index file (not the unwritten rows a read-only cache keeps)."""
+        store = self.records.store
+        return len(store) - len(store.extra)
+
     def refresh(self):
         """(chain, records), equal to `index(chain_path)` at the same moment (records: an `IndexView`)."""
         if getattr(self, 'carried', None) is None:
@@ -862,7 +867,7 @@ class IndexCache:
 
     def _refresh(self):
         cache = index_path(self.chain_path)
-        if self.records is None or (getattr(self, 'carried', False) and (not len(self.records) or not self.offset)):
+        if self.records is None or (getattr(self, 'carried', False) and self.file_rows() == 0):
             return self._whole()  # a carried chain's first file rows always pass the head check of a full read
         try:
             f = open(cache, 'rb')

@@ -1170,14 +1170,16 @@ class CarryTests(unittest.TestCase):
         old_rows = (old_root / 'chains' / 'c1' / 'chain.index.jsonl').read_bytes()
         cman = cont / 'chains' / 'c1c' / 'chain.json'
         cindex = cont / 'chains' / 'c1c' / 'chain.index.jsonl'
-        cindex.write_bytes(b'')
-        ro = retention.IndexCache(cman, read_only=True)
-        first = ro.refresh()[1]
-        self.assertTrue(len(first) > 0)  # unwritten continuation rows held in memory, the file still empty
-        with open(cindex, 'ab') as f:
-            f.write(old_rows)
-        with self.assertRaisesRegex(SystemExit, 'carried boundary'):
-            ro.refresh()
+        for empty in (b'', b'\n', b'\n\n'):  # zero bytes, or blank lines only
+            with self.subTest(empty=empty):
+                cindex.write_bytes(empty)
+                ro = retention.IndexCache(cman, read_only=True)
+                first = ro.refresh()[1]
+                self.assertTrue(len(first) > 0)  # unwritten continuation rows held in memory, no file rows
+                with open(cindex, 'ab') as f:
+                    f.write(old_rows)
+                with self.assertRaisesRegex(SystemExit, 'carried boundary'):
+                    ro.refresh()
         cindex.unlink()
         # a qualification record destination through a linked parent is refused before the lock
         (self.t / 'out-link').symlink_to(old_root / 'chains' / 'c1', target_is_directory=True)
