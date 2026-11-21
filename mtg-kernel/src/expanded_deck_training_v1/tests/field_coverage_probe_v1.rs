@@ -359,6 +359,13 @@ fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: 
     let mut uniform = SplitMix64::seed(episode.seed ^ UNIFORM_STREAM);
     let mut decisions = 0u64;
     let mut kinds: BTreeMap<String, u64> = BTreeMap::new();
+    // Rolling digest of what the policy was given and what it answered at
+    // every decision: the decision index, the session's state hash, the
+    // encoded training tensor and the scores (Debug text, which prints every
+    // float's shortest round-trip form). Two builds that agree on
+    // `inputs_sha256` for a game fed the model the same features at every
+    // decision of that game.
+    let mut inputs = Sha256::new();
     loop {
         let d = match session.current_response() {
             FastActorResponseV1::Terminal(terminal) => {
@@ -370,6 +377,7 @@ fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: 
                 };
                 return json!({"class": class, "stop_decision_index": decisions,
                     "decisions": decisions, "kinds": kinds,
+                    "inputs_sha256": hex(&inputs.finalize()),
                     "terminal": terminal_json(&terminal)});
             }
             FastActorResponseV1::Decision(d) => d,
@@ -377,13 +385,22 @@ fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: 
         let kind = format!("{:?}", d.decision_kind);
         if decisions >= episode.max_policy_steps {
             return json!({"class": "policy_step_limit", "stop_decision_index": decisions,
-                "decisions": decisions, "kinds": kinds, "error": POLICY_STEP_LIMIT_TEXT});
+                "decisions": decisions, "kinds": kinds,
+                "inputs_sha256": hex(&inputs.finalize()), "error": POLICY_STEP_LIMIT_TEXT});
         }
         let selected = match policy.select_with_training_tensor_v4(&session) {
-            Ok((selected, _, _)) => match select {
-                Select::Policy => selected,
-                Select::Uniform => (uniform.next_u64() % u64::from(d.legal_action_count)) as u32,
-            },
+            Ok((selected, scores, tensor)) => {
+                inputs.update(decisions.to_le_bytes());
+                inputs.update(session.diagnostic_state_hash().to_le_bytes());
+                inputs.update(format!("{tensor:?}").as_bytes());
+                inputs.update(format!("{scores:?}").as_bytes());
+                match select {
+                    Select::Policy => selected,
+                    Select::Uniform => {
+                        (uniform.next_u64() % u64::from(d.legal_action_count)) as u32
+                    }
+                }
+            }
             Err(error) => {
                 let (class, stage) = classify_selection_error(&error);
                 let texts: Vec<String> = session
@@ -403,6 +420,7 @@ fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: 
                     "stop_decision_index": decisions,
                     "decisions": decisions,
                     "kinds": kinds,
+                    "inputs_sha256": hex(&inputs.finalize()),
                     "decision_kind": kind,
                     "acting_player": format!("{:?}", d.acting_player),
                     "legal_action_count": d.legal_action_count,
@@ -423,7 +441,7 @@ fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: 
         if let Err(error) = session.step(d.episode_id, d.step, selected) {
             return json!({"class": "step_error", "stop_decision_index": decisions,
                 "decisions": decisions, "kinds": kinds, "decision_kind": kind,
-                "error": error.to_string()});
+                "inputs_sha256": hex(&inputs.finalize()), "error": error.to_string()});
         }
         decisions += 1;
     }
