@@ -89,6 +89,7 @@ const MAX_BATCH_BYTES: u64 = 512 * 1024 * 1024;
 #[cfg(test)]
 mod engine_ceiling_probe_v1;
 mod phase1_parallel_collection;
+pub mod pooled_collection_v1;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
 pub mod public_features;
 #[cfg(feature = "experimental-burn-net8-packed-cuda-v1")]
@@ -3974,6 +3975,12 @@ pub enum ExpandedTrainingCommandV1 {
         /// existing command keeps its bytes and publishes plain JSON.
         #[serde(default, skip_serializing_if = "RecordEnvelopeV1::is_none")]
         record_envelope: RecordEnvelopeV1,
+        /// A pooled collection's shard (`pooled_collection_v1`): the slice's
+        /// schedule position. Files and ledger slots then carry schedule
+        /// indices and the non-natural cap is left to the merge. Omitted for
+        /// a whole collection, so every existing command keeps its bytes.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shard: Option<pooled_collection_v1::CollectionShardV1>,
         output_directory: PathBuf,
     },
     Update {
@@ -4447,6 +4454,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             training_math,
             ex1,
             record_envelope,
+            shard,
             output_directory,
         } => phase1_parallel_collection::collect_parallel_v1(
             source,
@@ -4457,6 +4465,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
             training_math,
             ex1,
             record_envelope,
+            shard,
             output_directory,
         ),
         ExpandedTrainingCommandV1::Collect {

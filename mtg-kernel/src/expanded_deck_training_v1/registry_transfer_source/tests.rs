@@ -357,6 +357,7 @@ fn phase1_registry_trainer_rejects_scalars_and_serial_parallel_schedule_before_p
                 training_math: TrainingMathV1::PlatformLibm,
                 ex1: None,
                 record_envelope: Default::default(),
+                shard: None,
                 output_directory: output.clone(),
             }
         } else {

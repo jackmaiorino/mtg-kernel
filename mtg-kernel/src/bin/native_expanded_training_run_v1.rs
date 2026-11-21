@@ -37,10 +37,25 @@ fn run() -> Result<(), String> {
             .join()
             .map_err(|_| "config validation thread panicked".to_owned())?;
     }
+    let first = std::env::args_os().nth(1);
+    if first.as_deref() == Some(std::ffi::OsStr::new("--execute-collect-shard"))
+        || first.as_deref() == Some(std::ffi::OsStr::new("--merge-collection-shards"))
+    {
+        // Pooled collection (pooled_collection_v1): a collector host runs one
+        // shard of an iteration's collection, and the learner host merges the
+        // shards, with this same pinned binary.
+        return std::thread::Builder::new()
+            .name("pooled-collection".into())
+            .stack_size(64 * 1024 * 1024)
+            .spawn(pooled_collection_mode_v1)
+            .map_err(|error| error.to_string())?
+            .join()
+            .map_err(|_| "pooled collection thread panicked".to_owned())?;
+    }
     let usage = concat!(
         "usage: native_expanded_training_run_v1 CONFIG.json [--max-new-iterations N] ",
         "[--gpu-exact-inference ORDINAL [--gpu-exact-latency-us N]] [--gpu-exact-learner ORDINAL] ",
-        "[--gpu-exact-kernels v1|v2] [--gpu-exact-wait spin|block]"
+        "[--gpu-exact-kernels v1|v2] [--gpu-exact-wait spin|block] [--collect-external PROGRAM]"
     );
     let mut args = std::env::args_os().skip(1);
     let path = PathBuf::from(args.next().ok_or(usage)?);
@@ -50,6 +65,7 @@ fn run() -> Result<(), String> {
     let mut gpu_learner: Option<usize> = None;
     let mut gpu_kernels: Option<String> = None;
     let mut gpu_wait: Option<String> = None;
+    let mut collect_external: Option<PathBuf> = None;
     let number = |value: Option<std::ffi::OsString>, what: &str| -> Result<u64, String> {
         value
             .ok_or(format!("missing {what}"))?
@@ -83,6 +99,9 @@ fn run() -> Result<(), String> {
             }
             Some("--gpu-exact-wait") if gpu_wait.is_none() => {
                 gpu_wait = Some(text(args.next(), "wait mode")?);
+            }
+            Some("--collect-external") if collect_external.is_none() => {
+                collect_external = Some(PathBuf::from(text(args.next(), "collector program")?));
             }
             _ => return Err(format!("unknown option; {usage}")),
         }
@@ -142,6 +161,12 @@ fn run() -> Result<(), String> {
             "--gpu-exact-learner {ordinal} needs a build with gpu-exact-v1"
         ));
     }
+    // Pooled collection changes where games are played, never their bytes:
+    // an execution option outside the run identity, checked by the run like
+    // a local collection.
+    if let Some(program) = collect_external {
+        mtg_kernel::native_expanded_training_run_v1::install_external_collector_v1(program)?;
+    }
     let result = run_native_expanded_training_v1(&config, limit);
     #[cfg(feature = "gpu-exact-v1")]
     if gpu_inference.is_some() || gpu_learner.is_some() {
@@ -161,6 +186,36 @@ fn run() -> Result<(), String> {
     println!(
         "{}",
         serde_json::to_string(&result).map_err(|e| e.to_string())?
+    );
+    Ok(())
+}
+
+/// `--execute-collect-shard SHARD.json`: plays one shard command (a
+/// `collect_parallel` command that names its schedule position) and prints
+/// its receipt. `--merge-collection-shards COLLECT_COMMAND.json SHARD_DIR...`:
+/// merges shard outputs, in schedule order, into the whole command's output
+/// directory and prints the merged receipt.
+fn pooled_collection_mode_v1() -> Result<(), String> {
+    use mtg_kernel::expanded_deck_training_v1::pooled_collection_v1::{
+        execute_shard_file_v1, merge_shards_file_v1,
+    };
+    let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    let receipt = match args.first().and_then(|mode| mode.to_str()) {
+        Some("--execute-collect-shard") if args.len() == 2 => execute_shard_file_v1(&args[1])?,
+        Some("--merge-collection-shards") if args.len() >= 3 => {
+            merge_shards_file_v1(&args[1], &args[2..])?
+        }
+        _ => {
+            return Err(
+                "usage: native_expanded_training_run_v1 --execute-collect-shard SHARD.json | \
+                 --merge-collection-shards COLLECT_COMMAND.json SHARD_DIR..."
+                    .into(),
+            )
+        }
+    };
+    println!(
+        "{}",
+        serde_json::to_string(&receipt).map_err(|error| error.to_string())?
     );
     Ok(())
 }
