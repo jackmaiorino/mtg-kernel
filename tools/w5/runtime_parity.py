@@ -29,7 +29,8 @@ outcome. Every check must hold for the receipt to pass:
   before, unless the caller passes `--postboard-exception REASON` (non-empty; the name shares no prefix with
   `--allow-london-training`, so that flag's abbreviations keep working). Without the flag nothing here reads a set
   differently than before. With it:
-  - `postboard` must be a boolean (the trainer's field); any other value counts as a malformed registration;
+  - `postboard` must be a boolean (the trainer's field), and every registered and selected deck a string label
+    with two lists of card ids; anything else counts as a malformed registration;
   - a game one's `selected` decks must equal its `registered` decks whole (label, mainboard, sideboard and any other
     field), whether or not the set has any post-board game; a difference fails `ordinary_starts_game_one`;
   - a post-board game's decks are read from `registered` (its selected 60 is not a deck the board plays), and the
@@ -104,6 +105,14 @@ def deck_key(ids, card_names: list[str]) -> Counter:
     return Counter((i, card_names[i]) for i in ids)
 
 
+def typed_deck(deck) -> bool:
+    """A registration as the trainer reads one: a string label and two lists of card ids (ints in [0, 65535]; a
+    bool is not a card id). Judged only under `--postboard-exception`, before any multiset is compared."""
+    return isinstance(deck, dict) and isinstance(deck.get("label"), str) and all(
+        isinstance(deck.get(zone), list) and all(type(card) is int and 0 <= card <= 65535 for card in deck[zone])
+        for zone in ("mainboard", "sideboard"))
+
+
 def training_side(configs: list[dict], card_names: list[str], postboard_flag: bool = False) -> dict:
     """Mulligan profile, rules, starts, limits and decks of every training episode. With `postboard_flag` (the
     caller passed `--postboard-exception`) a post-board game's decks are its registered ones and the side gains
@@ -144,6 +153,8 @@ def training_side(configs: list[dict], card_names: list[str], postboard_flag: bo
                         selected["label"], selected["mainboard"])
             if postboard_flag and type(ep.get("postboard")) is not bool:
                 malformed += 1  # the trainer's field is a bool: "false", 1 or a missing key is not a game it plays
+            if postboard_flag and not all(typed_deck(deck) for deck in ep["registered"] + ep["selected"]):
+                malformed += 1  # a string of 15 characters has length 15 and a multiset, and is not a sideboard
             exposed = postboard_flag and ep.get("postboard") is True
             if exposed:
                 # A post-board game: each seat's selected 60 and 15 must hold exactly its registered 75.

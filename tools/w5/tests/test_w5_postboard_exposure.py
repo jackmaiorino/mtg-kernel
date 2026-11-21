@@ -560,6 +560,36 @@ class ParityTests(unittest.TestCase):
         with self.assertRaises(rp.ParityError):  # read as a game one with a changed 60
             self.compare(cfg, 'reason')
 
+    def test_under_the_flag_decks_are_typed_before_conservation(self):
+        def flagged(change):
+            cfg = self.config()
+            ep = entries(cfg)[0]['episode']
+            ep['postboard'] = True  # a post-board game whose selected lists equal its registered ones
+            for key in ('registered', 'selected'):
+                change(ep[key][0])
+            return self.compare(cfg, 'reason')
+        training, ok = flagged(lambda deck: None)
+        self.assertEqual(training['malformed_registrations'], 0)
+        self.assertTrue(rp.passes(ok))  # the unchanged post-board game itself is admitted
+        cases = {
+            'a string of 15 characters': lambda deck: deck.update(sideboard='x' * 15),
+            'a list of strings': lambda deck: deck.update(sideboard=['x'] * 15),
+            'booleans as card ids': lambda deck: deck.update(sideboard=[True] * 15),
+            'floats as card ids': lambda deck: deck.update(sideboard=[float(c) for c in deck['sideboard']]),
+            'a card id out of range': lambda deck: deck.update(sideboard=[70000] * 15),
+            'a tuple': lambda deck: deck.update(sideboard=tuple(deck['sideboard'])),
+            'a label that is not a string': lambda deck: deck.update(label=7),
+        }
+        for name, change in cases.items():
+            with self.subTest(name=name):
+                try:
+                    training, result = flagged(change)
+                except (rp.ParityError, TypeError, IndexError):
+                    continue  # refused outright while reading the decks
+                self.assertGreaterEqual(training['malformed_registrations'], 1)
+                self.assertIsNone(result['postboard']['exception'])
+                self.assertFalse(rp.passes(result))
+
     def test_the_london_flag_keeps_its_abbreviation(self):
         import contextlib
         import io
