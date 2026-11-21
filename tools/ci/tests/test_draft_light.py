@@ -39,10 +39,18 @@ class DraftLightTests(unittest.TestCase):
                 elif name == "rust-quality":
                     self.assertIn("""contains(fromJSON('["full", "pr", "draft"]'), needs.detect-changes.outputs.scope)""", cond)
                 elif name == "hosted-fallback":
-                    # It only acts on failed self-hosted Windows jobs, which a draft run has none of.
-                    self.assertIn("contains(needs.*.result, 'failure')", cond)
+                    self.assertIn("needs.detect-changes.result == 'success' && "
+                                  "needs.detect-changes.outputs.scope != 'draft'", cond)
                 else:
                     self.assertIn("needs.detect-changes.outputs.scope != 'draft'", cond)
+
+    def test_a_draft_run_has_its_own_concurrency_group(self):
+        # Same predicate as the draft scope: a light run never cancels or replaces a full run.
+        text = WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'pull_request' && "
+                      "github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'ci:full') "
+                      "&& '-draft' || '' }}\n", text)
+        self.assertIn("  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n", text)
 
     def test_a_dispatch_runs_only_the_complement_of_a_ready_pull_request(self):
         body = jobs()["detect-changes"]
