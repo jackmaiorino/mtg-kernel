@@ -127,7 +127,11 @@ def run_suite(executable: str, *, allow_empty: bool = False, selection: dict | N
         # prevents similarly named modules from overlapping.
         selected_tests = [test for test in tests if test.startswith(module + "::")]
         print(f"Running integration module: {module} ({len(selected_tests)} listed tests)", flush=True)
-        result = subprocess.run([executable, module + "::"], check=False)
+        command = [executable, module + "::"]
+        # Keep the replay hashes from passing Eternal games and matches in CI.
+        if module in {"eternal_catalog_v1", "eternal_bo3_v1"}:
+            command.append("--show-output")
+        result = subprocess.run(command, check=False)
         failures += bool(result.returncode)
     if selection is None:
         print(f"Integration inventory: {len(tests)} tests, {len(modules)} modules, {failures} failed modules",
