@@ -197,10 +197,8 @@ def state_directory(directory: Path, create: bool = False):
                 except FileNotFoundError:
                     if not create:
                         raise
-                    try:
+                    with contextlib.suppress(FileExistsError):  # Other supervisors can create the same directory.
                         os.mkdir(part, dir_fd=fd)
-                    except FileExistsError:  # Another supervisor can create the same directory.
-                        pass
                     child = os.open(part, flags, dir_fd=fd)
             except OSError as error:
                 if error.errno in (errno.ENOTDIR, errno.ELOOP):
@@ -1334,7 +1332,7 @@ class Supervisor:
         self.write_ledger_source(self.last_stop_at())
         self.ledger.append({"event": "open", "instance": self.instance, "base_usec": self.base,
                             "cgroup": str(self.chain_cg.path), "cgroup_inode": self.chain_cg.inode(),
-                            "manifest_sha256": sha256_file(manifest_path)})
+                            "manifest_sha256": sha256_bytes(read_state(manifest_path))})
         with self.node.locked():  # the start is decided and spawned under the lock
             records, torn = self.node.read()
             state = NodeLog.state(records, torn)
@@ -1455,7 +1453,7 @@ def recover_chain(plan: dict, plan_sha: str, chain: str, layout: dict, detected:
         killed = running = False
         if sup.chain_cg.exists() and sup.chain_cg.populated():  # unsupervised: nothing reads its requests
             # It ran until now only if it was neither frozen nor marked paused (a pause freezes before its record).
-            running = not sup.chain_cg.frozen() and not sup.paused_path.exists()
+            running = not sup.chain_cg.frozen() and not state_exists(sup.paused_path)
             # Killed as it is: a paused (frozen) chain never runs again beside its box's filler.
             sup.chain_cg.kill()
             require(sup.chain_cg.wait_empty(SETTLE_SECONDS), f"{sup.chain_cg.path} did not empty")
