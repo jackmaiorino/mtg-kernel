@@ -23,8 +23,9 @@
 //!   generic increase from its chosen targets, and [`is_torch_target`] lets
 //!   the cast pipeline offer a Torch as a target only while that cast stays
 //!   payable.
-//! - Hallow: a shield bound to the target spell's stack incarnation for the
-//!   rest of the turn, consumed by the damage pipeline ([`hallow_prevents`]).
+//! - Hallow: a shield bound to the target spell's stack incarnation, and to
+//!   the permanent that spell becomes (CR 400.7c), for the rest of the turn,
+//!   consumed by the damage pipeline ([`hallow_prevents`]).
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::card_def::{CardDef, TargetSpec, CARD_DEFS};
@@ -336,13 +337,14 @@ pub(crate) fn torch_target_tax(state: &GameState, targets: &[Target]) -> u32 {
 /// Hallow's resolution: if its target spell is still legal, a shield against
 /// the damage that spell incarnation deals this turn.
 ///
-/// Rules reading: Hallow targets a spell, and the shield follows that
-/// object only while it is that spell. A permanent spell that resolves
-/// becomes a new object (400.7), so damage the permanent deals later is not
-/// prevented. CR 609.7a extends an effect to "the permanent that spell
-/// becomes" only for an effect that has a player choose a source, which
-/// Hallow does not; the card has no Gatherer ruling, and the XMage
-/// implementation likewise prevents damage only from the spell object.
+/// Rules reading: CR 400.7c, "Prevention effects that apply to damage from
+/// a permanent spell on the stack continue to apply to damage from the
+/// permanent that spell becomes." So when the shielded spell resolves into a
+/// permanent, the shield also covers damage from that permanent incarnation
+/// (the battlefield incarnation right after the stack one) for the rest of
+/// the turn, including damage it deals as it last existed after leaving;
+/// a later incarnation (once the permanent leaves and returns) is a new
+/// object and is not covered.
 fn hallow_shield(ctx: &ExecCtx, state: &mut GameState) {
     let Some(Target::Object(spell)) = ctx.targets.first().copied() else {
         return;
@@ -365,12 +367,53 @@ fn hallow_shield(ctx: &ExecCtx, state: &mut GameState) {
     });
 }
 
+/// The incarnation that deals `damage` and the zone it was in: its
+/// historical source, else the source of the resolving ability that deals
+/// it as that source last existed (113.7a), else the live object.
+fn damage_source_incarnation(
+    state: &GameState,
+    damage: &DamageProposed,
+) -> Option<(ObjectLinkV4, Zone)> {
+    if let Some(facts) = damage.historical_facts(state).ok()? {
+        return Some((
+            ObjectLinkV4 {
+                object: facts.source.source,
+                zone_change_count: facts.source.zone_change_count,
+            },
+            facts.source.zone,
+        ));
+    }
+    if let Some(source) = crate::eternal_premodern_p3d_v1::resolving_ability_source(state)
+        .filter(|source| source.source == damage.source)
+    {
+        return Some((
+            ObjectLinkV4 {
+                object: source.source,
+                zone_change_count: source.zone_change_count,
+            },
+            source.zone,
+        ));
+    }
+    let live = state.objects.try_get(damage.source)?;
+    Some((link(state, damage.source)?, live.zone))
+}
+
+/// Whether `shield` covers damage from `source` in `zone`: the shielded
+/// spell itself, or the permanent that spell became (400.7c), the
+/// battlefield incarnation right after its stack incarnation.
+fn shield_covers(shield: &HallowShieldV1, source: ObjectLinkV4, zone: Zone) -> bool {
+    shield.spell == source
+        || (zone == Zone::Battlefield
+            && source.object == shield.spell.object
+            && shield.spell.zone_change_count.checked_add(1) == Some(source.zone_change_count))
+}
+
 /// Called by the damage pipeline before the damage is dealt. If a Hallow
-/// shield from this turn names `damage`'s source incarnation, the damage is
-/// prevented and the shield's controller is owed that much life, gained as
-/// soon as the proposing event (or batch) finishes, so no event is committed
-/// from inside the replacement pass. The shield keeps preventing damage from
-/// that spell for the rest of the turn.
+/// shield from this turn covers `damage`'s source, the damage is prevented
+/// and the shield's controller is owed that much life, gained as soon as the
+/// proposing event (or batch) finishes, so no event is committed from inside
+/// the replacement pass. The shield keeps preventing damage from that spell,
+/// and from the permanent it becomes, for the rest of the turn.
 pub(crate) fn hallow_prevents(state: &mut GameState, damage: &DamageProposed) -> bool {
     let Some(pf1c) = read_state(state) else {
         return false;
@@ -378,23 +421,17 @@ pub(crate) fn hallow_prevents(state: &mut GameState, damage: &DamageProposed) ->
     if pf1c.hallow_shields.is_empty() || damage.amount <= 0 {
         return false;
     }
-    let source = match damage.historical_facts(state) {
-        Ok(Some(facts)) => ObjectLinkV4 {
-            object: facts.source.source,
-            zone_change_count: facts.source.zone_change_count,
-        },
-        Ok(None) => match link(state, damage.source) {
-            Some(source) => source,
-            None => return false,
-        },
-        Err(_) => return false,
+    let Some((source, zone)) = damage_source_incarnation(state, damage) else {
+        return false;
     };
     let turn = state.turn_key_v1();
     let active = state.active_player;
     let Some(controller) = pf1c
         .hallow_shields
         .iter()
-        .find(|shield| shield.spell == source && shield.turn == turn && shield.active == active)
+        .find(|shield| {
+            shield.turn == turn && shield.active == active && shield_covers(shield, source, zone)
+        })
         .map(|shield| shield.controller)
     else {
         return false;

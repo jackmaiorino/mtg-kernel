@@ -1031,12 +1031,13 @@ fn hallow_does_nothing_when_its_target_spell_is_gone() {
 }
 
 #[test]
-fn hallow_does_not_follow_a_permanent_spell_onto_the_battlefield() {
+fn hallow_follows_a_permanent_spell_onto_the_battlefield() {
     let mut state = plains();
     let hallow = put(&mut state, P0, "Hallow", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::W], 0);
     state.active_player = P1;
     state.priority_player = P1;
+    let other = put(&mut state, P1, "Mogg Fanatic", Zone::Battlefield);
     let fanatic = put(&mut state, P1, "Mogg Fanatic", Zone::Hand);
     pool(&mut state, P1, &[ManaColor::R], 0);
     cast(&mut state, fanatic, &[]);
@@ -1045,11 +1046,46 @@ fn hallow_does_not_follow_a_permanent_spell_onto_the_battlefield() {
     settled(&mut state);
     assert_eq!(zone(&state, fanatic), Zone::Battlefield);
     assert_eq!(hallow_shield_count(&state), 1);
-    // The permanent is a new object (400.7): its damage isn't prevented.
+    // CR 400.7c: the prevention applies to the permanent the spell became,
+    // even as its sacrificed self deals the damage, and Hallow's controller
+    // gains the life.
     activate(&mut state, fanatic, 0, &[Target::Player(P0)]);
     settled(&mut state);
     assert_eq!(zone(&state, fanatic), Zone::Graveyard);
-    assert_eq!(life(&state, P0), 19);
+    assert_eq!(life(&state, P0), 21, "1 prevented, 1 gained");
+    // Another Mogg Fanatic was never that spell: its damage is dealt.
+    activate(&mut state, other, 0, &[Target::Player(P0)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, other), Zone::Graveyard);
+    assert_eq!(life(&state, P0), 20);
+}
+
+// ---- Granted flashback and a mandatory additional cost (W1 review) ----------------------
+
+/// Deprive (wave Pf1b) given flashback by Snapcaster Mage still pays its
+/// mandatory additional cost: the cast stages the land to return although
+/// the card has no printed flashback.
+#[test]
+fn deprive_cast_by_a_granted_flashback_still_returns_a_land() {
+    let mut state = plains();
+    let mountain = put(&mut state, P0, "Mountain", Zone::Battlefield);
+    let deprive = put(&mut state, P0, "Deprive", Zone::Graveyard);
+    let snapcaster = put(&mut state, P0, "Snapcaster Mage", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 1);
+    cast(&mut state, snapcaster, &[]);
+    settle_choosing(&mut state, deprive);
+    assert_eq!(zone(&state, snapcaster), Zone::Battlefield);
+    assert_eq!(zone(&state, mountain), Zone::Battlefield);
+    let bolt = opponent_bolts(&mut state, Target::Player(P0));
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 0);
+    cast(&mut state, deprive, &[Target::Object(bolt)]);
+    // The only land is returned without a choice.
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(zone(&state, mountain), Zone::Hand, "returned as a cost");
+    settled(&mut state);
+    assert_eq!(zone(&state, bolt), Zone::Graveyard, "countered");
+    assert_eq!(zone(&state, deprive), Zone::Exile, "flashback exiles it");
+    assert_eq!(life(&state, P0), 20);
 }
 
 // ---- Public sessions -----------------------------------------------------------------------

@@ -9292,58 +9292,64 @@ fn cast_single_object_cost_needed(
     }
     #[cfg(not(feature = "eternal-fixtures"))]
     let _ = state;
+    // "As an additional cost to cast this spell, return a land you control
+    // to its owner's hand" (Deprive). A mandatory additional cost is paid
+    // whatever the base cost, including a flashback an effect grants, so it
+    // is staged when the base cost stages no object of its own.
+    let additional = || {
+        def.additional_cost?
+            .iter()
+            .find_map(|component| match component {
+                CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
+                    Some(CastSingleObjectCostV1::ReturnPermanent(*filter))
+                }
+                _ => None,
+            })
+    };
     if pending.is_flashback {
         return def
             .flashback
-            .as_ref()?
-            .cost
-            .iter()
-            .find_map(|component| match component {
-                CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
-                    Some(CastSingleObjectCostV1::TapPermanents(*filter, *count))
-                }
-                // Boarding Action's "Beam me up": return a creature you
-                // control to its owner's hand (Pauper field wave Pf1c).
-                CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
-                    Some(CastSingleObjectCostV1::ReturnPermanent(*filter))
-                }
-                _ => None,
-            });
+            .as_ref()
+            .and_then(|flashback| {
+                flashback.cost.iter().find_map(|component| match component {
+                    CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
+                        Some(CastSingleObjectCostV1::TapPermanents(*filter, *count))
+                    }
+                    // Boarding Action's "Beam me up": return a creature
+                    // you control to its owner's hand (wave Pf1c).
+                    CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
+                        Some(CastSingleObjectCostV1::ReturnPermanent(*filter))
+                    }
+                    _ => None,
+                })
+            })
+            .or_else(additional);
     }
     if pending.cast_mode != Some(CastMode::Alternative) {
-        // "As an additional cost to cast this spell, return a land you
-        // control to its owner's hand" (Deprive).
-        return def
-            .additional_cost?
-            .iter()
-            .find_map(|component| match component {
+        return additional();
+    }
+    def.alt_cost
+        .and_then(|alt| {
+            alt.components.iter().find_map(|component| match component {
                 CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
                     Some(CastSingleObjectCostV1::ReturnPermanent(*filter))
                 }
+                CostComponent::ExileCardFromHandWithColorV1(color) => {
+                    Some(CastSingleObjectCostV1::ExileHandCard(*color))
+                }
+                CostComponent::ExileCardsFromHandWithColorV1 { count, color } => {
+                    Some(CastSingleObjectCostV1::ExileHandCards(*color, *count))
+                }
+                CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count, filter } => {
+                    Some(CastSingleObjectCostV1::ReturnPermanents(*filter, *count))
+                }
+                CostComponent::DiscardIslandAndAnotherCardV1 => {
+                    Some(CastSingleObjectCostV1::DiscardIslandAndAnother)
+                }
                 _ => None,
-            });
-    }
-    def.alt_cost?
-        .components
-        .iter()
-        .find_map(|component| match component {
-            CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
-                Some(CastSingleObjectCostV1::ReturnPermanent(*filter))
-            }
-            CostComponent::ExileCardFromHandWithColorV1(color) => {
-                Some(CastSingleObjectCostV1::ExileHandCard(*color))
-            }
-            CostComponent::ExileCardsFromHandWithColorV1 { count, color } => {
-                Some(CastSingleObjectCostV1::ExileHandCards(*color, *count))
-            }
-            CostComponent::ReturnControlledPermanentsToOwnersHandV1 { count, filter } => {
-                Some(CastSingleObjectCostV1::ReturnPermanents(*filter, *count))
-            }
-            CostComponent::DiscardIslandAndAnotherCardV1 => {
-                Some(CastSingleObjectCostV1::DiscardIslandAndAnother)
-            }
-            _ => None,
+            })
         })
+        .or_else(additional)
 }
 
 fn cast_single_object_cost_candidates(

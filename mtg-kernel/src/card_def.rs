@@ -543,6 +543,9 @@ impl Subtype {
     /// Every creature type represented by the checked-in pool, in stable-id
     /// order. Case-distinct registry spellings remain separate because their
     /// existing ids and subtype queries are intentionally preserved.
+    /// Klingon is deliberately left out of this materialized changeling list
+    /// to keep existing eternal state hashes stable; no card in the catalog
+    /// reads Klingon.
     pub const CREATURE_TYPES: &'static [Subtype] = &[
         Subtype::Ape,
         Subtype::BirdAllCaps,
@@ -951,8 +954,11 @@ impl Subtype {
         Subtype::Mount,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Doctor,
-        #[cfg(feature = "eternal-fixtures")]
-        Subtype::Klingon,
+        // Klingon (Pauper field wave Pf1c) is deliberately left out of this
+        // list, which changelings materialize into their stored and hashed
+        // effective subtype set, so existing eternal state hashes stay
+        // stable. No card in the catalog reads Klingon; `is_creature_type`
+        // still classifies it as a creature type.
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
