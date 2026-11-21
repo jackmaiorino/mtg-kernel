@@ -1184,6 +1184,139 @@ fn skeletal_scrying_exiles_x_cards_to_draw_x_and_lose_x() {
 }
 
 #[test]
+fn skeletal_scrying_escape_pays_x_plus_three_and_draws_only_x() {
+    for order in [0, 1] {
+        let mut state = islands();
+        put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+        let spell = put(&mut state, P0, "Skeletal Scrying", Zone::Graveyard);
+        let fuel: Vec<_> = (0..5)
+            .map(|_| put(&mut state, P0, "Swamp", Zone::Graveyard))
+            .collect();
+        pool(&mut state, P0, &[ManaColor::B], 3);
+        cast(&mut state, spell, &[]);
+        // There is mana for X = 3, but only five cards for X + 3 exiles.
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption {
+                option_count: 3,
+                ..
+            }
+        ));
+        act(&mut state, Action::ChooseEffectOption(2));
+        assert!(matches!(
+            next(&mut state),
+            Decision::ChooseEffectOption {
+                option_count: 2,
+                ..
+            }
+        ));
+        act(&mut state, Action::ChooseEffectOption(order));
+        for (i, &card) in fuel.iter().enumerate() {
+            let first_group = if order == 0 { 2 } else { 3 };
+            let expected = if i < first_group {
+                first_group - i
+            } else {
+                5 - i
+            };
+            assert!(
+                matches!(next(&mut state), Decision::ChooseCostTargets { candidates, remaining, .. }
+                if usize::from(remaining) == expected && candidates.contains(&card)
+                    && candidates.iter().all(|c| !fuel[..i].contains(c) && *c != spell))
+            );
+            act(&mut state, Action::ChooseCostTarget(card));
+        }
+        settled(&mut state);
+        assert!(fuel.iter().all(|&card| zone(&state, card) == Zone::Exile));
+        assert_eq!(zone(&state, spell), Zone::Graveyard);
+        assert_eq!(state.players[0].mana_pool[ManaColor::C.pool_index()], 1);
+        assert_eq!(state.players[0].hand.len(), 2);
+        assert_eq!(state.players[0].life, 18);
+    }
+}
+
+#[test]
+fn skeletal_scrying_escape_zero_still_requires_three_other_cards_and_black_mana() {
+    let mut state = islands();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let spell = put(&mut state, P0, "Skeletal Scrying", Zone::Graveyard);
+    for _ in 0..2 {
+        put(&mut state, P0, "Swamp", Zone::Graveyard);
+    }
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    assert!(!castable(&mut state, spell));
+    put(&mut state, P0, "Swamp", Zone::Graveyard);
+    let mut no_black = state.clone();
+    no_black.players[0].mana_pool[ManaColor::B.pool_index()] = 0;
+    assert!(!castable(&mut no_black, spell));
+    cast(&mut state, spell, &[]);
+    for expected in (1..=3).rev() {
+        let Decision::ChooseCostTargets {
+            remaining,
+            candidates,
+            ..
+        } = next(&mut state)
+        else {
+            panic!("only escape fuel is chosen at X = 0");
+        };
+        assert_eq!(remaining, expected);
+        act(&mut state, Action::ChooseCostTarget(candidates[0]));
+    }
+    settled(&mut state);
+    assert_eq!(state.exile.len(), 3);
+    assert_eq!(state.players[0].life, 20);
+    assert!(state.players[0].hand.is_empty());
+}
+
+#[test]
+fn skeletal_scrying_retrace_can_exile_its_discarded_land() {
+    let mut state = islands();
+    let wrenn = put(&mut state, P0, "Wrenn and Six", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R, ManaColor::G], 0);
+    cast(&mut state, wrenn, &[]);
+    settled(&mut state);
+    mtg_kernel::planeswalker_v1::change_loyalty(&mut state, wrenn, 4);
+    activate(&mut state, wrenn, 2, &[]);
+    settled(&mut state);
+    // Wrenn goes to the graveyard after spending its last loyalty counter.
+    assert_eq!(zone(&state, wrenn), Zone::Graveyard);
+    let spell = put(&mut state, P0, "Skeletal Scrying", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::B], 2);
+    assert!(!castable(&mut state, spell));
+    let land = put(&mut state, P0, "Swamp", Zone::Hand);
+    cast(&mut state, spell, &[]);
+    assert!(matches!(
+        next(&mut state),
+        Decision::ChooseEffectOption {
+            option_count: 3,
+            ..
+        }
+    ));
+    act(&mut state, Action::ChooseEffectOption(2));
+    // Only discarding first can provide both cards.
+    assert!(
+        matches!(next(&mut state), Decision::ChooseCostTargets { candidates, .. } if candidates == [land])
+    );
+    act(&mut state, Action::ChooseCostTarget(land));
+    let mut restored: GameState =
+        serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+    for game in [&mut state, &mut restored] {
+        for card in [land, wrenn] {
+            assert!(
+                matches!(next(game), Decision::ChooseCostTargets { candidates, .. } if candidates.contains(&card))
+            );
+            act(game, Action::ChooseCostTarget(card));
+        }
+        settled(game);
+        assert_eq!(zone(game, land), Zone::Exile);
+        assert_eq!(zone(game, wrenn), Zone::Exile);
+        assert_eq!(zone(game, spell), Zone::Graveyard);
+        assert_eq!(game.players[0].hand.len(), 2);
+        assert_eq!(game.players[0].life, 18);
+    }
+    assert_eq!(state, restored);
+}
+
+#[test]
 fn vision_charm_mills_changes_land_types_or_phases_out_an_artifact() {
     let mut state = islands();
     let charm = put(&mut state, P0, "Vision Charm", Zone::Hand);

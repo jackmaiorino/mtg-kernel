@@ -16,7 +16,8 @@ fn additional_object_cost(def: &card_def::CardDef) -> Option<CostComponent> {
         [cost @ (CostComponent::SacrificeControlled { .. }
         | CostComponent::SacrificeOtherControlledCreatures(_)
         | CostComponent::ReturnControlledPermanentToOwnersHand(_)
-        | CostComponent::ExileOtherCardsFromOwnGraveyard(_))] => Some(*cost),
+        | CostComponent::ExileOtherCardsFromOwnGraveyard(_)
+        | CostComponent::ExileXCardsFromOwnGraveyardV1 { blue_only: false })] => Some(*cost),
         _ => None,
     }
 }
@@ -65,8 +66,31 @@ impl Costs {
         }
     }
 
-    pub(super) fn count(self) -> usize {
-        usize::from(count(self.route)) + usize::from(count(self.additional))
+    pub(super) fn announces_x(self) -> bool {
+        matches!(
+            self.additional,
+            CostComponent::ExileXCardsFromOwnGraveyardV1 { .. }
+        )
+    }
+
+    fn for_x(self, x: u16) -> Option<Self> {
+        if self.announces_x() {
+            Some(Self {
+                additional: CostComponent::ExileOtherCardsFromOwnGraveyard(u8::try_from(x).ok()?),
+                ..self
+            })
+        } else {
+            Some(self)
+        }
+    }
+
+    pub(super) fn count(self, pending: &PendingCast) -> usize {
+        usize::from(count(self.route))
+            + if self.announces_x() {
+                usize::from(pending.selected_x_v59().unwrap_or(0))
+            } else {
+                usize::from(count(self.additional))
+            }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -82,18 +106,20 @@ impl Costs {
         order: Option<bool>,
         reserved: &[ObjectId],
     ) -> Option<(SpellManaPaymentV1, Payment)> {
+        let costs = self.for_x(x)?;
+        let total = usize::from(count(costs.route)) + usize::from(count(costs.additional));
         let additional_exiles = matches!(
-            self.additional,
+            costs.additional,
             CostComponent::ExileOtherCardsFromOwnGraveyard(_)
         );
         let route_exiles = matches!(
-            self.route,
+            costs.route,
             CostComponent::ExileOtherCardsFromOwnGraveyard(_)
         );
-        if prefix.len() > self.count()
+        if prefix.len() > total
             || (!additional_exiles
                 && state.players[player.index()].battlefield.len()
-                    < usize::from(count(self.additional)))
+                    < usize::from(count(costs.additional)))
         {
             return None;
         }
@@ -122,9 +148,9 @@ impl Costs {
                 .then_some((mana, projected))
         };
         let (mana, projected) = project_mana(&[])?;
-        let survivors = ctx.candidates(&projected, self.additional)?;
+        let survivors = ctx.candidates(&projected, costs.additional)?;
         let lost: Vec<_> = ctx
-            .candidates(state, self.additional)?
+            .candidates(state, costs.additional)?
             .into_iter()
             .filter(|id| {
                 !survivors.contains(id)
@@ -133,29 +159,31 @@ impl Costs {
             })
             .collect();
         for route_first in [false, true] {
-            if order.is_some_and(|wanted| wanted != route_first) {
+            if order.is_some_and(|wanted| wanted != route_first)
+                || (route_first && count(costs.additional) == 0)
+            {
                 continue;
             }
-            let groups = self.groups(route_first);
+            let groups = costs.groups(route_first);
             let split = prefix.len().min(usize::from(count(groups[0])));
             let (first, second) = prefix.split_at(split);
             let additional_picks = if route_first { second } else { first };
             let complete = |projected: &GameState| {
-                let candidates = ctx.candidates(projected, self.additional)?;
-                if additional_exiles && route_exiles && candidates.len() < self.count() {
+                let candidates = ctx.candidates(projected, costs.additional)?;
+                if additional_exiles && route_exiles && candidates.len() < total {
                     // Both groups draw from the same graveyard and must be disjoint.
                     return None;
                 }
                 if additional_exiles
                     && !route_exiles
-                    && ctx.candidates(projected, self.route)?.is_empty()
+                    && ctx.candidates(projected, costs.route)?.is_empty()
                 {
                     // Exiling cards cannot put a land in hand to pay for retrace.
                     return None;
                 }
                 let discard_can_supply_exile = additional_exiles && !route_exiles && route_first;
                 if !discard_can_supply_exile
-                    && (candidates.len() < usize::from(count(self.additional))
+                    && (candidates.len() < usize::from(count(costs.additional))
                         || additional_picks.iter().any(|id| !candidates.contains(id)))
                 {
                     return None;
@@ -178,7 +206,7 @@ impl Costs {
                 // Only protect permanents actually lost to the first mana
                 // plan. Other selected lands may still tap before returning.
                 if let Some(plan) =
-                    ctx.complete(state, self.additional, additional_picks, |picks| {
+                    ctx.complete(state, costs.additional, additional_picks, |picks| {
                         let protect: Vec<_> =
                             picks.into_iter().filter(|id| lost.contains(id)).collect();
                         if protect.is_empty() {
@@ -234,7 +262,10 @@ impl Costs {
     }
 
     pub(super) fn next(self, state: &GameState, pending: &PendingCast, first: bool) -> Decision {
-        let groups = self.groups(first);
+        let groups = self
+            .for_x(pending.selected_x_v59().unwrap_or(0))
+            .expect("validated compound X")
+            .groups(first);
         let len = pending.sacrifice_chosen.len();
         let first_count = usize::from(count(groups[0]));
         let (group, picked) = if len < first_count {
