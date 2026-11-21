@@ -40,6 +40,23 @@ class BudgetTests(unittest.TestCase):
                                  "PR_SLOTS": "1", "PR_ELIGIBLE": '["workspace-targets", "workspace-lib"]'})
         self.assertEqual(text, 'groups=["workspace-targets"]\n')
 
+    def test_a_run_that_moves_from_queued_to_running_between_reads_is_seen(self):
+        order = []
+
+        def fake_get(path, _budget):
+            if "/runs?status=" in path:
+                status = path.split("status=")[1].split("&")[0]
+                order.append(status)
+                # The run starts right after the first read of either list it can appear in.
+                running = any(seen in ("queued", "in_progress") for seen in order[:-1])
+                visible = (status == "in_progress") if running else (status == "queued")
+                return {"workflow_runs": [{"id": 5}] if visible else []}
+            return {"jobs": [job("in_progress", POOL, run_id=5)]}
+        with patch.object(budget, "_get", side_effect=fake_get):
+            self.assertEqual(budget.held_by_pool(budget.active_jobs("owner/project"), POOL), 1)
+        self.assertEqual(order[-1], "in_progress")
+        self.assertLess(order.index("queued"), len(order) - 1)
+
     def test_the_lookup_has_a_time_and_request_limit(self):
         tight = budget.Budget(seconds=60, requests=2)
         self.assertLessEqual(tight.spend(), 15.0)
