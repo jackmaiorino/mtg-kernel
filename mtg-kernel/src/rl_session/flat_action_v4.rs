@@ -306,6 +306,7 @@ pub(super) fn redeterminize_end_turn_v68(
 
 use crate::ids::{ObjectId, PlayerId};
 use crate::state::Zone;
+pub(super) mod attack_count_v1;
 pub(crate) use search_state::future_chance_seed_v3;
 pub(crate) use search_state::PreparedV4SearchRootV1;
 pub(crate) use search_state::SlotFilterV1;
@@ -1029,7 +1030,7 @@ impl FastActorSessionV1 {
             },
         )?;
         Ok((
-            self.flat_policy_observation_v4(expected)?,
+            self.flat_policy_observation_raw_v4(expected)?,
             current
                 .candidates
                 .iter()
@@ -1236,10 +1237,24 @@ impl FastActorSessionV1 {
     /// the observation itself does not depend on the V3 action cache at
     /// all, only `flat_policy_observation_v3`'s own validation gate did.
     /// The full origin-decision/candidate-shape proof is not redone here:
-    /// this function's only caller, `build_scoring_owned_v4`, always calls
+    /// `build_scoring_owned_v4`, the scoring caller, always calls
     /// `encode_current_flat_action_slice_v4` first, which already proved it
     /// (via `validate_origin_decision_against_reordered_candidates_v4`).
+    /// This is the observation the V4 scorer family (FlatV4, V7, V8)
+    /// encodes: the raw observation with an unread per-turn attack count
+    /// omitted ([`attack_count_v1`], #454).
     pub(crate) fn flat_policy_observation_v4(
+        &self,
+        expected: FastActorDecisionV1,
+    ) -> Result<crate::policy_observation_v6::ObservationV6, FlatActionDecisionSliceErrorV1> {
+        let mut observation = self.flat_policy_observation_raw_v4(expected)?;
+        attack_count_v1::omit_unread_attack_count_v1(&mut observation)?;
+        Ok(observation)
+    }
+
+    /// The shared flat entry's observation, unchanged, for every consumer
+    /// that is not a scorer (human adapters, traces, diagnostics).
+    pub(crate) fn flat_policy_observation_raw_v4(
         &self,
         expected: FastActorDecisionV1,
     ) -> Result<crate::policy_observation_v6::ObservationV6, FlatActionDecisionSliceErrorV1> {
@@ -1357,7 +1372,7 @@ impl FastActorSessionV1 {
                 };
             }
         }
-        if let Err(e) = self.flat_policy_observation_v4(expected) {
+        if let Err(e) = self.flat_policy_observation_raw_v4(expected) {
             return format!("observation {e:?}");
         }
         "unlocated (the per-reference checks pass; a cross-action check failed)".into()

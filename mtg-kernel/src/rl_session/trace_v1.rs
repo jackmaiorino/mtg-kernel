@@ -35,7 +35,7 @@ impl FastActorSessionV1 {
             return Err("trace decision binding".into());
         }
         let observation = if v4 {
-            self.flat_policy_observation_v4(expected)
+            self.flat_policy_observation_raw_v4(expected)
         } else {
             crate::rl::observe_policy_v6_unhashed_for_flat_policy(
                 &self.state,
