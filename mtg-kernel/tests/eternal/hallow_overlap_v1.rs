@@ -18,6 +18,8 @@ fn board(active: PlayerId) -> GameState {
     let deck = [
         "Lightning Bolt",
         "Crypt Rats",
+        "Mogg Fanatic",
+        "Ephemerate",
         "Hallow",
         "Hallow",
         "Plains",
@@ -233,6 +235,107 @@ fn no_prevention_menu_for_zero_one_or_two_identical_beneficiaries() {
                 state.players[other.index()].life,
                 if count == 0 { 17 } else { 20 }
             );
+            let bytes = serde_json::to_vec(&state).unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert!(value
+                .pointer("/engine/linked_aura_operation_v1/pending_hallow_v1")
+                .is_none());
+            let restored: GameState = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(restored.state_hash(), state.state_hash());
+            assert_eq!(serde_json::to_vec(&restored).unwrap(), bytes);
+        }
+    }
+}
+
+#[test]
+fn restored_hallow_checkpoint_refuses_a_changed_affected_player_without_mutation() {
+    for active in SEATS {
+        let target = active.opponent();
+        let (mut state, source) = bolt(active, target, &[active, target]);
+        let mut count = 0;
+        settle(&mut state, |state, decision| {
+            let mut value = serde_json::to_value(&*state).unwrap();
+            value["engine"]["linked_aura_operation_v1"]["pending_hallow_v1"]["choice"]["chooser"] =
+                serde_json::to_value(active).unwrap();
+            let mut tampered: GameState = serde_json::from_value(value).unwrap();
+            let before = serde_json::to_vec(&tampered).unwrap();
+            assert!(matches!(
+                engine::advance_until_decision(&mut tampered),
+                Decision::Halted { .. }
+            ));
+            assert_eq!(serde_json::to_vec(&tampered).unwrap(), before);
+            assert!(engine::step(
+                &mut tampered,
+                Action::ChooseEffectTarget(Target::Player(active))
+            )
+            .is_err());
+            assert_eq!(serde_json::to_vec(&tampered).unwrap(), before);
+            choose(state, decision, source, target, target);
+            count += 1;
+        });
+        assert_eq!(count, 1);
+        assert_eq!(state.players[target.index()].life, 23);
+    }
+}
+
+#[test]
+fn opposing_hallows_follow_a_sacrificed_source_but_exclude_its_blinked_incarnation() {
+    for active in SEATS {
+        for blink in [false, true] {
+            let other = active.opponent();
+            let mut state = board(active);
+            state.players[active.index()].mana_pool[ManaColor::R.pool_index()] = 1;
+            let fanatic = cast(&mut state, active, "Mogg Fanatic", None);
+            shields(&mut state, fanatic, &[active, other]);
+            settle(&mut state, |_, decision| {
+                panic!("unexpected entry choice {decision:?}")
+            });
+            assert_eq!(state.objects.get(fanatic).zone, Zone::Battlefield);
+            let original = state.objects.get(fanatic).zone_change_count;
+            if blink {
+                state.players[active.index()].mana_pool[ManaColor::W.pool_index()] += 1;
+                cast(
+                    &mut state,
+                    active,
+                    "Ephemerate",
+                    Some(Target::Object(fanatic)),
+                );
+                settle(&mut state, |_, decision| {
+                    panic!("unexpected blink choice {decision:?}")
+                });
+                assert!(state.objects.get(fanatic).zone_change_count > original);
+            }
+            let Decision::CastSpellOrPass {
+                player,
+                activatable_abilities,
+                ..
+            } = engine::advance_until_decision(&mut state)
+            else {
+                panic!("expected Fanatic priority");
+            };
+            assert_eq!(player, active);
+            assert!(activatable_abilities.contains(&(fanatic, 0)));
+            act(&mut state, Action::ActivateAbility(fanatic, 0));
+            let Decision::ChooseTargets { legal_targets, .. } =
+                engine::advance_until_decision(&mut state)
+            else {
+                panic!("expected Fanatic target");
+            };
+            assert!(legal_targets.contains(&Target::Player(other)));
+            act(&mut state, Action::ChooseTarget(Target::Player(other)));
+            assert_eq!(state.objects.get(fanatic).zone, Zone::Graveyard);
+            let mut count = 0;
+            settle(&mut state, |state, decision| {
+                assert!(!blink, "a later incarnation must not offer its old shields");
+                choose(state, decision, fanatic, other, other);
+                count += 1;
+            });
+            assert_eq!(count, usize::from(!blink));
+            assert_eq!(
+                state.players[other.index()].life,
+                if blink { 19 } else { 21 }
+            );
+            assert_eq!(state.players[active.index()].life, 20);
         }
     }
 }
