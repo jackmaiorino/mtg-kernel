@@ -1,4 +1,5 @@
 """The release line's scope table, workflow and docs/CI-SCOPES.md agree; changes map as the lead ruled."""
+import os
 import re
 import sys
 import unittest
@@ -98,6 +99,29 @@ class TableTests(unittest.TestCase):
         job = text[text.index("  rust-quality:\n"):text.index("  rust-test-groups:\n")]
         for command in ci_scope.QUALITY_COMMANDS:
             self.assertIn("run: " + command, job)
+
+    def test_every_module_the_train_step_and_training_math_reference_is_filtered_or_excluded(self):
+        referenced = set()
+        for root in ci_scope.TRAINING_REFERENCE_ROOTS:
+            path = ROOT / root
+            for file in ([path] if path.is_file() else sorted(path.rglob("*.rs"))):
+                referenced |= set(re.findall(r"crate::([a-z_0-9]+)", file.read_text(encoding="utf-8", errors="replace")))
+        self.assertGreater(len(referenced), 10)
+        for module in sorted(referenced):
+            filtered = any(module.startswith(f.rstrip(":")) for f in ci_scope.TRAINER_FILTERS)
+            with self.subTest(module=module):
+                self.assertTrue(filtered or module in ci_scope.TRAINING_REFERENCE_EXCLUSIONS,
+                                f"{module}: add it to TRAINER_FILTERS or to TRAINING_REFERENCE_EXCLUSIONS with a reason")
+        for module in ci_scope.TRAINING_REFERENCE_EXCLUSIONS:
+            with self.subTest(stale_exclusion=module):
+                self.assertIn(module, referenced)
+
+    def test_a_sync_pull_request_runs_the_full_set(self):
+        trainer = ["mtg-kernel/src/expanded_deck_training_v1.rs"]
+        self.assertEqual(ci_scope.choose("pull_request", "pr", "", [], trainer, 0, "main"), "all")
+        self.assertEqual(ci_scope.choose("pull_request", "pr", "", [], trainer, 0, "release/mull-x"), "all")
+        self.assertEqual(ci_scope.choose("pull_request", "pr", "", [], trainer, 0, "claude/feature"), "release-trainer")
+        self.assertIn("HEAD_REF: ${{ github.head_ref }}", WORKFLOW.read_text(encoding="utf-8"))
 
     def test_the_record_names_the_mandatory_rows(self):
         record = ci_scope.trainer_record()
@@ -212,7 +236,11 @@ class MonitorTests(unittest.TestCase):
     def test_monitors_on_the_line_coalesce_as_on_main(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         group = [l for l in text.splitlines() if l.startswith("  group: ")][0]
-        self.assertNotIn("run_id", group)
+        # Only scoped or fallback dispatches get a run-specific group; pushes share one per line.
+        self.assertNotIn("github.event_name == 'push'", group)
+        self.assertEqual(group.count("run_id"), 1)
+        self.assertIn("github.event_name == 'workflow_dispatch' && (inputs.scope != '' || inputs.windows_runner != '')",
+                      group)
         self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", text)
 
     def test_the_monitor_runs_on_a_failed_or_timed_out_dependency(self):
@@ -340,6 +368,48 @@ class MonitorTests(unittest.TestCase):
             jobs = [{"name": "Report a red post-merge run", "conclusion": conclusion,
                      "started_at": None if conclusion == "skipped" else "t"}]
             self.assertEqual(report.is_monitor(lambda path: {"jobs": jobs}, "o/r", {"id": 1}), expected)
+
+    def test_an_earlier_run_in_the_same_second_is_the_last_monitored(self):
+        get = self.fake_api(["c1", "c2", "c3"], [(8, "c2", "success", "2026-11-21T12:00:00Z")],
+                            {"c3": (837, "x")})
+        self.assertEqual([m["sha"] for m in self.run_report(get)[2]], ["c3"])
+
+    def test_a_failed_comment_never_hides_the_handoff_line(self):
+        import io
+        import contextlib
+        import post_merge_report as report
+        get = self.fake_api(["c1", "c2", "c3"], [(8, "c2", "success", "2026-11-21T11:00:00Z")], {"c3": (837, "x")})
+        run = {"id": 9, "head_sha": "c3", "head_branch": "main", "event": "push", "html_url": "u",
+               "created_at": "2026-11-21T12:00:00Z"}
+
+        def request(method, path, body=None):
+            if method == "POST":
+                raise OSError("403")
+            return run if path.endswith("/runs/9") else get(path)
+        saved = report.request
+        report.request = request
+        env = {"GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "9", "GITHUB_SHA": "c3", "GITHUB_REF_NAME": "main",
+               "GITHUB_EVENT_NAME": "push"}
+        old_env = {k: os.environ.get(k) for k in env}
+        os.environ.update(env)
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = report.main()
+        finally:
+            report.request = saved
+            for k, v in old_env.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+        self.assertEqual(code, 1)
+        self.assertIn("Handoff log line: [CI] post-merge push run red on main covering c3 (#837)", out.getvalue())
+        self.assertIn(">> HANDOFFS/20261114/README.md", out.getvalue())
+        self.assertIn("Could not comment on #837", err.getvalue())
+
+    def test_scoped_and_fallback_dispatches_never_join_the_monitor_group(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        group = [l for l in text.splitlines() if l.startswith("  group: ")][0]
+        self.assertIn("github.event_name == 'workflow_dispatch' && (inputs.scope != '' || inputs.windows_runner != '')"
+                      " && format('-dispatch-{0}', github.run_id)", group)
 
     def test_no_earlier_monitored_run_covers_the_head_only(self):
         get = self.fake_api(["c1", "c2", "c3"], [], {"c3": (837, "x")})

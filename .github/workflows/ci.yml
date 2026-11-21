@@ -34,7 +34,8 @@ concurrency:
   # Pushes to the line share one group, as on main: at most one monitor runs
   # and one waits, and a newer merge replaces the waiting one. The post-merge
   # report names every merge a run covers.
-  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'pull_request' && github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'ci:full') && '-draft' || '' }}
+  # A scoped or fallback dispatch has a group of its own, so it never replaces a waiting monitor.
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'pull_request' && github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'ci:full') && '-draft' || '' }}${{ github.event_name == 'workflow_dispatch' && (inputs.scope != '' || inputs.windows_runner != '') && format('-dispatch-{0}', github.run_id) || '' }}
   # A newer push to a pull request replaces its running CI. Runs on main,
   # tags and manual dispatches finish, because they carry the Windows
   # feature groups that pull requests skip.
@@ -137,6 +138,7 @@ jobs:
           DRAFT: ${{ github.event.pull_request.draft }}
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           SCOPE=full
           if [ "$EVENT" = pull_request ]; then
