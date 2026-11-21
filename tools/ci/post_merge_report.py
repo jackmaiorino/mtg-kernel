@@ -66,11 +66,11 @@ def last_monitored_commit(get: Get, repo: str, branch: str, run_id) -> tuple[str
     True) when the branch has no such run, (None, False) when the examined history ran out first."""
     this = get(f"/repos/{repo}/actions/runs/{run_id}")
     for page in range(1, MAX_HISTORY_PAGES + 1):
+        # Run ids increase with creation, so an earlier run created in the same second still counts.
         runs = get(f"/repos/{repo}/actions/workflows/ci.yml/runs?event=push&branch={branch}&status=completed"
-                   f"&created=%3C{this['created_at']}&per_page=50&page={page}")["workflow_runs"]
+                   f"&created=%3C%3D{this['created_at']}&per_page=50&page={page}")["workflow_runs"]
         for run in runs:
-            if run["id"] != int(run_id) and run["created_at"] < this["created_at"] \
-                    and run["head_sha"] != this["head_sha"] and ran(get, repo, run):
+            if run["id"] < int(run_id) and run["head_sha"] != this["head_sha"] and ran(get, repo, run):
                 return run["head_sha"], True
         if len(runs) < 50:
             return None, True
@@ -199,18 +199,25 @@ def main() -> int:
                head_branch=os.environ.get("GITHUB_REF_NAME", run["head_branch"]),
                event=os.environ.get("GITHUB_EVENT_NAME", run["event"]))
     body, line, merges = report(get, repo, run)
-    for number in sorted({m["pull"] for m in merges if m["pull"]}):
-        request("POST", f"/repos/{repo}/issues/{number}/comments", {"body": body})
     command = append_command(line)
+    # The handoff line and its command come first, so a failed comment never hides them.
     print(body)
     print("Handoff log line: " + line)
-    print("To add it to the handoff log, run from a collab checkout: " + command)
+    print("To add it to the handoff log, run from a collab checkout: " + command, flush=True)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
         with open(summary, "a", encoding="utf-8") as out:
             out.write(body + "\n\nHandoff log line: `" + line + "`\n\nTo add it to the handoff log, run from a "
                       "collab checkout: `" + command + "`\n")
-    return 0
+    failures = []
+    for number in sorted({m["pull"] for m in merges if m["pull"]}):
+        try:
+            request("POST", f"/repos/{repo}/issues/{number}/comments", {"body": body})
+        except Exception as error:  # noqa: BLE001 - report every comment failure, then fail the job
+            failures.append(f"#{number}: {error}")
+    for failure in failures:
+        print("Could not comment on " + failure, file=sys.stderr)
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

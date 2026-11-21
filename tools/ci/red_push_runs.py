@@ -28,17 +28,16 @@ def gh_get(path: str):
     return json.loads(out or "null")
 
 
-# Runs created this long before --since are still listed, so a long run that completes after --since is found.
-LOOKBACK = timedelta(hours=12)
-
-
-def runs_since(repo: str, since: str) -> list[dict]:
-    """Completed runs that finished at or after since (created up to LOOKBACK earlier)."""
+def runs_since(repo: str, since: str, lookback_days: int) -> list[dict]:
+    """Completed runs that finished at or after since. GitHub lists runs by creation only, so runs created up to
+    lookback_days before since are examined (reruns of older runs are outside that window; the default covers
+    any rerun GitHub still allows, 30 days)."""
     start = datetime.fromisoformat(since.replace("Z", "+00:00"))
-    created = (start - LOOKBACK).strftime("%Y-%m-%dT%H:%M:%SZ")
+    created = (start - timedelta(days=lookback_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     out = subprocess.run(["gh", "api", "--paginate",
-                          f"repos/{repo}/actions/workflows/ci.yml/runs?status=completed&created=>={created}&per_page=100",
-                          "--jq", ".workflow_runs[] | tojson"], capture_output=True, text=True, encoding="utf-8",
+                          f"repos/{repo}/actions/workflows/ci.yml/runs?status=completed&created=%3E%3D{created}"
+                          "&per_page=100", "--jq", ".workflow_runs[] | select(.event == \"push\" or .event == "
+                          "\"workflow_dispatch\") | tojson"], capture_output=True, text=True, encoding="utf-8",
                          check=True).stdout
     runs = [json.loads(line) for line in out.splitlines() if line.strip()]
     return [r for r in runs if datetime.fromisoformat(r["updated_at"].replace("Z", "+00:00")) >= start]
@@ -75,10 +74,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", default="jackmaiorino/mtg-kernel")
     parser.add_argument("--branches", default="main,release/")
     parser.add_argument("--append", help="handoff log file to append new lines to")
+    parser.add_argument("--lookback-days", type=int, default=30,
+                        help="examine runs created this many days before --since (default 30, GitHub's rerun limit)")
     args = parser.parse_args(argv)
     branches = [b.strip() for b in args.branches.split(",") if b.strip()]
     lines = [post_merge_report.report(gh_get, args.repo, run)[1]
-             for run in red_runs(runs_since(args.repo, args.since), branches, gh_get, args.repo)]
+             for run in red_runs(runs_since(args.repo, args.since, args.lookback_days), branches, gh_get, args.repo)]
     for text in lines:
         print(text)
     if args.append:

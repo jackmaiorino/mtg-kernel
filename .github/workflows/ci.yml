@@ -48,7 +48,8 @@ concurrency:
   # replace the full run that marking the pull request ready starts. The
   # cost: a full run still in progress when its pull request goes back to
   # draft and gets a new push is not cancelled by that push.
-  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'pull_request' && github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'ci:full') && '-draft' || '' }}
+  # A scoped or fallback dispatch has a group of its own, so it never replaces a waiting monitor.
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'pull_request' && github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'ci:full') && '-draft' || '' }}${{ github.event_name == 'workflow_dispatch' && (inputs.scope != '' || inputs.windows_runner != '') && format('-dispatch-{0}', github.run_id) || '' }}
   # A newer push to a pull request replaces its running CI. Runs on main,
   # tags and manual dispatches finish, because they carry the Windows
   # feature groups that pull requests skip.

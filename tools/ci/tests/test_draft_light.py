@@ -49,7 +49,7 @@ class DraftLightTests(unittest.TestCase):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'pull_request' && "
                       "github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'ci:full') "
-                      "&& '-draft' || '' }}\n", text)
+                      "&& '-draft' || '' }}", text)
         self.assertIn("  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n", text)
 
     def test_a_dispatch_runs_only_the_complement_of_a_ready_pull_request(self):

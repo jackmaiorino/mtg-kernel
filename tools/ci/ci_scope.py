@@ -182,7 +182,8 @@ def markdown() -> str:
            "decide. Main pushes, tags and dispatches without `scope` run the full matrix as a monitor: pushes to a "
            "line share one concurrency group (one running, one waiting, a newer merge replaces the waiting one), and "
            "a red monitor's report names every merge it covers. `ci:full` on a pull request forces the whole pull "
-           "request set; labels never narrow a run. `gh workflow run ci.yml --ref REF -f scope=SCOPE` runs one "
+           "request set from the next push, reopen or ready-for-review event (adding the label starts no run); "
+           "labels never narrow a run. `gh workflow run ci.yml --ref REF -f scope=SCOPE` runs one "
            "scope on any ref.", "",
            "## Path rules (first match decides)", "", "| paths | scope |", "|---|---|"]
     for patterns, scope in PATH_RULES:

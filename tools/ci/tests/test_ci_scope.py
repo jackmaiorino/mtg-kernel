@@ -1,4 +1,5 @@
 """The scope table, the workflow and docs/CI-SCOPES.md agree; changes map to the scopes the merge rule sets."""
+import os
 import re
 import sys
 import unittest
@@ -116,11 +117,13 @@ class ScopeTests(unittest.TestCase):
             rel = path.relative_to(src).as_posix()
             if rel.split("/")[0].removesuffix(".rs") in roots or rel in ("bin/native_expanded_training_run_v1.rs",):
                 continue
-            for root, item in re.findall(r"(" + "|".join(roots) + r")(?:::([a-z_0-9]+))?", path.read_text(encoding="utf-8", errors="replace")):
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if rel == "lib.rs":
+                # The crate root declares every module; only its declarations are exempt.
+                text = re.sub(r"^\s*(pub(\([a-z]+\))? )?mod [a-z_0-9]+;\s*$", "", text, flags=re.MULTILINE)
+            for root, item in re.findall(r"(" + "|".join(roots) + r")(?:::([a-z_0-9]+))?", text):
                 refs.add((root, item))
         for root, item in refs:
-            if root == "native_expanded_training_run_v1":
-                continue   # only lib.rs declares it
             # An item of the module root (not a submodule file) is the root file itself.
             sub = src / root / item
             if item and not (sub.with_suffix(".rs").exists() or sub.is_dir()):
@@ -295,6 +298,48 @@ class MonitorTests(unittest.TestCase):
             jobs = [{"name": "Report a red post-merge run", "conclusion": conclusion,
                      "started_at": None if conclusion == "skipped" else "t"}]
             self.assertEqual(report.is_monitor(lambda path: {"jobs": jobs}, "o/r", {"id": 1}), expected)
+
+    def test_an_earlier_run_in_the_same_second_is_the_last_monitored(self):
+        get = self.fake_api(["c1", "c2", "c3"], [(8, "c2", "success", "2026-11-21T12:00:00Z")],
+                            {"c3": (837, "x")})
+        self.assertEqual([m["sha"] for m in self.run_report(get)[2]], ["c3"])
+
+    def test_a_failed_comment_never_hides_the_handoff_line(self):
+        import io
+        import contextlib
+        import post_merge_report as report
+        get = self.fake_api(["c1", "c2", "c3"], [(8, "c2", "success", "2026-11-21T11:00:00Z")], {"c3": (837, "x")})
+        run = {"id": 9, "head_sha": "c3", "head_branch": "main", "event": "push", "html_url": "u",
+               "created_at": "2026-11-21T12:00:00Z"}
+
+        def request(method, path, body=None):
+            if method == "POST":
+                raise OSError("403")
+            return run if path.endswith("/runs/9") else get(path)
+        saved = report.request
+        report.request = request
+        env = {"GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "9", "GITHUB_SHA": "c3", "GITHUB_REF_NAME": "main",
+               "GITHUB_EVENT_NAME": "push"}
+        old_env = {k: os.environ.get(k) for k in env}
+        os.environ.update(env)
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = report.main()
+        finally:
+            report.request = saved
+            for k, v in old_env.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+        self.assertEqual(code, 1)
+        self.assertIn("Handoff log line: [CI] post-merge push run red on main covering c3 (#837)", out.getvalue())
+        self.assertIn(">> HANDOFFS/20261114/README.md", out.getvalue())
+        self.assertIn("Could not comment on #837", err.getvalue())
+
+    def test_scoped_and_fallback_dispatches_never_join_the_monitor_group(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        group = [l for l in text.splitlines() if l.startswith("  group: ")][0]
+        self.assertIn("github.event_name == 'workflow_dispatch' && (inputs.scope != '' || inputs.windows_runner != '')"
+                      " && format('-dispatch-{0}', github.run_id)", group)
 
     def test_no_earlier_monitored_run_covers_the_head_only(self):
         get = self.fake_api(["c1", "c2", "c3"], [], {"c3": (837, "x")})
