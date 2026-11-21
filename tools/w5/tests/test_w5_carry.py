@@ -906,8 +906,11 @@ class CarryTests(unittest.TestCase):
         targets = (cont / 'LOG.jsonl', cdir / 'durable.jsonl', cdir / 'segments' / 'seg-00001.json.gz.tmp')
         for planted in targets:
             for outcome in ('complete', 'cut', 'failed'):
+                made = []
+
                 def train_and_plant(arm, config_path, deadline=None, logs=None):
                     native = Path(json.loads(Path(config_path).read_text())['output_directory'])
+                    made.append(native)
                     native.mkdir(parents=True, exist_ok=True)
                     if outcome == 'complete':
                         (native / 'completion.json').write_text('{}')
@@ -921,8 +924,10 @@ class CarryTests(unittest.TestCase):
                 with self.subTest(planted=planted.name, outcome=outcome), \
                         mock.patch.object(chains, 'run_trainer', side_effect=train_and_plant), \
                         contextlib.redirect_stderr(io.StringIO()):
-                    self.assertEqual(self.drive(plan, 'c1c', cont, 9), chains.EXIT_STOP)
-                planted.unlink()
+                    self.assertEqual(self.drive(plan, 'c1c', cont, 99), chains.EXIT_STOP)
+                planted.unlink(missing_ok=True)
+                for native in made:  # the fake trainer's output is not a real segment: start the next case clean
+                    shutil.rmtree(native, ignore_errors=True)
                 self.assertEqual(snap(), before)
         # launch: a node lock linked into the old tree is refused before the witness and the lock
         lock = cont / 'state' / 'occupancy.lock'
