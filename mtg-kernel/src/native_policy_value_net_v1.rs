@@ -446,6 +446,56 @@ pub(crate) struct NativeNamedParameterV1 {
     pub(crate) values: Vec<f32>,
 }
 
+/// One named tensor borrowed where it is held: what a
+/// [`NativeNamedParameterV1`] copies, with the values left in place. The
+/// shape is a small owned copy, because the visitors pass some shapes as
+/// temporaries. Compare tensors by their bits (`same_tensors_v1` in the
+/// checkpoint codec), not with `==` on floats, which is why this has no
+/// `PartialEq`.
+#[derive(Clone, Debug)]
+pub(crate) struct NativeNamedTensorRefV1<'a> {
+    pub(crate) name: &'static str,
+    pub(crate) shape: Vec<usize>,
+    pub(crate) values: &'a [f32],
+}
+
+/// A named tensor's name, shape and values, however it is held: owned
+/// ([`NativeNamedParameterV1`]) or borrowed ([`NativeNamedTensorRefV1`]).
+/// What replaces parameters and validates train-state tensors reads it.
+pub(crate) trait NamedTensorV1 {
+    fn tensor_name_v1(&self) -> &'static str;
+    fn tensor_shape_v1(&self) -> &[usize];
+    fn tensor_values_v1(&self) -> &[f32];
+}
+
+impl NamedTensorV1 for NativeNamedParameterV1 {
+    fn tensor_name_v1(&self) -> &'static str {
+        self.name
+    }
+
+    fn tensor_shape_v1(&self) -> &[usize] {
+        &self.shape
+    }
+
+    fn tensor_values_v1(&self) -> &[f32] {
+        &self.values
+    }
+}
+
+impl NamedTensorV1 for NativeNamedTensorRefV1<'_> {
+    fn tensor_name_v1(&self) -> &'static str {
+        self.name
+    }
+
+    fn tensor_shape_v1(&self) -> &[usize] {
+        &self.shape
+    }
+
+    fn tensor_values_v1(&self) -> &[f32] {
+        self.values
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum NativePolicyValueErrorV1 {
     ModelConfigMismatch(&'static str),
@@ -1229,37 +1279,70 @@ impl NativePolicyValueNetV1 {
         &mut self,
         replacement: &[NativeNamedParameterV1],
     ) -> Result<(), NativePolicyValueErrorV1> {
-        let expected = self.parameter_snapshot_v1();
-        if replacement.len() != expected.len()
-            || replacement.iter().zip(&expected).any(|(actual, expected)| {
-                actual.name != expected.name
-                    || actual.shape != expected.shape
-                    || actual.values.len() != expected.values.len()
-                    || !all_finite_v1(&actual.values)
-            })
-        {
+        self.check_replacement_manifest_v1(replacement)?;
+        *self = self.clone().filled_v1(replacement)?;
+        Ok(())
+    }
+
+    /// [`Self::replace_parameter_snapshot_v1`] of a model its caller gives
+    /// up, from tensors held anywhere: the same checks in the same order,
+    /// with the values written into this model's own storage instead of a
+    /// private clone's, since a refusal drops it.
+    pub(crate) fn with_parameters_v1<T: NamedTensorV1>(
+        self,
+        replacement: &[T],
+    ) -> Result<Self, NativePolicyValueErrorV1> {
+        self.check_replacement_manifest_v1(replacement)?;
+        self.filled_v1(replacement)
+    }
+
+    /// Refuses a replacement unless it has this model's tensors, in order,
+    /// under their names and shapes, each value finite. Reads the model's
+    /// tensors in place.
+    fn check_replacement_manifest_v1<T: NamedTensorV1>(
+        &self,
+        replacement: &[T],
+    ) -> Result<(), NativePolicyValueErrorV1> {
+        let mut count = 0usize;
+        let mut differs = false;
+        self.visit_parameters_v1(|name, shape, values| {
+            differs |= replacement.get(count).is_none_or(|actual| {
+                actual.tensor_name_v1() != name
+                    || actual.tensor_shape_v1() != shape
+                    || actual.tensor_values_v1().len() != values.len()
+                    || !all_finite_v1(actual.tensor_values_v1())
+            });
+            count += 1;
+        });
+        if differs || count != replacement.len() {
             return Err(NativePolicyValueErrorV1::ParameterInvariant(
                 "replacement_manifest",
             ));
         }
+        Ok(())
+    }
 
-        let mut candidate = self.clone();
+    /// This model with `replacement`'s values (checked by
+    /// [`Self::check_replacement_manifest_v1`]), validated whole.
+    fn filled_v1<T: NamedTensorV1>(
+        mut self,
+        replacement: &[T],
+    ) -> Result<Self, NativePolicyValueErrorV1> {
         let mut position = 0usize;
-        candidate.visit_parameters_mut_v1(|name, shape, values| {
+        self.visit_parameters_mut_v1(|name, shape, values| {
             let source = &replacement[position];
-            debug_assert_eq!(source.name, name);
-            debug_assert_eq!(source.shape, shape);
-            values.copy_from_slice(&source.values);
+            debug_assert_eq!(source.tensor_name_v1(), name);
+            debug_assert_eq!(source.tensor_shape_v1(), shape);
+            values.copy_from_slice(source.tensor_values_v1());
             position += 1;
         });
-        candidate.validate_parameters_v1()?;
-        if candidate.parameter_count_v1() != candidate.expected_parameter_count_v1() {
+        self.validate_parameters_v1()?;
+        if self.parameter_count_v1() != self.expected_parameter_count_v1() {
             return Err(NativePolicyValueErrorV1::ParameterInvariant(
                 "parameter_count",
             ));
         }
-        *self = candidate;
-        Ok(())
+        Ok(self)
     }
 
     /// Net-8's parameter count, or the V8 inclusion net's.
@@ -1315,9 +1398,12 @@ impl NativePolicyValueNetV1 {
         Ok(())
     }
 
-    pub(crate) fn visit_parameters_v1(
-        &self,
-        mut visitor: impl FnMut(&'static str, &[usize], &[f32]),
+    /// Visits every named parameter in `named_parameters()` order. The
+    /// values are the model's own stored tensors, borrowed for as long as the
+    /// model is.
+    pub(crate) fn visit_parameters_v1<'a>(
+        &'a self,
+        mut visitor: impl FnMut(&'static str, &[usize], &'a [f32]),
     ) {
         visitor(
             "card_embedding.weight",
@@ -1527,10 +1613,10 @@ impl NativePolicyValueNetV1 {
     }
 }
 
-fn visit_linear_v1(
-    visitor: &mut impl FnMut(&'static str, &[usize], &[f32]),
+fn visit_linear_v1<'a>(
+    visitor: &mut impl FnMut(&'static str, &[usize], &'a [f32]),
     prefix: &'static str,
-    linear: &LinearV1,
+    linear: &'a LinearV1,
 ) {
     let (weight_name, bias_name) = match prefix {
         "object_encoder.0" => ("object_encoder.0.weight", "object_encoder.0.bias"),
@@ -2536,9 +2622,9 @@ impl NativePolicyValueNetWideV1 {
         Ok(())
     }
 
-    pub(crate) fn visit_parameters_wide_v1(
-        &self,
-        mut visitor: impl FnMut(&'static str, &[usize], &[f32]),
+    pub(crate) fn visit_parameters_wide_v1<'a>(
+        &'a self,
+        mut visitor: impl FnMut(&'static str, &[usize], &'a [f32]),
     ) {
         visitor(
             "card_embedding.weight",
