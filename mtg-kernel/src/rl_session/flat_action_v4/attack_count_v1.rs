@@ -185,8 +185,9 @@ mod tests {
     /// The V4 scorer on the session's own current decision.
     fn score_v4(state: GameState) -> Result<(), FlatDecisionErrorV2> {
         let session = FastActorSessionV1::from_v3_fixture_state(state);
-        let FastActorResponseV1::Decision(expected) = session.current_response() else {
-            panic!("fixture is not a live decision");
+        let expected = match session.current_response() {
+            FastActorResponseV1::Decision(expected) => expected,
+            other => panic!("fixture is not a live decision: {other:?}"),
         };
         let (mut objects, mut relations, mut object_subtypes) =
             (Vec::new(), Vec::new(), Vec::new());
