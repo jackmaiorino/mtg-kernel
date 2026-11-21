@@ -135,6 +135,7 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
         root.join("v1"),
     )
     .unwrap();
+    checkpoint_metadata_memo_v1::clear_for_test_v1();
     let v2 = update(
         &source,
         &trajectories,
@@ -142,6 +143,17 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
         root.join("v2"),
     )
     .unwrap();
+    // The v2 update itself remembered its container's metadata view after
+    // its readback (no metadata probe has run since the memo was cleared).
+    let pin_v2_now: PinnedFileV1 = serde_json::from_value(v2["checkpoint"].clone()).unwrap();
+    let remembered = checkpoint_metadata_memo_v1::lookup_v1(&pin_v2_now.sha256)
+        .expect("the update remembers its container's metadata view");
+    assert_eq!(
+        remembered.as_slice(),
+        checkpoint_container_v1::metadata_view_v1(&fs::read(&pin_v2_now.path).unwrap())
+            .unwrap()
+            .as_ref()
+    );
     // The default (an absent field) publishes the same container as an
     // explicit v2 for this in-scope kind.
     let auto = update(
@@ -176,8 +188,8 @@ fn a_v2_update_publishes_a_container_equal_to_the_v1_checkpoint_and_resumes_iden
     );
     let probe: CheckpointESupportedProbeV1 = read_checkpoint_metadata_v1(&pin_v2).unwrap();
     assert!(probe.e_supported.is_none() && probe.ex1.is_none());
-    // The v2 update remembered its container's metadata view after its
-    // readback: exactly the view a fresh probe takes from the file.
+    // The remembered view is exactly the view a fresh probe takes from the
+    // file.
     let view = checkpoint_container_v1::metadata_view_v1(&bytes_v2).unwrap();
     assert_eq!(
         checkpoint_metadata_memo_v1::lookup_v1(&pin_v2.sha256).as_deref(),

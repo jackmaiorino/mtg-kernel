@@ -2,7 +2,7 @@
 //! This successor owns its checkpoints; it does not reinterpret legacy Stores.
 
 use crate::durable_publication_v1::{
-    capture_existing_publication_parent_v1, publish_new_bytes_lean_v1,
+    capture_existing_publication_parent_v1, publish_new_bytes_deferred_cleanup_v1,
 };
 use crate::expanded_deck_training_v1::e_supported_teacher_v1::{
     continuation_identity as e_supported_continuation_identity_v1, ESupportedSlotV1,
@@ -1105,9 +1105,10 @@ fn publish(
         .as_nanos();
     // A crashed writer may leave any previous stage. A new stage preserves
     // those bytes and allows the absent final receipt to publish on resume.
-    // The lean publication (`publish_new_bytes_lean_v1`): the full
-    // publication's bytes, receipt and final durability.
-    let receipt = publish_new_bytes_lean_v1(
+    // No directory sync after the staging name's removal
+    // (`publish_new_bytes_deferred_cleanup_v1`): the full publication's
+    // readbacks, bytes, receipt and final durability.
+    let receipt = publish_new_bytes_deferred_cleanup_v1(
         &parent,
         format!(".{name}.stage-{}-{nonce}", std::process::id()),
         name,

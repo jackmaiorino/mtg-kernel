@@ -1116,19 +1116,41 @@ pub fn publish_new_bytes_bracketed_v1(
     )
 }
 
-/// [`publish_new_bytes_bracketed_v1`] without the directory sync after the
-/// staging name is removed. That sync only makes the removal of a name that
-/// is not a record durable: after a power loss without it, the staging name
-/// can reappear as a second link to the complete, synced final file, which is
-/// exactly what a process crash between linking and unlinking leaves (and
-/// what every caller already treats as debris). The final file's data sync,
-/// its directory sync before the receipt, and the bracketing readbacks are
-/// unchanged, so the final name is durable and verified before the receipt
-/// as in every other publication. The next publication's directory sync in
-/// the same directory also persists the removal on journaling filesystems.
-/// For the native trainer's records (`expanded_deck_training_v1` and
-/// `native_expanded_training_run_v1`).
-pub fn publish_new_bytes_lean_v1(
+/// [`publish_new_bytes_v1`] without the directory sync after the staging name
+/// is removed (F3). Every readback, the staged file's data sync, the no-replace
+/// link, the directory sync before the receipt (F2) and the receipt are
+/// unchanged, so the final name is durable and verified before the receipt as
+/// in every other publication. F3 only made the removal of the staging name
+/// durable (and reported a failure of that flush): after a power loss without
+/// it, a staging name can reappear as a second link to the complete, synced
+/// final file, possibly beside records published after it. A staging name is
+/// never a record: every reader of these trees ignores or deletes it, and a
+/// process crash between linking and unlinking already leaves one. The next
+/// publication's directory sync in the same directory also persists the
+/// removal on journaling filesystems. For the native trainer's records
+/// (`expanded_deck_training_v1` and `native_expanded_training_run_v1`).
+pub fn publish_new_bytes_deferred_cleanup_v1(
+    parent: &ValidatedPublicationParentV1,
+    stage_name: impl AsRef<OsStr>,
+    final_name: impl AsRef<OsStr>,
+    bytes: &[u8],
+) -> Result<DurablePublicationReceiptV1, DurablePublicationErrorV1> {
+    let expectation = DurableFileExpectationV1::from_bytes(bytes)?;
+    publish_verified_bytes_mode_with_hook_v1(
+        parent,
+        stage_name.as_ref(),
+        final_name.as_ref(),
+        bytes,
+        expectation,
+        RecaptureV1::EveryBoundary,
+        CleanupSyncV1::Deferred,
+        crash_point_hook_v1,
+    )
+}
+
+/// [`publish_new_bytes_bracketed_v1`] (resident reads) without F3, as
+/// [`publish_new_bytes_deferred_cleanup_v1`].
+pub fn publish_new_bytes_bracketed_deferred_cleanup_v1(
     parent: &ValidatedPublicationParentV1,
     stage_name: impl AsRef<OsStr>,
     final_name: impl AsRef<OsStr>,
@@ -1150,9 +1172,10 @@ pub fn publish_new_bytes_lean_v1(
 /// Whether a publication syncs its directory after removing the staging name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CleanupSyncV1 {
-    /// Sync the directory after the removal (every publication but the lean one).
+    /// Sync the directory after the removal.
     Synced,
-    /// Leave the removal to the next directory sync (`publish_new_bytes_lean_v1`).
+    /// Leave the removal to the next directory sync
+    /// (`publish_new_bytes_deferred_cleanup_v1`).
     Deferred,
 }
 
@@ -1862,15 +1885,16 @@ mod tests {
         }
     }
 
-    /// Every readback and directory-sync choice, the lean publication's last.
-    const MODES_V1: [(RecaptureV1, CleanupSyncV1); 3] = [
+    /// Every readback and directory-sync choice.
+    const MODES_V1: [(RecaptureV1, CleanupSyncV1); 4] = [
         (RecaptureV1::EveryBoundary, CleanupSyncV1::Synced),
         (RecaptureV1::Bracketing, CleanupSyncV1::Synced),
+        (RecaptureV1::EveryBoundary, CleanupSyncV1::Deferred),
         (RecaptureV1::Bracketing, CleanupSyncV1::Deferred),
     ];
 
     #[test]
-    fn lean_publication_writes_the_same_final_and_receipt_and_removes_its_stage() {
+    fn deferred_cleanup_publication_writes_the_same_final_and_receipt_and_removes_its_stage() {
         let bytes = (0..2 * RECAPTURE_BUFFER_BYTES_V1 + 3)
             .map(|index| (index * 7 % 253) as u8)
             .collect::<Vec<_>>();
@@ -1883,7 +1907,7 @@ mod tests {
             &bytes,
         )
         .unwrap();
-        let lean = publish_new_bytes_lean_v1(
+        let lean = publish_new_bytes_deferred_cleanup_v1(
             &parent,
             OsStr::new(".lean.stage"),
             OsStr::new("lean.bin"),
@@ -1902,7 +1926,7 @@ mod tests {
             lean
         );
         // The final name is still no-replace.
-        let again = publish_new_bytes_lean_v1(
+        let again = publish_new_bytes_deferred_cleanup_v1(
             &parent,
             OsStr::new(".lean2.stage"),
             OsStr::new("lean.bin"),

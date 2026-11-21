@@ -6751,7 +6751,7 @@ fn publish_json_shared_in_v1(
 
 /// The publication both `publish_json_*` share; the caller records the bytes.
 fn publish_json_unrecorded_v1(
-    _cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
+    cache: &verified_bytes_cache_v1::VerifiedBytesCacheV1,
     directory: &Path,
     name: &str,
     bytes: &[u8],
@@ -6761,13 +6761,20 @@ fn publish_json_unrecorded_v1(
         "output exceeds file size limit",
     )?;
     let parent = capture_existing_publication_parent_v1(directory).map_err(err)?;
-    // The bracketing readbacks and no directory sync after the staging name's
-    // removal (`publish_new_bytes_lean_v1`), in either read mode: the bytes,
-    // the receipt and the final file's durability are the full publication's.
+    // No directory sync after the staging name's removal
+    // (`publish_new_bytes_deferred_cleanup_v1`); resident reads also skip the
+    // two non-bracketing readbacks (`publish_new_bytes_bracketed_v1`).
     let stage = format!(".{name}.stage");
-    let receipt =
-        crate::durable_publication_v1::publish_new_bytes_lean_v1(&parent, stage, name, bytes)
-            .map_err(err)?;
+    let receipt = if cache.resident_v1() {
+        crate::durable_publication_v1::publish_new_bytes_bracketed_deferred_cleanup_v1(
+            &parent, stage, name, bytes,
+        )
+    } else {
+        crate::durable_publication_v1::publish_new_bytes_deferred_cleanup_v1(
+            &parent, stage, name, bytes,
+        )
+    }
+    .map_err(err)?;
     Ok(PinnedFileV1 {
         path: directory.join(name),
         sha256: hex(&receipt.sha256()),
