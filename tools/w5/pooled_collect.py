@@ -136,14 +136,20 @@ NESTED_PIN_BYTES = 1 << 20
 
 def input_closure(command: dict) -> set[tuple[str, str]]:
     """The command's pins plus the pins inside small pinned JSON files (a play import names its
-    initialization and parameter files). Checkpoints are larger and name only history, never read."""
-    found, queue = set(), list(pins_of(command))
+    initialization and parameter files). Checkpoints are larger and name only history, never read.
+    A nested pin counts only when the learner holds exactly its bytes: records also carry provenance
+    pins (the interpreter that produced a file, another host's paths) that no collector opens, and
+    the learner, which reads every input it needs, would have failed on a missing one."""
+    top = set(pins_of(command))
+    found, queue = set(), list(top)
     while queue:
         pin = queue.pop()
         if pin in found:
             continue
-        found.add(pin)
         path = Path(pin[0])
+        if pin not in top and not (path.is_file() and sha256_file(path) == pin[1]):
+            continue
+        found.add(pin)
         try:
             if path.is_file() and path.stat().st_size <= NESTED_PIN_BYTES:
                 queue.extend(pins_of(json.loads(path.read_bytes())))

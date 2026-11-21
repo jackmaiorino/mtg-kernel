@@ -131,6 +131,13 @@ class PooledCollectTests(unittest.TestCase):
         self.command["source"]["play_import"] = {"path": str(imp), "sha256": pc.sha256_file(imp)}
         self.command_path.write_text(json.dumps(self.command))
         self.assertIn((str(leaf), pc.sha256_file(leaf)), pc.input_closure(self.command))
+        # A provenance pin the learner does not hold (another host's interpreter) is not an input.
+        imp.write_text(json.dumps({"parameters": {"path": str(leaf), "sha256": pc.sha256_file(leaf)},
+                                   "producer": {"path": "C:/Python314/python.exe", "sha256": "f" * 64}}))
+        self.command["source"]["play_import"] = {"path": str(imp), "sha256": pc.sha256_file(imp)}
+        self.command_path.write_text(json.dumps(self.command))
+        self.assertNotIn(("C:/Python314/python.exe", "f" * 64), pc.input_closure(self.command))
+        self.assertIn((str(leaf), pc.sha256_file(leaf)), pc.input_closure(self.command))
         config = self.config([("a", 1.0, "x86")])
         transports = self.transports(config)
         pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
