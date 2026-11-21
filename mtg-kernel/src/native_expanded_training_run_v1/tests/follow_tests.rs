@@ -174,7 +174,8 @@ fn the_continuation_check_admits_only_the_next_segment_of_the_same_run() {
         let error = check_continuation_v1(&first, previous_result, &candidate).expect_err(what);
         assert!(!error.is_empty(), "{what}");
     };
-    let changes: Vec<(&str, fn(&mut NativeExpandedTrainingRunV1))> = vec![
+    type ChangeV1 = (&'static str, fn(&mut NativeExpandedTrainingRunV1));
+    let changes: [ChangeV1; 13] = [
         ("learning rate", |c| c.learning_rate *= 2.0),
         ("value coefficient", |c| c.value_coefficient *= 2.0),
         ("collection workers", |c| c.collection_workers = 3),
