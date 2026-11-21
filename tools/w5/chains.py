@@ -1616,8 +1616,18 @@ class Follower:
         """Creates the spool's STOP file exclusively and without following a link; False if it cannot."""
         if not self.spool_real():
             return False
+        path = self.spool / 'STOP'
         try:
-            fd = os.open(self.spool / 'STOP', os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0))
+            if os.name == 'nt':
+                from _winapi import CloseHandle, CreateFile, GENERIC_WRITE
+                # CREATE_NEW applies to the directory entry itself when OPEN_REPARSE_POINT is set.
+                create_new, open_reparse_point = 1, 0x00200000
+                share_read_write_delete = 7
+                handle = CreateFile(str(path), GENERIC_WRITE, share_read_write_delete, 0,
+                                    create_new, open_reparse_point, 0)
+                CloseHandle(handle)
+                return True
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0))
         except OSError:
             return False
         os.close(fd)
