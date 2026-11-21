@@ -67,9 +67,6 @@ jobs:
     # other work, and the Python shards wait on this job.
     runs-on: ubuntu-24.04
     permissions:
-      # actions: write only to cancel this pull request's own superseded full
-      # runs when it is back in draft (step below).
-      actions: write
       contents: read
       pull-requests: read
     outputs:
@@ -127,26 +124,6 @@ jobs:
           fi
           echo "scope=$scope" >> "$GITHUB_OUTPUT"
           echo "group set: $scope" | tee -a "$GITHUB_STEP_SUMMARY"
-
-      # A draft run has its own concurrency group, so it cannot cancel a full
-      # run started while the pull request was ready. When the pull request is
-      # back in draft at a newer commit, end those full runs at older commits.
-      - name: Cancel this pull request's full runs at older commits
-        if: steps.scope.outputs.scope == 'draft' && github.event.pull_request.head.repo.full_name == github.repository
-        continue-on-error: true
-        timeout-minutes: 2
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          HEAD_REF: ${{ github.head_ref }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs?event=pull_request&branch=$HEAD_REF&per_page=50" \
-            --jq ".workflow_runs[] | select(.status != \"completed\" and .head_sha != \"$HEAD_SHA\" and .id != $GITHUB_RUN_ID and .path == \".github/workflows/ci.yml\") | .id" |
-          while read -r run; do
-            echo "cancelling superseded run $run"
-            gh api -X POST "repos/$GITHUB_REPOSITORY/actions/runs/$run/cancel" || true
-          done
 
       - name: Check out merge ref with parents
         if: github.event_name == 'pull_request'
