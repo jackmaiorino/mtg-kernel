@@ -33,6 +33,7 @@ use crate::card_def::{CardDef, TargetSpec, CARD_DEFS};
 use crate::effect::{EffectContinuation, EffectOp, ExecCtx, TargetRef};
 use crate::eternal_cards_v1::EternalOpV1;
 use crate::eternal_cube_c1c_v1::C1cOpV1;
+use crate::eternal_sideboard_s1d_v1::{statics as circles, CopShieldV1};
 use crate::event::{self, DamageProposed, ProposedEvent};
 use crate::ids::{ObjectId, PlayerId};
 use crate::standard_cards_v1::StandardOpV1;
@@ -124,11 +125,28 @@ pub struct HallowChoiceV1 {
     pub source_zone: Zone,
     pub chooser: PlayerId,
     pub beneficiaries: Vec<PlayerId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub circle: Option<CopShieldV1>,
 }
 
-/// Only games with opposing shields borrow the operation replay. The ordinary
-/// single-controller path keeps its exact state, journal and hash behavior.
-pub(crate) fn has_overlapping_hallows(state: &GameState) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HallowPreventionV1 {
+    Hallow(PlayerId),
+    Circle,
+}
+
+impl HallowChoiceV1 {
+    pub(crate) fn allows(&self, prevention: HallowPreventionV1) -> bool {
+        match prevention {
+            HallowPreventionV1::Hallow(player) => self.beneficiaries.contains(&player),
+            HallowPreventionV1::Circle => self.circle.is_some(),
+        }
+    }
+}
+
+/// A potential second prevention effect enables replay. The exact options
+/// are determined at the effective damage packet, after redirection.
+pub(crate) fn may_need_hallow_choice(state: &GameState) -> bool {
     if !cfg!(feature = "eternal-fixtures") {
         return false;
     }
@@ -136,15 +154,17 @@ pub(crate) fn has_overlapping_hallows(state: &GameState) -> bool {
         return false;
     };
     let turn = state.turn_key_v1();
+    let circle = circles::has_live_circle_shield(state);
     pf1c.hallow_shields.iter().enumerate().any(|(at, first)| {
         first.turn == turn
             && first.active == state.active_player
-            && pf1c.hallow_shields[at + 1..].iter().any(|second| {
-                second.turn == first.turn
-                    && second.active == first.active
-                    && second.spell == first.spell
-                    && second.controller != first.controller
-            })
+            && (circle
+                || pf1c.hallow_shields[at + 1..].iter().any(|second| {
+                    second.turn == first.turn
+                        && second.active == first.active
+                        && second.spell == first.spell
+                        && second.controller != first.controller
+                }))
     })
 }
 
@@ -468,6 +488,27 @@ fn shield_covers(shield: &HallowShieldV1, source: ObjectLinkV4, zone: Zone) -> b
 /// the replacement pass. The shield keeps preventing damage from that spell,
 /// and from the permanent it becomes, for the rest of the turn.
 pub(crate) fn hallow_prevents(state: &mut GameState, damage: &DamageProposed) -> bool {
+    apply_hallow_prevention(state, damage, None)
+}
+
+/// Resolve genuinely competing Hallow and Circle shields before Circle spends
+/// a charge. A pure Circle packet keeps using the existing prevention path.
+pub(crate) fn hallow_prevents_with_circle(state: &mut GameState, damage: &DamageProposed) -> bool {
+    if read_state(state).is_none_or(|pf1c| pf1c.hallow_shields.is_empty()) {
+        return false;
+    }
+    let Some(position) = circles::circle_shield_position(state, damage) else {
+        return false;
+    };
+    let shield = state.eternal_v1.as_ref().unwrap().s1d.cop_shields[position];
+    apply_hallow_prevention(state, damage, Some(shield))
+}
+
+fn apply_hallow_prevention(
+    state: &mut GameState,
+    damage: &DamageProposed,
+    circle: Option<CopShieldV1>,
+) -> bool {
     let Some(pf1c) = read_state(state) else {
         return false;
     };
@@ -478,9 +519,9 @@ pub(crate) fn hallow_prevents(state: &mut GameState, damage: &DamageProposed) ->
         return false;
     };
     let beneficiaries = hallow_beneficiaries(state, source, zone);
-    let controller = match beneficiaries.as_slice() {
-        [] => return false,
-        [controller] => *controller,
+    let controller = match (beneficiaries.as_slice(), circle) {
+        ([], _) => return false,
+        ([controller], None) => *controller,
         _ => {
             let chooser = match damage.target {
                 Target::Object(object) => state.objects.get(object).controller,
@@ -493,9 +534,13 @@ pub(crate) fn hallow_prevents(state: &mut GameState, damage: &DamageProposed) ->
                 source_zone: zone,
                 chooser,
                 beneficiaries,
+                circle,
             };
             match crate::linked_aura_operation_v1::choose_hallow(state, choice) {
-                Ok(Some(controller)) => controller,
+                Ok(Some(HallowPreventionV1::Hallow(controller))) => controller,
+                Ok(Some(HallowPreventionV1::Circle)) => {
+                    return circles::consume_circle_shield(state, damage);
+                }
                 // Unanswered work runs only in the enclosing replay's disposable
                 // tail. Its earlier checkpoint contains neither this gain nor
                 // any later packet/operation effects.

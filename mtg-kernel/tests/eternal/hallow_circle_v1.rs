@@ -43,6 +43,12 @@ fn resolution_outcomes(two_hallows: bool, expected_options: u16) -> Vec<(i32, i3
         (20, 20, 1)
     );
 
+    let before_invalid = state.state_hash();
+    assert!(
+        mtg_kernel::engine::step(&mut state, Action::ChooseEffectOption(expected_options)).is_err()
+    );
+    assert_eq!(state.state_hash(), before_invalid);
+
     let mut outcomes = Vec::new();
     for index in 0..expected_options {
         let mut branch = restored(&state);
@@ -52,19 +58,18 @@ fn resolution_outcomes(two_hallows: bool, expected_options: u16) -> Vec<(i32, i3
         assert_eq!(branch.objects.get(bolt).zone, Zone::Graveyard);
         outcomes.push((life(&branch, P0), life(&branch, P1), shields(&branch)));
     }
-    outcomes.sort_unstable();
     outcomes
 }
 
 #[test]
 fn one_hallow_and_red_circle_offer_two_distinct_prevention_choices() {
-    assert_eq!(resolution_outcomes(false, 2), [(20, 20, 0), (23, 20, 1)]);
+    assert_eq!(resolution_outcomes(false, 2), [(23, 20, 1), (20, 20, 0)]);
 }
 
 #[test]
 fn opposing_hallows_and_red_circle_offer_three_distinct_prevention_choices() {
     assert_eq!(
         resolution_outcomes(true, 3),
-        [(20, 20, 0), (20, 23, 1), (23, 20, 1)]
+        [(23, 20, 1), (20, 23, 1), (20, 20, 0)]
     );
 }

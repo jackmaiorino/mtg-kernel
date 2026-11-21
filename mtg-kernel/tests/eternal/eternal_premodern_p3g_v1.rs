@@ -5,6 +5,9 @@
 #![cfg(feature = "eternal-fixtures")]
 #![allow(dead_code)]
 
+#[path = "hallow_circle_v1.rs"]
+mod hallow_circle_v1;
+
 use mtg_kernel::card_def::{
     card_id_by_name, mana_color_mask, CardCapability, CardDef, CardType, CARD_DEFS,
 };

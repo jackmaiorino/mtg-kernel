@@ -3119,7 +3119,8 @@ fn apply_replacements_inner(
         // Circles of Protection (waves S1d and P3g).
         #[cfg(feature = "eternal-fixtures")]
         if !damage_cannot_be_prevented
-            && crate::eternal_sideboard_s1d_v1::statics::consume_circle_shield(state, damage)
+            && (crate::eternal_pauper_pf1c_v1::hallow_prevents_with_circle(state, damage)
+                || crate::eternal_sideboard_s1d_v1::statics::consume_circle_shield(state, damage))
         {
             return None;
         }
