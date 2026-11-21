@@ -1,9 +1,7 @@
 """Pooled collection dispatcher tests (stage 1). Hosts are simulated in temporary directories; the
 fake collector writes each slot's bytes as a function of its episode alone (as the real collector
 does), so any host split, failover or audit must merge to the same files."""
-import contextlib
 import hashlib
-import io
 import json
 import os
 import shlex
@@ -30,27 +28,9 @@ class FakeTransport:
     """One simulated host. `fail` makes every shard run fail; `salt` makes this host's bytes differ
     (a divergent architecture)."""
 
-    def __init__(self, host, files: dict, fail=False, salt="", storage="0" * 32):
-        self.host, self.files, self.fail, self.salt, self.storage = host, files, fail, salt, storage
+    def __init__(self, host, files: dict, fail=False, salt=""):
+        self.host, self.files, self.fail, self.salt = host, files, fail, salt
         self.pushed, self.runs = [], []
-        self.ident, self.witness, self.serial = {}, {}, 0
-
-    def storage_id(self):
-        return self.storage
-
-    def replace_file(self, path, digest):
-        """Another file at `path` (restored, recreated storage): same bytes, another identity."""
-        self.serial += 1
-        self.files[path], self.ident[path] = digest, ("other", self.serial)
-
-    def remove_owned(self, remote, digest):
-        owned = self.witness.pop(remote, None)
-        if owned is None or self.ident.get(remote) != owned or self.files.get(remote) != digest:
-            return "not-owned"
-        self.files.pop(remote)
-        self.ident.pop(remote)
-        self.removed = getattr(self, "removed", []) + [remote]
-        return "removed"
 
     def pin_status(self, pins):
         return {p: ("absent" if p[0] not in self.files else "ok" if self.files[p[0]] == p[1] else "differs")
@@ -62,9 +42,7 @@ class FakeTransport:
                 raise RuntimeError(f"existing pin differs: {remote}")
             return False  # another process installed the same bytes first: not ours
         assert pc.sha256_file(Path(local)) == digest
-        self.serial += 1
-        self.files[remote], self.ident[remote] = digest, ("push", self.serial)
-        self.witness[remote] = self.ident[remote]
+        self.files[remote] = digest
         self.pushed.append(remote)
         return True
 
@@ -213,106 +191,6 @@ class PooledCollectTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
 
-    def test_a_host_name_reused_for_another_machine_inherits_no_ownership(self):
-        config = self.config([("a", 1.0, "x86")])
-        host = config["hosts"][0]
-        host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", "machine-x"], True
-        config["state_path"] = str(self.root / "pushed.json")
-        pc.Dispatcher(config, self.transports(config)).collect(self.command_path, fake_merge)
-        # The same name now reaches another machine that happens to hold the old checkpoint.
-        host.ssh = ["ssh", "machine-y"]
-        other = self.transports(config)
-        other["a"].files[str(self.checkpoint)] = pc.sha256_file(self.checkpoint)
-        new = self.root / "learner" / "checkpoint-2.json"
-        new.write_bytes(b"next checkpoint")
-        self.command["source"]["checkpoint"] = {"path": str(new), "sha256": pc.sha256_file(new)}
-        nxt = self.root / "run" / "iterations" / "000017" / "attempt-000000"
-        nxt.mkdir(parents=True)
-        (nxt / "collect-command.json").write_text(json.dumps(self.command))
-        pc.Dispatcher(config, other).collect(nxt / "collect-command.json", fake_merge)
-        self.assertIn(str(self.checkpoint), other["a"].files, "never installed there, never pruned there")
-
-    def test_replaced_storage_behind_the_same_connection_inherits_no_ownership(self):
-        config = self.config([("a", 1.0, "x86")])
-        host = config["hosts"][0]
-        host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", "machine-x"], True
-        config["state_path"] = str(self.root / "pushed.json")
-        pc.Dispatcher(config, self.transports(config)).collect(self.command_path, fake_merge)
-        # Same ssh target and wrap, but the container behind it was recreated (a new storage marker),
-        # and the new storage happens to hold the old checkpoint.
-        replaced = {h.name: FakeTransport(h, {h.collector: h.collector_sha256}, storage="1" * 32)
-                    for h in config["hosts"]}
-        replaced["a"].files[str(self.checkpoint)] = pc.sha256_file(self.checkpoint)
-        new = self.root / "learner" / "checkpoint-2.json"
-        new.write_bytes(b"next checkpoint")
-        self.command["source"]["checkpoint"] = {"path": str(new), "sha256": pc.sha256_file(new)}
-        nxt = self.root / "run" / "iterations" / "000017" / "attempt-000000"
-        nxt.mkdir(parents=True)
-        (nxt / "collect-command.json").write_text(json.dumps(self.command))
-        pc.Dispatcher(config, replaced).collect(nxt / "collect-command.json", fake_merge)
-        self.assertIn(str(self.checkpoint), replaced["a"].files, "never installed in this storage, never pruned")
-
-    def next_iteration(self):
-        new = self.root / "learner" / "checkpoint-2.json"
-        new.write_bytes(b"next checkpoint")
-        self.command["source"]["checkpoint"] = {"path": str(new), "sha256": pc.sha256_file(new)}
-        nxt = self.root / "run" / "iterations" / "000017" / "attempt-000000"
-        nxt.mkdir(parents=True)
-        (nxt / "collect-command.json").write_text(json.dumps(self.command))
-        return nxt / "collect-command.json"
-
-    def test_a_restored_copy_with_the_same_bytes_behind_a_kept_scratch_is_never_pruned(self):
-        config = self.config([("a", 1.0, "x86")])
-        host = config["hosts"][0]
-        host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", "machine-x"], True
-        config["state_path"] = str(self.root / "pushed.json")
-        transports = self.transports(config)
-        pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
-        # The scratch root (marker and witnesses) survives, but the input storage was replaced and
-        # an independently restored checkpoint with the same bytes now sits at the old path.
-        transports["a"].replace_file(str(self.checkpoint), pc.sha256_file(self.checkpoint))
-        pc.Dispatcher(config, transports).collect(self.next_iteration(), fake_merge)
-        self.assertIn(str(self.checkpoint), transports["a"].files, "another file than the one installed")
-        self.assertNotIn(str(self.checkpoint), getattr(transports["a"], "removed", []))
-
-    def test_storage_replaced_between_upload_and_prune_keeps_its_files(self):
-        config = self.config([("a", 1.0, "x86")])
-        host = config["hosts"][0]
-        host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", "machine-x"], True
-        config["state_path"] = str(self.root / "pushed.json")
-        first = self.transports(config)
-        pc.Dispatcher(config, first).collect(self.command_path, fake_merge)
-        # Next collection: the upload goes to the old storage, which is then replaced (same marker,
-        # say a restored scratch) before the prune; the replacement holds both checkpoints' bytes.
-        nxt = self.next_iteration()
-        dispatcher = pc.Dispatcher(config, first)
-        real_prune = dispatcher._prune_locked
-
-        def replace_then_prune(state_path, current):
-            replaced = FakeTransport(host, {host.collector: host.collector_sha256})
-            for path, digest in first["a"].files.items():
-                replaced.replace_file(path, digest)
-            dispatcher.transports = {"a": replaced}
-            real_prune(state_path, current)
-            self.assertEqual(getattr(replaced, "removed", []), [])
-
-        dispatcher._prune_locked = replace_then_prune
-        dispatcher.collect(nxt, fake_merge)
-        # One more iteration: the upload that went to the old storage is now eligible for pruning,
-        # and the replacement storage (no witness for it) keeps it.
-        replaced = dispatcher.transports["a"]
-        third = self.root / "learner" / "checkpoint-3.json"
-        third.write_bytes(b"third checkpoint")
-        self.command["source"]["checkpoint"] = {"path": str(third), "sha256": pc.sha256_file(third)}
-        last = self.root / "run" / "iterations" / "000018" / "attempt-000000"
-        last.mkdir(parents=True)
-        (last / "collect-command.json").write_text(json.dumps(self.command))
-        pc.Dispatcher(config, {"a": replaced}).collect(last / "collect-command.json", fake_merge)
-        self.assertIn(str(self.root / "learner" / "checkpoint-2.json"), replaced.files)
-        self.assertIn(str(self.checkpoint), replaced.files)
-        self.assertEqual([r for r in getattr(replaced, "removed", []) if "pooled-" not in Path(r).name], [],
-                         "only its own shard command files were removed")
-
     def test_a_whole_command_one_process_refuses_launches_nothing(self):
         config = self.config([("a", 1.0, "x86"), ("b", 1.0, "x86")])
         transports = self.transports(config)
@@ -325,68 +203,11 @@ class PooledCollectTests(unittest.TestCase):
         self.assertEqual([t.runs for t in transports.values()], [[], []])
         self.assertFalse((self.command_path.parent / "pooled-shards").exists())
 
-    def test_the_storage_marker_is_created_once_and_then_read(self):
-        host = pc.Host(name="m", kind="local", collector="/c", collector_sha256="c" * 64, workers=2, weight=1.0,
-                       scratch=str(self.root / "scratch-marker"), arch="x86")
-        first = pc.Transport(host).storage_id()
-        self.assertRegex(first, r"^[0-9a-f]{32}$")
-        self.assertEqual(pc.Transport(host).storage_id(), first)
-        (self.root / "scratch-marker" / ".pooled-storage-id").unlink()
-        self.assertNotEqual(pc.Transport(host).storage_id(), first, "new storage, new marker")
-
     def test_an_ancestor_named_iterations_does_not_confuse_the_index(self):
         path = Path("/srv/iterations/run/iterations/000007/attempt-000000/collect-command.json")
         self.assertEqual(pc.iteration_of(path), 7)
         with self.assertRaises(ValueError):
             pc.iteration_of(Path("/srv/iterations/run/collect-command.json"))
-
-    def test_a_pin_installed_by_another_process_first_is_never_pruned(self):
-        config = self.config([("a", 1.0, "x86")])
-        host = config["hosts"][0]
-        host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", "a"], True
-        config["state_path"] = str(self.root / "pushed.json")
-        transports = self.transports(config)
-        racing = transports["a"]
-        real_status = racing.pin_status
-        checkpoint = (str(self.checkpoint), pc.sha256_file(self.checkpoint))
-
-        def status_then_race(pins):
-            states = real_status(pins)
-            if checkpoint in pins and states.get(checkpoint) == "absent":
-                racing.files[checkpoint[0]] = checkpoint[1]  # another dispatcher wins the race
-            return states
-
-        racing.pin_status = status_then_race
-        pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
-        state = json.loads((self.root / "pushed.json").read_text())
-        self.assertNotIn(str(self.checkpoint), state[pc.Dispatcher.storage_key(host) + "@" + "0" * 32],
-                         "not ours: never recorded, never pruned")
-
-    def test_concurrent_dispatchers_sharing_retention_state_keep_every_record(self):
-        state_path = self.root / "shared-pushed.json"
-        errors = []
-
-        def one(name):
-            config = self.config([(name, 1.0, "x86")])
-            config["state_path"] = str(state_path)
-            dispatcher = pc.Dispatcher(config, self.transports(config))
-            dispatcher.pushed = {name: {f"/pins/{name}-{i}": "a" * 64 for i in range(3)}}
-            try:
-                for _ in range(20):
-                    dispatcher.prune(set())
-            except Exception as error:  # noqa: BLE001
-                errors.append(error)
-
-        threads = [threading.Thread(target=one, args=(f"h{i}",)) for i in range(4)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join()
-        self.assertEqual(errors, [])
-        state = json.loads(state_path.read_text())
-        self.assertEqual(sorted(k.split("#")[0] for k in state), ["h0", "h1", "h2", "h3"])
-        self.assertTrue(all(len(state[h]) == 3 for h in state))
-        self.assertEqual([p.name for p in self.root.glob("shared-pushed.json*.stage")], [])
 
     def test_an_ordinary_play_import_distributes_the_files_its_loader_reads(self):
         export = self.root / "learner" / "export"
@@ -457,40 +278,6 @@ class PooledCollectTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "cross-host divergence"):
             pc.Dispatcher(config, self.transports(config, salt={"m": "-arm"})).collect(self.command_path, fake_merge)
 
-    def test_old_pushed_checkpoints_are_pruned_on_ssh_hosts_only(self):
-        # A nested input (a play import's parameters) stays across iterations.
-        leaf = self.root / "learner" / "parameters.f32le"
-        leaf.write_bytes(b"parameters")
-        imp = self.root / "learner" / "import.json"
-        imp.write_text(json.dumps({"parameters": {"path": str(leaf), "sha256": pc.sha256_file(leaf)}}))
-        self.command["source"]["play_import"] = {"path": str(imp), "sha256": pc.sha256_file(imp)}
-        self.command_path.write_text(json.dumps(self.command))
-        config = self.config([("a", 1.0, "x86"), ("b", 1.0, "arm64")])
-        for host in config["hosts"]:
-            host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", host.name], True
-        config["state_path"] = str(self.root / "pushed.json")
-        transports = self.transports(config)
-        dispatcher = pc.Dispatcher(config, transports)
-        dispatcher.collect(self.command_path, fake_merge)
-        old = str(self.checkpoint)
-        # The next iteration collects from a new checkpoint.
-        new = self.root / "learner" / "checkpoint-2.json"
-        new.write_bytes(b"next checkpoint")
-        self.command["source"]["checkpoint"] = {"path": str(new), "sha256": pc.sha256_file(new)}
-        nxt = self.root / "run" / "iterations" / "000017" / "attempt-000000"
-        nxt.mkdir(parents=True)
-        (nxt / "collect-command.json").write_text(json.dumps(self.command))
-        pc.Dispatcher(config, transports).collect(nxt / "collect-command.json", fake_merge)
-        for transport in transports.values():
-            inputs = [r for r in transport.removed if "pooled-" not in Path(r).name]  # not shard command files
-            self.assertEqual(inputs, [old])
-            self.assertIn(str(new), transport.files)
-        state = json.loads((self.root / "pushed.json").read_text())
-        key = pc.Dispatcher.storage_key(config["hosts"][0]) + "@" + "0" * 32
-        self.assertEqual(sorted(state[key]), sorted([str(new), str(imp), str(leaf)]))
-        for transport in transports.values():
-            self.assertIn(str(leaf), transport.files)
-
     def test_remote_commands_can_run_inside_a_container(self):
         host = pc.Host(name="m", kind="ssh", collector="/c", collector_sha256="c" * 64, workers=2, weight=1.0,
                        scratch="/s", arch="arm64", ssh=["ssh", "mac"],
@@ -500,6 +287,15 @@ class PooledCollectTests(unittest.TestCase):
         self.assertEqual(argv[2], "docker exec -i node sh -c " + pc.shlex.quote("tar -C '/a b' -cf - ."))
         host.remote_wrap = ""
         self.assertEqual(pc.Transport(host)._ssh(["ls"]), ["ssh", "mac", "ls"])
+
+    def test_a_hosts_file_asking_for_retention_is_refused(self):
+        # Remote retention (pruning old pins on collectors) is not part of this version.
+        path = self.root / "hosts.json"
+        entry = {"name": "a", "kind": "ssh", "collector": "/bin/c", "collector_sha256": "c" * 64, "workers": 4,
+                 "weight": 1.0, "scratch": "/s", "arch": "x86", "ssh": ["ssh", "h"], "prune_pushed": True}
+        path.write_text(json.dumps({"schema": pc.SCHEMA, "hosts": [entry], "merge_binary": "/bin/m"}))
+        with self.assertRaises((TypeError, ValueError)):
+            pc.load_hosts(path)
 
     def test_hosts_file_is_checked(self):
         path = self.root / "hosts.json"
@@ -613,87 +409,6 @@ class PinPublicationTests(unittest.TestCase):
             self.assertEqual(transport.pin_status({conflicting_pin})[conflicting_pin], "differs")
         self.assertEqual(remote.read_bytes(), self.checkpoint.read_bytes())
         self.assertEqual(list(remote.parent.iterdir()), [remote])
-
-    def emulated_ssh(self):
-        local_run = subprocess.run
-
-        def emulate_ssh(argv, **kwargs):
-            command = shlex.split(argv[-1])
-            return local_run([sys.executable, *command[1:]], **kwargs)
-
-        return mock.patch.object(pc.subprocess, "run", side_effect=emulate_ssh)
-
-    def test_a_replacement_right_after_publication_is_never_owned(self):
-        self.host.kind, self.host.ssh, self.host.prune_pushed = "ssh", ["fake-ssh", "collector"], True
-        transport = pc.Transport(self.host)
-        remote = (self.root / "collector" / "pin.json").as_posix()
-        digest = pc.sha256_file(self.checkpoint)
-        real_link = os.link
-
-        def link_then_replace(src, dst, *args, **kwargs):
-            real_link(src, dst, *args, **kwargs)
-            if Path(dst).as_posix() == remote:  # another actor restores a same-bytes copy at once
-                Path(remote).unlink()
-                Path(remote).write_bytes(self.checkpoint.read_bytes())
-
-        with mock.patch.object(pc.os, "link", side_effect=link_then_replace):
-            exec_globals = {"__name__": "__main__"}
-            argv = [remote, remote + ".stage", digest, self.host.scratch, "1"]
-            with mock.patch.object(sys, "argv", ["-c", *argv]), \
-                    mock.patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(self.checkpoint.read_bytes()))), \
-                    contextlib.redirect_stdout(io.StringIO()) as out:
-                exec(compile(pc.PUSH_PIN, "push", "exec"), exec_globals)
-        self.assertEqual(out.getvalue().strip(), "created")
-        with self.emulated_ssh():
-            self.assertEqual(transport.remove_owned(remote, digest), "not-owned", "the witness names the installed inode")
-        self.assertEqual(Path(remote).read_bytes(), self.checkpoint.read_bytes())
-
-    def test_an_unusable_witness_directory_never_fails_a_push(self):
-        self.host.kind, self.host.ssh, self.host.prune_pushed = "ssh", ["fake-ssh", "collector"], True
-        Path(self.host.scratch).mkdir(parents=True)
-        (Path(self.host.scratch) / ".pooled-owned").write_text("not a directory")
-        remote = (self.root / "collector" / "pin.json").as_posix()
-        with self.emulated_ssh():
-            self.assertFalse(pc.Transport(self.host).push(self.checkpoint, remote, pc.sha256_file(self.checkpoint)),
-                             "installed, but unowned")
-        self.assertEqual(Path(remote).read_bytes(), self.checkpoint.read_bytes())
-
-    def test_without_retention_no_witness_is_made(self):
-        self.host.kind, self.host.ssh = "ssh", ["fake-ssh", "collector"]
-        remote = (self.root / "collector" / "pin.json").as_posix()
-        with self.emulated_ssh():
-            self.assertFalse(pc.Transport(self.host).push(self.checkpoint, remote, pc.sha256_file(self.checkpoint)))
-        self.assertTrue(Path(remote).exists())
-        self.assertFalse((Path(self.host.scratch) / ".pooled-owned").exists())
-
-    def test_owned_removal_deletes_only_the_installed_file(self):
-        self.host.kind, self.host.ssh, self.host.prune_pushed = "ssh", ["fake-ssh", "collector"], True
-        transport = pc.Transport(self.host)
-        remote = (self.root / "collector" / "pin.json").as_posix()
-        digest = pc.sha256_file(self.checkpoint)
-        local_run = subprocess.run
-
-        def emulate_ssh(argv, **kwargs):
-            command = shlex.split(argv[-1])
-            return local_run([sys.executable, *command[1:]], **kwargs)
-
-        with mock.patch.object(pc.subprocess, "run", side_effect=emulate_ssh):
-            self.assertTrue(transport.push(self.checkpoint, remote, digest), "created and owned")
-            self.assertFalse(transport.push(self.checkpoint, remote, digest), "existing: not owned twice")
-            self.assertEqual(transport.remove_owned(remote, "0" * 64), "not-owned", "other bytes expected")
-            self.assertTrue(Path(remote).exists(), "put back")
-            self.assertEqual(transport.remove_owned(remote, digest), "removed")
-            self.assertFalse(Path(remote).exists())
-            # A restored copy with the same bytes is another file: never removed.
-            self.assertTrue(transport.push(self.checkpoint, remote, digest))
-            Path(remote).unlink()
-            Path(remote).write_bytes(self.checkpoint.read_bytes())
-            self.assertEqual(transport.remove_owned(remote, digest), "not-owned")
-            self.assertEqual(Path(remote).read_bytes(), self.checkpoint.read_bytes())
-            self.assertEqual(transport.remove_owned(remote, digest), "not-owned", "the stale witness is gone")
-        owned = Path(self.host.scratch) / ".pooled-owned"
-        self.assertEqual([p for p in owned.iterdir() if not p.name.endswith(".lock")], [],
-                         "no witness or set-aside file left")
 
     def test_merge_uses_the_native_trainer_mode_in_schedule_order(self):
         command_path = self.root / "collect-command.json"

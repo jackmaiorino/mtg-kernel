@@ -37,7 +37,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import shlex
 import shutil
 import subprocess
@@ -64,11 +63,6 @@ class Host:
     arch: str  # architecture class, for audits: e.g. "x86-znver5", "x86-portable", "arm64"
     ssh: list = field(default_factory=list)  # e.g. ["ssh", "-o", "BatchMode=yes", "mtg@10.0.0.37"]
     prefix: list = field(default_factory=list)  # e.g. ["nice", "-n", "19", "taskset", "-c", "1,17"]
-    # Opt-in remote retention: delete inputs this dispatcher pushed for an earlier iteration (old
-    # checkpoints) once a later collection merges, only while they still hold the bytes it pushed.
-    # Off by default: an absolute pin can still serve another run or fork on that host (a pruned
-    # pin is pushed again when next needed), so enable it only for hosts that serve one lineage.
-    prune_pushed: bool = False
     # Format string around each remote shell command, e.g. "docker exec -i bladder-node sh -c {cmd}".
     remote_wrap: str = ""
 
@@ -186,27 +180,9 @@ def input_closure(command: dict) -> set[tuple[str, str]]:
     return found
 
 
-# Retention ownership. A pin this dispatcher creates gets a witness, a second hard link to the very
-# inode it installed, `<scratch>/.pooled-owned/<sha256 of the path string>`. The witness is linked
-# from the verified private stage file before publication and renamed into place after it, so it
-# can only ever name the installed inode, never a later replacement. Publication and removal of one
-# path take the same lock file beside the witness. All of it is best effort and only for retention:
-# a host where it fails installs the pin unowned (never pruned) and collection goes on.
-OWNERSHIP_LOCK = """
-def ownership_lock(own, name):
-  fd=os.open(os.path.join(own,name+'.lock'),os.O_RDWR|os.O_CREAT,0o600)
-  try:
-    import fcntl
-    fcntl.flock(fd,fcntl.LOCK_EX)
-  except ImportError:
-    pass
-  return fd
-"""
-
-PUSH_PIN = """import hashlib,os,shutil,sys,uuid
+PUSH_PIN = """import hashlib,os,shutil,sys
 from pathlib import Path
-dest,stage,expected,scratch,owning=Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3],sys.argv[4],sys.argv[5]=='1'
-""" + OWNERSHIP_LOCK + """
+dest,stage,expected=Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3]
 def digest(path):
   h=hashlib.sha256()
   with path.open('rb') as f:
@@ -214,19 +190,9 @@ def digest(path):
   return h.hexdigest()
 dest.parent.mkdir(parents=True,exist_ok=True)
 f=stage.open('xb')
-witness=None
 try:
   with f: shutil.copyfileobj(sys.stdin.buffer,f)
   if digest(stage)!=expected: sys.exit('staged pin differs: '+str(dest))
-  if owning:
-    try:
-      own=os.path.join(scratch,'.pooled-owned'); name=hashlib.sha256(sys.argv[1].encode()).hexdigest()
-      os.makedirs(own,exist_ok=True)
-      ownership_lock(own,name)
-      witness=os.path.join(own,'witness-'+uuid.uuid4().hex)
-      os.link(stage,witness)
-    except OSError:
-      witness=None
   try:
     os.link(stage,dest)
   except FileExistsError:
@@ -234,88 +200,10 @@ try:
       sys.exit('existing pin differs: '+str(dest))
     print('existing')
   else:
-    try:
-      if witness is None: raise OSError
-      os.replace(witness,os.path.join(own,name)); witness=None  # replaces only a stale witness
-      print('created')
-    except OSError:
-      print('created-unowned')
+    print('created')
 finally:
   stage.unlink(missing_ok=True)
-  if witness is not None:
-    try: os.unlink(witness)
-    except OSError: pass
 """
-
-REMOVE_OWNED = """import hashlib,os,stat,sys,uuid
-dest,scratch,expected=sys.argv[1:4]
-own=os.path.join(scratch,'.pooled-owned')
-name=hashlib.sha256(dest.encode()).hexdigest()
-w=os.path.join(own,name)
-""" + OWNERSHIP_LOCK + """
-def ident(p):
-  try: s=os.lstat(p)
-  except FileNotFoundError: return None
-  return (s.st_dev,s.st_ino) if stat.S_ISREG(s.st_mode) else 'other'
-def digest(p):
-  h=hashlib.sha256()
-  with open(p,'rb') as f:
-    for b in iter(lambda: f.read(1<<20),b''): h.update(b)
-  return h.hexdigest()
-mine=ident(w)
-if mine is None or mine=='other':
-  print('not-owned'); sys.exit(0)
-ownership_lock(own,name)
-if ident(dest)!=mine:
-  os.unlink(w); print('not-owned'); sys.exit(0)
-aside=os.path.join(own,'aside-'+uuid.uuid4().hex)
-os.rename(dest,aside)
-if ident(aside)==mine and digest(aside)==expected:
-  os.unlink(aside); os.unlink(w); print('removed'); sys.exit(0)
-try:
-  os.link(aside,dest); os.unlink(aside)
-except FileExistsError:
-  kept=os.path.join(own,'kept-'+uuid.uuid4().hex)
-  os.rename(aside,kept); print('kept '+kept); sys.exit(0)
-print('not-owned')
-"""
-
-
-class state_lock:
-    """An exclusive lock beside the retention state file, held across its whole
-    read, prune and publish, so concurrent dispatchers sharing it never lose records."""
-
-    def __init__(self, state_path: Path):
-        self.path = Path(f"{state_path}.lock")
-
-    def __enter__(self):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.handle = open(self.path, "a+b")
-        if os.name == "nt":
-            import msvcrt
-            while True:
-                try:
-                    self.handle.seek(0)
-                    msvcrt.locking(self.handle.fileno(), msvcrt.LK_LOCK, 1)
-                    break
-                except OSError:
-                    time.sleep(0.05)
-        else:
-            import fcntl
-            fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
-        return self
-
-    def __exit__(self, *exc):
-        if os.name == "nt":
-            import msvcrt
-            self.handle.seek(0)
-            msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
-        self.handle.close()
-        return False
-
 
 def preflight(whole: dict) -> None:
     """The ordinary collector's whole-command checks, before any staging or launch (the merge
@@ -412,10 +300,8 @@ class Transport:
     def push(self, local: Path, remote: str, digest: str) -> bool:
         """Installs an immutable pin: a private staged copy, verified, then hard-linked into place.
         An established file is never replaced; a racing copy is accepted only with the same digest.
-        Returns True only when this call created the destination and linked its ownership witness
-        (`<scratch>/.pooled-owned/<sha256 of the path>`, a second hard link to the same file); only
-        then does the dispatcher own it. The collector's filesystem needs hard links; a pin on another
-        filesystem than the scratch root is installed but never owned, so never pruned."""
+        Returns True when this call created the destination. The collector's filesystem needs hard
+        links."""
         stage_name = f"{remote}.{uuid.uuid4().hex}.stage"
         if self.host.kind == "local":
             destination, stage = Path(remote), Path(stage_name)
@@ -437,9 +323,7 @@ class Transport:
                     return False
             finally:
                 stage.unlink(missing_ok=True)
-        owning = "1" if self.host.prune_pushed else "0"
-        command = " ".join(shlex.quote(arg) for arg in ("python3", "-c", PUSH_PIN, remote, stage_name, digest,
-                                                        self.host.scratch, owning))
+        command = " ".join(shlex.quote(arg) for arg in ("python3", "-c", PUSH_PIN, remote, stage_name, digest))
         with open(local, "rb") as handle:
             result = subprocess.run(self._ssh([command]), stdin=handle, capture_output=True, timeout=600)
         if result.returncode != 0:
@@ -491,49 +375,6 @@ class Transport:
         else:
             subprocess.run(self._ssh([f"rm -f -- {shlex.quote(remote)}"]), capture_output=True, timeout=120)
 
-    def remove_owned(self, remote: str, digest: str) -> str:
-        """Deletes `remote` only if it is still the file this dispatcher installed: the same file
-        (device and inode) as its ownership witness, with the expected bytes. The file is first moved
-        aside atomically into the witness directory, checked there and only then deleted; anything else
-        is put back. A restored or replaced copy with the same bytes is another file and is kept; a
-        witness whose file is gone is dropped. Returns "removed", "not-owned", or "kept <path>" when a
-        file found at the path could not be put back because another appeared there meanwhile (its bytes
-        are kept at <path>, recorded by the caller)."""
-        if self.host.kind == "local":
-            result = subprocess.run([sys.executable, "-c", REMOVE_OWNED, remote, self.host.scratch, digest],
-                                    capture_output=True, text=True, timeout=300)
-        else:
-            command = " ".join(shlex.quote(a) for a in ("python3", "-c", REMOVE_OWNED, remote, self.host.scratch, digest))
-            result = subprocess.run(self._ssh([command]), capture_output=True, text=True, timeout=300,
-                                    stdin=subprocess.DEVNULL)
-        outcome = (result.stdout.strip().splitlines()[-1:] or [""])[0]
-        if result.returncode != 0 or not (outcome in ("removed", "not-owned") or outcome.startswith("kept ")):
-            raise RuntimeError(f"{self.host.name}: owned removal of {remote} failed: {result.stderr.strip()[-200:]}")
-        return outcome
-
-    def storage_id(self) -> str:
-        """The collector storage's generation marker, `<scratch>/.pooled-storage-id`, created once
-        with a random value. Replaced storage (a recreated container, a reimaged disk) gets a new one,
-        so it inherits no ownership records."""
-        script = ("import os,sys,uuid\n"
-                  "d=sys.argv[1]; p=os.path.join(d,'.pooled-storage-id')\n"
-                  "os.makedirs(d,exist_ok=True)\n"
-                  "try:\n"
-                  "  fd=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o644); os.write(fd,uuid.uuid4().hex.encode()); os.close(fd)\n"
-                  "except FileExistsError: pass\n"
-                  "print(open(p).read().strip())\n")
-        if self.host.kind == "local":
-            result = subprocess.run([sys.executable, "-c", script, self.host.scratch], capture_output=True,
-                                    text=True, timeout=60)
-        else:
-            command = " ".join(shlex.quote(arg) for arg in ("python3", "-c", script, self.host.scratch))
-            result = subprocess.run(self._ssh([command]), capture_output=True, text=True, timeout=120,
-                                    stdin=subprocess.DEVNULL)
-        marker = result.stdout.strip()
-        if result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{32}", marker):
-            raise RuntimeError(f"{self.host.name}: storage marker unreadable")
-        return marker
-
     def remove_dir(self, remote: str) -> None:
         if self.host.kind == "local":
             shutil.rmtree(remote, ignore_errors=True)
@@ -563,7 +404,6 @@ class Dispatcher:
         self.transports = transports or {h.name: Transport(h) for h in self.hosts}
         self.timeout = timeout
         self.log: list[dict] = []
-        self.pushed: dict[str, dict] = {}  # host -> {path: sha256} this process uploaded
         self._lock = threading.Lock()
         self._input_locks: dict[tuple[str, str], threading.Lock] = {}
 
@@ -591,11 +431,8 @@ class Dispatcher:
                 local = Path(pin[0])
                 if not local.is_file() or sha256_file(local) != pin[1]:
                     raise RuntimeError(f"learner lacks pinned input {pin[0]}")
-                created = transport.push(local, pin[0], pin[1])
+                transport.push(local, pin[0], pin[1])
                 pushed += local.stat().st_size
-                if created and host.kind == "ssh":
-                    with self._lock:
-                        self.pushed.setdefault(host.name, {})[pin[0]] = pin[1]
         return pushed
 
     @staticmethod
@@ -710,66 +547,7 @@ class Dispatcher:
                    "collection_seconds": round(collected, 3), "failed_hosts": sorted(failed),
                    "events": self.log, "merged": merged}
         (staging_root / "dispatch.json").write_text(json.dumps(receipt, indent=1))
-        self.prune(input_closure(whole))
         return receipt
-
-    def prune(self, current: set) -> None:
-        """Remote retention: files pushed for earlier iterations (old checkpoints) are deleted
-        once a later collection has merged; current pins and never-pushed files are kept."""
-        state_path = self.config.get("state_path")
-        if not state_path:
-            return
-        state_path = Path(state_path)
-        with state_lock(state_path):
-            self._prune_locked(state_path, current)
-
-    @staticmethod
-    def storage_key(host: Host) -> str:
-        """Retention records belong to a remote storage, not to a host name: the name plus a hash of
-        how it is reached (ssh target, container or VM wrap, transport and scratch). A name reused for
-        another machine starts with no ownership there."""
-        reach = json.dumps([host.kind, host.ssh, host.remote_wrap, getattr(host, "transport", "shell"),
-                            getattr(host, "agent_wrap", ""), host.scratch])
-        return f"{host.name}#{hashlib.sha256(reach.encode()).hexdigest()[:16]}"
-
-    def storage_key_now(self, host: Host) -> str | None:
-        """storage_key plus the collector storage's generation marker; None when the marker cannot be
-        read, in which case nothing is pruned on that host this time."""
-        try:
-            return f"{self.storage_key(host)}@{self.transports[host.name].storage_id()}"
-        except Exception as error:  # noqa: BLE001
-            self.note(event="storage-marker-unreadable", host=host.name, error=str(error)[-200:])
-            return None
-
-    def _prune_locked(self, state_path: Path, current: set) -> None:
-        state = json.loads(state_path.read_text()) if state_path.exists() else {}
-        keep_paths = {p for p, _ in current}
-        for host in self.hosts:
-            key = self.storage_key_now(host) if host.prune_pushed and host.kind == "ssh" else self.storage_key(host)
-            if key is None:
-                continue
-            previous = state.get(key, {})
-            if not isinstance(previous, dict):
-                previous = {}  # an older state format holds no hashes: forget, never delete
-            now = self.pushed.get(host.name, {})
-            merged = dict(previous) | now
-            if host.prune_pushed and host.kind == "ssh":
-                for path in sorted(set(merged) - set(now) - keep_paths):
-                    # Delete only the very file this dispatcher installed (its ownership witness).
-                    try:
-                        outcome = self.transports[host.name].remove_owned(path, merged[path])
-                    except Exception as error:  # noqa: BLE001  kept for the next collection
-                        self.note(event="prune-failed", host=host.name, path=path, error=str(error)[-200:])
-                        continue
-                    if outcome.startswith("kept "):
-                        self.note(event="kept-aside", host=host.name, path=path, kept=outcome[5:])
-                    else:
-                        self.note(event="pruned" if outcome == "removed" else "not-owned", host=host.name, path=path)
-                    del merged[path]
-            state[key] = dict(sorted(merged.items()))
-        stage = state_path.with_name(f"{state_path.name}.{uuid.uuid4().hex}.stage")
-        stage.write_text(json.dumps(state, indent=1))
-        os.replace(stage, state_path)
 
     def audit(self, whole, iteration, jobs, results, staging, tag_root, failed):
         audit = self.config.get("audit", {})
