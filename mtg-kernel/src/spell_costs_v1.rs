@@ -1460,13 +1460,34 @@ fn selected_spell_quote_branch_grant_v1(
         selected.component_groups.extend(retrace);
     }
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
+    let pending = state
+        .engine
+        .pending_cast
+        .as_ref()
+        .filter(|p| p.spell == source);
+    let order = pending.and_then(|p| p.graveyard_cost_first_v1);
+    if let Some(costs) = super::compound_cast_cost_v1::Costs::optional_escape(definition, method) {
+        let choice = pending.and_then(|p| p.optional_additional_cost_paid);
+        if choice.is_none()
+            || pending.is_some_and(super::compound_cast_cost_v1::Costs::ordered_optional)
+        {
+            let joint = costs.quote(
+                &selected,
+                state,
+                source,
+                player,
+                x,
+                modifiers,
+                chosen_prefix,
+                order,
+                reserved_graveyard,
+            );
+            if joint.is_some() || choice == Some(true) {
+                return joint.map(|(mana, _)| mana);
+            }
+        }
+    }
     if let Some(costs) = selected.compound_costs(definition, method, mode, x) {
-        let order = state
-            .engine
-            .pending_cast
-            .as_ref()
-            .filter(|p| p.spell == source)
-            .and_then(|p| p.graveyard_cost_first_v1);
         let (mana, _) = costs.quote(
             &selected,
             state,
@@ -1936,12 +1957,8 @@ pub(super) fn prepare_final_spell_payment_v1(
         state,
     )?;
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
-    let compound = selected.compound_costs(
-        definition,
-        method,
-        pending.mode_chosen.unwrap_or(0),
-        pending.selected_x_v59().unwrap_or(0),
-    );
+    let compound = super::compound_cast_cost_v1::Costs::pending(state, pending, definition);
+    let ordered_optional = compound.is_some_and(|costs| costs.pays_optional());
     let choices = if compound.is_some() {
         SpellComponentChoicesV1 {
             ordered_objects: Vec::new(),
@@ -1999,7 +2016,8 @@ pub(super) fn prepare_final_spell_payment_v1(
     {
         return None;
     }
-    let optional_kind = if pending.optional_additional_cost_paid == Some(true) {
+    let optional_kind = if !ordered_optional && pending.optional_additional_cost_paid == Some(true)
+    {
         Some(definition.optional_additional_cost?)
     } else {
         None

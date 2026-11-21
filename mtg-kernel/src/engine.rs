@@ -2869,7 +2869,7 @@ fn validate_spell_source_contract_fields(
                 "spell optional additional-cost provenance is not definition-owned".to_string(),
             );
         }
-        validate_optional_additional_paid_refs(kind, item.controller, &item.v4.paid_cost_refs)?;
+        spell_optional_paid_refs(item, def, kind)?;
     }
     let battlemage_kickers = item.v4.battlemage_kickers_v1.0;
     let bad_kicker_receipt = if crate::eternal_premodern_p2b_v1::is_thornscape(def) {
@@ -8483,6 +8483,40 @@ fn optional_additional_cost_is_payable(
     }
 }
 
+/// Check both branches together with escape, including the actual sacrifice destination.
+fn optional_additional_cost_branches(
+    state: &GameState,
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+    kind: OptionalAdditionalCostDef,
+) -> Result<[bool; 2], String> {
+    let method = pending.source_contract.cast_method;
+    if compound_cast_cost_v1::Costs::optional_escape(def, method).is_none() {
+        return Ok([
+            true,
+            optional_additional_cost_is_payable(kind, pending.controller, state)?,
+        ]);
+    }
+    let mut projected = state.clone();
+    Ok([false, true].map(|pay| {
+        let cast = projected
+            .engine
+            .pending_cast
+            .as_mut()
+            .expect("optional choice belongs to the pending cast");
+        cast.optional_additional_cost_paid = Some(pay);
+        pending_cast_quote_v1(
+            def,
+            projected.engine.pending_cast.as_ref().unwrap(),
+            method,
+            pending.kicked == Some(true),
+            pending.selected_x_v59().unwrap_or(0),
+            &projected,
+        )
+        .is_some()
+    }))
+}
+
 fn optional_additional_cost_selection_is_complete(
     pending: &PendingCast,
     def: &card_def::CardDef,
@@ -8501,10 +8535,59 @@ fn optional_additional_cost_selection_is_complete(
         (
             Some(OptionalAdditionalCostDef::Bargain | OptionalAdditionalCostDef::Casualty(_)),
             Some(true),
-        ) => Ok(pending.optional_additional_cost_chosen.len() == 1),
+        ) => {
+            if let Some(costs) = compound_cast_cost_v1::Costs::pending(state, pending, def)
+                .filter(|costs| costs.pays_optional())
+            {
+                return Ok(pending.sacrifice_chosen.len() == costs.count());
+            }
+            Ok(pending.optional_additional_cost_chosen.len() == 1)
+        }
         (Some(_), None) => Ok(false),
         _ => Err("pending cast optional additional-cost state is noncanonical".to_string()),
     }
+}
+
+/// Escape receipts precede the optional sacrifice receipt regardless of payment order.
+fn spell_optional_paid_refs<'a>(
+    item: &'a StackItem,
+    def: &card_def::CardDef,
+    kind: OptionalAdditionalCostDef,
+) -> Result<&'a [PaidCostRefV4], String> {
+    let refs = &item.v4.paid_cost_refs;
+    if let Some(costs) = item
+        .v4
+        .cast_method
+        .and_then(|method| compound_cast_cost_v1::Costs::optional_escape(def, method))
+    {
+        if refs.len() != costs.count() {
+            return Err("optional escape has the wrong number of payment receipts".into());
+        }
+        let (exiles, sacrifice) = refs.split_at(refs.len() - 1);
+        let paid = &sacrifice[0];
+        if exiles.iter().enumerate().any(|(i, exile)| {
+            exile.object == item.source
+                || exile.zone != Zone::Exile
+                || exile.owner != item.controller
+                || exile.visible_to_mask != 0b11
+                || card_def::CARD_DEFS
+                    .get(usize::from(exile.card_def))
+                    .is_none_or(|card| card.is_token)
+                || exiles[..i].iter().any(|prior| prior.object == exile.object)
+                || (exile.object == paid.object
+                    && (paid.zone != Zone::Graveyard
+                        || exile.card_def != paid.card_def
+                        || exile.owner != paid.owner
+                        || paid.zone_change_count.checked_add(1) != Some(exile.zone_change_count)))
+        }) || paid.object == item.source
+        {
+            return Err("optional escape carries invalid exile or sacrifice provenance".into());
+        }
+        validate_optional_additional_paid_refs(kind, item.controller, sacrifice)?;
+        return Ok(sacrifice);
+    }
+    validate_optional_additional_paid_refs(kind, item.controller, refs)?;
+    Ok(refs)
 }
 
 fn validate_optional_additional_paid_refs(
@@ -14967,12 +15050,7 @@ fn remaining_cast_payment_is_payable(
     ) else {
         return false;
     };
-    if let Some(costs) = selected.compound_costs(
-        def,
-        method,
-        pending.mode_chosen.unwrap_or(0),
-        pending.selected_x_v59().unwrap_or(0),
-    ) {
+    if let Some(costs) = compound_cast_cost_v1::Costs::pending(state, pending, def) {
         return pending.graveyard_cost_first_v1.is_some_and(|first| {
             pending.sacrifice_chosen.len() == costs.count()
                 && costs.can_finish(state, pending, first, &pending.sacrifice_chosen)
@@ -16878,6 +16956,9 @@ pub(crate) fn validate_pending_cast(
 
     let compound = compound_cast_cost_v1::Costs::pending(state, pending, def);
     let interactive_object_cost_needed = if let Some(costs) = compound {
+        if costs.pays_optional() && !pending.optional_additional_cost_chosen.is_empty() {
+            return Err("compound sacrifice carries a second optional binding".into());
+        }
         if let Some(first) = pending.graveyard_cost_first_v1 {
             if compound_cast_cost_v1::Costs::waiting_for_x(pending, def)
                 || pending.cast_mode.is_none()
@@ -17352,21 +17433,27 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
 
     if let Some(kind) = def.optional_additional_cost {
         if pending.optional_additional_cost_paid.is_none() {
-            match optional_additional_cost_is_payable(kind, pending.controller, state) {
-                Ok(true) => {
+            match optional_additional_cost_branches(state, &pending, def, kind) {
+                Ok([true, true]) => {
                     return Some(Decision::ChooseEffectOption {
                         player: pending.controller,
                         source: pending.spell,
                         option_count: 2,
                     });
                 }
-                Ok(false) => {
+                Ok([false, false]) => {
+                    let method = finalized_cast_method(&pending, staged_method, def);
+                    let pending = state.engine.pending_cast.take().unwrap();
+                    abort_cast(state, pending, method);
+                    return None;
+                }
+                Ok([_, pay]) => {
                     state
                         .engine
                         .pending_cast
                         .as_mut()
                         .expect("validated cast remains pending")
-                        .optional_additional_cost_paid = Some(false);
+                        .optional_additional_cost_paid = Some(pay);
                     return drain_pending_cast_or_decide(state);
                 }
                 Err(_) => {
@@ -17812,7 +17899,10 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         }
     }
 
-    if pending.optional_additional_cost_paid == Some(true) {
+    if pending.optional_additional_cost_paid == Some(true)
+        && !compound_cast_cost_v1::Costs::pending(state, &pending, def)
+            .is_some_and(|costs| costs.pays_optional())
+    {
         match def
             .optional_additional_cost
             .expect("a paid optional additional cost remains definition-owned")
@@ -23062,13 +23152,19 @@ fn resolve_top_of_stack(state: &mut GameState) -> ResolutionProgress {
     };
     if item.kind == StackItemKind::Spell {
         if let Some(kind) = item.v4.optional_additional_cost_paid {
+            let def = &card_def::CARD_DEFS[state.objects.get(item.source).card_def as usize];
+            let Ok(receipts) = spell_optional_paid_refs(&item, def, kind) else {
+                state.engine.halted =
+                    Some((UnsupportedMechanic::InvalidEffectContinuation, item.source));
+                return ResolutionProgress::Suspended;
+            };
             state
                 .engine
                 .event_log
                 .push(CommittedEvent::OptionalAdditionalCostPaid {
                     source: item.source,
                     kind,
-                    paid_cost_refs: item.v4.paid_cost_refs.clone(),
+                    paid_cost_refs: receipts.to_vec(),
                 });
         }
     }
@@ -26917,7 +27013,10 @@ fn pending_cast_action_stage(
     {
         return Ok(PendingCastActionStage::ChooseCostTarget);
     }
-    if pending.optional_additional_cost_paid == Some(true) {
+    if pending.optional_additional_cost_paid == Some(true)
+        && !compound_cast_cost_v1::Costs::pending(state, &pending, def)
+            .is_some_and(|costs| costs.pays_optional())
+    {
         match def
             .optional_additional_cost
             .ok_or("paid optional additional cost lost its definition")?
@@ -27863,8 +27962,8 @@ fn apply_choose_optional_additional_cost(
     let kind = def
         .optional_additional_cost
         .ok_or("this spell has no optional additional cost")?;
-    if !optional_additional_cost_is_payable(kind, pending.controller, state)? {
-        return Err("optional additional cost is no longer payable".to_string());
+    if optional_additional_cost_branches(state, &pending, def, kind)? != [true, true] {
+        return Err("optional additional cost choice is no longer offered".to_string());
     }
     let paid = match option_index {
         0 => false,
