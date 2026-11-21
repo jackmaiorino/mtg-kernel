@@ -2350,12 +2350,16 @@ pub fn run_native_expanded_training_v1(
     Ok(result)
 }
 
+pub mod follow_v1;
+
 #[cfg(test)]
 mod verified_pin_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod follow_tests;
     /// The final state of `portable_math_run_trains_one_state_on_every_system_and_worker_count`,
     /// the same on every system. Native236 and CI39598628050 observe this CPU
     /// regression state after the CR 117.3c/117.5 caster-priority correction.
