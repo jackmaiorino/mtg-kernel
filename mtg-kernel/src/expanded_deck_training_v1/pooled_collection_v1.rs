@@ -597,6 +597,7 @@ mod tests {
                 mulligan_modes: None,
                 london_keep_offset: None,
                 priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         (root, source, episodes)
