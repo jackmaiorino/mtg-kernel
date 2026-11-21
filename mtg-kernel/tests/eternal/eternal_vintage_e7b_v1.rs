@@ -1160,6 +1160,67 @@ fn commandeer_exiles_two_blue_cards_takes_a_spell_and_may_retarget_it() {
     assert_eq!(state.players[1].life, 17, "the stolen Bolt hit its caster");
 }
 
+fn commandeered_pursue_the_past_dredges(caster: PlayerId) {
+    let mut state = islands();
+    if caster == P1 {
+        opponents_main_phase(&mut state);
+    }
+    let drawer = caster.opponent();
+    let pursue = put(&mut state, caster, "Pursue the Past", Zone::Hand);
+    let commandeer = put(&mut state, drawer, "Commandeer", Zone::Hand);
+    let fodder = put(&mut state, drawer, "Lightning Bolt", Zone::Hand);
+    let thug = put(&mut state, drawer, "Golgari Thug", Zone::Graveyard);
+    let library = state.players[drawer.index()].library.clone();
+
+    pool(&mut state, caster, &[ManaColor::R, ManaColor::W], 0);
+    pool(&mut state, drawer, &[ManaColor::U, ManaColor::U], 5);
+    cast(&mut state, pursue, &[]);
+    next(&mut state);
+    act(&mut state, Action::Pass);
+    cast(&mut state, commandeer, &[Target::Object(pursue)]);
+    settle_with(&mut state, |_, decision| match decision {
+        Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            selected_count: 0,
+            ..
+        } if legal_targets.contains(&Target::Object(fodder)) => {
+            assert_eq!(player, drawer);
+            Action::ChooseEffectTarget(Target::Object(fodder))
+        }
+        Decision::ChooseEffectTargets {
+            player,
+            legal_targets,
+            selected_count: 0,
+            ..
+        } if legal_targets.contains(&Target::Object(thug)) => {
+            assert_eq!(player, drawer);
+            Action::ChooseEffectTarget(Target::Object(thug))
+        }
+        other => first_answer(other),
+    });
+
+    assert_eq!(state.players[drawer.index()].life, 22);
+    assert!(state.players[drawer.index()].graveyard.contains(&fodder));
+    assert!(library[..4]
+        .iter()
+        .all(|card| state.players[drawer.index()].graveyard.contains(card)));
+    assert!(hand_contains(&state, drawer, thug));
+    assert!(hand_contains(&state, drawer, library[4]), "second draw");
+    assert_eq!(state.players[drawer.index()].library, library[5..]);
+    assert!(state.players[caster.index()].graveyard.contains(&pursue));
+}
+
+#[test]
+fn commandeered_pursue_dredges_after_discard_with_p0_as_caster() {
+    commandeered_pursue_the_past_dredges(P0);
+}
+
+#[test]
+fn commandeered_pursue_dredges_after_discard_with_p1_as_caster() {
+    commandeered_pursue_the_past_dredges(P1);
+}
+
 #[test]
 fn commandeered_artifact_spells_enter_under_the_new_controller() {
     let mut state = islands();
