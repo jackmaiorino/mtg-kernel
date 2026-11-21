@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 import re
+import shlex
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -312,6 +313,52 @@ def predict(features: str, target: str = "linux") -> list[str]:
 
 def feature_only(features: str, target: str = "linux") -> list[str]:
     return sorted(set(predict(features, target)) - set(predict("", target)))
+
+
+WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+
+
+def full_set_feature_steps(path: Path = WORKFLOW) -> list[tuple[str, list[str]]]:
+    """(features, library filters) of every full-set test command that builds with features: each
+    run_rust_lib_filters.py call and plain `cargo test --lib` call, excluding the trainer rows themselves and the
+    Limited-only call (it runs every Limited-only case, which the Limited row's added tests include)."""
+    text = re.sub(r"\\\n\s*", " ", path.read_text(encoding="utf-8"))
+    steps = []
+    for line in text.splitlines():
+        if "--features" not in line or "--limited-only-workflow" in line:
+            continue
+        if "run_rust_lib_filters.py" in line:
+            words = shlex.split(line.split("run_rust_lib_filters.py", 1)[1])
+            valued = {"--features", "--shard-index", "--shard-count", "--filter-timeout-seconds"}
+        elif "cargo test" in line and "--lib" in line.split():
+            words = shlex.split(line.split("cargo test", 1)[1].split(" -- ", 1)[0])
+            valued = {"--features", "--test", "--bin", "-p", "--package"}
+        else:
+            continue
+        features = words[words.index("--features") + 1].replace(" ", ",")
+        filters, i = [], 0
+        while i < len(words):
+            if words[i] in valued:
+                i += 2
+                continue
+            if not words[i].startswith("-"):
+                filters.append(words[i])
+            i += 1
+        steps.append((features, filters))
+    return steps
+
+
+def full_set_tests(features: str, target: str = "linux") -> list[str]:
+    """Selected tests the full set's feature commands with exactly this feature set (same Cargo closure) run."""
+    enabled = closure(features)
+    filters = [f for step, fs in full_set_feature_steps() if closure(step) == enabled for f in fs]
+    return sorted(name for name in predict(features, target) if any(f in name for f in filters))
+
+
+def row_tests(features: str, target: str = "linux") -> list[str]:
+    """What a feature row runs: the selected tests its build adds over the default build, plus the selected tests
+    the full set's own commands with this feature set run, so the row is never weaker than the full set."""
+    return sorted(set(feature_only(features, target)) | set(full_set_tests(features, target)))
 
 
 def atoms(tree) -> set[str]:

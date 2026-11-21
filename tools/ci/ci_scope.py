@@ -70,11 +70,20 @@ TRAINER_FILTERS = [
 # Windows default row runs the selected tests on Windows, as the pull request set's Windows workspace suite does.
 # Selected tests that compile only on Windows with other features are outside this scope, as they are outside the
 # pull request set; tools/ci/tests/test_ci_scope.py fails if any other selected test is compiled by no row.
-FEATURE_SETS = ["", "experimental-burn-net8-packed-cuda-v1,gpu-exact-fault-injection-v1", "limited-fdn-fixtures",
-                "standard-magezero-fixtures", "eternal-fixtures",
+FEATURE_SETS = ["", "experimental-burn-net8-packed-cuda-v1,gpu-exact-v1", "limited-fdn-fixtures",
+                "limited-fdn-fixtures,native-training-store-v2-production", "standard-magezero-fixtures",
+                "eternal-fixtures", "gameplay-decision-trace-v1",
                 "viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1,"
-                "native-training-store-v2-production"]
+                "native-training-store-v2-production,gpu-exact-fault-injection-v1"]
 TRAINER_ROWS = [("linux", features) for features in FEATURE_SETS] + [("windows", "")]
+# The rust-quality job's formatting and Clippy commands (a test keeps them equal), for local runs.
+QUALITY_COMMANDS = [
+    "cargo fmt --all -- --check",
+    "cargo clippy --release --locked --workspace --all-targets -- -D warnings",
+    "cargo clippy --release --locked -p mtg-kernel --all-targets --features native-training-store-v2-production -- -D warnings",
+    "cargo clippy --release --locked -p mtg-kernel --all-targets --features limited-fdn-fixtures -- -D warnings",
+    "cargo clippy --release --locked -p mtg-kernel --all-targets --features experimental-burn-net8-packed-cuda-v1,gpu-exact-v1 -- -D warnings",
+]
 
 
 BIT_IDENTITY_ROWS = [
@@ -148,8 +157,9 @@ def markdown() -> str:
     out += ["", "Library test filters: " + ", ".join(f"`{f}`" for f in TRAINER_FILTERS) + ".", "",
             "Rows: Linux with " + ", ".join(f"`{f or 'default features'}`" for f in FEATURE_SETS)
             + ", and Windows with default features. A default row runs every library test the filters select; "
-            "another row runs exactly the selected tests its build compiles and the default build does not "
-            "(`tools/ci/rust_test_cfg.py`, checked against the compiled inventory on every run). Selected tests "
+            "another row runs the selected tests its build compiles and the default build does not, plus the selected "
+            "tests the full pull request set's own commands with the same feature set run, so no row is weaker than "
+            "the full set (`tools/ci/rust_test_cfg.py`, checked against the compiled inventory on every run). Selected tests "
             "that compile only on Windows with other features are not run here, as in the pull request set.", "",
             trainer_record(), "", BLIND_NOTE, "", RULES_NOTE, ""]
     return "\n".join(out)
@@ -170,8 +180,12 @@ def main(argv: list[str]) -> int:
         if argv[2] != "release-trainer":
             print(f"no local command list for scope {argv[2]}", file=sys.stderr)
             return 2
-        for features in FEATURE_SETS:
-            print(f'python tools/ci/run_trainer_row.py --features "{features}"')
+        # The lint job's commands, then this host's rows (Windows runs only its default row, as in CI).
+        for command in QUALITY_COMMANDS:
+            print(command)
+        for os_name, features in TRAINER_ROWS:
+            if os_name == ("windows" if sys.platform == "win32" else "linux"):
+                print(f'python tools/ci/run_trainer_row.py --features "{features}"')
         return 0
     if command == "choose":
         labels = json.loads(os.environ.get("LABELS") or "[]")

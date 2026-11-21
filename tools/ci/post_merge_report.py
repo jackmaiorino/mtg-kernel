@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import sys
 import urllib.request
 from typing import Callable
@@ -73,27 +74,71 @@ def last_monitored_commit(get: Get, repo: str, branch: str, run_id) -> str | Non
     return None
 
 
-def covered_merges(get: Get, repo: str, branch: str, run_id, head: str) -> list[dict]:
-    """First-parent commits after the last monitored commit up to head, oldest first: {sha, pull, author}."""
+# The most first-parent commits a report walks back; a longer range is reported as incomplete, never silently.
+MAX_COVERED = 100
+
+
+def covered_merges(get: Get, repo: str, branch: str, run_id, head: str) -> tuple[list[dict], bool]:
+    """First-parent commits after the last monitored commit up to head, oldest first ({sha, pull, author}), and
+    whether the walk reached that commit (always true when there is no earlier monitored run)."""
     base = last_monitored_commit(get, repo, branch, run_id)
-    shas = [head]
+    shas, sha, complete = [], head, True
     if base:
-        compare = get(f"/repos/{repo}/compare/{base}...{head}?per_page=250")
-        parents = {c["sha"]: [p["sha"] for p in c["parents"]] for c in compare["commits"]}
-        shas, sha = [], head
-        while sha in parents and sha != base:
+        while sha != base:
+            if len(shas) == MAX_COVERED:
+                complete = False
+                break
             shas.append(sha)
-            sha = parents[sha][0]
-        if not shas or (sha != base and len(compare["commits"]) >= 250):
-            shas = shas or [head]      # beyond the comparison limit: report what is listed
-    out = []
-    for sha in reversed(shas):
-        pulls = get(f"/repos/{repo}/commits/{sha}/pulls") or []
-        merged = [p for p in pulls if p.get("merged_at")] or pulls
-        pull = merged[0] if merged else None
-        out.append({"sha": sha, "pull": pull["number"] if pull else None,
-                    "author": (pull.get("user") or {}).get("login") if pull else None})
-    return out
+            parents = get(f"/repos/{repo}/commits/{sha}")["parents"]
+            if not parents:
+                complete = False      # reached a root without meeting the base (history rewritten)
+                break
+            sha = parents[0]["sha"]
+    else:
+        shas = [head]
+    return [merged_pull_request(get, repo, branch, sha) for sha in reversed(shas)], complete
+
+
+def merged_pull_request(get: Get, repo: str, branch: str, sha: str) -> dict:
+    """{sha, pull, author}: the pull request merged into branch whose merge commit is sha (pull None if there is
+    no such pull request or more than one)."""
+    pulls, page = [], 1
+    while True:
+        rows = get(f"/repos/{repo}/commits/{sha}/pulls?per_page=100&page={page}") or []
+        pulls += rows
+        if len(rows) < 100:
+            break
+        page += 1
+    matches = [p for p in pulls if p.get("merged_at") and (p.get("base") or {}).get("ref") == branch
+               and p.get("merge_commit_sha") == sha]
+    pull = matches[0] if len(matches) == 1 else None
+    return {"sha": sha, "pull": pull["number"] if pull else None,
+            "author": (pull.get("user") or {}).get("login") if pull else None}
+
+
+def is_monitor(get: Get, repo: str, run: dict) -> bool:
+    """Whether a completed run is a red monitor: its post-merge-report job executed (the workflow starts it only
+    for a push run, or a full dispatch, on main or a release line with a failed or cancelled job)."""
+    jobs = get(f"/repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")["jobs"]
+    return any(job["name"] == "Report a red post-merge run" and job.get("conclusion") in ("success", "failure")
+               for job in jobs)
+
+
+# Failed-job name prefixes and the dispatch scope that reruns them alone; any other job reruns with a full dispatch.
+JOB_SCOPES = [("Trainer library tests", "release-trainer")]
+
+
+def rerun_scope(failed: list[str]) -> str:
+    """The one dispatch scope that reruns every failed job, or "" for a full dispatch."""
+    found = {next((scope for prefix, scope in JOB_SCOPES if name.startswith(prefix)), "") for name in failed}
+    return found.pop() if len(found) == 1 else ""
+
+
+def bisect_commands(merges: list[dict], scope: str) -> list[str]:
+    """Per covered commit: push a branch at it and dispatch the rerun there."""
+    flag = f" -f scope={scope}" if scope else ""
+    return [f"git push origin {m['sha']}:refs/heads/bisect-{m['sha'][:9]} && "
+            f"gh workflow run ci.yml --ref bisect-{m['sha'][:9]}{flag}" for m in merges]
 
 
 def strip_mentions(text: str) -> str:
@@ -104,34 +149,41 @@ def label(merge: dict) -> str:
     return f"`{merge['sha'][:9]}`" + (f" (#{merge['pull']})" if merge["pull"] else " (no pull request)")
 
 
-def compose(run_url: str, ref: str, event: str, failed: list[str], merges: list[dict]) -> tuple[str, str]:
+def compose(run_url: str, ref: str, event: str, failed: list[str], merges: list[dict],
+            complete: bool = True) -> tuple[str, str]:
     kind = "push run" if event == "push" else "full dispatch run"
     oldest = merges[0]
     responder = (f"the author of #{oldest['pull']}" if oldest["pull"] else f"the author of `{oldest['sha'][:9]}`")
+    if not complete:
+        responder = "the author of the oldest merge in the range (beyond the listed commits)"
+    scope = rerun_scope(failed)
+    rerun = f"a `{scope}` dispatch" if scope else "a full dispatch"
     body = "\n".join([
         f"Post-merge CI {kind} on `{ref}` failed: {run_url}", "",
-        f"It covers {len(merges)} merge{'s' if len(merges) != 1 else ''}, oldest first:",
+        (f"It covers {len(merges)} merge{'s' if len(merges) != 1 else ''}, oldest first:" if complete else
+         f"It covers more than {len(merges)} merges; the newest {len(merges)}, oldest first (the range continues "
+         "before the first one listed):"),
         *[f"- {label(m)}" for m in merges], "", "Failed jobs:", *[f"- {name}" for name in failed], "",
-        f"First responder: {responder} (the oldest covered merge), who bisects by rerunning the failed job scoped "
-        "on each covered commit (push a branch at the commit, then `gh workflow run ci.yml --ref BRANCH -f "
-        "scope=SCOPE`), then fixes forward or reverts the same day (merge rule of 2026-11-21) and says which in "
-        "the handoff log."])
-    line = (f"[CI] post-merge {kind} red on {ref} covering " + ", ".join(label(m).replace("`", "") for m in merges)
-            + f": {', '.join(failed)}; first responder {responder}; {run_url}")
+        f"First responder: {responder} (the oldest covered merge). They bisect by rerunning the failed jobs "
+        f"({rerun}) on each covered commit, then fix forward or revert the same day (merge rule of 2026-11-21) "
+        "and say which in the handoff log:", "", "```", *bisect_commands(merges, scope), "```"])
+    line = (f"[CI] post-merge {kind} red on {ref} covering " + ("" if complete else "(incomplete, newest only) ")
+            + ", ".join(label(m).replace("`", "") for m in merges)
+            + f": {', '.join(failed)}; first responder {responder}, who bisects with {rerun.replace('`', '')} on "
+            f"each covered commit; {run_url}")
     return strip_mentions(body), strip_mentions(line)
 
 
-def append_command(created_at: str, ref: str) -> str:
-    """The command a session runs, from a collab checkout, to put this red run in the handoff log."""
-    return (f"python <mtg-kernel checkout>/tools/ci/red_push_runs.py --since {created_at or '<run start, UTC>'} "
-            f"--branches {ref} --append {HANDOFF_LOG}")
+def append_command(line: str) -> str:
+    """The exact command, run from a collab checkout, that appends this run's line to the handoff log."""
+    return f"printf '%s\\n' {shlex.quote(line)} >> {HANDOFF_LOG}"
 
 
 def report(get: Get, repo: str, run: dict) -> tuple[str, str, list[dict]]:
     """Comment body, handoff line and covered merges of a red run (run: id, head_sha, head_branch, event, url)."""
     failed = failed_jobs(get, repo, run["id"]) or ["(no failed job identified; see the run)"]
-    merges = covered_merges(get, repo, run["head_branch"], run["id"], run["head_sha"])
-    body, line = compose(run["html_url"], run["head_branch"], run["event"], failed, merges)
+    merges, complete = covered_merges(get, repo, run["head_branch"], run["id"], run["head_sha"])
+    body, line = compose(run["html_url"], run["head_branch"], run["event"], failed, merges, complete)
     return body, line, merges
 
 
@@ -145,7 +197,7 @@ def main() -> int:
     body, line, merges = report(get, repo, run)
     for number in sorted({m["pull"] for m in merges if m["pull"]}):
         request("POST", f"/repos/{repo}/issues/{number}/comments", {"body": body})
-    command = append_command(run.get("created_at", ""), run["head_branch"])
+    command = append_command(line)
     print(body)
     print("Handoff log line: " + line)
     print("To add it to the handoff log, run from a collab checkout: " + command)

@@ -3,8 +3,8 @@ inventory against tools/ci/rust_test_cfg.py's prediction, and run that row's tes
 
 The default row runs every library test the trainer filters select (python/tools/run_rust_lib_filters.py, with
 its per-case limits). Any other row runs exactly the selected tests its build compiles and the default build does
-not, so tests that only hold without the feature (for example fixtures that a catalog feature rejects) never run
-under it; each of those runs as its own process with a time limit. A difference between the compiled inventory
+not, plus the selected tests the full pull request set's own commands with the same feature set run (so the row is
+never weaker than the full set); tests that only hold without the feature never run under it; each of those runs as its own process with a time limit. A difference between the compiled inventory
 and the prediction fails the row before any test runs. The Linux default row first fails if a selected test that
 some Linux build could compile is compiled by no row (rust_test_cfg.py check-coverage).
 
@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -65,6 +66,9 @@ def main() -> int:
     parser.add_argument("--features", required=True)
     features = parser.parse_args().features
     target = "windows" if sys.platform == "win32" else "linux"
+    if platform.machine().lower() not in ("x86_64", "amd64") or not sys.platform.startswith(("win32", "linux")):
+        print(f"unsupported host {sys.platform}/{platform.machine()}: the predictor models x86-64 Linux and Windows")
+        return 2
     if not features and target == "linux" and rust_test_cfg.check_coverage():
         return 1
     executable = build(features)
@@ -79,11 +83,11 @@ def main() -> int:
     if not features:
         command = [sys.executable, "python/tools/run_rust_lib_filters.py", "--features", "", *ci_scope.TRAINER_FILTERS]
         return subprocess.run(command, cwd=ROOT, check=False).returncode
-    added = rust_test_cfg.feature_only(features, target)
+    added = rust_test_cfg.row_tests(features, target)
     # #[ignore] cases keep their explicit-invocation rule: listed as ignored, never run or reported as passed.
     ignored = sorted(compiled(executable, ignored=True) & set(added))
     runnable = [name for name in added if name not in ignored]
-    print(json.dumps({"feature_only": added, "count": len(added), "ignored": ignored,
+    print(json.dumps({"row_tests": added, "count": len(added), "ignored": ignored,
                       "runnable_count": len(runnable)}), flush=True)
     if not runnable:
         return 0

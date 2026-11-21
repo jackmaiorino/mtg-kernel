@@ -78,6 +78,27 @@ class TableTests(unittest.TestCase):
         self.assertNotIn("native_training_store_run_v2::tests::valid_fixture_roundtrips_and_exposes_authority",
                          standard)
 
+    def test_feature_rows_include_every_full_set_feature_filter_for_the_qualifying_files(self):
+        import rust_test_cfg
+        rows = [rust_test_cfg.closure(f) for os_name, f in ci_scope.TRAINER_ROWS if os_name == "linux" and f]
+        steps = rust_test_cfg.full_set_feature_steps()
+        self.assertGreater(len(steps), 10)
+        for features, filters in steps:
+            hits = [n for n in rust_test_cfg.predict(features) if any(f in n for f in filters)]
+            if not hits:
+                continue
+            with self.subTest(features=features):
+                (row,) = [f for os_name, f in ci_scope.TRAINER_ROWS
+                          if os_name == "linux" and f and rust_test_cfg.closure(f) == rust_test_cfg.closure(features)]
+                self.assertTrue(set(hits) <= set(rust_test_cfg.row_tests(row)), features)
+        self.assertTrue(rows)
+
+    def test_local_commands_carry_the_lint_job_commands(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        job = text[text.index("  rust-quality:\n"):text.index("  rust-test-groups:\n")]
+        for command in ci_scope.QUALITY_COMMANDS:
+            self.assertIn("run: " + command, job)
+
     def test_the_record_names_the_mandatory_rows(self):
         record = ci_scope.trainer_record()
         for row in ci_scope.BIT_IDENTITY_ROWS:
@@ -219,13 +240,16 @@ class MonitorTests(unittest.TestCase):
                 ran = {i: c for i, h, c, t in runs}.get(rid) == "ran-cancelled"
                 return {"jobs": [{"name": "Rust tests (ubuntu-24.04, limited)", "conclusion":
                                   "failure" if rid == run_id else ("success" if ran else None)}]}
-            if "/compare/" in path:
-                base = path.split("/compare/")[1].split("...")[0]
-                return {"commits": commits[chain.index(base) + 1:]}
-            if path.endswith("/pulls"):
+            if "/pulls?" in path:
                 sha = path.split("/commits/")[1].split("/")[0]
                 number, login = pulls[sha]
-                return [{"number": number, "merged_at": "x", "user": {"login": login}}]
+                return [{"number": number, "merged_at": "x", "user": {"login": login}, "merge_commit_sha": sha,
+                         "base": {"ref": "main"}},
+                        {"number": 999, "merged_at": "x", "user": {"login": "z"}, "merge_commit_sha": "other",
+                         "base": {"ref": "main"}}]
+            if path.startswith("/repos/o/r/commits/"):
+                sha = path.rsplit("/", 1)[1]
+                return {"parents": next(c["parents"] for c in commits if c["sha"] == sha)}
             raise AssertionError(path)
         return get
 
@@ -242,7 +266,7 @@ class MonitorTests(unittest.TestCase):
         self.assertIn("It covers 1 merge, oldest first:", body)
         self.assertIn("covering c3 (#837)", line)
         self.assertIn("first responder the author of #837", line)
-        self.assertIn("bisects by rerunning the failed job scoped on each covered commit", body)
+        self.assertIn("They bisect by rerunning the failed jobs", body)
         self.assertNotIn("someone", body + line)
 
     def test_a_run_covering_several_merges_skips_a_replaced_run(self):
@@ -266,6 +290,36 @@ class MonitorTests(unittest.TestCase):
         self.assertIn("covering c2 (#836), c3 (#837)", line)
         self.assertIn("First responder: the author of #836", body)
 
+    def test_a_range_longer_than_the_walk_is_reported_as_incomplete(self):
+        import post_merge_report as report
+        get = self.fake_api(["c0", "c1", "c2", "c3"], [(8, "c0", "success", "2026-11-21T11:00:00Z")],
+                            {"c2": (836, "a"), "c3": (837, "b")})
+        saved, report.MAX_COVERED = report.MAX_COVERED, 2
+        try:
+            body, line, merges = self.run_report(get)
+        finally:
+            report.MAX_COVERED = saved
+        self.assertEqual([m["sha"] for m in merges], ["c2", "c3"])
+        self.assertIn("It covers more than 2 merges", body)
+        self.assertIn("(incomplete, newest only)", line)
+        self.assertNotIn("the author of #836", line)
+
+    def test_the_collector_uses_the_monitor_predicate(self):
+        import red_push_runs as red
+        runs = [{"id": 1, "conclusion": "cancelled", "event": "push", "head_branch": "main"},
+                {"id": 2, "conclusion": "failure", "event": "workflow_dispatch", "head_branch": "main"},
+                {"id": 3, "conclusion": "failure", "event": "pull_request", "head_branch": "main"},
+                {"id": 4, "conclusion": "success", "event": "push", "head_branch": "main"},
+                {"id": 5, "conclusion": "failure", "event": "push", "head_branch": "feature"},
+                {"id": 6, "conclusion": "cancelled", "event": "push", "head_branch": "release/x"}]
+        report_ran = {1: "success", 2: "skipped", 6: None}   # 2: a scoped dispatch; 6: replaced before running
+
+        def get(path):
+            rid = int(path.split("/runs/")[1].split("/")[0])
+            conclusion = report_ran.get(rid)
+            return {"jobs": [{"name": "Report a red post-merge run", "conclusion": conclusion}] if conclusion else []}
+        self.assertEqual([r["id"] for r in red.red_runs(runs, ["main", "release/"], get, "o/r")], [1])
+
     def test_no_earlier_monitored_run_covers_the_head_only(self):
         get = self.fake_api(["c1", "c2", "c3"], [], {"c3": (837, "x")})
         self.assertEqual([m["sha"] for m in self.run_report(get)[2]], ["c3"])
@@ -280,16 +334,34 @@ class MonitorTests(unittest.TestCase):
     def test_the_append_command_and_append_are_exact(self):
         import post_merge_report as report
         import red_push_runs as red
+        import shlex
+        import subprocess
         import tempfile
-        self.assertEqual(report.append_command("2026-11-21T12:00:00Z", "main"),
-                         "python <mtg-kernel checkout>/tools/ci/red_push_runs.py --since 2026-11-21T12:00:00Z "
-                         "--branches main --append HANDOFFS/20261114/README.md")
+        line = "[CI] post-merge push run red on main covering c3 (#837): it's \"x\"; $HOME `y`"
+        command = report.append_command(line)
+        self.assertTrue(command.endswith(">> HANDOFFS/20261114/README.md"))
         with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "HANDOFFS" / "20261114").mkdir(parents=True)
+            bash = "C:/Program Files/Git/bin/bash.exe" if sys.platform == "win32" else "bash"
+            subprocess.run([bash, "-c", command], cwd=tmp, check=True)
+            self.assertEqual((Path(tmp) / "HANDOFFS/20261114/README.md").read_text(encoding="utf-8"), line + "\n")
             log = Path(tmp) / "README.md"
             log.write_text("old\n", encoding="utf-8")
             self.assertEqual(red.append_new(str(log), ["a", "old"]), ["a"])
             self.assertEqual(red.append_new(str(log), ["a"]), [])
             self.assertEqual(log.read_text(encoding="utf-8"), "old\na\n")
+
+    def test_bisect_commands_use_the_scope_that_reruns_the_failed_jobs(self):
+        import post_merge_report as report
+        merges = [{"sha": "c2" * 5, "pull": 836, "author": "a"}, {"sha": "c3" * 5, "pull": 837, "author": "b"}]
+        body, line = report.compose("u", "main", "push", ["Trainer library tests (ubuntu-24.04, shard 1)"], merges)
+        scope = report.JOB_SCOPES[0][1]
+        self.assertIn(f"git push origin {'c2' * 5}:refs/heads/bisect-c2c2c2c2c && gh workflow run ci.yml "
+                      f"--ref bisect-c2c2c2c2c -f scope={scope}", body)
+        self.assertIn(f"who bisects with a {scope} dispatch on each covered commit", line)
+        body, line = report.compose("u", "main", "push", ["Rust tests (windows-2025, workspace-lib)"], merges)
+        self.assertNotIn("-f scope", body)
+        self.assertIn("who bisects with a full dispatch", line)
 
 
 
