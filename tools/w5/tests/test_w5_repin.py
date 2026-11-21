@@ -315,7 +315,7 @@ class RepinTests(unittest.TestCase):
             code = chains.main(['repin', 'begin', '--plan', str(old_path), '--chain', 'c1',
                                 '--request', str(jwrite(self.t / 'req-old.json', req_doc))])
         self.assertEqual(code, w5box.EXIT_REFUSED)
-        self.assertIn('carried chains', err.getvalue())
+        self.assertIn('segment and retention guards', err.getvalue())
 
 
 if __name__ == '__main__':

@@ -214,17 +214,23 @@ def own_files(seg_root, *paths, own_dir=None):
             raise SystemExit(f'stop: {p} resolves outside its segment {seg_root} or has a link in its path')
 
 
+def guarded(chain):
+    """A chain under the link and containment guards: a carried continuation, or an ordinary chain whose manifest
+    names `guards` (chains.py `guards` input; set once, never removed). Ordinary chains: unchanged behaviour."""
+    return bool(chain.get('carry') or chain.get('guards'))
+
+
 def carried_dir(chain, chain_path):
     """`scan`'s extra argument for a carried chain (its manifest's directory); none for an ordinary chain, whose
     call stays as before."""
-    return (Path(chain_path).parent,) if chain.get('carry') else ()
+    return (Path(chain_path).parent,) if guarded(chain) else ()
 
 
 def scan(chain, known, own_dir=None):
     """Index records of the completed updates after the first `known` ones (the records already indexed), in order,
     stopping at the first update without its receipt (a segment's iterations complete in order)."""
     known += chain_start(chain)  # a boundary from here on: a carried chain's records start at update B
-    carried = bool(chain.get('carry'))
+    carried = guarded(chain)
     new = []
     for s, seg in enumerate(chain['segments']):
         if seg['offset'] + seg['updates'] <= known:
@@ -299,7 +305,7 @@ def carried_output_unlinked(out, *dirs):
 def is_carried(chain_path):
     """True when `chain_path` is a readable carried manifest (one with `carry`)."""
     try:
-        return Path(chain_path).is_file() and bool(read(chain_path).get('carry'))
+        return Path(chain_path).is_file() and guarded(read(chain_path))
     except (OSError, ValueError):
         return False
 
@@ -320,7 +326,7 @@ def carried_index_head_ok(chain, chain_path, cache):
     """A carried chain's index starts with its own first update: update B, local segment 0, a checkpoint with no
     link in its path inside the manifest's directory (a copied predecessor's or another continuation's index is
     refused before its rows are used or counted)."""
-    if not chain.get('carry') or not Path(cache).exists():
+    if not guarded(chain) or not Path(cache).exists():
         return
     with open(cache, 'rb') as f:
         line = f.readline()
@@ -1108,7 +1114,7 @@ def plan(chain_path, snapshot_from=None, cache=None):
     out = {'schema': 'w5-retention-plan/v1', 'chain': chain['chain'], 'arm': chain['arm'], 'latest': latest,
            'snapshot_from': snapshot_from, 'checkpoints': checkpoints, 'trajectories': trajectories,
            'bytes': sum(c['bytes'] for c in checkpoints) + sum(t['bytes'] for t in trajectories)}
-    if chain.get('carry'):  # absent otherwise: an ordinary plan keeps its bytes
+    if guarded(chain):  # absent otherwise: an ordinary plan keeps its bytes
         own = Path(chain_path).parent.resolve().as_posix()
         stray = [i['path'] for i in checkpoints + trajectories if not unlinked_inside(i['path'], own)]
         if stray:
@@ -1648,7 +1654,7 @@ def main(argv=None):
         out = select(chain, records, a.r_usec, snapshots(a.chain))
     elif a.cmd == 'replay-config':
         chain = load_chain(a.chain)
-        if chain.get('carry'):
+        if guarded(chain):
             carried_output_unlinked(a.out, a.output_dir)
         write(a.out, replay_config(chain, read(a.spec), a.output_dir))
         out = {'config': Path(a.out).as_posix()}
@@ -1658,7 +1664,7 @@ def main(argv=None):
         chain, records = index(a.chain)
         out = prune_manifest(chain, records, a.boundary, read(a.replay_receipt) if a.replay_receipt else None,
                              snapshots(a.chain))
-        if chain.get('carry'):
+        if guarded(chain):
             carried_output_unlinked(a.out)
         write(a.out, out)
     else:
