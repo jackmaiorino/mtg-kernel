@@ -15,10 +15,8 @@
 //!   last had on the battlefield is
 //!   kept for the spell's stack incarnation (and read by its copies, which
 //!   copy the cost paid for the original, 707.10).
-//! - Boarding Action: Battle Screech's token creation; "Beam me up" is a
-//!   flashback cost of mana plus Deprive's "return a creature you control to
-//!   its owner's hand" component, staged by the cast pipeline's flashback
-//!   branch.
+//! - Boarding Action creates a token. Its Beam me up alternative returns a creature
+//!   you control and exiles the spell when it leaves the stack.
 //! - Kaervek's Torch: Traumatic Critique's X damage leaf; the tax on spells
 //!   that target it is [`torch_target_tax`], added to the casting spell's own
 //!   generic increase from its chosen targets, and [`is_torch_target`] lets
@@ -39,6 +37,20 @@ use crate::standard_cards_v1::StandardOpV1;
 use crate::state::{GameState, ObjectLinkV4, StackItemKind, Target, Zone};
 use crate::trigger::TriggeredAbilityDef;
 use serde::{Deserialize, Serialize};
+
+pub(crate) fn beam_me_up_cost(def: &CardDef) -> Option<&'static [crate::card_def::CostComponent]> {
+    use crate::card_def::{CostComponent, PermanentFilterDef};
+    use crate::mana::{Cost, ManaColor, Pip};
+    const COST: &[CostComponent] = &[
+        CostComponent::Mana(Cost {
+            pips: &[Pip::Colored(ManaColor::R)],
+            generic: 2,
+            x_count: 0,
+        }),
+        CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::CreatureV1),
+    ];
+    (cfg!(feature = "eternal-fixtures") && def.name == "Boarding Action").then_some(COST)
+}
 
 pub(crate) const FLING: &str = "Fling";
 pub(crate) const KAERVEKS_TORCH: &str = "Kaervek's Torch";

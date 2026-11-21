@@ -904,6 +904,7 @@ pub enum CastMethodV4 {
     /// two by which of `CardDef::omen`/`CardDef::adventure` the resolving
     /// source actually carries (mutually exclusive per card).
     Omen,
+    BeamMeUp,
 }
 
 /// Independently frozen route by which a physical spell's immediately
@@ -978,6 +979,9 @@ pub enum SpellCastRouteV4 {
     TinybonesExileV72 {
         play_history_index: u64,
     },
+    BeamMeUpV1,
+    SnapcasterFlashbackV1,
+    RetraceV1,
 }
 
 /// Incarnation-local cast provenance stored on the physical source object

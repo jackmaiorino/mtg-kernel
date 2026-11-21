@@ -1300,6 +1300,7 @@ fn cast_method_id(value: CastMethodV4) -> u8 {
         CastMethodV4::Escape => 6,
         CastMethodV4::Bestow => 7,
         CastMethodV4::Omen => 8,
+        CastMethodV4::BeamMeUp => 9,
     }
 }
 

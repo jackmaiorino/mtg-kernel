@@ -149,6 +149,10 @@ pub enum RouteV1 {
     PrintedFlashback,
     Escape,
     Granted { grant: u32 },
+    Snapcaster,
+    BeamMeUp,
+    Breach,
+    Retrace,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CostV1 {
@@ -157,6 +161,7 @@ pub enum CostV1 {
     SacrificeLands(u8),
     PayLife(u8),
     ExileOtherOwnGraveyardCards(u8),
+    PrintedComponent(serde_json::Value),
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -286,7 +291,9 @@ pub(crate) fn costs(values: &[CostComponent]) -> Result<Vec<CostV1>, String> {
                 CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
                     CostV1::ExileOtherOwnGraveyardCards(*n)
                 }
-                _ => return Err("Sphinx route has an unrepresented printed cost component".into()),
+                other => CostV1::PrintedComponent(
+                    serde_json::to_value(other).map_err(|e| e.to_string())?,
+                ),
             })
         })
         .collect()
@@ -322,6 +329,24 @@ pub(crate) fn options(
                             .cost,
                     )?,
                 ),
+                casting::RouteV1::Snapcaster => {
+                    (RouteV1::Snapcaster, vec![CostV1::Mana(d.cost.into())])
+                }
+                casting::RouteV1::BeamMeUp => (
+                    RouteV1::BeamMeUp,
+                    costs(
+                        crate::eternal_pauper_pf1c_v1::beam_me_up_cost(d)
+                            .ok_or("Beam me up cost absent")?,
+                    )?,
+                ),
+                casting::RouteV1::Breach => (
+                    RouteV1::Breach,
+                    costs(
+                        crate::eternal_lurrus_v1::granted_escape_cost(d)
+                            .ok_or("Breach cost absent")?,
+                    )?,
+                ),
+                casting::RouteV1::Retrace => (RouteV1::Retrace, vec![CostV1::Mana(d.cost.into())]),
                 casting::RouteV1::Granted { installation } => (
                     RouteV1::Granted {
                         grant: *grants

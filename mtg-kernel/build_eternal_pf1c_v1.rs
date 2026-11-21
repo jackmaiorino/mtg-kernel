@@ -26,7 +26,7 @@ const fn program(target_spec: &'static str, program: &'static str) -> Special {
     }
 }
 
-/// Spell programs. Boarding Action's "Beam me up" is `flashback_for`;
+/// Spell programs. Boarding Action's "Beam me up" cost lives in its runtime module.
 /// Fling's sacrifice is `additional_cost_for` in wave P1a's table.
 pub(super) fn special_for(name: &str) -> Option<Special> {
     match name {
@@ -58,25 +58,6 @@ pub(super) fn kicker_cost_for(_name: &str) -> Option<&'static str> {
 /// No Pf1c card is an Aura or an Equipment yet.
 pub(super) fn attachment_for(_name: &str) -> &'static str {
     "None"
-}
-
-/// Graveyard casts. Boarding Action: "Beam me up {2}{R} (You may cast this
-/// card from your graveyard for {2}{R} if you also return a creature you
-/// control to its owner's hand. Then exile this spell.)" It is a flashback
-/// cost of mana plus Deprive's return component (the ruling: the cost is
-/// paid rather than the mana cost, and the spell is exiled whenever it
-/// leaves the stack).
-pub(super) fn flashback_for(name: &str) -> String {
-    match name {
-        "Boarding Action" => {
-            let (pips, generic, x_count) = super::parse_cost("{2}{R}");
-            format!(
-                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}), CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::CreatureV1)] }})",
-                pips.join(", ")
-            )
-        }
-        _ => "None".to_string(),
-    }
 }
 
 /// No Pf1c card has an alternative cost yet.

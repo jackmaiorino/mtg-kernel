@@ -223,7 +223,7 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
                 return Err("Sphinx duplicate route".into());
             }
             let (expected_cost, expected_method) = match option.route {
-                public::RouteV1::Normal => (
+                public::RouteV1::Normal | public::RouteV1::Retrace => (
                     vec![public::CostV1::Mana(def.cost.into())],
                     crate::state::CastMethodV4::Normal,
                 ),
@@ -245,7 +245,21 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
                     )?,
                     crate::state::CastMethodV4::Escape,
                 ),
-                public::RouteV1::Granted { .. } => (
+                public::RouteV1::BeamMeUp => (
+                    public::costs(
+                        crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def)
+                            .ok_or("Beam me up cost absent")?,
+                    )?,
+                    crate::state::CastMethodV4::BeamMeUp,
+                ),
+                public::RouteV1::Breach => (
+                    public::costs(
+                        crate::eternal_lurrus_v1::granted_escape_cost(def)
+                            .ok_or("Breach cost absent")?,
+                    )?,
+                    crate::state::CastMethodV4::Escape,
+                ),
+                public::RouteV1::Snapcaster | public::RouteV1::Granted { .. } => (
                     vec![public::CostV1::Mana(def.cost.into())],
                     crate::state::CastMethodV4::Flashback,
                 ),
@@ -254,8 +268,10 @@ pub(crate) fn validate_facts(facts: &FactsV1, actor: PlayerSeatV1) -> Result<(),
                 || cast.selected == Some(i as u16)
                     && cast.finalized_method.is_some_and(|method| {
                         method != expected_method
-                            && !(option.route == public::RouteV1::Normal
-                                && method == crate::state::CastMethodV4::Alternative)
+                            && !(matches!(
+                                option.route,
+                                public::RouteV1::Normal | public::RouteV1::Retrace
+                            ) && method == crate::state::CastMethodV4::Alternative)
                     })
             {
                 return Err("Sphinx route changed its printed cost or finalized method".into());

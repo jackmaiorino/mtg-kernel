@@ -480,7 +480,10 @@ fn pf1c_printed_characteristics() {
     assert_eq!(boarding.cost.generic, 1);
     assert_eq!(boarding.cost.pips, &[Pip::Colored(ManaColor::R)]);
     assert!(boarding.target_spec == TargetSpec::None);
-    assert!(boarding.flashback.is_some(), "Beam me up");
+    assert!(
+        boarding.flashback.is_none(),
+        "Beam me up is its own casting ability"
+    );
     assert!(boarding.additional_cost.is_none());
 
     let token = def("Klingon Warrior Token");

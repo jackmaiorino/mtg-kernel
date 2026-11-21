@@ -201,6 +201,9 @@ impl SelectedSpellManaCostsV1 {
             CastMethodV4::Alternative => Some(definition.alt_cost?.components),
             CastMethodV4::Flashback if self.granted_flashback_v1 => Some(&[][..]),
             CastMethodV4::Flashback => Some(flashback_cost_v1(definition)?),
+            CastMethodV4::BeamMeUp => {
+                Some(crate::eternal_pauper_pf1c_v1::beam_me_up_cost(definition)?)
+            }
             CastMethodV4::Escape => Some(escape_cost_v1(definition)?),
             _ => None,
         };
@@ -706,6 +709,9 @@ pub(super) fn selected_spell_mana_costs_v1(
             }
         }
         CastMethodV4::Flashback => selected.components(flashback_cost_v1(definition)?),
+        CastMethodV4::BeamMeUp => {
+            selected.components(crate::eternal_pauper_pf1c_v1::beam_me_up_cost(definition)?)
+        }
         CastMethodV4::Escape => selected.components(escape_cost_v1(definition)?),
         CastMethodV4::Madness => selected.costs.push(definition.madness_cost?),
         CastMethodV4::Plotted => {
@@ -891,7 +897,7 @@ pub(super) fn selected_spell_mana_costs_for_source_v1(
         targets,
         player,
         state,
-        crate::effect::sphinx_lore_v1::granted_route(state, source),
+        super::sphinx_lore_cast_v1::CostGrant::selected(state, source),
     )
 }
 
@@ -903,7 +909,7 @@ fn selected_spell_mana_costs_for_source_grant_v1(
     targets: &[Target],
     player: PlayerId,
     state: &GameState,
-    grant: Option<u64>,
+    grant: Option<super::sphinx_lore_cast_v1::CostGrant>,
 ) -> Option<SelectedSpellManaCostsV1> {
     let (method, kicked, mode) = form;
     if method == CastMethodV4::Omen
@@ -913,14 +919,13 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         return None;
     }
     let granted = method == CastMethodV4::Flashback && grant.is_some();
-    if let Some(index) = grant {
+    if let Some(grant) = grant {
         if state
             .objects
             .try_get(source)
             .and_then(|o| card_def::CARD_DEFS.get(o.card_def as usize))
             .is_none_or(|actual| !std::ptr::eq(actual, definition))
-            || method != CastMethodV4::Flashback
-            || !crate::effect::sphinx_lore_v1::quote_grant(state, source, player, index)
+            || !grant.permits(state, source, player, method)
         {
             return None;
         }
@@ -1000,7 +1005,8 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         if (matches!(method, CastMethodV4::Normal | CastMethodV4::Alternative)
             || (method == CastMethodV4::Omen
                 && crate::eternal_sideboard_s1d_v1::statics::is_overload(definition.name)))
-            && crate::eternal_vintage_e7b_v1::retrace_quote(state, source, player)
+            && (grant == Some(super::sphinx_lore_cast_v1::CostGrant::Retrace)
+                || crate::eternal_vintage_e7b_v1::retrace_quote(state, source, player))
         {
             // Delve is tracked outside component_groups, so the check for
             // two object families below does not see it. Retrace cannot
@@ -1110,7 +1116,7 @@ pub(super) fn selected_spell_quote_wide_x_v59(
         player,
         state,
         reserved_graveyard,
-        crate::effect::sphinx_lore_v1::granted_route(state, source),
+        super::sphinx_lore_cast_v1::CostGrant::selected(state, source),
     )
 }
 
@@ -1128,7 +1134,7 @@ pub(super) fn selected_spell_quote_with_grant_v1(
     player: PlayerId,
     state: &GameState,
     reserved_graveyard: &[ObjectId],
-    grant: Option<u64>,
+    grant: Option<super::sphinx_lore_cast_v1::CostGrant>,
 ) -> Option<SpellManaPaymentV1> {
     selected_spell_quote_with_grant_wide_x_v59(
         definition,
@@ -1161,7 +1167,7 @@ pub(super) fn selected_spell_quote_with_grant_wide_x_v59(
     player: PlayerId,
     state: &GameState,
     reserved_graveyard: &[ObjectId],
-    grant: Option<u64>,
+    grant: Option<super::sphinx_lore_cast_v1::CostGrant>,
 ) -> Option<SpellManaPaymentV1> {
     if super::mandatory_cast_cost_v1::mana_branch(definition).is_some() {
         let choice = state
@@ -1241,7 +1247,7 @@ pub(super) fn selected_spell_quote_branch_wide_x_v59(
         state,
         reserved_graveyard,
         forced_branch,
-        crate::effect::sphinx_lore_v1::granted_route(state, source),
+        super::sphinx_lore_cast_v1::CostGrant::selected(state, source),
     )
 }
 
@@ -1260,7 +1266,7 @@ fn selected_spell_quote_branch_grant_v1(
     state: &GameState,
     reserved_graveyard: &[ObjectId],
     forced_branch: Option<bool>,
-    grant: Option<u64>,
+    grant: Option<super::sphinx_lore_cast_v1::CostGrant>,
 ) -> Option<SpellManaPaymentV1> {
     // Every route, including resolution-time permissions and X menus, uses
     // this quote. Evaluate cast restrictions with the selected form and X.
@@ -1931,7 +1937,10 @@ pub(super) fn prepare_final_spell_payment_v1(
     prepared.mana.commit(&mut projected, player, source);
     let base_count = usize::from(matches!(
         method,
-        CastMethodV4::Alternative | CastMethodV4::Flashback | CastMethodV4::Escape
+        CastMethodV4::Alternative
+            | CastMethodV4::Flashback
+            | CastMethodV4::BeamMeUp
+            | CastMethodV4::Escape
     ));
     let groups = selected
         .component_groups

@@ -188,6 +188,10 @@ pub(super) fn label(
             Some(format!("Give {} flashback equal to its mana cost until end of turn",handles.name(object)?)),
         (Some(ActionV1::ChooseCastRoute {route,..}),_) => Some(match route {
             RouteV1::Normal => "Pay the spell's ordinary costs",
+            RouteV1::Snapcaster => "Use Snapcaster Mage's flashback at the card's mana cost; exile it when it leaves the stack",
+            RouteV1::BeamMeUp => "Beam me up: pay {2}{R} and return a creature you control; exile the spell when it leaves the stack",
+            RouteV1::Retrace => "Retrace: discard a land card in addition to the spell's other costs",
+            RouteV1::Breach => "Escape with Underworld Breach: pay the mana cost and exile three other graveyard cards",
             RouteV1::PrintedFlashback => "Pay the printed flashback cost; exile the spell when it leaves the stack",
             RouteV1::Escape => "Pay the printed escape cost",
             RouteV1::Granted {..} => "Use Sphinx's granted flashback cost equal to the mana cost; exile the spell when it leaves the stack",

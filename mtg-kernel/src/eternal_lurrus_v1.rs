@@ -559,7 +559,6 @@ fn definition_index(definition: &CardDef) -> Option<usize> {
 /// The flashback cost Snapcaster Mage gives an instant or sorcery card.
 pub(crate) fn granted_flashback_cost(definition: &CardDef) -> Option<&'static [CostComponent]> {
     if !cfg!(feature = "eternal-fixtures")
-        || definition.flashback.is_some()
         || !(definition.has_type(CardType::Instant) || definition.has_type(CardType::Sorcery))
     {
         return None;
