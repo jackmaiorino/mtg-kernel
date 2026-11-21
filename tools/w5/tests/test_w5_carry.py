@@ -559,5 +559,20 @@ class CarryTests(unittest.TestCase):
             chains.make_plan(self.cont_inputs(carry_path, label='pr', root='pr'))
 
 
+    def test_a_foreign_record_or_a_changed_receipt_is_refused(self):
+        _, old_man = self.old(3)
+        other = jwrite(self.t / 'not-a-carry.json', {'schema': 'something-else'})
+        before = sorted(p.as_posix() for p in self.t.rglob('*'))
+        with self.assertRaisesRegex(chains.Stop, 'not a w5-chain-carry/v1 record'):
+            chains.make_plan(self.cont_inputs(other, label='fr', root='fr'))
+        self.assertFalse((self.t / 'fr').exists())  # refused before any plan write
+        seg = Path(json.loads(old_man.read_text())['segments'][1]['root'])
+        upd = next(seg.glob('iterations/000003/attempt-*/update/update.json'))
+        upd.write_text(upd.read_text() + ' ')
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(chains.main(['carry', '--manifest', str(old_man), '--boundary', '8', '--objects',
+                                          str(self.t / 'o'), '--out', str(self.t / 'cu.json')]), w5box.EXIT_REFUSED)
+
+
 if __name__ == '__main__':
     unittest.main()

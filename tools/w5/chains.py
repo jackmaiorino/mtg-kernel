@@ -587,6 +587,7 @@ def check_carry_roots(doc, name, root, scratch_root=None):
     """The new root and its scratch root are disjoint from the carried chain's root and from its scratch root:
     neither is the other or inside it, so no write, scratch reset or persist of the continuation can reach a file
     of the old chain."""
+    require(isinstance(doc, dict) and doc.get('schema') == CARRY_SCHEMA, f'{name}: not a {CARRY_SCHEMA} record')
     try:
         old_root, old_scratch = old_trees(doc['from']['manifest']['path'])
     except (OSError, ValueError, KeyError) as exc:
