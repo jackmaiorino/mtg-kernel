@@ -319,12 +319,18 @@ pub(crate) fn begin_damage_batch(state: &mut GameState, events: &[ProposedEvent]
             ProposedEvent::Damage(damage)
                 if matches!(damage.target, Target::Object(target)
                     if active_named(state, target, PHANTOM_NISHOBA))
+                || crate::eternal_pauper_pf1c_v1::shielded_redirect_may_hit_nishoba(state, damage)
         )
     });
-    if hits_nishoba {
-        p2c_state(state).nishoba_batch = Some(Vec::new());
+    hits_nishoba && begin_nishoba_cohort(state)
+}
+
+pub(crate) fn begin_nishoba_cohort(state: &mut GameState) -> bool {
+    if read_state(state).is_some_and(|p2c| p2c.nishoba_batch.is_some()) {
+        return false;
     }
-    hits_nishoba
+    p2c_state(state).nishoba_batch = Some(Vec::new());
+    true
 }
 
 /// Closes the batch [`begin_damage_batch`] opened.
@@ -334,6 +340,11 @@ pub(crate) fn end_damage_batch(state: &mut GameState, began: bool) {
             eternal.p2c.nishoba_batch = None;
         }
     }
+}
+
+pub(crate) fn nishoba_applies(state: &GameState, damage: &DamageProposed) -> bool {
+    damage.amount > 0
+        && matches!(damage.target, Target::Object(id) if active_named(state, id, PHANTOM_NISHOBA))
 }
 
 /// Phantom Nishoba: "If damage would be dealt to this creature, prevent that
@@ -349,7 +360,7 @@ pub(crate) fn prevent_damage(
     let Target::Object(target) = damage.target else {
         return false;
     };
-    if damage.amount <= 0 || !active_named(state, target, PHANTOM_NISHOBA) {
+    if !nishoba_applies(state, damage) {
         return false;
     }
     let link = live_link(state, target);

@@ -367,10 +367,67 @@ impl SelectedSpellManaCostsV1 {
             }
         }
         let (increase, reduction) = generic_modifiers;
-        self.payment_plan(x, player, state, increase, reduction, &reserved)
-            .filter(|payment| {
-                super::checked_spell_mana_plan_v59(state, player, &payment.mana).is_some()
-            })
+        let plan = |reserved: &[ObjectId]| {
+            self.payment_plan(x, player, state, increase, reduction, reserved)
+                .filter(|payment| {
+                    super::checked_spell_mana_plan_v59(state, player, &payment.mana).is_some()
+                })
+        };
+        let payment = plan(&reserved)?;
+        #[cfg(feature = "eternal-fixtures")]
+        {
+            // A land returned by Deprive may first produce mana, but must
+            // survive that production. Only LandV1 return costs need this
+            // projection; ordinary spell and activation quotes do not.
+            let returned_lands = self
+                .component_groups
+                .iter()
+                .zip(chosen_by_group)
+                .filter(|(components, _)| {
+                    components.iter().any(|component| {
+                        matches!(
+                            component,
+                            CostComponent::ReturnControlledPermanentToOwnersHand(
+                                card_def::PermanentFilterDef::LandV1
+                            )
+                        )
+                    })
+                })
+                .flat_map(|(_, chosen)| chosen.iter().copied())
+                .collect::<Vec<_>>();
+            if !returned_lands.is_empty() {
+                let survives = |payment: &SpellManaPaymentV1| {
+                    let mut projected = state.clone();
+                    projected.engine.pending_cast = None;
+                    projected.engine.pending_discard = None;
+                    // The real mana commitment owns depletion, ability
+                    // removal, and all other source effects. Do not keep a
+                    // second list of lands that can leave during payment.
+                    payment.commit(&mut projected, player, source);
+                    let candidates = super::return_permanent_cost_candidates(
+                        player,
+                        &projected,
+                        card_def::PermanentFilterDef::LandV1,
+                        &[],
+                    );
+                    projected.engine.halted.is_none()
+                        && returned_lands.iter().all(|object| {
+                            candidates.iter().any(|binding| {
+                                binding.object == *object
+                                    && binding.expected_zone_change_count
+                                        == state.objects.get(*object).zone_change_count
+                            })
+                        })
+                };
+                if !survives(&payment) {
+                    // Keep the selected land out of mana production and
+                    // retry the same planner. Another source may save it.
+                    reserved.extend(returned_lands.iter().copied());
+                    return plan(&reserved).filter(survives);
+                }
+            }
+        }
+        Some(payment)
     }
 
     /// Determine the payment without changing state. Freeze this result before

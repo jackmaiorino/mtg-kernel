@@ -3397,14 +3397,23 @@ const OJER_TRIGGERS: [TriggeredAbilityDef; 1] = [trigger(
 /// less than Ojer Axonil's power to an opponent, that source deals damage
 /// equal to Ojer Axonil's power instead."
 pub(crate) fn replace_damage(state: &GameState, damage: &mut DamageProposed) {
+    let power = applicable_ojers(state, damage)
+        .map(|(_, power)| power)
+        .max();
+    if let Some(power) = power {
+        damage.amount = power;
+    }
+}
+
+fn ojer_source_controller(state: &GameState, damage: &DamageProposed) -> Option<PlayerId> {
     if damage.is_combat || damage.amount <= 0 {
-        return;
+        return None;
     }
     let Target::Player(damaged) = damage.target else {
-        return;
+        return None;
     };
     let Some(source) = state.objects.try_get(damage.source) else {
-        return;
+        return None;
     };
     let controller = damage
         .historical_facts(state)
@@ -3415,25 +3424,35 @@ pub(crate) fn replace_damage(state: &GameState, damage: &mut DamageProposed) {
             & crate::card_def::mana_colors_mask(&[ManaColor::R])
             == 0
     {
-        return;
+        return None;
     }
-    let power = state.players[controller.index()]
-        .battlefield
-        .iter()
-        .copied()
-        .filter(|&id| {
-            let live = state.objects.get(id);
-            live.v4.face_index == 0
-                && CARD_DEFS[live.card_def as usize].name == OJER
-                && crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+    Some(controller)
+}
+
+pub(crate) fn applicable_ojers<'a>(
+    state: &'a GameState,
+    damage: &DamageProposed,
+) -> impl Iterator<Item = (ObjectId, i32)> + 'a {
+    let amount = damage.amount;
+    ojer_source_controller(state, damage)
+        .into_iter()
+        .flat_map(move |controller| {
+            state.players[controller.index()]
+                .battlefield
+                .iter()
+                .copied()
         })
-        .map(|id| crate::engine::effective_power(state, id))
-        .max();
-    if let Some(power) = power {
-        if damage.amount < power {
-            damage.amount = power;
-        }
-    }
+        .filter_map(move |id| {
+            let live = state.objects.get(id);
+            if live.v4.face_index != 0
+                || CARD_DEFS[live.card_def as usize].name != OJER
+                || !crate::continuous_characteristics_v1::printed_abilities_active(state, id)
+            {
+                return None;
+            }
+            let power = crate::engine::effective_power(state, id);
+            (amount < power).then_some((id, power))
+        })
 }
 
 /// Records noncombat damage dealt by red sources for Temple of Power.

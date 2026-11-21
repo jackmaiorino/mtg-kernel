@@ -1264,6 +1264,39 @@ fn hallow_follows_a_permanent_spell_onto_the_battlefield() {
     assert_eq!(life(&state, P0), 20);
 }
 
+#[test]
+fn hallow_does_not_follow_the_permanent_through_a_later_zone_change() {
+    let mut state = plains();
+    let hallow = put(&mut state, P0, "Hallow", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    state.active_player = P1;
+    state.priority_player = P1;
+    let fanatic = put(&mut state, P1, "Mogg Fanatic", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::R], 0);
+    cast(&mut state, fanatic, &[]);
+    pass_priority(&mut state, P1);
+    cast(&mut state, hallow, &[Target::Object(fanatic)]);
+    settled(&mut state);
+    let first_incarnation = state.objects.get(fanatic).zone_change_count;
+
+    // Blinking the permanent creates a later incarnation. Only the
+    // original resolving spell-to-permanent transition carries Hallow.
+    let ephemerate = put(&mut state, P1, "Ephemerate", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::W], 0);
+    cast(&mut state, ephemerate, &[Target::Object(fanatic)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, fanatic), Zone::Battlefield);
+    assert!(state.objects.get(fanatic).zone_change_count > first_incarnation);
+    activate(&mut state, fanatic, 0, &[Target::Player(P0)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, fanatic), Zone::Graveyard);
+    assert_eq!(
+        life(&state, P0),
+        19,
+        "the later incarnation is not shielded"
+    );
+}
+
 // ---- Granted flashback and a mandatory additional cost (W1 review) ----------------------
 
 /// Deprive (wave Pf1b) given flashback by Snapcaster Mage still pays its
@@ -1403,6 +1436,132 @@ fn deprive_with_a_second_land_returns_a_land_the_payment_leaves() {
     assert_eq!(life(&state, P0), 20);
 }
 
+fn woodlot_with_last_counter(state: &mut GameState) -> ObjectId {
+    let woodlot = put(state, P0, "Hickory Woodlot", Zone::Hand);
+    play_land(state, woodlot);
+    // Fixture untaps and the pool reset stand for intervening turns. The
+    // real mana ability removes the first of the two depletion counters.
+    state.objects.get_mut(woodlot).tapped = false;
+    next(state);
+    act(
+        state,
+        Action::ActivateManaAbilityChoice(woodlot, ManaColor::G),
+    );
+    state.objects.get_mut(woodlot).tapped = false;
+    state.players[0].mana_pool = [0; 6];
+    assert_eq!(
+        mtg_kernel::eternal_pauper_e8b_v1::depletion_counters(state, woodlot),
+        1
+    );
+    woodlot
+}
+
+#[test]
+fn deprive_refuses_a_last_counter_woodlot_under_sphere_of_resistance() {
+    let mut state = plains();
+    let woodlot = woodlot_with_last_counter(&mut state);
+    put(&mut state, P0, "Sphere of Resistance", Zone::Battlefield);
+    // The opponent also pays Sphere's tax on the Bolt.
+    pool(&mut state, P1, &[], 1);
+    let bolt = opponent_bolts(&mut state, Target::Player(P0));
+    let deprive = put(&mut state, P0, "Deprive", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 0);
+    assert!(
+        !castable(&mut state, deprive),
+        "the {{1}}{{U}}{{U}} payment loses its return land"
+    );
+    assert_eq!(zone(&state, woodlot), Zone::Battlefield);
+    assert_eq!(zone(&state, bolt), Zone::Stack);
+    assert_eq!(
+        mana(&state, P0, ManaColor::U),
+        2,
+        "the quote did not pay mana"
+    );
+    assert_eq!(
+        mtg_kernel::eternal_pauper_e8b_v1::depletion_counters(&state, woodlot),
+        1
+    );
+}
+
+#[test]
+fn deprive_keeps_healthy_return_choices_when_woodlot_pays_spheres_tax() {
+    let mut state = plains();
+    let woodlot = woodlot_with_last_counter(&mut state);
+    let mountain = put(&mut state, P0, "Mountain", Zone::Battlefield);
+    let forest = put(&mut state, P0, "Forest", Zone::Battlefield);
+    // These can be returned, but cannot replace the Woodlot's mana.
+    state.objects.get_mut(mountain).tapped = true;
+    state.objects.get_mut(forest).tapped = true;
+    put(&mut state, P0, "Sphere of Resistance", Zone::Battlefield);
+    pool(&mut state, P1, &[], 1);
+    let bolt = opponent_bolts(&mut state, Target::Player(P0));
+    let deprive = put(&mut state, P0, "Deprive", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 0);
+    cast(&mut state, deprive, &[Target::Object(bolt)]);
+    match next(&mut state) {
+        Decision::ChooseCostTargets {
+            cost_kind,
+            candidates,
+            ..
+        } => {
+            assert_eq!(cost_kind, CostKind::ReturnPermanentsToHand);
+            assert_eq!(sorted(candidates), sorted(vec![mountain, forest]));
+            act(&mut state, Action::ChooseCostTarget(mountain));
+        }
+        other => panic!("expected the surviving return lands, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(
+        zone(&state, woodlot),
+        Zone::Graveyard,
+        "paid the generic tax"
+    );
+    assert_eq!(zone(&state, mountain), Zone::Hand);
+    assert_eq!(zone(&state, forest), Zone::Battlefield);
+    assert_eq!(zone(&state, bolt), Zone::Graveyard);
+    assert_eq!(zone(&state, deprive), Zone::Graveyard);
+    assert_eq!(
+        mana(&state, P0, ManaColor::G),
+        1,
+        "the unused Woodlot mana remains"
+    );
+    assert_eq!(life(&state, P0), 20);
+}
+
+#[test]
+fn deprive_can_save_a_last_counter_woodlot_using_another_mana_source() {
+    let mut state = plains();
+    let woodlot = woodlot_with_last_counter(&mut state);
+    let island = put(&mut state, P0, "Island", Zone::Battlefield);
+    put(&mut state, P0, "Sphere of Resistance", Zone::Battlefield);
+    pool(&mut state, P1, &[], 1);
+    let bolt = opponent_bolts(&mut state, Target::Player(P0));
+    let deprive = put(&mut state, P0, "Deprive", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 0);
+    cast(&mut state, deprive, &[Target::Object(bolt)]);
+    match next(&mut state) {
+        Decision::ChooseCostTargets { candidates, .. } => {
+            assert_eq!(sorted(candidates), sorted(vec![woodlot, island]));
+            act(&mut state, Action::ChooseCostTarget(woodlot));
+        }
+        other => panic!("expected both return lands, got {other:?}"),
+    }
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(
+        zone(&state, woodlot),
+        Zone::Hand,
+        "saved by the other mana source"
+    );
+    assert!(
+        state.objects.get(island).tapped,
+        "the Island paid Sphere's tax"
+    );
+    settled(&mut state);
+    assert_eq!(zone(&state, bolt), Zone::Graveyard);
+    assert_eq!(zone(&state, deprive), Zone::Graveyard);
+    assert_eq!(life(&state, P0), 20);
+}
+
 /// Fling reads the creature's power as it last existed, after its mana
 /// abilities ran: Gemstone Mine's last counter puts it into a graveyard
 /// before Terravore is sacrificed, so Terravore was 2/2.
@@ -1454,6 +1613,44 @@ fn a_modal_spell_keeps_its_untargeted_mode_while_a_torch_is_on_the_stack() {
     assert_eq!(zone(&state, torch), Zone::Graveyard, "not countered");
     assert_eq!(life(&state, P1), 19);
     assert_eq!(state.players[1].mana_pool, [0; 6]);
+}
+
+#[test]
+fn a_torch_counter_mode_requires_its_tax_even_when_another_mode_is_payable() {
+    let mut state = plains();
+    let torch = put(&mut state, P0, "Kaervek's Torch", Zone::Hand);
+    let mystic = put(&mut state, P1, "Mystic Confluence", Zone::Hand);
+    put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast_x(&mut state, torch, 1, &[Target::Player(P1)]);
+    pass_priority(&mut state, P0);
+    pool(&mut state, P1, &[ManaColor::U, ManaColor::U], 3);
+    let mut paid = state.clone();
+
+    assert!(castable(&mut state, mystic));
+    act(&mut state, Action::CastSpell(mystic));
+    let Decision::ChooseSpellMode { legal_modes, .. } = next(&mut state) else {
+        panic!("expected bounce and draw choices")
+    };
+    assert_eq!(legal_modes, vec![6, 7, 8, 9]);
+    assert!(engine::step(&mut state, Action::ChooseSpellMode(2)).is_err());
+    act(&mut state, Action::ChooseSpellMode(9));
+    settled(&mut state);
+    assert_eq!(state.players[P1.index()].hand.len(), 3);
+    assert_eq!(life(&state, P1), 19);
+
+    // Two counter modes targeting the same Torch pay a single {2} increase.
+    pool(&mut paid, P1, &[], 2);
+    cast_mode(
+        &mut paid,
+        mystic,
+        2,
+        &[Target::Object(torch), Target::Object(torch)],
+    );
+    settled(&mut paid);
+    assert_eq!(paid.players[P1.index()].mana_pool, [0; 6]);
+    assert_eq!(paid.players[P1.index()].hand.len(), 1);
+    assert_eq!(life(&paid, P1), 20);
 }
 
 /// P1 casts a Torch at P0 (X = 1) and passes; P0 holds Counterspell with two

@@ -4,6 +4,7 @@
 //! speculative tails are never installed in the game or its committed journal.
 use crate::effect::EffectObjectBinding;
 use crate::engine::{Action, Decision};
+use crate::eternal_pauper_pf1c_v1::{HallowChoiceV1, HallowPreventionV1};
 use crate::eternal_sideboard_s1b_v1::meddling_mage_entry::{self as mage_entry, show_and_tell};
 use crate::event::{CommittedEvent, ProposedEvent};
 use crate::linked_aura_return_v1::HostChoiceV1;
@@ -99,6 +100,10 @@ pub enum GeneralAnswerV36 {
         choice: Box<show_and_tell::ChoiceV1>,
         selected: Option<crate::state::AbilitySourceContractV4>,
     },
+    HallowV1 {
+        choice: Box<HallowChoiceV1>,
+        prevention: HallowPreventionV1,
+    },
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GeneralChoiceV36 {
@@ -138,6 +143,20 @@ pub enum GeneralChoiceV36 {
         choice: Box<show_and_tell::ChoiceV1>,
         original_sha256: String,
     },
+    HallowV1 {
+        choice: Box<crate::eternal_pauper_pf1c_v1::HallowChoiceV1>,
+    },
+}
+
+/// Hallow borrows the existing operation replay without opting into any
+/// entry-card consumer or changing the public target-selection vocabulary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HallowCheckpointV1 {
+    pub original: Box<GameState>,
+    pub operation: OperationV1,
+    pub answers: Vec<GeneralAnswerV36>,
+    pub choice: Box<crate::eternal_pauper_pf1c_v1::HallowChoiceV1>,
+    pub used_banner: bool,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -181,6 +200,8 @@ struct MagePlanV1 {
 /// construct it. Opaque input borrowing is confined to local family verification.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RunnerV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hallow_batch: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     kinship_start: Option<u32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -237,6 +258,8 @@ fn is_printed_mage_names_v2(names_v2: &bool) -> bool {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StateV1 {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_hallow_v1: Option<Box<HallowCheckpointV1>>,
     pub pending: Option<Box<CheckpointV1>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_kinship_v1: Option<Box<crate::banner_of_kinship_v1::entry::CheckpointV1>>,
@@ -255,7 +278,8 @@ pub struct StateV1 {
 }
 impl StateV1 {
     pub fn is_empty(&self) -> bool {
-        self.pending_kinship_v1.is_none()
+        self.pending_hallow_v1.is_none()
+            && self.pending_kinship_v1.is_none()
             && self.pending.is_none()
             && self.pending_general_v36.is_none()
             && self.pending_token_attachment_v48.is_none()
@@ -265,6 +289,12 @@ impl StateV1 {
 }
 impl Hash for StateV1 {
     fn hash<H: Hasher>(&self, hasher: &mut H) {
+        if let Some(pending) = &self.pending_hallow_v1 {
+            "hallow-prevention-operation/v1".hash(hasher);
+            serde_json::to_vec(pending)
+                .expect("owned Hallow checkpoint serializes")
+                .hash(hasher);
+        }
         if let Some(pending) = &self.pending_fake_aura_v50 {
             "fake-aura-return/v50".hash(hasher);
             serde_json::to_vec(pending)
@@ -314,6 +344,9 @@ pub(crate) fn clear_runtime_for_graveyard_checkpoint(state: &mut GameState) {
 
 /// Borrow the existing enclosing operation of a published entry checkpoint.
 pub(crate) fn pending_original_operation(state: &GameState) -> Option<(&GameState, &OperationV1)> {
+    if let Some(pending) = &state.engine.linked_aura_operation_v1.pending_hallow_v1 {
+        return Some((&pending.original, &pending.operation));
+    }
     if let Some(pending) = &state
         .engine
         .linked_aura_operation_v1
@@ -601,6 +634,8 @@ pub(crate) fn with_ravenous_replay_borrow_v51(
     // The installer is limited to this disposable atomic replay. It never
     // returns a Runner or installs one in an actual/restored game.
     replay.engine.linked_aura_operation_v1.runtime = Some(Box::new(RunnerV1 {
+        hallow_batch: None,
+
         kinship_start: None,
         kinship_plans: Vec::new(),
         mage_start: None,
@@ -704,8 +739,13 @@ pub fn has_pending(state: &GameState) -> bool {
     state
         .engine
         .linked_aura_operation_v1
-        .pending_kinship_v1
+        .pending_hallow_v1
         .is_some()
+        || state
+            .engine
+            .linked_aura_operation_v1
+            .pending_kinship_v1
+            .is_some()
         || state.engine.linked_aura_operation_v1.pending.is_some()
         || has_banner_pending(state)
         || crate::season_token_attachment_v48::pending(state).is_some()
@@ -948,7 +988,154 @@ fn invoke(state: &mut GameState, operation: &OperationV1) -> Result<Option<Decis
         }
     }
 }
+fn hallow_decision(choice: &HallowChoiceV1) -> Decision {
+    if choice.mixed() {
+        return Decision::ChooseEffectOption {
+            player: choice.chooser,
+            source: choice.damage.source,
+            option_count: choice.count() as u16,
+        };
+    }
+    Decision::ChooseEffectTargets {
+        player: choice.chooser,
+        source: choice.damage.source,
+        selected_count: 0,
+        min_targets: 1,
+        max_targets: 1,
+        can_finish: false,
+        legal_targets: choice
+            .beneficiaries
+            .iter()
+            .copied()
+            .map(Target::Player)
+            .collect(),
+    }
+}
+
+/// Borrow the genuine enclosing operation at the actual effective damage
+/// checkpoint. Completed answers are replayed, never inferred from a slot.
+pub(crate) fn choose_hallow(
+    state: &mut GameState,
+    choice: HallowChoiceV1,
+) -> Result<Option<HallowPreventionV1>, String> {
+    request_hallow(state, choice)
+}
+
+fn request_hallow(
+    state: &mut GameState,
+    choice: HallowChoiceV1,
+) -> Result<Option<HallowPreventionV1>, String> {
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_ref()
+        .ok_or("Hallow checkpoint lacks its original operation")?;
+    if runner.checkpoint.is_some() {
+        return Ok(None);
+    }
+    if let Some(answer) = runner.answers.get(runner.cursor).cloned() {
+        let GeneralAnswerV36::HallowV1 {
+            choice: expected,
+            prevention,
+        } = answer
+        else {
+            return Err("Hallow replay changed an already confirmed choice kind".into());
+        };
+        if *expected != choice || !choice.allows(prevention) {
+            return Err("Hallow replay changed an already confirmed prevention effect".into());
+        }
+        state
+            .engine
+            .linked_aura_operation_v1
+            .runtime
+            .as_mut()
+            .unwrap()
+            .cursor += 1;
+        return Ok(Some(prevention));
+    }
+    let mut snapshot = state.clone();
+    // Retain a real resolving row for public source/stack identity, using
+    // the same pre-pop ownership rule as the existing Aura checkpoint.
+    if let Some(original) = runner.original_stack.last() {
+        let absent = !snapshot
+            .stack
+            .iter()
+            .any(|item| item.v4.stack_item_id == original.v4.stack_item_id);
+        let departed = snapshot
+            .engine
+            .event_history
+            .range_v2(runner.original_history_len..)
+            .iter()
+            .any(|event| {
+                matches!(event, CommittedEvent::ZoneChange {
+                object, from: Zone::Stack, ..
+            } if *object == original.source)
+            });
+        if absent && !departed {
+            snapshot.stack.insert(
+                runner
+                    .original_stack
+                    .len()
+                    .saturating_sub(1)
+                    .min(snapshot.stack.len()),
+                original.clone(),
+            );
+        }
+    }
+    snapshot.engine.linked_aura_operation_v1 = StateV1::default();
+    state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .unwrap()
+        .checkpoint = Some((
+        Box::new(snapshot),
+        GeneralChoiceV36::HallowV1 {
+            choice: Box::new(choice),
+        },
+    ));
+    Ok(None)
+}
+
+/// Hallow-covered packets apply replacement choices in actual APNAP order.
+/// The enclosing operation owns suspension, so confirmed mutations are visible
+/// to every later frontier, including newly redirected portions.
+pub(crate) fn prepare_hallow_batch(
+    state: &mut GameState,
+    events: &mut Vec<ProposedEvent>,
+) -> Result<bool, String> {
+    if !crate::eternal_pauper_pf1c_v1::may_need_hallow_choice(state)
+        || !events
+            .iter()
+            .any(|event| matches!(event, ProposedEvent::Damage(_)))
+    {
+        return Ok(false);
+    }
+    let runner = state
+        .engine
+        .linked_aura_operation_v1
+        .runtime
+        .as_mut()
+        .ok_or("Hallow damage batch lacks its enclosing operation")?;
+    if runner.checkpoint.is_some() {
+        return Ok(true);
+    }
+    let batch = match runner.hallow_batch {
+        None => 0,
+        Some(batch) => batch
+            .checked_add(1)
+            .ok_or("Hallow batch ordinal overflow")?,
+    };
+    runner.hallow_batch = Some(batch);
+    crate::eternal_pauper_pf1c_v1::prevent_hallow_batch(state, events, batch)
+}
+
 fn potential_operation(state: &GameState) -> bool {
+    if crate::eternal_pauper_pf1c_v1::may_need_hallow_choice(state) {
+        return true;
+    }
     if state
         .stack
         .iter()
@@ -1191,6 +1378,8 @@ fn replay_general_input_v1(
     let origin = original_sha256(original);
     let returns_aura = potentially_returns_aura(original);
     let runner = RunnerV1 {
+        hallow_batch: None,
+
         kinship_start: None,
         kinship_plans: Vec::new(),
         original_stack: original.stack.clone(),
@@ -1282,7 +1471,16 @@ fn replay_general_input_v1(
         {
             return Err("Genesis current-slot replay changed its exact color-entry owner".into());
         }
-        if let GeneralChoiceV36::FakeAuraV50 { input, .. } = &choice {
+        if let GeneralChoiceV36::HallowV1 { choice } = choice {
+            checkpoint.engine.linked_aura_operation_v1.pending_hallow_v1 =
+                Some(Box::new(HallowCheckpointV1 {
+                    original: Box::new(original.clone()),
+                    operation: operation.clone(),
+                    answers: answers.to_vec(),
+                    choice,
+                    used_banner: runner.used_banner,
+                }));
+        } else if let GeneralChoiceV36::FakeAuraV50 { input, .. } = &choice {
             checkpoint
                 .engine
                 .linked_aura_operation_v1
@@ -1679,6 +1877,12 @@ pub fn validate(state: &GameState) -> Result<(), String> {
         state
             .engine
             .linked_aura_operation_v1
+            .pending_hallow_v1
+            .is_some(),
+    ) + usize::from(
+        state
+            .engine
+            .linked_aura_operation_v1
             .pending_kinship_v1
             .is_some(),
     ) + usize::from(state.engine.linked_aura_operation_v1.pending.is_some())
@@ -1700,6 +1904,22 @@ pub fn validate(state: &GameState) -> Result<(), String> {
         );
     if owners > 1 || (owners != 0 && locally_owned(state)) {
         return Err("entry checkpoint has multiple or synchronous owners".into());
+    }
+    if let Some(pending) = &state.engine.linked_aura_operation_v1.pending_hallow_v1 {
+        return as_recorded(|| {
+            let (expected, _) = replay_general(
+                &pending.original,
+                &pending.operation,
+                &pending.answers,
+                pending.used_banner,
+            )?;
+            if expected != *state || !has_pending(&expected) {
+                return Err(
+                    "Hallow checkpoint changed its original operation or beneficiary menu".into(),
+                );
+            }
+            Ok(())
+        });
     }
     if let Some(pending) = &state
         .engine
@@ -1898,6 +2118,9 @@ pub fn validate(state: &GameState) -> Result<(), String> {
 }
 fn decision(state: &GameState) -> Result<Decision, String> {
     validate(state)?;
+    if let Some(pending) = &state.engine.linked_aura_operation_v1.pending_hallow_v1 {
+        return Ok(hallow_decision(&pending.choice));
+    }
     if let Some(pending) = &state
         .engine
         .linked_aura_operation_v1
@@ -1942,7 +2165,8 @@ fn decision(state: &GameState) -> Result<Decision, String> {
             | GeneralChoiceV36::MeddlingMageV1 { .. }
             | GeneralChoiceV36::ReanimateMetamorphV1 { .. }
             | GeneralChoiceV36::VialMetamorphV1 { .. }
-            | GeneralChoiceV36::ShowAndTellV1 { .. } => {
+            | GeneralChoiceV36::ShowAndTellV1 { .. }
+            | GeneralChoiceV36::HallowV1 { .. } => {
                 return Err("successor choice cannot use frozen Banner checkpoint".into())
             }
             GeneralChoiceV36::Color { choice, .. } => Decision::ChooseEntryColorV36 {
@@ -1988,6 +2212,35 @@ fn decision(state: &GameState) -> Result<Decision, String> {
     })
 }
 pub(crate) fn step(state: &mut GameState, action: Action) -> Result<(), String> {
+    if let Some(pending) = &state.engine.linked_aura_operation_v1.pending_hallow_v1 {
+        validate(state)?;
+        let prevention = match action {
+            Action::ChooseEffectTarget(Target::Player(beneficiary)) if !pending.choice.mixed() => {
+                HallowPreventionV1::Hallow(beneficiary)
+            }
+            Action::ChooseEffectOption(option) if pending.choice.mixed() => pending
+                .choice
+                .option(option)
+                .ok_or("Hallow prevention effect is outside its captured menu")?,
+            _ => return Err("Hallow requires one of its offered prevention effects".into()),
+        };
+        if !pending.choice.allows(prevention) {
+            return Err("Hallow prevention effect is outside its captured menu".into());
+        }
+        let mut answers = pending.answers.clone();
+        answers.push(GeneralAnswerV36::HallowV1 {
+            choice: pending.choice.clone(),
+            prevention,
+        });
+        let (next, _) = replay_general(
+            &pending.original,
+            &pending.operation,
+            &answers,
+            pending.used_banner,
+        )?;
+        *state = next;
+        return Ok(());
+    }
     crate::event::validate_copied_token_abilities_v1(state)?;
     mage_entry::validate_retained(state)?;
     if let Some(pending) = &state
@@ -3459,6 +3712,7 @@ pub(crate) fn commit_entry_color(
 
 fn equipment_decision_v48(choice: &GeneralChoiceV36) -> Result<Decision, String> {
     match choice {
+        GeneralChoiceV36::HallowV1 { choice } => Ok(hallow_decision(choice)),
         GeneralChoiceV36::MeddlingMageV1 { choice, group } => mage_entry::decision(choice, *group),
         GeneralChoiceV36::ShowAndTellV1 { choice, .. } => Ok(Decision::ChooseEffectTargets {
             player: choice.player,
@@ -3988,6 +4242,8 @@ pub(crate) fn replay_drake_enclosing_owned_v1(
 pub(crate) fn tamper_drake_saved_output_runtime_for_test(state: &mut GameState) {
     assert!(!locally_owned(state));
     let runner = RunnerV1 {
+        hallow_batch: None,
+
         kinship_start: None,
         kinship_plans: Vec::new(),
         mage_start: None,
@@ -4024,6 +4280,8 @@ mod runner_serde_tests {
 
     fn runner(mage_names_v2: bool) -> RunnerV1 {
         RunnerV1 {
+            hallow_batch: None,
+
             kinship_start: None,
             kinship_plans: Vec::new(),
             original_stack: Vec::new(),
