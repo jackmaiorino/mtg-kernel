@@ -2269,6 +2269,12 @@ pub enum CommittedEvent {
     EtaliPrimalStormReceiptV1 {
         journal: Box<crate::etali_primal_storm_receipts_v1::JournalV1>,
     },
+    /// Resolution payment for an exact spell incarnation, retained only in
+    /// engine history. It does not create a trigger or cast a spell.
+    SpellCopyCostPaidV1 {
+        parent: StackItemId,
+        player: PlayerId,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;

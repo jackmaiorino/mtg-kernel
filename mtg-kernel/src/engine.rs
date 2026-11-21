@@ -1414,17 +1414,21 @@ pub struct PendingOptionalCostSacrifice {
 pub enum SpellCopyStage {
     /// The affected player decides whether to pay {R}{R}.
     Payment,
-    /// Payment succeeded and the copy exists on the stack; decide whether
+    /// The player chose to copy and the copy exists on the stack; decide whether
     /// to choose a target again or keep the inherited target.
     Retarget,
     /// The player chose to retarget and must now select one legal target.
     Target,
+    /// Payment succeeded; the player decides whether to create a copy.
+    Copy,
 }
+
+pub(crate) const SPELL_COPY_CHOICE_PATH: &[u16] = &[1];
 
 /// Durable continuation for a spell-copy choice made during resolution.
 /// `resolving_source` plus `resolving_source_zone_change_count` identifies
 /// the exact still-live parent stack incarnation; `copy_source` is a fresh
-/// virtual arena object once payment succeeds.
+/// virtual arena object once the paid player chooses to copy.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PendingSpellCopy {
     /// Exact parent stack incarnation whose resolution is suspended.
@@ -1442,7 +1446,7 @@ pub struct PendingSpellCopy {
     pub inherited_target_contract: Option<StackTargetContractV4>,
     pub stage: SpellCopyStage,
     pub copy_source: Option<ObjectId>,
-    /// Exact virtual copy incarnation allocated after payment.
+    /// Exact virtual copy incarnation allocated on acceptance.
     #[serde(default)]
     pub copy_stack_item: Option<StackItemId>,
 }
@@ -4156,6 +4160,30 @@ fn legal_targets_for_controller_from_source_unframed(
     legal
 }
 
+// Old snapshots stored Journey's printed "target creature" trigger using the
+// source-excluding tag. All other printings retain the tag's usual meaning.
+fn current_target_spec(spec: TargetSpec, source_card_def: Option<u16>) -> TargetSpec {
+    if spec == TargetSpec::CreatureOtherThanSource
+        && source_card_def
+            .and_then(|id| card_def::CARD_DEFS.get(usize::from(id)))
+            .is_some_and(|definition| definition.name == "Journey to Nowhere")
+    {
+        TargetSpec::Creature
+    } else {
+        spec
+    }
+}
+
+fn current_stack_target_spec(item: &StackItem) -> Option<TargetSpec> {
+    let source = item
+        .v4
+        .ability_source_contract
+        .map(|contract| contract.card_def);
+    item.v4
+        .target_spec
+        .map(|spec| current_target_spec(spec, source))
+}
+
 fn legal_targets_unrestricted_v1(
     spec: TargetSpec,
     targets_chosen: &[Target],
@@ -4169,6 +4197,7 @@ fn legal_targets_unrestricted_v1(
         None => None,
     };
     let source = source.filter(|_| dungeon_colors.is_none());
+    let spec = current_target_spec(spec, source.map(|s| s.card_def));
     let mut full_text_a2_live = false;
     match source.and_then(|source| source.full_text_departure) {
         Some(Ok(crate::full_text_v1::TriggerSourceV1::Departed(departure))) => {
@@ -5136,6 +5165,11 @@ fn legal_targets_unrestricted_v1(
                 });
             }
         }
+    }
+    if dungeon_colors.is_some() {
+        targets.retain(|&target| {
+            !crate::eternal_e5a_v1::statics::protected_from_dungeon(state, target)
+        });
     }
     if let Some(colors) = dungeon_colors.filter(|&colors| colors != 0) {
         targets.retain(|&target| {
@@ -15172,8 +15206,8 @@ fn drain_pending_optional_cost_or_decide(state: &mut GameState) -> Option<Decisi
 
 /// Presents whichever decision is live inside Chain Lightning's suspended
 /// resolution. The target stage deliberately reuses ordinary
-/// `Decision::ChooseTargets`/`Action::ChooseTarget`; the two preceding
-/// binary decisions retain their distinct rules meanings on the RL wire.
+/// `Decision::ChooseTargets`/`Action::ChooseTarget`; the decision to copy
+/// after payment uses the generic effect-option menu.
 fn drain_pending_spell_copy_or_decide(state: &mut GameState) -> Option<Decision> {
     let pending = state.engine.pending_spell_copy.clone()?;
     if validate_pending_spell_copy(state, &pending).is_err() {
@@ -15190,6 +15224,11 @@ fn drain_pending_spell_copy_or_decide(state: &mut GameState) -> Option<Decision>
         SpellCopyStage::Payment => Some(Decision::ChooseSpellCopyPayment {
             player: pending.player,
             spell: pending.resolving_source,
+        }),
+        SpellCopyStage::Copy => Some(Decision::ChooseEffectOption {
+            player: pending.player,
+            source: pending.resolving_source,
+            option_count: 2,
         }),
         SpellCopyStage::Retarget => Some(Decision::ChooseSpellCopyRetarget {
             player: pending.player,
@@ -18620,7 +18659,10 @@ pub(crate) fn validate_pending_trigger(
             )
         })
         .ok_or("pending targeted trigger has no matching definition-owned ability")?;
-    if pending.target_spec != expected {
+    let source_card_def = pending
+        .source_contract
+        .map_or(source.card_def, |c| c.card_def);
+    if current_target_spec(pending.target_spec, Some(source_card_def)) != expected {
         return Err("pending trigger target specification changed".to_string());
     }
     if (expected != TargetSpec::CounterDistribution
@@ -19029,7 +19071,7 @@ pub(crate) fn validate_pending_trigger_identity(
         },
     };
     let expected = triggered_stack_item_expected_target_spec(&candidate, state, false)?;
-    if expected != candidate.v4.target_spec {
+    if expected != current_stack_target_spec(&candidate) {
         return Err("pending trigger target specification is not definition-owned".to_string());
     }
     Ok(())
@@ -20316,7 +20358,7 @@ fn validated_stack_item_target_metadata(
         }
         return Ok(None);
     };
-    if item.v4.target_spec != Some(spec) {
+    if current_stack_target_spec(item) != Some(spec) {
         return Err("stack target specification does not match its definition".to_string());
     }
     if let Some(EffectOp::DistributePlusOneCounters {
@@ -26689,6 +26731,17 @@ pub(crate) fn step_without_linked_aura_v1(
             }
         }
     }
+    if state
+        .engine
+        .pending_spell_copy
+        .as_ref()
+        .is_some_and(|pending| pending.stage == SpellCopyStage::Copy)
+    {
+        return match action {
+            Action::ChooseEffectOption(option) => apply_choose_paid_spell_copy(state, option),
+            _ => Err("only the paid spell-copy choice may answer this decision".to_string()),
+        };
+    }
     match action {
         Action::ChooseTriggerMode(mode) => {
             let pending = state.engine.pending_triggers.first()
@@ -28861,14 +28914,20 @@ pub(crate) fn validate_pending_spell_copy(
         return Err("the spell-copy continuation changed the affected player".to_string());
     }
     match pending.stage {
-        SpellCopyStage::Payment => {
+        SpellCopyStage::Payment | SpellCopyStage::Copy => {
+            let paid = state.engine.event_history.last()
+                == Some(&CommittedEvent::SpellCopyCostPaidV1 {
+                    parent: pending.resolving_stack_item,
+                    player: pending.player,
+                });
+            if paid != (pending.stage == SpellCopyStage::Copy) {
+                return Err("the spell-copy decision disagrees with its payment receipt".into());
+            }
             if pending.copy_source.is_some() || pending.copy_stack_item.is_some() {
-                return Err("the payment-stage spell copy already has a copy object".to_string());
+                return Err("the spell-copy choice already has a copy object".to_string());
             }
             if parent_index + 1 != state.stack.len() {
-                return Err(
-                    "the payment-stage spell-copy parent is not the top stack item".to_string(),
-                );
+                return Err("the spell-copy parent is not the top stack item".to_string());
             }
         }
         SpellCopyStage::Retarget | SpellCopyStage::Target => {
@@ -28962,6 +29021,28 @@ fn finish_pending_spell_copy_resolution(
     Ok(())
 }
 
+thread_local! {
+    static LEGACY_ROLLOUT_SPELL_COPY_V1: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Seeded-uniform rollout V1 and V2 preserve their original decision stream.
+/// Keep their payment mode on the dedicated worker thread and out of the
+/// game state, action encodings, and persisted history.
+pub(crate) fn with_legacy_rollout_spell_copy_v1<T>(run: impl FnOnce() -> T) -> T {
+    struct RestoreMode<'a>(&'a std::cell::Cell<bool>, bool);
+
+    impl Drop for RestoreMode<'_> {
+        fn drop(&mut self) {
+            self.0.set(self.1);
+        }
+    }
+
+    LEGACY_ROLLOUT_SPELL_COPY_V1.with(|mode| {
+        let _restore = RestoreMode(mode, mode.replace(true));
+        run()
+    })
+}
+
 fn apply_choose_spell_copy_payment(state: &mut GameState, pay: bool) -> Result<(), String> {
     let pending = state
         .engine
@@ -28981,7 +29062,45 @@ fn apply_choose_spell_copy_payment(state: &mut GameState, pay: bool) -> Result<(
         return finish_pending_spell_copy_resolution(state, &pending);
     };
     pay_plan(state, pending.player, &plan);
-    let (copy_source, copy_stack_item) = create_spell_copy(state, &pending);
+    if LEGACY_ROLLOUT_SPELL_COPY_V1.with(std::cell::Cell::get) {
+        enter_spell_copy_retarget(state, &pending);
+        return Ok(());
+    }
+    state
+        .engine
+        .event_history
+        .push(CommittedEvent::SpellCopyCostPaidV1 {
+            parent: pending.resolving_stack_item,
+            player: pending.player,
+        });
+    state
+        .engine
+        .pending_spell_copy
+        .as_mut()
+        .expect("pending was validated above")
+        .stage = SpellCopyStage::Copy;
+    Ok(())
+}
+
+fn apply_choose_paid_spell_copy(state: &mut GameState, option: u16) -> Result<(), String> {
+    let pending = state
+        .engine
+        .pending_spell_copy
+        .clone()
+        .filter(|pending| pending.stage == SpellCopyStage::Copy)
+        .ok_or("no paid spell-copy decision is pending")?;
+    validate_pending_spell_copy(state, &pending)?;
+    match option {
+        0 => return finish_pending_spell_copy_resolution(state, &pending),
+        1 => (),
+        _ => return Err("invalid paid spell-copy option".to_string()),
+    }
+    enter_spell_copy_retarget(state, &pending);
+    Ok(())
+}
+
+fn enter_spell_copy_retarget(state: &mut GameState, pending: &PendingSpellCopy) {
+    let (copy_source, copy_stack_item) = create_spell_copy(state, pending);
     let live = state
         .engine
         .pending_spell_copy
@@ -28990,7 +29109,6 @@ fn apply_choose_spell_copy_payment(state: &mut GameState, pay: bool) -> Result<(
     live.stage = SpellCopyStage::Retarget;
     live.copy_source = Some(copy_source);
     live.copy_stack_item = Some(copy_stack_item);
-    Ok(())
 }
 
 fn apply_choose_spell_copy_retarget(
@@ -37662,6 +37780,63 @@ mod tests {
     }
 
     #[test]
+    fn chain_lightning_can_pay_then_decline_without_creating_copy() {
+        let mut state = ready_game_in_main1(1);
+        let chain = put_in_hand(&mut state, PlayerId::P0, "Chain Lightning");
+        let red = mana::ManaColor::R.pool_index();
+        state.players[1].mana_pool[red] = 2;
+        step(&mut state, Action::CastSpell(chain)).unwrap();
+        step(
+            &mut state,
+            Action::ChooseTarget(Target::Player(PlayerId::P1)),
+        )
+        .unwrap();
+        assert!(matches!(
+            pass_until_stack_resolves(&mut state),
+            Decision::ChooseSpellCopyPayment {
+                player: PlayerId::P1,
+                ..
+            }
+        ));
+        let object_count = state.objects.len();
+
+        step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+        assert_eq!(state.players[1].mana_pool[red], 0);
+        assert!(matches!(
+            advance_until_decision(&mut state),
+            Decision::ChooseEffectOption {
+                player: PlayerId::P1, source, option_count: 2,
+            } if source == chain
+        ));
+        assert_eq!(state.stack.len(), 1);
+        assert_eq!(state.objects.len(), object_count);
+
+        let snapshot = serde_json::to_vec(&state).unwrap();
+        let mut state: GameState = serde_json::from_slice(&snapshot).unwrap();
+        let before = state.clone();
+        assert!(step(&mut state, Action::ChooseEffectOption(2)).is_err());
+        assert!(step(&mut state, Action::ChooseSpellCopyPayment(true)).is_err());
+        assert!(step(&mut state, Action::Pass).is_err());
+        assert_eq!(state, before);
+        let mut unearned_copy = state.clone();
+        unearned_copy
+            .engine
+            .event_history
+            .truncate(unearned_copy.engine.event_history.len() - 1);
+        let unearned_before = unearned_copy.clone();
+        assert!(step(&mut unearned_copy, Action::ChooseEffectOption(1)).is_err());
+        assert_eq!(unearned_copy, unearned_before);
+
+        step(&mut state, Action::ChooseEffectOption(0)).unwrap();
+        assert_eq!(state.players[1].mana_pool[red], 0);
+        assert_eq!(state.players[1].life, 17);
+        assert_eq!(state.players[0].graveyard, vec![chain]);
+        assert!(state.stack.is_empty());
+        assert_eq!(state.objects.len(), object_count);
+        assert!(state.engine.pending_spell_copy.is_none());
+    }
+
+    #[test]
     fn blood_activation_with_one_discardable_card_is_forced_before_policy_dispatch() {
         let mut state = ready_game_in_main1(1);
         let blood = put_on_battlefield(&mut state, PlayerId::P0, "Blood Token");
@@ -37736,6 +37911,7 @@ mod tests {
             Decision::ChooseSpellCopyPayment { .. }
         ));
         step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+        step(&mut state, Action::ChooseEffectOption(1)).unwrap();
 
         assert!(state.objects.get(red1).tapped && state.objects.get(red2).tapped);
         assert_eq!(state.objects.len(), arena_before_copy + 1);
@@ -37814,6 +37990,7 @@ mod tests {
         assert_eq!(state.objects.get(creature).damage, 3);
 
         step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+        step(&mut state, Action::ChooseEffectOption(1)).unwrap();
         step(&mut state, Action::ChooseSpellCopyRetarget(true)).unwrap();
         let copy = state
             .engine
@@ -37893,6 +38070,7 @@ mod tests {
         );
 
         step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+        step(&mut state, Action::ChooseEffectOption(1)).unwrap();
         match advance_until_decision(&mut state) {
             Decision::ChooseSpellCopyRetarget {
                 player: PlayerId::P1,
@@ -37925,6 +38103,7 @@ mod tests {
         .unwrap();
         let _ = pass_until_stack_resolves(&mut state);
         step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+        step(&mut state, Action::ChooseEffectOption(1)).unwrap();
         let copy1 = state
             .engine
             .pending_spell_copy
@@ -37941,6 +38120,7 @@ mod tests {
 
         let _ = pass_until_stack_resolves(&mut state);
         step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+        step(&mut state, Action::ChooseEffectOption(1)).unwrap();
         let copy2 = state
             .engine
             .pending_spell_copy
@@ -37981,6 +38161,7 @@ mod tests {
             Decision::ChooseSpellCopyPayment { .. }
         ));
         step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+        step(&mut state, Action::ChooseEffectOption(1)).unwrap();
         let copy = state
             .engine
             .pending_spell_copy
@@ -38034,6 +38215,7 @@ mod tests {
         let payment_snapshot = state.snapshot();
 
         step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+        step(&mut state, Action::ChooseEffectOption(1)).unwrap();
         let copy = state
             .engine
             .pending_spell_copy
@@ -38073,6 +38255,7 @@ mod tests {
 
         state.restore(&payment_snapshot);
         step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+        step(&mut state, Action::ChooseEffectOption(1)).unwrap();
         assert_eq!(
             state
                 .engine
@@ -38134,6 +38317,7 @@ mod tests {
             .unwrap()
             .inherited_target = Target::Player(PlayerId::P1);
         step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+        step(&mut state, Action::ChooseEffectOption(1)).unwrap();
         let copy = state
             .engine
             .pending_spell_copy
@@ -38293,6 +38477,7 @@ mod tests {
         .unwrap();
         let _ = pass_until_stack_resolves(&mut state);
         step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+        step(&mut state, Action::ChooseEffectOption(1)).unwrap();
         let copy = state
             .engine
             .pending_spell_copy
@@ -38328,6 +38513,7 @@ mod tests {
         .unwrap();
         let _ = pass_until_stack_resolves(&mut state);
         step(&mut state, Action::ChooseSpellCopyPayment(true)).unwrap();
+        step(&mut state, Action::ChooseEffectOption(1)).unwrap();
         let copy = state
             .engine
             .pending_spell_copy

@@ -270,6 +270,36 @@ fn circle_entry_matches(state: &GameState, source: ObjectLinkV4, spell: CopSpell
             .any(|event| matches!(event, event::CommittedEvent::ZoneChange { object, .. } if *object == source.object))
 }
 
+/// A virtual spell starts at generation zero on the stack. Its first zone
+/// change is the only one that can turn the chosen spell into a permanent.
+fn circle_copy_entry_matches(
+    state: &GameState,
+    chosen: ObjectLinkV4,
+    permanent: ObjectLinkV4,
+) -> bool {
+    if chosen.object != permanent.object
+        || chosen.zone_change_count != 0
+        || permanent.zone_change_count != 1
+        || state
+            .objects
+            .try_get(chosen.object)
+            .is_none_or(|object| object.spell_copy_origin.is_none() || !object.v4.is_token)
+    {
+        return false;
+    }
+    state
+        .engine
+        .event_history
+        .of_kinds_v2(&[crate::event_history_v1::EventKindV1::ZoneChange])
+        .find_map(|(_, event)| match event {
+            event::CommittedEvent::ZoneChange {
+                object, from, to, ..
+            } if *object == chosen.object => Some(*from == Zone::Stack && *to == Zone::Battlefield),
+            _ => None,
+        })
+        .unwrap_or(false)
+}
+
 /// Effect leaves owned by this module, carried as
 /// `eternal_cards_v1::EternalOpV1::S1dV1`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1701,6 +1731,7 @@ pub(crate) mod statics {
                 && shield.player == player
                 && color_mask & shield.color.mask() != 0
                 && (shield.source == source
+                    || circle_copy_entry_matches(state, shield.source, source)
                     || shield.spell.is_some_and(|spell| {
                         spell.permanent == Some(source)
                             && circle_entry_matches(state, shield.source, spell)

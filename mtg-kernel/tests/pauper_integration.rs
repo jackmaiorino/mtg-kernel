@@ -50,6 +50,8 @@ mod final_pool_initiative_v1;
 mod flat_policy_v1;
 #[path = "pauper/gut_shot_ichor_wellspring.rs"]
 mod gut_shot_ichor_wellspring;
+#[path = "pauper/journey_token_exile_v1.rs"]
+mod journey_token_exile_v1;
 #[path = "pauper/kshadow_combat_departure.rs"]
 mod kshadow_combat_departure;
 #[path = "pauper/kshadow_continuous_effects.rs"]
@@ -74,6 +76,8 @@ mod mana_permanents;
 mod mill_cards;
 #[path = "pauper/murmuring_mystic.rs"]
 mod murmuring_mystic;
+#[path = "pauper/nyxborn_bestow_sacrifice_v1.rs"]
+mod nyxborn_bestow_sacrifice_v1;
 #[path = "pauper/pauper_counterspells.rs"]
 mod pauper_counterspells;
 #[path = "pauper/pauper_green_utility.rs"]
@@ -124,6 +128,8 @@ mod rl_session;
 mod sideboard_v1;
 #[path = "pauper/sleep_of_the_dead.rs"]
 mod sleep_of_the_dead;
+#[path = "pauper/sneaky_snacker_return_v1.rs"]
+mod sneaky_snacker_return_v1;
 #[path = "pauper/sneaky_snacker_trigger_zone.rs"]
 mod sneaky_snacker_trigger_zone;
 #[path = "pauper/spy_combo_core.rs"]

@@ -680,7 +680,7 @@ fn worker_entry(shared: Arc<SharedRolloutV1>, config: AsyncRolloutConfigV1, lane
     #[cfg(test)]
     let _active_worker = TestActiveWorkerGuardV1::enter(Arc::clone(&shared.test_instrumentation));
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        worker_loop(&shared, &config, lane_id)
+        crate::engine::with_legacy_rollout_spell_copy_v1(|| worker_loop(&shared, &config, lane_id))
     }));
     if shared.control.cancel.load(Ordering::Relaxed) {
         return;
@@ -891,6 +891,8 @@ fn read_worker_failure(
 
 /// Run a finite seeded-uniform rollout schedule through the asynchronous
 /// request/response path.
+/// Uses the historical seeded-uniform policy menu, including the original
+/// combined payment and copy transition for Chain Lightning.
 pub fn run_seeded_uniform_async_rollout_v1(
     config: AsyncRolloutConfigV1,
 ) -> Result<AsyncRolloutResultV1, AsyncRolloutErrorV1> {

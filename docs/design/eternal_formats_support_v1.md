@@ -631,7 +631,9 @@ New, each built once in the first wave that needs it:
   show a bound Undercity room like a bound Forgotten Realms room, as its
   venture source's trigger with the engine's legal targets. Infoset exports
   still refuse bound Undercity rooms.
-  Serra's Emissary's existing type choices still omit Dungeon.
+  Serra's Emissary appends Dungeon after its seven historical type choices.
+  Native room abilities check that protection at target selection and
+  resolution, including when the room outlasts its dungeon.
   Temple of Dumathoin and Mad Wizard's Lair bind each draw attempt to the
   native venture entry and published room ability. The Lair reveals and
   offers only cards actually drawn, and an immediate Jace win ends the
@@ -665,9 +667,11 @@ New, each built once in the first wave that needs it:
   capture; no copied Arcane Denial fixture exists yet. Ordinary
   pending and published triggers retain their public meaning through
   authenticated original source contracts; suspended
-  owned replacement choices require an observation successor. Native1330 exposed
-  start/resume guards and an unavailable copy fixture producer; both source fixes
-  are committed, with native requalification pending.
+  owned replacement choices require an observation successor. After the
+  start/resume and copy-fixture repairs, all nine Portent integration tests
+  passed at `e32ed55cf`, including a paid spell retargeted by Misdirection,
+  restore after a replacement choice, and a native copy's ordinary delayed
+  draw. [Hosted Eternal integration][s1-draw-native].
   The physical Standstill successor binds the exact finalized cast identity
   and SpellCast occurrence, original battlefield source, native trigger
   publication, and successful sacrifice marker plus source departure. The
@@ -682,8 +686,10 @@ New, each built once in the first wave that needs it:
   a copied bound receipt. Ordinary pending and published triggers retain existing
   observations; suspended owned replacement choices require an observation
   successor. Source review verified the ordinary V5/Human compatibility repair
-  and authenticated historical source projection. Native qualification of this
-  successor remains pending.
+  and authenticated historical source projection. All seven Standstill
+  integration tests passed at `e32ed55cf`, including a sacrifice replaced by
+  exile, stale stacked triggers, and a Vialed Metamorph copying an animated
+  Standstill. [Hosted Eternal integration][s1-draw-native].
   Generated draws from the remaining Premodern leaves, Arcane Denial and
   Accumulated Knowledge still need their Jace/Hullbreacher origins.
   Quantum Riddler adjusts the whole count once for uninterrupted fixed and
@@ -696,8 +702,11 @@ New, each built once in the first wave that needs it:
   the native return batch before validating the adjustment. A terminal Jace
   win stops the remaining attempts and skips Jewel's transfer. Earlier saved
   continuations keep their prior format. Both-seat paid fixtures cover
-  Dredge, Hullbreacher, Jace, restore and tampering. Native qualification is
-  pending. Wizards' Edge of Eternities release notes specify that Riddler
+  Dredge, Hullbreacher, Jace, restore and tampering. At `e32ed55cf`, the
+  paid two-seat cases passed for Jewel's Riddler-adjusted entry draw, a Jace
+  win before Jewel's combat transfer, and Outcome's adjusted draw count
+  through dredge and a Jace win. [Hosted Eternal integration][s1-draw-native].
+  Wizards' Edge of Eternities release notes specify that Riddler
   adjusts the whole instruction before individual draw replacements
   (https://magic.wizards.com/en/news/feature/edge-of-eternities-release-notes).
   Nested or dynamic suspended draws, copies, and turn-based draws with
@@ -757,7 +766,9 @@ New, each built once in the first wave that needs it:
   historical damage to the chosen source incarnation. A native Stack-to-Battlefield
   entry records the exact permanent that a chosen physical cast becomes, bound
   to its published cast identity and first committed departure; later blinks do
-  not retarget its shield. Virtual permanent spell copies still need this binding.
+  not retarget its shield. A virtual permanent spell starts on the stack with
+  its own object identity. Its shield follows that copy through its first
+  stack-to-battlefield move to the token it becomes.
   Wave P3g records departed sources' last-known color and marks the card Full (see P3g).
   The choice menu includes blue permanents, stack spells, face-up command
   objects and supported public references from stack items and waiting effects.
@@ -3432,3 +3443,187 @@ Ten cards stay out, each for a stated missing piece:
   added artifact type); Pyrogoyf (damage by each entering creature as it last existed); Saheeli,
   Sublime Artificer (full copiable values for a token that becomes a copy); Chandra, Torch of
   Defiance (casting an exiled card for its mana cost).
+
+## Eternal rules precision closeout (#717)
+
+This records the finite [rules review checklist](https://github.com/jackmaiorino/mtg-kernel/issues/717)
+against main at `e32ed55cf`, including the named C5 and C6 findings in its comments. The rules limits below are based on current source and the named review evidence. Card tiers and
+registered deck coverage follow the existing catalog. Draw-owner work outside this finite list remains
+tracked in #365.
+
+### Corrections on main
+
+- [#756](https://github.com/jackmaiorino/mtg-kernel/pull/756) stops a plain or resumable effect program
+  after a draw wins the game. It also decides name-keyed graveyard replacements before a zone-move
+  batch begins, including effect batches, state-based death groups and multi-permanent sacrifice
+  costs. The separately committed each-player sacrifices and simultaneous-entry limits are below.
+- The same change skips the shuffle when an optional search is declined, requires a find in a
+  nonempty library for an unrestricted search, and prevents a cascade Adventure cast whose chosen
+  spell fails the mana-value bound. It suppresses printed land-entry tap rules under the Moon effects
+  and reads effective types for the external enters-tapped effects. It permits multikicker, replicate
+  and splice on a free cast, separates saddle from Pilot-assisted crew, and applies floored activation
+  reductions to the total after cost increases.
+- [#778](https://github.com/jackmaiorino/mtg-kernel/pull/778), integrated by
+  [#784](https://github.com/jackmaiorino/mtg-kernel/pull/784), orders Wheel of Fortune, Time Spiral
+  and Faerie Mastermind's two draws active-player first. It exposes the competing replacement choice
+  on Occult Epiphany's leaf-staged draws and across structural choices, and lets the may-discard-then-draw
+  leaf offer dredge. The generic choice path covers a definition-owned draw of Palantir of Orthanc's
+  draw branch by source inspection. The review exercised Smuggler's Copter as the structural choice
+  witness. Memory Jar's separate program and the nested Quantum Riddler case remain below.
+- [#780](https://github.com/jackmaiorino/mtg-kernel/pull/780), integrated by #784, orders
+  the listed static keyword grants, animation keywords and protection records against ability
+  removal by timestamp. Creeping Tar Pit's resolved blocking restriction still applies because
+  that restriction is a rule effect of its resolution. The aggregate keyword query has its own
+  remaining discrepancy.
+- [#777](https://github.com/jackmaiorino/mtg-kernel/pull/777), integrated by #784, records
+  Currency Converter and Staff of the Storyteller at their triggering events. It keeps the exile
+  link to a departed Converter, applies the applicable counter replacements to the reported counter
+  cost and charge-counter leaf, and accounts for sunburst when a cast copy spell enters as a copy.
+  A second token-creation instruction can still be coalesced into the first trigger.
+- [#764](https://github.com/jackmaiorino/mtg-kernel/pull/764), integrated by #784, retains later
+  added basic land types under a land-type setter by timestamp. Its regression suite checks
+  Navigator's Compass before and after Spreading Seas and both manual and planned mana.
+  It also removes the printed-color shortcut when printed abilities are off, covering the
+  reported Urborg, Yavimaya, Navigator's Compass and Petrified Hamlet omissions.
+- [#781](https://github.com/jackmaiorino/mtg-kernel/pull/781), integrated by #784, keeps the
+  printed Hickory Woodlot and Sandstone Needle counter and sacrifice rules from applying to
+  a mana ability supplied by a land-type setter when printed abilities are off. Its Moon
+  tests cover the Woodlot by hand, including the zero-counter case. The normal printed
+  activation test covers Sandstone Needle as well. The narrower gaps below remain.
+
+### Casting, draws and copy effects
+
+- **Flashback.** The single flashback cost selected by `spell_costs_v1::flashback_cost_v1` takes
+  the printed cost before a granted cost. A grant from Flashback or Snapcaster Mage therefore
+  offers no second price for Lingering Souls.
+- **Additional costs under another permission.** Bitter Triumph's registered cast still treats
+  the 3-life choice as an alternative cost, so the caster cannot choose it while casting for
+  granted flashback or a free cast. See [Choice between additional costs](#choice-between-additional-costs-715)
+  for the actor-contract scope and the different treatment of Bone Shards and Demand Answers.
+  A graveyard cast that already stages one object payment can also lack a second selection.
+  The C6 review cites Six's retrace with Abhorrent Oculus's graveyard exile. The corresponding
+  Wrenn emblem case is a pitch selection where the cast offers it. #786 corrected the reported
+  non-completing Gurmag Angler and Avatar of Woe offers without adding a second object selection.
+- **Divided damage.** Fire Covenant, Fire and Fury store one pick per point. A spell directing
+  multiple picks at one object still has multiple entries, so the single-target Misdirection
+  check can reject such a Fire Covenant or Fire. Fury uses the same allocation for a triggered
+  ability. Fire Covenant also caps the allocation at 64 picks.
+- **Lurrus.** `lurrus_card` checks the printed permanent definition's mana value. It has no
+  selected X or Adventure-face input. A permanent card with X is eligible as though X were
+  zero, and a graveyard cast of an Adventure half may consume the permission based on the
+  permanent card. The latter is the reported route, unverified by a paired cast witness.
+- **Draw order and ownership.** `memory_jar` still draws for its controller before the other
+  player even when activated out of turn. The program stops between the draws if a draw won the
+  game. #778 fixes paid-choice dredge and choice-origin discovery, but Quantum Riddler's
+  extra draw can still be lost when dredge replaces the first draw of a nested instruction
+  such as Skullclamp, Glimmer Lens, Smuggler's Copter or Proft's Eidetic Memory.
+  The owned-draw journal does not take ownership of that sub-instruction.
+- **Temporary and death copies.** A permanent has one live copy record. If Shifting Woodland
+  copies Thespian's Stage and then uses Stage's ability, the later copy can be cleared when
+  Woodland's timed copy expires. Sphinx of False Conclusions combines Wurmcoil Engine's death condition with Homunculus Horde's
+  token-copy operation. The copy operation retains the departed permanent's definition but
+  can drop copy-effect additions such as Metamorph's artifact type. Vaultborn Tyrant
+  depends on the missing values and was withheld from C6. This differs from the reported
+  last-known *power* gap for Phyrexian Metamorph copying Ouroboroid, where the normal
+  source-power capture can miss the copied permanent. The latter remains a review case,
+  without a targeted departure replay.
+- **Aura entry and emblems.** Aang's Iceberg's linked return bypasses the choice of what a
+  returning Aura enchants. Banishing Light has a specialized return path. An Animate Dead
+  token from Fractured Identity goes through battlefield attachment selection and
+  cannot select its creature card in the graveyard. Targeted Tezzeret and Teferi emblems
+  use the planeswalker's source characteristics for protection checks, so targets protected
+  from the maker's colors can be excluded.
+
+### Lands, mana and continuous effects
+
+- **Land-type dependencies.** #764 orders the listed type additions relative to setters by
+  timestamp. It has no layer-4 dependency resolution between setters. It also cannot recover
+  the real order of a Navigator's Compass record saved without a timestamp. The older record
+  reads as timestamp zero. This is distinct from the corrected granted-color case.
+- **Land plays.** Fastbond can waive the ordinary allowance, but the serialized
+  `lands_played_this_turn` remains eight bits and rejects play number 256. The effect-resolution
+  route used by Collector's Cage and Shelldock Isle admits only an unused first land
+  play and does not choose the land face of a modal double-faced card. The graveyard land-play
+  candidates of Mole Man, Icetill Explorer and Crucible of Worlds also use the registered front
+  face. C6's change to control of a land played from someone else's exile does not change these
+  allowance or face checks.
+- **Battlefield land predicates.** Several readers use the registered definition rather than
+  the battlefield face. A modal double-faced permanent showing its land face can be missed by
+  a land sacrifice cost, land count or land-departure condition, as reported for Baloth Prime
+  and Titania, Protector of Argoth. This is a battlefield lookup separate from playing a land
+  face from the graveyard.
+- **Finite X and arithmetic.** Candelabra of Tawnos and Blast Zone enumerate X, ending at 8
+  and 7 respectively. The engine also has bounded 32-bit counter and characteristic arithmetic,
+  which can halt when the computed value leaves its range. The C4 review identified unbounded
+  doubling by Bristly Bill and repeated Ouroboroid combats as boundary cases. No exact number
+  of iterations is assumed because it depends on the starting values.
+- **Mana pool.** In the fixed-color path, checking every unit against the original pool can admit
+  repeated same-color outputs that do not fit together in the eight-bit pool. The C5 review
+  cited four green from Fanatic of Rhonas at 252 and two colorless from Sol Ring at 254.
+  These are boundary examples for the multi-mana checks, without evidence of a registered
+  deck reaching either pool balance.
+- **Restricted mana and activation tax.** The existing Powerstone noncast payment is specific
+  to that restriction. The reviewed missing payments include Eldrazi Temple's activated-ability
+  clause, mana-ability costs paid with Gwenna or Secluded Courtyard, Chandra's noncreature-spell
+  mana in the total planner, and Mishra's Workshop for an artifact miracle cost. Gloom's
+  activation tax has no mana-ability path. The reviewed catalog had no white enchantment with
+  a mana ability, so that Gloom omission had no registered card witness.
+- **Depletion lands.** `mana_ability_blocked` and `after_tapped_for_mana` now require the
+  printed abilities to be active. When they are active, those checks still identify the
+  source card instead of the particular mana ability used. They can block or consume depletion
+  for a granted tap ability. Entry counters are still initialized by name under an active Moon.
+  The reported difference between automatic planning and the castable list at zero counters
+  lacks a matching automatic-payment regression. The common printed-activation test covers
+  Sandstone Needle, while the new Moon tests exercise Woodlot.
+- **Keyword masks.** `has_effective_keyword` sees the Eternal `conditional_self_keywords`
+  helper, including Dragon's Rage Channeler's delirium flying. The aggregate
+  `effective_keywords` path has specific conditional grants but does not call that full helper.
+  The two readers can therefore disagree. The specific C5a menacing and trampling keywords
+  are present in both paths.
+
+### Choices, events and cleanup
+
+- **Simultaneous entry choices.** When entries have as-enters choices in more than one module,
+  the engine drains the choice handlers in module order; it does not order the choices by active
+  player and then nonactive player. Veteran Explorer has a separate two-search order in
+  `explorer_dies` that still asks its controller first.
+- **Simultaneous entry replacements.** Reanimation batches can apply Containment Priest as
+  each entry commits. A Priest that entered first can then exile another nontoken entrant of the
+  same batch. Stronghold Gambit has its own guard. External static tap requirements
+  (Archon of Emeria, Root Maze, Spider-Woman) also read the live battlefield for a later batch
+  member. A static source that entered earlier can tap a later creature, land or artifact in
+  the same entry batch. The effective-type fix in #756 does not take a pre-entry snapshot.
+- **Printed entry hooks and controller.** The shared printed "enters tapped unless" test
+  receives the permanent's owner rather than the player it is entering under. Outside the
+  existing Moon suppression, the printed tapped flag and several earlier entry-counter hooks
+  do not check for ability removal on entry. Baloth Prime guards its stun counters
+  against Dress Down and still uses the printed tapped flag.
+- **Separate sacrifices and remembered control.** Innocent Blood and Accursed Marauder
+  resolve each player's sacrifice separately, so removing a Dauthi Voidwalker first can leave
+  the other creature unexiled. The batch semantics for multi-permanent costs do not cover
+  these effect choices. Titania's simultaneous-departure look-back also has an owner-based
+  fallback when a watched land leaves with Titania under a different player's control.
+  That can omit its trigger. A Bargain or Casualty payment that ends in a library is rejected
+  by `validate_optional_additional_paid_refs`, which permits Graveyard or Exile for the
+  reported sacrifice receipt. Darksteel Colossus and Wheel of Sun and Moon were the review
+  examples. The C5 review found no registered deck that reaches the library-destination case.
+- **Trigger counts and attack destinations.** Staff triggers once when a trigger collection has
+  one or more qualifying creature-token creations, even if Ocelot Pride with the city's blessing
+  created tokens in two separate instructions. A token created tapped and attacking by Otharri,
+  Adeline or Gut is assigned to the defending player. The controller gets no choice of another
+  legal attack destination, such as a defending planeswalker.
+- **Cleanup.** Veil of Summer's and Seasoned Dungeoneer's turn-keyed effects can persist into a
+  cleanup priority window. They remain tied to the old turn until the turn changes. The engine
+  repeats cleanup for explicitly handled cases. A Necromancy cast at cleanup priority can miss
+  its required subsequent cleanup sacrifice because `begin_cleanup` is not called again.
+- **Saga chapters and simultaneous state-based actions.** Urza's Saga reads the highest
+  chapter gained to decide which mana abilities it has. If Stifle countered chapter I and
+  chapter II later resolves, the engine can expose chapter I's mana ability anyway, including
+  under a compatible Moon effect. The chapter recording in #761 does not fix the shared query.
+  Completed Sagas also take a separate state-based sweep. The #768 review found that the
+  donor audit can see an intermediate graveyard top, name-keyed replacement decisions do not
+  share a simultaneous batch with other state-based deaths, the owner's order for simultaneous
+  graveyard placement does not cover the Saga, and the sweep does not record the sacrifice
+  event. The review's proposed repair is one simultaneous state-based batch.
+
+[s1-draw-native]: https://github.com/jackmaiorino/mtg-kernel/actions/runs/44686851543/job/136123153784
