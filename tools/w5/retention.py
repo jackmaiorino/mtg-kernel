@@ -277,6 +277,23 @@ def index_lock(chain_path):
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
+def carried_output_unlinked(out, *dirs):
+    """A standalone output for a carried chain: the file, its temporary and the named directories have no link in
+    their paths, and nothing inside the directories is a link."""
+    out = Path(out)
+    paths = [out, out.with_suffix(out.suffix + '.tmp'), *[Path(d) for d in dirs if d]]
+    for p in paths:
+        absolute = os.path.abspath(p)
+        if os.path.islink(p) or os.path.realpath(absolute) != absolute:
+            raise SystemExit(f'stop: {p} is a link or lies under one (a carried chain)')
+    for d in dirs:
+        if d and Path(d).is_dir():
+            for dirpath, dirnames, filenames in os.walk(d, followlinks=False):
+                for entry in dirnames + filenames:
+                    if os.path.islink(os.path.join(dirpath, entry)):
+                        raise SystemExit(f'stop: {os.path.join(dirpath, entry)} is a link (a carried chain)')
+
+
 def is_carried(chain_path):
     """True when `chain_path` is a readable carried manifest (one with `carry`)."""
     try:
@@ -1106,6 +1123,9 @@ def apply(plan_doc, log_path, hold=None):
         log_abs = os.path.abspath(log_path)
         if os.path.realpath(log_abs) != log_abs:
             raise SystemExit(f'stop: the retention log {log_path} is a link or lies under one')
+        own_root = Path(os.path.abspath(plan_doc['own_dir'])).parent.parent  # <root>/chains/<name> -> <root>
+        if Path(log_abs).parent != own_root / 'retention' or Path(log_abs).suffix != '.jsonl':
+            raise SystemExit(f'stop: a carried plan logs to {own_root / "retention"}/<name>.jsonl, not {log_path}')
         if hold:
             hold_abs = os.path.abspath(hold)
             if os.path.realpath(hold_abs) != hold_abs:
@@ -1617,6 +1637,8 @@ def main(argv=None):
         out = select(chain, records, a.r_usec, snapshots(a.chain))
     elif a.cmd == 'replay-config':
         chain = load_chain(a.chain)
+        if chain.get('carry'):
+            carried_output_unlinked(a.out, a.output_dir)
         write(a.out, replay_config(chain, read(a.spec), a.output_dir))
         out = {'config': Path(a.out).as_posix()}
     elif a.cmd == 'verify-replay':
@@ -1625,6 +1647,8 @@ def main(argv=None):
         chain, records = index(a.chain)
         out = prune_manifest(chain, records, a.boundary, read(a.replay_receipt) if a.replay_receipt else None,
                              snapshots(a.chain))
+        if chain.get('carry'):
+            carried_output_unlinked(a.out)
         write(a.out, out)
     else:
         out = guard(a.roots, a.cap_bytes, a.next_bytes, a.chains)

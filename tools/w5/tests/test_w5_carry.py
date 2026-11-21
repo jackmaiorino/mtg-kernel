@@ -1096,5 +1096,35 @@ class CarryTests(unittest.TestCase):
         self.assertEqual(snap(), before)
 
 
+    def test_carried_retention_log_and_standalone_outputs_are_confined(self):
+        _, old_man = self.old(3)
+        path, plan = chains.make_plan(self.cont_inputs(self.carry(old_man, 8)))
+        cont = self.t / 'cont'
+        self.assertEqual(self.drive(plan, 'c1c', cont, 1), chains.EXIT_ROOM)
+        old_root = self.node.root
+        old_ck = next((old_root / 'chains' / 'c1' / 'seg-00001' / 'iterations' / '000003').glob(
+            'attempt-*/update/checkpoint.json'))
+        snap = lambda: {p: p.read_bytes() for p in old_root.rglob('*') if p.is_file() and not p.is_symlink()}
+        before = snap()
+        victim = cont / 'chains' / 'c1c' / 'victim.json'
+        victim.write_text('{}')
+        doc = {'own_dir': (cont / 'chains' / 'c1c').resolve().as_posix(),
+               'checkpoints': [{'path': victim.resolve().as_posix()}], 'trajectories': []}
+        with self.assertRaisesRegex(SystemExit, 'carried plan logs to'):
+            retention.apply(doc, old_ck)
+        self.assertTrue(victim.exists())
+        self.assertEqual(snap(), before)
+        # replay-config with a stale linked temporary output
+        out = cont / 'replay-x' / 'config.json'
+        out.parent.mkdir()
+        try:
+            (out.parent / 'config.json.tmp').symlink_to(old_ck)
+        except OSError:
+            self.skipTest('no symlink permission on this host')
+        with self.assertRaisesRegex(SystemExit, 'is a link'):
+            retention.carried_output_unlinked(out, out.parent / 'native')
+        self.assertEqual(snap(), before)
+
+
 if __name__ == '__main__':
     unittest.main()
