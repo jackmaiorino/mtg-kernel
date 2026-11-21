@@ -1252,6 +1252,54 @@ fn a_modal_spell_keeps_its_untargeted_mode_while_a_torch_is_on_the_stack() {
     assert_eq!(state.players[1].mana_pool, [0; 6]);
 }
 
+/// P1 casts a Torch at P0 (X = 1) and passes; P0 holds Counterspell with two
+/// untapped Mountains. Returns the Torch and the Counterspell.
+fn torch_against_counterspell(omniscience: bool) -> (GameState, ObjectId, ObjectId) {
+    let mut state = plains();
+    if omniscience {
+        put(&mut state, P0, "Omniscience", Zone::Battlefield);
+    }
+    put(&mut state, P0, "Mountain", Zone::Battlefield);
+    put(&mut state, P0, "Mountain", Zone::Battlefield);
+    let counterspell = put(&mut state, P0, "Counterspell", Zone::Hand);
+    state.active_player = P1;
+    state.priority_player = P1;
+    let torch = put(&mut state, P1, "Kaervek's Torch", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::R], 1);
+    cast_x(&mut state, torch, 1, &[Target::Player(P0)]);
+    pass_priority(&mut state, P1);
+    (state, torch, counterspell)
+}
+
+/// Under Omniscience, Counterspell cast without paying its mana cost still
+/// pays the Torch's {2}, which two Mountains cover.
+#[test]
+fn a_free_cast_under_omniscience_pays_only_the_torchs_tax() {
+    let (mut state, torch, counterspell) = torch_against_counterspell(true);
+    assert!(
+        castable(&mut state, counterspell),
+        "free, plus the {{2}} tax"
+    );
+    cast(&mut state, counterspell, &[Target::Object(torch)]);
+    settle_first(&mut state);
+    assert_eq!(zone(&state, torch), Zone::Graveyard, "countered");
+    assert_eq!(zone(&state, counterspell), Zone::Graveyard);
+    assert_eq!(life(&state, P0), 20);
+    let mountains = named(&state, P0, "Mountain");
+    assert_eq!(mountains.len(), 2);
+    assert!(mountains
+        .iter()
+        .all(|&mountain| state.objects.get(mountain).tapped));
+}
+
+/// Without Omniscience, {U}{U} plus the tax is out of reach of two
+/// Mountains: Counterspell, whose only target is the Torch, isn't offered.
+#[test]
+fn without_omniscience_counterspell_cant_target_the_torch_with_two_mountains() {
+    let (mut state, _, counterspell) = torch_against_counterspell(false);
+    assert!(!castable(&mut state, counterspell));
+}
+
 // ---- Public sessions -----------------------------------------------------------------------
 
 #[derive(Default)]
