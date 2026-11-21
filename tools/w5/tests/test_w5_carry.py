@@ -802,5 +802,43 @@ class CarryTests(unittest.TestCase):
         self.assertIn('is not this carried chain', err.getvalue())
 
 
+    def test_non_canonical_roots_and_a_swap_before_persist_are_refused(self):
+        _, old_man = self.old(2, length=32)
+        carry_path = self.carry(old_man, 32)
+        real = self.t / 'real-disk'
+        real.mkdir()
+        try:
+            (self.t / 'mnt-link').symlink_to(real, target_is_directory=True)
+        except OSError:
+            self.skipTest('no symlink permission on this host')
+        doc = json.loads(Path(self.cont_inputs(carry_path, label='nc', root='nc', segment_updates=32)).read_text())
+        doc['root'] = (self.t / 'mnt-link' / 'cont').as_posix()
+        with self.assertRaisesRegex(chains.Stop, 'canonical'):
+            chains.make_plan(jwrite(self.t / 'nc.json', doc))
+        self.assertFalse((real / 'cont').exists())
+        # the scratch parent swapped for a link while the trainer runs: no persist
+        shm = self.t / 'shm'
+        doc = json.loads(Path(self.cont_inputs(carry_path, label='sw', root='sw', segment_updates=32)).read_text())
+        doc['scratch_root'] = shm.as_posix()
+        doc['arms']['C']['scratch'] = True
+        path, plan = chains.make_plan(jwrite(self.t / 'sw.json', doc))
+        old_chain = self.node.root / 'chains' / 'c1'
+        before = {p: p.read_bytes() for p in old_chain.rglob('*') if p.is_file()}
+
+        def run_and_swap(arm, config_path, deadline, cdir, native):
+            Path(native).mkdir(parents=True, exist_ok=True)
+            (Path(native) / 'completion.json').write_text('{}')
+            (shm / 'c1c').mkdir(parents=True, exist_ok=True)
+            (shm / 'c1c').rename(shm / 'c1c.moved')
+            (shm / 'c1c').symlink_to(old_chain, target_is_directory=True)
+            return 0, False, 0
+        with mock.patch.object(chains, 'scratch_link'), \
+                mock.patch.object(chains, 'run_reaped', side_effect=run_and_swap), \
+                mock.patch.object(chains, 'persist', side_effect=AssertionError('no persist')), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.drive(plan, 'c1c', self.t / 'sw', 1), w5box.EXIT_REFUSED)
+        self.assertEqual({p: p.read_bytes() for p in old_chain.rglob('*') if p.is_file()}, before)
+
+
 if __name__ == '__main__':
     unittest.main()

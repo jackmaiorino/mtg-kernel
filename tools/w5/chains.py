@@ -652,6 +652,10 @@ def carried_dirs_apart(doc, name, root, scratch_root=None):
         ([(Path(scratch_root), Path(scratch_root) / name)] if scratch_root else [])
     for top, d in pairs:
         real = d.resolve()
+        absolute = os.path.abspath(d)
+        require(Path(top).is_absolute() and os.path.realpath(top) == os.path.abspath(top)
+                and not d.is_symlink() and os.path.realpath(absolute) == absolute,
+                f'{name}: {top} and {d} must be canonical paths with no link in them (resolves to {real})')
         require(Path(top).resolve() in real.parents, f'{name}: {d} resolves to {real}, outside {top}')
         for t in theirs:
             require(disjoint(real, t), f'{name}: {d} resolves to {real}, not apart from the carried chain\'s {t}')
@@ -2145,6 +2149,7 @@ def run(a):
     log(root, chain=a.chain, event='run', cmd=cmd)
     code = subprocess.call(cmd)
     log(root, chain=a.chain, event='run-exit', exit=code)
+    carried_chain_dir_ok(plan, root, a.chain)  # a carried chain: again, before reading or writing its END
     if read_end(root, a.chain) is not None:
         release_scratch(plan, a.chain, read(chain_dir(root, a.chain) / 'chain.json'))  # the box's driver is gone
         return 0
