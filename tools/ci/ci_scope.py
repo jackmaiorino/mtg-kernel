@@ -4,7 +4,7 @@ The release line has one narrow scope, release-trainer (the lead's ruling of 202
 the trainer and learner modules plus a named list of shared modules runs formatting, Clippy and the library
 tests of every one of those modules in full. Any other file (engine rules, cards, data, build files, workflow)
 runs the whole pull request set, and so does any pull request that contains a merge commit (a merge between
-this line and main). The full matrix runs after every merge into the line as a monitor.
+this line and main). Pushes to the line run the full matrix as a coalesced monitor.
 
 Usage:
   ci_scope.py choose          detect-changes step: reads EVENT, SCOPE, INPUT_SCOPE, LABELS (JSON list),
@@ -135,9 +135,9 @@ def markdown() -> str:
            "any merge commit in the pull request (a merge between this line and main), or a pull request of more "
            "than 250 commits (the listing limit), runs the whole pull request set. Markdown files never decide. "
            "`ci:full` forces the whole set on the next push or ready (a label alone starts no run); labels never "
-           "narrow a run. Every "
-           "merge into the line runs the full matrix as a monitor; a red Limited or Eternal shard there is fixed "
-           "forward or reverted the same day.", "",
+           "narrow a run. Pushes to the line run the full matrix as a monitor, coalesced as on main (one running, "
+           "one waiting, a newer merge replaces the waiting one); a red monitor's report names every merge it "
+           "covers, and a red shard there is fixed forward or reverted the same day.", "",
            "## Files that qualify for release-trainer", "",
            "Trainer modules: " + ", ".join(f"`{p}`" for p in TRAINER_MODULES) + ".", "",
            "Shared modules (tested in full): " + ", ".join(f"`{p}`" for p in SHARED_QUALIFYING) + ".", "",

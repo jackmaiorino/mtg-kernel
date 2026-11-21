@@ -188,15 +188,109 @@ class ScopeTests(unittest.TestCase):
 
 
 class MonitorTests(unittest.TestCase):
+    def test_monitors_on_the_line_coalesce_as_on_main(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        group = [l for l in text.splitlines() if l.startswith("  group: ")][0]
+        self.assertNotIn("run_id", group)
+        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", text)
+
     def test_the_monitor_runs_on_a_failed_or_timed_out_dependency(self):
         condition = jobs()["post-merge-report"]
         self.assertIn("contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')", condition)
 
+    @staticmethod
+    def fake_api(chain, runs, pulls, run_id=9):
+        """chain: first-parent shas oldest to newest (each a merge with a side parent); runs: earlier push runs
+        newest first as (id, head, conclusion, created); pulls: sha -> (number, login)."""
+        commits = []
+        for i, sha in enumerate(chain):
+            parents = [{"sha": chain[i - 1] if i else "root"}, {"sha": "side-" + sha}]
+            commits.append({"sha": sha, "parents": parents})
+        head = chain[-1]
+
+        def get(path):
+            if path == f"/repos/o/r/actions/runs/{run_id}":
+                return {"id": run_id, "head_sha": head, "created_at": "2026-11-21T12:00:00Z"}
+            if path.startswith("/repos/o/r/actions/workflows/ci.yml/runs"):
+                return {"workflow_runs": [{"id": i, "head_sha": h, "conclusion": c, "created_at": t}
+                                          for i, h, c, t in runs]}
+            if "/jobs" in path:
+                rid = int(path.split("/runs/")[1].split("/")[0])
+                ran = {i: c for i, h, c, t in runs}.get(rid) == "ran-cancelled"
+                return {"jobs": [{"name": "Rust tests (ubuntu-24.04, limited)", "conclusion":
+                                  "failure" if rid == run_id else ("success" if ran else None)}]}
+            if "/compare/" in path:
+                base = path.split("/compare/")[1].split("...")[0]
+                return {"commits": commits[chain.index(base) + 1:]}
+            if path.endswith("/pulls"):
+                sha = path.split("/commits/")[1].split("/")[0]
+                number, login = pulls[sha]
+                return [{"number": number, "merged_at": "x", "user": {"login": login}}]
+            raise AssertionError(path)
+        return get
+
+    def run_report(self, get):
+        import post_merge_report as report
+        return report.report(get, "o/r", {"id": 9, "head_sha": "c3", "head_branch": "main", "event": "push",
+                                          "html_url": "https://x/runs/9"})
+
+    def test_a_run_covering_one_merge(self):
+        get = self.fake_api(["c1", "c2", "c3"], [(8, "c2", "success", "2026-11-21T11:00:00Z")],
+                            {"c3": (837, "someone")})
+        body, line, merges = self.run_report(get)
+        self.assertEqual([(m["sha"], m["pull"]) for m in merges], [("c3", 837)])
+        self.assertIn("It covers 1 merge, oldest first:", body)
+        self.assertIn("covering c3 (#837)", line)
+        self.assertIn("first responder the author of #837", line)
+        self.assertIn("bisects by rerunning the failed job scoped on each covered commit", body)
+        self.assertNotIn("someone", body + line)
+
+    def test_a_run_covering_several_merges_skips_a_replaced_run(self):
+        # Run 7 (head c2) was replaced while waiting and never ran; run 6 (head c1, cancelled at a shard's time
+        # limit) did run, so c1 is the last monitored commit and the run covers c2 and c3.
+        get = self.fake_api(["c0", "c1", "c2", "c3"],
+                            [(7, "c2", "cancelled", "2026-11-21T11:30:00Z"),
+                             (6, "c1", "ran-cancelled", "2026-11-21T11:00:00Z")],
+                            {"c2": (836, "a@b"), "c3": (837, "c")})
+        get_runs = get
+
+        def get(path):
+            out = get_runs(path)
+            if "workflows/ci.yml/runs" in path:
+                for run in out["workflow_runs"]:
+                    run["conclusion"] = "cancelled" if run["conclusion"] == "ran-cancelled" else run["conclusion"]
+            return out
+        body, line, merges = self.run_report(get)
+        self.assertEqual([(m["sha"], m["pull"]) for m in merges], [("c2", 836), ("c3", 837)])
+        self.assertIn("It covers 2 merges, oldest first:\n- `c2` (#836)\n- `c3` (#837)", body)
+        self.assertIn("covering c2 (#836), c3 (#837)", line)
+        self.assertIn("First responder: the author of #836", body)
+
+    def test_no_earlier_monitored_run_covers_the_head_only(self):
+        get = self.fake_api(["c1", "c2", "c3"], [], {"c3": (837, "x")})
+        self.assertEqual([m["sha"] for m in self.run_report(get)[2]], ["c3"])
+
     def test_the_comment_mentions_no_one(self):
         import post_merge_report as report
-        body, line = report.compose("o/r", "u", "abcdef1234", "release/mull-c5719e1cf", "push", ["x by @y"], {"number": 7})
-        self.assertNotIn("@y", body + line)
-        self.assertIn("#7", line)
+        body, line = report.compose("u", "main", "workflow_dispatch", ["job by @someone"],
+                                    [{"sha": "abcdef1234", "pull": 7, "author": "x"}])
+        self.assertNotIn("@s", body + line)
+        self.assertIn("full dispatch run", body)
+
+    def test_the_append_command_and_append_are_exact(self):
+        import post_merge_report as report
+        import red_push_runs as red
+        import tempfile
+        self.assertEqual(report.append_command("2026-11-21T12:00:00Z", "main"),
+                         "python <mtg-kernel checkout>/tools/ci/red_push_runs.py --since 2026-11-21T12:00:00Z "
+                         "--branches main --append HANDOFFS/20261114/README.md")
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "README.md"
+            log.write_text("old\n", encoding="utf-8")
+            self.assertEqual(red.append_new(str(log), ["a", "old"]), ["a"])
+            self.assertEqual(red.append_new(str(log), ["a"]), [])
+            self.assertEqual(log.read_text(encoding="utf-8"), "old\na\n")
+
 
 
 if __name__ == "__main__":
