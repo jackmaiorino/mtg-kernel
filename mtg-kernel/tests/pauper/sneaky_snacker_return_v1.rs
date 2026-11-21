@@ -3,9 +3,8 @@
 //! and no intervening "if" clause. Under CR 400.7, if another effect moves
 //! the card, its ability resolves and does nothing because the original
 //! object is gone, even if the card returns to the graveyard or battlefield.
-//! CR 400.7j lets the effect find an object it moved to a public zone itself,
-//! or that moved there to pay the spell or ability's costs. With no response,
-//! the resolving ability finds the card it returned and taps it.
+//! With no response, its ability returns the original card tapped. Entering
+//! tapped does not produce a separate tap event (CR 603.2e).
 
 use mtg_kernel::card_def::{card_id_by_name, CARD_DEFS};
 use mtg_kernel::engine::{self, Action, Decision};
@@ -260,6 +259,8 @@ fn sneaky_snacker_returns_tapped_when_nobody_responds() {
     ] {
         let mut game = snacker_game(seed, me);
         snacker_trigger_on_the_stack(&mut game);
+        let start = game.state.engine.event_history.len();
+        game.state = serde_json::from_slice(&serde_json::to_vec(&game.state).unwrap()).unwrap();
         pass_until_idle_watching(&mut game.state, game.snacker);
         let state = &game.state;
         assert!(state.engine.halted.is_none());
@@ -268,6 +269,9 @@ fn sneaky_snacker_returns_tapped_when_nobody_responds() {
             .battlefield
             .contains(&game.snacker));
         assert!(state.objects.get(game.snacker).tapped);
+        assert!(!state.engine.event_history.range_v2(start..).iter().any(
+            |event| matches!(event, event::CommittedEvent::Tap { object } if *object == game.snacker)
+        ));
     }
 }
 
