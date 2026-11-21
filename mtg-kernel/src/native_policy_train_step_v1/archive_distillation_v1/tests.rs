@@ -132,16 +132,18 @@ fn state_bits(state: &NativePolicyValueTrainStateV1) -> (u64, u32, Vec<u32>) {
 /// receives no auxiliary gradient. A gradient mask would fail this fixture.
 fn state_with_moments() -> NativePolicyValueTrainStateV1 {
     let mut state = NativePolicyValueTrainStateV1::new_v1(model()).unwrap();
-    state.adam_step = 17;
-    for index in 0..state.first_moments.len() {
-        if index != SCORER_SECOND_BIAS {
-            state.first_moments[index].fill(0.002 * (index + 1) as f32);
-            state.second_moments[index].fill(0.003 * (index + 1) as f32);
+    state.with_fields_mut_for_test_v1(|state| {
+        state.adam_step = 17;
+        for index in 0..state.first_moments.len() {
+            if index != SCORER_SECOND_BIAS {
+                state.first_moments[index].fill(0.002 * (index + 1) as f32);
+                state.second_moments[index].fill(0.003 * (index + 1) as f32);
+            }
         }
-    }
-    // The padding embedding row is an independent exact-zero invariant.
-    state.first_moments[CARD_EMBEDDING][..CARD_EMBEDDING_DIM_V1].fill(0.0);
-    state.second_moments[CARD_EMBEDDING][..CARD_EMBEDDING_DIM_V1].fill(0.0);
+        // The padding embedding row is an independent exact-zero invariant.
+        state.first_moments[CARD_EMBEDDING][..CARD_EMBEDDING_DIM_V1].fill(0.0);
+        state.second_moments[CARD_EMBEDDING][..CARD_EMBEDDING_DIM_V1].fill(0.0);
+    });
     state
 }
 
@@ -188,13 +190,17 @@ fn default_and_explicit_full_scope_match_historical_adam_bits() {
     next[SCORER_SECOND_BIAS].values[0] = f32::from_bits(reference.scorer_bias_anchor_bits);
     first[SCORER_SECOND_BIAS][0] = 0.0;
     second[SCORER_SECOND_BIAS][0] = 0.0;
-    reference
-        .model
-        .replace_parameter_snapshot_v1(&next)
-        .unwrap();
-    reference.first_moments = first;
-    reference.second_moments = second;
-    reference.adam_step += 1;
+    reference.with_fields_mut_for_test_v1(|reference| {
+        reference
+            .model
+            .replace_parameter_snapshot_v1(&next)
+            .unwrap();
+        reference.first_moments = first;
+        reference.second_moments = second;
+        reference.adam_step += 1;
+    });
+    let before_digest = default.state_sha256_v1().unwrap();
+    assert_eq!(explicit.state_sha256_v1().unwrap(), before_digest);
     let implicit_result = default
         .train_step_auxiliary_only_v1(FreshLineageGenerationV1::V3, LR, &[&input])
         .unwrap();
@@ -209,6 +215,10 @@ fn default_and_explicit_full_scope_match_historical_adam_bits() {
     assert_eq!(implicit_result, explicit_result);
     assert_eq!(state_bits(&default), state_bits(&reference));
     assert_eq!(state_bits(&explicit), state_bits(&reference));
+    let expected_after_digest = compute_live_train_state_sha256_dims_v1(&reference);
+    assert_ne!(expected_after_digest, before_digest);
+    assert_eq!(default.state_sha256_v1().unwrap(), expected_after_digest);
+    assert_eq!(explicit.state_sha256_v1().unwrap(), expected_after_digest);
 }
 
 /// Frozen parameters and both moments survive multiple steps bit for bit.

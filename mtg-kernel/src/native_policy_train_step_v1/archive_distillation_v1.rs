@@ -288,6 +288,7 @@ impl NativePolicyValueTrainStateV1 {
     > {
         self.require_platform_math_v1("archive distillation")?;
         self.require_no_input_contract_v1("archive distillation")?;
+        self.require_no_london_keep_offset_v1()?;
         if pathway.is_some() && update_scope != ArchiveDistillationUpdateScopeV1::FullNetwork {
             return Err(invalid("rules-pathway-scope"));
         }
@@ -413,10 +414,12 @@ impl NativePolicyValueTrainStateV1 {
             &next_second_moments,
             self.scorer_bias_anchor_bits,
         )?;
-        self.model = candidate_model;
-        self.adam_step = next_step;
-        self.first_moments = next_first_moments;
-        self.second_moments = next_second_moments;
+        self.commit_step_dims_v1(
+            candidate_model,
+            next_step,
+            next_first_moments,
+            next_second_moments,
+        );
         Ok(())
     }
 }

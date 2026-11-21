@@ -29,7 +29,7 @@
 
 use super::fresh_initialization_source::{self, ExpandedFreshInitializationSourceV1};
 use super::{
-    ensure, no_state_digest_v1, read_pinned_bytes, CheckpointInputExpectationV1,
+    check_pinned_v1, ensure, no_state_digest_v1, CheckpointInputExpectationV1,
     ExpandedCheckpointV1, ExpandedModelSourceV1, FrozenPlayPolicyV1, NativePolicyValueTrainStateV1,
     PinnedFileV1,
 };
@@ -176,7 +176,7 @@ pub(super) fn lookup_v1(
         KindV1::Fresh(descriptor) => {
             fresh_initialization_source::reverify_input_files_v1(descriptor)?;
             if let Some(pin) = &source.checkpoint {
-                read_pinned_bytes(pin)?;
+                check_pinned_v1(pin)?;
             }
         }
         KindV1::Converted { .. } => {
@@ -229,9 +229,9 @@ pub(super) fn lookup_flat_checkpoint_v1(
     };
     #[cfg(test)]
     FLAT_MATCHES_FOR_TEST_V1.with(|matches| matches.set(matches.get() + 1));
-    read_pinned_bytes(pin)?;
+    check_pinned_v1(pin)?;
     fresh_initialization_source::reverify_input_files_v1(descriptor)?;
-    read_pinned_bytes(pin)?;
+    check_pinned_v1(pin)?;
     serve_v1(&entry, inputs)
 }
 
@@ -258,12 +258,12 @@ fn serve_v1(
 
 /// Keep a full load's result. `saved` is the checkpoint it restored, if any.
 /// Sources this cache cannot serve exactly are left out.
-pub(super) fn remember_v1(
+pub(super) fn remember_v1<T>(
     source: &ExpandedModelSourceV1,
     descriptor_bytes: &[u8],
     policy: &FrozenPlayPolicyV1,
     state: &NativePolicyValueTrainStateV1,
-    saved: Option<&ExpandedCheckpointV1>,
+    saved: Option<&ExpandedCheckpointV1<T>>,
 ) {
     #[cfg(test)]
     if BYPASS_FOR_TEST_V1.with(std::cell::Cell::get) {
@@ -350,12 +350,12 @@ pub(super) fn remember_converted_v1(
 /// descriptor, and a checkpoint that names no further file, are kept. Never
 /// inlined: its policy template stays out of the loader's frame.
 #[inline(never)]
-pub(super) fn remember_flat_checkpoint_v1(
+pub(super) fn remember_flat_checkpoint_v1<T>(
     source: &ExpandedModelSourceV1,
     descriptor_bytes: &[u8],
     policy: &FrozenPlayPolicyV1,
     state: &NativePolicyValueTrainStateV1,
-    saved: &ExpandedCheckpointV1,
+    saved: &ExpandedCheckpointV1<T>,
 ) {
     #[cfg(test)]
     if BYPASS_FOR_TEST_V1.with(std::cell::Cell::get) {

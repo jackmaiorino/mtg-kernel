@@ -138,3 +138,46 @@ fn a_claim_released_by_unwinding_wakes_its_readers() {
     assert!(reader.join().unwrap());
     assert!(!lock_v1(shared_v1()).entries.contains_key(key));
 }
+
+/// An entry is charged its record length, or its buffer's capacity when the
+/// buffer keeps more than that alive.
+#[test]
+fn an_entry_is_never_charged_less_than_the_capacity_it_keeps_alive() {
+    assert_eq!(retained_charge_v1(100, 100), 100);
+    assert_eq!(retained_charge_v1(100, 4096), 4096);
+    // A sealed record: the record length exceeds the frame's buffer.
+    assert_eq!(retained_charge_v1(4096, 100), 4096);
+
+    // Through the store's own insertion, under one lock so that no other
+    // test's entries can displace it in between: a short plain record in a
+    // roomy buffer, as a serializer can leave it, is charged the buffer.
+    let key = "parse-ahead-test-roomy";
+    let mut roomy = Vec::with_capacity(64 * 1024);
+    roomy.extend_from_slice(b"{}");
+    let capacity = roomy.capacity();
+    assert!(capacity >= 64 * 1024);
+    let record_length = roomy.len();
+    let mut state = lock_v1(shared_v1());
+    assert!(insert_locked_v1(
+        &mut state,
+        key,
+        Arc::new(roomy),
+        record_length,
+        [SlotV1::Gone, SlotV1::Gone]
+    ));
+    assert_eq!(state.entries[key].charge, capacity);
+    assert!(state.retained_bytes >= capacity);
+    // The same pin again is not held twice.
+    assert!(!insert_locked_v1(
+        &mut state,
+        key,
+        Arc::new(Vec::new()),
+        0,
+        [SlotV1::Gone, SlotV1::Gone]
+    ));
+    // Dropping the entry gives back exactly what it was charged.
+    let held = state.retained_bytes;
+    state.remove_v1(key);
+    assert_eq!(held - state.retained_bytes, capacity);
+    assert!(!state.entries.contains_key(key));
+}

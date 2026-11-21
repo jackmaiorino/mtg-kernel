@@ -50,12 +50,12 @@
 use super::ex1_update_v1::{self, Ex1UpdateOptionsV1};
 use super::{
     compute_gae_targets_of_values_v1, ensure, err, inference_schema_v1, ordered_update_preparation,
-    publish_json, publish_json_bytes_v1, read_pinned_bytes, read_trajectory_batch_v1,
-    replay_learner_groups_v1, validate_actual_behaviors_v1, validate_trajectory,
-    CheckpointInputExpectationV1, CheckpointRecordFormatV1, CollectionSamplerV1,
-    ExpandedInferenceIdentityV1, ExpandedLossSelectionV1, ExpandedModelSourceV1,
-    ExpandedSeatBehaviorV1, ExpandedUpdateBackendV1, OpponentCacheV1, PinnedFileV1,
-    UpdateBackwardExecutionV1, GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1, MAX_BATCH_BYTES,
+    publish_json, publish_json_bytes_v1, read_pinned_bytes, read_trajectory_batch_bounded_v1,
+    record_envelope_v1, replay_learner_groups_v1, validate_actual_behaviors_v1,
+    validate_trajectory, CheckpointInputExpectationV1, CheckpointRecordFormatV1,
+    CollectionSamplerV1, ExpandedInferenceIdentityV1, ExpandedLossSelectionV1,
+    ExpandedModelSourceV1, ExpandedSeatBehaviorV1, ExpandedUpdateBackendV1, OpponentCacheV1,
+    PinnedFileV1, UpdateBackwardExecutionV1, GAE_ADVANTAGE_VALUE_LOSS_IDENTITY_V1,
 };
 use crate::card_def::KERNEL_CARDDB_HASH;
 use crate::native_flat_tensorizer_v2::NativeFlatDecisionTensorV2;
@@ -294,10 +294,20 @@ pub(crate) fn validate_update_loss_v1(
         gamma,
         lambda,
         entropy_coefficient,
+        pregame_advantage,
+        pregame_announcement_step_scale,
     } = loss_selection
     else {
         return Err("an S learner trains only the GAE loss (gae_advantage_value/v1)".into());
     };
+    ensure(
+        pregame_advantage.is_gae(),
+        "an S learner refuses the terminal pregame advantage",
+    )?;
+    ensure(
+        pregame_announcement_step_scale.is_none(),
+        "an S learner refuses the pregame announcement step scale",
+    )?;
     ensure(
         record.gamma_bits == gamma.to_bits()
             && record.gae_lambda_bits == lambda.to_bits()
@@ -363,6 +373,8 @@ pub(super) struct SUpdateInputsV1 {
     pub(super) output_directory: PathBuf,
     pub(super) preparation_workers: Option<usize>,
     pub(super) max_prepared_tensor_mebibytes: usize,
+    /// The trajectory batch bound in bytes (`max_trajectory_batch_mebibytes`).
+    pub(super) max_batch_bytes: u64,
     pub(super) unsupported: SUnsupportedOptionsV1,
     /// EX1 or W5 (`Ex1Update`); the caller validated the options and their
     /// combination.
@@ -401,10 +413,20 @@ fn refuse_unsupported_v1(inputs: &SUpdateInputsV1) -> Result<(f32, f32), String>
             gamma,
             lambda,
             entropy_coefficient,
+            pregame_advantage,
+            pregame_announcement_step_scale,
         } => {
             ensure(
                 entropy_coefficient.to_bits() == 0,
                 "an S learner's GAE loss has no entropy term",
+            )?;
+            ensure(
+                pregame_advantage.is_gae(),
+                "an S learner refuses the terminal pregame advantage",
+            )?;
+            ensure(
+                pregame_announcement_step_scale.is_none(),
+                "an S learner refuses the pregame announcement step scale",
             )?;
             Ok((gamma, lambda))
         }
@@ -428,6 +450,7 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         output_directory,
         preparation_workers,
         max_prepared_tensor_mebibytes,
+        max_batch_bytes,
         ex1,
         training_math,
         started,
@@ -460,15 +483,26 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
         total_bytes = total_bytes
             .checked_add(fs::metadata(&pin.path).map_err(err)?.len())
             .ok_or("batch size overflow")?;
-        ensure(
-            total_bytes <= MAX_BATCH_BYTES,
-            "trajectory batch exceeds 512 MiB CPU ingestion bound",
-        )?;
+        if total_bytes > max_batch_bytes {
+            return Err(record_envelope_v1::batch_bound_error_v1(max_batch_bytes));
+        }
     }
-    let episodes = read_trajectory_batch_v1(&trajectories, preparation_workers.unwrap_or(1))?;
+    let episodes = read_trajectory_batch_bounded_v1(
+        &trajectories,
+        preparation_workers.unwrap_or(1),
+        max_batch_bytes,
+    )?;
     let mut ids = BTreeSet::new();
     for episode in &episodes {
         validate_trajectory(episode)?;
+        // The London keep offset (one number or one per mulligan count) is
+        // applied by the net-8 update only; this update would train without
+        // it, off the distribution the rows were drawn from.
+        ensure(
+            episode.episode.london_keep_offset.is_none(),
+            "an S learner update refuses the London keep offset",
+        )?;
+        super::refuse_priority_pass_offset_v1([&episode.episode], "an S learner update")?;
         // Rows the search played are authenticated and masked only by a
         // W5 update.
         ensure(
@@ -507,6 +541,7 @@ pub(super) fn execute_s_update_v1(inputs: SUpdateInputsV1) -> Result<Value, Stri
             &learner,
             workers,
             max_prepared_tensor_mebibytes,
+            ordered_update_preparation::preparation_groups_bound_v1(max_batch_bytes),
             training_math,
         )?;
         (prepared.groups, Some(prepared.telemetry))

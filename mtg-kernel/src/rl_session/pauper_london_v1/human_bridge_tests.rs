@@ -36,9 +36,16 @@ fn pair(
         LEARNED,
     )
     .unwrap();
-    let lockstep =
-        FlatV4LockstepV1::reset_london_human(episode, seed, 2_000, 200_000, decks, [false; 2])
-            .unwrap();
+    let lockstep = FlatV4LockstepV1::reset_london_human(
+        episode,
+        seed,
+        2_000,
+        200_000,
+        decks,
+        [false; 2],
+        [crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2; 2],
+    )
+    .unwrap();
     (raw, lockstep)
 }
 

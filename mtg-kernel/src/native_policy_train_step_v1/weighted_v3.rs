@@ -178,6 +178,7 @@ impl NativePolicyValueTrainStateV1 {
     ) -> Result<NativePolicyTrainStepResultV1, NativePolicyTrainErrorV1> {
         self.require_platform_math_v1("weighted loss")?;
         self.require_no_input_contract_v1("weighted loss")?;
+        self.require_no_london_keep_offset_v1()?;
         validate_weighted_inputs_v3(groups, group_weights)?;
         if !value_coefficient.is_finite() || value_coefficient <= 0.0 {
             return Err(NativePolicyTrainErrorV1::InvalidValueCoefficient);
@@ -415,10 +416,12 @@ impl NativePolicyValueTrainStateV1 {
         )?;
         let gradient_snapshot = named_state_snapshot(&parameters, &gradients);
         // No fallible work follows: commit the whole candidate state together.
-        self.model = candidate_model;
-        self.adam_step = next_step;
-        self.first_moments = next_first_moments;
-        self.second_moments = next_second_moments;
+        self.commit_step_dims_v1(
+            candidate_model,
+            next_step,
+            next_first_moments,
+            next_second_moments,
+        );
         Ok(NativePolicyTrainStepResultV1 {
             policy_sum,
             value_sum,

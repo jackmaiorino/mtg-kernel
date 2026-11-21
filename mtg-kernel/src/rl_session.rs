@@ -7397,7 +7397,33 @@ impl FastActorSessionV1 {
         mainboards: [Vec<u16>; 2],
         starting_player: PlayerId,
     ) -> Result<Self, RlSessionError> {
-        Self::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization(
+        Self::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_and_windows_v1(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            starting_player,
+            [crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2; 2],
+        )
+    }
+
+    /// `..._with_starting_player_v1` with each seat's priority-window rule
+    /// (`HarnessSurfaceV2::set_action_window_seats_v1`), set before the first
+    /// advance. Both `HarnessV2` is that reset exactly.
+    #[allow(clippy::too_many_arguments)]
+    pub fn reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_starting_player_and_windows_v1(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: PlayerId,
+        windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+    ) -> Result<Self, RlSessionError> {
+        Self::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization_and_windows(
             episode_id,
             pair_environment_seed,
             max_physical_decisions,
@@ -7405,6 +7431,7 @@ impl FastActorSessionV1 {
             deck_ids,
             mainboards,
             Some(starting_player),
+            windows,
         )
     }
 
@@ -7417,11 +7444,38 @@ impl FastActorSessionV1 {
         mainboards: [Vec<u16>; 2],
         starting_player: Option<PlayerId>,
     ) -> Result<Self, RlSessionError> {
+        Self::reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization_and_windows(
+            episode_id,
+            pair_environment_seed,
+            max_physical_decisions,
+            max_policy_steps,
+            deck_ids,
+            mainboards,
+            starting_player,
+            [crate::priority_action_windows_v1::SeatPriorityWindowsV1::HarnessV2; 2],
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn reset_with_explicit_decks_and_limits_flat_action_v2_environment_v2_with_randomization_and_windows(
+        episode_id: u64,
+        pair_environment_seed: u64,
+        max_physical_decisions: u64,
+        max_policy_steps: u64,
+        deck_ids: SessionDeckIdsV1,
+        mainboards: [Vec<u16>; 2],
+        starting_player: Option<PlayerId>,
+        windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
+    ) -> Result<Self, RlSessionError> {
         let (deck_hashes, state) = build_session_deck_pair_state_from_explicit_decks(
             &mainboards,
             pair_environment_seed,
             starting_player,
         )?;
+        let mut surface = PolicySurfaceV5::new_for_session();
+        surface
+            .set_action_window_seats_v1(windows)
+            .map_err(|error| session_error(RlSessionErrorCode::UnsupportedDeck, &error))?;
         let mut session = FastActorSessionV1 {
             deck_ids,
             deck_hashes,
@@ -7429,7 +7483,7 @@ impl FastActorSessionV1 {
             max_physical_decisions,
             max_policy_steps,
             state,
-            surface: PolicySurfaceV5::new_for_session(),
+            surface,
             environment_revision: 0,
             policy_step_count: 0,
             physical_decision_count: 0,
@@ -8033,6 +8087,48 @@ impl FastActorSessionV1 {
     pub(crate) fn lift_caps_for_private_line_v1(&mut self) {
         self.max_physical_decisions = u64::MAX;
         self.max_policy_steps = u64::MAX;
+    }
+
+    /// The Pass candidate index of the pending decision when it is a new
+    /// priority window (`expanded_deck_training_v1::priority_pass_offset_v1`):
+    /// a priority window the surface hands to a seat on an action-window
+    /// rule (`action-windows-v1` or `action-windows-end-step-v1`) where
+    /// HarnessV2 would have passed for it. None for every other decision,
+    /// including the windows HarnessV2 itself offers, a HarnessV2 seat's
+    /// decisions, combat scans and London decisions. Reads only the surface's
+    /// own record and the acting seat's menu.
+    pub(crate) fn priority_pass_window_v1(&self) -> Result<Option<u32>, String> {
+        let Some(current) = self.current.as_ref() else {
+            return Ok(None);
+        };
+        if self.pauper_london_pending_v1()
+            || current.decision_kind != FastActorDecisionKindV1::Surface
+            || !matches!(
+                current.origin_decision,
+                PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+                    Decision::CastSpellOrPass { .. }
+                ))
+            )
+            || self.surface.engine_window_v1().is_none()
+            || self.surface.harness_surface().action_window_seats_v1()[current.actor.index()]
+                .is_harness_v2()
+        {
+            return Ok(None);
+        }
+        if current.substep_index != 0 || current.substep_count != 1 {
+            return Err("a new priority window is not a single-substep decision".into());
+        }
+        let mut passes = current
+            .candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| matches!(candidate.semantic, ActionSemanticV1::Pass { .. }));
+        match (passes.next(), passes.next()) {
+            (Some((index, _)), None) => u32::try_from(index)
+                .map(Some)
+                .map_err(|_| "Pass row index overflow".to_string()),
+            _ => Err("a new priority window must offer exactly one Pass".into()),
+        }
     }
 
     pub(crate) fn enable_spellbench_neutral_choices(&mut self) {

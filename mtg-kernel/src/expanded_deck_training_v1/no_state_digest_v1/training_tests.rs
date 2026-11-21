@@ -1497,6 +1497,9 @@ fn episode(id: &str, seed: u64, opponent: Option<ExpandedModelSourceV1>) -> Expa
         reset: None,
         opening: None,
         mulligan_modes: None,
+        london_keep_offset: None,
+        priority_windows: None,
+        priority_pass_offset: None,
     }
 }
 
@@ -1505,6 +1508,8 @@ fn gae() -> ExpandedLossSelectionV1 {
         gamma: 1.0,
         lambda: 0.9,
         entropy_coefficient: 0.0,
+        pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+        pregame_announcement_step_scale: None,
     }
 }
 
@@ -1535,6 +1540,7 @@ fn run_config(
         ],
         record_format: Default::default(),
         record_envelope: Default::default(),
+        verified_reads: Default::default(),
         learning_rate: 0.0003,
         value_coefficient: 0.5,
         update_backend: ExpandedUpdateBackendV1::Cpu,
@@ -1544,6 +1550,8 @@ fn run_config(
         preparation_workers: workers,
         max_non_natural_episode_fraction: 0.0,
         max_prepared_tensor_mebibytes: DEFAULT_MAX_PREPARED_TENSOR_MEBIBYTES,
+        max_trajectory_batch_mebibytes:
+            crate::expanded_deck_training_v1::DEFAULT_MAX_TRAJECTORY_BATCH_MEBIBYTES,
         collection_sampler: CollectionSamplerV1::Legacy,
         training_math: TrainingMathV1::PlatformLibm,
         line_b: None,
