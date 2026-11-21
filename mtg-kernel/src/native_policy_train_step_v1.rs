@@ -1748,7 +1748,7 @@ mod live_train_state_v1 {
         }
 
         /// Clears any memoized `state_sha256` so the next query hashes cold.
-        #[cfg(any(test, feature = "checkpoint-codec-bench-v1"))]
+        #[cfg(test)]
         pub(crate) fn clear_cached_state_sha256_v1(&mut self) {
             self.cached_state_sha256.clear_v1();
         }
