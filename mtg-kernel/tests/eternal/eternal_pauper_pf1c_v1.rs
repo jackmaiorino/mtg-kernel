@@ -585,6 +585,126 @@ fn payment_pick(state: &mut GameState, kind: CostKind, choice: ObjectId) {
     }
 }
 
+// Follow the public cast menu. Forced costs may be paid without a prompt.
+fn finish_optional_escape(
+    state: &mut GameState,
+    spell: ObjectId,
+    target: Option<ObjectId>,
+    sacrifice: Option<ObjectId>,
+    fuel: &[ObjectId],
+) {
+    assert!(castable(state, spell));
+    act(state, Action::CastSpell(spell));
+    for _ in 0..12 {
+        let decision = next(state);
+        let Some(pending) = state.engine.pending_cast.as_ref() else {
+            return;
+        };
+        let action = match decision {
+            Decision::ChooseEffectOption { .. }
+                if pending.optional_additional_cost_paid.is_none() =>
+            {
+                Action::ChooseEffectOption(u16::from(sacrifice.is_some()))
+            }
+            // If both payment orders are offered, pay the sacrifice first.
+            Decision::ChooseEffectOption { .. } => Action::ChooseEffectOption(0),
+            Decision::ChooseTargets { legal_targets, .. } => {
+                let asked = Target::Object(target.expect("a spell to counter"));
+                assert!(legal_targets.contains(&asked));
+                Action::ChooseTarget(asked)
+            }
+            Decision::ChooseCostTargets {
+                cost_kind: CostKind::ExileFromGraveyard,
+                candidates,
+                ..
+            } => {
+                let next_card = fuel.iter().find(|id| candidates.contains(id)).unwrap();
+                Action::ChooseCostTarget(*next_card)
+            }
+            Decision::ChooseCostTargets { candidates, .. } => {
+                let permanent = sacrifice.expect("the optional sacrifice");
+                assert!(candidates.contains(&permanent));
+                Action::ChooseCostTarget(permanent)
+            }
+            other => panic!("unexpected optional escape decision {other:?}"),
+        };
+        act(state, action);
+    }
+    panic!("escape did not finish paying");
+}
+
+#[test]
+fn optional_escape_can_exile_its_own_bargain_or_casualty_sacrifice() {
+    use mtg_kernel::card_def::OptionalAdditionalCostDef::{Bargain, Casualty};
+
+    for name in ["Beseech the Mirror", "Make Disappear"] {
+        let mut state = plains();
+        let breach = put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+        let spell = put(&mut state, P0, name, Zone::Graveyard);
+        let island = put(&mut state, P0, "Island", Zone::Graveyard);
+        let swamp = put(&mut state, P0, "Swamp", Zone::Graveyard);
+        let (sacrifice, kind, target) = if name == "Beseech the Mirror" {
+            pool(&mut state, P0, &[ManaColor::B; 3], 1);
+            (breach, Bargain, None)
+        } else {
+            let target = opponent_bolts(&mut state, Target::Player(P0));
+            pool(&mut state, P0, &[ManaColor::U], 1);
+            assert!(!castable(&mut state, spell));
+            let creature = put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+            (creature, Casualty(1), Some(target))
+        };
+        let fuel = [island, swamp, sacrifice];
+        finish_optional_escape(&mut state, spell, target, Some(sacrifice), &fuel);
+        let item = state
+            .stack
+            .iter()
+            .find(|item| item.source == spell && !item.is_copy)
+            .unwrap();
+        assert_eq!(item.v4.optional_additional_cost_paid, Some(kind));
+        assert_eq!(zone(&state, spell), Zone::Stack);
+        for card in fuel {
+            assert_eq!(zone(&state, card), Zone::Exile);
+        }
+        let refs: Vec<_> = item
+            .v4
+            .paid_cost_refs
+            .iter()
+            .filter(|paid| paid.object == sacrifice)
+            .map(|paid| (paid.zone, paid.zone_change_count))
+            .collect();
+        assert!(refs.contains(&(Zone::Graveyard, 1)));
+        assert!(refs.contains(&(Zone::Exile, 2)));
+        let mut restored: GameState =
+            serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+        assert_eq!(restored.state_hash(), state.state_hash());
+        assert_eq!(next(&mut restored), next(&mut state));
+    }
+}
+
+#[test]
+fn optional_escape_cannot_use_a_sacrifice_diverted_to_exile_and_can_decline() {
+    let mut state = plains();
+    let breach = put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    put(&mut state, P1, "Leyline of the Void", Zone::Battlefield);
+    let spell = put(&mut state, P0, "Beseech the Mirror", Zone::Graveyard);
+    let island = put(&mut state, P0, "Island", Zone::Graveyard);
+    let swamp = put(&mut state, P0, "Swamp", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::B; 3], 1);
+    assert!(!castable(&mut state, spell));
+    let forest = put(&mut state, P0, "Forest", Zone::Graveyard);
+    finish_optional_escape(&mut state, spell, None, None, &[island, swamp, forest]);
+    let item = state
+        .stack
+        .iter()
+        .find(|item| item.source == spell)
+        .unwrap();
+    assert_eq!(item.v4.optional_additional_cost_paid, None);
+    assert_eq!(zone(&state, breach), Zone::Battlefield);
+    for card in [island, swamp, forest] {
+        assert_eq!(zone(&state, card), Zone::Exile);
+    }
+}
+
 #[test]
 fn compound_escape_fling_sacrifices_then_exiles_the_same_card() {
     let mut state = plains();
