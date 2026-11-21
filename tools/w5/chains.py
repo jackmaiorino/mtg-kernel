@@ -1395,9 +1395,13 @@ def make_plan(inputs_path):
             path.parent.mkdir(parents=True, exist_ok=True)
             if repin_bytes:  # a re-pin: complete and durable before any plan or manifest names it
                 tmp = path.with_name(f'.{path.name}.{os.getpid()}.tmp')
-                tmp.write_text(text, encoding='utf-8', newline='\n')
-                if os.name != 'nt':
-                    fsync_path(tmp)
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0), 0o644)
+                try:
+                    os.write(fd, text.encode('utf-8'))
+                    if os.name != 'nt':
+                        os.fsync(fd)
+                finally:
+                    os.close(fd)
                 os.replace(tmp, path)
                 durable_entry(path)
             else:
