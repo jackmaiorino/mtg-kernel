@@ -146,11 +146,10 @@ class ValidationTests(unittest.TestCase):
 class ExchangeTests(unittest.TestCase):
     def test_an_exchange_conserves_the_75_keeps_the_lands_and_sorts(self):
         registered = deck('A/aaaa')
-        counts, sizes = Counter(), Counter()
+        sizes = Counter()
         for n in range(400):
             swapped = qual.postboard_exposure_swap(registered, EXPOSURE, ['t', n])
-            if swapped is None:
-                counts['unchanged'] += 1
+            if swapped is None:  # a card exchanged for another copy of itself (tested by itself below)
                 continue
             self.assertEqual(swapped['label'], registered['label'])
             self.assertEqual((len(swapped['mainboard']), len(swapped['sideboard'])), (60, 15))
@@ -179,6 +178,24 @@ class ExchangeTests(unittest.TestCase):
             self.assertEqual(sum(gone.values()), 1)
             lands_left += any(card in LANDS for card in gone)
         self.assertTrue(40 < lands_left < 160, lands_left)  # about a third of the mainboard is land
+
+    def test_an_exchange_of_a_card_for_itself_changes_nothing(self):
+        # the only movable mainboard card is also the only sideboard card: every exchange cancels
+        registered = {'label': 'A/aaaa', 'mainboard': [0] * 50 + [10] * 10, 'sideboard': [10] * 15}
+        spec = dict(EXPOSURE, keep_ids=[0])
+        for n in range(50):
+            self.assertIsNone(qual.postboard_exposure_swap(registered, spec, ['c', n]))
+        base = deck_base()
+        for item in base['iterations']:
+            for entry in item['episodes']:
+                entry['episode']['registered'] = [copy.deepcopy(registered), copy.deepcopy(registered)]
+                entry['episode']['selected'] = copy.deepcopy(entry['episode']['registered'])
+        with tempfile.TemporaryDirectory() as tmp:
+            d = json.loads(dose(Path(tmp), 'p').read_text())
+            exposed = qual.build_config(base, d, Path(tmp) / 'o', 'r1', 'ns', 0, 20, 2,
+                                        postboard_exposure=dict(spec, share=[1, 1]))
+            plain = qual.build_config(base, d, Path(tmp) / 'o', 'r1', 'ns', 0, 20, 2)
+        self.assertEqual(json.dumps(exposed), json.dumps(plain))  # every drawn game stays a game one, byte for byte
 
     def test_a_deck_with_nothing_movable_is_left_alone(self):
         registered = deck('A/aaaa')
@@ -467,11 +484,11 @@ class ParityTests(unittest.TestCase):
         self.assertTrue(flagged['postboard']['covered_by_the_flag'])
         self.assertFalse(flagged['checks']['ordinary_starts_game_one'])  # the check itself stays honest
         self.assertEqual(flagged['postboard']['exception'],
-                         {'flag': '--allow-postboard-training', 'reason': 'stage 1 exposure',
+                         {'flag': '--postboard-exception', 'reason': 'stage 1 exposure',
                           'excepted_checks': ['ordinary_starts_game_one']})
         self.assertTrue(rp.passes(flagged))
         self.assertEqual(flagged['parity'], 'holds only with a recorded exception: ordinary_starts_game_one '
-                                            '(--allow-postboard-training: stage 1 exposure)')
+                                            '(--postboard-exception: stage 1 exposure)')
         with self.assertRaises(rp.ParityError):
             self.compare(cfg, '  ')
 
@@ -511,6 +528,47 @@ class ParityTests(unittest.TestCase):
         self.assertIsNone(result['postboard']['exception'])
         self.assertFalse(rp.passes(result))
 
+    def test_under_the_flag_a_game_one_set_with_a_changed_sideboard_fails(self):
+        for change in (lambda deck: deck['sideboard'].__setitem__(0, deck['sideboard'][-1]),
+                       lambda deck: deck.pop('sideboard'),
+                       lambda deck: deck.update(note='extra')):
+            cfg = self.config()  # no post-board game at all
+            change(entries(cfg)[0]['episode']['selected'][0])
+            _, plain = self.compare(cfg)
+            self.assertTrue(rp.passes(plain))  # without the flag the set is read as before
+            training, result = self.compare(cfg, 'reason')
+            self.assertEqual(training['postboard']['game_one_episodes_with_changed_decks'], 1)
+            self.assertFalse(result['checks']['ordinary_starts_game_one'])
+            self.assertIsNone(result['postboard']['exception'])
+            self.assertFalse(rp.passes(result))
+
+    def test_under_the_flag_postboard_must_be_a_boolean(self):
+        for value in ('false', 'true', 1, 0, None):
+            cfg = self.config()
+            if value is None:
+                del entries(cfg)[0]['episode']['postboard']
+            else:
+                entries(cfg)[0]['episode']['postboard'] = value
+            with self.subTest(value=value):
+                training, result = self.compare(cfg, 'reason')
+                self.assertEqual(training['malformed_registrations'], 1)
+                self.assertFalse(result['checks']['ordinary_starts_game_one'])
+                self.assertIsNone((result.get('postboard') or {}).get('exception'))
+                self.assertFalse(rp.passes(result))
+        cfg = self.config(ALWAYS)  # a valid exposed set with one truthy value that is not a boolean
+        entries(cfg)[0]['episode']['postboard'] = 1
+        with self.assertRaises(rp.ParityError):  # read as a game one with a changed 60
+            self.compare(cfg, 'reason')
+
+    def test_the_london_flag_keeps_its_abbreviation(self):
+        import contextlib
+        import io
+        with contextlib.redirect_stderr(io.StringIO()) as err, self.assertRaises(SystemExit) as stop:
+            rp.main(['--allow', 'reason', '--training-config', 'x.json'])  # stops on the missing arguments only
+        self.assertEqual(stop.exception.code, 2)
+        self.assertNotIn('ambiguous', err.getvalue())
+        self.assertIn('required', err.getvalue())
+
     def test_both_exceptions_are_recorded_together(self):
         base = deck_base(opening=True, overlap=False)
         cfg = qual.build_config(base, self.dose, Path(self.tmp.name) / 'o', 'r1', 'ns', 0, 40, 2,
@@ -523,7 +581,7 @@ class ParityTests(unittest.TestCase):
         self.assertTrue(rp.passes(result))
         self.assertEqual(result['parity'], 'holds only with a recorded exception: mulligans_off_in_training '
                                            '(--allow-london-training: arm Q); ordinary_starts_game_one '
-                                           '(--allow-postboard-training: stage 1)')
+                                           '(--postboard-exception: stage 1)')
         # a London set alone keeps its text
         plain = qual.build_config(base, self.dose, Path(self.tmp.name) / 'o', 'r1', 'ns', 0, 40, 2)
         for n, entry in enumerate(entries(plain)):
