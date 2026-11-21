@@ -114,6 +114,7 @@ import os
 import platform
 import re
 import signal
+import stat
 import sys
 import time
 from pathlib import Path
@@ -148,6 +149,10 @@ class Refusal(Exception):
     """A launch refusal: raised before any spawn."""
 
 
+class LockHeld(Refusal):
+    """Another process has the requested nonblocking box or supervisor lock."""
+
+
 def require(ok: bool, message: str) -> None:
     if not ok:
         raise Refusal(message)
@@ -171,21 +176,152 @@ def canonical(value) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def write_json_atomic(path: Path, value, durable: bool = False) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f"{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
-    with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
-        if durable:
-            handle.flush()
-            os.fsync(handle.fileno())
-    os.replace(tmp, path)
-    if durable and hasattr(os, "O_DIRECTORY"):
-        fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(fd)
-        finally:
+@contextlib.contextmanager
+def state_directory(directory: Path, create: bool = False):
+    """Hold each parent while opening the next. Reopen the path on every state operation."""
+    if os.name == "nt":  # Offline readers and tool tests also run on Windows.
+        require(os.path.normcase(os.path.realpath(directory)) == os.path.normcase(os.path.abspath(directory)),
+                f"linked state directory: {directory}")
+        if create:
+            directory.mkdir(parents=True, exist_ok=True)
+        yield None
+        return
+    directory = directory.absolute()
+    flags = getattr(os, "O_PATH", os.O_RDONLY) | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = os.open(directory.anchor, flags)
+    try:
+        for part in directory.parts[1:]:
+            try:
+                try:
+                    child = os.open(part, flags, dir_fd=fd)
+                except FileNotFoundError:
+                    if not create:
+                        raise
+                    try:
+                        os.mkdir(part, dir_fd=fd)
+                    except FileExistsError:  # Another supervisor can create the same directory.
+                        pass
+                    child = os.open(part, flags, dir_fd=fd)
+            except OSError as error:
+                if error.errno in (errno.ENOTDIR, errno.ELOOP):
+                    raise Refusal(f"state directory requires plain directories: {directory}") from error
+                raise
             os.close(fd)
+            fd = child
+        yield fd
+    finally:
+        os.close(fd)
+
+
+def state_name(path: Path, directory: int | None) -> Path | str:
+    return path if directory is None else path.name
+
+
+def require_state_file(path: Path, entry: os.stat_result) -> None:
+    require(stat.S_ISREG(entry.st_mode) and entry.st_nlink <= 1 and not (
+        getattr(entry, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT),
+        f"expected a regular state file with a single name: {path}")
+
+
+def check_state_entry(path: Path, directory: int | None) -> bool:
+    try:
+        entry = os.stat(state_name(path, directory), dir_fd=directory, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    require_state_file(path, entry)
+    return True
+
+
+def state_exists(path: Path) -> bool:
+    try:
+        with state_directory(path.parent) as directory:
+            return check_state_entry(path, directory)
+    except FileNotFoundError:
+        return False
+
+
+def open_state(path: Path, flags: int, mode: int = 0o666) -> int:
+    with state_directory(path.parent, create=bool(flags & os.O_CREAT)) as directory:
+        if directory is None:
+            check_state_entry(path, directory)
+        try:
+            flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
+            fd = os.open(state_name(path, directory), flags, mode, dir_fd=directory)
+        except OSError as error:
+            if error.errno == errno.ELOOP:
+                raise Refusal(f"linked state file: {path}") from error
+            raise
+        try:
+            require_state_file(path, os.fstat(fd))
+        except BaseException:
+            os.close(fd)
+            raise
+        return fd
+
+
+def read_state(path: Path) -> bytes:
+    with os.fdopen(open_state(path, os.O_RDONLY), "rb") as handle:
+        return handle.read()
+
+
+def read_log(path: Path) -> bytes:
+    try:
+        return read_state(path)
+    except FileNotFoundError:
+        return b""
+
+
+def unlink_state(path: Path, *, missing_ok: bool = False) -> None:
+    try:
+        with state_directory(path.parent) as directory:
+            check_state_entry(path, directory)
+            os.unlink(state_name(path, directory), dir_fd=directory)
+    except FileNotFoundError:
+        if not missing_ok:
+            raise
+
+
+def rename_control(path: Path, new_name: str) -> None:
+    destination = path.with_name(new_name)
+    with state_directory(path.parent) as directory:
+        check_state_entry(path, directory)
+        check_state_entry(destination, directory)
+        os.replace(state_name(path, directory), state_name(destination, directory),
+                   src_dir_fd=directory, dst_dir_fd=directory)
+
+
+def replace_state_bytes(path: Path, data: bytes, *, sync_file: bool, sync_directory: bool) -> None:
+    with state_directory(path.parent, create=True) as directory:
+        check_state_entry(path, directory)
+        name = state_name(path, directory)
+        tmp = f"{name}.{os.getpid()}.{time.time_ns()}.tmp"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+        fd = os.open(tmp, flags, 0o666, dir_fd=directory)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+                if sync_file:
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            check_state_entry(path, directory)
+            os.replace(tmp, name, src_dir_fd=directory, dst_dir_fd=directory)
+        except BaseException:
+            try:
+                os.unlink(tmp, dir_fd=directory)
+            except FileNotFoundError:
+                pass
+            raise
+        if sync_directory and directory is not None:
+            fd = os.open(".", os.O_RDONLY | os.O_DIRECTORY, dir_fd=directory)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+
+
+def write_json_atomic(path: Path, value, durable: bool = False) -> None:
+    data = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    replace_state_bytes(path, data, sync_file=durable, sync_directory=durable)
 
 
 # ---------------------------------------------------------------- cpu lists and topology
@@ -420,8 +556,7 @@ def spawn_into(cgroup: Cgroup, argv: list[str], env: dict, log_path: Path, cwd: 
     the parent then confirms membership from cgroup.procs instead of the child's acknowledgement."""
     if frozen:
         cgroup.write("cgroup.freeze", 1)
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    log_fd = open_state(log_path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
     procs = str(cgroup.path / "cgroup.procs")
     ack_r, ack_w = os.pipe()  # the child acknowledges joining the cgroup before exec
     pid = os.fork()
@@ -508,10 +643,8 @@ class Ledger:
         self.path = Path(path)
 
     def records(self) -> list[dict]:
-        if not self.path.exists():
-            return []
         out, prev = [], None
-        for number, raw in enumerate(self.path.read_bytes().splitlines(), 1):
+        for number, raw in enumerate(read_log(self.path).splitlines(), 1):
             record = json.loads(raw)
             if record.get("prev_sha256") != prev:
                 raise ValueError(f"{self.path}: line {number} breaks the hash chain")
@@ -521,10 +654,9 @@ class Ledger:
 
     def append(self, record: dict) -> dict:
         records = self.records()
-        prev = sha256_bytes(self.path.read_bytes().splitlines()[-1]) if records else None
+        prev = sha256_bytes(read_state(self.path).splitlines()[-1]) if records else None
         record = dict(record, schema=LEDGER_SCHEMA, prev_sha256=prev, unix=round(time.time(), 3))
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "ab") as handle:
+        with os.fdopen(open_state(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT), "ab") as handle:
             handle.write(canonical(record) + b"\n")
             handle.flush()
             os.fsync(handle.fileno())
@@ -724,13 +856,14 @@ def require_throughput(record: dict | None, binding: dict) -> dict:
 
 def flock(path: Path, what: str):
     import fcntl
-    path.parent.mkdir(parents=True, exist_ok=True)
-    handle = open(path, "w")
+    handle = os.fdopen(open_state(path, os.O_RDWR | os.O_CREAT), "r+b")
     try:
         fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    except OSError as error:
         handle.close()
-        raise Refusal(f"{what} is held by another supervisor")
+        if error.errno in (errno.EACCES, errno.EAGAIN):
+            raise LockHeld(f"{what} is held by another supervisor") from error
+        raise
     return handle
 
 
@@ -746,16 +879,13 @@ class NodeLog:
     @contextlib.contextmanager
     def locked(self):
         import fcntl
-        self.lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.lock_path, "w") as handle:
+        with os.fdopen(open_state(self.lock_path, os.O_RDWR | os.O_CREAT), "r+b") as handle:
             fcntl.flock(handle, fcntl.LOCK_EX)
             yield
 
     def read(self) -> tuple[list[dict], bool]:
         """Complete records (hash chain checked) and whether a torn tail follows them. Call under the lock."""
-        if not self.path.exists():
-            return [], False
-        data = self.path.read_bytes()
+        data = read_log(self.path)
         torn = bool(data) and not data.endswith(b"\n")
         lines = data.split(b"\n")[:-1] if data else []
         records, prev = [], None
@@ -769,28 +899,22 @@ class NodeLog:
 
     def append(self, record: dict) -> dict:
         """Append under the caller's lock; a torn tail is cut and recorded first."""
-        data = self.path.read_bytes() if self.path.exists() else b""
+        data = read_log(self.path)
         if data and not data.endswith(b"\n"):  # the cut log and its repair record land in one atomic rename
             cut = data.rfind(b"\n") + 1
             kept = data[:cut]
             lines = kept.split(b"\n")[:-1]
             repair = dict({"event": "torn-tail-repaired", "bytes": len(data) - cut}, log=OCCUPANCY_SCHEMA,
                           prev_sha256=sha256_bytes(lines[-1]) if lines else None, unix=round(time.time(), 3))
-            tmp = self.path.with_name(f"{self.path.name}.{os.getpid()}.{time.time_ns()}.tmp")
-            with open(tmp, "wb") as handle:
-                handle.write(kept + canonical(repair) + b"\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(tmp, self.path)
+            replace_state_bytes(self.path, kept + canonical(repair) + b"\n", sync_file=True, sync_directory=False)
         return self._write(record)
 
     def _write(self, record: dict) -> dict:
-        data = self.path.read_bytes() if self.path.exists() else b""
+        data = read_log(self.path)
         lines = data.split(b"\n")[:-1] if data else []
         prev = sha256_bytes(lines[-1]) if lines else None
         record = dict(record, log=OCCUPANCY_SCHEMA, prev_sha256=prev, unix=round(time.time(), 3))
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.path, "ab") as handle:
+        with os.fdopen(open_state(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT), "ab") as handle:
             handle.write(canonical(record) + b"\n")
             handle.flush()
             os.fsync(handle.fileno())
@@ -831,7 +955,7 @@ def node_chains(state_root: Path) -> list[dict]:
     out = []
     for path in sorted(Path(state_root).glob("box*.owner.json")):
         try:
-            out.append(json.loads(path.read_text()))
+            out.append(json.loads(read_state(path)))
         except (OSError, ValueError):
             continue
     return out
@@ -854,8 +978,8 @@ def enforce_node(plan: dict, node: NodeLog, reason: str) -> dict:
             if not chain_cg.exists() or not chain_cg.populated():
                 continue
             owner_path = state_root / f"{box.name}.owner.json"
-            owner = json.loads(owner_path.read_text()) if owner_path.exists() else None
-            paused = owner is not None and (state_root / owner["chain"] / "paused.json").exists()
+            owner = json.loads(read_state(owner_path)) if state_exists(owner_path) else None
+            paused = owner is not None and state_exists(state_root / owner["chain"] / "paused.json")
             want = state["frozen"] or paused or owner is None
             if chain_cg.frozen() != want:
                 chain_cg.freeze(want)
@@ -910,7 +1034,7 @@ class Supervisor:
     def recover(self, killed_running: bool = False) -> None:
         """Closes an instance whose supervisor died (`killed_running`: `w5box.py recover` stopped it while it still
         ran, neither frozen nor marked paused, so it ran until now)."""
-        owner = json.loads(self.owner_path.read_text()) if self.owner_path.exists() else None
+        owner = json.loads(read_state(self.owner_path)) if state_exists(self.owner_path) else None
         if owner is not None and owner["chain"] != self.chain:
             other = Ledger(self.state_root / owner["chain"] / "ledger.jsonl").summary()
             require(other["open"] is None, f"Box {self.slot['slot']} holds chain {owner['chain']}'s open instance")
@@ -938,7 +1062,7 @@ class Supervisor:
                 oom = int(events.get("oom_kill", 0)) + int(events.get("oom_group_kill", 0))
             else:
                 live = instance_dir / "live.json"
-                readings = [json.loads(live.read_text())["usage_usec"]] if live.exists() else []
+                readings = [json.loads(read_state(live))["usage_usec"]] if state_exists(live) else []
                 readings += [r["usage_usec"] for r in self.ledger.records()
                              if r["event"] in ("pause", "resume") and r["instance"] == record["instance"]]
                 final, lower, how, oom = max(readings, default=0), True, "cgroup lost: last durable reading", None
@@ -957,9 +1081,9 @@ class Supervisor:
             self.filler_cg.kill()
             require(self.filler_cg.wait_empty(SETTLE_SECONDS), "A leftover filler did not die")
             self.filler_cg.rmdir()
-        self.paused_path.unlink(missing_ok=True)
-        if self.owner_path.exists():
-            self.owner_path.unlink()
+        unlink_state(self.paused_path, missing_ok=True)
+        if state_exists(self.owner_path):
+            unlink_state(self.owner_path)
 
     def filler_seed_root(self) -> str:
         return self.plan["filler"]["seed_root_template"].format(j=self.slot["slot"])
@@ -1027,9 +1151,8 @@ class Supervisor:
             self.chain_cg.freeze(True)
         self.paused_usec = self.chain_cg.usage_usec()
         self.paused_seq = int(request["seq"])
-        os.replace(self.control / "pause.request",
-                   self.control / f"pause.{self.instance}.{self.paused_seq}.accepted")
-        (self.control / "pause.intent").unlink(missing_ok=True)
+        rename_control(self.control / "pause.request", f"pause.{self.instance}.{self.paused_seq}.accepted")
+        unlink_state(self.control / "pause.intent", missing_ok=True)
         self.ledger.append({"event": "pause", "instance": self.instance, "seq": self.paused_seq,
                             "usage_usec": self.paused_usec, "request": request})
         make_leaf(self.box, "filler", int(self.plan["filler"]["memory_max_bytes"]))
@@ -1071,7 +1194,7 @@ class Supervisor:
             if outage is not None:
                 self.node.append({"event": "restored", "outage_id": outage["id"], "box_slot": self.slot["slot"],
                                   "chain": self.chain, "how": "chain-resumed"})
-        self.paused_path.unlink(missing_ok=True)
+        unlink_state(self.paused_path, missing_ok=True)
         self.paused_seq = self.paused_usec = None
         enforce_node(self.plan, self.node, "resume")  # thaws only if the node is clear
 
@@ -1172,10 +1295,17 @@ class Supervisor:
         enforce_node(self.plan, self.node, "follow")
 
     # --- the run
+    @contextlib.contextmanager
+    def locks(self):
+        with flock(self.state / "supervisor.lock", f"Chain {self.chain}"), \
+                flock(self.state_root / f"box{self.slot['slot']}.lock", f"Box {self.slot['slot']}"):
+            yield
+
     def run(self) -> int:
-        self.state.mkdir(parents=True, exist_ok=True)
-        locks = [flock(self.state / "supervisor.lock", f"Chain {self.chain}"),
-                 flock(self.state_root / f"box{self.slot['slot']}.lock", f"Box {self.slot['slot']}")]
+        with self.locks():
+            return self.run_locked()
+
+    def run_locked(self) -> int:
         with self.node.locked():  # concurrent supervisors create the shared root one at a time
             prepare_root(self.root, self.layout, self.plan["isolation"], plan_box_slots(self.plan))
             prepare_box(self.root, self.slot)
@@ -1191,10 +1321,9 @@ class Supervisor:
             for instance in summary["unresolved_lower_bounds"]:
                 self.ledger.append({"event": "accept-lower-bound", "instance": instance,
                                     "reason": self.accept_lower_bound})
-        if self.control.exists():  # earlier instances' handshakes never reach this one
+        with state_directory(self.control, create=True):  # earlier instances' handshakes never reach this one
             for stale in self.control.iterdir():
-                stale.unlink()
-        self.control.mkdir(parents=True, exist_ok=True)
+                unlink_state(stale)
         self.instance, self.base = summary["next_instance"], summary["closed_total_usec"]
         instance_dir = self.state / f"instance-{self.instance:04d}"
         argv = chain_argv(self.spec, self.chain, self.state)
@@ -1234,36 +1363,36 @@ class Supervisor:
                 status, ru = wstatus, ru_now
                 break
             request_path = self.control / "pause.request"
-            if self.paused_seq is None and (self.control / "pause.now").exists():
+            if self.paused_seq is None and state_exists(self.control / "pause.now"):
                 accepted = sorted(int(x.name.split(".")[2])
-                                  for x in self.control.glob(f"pause.{self.instance}.*.accepted"))
-                now_request = dict(json.loads((self.control / "pause.now").read_text()), instance=self.instance,
+                                  for x in self.control.glob(f"pause.{self.instance}.*.accepted") if state_exists(x))
+                now_request = dict(json.loads(read_state(self.control / "pause.now")), instance=self.instance,
                                    seq=accepted[-1] + 1 if accepted else 0, at="controller")
-                os.replace(self.control / "pause.now", request_path)
+                rename_control(self.control / "pause.now", request_path.name)
                 self.pause(now_request, instance_dir)
-            elif self.paused_seq is None and request_path.exists():
-                request = json.loads(request_path.read_text())
+            elif self.paused_seq is None and state_exists(request_path):
+                request = json.loads(read_state(request_path))
                 if (request.get("instance") == self.instance and type(request.get("seq")) is int and not
-                        (self.control / f"pause.{self.instance}.{request['seq']}.accepted").exists()):
+                        state_exists(self.control / f"pause.{self.instance}.{request['seq']}.accepted")):
                     self.pause(request, instance_dir)
                 else:
-                    os.replace(request_path, self.control / f"pause.rejected.{time.time_ns()}")
+                    rename_control(request_path, f"pause.rejected.{time.time_ns()}")
                     self.ledger.append({"event": "pause-rejected", "instance": self.instance, "request": request})
-            elif self.paused_seq is not None and (self.control / "resume.request").exists():
-                payload = json.loads((self.control / "resume.request").read_text())
-                (self.control / "resume.request").unlink()
+            elif self.paused_seq is not None and state_exists(self.control / "resume.request"):
+                payload = json.loads(read_state(self.control / "resume.request"))
+                unlink_state(self.control / "resume.request")
                 self.resume(payload)
-            if (self.control / "kill.request").exists() or stop["flag"]:
+            if state_exists(self.control / "kill.request") or stop["flag"]:
                 reason = reason or ("sigterm" if stop["flag"] else "kill-request")
-                (self.control / "kill.request").unlink(missing_ok=True)
+                unlink_state(self.control / "kill.request", missing_ok=True)
                 self.chain_cg.kill()
             if self.max_wall is not None and time.monotonic() - started > self.max_wall and reason is None:
                 reason = "qualification-wall-cap"
                 self.chain_cg.kill()
             if self.filler_pid is not None:
                 self.watch_filler(instance_dir)
-            if (self.control / "refill.request").exists():
-                (self.control / "refill.request").unlink()
+            if state_exists(self.control / "refill.request"):
+                unlink_state(self.control / "refill.request")
                 self.refill(instance_dir)
             self.follow_node()
             if time.monotonic() - last_live >= LIVE_EVERY_SECONDS:
@@ -1288,7 +1417,7 @@ class Supervisor:
             enforce_node(self.plan, self.node, "handoff")
         if self.paused_seq is not None or self.chain_cg.frozen():  # the chain died while paused or frozen (a kill)
             self.stop_filler()
-            self.paused_path.unlink(missing_ok=True)
+            unlink_state(self.paused_path, missing_ok=True)
             self.chain_cg.freeze(False)
         if not self.chain_cg.wait_empty(SETTLE_SECONDS):  # orphans outlived the chain's root process
             reason = reason or "orphans-killed"
@@ -1309,9 +1438,7 @@ class Supervisor:
                             "chain_failure": bool(oom) or None})
         write_json_atomic(instance_dir / "close.json", close, durable=True)
         self.chain_cg.rmdir()
-        self.owner_path.unlink(missing_ok=True)
-        for lock in locks:
-            lock.close()
+        unlink_state(self.owner_path, missing_ok=True)
         if oom:
             return EXIT_OOM
         return code if code >= 0 else 128 - code
@@ -1322,11 +1449,9 @@ class Supervisor:
 def recover_chain(plan: dict, plan_sha: str, chain: str, layout: dict, detected: str) -> dict:
     """`w5box.py recover`: closes the open instance of a chain whose supervisor has died (module docstring)."""
     sup = Supervisor(plan, plan_sha, chain, None, None, layout, detected, None)
-    if not sup.ledger.path.exists() or sup.ledger.summary()["open"] is None:
+    if sup.ledger.summary()["open"] is None:
         return {"chain": chain, "recovered": False, "why": "no open instance"}
-    locks = [flock(sup.state / "supervisor.lock", f"Chain {chain}"),
-             flock(sup.state_root / f"box{sup.slot['slot']}.lock", f"Box {sup.slot['slot']}")]
-    try:
+    with sup.locks():
         killed = running = False
         if sup.chain_cg.exists() and sup.chain_cg.populated():  # unsupervised: nothing reads its requests
             # It ran until now only if it was neither frozen nor marked paused (a pause freezes before its record).
@@ -1337,9 +1462,6 @@ def recover_chain(plan: dict, plan_sha: str, chain: str, layout: dict, detected:
             killed = True
         sup.recover(killed_running=running)  # a handoff chain's box is held there, before the instance closes
         return {"chain": chain, "recovered": True, "killed": killed, "was_running": running}
-    finally:
-        for lock in locks:
-            lock.close()
 
 
 # ---------------------------------------------------------------- an ended chain's box
@@ -1413,64 +1535,63 @@ def fill_box(plan: dict, index: int, layout: dict, empty_since: float | None, st
         try:
             lock = flock(state_root / f"box{index}.lock", f"Box {index}")
             break
-        except Refusal:
+        except LockHeld:
             if chain_cg.exists() and chain_cg.populated():  # another chain took the box: it is not empty
                 close_outage("box-occupied-by-a-chain")
                 raise
             if time.monotonic() > deadline:
                 raise  # the box stays an outage; the next start retries
             time.sleep(0.5)
-    if chain_cg.exists() and chain_cg.populated():
-        close_outage("box-occupied-by-a-chain")
-        lock.close()
-        raise Refusal(f"Box {index} holds a running chain")
-    write_json_atomic(mark, {"pid": os.getpid(), "unix": time.time(), "empty_since": empty_since, "stop": stop_key},
-                      durable=True)
-    pid, seq, failures, faulted, ended = None, 0, 0, False, False
-    try:
-        while not stop["flag"]:
-            if stop_path.exists():
-                ended = True
-                break
-            if pid is not None:
-                done, status = os.waitpid(pid, os.WNOHANG)
-                if done == pid:
-                    pid = None
-                    open_outage("the box filler exited", exit=os.waitstatus_to_exitcode(status))
-            if pid is None and not faulted:
-                clear(None)
-                make_leaf(box, "filler", int(filler["memory_max_bytes"]))
-                pid = spawn_into(filler_cg, filler_argv(filler, seed_root, index, seq), env,
-                                 state_root / f"box{index}.fill" / f"filler-{seq}.log")
-                seq += 1
-                verification, pid = verify_filler(filler_cg, pid, slot["cpus"])
-                if verification["ok"]:
-                    failures = 0
-                    close_outage("fill-verified", any_source=True, verification=verification)
-                else:
-                    failures += 1
-                    clear(pid)
-                    pid = None
-                    if failures >= FILLER_RESTARTS:
-                        faulted = True
-                        with node.locked():
-                            records, torn = node.read()
-                            outage = NodeLog.state(records, torn)["open_outages"].get(index)
-                            node.append({"event": "fault", "outage_id": outage and outage["id"], "box_slot": index,
-                                         "chain": None, "attempts": failures, "affected": node_chains(state_root),
-                                         "meaning": "the ended box holds no verified filler; the node's chains stay "
-                                                    "frozen"})
-            enforce_node(plan, node, "fill")  # escalation of an outage left open
-            time.sleep(FILL_POLL_SECONDS)
-    finally:
-        if ended:  # every measured chain has ended: nothing waits on this box any more
-            clear(pid)
-            close_outage("fill-stopped")
-        else:  # a signal or an error: the box is about to be empty, so the node holds first
-            open_outage("the box fill stopped")
-            clear(pid)
-        mark.unlink(missing_ok=True)
-        lock.close()
+    with lock:
+        if chain_cg.exists() and chain_cg.populated():
+            close_outage("box-occupied-by-a-chain")
+            raise Refusal(f"Box {index} holds a running chain")
+        write_json_atomic(mark, {"pid": os.getpid(), "unix": time.time(), "empty_since": empty_since, "stop": stop_key},
+                          durable=True)
+        pid, seq, failures, faulted, ended = None, 0, 0, False, False
+        try:
+            while not stop["flag"]:
+                if stop_path.exists():
+                    ended = True
+                    break
+                if pid is not None:
+                    done, status = os.waitpid(pid, os.WNOHANG)
+                    if done == pid:
+                        pid = None
+                        open_outage("the box filler exited", exit=os.waitstatus_to_exitcode(status))
+                if pid is None and not faulted:
+                    clear(None)
+                    make_leaf(box, "filler", int(filler["memory_max_bytes"]))
+                    pid = spawn_into(filler_cg, filler_argv(filler, seed_root, index, seq), env,
+                                     state_root / f"box{index}.fill" / f"filler-{seq}.log")
+                    seq += 1
+                    verification, pid = verify_filler(filler_cg, pid, slot["cpus"])
+                    if verification["ok"]:
+                        failures = 0
+                        close_outage("fill-verified", any_source=True, verification=verification)
+                    else:
+                        failures += 1
+                        clear(pid)
+                        pid = None
+                        if failures >= FILLER_RESTARTS:
+                            faulted = True
+                            with node.locked():
+                                records, torn = node.read()
+                                outage = NodeLog.state(records, torn)["open_outages"].get(index)
+                                node.append({"event": "fault", "outage_id": outage and outage["id"], "box_slot": index,
+                                             "chain": None, "attempts": failures, "affected": node_chains(state_root),
+                                             "meaning": "the ended box holds no verified filler; the node's chains stay "
+                                                        "frozen"})
+                enforce_node(plan, node, "fill")  # escalation of an outage left open
+                time.sleep(FILL_POLL_SECONDS)
+        finally:
+            if ended:  # every measured chain has ended: nothing waits on this box any more
+                clear(pid)
+                close_outage("fill-stopped")
+            else:  # a signal or an error: the box is about to be empty, so the node holds first
+                open_outage("the box fill stopped")
+                clear(pid)
+            unlink_state(mark, missing_ok=True)
     return 0
 
 
