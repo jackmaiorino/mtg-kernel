@@ -12407,6 +12407,7 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
                     .iter()
                     .flat_map(|pending| pending.waiting_triggers()),
             )
+            .chain(dredge_waiting_triggers(state))
             .map(|p| {
                 let prepared_source = match prepared_scope {
                     Some(CommonProjectionScopeV42::NextFiveV59) => {
@@ -14503,6 +14504,7 @@ fn owned_draw_pending_source_ref(
                 .iter()
                 .flat_map(|legend| legend.waiting_triggers()),
         )
+        .chain(dredge_waiting_triggers(state))
         .filter(|row| *row == pending)
         .count()
         != 1
@@ -14542,6 +14544,20 @@ fn owned_draw_pending_source_ref(
         zone,
         zone_change_count: generation,
     }))
+}
+
+pub(crate) fn dredge_waiting_triggers(
+    state: &GameState,
+) -> std::slice::Iter<'_, crate::trigger::PendingTrigger> {
+    #[cfg(feature = "eternal-fixtures")]
+    {
+        crate::eternal_vintage_e7b_v1::dredge::waiting_triggers(state).iter()
+    }
+    #[cfg(not(feature = "eternal-fixtures"))]
+    {
+        let _ = state;
+        [].iter()
+    }
 }
 
 fn frozen_stack_source_ref(state: &GameState, item: &StackItem) -> Result<CardStableRefV1> {

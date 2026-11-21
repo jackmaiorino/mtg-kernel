@@ -5320,13 +5320,43 @@ pub(crate) fn collect_and_process_with_sba_result_v1(
     {
         return (Vec::new(), false, false);
     }
-    waiting.extend(capture_triggers_without_sba(state));
+    #[cfg(feature = "eternal-fixtures")]
+    let dredge_deferred = crate::eternal_vintage_e7b_v1::dredge::deferring_captures(state);
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let dredge_deferred = false;
+    #[cfg(feature = "eternal-fixtures")]
+    let eternal_checkpoint_hold = dredge_deferred || !waiting.is_empty();
+    #[cfg(not(feature = "eternal-fixtures"))]
+    let eternal_checkpoint_hold = false;
+    #[cfg(feature = "eternal-fixtures")]
+    if eternal_checkpoint_hold {
+        crate::eternal_vintage_e7b_v1::dredge::stop_deferring(state);
+        if !waiting.is_empty() {
+            crate::eternal_vintage_e7b_v1::dredge::prepend_checkpoint_captures(
+                state,
+                std::mem::take(&mut waiting),
+            );
+        }
+    }
+    let pre_sba = capture_triggers_without_sba(state);
     // This checkpoint ends the resolving item's ownership of its kick marker.
     state.engine.pending_kicked_source = None;
     state.engine.battlemage_entry_v1.0 = None;
     if state.engine.halted.is_some() {
+        #[cfg(feature = "eternal-fixtures")]
+        if eternal_checkpoint_hold {
+            let _ = crate::eternal_vintage_e7b_v1::dredge::take_captures(state);
+        }
         return (Vec::new(), false, false);
     }
+    if eternal_checkpoint_hold {
+        #[cfg(feature = "eternal-fixtures")]
+        waiting.extend(crate::eternal_vintage_e7b_v1::dredge::take_captures(state));
+        if dredge_deferred {
+            waiting.append(&mut state.engine.pending_triggers);
+        }
+    }
+    waiting.extend(pre_sba);
     let mut new_triggers = waiting;
 
     // Conversely, SBAs can create new trigger events themselves. Lethal
@@ -5348,9 +5378,24 @@ pub(crate) fn collect_and_process_with_sba_result_v1(
         state,
         &sba_events,
     ));
-    new_triggers.extend(triggers_from_events(state, &sba_events, None));
+    #[cfg(feature = "eternal-fixtures")]
+    if eternal_checkpoint_hold {
+        crate::eternal_vintage_e7b_v1::dredge::store_checkpoint_captures(
+            state,
+            std::mem::take(&mut new_triggers),
+        );
+    }
+    let post_sba = triggers_from_events(state, &sba_events, None);
+    #[cfg(feature = "eternal-fixtures")]
+    if eternal_checkpoint_hold {
+        new_triggers = crate::eternal_vintage_e7b_v1::dredge::take_captures(state);
+    }
+    new_triggers.extend(post_sba);
     #[cfg(feature = "eternal-fixtures")]
     crate::eternal_cube_c6a_v1::clear_collected_exile_batches(state);
+    if dredge_deferred {
+        new_triggers.append(&mut state.engine.pending_triggers);
+    }
 
     // 603.3d: a triggered ability requiring targets is removed from the
     // stack-placement queue when no complete legal target assignment exists.
