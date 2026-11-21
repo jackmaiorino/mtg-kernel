@@ -93,16 +93,57 @@ fn followed_v1(
             before_next(&config);
             Ok(FollowNextV1::Config(Box::new(config)))
         },
-        |index, config, result| {
+        |result| {
             results.borrow_mut().push(result.clone());
-            spool.publish_done_v1(index, config, result)
+            Ok(())
         },
+        |index, config, result| spool.publish_done_v1(index, config, result),
     )?;
     Ok((ended, results.into_inner()))
 }
 
-/// Every non-timed file present in both trees has the same bytes, and the
-/// same files exist apart from staging debris and the run lock.
+/// Leaves that are telemetry wherever they appear (besides keys ending in
+/// `_seconds`).
+const TELEMETRY_KEYS: [&str; 6] = [
+    "worker_timings",
+    "collection_worker_timings",
+    "episode_seconds",
+    "opponent_cache_hits",
+    "driver_process_cpu_seconds",
+    "scheduler_timing",
+];
+
+/// A timed document without its telemetry: every key ending in `_seconds` or
+/// named in `TELEMETRY_KEYS` removed, and the digest of every pin to a timed
+/// document (whose bytes carry telemetry) removed.
+fn without_telemetry_v1(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let pin_to_timed = map.len() == 2
+                && map.contains_key("sha256")
+                && map
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .is_some_and(|path| TIMED.iter().any(|name| path.ends_with(name)));
+            Value::Object(
+                map.iter()
+                    .filter(|(key, _)| {
+                        !(key.ends_with("_seconds")
+                            || TELEMETRY_KEYS.contains(&key.as_str())
+                            || (pin_to_timed && key.as_str() == "sha256"))
+                    })
+                    .map(|(key, value)| (key.clone(), without_telemetry_v1(value)))
+                    .collect(),
+            )
+        }
+        Value::Array(items) => Value::Array(items.iter().map(without_telemetry_v1).collect()),
+        other => other.clone(),
+    }
+}
+
+/// Every file present in both trees has the same bytes, except timed
+/// documents, which are equal without their telemetry; and (with
+/// `same_files`) the same files exist, apart from staging debris.
 fn assert_trees_match_v1(case: &str, got: &Path, want: &Path, same_files: bool) {
     let wanted = files_under_v1(want);
     let found = files_under_v1(got);
@@ -114,7 +155,16 @@ fn assert_trees_match_v1(case: &str, got: &Path, want: &Path, same_files: bool) 
         let expected = wanted
             .get(path)
             .unwrap_or_else(|| panic!("{case}: unexpected file {}", path.display()));
-        if name != "run.lock" && !TIMED.contains(&name) {
+        if TIMED.contains(&name) {
+            let parse =
+                |bytes: &[u8]| without_telemetry_v1(&serde_json::from_slice(bytes).unwrap());
+            assert_eq!(
+                parse(bytes),
+                parse(expected),
+                "{case}: {} differs outside its telemetry",
+                path.display()
+            );
+        } else if name != "run.lock" {
             assert!(bytes == expected, "{case}: {} differs", path.display());
         }
     }
@@ -168,6 +218,12 @@ fn the_continuation_check_admits_only_the_next_segment_of_the_same_run() {
         "actual_identity":{"checkpoint_sha256":later_pin.sha256}});
     let later = segment_v1(&base, &chain, 2, Some(later_pin.clone()));
     check_continuation_v1(&next, &later_result, &later).unwrap();
+    // A run with resident reads is not continued, even by an otherwise exact next segment.
+    let mut resident_first = first.clone();
+    resident_first.verified_reads = VerifiedReadsV1::Resident;
+    let mut resident_next = next.clone();
+    resident_next.verified_reads = VerifiedReadsV1::Resident;
+    assert!(check_continuation_v1(&resident_first, &result, &resident_next).is_err());
     // A pin of the run before the previous one is not a continuation.
     assert!(check_continuation_v1(&next, &later_result, &next.clone()).is_err());
     let refused = |what: &str, previous_result: &Value, candidate: NativeExpandedTrainingRunV1| {
@@ -175,7 +231,7 @@ fn the_continuation_check_admits_only_the_next_segment_of_the_same_run() {
         assert!(!error.is_empty(), "{what}");
     };
     type ChangeV1 = (&'static str, fn(&mut NativeExpandedTrainingRunV1));
-    let changes: [ChangeV1; 13] = [
+    let changes: [ChangeV1; 14] = [
         ("learning rate", |c| c.learning_rate *= 2.0),
         ("value coefficient", |c| c.value_coefficient *= 2.0),
         ("collection workers", |c| c.collection_workers = 3),
@@ -206,6 +262,15 @@ fn the_continuation_check_admits_only_the_next_segment_of_the_same_run() {
             c.max_non_natural_episode_fraction = 0.25
         }),
         ("schema", |c| c.schema.push('x')),
+        ("negative zero", |c| {
+            c.loss_selection = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.9,
+                entropy_coefficient: -0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+                pregame_announcement_step_scale: None,
+            }
+        }),
     ];
     for (what, change) in changes {
         let mut candidate = next.clone();
@@ -270,14 +335,22 @@ fn the_spool_reads_stop_first_then_one_whole_next_config() {
     );
     fs::remove_file(spool_dir.join(STOP_NAME)).unwrap();
     fs::remove_file(spool_dir.join(NEXT_NAME)).unwrap();
+    // A next.json that is not a config is refused (status 3 in the binary) and removed.
     fs::create_dir(spool_dir.join(NEXT_NAME)).unwrap();
-    assert!(
-        spool.wait_v1().is_err(),
-        "a next.json that is not a file is an error"
-    );
-    fs::remove_dir(spool_dir.join(NEXT_NAME)).unwrap();
+    assert!(matches!(
+        spool.wait_v1().unwrap(),
+        FollowNextV1::Unusable(_)
+    ));
+    assert!(!spool_dir.join(NEXT_NAME).exists());
     fs::write(spool_dir.join(NEXT_NAME), b"{\"schema\":").unwrap();
-    assert!(spool.wait_v1().is_err(), "an unparsable config is an error");
+    assert!(matches!(
+        spool.wait_v1().unwrap(),
+        FollowNextV1::Unusable(_)
+    ));
+    assert!(!spool_dir.join(NEXT_NAME).exists());
+    // A spool that is not empty belongs to another process.
+    fs::write(spool_dir.join("done-000000.json"), b"{}").unwrap();
+    assert!(SpoolV1::open_v1(&spool_dir).is_err());
     fs::remove_dir_all(&chain).unwrap();
 }
 
@@ -335,6 +408,7 @@ fn a_followed_chain_publishes_the_trees_and_states_of_fresh_processes() {
                 Some(checkpoint_pin_v1(&fresh_first)),
             ))))
         },
+        |_| Ok(()),
         |index, config, result| handle.publish_done_v1(index, config, result),
     )
     .unwrap_err();
