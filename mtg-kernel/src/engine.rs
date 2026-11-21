@@ -2426,7 +2426,48 @@ fn validate_physical_spell_cast_origin(
                         "chosen-creature cost lost its finalized source binding".to_string()
                     );
                 };
-                if item.v4.paid_cost_refs.as_slice() != [chosen] {
+                // The chosen creature follows any distinct payment for the graveyard route.
+                let (last, route) = item
+                    .v4
+                    .paid_cost_refs
+                    .split_last()
+                    .ok_or("chosen creature payment absent")?;
+                let legal_route = match (cast_method, origin.route) {
+                    (CastMethodV4::Escape, SpellCastRouteV4::GraveyardEscape) => {
+                        let count = spell_costs_v1::escape_cost_v1(def).and_then(|cost| {
+                            cost.iter().find_map(|part| match part {
+                                CostComponent::ExileOtherCardsFromOwnGraveyard(n) => {
+                                    Some(usize::from(*n))
+                                }
+                                _ => None,
+                            })
+                        });
+                        count == Some(route.len())
+                            && route.iter().enumerate().all(|(index, card)| {
+                                card.owner == caster
+                                    && card.zone == Zone::Exile
+                                    && card.power_lki.is_none()
+                                    && !route[..index]
+                                        .iter()
+                                        .any(|prior| prior.object == card.object)
+                            })
+                    }
+                    (CastMethodV4::Normal, SpellCastRouteV4::GraveyardPermissionV1 { .. }) => {
+                        match route {
+                            [] => true,
+                            [land] => {
+                                land.owner == caster
+                                    && land.power_lki.is_none()
+                                    && card_def::CARD_DEFS
+                                        .get(usize::from(land.card_def))
+                                        .is_some_and(|def| def.has_type(CardType::Land))
+                            }
+                            _ => false,
+                        }
+                    }
+                    _ => route.is_empty(),
+                };
+                if *last != chosen || !legal_route {
                     return Err(
                         "chosen-creature payment disagrees with its finalized source binding"
                             .to_string(),
@@ -10954,6 +10995,33 @@ fn payable_cast_modes(
     pending: &PendingCast,
     state: &GameState,
 ) -> Vec<CastMode> {
+    if crate::eternal_legacy_e8a_v1::graveyard_life_choice(
+        def,
+        pending.origin_zone,
+        pending.source_contract.cast_method,
+    ) {
+        return [CastMode::Normal, CastMode::Alternative]
+            .into_iter()
+            .filter(|&mode| {
+                spell_costs_v1::selected_spell_quote_branch_wide_x_v59(
+                    def,
+                    pending.spell,
+                    pending.origin_zone,
+                    pending.source_contract.cast_method,
+                    false,
+                    0,
+                    0,
+                    &pending.targets_chosen,
+                    &[],
+                    pending.controller,
+                    state,
+                    &[],
+                    Some(mode == CastMode::Alternative),
+                )
+                .is_some()
+            })
+            .collect();
+    }
     let mut modes = Vec::new();
     if pending_cast_form_timing_ok(def.types, def.keywords, pending, state)
         && pending_cast_quote_v1(
@@ -11852,8 +11920,7 @@ fn is_castable_with_cost_grant(
             };
             main_ok || omen_ok() || bestow_ok() || adventure_ok()
         }
-        CastMethodV4::Flashback
-        | CastMethodV4::Alternative
+        CastMethodV4::Alternative
         | CastMethodV4::Madness
         | CastMethodV4::Plotted
         | CastMethodV4::Bestow
@@ -14900,10 +14967,9 @@ fn remaining_cast_payment_is_payable(
     ) else {
         return false;
     };
-    if let Some(costs) = compound_cast_cost_v1::Costs::new(
+    if let Some(costs) = selected.compound_costs(
         def,
         method,
-        selected.retrace,
         pending.mode_chosen.unwrap_or(0),
         pending.selected_x_v59().unwrap_or(0),
     ) {
@@ -14967,7 +15033,13 @@ pub(crate) fn finalized_cast_method(
             CastMethodV4::Omen
         } else if supported_bestow(def).is_some() && pending.mode_chosen == Some(1) {
             CastMethodV4::Bestow
-        } else if pending.cast_mode == Some(CastMode::Alternative) {
+        } else if pending.cast_mode == Some(CastMode::Alternative)
+            && !crate::eternal_legacy_e8a_v1::graveyard_life_choice(
+                def,
+                pending.origin_zone,
+                staged_method,
+            )
+        {
             CastMethodV4::Alternative
         } else {
             CastMethodV4::Normal
@@ -16344,6 +16416,8 @@ pub(crate) fn validate_pending_cast(
                         })
                 })
     };
+    let graveyard_choice =
+        crate::eternal_legacy_e8a_v1::graveyard_life_choice(def, pending.origin_zone, method);
     match method {
         CastMethodV4::Normal => {
             // `move_to_stack` clears `ObjectStateV4::on_adventure`;
@@ -16466,7 +16540,7 @@ pub(crate) fn validate_pending_cast(
                 || (!has_flashback_v1(state, pending.spell, origin_generation, def)
                     && !sphinx_lore_cast_v1::granted(pending))
                 || (def.escape.is_some() && !sphinx_lore_cast_v1::granted(pending))
-                || pending.cast_mode != Some(CastMode::Normal)
+                || (pending.cast_mode != Some(CastMode::Normal) && !graveyard_choice)
             {
                 return Err("flashback cast has a noncanonical origin or definition".to_string());
             }
@@ -16487,7 +16561,7 @@ pub(crate) fn validate_pending_cast(
                     .is_some()
                     && !compound_cast_cost_v1::supports_escape(def))
                 || def.generic_cost_reduction.is_some()
-                || pending.cast_mode != Some(CastMode::Normal)
+                || (pending.cast_mode != Some(CastMode::Normal) && !graveyard_choice)
             {
                 return Err("escape cast has a noncanonical origin or definition".to_string());
             }
@@ -16894,11 +16968,12 @@ pub(crate) fn validate_pending_cast(
         && (!resolution_cast_v1::free_cast(state, pending.spell)
             || crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Alternative)
                 .is_some());
-    let seeded_cast_mode = if method == CastMethodV4::Normal && has_cast_mode_choice {
-        None
-    } else {
-        Some(CastMode::Normal)
-    };
+    let seeded_cast_mode =
+        if (method == CastMethodV4::Normal && has_cast_mode_choice) || graveyard_choice {
+            None
+        } else {
+            Some(CastMode::Normal)
+        };
     let additional_is_at_seed = if def.additional_cost.is_none() {
         pending.additional_cost_discarded.as_deref() == Some(&[])
     } else {
@@ -16910,8 +16985,12 @@ pub(crate) fn validate_pending_cast(
         pending.optional_additional_cost_paid.is_none()
     } && pending.optional_additional_cost_chosen.is_empty()
         && !pending.optional_additional_cost_selection_finished;
+    // Earlier snapshots preselected discard for a flashback or escape.
+    let old_discard_seed = graveyard_choice
+        && method != CastMethodV4::Normal
+        && pending.cast_mode == Some(CastMode::Normal);
     let later_fields_are_seeded = |require_seeded_cast_mode: bool| {
-        (!require_seeded_cast_mode || pending.cast_mode == seeded_cast_mode)
+        (!require_seeded_cast_mode || pending.cast_mode == seeded_cast_mode || old_discard_seed)
             && pending.sacrifice_chosen.is_empty()
             && pending.optional_additional_cost_chosen.is_empty()
             && !pending.optional_additional_cost_selection_finished
@@ -16954,8 +17033,8 @@ pub(crate) fn validate_pending_cast(
     {
         return Err("pending cast advanced past incomplete targeting".to_string());
     }
-    if method == CastMethodV4::Normal
-        && has_cast_mode_choice
+    if (method == CastMethodV4::Normal && has_cast_mode_choice
+        || graveyard_choice && pending.cast_mode == Some(CastMode::Alternative))
         && pending.cast_mode.is_some()
         && (pending.kicked.is_none()
             || pending.mode_chosen.is_none()
@@ -30701,17 +30780,20 @@ fn materialize_begin_cast_with_quote_v1(
     });
     let free_room_door_choice = without_mana_cost
         && crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Alternative).is_some();
-    let cast_mode = if (without_mana_cost && !free_room_door_choice)
-        || citadel_cast
-        || hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost)
-        || cast_method != CastMethodV4::Normal
-        || crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some()
-        || def.alt_cost.is_none()
-    {
-        Some(CastMode::Normal)
-    } else {
-        None
-    };
+    let cast_mode =
+        if crate::eternal_legacy_e8a_v1::graveyard_life_choice(def, origin_zone, cast_method) {
+            None
+        } else if (without_mana_cost && !free_room_door_choice)
+            || citadel_cast
+            || hand_free_cast_v1 == Some(HandFreeCastV1::WithoutManaCost)
+            || cast_method != CastMethodV4::Normal
+            || crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some()
+            || def.alt_cost.is_none()
+        {
+            Some(CastMode::Normal)
+        } else {
+            None
+        };
     let additional_cost_discarded = if def.additional_cost.is_none() {
         Some(vec![])
     } else {
@@ -31138,7 +31220,7 @@ fn finalize_owned_cast(
     // The complete local plan was prepared before any real discard or mana
     // payment. Capture provenance inputs before consuming it exactly once.
     let object_cost_chosen = payment.ordered_objects.clone();
-    let chosen_power_lki = payment.chosen_power_lki;
+    let chosen_creature_cost = payment.chosen_creature;
     let was_kicked = pending.kicked == Some(true);
     let paid_optional_additional_cost = if pending.optional_additional_cost_paid == Some(true) {
         Some(
@@ -31251,9 +31333,6 @@ fn finalize_owned_cast(
             .iter()
             .map(|binding| binding.object),
     );
-    if let Some(binding) = pending.chosen_creature_cost {
-        paid_cost_objects.push(binding.object);
-    }
     // Capture after sacrifice/discard zone changes have committed. These refs
     // describe the payment-time incarnation and visibility forever; later
     // reanimation, bounce, shuffle, or exile cannot rewrite stack provenance.
@@ -31262,23 +31341,7 @@ fn finalize_owned_cast(
             .into_iter()
             .map(|object| PaidCostRefV4::capture(state, object)),
     );
-    if let Some(binding) = pending.chosen_creature_cost {
-        let power =
-            chosen_power_lki.expect("complete preparation captured payment-time chosen power");
-        let reference = paid_cost_refs
-            .iter_mut()
-            .find(|reference| reference.object == binding.object)
-            .expect("chosen creature is included in its paid provenance");
-        if state.hand_knowledge_by_name_v2
-            && pending.chosen_creature_cost_zone == Some(ChosenCreatureCostZoneV1::Hand)
-        {
-            // The prepared cost publicly revealed this card. Its paid
-            // receipt remains visible even if a prior same-name fact
-            // already supplies the observer's known-hand lower bound.
-            reference.visible_to_mask = 0b11;
-        }
-        reference.power_lki = Some(power);
-    }
+    paid_cost_refs.extend(chosen_creature_cost);
     let selected_target_spec = if cast_method == CastMethodV4::Omen {
         if let Some(adventure) = supported_adventure(def) {
             adventure.target_spec
@@ -31302,12 +31365,6 @@ fn finalize_owned_cast(
     // Payment is now irrevocably complete. Stamp the independently owned
     // source-object record before recapturing the finalized stack contract;
     // later validators require both copies to agree with this exact method.
-    let chosen_creature_cost = pending.chosen_creature_cost.and_then(|binding| {
-        paid_cost_refs
-            .iter()
-            .find(|reference| reference.object == binding.object)
-            .copied()
-    });
     let used_graveyard_creature_permission =
         matches!(
             cast_method,

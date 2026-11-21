@@ -473,14 +473,14 @@ pub(super) fn answer(state: &mut GameState, p: &PendingCast, index: u16) -> Resu
         .ok_or("Sphinx pending absent")?;
     live.source_contract = source;
     live.is_flashback = is_flashback;
-    live.cast_mode = if source.cast_method == CastMethodV4::Normal
-        && crate::eternal_pauper_pf1c_v1::beam_me_up_cost(
-            &card_def::CARD_DEFS[source.card_def as usize],
-        )
-        .is_none()
-        && card_def::CARD_DEFS[source.card_def as usize]
-            .alt_cost
-            .is_some()
+    let def = &card_def::CARD_DEFS[usize::from(source.card_def)];
+    live.cast_mode = if crate::eternal_legacy_e8a_v1::graveyard_life_choice(
+        def,
+        live.origin_zone,
+        source.cast_method,
+    ) || source.cast_method == CastMethodV4::Normal
+        && crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_none()
+        && def.alt_cost.is_some()
     {
         None
     } else {
