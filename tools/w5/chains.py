@@ -612,9 +612,13 @@ def linked_file(path, siblings=()):
             except FileNotFoundError:
                 continue
             temps += (t.st_dev, t.st_ino) == (st.st_dev, st.st_ino)
-    # against the first count: a temporary removed meanwhile can only make this refuse, and the caller looks again
-    # with a fresh listing; an outside link is never hidden
-    return st.st_nlink > 1 + temps
+    # against the first and the last count: a temporary removed meanwhile can only make this refuse (the caller looks
+    # again with a fresh listing), and one added meanwhile cannot hide an outside link
+    try:
+        last = os.lstat(path).st_nlink
+    except FileNotFoundError:
+        last = 0
+    return st.st_nlink > 1 + temps or last > 1 + temps
 
 
 def carried_trees_unlinked(root, name):
