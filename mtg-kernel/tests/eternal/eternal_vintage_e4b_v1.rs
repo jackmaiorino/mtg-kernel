@@ -1418,3 +1418,23 @@ fn underworld_breach_pays_escape_and_optional_kicker_together() {
         );
     }
 }
+
+#[test]
+fn underworld_breach_can_escape_when_only_the_kicked_spell_has_a_target() {
+    let mut state = islands();
+    put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+    let target = put(&mut state, P1, "Hypnotic Specter", Zone::Battlefield);
+    let thirst = put(&mut state, P0, "Bloodchief's Thirst", Zone::Graveyard);
+    for _ in 0..3 {
+        put(&mut state, P0, "Island", Zone::Graveyard);
+    }
+    pool(&mut state, P0, &[ManaColor::B], 2);
+    assert!(!castable(&mut state, thirst));
+    pool(&mut state, P0, &[ManaColor::B], 0);
+    cast(&mut state, thirst, &[Target::Object(target)]);
+    settle_first(&mut state);
+    assert_eq!(zone(&state, target), Zone::Graveyard);
+    assert_eq!(zone(&state, thirst), Zone::Graveyard);
+    assert_eq!(state.exile.len(), 3);
+    assert_eq!(mana(&state, P0, ManaColor::B), 0);
+}
