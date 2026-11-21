@@ -2640,8 +2640,10 @@ def drive_locked(a, arm, root, cdir, man_path, follower=None):
             if attempts_of != s:
                 attempts, attempts_of = [], s
             first = completed(native)  # the iterations this attempt finds complete (none after a scratch reset)
-        if scratch:
-            code, killed, reaped = run_reaped(arm, path, deadline, cdir, native, follower)
+        if scratch and follower is not None:
+            code, killed, reaped = run_reaped(arm, path, deadline, cdir, native, follower=follower)
+        elif scratch:
+            code, killed, reaped = run_reaped(arm, path, deadline, cdir, native)  # main's call, unchanged
         elif follower is not None:
             code, killed = follower.run(path, deadline)
         else:
