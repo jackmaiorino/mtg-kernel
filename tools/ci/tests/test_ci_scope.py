@@ -127,14 +127,16 @@ class CfgPredictorTests(unittest.TestCase):
                     fn after() {}
                 }
             """,
-            "m/gated.rs": '#[test]\nfn inside() {}\n#[path = "other.rs"]\nmod moved;\n',
+            "m/gated.rs": '#[test]\nfn inside() {}\n#[path = "other.rs"]\nmod moved;\n'
+                          'mod spliced {\n    include!("spliced_tests.rs");\n}\n',
+            "m/spliced_tests.rs": "#[test]\nfn from_include() {}\n",
             "m/other.rs": "#[test]\nfn moved_test() {}\n",
         }
         self.assertEqual(self.predicted(files, ""), ["m::tests::after", "m::tests::plain"])
         self.assertEqual(self.predicted(files, "a"), ["m::gated::inside", "m::gated::moved::moved_test",
-                                                       "m::tests::a_without_b", "m::tests::after", "m::tests::plain"])
+                                                       "m::gated::spliced::from_include", "m::tests::a_without_b", "m::tests::after", "m::tests::plain"])
         self.assertEqual(self.predicted(files, "a,b"), ["m::gated::inside", "m::gated::moved::moved_test",
-                                                         "m::tests::after", "m::tests::both", "m::tests::plain"])
+                                                         "m::gated::spliced::from_include", "m::tests::after", "m::tests::both", "m::tests::plain"])
         self.assertIn("m::tests::win::only_windows", self.predicted(files, "", "windows"))
 
     def test_an_exemption_needs_a_predicate_no_linux_build_satisfies(self):

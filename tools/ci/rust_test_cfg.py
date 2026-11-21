@@ -69,6 +69,23 @@ def tokens(text: str) -> list[str]:
     return out
 
 
+def expanded_tokens(file: Path) -> list[str]:
+    """Tokens of a file with each `include!("path")` replaced by the included file's tokens (path relative to
+    the including file), as the compiler splices them in place."""
+    toks, out, i = tokens(file.read_text(encoding="utf-8")), [], 0
+    while i < len(toks):
+        if (toks[i] == "include" and toks[i + 1:i + 3] == ["!", "("] and toks[i + 3].startswith('"')
+                and toks[i + 4] == ")"):
+            out += expanded_tokens(file.parent / toks[i + 3].strip('"'))
+            i += 5
+            if i < len(toks) and toks[i] == ";":
+                i += 1
+            continue
+        out.append(toks[i])
+        i += 1
+    return out
+
+
 def parse_cfg(toks: list[str], i: int = 0):
     """Parse one cfg predicate starting at toks[i]; return (tree, next index)."""
     name = toks[i]
@@ -144,7 +161,7 @@ def attribute_groups(toks: list[str], i: int):
 
 
 def scan_file(module_path: str, file: Path, outer_cfgs: list, tests: list, inline_path_ok=True):
-    toks = tokens(file.read_text(encoding="utf-8"))
+    toks = expanded_tokens(file)
     is_dir_owner = file.name in ("mod.rs", "lib.rs")
     base_dir = file.parent if is_dir_owner else file.parent / file.stem
     # stack of (module path, cfgs, brace depth at open, child directory)
