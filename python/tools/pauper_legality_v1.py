@@ -4,7 +4,8 @@ Offline only: no engine build, process or network. The list is
 `data/eternal_v1/pauper_legality_scryfall_20261121.json`, one row for every
 non-token card in the `eternal-fixtures` build's three registries.
 
-- ``check-registries``: every non-token registry card has exactly one row.
+- ``check-registries``: no stale, duplicate or mislabelled rows; registry cards
+  without a row are counted, and are problems only with ``--strict``.
 - ``deck FILE``: print each card of a plain decklist that is not ``legal``.
 - ``summary``: row counts by registry and status.
 """
@@ -40,8 +41,19 @@ def registry_cards() -> dict[str, list[str]]:
     return cards
 
 
-def registry_problems(legality: dict[str, Any], registries: dict[str, list[str]]) -> list[str]:
-    """Differences between the legality rows and the registries; empty when they match exactly."""
+def unlisted_cards(legality: dict[str, Any], registries: dict[str, list[str]]) -> list[str]:
+    """Non-token registry cards that have no legality row, sorted by name."""
+    listed = {row["name"] for row in legality["cards"]}
+    return sorted({name for names in registries.values() for name in names} - listed)
+
+
+def registry_problems(legality: dict[str, Any], registries: dict[str, list[str]],
+                      strict: bool = False) -> list[str]:
+    """Defects of the legality rows against the registries; empty when there are none.
+
+    A registry card without a row is a problem only when ``strict``: card waves append
+    registry rows without a legality lookup.
+    """
     problems = []
     rows: dict[str, list[dict[str, Any]]] = {}
     for row in legality["cards"]:
@@ -51,9 +63,9 @@ def registry_problems(legality: dict[str, Any], registries: dict[str, list[str]]
     expected = {name: label for label, names in registries.items() for name in names}
     for name, label in sorted(expected.items()):
         found = rows.get(name, [])
-        if len(found) != 1:
+        if len(found) > 1 or (strict and not found):
             problems.append(f"{name} ({label}): {len(found)} rows")
-        elif found[0]["registry"] != label:
+        elif found and found[0]["registry"] != label:
             problems.append(f"{name}: row registry {found[0]['registry']!r}, registry {label!r}")
     for name in sorted(set(rows) - set(expected)):
         problems.append(f"{name}: row without a non-token registry card")
@@ -91,17 +103,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--legality", type=Path, default=LEGALITY)
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("check-registries")
+    check = sub.add_parser("check-registries")
+    check.add_argument("--strict", action="store_true", help="also fail on registry cards without a row")
     deck = sub.add_parser("deck")
     deck.add_argument("file", type=Path)
     sub.add_parser("summary")
     args = parser.parse_args(argv)
     legality = load_legality(args.legality)
     if args.command == "check-registries":
-        problems = registry_problems(legality, registry_cards())
+        registries = registry_cards()
+        problems = registry_problems(legality, registries, strict=args.strict)
         for row in problems:
             print(row, file=sys.stderr)
-        print(f"{len(legality['cards'])} rows, {len(problems)} problems")
+        print(f"{len(legality['cards'])} rows, {len(problems)} problems, "
+              f"{len(unlisted_cards(legality, registries))} registry cards without a row")
         return int(bool(problems))
     if args.command == "deck":
         problems = deck_problems(legality, args.file.read_text(encoding="utf-8"))

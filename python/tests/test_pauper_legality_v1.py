@@ -26,13 +26,17 @@ def run_tool(*argv: str) -> tuple[int, str, str]:
 
 
 class PauperLegalityTest(unittest.TestCase):
-    def test_committed_list_covers_the_registries_exactly(self):
+    def test_committed_list_has_no_stale_duplicate_or_mislabelled_rows(self):
         legality = legality_tool.load_legality()
+        registries = legality_tool.registry_cards()
         self.assertEqual(legality["schema"], "pauper_legality/v1")
-        self.assertEqual(legality_tool.registry_problems(legality, legality_tool.registry_cards()), [])
+        self.assertEqual(legality_tool.registry_problems(legality, registries), [])
+        known = {name for names in registries.values() for name in names}
+        self.assertTrue({row["name"] for row in legality["cards"]} <= known)
         code, out, err = run_tool("check-registries")
         self.assertEqual((code, err), (0, ""))
-        self.assertIn("0 problems", out)
+        self.assertIn(f"{len(legality_tool.unlisted_cards(legality, registries))} registry cards without a row",
+                      out)
 
     def test_problems_name_a_missing_duplicate_extra_and_unresolved_row(self):
         registries = {"pauper_v1": ["Bolt", "Island"], "standard": ["Cut Down"], "eternal_v1": ["Daze"]}
@@ -43,7 +47,10 @@ class PauperLegalityTest(unittest.TestCase):
             {"name": "Daze", "registry": "standard", "pauper": "banned"},
             {"name": "Extra", "registry": "eternal_v1", "pauper": "maybe"},
         ]
-        problems = legality_tool.registry_problems({"cards": rows, "unresolved": ["Odd"]}, registries)
+        legality = {"cards": rows, "unresolved": ["Odd"]}
+        self.assertEqual(legality_tool.unlisted_cards(legality, registries), ["Island"])
+        self.assertNotIn("Island (pauper_v1): 0 rows", legality_tool.registry_problems(legality, registries))
+        problems = legality_tool.registry_problems(legality, registries, strict=True)
         self.assertIn("Island (pauper_v1): 0 rows", problems)
         self.assertIn("Cut Down (standard): 2 rows", problems)
         self.assertIn("Daze: row registry 'standard', registry 'eternal_v1'", problems)
@@ -106,16 +113,14 @@ class PauperFieldSnapshotTest(unittest.TestCase):
         self.assertEqual(pauper["listed_share"], round(sum(deck["share"] for deck in decks), 1))
         self.assertIn("| pauper | 18 |", census.markdown(report, top=5))
 
-    def test_snapshot_cards_are_all_in_the_legality_list(self):
+    def test_snapshot_cards_with_a_legality_row_are_legal(self):
         status = {row["name"]: row["pauper"] for row in legality_tool.load_legality()["cards"]}
         snapshot = json.loads(FIELD_SNAPSHOT.read_text(encoding="utf-8"))
-        full, _ = census.load_status()
         for deck in snapshot["formats"]["pauper"]:
             for zone in ("mainboard", "sideboard"):
                 for _, name in deck[zone]:
-                    # Cards the engine supports must have a row; an unsupported card may lack one.
-                    if name in full:
-                        self.assertIn(name, status, f"{deck['archetype']}: {name}")
+                    if name in status:
+                        self.assertEqual(status[name], "legal", f"{deck['archetype']}: {name}")
 
 
 if __name__ == "__main__":
