@@ -56,8 +56,11 @@ Commands:
   retention.py guard --cap-bytes N [--next-bytes M] [--chain CHAIN.json ...] ROOT [ROOT ...]
 """
 import argparse
+import codecs
 import contextlib
+import copy
 import hashlib
+import io
 import math
 import json
 import os
@@ -66,6 +69,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import zlib
+from array import array
+from collections.abc import Sequence
 from pathlib import Path
 
 FULL_STRIDE = 64
@@ -145,10 +151,10 @@ def load_chain(path):
     chain = read(path)
     if chain.get('schema') != 'w5-chain/v1' or chain.get('arm') not in ('X', 'C'):
         raise SystemExit('stop: not a w5-chain/v1 manifest with arm X or C')
-    offset = 0
+    offset = chain_start(chain)
     for seg in chain['segments']:
         if seg['offset'] != offset:
-            raise SystemExit('stop: segment offsets are not contiguous from 0')
+            raise SystemExit(f'stop: segment offsets are not contiguous from {chain_start(chain)}')
         if 'root' not in seg or 'updates' not in seg:
             cfg = read_config(seg['config'])
             seg['root'] = cfg['output_directory']
@@ -175,9 +181,56 @@ def index_path(chain_path):
     return Path(chain_path).with_suffix('.index.jsonl')
 
 
-def scan(chain, known):
-    """Index records of the completed updates from `known` on, in order, stopping at the first update without its
-    receipt (a segment's iterations complete in order)."""
+def chain_start(chain):
+    """The boundary the manifest's first segment starts from: 0 (the parent), or a carried continuation's boundary B
+    (chains.py `carry`: the chain keeps the global update numbering of the chain it continues)."""
+    return (chain.get('carry') or {}).get('boundary', 0)
+
+
+def unlinked_inside(path, top):
+    """`path` has no symlink in any component, no `..` component, and lies inside `top` (both made absolute, `top`
+    resolved)."""
+    absolute = os.path.abspath(path)
+    return '..' not in Path(path).parts and os.path.realpath(absolute) == absolute and \
+        Path(top).resolve() in Path(absolute).parents
+
+
+def own_files(seg_root, *paths, own_dir=None):
+    """A carried chain's segment and the files it indexes resolve inside the segment's own chain directory (no link
+    out of it), so an index never labels another chain's files with the continuation's boundaries. The segment has
+    no link in its path and, given `own_dir` (the manifest's directory), is a direct child of it; every file has no
+    link in its path and lies inside the segment (an iteration linked to another iteration is refused)."""
+    seg_root = Path(seg_root)
+    chain_dir_real = seg_root.parent.resolve()
+    real_seg = seg_root.resolve()
+    if seg_root.is_symlink() or real_seg.parent != chain_dir_real:
+        raise SystemExit(f'stop: {seg_root} is a link or resolves outside its chain directory')
+    seg_abs = os.path.abspath(seg_root)
+    if os.path.realpath(seg_abs) != seg_abs or (
+            own_dir is not None and os.path.dirname(seg_abs) != os.path.abspath(own_dir)):
+        raise SystemExit(f'stop: {seg_root} has a link in its path or is not a segment of {own_dir}')
+    for p in paths:
+        if real_seg not in Path(p).resolve().parents or not unlinked_inside(p, seg_root):
+            raise SystemExit(f'stop: {p} resolves outside its segment {seg_root} or has a link in its path')
+
+
+def guarded(chain):
+    """A chain under the link and containment guards: a carried continuation, or an ordinary chain whose manifest
+    names `guards` (chains.py `guards` input; set once, never removed). Ordinary chains: unchanged behaviour."""
+    return bool(chain.get('carry') or chain.get('guards'))
+
+
+def carried_dir(chain, chain_path):
+    """`scan`'s extra argument for a carried chain (its manifest's directory); none for an ordinary chain, whose
+    call stays as before."""
+    return (Path(chain_path).parent,) if guarded(chain) else ()
+
+
+def scan(chain, known, own_dir=None):
+    """Index records of the completed updates after the first `known` ones (the records already indexed), in order,
+    stopping at the first update without its receipt (a segment's iterations complete in order)."""
+    known += chain_start(chain)  # a boundary from here on: a carried chain's records start at update B
+    carried = guarded(chain)
     new = []
     for s, seg in enumerate(chain['segments']):
         if seg['offset'] + seg['updates'] <= known:
@@ -189,7 +242,11 @@ def scan(chain, known):
             if not complete.exists():
                 return new
             receipt = read(complete)
+            if carried:  # a carried chain indexes only its own files (a link to another tree is refused)
+                own_files(seg['root'], complete, receipt['update']['path'], own_dir=own_dir)
             doc = read(receipt['update']['path'])
+            if carried:
+                own_files(seg['root'], doc['checkpoint']['path'], own_dir=own_dir)
             ledger = receipt.get('chain_ledger') or {}
             new.append({'update': seg['offset'] + i, 'boundary': seg['offset'] + i + 1, 'segment': s, 'iteration': i,
                         'after_state_sha256': doc['after_state_sha256'], 'checkpoint': doc['checkpoint'],
@@ -228,8 +285,67 @@ def index_lock(chain_path):
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
+def carried_output_unlinked(out, *dirs):
+    """A standalone output for a carried chain: the file, its temporary and the named directories have no link in
+    their paths, and nothing inside the directories is a link."""
+    out = Path(out)
+    paths = [out, out.with_suffix(out.suffix + '.tmp'), *[Path(d) for d in dirs if d]]
+    for p in paths:
+        absolute = os.path.abspath(p)
+        if '..' in Path(p).parts or os.path.islink(p) or os.path.realpath(absolute) != absolute:
+            raise SystemExit(f'stop: {p} is a link, lies under one or has a ".." component (a carried chain)')
+    for d in dirs:
+        if d and Path(d).is_dir():
+            for dirpath, dirnames, filenames in os.walk(d, followlinks=False):
+                for entry in dirnames + filenames:
+                    if os.path.islink(os.path.join(dirpath, entry)):
+                        raise SystemExit(f'stop: {os.path.join(dirpath, entry)} is a link (a carried chain)')
+
+
+def is_carried(chain_path):
+    """True when `chain_path` is a readable carried manifest (one with `carry`)."""
+    try:
+        return Path(chain_path).is_file() and guarded(read(chain_path))
+    except (OSError, ValueError):
+        return False
+
+
+def carried_files_unlinked(chain_path):
+    """A carried manifest's chain directory, manifest, index, index lock and index temp have no link in any
+    component (a link could hand the continuation another chain's index or lock, or append to it)."""
+    chain_path = Path(chain_path)
+    cache = index_path(chain_path)
+    for p in (chain_path.parent, chain_path, cache, chain_path.with_suffix('.index.lock'),
+              cache.with_suffix(cache.suffix + '.tmp')):
+        absolute = os.path.abspath(p)
+        if '..' in Path(p).parts or os.path.islink(p) or os.path.realpath(absolute) != absolute:
+            raise SystemExit(f'stop: {p} is a link or lies under one (a carried chain)')
+
+
+def carried_index_head_ok(chain, chain_path, cache):
+    """A carried chain's index starts with its own first update: update B, local segment 0, a checkpoint with no
+    link in its path inside the manifest's directory (a copied predecessor's or another continuation's index is
+    refused before its rows are used or counted)."""
+    if not guarded(chain) or not Path(cache).exists():
+        return
+    with open(cache, 'rb') as f:
+        line = f.readline()
+        while line and not line.strip():  # the readers skip blank lines: so does this check
+            line = f.readline()
+    if not line.strip():
+        return
+    rec = json.loads(line)
+    ck = (rec.get('checkpoint') or {}).get('path', '')
+    if rec.get('update') != chain_start(chain) or rec.get('segment') != 0 or \
+            not unlinked_inside(ck, Path(chain_path).parent):
+        raise SystemExit(f'stop: {cache} does not start at the carried boundary {chain_start(chain)} '
+                         f'with this chain\'s own checkpoint')
+
+
 def index(chain_path):
     """One record per completed update: update, boundary, segment, after-state hash, checkpoint pin, ledger."""
+    if is_carried(chain_path):
+        carried_files_unlinked(chain_path)
     with index_lock(chain_path):
         return index_locked(chain_path)
 
@@ -240,6 +356,7 @@ def index_locked(chain_path):
     records = []
     if cache.exists():
         records = [json.loads(line) for line in cache.read_text(encoding='utf-8').splitlines() if line]
+    carried_index_head_ok(chain, chain_path, cache)
     if any('state' not in r for r in records):
         # Caches written before S containers were tracked: read each record's container pin from its durable
         # update receipt once, then rewrite the cache.
@@ -251,7 +368,7 @@ def index_locked(chain_path):
         tmp = cache.with_suffix(cache.suffix + '.tmp')
         tmp.write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
         os.replace(tmp, cache)
-    new = scan(chain, len(records))
+    new = scan(chain, len(records), *carried_dir(chain, chain_path))
     if new:
         with open(cache, 'ab') as f:
             terminate(f)
@@ -262,6 +379,7 @@ def index_locked(chain_path):
 def terminate(f):
     """Before an append (`f` open in 'ab'): a last line left without its newline (an interrupted append whose record
     is complete, which `index` reads as a line) gets one, so the new lines never join it."""
+    f.flush()  # the size on disk includes what this handle wrote
     size = os.fstat(f.fileno()).st_size
     if size:
         with open(f.name, 'rb') as r:
@@ -270,49 +388,493 @@ def terminate(f):
                 f.write(b'\n')
 
 
+LINE_BREAK = re.compile('[\n\r\x0b\x0c\x1c\x1d\x1e\x85  ]')  # what str.splitlines splits on
+
+
+def byte_length(text):
+    return len(text) if text.isascii() else len(text.encode('utf-8'))
+
+
+def stream_lines(f, start=0, chunk=1 << 20):
+    """(text, byte offset, byte length) of every non-empty line of `f` from byte `start` on, split as `index` splits
+    the file (`read_text(encoding='utf-8').splitlines()`, empty lines skipped), holding one chunk and the line being
+    read at a time (a CR-only file or a long line costs that line, not the file)."""
+    decoder = codecs.getincrementaldecoder('utf-8')()
+    f.seek(start)
+    pos, carry, carry_cr = start, [], False
+    while True:
+        block = f.read(chunk)
+        final = not block
+        new = decoder.decode(block, final=final)
+        if not final and not carry_cr and not LINE_BREAK.search(new):
+            carry.append(new)  # still inside one line
+            continue
+        pieces = (''.join(carry) + new).splitlines(keepends=True)
+        carry, carry_cr = [], False
+        if not final and pieces:
+            last = pieces[-1]
+            if last.endswith('\r') or not LINE_BREAK.search(last[-1]):  # unfinished, or a CR a LF may follow
+                carry, carry_cr = [pieces.pop()], last.endswith('\r')
+        for piece in pieces:
+            text = piece.splitlines()[0] if piece else ''
+            if text:
+                yield text, pos, byte_length(text)
+            pos += byte_length(piece)
+        if final:
+            return
+
+
+def parse_bytes(data, start):
+    """(record, offset, length, crc) for every record of index file bytes `data` read from file offset `start`."""
+    return [(json.loads(text), start + offset, length, zlib.crc32(text.encode('utf-8')))
+            for text, offset, length in stream_lines(io.BytesIO(data))]
+
+
+class Boundaries:
+    """A set of boundaries (`IndexCache.settled`) at one bit per boundary: an integer boundary from 0 below 2**28 is
+    a bit (a value equal to one, such as True or 2.0, is the same member, as in a set), anything else is in a set."""
+    LIMIT = 1 << 28
+
+    def __init__(self, values=()):
+        self.bits, self.count, self.other = bytearray(), 0, set()
+        self.update(values)
+
+    def _bit(self, b):
+        if type(b) is not int:
+            if not isinstance(b, (int, float)) or isinstance(b, float) and not b.is_integer():
+                return None
+            b = int(b)
+        return b if 0 <= b < self.LIMIT else None
+
+    def add(self, b):
+        i = self._bit(b)
+        if i is None:
+            self.other.add(b)
+            return
+        if i >> 3 >= len(self.bits):
+            self.bits.extend(bytes(max((i >> 3) + 1 - len(self.bits), len(self.bits))))
+        if not self.bits[i >> 3] & (1 << (i & 7)):
+            self.bits[i >> 3] |= 1 << (i & 7)
+            self.count += 1
+
+    def update(self, values):
+        for b in values:
+            self.add(b)
+
+    def __ior__(self, values):
+        self.update(values)
+        return self
+
+    def __contains__(self, b):
+        i = self._bit(b)
+        if i is None:
+            try:
+                return b in self.other
+            except TypeError:  # unhashable: never a member
+                return False
+        return i >> 3 < len(self.bits) and bool(self.bits[i >> 3] & (1 << (i & 7)))
+
+    def __len__(self):
+        return self.count + len(self.other)
+
+    def __iter__(self):
+        for i, byte in enumerate(self.bits):
+            if byte:
+                for k in range(8):
+                    if byte & (1 << k):
+                        yield (i << 3) | k
+        yield from self.other
+
+
+class Missing:
+    """A field a record does not have (`IndexRecords` columns)."""
+    __slots__ = ()
+
+    def __repr__(self):
+        return 'MISSING'
+
+
+MISSING = Missing()
+
+
+class IndexChanged(RuntimeError):
+    """A cached index line no longer reads as it did: the file was rewritten in place (it is append-only)."""
+
+
+class IndexRecords:
+    """The records of one chain index file as `IndexCache` keeps them: each record's line offset, length and CRC-32
+    in the file and the scalar fields that scans over every record read (`FIELDS`) in typed arrays, 60 bytes a
+    record; a whole record is parsed again from its line when it is read. A value an array cannot hold exactly
+    (None, an integer past 64 bits, a float in an integer field) or a field the record lacks (`MISSING`) is kept
+    beside the array for that record alone, so every value reads back exactly as it was parsed. Records without an
+    `after_state_sha256` are listed (`lacks_after`: `plan` raises KeyError on them as it always did).
+
+    The index is append-only. A line read again must hold the bytes parsed from it: its length and the CRC-32 of its
+    bytes (taken when the record was appended), its one line and all five cached fields are checked, and a
+    difference raises `IndexChanged` (logged with the chain and boundary) before the record is used. On POSIX the indexed file stays open, so a replacement cannot change what is read; on
+    Windows, which refuses to replace an open file, it is opened for each read and must still be the indexed file.
+    Records a read-only cache found but did not write are kept parsed (`extra`)."""
+
+    FIELDS = (('update', 'q'), ('boundary', 'q'), ('ledger_usec', 'q'), ('unix_seconds', 'd'), ('instance', 'q'))
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.offsets, self.lengths, self.crcs = array('q'), array('q'), array('I')
+        self.lacks_after = set()
+        self.values = {name: array(code) for name, code in self.FIELDS}
+        self.other = {name: {} for name, _ in self.FIELDS}  # record number to a value its array cannot hold
+        self.extra = {}  # record number to a record not in the file (read-only caches)
+        self.handle, self.ident = None, None
+
+    def __len__(self):
+        return len(self.offsets)
+
+    def append(self, rec, offset, length, crc):
+        n = len(self.offsets)
+        self.offsets.append(offset)
+        self.lengths.append(length)
+        self.crcs.append(crc)
+        if 'after_state_sha256' not in rec:
+            self.lacks_after.add(n)
+        for name, code in self.FIELDS:
+            v = rec.get(name, MISSING)
+            if type(v) is (int if code == 'q' else float) and (code == 'd' or -(1 << 63) <= v < 1 << 63):
+                self.values[name].append(v)
+            else:
+                self.values[name].append(0)
+                self.other[name][n] = v
+
+    def append_unwritten(self, rec):
+        """A record a read-only cache found past the file's end (kept parsed; it is not in the file)."""
+        self.extra[len(self.offsets)] = rec
+        self.append(rec, -1, -1, 0)
+
+    def drop_unwritten(self):
+        """Forgets the unwritten records (all at the end): the file may now hold them."""
+        if not self.extra:
+            return
+        n = min(self.extra)
+        for column in [self.offsets, self.lengths, self.crcs] + list(self.values.values()):
+            del column[n:]
+        for other in self.other.values():
+            for k in [k for k in other if k >= n]:
+                del other[k]
+        self.lacks_after = {k for k in self.lacks_after if k < n}
+        self.extra = {}
+
+    def attach(self, ident):
+        """The records index the file now at the path, whose (st_dev, st_ino) is `ident` (None: no file)."""
+        self.ident = ident
+        if ident is not None and os.name != 'nt':
+            f = open(self.path, 'rb')
+            st = os.fstat(f.fileno())
+            if (st.st_dev, st.st_ino) != ident:
+                f.close()
+                raise IndexChanged(f'stop: {self.path} was replaced while it was read')
+            self.handle = f
+
+    @contextlib.contextmanager
+    def reader(self):
+        if self.handle is not None:
+            yield self.handle
+            return
+        if self.ident is None:  # no file: only unwritten records
+            yield None
+            return
+        with open(self.path, 'rb') as f:
+            st = os.fstat(f.fileno())
+            if (st.st_dev, st.st_ino) != self.ident:
+                raise IndexChanged(f'stop: {self.path} was replaced under its cached records')
+            yield f
+
+    def value(self, name, n):
+        other = self.other[name]
+        return other[n] if n in other else self.values[name][n]
+
+    def read(self, f, n):
+        if n in self.extra:
+            return copy.deepcopy(self.extra[n])  # a fresh dict, as a record parsed from its line
+        f.seek(self.offsets[n])
+        data = f.read(self.lengths[n])
+        try:
+            text = data.decode('utf-8')
+            rec = json.loads(text) if len(data) == self.lengths[n] and zlib.crc32(data) == self.crcs[n] and len(
+                text.splitlines()) == 1 else None
+        except ValueError:
+            rec = None
+        bad = rec is None or not isinstance(rec, dict) or any(
+            not same(rec.get(name, MISSING), self.value(name, n)) for name, _ in self.FIELDS)
+        if bad:
+            boundary = self.value('boundary', n)
+            print(json.dumps({'event': 'index-changed', 'chain': self.path.parent.name, 'index': self.path.as_posix(),
+                              'record': n, 'boundary': None if boundary is MISSING else boundary,
+                              'offset': self.offsets[n]}, default=str), file=sys.stderr, flush=True)
+            raise IndexChanged(f'stop: {self.path}: the line of record {n} (boundary {boundary}) at byte '
+                               f'{self.offsets[n]} changed after it was read; the index is append-only (supervise '
+                               f'reads it whole again when restarted)')
+        return rec
+
+    def check(self, n):
+        """Reads record `n` again (raises `IndexChanged` if its line changed)."""
+        if not 0 <= n < len(self.offsets):
+            raise IndexError(f'record {n} of {len(self.offsets)}')
+        with self.reader() as f:
+            return self.read(f, n)
+
+    def column(self, name, numbers, absent):
+        """The field's values of the given record numbers, in order. A record without the field gives None
+        (`absent='get'`, as `rec.get`) or raises KeyError when it is reached (`absent='raise'`, as `rec[name]`)."""
+        values, other = self.values[name], self.other[name]
+        if isinstance(numbers, range) and numbers.step == 1:
+            chunk = values[numbers.start:numbers.stop]
+            pairs = zip(numbers, chunk) if other else None
+            if pairs is None:
+                return iter(chunk)
+        else:
+            pairs = ((n, values[n]) for n in numbers)
+            if not other:
+                return (v for _, v in pairs)
+
+        def read():
+            for n, v in pairs:
+                if n in other:
+                    v = other[n]
+                    if v is MISSING:
+                        if absent == 'raise':
+                            raise KeyError(name)
+                        v = None
+                yield v
+        return read()
+
+    def view(self):
+        return IndexView(self, range(len(self.offsets)))
+
+
+def same(a, b):
+    """Equal and of one type (True is not 1), NaN equal to itself."""
+    return type(a) is type(b) and (a == b or (isinstance(a, float) and a != a and b != b))
+
+
+class IndexView(Sequence):
+    """A fixed list of `IndexRecords` records (what `IndexCache.refresh` returns, and `IndexCache.active`). It
+    supports what the supervise cycle and the pair code do with the list `index` returns: len, truth, an integer
+    index (negative too), slices (a view), iteration, reversed, `in`, `index`, `count`, and == / != against a list
+    or a view (never equal to a tuple, as a list is not). Each read parses the record from its line (a fresh dict
+    each time). It has no list mutation (append, extend, sort, del, item assignment raise), and records appended to
+    the cache later are not in it, as with a copied list. `column`, `where` and `lookup` serve the compact fields
+    without parsing records."""
+
+    def __init__(self, store, numbers):
+        self.store, self.numbers = store, numbers
+
+    def __len__(self):
+        return len(self.numbers)
+
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            return IndexView(self.store, self.numbers[i])
+        n = self.numbers[i]
+        with self.store.reader() as f:
+            return self.store.read(f, n)
+
+    def __iter__(self):
+        if not len(self.numbers):  # nothing to read (the index file may not exist yet)
+            return
+        with self.store.reader() as f:
+            for n in self.numbers:
+                yield self.store.read(f, n)
+
+    def __reversed__(self):
+        for j in range(len(self.numbers) - 1, -1, -1):
+            yield self[j]
+
+    def __eq__(self, other):
+        if not isinstance(other, (list, IndexView)):
+            return NotImplemented
+        return len(self) == len(other) and all(a == b for a, b in zip(self, other))
+
+    __hash__ = None
+
+    def __repr__(self):
+        return f'IndexView({len(self)} records of {self.store.path})'
+
+    def column(self, name, absent='raise'):
+        """The field of every record, in order, without parsing them (see `IndexRecords.column`)."""
+        return self.store.column(name, self.numbers, absent)
+
+    def where(self, name, keep, absent='raise'):
+        """The records whose field `name` satisfies `keep`, in order, as a view."""
+        picked = array('q', (n for n, v in zip(self.numbers, self.column(name, absent)) if keep(v)))
+        if picked and picked[-1] - picked[0] + 1 == len(picked) and all(
+                b - a == 1 for a, b in zip(picked, picked[1:])):
+            return IndexView(self.store, range(picked[0], picked[-1] + 1))
+        return IndexView(self.store, picked)
+
+    def pick(self, positions):
+        """The records at the given positions of this view, in that order, as a view."""
+        return IndexView(self.store, array('q', (self.numbers[j] for j in positions)))
+
+    def lookup(self, name):
+        """A mapping from each value of the field to the last record holding it (as a dict comprehension over the
+        records builds it), parsing only the records looked up."""
+        return LazyRecords(self.store, {v: n for n, v in zip(self.numbers, self.column(name))})
+
+
+class LazyRecords:
+    """`IndexView.lookup`'s mapping: value to record, the record parsed when it is looked up."""
+
+    def __init__(self, store, numbers):
+        self.store, self.numbers = store, numbers
+
+    def __contains__(self, key):
+        return key in self.numbers
+
+    def __getitem__(self, key):
+        with self.store.reader() as f:
+            return self.store.read(f, self.numbers[key])
+
+    def get(self, key, default=None):
+        return self[key] if key in self.numbers else default
+
+
+def fields(records, *names, absent='get'):
+    """Iterators over the named fields of every record, in order, from an `IndexView`'s compact columns without
+    parsing the records (a record without a field: None with `absent='get'`, KeyError with `absent='raise'`); None
+    for any other sequence (then read the records)."""
+    if not isinstance(records, IndexView):
+        return None
+    return [records.column(name, absent) for name in names]
+
+
+def migrate(chain_path, chain):
+    """`index_locked`'s one-time migration of a cache written before S containers were tracked (each record's
+    container pin read from its durable update receipt, the file rewritten), streamed: the same bytes, one record in
+    memory at a time. Every line is parsed first, so a file that does not parse is left as it is."""
+    cache = index_path(chain_path)
+    with open(cache, 'rb') as f:
+        for text, _, _ in stream_lines(f):
+            json.loads(text)
+    tmp = cache.with_suffix(cache.suffix + '.tmp')
+    with open(cache, 'rb') as f, open(tmp, 'w', encoding='utf-8') as out:
+        for text, _, _ in stream_lines(f):
+            rec = json.loads(text)
+            if 'state' not in rec:
+                seg = chain['segments'][rec['segment']]
+                complete = Path(seg['root'], 'iterations', f"{rec['iteration']:06d}", 'complete.json')
+                rec['state'] = state_pin(read(read(complete)['update']['path']))
+            out.write(json.dumps(rec) + '\n')
+    os.replace(tmp, cache)
+
+
 class IndexCache:
-    """`index` with the records kept in memory across calls (`chains.py supervise --loop`): under the index lock, a
-    refresh reads only the cache file's new lines and the receipts past them, and appends what it finds as `index`
-    does, so it returns the same records. A cache file that was replaced or shortened, whose last line lacks its
-    newline, or that does not end at the cursor, is read whole through `index` instead.
+    """`index` with the records kept across calls (`chains.py supervise --loop`): under the index lock, a refresh
+    reads only the cache file's new lines and the receipts past them, and appends what it finds as `index` does, so
+    it returns the same records. A cache file that was replaced or shortened, whose last line lacks its newline, or
+    that does not end at the cursor, is read whole again (streamed, as `index` reads it) instead.
+
+    The records are kept compactly (`IndexRecords`: line offsets, lengths and CRC-32s and the scalar fields scans
+    read) and returned as an `IndexView`, which parses a record from its line when it is read, so memory grows by
+    about 60 bytes a record rather than a parsed record's kilobyte or more. Each refresh reads the last cached line again: a
+    line rewritten in place raises `IndexChanged` before the cycle decides anything from it.
 
     It also keeps what `plan` and `guard` need not look at again:
     - `settled`: boundaries every file of whose full state was found absent. Nothing writes into a completed
       iteration again, so they stay absent; an absent file is never a plan item or a guard count, and it cannot
-      shadow an existing one in `plan`'s set of files surviving states use. `active` is the other records, rebuilt
-      whenever the records are read whole.
+      shadow an existing one in `plan`'s set of files surviving states use. `active` is the other records (a view),
+      rebuilt whenever the records are read whole; boundaries are settled where they always were (`plan`, `guard`).
     - `complete`: segments found with completion.json (never removed).
-    - `swept`: complete segments older than the trajectory window whose trajectories were found gone."""
+    - `swept`: complete segments older than the trajectory window whose trajectories were found gone.
 
-    def __init__(self, chain_path):
+    `read_only` (a dry cycle): no lock, nothing written; records found past the file's end are kept parsed."""
+
+    def __init__(self, chain_path, read_only=False):
         self.chain_path = Path(chain_path)
-        self.records, self.active, self.offset, self.ident = None, [], 0, None
-        self.settled, self.complete, self.swept = set(), set(), set()
+        self.read_only = read_only
+        self.records, self.active, self.offset, self.ident = None, None, 0, None
+        self.settled, self.complete, self.swept = Boundaries(), set(), set()
+
+    def _stream(self, cache, store):
+        """Reads the cache file into `store` one line at a time; False when a record lacks its S-container pin (the
+        file needs `index`'s migration). `self.consumed` is then (bytes read, (st_dev, st_ino)) of that read itself."""
+        with open(cache, 'rb') as f:
+            st = os.fstat(f.fileno())
+            for text, offset, length in stream_lines(f):
+                rec = json.loads(text)
+                if 'state' not in rec:
+                    return False
+                store.append(rec, offset, length, zlib.crc32(text.encode('utf-8')))
+            self.consumed = (f.tell(), (st.st_dev, st.st_ino))
+        return True
+
+    def _keep(self, view):
+        """`active`: the view's records whose boundary is not settled (record numbers, so appends extend it)."""
+        settled = self.settled
+        return IndexView(view.store, array('q', (n for n, b in zip(view.numbers, view.column('boundary'))
+                                                 if b not in settled)))
 
     def _whole(self):
-        """Every record as `index` reads them (the lock is held); the cursor is then the file's end."""
-        chain, records = index_locked(self.chain_path)
+        """Every record as `index` reads them (the lock is held), streamed; the cursor is then the file's end."""
+        chain = load_chain(self.chain_path)
         cache = index_path(self.chain_path)
-        if cache.exists():
-            with open(cache, 'ab') as f:
-                terminate(f)
-                st = os.fstat(f.fileno())
-            self.offset, self.ident = st.st_size, (st.st_dev, st.st_ino)
+        carried_index_head_ok(chain, self.chain_path, cache)
+        store = IndexRecords(cache)
+        self.consumed = (0, None)
+        if cache.exists() and not self._stream(cache, store):
+            if self.read_only:
+                raise SystemExit(f'stop: {cache} needs its S-container migration, which a read-only cache does not do')
+            migrate(self.chain_path, chain)  # a cache written before S containers were tracked (once)
+            return self._whole()
+        new = scan(chain, len(store), *carried_dir(chain, self.chain_path))
+        if self.read_only:
+            # The cursor is the end of what was read, not a later size: a row another writer appends meanwhile is
+            # read at the next refresh, which then reconciles the unwritten records found past it.
+            self.offset, self.ident = self.consumed
+            store.attach(self.ident if len(store) else None)
+            for rec in new:
+                store.append_unwritten(rec)
         else:
-            self.offset, self.ident = 0, None
-        self.records = records
-        self.active = [r for r in records if r['boundary'] not in self.settled]
-        return chain, list(records)
+            if new:
+                lines = [(json.dumps(rec) + '\n').encode('utf-8') for rec in new]
+                with open(cache, 'ab') as f:
+                    terminate(f)
+                    f.flush()
+                    at = os.fstat(f.fileno()).st_size
+                    f.write(b''.join(lines))
+                for rec, line in zip(new, lines):
+                    store.append(rec, at, len(line) - 1, zlib.crc32(line[:-1]))
+                    at += len(line)
+            if cache.exists():
+                with open(cache, 'ab') as f:
+                    terminate(f)
+                    st = os.fstat(f.fileno())
+                self.offset, self.ident = st.st_size, (st.st_dev, st.st_ino)
+            else:
+                self.offset, self.ident = 0, None
+            store.attach(self.ident if len(store) else None)
+        self.records = store
+        self.active = self._keep(store.view())
+        return chain, store.view()
+
+    def file_rows(self):
+        """How many held records come from the index file (not the unwritten rows a read-only cache keeps)."""
+        store = getattr(self.records, 'store', self.records)  # the cache's IndexRecords
+        return len(store) - len(store.extra)
 
     def refresh(self):
-        """(chain, records), equal to `index(chain_path)` at the same moment."""
+        """(chain, records), equal to `index(chain_path)` at the same moment (records: an `IndexView`)."""
+        if getattr(self, 'carried', None) is None:
+            self.carried = is_carried(self.chain_path)
+        if self.carried:
+            carried_files_unlinked(self.chain_path)
+        if self.read_only:
+            return self._refresh()
         with index_lock(self.chain_path):
             return self._refresh()
 
     def _refresh(self):
         cache = index_path(self.chain_path)
-        if self.records is None:
-            return self._whole()
+        if self.records is None or (getattr(self, 'carried', False) and self.file_rows() == 0):
+            return self._whole()  # a carried chain's first file rows always pass the head check of a full read
         try:
             f = open(cache, 'rb')
         except FileNotFoundError:
@@ -327,32 +889,55 @@ class IndexCache:
             return self._whole()  # replaced or shortened
         if data and not data.endswith(b'\n'):
             return self._whole()  # a last line without its newline: read as index() reads it
-        added = [json.loads(line) for line in data.decode('utf-8').splitlines() if line]
-        if any('state' not in r for r in added):
+        written = len(self.records) - len(self.records.extra)
+        if written:
+            self.records.check(written - 1)  # the last cached line still reads as cached
+        added = parse_bytes(data, self.offset)
+        if any('state' not in r for r, _, _, _ in added):
             return self._whole()  # index() migrates the file first
+        if self.read_only and added and self.records.extra:
+            # The file grew past records this cache found but did not write: forget them, read the file's rows,
+            # and find the rest from the receipts again (no record twice, none skipped).
+            first = min(self.records.extra)
+            self.records.drop_unwritten()
+            self.active = IndexView(self.records, array('q', (n for n in self.active.numbers if n < first)))
         chain = load_chain(self.chain_path)
-        new = scan(chain, len(self.records) + len(added))
-        if new:
-            text = ''.join(json.dumps(r) + '\n' for r in new).encode('utf-8')
+        new = scan(chain, len(self.records) + len(added), *carried_dir(chain, self.chain_path))
+        if new and not self.read_only:
+            lines = [(json.dumps(r) + '\n').encode('utf-8') for r in new]
             with open(cache, 'ab') as f:
                 before = os.fstat(f.fileno())
                 moved = (before.st_dev, before.st_ino) != self.ident or before.st_size != self.offset + len(data)
                 if not moved:
-                    f.write(text)
+                    f.write(b''.join(lines))
                     f.flush()
             if moved:
                 return self._whole()  # not the file just read (a writer outside the lock): append nothing
-            data += text
+            at = self.offset + len(data)
+            for rec, line in zip(new, lines):
+                added.append((rec, at, len(line) - 1, zlib.crc32(line[:-1])))
+                at += len(line)
+            data += b''.join(lines)
+        if self.records.ident is None and added:  # the file's first records
+            self.records.attach(self.ident)
         self.offset += len(data)
-        self.records.extend(added + new)
-        self.active.extend(r for r in added + new if r['boundary'] not in self.settled)
-        return chain, list(self.records)
+        for rec, offset, length, crc in added:
+            n = len(self.records)
+            self.records.append(rec, offset, length, crc)
+            if rec['boundary'] not in self.settled:
+                self.active.numbers.append(n)
+        for rec in new if self.read_only else ():
+            n = len(self.records)
+            self.records.append_unwritten(rec)
+            if rec['boundary'] not in self.settled:
+                self.active.numbers.append(n)
+        return chain, self.records.view()
 
     def settle(self, boundaries):
         """Records whose full-state files were all found absent leave `active`."""
         if boundaries:
-            self.settled |= set(boundaries)
-            self.active = [r for r in self.active if r['boundary'] not in self.settled]
+            self.settled |= boundaries
+            self.active = self._keep(self.active)
 
 
 def keeps_full_state(arm, boundary, latest):
@@ -385,22 +970,31 @@ def snapshots(chain_path):
     return {b: r for b, r in out.items() if Path(r['path']).exists()}
 
 
-def snapshot(chain_path, binary, snapshot_from, max_new=None):
+def snapshot(chain_path, binary, snapshot_from, max_new=None, cache=None):
     """Cuts a weights-only snapshot of every unpruned checkpoint at or past `snapshot_from` that keeps no full
     state and has none yet (the binary verifies the checkpoint against its pin), earliest first and at most
-    `max_new` of them. Each snapshot must have been cut from the recorded after-state."""
-    chain, records = index(chain_path)
+    `max_new` of them. Each snapshot must have been cut from the recorded after-state. With an `IndexCache` the
+    records come from it (as `index` would return them) and only the boundaries are read until one qualifies."""
+    chain, records = index(chain_path) if cache is None else cache.refresh()
     latest = records[-1]['boundary'] if records else 0
     have = snapshots(chain_path)
     directory = snapshot_dir(chain_path, chain)
     directory.mkdir(parents=True, exist_ok=True)
     made = []
-    for rec in records:
-        b = rec['boundary']
+
+    def walk():  # (boundary, its record when wanted), in order
+        if isinstance(records, IndexView):
+            for j, b in enumerate(records.column('boundary')):
+                yield b, (lambda j=j: records[j])
+        else:
+            for r in records:
+                yield r['boundary'], (lambda r=r: r)
+    for b, record in walk():
         if max_new is not None and len(made) >= max_new:
             break
         if b < snapshot_from or b in have or keeps_full_state(chain['arm'], b, latest):
             continue
+        rec = record()
         if not Path(rec['checkpoint']['path']).exists():
             continue
         out = directory / f'b{b:09d}.weights'
@@ -453,12 +1047,24 @@ def plan(chain_path, snapshot_from=None, cache=None):
     chain, records = index(chain_path) if cache is None else cache.refresh()
     candidates = records if cache is None else cache.active
     have = snapshots(chain_path)
-    after = {r['boundary']: r['after_state_sha256'] for r in candidates}
+    # Each boundary's after-state hash (the last candidate of a boundary wins); `verified` asks only inside the
+    # snapshot window, so only those boundaries are kept.
+    after = {}
+    if isinstance(candidates, IndexView):
+        lacking = candidates.store.lacks_after
+        if lacking and any(n in lacking for n in candidates.numbers):
+            raise KeyError('after_state_sha256')  # as the old {boundary: after-state} over every candidate raised
+    else:
+        after = {r['boundary']: r['after_state_sha256'] for r in candidates}
+    if snapshot_from is not None and isinstance(candidates, IndexView):
+        for r in candidates:
+            if r['boundary'] >= snapshot_from:
+                after[r['boundary']] = r['after_state_sha256']
 
     def verified(b):
         snap = have.get(b)
         return bool(snap) and snap['cut_from_state_sha256'] == after.get(b) and sha(snap['path']) == snap['sha256']
-    latest = records[-1]['boundary'] if records else 0
+    latest = records[-1]['boundary'] if records else chain_start(chain)
     segs = chain['segments']
     if cache is None:
         complete = [segment_complete(s) for s in segs]
@@ -466,21 +1072,23 @@ def plan(chain_path, snapshot_from=None, cache=None):
         cache.complete |= {i for i, s in enumerate(segs) if i not in cache.complete and segment_complete(s)}
         complete = [i in cache.complete for i in range(len(segs))]
     checkpoints, trajectories = [], []
-    prunable = []
-    for rec in candidates:
+    # One pass over the candidates (a cache's are parsed one at a time) finds the prunable ones and their
+    # boundaries; the others' files survive unless their boundary is pruned too. A cache's are kept by position.
+    view = isinstance(candidates, IndexView)
+    prunable, pruned, others = (array('q'), Boundaries(), array('q')) if view else ([], set(), [])
+    for j, rec in enumerate(candidates):
         s = rec['segment']
-        if keeps_full_state(chain['arm'], rec['boundary'], latest) or rec['boundary'] == latest:
+        keep = keeps_full_state(chain['arm'], rec['boundary'], latest) or rec['boundary'] == latest or (
+            snapshot_from is not None and rec['boundary'] >= snapshot_from and not verified(rec['boundary']))
+        if keep or not (complete[s] and s + 1 < len(segs) and complete[s + 1]):
+            others.append(j if view else rec)
             continue
-        if snapshot_from is not None and rec['boundary'] >= snapshot_from and not verified(rec['boundary']):
-            continue
-        if not (complete[s] and s + 1 < len(segs) and complete[s + 1]):
-            continue
-        prunable.append(rec)
-    pruned = {r['boundary'] for r in prunable}
-    surviving = {Path(p['path']).as_posix() for r in candidates if r['boundary'] not in pruned
-                 for p in record_parts(r)}
+        prunable.append(j if view else rec)
+        pruned.add(rec['boundary'])
+    surviving = {Path(p['path']).as_posix() for r in (candidates.pick(others) if view else others)
+                 if r['boundary'] not in pruned for p in record_parts(r)}
     seen, gone = set(), []
-    for rec in prunable:
+    for rec in candidates.pick(prunable) if view else prunable:
         for part in record_parts(rec):
             path = Path(part['path'])
             if part['path'] in surviving or part['path'] in seen or not path.exists():
@@ -503,17 +1111,46 @@ def plan(chain_path, snapshot_from=None, cache=None):
             trajectories.append({'segment': s, 'path': path.as_posix(), 'bytes': path.stat().st_size})
         if cache is not None and not found:
             cache.swept.add(s)
+    out = {'schema': 'w5-retention-plan/v1', 'chain': chain['chain'], 'arm': chain['arm'], 'latest': latest,
+           'snapshot_from': snapshot_from, 'checkpoints': checkpoints, 'trajectories': trajectories,
+           'bytes': sum(c['bytes'] for c in checkpoints) + sum(t['bytes'] for t in trajectories)}
+    if guarded(chain):  # absent otherwise: an ordinary plan keeps its bytes
+        own = Path(chain_path).parent.resolve().as_posix()
+        stray = [i['path'] for i in checkpoints + trajectories if not unlinked_inside(i['path'], own)]
+        if stray:
+            raise SystemExit(f'stop: a carried chain\'s retention would delete through a link or outside its '
+                             f'chain directory: {stray[:3]}')
+        out['own_dir'] = own
     if cache is not None:
         cache.settle(gone)
-    return {'schema': 'w5-retention-plan/v1', 'chain': chain['chain'], 'arm': chain['arm'], 'latest': latest,
-            'snapshot_from': snapshot_from, 'checkpoints': checkpoints, 'trajectories': trajectories,
-            'bytes': sum(c['bytes'] for c in checkpoints) + sum(t['bytes'] for t in trajectories)}
+    return out
 
 
 def apply(plan_doc, log_path, hold=None):
     """Deletes (or moves under `hold`, same volume) every planned file, appending one log line per file.
     Checkpoints are regenerable by replay against their recorded hashes; trajectories by recollection."""
     done, touched = 0, []
+    if plan_doc.get('own_dir'):  # a carried chain's plan: every path link-free and inside its chain directory
+        stray = [i['path'] for kind in ('checkpoints', 'trajectories') for i in plan_doc[kind]
+                 if not unlinked_inside(i['path'], plan_doc['own_dir'])]
+        if stray:
+            raise SystemExit(f'stop: the plan would delete through a link or outside {plan_doc["own_dir"]}: {stray[:3]}')
+        log_abs = os.path.abspath(log_path)
+        if '..' in Path(log_path).parts or (hold and '..' in Path(hold).parts):
+            raise SystemExit('stop: a carried plan\'s log and hold paths have no ".." component')
+        if os.path.realpath(log_abs) != log_abs:
+            raise SystemExit(f'stop: the retention log {log_path} is a link or lies under one')
+        own_root = Path(os.path.abspath(plan_doc['own_dir'])).parent.parent  # <root>/chains/<name> -> <root>
+        if Path(log_abs).parent != own_root / 'retention' or Path(log_abs).suffix != '.jsonl':
+            raise SystemExit(f'stop: a carried plan logs to {own_root / "retention"}/<name>.jsonl, not {log_path}')
+        if hold:
+            hold_abs = os.path.abspath(hold)
+            if os.path.realpath(hold_abs) != hold_abs:
+                raise SystemExit(f'stop: the hold folder {hold} is a link or lies under one')
+            bad = [i['path'] for kind in ('checkpoints', 'trajectories') for i in plan_doc[kind]
+                   if not unlinked_inside(Path(hold) / Path(i['path']).relative_to(Path(i['path']).anchor), hold)]
+            if bad:
+                raise SystemExit(f'stop: a hold destination has a link in its path: {bad[:3]}')
     try:
         with open(log_path, 'a', encoding='utf-8') as log:
             for kind in ('checkpoints', 'trajectories'):
@@ -538,6 +1175,9 @@ def apply(plan_doc, log_path, hold=None):
 
 
 def ledger_series(records):
+    columns = fields(records, 'unix_seconds', 'ledger_usec')
+    if columns is not None:  # the same pairs from an IndexCache view's compact fields
+        return [(t, c) for t, c in zip(*columns) if t is not None and c is not None]
     return [(r['unix_seconds'], r['ledger_usec']) for r in records
             if r.get('unix_seconds') is not None and r.get('ledger_usec') is not None]
 
@@ -561,6 +1201,12 @@ def project(c_records, launched, now=None, horizon=HORIZON):
 
 
 def first_at_or_past(records, r_usec):
+    columns = fields(records, 'ledger_usec')
+    if columns is not None:  # an IndexCache view: only the record found is parsed
+        for j, v in enumerate(columns[0]):
+            if v is not None and v >= r_usec:
+                return records[j]
+        return None
     for rec in records:
         if rec.get('ledger_usec') is not None and rec['ledger_usec'] >= r_usec:
             return rec
@@ -616,17 +1262,17 @@ def select(chain, records, r_usec, weights=None):
     if not hit:
         raise SystemExit('stop: no boundary reaches R yet')
     endpoint = hit['boundary']
-    by_boundary = {r['boundary']: r for r in records}
+    by_boundary = records.lookup('boundary') if isinstance(records, IndexView) else {r['boundary']: r for r in records}
     if state_intact(hit['checkpoint'], hit.get('state')):
         return {'endpoint_boundary': endpoint, 'r_usec': r_usec, 'checkpoint': hit['checkpoint'], 'replay': None}
     snap = (weights or {}).get(endpoint)
     if snap and sha(snap['path']) == snap['sha256'] and snap['cut_from_state_sha256'] == hit['after_state_sha256']:
         return {'endpoint_boundary': endpoint, 'r_usec': r_usec, 'checkpoint': hit['checkpoint'],
                 'weights_snapshot': {k: snap[k] for k in ('path', 'sha256', 'parameters_sha256')}, 'replay': None}
-    start = None
-    for b in range(endpoint - 1, -1, -1):
-        if b == 0:
-            start = {'boundary': 0, 'checkpoint': None}
+    start, first = None, chain_start(chain)  # the chain's start: 0 (its parent) or a carried chain's B (its record)
+    for b in range(endpoint - 1, first - 1, -1):
+        if b == first:
+            start = {'boundary': first, 'checkpoint': None}
             break
         rec = by_boundary.get(b)
         if rec and state_present(rec['checkpoint'], rec.get('state')):
@@ -670,9 +1316,10 @@ def replay_config(chain, spec, out_dir):
     source = dict(cfg['initial_source'])
     if replay['from']['checkpoint'] is not None:
         source['checkpoint'] = replay['from']['checkpoint']
-    elif first != 0:
-        raise SystemExit('stop: a replay from a nonzero boundary needs its kept checkpoint')
-    else:
+    elif first != chain_start(chain):
+        raise SystemExit('stop: a replay from a nonzero boundary needs its kept checkpoint' if not chain_start(chain)
+                         else 'stop: a replay from a boundary after the carried start needs its kept checkpoint')
+    else:  # the chain's start: its parent, or a carried chain's recorded source (segment 0's initial source)
         source = dict(read_config(chain['segments'][0]['config'])['initial_source'])
     cfg['initial_source'] = source
     cfg['iterations'] = iterations
@@ -763,7 +1410,7 @@ def prune_manifest(chain, records, selected_boundary, replay_receipt=None, weigh
             keep.append(item)
         else:
             prune.append(item)
-    if not keep and selected_boundary != 0:
+    if not keep and selected_boundary != chain_start(chain):
         raise SystemExit('stop: the selected endpoint is not on disk (replay it first)')
     by_kind = {k: sum(p['bytes'] for p in prune if p['kind'] == k) for k in ('full', 'weights')}
     return {'schema': 'artifact-prune-manifest/v1', 'lane': 'w5', 'chain': chain['chain'], 'arm': chain['arm'],
@@ -975,8 +1622,8 @@ def main(argv=None):
     p.add_argument('--chain', dest='chains', action='append', default=[])
     a = ap.parse_args(argv)
     if a.cmd == 'index':
-        _, records = index(a.chain)
-        out = {'updates': len(records), 'latest_boundary': records[-1]['boundary'] if records else 0}
+        chain, records = index(a.chain)
+        out = {'updates': len(records), 'latest_boundary': records[-1]['boundary'] if records else chain_start(chain)}
     elif a.cmd == 'snapshot':
         made = snapshot(a.chain, a.binary, a.snapshot_from)
         out = {'snapshots': len(made), 'bytes': sum(m['bytes'] for m in made)}
@@ -1007,6 +1654,8 @@ def main(argv=None):
         out = select(chain, records, a.r_usec, snapshots(a.chain))
     elif a.cmd == 'replay-config':
         chain = load_chain(a.chain)
+        if guarded(chain):
+            carried_output_unlinked(a.out, a.output_dir)
         write(a.out, replay_config(chain, read(a.spec), a.output_dir))
         out = {'config': Path(a.out).as_posix()}
     elif a.cmd == 'verify-replay':
@@ -1015,6 +1664,8 @@ def main(argv=None):
         chain, records = index(a.chain)
         out = prune_manifest(chain, records, a.boundary, read(a.replay_receipt) if a.replay_receipt else None,
                              snapshots(a.chain))
+        if guarded(chain):
+            carried_output_unlinked(a.out)
         write(a.out, out)
     else:
         out = guard(a.roots, a.cap_bytes, a.next_bytes, a.chains)
