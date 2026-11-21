@@ -31,6 +31,12 @@ LONDON_VECTOR_SOURCE_B = "6faa42219a4e67d266019458a2380df5aa5e25f8"
 LONDON_VECTOR_SOURCE_MERGED = "ce3df74f85649bdbb9a9c4971bafefb7346243ed"
 # The merge commit of PR 729 (pregame announcement step scale) on release/mull-c5719e1cf: this is what gets pinned for arm Q.
 ANNOUNCE_STEP_SOURCE_MERGED = "b6516e6f578109194c496768222ca97cdf5f0191"
+# Speed pack3 on release/mull-c5719e1cf (guard branch only): exact backports of main's net-8 speed work.
+PACK3_SOURCES = (
+    "572de58807a51254212e1cb2e4904f24a676e3d9",  # release head (PR 811 merge), the base
+    "ea8018f083b431b98d6a4b92c822941aeb83944b",  # + fd974ac9b, 69fcba51b
+    "53ccd2188088a52724f41bc4a940958fb6e425f1",  # + Tier A tensorizer, memo default, seal_v1
+)
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
 # scripts or proc macros) and writes a manifest with another schema id, the name and the flags. A variant binary runs
@@ -48,6 +54,7 @@ SOURCES = (
     LONDON_VECTOR_SOURCE_B,
     LONDON_VECTOR_SOURCE_MERGED,
     ANNOUNCE_STEP_SOURCE_MERGED,
+    *PACK3_SOURCES,
 )
 IMAGE = "mirror.gcr.io/library/python@sha256:3c3ba8ad4c85eb63b7568f806434f14e33370056985da7fdf2673621cb1d7e93"
 GIB = 2**30
