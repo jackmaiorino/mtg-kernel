@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>MTG Kernel Weekly</title>
+  <subtitle>One small chart a week about what a self-taught Magic: The Gathering agent learned.</subtitle>
+  <link rel="self" href="https://jackmaiorino.github.io/mtg-kernel/blog/feed.xml"/>
+  <link rel="alternate" href="https://jackmaiorino.github.io/mtg-kernel/blog/"/>
+  <id>https://jackmaiorino.github.io/mtg-kernel/blog/</id>
+  <updated>2026-11-20T22:00:00-05:00</updated>
+  <author><name>MTG Kernel</name></author>
+  <!-- Newest first. The weekly task adds one <entry> per post and updates <updated> above. -->
+  <entry>
+    <title>#1: Past a million updates, the bot is still climbing</title>
+    <link rel="alternate" href="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/"/>
+    <id>https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/</id>
+    <published>2026-11-20T22:00:00-05:00</published>
+    <updated>2026-11-20T22:00:00-05:00</updated>
+    <summary>Each doubling of training still buys wins against the model the chains started from. It just buys fewer than it used to: about 2.5 win-rate points per doubling past a million updates.</summary>
+  </entry>
+</feed>

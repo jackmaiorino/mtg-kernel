@@ -11499,7 +11499,10 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
                         && other.exiled_zone_change_count == record.exiled_zone_change_count)
                         || (other.source == record.source
                             && !until_leaves
-                            && definition.name != "Lagrella, the Magpie")
+                            && !matches!(
+                                definition.name,
+                                "Journey to Nowhere" | "Mesmeric Fiend" | "Lagrella, the Magpie"
+                            ))
                 })
         {
             return Err(RlContractError(
@@ -11512,12 +11515,16 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
         let exiled = state.objects.try_get(record.exiled).ok_or_else(|| {
             RlContractError("linked-exile record exiled object is missing".to_string())
         })?;
-        if source.card_def != record.source.card_def
+        let source_matches = match definition.name {
+            "Mesmeric Fiend" | "Journey to Nowhere" => {
+                crate::engine::source_card_def_matches(state, record.source, source.card_def)
+            }
+            _ => source.card_def == record.source.card_def,
+        };
+        if !source_matches
             || source.owner != record.source.owner
             || source.zone_change_count < record.source.zone_change_count
-            || exiled.card_def != record.exiled_card_def
-            || exiled.owner != record.exiled_owner
-            || exiled.zone_change_count < record.exiled_zone_change_count
+            || !crate::linked_exile_v4::target_matches(state, record, exiled)
         {
             return Err(RlContractError(
                 "linked-exile record no longer matches its physical objects".to_string(),
