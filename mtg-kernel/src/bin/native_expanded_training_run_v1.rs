@@ -55,7 +55,8 @@ fn run() -> Result<(), String> {
     let usage = concat!(
         "usage: native_expanded_training_run_v1 CONFIG.json [--max-new-iterations N] ",
         "[--gpu-exact-inference ORDINAL [--gpu-exact-latency-us N]] [--gpu-exact-learner ORDINAL] ",
-        "[--gpu-exact-kernels v1|v2] [--gpu-exact-wait spin|block] [--collect-external PROGRAM]"
+        "[--gpu-exact-kernels v1|v2] [--gpu-exact-wait spin|block] [--collect-external PROGRAM] ",
+        "| CONFIG.json --follow SPOOL"
     );
     let mut args = std::env::args_os().skip(1);
     let path = PathBuf::from(args.next().ok_or(usage)?);
@@ -66,6 +67,7 @@ fn run() -> Result<(), String> {
     let mut gpu_kernels: Option<String> = None;
     let mut gpu_wait: Option<String> = None;
     let mut collect_external: Option<PathBuf> = None;
+    let mut follow: Option<PathBuf> = None;
     let number = |value: Option<std::ffi::OsString>, what: &str| -> Result<u64, String> {
         value
             .ok_or(format!("missing {what}"))?
@@ -103,8 +105,25 @@ fn run() -> Result<(), String> {
             Some("--collect-external") if collect_external.is_none() => {
                 collect_external = Some(PathBuf::from(text(args.next(), "collector program")?));
             }
+            Some("--follow") if follow.is_none() => {
+                follow = Some(PathBuf::from(text(args.next(), "spool directory")?));
+            }
             _ => return Err(format!("unknown option; {usage}")),
         }
+    }
+    // A followed process runs every config in full through the CPU entry
+    // point; it takes no iteration limit, no GPU service and (until the two
+    // are proved together) no external collector.
+    if follow.is_some()
+        && (limit.is_some()
+            || gpu_inference.is_some()
+            || gpu_learner.is_some()
+            || gpu_latency_us.is_some()
+            || gpu_kernels.is_some()
+            || gpu_wait.is_some()
+            || collect_external.is_some())
+    {
+        return Err("--follow takes no other option".into());
     }
     if gpu_latency_us.is_some() && gpu_inference.is_none() {
         return Err("--gpu-exact-latency-us needs --gpu-exact-inference".into());
@@ -133,6 +152,9 @@ fn run() -> Result<(), String> {
     }
     let config: NativeExpandedTrainingRunV1 =
         serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    if let Some(spool) = follow {
+        return follow_mode(config, &spool);
+    }
     // The kernel version and wait mode change timing only, like the backends.
     if gpu_kernels.is_some() || gpu_wait.is_some() {
         #[cfg(feature = "gpu-exact-v1")]
@@ -188,6 +210,37 @@ fn run() -> Result<(), String> {
         serde_json::to_string(&result).map_err(|e| e.to_string())?
     );
     Ok(())
+}
+
+/// `--follow SPOOL` (`native_expanded_training_run_v1::follow_v1`): runs
+/// `config`, then each continuation the driver publishes in the spool, each
+/// with its result line on stdout as a fresh process prints it. A refused
+/// config exits with `REFUSED_EXIT_CODE` before any of its work.
+fn follow_mode(config: NativeExpandedTrainingRunV1, spool: &std::path::Path) -> Result<(), String> {
+    use mtg_kernel::native_expanded_training_run_v1::follow_v1::{
+        follow_v1, FollowErrorV1, SpoolV1, REFUSED_EXIT_CODE,
+    };
+    let spool = SpoolV1::open_v1(spool)?;
+    let ended = follow_v1(
+        config,
+        |_| spool.wait_v1(),
+        |result| {
+            println!(
+                "{}",
+                serde_json::to_string(result).map_err(|e| e.to_string())?
+            );
+            Ok(())
+        },
+        |index, config, result| spool.publish_done_v1(index, config, result),
+    );
+    match ended {
+        Ok(_) => Ok(()),
+        Err(FollowErrorV1::Run(error)) => Err(error),
+        Err(FollowErrorV1::Refused(reason)) => {
+            eprintln!("native expanded training: follow refused the next config: {reason}");
+            std::process::exit(REFUSED_EXIT_CODE);
+        }
+    }
 }
 
 /// `--execute-collect-shard SHARD.json`: plays one shard command (a
