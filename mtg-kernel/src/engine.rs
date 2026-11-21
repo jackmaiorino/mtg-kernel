@@ -8992,7 +8992,7 @@ fn graveyard_exile_cards_needed(
 ) -> u8 {
     // "Exile X cards from your graveyard" (eternal wave P1a): the chosen
     // cards so far; the caster stops when they choose (X is their number).
-    if pending_x_graveyard_exile(pending, def).is_some() {
+    if pending_x_graveyard_exile(pending, def, state).is_some() {
         return u8::try_from(pending.sacrifice_chosen.len()).unwrap_or(u8::MAX);
     }
     if pending.source_contract.cast_method != CastMethodV4::Escape {
@@ -9053,7 +9053,7 @@ fn escape_extra_exile_candidates(
     if !cfg!(feature = "eternal-fixtures") || pending.escape_exile_finished_v1 {
         return None;
     }
-    if let Some(blue_only) = pending_x_graveyard_exile(pending, def) {
+    if let Some(blue_only) = pending_x_graveyard_exile(pending, def, state) {
         return x_graveyard_exile_candidates(pending, def, state, blue_only);
     }
     if pending.source_contract.cast_method != CastMethodV4::Escape {
@@ -9085,7 +9085,11 @@ fn escape_extra_exile_candidates(
 /// The "exile X cards from your graveyard" cost of this cast, if any:
 /// Skeletal Scrying's additional cost, or Flash of Insight's flashback (with
 /// `blue_only`). Eternal wave P1a.
-fn pending_x_graveyard_exile(pending: &PendingCast, def: &card_def::CardDef) -> Option<bool> {
+fn pending_x_graveyard_exile(
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+    state: &GameState,
+) -> Option<bool> {
     if !cfg!(feature = "eternal-fixtures") {
         return None;
     }
@@ -9098,10 +9102,13 @@ fn pending_x_graveyard_exile(pending: &PendingCast, def: &card_def::CardDef) -> 
         }
         _ => return None,
     };
-    cost.iter().find_map(|component| match component {
+    let blue_only = cost.iter().find_map(|component| match component {
         CostComponent::ExileXCardsFromOwnGraveyardV1 { blue_only } => Some(*blue_only),
         _ => None,
-    })
+    })?;
+    // Retrace announces X before selecting its two payments. Its discarded
+    // land belongs to the separate retrace payment even if later exiled.
+    (!crate::eternal_vintage_e7b_v1::pending_retrace(state, pending)).then_some(blue_only)
 }
 
 /// The graveyard cards an "exile X cards" cost may take next, while
@@ -9151,7 +9158,7 @@ pub(crate) fn forced_cast_x(
     if let Some(x) = crate::eternal_cube_c1c_v1::covenant_forced_x(pending, def) {
         return Some(x);
     }
-    pending_x_graveyard_exile(pending, def)?;
+    pending_x_graveyard_exile(pending, def, state)?;
     u16::try_from(pending.sacrifice_chosen.len()).ok()
 }
 
@@ -14871,7 +14878,7 @@ fn remaining_cast_payment_is_payable(
     };
     if let Some(costs) = compound_cast_cost_v1::Costs::new(def, method, selected.retrace) {
         return pending.graveyard_cost_first_v1.is_some_and(|first| {
-            pending.sacrifice_chosen.len() == costs.count()
+            pending.sacrifice_chosen.len() == costs.count(pending)
                 && costs.can_finish(state, pending, first, &pending.sacrifice_chosen)
         });
     }
@@ -16768,7 +16775,8 @@ pub(crate) fn validate_pending_cast(
     let compound = compound_cast_cost_v1::Costs::pending(state, pending, def);
     let interactive_object_cost_needed = if let Some(costs) = compound {
         if let Some(first) = pending.graveyard_cost_first_v1 {
-            if pending.cast_mode.is_none()
+            if (costs.announces_x() && pending.selected_x_v59().is_none())
+                || pending.cast_mode.is_none()
                 || pending.kicked.is_none()
                 || active_spec.is_none_or(|spec| !pending_cast_targeting_is_complete(pending, spec))
                 || !costs.can_finish(state, pending, first, &pending.sacrifice_chosen)
@@ -16778,12 +16786,12 @@ pub(crate) fn validate_pending_cast(
         } else if !pending.sacrifice_chosen.is_empty() {
             return Err("compound object choices require a payment order".into());
         }
-        u8::try_from(costs.count()).map_err(|_| "compound object count exceeds u8")?
+        costs.count(pending)
     } else {
         if pending.graveyard_cost_first_v1.is_some() {
             return Err("ordinary cast carries a compound payment order".into());
         }
-        validate_single_cast_object_prefix(state, pending, def)?
+        usize::from(validate_single_cast_object_prefix(state, pending, def)?)
     };
     if !pending.sacrifice_chosen.is_empty()
         && (pending.cast_mode.is_none()
@@ -16798,7 +16806,7 @@ pub(crate) fn validate_pending_cast(
             || pending.mode_chosen.is_none()
             || active_spec.is_none_or(|spec| !pending_cast_targeting_is_complete(pending, spec))
             || pending.cast_mode.is_none()
-            || pending.sacrifice_chosen.len() != usize::from(interactive_object_cost_needed))
+            || pending.sacrifice_chosen.len() != interactive_object_cost_needed)
     {
         return Err(
             "optional additional-cost objects were chosen before prior cast stages completed"
@@ -16828,7 +16836,7 @@ pub(crate) fn validate_pending_cast(
                 || active_spec
                     .is_none_or(|spec| !pending_cast_targeting_is_complete(pending, spec))
                 || pending.cast_mode.is_none()
-                || pending.sacrifice_chosen.len() != usize::from(interactive_object_cost_needed))
+                || pending.sacrifice_chosen.len() != interactive_object_cost_needed)
         {
             return Err("chosen-creature cost advanced before prior cast stages".to_string());
         }
@@ -16932,7 +16940,7 @@ pub(crate) fn validate_pending_cast(
     {
         return Err("pending cast advanced past an unresolved cast-mode choice".to_string());
     }
-    if pending.sacrifice_chosen.len() < usize::from(interactive_object_cost_needed)
+    if pending.sacrifice_chosen.len() < interactive_object_cost_needed
         && (!additional_is_at_seed || state.engine.pending_discard.is_some())
     {
         return Err("pending cast advanced past an incomplete object cost".to_string());
@@ -17003,7 +17011,7 @@ pub(crate) fn validate_pending_cast(
             || active_spec.is_none_or(|spec| !pending_cast_targeting_is_complete(pending, spec))
             || pending.cast_mode.is_none()
             || pending.kicked.is_none()
-            || pending.sacrifice_chosen.len() != usize::from(interactive_object_cost_needed)
+            || pending.sacrifice_chosen.len() != interactive_object_cost_needed
             || !optional_additional_cost_selection_is_complete(pending, def, state)?
         {
             return Err("pending cast discard binding or stage changed".to_string());
@@ -17011,6 +17019,58 @@ pub(crate) fn validate_pending_cast(
     }
     standard_cast_convoke::validate(state, pending)?;
     Ok(())
+}
+
+fn decide_cast_x(
+    state: &mut GameState,
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+    staged_method: CastMethodV4,
+) -> Option<Decision> {
+    let Some(_) = pending_cast_selected_mana_cost(def, pending, state) else {
+        state.engine.halted = Some((
+            UnsupportedMechanic::InvalidEffectContinuation,
+            pending.spell,
+        ));
+        return None;
+    };
+    let minimum = u16::from(crate::standard_cards_v1::minimum_x(
+        def,
+        &pending.targets_chosen,
+        state,
+    ));
+    let Some(maximum) =
+        maximum_payable_x(def, pending, state).filter(|&maximum| maximum >= minimum)
+    else {
+        let cast_method = finalized_cast_method(pending, staged_method, def);
+        let pending = state.engine.pending_cast.take().unwrap();
+        abort_cast(state, pending, cast_method);
+        return None;
+    };
+    // The Spellbench neutral contract poses the forced X = 0 as an
+    // explicit singleton numeric choice.
+    if maximum == minimum && !(state.engine.spellbench_neutral_v1.choices && maximum == 0) {
+        state
+            .engine
+            .pending_cast
+            .as_mut()
+            .unwrap()
+            .set_selected_x_v59(minimum);
+        return drain_pending_cast_or_decide(state);
+    }
+    // Option `i` announces X = `minimum + i`.
+    if minimum == 0 && maximum == u16::MAX {
+        return Some(Decision::ChooseFullRangeCastXValueV59 {
+            player: pending.controller,
+            spell: pending.spell,
+        });
+    }
+    Some(Decision::ChooseEffectOption {
+        player: pending.controller,
+        source: pending.spell,
+        option_count: u16::try_from(u32::from(maximum) - u32::from(minimum) + 1)
+            .expect("full-range X uses its appended decision"),
+    })
 }
 
 fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
@@ -17346,8 +17406,11 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     }
 
     if let Some(costs) = compound_cast_cost_v1::Costs::pending(state, &pending, def) {
+        if costs.announces_x() && pending.selected_x_v59().is_none() {
+            return decide_cast_x(state, &pending, def, staged_method);
+        }
         if let Some(first) = pending.graveyard_cost_first_v1 {
-            if pending.sacrifice_chosen.len() < costs.count() {
+            if pending.sacrifice_chosen.len() < costs.count(&pending) {
                 return Some(costs.next(state, &pending, first));
             }
         } else {
@@ -17431,7 +17494,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     }
 
     let graveyard_exile_needed = graveyard_exile_cards_needed(&pending, def, state);
-    if (pending.sacrifice_chosen.len() as u8) < graveyard_exile_needed {
+    if pending.sacrifice_chosen.len() < usize::from(graveyard_exile_needed) {
         let Some(candidates) = checked_graveyard_exile_candidates(
             pending.controller,
             pending.spell,
@@ -17846,50 +17909,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     }
 
     if pending.selected_x_v59().is_none() {
-        let Some(_) = pending_cast_selected_mana_cost(def, &pending, state) else {
-            state.engine.halted = Some((
-                UnsupportedMechanic::InvalidEffectContinuation,
-                pending.spell,
-            ));
-            return None;
-        };
-        let minimum = u16::from(crate::standard_cards_v1::minimum_x(
-            def,
-            &pending.targets_chosen,
-            state,
-        ));
-        let Some(maximum) =
-            maximum_payable_x(def, &pending, state).filter(|&maximum| maximum >= minimum)
-        else {
-            let cast_method = finalized_cast_method(&pending, staged_method, def);
-            let pending = state.engine.pending_cast.take().unwrap();
-            abort_cast(state, pending, cast_method);
-            return None;
-        };
-        // The Spellbench neutral contract poses the forced X = 0 as an
-        // explicit singleton numeric choice.
-        if maximum == minimum && !(state.engine.spellbench_neutral_v1.choices && maximum == 0) {
-            state
-                .engine
-                .pending_cast
-                .as_mut()
-                .unwrap()
-                .set_selected_x_v59(minimum);
-            return drain_pending_cast_or_decide(state);
-        }
-        // Option `i` announces X = `minimum + i`.
-        if minimum == 0 && maximum == u16::MAX {
-            return Some(Decision::ChooseFullRangeCastXValueV59 {
-                player: pending.controller,
-                spell: pending.spell,
-            });
-        }
-        return Some(Decision::ChooseEffectOption {
-            player: pending.controller,
-            source: pending.spell,
-            option_count: u16::try_from(u32::from(maximum) - u32::from(minimum) + 1)
-                .expect("full-range X uses its appended decision"),
-        });
+        return decide_cast_x(state, &pending, def, staged_method);
     }
 
     if standard_cast_convoke::active(state, &pending) && !pending.convoke_finished {
@@ -26753,10 +26773,13 @@ fn pending_cast_action_stage(
         return Ok(PendingCastActionStage::ChooseMandatoryAdditionalCost);
     }
     if let Some(costs) = compound_cast_cost_v1::Costs::pending(state, pending, def) {
+        if costs.announces_x() && pending.selected_x_v59().is_none() {
+            return Ok(PendingCastActionStage::ChooseXValue);
+        }
         if pending.graveyard_cost_first_v1.is_none() {
             return Ok(PendingCastActionStage::ChooseCompoundCostOrder);
         }
-        if pending.sacrifice_chosen.len() < costs.count() {
+        if pending.sacrifice_chosen.len() < costs.count(pending) {
             return Ok(PendingCastActionStage::ChooseCostTarget);
         }
     }
@@ -27952,7 +27975,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
         let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
         if let Some(costs) = compound_cast_cost_v1::Costs::pending(state, &pending, def) {
             if let Some(first) = pending.graveyard_cost_first_v1 {
-                if pending.sacrifice_chosen.len() < costs.count() {
+                if pending.sacrifice_chosen.len() < costs.count(&pending) {
                     let mut picks = pending.sacrifice_chosen.clone();
                     picks.push(id);
                     if !costs.can_finish(state, &pending, first, &picks) {
@@ -28000,7 +28023,7 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
             return Ok(());
         }
         let graveyard_exile_needed = graveyard_exile_cards_needed(&pending, def, state);
-        if (pending.sacrifice_chosen.len() as u8) < graveyard_exile_needed {
+        if pending.sacrifice_chosen.len() < usize::from(graveyard_exile_needed) {
             let active_target_spec = selected_spell_target_spec(
                 def,
                 pending

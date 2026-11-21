@@ -1969,7 +1969,7 @@ pub(super) fn prepare_final_spell_payment_v1(
     };
     let resources = resource_projection.as_ref().unwrap_or(state);
     let (mana, compound) = if let Some(costs) = compound {
-        if pending.sacrifice_chosen.len() != costs.count() {
+        if pending.sacrifice_chosen.len() != costs.count(pending) {
             return None;
         }
         let (mana, payment) = costs.quote(
