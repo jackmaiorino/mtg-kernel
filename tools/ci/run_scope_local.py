@@ -29,6 +29,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--head", required=True)
     parser.add_argument("--checkout", default=str(Path(__file__).resolve().parents[2]))
     parser.add_argument("--record")
+    parser.add_argument("--no-uv", action="store_true",
+                        help="run `uv run --no-sync python` commands with this Python instead (machines without uv)")
     args = parser.parse_args(argv)
     repo = Path(args.checkout)
     for command in (["git", "fetch", "--quiet", "origin", args.head], ["git", "checkout", "--quiet", "--detach", args.head]):
@@ -42,11 +44,15 @@ def main(argv: list[str] | None = None) -> int:
         print(listed.stderr, file=sys.stderr)
         return 2
     rows, started = [], time.monotonic()
-    for command in [line for line in listed.stdout.splitlines() if line.strip()]:
+    commands = [line for line in listed.stdout.splitlines() if line.strip()]
+    if args.no_uv:
+        commands = [c.replace("uv run --no-sync python", f'"{sys.executable}"') for c in commands]
+    for command in commands:
         t0 = time.monotonic()
         code = run(command, repo, shell=True).returncode
         rows.append({"command": command, "exit": code, "minutes": round((time.monotonic() - t0) / 60, 1)})
     record = {"scope": args.scope, "head": head, "host": platform.node(), "os": platform.system(),
+              "python": platform.python_version(), "uv": not args.no_uv,
               "finished": datetime.now(timezone.utc).isoformat(timespec="seconds"),
               "minutes": round((time.monotonic() - started) / 60, 1),
               "result": "pass" if all(r["exit"] == 0 for r in rows) else "fail", "commands": rows}
