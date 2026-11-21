@@ -26,7 +26,7 @@
 //!   payable.
 //! - Hallow: a shield bound to the target spell's stack incarnation, and to
 //!   the permanent that spell becomes (CR 400.7c), for the rest of the turn,
-//!   consumed by the damage pipeline ([`hallow_prevents`]).
+//!   consumed by the damage pipeline ([`replace_damage`]).
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::card_def::{CardDef, TargetSpec, CARD_DEFS};
@@ -561,6 +561,7 @@ fn covered_packet(
     let (source, source_zone) = damage_source_incarnation(state, damage)?;
     if hallow_beneficiaries(state, source, source_zone).is_empty()
         && !crate::eternal_prevention_order_v1::eligible(state, damage)
+        && !crate::eternal_prevention_order_v1::residual_order_applies(state, damage)
     {
         return None;
     }
@@ -580,13 +581,14 @@ fn packet_chooser(state: &GameState, damage: &DamageProposed) -> Option<PlayerId
     }
 }
 
-/// True only once every portion is prevented or reduced to zero. State-bearing
-/// effects apply immediately in choice chronology; the next frontier is built
+/// Finish each portion by prevention, zero reduction or an exact residual.
+/// State-bearing effects apply immediately in choice chronology; the next frontier is built
 /// from the resulting live state, never from a reordered speculative replay.
 fn prevent_packets(
     state: &mut GameState,
     mut work: Vec<HallowPacketV1>,
     batch: Option<u32>,
+    residuals: &mut Vec<(usize, event::DamageProposed)>,
 ) -> Result<bool, String> {
     let mut steps = vec![0u32; work.iter().map(|item| item.event + 1).max().unwrap_or(0)];
     while !work.is_empty() {
@@ -642,7 +644,8 @@ fn prevent_packets(
             ordinary,
         };
         let selected = if choice.count() == 0 {
-            return Err("covered frontier lost every complete prevention".into());
+            residuals.push((item.event, damage.clone()));
+            continue;
         } else if choice.count() == 1 {
             if complete_prevention {
                 HallowPreventionV1::Ordinary(0)
@@ -706,20 +709,23 @@ pub(crate) fn batch_has_covered_damage(state: &GameState, events: &[ProposedEven
 }
 
 /// Process all covered portions of one simultaneous batch as a live frontier.
-/// Every such portion must ultimately be prevented because its Hallow remains
-/// applicable. Uncovered events retain the ordinary replacement/commit path.
+/// Covered portions either finish prevention or return a typed residual. The
+/// remaining events retain the ordinary replacement/commit path.
 pub(crate) fn prevent_hallow_batch(
     state: &mut GameState,
     events: &mut Vec<ProposedEvent>,
     batch: u32,
-) -> Result<bool, String> {
+) -> Result<crate::eternal_prevention_order_v1::BatchDamageResultV1, String> {
+    use crate::eternal_prevention_order_v1::{
+        BatchDamageResultV1 as ResultV1, PreparedDamageBatchV1,
+    };
     if state.engine.until_end_of_turn.iter().any(|effect| {
         matches!(
             effect,
             crate::engine::UntilEndOfTurnEffect::DamageCannotBePrevented { .. }
         )
     }) {
-        return Ok(false);
+        return Ok(ResultV1::Complete(PreparedDamageBatchV1::default()));
     }
     let mut work = Vec::new();
     let mut covered = vec![false; events.len()];
@@ -727,7 +733,7 @@ pub(crate) fn prevent_hallow_batch(
         if let ProposedEvent::Damage(damage) = event {
             if let Some(packet) = covered_packet(state, damage, at) {
                 if u32::try_from(at).is_err() || !event::preflight_hallow_damage_v1(state, event) {
-                    return Err("Hallow cohort rejected its original historical damage".into());
+                    return Err("damage cohort rejected its original historical damage".into());
                 }
                 work.push(packet);
                 covered[at] = true;
@@ -735,37 +741,55 @@ pub(crate) fn prevent_hallow_batch(
         }
     }
     if work.is_empty() {
-        return Ok(false);
+        return Ok(ResultV1::Complete(PreparedDamageBatchV1::default()));
     }
-    if !prevent_packets(state, work, Some(batch))? {
-        return Ok(true);
+    let mut residuals = Vec::new();
+    if !prevent_packets(state, work, Some(batch), &mut residuals)? {
+        return Ok(ResultV1::Suspended);
     }
-    let mut at = 0;
-    events.retain(|_| {
-        let keep = !covered[at];
-        at += 1;
-        keep
-    });
-    Ok(false)
+    let mut prepared = Vec::new();
+    let mut next = Vec::new();
+    for (at, event) in std::mem::take(events).into_iter().enumerate() {
+        if !covered[at] {
+            next.push(event);
+            prepared.push(None);
+        } else {
+            for (_, damage) in residuals.iter().filter(|(original, _)| *original == at) {
+                next.push(ProposedEvent::Damage(damage.clone()));
+                prepared.push(Some(damage.clone()));
+            }
+        }
+    }
+    *events = next;
+    Ok(ResultV1::Complete(PreparedDamageBatchV1::new(prepared)))
 }
 
-/// The single-event path uses the same typed frontier. Its enclosing operation
-/// owns any yielded choice, and life is gained only at the existing event tail.
-pub(crate) fn hallow_prevents(state: &mut GameState, damage: &DamageProposed) -> bool {
+/// The operation owns the complete chosen mutation prefix. A surviving packet
+/// returns to the normal commit path with its replacements already finished.
+pub(crate) fn replace_damage(
+    state: &mut GameState,
+    damage: &event::DamageProposed,
+) -> crate::eternal_prevention_order_v1::DamageResultV1 {
+    use crate::eternal_prevention_order_v1::DamageResultV1;
     let Some(packet) = covered_packet(state, damage, 0) else {
-        return false;
+        return DamageResultV1::Uncovered;
     };
     let cohort = redirect_may_hit_nishoba(state, damage)
         && crate::eternal_premodern_p2c_v1::statics::begin_nishoba_cohort(state);
-    let result = prevent_packets(state, vec![packet], None);
+    let mut residuals = Vec::new();
+    let result = prevent_packets(state, vec![packet], None, &mut residuals);
     crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, cohort);
-    if result.is_err() {
+    if result.is_err() || residuals.len() > 1 {
         state.engine.halted = Some((
             crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
             damage.source,
         ));
+        return DamageResultV1::Prevented;
     }
-    true
+    match residuals.pop() {
+        Some((_, damage)) => DamageResultV1::Residual(damage),
+        None => DamageResultV1::Prevented,
+    }
 }
 
 /// Called at the end of `event::propose_and_commit` and

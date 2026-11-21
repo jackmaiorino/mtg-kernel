@@ -11,6 +11,8 @@ mod hallow_circle_v1;
 mod hallow_ordinary_v1;
 #[path = "prevention_order_no_hallow_v1.rs"]
 mod prevention_order_no_hallow_v1;
+#[path = "sphere_ojer_order_no_hallow_v1.rs"]
+mod sphere_ojer_order_no_hallow_v1;
 
 use mtg_kernel::card_def::{
     card_id_by_name, mana_color_mask, CardCapability, CardDef, CardType, CARD_DEFS,

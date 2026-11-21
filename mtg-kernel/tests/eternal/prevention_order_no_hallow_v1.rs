@@ -90,7 +90,7 @@ fn combat_choice(state: &mut GameState) -> Option<Decision> {
     panic!("combat did not complete");
 }
 
-fn choose_public(
+pub(super) fn choose_public(
     state: &mut GameState,
     actor: PlayerId,
     source: ObjectId,

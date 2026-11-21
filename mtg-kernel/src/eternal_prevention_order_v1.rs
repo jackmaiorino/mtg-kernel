@@ -1,11 +1,12 @@
-//! Complete-prevention choices without Hallow. A global fog/color shield and
-//! a Circle can both prevent the packet, but only the Circle is consumed.
-//! Damage that can survive its replacements keeps the existing engine path.
+//! Scoped replacement choices without Hallow: Circle/global prevention and
+//! Sphere of Law/Ojer Axonil. Fully replaced residuals return to ordinary commit
+//! through local receipts; public proposals and state schemas remain unchanged.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
 
 use crate::eternal_pauper_pf1c_v1::ordinary_damage::{OrdinaryV1, Packet};
 use crate::eternal_sideboard_s1d_v1::statics as circles;
 use crate::event::{self, DamageProposed, ProposedEvent, ReplacementEffectKind};
+use crate::ids::PlayerId;
 use crate::state::GameState;
 
 fn has_color_prevention(state: &GameState) -> bool {
@@ -23,9 +24,13 @@ fn has_color_prevention(state: &GameState) -> bool {
 pub(crate) fn may_need_choice(state: &GameState) -> bool {
     cfg!(feature = "eternal-fixtures")
         && !cannot_prevent(state)
-        && circles::has_live_circle_shield(state)
-        && (crate::eternal_pauper_e6a_v1::has_active_global_fog(state)
-            || has_color_prevention(state))
+        && ((circles::has_live_circle_shield(state)
+            && (crate::eternal_pauper_e6a_v1::has_active_global_fog(state)
+                || has_color_prevention(state)))
+            || [PlayerId::P0, PlayerId::P1].into_iter().any(|player| {
+                crate::eternal_premodern_p3a_v1::statics::has_sphere_of_law(state, player)
+                    && crate::standard_cards_v1::has_active_ojer(state, player.opponent())
+            }))
 }
 
 fn full_prevention(state: &GameState, damage: &DamageProposed) -> bool {
@@ -58,9 +63,9 @@ pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
         && full_prevention(state, damage)
 }
 
-/// Re-evaluate all state-bearing replacements after each chosen effect. The
-/// persistent global prevention guarantees that every portion ultimately ends
-/// without damage; finite shields still have their distinct consumption choice.
+/// Re-evaluate all state-bearing replacements after each chosen effect.
+/// A portion with no remaining applicable effect returns its final damage;
+/// finite shields retain their distinct consumption choice.
 pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<OrdinaryV1> {
     let mut options = Vec::new();
     for (position, shield) in circles::matching_circle_shields(state, &packet.damage) {
@@ -88,4 +93,61 @@ pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<Ordinary
         }
     }
     options
+}
+
+/// The affected player can obtain different surviving amounts by ordering the
+/// active reduction and increase. Their authoritative matchers retain source
+/// color, controller, printed-ability, face and historical-source restrictions.
+pub(crate) fn residual_order_applies(state: &GameState, damage: &DamageProposed) -> bool {
+    !damage.is_combat
+        && damage.amount > 0
+        && !cannot_prevent(state)
+        && crate::eternal_premodern_p3a_v1::statics::applicable_spheres(state, damage)
+            .next()
+            .is_some()
+        && crate::standard_cards_v1::applicable_ojers(state, damage)
+            .next()
+            .is_some()
+}
+
+/// Local, nonserialized evidence that the frontier finished this exact damage
+/// event. All other events still use the ordinary replacement pass. Keeping
+/// this separate from DamageProposed preserves public event bytes and avoids
+/// applying a static reduction or multiplier twice during batch commitment.
+#[derive(Default)]
+pub(crate) struct PreparedDamageBatchV1(Vec<Option<DamageProposed>>);
+
+impl PreparedDamageBatchV1 {
+    pub(crate) fn new(events: Vec<Option<DamageProposed>>) -> Self {
+        Self(events)
+    }
+    pub(crate) fn apply(
+        &self,
+        state: &mut GameState,
+        at: usize,
+        event: ProposedEvent,
+    ) -> Option<ProposedEvent> {
+        let Some(Some(damage)) = self.0.get(at) else {
+            return event::apply_replacements(state, event);
+        };
+        if event != ProposedEvent::Damage(damage.clone()) {
+            state.engine.halted = Some((
+                crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                damage.source,
+            ));
+            return None;
+        }
+        Some(event)
+    }
+}
+
+pub(crate) enum BatchDamageResultV1 {
+    Suspended,
+    Complete(PreparedDamageBatchV1),
+}
+
+pub(crate) enum DamageResultV1 {
+    Uncovered,
+    Prevented,
+    Residual(DamageProposed),
 }

@@ -1111,14 +1111,16 @@ fn request_hallow(
 pub(crate) fn prepare_hallow_batch(
     state: &mut GameState,
     events: &mut Vec<ProposedEvent>,
-) -> Result<bool, String> {
+) -> Result<crate::eternal_prevention_order_v1::BatchDamageResultV1, String> {
     if !(crate::eternal_pauper_pf1c_v1::may_need_hallow_choice(state)
         || crate::eternal_prevention_order_v1::may_need_choice(state))
         || !events
             .iter()
             .any(|event| matches!(event, ProposedEvent::Damage(_)))
     {
-        return Ok(false);
+        return Ok(
+            crate::eternal_prevention_order_v1::BatchDamageResultV1::Complete(Default::default()),
+        );
     }
     let runner = state
         .engine
@@ -1127,7 +1129,7 @@ pub(crate) fn prepare_hallow_batch(
         .as_mut()
         .ok_or("Hallow damage batch lacks its enclosing operation")?;
     if runner.checkpoint.is_some() {
-        return Ok(true);
+        return Ok(crate::eternal_prevention_order_v1::BatchDamageResultV1::Suspended);
     }
     let batch = match runner.hallow_batch {
         None => 0,

@@ -3087,12 +3087,14 @@ fn apply_replacements_inner(
             )
         });
     if let ProposedEvent::Damage(damage) = &mut proposed {
-        // Only a matching, preventable Hallow packet borrows replacement ordering.
         #[cfg(feature = "eternal-fixtures")]
-        if !damage_cannot_be_prevented
-            && crate::eternal_pauper_pf1c_v1::hallow_prevents(state, damage)
-        {
-            return None;
+        if !damage_cannot_be_prevented {
+            use crate::eternal_prevention_order_v1::DamageResultV1;
+            match crate::eternal_pauper_pf1c_v1::replace_damage(state, damage) {
+                DamageResultV1::Uncovered => {}
+                DamageResultV1::Prevented => return None,
+                DamageResultV1::Residual(damage) => return Some(ProposedEvent::Damage(damage)),
+            }
         }
         // Sphere of Law (Premodern sideboard wave P3a) applies first: before
         // the increases, the redirection and every shield.
@@ -7093,18 +7095,21 @@ fn batch_with_aura_token_hosts_v1(
     (|| {
         #[cfg(feature = "eternal-fixtures")]
         let mut events = events;
+        #[cfg(not(feature = "eternal-fixtures"))]
+        let prepared_damage = crate::eternal_prevention_order_v1::PreparedDamageBatchV1::default();
         #[cfg(feature = "eternal-fixtures")]
-        match crate::linked_aura_operation_v1::prepare_hallow_batch(state, &mut events) {
-            Ok(true) => return,
-            Ok(false) => {}
-            Err(_) => {
-                state.engine.halted = Some((
-                    crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
-                    ObjectId(0),
-                ));
-                return;
-            }
-        }
+        let prepared_damage =
+            match crate::linked_aura_operation_v1::prepare_hallow_batch(state, &mut events) {
+                Ok(crate::eternal_prevention_order_v1::BatchDamageResultV1::Suspended) => return,
+                Ok(crate::eternal_prevention_order_v1::BatchDamageResultV1::Complete(plan)) => plan,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        ObjectId(0),
+                    ));
+                    return;
+                }
+            };
         let authority_batch = crate::authority_of_the_consuls_v1::EntryBatchV1::capture(state);
         if needs_final_zone_pt_plan_v1(state, &events) {
             let mut replaced = state.clone();
@@ -7115,7 +7120,8 @@ fn batch_with_aura_token_hosts_v1(
             );
             let mut survivors = events
                 .into_iter()
-                .filter_map(|event| apply_replacements(&mut replaced, event))
+                .enumerate()
+                .filter_map(|(at, event)| prepared_damage.apply(&mut replaced, at, event))
                 .collect::<Vec<_>>();
             #[cfg(feature = "eternal-fixtures")]
             crate::eternal_premodern_p2c_v1::statics::end_damage_batch(
@@ -7181,7 +7187,8 @@ fn batch_with_aura_token_hosts_v1(
             crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(state, &events);
         let survivors: Vec<ProposedEvent> = events
             .into_iter()
-            .filter_map(|e| apply_replacements(state, e))
+            .enumerate()
+            .filter_map(|(at, event)| prepared_damage.apply(state, at, event))
             .collect();
         #[cfg(feature = "eternal-fixtures")]
         crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, nishoba_batch);

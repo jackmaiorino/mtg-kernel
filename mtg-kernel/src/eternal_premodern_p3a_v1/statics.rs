@@ -190,3 +190,15 @@ pub(crate) fn applicable_spheres<'a>(
         )
     })
 }
+
+/// Coarse operation ownership uses the same active Sphere matcher as damage.
+pub(crate) fn has_sphere_of_law(state: &GameState, player: PlayerId) -> bool {
+    active_with_id(
+        state,
+        static_ids().sphere_of_law,
+        SPHERE_OF_LAW,
+        Some(player),
+    )
+    .next()
+    .is_some()
+}
