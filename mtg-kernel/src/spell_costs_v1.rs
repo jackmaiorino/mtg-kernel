@@ -1699,7 +1699,7 @@ pub(super) struct PreparedSpellPaymentV1 {
     optional_kind: Option<super::OptionalAdditionalCostDef>,
     optional_objects: Vec<ObjectId>,
     pub(super) ordered_objects: Vec<ObjectId>,
-    pub(super) chosen_power_lki: Option<i32>,
+    pub(super) chosen_creature: Option<super::PaidCostRefV4>,
     pub(super) storm_targets: Option<crate::effect::thousand_year_storm_v1::targets::CastTargetsV1>,
 }
 
@@ -2034,7 +2034,7 @@ pub(super) fn prepare_final_spell_payment_v1(
         optional_kind,
         optional_objects,
         ordered_objects: choices.ordered_objects,
-        chosen_power_lki: None,
+        chosen_creature: None,
         storm_targets: crate::effect::thousand_year_storm_v1::freeze_cast_targets(
             state, pending, method,
         )
@@ -2096,6 +2096,22 @@ pub(super) fn prepare_final_spell_payment_v1(
                 source,
             );
         }
+        // Capture the revealed hand incarnation before retrace discards its land.
+        // A creature land can pay both costs and has two distinct receipts.
+        let mut chosen = super::PaidCostRefV4::capture(&projected, binding.object);
+        chosen.power_lki = Some(match zone {
+            super::ChosenCreatureCostZoneV1::Battlefield => {
+                super::effective_power(&projected, binding.object)
+            }
+            super::ChosenCreatureCostZoneV1::Hand => {
+                chosen.visible_to_mask = 0b11;
+                card_def::CARD_DEFS[usize::from(chosen.card_def)]
+                    .power
+                    .map(i32::from)
+                    .unwrap_or(0)
+            }
+        });
+        prepared.chosen_creature = Some(chosen);
     }
     prepared.additional =
         prepare_spell_nonmana_v1(&projected, player, source, &groups[base_count..])?;
@@ -2123,17 +2139,6 @@ pub(super) fn prepare_final_spell_payment_v1(
         }
     }
     prepared.commit_optional(&mut projected);
-    if let Some(binding) = pending.chosen_creature_cost {
-        prepared.chosen_power_lki = Some(match projected.objects.get(binding.object).zone {
-            crate::state::Zone::Battlefield => super::effective_power(&projected, binding.object),
-            crate::state::Zone::Hand => card_def::CARD_DEFS
-                [projected.objects.get(binding.object).card_def as usize]
-                .power
-                .map(i32::from)
-                .unwrap_or(0),
-            _ => return None,
-        });
-    }
     if prepared.greatwurm.is_some() {
         // Counts and exact incarnations were prepared before any real payment.
         // Automatic mana/base costs may not silently spend the same selected

@@ -2426,7 +2426,25 @@ fn validate_physical_spell_cast_origin(
                         "chosen-creature cost lost its finalized source binding".to_string()
                     );
                 };
-                if item.v4.paid_cost_refs.as_slice() != [chosen] {
+                // The chosen creature follows any distinct payment for the graveyard route.
+                let (last, route) = item
+                    .v4
+                    .paid_cost_refs
+                    .split_last()
+                    .ok_or("chosen creature payment absent")?;
+                let legal_route = match (cast_method, origin.route) {
+                    (CastMethodV4::Escape, _) => spell_costs_v1::escape_cost_v1(def).is_some_and(|cost| {
+                        cost.iter().any(|part| matches!(part, CostComponent::ExileOtherCardsFromOwnGraveyard(n) if usize::from(*n) == route.len()))
+                            && route.iter().enumerate().all(|(idx, r)| r.owner == caster && r.zone == Zone::Exile && r.power_lki.is_none() && !route[..idx].iter().any(|prior| prior.object == r.object))
+                    }),
+                    (CastMethodV4::Normal, SpellCastRouteV4::GraveyardPermissionV1 { .. }) => match route {
+                        [] => true,
+                        [land] => land.owner == caster && land.power_lki.is_none() && card_def::CARD_DEFS.get(usize::from(land.card_def)).is_some_and(|d| d.has_type(CardType::Land)),
+                        _ => false,
+                    },
+                    _ => route.is_empty(),
+                };
+                if *last != chosen || !legal_route {
                     return Err(
                         "chosen-creature payment disagrees with its finalized source binding"
                             .to_string(),
@@ -30980,7 +30998,7 @@ fn finalize_owned_cast(
     // The complete local plan was prepared before any real discard or mana
     // payment. Capture provenance inputs before consuming it exactly once.
     let object_cost_chosen = payment.ordered_objects.clone();
-    let chosen_power_lki = payment.chosen_power_lki;
+    let chosen_creature_cost = payment.chosen_creature;
     let was_kicked = pending.kicked == Some(true);
     let paid_optional_additional_cost = if pending.optional_additional_cost_paid == Some(true) {
         Some(
@@ -31093,9 +31111,6 @@ fn finalize_owned_cast(
             .iter()
             .map(|binding| binding.object),
     );
-    if let Some(binding) = pending.chosen_creature_cost {
-        paid_cost_objects.push(binding.object);
-    }
     // Capture after sacrifice/discard zone changes have committed. These refs
     // describe the payment-time incarnation and visibility forever; later
     // reanimation, bounce, shuffle, or exile cannot rewrite stack provenance.
@@ -31104,23 +31119,7 @@ fn finalize_owned_cast(
             .into_iter()
             .map(|object| PaidCostRefV4::capture(state, object)),
     );
-    if let Some(binding) = pending.chosen_creature_cost {
-        let power =
-            chosen_power_lki.expect("complete preparation captured payment-time chosen power");
-        let reference = paid_cost_refs
-            .iter_mut()
-            .find(|reference| reference.object == binding.object)
-            .expect("chosen creature is included in its paid provenance");
-        if state.hand_knowledge_by_name_v2
-            && pending.chosen_creature_cost_zone == Some(ChosenCreatureCostZoneV1::Hand)
-        {
-            // The prepared cost publicly revealed this card. Its paid
-            // receipt remains visible even if a prior same-name fact
-            // already supplies the observer's known-hand lower bound.
-            reference.visible_to_mask = 0b11;
-        }
-        reference.power_lki = Some(power);
-    }
+    paid_cost_refs.extend(chosen_creature_cost);
     let selected_target_spec = if cast_method == CastMethodV4::Omen {
         if let Some(adventure) = supported_adventure(def) {
             adventure.target_spec
@@ -31144,12 +31143,6 @@ fn finalize_owned_cast(
     // Payment is now irrevocably complete. Stamp the independently owned
     // source-object record before recapturing the finalized stack contract;
     // later validators require both copies to agree with this exact method.
-    let chosen_creature_cost = pending.chosen_creature_cost.and_then(|binding| {
-        paid_cost_refs
-            .iter()
-            .find(|reference| reference.object == binding.object)
-            .copied()
-    });
     let used_graveyard_creature_permission =
         matches!(
             cast_method,

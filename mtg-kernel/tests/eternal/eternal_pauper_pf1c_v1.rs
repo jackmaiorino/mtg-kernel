@@ -1972,3 +1972,91 @@ fn pf1c_decks_finish_and_replay_through_public_sessions_both_seats() {
         assert!(casts > 0, "{name} never cast through a public session");
     }
 }
+
+#[test]
+fn monstrous_emergence_escape_pays_three_exiles_and_uses_its_chosen_creature() {
+    for reveal in [false, true] {
+        let mut state = plains();
+        put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
+        let grave =
+            ["Forest", "Swamp", "Island"].map(|name| put(&mut state, P0, name, Zone::Graveyard));
+        let target = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+        let spell = put(&mut state, P0, "Monstrous Emergence", Zone::Graveyard);
+        pool(&mut state, P0, &[ManaColor::G], 1);
+        assert!(
+            !castable(&mut state, spell),
+            "a creature must be chosen or revealed"
+        );
+        let origin = if reveal {
+            Zone::Hand
+        } else {
+            Zone::Battlefield
+        };
+        let creature = put(&mut state, P0, "Grizzly Bears", origin);
+        cast(&mut state, spell, &[Target::Object(target)]);
+        for object in grave {
+            payment_pick(&mut state, CostKind::ExileFromGraveyard, object);
+        }
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        let refs = &state.stack.last().unwrap().v4.paid_cost_refs;
+        assert_eq!(refs.len(), 4);
+        assert!(refs[..3]
+            .iter()
+            .all(|r| r.zone == Zone::Exile && r.power_lki.is_none()));
+        let chosen = refs[3];
+        assert_eq!(
+            (
+                chosen.object,
+                chosen.zone,
+                chosen.power_lki,
+                chosen.visible_to_mask
+            ),
+            (creature, origin, Some(2), 3)
+        );
+        let mut restored: GameState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        for game in [&mut state, &mut restored] {
+            settled(game);
+            assert_eq!(zone(game, target), Zone::Graveyard);
+            assert_eq!(zone(game, spell), Zone::Graveyard);
+            assert_eq!(zone(game, creature), origin);
+        }
+        assert_eq!(state, restored);
+    }
+}
+
+#[test]
+fn monstrous_emergence_retrace_reveals_the_creature_land_it_discards() {
+    let mut state = plains();
+    retrace_emblem(&mut state);
+    let spell = put(&mut state, P0, "Monstrous Emergence", Zone::Graveyard);
+    let target = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    let land = put(&mut state, P0, "Dryad Arbor", Zone::Hand);
+    let generation = state.objects.get(land).zone_change_count;
+    pool(&mut state, P0, &[ManaColor::G], 1);
+    cast(&mut state, spell, &[Target::Object(target)]);
+    if matches!(next(&mut state), Decision::ChooseCostTargets { .. }) {
+        payment_pick(&mut state, CostKind::DiscardCards, land);
+    }
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    let refs = &state.stack.last().unwrap().v4.paid_cost_refs;
+    assert_eq!(refs.len(), 2);
+    assert_eq!(
+        (refs[0].object, refs[0].zone, refs[0].zone_change_count),
+        (land, Zone::Graveyard, generation + 1)
+    );
+    assert_eq!(
+        (
+            refs[1].object,
+            refs[1].zone,
+            refs[1].zone_change_count,
+            refs[1].power_lki,
+            refs[1].visible_to_mask
+        ),
+        (land, Zone::Hand, generation, Some(1), 3)
+    );
+    settled(&mut state);
+    assert_eq!(state.objects.get(target).damage, 1);
+    assert_eq!(zone(&state, land), Zone::Graveyard);
+    assert_eq!(zone(&state, spell), Zone::Graveyard);
+}

@@ -29,7 +29,7 @@ fn printed_cost(def: &card_def::CardDef, method: CastMethodV4, mode: u8) -> Opti
 }
 
 pub(super) fn supports_escape(def: &card_def::CardDef) -> bool {
-    printed_cost(def, CastMethodV4::Escape, 0).is_some()
+    has_chosen_creature_additional_cost(def) || printed_cost(def, CastMethodV4::Escape, 0).is_some()
 }
 
 impl Costs {
