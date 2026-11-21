@@ -592,6 +592,13 @@ class BackgroundPolicyTests(unittest.TestCase):
         claims = [{"cores": [7, 6]}, {"cores": [0], "background": True}]
         self.assertEqual(slots.background_order(config8(), slots.available(config8(), FREE, claims)), [1, 2, 3, 4, 5])
 
+    def test_background_placement_preserves_the_reserve_with_an_ordinary_core_pool(self):
+        room = slots.available(CONFIG4, FREE, [])
+        background_cores = slots.background_order(CONFIG4, room)[:1]
+        claims = [{"cores": background_cores, "background": True}]
+        head = ticket("head", 3, None, core_pool=[0, 1, 3])
+        self.assertEqual(slots._head_start(CONFIG4, FREE, claims, head), ({0, 1, 3}, {0}))
+
     def test_review_states_keep_mains_outcome_for_ordinary_requests_and_predictions(self):
         # review round 1, state 1: preference 0 to 4, ordinary C on 0, 1, 4, background G on 3, a three-core head
         config = {"cores": [0, 1, 2, 3, 4], "keep_free": 0, "priority": "below_normal"}
@@ -645,8 +652,8 @@ class BackgroundPolicyTests(unittest.TestCase):
 
     def test_background_placement_changes_only_where_background_work_sits(self):
         """For a table of states: an admitted background request gets the same number of cores from the same room,
-        the CI floor first, and otherwise the cores latest in the preference order; an ordinary request that fits
-        in the cores no claim holds then never meets it; ordinary choices, shared expansion and every
+        the CI floor first, and the cores latest in the preference order when no reserve applies. In that case an
+        ordinary request that fits in the cores no claim holds never meets it. Ordinary choices, shared expansion and every
         admit-or-wait outcome are computed by main's code (available(), _claim_record) on the same claims."""
         bg = lambda *c: {"cores": list(c), "background": True}                   # noqa: E731
         no_play = {"cores": [7, 6, 5, 4, 1, 0], "keep_free": 0, "priority": "below_normal"}   # 2 and 3 reserved
@@ -670,11 +677,13 @@ class BackgroundPolicyTests(unittest.TestCase):
                     order = config["cores"]
                     rest = [c for c in chosen if c not in floor]
                     skipped = [c for c in room if c not in floor and c not in rest]
-                    if rest and skipped:
+                    if config["keep_free"]:
+                        self.assertEqual(chosen, room[:wanted])
+                    elif rest and skipped:
                         self.assertGreater(min(order.index(c) for c in rest), max(order.index(c) for c in skipped))
                     after = claims + [{"cores": sorted(chosen), "background": True}]
                     ordinary_room = slots.available(config, timed, after, background=False)
-                    if not floor and not any(c.get("background") for c in claims):
+                    if not config["keep_free"] and not floor and not any(c.get("background") for c in claims):
                         # ordinary work fills the front first and reaches this claim only when nothing else is left
                         for size in range(1, len(ordinary_room) - wanted + 1):
                             self.assertFalse(set(ordinary_room[:size]) & set(chosen))

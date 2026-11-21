@@ -812,11 +812,14 @@ def available(config: dict, timed: dict, claims: list[dict], *, background: bool
 
 
 def background_order(config: dict, room: list[int]) -> list[int]:
-    """The order in which an admitted background request takes cores from its `room` (what available() returned
-    for it): the CI floor first, as before, then the other cores from the far end of the preference order, the
-    cores an ordinary claim takes last. Ordinary claims take the front of the same order, so they meet background
-    work only when they cannot fit without it. No other request's choice and no prediction depends on where a
-    background claim sits: every copy of this tool reads the live claims' cores."""
+    """Take the CI floor first, then the other cores from the far end of the preference order.
+
+    A host with a keep_free reserve retains the original order: an ordinary core pool can use the whole
+    allocatable budget, so moving a background claim off that pool could keep it running outside the budget.
+    Ordinary admission and its prediction both use the live claims' cores and their original placement order.
+    """
+    if config["keep_free"]:
+        return room
     floor = set(ci_floor_cores(config))
     return [core for core in room if core in floor] + [core for core in reversed(room) if core not in floor]
 
