@@ -1,4 +1,4 @@
-//! Native selection of printed versus installed flashback costs.
+//! Select and bind the permission and cost of a graveyard cast before paying it.
 use super::*;
 use crate::effect::sphinx_lore_v1 as lore;
 use serde::{Deserialize, Serialize};
@@ -158,11 +158,12 @@ pub(crate) fn options_record(state: &GameState, index: u64) -> Result<&OptionsV1
                     RouteV1::PrintedFlashback if d.flashback.is_some() && d.escape.is_none() => {}
                     RouteV1::Escape if d.escape.is_some() && d.flashback.is_none() => {}
                     RouteV1::Snapcaster
-                        if crate::eternal_lurrus_v1::flashback_granted(
-                            state,
-                            options.spell,
-                            options.graveyard_generation,
-                        ) => {}
+                        if options.turn == state.turn_key_v1()
+                            && crate::eternal_lurrus_v1::flashback_granted(
+                                state,
+                                options.spell,
+                                options.graveyard_generation,
+                            ) => {}
                     RouteV1::BeamMeUp
                         if crate::eternal_pauper_pf1c_v1::beam_me_up_cost(d).is_some() => {}
                     RouteV1::Breach
@@ -401,51 +402,18 @@ pub(super) fn validate(state: &GameState, p: &PendingCast) -> Result<(), String>
         || record.controller != p.controller
         || record.graveyard_generation != origin.origin_zone_change_count
         || p.origin_zone != Zone::Graveyard
-        || record.routes.is_empty()
-        || record.routes.len() > usize::from(u16::MAX)
-        || record
-            .routes
-            .iter()
-            .enumerate()
-            .any(|(i, r)| record.routes[..i].contains(r))
     {
-        return Err("Sphinx route source/menu changed".into());
+        return Err("graveyard route no longer matches the announcing card".into());
     }
-    for route in &record.routes {
-        match *route {
-            RouteV1::Granted { installation } => {
-                let (b, holder, turn) = lore::installation(state, installation)?;
-                if installation >= c.options_history_index
-                    || b.object != p.spell
-                    || b.expected_zone_change_count != record.graveyard_generation
-                    || holder != p.controller
-                    || turn != record.turn
-                    || !lore::active_at(state, c.options_history_index as usize)?
-                        .contains(&installation)
-                {
-                    return Err(
-                        "Sphinx original route grant changed or expired before announcement".into(),
-                    );
-                }
-            }
-            RouteV1::PrintedFlashback
-                if card_def::CARD_DEFS[record.card_def as usize]
-                    .flashback
-                    .is_some() => {}
-            RouteV1::Escape
-                if card_def::CARD_DEFS[record.card_def as usize]
-                    .escape
-                    .is_some() => {}
-            RouteV1::Snapcaster | RouteV1::BeamMeUp | RouteV1::Breach | RouteV1::Retrace => {} // options_record validates the grant.
-            RouteV1::Normal
-                if crate::standard_cards_v1::graveyard_cast_granted_without_retrace(
-                    state,
-                    p.spell,
-                    p.controller,
-                    record.graveyard_generation,
-                ) => {}
-            _ => return Err("Sphinx foreign cast route".into()),
-        }
+    if record.routes.contains(&RouteV1::Normal)
+        && !crate::standard_cards_v1::graveyard_cast_granted_without_retrace(
+            state,
+            p.spell,
+            p.controller,
+            record.graveyard_generation,
+        )
+    {
+        return Err("ordinary graveyard permission no longer matches the card".into());
     }
     let selected = record
         .routes

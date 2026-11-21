@@ -9354,15 +9354,6 @@ fn cast_single_object_cost_needed(
                 _ => None,
             })
     };
-    if pending
-        .source_contract
-        .spell_cast_origin
-        .is_some_and(|origin| origin.route == SpellCastRouteV4::BeamMeUpV1)
-    {
-        return Some(CastSingleObjectCostV1::ReturnPermanent(
-            card_def::PermanentFilterDef::CreatureV1,
-        ));
-    }
     if pending.is_flashback && !sphinx_lore_cast_v1::granted(pending) {
         return def
             .flashback
@@ -9372,8 +9363,6 @@ fn cast_single_object_cost_needed(
                     CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
                         Some(CastSingleObjectCostV1::TapPermanents(*filter, *count))
                     }
-                    // Boarding Action's "Beam me up": return a creature
-                    // you control to its owner's hand (wave Pf1c).
                     CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
                         Some(CastSingleObjectCostV1::ReturnPermanent(*filter))
                     }
@@ -9382,7 +9371,11 @@ fn cast_single_object_cost_needed(
             })
             .or_else(additional);
     }
-    if pending.cast_mode != Some(CastMode::Alternative) {
+    let beam_me_up = pending
+        .source_contract
+        .spell_cast_origin
+        .is_some_and(|origin| origin.route == SpellCastRouteV4::BeamMeUpV1);
+    if pending.cast_mode != Some(CastMode::Alternative) && !beam_me_up {
         return additional();
     }
     def.alt_cost
@@ -16805,6 +16798,7 @@ pub(crate) fn validate_pending_cast(
             pending.controller,
         );
     let has_cast_mode_choice = def.alt_cost.is_some()
+        && crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_none()
         && !citadel_cast
         && (!resolution_cast_v1::free_cast(state, pending.spell)
             || crate::standard_cards_v1::room_cast_mana_value(def, CastMethodV4::Alternative)
