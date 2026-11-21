@@ -21,7 +21,13 @@
 //! `select_with_training_tensor_v4`). Every pass A result carries
 //! `stop_decision_index`, the number of decisions played before the game
 //! ended or stopped (null when it stopped before a session existed). A
-//! selection error is recorded with its decision, the full error text, the
+//! completed Pass A session records successful score-and-selection calls and
+//! successful steps separately. Its digests cover the ordered V6 scoring
+//! observations, encoded tensors and scores (including encoded V7 and London
+//! inputs), and selected ordinals actually submitted to the session. A step
+//! error includes the final scored row and attempted ordinal in the digests.
+//!
+//! A selection error is recorded with its decision, the full error text, the
 //! full input diagnosis (`diagnose_current_decision_input_v4`), the candidate
 //! index the diagnosis implicates when it names one (`at <i>`) with that
 //! candidate's semantic in full, the whole action menu's semantics up to
@@ -46,7 +52,9 @@
 //!     prefix), never guessed into either class above.
 //!
 //! Pass B runs the same episode through `collect_episode`, the trainer's own
-//! collection with trajectory validation. It returns natural, non-natural
+//! collection with trajectory validation. On natural completion it hashes
+//! the ordered decision records returned by the collector. On other results
+//! the collector does not return any records. It returns natural, non-natural
 //! with its terminal, or `other` with the trainer's text; it carries no stop
 //! index for `other`. The row's `comparison` therefore states exactly what
 //! was compared: `outcome_agreement` (same outcome class and, for terminals,
@@ -334,6 +342,12 @@ fn terminal_json(terminal: &RlSessionTerminalV1) -> Value {
     })
 }
 
+/// Compact Serde JSON plus LF for each record, in the order encountered.
+fn hash_json_record(hash: &mut Sha256, record: &impl Serialize) {
+    hash.update(serde_json::to_vec(record).expect("probe digest record serializes"));
+    hash.update(b"\n");
+}
+
 /// Pass A: the collector's session, seeds and selection call, driven here
 /// so a stop can be diagnosed on the live decision.
 fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: Select) -> Value {
@@ -359,14 +373,13 @@ fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: 
     let mut uniform = SplitMix64::seed(episode.seed ^ UNIFORM_STREAM);
     let mut decisions = 0u64;
     let mut kinds: BTreeMap<String, u64> = BTreeMap::new();
-    // Rolling digest of what the policy was given and what it answered at
-    // every decision: the decision index, the session's state hash, the
-    // encoded training tensor and the scores (Debug text, which prints every
-    // float's shortest round-trip form). Two builds that agree on
-    // `inputs_sha256` for a game fed the model the same features at every
-    // decision of that game.
+    // Preserve the original input digest: decision index, session state
+    // hash, and round-trip Debug text for the tensor and scores.
     let mut inputs = Sha256::new();
-    loop {
+    let mut observations = Sha256::new();
+    let mut selected_ordinals = Sha256::new();
+    let mut scored = 0u64;
+    let mut result = loop {
         let d = match session.current_response() {
             FastActorResponseV1::Terminal(terminal) => {
                 let class = if terminal.terminal_classification == TerminalClassificationV1::Natural
@@ -375,18 +388,16 @@ fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: 
                 } else {
                     "non_natural"
                 };
-                return json!({"class": class, "stop_decision_index": decisions,
+                break json!({"class": class, "stop_decision_index": decisions,
                     "decisions": decisions, "kinds": kinds,
-                    "inputs_sha256": hex(&inputs.finalize()),
                     "terminal": terminal_json(&terminal)});
             }
             FastActorResponseV1::Decision(d) => d,
         };
         let kind = format!("{:?}", d.decision_kind);
         if decisions >= episode.max_policy_steps {
-            return json!({"class": "policy_step_limit", "stop_decision_index": decisions,
-                "decisions": decisions, "kinds": kinds,
-                "inputs_sha256": hex(&inputs.finalize()), "error": POLICY_STEP_LIMIT_TEXT});
+            break json!({"class": "policy_step_limit", "stop_decision_index": decisions,
+                "decisions": decisions, "kinds": kinds, "error": POLICY_STEP_LIMIT_TEXT});
         }
         let selected = match policy.select_with_training_tensor_v4(&session) {
             Ok((selected, scores, tensor)) => {
@@ -414,13 +425,12 @@ fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: 
                 let implicated = implicated_candidate(&diagnosis);
                 let implicated_semantic = implicated.and_then(|i| texts.get(i).cloned());
                 let (menu, menu_truncated) = capped_menu(&texts);
-                return json!({
+                break json!({
                     "class": class,
                     "stage": stage,
                     "stop_decision_index": decisions,
                     "decisions": decisions,
                     "kinds": kinds,
-                    "inputs_sha256": hex(&inputs.finalize()),
                     "decision_kind": kind,
                     "acting_player": format!("{:?}", d.acting_player),
                     "legal_action_count": d.legal_action_count,
@@ -437,14 +447,28 @@ fn pass_a(policy: &mut FrozenPlayPolicyV1, episode: &ExpandedEpisodeV1, select: 
                 });
             }
         };
+        // The same V6 getter as build_scoring_owned_v4, on the same decision
+        // binding immediately after select and before the session advances.
+        let observation = session
+            .flat_policy_observation_v4(d)
+            .expect("successfully scored decision still has its scoring observation");
+        hash_json_record(&mut observations, &observation);
+        selected_ordinals.update(selected.to_le_bytes());
+        scored += 1;
         *kinds.entry(kind.clone()).or_default() += 1;
         if let Err(error) = session.step(d.episode_id, d.step, selected) {
-            return json!({"class": "step_error", "stop_decision_index": decisions,
+            break json!({"class": "step_error", "stop_decision_index": decisions,
                 "decisions": decisions, "kinds": kinds, "decision_kind": kind,
-                "inputs_sha256": hex(&inputs.finalize()), "error": error.to_string()});
+                "error": error.to_string()});
         }
         decisions += 1;
-    }
+    };
+    result["inputs_sha256"] = json!(hex(&inputs.finalize()));
+    result["scoring_observations_sha256"] = json!(hex(&observations.finalize()));
+    result["selected_ordinals_sha256"] = json!(hex(&selected_ordinals.finalize()));
+    result["scored_decisions"] = json!(scored);
+    result["stepped_decisions"] = json!(decisions);
+    result
 }
 
 /// Pass B: the trainer's collection of the same episode.
@@ -454,8 +478,15 @@ fn pass_b(
     episode: &ExpandedEpisodeV1,
 ) -> Value {
     match collect_episode(policy, learner, None, episode) {
-        Ok(trajectory) => json!({"class": "natural", "decisions": trajectory.decisions.len(),
-            "terminal": terminal_json(&trajectory.terminal)}),
+        Ok(trajectory) => {
+            let mut records = Sha256::new();
+            for record in &trajectory.decisions {
+                hash_json_record(&mut records, record);
+            }
+            json!({"class": "natural", "decisions": trajectory.decisions.len(),
+                "decision_records_sha256": hex(&records.finalize()),
+                "terminal": terminal_json(&trajectory.terminal)})
+        }
         Err(CollectEpisodeErrorV1::NonNatural(terminal)) => {
             json!({"class": "non_natural", "terminal": terminal_json(&terminal)})
         }
