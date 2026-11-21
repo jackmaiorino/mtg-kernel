@@ -4,13 +4,16 @@ inventory against tools/ci/rust_test_cfg.py's prediction, and run that row's tes
 The default row runs every library test the trainer filters select (python/tools/run_rust_lib_filters.py, with
 its per-case limits). Any other row runs exactly the selected tests its build compiles and the default build does
 not, so tests that only hold without the feature (for example fixtures that a catalog feature rejects) never run
-under it. A difference between the compiled inventory and the prediction fails the row before any test runs.
+under it; each of those runs as its own process with a time limit. A difference between the compiled inventory
+and the prediction fails the row before any test runs. The Linux default row first fails if a selected test that
+some Linux build could compile is compiled by no row (rust_test_cfg.py check-coverage).
 
 Usage: run_trainer_row.py --features FEATURES   ("" for default features; the target is this host's OS)
 """
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import subprocess
 import sys
@@ -44,11 +47,25 @@ def compiled(executable: str) -> set[str]:
     return {name for name in names if rust_test_cfg.selected(name)}
 
 
+# Seconds a feature row's case may run before it is stopped and reported as timed out (the filter runner's
+# default limit).
+CASE_TIMEOUT_SECONDS = 1800
+
+
+def filter_runner():
+    spec = importlib.util.spec_from_file_location("run_rust_lib_filters", ROOT / "python/tools/run_rust_lib_filters.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--features", required=True)
     features = parser.parse_args().features
     target = "windows" if sys.platform == "win32" else "linux"
+    if not features and target == "linux" and rust_test_cfg.check_coverage():
+        return 1
     executable = build(features)
     actual, predicted = compiled(executable), set(rust_test_cfg.predict(features, target))
     if actual != predicted:
@@ -65,7 +82,8 @@ def main() -> int:
     print(json.dumps({"feature_only": names, "count": len(names)}), flush=True)
     if not names:
         return 0
-    return subprocess.run([executable, "--exact", *names], cwd=ROOT, check=False).returncode
+    # One process per case, a few at a time, each stopped and reported at the limit (no long command lines).
+    return filter_runner().run_isolated_cases(executable, names, CASE_TIMEOUT_SECONDS, [])
 
 
 if __name__ == "__main__":

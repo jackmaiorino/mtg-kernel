@@ -258,26 +258,64 @@ def feature_only(features: str, target: str = "linux") -> list[str]:
     return sorted(set(predict(features, target)) - set(predict("", target)))
 
 
+def atoms(tree) -> set[str]:
+    if tree[0] in ("all", "any", "not"):
+        return set().union(*(atoms(t) for t in tree[1])) if tree[1] else set()
+    return {tree[2].strip('"')} if tree[0] == "kv" and tree[1] == "feature" else set()
+
+
+def satisfiable_on(cfgs: list, target: str) -> bool:
+    """Whether some feature selection (with Cargo implications) compiles a test with these cfgs on target."""
+    names = sorted(set().union(*(atoms(c) for c in cfgs))) if cfgs else []
+    if len(names) > 12:
+        raise Unknown(f"too many feature atoms to enumerate: {names}")
+    for mask in range(1 << len(names)):
+        enabled = closure(",".join(n for i, n in enumerate(names) if mask >> i & 1))
+        if all(evaluate(c, enabled, target) for c in cfgs):
+            return True
+    return False
+
+
 def uncovered() -> list[tuple[str, str, bool]]:
-    """Selected tests no release-trainer row compiles: (name, file, whether some Windows build compiles it)."""
+    """Selected tests no release-trainer row compiles: (name, file, whether no Linux build can compile it)."""
     rows = [(closure(fs), os) for os, fs in ci_scope.TRAINER_ROWS]
-    windows = [closure(fs) for fs in ci_scope.FEATURE_SETS + [ci_scope.WINDOWS_STORE_FEATURES]]
     out = []
     for name, cfgs, file in all_tests():
         if selected(name) and not any(all(evaluate(c, row, os) for c in cfgs) for row, os in rows):
-            on_windows = any(all(evaluate(c, row, "windows") for c in cfgs) for row in windows)
-            out.append((name, file.relative_to(SRC).as_posix(), on_windows))
+            out.append((name, file.relative_to(SRC).as_posix(), not satisfiable_on(cfgs, "linux")))
     return sorted(out)
+
+
+def check_coverage() -> int:
+    """Exit status for the trainer scope: every selected test is run by some row unless no Linux build compiles it."""
+    gaps = [(name, file) for name, file, windows_only in uncovered() if not windows_only]
+    for name, file in gaps:
+        print(f"no release-trainer row compiles {name} ({file})")
+    if gaps:
+        print("Add a feature set to tools/ci/ci_scope.py FEATURE_SETS (and the trainer-tests matrix) that compiles them.")
+        return 1
+    exempt = sum(1 for *_, windows_only in uncovered() if windows_only)
+    print(f"coverage: every selected test is run by a row, except {exempt} that no Linux build compiles "
+          f"(Windows with non-default features, outside the pull request set too)")
+    return 0
 
 
 def main(argv: list[str]) -> int:
     command = argv[1] if len(argv) > 1 else ""
     if command in ("predict", "feature-only"):
-        print("\n".join((predict if command == "predict" else feature_only)(argv[2] if len(argv) > 2 else "")))
+        target = argv[3] if len(argv) > 3 else "linux"
+        if target not in TARGETS:
+            print(f"target must be one of {sorted(TARGETS)}", file=sys.stderr)
+            return 2
+        function = predict if command == "predict" else feature_only
+        print("\n".join(function(argv[2] if len(argv) > 2 else "", target)))
         return 0
     if command == "uncovered":
-        print("\n".join(f"{name}  ({file})" for name, file in uncovered()))
+        for name, file, windows_only in uncovered():
+            print(f"{name}  ({file})" + ("  Windows only" if windows_only else ""))
         return 0
+    if command == "check-coverage":
+        return check_coverage()
     print(__doc__, file=sys.stderr)
     return 2
 

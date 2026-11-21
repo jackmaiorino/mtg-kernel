@@ -67,9 +67,10 @@ class TableTests(unittest.TestCase):
         import rust_test_cfg
         names = [name for name, _, _ in rust_test_cfg.all_tests() if rust_test_cfg.selected(name)]
         self.assertGreater(len(names), 1000)
-        for name, file, on_windows in rust_test_cfg.uncovered():
+        for name, file, windows_only in rust_test_cfg.uncovered():
             with self.subTest(test=name, file=file):
-                self.assertTrue(on_windows, "no release-trainer row compiles this test")
+                self.assertTrue(windows_only, "no release-trainer row compiles this test")
+        self.assertEqual(rust_test_cfg.check_coverage(), 0)
         # The Standard row must not rerun default tests whose fixtures Standard rejects.
         standard = rust_test_cfg.feature_only("standard-magezero-fixtures")
         self.assertIn("native_training_store_run_v2::tests::standard_fixture_refuses_unadmitted_training_profile",
@@ -135,6 +136,17 @@ class CfgPredictorTests(unittest.TestCase):
         self.assertEqual(self.predicted(files, "a,b"), ["m::gated::inside", "m::gated::moved::moved_test",
                                                          "m::tests::after", "m::tests::both", "m::tests::plain"])
         self.assertIn("m::tests::win::only_windows", self.predicted(files, "", "windows"))
+
+    def test_an_exemption_needs_a_predicate_no_linux_build_satisfies(self):
+        import rust_test_cfg
+        tree = lambda text: rust_test_cfg.parse_cfg(rust_test_cfg.tokens(text))[0]
+        both = [tree('all(feature = "limited-fdn-fixtures", feature = "native-training-store-v2-production")')]
+        self.assertTrue(rust_test_cfg.satisfiable_on(both, "linux"))
+        windows = [tree('all(windows, feature = "limited-fdn-fixtures")')]
+        self.assertFalse(rust_test_cfg.satisfiable_on(windows, "linux"))
+        self.assertTrue(rust_test_cfg.satisfiable_on(windows, "windows"))
+        implied = [tree('all(feature = "limited-fdn-fixtures", not(feature = "standard-magezero-fixtures"))')]
+        self.assertTrue(rust_test_cfg.satisfiable_on(implied, "linux"))
 
 
 class ScopeTests(unittest.TestCase):

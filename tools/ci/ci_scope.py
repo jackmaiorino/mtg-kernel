@@ -75,7 +75,6 @@ FEATURE_SETS = ["", "experimental-burn-net8-packed-cuda-v1,gpu-exact-fault-injec
                 "viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1,"
                 "native-training-store-v2-production"]
 TRAINER_ROWS = [("linux", features) for features in FEATURE_SETS] + [("windows", "")]
-WINDOWS_STORE_FEATURES = "limited-fdn-fixtures,native-training-store-v2-production"
 
 
 BIT_IDENTITY_ROWS = [
