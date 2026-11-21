@@ -37,6 +37,8 @@ BATCHBOUND_SOURCE_MERGED = "66b532ed669cff0c9713d4e96b1f1bdbc20a81be"
 BATCHBOUND_GROUPS_SOURCE_MERGED = "a9388d185a53815f114528c805ef4e15b33c3722"
 # The merge commit of PR 799 (per-seat priority-window rules) on release/mull-c5719e1cf (this guard branch only).
 PRIORITY_WINDOWS_SOURCE_MERGED = "fe06baa32227b9319a1f53d1d11f9d2abe916e27"
+# The merge commit of PR 811 (action-windows-v1 combat-participant grouping) on release/mull-c5719e1cf (this guard branch only).
+PRIORITY_WINDOWS_811_SOURCE_MERGED = "572de58807a51254212e1cb2e4904f24a676e3d9"
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
 # scripts or proc macros) and writes a manifest with another schema id, the name and the flags. A variant binary runs
@@ -57,6 +59,7 @@ SOURCES = (
     BATCHBOUND_SOURCE_MERGED,
     BATCHBOUND_GROUPS_SOURCE_MERGED,
     PRIORITY_WINDOWS_SOURCE_MERGED,
+    PRIORITY_WINDOWS_811_SOURCE_MERGED,
 )
 # The image follows the host (this guard branch only): the amd64 image for the portable x86-64 build (unchanged),
 # and on an arm64 hosted runner the linux/arm64 member of the python:3.12-slim-bookworm index 935c3c5b... that the
