@@ -15,7 +15,7 @@ import argparse
 import json
 import subprocess
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -28,19 +28,39 @@ def gh_get(path: str):
     return json.loads(out or "null")
 
 
+# GitHub returns at most this many runs for one filtered listing.
+RESULT_CAP = 1000
+
+
+def listing(repo: str, start: datetime, end: datetime) -> tuple[int, list[dict]]:
+    created = f"{start:%Y-%m-%dT%H:%M:%SZ}..{end:%Y-%m-%dT%H:%M:%SZ}"
+    out = subprocess.run(["gh", "api", "--paginate", f"repos/{repo}/actions/workflows/ci.yml/runs?status=completed"
+                          f"&created={created}&per_page=100", "--jq", "{total: .total_count, runs: .workflow_runs} "
+                          "| tojson"], capture_output=True, text=True, encoding="utf-8", check=True).stdout
+    pages = [json.loads(line) for line in out.splitlines() if line.strip()]
+    return (pages[0]["total"] if pages else 0), [run for page in pages for run in page["runs"]]
+
+
+def runs_in(repo: str, start: datetime, end: datetime, depth: int = 0) -> list[dict]:
+    """Completed runs created in [start, end], split into halves while a listing would exceed RESULT_CAP."""
+    total, runs = listing(repo, start, end)
+    if total <= RESULT_CAP:
+        return runs
+    if depth >= 12 or end - start <= timedelta(minutes=1):
+        raise SystemExit(f"more than {RESULT_CAP} runs created in {start}..{end}: listing incomplete")
+    middle = start + (end - start) / 2
+    return runs_in(repo, start, middle, depth + 1) + runs_in(repo, middle + timedelta(seconds=1), end, depth + 1)
+
+
 def runs_since(repo: str, since: str, lookback_days: int) -> list[dict]:
-    """Completed runs that finished at or after since. GitHub lists runs by creation only, so runs created up to
-    lookback_days before since are examined (reruns of older runs are outside that window; the default covers
-    any rerun GitHub still allows, 30 days)."""
+    """Completed push and dispatch runs that finished at or after since. GitHub lists runs by creation only, so
+    runs created up to lookback_days before since are examined (the default 30 covers any rerun GitHub allows),
+    in slices below its result cap."""
     start = datetime.fromisoformat(since.replace("Z", "+00:00"))
-    created = (start - timedelta(days=lookback_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    out = subprocess.run(["gh", "api", "--paginate",
-                          f"repos/{repo}/actions/workflows/ci.yml/runs?status=completed&created=%3E%3D{created}"
-                          "&per_page=100", "--jq", ".workflow_runs[] | select(.event == \"push\" or .event == "
-                          "\"workflow_dispatch\") | tojson"], capture_output=True, text=True, encoding="utf-8",
-                         check=True).stdout
-    runs = [json.loads(line) for line in out.splitlines() if line.strip()]
-    return [r for r in runs if datetime.fromisoformat(r["updated_at"].replace("Z", "+00:00")) >= start]
+    runs = runs_in(repo, start - timedelta(days=lookback_days), datetime.now(timezone.utc))
+    unique = {run["id"]: run for run in runs}.values()
+    return [r for r in unique if r.get("event") in ("push", "workflow_dispatch")
+            and datetime.fromisoformat(r["updated_at"].replace("Z", "+00:00")) >= start]
 
 
 def red_runs(runs: list[dict], branches: list[str], get=None, repo: str = "") -> list[dict]:

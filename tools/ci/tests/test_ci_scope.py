@@ -341,9 +341,18 @@ class MonitorTests(unittest.TestCase):
         self.assertIn("github.event_name == 'workflow_dispatch' && (inputs.scope != '' || inputs.windows_runner != '')"
                       " && format('-dispatch-{0}', github.run_id)", group)
 
-    def test_no_earlier_monitored_run_covers_the_head_only(self):
+    def test_only_replaced_earlier_runs_make_the_range_incomplete(self):
+        get = self.fake_api(["c1", "c2", "c3"], [(8, "c2", "cancelled", "2026-11-21T11:30:00Z"),
+                                                 (7, "c1", "cancelled", "2026-11-21T11:00:00Z")], {"c3": (837, "x")})
+        body, line, merges = self.run_report(get)
+        self.assertIn("(incomplete, newest only)", line)
+        self.assertNotIn("first responder the author of #837", line)
+
+    def test_no_earlier_monitored_run_is_an_unbounded_range(self):
         get = self.fake_api(["c1", "c2", "c3"], [], {"c3": (837, "x")})
-        self.assertEqual([m["sha"] for m in self.run_report(get)[2]], ["c3"])
+        body, line, merges = self.run_report(get)
+        self.assertEqual([m["sha"] for m in merges], ["c3"])
+        self.assertIn("(incomplete, newest only)", line)
 
     def test_the_comment_mentions_no_one(self):
         import post_merge_report as report
@@ -351,6 +360,25 @@ class MonitorTests(unittest.TestCase):
                                     [{"sha": "abcdef1234", "pull": 7, "author": "x"}])
         self.assertNotIn("@s", body + line)
         self.assertIn("full dispatch run", body)
+
+    def test_the_collector_splits_listings_above_the_result_cap(self):
+        import red_push_runs as red
+        from datetime import datetime, timezone
+        calls = []
+
+        def listing(repo, start, end):
+            calls.append((start, end))
+            hours = (end - start).total_seconds() / 3600
+            return (1500 if hours > 24 else 10), [{"id": len(calls), "event": "push",
+                                                     "updated_at": "2026-11-21T12:00:00Z"}]
+        saved = red.listing
+        red.listing = listing
+        try:
+            runs = red.runs_in("o/r", datetime(2026, 11, 1, tzinfo=timezone.utc), datetime(2026, 11, 3, tzinfo=timezone.utc))
+        finally:
+            red.listing = saved
+        self.assertGreater(len(calls), 1)
+        self.assertEqual(len(runs), len(calls) - sum(1 for s_, e_ in calls if (e_ - s_).total_seconds() > 86400))
 
     def test_the_append_command_and_append_are_exact(self):
         import post_merge_report as report
