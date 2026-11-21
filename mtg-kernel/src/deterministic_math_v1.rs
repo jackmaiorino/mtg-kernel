@@ -691,6 +691,10 @@ const MXCSR_FTZ_BIT_V1: u32 = 1 << 15;
 const MXCSR_ROUNDING_CONTROL_SHIFT_V1: u32 = 13;
 #[cfg(target_arch = "x86_64")]
 const MXCSR_ROUNDING_CONTROL_MASK_V1: u32 = 0b11;
+/// The six exception mask bits (invalid, denormal, divide by zero,
+/// overflow, underflow, precision): MXCSR bits 7 to 12.
+#[cfg(target_arch = "x86_64")]
+const MXCSR_EXCEPTION_MASKS_V1: u32 = 0b11_1111 << 7;
 
 /// Reads the calling thread's MXCSR. `stmxcsr` with no special
 /// `options(...)` is a full side effect from the compiler's point of view,
@@ -711,6 +715,18 @@ pub(crate) fn read_mxcsr_v1() -> u32 {
         );
     }
     mxcsr
+}
+
+/// `true` when every floating-point exception is masked on the calling
+/// thread (MXCSR bits 7 to 12 all set, the default). Kernels that leave out
+/// operations whose results no sum reads require it: with an exception
+/// unmasked, the reference's operation could trap where the left-out one
+/// cannot. Sticky exception flags (MXCSR bits 0 to 5) are not part of the
+/// bit-identity contract: a left-out operation can leave a flag clear that
+/// the reference would have set, and nothing reads the flags.
+#[cfg(target_arch = "x86_64")]
+pub(crate) fn mxcsr_exceptions_masked_v1() -> bool {
+    read_mxcsr_v1() & MXCSR_EXCEPTION_MASKS_V1 == MXCSR_EXCEPTION_MASKS_V1
 }
 
 /// Writes the calling thread's MXCSR.

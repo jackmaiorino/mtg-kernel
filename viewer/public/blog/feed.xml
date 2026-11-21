@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>MTG Kernel Weekly</title>
+  <subtitle>A computer program learning Magic: The Gathering by playing games against itself and earlier bots. Follow its progress one chart a week.</subtitle>
+  <link rel="self" href="https://jackmaiorino.github.io/mtg-kernel/blog/feed.xml"/>
+  <link rel="alternate" href="https://jackmaiorino.github.io/mtg-kernel/blog/"/>
+  <id>https://jackmaiorino.github.io/mtg-kernel/blog/</id>
+  <updated>2026-11-21T12:01:00Z</updated>
+  <author><name>MTG Kernel</name></author>
+  <!-- Newest first. The weekly task adds one <entry> per post and updates <updated> above. -->
+  <entry>
+    <title>#1: A bot that taught itself Magic is still getting better</title>
+    <link rel="alternate" href="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/"/>
+    <id>https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/</id>
+    <published>2026-11-20T22:00:00-05:00</published>
+    <updated>2026-11-21T12:01:00Z</updated>
+    <summary>A Magic: The Gathering bot won about 71 in 100 games against its starting version after 1.59 million training steps.</summary>
+  </entry>
+</feed>

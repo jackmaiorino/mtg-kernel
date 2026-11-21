@@ -671,6 +671,149 @@ fn mesmeric_fiend_reveals_publicly_exiles_nonland_and_returns_exact_linked_card(
 }
 
 #[test]
+fn fiend_returns_the_exiled_card_after_changing_controller() {
+    let mut state = ready_main(774);
+    let fiend = put_object(&mut state, PlayerId::P0, "Mesmeric Fiend", Zone::Hand);
+    let card = put_object(&mut state, PlayerId::P1, "Fume Spitter", Zone::Hand);
+    queue_move_triggers(&mut state, fiend, Zone::Battlefield);
+    choose_fiend_trigger_target(&mut state, fiend);
+    pass_until_idle(&mut state);
+    assert_eq!(state.objects.get(card).zone, Zone::Exile);
+
+    state.players[0].battlefield.retain(|id| *id != fiend);
+    state.players[1].battlefield.push(fiend);
+    state.objects.get_mut(fiend).controller = PlayerId::P1;
+    queue_move_triggers(&mut state, fiend, Zone::Graveyard);
+    assert_eq!(state.engine.pending_triggers[0].controller, PlayerId::P1);
+    let mut restored: GameState =
+        serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+    pass_until_idle(&mut restored);
+    assert!(restored.players[1].hand.contains(&card));
+    assert!(restored.engine.linked_exile_records.is_empty());
+}
+
+#[test]
+fn repeated_linked_enters_return_each_matching_card_from_one_incarnation() {
+    for (name, origin) in [
+        ("Mesmeric Fiend", Zone::Hand),
+        ("Journey to Nowhere", Zone::Battlefield),
+    ] {
+        for owner in [PlayerId::P0, PlayerId::P1] {
+            let opponent = owner.opponent();
+            let mut state = ready_main(775);
+            state.active_player = owner;
+            state.priority_player = owner;
+            let source = put_object(&mut state, owner, name, Zone::Hand);
+            let first = put_object(&mut state, opponent, "Fume Spitter", origin);
+            let second = put_object(&mut state, opponent, "Cryptic Serpent", origin);
+            queue_move_triggers(&mut state, source, Zone::Battlefield);
+            let enter = state.engine.pending_triggers[0].clone();
+            for (index, target) in [first, second].into_iter().enumerate() {
+                // Exercise an additional instance of the native enter ability for the same source.
+                if index == 1 {
+                    state.engine.pending_triggers.push(enter.clone());
+                }
+                for _ in 0..32 {
+                    let decision = engine::advance_until_decision(&mut state);
+                    if state.objects.get(target).zone == Zone::Exile && state.stack.is_empty() {
+                        break;
+                    }
+                    let action = match decision {
+                        Decision::ChooseTargets { .. } => {
+                            Action::ChooseTarget(if origin == Zone::Hand {
+                                Target::Player(opponent)
+                            } else {
+                                Target::Object(target)
+                            })
+                        }
+                        Decision::ChooseEffectTargets { .. } => {
+                            Action::ChooseEffectTarget(Target::Object(target))
+                        }
+                        Decision::CastSpellOrPass { .. } => Action::Pass,
+                        other => panic!("{name} failed to exile card {index}: {other:?}"),
+                    };
+                    engine::step(&mut state, action).unwrap();
+                }
+                assert_eq!(state.objects.get(target).zone, Zone::Exile);
+                assert_eq!(state.engine.linked_exile_records.len(), index + 1);
+                assert_historical_exile_relation(&state, source, 1, target);
+            }
+
+            let mut duplicate = state.clone();
+            duplicate
+                .engine
+                .linked_exile_records
+                .push(state.engine.linked_exile_records[0]);
+            assert!(observe_v2(&duplicate, &HarnessSurfaceV2::default(), owner, 18).is_err());
+
+            // The same physical card can enter exile again before the source leaves.
+            let mut later = state.clone();
+            event::propose_and_commit(
+                &mut later,
+                ProposedEvent::zone_change(first, Zone::Graveyard),
+            );
+            event::propose_and_commit(&mut later, ProposedEvent::zone_change(first, Zone::Exile));
+            queue_move_triggers(&mut later, source, Zone::Graveyard);
+            pass_until_idle(&mut later);
+            assert!(later.engine.halted.is_none());
+            assert_eq!(later.objects.get(first).zone, Zone::Exile);
+            assert_eq!(later.objects.get(second).zone, origin);
+            assert!(later.engine.linked_exile_records.is_empty());
+
+            queue_move_triggers(&mut state, source, Zone::Graveyard);
+            for corruption in [
+                "duplicate",
+                "second source claims the same card",
+                "missing exile membership",
+                "forged attachment",
+            ] {
+                let mut broken = state.clone();
+                match corruption {
+                    "duplicate" => broken
+                        .engine
+                        .linked_exile_records
+                        .push(state.engine.linked_exile_records[1]),
+                    "second source claims the same card" => {
+                        let other = put_object(&mut broken, owner, name, Zone::Battlefield);
+                        let mut record = broken.engine.linked_exile_records[1];
+                        record.source =
+                            mtg_kernel::state::AbilitySourceContractV4::capture(&broken, other);
+                        broken.engine.linked_exile_records.push(record);
+                    }
+                    "missing exile membership" => broken.exile.retain(|id| *id != second),
+                    _ => {
+                        broken.engine.linked_exile_records[1].source.attached_to =
+                            Some(mtg_kernel::state::ObjectLinkV4 {
+                                object: first,
+                                zone_change_count: 0,
+                            });
+                    }
+                }
+                let mut broken: GameState =
+                    serde_json::from_slice(&serde_json::to_vec(&broken).unwrap()).unwrap();
+                let records = broken.engine.linked_exile_records.clone();
+                assert!(
+                    matches!(pass_until_idle(&mut broken), Decision::Halted { .. }),
+                    "{name}: {corruption}"
+                );
+                assert_eq!(broken.engine.linked_exile_records, records);
+                assert_eq!(broken.objects.get(first).zone, Zone::Exile);
+                assert_eq!(broken.objects.get(second).zone, Zone::Exile);
+            }
+            let mut restored: GameState =
+                serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+            pass_until_idle(&mut restored);
+            assert!(restored.engine.halted.is_none());
+            for target in [first, second] {
+                assert_eq!(restored.objects.get(target).zone, origin);
+                assert_eq!(restored.objects.get(target).owner, opponent);
+            }
+            assert!(restored.engine.linked_exile_records.is_empty());
+        }
+    }
+}
+
+#[test]
 fn mesmeric_fiend_classic_leave_before_etb_permanently_exiles_and_all_land_is_noop() {
     let mut state = ready_main(0x4d45_534d_4552_0002);
     let fiend = put_object(&mut state, PlayerId::P0, "Mesmeric Fiend", Zone::Hand);

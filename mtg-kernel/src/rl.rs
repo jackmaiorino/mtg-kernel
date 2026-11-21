@@ -673,16 +673,6 @@ pub enum SpellCopyStageV2 {
     Target,
 }
 
-impl From<engine::SpellCopyStage> for SpellCopyStageV2 {
-    fn from(value: engine::SpellCopyStage) -> Self {
-        match value {
-            engine::SpellCopyStage::Payment => SpellCopyStageV2::Payment,
-            engine::SpellCopyStage::Retarget => SpellCopyStageV2::Retarget,
-            engine::SpellCopyStage::Target => SpellCopyStageV2::Target,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PendingSpellCopySemanticV2 {
     pub parent: Option<CardStableRefV1>,
@@ -6569,6 +6559,20 @@ fn policy_observation_extensions_conqueror_inner_v49_fake_v50(
             }
         }
     }
+    if let Some(pending) = state
+        .engine
+        .pending_spell_copy
+        .as_ref()
+        .filter(|pending| pending.stage == engine::SpellCopyStage::Copy)
+    {
+        let parent =
+            engine::validate_pending_spell_copy(state, pending).map_err(RlContractError)?;
+        historical_public_sources.push(HistoricalPublicSourceV6 {
+            context: HistoricalSourceContextV6::PendingEffect,
+            source: card_ref(state, parent.source)?,
+            stack_item_kind: StackItemKindV2::Spell,
+        });
+    }
     Ok(PolicyObservationExtensionsV6 {
         pending_cast_object_cost,
         decision_local_library,
@@ -7556,6 +7560,18 @@ fn core_surface_action_candidates_fake_scoped_v50(
             } => {
                 let actor = (*player).into();
                 let source = card_ref(state, *source)?;
+                if let Some(pending) = state.engine.pending_spell_copy.as_ref() {
+                    engine::validate_pending_spell_copy(state, pending).map_err(RlContractError)?;
+                    if pending.stage != engine::SpellCopyStage::Copy
+                        || pending.player != *player
+                        || pending.resolving_source.0 != source.arena_id
+                        || *option_count != 2
+                    {
+                        return Err(RlContractError(
+                            "effect choice disagrees with the pending spell copy".into(),
+                        ));
+                    }
+                }
                 if let Some(pending) = state.engine.pending_land_play.as_ref() {
                     engine::validate_pending_land_play(state, pending).map_err(RlContractError)?;
                     if pending.controller != *player
@@ -11483,7 +11499,10 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
                         && other.exiled_zone_change_count == record.exiled_zone_change_count)
                         || (other.source == record.source
                             && !until_leaves
-                            && definition.name != "Lagrella, the Magpie")
+                            && !matches!(
+                                definition.name,
+                                "Journey to Nowhere" | "Mesmeric Fiend" | "Lagrella, the Magpie"
+                            ))
                 })
         {
             return Err(RlContractError(
@@ -11496,12 +11515,16 @@ fn validate_linked_exile_records_public_v4(state: &GameState) -> Result<()> {
         let exiled = state.objects.try_get(record.exiled).ok_or_else(|| {
             RlContractError("linked-exile record exiled object is missing".to_string())
         })?;
-        if source.card_def != record.source.card_def
+        let source_matches = match definition.name {
+            "Mesmeric Fiend" | "Journey to Nowhere" => {
+                crate::engine::source_card_def_matches(state, record.source, source.card_def)
+            }
+            _ => source.card_def == record.source.card_def,
+        };
+        if !source_matches
             || source.owner != record.source.owner
             || source.zone_change_count < record.source.zone_change_count
-            || exiled.card_def != record.exiled_card_def
-            || exiled.owner != record.exiled_owner
-            || exiled.zone_change_count < record.exiled_zone_change_count
+            || !crate::linked_exile_v4::target_matches(state, record, exiled)
         {
             return Err(RlContractError(
                 "linked-exile record no longer matches its physical objects".to_string(),
@@ -12118,6 +12141,20 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
         .pending_effect
         .as_ref()
         .or(show_and_tell_hand.as_ref());
+    // The decision to create a copy is a binary effect option on the still
+    // resolving parent. Reuse that shape in the frozen observation schema.
+    let (paid_copy, other_copy) =
+        state
+            .engine
+            .pending_spell_copy
+            .as_ref()
+            .map_or((None, None), |pending| {
+                if pending.stage == engine::SpellCopyStage::Copy {
+                    (Some(pending), None)
+                } else {
+                    (None, Some(pending))
+                }
+            });
     let current_stage = if state.engine.halted.is_some() {
         EngineDecisionStageV2::Halted
     } else if state.pending_legend_rule_v1.is_some() {
@@ -12134,9 +12171,12 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
         EngineDecisionStageV2::PendingOptionalCost
     } else if state.engine.pending_optional_cost_sacrifice.is_some() {
         EngineDecisionStageV2::PendingOptionalCostSacrifice
-    } else if state.engine.pending_spell_copy.is_some() {
+    } else if other_copy.is_some() {
         EngineDecisionStageV2::PendingSpellCopy
-    } else if pending_effect.is_some() || state.engine.pending_land_play.is_some() {
+    } else if paid_copy.is_some()
+        || pending_effect.is_some()
+        || state.engine.pending_land_play.is_some()
+    {
         EngineDecisionStageV2::PendingEffect
     } else if !state.engine.pending_triggers.is_empty() {
         EngineDecisionStageV2::PendingTriggers
@@ -12303,13 +12343,23 @@ fn engine_context_v2_conqueror_inner_v49_fake_v50(
             .as_ref()
             .map(|p| pending_optional_cost_sacrifice_semantic_v2(state, acting_player, p))
             .transpose()?,
-        pending_spell_copy: state
-            .engine
-            .pending_spell_copy
-            .as_ref()
+        pending_spell_copy: other_copy
             .map(|p| pending_spell_copy_semantic_v2(state, acting_player, p))
             .transpose()?,
-        pending_effect: if let Some(pending) = pending_effect {
+        pending_effect: if let Some(pending) = paid_copy {
+            let parent =
+                engine::validate_pending_spell_copy(state, pending).map_err(RlContractError)?;
+            Some(PendingEffectSemanticV4 {
+                source: Some(card_ref(state, parent.source)?),
+                controller: parent.controller.into(),
+                choice: Some(PendingEffectChoiceSemanticV4::Options {
+                    player: pending.player.into(),
+                    structural_path: engine::SPELL_COPY_CHOICE_PATH.to_vec(),
+                    option_count: 2,
+                    creature_options: None,
+                }),
+            })
+        } else if let Some(pending) = pending_effect {
             Some(if accept_akroma {
                 pending_effect_semantic_v4_akroma_inner_fake_v50(
                     state,
@@ -13447,7 +13497,16 @@ fn pending_spell_copy_semantic_v2(
         parent: visible_card_ref(state, p.resolving_source, acting_player)?,
         player: p.player.into(),
         inherited_target: inherited_targets.remove(0),
-        stage: p.stage.into(),
+        stage: match p.stage {
+            engine::SpellCopyStage::Payment => SpellCopyStageV2::Payment,
+            engine::SpellCopyStage::Retarget => SpellCopyStageV2::Retarget,
+            engine::SpellCopyStage::Target => SpellCopyStageV2::Target,
+            engine::SpellCopyStage::Copy => {
+                return Err(RlContractError(
+                    "paid spell-copy option requires effect projection".into(),
+                ));
+            }
+        },
         copy: p
             .copy_source
             .map(|id| visible_card_ref(state, id, acting_player))

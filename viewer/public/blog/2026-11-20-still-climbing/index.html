@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MTG Kernel Weekly #1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Article and interactive chart share one reading column. */
+:root {
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --ink: #12151b;
+  --ink-2: #4a505c;
+  --ink-3: #7a808c;
+  --rule: #dde1e8;
+  --grid: #e9ecf1;
+  --accent: #2a78d6;
+  --pending: #eb6834;
+  --proj: #8a909b;
+  --f-display: "Sora", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111318; --card: #181b21; --ink: #eef0f4; --ink-2: #b9bfca; --ink-3: #8a919d;
+  --rule: #2b3039; --grid: #232830; --accent: #4b93ea;
+  --pending: #f07a4a; --proj: #8d94a0; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111318; --card: #181b21; --ink: #eef0f4; --ink-2: #b9bfca; --ink-3: #8a919d;
+  --rule: #2b3039; --grid: #232830; --accent: #4b93ea;
+  --pending: #f07a4a; --proj: #8d94a0; color-scheme: dark }
+
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16px; line-height: 1.6; }
+.wrap { max-width: 760px; margin: 0 auto; padding-block: 40px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 28px; }
+.nav { display: flex; gap: 18px; flex-wrap: wrap; font-size: 14px; }
+.nav a, .prose a { color: var(--accent); }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3); display: flex; gap: 12px; flex-wrap: wrap; }
+h1 { font-family: var(--f-display); font-weight: 700; font-size: clamp(30px, 6vw, 46px); line-height: 1.08; margin: 6px 0 0; text-wrap: balance; letter-spacing: -.01em; }
+h1 em { font-style: normal; color: var(--accent); }
+.dek { font-size: 18px; color: var(--ink-2); margin: 12px 0 0; max-width: 60ch; }
+.card { background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 20px; min-width: 0; }
+.chart-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+.chart-title { font-family: var(--f-display); font-weight: 500; font-size: 15px; margin: 0; }
+.chart-sub { font-size: 13px; color: var(--ink-3); margin: 2px 0 0; }
+.big { text-align: right; }
+.big .n { font-family: var(--f-display); font-weight: 700; font-size: 40px; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; }
+.big .l { font-size: 12px; color: var(--ink-3); }
+.svgbox { position: relative; margin-top: 12px; }
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { font-family: var(--f-mono); font-size: 11px; fill: var(--ink-3); }
+svg .lab { fill: var(--ink-2); font-size: 12px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); margin-top: 10px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.sw { width: 18px; height: 0; border-top: 2px solid var(--accent); }
+.sw.proj { border-top: 2px dashed var(--proj); }
+.sw.pend { width: 10px; height: 10px; border: 2px solid var(--pending); border-radius: 50%; }
+.tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--bg); font-family: var(--f-mono); font-size: 12px; line-height: 1.45; padding: 8px 10px; border-radius: 6px; width: max-content; max-width: 100%; transform: translateY(calc(-100% - 12px)); }
+.controls { display: flex; justify-content: flex-end; margin-top: 8px; }
+button { font: 500 13px var(--f-body); color: var(--accent); background: transparent; border: 1px solid var(--rule); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.intro { background: var(--card); border: 1px solid var(--rule); border-left: 3px solid var(--accent); border-radius: 10px; padding: 14px 18px; font-size: 15px; color: var(--ink-2); max-width: 64ch; }
+.intro p { margin: 0; }
+.intro b { color: var(--ink); }
+.prose { display: grid; gap: 14px; max-width: 64ch; }
+.prose p { margin: 0; }
+.prose h2 { font-family: var(--f-display); font-size: 20px; margin: 8px 0 0; }
+.foot { font-size: 13px; color: var(--ink-3); border-top: 1px solid var(--rule); padding-top: 16px; display: grid; gap: 8px; }
+.foot p { margin: 0; }
+details summary { cursor: pointer; color: var(--ink-2); font-size: 14px; }
+.foot, .foot details { min-width: 0; }
+.tbl { overflow-x: auto; margin-top: 10px; }
+table { border-collapse: collapse; font-family: var(--f-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; width: 100%; }
+th, td { text-align: right; padding: 5px 10px; border-bottom: 1px solid var(--rule); }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--ink-3); font-weight: 500; }
+@media (max-width: 560px) { svg text, svg .lab { font-size: 15px; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+<meta name="description" content="A Magic: The Gathering bot won about 71 in 100 games against its starting version after 1.59 million training steps.">
+<link rel="canonical" href="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/">
+<link rel="alternate" type="application/atom+xml" title="MTG Kernel Weekly" href="../feed.xml">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="MTG Kernel">
+<meta property="og:title" content="A bot that taught itself Magic is still getting better">
+<meta property="og:description" content="A Magic: The Gathering bot won about 71 in 100 games against its starting version after 1.59 million training steps.">
+<meta property="og:url" content="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/">
+<meta property="og:image" content="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+</head>
+<body>
+
+<div class="wrap">
+  <nav class="nav" aria-label="Site"><a href="../">All weekly posts</a><a href="../../">Watch the bot play (replay viewer)</a><a href="https://github.com/jackmaiorino/mtg-kernel">Code on GitHub</a></nav>
+  <header>
+    <div class="eyebrow"><span>MTG Kernel weekly</span><span>#1</span><span>Nov 20, 2026</span></div>
+    <h1>A bot that taught itself Magic is <em>still getting better</em></h1>
+    <p class="dek">After 1.59 million training steps, the bot won about 71 in every 100 games against its starting version. How much did the latest practice help?</p>
+  </header>
+
+  <aside class="intro"><p><b>New here?</b> MTG Kernel is an open-source project teaching a computer to play Magic: The Gathering from scratch. It has never watched a human play. The bot learns by playing itself and earlier bots. Its only reward comes from winning. Each week we share one chart about what it learned.</p></aside>
+
+  <section class="card" aria-labelledby="c1t">
+    <div class="chart-head">
+      <div>
+        <p class="chart-title" id="c1t">How often today's bot beats the version it started from</p>
+        <p class="chart-sub">Each dot combines 11,664 test games across three training runs, with 3,888 games per run.</p>
+      </div>
+      <div class="big"><div class="n" id="bigN">70.8%</div><div class="l" id="bigL">of games won, at 1.59M training steps</div></div>
+    </div>
+    <div class="svgbox" id="box1">
+      <svg id="c1" viewBox="0 0 720 360" role="img" aria-label="The bot won 55.3 percent of its games against its starting version after 65,536 training steps and 70.8 percent after 1,589,248. Open circles show projections at 2.1 million steps."></svg>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+    <div class="legend">
+      <span><i class="sw"></i>Measured</span>
+      <span><i class="sw proj"></i>Projection at the earlier pace</span>
+      <span><i class="sw pend"></i>Two possible results at 2.1M steps</span>
+    </div>
+    <div class="controls"><button id="replay" type="button">Replay the climb</button></div>
+  </section>
+
+
+  <article class="prose">
+    <h2>What we learned</h2>
+    <p>The bot plays Pauper, a version of Magic that allows only cards printed at its most common rarity. We test it against Basilisk 1, the public bot it started from. Basilisk 1 won 1,936 of 3,888 games against a copy of itself (49.79%). On the same deals, the three trained versions won 8,253 of 11,664 games (70.76%). Training gained about 21 wins per 100 games.</p>
+    <p>Through the first million training steps, doubling practice added about 2.6 to 4.5 wins per 100 games. Across the later tests, another doubling of practice was worth an estimated 2.4 extra wins per 100 games. The latest pace looks slower, though the earlier pace still fits the data.</p>
+    <p>So besides training longer, we are handing it decisions it used to skip: whether to throw back a bad opening hand (a mulligan), and when to respond during the opponent's turn. It will have to work out both on its own.</p>
+    <h2>Next week</h2>
+    <p>At the time of this analysis, two of the three training runs had played their 2.1-million-step test games. We hadn't opened their results yet. Starting from the million-step score, the later pace would put the bot near 72% at 2.1 million steps. A flat result would put it near 70%.</p>
+    <p>Follow along with the <a href="../feed.xml">RSS feed</a>, read the <a href="https://github.com/jackmaiorino/mtg-kernel">code on GitHub</a>, or <a href="../../">watch the bot's choices in the replay viewer</a>.</p>
+  </article>
+
+  <footer class="foot">
+    <details>
+      <summary>Show the numbers</summary>
+      <p>Each row includes 11,664 games against Basilisk 1. The gain compares the newer bots with Basilisk 1 on the same deals. The 95% range shows our uncertainty about that gain. It accounts for differences across training runs and deals.</p>
+      <div class="tbl"><table id="tbl"><thead><tr><th scope="col">Training steps</th><th scope="col">Wins</th><th scope="col">Win rate</th><th scope="col">Gain (points)</th><th scope="col">95% range for gain (points)</th></tr></thead><tbody></tbody></table></div>
+      <p>The four early doublings gained 2.58, 4.51, 3.95 and 3.34 percentage points. Across nine later tests per run, the estimate was 2.44 points per doubling (95% range 1.41 to 3.46). Comparing just the 1.05M and 1.59M endpoints gives a gain of 1.08 points (95% range −0.13 to 2.21).</p>
+    </details>
+    <p>All of these test games ended in a win or loss. We track performance against other opponents separately.</p>
+  </footer>
+</div>
+
+<script>
+(function () {
+  var gamesPerCheckpoint = 11664;
+  var pts = [
+    { steps: 65536, wins: 6450, gain: 5.5041, low: 4.4067, high: 6.5844 },
+    { steps: 131072, wins: 6751, gain: 8.0847, low: 6.6529, high: 9.5336 },
+    { steps: 262144, wins: 7277, gain: 12.5943, low: 11.1968, high: 14.0432 },
+    { steps: 524288, wins: 7738, gain: 16.5466, low: 14.3261, high: 18.5271 },
+    { steps: 1048576, wins: 8127, gain: 19.8817, low: 18.6385, high: 21.1163 },
+    { steps: 1122304, wins: 8038, gain: 19.1187, low: 17.4897, high: 20.6619 },
+    { steps: 1196032, wins: 8129, gain: 19.8988, low: 18.6128, high: 21.2191 },
+    { steps: 1318912, wins: 8110, gain: 19.7359, low: 18.4156, high: 21.0648 },
+    { steps: 1589248, wins: 8253, gain: 20.9619, low: 19.5645, high: 22.3508 }
+  ];
+  function winRate(point) { return 100 * point.wins / gamesPerCheckpoint; }
+  var first = pts[0], last = pts[pts.length - 1];
+  var NS = "http://www.w3.org/2000/svg";
+  function el(tag, attrs, parent) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
+  function fmtU(u) {
+    if (u >= 1000000) return parseFloat((u / 1000000).toFixed(2)) + "M";
+    return parseFloat((u / 1000).toFixed(1)) + "k";
+  }
+  function fmtLong(u) { return u.toLocaleString("en-US"); }
+
+  // Chart 1
+  var svg = document.getElementById("c1"), narrow = svg.parentNode.clientWidth < 520;
+  var W = narrow ? 420 : 720, H = 360, L = narrow ? 52 : 48, R = narrow ? 30 : 20, T = 14, B = narrow ? 50 : 40;
+  svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+  var xMin = -0.15, xMax = 5.25, yMin = 52, yMax = 75;
+  function X(u) { return L + (Math.log2(u / 65536) - xMin) / (xMax - xMin) * (W - L - R); }
+  function Y(v) { return T + (yMax - v) / (yMax - yMin) * (H - T - B); }
+  [55, 60, 65, 70, 75].forEach(function (v) {
+    el("line", { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: "var(--grid)", "stroke-width": 1 }, svg);
+    el("text", { x: L - 8, y: Y(v) + 4, "text-anchor": "end" }, svg).textContent = v + "%";
+  });
+  [[65536, "65.5k"], [131072, "131k"], [262144, "262k"], [524288, "524k"], [1048576, "1.05M"], [2097152, "2.1M"]].forEach(function (t) {
+    el("text", { x: X(t[0]), y: H - B + 20, "text-anchor": "middle" }, svg).textContent = t[1];
+  });
+  el("text", { x: (L + W - R) / 2, y: H - 4, "text-anchor": "middle", class: "lab" }, svg).textContent = narrow ? "training steps (each tick doubles)" : "practice so far, in training steps (each tick is double the last)";
+
+  // Project from the measured score at the last complete doubling.
+  var anchor = pts[4], nextSteps = 2097152, px = X(nextSteps);
+  var flat = winRate(anchor), earlierPace = flat + 3.3350, laterPace = flat + 2.4359;
+  el("path", { d: "M" + X(anchor.steps) + "," + Y(flat) + "L" + px + "," + Y(earlierPace), fill: "none", stroke: "var(--proj)", "stroke-width": 2, "stroke-dasharray": "5 5" }, svg);
+  el("text", { x: px + 5, y: Y(earlierPace) + 4, class: "lab" }, svg).textContent = "73%";
+  [flat, laterPace].forEach(function (scenario) {
+    el("circle", { cx: px, cy: Y(scenario), r: 5, fill: "var(--card)", stroke: "var(--pending)", "stroke-width": 2 }, svg);
+  });
+
+  var line = el("path", { d: "M" + pts.map(function (p) { return X(p.steps) + "," + Y(winRate(p)); }).join("L"), fill: "none", stroke: "var(--accent)", "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+  var dots = pts.map(function (p) { return el("circle", { cx: X(p.steps), cy: Y(winRate(p)), r: 4.5, fill: "var(--accent)", stroke: "var(--card)", "stroke-width": 2 }, svg); });
+  el("text", { x: X(first.steps) + 10, y: Y(winRate(first)) + 18, class: "lab" }, svg).textContent = winRate(first).toFixed(1) + "%";
+  el("text", { x: X(last.steps) + (narrow ? 8 : -4), y: Y(winRate(last)) + (narrow ? 44 : 26), "text-anchor": "end", class: "lab" }, svg).textContent = winRate(last).toFixed(1) + "%";
+
+  // hover
+  var tip = document.getElementById("tip"), box = document.getElementById("box1");
+  var hits = pts.map(function (p) { return { p: p, x: X(p.steps), y: Y(winRate(p)) }; });
+  hits.push({ pend: true, x: px, y: Y(laterPace) });
+  function show(evt) {
+    var r = svg.getBoundingClientRect(), sx = (evt.clientX - r.left) * W / r.width;
+    var best = null, bd = 1e9;
+    hits.forEach(function (h) { var d = Math.abs(h.x - sx); if (d < bd) { bd = d; best = h; } });
+    if (!best || bd > 40) { tip.hidden = true; return; }
+    tip.innerHTML = best.pend
+      ? "2,097,152 steps (projections)<br>Later pace: " + laterPace.toFixed(1) + "%<br>Flat: " + flat.toFixed(1) + "%"
+      : fmtLong(best.p.steps) + " training steps<br><b>" + winRate(best.p).toFixed(1) + "%</b> of games won<br>" + fmtLong(best.p.wins) + " of " + fmtLong(gamesPerCheckpoint);
+    tip.hidden = false;
+    var centered = best.x * r.width / W - tip.offsetWidth / 2;
+    tip.style.left = Math.max(0, Math.min(centered, box.clientWidth - tip.offsetWidth)) + "px";
+    tip.style.top = (best.y * r.height / H) + "px";
+  }
+  svg.addEventListener("pointermove", show);
+  svg.addEventListener("pointerleave", function () { tip.hidden = true; });
+
+  // replay animation: the page rests fully drawn; the button runs the climb
+  var bigN = document.getElementById("bigN"), bigL = document.getElementById("bigL");
+  document.getElementById("replay").addEventListener("click", function () {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    var len = line.getTotalLength(), t0 = null, dur = 2200;
+    line.style.strokeDasharray = len; line.style.strokeDashoffset = len;
+    dots.forEach(function (d) { d.style.opacity = 0; });
+    function frame(ts) {
+      if (t0 === null) t0 = ts;
+      var k = Math.min(1, (ts - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      line.style.strokeDashoffset = len * (1 - e);
+      var drawnX = L + e * (X(1589248) - L), cur = pts[0];
+      pts.forEach(function (p, i) { if (X(p.steps) <= drawnX + 0.5) { dots[i].style.opacity = 1; cur = p; } });
+      bigN.textContent = winRate(cur).toFixed(1) + "%"; bigL.textContent = "of games won, at " + fmtU(cur.steps) + " training steps";
+      if (k < 1) requestAnimationFrame(frame); else { line.style.strokeDasharray = ""; line.style.strokeDashoffset = ""; bigN.textContent = winRate(last).toFixed(1) + "%"; bigL.textContent = "of games won, at 1.59M training steps"; }
+    }
+    requestAnimationFrame(frame);
+  });
+
+
+  // table
+  var tb = document.querySelector("#tbl tbody");
+  pts.forEach(function (p) {
+    var tr = tb.insertRow();
+    [fmtLong(p.steps), fmtLong(p.wins), winRate(p).toFixed(2) + "%",
+     p.gain.toFixed(2), p.low.toFixed(2) + " to " + p.high.toFixed(2)].forEach(function (value) {
+      tr.insertCell().textContent = value;
+    });
+  });
+})();
+</script>
+</body>
+</html>

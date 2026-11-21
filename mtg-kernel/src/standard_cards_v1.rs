@@ -5450,6 +5450,52 @@ pub(crate) fn active_aegis_copy(state: &GameState, object: ObjectId) -> bool {
     })
 }
 
+/// Recover the physical definition in older, noncast saves without an exile-departure receipt.
+/// Metamorph's as-entry copy is always the bottom layer. Later Aegis and Curie
+/// records can retain intermediate forms, so ambiguous or contradictory evidence refuses.
+pub(crate) fn archived_copy_printing(
+    state: &GameState,
+    host: crate::state::ObjectLinkV4,
+    live_definition: u16,
+) -> Option<u16> {
+    let mut entered = state
+        .eternal_v1
+        .iter()
+        .flat_map(|e| &e.vintage.copies)
+        .filter(|copy| copy.host == host);
+    if let Some(copy) = entered.next() {
+        return (entered.next().is_none()
+            && CARD_DEFS
+                .get(usize::from(copy.card_def))
+                .is_some_and(|d| d.name == "Phyrexian Metamorph"))
+        .then_some(copy.card_def);
+    }
+    let key = (host.object, host.zone_change_count);
+    let aegis = state
+        .standard_v1
+        .as_ref()
+        .and_then(|s| s.aegis_copies.iter().find(|copy| copy.host == key))
+        .map(|copy| copy.card_def);
+    let mut permanent = state
+        .eternal_v1
+        .iter()
+        .flat_map(|e| &e.e7a.copies)
+        .filter(|copy| copy.host == host);
+    let saved = permanent.next().map(|copy| copy.card_def);
+    if permanent.next().is_some() || matches!((aegis, saved), (Some(a), Some(b)) if a != b) {
+        return None;
+    }
+    let physical = aegis.or(saved).unwrap_or(live_definition);
+    let first = state.standard_v1.as_ref().and_then(|s| {
+        s.copied_card_defs
+            .iter()
+            .find(|&&(id, generation, _)| (id, generation) == key)
+    });
+    first
+        .is_none_or(|&(_, _, definition)| definition == physical)
+        .then_some(physical)
+}
+
 /// Definition of a copied permanent immediately before this departure.
 /// The marker precedes the ordinary zone-change event and survives copies ending.
 pub(crate) fn copied_departure_at(
