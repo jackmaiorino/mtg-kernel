@@ -10414,7 +10414,7 @@ fn torch_mode_payable_v1(
     let Some(spec) = selected_spell_target_spec(def, mode, false) else {
         return true;
     };
-    if spec == TargetSpec::None {
+    if target_min_count(spec) == 0 {
         return true;
     }
     let first = completable_next_targets_for_controller_and_source(
@@ -10833,6 +10833,33 @@ fn viable_pending_spell_forms(
         });
     }
     modes.retain(|_| resolution_cast_v1::form_allowed(state, pending.spell, CastMethodV4::Normal));
+    modes
+}
+
+/// Both the mode menu and the submitted mode action use the same payable choices.
+fn payable_pending_spell_modes(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    state: &GameState,
+) -> Vec<u8> {
+    let modes = viable_pending_spell_forms(def, pending, state);
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_pauper_pf1c_v1::torch_on_stack(state) {
+        return modes
+            .into_iter()
+            .filter(|&mode| {
+                torch_mode_payable_v1(
+                    def,
+                    pending.spell,
+                    pending.origin_zone,
+                    pending.source_contract.cast_method,
+                    mode,
+                    pending.controller,
+                    state,
+                )
+            })
+            .collect();
+    }
     modes
 }
 
@@ -17028,28 +17055,7 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
     // index (including index 1) silently; if both are viable, expose the
     // existing two-action schema-v4 decision unchanged.
     if has_spell_form_choice(def) && pending.mode_chosen.is_none() {
-        let viable_modes = viable_pending_spell_forms(def, &pending, state);
-        // Kaervek's Torch (Pauper field wave Pf1c): a mode whose only first
-        // targets are Torches this cast can't pay the tax for isn't offered.
-        #[cfg(feature = "eternal-fixtures")]
-        let viable_modes = if crate::eternal_pauper_pf1c_v1::torch_on_stack(state) {
-            viable_modes
-                .into_iter()
-                .filter(|&mode| {
-                    torch_mode_payable_v1(
-                        def,
-                        pending.spell,
-                        pending.origin_zone,
-                        pending.source_contract.cast_method,
-                        mode,
-                        pending.controller,
-                        state,
-                    )
-                })
-                .collect::<Vec<u8>>()
-        } else {
-            viable_modes
-        };
+        let viable_modes = payable_pending_spell_modes(def, &pending, state);
         if viable_modes.is_empty() {
             // Defensive against a state mutation between the general gate
             // above and this mode stage (none exists in today's pipeline).
@@ -27211,7 +27217,7 @@ pub(crate) fn step_without_linked_aura_v1(
                 return Err("this cast's mode has already been chosen".to_string());
             }
             let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
-            let viable_modes = viable_pending_spell_forms(def, pending, state);
+            let viable_modes = payable_pending_spell_modes(def, pending, state);
             if viable_modes.is_empty() || (viable_modes.len() == 1 && !state.engine.spellbench_neutral_v1.choices)
                 || !viable_modes.contains(&mode) {
                 return Err(format!("{mode} is not a legal spell mode for {p:?}'s cast"));

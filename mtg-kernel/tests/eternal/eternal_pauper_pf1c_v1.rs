@@ -1285,6 +1285,44 @@ fn a_modal_spell_keeps_its_untargeted_mode_while_a_torch_is_on_the_stack() {
     assert_eq!(state.players[1].mana_pool, [0; 6]);
 }
 
+#[test]
+fn a_torch_counter_mode_requires_its_tax_even_when_another_mode_is_payable() {
+    let mut state = plains();
+    let torch = put(&mut state, P0, "Kaervek's Torch", Zone::Hand);
+    let mystic = put(&mut state, P1, "Mystic Confluence", Zone::Hand);
+    put(&mut state, P0, "Llanowar Elves", Zone::Battlefield);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast_x(&mut state, torch, 1, &[Target::Player(P1)]);
+    pass_priority(&mut state, P0);
+    pool(&mut state, P1, &[ManaColor::U, ManaColor::U], 3);
+    let mut paid = state.clone();
+
+    assert!(castable(&mut state, mystic));
+    act(&mut state, Action::CastSpell(mystic));
+    let Decision::ChooseSpellMode { legal_modes, .. } = next(&mut state) else {
+        panic!("expected bounce and draw choices")
+    };
+    assert_eq!(legal_modes, vec![6, 7, 8, 9]);
+    assert!(engine::step(&mut state, Action::ChooseSpellMode(2)).is_err());
+    act(&mut state, Action::ChooseSpellMode(9));
+    settled(&mut state);
+    assert_eq!(state.players[P1.index()].hand.len(), 3);
+    assert_eq!(life(&state, P1), 19);
+
+    // Two counter modes targeting the same Torch pay a single {2} increase.
+    pool(&mut paid, P1, &[], 2);
+    cast_mode(
+        &mut paid,
+        mystic,
+        2,
+        &[Target::Object(torch), Target::Object(torch)],
+    );
+    settled(&mut paid);
+    assert_eq!(paid.players[P1.index()].mana_pool, [0; 6]);
+    assert_eq!(paid.players[P1.index()].hand.len(), 1);
+    assert_eq!(life(&paid, P1), 20);
+}
+
 // ---- Public sessions -----------------------------------------------------------------------
 
 #[derive(Default)]
