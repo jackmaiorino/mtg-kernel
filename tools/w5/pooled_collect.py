@@ -822,8 +822,17 @@ class Dispatcher:
 # another there, which the key holder could push anyway); resource use (disk, memory, processes and
 # CPU need quotas and cgroups); a collector outliving a SIGKILLed agent beyond its parent-death signal.
 # "sandbox": "none" opts out explicitly, for a platform without Landlock: then only the userspace
-# checks hold, which assume the roots' namespace is private to the account. With "landlock"
-# configured and unavailable, every request is refused.
+# checks hold, which assume the roots' namespace is private to the account, and they do NOT meet the
+# confinement contract for the collector's reads: a pinned record the key holder pushed can name, in a
+# field the walk below classifies as provenance (or in a document over its 1 MiB parse bound), a file
+# the collector's loader opens and hash-checks, so any file the account can read is exposed to a
+# guess-the-hash oracle. Standing keys belong on hosts where Landlock (ABI 2 or later for retention)
+# is active. With "landlock" configured and unavailable, every request is refused.
+#
+# Deployment rules the code assumes: the scratch root is exclusive to this agent and disposable (any
+# valid tag's directory and command file there may be removed or fetched by the key holder); the pin
+# roots hold only this lineage's inputs; disk, memory and process limits come from quotas and cgroups;
+# a collector descendant that calls setsid escapes the group kill (a request-scoped cgroup would end it).
 #
 # The userspace checks stay because they refuse precisely and early: no-follow opens, singly linked
 # outputs, exact output and tag paths, printable ASCII paths, inputs within the pin roots with their
@@ -1231,6 +1240,10 @@ def _valid_shard_command(data: bytes, tag: str, config: dict) -> dict:
             or not isinstance(command.get("shard"), dict) \
             or command.get("output_directory") != config["scratch"] + "/" + tag:
         raise AgentRefusal("not a collect_parallel shard command writing exactly to its own scratch directory")
+    workers, episodes = command.get("workers"), command.get("episodes")
+    if command.get("ex1") is not None or not isinstance(workers, int) or isinstance(workers, bool) \
+            or not 1 <= workers <= 1024 or not isinstance(episodes, list) or not 1 <= len(episodes) <= 1024:
+        raise AgentRefusal("a shard has 1 to 1024 episodes and workers and no EX1 hook, as the dispatcher sends")
     _confined_inputs(command, config)
     return command
 
@@ -1349,7 +1362,7 @@ def _run_collector(config: dict, command_file: str, run_dir: str, seconds: int):
     try:
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.PIPE, start_new_session=(os.name == "posix"),
-                                   preexec_fn=preexec)
+                                   preexec_fn=preexec, cwd=run_dir)  # relative names resolve in its run dir
     except BaseException:
         launch.__exit__()
         raise

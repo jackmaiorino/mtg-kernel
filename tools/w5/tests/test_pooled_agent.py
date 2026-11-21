@@ -152,7 +152,7 @@ class AgentCase(unittest.TestCase):
         self.assertIn(words, err)
 
     def shard_command(self, episodes=None, **changes):
-        command = {"mode": "collect_parallel", "shard": {"first_slot": 2, "schedule_episodes": 4},
+        command = {"mode": "collect_parallel", "shard": {"first_slot": 2, "schedule_episodes": 4}, "workers": 2,
                    "episodes": episodes or [{"id": "e2", "seed": 7}, {"id": "e3", "seed": 8}],
                    "output_directory": str(self.scratch) + "/" + TAG}
         command.update(changes)
@@ -235,6 +235,10 @@ class AgentRefusalTests(AgentCase):
         self.assertRefused(self.serve("put_shard", json.dumps(sneaky).encode(), tag=TAG), "own scratch")
         self.assertRefused(self.serve("put_shard", json.dumps(self.shard_command(mode="update")).encode(), tag=TAG),
                            "own scratch")
+        for changes in ({"ex1": {"run": "r", "update": 0, "budget": 1}}, {"workers": 4096}, {"workers": True},
+                        {"episodes": [{"id": "e", "seed": 1}] * 1025}):
+            self.assertRefused(self.serve("put_shard", json.dumps(self.shard_command(**changes)).encode(), tag=TAG),
+                               "no EX1 hook")
         outside = self.shard_command(source={"checkpoint": {"path": str(self.root / "agent.json"),
                                                              "sha256": "0" * 64}})
         self.assertRefused(self.serve("put_shard", json.dumps(outside).encode(), tag=TAG), "outside the pin roots")
@@ -357,8 +361,8 @@ class AgentRefusalTests(AgentCase):
         os.symlink(secret, self.pins / "final-link.bin")  # the final component is a symlink
         self.assertRefused(self.serve("push", data, path=str(self.pins / "final-link.bin"), sha256=sha(data)),
                            "outside the pin roots")
-        states = json.loads(self.serve("pin_status", pins=[[str(self.pins / "final-link.bin"), sha(data)]])[1])
-        self.assertEqual(states["states"], ["differs"], "a symlink is never hashed through")
+        self.assertRefused(self.serve("pin_status", pins=[[str(self.pins / "final-link.bin"), sha(data)]]),
+                           "outside the pin roots")
         self.assertRefused(self.serve("remove_pin", path=str(self.pins / "final-link.bin"), sha256=sha(data)),
                            "outside the pin roots")
         self.assertTrue(secret.exists())
@@ -368,7 +372,12 @@ class AgentRefusalTests(AgentCase):
         code, _, err = self.serve("pin_status", pins=[], config=linked_root)
         self.assertEqual(code, 1)
         self.assertIn("canonical", err)
-        # Shard output: a symlink member, or a symlink in place of the run directory, is never fetched.
+
+    @unittest.skipUnless(os.name == "posix", "symlinks need privileges on Windows")
+    def test_symlinks_in_a_shard_output_are_never_fetched_or_followed(self):
+        secret = self.root / "secret.txt"
+        secret.write_bytes(b"not for the learner")
+        # A symlink member, or a symlink in place of the run directory, is never fetched.
         self.put_shard()
         self.assertEqual(json.loads(self.run_shard()[1])["code"], 0)
         os.symlink(secret, self.scratch / TAG / "out" / "leak.json")
