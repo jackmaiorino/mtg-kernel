@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MTG Kernel Weekly</title>
+<meta name="description" content="One small chart a week about what a self-taught Magic: The Gathering agent learned.">
+<link rel="canonical" href="https://jackmaiorino.github.io/mtg-kernel/blog/">
+<link rel="alternate" type="application/atom+xml" title="MTG Kernel Weekly" href="feed.xml">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="MTG Kernel">
+<meta property="og:title" content="MTG Kernel Weekly">
+<meta property="og:description" content="One small chart a week about what a self-taught Magic: The Gathering agent learned.">
+<meta property="og:url" content="https://jackmaiorino.github.io/mtg-kernel/blog/">
+<meta property="og:image" content="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@500;700&family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400&display=swap">
+<style>
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --ink: #12151b; --ink-2: #4a505c; --ink-3: #7a808c; --rule: #dde1e8; --accent: #2a78d6;
+  --f-display: "Sora", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #111318; --card: #181b21; --ink: #eef0f4; --ink-2: #b9bfca; --ink-3: #8a919d; --rule: #2b3039; --accent: #4b93ea; color-scheme: dark } }
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 16px; line-height: 1.6; }
+.wrap { max-width: 760px; margin: 0 auto; padding-block: 40px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 28px; }
+.nav { display: flex; gap: 18px; flex-wrap: wrap; font-size: 14px; }
+a { color: var(--accent); }
+h1 { font-family: var(--f-display); font-size: clamp(30px, 6vw, 44px); line-height: 1.1; margin: 0; }
+.dek { color: var(--ink-2); font-size: 18px; margin: 10px 0 0; max-width: 60ch; }
+.posts { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
+.post { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 18px; align-items: center; background: var(--card); border: 1px solid var(--rule); border-radius: 10px; padding: 16px; text-decoration: none; color: inherit; }
+.post:hover, .post:focus-visible { border-color: var(--accent); outline: none; }
+.meta { font-family: var(--f-mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); }
+.post h2 { font-family: var(--f-display); font-size: 21px; line-height: 1.25; margin: 4px 0 6px; text-wrap: balance; }
+.post p { margin: 0; color: var(--ink-2); font-size: 15px; }
+.post img { width: 100%; height: auto; border-radius: 6px; display: block; }
+@media (max-width: 560px) { .post { grid-template-columns: 1fr; } .post img { order: -1; } }
+.foot { font-size: 13px; color: var(--ink-3); border-top: 1px solid var(--rule); padding-top: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="nav" aria-label="Site"><a href="../">Decision Studio</a><a href="feed.xml">RSS feed</a><a href="https://github.com/jackmaiorino/mtg-kernel">Source on GitHub</a></nav>
+  <header>
+    <h1>MTG Kernel Weekly</h1>
+    <p class="dek">One small chart a week about what our Magic: The Gathering agent learned. It teaches itself by playing, and the only reward is winning.</p>
+  </header>
+  <ul class="posts">
+    <!-- Newest first. The weekly task adds one <li> here per post. -->
+    <li><a class="post" href="2026-11-20-still-climbing/">
+      <div>
+        <div class="meta">#1 · Nov 20, 2026</div>
+        <h2>Past a million updates, the bot is still climbing</h2>
+        <p>Each doubling of training still buys wins. It just buys fewer than it used to.</p>
+      </div>
+      <img src="2026-11-20-still-climbing/og.png" alt="Learning curve: win rate rises from 55.5% to 71.0% between 65 thousand and 1.59 million training updates." width="1200" height="630" loading="lazy">
+    </a></li>
+  </ul>
+  <p class="foot">Numbers come from the project's own evaluation records, with 95% intervals. Older models are public on Hugging Face; the replay viewer is the Decision Studio.</p>
+</div>
+</body>
+</html>
