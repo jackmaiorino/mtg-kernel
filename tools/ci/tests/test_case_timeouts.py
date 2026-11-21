@@ -68,14 +68,14 @@ class CaseTimeoutTests(unittest.TestCase):
                 with patch.object(runner, "CASE_TIMEOUTS_PATH", path), self.assertRaises((ValueError, OSError)):
                     runner.case_timeouts()
 
-    def run_cases(self, run_seconds, default=1800):
+    def run_cases(self, run_seconds, timeout=None):
         clock = Clock()
         events = []
         with patch.object(runner.subprocess, "Popen", fake_popen_factory(clock, run_seconds)), \
                 patch.object(runner.time, "monotonic", clock.monotonic), \
                 patch.object(runner, "case_resources", return_value=(1, {})), \
                 patch.object(runner.sys.stdout, "write", side_effect=lambda text: events.append(text)):
-            code = runner.run_isolated_cases("tests.exe", list(run_seconds), default, [])
+            code = runner.run_isolated_cases("tests.exe", list(run_seconds), timeout, [])
         rows = [json.loads(line) for text in events for line in text.splitlines() if line.startswith("{")]
         summary = next(row for row in rows if row.get("event") == "rust_isolated_case_summary")
         return code, {row["case"]: row["status"] for row in summary["results"]}, rows
@@ -88,6 +88,40 @@ class CaseTimeoutTests(unittest.TestCase):
         self.assertEqual(started, {wide: 3000, "other::case": 1800})
         code, status, _ = self.run_cases({wide: 3500})
         self.assertEqual((code, status[wide]), (124, "timeout"))
+
+    def test_an_explicit_limit_overrides_a_named_case(self):
+        wide = sorted(SLOW)[1]
+        for limit in (45, 1800, 3600):
+            with self.subTest(limit=limit):
+                code, status, rows = self.run_cases({wide: limit + 1, "other::case": 10}, timeout=limit)
+                self.assertEqual((code, status[wide], status["other::case"]), (124, "timeout", "passed"))
+                started = {row["case"]: row["timeout_seconds"] for row in rows
+                           if row.get("event") == "rust_test_case_started"}
+                self.assertEqual(started, {wide: limit, "other::case": limit})
+        code, status, _ = self.run_cases({wide: 3200}, timeout=3600)
+        self.assertEqual((code, status[wide]), (0, "passed"))
+
+    def test_cargo_runner_preserves_whether_the_limit_was_explicit(self):
+        wide = sorted(SLOW)[1]
+        for limit in (None, 1800):
+            with self.subTest(limit=limit):
+                args = ["runner", "--features", "limited-fdn-fixtures", "--shard-index", "0", "--shard-count", "1",
+                        "--isolated-cases", "human_bo3_v1::"]
+                if limit is not None:
+                    args.extend(["--filter-timeout-seconds", str(limit)])
+                with patch.dict(runner.os.environ, {runner.FILTER_TIMEOUT_ENV: "99"}), \
+                        patch.object(sys, "argv", args), patch.object(runner.subprocess, "run") as cargo:
+                    cargo.return_value.returncode = 0
+                    self.assertEqual(runner.main(), 0)
+                env = cargo.call_args.kwargs["env"]
+                self.assertEqual(env.get(runner.FILTER_TIMEOUT_ENV), None if limit is None else str(limit))
+                with patch.dict(runner.os.environ, env, clear=True), \
+                        patch.object(sys, "argv", ["runner", "--run", "tests.exe"]), \
+                        patch.object(runner, "compiled_names", side_effect=[[wide], []]), \
+                        patch.object(runner, "run_isolated_cases", return_value=0) as isolated, \
+                        patch("builtins.print"):
+                    self.assertEqual(runner.main(), 0)
+                isolated.assert_called_once_with("tests.exe", [wide], limit, [])
 
     def test_every_other_case_keeps_the_default(self):
         code, status, _ = self.run_cases({"other::slow_case": 1900})
