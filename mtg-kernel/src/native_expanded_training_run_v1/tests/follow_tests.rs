@@ -511,10 +511,19 @@ fn a_crash_at_any_publication_of_a_followed_chain_resumes_to_the_uninterrupted_r
     let reference_chain = chain.with_file_name("chain-uninterrupted");
     let _ = fs::remove_dir_all(&chain);
     let _ = fs::remove_dir_all(&reference_chain);
+    // Publication callbacks receive canonical paths, including the Windows
+    // verbatim prefix. The parent exists before the chain itself is created.
+    let publication_root = chain
+        .parent()
+        .unwrap()
+        .canonicalize()
+        .unwrap()
+        .join(chain.file_name().unwrap());
     let spool = chain.join("spool");
-    let ((ended, reference), publications, crashed) = with_crash_point_v1(&chain, None, || {
-        followed_v1(&base, &chain, 0, 2, &spool, &mut |_| {}).unwrap()
-    });
+    let ((ended, reference), publications, crashed) =
+        with_crash_point_v1(&publication_root, None, || {
+            followed_v1(&base, &chain, 0, 2, &spool, &mut |_| {}).unwrap()
+        });
     assert!(!crashed);
     assert_eq!(ended, FollowEndV1::Stopped);
     assert_eq!(reference.len(), 2);
@@ -526,7 +535,7 @@ fn a_crash_at_any_publication_of_a_followed_chain_resumes_to_the_uninterrupted_r
         for point in [CrashPointV1::BeforeFinal, CrashPointV1::AfterFinal] {
             let case = format!("publication {index} {point:?}");
             let (crashed_run, _, crashed) =
-                with_crash_point_v1(&chain, Some((index, point)), || {
+                with_crash_point_v1(&publication_root, Some((index, point)), || {
                     followed_v1(&base, &chain, 0, 2, &spool, &mut |_| {})
                 });
             assert!(crashed, "{case}: never reached");
