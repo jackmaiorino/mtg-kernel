@@ -885,6 +885,75 @@ def carried_from_stopped(man):
 REPIN_SCHEMA = 'w5-repin/v1'
 REPIN_PROOF_SCHEMA = 'w5-repin-proof/v1'
 REPIN_PENDING = 'REPIN-PENDING.json'
+# Gate (a) before the hold (collab LANES/speed-lead/repin-downtime/DESIGN-DELTA.md, change 1): a pre-hold receipt
+# (`w5-repin-proof-a/v1`) proves gate (a) on a recent completed segment while the chain still trains; the in-hold
+# receipt (`w5-repin-proof-c/v1`) proves gate (c) only and cites it; the request names both (`proof`, `proof_a`).
+REPIN_PREHOLD_SCHEMA = 'w5-repin-proof-a/v1'
+REPIN_PROOF_C_SCHEMA = 'w5-repin-proof-c/v1'
+REPIN_PREHOLD_MAX_SEGMENTS = 8  # completed segments after the proven one, at the hold
+REPIN_PREHOLD_MAX_SECONDS = 3600.0  # from the pre-hold proof's end to the in-hold proof's start
+REPIN_CONFIRM_SCHEMA = 'w5-repin-confirm/v1'
+INDEX_TAIL_BYTES = 64 * 2**20
+
+
+def finite_time(t):
+    return isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t)
+
+
+def pin_holds(p):
+    """A pin whose file exists with that content (no refusal: the caller words it)."""
+    try:
+        return isinstance(p, dict) and Path(p['path']).is_file() and sha(p['path']) == p['sha256']
+    except (OSError, KeyError, TypeError):
+        return False
+
+
+def history_sha256(man):
+    return hashlib.sha256(json.dumps(man.get('trainer_history') or [], sort_keys=True).encode()).hexdigest()
+
+
+def config_bytes(path, tries=3):
+    """A segment config's bytes, decompressed (the driver gzips a finished scratch segment's config after its commit:
+    the plain file first, then `.gz`, retried so that a gzip landing between the two is read); None if absent."""
+    path = Path(path)
+    for _ in range(tries):
+        for p in (path, path.with_name(path.name + '.gz')):
+            try:
+                raw = p.read_bytes()
+            except FileNotFoundError:
+                continue
+            return gzip.decompress(raw) if p.name.endswith('.gz') else raw
+    return None
+
+
+def index_rows_tail(index_path, lo, hi):
+    """{boundary: after_state_sha256} for lo <= boundary <= hi from the tail of a chain index, read directly (never
+    `retention.index`, which takes the index lock and can write)."""
+    found = {}
+    try:
+        with open(index_path, 'rb') as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - INDEX_TAIL_BYTES))
+            lines = f.read().decode('utf-8', 'replace').splitlines()[1 if size > INDEX_TAIL_BYTES else 0:]
+    except FileNotFoundError:
+        return found
+    for line in lines:
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        b = r.get('boundary') if isinstance(r, dict) else None
+        if isinstance(b, int) and lo <= b <= hi:
+            require(found.get(b, r.get('after_state_sha256')) == r.get('after_state_sha256'), f'index rows at {b} disagree')
+            found[b] = r.get('after_state_sha256')
+    return found
+
+
+def newest_iteration(native):
+    its = sorted(p for p in (Path(native) / 'iterations').iterdir() if (p / 'complete.json').exists())
+    require(its, f'{native} has no completed iteration')
+    return its[-1]
 
 
 def repin_pending(cdir):
@@ -951,6 +1020,10 @@ def check_repin_request(req, name, man, to_sha=None, man_path=None, arm=None):
     require(req.get('to_sha256') not in (None, req['from_sha256']), f'{name}: the request names no other trainer')
     if to_sha is not None:
         require(req['to_sha256'] == to_sha, f'{name}: the plan trainer is not the request\'s new trainer')
+    owed = repin_unconfirmed(man)  # its first segment on the current trainer is not confirmed: only the way back
+    require(owed is None or req['to_sha256'] == owed['from_sha256'],
+            f'{name}: its first segment on {owed and owed["to_sha256"]} is unconfirmed: only a re-pin back to '
+            f'{owed and owed["from_sha256"]} (or repin confirm first)')
     last = Path(segs[-1]['root'])
     require((last / 'completion.json').exists() and not os.path.ismount(last),
             f'{name}: its last segment is not complete and persisted')
@@ -962,15 +1035,23 @@ def check_repin_request(req, name, man, to_sha=None, man_path=None, arm=None):
     check_pin(proof, 'the re-pin proof receipt')
     doc = read(proof['path'])
     length = segs[-1]['updates']
-    require(doc.get('schema') == REPIN_PROOF_SCHEMA and doc.get('pass') is True, f'{name}: the proof did not pass')
+    prehold = req.get('proof_a') is not None  # gate (a) before the hold: the in-hold receipt proves gate (c) only
+    require(doc.get('schema') == (REPIN_PROOF_C_SCHEMA if prehold else REPIN_PROOF_SCHEMA) and doc.get('pass') is True,
+            f'{name}: the proof did not pass')
     require(doc.get('chain') == name and doc.get('boundary') == boundary and doc.get('next_segment') == len(segs)
             and doc.get('old_sha256') == req['from_sha256'] and doc.get('new_sha256') == req['to_sha256'],
             f'{name}: the proof is for another chain, boundary, segment or trainer pair')
-    for gate in ('gate_a', 'gate_c'):
+    for gate in (('gate_c',) if prehold else ('gate_a', 'gate_c')):
         g = doc.get(gate) or {}
         require(g.get('updates') == length and g.get('equal') == length, f'{name}: proof {gate} is not {length} of {length}')
     require(not doc.get('rehearsal'), f'{name}: a rehearsal receipt authorises nothing')
-    if man_path is not None:  # bound to this chain's own manifest, as it stands held, and its next segment
+    if prehold:
+        require(man_path is not None, f'{name}: a pre-hold proof is checked against the held manifest')
+        mp = Path(man_path).resolve()
+        require(doc.get('manifest') == {'path': mp.as_posix(), 'sha256': sha(mp)},
+                f'{name}: the proof was made on another manifest, or the chain changed since')
+        check_prehold_receipt(req, doc, name, man, mp)
+    elif man_path is not None:  # bound to this chain's own manifest, as it stands held, and its next segment
         mp = Path(man_path).resolve()
         require(doc.get('manifest') == {'path': mp.as_posix(), 'sha256': sha(mp)},
                 f'{name}: the proof was made on another manifest, or the chain changed since')
@@ -982,6 +1063,148 @@ def check_repin_request(req, name, man, to_sha=None, man_path=None, arm=None):
         config_sha, source = repin_next_config_sha256(arm, man)
         require(doc['gate_c'].get('config_sha256') == config_sha and doc['gate_c'].get('source_checkpoint') ==
                 source['checkpoint'], f'{name}: gate (c) ran another configuration or source than the next segment')
+
+
+def check_prehold_receipt(req, cdoc, name, man, man_path):
+    """The pre-hold receipt the request names (`proof_a`) against the held chain (DESIGN-DELTA 1.3, in order): the one
+    the in-hold receipt checked; passed; this chain; this trainer pair; the chain unchanged since (arm file, its bytes,
+    trainer history, the segment's trainer); the exact segment; fresh (segments and seconds, from recorded times);
+    its evidence still retained (the predecessor's actual source, every state part, the config content); gate (a)
+    whole; its rows the index's; both proofs on the same tools. Deterministic: no clock, no index lock."""
+    require(cdoc.get('gate_a_receipt') == req['proof_a'], f'{name}: the in-hold proof cites another pre-hold proof')
+    check_pin(req['proof_a'], 'the pre-hold proof receipt')
+    a = read(req['proof_a']['path'])
+    require(isinstance(a, dict) and a.get('schema') == REPIN_PREHOLD_SCHEMA and a.get('pass') is True
+            and not a.get('rehearsal'), f'{name}: pre-hold proof did not pass')
+    require(a.get('chain') == name and a.get('manifest_path') == Path(man_path).as_posix(),
+            f'{name}: pre-hold proof is for another chain')
+    require(a.get('old_sha256') == req['from_sha256'] and a.get('new_sha256') == req['to_sha256'],
+            f'{name}: pre-hold proof is for another trainer pair')
+    segs, k = man['segments'], a.get('segment')
+    in_range = type(k) is int and 1 <= k <= len(segs) - 1
+    require(a.get('arm_file') == man.get('arm_file') and pin_holds(man.get('arm_file'))
+            and a.get('trainer_history_sha256') == history_sha256(man)
+            and (not in_range or trainer_of_segment(man, k) == req['from_sha256']),
+            f'{name}: the chain changed since the pre-hold proof')
+    require(in_range and segs[k] == a.get('segment_entry')
+            and a.get('boundary') == segs[k]['offset'] + segs[k]['updates'],
+            f'{name}: pre-hold proof replayed another segment')
+    finished, started = a.get('finished_unix'), cdoc.get('started_unix')
+    require(finite_time(finished) and finite_time(started) and started - finished >= 0,
+            f'{name}: pre-hold proof times are out of order')
+    behind, age = len(segs) - 1 - k, started - finished
+    require(behind <= REPIN_PREHOLD_MAX_SEGMENTS,
+            f'{name}: pre-hold proof is stale: {behind} completed segments after the proven one, over the bound of '
+            f'{REPIN_PREHOLD_MAX_SEGMENTS} (rerun gate (a), or the combined proof in the hold)')
+    require(age <= REPIN_PREHOLD_MAX_SECONDS,
+            f'{name}: pre-hold proof is stale: {age:.0f} s from its end to the in-hold proof, over the bound of '
+            f'{REPIN_PREHOLD_MAX_SECONDS:.0f} s (rerun gate (a), or the combined proof in the hold)')
+    lost = f"{name}: the pre-hold proof's source or config is no longer retained"
+    try:
+        source = next_source(segs[k - 1]['root'])
+        required = scratch_kept_pins(newest_iteration(segs[k - 1]['root']))
+    except (Stop, OSError, ValueError, KeyError):
+        raise Stop(lost)
+    require(source['checkpoint'] == a.get('source_checkpoint'), lost)
+    parts = a.get('source_parts')
+    try:
+        named = sorted((Path(p['path']).resolve().as_posix(), p['sha256']) for p in parts)
+    except (TypeError, KeyError):
+        named = None
+    require(named == sorted((Path(p).resolve().as_posix(), d) for p, d in required.items()),
+            f'{name}: pre-hold proof does not name every source state part')
+    require(all(pin_holds(p) for p in parts), lost)
+    data = config_bytes(segs[k]['config'])
+    require(data is not None and hashlib.sha256(data).hexdigest() == a.get('config_sha256'), lost)
+    length, lo = segs[k]['updates'], segs[k]['offset']
+    rows = a.get('rows')
+    require(a.get('updates') == length == a.get('equal') and isinstance(rows, list) and len(rows) == length
+            and [r.get('boundary') for r in rows] == list(range(lo + 1, lo + length + 1))
+            and all(isinstance(r.get('index'), str) and r.get('new') == r['index'] for r in rows)
+            and a.get('first_before_equal') is True, f'{name}: pre-hold proof gate (a) is not {length} of {length}')
+    index = index_rows_tail(retention.index_path(man_path), lo, lo + length)
+    require(all(index.get(r['boundary']) == r['index'] for r in rows)
+            and isinstance(a.get('first_before'), str) and index.get(lo) == a['first_before'],
+            f'{name}: pre-hold proof rows differ from the index (or its first before-state from the row at {lo})')
+    require(a.get('tools_chains_sha256') == cdoc.get('tools_chains_sha256'), f'{name}: the two proofs ran different tools')
+
+
+def repin_effective(history):
+    """(index, entry) of the switch in force: the last history entry that is not a revert and was not reverted (a
+    `repin abort` of a later re-pin puts the earlier one, and any confirmation it still owes, back in force); else
+    (None, None)."""
+    reverted = set()
+    for i in range(len(history) - 1, -1, -1):
+        e = history[i]
+        if e.get('reverts') is not None:
+            reverted.add(e['reverts'])
+        elif e['id'] not in reverted:
+            return i, e
+    return None, None
+
+
+def repin_unconfirmed(man):
+    """The switch in force when it owes a confirmation (`repin end --hold-first`) and has none, else None."""
+    _, entry = repin_effective(man.get('trainer_history') or [])
+    return entry if entry and entry.get('confirm_required') and not entry.get('confirmed') else None
+
+
+def repin_first_hold(man, cdir):
+    """Why the chain holds after its first segment on a new trainer (`repin end --hold-first`), or None: the switch
+    in force owes a confirmation and has none, and its first segment is persisted, complete and committed. A segment
+    finished in its scratch mount but not persisted or committed does not hold: the driver settles and commits it
+    first."""
+    entry = repin_unconfirmed(man)
+    if entry is None:
+        return None
+    s, segs = entry['segment'], man['segments']
+    if len(segs) <= s:
+        return None
+    root = Path(segs[s]['root'])
+    if mounted(root) or not (root / 'completion.json').exists():
+        return None
+    rows, _ = read_commits(cdir)
+    if not any(r.get('event') == 'commit' and r.get('segment') == s for r in rows):
+        return None
+    return f'{man["chain"]}: the first segment on the new trainer awaits its confirmation (repin confirm)'
+
+
+def repin_confirm(a, root, cdir, man, history, pending):
+    """`repin confirm`: the first segment on the new trainer against gate (c)'s rows; on equality its confirmation is
+    pinned in the history entry and the hold ends."""
+    require(pending is None, f'{a.chain}: a re-pin is pending (repin end first)')
+    at, entry = repin_effective(history)
+    require(entry is not None and entry.get('confirm_required'), f'{a.chain}: no re-pin awaits a confirmation')
+    if entry.get('confirmed'):
+        print(json.dumps({'chain': a.chain, 'confirmed': entry['id'], 'again': True}))
+        return 0
+    require(not live(root, a.chain), f'{a.chain} still has an open instance (its trainer has not exited)')
+    require(repin_first_hold(man, cdir) is not None,
+            f'{a.chain}: its first segment on the new trainer is not persisted and committed yet')
+    check_pin(entry['proof'], 'the re-pin proof receipt')
+    seg = man['segments'][entry['segment']]
+    lo, length = seg['offset'], seg['updates']
+    want = {r.get('boundary'): r.get('new') for r in (read(entry['proof']['path']).get('gate_c') or {}).get('rows') or []}
+    require(sorted(want) == list(range(lo + 1, lo + length + 1)),
+            f'{a.chain}: the proof names no gate (c) rows for the first segment on the new trainer')
+    got = index_rows_tail(retention.index_path(cdir / 'chain.json'), lo + 1, lo + length)
+    require(len(got) == length, f'{a.chain}: the index lacks rows of the first segment on the new trainer '
+                                f'(the supervise loop indexes it)')
+    equal = sum(1 for b, v in want.items() if got.get(b) == v)
+    require(equal == length, f'{a.chain}: the first segment on the new trainer differs from the proven rows '
+                             f'({equal} of {length} equal)')
+    path = cdir / f'REPIN-CONFIRM-{entry["id"]}.json'
+    write(path, {'schema': REPIN_CONFIRM_SCHEMA, 'chain': a.chain, 'id': entry['id'], 'segment': entry['segment'],
+                 'rows': length, 'equal': equal, 'proof': entry['proof'], 'unix': time.time()})
+    if os.name != 'nt':
+        fsync_path(path)
+    durable_entry(path)
+    man['trainer_history'] = history[:at] + [dict(entry, confirmed=pin(path))] + history[at + 1:]
+    write(cdir / 'chain.json', man)
+    durable_entry(cdir / 'chain.json')
+    log(root, chain=a.chain, event='repin-confirm', id=entry['id'], rows=length)
+    print(json.dumps({'chain': a.chain, 'confirmed': entry['id'], 'rows': length}))
+    return 0
 
 
 def repin_cmd(a):
@@ -1017,6 +1240,8 @@ def repin_cmd(a):
             to=req['to_sha256'])
         print(json.dumps({'chain': a.chain, 'pending': req['id'], 'boundary': req['boundary']}))
         return 0
+    if a.step == 'confirm':
+        return repin_confirm(a, root, cdir, man, history, pending)
     if pending is None and a.step == 'end' and history and history[-1].get('reverts') is None:
         print(json.dumps({'chain': a.chain, 'switched': history[-1]['id'], 'again': True}))
         return 0
@@ -1054,6 +1279,11 @@ def repin_cmd(a):
             == plan['trainer']['sha256'], f'{a.chain}: the plan, arm file and manifest do not all name the new trainer')
     require(arm_spec['w5box_plan'] and read(arm_spec['w5box_plan']['path']).get('throughput') is not None,
             f'{a.chain}: the arm\'s launch plan names no throughput record (qualify on the new trainer first)')
+    if getattr(a, 'hold_first', False) and not history[-1].get('confirm_required'):
+        # the first segment on the new trainer is confirmed before a second one starts (the driver enforces it)
+        man['trainer_history'] = history[:-1] + [dict(history[-1], confirm_required=True)]
+        write(cdir / 'chain.json', man)
+        durable_entry(cdir / 'chain.json')
     (cdir / REPIN_PENDING).unlink()
     durable_entry(cdir / REPIN_PENDING)
     log(root, chain=a.chain, event='repin-end', id=pending['id'], to=pending['to_sha256'])
@@ -1719,6 +1949,7 @@ def make_plan(inputs_path):
                     'id': req['id'], 'segment': req['segment'], 'boundary': req['boundary'],
                     'from_sha256': req['from_sha256'], 'to_sha256': req['to_sha256'],
                     'to_path': common['trainer']['path'], 'request': repin[1], 'proof': req['proof'],
+                    **({'proof_a': req['proof_a']} if req.get('proof_a') is not None else {}),
                     'unix': time.time()}]
                 have['recipe'] = dict(have['recipe'], trainer_sha256=header['recipe']['trainer_sha256'])
             require(not have['segments'] or have['recipe'] == header['recipe'],
@@ -2498,6 +2729,10 @@ def drive_locked(a, arm, root, cdir, man_path):
         if stopped(root, cdir):
             log(root, chain=a.chain, event='stop')
             return EXIT_STOP
+        first = repin_first_hold(man, cdir)  # None without `repin end --hold-first`: after settle and commit recovery
+        if first is not None:
+            log(root, chain=a.chain, event='stop', reason=first)
+            return EXIT_STOP
         hold = carried_from_stopped(man)  # None unless carried: before every segment, the old chain must stay held
         if guarded(man):
             try:
@@ -2636,6 +2871,9 @@ def run(a):
     require(not stopped(root, chain_dir(root, a.chain)), 'a STOP file is present')
     require(not (chain_dir(root, a.chain) / REPIN_PENDING).exists(),
             f'{a.chain}: a trainer re-pin is pending (repin end or abort first)')
+    if c.get('repin'):  # a re-pinned chain's plan entry names its request: absent otherwise, nothing more is read
+        first = repin_first_hold(read(chain_dir(root, a.chain) / 'chain.json'), chain_dir(root, a.chain))
+        require(first is None, first)
     if c.get('carry'):  # absent otherwise: an ordinary run reads nothing more than before
         why = carried_from_stopped(read(chain_dir(root, a.chain) / 'chain.json'))
         require(why is None, f'{a.chain}: {why}')
@@ -3610,7 +3848,10 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None, guar
         fresh_chain, fresh = chain_index(info['path'], caches)
         info = dict(info, chain=fresh_chain, records=fresh)
         looks[n] = look(info, plan['r_nom_usec'])
-        keep = protected_paths(info, {looks[n]['boundary']} if looks.get(n) else set())
+        owed = repin_unconfirmed(fresh_chain)  # the first segment on a new trainer awaits its confirmation: the
+        # state it started from stays (the re-pin back proves gate (a) on that segment, from that state)
+        keep = protected_paths(info, ({looks[n]['boundary']} if looks.get(n) else set())
+                               | ({owed['boundary']} if owed else set()))
         doc['checkpoints'] = [i for i in doc['checkpoints'] if i['path'] not in keep]
         c = plan['chains'][n]
         if replay_sample.sampled(plan['stage'], c['arm']):  # selected updates not yet staged keep their files
@@ -4869,10 +5110,12 @@ def main(argv=None):
     p.add_argument('--objects', required=True)
     p.add_argument('--out', required=True)
     p = sub.add_parser('repin')
-    p.add_argument('step', choices=('begin', 'end', 'abort'))
+    p.add_argument('step', choices=('begin', 'end', 'abort', 'confirm'))
     p.add_argument('--plan', required=True)
     p.add_argument('--chain', required=True)
     p.add_argument('--request')
+    p.add_argument('--hold-first', action='store_true',
+                   help='end: hold after the first segment on the new trainer until `repin confirm`')
     p = sub.add_parser('segcheck')
     p.add_argument('--plan', required=True)
     p.add_argument('--arm', required=True, choices=sorted(ARMS))
