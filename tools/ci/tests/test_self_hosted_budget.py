@@ -24,13 +24,16 @@ class BudgetTests(unittest.TestCase):
                 job("queued", ["self-hosted", "mtg-ci-windows"]),                       # broader
                 job("queued", ["self-hosted", "Windows", "X64", "mtg-ci-windows"]),     # broader, other labels
                 job("queued", POOL + ["gpu"]),                                          # narrower
-                job("queued", ["self-hosted", "mtg-ci-linux"]),                         # another pool
+                job("queued", ["self-hosted", "mtg-ci-linux"]),                         # the other pool
                 job("queued", ["windows-2025"]), job("queued", ["ubuntu-24.04"]),       # hosted
                 job("queued", ["bn6"]), job("queued", ["mtg-ci-windows"]),              # custom label alone
-                job("queued", ["self-hosted"]),                                         # any self-hosted runner
+                job("queued", ["self-hosted"]), job("queued", ["self-hosted", "Windows", "X64"]),  # generic
                 job("in_progress", POOL, run_id=7)]
-        self.assertEqual(budget.held_by_pool(jobs, POOL), 9)
-        self.assertEqual(budget.held_by_pool(jobs, POOL, skip_run=7), 8)
+        linux = ["self-hosted", "mtg-ci-linux"]
+        self.assertEqual(budget.held_by_pool(jobs, POOL, other=linux), 10)
+        self.assertEqual(budget.held_by_pool(jobs, POOL, skip_run=7, other=linux), 9)
+        # Without the other pool's labels, its jobs count too (conservative).
+        self.assertEqual(budget.held_by_pool(jobs, POOL), 11)
         # A pool named only "self-hosted" counts every self-hosted job.
         self.assertEqual(budget.held_by_pool([job("queued", ["self-hosted", "mtg-ci-linux"]), job("queued", ["x"])],
                                              ["self-hosted"]), 1)

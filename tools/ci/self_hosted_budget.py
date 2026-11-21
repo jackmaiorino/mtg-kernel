@@ -10,6 +10,8 @@ Environment:
   PR_RUNNER  JSON runs-on labels of the pool (vars.MTG_CI_PR_WINDOWS_RUNNER), a list or one string.
   PR_SLOTS   Most jobs the pool may hold at once, queued or running (vars.MTG_CI_PR_WINDOWS_SLOTS).
              Unset or empty: every named group routes, as before this budget existed.
+  PR_OTHER_RUNNER  JSON runs-on labels of another self-hosted pool (vars.MTG_CI_LINUX_RUNNER), optional: a job
+             requesting one of its custom labels that this pool lacks cannot run on this pool.
   PR_ELIGIBLE  JSON list of the groups this run has on Windows; other named groups are skipped before
              the free slots are handed out (optional: unset, every named group is eligible).
   GH_TOKEN, GITHUB_REPOSITORY, GITHUB_RUN_ID, optional GITHUB_API_URL, GITHUB_OUTPUT, GITHUB_STEP_SUMMARY.
@@ -68,20 +70,23 @@ def parse_slots(text: str | None) -> int | None:
     return slots
 
 
-def held_by_pool(jobs: list[dict], labels: list[str], skip_run: int | None = None) -> int:
-    """Jobs not yet completed that a pool runner could be holding or will take, counted generously (a
-    wrong count only sends a group to hosted runners): every job that requests any custom pool label (any
-    label but "self-hosted"), such as ["bn6"] or a broader ["self-hosted", "Windows", "mtg-ci-windows"], and
-    every job that requests only "self-hosted". The runner list itself needs admin rights the job token
-    lacks. Case-insensitive."""
+def held_by_pool(jobs: list[dict], labels: list[str], skip_run: int | None = None,
+                 other: list[str] | None = None) -> int:
+    """Jobs not yet completed that a pool runner could be holding or will take, counted conservatively (a
+    wrong count only sends a group to hosted runners): every self-hosted job and every job requesting a
+    custom pool label (any label but "self-hosted"), such as ["bn6"] or ["self-hosted", "Windows", "X64"].
+    The only jobs left out request a custom label of another configured pool (`other`) that this pool does
+    not have: GitHub needs a runner to carry every requested label. The runner list itself needs admin
+    rights the job token lacks. Case-insensitive."""
     want = {label.lower() for label in labels}
     custom = want - {"self-hosted"}
+    elsewhere = {label.lower() for label in other or []} - want - {"self-hosted"}
     count = 0
     for job in jobs:
         if job.get("status") == "completed" or (skip_run is not None and job.get("run_id") == skip_run):
             continue
         have = {label.lower() for label in job.get("labels") or []}
-        if want and (have & custom or (have and have <= {"self-hosted"}) or (not custom and "self-hosted" in have)):
+        if want and ("self-hosted" in have or have & custom) and not have & elsewhere:
             count += 1
     return count
 
@@ -141,7 +146,8 @@ def main() -> int:
             lines.append(f"Self-hosted pull request groups: {json.dumps(chosen)} (no slot budget set)")
         else:
             run_id = int(os.environ.get("GITHUB_RUN_ID") or 0) or None
-            held = held_by_pool(active_jobs(os.environ["GITHUB_REPOSITORY"]), labels, skip_run=run_id)
+            other = parse_list(os.environ.get("PR_OTHER_RUNNER"))
+            held = held_by_pool(active_jobs(os.environ["GITHUB_REPOSITORY"]), labels, skip_run=run_id, other=other)
             chosen = choose(groups, slots, held)
             lines.append(f"Self-hosted pull request groups: {json.dumps(chosen)} ({held} job(s) already queued or "
                          f"running on {json.dumps(labels)}, budget {slots})")

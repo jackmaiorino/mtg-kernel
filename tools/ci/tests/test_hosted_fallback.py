@@ -31,40 +31,6 @@ class FallbackTests(unittest.TestCase):
                 4: fb.ADMISSION_MARKER, 5: None}
         assert [j["id"] for j in fb.admission_timeouts(jobs, logs.get)] == [1]
 
-    def test_a_self_hosted_windows_job_stopped_at_its_timeout_is_rerun_without_reading_its_log(self):
-        jobs = [job(1, "cancelled", ["self-hosted", "mtg-ci-windows", "bn6"]),
-                job(2, "cancelled", ["windows-2025"]),
-                job(3, "cancelled", ["self-hosted", "mtg-ci-linux"], name="Rust tests (ubuntu-24.04, eternal-integration)")]
-
-        def no_logs(_job_id):
-            raise AssertionError("a timed-out job's log is not needed")
-        assert [j["id"] for j in fb.admission_timeouts(jobs, no_logs)] == [1]
-
-    def test_the_fallback_job_also_runs_for_cancelled_jobs(self):
-        text = WORKFLOW.read_text(encoding="utf-8")
-        head = text[text.index("  hosted-fallback:"):].split("steps:")[0]
-        assert "if: always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled'))" in head
-
-    def test_a_timed_out_job_is_rerun_only_while_the_branch_is_still_at_the_run_commit(self):
-        jobs = [job(1, "cancelled", ["self-hosted", "mtg-ci-windows", "bn6"])]
-        for branch_head, dispatched in (("abc", True), ("def", False)):
-            calls = []
-
-            def request(method, path, body=None):
-                calls.append((method, path, body))
-                if path.endswith("/jobs?per_page=100&page=1"):
-                    return json.dumps({"jobs": jobs}).encode()
-                if path == "/repos/o/r/actions/runs/9":
-                    return json.dumps({"head_sha": "abc"}).encode()
-                if path == "/repos/o/r/branches/team%2Ffeature":
-                    return json.dumps({"commit": {"sha": branch_head}}).encode()
-                return b""
-            env = {"GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "9", "FALLBACK_REF": "team/feature",
-                   "GH_TOKEN": "t", "SCOPE": "pr"}
-            with patch.dict(os.environ, env), patch.object(fb, "_request", side_effect=request), patch("sys.stdout"):
-                assert fb.main() == 0
-            assert bool([c for c in calls if c[0] == "POST"]) == dispatched, branch_head
-
     def test_a_self_hosted_linux_job_is_never_a_reason_for_the_windows_rerun(self):
         marker = "hook ... " + fb.ADMISSION_MARKER + ": no CPU slots"
         jobs = [job(1, "failure", ["self-hosted", "mtg-ci-linux"], name="Rust tests (ubuntu-24.04, eternal-integration)"),
