@@ -428,3 +428,14 @@ fn collection_marks_and_passes_new_windows_and_validates() {
     }
     assert!(marked > 0);
 }
+
+/// The paths that would ignore the field (the S learner's collection and
+/// update, archive distillation) share one refusal, run before any game.
+#[test]
+fn paths_that_would_ignore_the_field_refuse_it() {
+    assert!(refuse_priority_pass_offset_v1([&plain(), &plain()], "a path").is_ok());
+    assert!(refuse_priority_pass_offset_v1([], "a path").is_ok());
+    let error =
+        refuse_priority_pass_offset_v1([&plain(), &windows_episode(0.0)], "a path").unwrap_err();
+    assert_eq!(error, "a path refuses the priority pass offset");
+}

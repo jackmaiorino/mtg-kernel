@@ -2834,6 +2834,21 @@ fn batch_london_keep_offset_v1(
     Ok(first)
 }
 
+/// Refuses `episodes` when any carries a priority pass offset: for a path
+/// that would collect or learn from them without applying it (the S learner,
+/// archive distillation), so it fails before any game is played.
+pub(crate) fn refuse_priority_pass_offset_v1<'a>(
+    episodes: impl IntoIterator<Item = &'a ExpandedEpisodeV1>,
+    path: &str,
+) -> Result<(), String> {
+    ensure(
+        episodes
+            .into_iter()
+            .all(|episode| episode.priority_pass_offset.is_none()),
+        &format!("{path} refuses the priority pass offset"),
+    )
+}
+
 /// The priority pass offset shared by every trajectory of an update batch
 /// (`priority_pass_offset_v1`), compared as f32 bits; a batch mixing values
 /// (or offset and no offset) is refused.
@@ -4329,12 +4344,7 @@ pub fn execute_v1(command: ExpandedTrainingCommandV1) -> Result<Value, String> {
                         .all(|episode| episode.london_keep_offset.is_none()),
                     "an S learner collection refuses the London keep offset",
                 )?;
-                ensure(
-                    episodes
-                        .iter()
-                        .all(|episode| episode.priority_pass_offset.is_none()),
-                    "an S learner collection refuses the priority pass offset",
-                )?;
+                refuse_priority_pass_offset_v1(&episodes, "an S learner collection")?;
                 s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
             } else {
                 let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;

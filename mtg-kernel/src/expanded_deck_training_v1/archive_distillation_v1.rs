@@ -1049,6 +1049,9 @@ fn load_inputs_v1(
         let game: ArchiveGameV1 = serde_json::from_str(line).map_err(err)?;
         ensure(game.lineage == lineage, "archive game from another lineage")?;
         ensure(ids.insert(game.id.clone()), "duplicate archive game id")?;
+        // Extraction captures raw parent logits and distillation never
+        // applies the offset: refused before any extraction or cache lookup.
+        refuse_priority_pass_offset_v1([&game.episode], "archive distillation")?;
         parsed.push(game);
     }
     ensure(!parsed.is_empty(), "no archive games")?;
