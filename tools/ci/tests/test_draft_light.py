@@ -52,6 +52,17 @@ class DraftLightTests(unittest.TestCase):
                       "&& '-draft' || '' }}\n", text)
         self.assertIn("  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n", text)
 
+    def test_a_draft_run_ends_the_full_runs_of_older_commits(self):
+        body = jobs()["detect-changes"]
+        step = body[body.index("      - name: Cancel this pull request's full runs at older commits"):]
+        step = step[:step.index("\n\n")]
+        self.assertIn("if: steps.scope.outputs.scope == 'draft' && github.event.pull_request.head.repo.full_name == "
+                      "github.repository", step)
+        self.assertIn('.head_sha != \\"$HEAD_SHA\\"', step)
+        self.assertIn(".id != $GITHUB_RUN_ID", step)
+        self.assertIn("continue-on-error: true", step)
+        self.assertIn("      actions: write\n", body)
+
     def test_a_dispatch_runs_only_the_complement_of_a_ready_pull_request(self):
         body = jobs()["detect-changes"]
         self.assertIn("select(.head.repo.full_name == env.GITHUB_REPOSITORY and (.draft | not))", body)
