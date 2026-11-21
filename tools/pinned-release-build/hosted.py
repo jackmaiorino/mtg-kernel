@@ -36,6 +36,7 @@ PACK3_SOURCES = (
     "572de58807a51254212e1cb2e4904f24a676e3d9",  # release head (PR 811 merge), the base
     "ea8018f083b431b98d6a4b92c822941aeb83944b",  # + fd974ac9b, 69fcba51b
     "53ccd2188088a52724f41bc4a940958fb6e425f1",  # + Tier A tensorizer, memo default, seal_v1
+    "9d936335c02050bdd7bbacbb80393827425c3e62",  # + 2cab2b1db row memo in update preparation
 )
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
