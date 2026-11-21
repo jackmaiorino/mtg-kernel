@@ -3288,7 +3288,8 @@ def throughput_run(plan_path, arm, label, updates, out, counts=None, max_wall=w5
     target = load_plan(plan_path)
     require(arm in target['arms'], f'the plan has no arm {arm}')
     slots = plan_slots(target)
-    counts = counts or [1, len(slots)]
+    if counts is None:
+        counts = [1, len(slots)] if len(slots) > 1 else [1]
     length = target['arms'][arm]['segment_updates']
     require(updates % length == 0 and updates >= 2 * length,
             f'N must be whole {arm} segments of {length} updates, at least two')
@@ -3340,7 +3341,10 @@ def throughput_run(plan_path, arm, label, updates, out, counts=None, max_wall=w5
 
 def throughput(a):
     require(sys.platform.startswith('linux'), 'the box throughput qualification runs the W5 launcher (Linux only)')
-    counts = [int(x) for x in a.counts.split(',')] if a.counts else None
+    try:
+        counts = [int(x) for x in a.counts.split(',')] if a.counts is not None else None
+    except ValueError:
+        raise Stop('phase box counts must be comma-separated integers') from None
     passed, record = throughput_run(a.plan, a.arm, a.label, a.updates, a.out, counts, a.max_wall_seconds,
                                     a.seed_root, keep_trees=a.keep_trees)
     print(json.dumps({'pass': passed, 'summary': record.get('summary'), 'why': record.get('why'),
@@ -3871,8 +3875,8 @@ def main(argv=None):
     p.add_argument('--seed-root', default=THROUGHPUT_SEED_ROOT)
     p.add_argument('--keep-trees', action='store_true')
     p = sub.add_parser('throughput-compare')
-    p.add_argument('--baseline', action='append', required=True)
-    p.add_argument('--candidate', action='append', required=True)
+    p.add_argument('--baseline', action='extend', nargs='+', required=True)
+    p.add_argument('--candidate', action='extend', nargs='+', required=True)
     p.add_argument('--out', required=True)
     p = sub.add_parser('stage0-exit')
     p.add_argument('--record', action='append', required=True)

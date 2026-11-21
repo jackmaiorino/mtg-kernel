@@ -98,11 +98,14 @@ digest per segment length across all samples of both trees.
 A durable updates/hour claim uses T6's code-only comparison (#600, #610). On one node, with Stage 0 inputs whose C
 arm has a `scratch_root`, record C's box throughput (`chains.py throughput --arm C --updates 512`: two 256-update
 segments, the fewest it accepts) with the W5 tools of main `0b8c0fa` and of this branch, in two A-B-B-A series
-(main, cursor, cursor, main, twice). Then compare the records:
+(main, cursor, cursor, main). For a one-box plan, add `--counts 1` explicitly with the pinned tools.
+Then compare the records.
 
 ```bash
-python3 tools/w5/chains.py throughput-compare --baseline main-1.json main-2.json main-3.json main-4.json \
-  --candidate cursor-1.json cursor-2.json cursor-3.json cursor-4.json --out t7-cursor-compare.json
+python3 tools/w5/chains.py throughput-compare \
+  --baseline main-1.json --baseline main-2.json --baseline main-3.json --baseline main-4.json \
+  --candidate cursor-1.json --candidate cursor-2.json --candidate cursor-3.json --candidate cursor-4.json \
+  --out t7-cursor-compare.json
 ```
 
 The comparison checks that only the code differs. It calls a difference only when the two sides' ranges separate
