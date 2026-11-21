@@ -1835,6 +1835,9 @@ fn deprive_refuses_a_last_counter_woodlot_under_sphere_of_resistance() {
         mtg_kernel::eternal_pauper_e8b_v1::depletion_counters(&state, woodlot),
         1
     );
+    act(&mut state, Action::ActivateManaAbility(woodlot));
+    assert_eq!(zone(&state, woodlot), Zone::Graveyard);
+    assert!(!castable(&mut state, deprive), "no land remains to return");
 }
 
 #[test]
@@ -1851,6 +1854,12 @@ fn deprive_keeps_healthy_return_choices_when_woodlot_pays_spheres_tax() {
     let bolt = opponent_bolts(&mut state, Target::Player(P0));
     let deprive = put(&mut state, P0, "Deprive", Zone::Hand);
     pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 0);
+    // Depletion lands use an explicit mana action. Float the Woodlot's two
+    // green before announcing Deprive; the other lands remain returnable.
+    assert!(!castable(&mut state, deprive));
+    act(&mut state, Action::ActivateManaAbility(woodlot));
+    assert_eq!(zone(&state, woodlot), Zone::Graveyard);
+    assert_eq!(mana(&state, P0, ManaColor::G), 2);
     cast(&mut state, deprive, &[Target::Object(bolt)]);
     match next(&mut state) {
         Decision::ChooseCostTargets {
