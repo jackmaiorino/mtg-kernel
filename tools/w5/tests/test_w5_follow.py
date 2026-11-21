@@ -258,15 +258,31 @@ class FollowDrive(unittest.TestCase):
         node.guard(ceilings={'c1': 10})
         calls = [0]
         real = chains.stopped
+        popen = chains.subprocess.Popen
+        driver_locks = []
 
         def stopped(root, cdir):
             calls[0] += 1
             return calls[0] > 2 or real(root, cdir)
 
+        def start_trainer(command, *args, **kwargs):
+            if '--follow' in command:
+                self.assertIn('--follow-driver-lock', command)
+                path = Path(command[command.index('--follow') + 1]) / chains.FOLLOW_DRIVER_LOCK
+                competing = chains.lock(path)
+                if competing is not None:
+                    competing.close()
+                self.assertIsNone(competing)
+                driver_locks.append(path)
+            return popen(command, *args, **kwargs)
+
         with mock.patch.object(chains, 'stopped', side_effect=stopped), \
+                mock.patch.object(chains.subprocess, 'Popen', side_effect=start_trainer), \
                 mock.patch.object(chains, 'kill_group', wraps=chains.kill_group) as kill:
             self.assertEqual(node.drive(plan, 'c1'), chains.EXIT_STOP)
         kill.assert_not_called()
+        self.assertEqual(len(driver_locks), 1)
+        self.assertFalse(driver_locks[0].exists())
         self.assertEqual([r['trainer_run'] for r in self.commits(node)], [0, 1])
 
 

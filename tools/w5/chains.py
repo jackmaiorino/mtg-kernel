@@ -1188,6 +1188,7 @@ FOLLOW_POLL = 0.05  # how often the driver looks for a followed trainer's done r
 FOLLOW_REFUSED = 3  # mtg-kernel follow_v1::REFUSED_EXIT_CODE: a refused next config, nothing of it ran
 FOLLOW_STOP_GRACE = 30.0
 FOLLOW_SPOOLS = 'follow'  # chains/<name>/follow/<spool of one process>
+FOLLOW_DRIVER_LOCK = 'driver.lock'  # follow_v1::driver_lock::NAME
 
 
 def follow_done_name(index):
@@ -1200,6 +1201,7 @@ class Follower:
     def __init__(self, arm, cdir, logs):
         self.arm, self.cdir, self.logs = arm, Path(cdir), Path(logs)
         self.proc = self.spool = self.pid = None
+        self.driver_lock = None
         self.files = ()
         self.runs = 0  # complete runs of the current process (the next done record's index)
         self.active = False  # a run is in flight (set before its start or hand-over, cleared at its done record)
@@ -1263,8 +1265,11 @@ class Follower:
         err = open(self.logs / 'trainer.err', 'ab')
         self.files = (out, err)
         try:
+            self.driver_lock = lock(self.spool / FOLLOW_DRIVER_LOCK)
+            require(self.driver_lock is not None, f'cannot hold the follow driver lock: {self.spool}')
             self.proc = subprocess.Popen(exe(self.arm['trainer']['path']) +
-                                         [str(config_path), '--follow', str(self.spool)], stdout=out, stderr=err,
+                                         [str(config_path), '--follow', str(self.spool), '--follow-driver-lock'],
+                                         stdout=out, stderr=err,
                                          **trainer_launch(self.arm))
         except BaseException:
             self.release()
@@ -1283,6 +1288,9 @@ class Follower:
             fsync_path(self.spool)
 
     def release(self):
+        if self.driver_lock is not None:
+            self.driver_lock.close()
+            self.driver_lock = None
         for f in self.files:
             f.close()
         self.files = ()
