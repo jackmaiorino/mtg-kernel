@@ -1,17 +1,17 @@
 //! Pauper field wave Pf1c: native rules and public-session tests for the
 //! four cards that each need a new engine piece.
 #![cfg(feature = "eternal-fixtures")]
-#![allow(dead_code, unused_imports)]
+#![allow(dead_code)]
 
 use crate::eternal_catalog_v1::{play_observed, Policy};
 use mtg_kernel::card_def::{
-    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, Supertype, TargetSpec,
-    CARD_DEFS,
+    card_id_by_name, CardCapability, CardDef, CardType, Keywords, Subtype, TargetSpec, CARD_DEFS,
 };
-use mtg_kernel::engine::{self, Action, Decision, OptionalCostChoice};
+use mtg_kernel::engine::{self, Action, CostKind, Decision, OptionalCostChoice};
+use mtg_kernel::eternal_pauper_pf1c_v1::hallow_shield_count;
 use mtg_kernel::ids::{ObjectId, PlayerId};
 use mtg_kernel::limited_session_v1::{CustomCardCountV1, CustomDeckV1};
-use mtg_kernel::mana::ManaColor;
+use mtg_kernel::mana::{ManaColor, Pip};
 use mtg_kernel::state::{GameObject, GameState, ObjectStateV4, Step, Target, Zone};
 use serde_json::Value;
 
@@ -469,5 +469,650 @@ fn pf1c_cards_are_full() {
         let card = def(name);
         assert_eq!(card.capability, CardCapability::Full, "{name}");
         assert!(card.is_executable(), "{name}");
+    }
+}
+
+#[test]
+fn pf1c_printed_characteristics() {
+    let boarding = def("Boarding Action");
+    assert_eq!(boarding.types, &[CardType::Sorcery]);
+    assert_eq!(boarding.mana_value, 2);
+    assert_eq!(boarding.cost.generic, 1);
+    assert_eq!(boarding.cost.pips, &[Pip::Colored(ManaColor::R)]);
+    assert!(boarding.target_spec == TargetSpec::None);
+    assert!(boarding.flashback.is_some(), "Beam me up");
+    assert!(boarding.additional_cost.is_none());
+
+    let token = def("Klingon Warrior Token");
+    assert!(token.is_token);
+    assert_eq!(token.capability, CardCapability::Full);
+    assert_eq!(token.types, &[CardType::Creature]);
+    assert_eq!(token.subtypes, &[Subtype::Klingon, Subtype::Warrior]);
+    assert_eq!((token.power, token.toughness), (Some(2), Some(1)));
+    assert_eq!(token.colors, &[ManaColor::R]);
+    assert!(token.keywords.has(Keywords::HASTE));
+    assert_eq!(Subtype::Klingon as u16, 740);
+    assert!(Subtype::Klingon.is_creature_type());
+
+    let torch = def("Kaervek's Torch");
+    assert_eq!(torch.types, &[CardType::Sorcery]);
+    assert_eq!(torch.mana_value, 1);
+    assert_eq!(torch.cost.generic, 0);
+    assert_eq!(torch.cost.x_count, 1);
+    assert_eq!(torch.cost.pips, &[Pip::Colored(ManaColor::R)]);
+    assert!(torch.target_spec == TargetSpec::AnyTarget);
+
+    let hallow = def("Hallow");
+    assert_eq!(hallow.types, &[CardType::Instant]);
+    assert_eq!(hallow.mana_value, 1);
+    assert_eq!(hallow.cost.generic, 0);
+    assert_eq!(hallow.cost.pips, &[Pip::Colored(ManaColor::W)]);
+    assert!(hallow.target_spec == TargetSpec::AnySpellOnStack);
+
+    let fling = def("Fling");
+    assert_eq!(fling.types, &[CardType::Instant]);
+    assert_eq!(fling.mana_value, 2);
+    assert_eq!(fling.cost.generic, 1);
+    assert_eq!(fling.cost.pips, &[Pip::Colored(ManaColor::R)]);
+    assert!(fling.target_spec == TargetSpec::AnyTarget);
+    assert!(fling.additional_cost.is_some(), "sacrifice a creature");
+    assert!(fling.flashback.is_none());
+}
+
+/// Casts `spell` announcing `x` and answering each target prompt from
+/// `targets` in order.
+fn cast_x(state: &mut GameState, spell: ObjectId, x: u16, targets: &[Target]) {
+    assert!(
+        castable(state, spell),
+        "{} not castable",
+        state.objects.get(spell).name
+    );
+    act(state, Action::CastSpell(spell));
+    let mut targets = targets.iter();
+    for _ in 0..8 {
+        match next(state) {
+            Decision::ChooseEffectOption { option_count, .. } => {
+                assert!(x < option_count, "X {x} of {option_count}");
+                act(state, Action::ChooseEffectOption(x));
+            }
+            Decision::ChooseTargets { legal_targets, .. } => {
+                let target = *targets.next().expect("a target answer");
+                assert!(
+                    legal_targets.contains(&target),
+                    "{target:?} not in {legal_targets:?}"
+                );
+                act(state, Action::ChooseTarget(target));
+            }
+            _ => return,
+        }
+    }
+    panic!("the cast never finished announcing");
+}
+
+/// `player`, who must hold priority, passes it.
+fn pass_priority(state: &mut GameState, player: PlayerId) {
+    match next(state) {
+        Decision::CastSpellOrPass { player: holder, .. } if holder == player => {
+            act(state, Action::Pass)
+        }
+        other => panic!("expected {player:?} to hold priority, got {other:?}"),
+    }
+}
+
+fn sorted(mut objects: Vec<ObjectId>) -> Vec<ObjectId> {
+    objects.sort();
+    objects
+}
+
+// ---- Fling ---------------------------------------------------------------------------
+
+#[test]
+fn fling_deals_the_sacrificed_creatures_power_as_it_last_existed() {
+    let mut state = plains();
+    let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
+    state.objects.get_mut(inspector).counters.plus1_plus1 = 2;
+    let skyfisher = put(&mut state, P0, "Kor Skyfisher", Zone::Battlefield);
+    let fling = put(&mut state, P0, "Fling", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    assert_eq!(
+        power_toughness(&state, inspector),
+        (3, 4),
+        "pumped by counters"
+    );
+    cast(&mut state, fling, &[Target::Player(P1)]);
+    match next(&mut state) {
+        Decision::ChooseCostTargets {
+            cost_kind,
+            candidates,
+            ..
+        } => {
+            assert_eq!(cost_kind, CostKind::SacrificeCreatures);
+            assert_eq!(sorted(candidates), sorted(vec![inspector, skyfisher]));
+            act(&mut state, Action::ChooseCostTarget(inspector));
+        }
+        other => panic!("expected the sacrifice, got {other:?}"),
+    }
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(
+        zone(&state, inspector),
+        Zone::Graveyard,
+        "sacrificed as a cost"
+    );
+    settled(&mut state);
+    assert_eq!(life(&state, P1), 17, "the counters' power counts");
+    assert_eq!(life(&state, P0), 20);
+    assert_eq!(zone(&state, skyfisher), Zone::Battlefield);
+    assert_eq!(zone(&state, fling), Zone::Graveyard);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+}
+
+#[test]
+fn fling_kills_a_creature_with_the_sacrificed_power() {
+    let mut state = plains();
+    let skyfisher = put(&mut state, P0, "Kor Skyfisher", Zone::Battlefield);
+    let target = put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+    let fling = put(&mut state, P0, "Fling", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    // The only creature is sacrificed without a choice.
+    cast(&mut state, fling, &[Target::Object(target)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, skyfisher), Zone::Graveyard);
+    assert_eq!(zone(&state, target), Zone::Graveyard, "two damage to a 1/2");
+}
+
+#[test]
+fn fling_with_a_zero_power_creature_deals_no_damage() {
+    let mut state = plains();
+    let lookout = put(&mut state, P0, "Mob Lookout", Zone::Battlefield);
+    let fling = put(&mut state, P0, "Fling", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    assert_eq!(power_toughness(&state, lookout).0, 0);
+    cast(&mut state, fling, &[Target::Player(P1)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, lookout), Zone::Graveyard);
+    assert_eq!(zone(&state, fling), Zone::Graveyard);
+    assert_eq!(life(&state, P1), 20);
+}
+
+#[test]
+fn fling_needs_a_creature_you_control_to_sacrifice() {
+    let mut state = plains();
+    put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+    let fling = put(&mut state, P0, "Fling", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    assert!(!castable(&mut state, fling), "no creature of yours");
+}
+
+#[test]
+fn fling_at_the_creature_it_sacrifices_does_nothing() {
+    let mut state = plains();
+    let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
+    state.objects.get_mut(inspector).counters.plus1_plus1 = 2;
+    let bystander = put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+    let fling = put(&mut state, P0, "Fling", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    // Targets are chosen before costs are paid, so the creature about to be
+    // sacrificed is a legal target; it is gone when Fling resolves.
+    cast(&mut state, fling, &[Target::Object(inspector)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, inspector), Zone::Graveyard);
+    assert_eq!(zone(&state, fling), Zone::Graveyard);
+    assert_eq!(zone(&state, bystander), Zone::Battlefield);
+    assert_eq!(state.objects.get(bystander).damage, 0);
+    assert_eq!((life(&state, P0), life(&state, P1)), (20, 20));
+}
+
+#[test]
+fn fling_whose_target_died_in_response_still_cost_its_creature() {
+    let mut state = plains();
+    let skyfisher = put(&mut state, P0, "Kor Skyfisher", Zone::Battlefield);
+    let target = put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+    let fling = put(&mut state, P0, "Fling", Zone::Hand);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast(&mut state, fling, &[Target::Object(target)]);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    cast(&mut state, bolt, &[Target::Object(target)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, target), Zone::Graveyard, "the Bolt killed it");
+    assert_eq!(
+        zone(&state, skyfisher),
+        Zone::Graveyard,
+        "the cost was paid"
+    );
+    assert_eq!(zone(&state, fling), Zone::Graveyard);
+    assert_eq!((life(&state, P0), life(&state, P1)), (20, 20));
+}
+
+// ---- Boarding Action ---------------------------------------------------------------------
+
+#[test]
+fn boarding_action_creates_a_hasty_two_one_red_klingon_warrior() {
+    let mut state = plains();
+    let boarding = put(&mut state, P0, "Boarding Action", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast(&mut state, boarding, &[]);
+    settled(&mut state);
+    let tokens = named(&state, P0, "Klingon Warrior Token");
+    assert_eq!(tokens.len(), 1);
+    let token = tokens[0];
+    assert!(state.objects.get(token).v4.is_token);
+    assert_eq!(power_toughness(&state, token), (2, 1));
+    assert!(keyword(&state, token, Keywords::HASTE));
+    assert!(engine::has_effective_subtype(
+        &state,
+        token,
+        Subtype::Klingon
+    ));
+    assert!(engine::has_effective_subtype(
+        &state,
+        token,
+        Subtype::Warrior
+    ));
+    assert_eq!(zone(&state, boarding), Zone::Graveyard);
+    // Haste: it attacks the turn it was made.
+    attack_with(&mut state, vec![token], |_, _| None);
+    assert_eq!(life(&state, P1), 18);
+}
+
+#[test]
+fn boarding_action_beams_up_returning_a_creature_you_control_then_is_exiled() {
+    let mut state = plains();
+    let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
+    let skyfisher = put(&mut state, P0, "Kor Skyfisher", Zone::Battlefield);
+    let theirs = put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+    let boarding = put(&mut state, P0, "Boarding Action", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::R], 2);
+    assert!(castable(&mut state, boarding));
+    act(&mut state, Action::CastSpell(boarding));
+    match next(&mut state) {
+        Decision::ChooseCostTargets {
+            cost_kind,
+            candidates,
+            ..
+        } => {
+            assert_eq!(cost_kind, CostKind::ReturnPermanentsToHand);
+            assert_eq!(
+                sorted(candidates),
+                sorted(vec![inspector, skyfisher]),
+                "only creatures you control"
+            );
+            act(&mut state, Action::ChooseCostTarget(skyfisher));
+        }
+        other => panic!("expected the creature to return, got {other:?}"),
+    }
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(zone(&state, skyfisher), Zone::Hand, "returned as a cost");
+    settled(&mut state);
+    assert_eq!(named(&state, P0, "Klingon Warrior Token").len(), 1);
+    assert_eq!(zone(&state, boarding), Zone::Exile, "then exile this spell");
+    assert_eq!(zone(&state, inspector), Zone::Battlefield);
+    assert_eq!(zone(&state, theirs), Zone::Battlefield);
+    assert_eq!(state.players[0].mana_pool, [0; 6], "{{2}}{{R}} paid");
+}
+
+#[test]
+fn boarding_action_beam_me_up_needs_a_creature_you_control_and_two_r() {
+    // No creature of yours to return.
+    let mut state = plains();
+    put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+    let boarding = put(&mut state, P0, "Boarding Action", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::R], 2);
+    assert!(!castable(&mut state, boarding), "no creature you control");
+
+    // A creature, but only {1}{R}: its mana cost doesn't pay Beam me up.
+    let mut state = plains();
+    let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
+    let boarding = put(&mut state, P0, "Boarding Action", Zone::Graveyard);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    assert!(
+        !castable(&mut state, boarding),
+        "Beam me up costs {{2}}{{R}}"
+    );
+
+    // With {2}{R} and one creature, that creature returns without a choice.
+    pool(&mut state, P0, &[], 1);
+    cast(&mut state, boarding, &[]);
+    settled(&mut state);
+    assert_eq!(zone(&state, inspector), Zone::Hand);
+    assert_eq!(zone(&state, boarding), Zone::Exile);
+    assert_eq!(named(&state, P0, "Klingon Warrior Token").len(), 1);
+}
+
+#[test]
+fn boarding_action_beamed_up_and_countered_is_still_exiled() {
+    let mut state = plains();
+    let inspector = put(&mut state, P0, "Thraben Inspector", Zone::Battlefield);
+    let boarding = put(&mut state, P0, "Boarding Action", Zone::Graveyard);
+    let counterspell = put(&mut state, P1, "Counterspell", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 2);
+    pool(&mut state, P1, &[ManaColor::U, ManaColor::U], 0);
+    cast(&mut state, boarding, &[]);
+    pass_priority(&mut state, P0);
+    cast(&mut state, counterspell, &[Target::Object(boarding)]);
+    settled(&mut state);
+    assert_eq!(
+        zone(&state, boarding),
+        Zone::Exile,
+        "exiled though countered"
+    );
+    assert_eq!(zone(&state, counterspell), Zone::Graveyard);
+    assert_eq!(zone(&state, inspector), Zone::Hand, "the cost stays paid");
+    assert!(named(&state, P0, "Klingon Warrior Token").is_empty());
+}
+
+// ---- Kaervek's Torch -----------------------------------------------------------------------
+
+#[test]
+fn kaerveks_torch_deals_x_damage_to_any_target() {
+    let mut state = plains();
+    let torch = put(&mut state, P0, "Kaervek's Torch", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 3);
+    cast_x(&mut state, torch, 3, &[Target::Player(P1)]);
+    settled(&mut state);
+    assert_eq!(life(&state, P1), 17);
+    assert_eq!(zone(&state, torch), Zone::Graveyard);
+    assert_eq!(state.players[0].mana_pool, [0; 6]);
+
+    // X = 2 at a creature.
+    let mut state = plains();
+    let inspector = put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+    let torch = put(&mut state, P0, "Kaervek's Torch", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 2);
+    cast_x(&mut state, torch, 2, &[Target::Object(inspector)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, inspector), Zone::Graveyard);
+    assert_eq!(life(&state, P1), 20);
+}
+
+#[test]
+fn kaerveks_torch_with_x_zero_deals_no_damage() {
+    let mut state = plains();
+    let torch = put(&mut state, P0, "Kaervek's Torch", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    cast_x(&mut state, torch, 0, &[Target::Player(P1)]);
+    settled(&mut state);
+    assert_eq!(life(&state, P1), 20);
+    assert_eq!(zone(&state, torch), Zone::Graveyard);
+}
+
+#[test]
+fn kaerveks_torch_does_nothing_when_its_target_is_gone() {
+    let mut state = plains();
+    let inspector = put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+    let torch = put(&mut state, P0, "Kaervek's Torch", Zone::Hand);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 2);
+    cast_x(&mut state, torch, 2, &[Target::Object(inspector)]);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    cast(&mut state, bolt, &[Target::Object(inspector)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, inspector), Zone::Graveyard);
+    assert_eq!(zone(&state, torch), Zone::Graveyard);
+    assert_eq!((life(&state, P0), life(&state, P1)), (20, 20));
+}
+
+#[test]
+fn spells_that_target_kaerveks_torch_cost_two_more() {
+    let mut state = plains();
+    let torch = put(&mut state, P0, "Kaervek's Torch", Zone::Hand);
+    let counterspell = put(&mut state, P1, "Counterspell", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast_x(&mut state, torch, 1, &[Target::Player(P1)]);
+    pass_priority(&mut state, P0);
+    // {U}{U} alone can't pay for the only target, the Torch.
+    pool(&mut state, P1, &[ManaColor::U, ManaColor::U], 0);
+    assert!(
+        !castable(&mut state, counterspell),
+        "the Torch's tax is unpaid"
+    );
+    pool(&mut state, P1, &[], 2);
+    cast(&mut state, counterspell, &[Target::Object(torch)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, torch), Zone::Graveyard, "countered");
+    assert_eq!(zone(&state, counterspell), Zone::Graveyard);
+    assert_eq!(life(&state, P1), 20);
+    assert_eq!(
+        state.players[1].mana_pool, [0; 6],
+        "{{U}}{{U}} and {{2}} paid"
+    );
+}
+
+#[test]
+fn spells_that_dont_target_kaerveks_torch_pay_no_tax() {
+    let mut state = plains();
+    let torch = put(&mut state, P0, "Kaervek's Torch", Zone::Hand);
+    let bolt = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast_x(&mut state, torch, 1, &[Target::Player(P1)]);
+    pass_priority(&mut state, P0);
+    pool(&mut state, P1, &[ManaColor::R], 0);
+    cast(&mut state, bolt, &[Target::Player(P0)]);
+    settled(&mut state);
+    assert_eq!(life(&state, P0), 17);
+    assert_eq!(life(&state, P1), 19);
+    assert_eq!(state.players[1].mana_pool, [0; 6]);
+}
+
+#[test]
+fn a_torch_is_offered_as_a_target_only_when_the_tax_is_payable() {
+    let mut state = plains();
+    let torch = put(&mut state, P0, "Kaervek's Torch", Zone::Hand);
+    let bolt = put(&mut state, P0, "Lightning Bolt", Zone::Hand);
+    let hallow = put(&mut state, P1, "Hallow", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 2);
+    cast_x(&mut state, torch, 2, &[Target::Player(P1)]);
+    pool(&mut state, P0, &[ManaColor::R], 0);
+    cast(&mut state, bolt, &[Target::Player(P1)]);
+    pass_priority(&mut state, P0);
+
+    // With {W} alone Hallow may target the Bolt but not the Torch.
+    pool(&mut state, P1, &[ManaColor::W], 0);
+    let offered = cast_targets(&state, hallow);
+    assert!(offered.contains(&Target::Object(bolt)));
+    assert!(!offered.contains(&Target::Object(torch)), "{offered:?}");
+
+    // With {2}{W} it may target the Torch too, and pays the tax.
+    pool(&mut state, P1, &[], 2);
+    let offered = cast_targets(&state, hallow);
+    assert!(offered.contains(&Target::Object(torch)), "{offered:?}");
+    cast(&mut state, hallow, &[Target::Object(torch)]);
+    settled(&mut state);
+    // The Bolt deals 3; the Torch's 2 is prevented and gains P1 2 life.
+    assert_eq!(life(&state, P1), 19);
+    assert_eq!(state.players[1].mana_pool, [0; 6]);
+}
+
+#[test]
+fn a_spell_whose_only_target_is_an_unpayable_torch_is_not_offered() {
+    let mut state = plains();
+    let torch = put(&mut state, P0, "Kaervek's Torch", Zone::Hand);
+    let hallow = put(&mut state, P1, "Hallow", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast_x(&mut state, torch, 1, &[Target::Player(P1)]);
+    pass_priority(&mut state, P0);
+    pool(&mut state, P1, &[ManaColor::W], 1);
+    assert!(
+        !castable(&mut state, hallow),
+        "{{1}}{{W}} can't pay {{2}}{{W}}"
+    );
+    pool(&mut state, P1, &[], 1);
+    assert!(castable(&mut state, hallow));
+}
+
+// ---- Hallow --------------------------------------------------------------------------------
+
+#[test]
+fn hallow_prevents_its_target_spells_damage_and_gains_that_much_life() {
+    let mut state = plains();
+    let hallow = put(&mut state, P0, "Hallow", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    let bolt = opponent_bolts(&mut state, Target::Player(P0));
+    cast(&mut state, hallow, &[Target::Object(bolt)]);
+    settled(&mut state);
+    assert_eq!(life(&state, P0), 23, "3 prevented, 3 gained");
+    assert_eq!(life(&state, P1), 20);
+    assert_eq!(zone(&state, bolt), Zone::Graveyard);
+    assert_eq!(zone(&state, hallow), Zone::Graveyard);
+}
+
+#[test]
+fn hallow_prevents_damage_to_every_recipient_and_gains_the_total() {
+    let mut state = plains();
+    let mine = [
+        put(&mut state, P0, "Thraben Inspector", Zone::Battlefield),
+        put(&mut state, P0, "Thraben Inspector", Zone::Battlefield),
+    ];
+    let theirs = put(&mut state, P1, "Thraben Inspector", Zone::Battlefield);
+    let hallow = put(&mut state, P0, "Hallow", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    state.priority_player = P1;
+    let cannonade = put(&mut state, P1, "Fiery Cannonade", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::R], 2);
+    cast(&mut state, cannonade, &[]);
+    pass_priority(&mut state, P1);
+    cast(&mut state, hallow, &[Target::Object(cannonade)]);
+    settled(&mut state);
+    for creature in [mine[0], mine[1], theirs] {
+        assert_eq!(zone(&state, creature), Zone::Battlefield);
+        assert_eq!(state.objects.get(creature).damage, 0);
+    }
+    assert_eq!(
+        life(&state, P0),
+        26,
+        "2 prevented to each of three creatures"
+    );
+    assert_eq!(life(&state, P1), 20);
+}
+
+#[test]
+fn hallow_leaves_other_spells_damage_alone() {
+    let mut state = plains();
+    let hallow = put(&mut state, P0, "Hallow", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    state.priority_player = P1;
+    let first = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    let second = put(&mut state, P1, "Lightning Bolt", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::R, ManaColor::R], 0);
+    cast(&mut state, first, &[Target::Player(P0)]);
+    cast(&mut state, second, &[Target::Player(P0)]);
+    pass_priority(&mut state, P1);
+    cast(&mut state, hallow, &[Target::Object(first)]);
+    settled(&mut state);
+    // The second Bolt deals 3; the first is prevented and gains 3.
+    assert_eq!(life(&state, P0), 20);
+    assert_eq!(zone(&state, first), Zone::Graveyard);
+    assert_eq!(zone(&state, second), Zone::Graveyard);
+}
+
+#[test]
+fn hallow_does_nothing_when_its_target_spell_is_gone() {
+    let mut state = plains();
+    let hallow = put(&mut state, P0, "Hallow", Zone::Hand);
+    let counterspell = put(&mut state, P0, "Counterspell", Zone::Hand);
+    pool(
+        &mut state,
+        P0,
+        &[ManaColor::W, ManaColor::U, ManaColor::U],
+        0,
+    );
+    let bolt = opponent_bolts(&mut state, Target::Player(P0));
+    cast(&mut state, hallow, &[Target::Object(bolt)]);
+    cast(&mut state, counterspell, &[Target::Object(bolt)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, bolt), Zone::Graveyard, "countered");
+    assert_eq!(zone(&state, hallow), Zone::Graveyard);
+    assert_eq!(
+        hallow_shield_count(&state),
+        0,
+        "no shield without its target"
+    );
+    assert_eq!(life(&state, P0), 20);
+}
+
+#[test]
+fn hallow_does_not_follow_a_permanent_spell_onto_the_battlefield() {
+    let mut state = plains();
+    let hallow = put(&mut state, P0, "Hallow", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::W], 0);
+    state.active_player = P1;
+    state.priority_player = P1;
+    let fanatic = put(&mut state, P1, "Mogg Fanatic", Zone::Hand);
+    pool(&mut state, P1, &[ManaColor::R], 0);
+    cast(&mut state, fanatic, &[]);
+    pass_priority(&mut state, P1);
+    cast(&mut state, hallow, &[Target::Object(fanatic)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, fanatic), Zone::Battlefield);
+    assert_eq!(hallow_shield_count(&state), 1);
+    // The permanent is a new object (400.7): its damage isn't prevented.
+    activate(&mut state, fanatic, 0, &[Target::Player(P0)]);
+    settled(&mut state);
+    assert_eq!(zone(&state, fanatic), Zone::Graveyard);
+    assert_eq!(life(&state, P0), 19);
+}
+
+// ---- Public sessions -----------------------------------------------------------------------
+
+#[derive(Default)]
+struct Pf1cEvents {
+    casts: [usize; PF1C_CARDS.len()],
+}
+
+impl Pf1cEvents {
+    fn observe(&mut self, _decision: &Value, action: &Value) {
+        let semantic = &action["semantic"];
+        if semantic["action_kind"].as_str() != Some("cast_spell") {
+            return;
+        }
+        let Some(card_id) = semantic["source"]["card_db_id"]
+            .as_u64()
+            .and_then(|id| usize::try_from(id).ok())
+        else {
+            return;
+        };
+        let name = CARD_DEFS[card_id].name;
+        if let Some(index) = PF1C_CARDS.iter().position(|&card| card == name) {
+            self.casts[index] += 1;
+        }
+    }
+}
+
+#[test]
+fn pf1c_decks_finish_and_replay_through_public_sessions_both_seats() {
+    let boros = deck(&[
+        ("Mountain", 10),
+        ("Plains", 7),
+        ("Fling", 5),
+        ("Kaervek's Torch", 5),
+        ("Boarding Action", 5),
+        ("Hallow", 4),
+        ("Mogg Fanatic", 4),
+        ("Goblin Bushwhacker", 2),
+        ("Lightning Bolt", 4),
+    ]);
+    let white = deck(&[
+        ("Plains", 17),
+        ("Hallow", 6),
+        ("Thraben Inspector", 5),
+        ("Kor Skyfisher", 4),
+        ("Swords to Plowshares", 4),
+        ("Prismatic Strands", 4),
+    ]);
+    let mut events = Pf1cEvents::default();
+    // Twelve games plus their twelve replays, with both policies and seats.
+    for pair in [[boros.clone(), white.clone()], [white, boros]] {
+        for seed in 0x9F1C_u64..0x9F1F {
+            for policy in [Policy::Ranked, Policy::Random(seed + 0x100)] {
+                let played = play_observed(pair.clone(), None, seed, policy, &mut |d, a| {
+                    events.observe(d, a)
+                });
+                let replay = play_observed(pair.clone(), None, seed, policy, &mut |_, _| {});
+                assert_eq!(played.transcript_sha256, replay.transcript_sha256);
+            }
+        }
+    }
+    for (name, casts) in PF1C_CARDS.into_iter().zip(events.casts) {
+        assert!(casts > 0, "{name} never cast through a public session");
     }
 }

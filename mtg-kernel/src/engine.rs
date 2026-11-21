@@ -9302,6 +9302,11 @@ fn cast_single_object_cost_needed(
                 CostComponent::TapUntappedControlledPermanentsV1 { count, filter } => {
                     Some(CastSingleObjectCostV1::TapPermanents(*filter, *count))
                 }
+                // Boarding Action's "Beam me up": return a creature you
+                // control to its owner's hand (Pauper field wave Pf1c).
+                CostComponent::ReturnControlledPermanentToOwnersHand(filter) => {
+                    Some(CastSingleObjectCostV1::ReturnPermanent(*filter))
+                }
                 _ => None,
             });
     }
@@ -10264,6 +10269,21 @@ fn ordinary_next_cast_targets(
     } else {
         candidates
     };
+    // Kaervek's Torch (Pauper field wave Pf1c): a spell that targets it
+    // costs {2} more, so a Torch is offered only while that cast stays
+    // payable.
+    #[cfg(feature = "eternal-fixtures")]
+    let candidates = if crate::eternal_pauper_pf1c_v1::torch_on_stack(state) {
+        candidates
+            .into_iter()
+            .filter(|&target| {
+                !crate::eternal_pauper_pf1c_v1::is_torch_target(state, target)
+                    || torch_target_payable_v1(def, pending, chosen, target, state)
+            })
+            .collect()
+    } else {
+        candidates
+    };
     if !normal_cast_cost_depends_on_targets(def) {
         return candidates;
     }
@@ -10282,6 +10302,83 @@ fn ordinary_next_cast_targets(
             )
         })
         .collect()
+}
+
+/// Kaervek's Torch (Pauper field wave Pf1c): whether `pending` stays payable
+/// by its cast method (or, before that is chosen, by either the mana cost or
+/// the alternative cost) with `target` added after `chosen`. The Torch's tax
+/// is part of the quote through the chosen targets.
+#[cfg(feature = "eternal-fixtures")]
+fn torch_target_payable_v1(
+    def: &card_def::CardDef,
+    pending: &PendingCast,
+    chosen: &[Target],
+    target: Target,
+    state: &GameState,
+) -> bool {
+    let mut projected = pending.clone();
+    projected.targets_chosen = chosen.to_vec();
+    projected.targets_chosen.push(target);
+    let kicked = pending.kicked == Some(true);
+    let x = pending.selected_x_v59().unwrap_or(0);
+    let method = finalized_cast_method(&projected, pending.source_contract.cast_method, def);
+    pending_cast_quote_v1(def, &projected, method, kicked, x, state).is_some()
+        || (method == CastMethodV4::Normal
+            && pending.cast_mode.is_none()
+            && pending_cast_quote_v1(def, &projected, CastMethodV4::Alternative, kicked, x, state)
+                .is_some())
+}
+
+/// Kaervek's Torch (Pauper field wave Pf1c): false when every legal first
+/// target of `def`'s spell is a Torch on the stack that this cast can't pay
+/// the {2} tax to target, so the spell isn't offered.
+#[cfg(feature = "eternal-fixtures")]
+fn torch_first_target_payable_v1(
+    def: &card_def::CardDef,
+    id: ObjectId,
+    cast_method: CastMethodV4,
+    player: PlayerId,
+    state: &GameState,
+) -> bool {
+    let first = completable_next_targets_for_controller_and_source(
+        def.target_spec,
+        &[],
+        player,
+        targeting_source_for_object(state, id),
+        state,
+    );
+    if first.is_empty()
+        || first
+            .iter()
+            .any(|&target| !crate::eternal_pauper_pf1c_v1::is_torch_target(state, target))
+    {
+        return true;
+    }
+    let methods: &[CastMethodV4] = if cast_method == CastMethodV4::Normal {
+        &[CastMethodV4::Normal, CastMethodV4::Alternative]
+    } else {
+        std::slice::from_ref(&cast_method)
+    };
+    let zone = state.objects.get(id).zone;
+    first.iter().any(|&target| {
+        methods.iter().any(|&method| {
+            spell_costs_v1::selected_spell_quote_v1(
+                def,
+                id,
+                zone,
+                method,
+                false,
+                0,
+                0,
+                &[target],
+                &[],
+                player,
+                state,
+                &[],
+            )
+            .is_some()
+        })
+    })
 }
 
 /// Returns the supported Omen definition for the current cast pipeline.
@@ -11240,6 +11337,14 @@ fn is_castable_now(
         )
         .into_iter()
         .any(|target| crate::standard_cards_v1::cast_target_allowed(def, id, player, target, state))
+    {
+        return false;
+    }
+    // Kaervek's Torch (Pauper field wave Pf1c): a spell whose only legal
+    // targets are Torches it can't pay to target isn't offered.
+    #[cfg(feature = "eternal-fixtures")]
+    if crate::eternal_pauper_pf1c_v1::torch_on_stack(state)
+        && !torch_first_target_payable_v1(def, id, cast_method, player, state)
     {
         return false;
     }
@@ -16895,6 +17000,19 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         let need = maximum.expect("unfinished unbounded selection handled above");
         let (legal_targets, can_finish) =
             cast_target_choices(def, &pending, active_target_spec, state);
+        // Kaervek's Torch's tax can leave a later pick with no payable
+        // target (Pauper field wave Pf1c): revert the cast instead of
+        // exposing an empty targeting decision.
+        #[cfg(feature = "eternal-fixtures")]
+        if legal_targets.is_empty()
+            && !can_finish
+            && crate::eternal_pauper_pf1c_v1::torch_on_stack(state)
+        {
+            let cast_method = finalized_cast_method(&pending, staged_method, def);
+            let pending = state.engine.pending_cast.take().unwrap();
+            abort_cast(state, pending, cast_method);
+            return None;
+        }
         return Some(Decision::ChooseTargets {
             player: pending.controller,
             spell: pending.spell,
@@ -30620,6 +30738,10 @@ fn finalize_owned_cast(
     // payment. Capture provenance inputs before consuming it exactly once.
     let object_cost_chosen = payment.ordered_objects.clone();
     let chosen_power_lki = payment.chosen_power_lki;
+    // Fling: the sacrificed creature's power as it last exists on the
+    // battlefield, read before the payment sacrifices it (wave Pf1c).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_pauper_pf1c_v1::note_sacrifice_power(state, pending.spell, &object_cost_chosen);
     let was_kicked = pending.kicked == Some(true);
     let paid_optional_additional_cost = if pending.optional_additional_cost_paid == Some(true) {
         Some(

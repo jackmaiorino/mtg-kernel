@@ -3112,6 +3112,14 @@ fn apply_replacements_inner(
         {
             return None;
         }
+        // Hallow's shield on a spell, which also gains its controller the
+        // life (Pauper field wave Pf1c).
+        #[cfg(feature = "eternal-fixtures")]
+        if !damage_cannot_be_prevented
+            && crate::eternal_pauper_pf1c_v1::hallow_prevents(state, damage)
+        {
+            return None;
+        }
         if !damage_cannot_be_prevented
             && damage
                 .historical_facts(state)
@@ -3694,6 +3702,9 @@ pub fn propose_and_commit(state: &mut GameState, event: ProposedEvent) {
         state,
         crate::full_text_v1::DonorCheckSiteV1::CommitTail,
     );
+    // Hallow's life for the damage this event's shield prevented (wave Pf1c).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
 }
 
 fn propose_event(state: &mut GameState, event: ProposedEvent, individual_draw: bool) {
@@ -6804,6 +6815,9 @@ pub fn propose_and_commit_batch(state: &mut GameState, events: Vec<ProposedEvent
         state,
         crate::full_text_v1::DonorCheckSiteV1::BatchTail,
     );
+    // Hallow's life for the damage the batch's shields prevented (wave Pf1c).
+    #[cfg(feature = "eternal-fixtures")]
+    crate::eternal_pauper_pf1c_v1::gain_hallow_life(state);
 }
 
 fn propose_and_commit_batch_unaudited(state: &mut GameState, events: Vec<ProposedEvent>) {

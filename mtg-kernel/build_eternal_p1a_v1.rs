@@ -353,6 +353,11 @@ pub(super) fn additional_cost_for(name: &str) -> &'static str {
         "Deprive" => {
             "Some(&[CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::LandV1)])"
         }
+        // Fling: "As an additional cost to cast this spell, sacrifice a
+        // creature." (Pauper field wave Pf1c.)
+        "Fling" => {
+            "Some(&[CostComponent::SacrificeControlled { count: 1, filter: PermanentFilter::Creature }])"
+        }
         _ => "None",
     }
 }

@@ -355,6 +355,13 @@ pub struct EternalStateV1 {
         skip_serializing_if = "crate::eternal_cube_c6c_v1::C6cStateV1::is_empty"
     )]
     pub c6c: crate::eternal_cube_c6c_v1::C6cStateV1,
+    /// Pauper field wave Pf1c's state: Fling's sacrificed power and Hallow's
+    /// shields (`eternal_pauper_pf1c_v1`).
+    #[serde(
+        default,
+        skip_serializing_if = "crate::eternal_pauper_pf1c_v1::Pf1cStateV1::is_empty"
+    )]
+    pub pf1c: crate::eternal_pauper_pf1c_v1::Pf1cStateV1,
 }
 
 fn is_no_emblem(emblems: &[bool; 2]) -> bool {

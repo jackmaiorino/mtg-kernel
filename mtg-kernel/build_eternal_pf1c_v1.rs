@@ -4,6 +4,12 @@
 //! defaults are the chains' base values. Runtime programs live in
 //! `src/eternal_pauper_pf1c_v1.rs`. Every row is keyed by a name that occurs
 //! only in the eternal registry.
+//!
+//! Rows of this wave that live in other waves' tables, each one small and
+//! additive:
+//!
+//! - Fling's additional cost (sacrifice a creature) is in
+//!   `build_eternal_p1a_v1.rs`'s `additional_cost_for`.
 
 use super::{ActivatedAbilityRecipe, Special};
 
@@ -12,9 +18,36 @@ pub(super) fn activated_ability_recipes_for(_name: &str) -> &'static [ActivatedA
     &[]
 }
 
-/// No Pf1c spell program yet.
-pub(super) fn special_for(_name: &str) -> Option<Special> {
-    None
+/// A spell whose program is a runtime function of `eternal_pauper_pf1c_v1`.
+const fn program(target_spec: &'static str, program: &'static str) -> Special {
+    Special::StandardProgram {
+        target_spec,
+        program,
+    }
+}
+
+/// Spell programs. Boarding Action's "Beam me up" is `flashback_for`;
+/// Fling's sacrifice is `additional_cost_for` in wave P1a's table.
+pub(super) fn special_for(name: &str) -> Option<Special> {
+    match name {
+        "Boarding Action" => Some(Special::CreateTokens {
+            token: "Klingon Warrior Token",
+            count: 1,
+        }),
+        "Fling" => Some(program(
+            "TargetSpec::AnyTarget",
+            "crate::eternal_pauper_pf1c_v1::fling",
+        )),
+        "Hallow" => Some(program(
+            "TargetSpec::AnySpellOnStack",
+            "crate::eternal_pauper_pf1c_v1::hallow",
+        )),
+        "Kaervek's Torch" => Some(program(
+            "TargetSpec::AnyTarget",
+            "crate::eternal_pauper_pf1c_v1::kaerveks_torch",
+        )),
+        _ => None,
+    }
 }
 
 /// No Pf1c card has kicker yet.
@@ -27,9 +60,23 @@ pub(super) fn attachment_for(_name: &str) -> &'static str {
     "None"
 }
 
-/// No Pf1c card has flashback yet.
-pub(super) fn flashback_for(_name: &str) -> String {
-    "None".to_string()
+/// Graveyard casts. Boarding Action: "Beam me up {2}{R} (You may cast this
+/// card from your graveyard for {2}{R} if you also return a creature you
+/// control to its owner's hand. Then exile this spell.)" It is a flashback
+/// cost of mana plus Deprive's return component (the ruling: the cost is
+/// paid rather than the mana cost, and the spell is exiled whenever it
+/// leaves the stack).
+pub(super) fn flashback_for(name: &str) -> String {
+    match name {
+        "Boarding Action" => {
+            let (pips, generic, x_count) = super::parse_cost("{2}{R}");
+            format!(
+                "Some(FlashbackDef {{ cost: &[CostComponent::Mana(Cost {{ pips: &[{}], generic: {generic}, x_count: {x_count} }}), CostComponent::ReturnControlledPermanentToOwnersHand(PermanentFilterDef::CreatureV1)] }})",
+                pips.join(", ")
+            )
+        }
+        _ => "None".to_string(),
+    }
 }
 
 /// No Pf1c card has an alternative cost yet.
@@ -38,7 +85,7 @@ pub(super) fn alt_cost_for(_name: &str) -> &'static str {
 }
 
 /// Boarding Action's Klingon Warrior token has haste. (No Pf1c card has a
-/// printed evergreen keyword yet.)
+/// printed evergreen keyword.)
 pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
     match name {
         "Klingon Warrior Token" => &["Keywords::HASTE"],
@@ -47,6 +94,16 @@ pub(super) fn keywords_for(name: &str) -> &'static [&'static str] {
 }
 
 /// Card-database tokens for this wave's abilities.
-pub(super) fn trigger_recipe_for(_name: &str) -> &'static str {
-    "none"
+pub(super) fn trigger_recipe_for(name: &str) -> &'static str {
+    match name {
+        "Boarding Action" => {
+            "spell:create_1_klingon_warrior_2_1_haste;beam_me_up:2r_return_controlled_creature_to_owners_hand:exile"
+        }
+        "Fling" => "additional_cost:sacrifice_creature;spell:damage_any_target_sacrificed_power_lki",
+        "Hallow" => "spell:target_spell:prevent_all_its_damage_this_turn:gain_life_prevented",
+        "Kaervek's Torch" => {
+            "static_on_stack:spells_targeting_it_cost_2_more;spell:damage_any_target_x"
+        }
+        _ => "none",
+    }
 }

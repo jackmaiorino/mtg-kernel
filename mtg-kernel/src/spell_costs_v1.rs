@@ -989,6 +989,11 @@ fn selected_spell_mana_costs_for_source_grant_v1(
                 ))
                 .saturating_add(crate::eternal_premodern_p3b_v1::statics::gloom_spell_tax(
                     state, definition, method,
+                ))
+                // Kaervek's Torch: spells that target it cost {2} more
+                // (Pauper field wave Pf1c).
+                .saturating_add(crate::eternal_pauper_pf1c_v1::torch_target_tax(
+                    state, targets,
                 ));
         // Retrace (Wrenn and Six's emblem): discard a land card in addition
         // to the other costs.

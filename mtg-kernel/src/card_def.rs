@@ -533,6 +533,10 @@ pub enum Subtype {
     /// Vintage Cube wave C6c planeswalker type.
     Narset = 720,
     Garruk = 721,
+    /// Appended for Pauper field wave Pf1c (Boarding Action's Klingon
+    /// Warrior token), stable id 740 from the 740 to 749 range reserved for
+    /// wave W1. A creature type.
+    Klingon = 740,
 }
 
 impl Subtype {
@@ -947,6 +951,8 @@ impl Subtype {
         Subtype::Mount,
         #[cfg(feature = "eternal-fixtures")]
         Subtype::Doctor,
+        #[cfg(feature = "eternal-fixtures")]
+        Subtype::Klingon,
     ];
 
     /// Outlaw creature types (Assassin, Mercenary, Pirate, Rogue, Warlock)
@@ -1211,6 +1217,7 @@ impl Subtype {
             710 => Subtype::Doctor,
             720 => Subtype::Narset,
             721 => Subtype::Garruk,
+            740 => Subtype::Klingon,
             _ => return None,
         })
     }
@@ -1454,6 +1461,7 @@ impl Subtype {
             Subtype::Doctor => true,
             Subtype::Narset => false,
             Subtype::Garruk => false,
+            Subtype::Klingon => true,
         }
     }
 
@@ -1577,6 +1585,7 @@ impl Subtype {
                     | Subtype::Horse
                     | Subtype::Mount
                     | Subtype::Doctor
+                    | Subtype::Klingon
             )
         {
             return true;

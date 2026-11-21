@@ -37086,7 +37086,7 @@
   },
   {
    "name": "Boarding Action",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}",
    "mana_value": 2,
    "colors": [
@@ -37106,11 +37106,14 @@
    ],
    "sideboard_only": false,
    "complexity": "complex",
-   "mechanics": []
+   "mechanics": [
+    "token_creation",
+    "flashback"
+   ]
   },
   {
    "name": "Kaervek's Torch",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{X}{R}",
    "mana_value": 1,
    "colors": [
@@ -37130,12 +37133,15 @@
    ],
    "sideboard_only": false,
    "complexity": "complex",
-   "mechanics": [],
+   "mechanics": [
+    "x_cost",
+    "damage"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/k/KaerveksTorch.java"
   },
   {
    "name": "Hallow",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{W}",
    "mana_value": 1,
    "colors": [
@@ -37155,12 +37161,15 @@
    ],
    "sideboard_only": false,
    "complexity": "complex",
-   "mechanics": [],
+   "mechanics": [
+    "damage_prevention",
+    "life_gain"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/h/Hallow.java"
   },
   {
    "name": "Fling",
-   "engine_capability": "no_effect",
+   "engine_capability": "full",
    "mana_cost": "{1}{R}",
    "mana_value": 2,
    "colors": [
@@ -37181,7 +37190,11 @@
    ],
    "sideboard_only": false,
    "complexity": "complex",
-   "mechanics": [],
+   "mechanics": [
+    "damage",
+    "additional_cost",
+    "sacrifice_cost"
+   ],
    "java_file": "Mage.Sets/src/mage/cards/f/Fling.java"
   },
   {
@@ -37196,6 +37209,7 @@
     "Creature"
    ],
    "subtypes": [
+    "Klingon",
     "Warrior"
    ],
    "supertypes": [],
