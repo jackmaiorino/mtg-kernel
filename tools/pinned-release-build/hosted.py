@@ -42,7 +42,7 @@ RELEASE_PR811_SOURCE_MERGED = "572de58807a51254212e1cb2e4904f24a676e3d9"
 TRAINER_TAIL_SOURCE_V1 = "78415f8eb0a081d70f00ef970166fd457a08998b"
 TRAINER_TAIL_LEAN_SOURCE_V1 = "553018fe4cafd58d352b0121d5b1ad16da1cc8c5"
 # The followed-trainer branch on the release line (this guard branch only).
-FOLLOW_SOURCE_V1 = "3314a7bdee394b14b51b910631350bdbe27d0673"
+FOLLOW_SOURCE_V1 = "dfe6bc76bc7a5b6f79e8cad960520b25d04d6870"
 # Target-flag variant of the build (`PINNED_TARGET_CPU` in the environment, default `default`): build.sh maps the
 # name to rustc target flags for every crate compiled for the target (not the precompiled standard library, build
 # scripts or proc macros) and writes a manifest with another schema id, the name and the flags. A variant binary runs
