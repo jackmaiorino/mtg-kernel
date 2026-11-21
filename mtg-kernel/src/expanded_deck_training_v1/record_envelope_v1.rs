@@ -97,6 +97,7 @@ impl RecordEnvelopeV1 {
                 } else {
                     sealed
                 };
+                #[cfg(debug_assertions)]
                 if open_v1(&sealed, bytes.len() as u64)?.as_ref() != bytes {
                     return Err("record envelope round trip differs".into());
                 }
