@@ -1,7 +1,9 @@
 """Pooled collection dispatcher tests (stage 1). Hosts are simulated in temporary directories; the
 fake collector writes each slot's bytes as a function of its episode alone (as the real collector
 does), so any host split, failover or audit must merge to the same files."""
+import contextlib
 import hashlib
+import io
 import json
 import os
 import shlex
@@ -296,6 +298,20 @@ class PooledCollectTests(unittest.TestCase):
 
         dispatcher._prune_locked = replace_then_prune
         dispatcher.collect(nxt, fake_merge)
+        # One more iteration: the upload that went to the old storage is now eligible for pruning,
+        # and the replacement storage (no witness for it) keeps it.
+        replaced = dispatcher.transports["a"]
+        third = self.root / "learner" / "checkpoint-3.json"
+        third.write_bytes(b"third checkpoint")
+        self.command["source"]["checkpoint"] = {"path": str(third), "sha256": pc.sha256_file(third)}
+        last = self.root / "run" / "iterations" / "000018" / "attempt-000000"
+        last.mkdir(parents=True)
+        (last / "collect-command.json").write_text(json.dumps(self.command))
+        pc.Dispatcher(config, {"a": replaced}).collect(last / "collect-command.json", fake_merge)
+        self.assertIn(str(self.root / "learner" / "checkpoint-2.json"), replaced.files)
+        self.assertIn(str(self.checkpoint), replaced.files)
+        self.assertEqual([r for r in getattr(replaced, "removed", []) if "pooled-" not in Path(r).name], [],
+                         "only its own shard command files were removed")
 
     def test_a_whole_command_one_process_refuses_launches_nothing(self):
         config = self.config([("a", 1.0, "x86"), ("b", 1.0, "x86")])
@@ -598,8 +614,60 @@ class PinPublicationTests(unittest.TestCase):
         self.assertEqual(remote.read_bytes(), self.checkpoint.read_bytes())
         self.assertEqual(list(remote.parent.iterdir()), [remote])
 
-    def test_owned_removal_deletes_only_the_installed_file(self):
+    def emulated_ssh(self):
+        local_run = subprocess.run
+
+        def emulate_ssh(argv, **kwargs):
+            command = shlex.split(argv[-1])
+            return local_run([sys.executable, *command[1:]], **kwargs)
+
+        return mock.patch.object(pc.subprocess, "run", side_effect=emulate_ssh)
+
+    def test_a_replacement_right_after_publication_is_never_owned(self):
+        self.host.kind, self.host.ssh, self.host.prune_pushed = "ssh", ["fake-ssh", "collector"], True
+        transport = pc.Transport(self.host)
+        remote = (self.root / "collector" / "pin.json").as_posix()
+        digest = pc.sha256_file(self.checkpoint)
+        real_link = os.link
+
+        def link_then_replace(src, dst, *args, **kwargs):
+            real_link(src, dst, *args, **kwargs)
+            if Path(dst).as_posix() == remote:  # another actor restores a same-bytes copy at once
+                Path(remote).unlink()
+                Path(remote).write_bytes(self.checkpoint.read_bytes())
+
+        with mock.patch.object(pc.os, "link", side_effect=link_then_replace):
+            exec_globals = {"__name__": "__main__"}
+            argv = [remote, remote + ".stage", digest, self.host.scratch, "1"]
+            with mock.patch.object(sys, "argv", ["-c", *argv]), \
+                    mock.patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(self.checkpoint.read_bytes()))), \
+                    contextlib.redirect_stdout(io.StringIO()) as out:
+                exec(compile(pc.PUSH_PIN, "push", "exec"), exec_globals)
+        self.assertEqual(out.getvalue().strip(), "created")
+        with self.emulated_ssh():
+            self.assertEqual(transport.remove_owned(remote, digest), "not-owned", "the witness names the installed inode")
+        self.assertEqual(Path(remote).read_bytes(), self.checkpoint.read_bytes())
+
+    def test_an_unusable_witness_directory_never_fails_a_push(self):
+        self.host.kind, self.host.ssh, self.host.prune_pushed = "ssh", ["fake-ssh", "collector"], True
+        Path(self.host.scratch).mkdir(parents=True)
+        (Path(self.host.scratch) / ".pooled-owned").write_text("not a directory")
+        remote = (self.root / "collector" / "pin.json").as_posix()
+        with self.emulated_ssh():
+            self.assertFalse(pc.Transport(self.host).push(self.checkpoint, remote, pc.sha256_file(self.checkpoint)),
+                             "installed, but unowned")
+        self.assertEqual(Path(remote).read_bytes(), self.checkpoint.read_bytes())
+
+    def test_without_retention_no_witness_is_made(self):
         self.host.kind, self.host.ssh = "ssh", ["fake-ssh", "collector"]
+        remote = (self.root / "collector" / "pin.json").as_posix()
+        with self.emulated_ssh():
+            self.assertFalse(pc.Transport(self.host).push(self.checkpoint, remote, pc.sha256_file(self.checkpoint)))
+        self.assertTrue(Path(remote).exists())
+        self.assertFalse((Path(self.host.scratch) / ".pooled-owned").exists())
+
+    def test_owned_removal_deletes_only_the_installed_file(self):
+        self.host.kind, self.host.ssh, self.host.prune_pushed = "ssh", ["fake-ssh", "collector"], True
         transport = pc.Transport(self.host)
         remote = (self.root / "collector" / "pin.json").as_posix()
         digest = pc.sha256_file(self.checkpoint)
@@ -624,7 +692,8 @@ class PinPublicationTests(unittest.TestCase):
             self.assertEqual(Path(remote).read_bytes(), self.checkpoint.read_bytes())
             self.assertEqual(transport.remove_owned(remote, digest), "not-owned", "the stale witness is gone")
         owned = Path(self.host.scratch) / ".pooled-owned"
-        self.assertEqual(list(owned.iterdir()), [], "no witness or set-aside file left")
+        self.assertEqual([p for p in owned.iterdir() if not p.name.endswith(".lock")], [],
+                         "no witness or set-aside file left")
 
     def test_merge_uses_the_native_trainer_mode_in_schedule_order(self):
         command_path = self.root / "collect-command.json"
