@@ -5,15 +5,15 @@
   <link rel="self" href="https://jackmaiorino.github.io/mtg-kernel/blog/feed.xml"/>
   <link rel="alternate" href="https://jackmaiorino.github.io/mtg-kernel/blog/"/>
   <id>https://jackmaiorino.github.io/mtg-kernel/blog/</id>
-  <updated>2026-11-20T22:00:00-05:00</updated>
+  <updated>2026-11-21T02:38:48Z</updated>
   <author><name>MTG Kernel</name></author>
   <!-- Newest first. The weekly task adds one <entry> per post and updates <updated> above. -->
   <entry>
     <title>#1: Past a million updates, the bot is still climbing</title>
     <link rel="alternate" href="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/"/>
     <id>https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/</id>
-    <published>2026-11-20T22:00:00-05:00</published>
-    <updated>2026-11-20T22:00:00-05:00</updated>
-    <summary>Each doubling of training still buys wins against the model the chains started from. It just buys fewer than it used to: about 2.5 win-rate points per doubling past a million updates.</summary>
+    <published>2026-11-21T02:31:23Z</published>
+    <updated>2026-11-21T02:38:48Z</updated>
+    <summary>After a million updates, the three chains gained about 2.44 percentage points per doubling on a fixed panel. The pace may be slowing.</summary>
   </entry>
 </feed>

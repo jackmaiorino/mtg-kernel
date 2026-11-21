@@ -79,13 +79,13 @@ th:first-child, td:first-child { text-align: left; }
 th { color: var(--ink-3); font-weight: 500; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
-<meta name="description" content="Each doubling of training still buys wins against the model the chains started from. It just buys fewer than it used to.">
+<meta name="description" content="After a million updates, the three chains gained about 2.44 percentage points per doubling on a fixed panel. The pace may be slowing.">
 <link rel="canonical" href="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/">
 <link rel="alternate" type="application/atom+xml" title="MTG Kernel Weekly" href="../feed.xml">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="MTG Kernel">
 <meta property="og:title" content="Past a million updates, the bot is still climbing">
-<meta property="og:description" content="Each doubling of training still buys wins against the model the chains started from. It just buys fewer than it used to.">
+<meta property="og:description" content="After a million updates, the three chains gained about 2.44 percentage points per doubling on a fixed panel. The pace may be slowing.">
 <meta property="og:url" content="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/">
 <meta property="og:image" content="https://jackmaiorino.github.io/mtg-kernel/blog/2026-11-20-still-climbing/og.png">
 <meta property="og:image:width" content="1200">
@@ -99,76 +99,86 @@ th { color: var(--ink-3); font-weight: 500; }
   <header>
     <div class="eyebrow"><span>mtg-kernel weekly</span><span>#1</span><span>Week of Nov 14 to 20, 2026</span></div>
     <h1>Past a million updates, the bot is <em>still climbing</em></h1>
-    <p class="dek">Each doubling of training still buys wins. It just buys fewer than it used to.</p>
+    <p class="dek">After a million updates, the three chains gained about 2.44 percentage points per doubling on a fixed panel. The pace may be slowing.</p>
   </header>
 
   <section class="card" aria-labelledby="c1t">
     <div class="chart-head">
       <div>
-        <p class="chart-title" id="c1t">Win rate against Basilisk 1, the model the chains started from</p>
-        <p class="chart-sub">Mean of three self-play chains, 3,888 games per checkpoint, 95% interval</p>
+        <p class="chart-title" id="c1t">Gain over Basilisk 1 on the same matchups</p>
+        <p class="chart-sub">Percentage points, with a 95% paired interval. Each of three chains played 3,888 games per checkpoint.</p>
       </div>
-      <div class="big"><div class="n" id="bigN">71.0%</div><div class="l" id="bigL">at 1.59M updates</div></div>
+      <div class="big"><div class="n" id="bigN">+21.0 pts</div><div class="l" id="bigL">at 1.59M updates</div></div>
     </div>
     <div class="svgbox" id="box1">
-      <svg id="c1" viewBox="0 0 720 360" role="img" aria-label="Line chart: win rate rises from 55.5 percent at 65 thousand updates to 71.0 percent at 1.59 million updates, flattening after 1 million."></svg>
+      <svg id="c1" viewBox="0 0 720 360" role="img" aria-label="The gain over Basilisk 1 rises from 5.5 points at 65,536 updates to 21.0 points at 1.59 million updates."></svg>
       <div class="tip" id="tip" hidden></div>
     </div>
     <div class="legend">
       <span><i class="sw"></i>Measured</span>
       <span><i class="sw band"></i>95% interval</span>
       <span><i class="sw proj"></i>If every doubling paid like 524k to 1.05M</span>
-      <span><i class="sw pend"></i>2.1M: games played, not read yet</span>
+      <span><i class="sw pend"></i>2.1M projections</span>
     </div>
     <div class="controls"><button id="replay" type="button">Replay the climb</button></div>
   </section>
 
   <section class="card" aria-labelledby="c2t">
-    <p class="chart-title" id="c2t">Win rate points gained per doubling of training</p>
-    <p class="chart-sub">Past 1.05M: regression slope over nine checkpoints per chain, with its 95% interval</p>
-    <div class="svgbox"><svg id="c2" viewBox="0 0 720 210" role="img" aria-label="Bar chart: points per doubling were 2.6, 4.5, 4.0 and 3.4 through 1.05 million updates, and about 2.5 after."></svg></div>
+    <p class="chart-title" id="c2t">Percentage points gained per doubling of training updates</p>
+    <p class="chart-sub">After 1.05M, the estimate uses nine checkpoints per chain. The whisker shows the 95% interval across the three slopes.</p>
+    <div class="svgbox"><svg id="c2" viewBox="0 0 720 210" role="img" aria-label="Bar chart: points per doubling were 2.6, 4.5, 4.0 and 3.3 through 1.05 million updates, and about 2.4 after."></svg></div>
   </section>
 
   <article class="prose">
     <h2>What we learned</h2>
-    <p>Our main training chains learn Pauper by playing against themselves and a few earlier models, and the only reward is winning. At each checkpoint we test them against Basilisk 1, the public model they started from, on a fixed panel of 3,888 games.</p>
-    <p>Through the middle of the curve, each doubling of training added 3.4 to 4.5 points of win rate. Past a million updates the best estimate is about 2.5 points per doubling. The interval rules out a flat line, so the chains are still improving. It does not yet rule out the old rate, so "slowing down" is our best guess, not a settled fact.</p>
+    <p>Our main training chains learn Pauper by playing against themselves and a few earlier models, and the only reward is winning. We test them against Basilisk 1, the public model they started from. Basilisk 1 scored 49.79% against itself on the same deals. At 1.59 million updates, the three chains averaged 70.76% against it, a gain of 20.96 percentage points. A draw counts as half a win.</p>
+    <p>The last doubling before 1.05 million updates gained 3.34 points. Across the later checkpoints, the estimated gain was 2.44 points per doubling. Its 95% interval, 1.41 to 3.46, includes that earlier pace. Comparing just the first and last of those checkpoints gives a gain of 1.08 points, with an interval that includes zero.</p>
     <p>That shapes how we spend the fleet. More of the same training still pays, probably more slowly. So the next experiments add what the bot could not do before: mulligans and full priority windows are next to go into training, as their own forks.</p>
     <h2>Next week</h2>
-    <p>The first games at 2.1M updates are already played and sealed until the read. If the trend holds, it lands near 72%. If the curve has gone flat, it lands near 70%.</p>
+    <p>At the time of this analysis, two of the three chains had played their 2.1M games. Their results were still sealed. Projecting from 1.05M gives a gain over Basilisk 1 of about 22 points if the later trend continues, or about 20 points if it stays flat.</p>
   </article>
 
   <footer class="foot">
     <details>
       <summary>Show the numbers</summary>
-      <div class="tbl"><table id="tbl"><thead><tr><th>Updates</th><th>Win rate</th><th>95% interval</th></tr></thead><tbody></tbody></table></div>
+      <div class="tbl"><table id="tbl"><thead><tr><th>Updates</th><th>Gain (points)</th><th>95% interval (points)</th></tr></thead><tbody></tbody></table></div>
     </details>
-    <p>Win rate counts a draw as half a win and is read from the signed score as 50% plus half the score. The yardstick is the chains' own starting point, so this measures progress, not strength against the wider field. Spellbench ratings are the outside view.</p>
+    <p>The shaded band measures uncertainty in the gain. It resamples chains and matched deal families together. This panel measures progress against the starting model. Spellbench ratings give a wider comparison.</p>
   </footer>
 </div>
 
 <script>
 (function () {
   var pts = [
-    [65536, 55.5, 54.4, 56.6], [131072, 58.1, 56.65, 59.55], [262144, 62.6, 61.2, 64.05],
-    [524288, 66.55, 64.35, 68.55], [1048576, 69.9, 68.65, 71.1], [1122304, 69.1, 67.5, 70.65],
-    [1196032, 69.9, 68.6, 71.2], [1318912, 69.75, 68.4, 71.05], [1589248, 70.95, 69.55, 72.35]
+    [65536, 5.5041, 4.4067, 6.5844],
+    [131072, 8.0847, 6.6529, 9.5336],
+    [262144, 12.5943, 11.1968, 14.0432],
+    [524288, 16.5466, 14.3261, 18.5271],
+    [1048576, 19.8817, 18.6385, 21.1163],
+    [1122304, 19.1187, 17.4897, 20.6619],
+    [1196032, 19.8988, 18.6128, 21.2191],
+    [1318912, 19.7359, 18.4156, 21.0648],
+    [1589248, 20.9619, 19.5645, 22.3508]
   ];
   var NS = "http://www.w3.org/2000/svg";
   function el(tag, attrs, parent) { var e = document.createElementNS(NS, tag); for (var k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
-  function fmtU(u) { return u >= 1e6 ? (u / 1048576).toFixed(2).replace(/0$/, "") + "M" : Math.round(u / 1024) + "k"; }
+  function fmtU(u) {
+    if (u >= 1e6) return (u / 1e6).toFixed(2).replace(/\.?0+$/, "") + "M";
+    if (u < 1e5) return (u / 1000).toFixed(1) + "k";
+    return Math.round(u / 1000) + "k";
+  }
   function fmtLong(u) { return u.toLocaleString("en-US"); }
 
   // Chart 1
   var svg = document.getElementById("c1"), W = 720, H = 360, L = 48, R = 20, T = 14, B = 40;
-  var xMin = -0.15, xMax = 5.25, yMin = 52, yMax = 75;
+  var xMin = -0.15, xMax = 5.25, yMin = 2, yMax = 25;
   function X(u) { return L + (Math.log2(u / 65536) - xMin) / (xMax - xMin) * (W - L - R); }
   function Y(v) { return T + (yMax - v) / (yMax - yMin) * (H - T - B); }
-  [55, 60, 65, 70, 75].forEach(function (v) {
+  [5, 10, 15, 20, 25].forEach(function (v) {
     el("line", { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: "var(--grid)", "stroke-width": 1 }, svg);
-    el("text", { x: L - 8, y: Y(v) + 4, "text-anchor": "end" }, svg).textContent = v + "%";
+    el("text", { x: L - 8, y: Y(v) + 4, "text-anchor": "end" }, svg).textContent = "+" + v;
   });
-  [[65536, "65k"], [131072, "131k"], [262144, "262k"], [524288, "524k"], [1048576, "1.05M"], [2097152, "2.1M"]].forEach(function (t) {
+  [[65536, "65.5k"], [131072, "131k"], [262144, "262k"], [524288, "524k"], [1048576, "1.05M"], [2097152, "2.1M"]].forEach(function (t) {
     el("text", { x: X(t[0]), y: H - B + 20, "text-anchor": "middle" }, svg).textContent = t[1];
   });
   el("text", { x: (L + W - R) / 2, y: H - 4, "text-anchor": "middle", class: "lab" }, svg).textContent = "training updates (log scale, each tick is a doubling)";
@@ -176,32 +186,32 @@ th { color: var(--ink-3); font-weight: 500; }
   var band = "M" + pts.map(function (p) { return X(p[0]) + "," + Y(p[3]); }).join("L") + "L" + pts.slice().reverse().map(function (p) { return X(p[0]) + "," + Y(p[2]); }).join("L") + "Z";
   el("path", { d: band, fill: "var(--band)", stroke: "none" }, svg);
 
-  // projection: +3.35 points per doubling from the 1.05M point
-  el("path", { d: "M" + X(1048576) + "," + Y(69.9) + "L" + X(2097152) + "," + Y(69.9 + 3.35), fill: "none", stroke: "var(--proj)", "stroke-width": 2, "stroke-dasharray": "5 5" }, svg);
-  el("text", { x: X(2097152) + 8, y: Y(73.25) + 4, class: "lab" }, svg).textContent = "73";
+  // Extend the preceding doubling from its observed endpoint.
+  el("path", { d: "M" + X(1048576) + "," + Y(19.8817) + "L" + X(2097152) + "," + Y(19.8817 + 3.3350), fill: "none", stroke: "var(--proj)", "stroke-width": 2, "stroke-dasharray": "5 5" }, svg);
+  el("text", { x: X(2097152) + 8, y: Y(23.2167) + 4, class: "lab" }, svg).textContent = "+23";
 
-  // pending 2.1M: trend range 71.3 to 73.4, flat 69.9
+  // Two scenarios at 2.1M, relative to the 1.05M gain: flat or continued late slope.
   var px = X(2097152);
-  el("line", { x1: px, x2: px, y1: Y(73.4), y2: Y(69.9), stroke: "var(--pending)", "stroke-width": 2, "stroke-dasharray": "2 4", "stroke-linecap": "round" }, svg);
-  el("circle", { cx: px, cy: Y(72.35), r: 6, fill: "var(--card)", stroke: "var(--pending)", "stroke-width": 2 }, svg);
+  el("line", { x1: px, x2: px, y1: Y(22.3176), y2: Y(19.8817), stroke: "var(--pending)", "stroke-width": 2, "stroke-dasharray": "2 4", "stroke-linecap": "round" }, svg);
+  el("circle", { cx: px, cy: Y(22.3176), r: 6, fill: "var(--card)", stroke: "var(--pending)", "stroke-width": 2 }, svg);
 
   var line = el("path", { d: "M" + pts.map(function (p) { return X(p[0]) + "," + Y(p[1]); }).join("L"), fill: "none", stroke: "var(--accent)", "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
   var dots = pts.map(function (p) { return el("circle", { cx: X(p[0]), cy: Y(p[1]), r: 4.5, fill: "var(--accent)", stroke: "var(--card)", "stroke-width": 2 }, svg); });
-  el("text", { x: X(65536) + 10, y: Y(55.5) + 18, class: "lab" }, svg).textContent = "55.5%";
-  el("text", { x: X(1589248) - 4, y: Y(70.95) + 26, "text-anchor": "end", class: "lab" }, svg).textContent = "71.0%";
+  el("text", { x: X(65536) + 10, y: Y(pts[0][1]) + 18, class: "lab" }, svg).textContent = "+5.5";
+  el("text", { x: X(1589248) - 4, y: Y(pts[pts.length - 1][1]) + 26, "text-anchor": "end", class: "lab" }, svg).textContent = "+21.0";
 
   // hover
   var tip = document.getElementById("tip"), box = document.getElementById("box1");
   var hits = pts.map(function (p) { return { p: p, x: X(p[0]), y: Y(p[1]) }; });
-  hits.push({ pend: true, x: px, y: Y(72.35) });
+  hits.push({ pend: true, x: px, y: Y(22.3176) });
   function show(evt) {
     var r = svg.getBoundingClientRect(), sx = (evt.clientX - r.left) * W / r.width;
     var best = null, bd = 1e9;
     hits.forEach(function (h) { var d = Math.abs(h.x - sx); if (d < bd) { bd = d; best = h; } });
     if (!best || bd > 40) { tip.hidden = true; return; }
     tip.innerHTML = best.pend
-      ? "2,097,152 updates<br>played and sealed, read next week<br>trend says about 72%, flat says 70%"
-      : fmtLong(best.p[0]) + " updates<br><b>" + best.p[1].toFixed(1) + "%</b> win rate<br>95%: " + best.p[2].toFixed(1) + " to " + best.p[3].toFixed(1);
+      ? "2,097,152 updates<br>two chains played, results sealed at analysis<br>continued trend +22 points, flat +20"
+      : fmtLong(best.p[0]) + " updates<br><b>" + best.p[1].toFixed(1) + " pts</b> gain<br>95% interval: " + best.p[2].toFixed(1) + " to " + best.p[3].toFixed(1);
     tip.style.left = (best.x * r.width / W) + "px";
     tip.style.top = (best.y * r.height / H) + "px";
     tip.hidden = false;
@@ -222,15 +232,15 @@ th { color: var(--ink-3); font-weight: 500; }
       line.style.strokeDashoffset = len * (1 - e);
       var drawnX = L + e * (X(1589248) - L), cur = pts[0];
       pts.forEach(function (p, i) { if (X(p[0]) <= drawnX + 0.5) { dots[i].style.opacity = 1; cur = p; } });
-      bigN.textContent = cur[1].toFixed(1) + "%"; bigL.textContent = "at " + fmtU(cur[0]) + " updates";
-      if (k < 1) requestAnimationFrame(frame); else { line.style.strokeDasharray = ""; line.style.strokeDashoffset = ""; bigN.textContent = "71.0%"; bigL.textContent = "at 1.59M updates"; }
+      bigN.textContent = "+" + cur[1].toFixed(1) + " pts"; bigL.textContent = "at " + fmtU(cur[0]) + " updates";
+      if (k < 1) requestAnimationFrame(frame); else { line.style.strokeDasharray = ""; line.style.strokeDashoffset = ""; bigN.textContent = "+21.0 pts"; bigL.textContent = "at 1.59M updates"; }
     }
     requestAnimationFrame(frame);
   });
 
   // Chart 2: points per doubling
   var s2 = document.getElementById("c2"), W2 = 720, H2 = 210, L2 = 48, R2 = 20, T2 = 18, B2 = 38, yM = 5;
-  var bars = [["65k to 131k", 2.6], ["131k to 262k", 4.5], ["262k to 524k", 3.95], ["524k to 1.05M", 3.35], ["past 1.05M", 2.45, 1.4, 3.45]];
+  var bars = [["65.5k to 131k", 2.5806], ["131k to 262k", 4.5096], ["262k to 524k", 3.9523], ["524k to 1.05M", 3.3350], ["past 1.05M", 2.4359, 1.4072, 3.4645]];
   function Y2(v) { return T2 + (yM - v) / yM * (H2 - T2 - B2); }
   [0, 1, 2, 3, 4, 5].forEach(function (v) {
     el("line", { x1: L2, x2: W2 - R2, y1: Y2(v), y2: Y2(v), stroke: v ? "var(--grid)" : "var(--rule)", "stroke-width": 1 }, s2);
@@ -252,7 +262,7 @@ th { color: var(--ink-3); font-weight: 500; }
 
   // table
   var tb = document.querySelector("#tbl tbody");
-  pts.forEach(function (p) { var tr = document.createElement("tr"); tr.innerHTML = "<td>" + fmtLong(p[0]) + "</td><td>" + p[1].toFixed(1) + "%</td><td>" + p[2].toFixed(1) + " to " + p[3].toFixed(1) + "</td>"; tb.appendChild(tr); });
+  pts.forEach(function (p) { var tr = document.createElement("tr"); tr.innerHTML = "<td>" + fmtLong(p[0]) + "</td><td>" + p[1].toFixed(1) + "</td><td>" + p[2].toFixed(1) + " to " + p[3].toFixed(1) + "</td>"; tb.appendChild(tr); });
 })();
 </script>
 </body>
