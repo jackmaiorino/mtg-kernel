@@ -799,7 +799,7 @@ class CarryTests(unittest.TestCase):
         with mock.patch.object(chains.subprocess, 'call', side_effect=AssertionError('no w5box')), \
                 contextlib.redirect_stderr(err):
             self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'c1c']), w5box.EXIT_REFUSED)
-        self.assertIn('carried manifest', err.getvalue())
+        self.assertIn('is not this carried chain', err.getvalue())
 
 
 if __name__ == '__main__':
