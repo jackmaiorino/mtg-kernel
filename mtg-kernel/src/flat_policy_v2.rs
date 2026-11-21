@@ -6275,7 +6275,7 @@ fn shows_attack_count_reader_v1(value: &serde_json::Value) -> bool {
 /// Frenzy, Search Party Captain), plus the card-code readers below.
 /// `eternal_actor_attack_count_read_sites_are_pinned` fails when a read site
 /// or a data-driven reader is added.
-pub(crate) fn reads_attack_count_v1(card_def: u16) -> bool {
+fn reads_attack_count_v1(card_def: u16) -> bool {
     crate::card_def::CARD_DEFS
         .get(usize::from(card_def))
         .is_some_and(|definition| {
@@ -9528,6 +9528,7 @@ mod attack_count_tests {
         }
     }
 
+    #[cfg(feature = "eternal-fixtures")]
     fn face_down(state: &mut GameState, object: ObjectId, lookers: u8) {
         state.objects.get_mut(object).v4.face_down_v1 = Some(crate::state::FaceDownV1 {
             disguised: false,
@@ -9589,7 +9590,7 @@ mod attack_count_tests {
                 assert_eq!(left.projection.creatures_attacked_this_turn, None);
                 assert_eq!(encode_error(&left), encode_error(&right));
 
-                let looked = exiled("Search Party Captain", hidden | 1 << observer.index());
+                let looked = exiled("Search Party Captain", hidden | (1 << observer.index()));
                 let observation = scored(&looked, observer);
                 assert_eq!(observation.projection.creatures_attacked_this_turn, Some(1));
                 assert_eq!(
@@ -9741,17 +9742,33 @@ mod attack_count_tests {
             concat!("creatures_attacked_", "turn_v1"),
             concat!("CreaturesAttacked", "ThisTurn"),
             concat!("attackers_", "this_turn("),
+            concat!("attacked_", "this_turn("),
+        ];
+        let wrappers = [
+            concat!("attackers_", "this_turn("),
+            concat!("attacked_", "this_turn("),
         ];
         let mut found = BTreeMap::new();
+        let mut wrapper_calls = std::collections::BTreeSet::new();
         let mut scan = |path: &Path| {
             let text = std::fs::read_to_string(path).unwrap();
+            let relative = path
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
             let lines = text
                 .lines()
                 .filter(|line| tokens.iter().any(|token| line.contains(token)))
                 .count();
+            for line in text.lines().map(str::trim) {
+                if wrappers.iter().any(|wrapper| line.contains(wrapper)) && !line.starts_with("fn ")
+                {
+                    wrapper_calls.insert((relative.clone(), line.to_string()));
+                }
+            }
             if lines > 0 {
-                let relative = path.strip_prefix(root).unwrap();
-                found.insert(relative.to_string_lossy().replace('\\', "/"), lines);
+                found.insert(relative, lines);
             }
         };
         let is_rust = |path: &Path| path.extension().is_some_and(|extension| extension == "rs");
@@ -9777,7 +9794,7 @@ mod attack_count_tests {
             ("build_eternal_e6b_v1.rs", 1),
             ("src/card_def.rs", 1),
             ("src/engine.rs", 4),
-            ("src/eternal_legacy_e9a_v1/statics.rs", 1),
+            ("src/eternal_legacy_e9a_v1/statics.rs", 3),
             ("src/flat_policy_v2.rs", 12),
             ("src/infoset_v1/export.rs", 1),
             ("src/regret_census_v1/stage4a.rs", 1),
@@ -9799,6 +9816,44 @@ mod attack_count_tests {
              now reads it, make reads_attack_count_v1 in flat_policy_v2.rs recognize the card \
              (card-code readers go in ATTACK_RECORD_CARD_CODE_READERS_V1) and add a test for it \
              beside this one, then update this list"
+        );
+
+        // Each call of a card-code wrapper names its card, and that card must
+        // be one of ATTACK_RECORD_CARD_CODE_READERS_V1.
+        let tied = [
+            (
+                "src/eternal_legacy_e9a_v1/statics.rs",
+                concat!(
+                    "(BROADSIDE_BOMBARDIERS, 0) => attacked_",
+                    "this_turn(state, source),"
+                ),
+                "Broadside Bombardiers",
+            ),
+            (
+                "src/standard_cards_v1.rs",
+                concat!(
+                    "CASE_OF_THE_GATEWAY_EXPRESS => attackers_",
+                    "this_turn(state) >= 3,"
+                ),
+                "Case of the Gateway Express",
+            ),
+        ];
+        for (_, _, reader) in tied {
+            assert!(
+                ATTACK_RECORD_CARD_CODE_READERS_V1.contains(&reader),
+                "{reader}"
+            );
+        }
+        let tied: std::collections::BTreeSet<(String, String)> = tied
+            .into_iter()
+            .map(|(path, line, _)| (path.to_string(), line.to_string()))
+            .collect();
+        assert_eq!(
+            wrapper_calls, tied,
+            "a card-code wrapper of this turn's attack record (attackers_this_turn in \
+             standard_cards_v1.rs, attacked_this_turn in eternal_legacy_e9a_v1/statics.rs) has a \
+             new or changed call. Add the calling card to ATTACK_RECORD_CARD_CODE_READERS_V1 in \
+             flat_policy_v2.rs, add a test for it beside this one, then update this list"
         );
     }
 }
