@@ -51,6 +51,13 @@ class TableTests(unittest.TestCase):
                 stem = prefix.rstrip(":")
                 self.assertTrue(any(n == stem or n.startswith(stem) for n in names), prefix)
 
+    def test_the_feature_matrix_is_the_table(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        (line,) = [l for l in text.splitlines() if l.strip().startswith("features: [")]
+        self.assertEqual(re.findall(r"'([^']*)'", line), ci_scope.FEATURE_SETS)
+        self.assertEqual(ci_scope.scope_of("docs/reports/x/pipeline.py"), None)
+        self.assertEqual(ci_scope.scope_of_files(["docs/reports/x/pipeline.py", "mtg-kernel/src/rl_session.rs"]), "pr")
+
     def test_the_record_names_the_mandatory_rows(self):
         record = ci_scope.trainer_record()
         for row in ci_scope.BIT_IDENTITY_ROWS:

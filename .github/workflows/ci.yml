@@ -31,7 +31,9 @@ permissions:
 concurrency:
   # A draft's light run has a group of its own, so it never cancels or
   # replaces the run that marking the pull request ready starts.
-  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'pull_request' && github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'ci:full') && '-draft' || '' }}
+  # Each push run is its own group, so a newer merge never replaces a pending
+  # monitor run of an earlier one.
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'pull_request' && github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'ci:full') && '-draft' || '' }}${{ github.event_name == 'push' && format('-{0}', github.run_id) || '' }}
   # A newer push to a pull request replaces its running CI. Runs on main,
   # tags and manual dispatches finish, because they carry the Windows
   # feature groups that pull requests skip.
@@ -144,9 +146,12 @@ jobs:
             fi
             SCOPE=pr
             CHANGED_FILES=$(git diff --name-only HEAD^1 HEAD)
-            # Any lookup failure counts as a merge commit (every job runs).
+            # Any lookup failure counts as a merge commit (every job runs), and
+            # so does a pull request longer than the 250 commits GitHub lists.
             MERGE_COMMITS=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/commits" \
               --jq '[.[] | select(.parents | length > 1)] | length' | awk '{s+=$1} END {print s+0}') || MERGE_COMMITS=1
+            COMMITS=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.commits') || COMMITS=999
+            if [ "${COMMITS:-999}" -gt 250 ]; then MERGE_COMMITS=1; fi
             export CHANGED_FILES MERGE_COMMITS
           fi
           export SCOPE
@@ -1165,9 +1170,14 @@ jobs:
   # workspace-lib also compiles (its cache is restored, never saved here).
   # The mandatory bit-identity rows run on a node.
   trainer-tests:
-    name: Trainer library tests (ubuntu-24.04)
+    name: Trainer library tests (ubuntu-24.04, ${{ matrix.features || 'default' }})
     needs: detect-changes
     if: needs.detect-changes.outputs.checks == 'release-trainer'
+    strategy:
+      fail-fast: false
+      matrix:
+        # tools/ci/ci_scope.py FEATURE_SETS (a test keeps them equal).
+        features: ['', 'experimental-burn-net8-packed-cuda-v1,gpu-exact-v1', 'limited-fdn-fixtures', 'gameplay-decision-trace-v1']
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults:
@@ -1221,7 +1231,11 @@ jobs:
       - name: Run the trainer library tests
         run: |
           read -r -a filters <<< "$(python tools/ci/ci_scope.py trainer-filters)"
-          python python/tools/run_rust_lib_filters.py --features "" "${filters[@]}"
+          # The Limited feature build needs two Cargo jobs on a 16 GB runner (as in limited-build).
+          if [[ "$TRAINER_FEATURES" == *limited* ]]; then export CARGO_BUILD_JOBS=2; fi
+          python python/tools/run_rust_lib_filters.py --features "$TRAINER_FEATURES" "${filters[@]}"
+        env:
+          TRAINER_FEATURES: ${{ matrix.features }}
 
   # A self-hosted runner's job-started hook waits for host_slots CPU admission
   # at most MTG_CI_ADMISSION_TIMEOUT seconds and then fails the job before any
