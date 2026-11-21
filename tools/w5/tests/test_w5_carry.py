@@ -607,5 +607,34 @@ class CarryTests(unittest.TestCase):
                          before)
 
 
+    def test_a_segment_link_or_a_release_cannot_reach_the_old_chain(self):
+        _, old_man = self.old(2, length=32)
+        carry_path = self.carry(old_man, 32)
+        shm = self.t / 'shm'
+        doc = json.loads(Path(self.cont_inputs(carry_path, label='sg', root='sg', segment_updates=32)).read_text())
+        doc['scratch_root'] = shm.as_posix()
+        doc['arms']['C']['scratch'] = True
+        path, plan = chains.make_plan(jwrite(self.t / 'sg.json', doc))
+        old_seg = Path(json.loads(old_man.read_text())['segments'][0]['root'])
+        (shm / 'c1c').mkdir(parents=True)
+        try:
+            (shm / 'c1c' / 'seg-00000').symlink_to(old_seg, target_is_directory=True)
+        except OSError:
+            self.skipTest('no symlink permission on this host')
+        before = {p: p.read_bytes() for p in (self.node.root / 'chains' / 'c1').rglob('*') if p.is_file()}
+        with mock.patch.object(chains, 'scratch_link', side_effect=AssertionError('no mount')), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(self.drive(plan, 'c1c', self.t / 'sg', 1), w5box.EXIT_REFUSED)
+        # the supervisor's release of an in-flight segment refuses too, before the unmount and the delete
+        man = json.loads(Path(plan['chains']['c1c']['manifest']).read_text())
+        self.assertTrue(man['segments'])
+        with mock.patch.object(chains, 'mounted', return_value=True), \
+                mock.patch.object(chains, 'unmount', side_effect=AssertionError('no unmount')):
+            with self.assertRaises(chains.Stop):
+                chains.release_scratch(plan, 'c1c', man)
+        self.assertEqual({p: p.read_bytes() for p in (self.node.root / 'chains' / 'c1').rglob('*') if p.is_file()},
+                         before)
+
+
 if __name__ == '__main__':
     unittest.main()

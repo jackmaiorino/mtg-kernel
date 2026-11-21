@@ -615,6 +615,26 @@ def carried_dirs_apart(doc, name, root, scratch_root=None):
             require(disjoint(real, t), f'{name}: {d} resolves to {real}, not apart from the carried chain\'s {t}')
 
 
+def carried_segment_ok(man, arm, cdir, native):
+    """A carried chain's concrete segment directory and its scratch directory are real directories (no link) in
+    their own parents, apart from the old chain's trees, before anything mounts, settles, quarantines, persists or
+    deletes them. Ordinary chains: nothing is checked."""
+    carry = man.get('carry')
+    if not carry:
+        return
+    cdir, native = Path(cdir), Path(native)
+    carried_dirs_apart(carry, cdir.name, cdir.parent.parent, arm.get('scratch_root'))
+    old_root, old_scratch = old_trees(carry['from']['manifest']['path'])
+    targets = [(native, cdir)]
+    if arm.get('scratch_root'):
+        targets.append((scratch_dir(arm, cdir, native), Path(arm['scratch_root']) / cdir.name))
+    for d, parent in targets:
+        require(not d.is_symlink() and d.resolve().parent == parent.resolve(),
+                f'{cdir.name}: {d} is a link or resolves outside {parent}')
+        for t in [old_root] + ([old_scratch] if old_scratch else []):
+            require(disjoint(d.resolve(), t), f'{cdir.name}: {d} reaches the carried chain\'s {t}')
+
+
 def check_carry(doc, name, seed_root, arm, new=True):
     """A plan's carried chain: the record is well formed, its seed root is the chain's, its recipe is the arm's except
     the trainer build, its checkpoint copy is intact, and the wall it continues has not passed."""
@@ -1706,6 +1726,7 @@ def release_scratch(plan, name, man):
     native = Path(man['segments'][-1]['root'])
     if mounted(native):
         arm = read(plan['arms'][plan['chains'][name]['arm']]['file']['path'])
+        carried_segment_ok(man, arm, native.parent, native)  # a carried chain: before the unmount and the delete
         unmount(native)
         if arm.get('scratch_root'):
             shutil.rmtree(scratch_dir(arm, native.parent, native), ignore_errors=True)
@@ -1916,6 +1937,8 @@ def drive_locked(a, arm, root, cdir, man_path):
     while True:
         if (cdir / 'END.json').exists():
             return 0
+        for seg in man['segments'][-2:]:  # a carried chain: the segments settle may touch are real and its own
+            carried_segment_ok(man, arm, cdir, seg['root'])
         if scratch:  # before the wall, STOP and guard checks: an END or a boundary only names persisted state
             scratch_settle(arm, root, cdir, man, instance)
             if (cdir / 'END.json').exists():
@@ -1954,6 +1977,7 @@ def drive_locked(a, arm, root, cdir, man_path):
             continue
         waiting = None
         s, path, native = current_segment(arm, man, man_path, a.ledger_source)
+        carried_segment_ok(man, arm, cdir, native)  # a carried chain: before the mount, quarantine and run
         if scratch:
             scratch_link(arm, cdir, native)
         moved = quarantine(native, cdir)
