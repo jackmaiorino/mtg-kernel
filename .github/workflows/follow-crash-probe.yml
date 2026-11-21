@@ -25,7 +25,8 @@ jobs:
       - name: Follow, crash and publication tests, ignored ones included
         run: |
           cargo test --release --locked -p mtg-kernel --lib -j 2 -- --include-ignored --test-threads 2 \
-            follow_tests \n            a_crash_at_any_publication_resumes_to_the_uninterrupted_result \
+            follow_tests \
+            a_crash_at_any_publication_resumes_to_the_uninterrupted_result \
             a_crash_after_the_checkpoint_resumes_in_a_new_attempt_with_the_same_states \
             durable_publication_v1 \
             checkpoint_container_v1 \
