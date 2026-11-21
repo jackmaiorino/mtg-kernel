@@ -57,21 +57,24 @@ def ran(get: Get, repo: str, run: dict) -> bool:
     return any(job.get("conclusion") in ("success", "failure", "timed_out") for job in jobs)
 
 
-def last_monitored_commit(get: Get, repo: str, branch: str, run_id) -> str | None:
-    """Head of the newest push run on the branch, created before this run, that ran its checks."""
+# Earlier push runs a report examines for the last monitored commit before calling the range incomplete.
+MAX_HISTORY_PAGES = 5
+
+
+def last_monitored_commit(get: Get, repo: str, branch: str, run_id) -> tuple[str | None, bool]:
+    """(head of the newest push run on the branch created before this run that ran its checks, found): (None,
+    True) when the branch has no such run, (None, False) when the examined history ran out first."""
     this = get(f"/repos/{repo}/actions/runs/{run_id}")
-    page = 1
-    while page <= 5:
+    for page in range(1, MAX_HISTORY_PAGES + 1):
         runs = get(f"/repos/{repo}/actions/workflows/ci.yml/runs?event=push&branch={branch}&status=completed"
-                   f"&per_page=50&page={page}")["workflow_runs"]
+                   f"&created=%3C{this['created_at']}&per_page=50&page={page}")["workflow_runs"]
         for run in runs:
             if run["id"] != int(run_id) and run["created_at"] < this["created_at"] \
                     and run["head_sha"] != this["head_sha"] and ran(get, repo, run):
-                return run["head_sha"]
+                return run["head_sha"], True
         if len(runs) < 50:
-            return None
-        page += 1
-    return None
+            return None, True
+    return None, False
 
 
 # The most first-parent commits a report walks back; a longer range is reported as incomplete, never silently.
@@ -81,8 +84,8 @@ MAX_COVERED = 100
 def covered_merges(get: Get, repo: str, branch: str, run_id, head: str) -> tuple[list[dict], bool]:
     """First-parent commits after the last monitored commit up to head, oldest first ({sha, pull, author}), and
     whether the walk reached that commit (always true when there is no earlier monitored run)."""
-    base = last_monitored_commit(get, repo, branch, run_id)
-    shas, sha, complete = [], head, True
+    base, found = last_monitored_commit(get, repo, branch, run_id)
+    shas, sha, complete = [], head, found
     if base:
         while sha != base:
             if len(shas) == MAX_COVERED:
@@ -120,8 +123,8 @@ def is_monitor(get: Get, repo: str, run: dict) -> bool:
     """Whether a completed run is a red monitor: its post-merge-report job executed (the workflow starts it only
     for a push run, or a full dispatch, on main or a release line with a failed or cancelled job)."""
     jobs = get(f"/repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100")["jobs"]
-    return any(job["name"] == "Report a red post-merge run" and job.get("conclusion") in ("success", "failure")
-               for job in jobs)
+    return any(job["name"] == "Report a red post-merge run" and job.get("started_at")
+               and job.get("conclusion") in ("success", "failure", "cancelled", "timed_out") for job in jobs)
 
 
 # Failed-job name prefixes and the dispatch scope that reruns them alone; any other job reruns with a full dispatch.

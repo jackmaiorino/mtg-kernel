@@ -272,8 +272,29 @@ class MonitorTests(unittest.TestCase):
         def get(path):
             rid = int(path.split("/runs/")[1].split("/")[0])
             conclusion = report_ran.get(rid)
-            return {"jobs": [{"name": "Report a red post-merge run", "conclusion": conclusion}] if conclusion else []}
+            return {"jobs": [{"name": "Report a red post-merge run", "conclusion": conclusion,
+                              "started_at": None if conclusion == "skipped" else "t"}] if conclusion else []}
         self.assertEqual([r["id"] for r in red.red_runs(runs, ["main", "release/"], get, "o/r")], [1])
+
+    def test_exhausted_history_is_incomplete_not_a_range_of_one(self):
+        import post_merge_report as report
+        get = self.fake_api(["c1", "c2", "c3"], [], {"c3": (837, "x")})
+
+        def get_full_pages(path):
+            if "workflows/ci.yml/runs" in path:
+                return {"workflow_runs": [{"id": 100 + i, "head_sha": "c3", "conclusion": "cancelled",
+                                           "created_at": "2026-11-21T11:00:00Z"} for i in range(50)]}
+            return get(path)
+        body, line, merges = self.run_report(get_full_pages)
+        self.assertIn("(incomplete, newest only)", line)
+        self.assertNotIn("the author of #837", line)
+
+    def test_a_cancelled_report_job_still_marks_a_monitor(self):
+        import post_merge_report as report
+        for conclusion, expected in (("cancelled", True), ("timed_out", True), ("skipped", False)):
+            jobs = [{"name": "Report a red post-merge run", "conclusion": conclusion,
+                     "started_at": None if conclusion == "skipped" else "t"}]
+            self.assertEqual(report.is_monitor(lambda path: {"jobs": jobs}, "o/r", {"id": 1}), expected)
 
     def test_no_earlier_monitored_run_covers_the_head_only(self):
         get = self.fake_api(["c1", "c2", "c3"], [], {"c3": (837, "x")})

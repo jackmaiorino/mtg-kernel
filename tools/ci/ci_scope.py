@@ -92,16 +92,19 @@ TRAINER_FILTERS = [
     "native_policy_value_net_v1::", "training_math_v1::", "native_flat_tensorizer_v", "inference_cache_v1::",
     "native_train_state_payload_v1::", "native_trainer_schedule_v", "native_trainer_v1::", "native_training_",
     "native_checkpoint_", "native_baseline_checkpoint_chain_v4::", "fast_sampler::", "unclamped_softmax_sampler_v1::",
+    "s_transformer_v1::",
 ]
 # The trainer tests run as two jobs, each building the library and running its filters. Balanced from the
 # filter times of hosted run 44906865422 (seconds): expanded_deck_training_v1 408, native_trainer_v1 306,
 # native_training_ 187, native_policy_train_step_v1 74, native_expanded_training_run_v1 49,
-# native_checkpoint_ 11, the rest under 2 each; about 531 s and 505 s.
+# native_checkpoint_ 11, the rest under 2 each; about 531 s and 505 s. s_transformer_v1 (the S learner's
+# update, added after that run) joins the second.
 TRAINER_SHARDS = [
     ["expanded_deck_training_v1::", "native_policy_train_step_v1::", "native_expanded_training_run_v1::"],
     ["native_policy_value_net_v1::", "training_math_v1::", "native_flat_tensorizer_v", "inference_cache_v1::",
      "native_train_state_payload_v1::", "native_trainer_schedule_v", "native_trainer_v1::", "native_training_",
-     "native_checkpoint_", "native_baseline_checkpoint_chain_v4::", "fast_sampler::", "unclamped_softmax_sampler_v1::"],
+     "native_checkpoint_", "native_baseline_checkpoint_chain_v4::", "fast_sampler::", "unclamped_softmax_sampler_v1::",
+     "s_transformer_v1::"],
 ]
 # Trainer changes also need these rows, which run on a node, never in CI.
 BIT_IDENTITY_ROWS = [
