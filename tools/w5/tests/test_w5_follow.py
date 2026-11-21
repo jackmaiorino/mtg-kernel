@@ -321,6 +321,35 @@ class FollowedScratch(test_w5_scratch_short.ShortScratchSegments):
         self.assertEqual([r['trainer_run'] for r in commits], list(range(segments)))
         self.assertEqual({r['how'] for r in commits}, {'scratch'})
 
+    def test_each_segment_is_persisted_before_the_next_config_is_handed_over(self):
+        """A waiting trainer must not start segment k+1 while segment k's scratch tree is still being copied,
+        unmounted and renamed (drive_locked: persist in the completion branch, then the loop's next pass hands the
+        next config over): persist(k) has returned before next.json for k+1 exists, for every k."""
+        length, segments = 4, 4
+        node, plan, wall = self.chain('order', length, True, segments, follow=True)
+        events, persist, hand = [], chains.persist, chains.Follower.hand
+
+        def persisting(arm, native, cdir):
+            spools = Path(cdir) / chains.FOLLOW_SPOOLS
+            pending = [s for s in spools.iterdir() if (s / 'next.json').exists()] if spools.exists() else []
+            self.assertEqual(pending, [], f'next.json published while {Path(native).name} is not yet persisted')
+            events.append(('persist-start', Path(native).name))
+            result = persist(arm, native, cdir)
+            events.append(('persist-end', Path(native).name))
+            return result
+
+        def handing(follower, config_path):
+            events.append(('hand', Path(config_path).stem))
+            hand(follower, config_path)
+
+        with mock.patch.object(chains, 'persist', side_effect=persisting), \
+                mock.patch.object(chains.Follower, 'hand', autospec=True, side_effect=handing):
+            self.assertEqual(self.drive(node, plan, wall), 0)
+        order = [e for e in events if e[0] in ('persist-end', 'hand')]
+        self.assertEqual(order, [x for s in range(segments) for x in
+                                 ([('persist-end', f'seg-{s:05d}')] +
+                                  ([('hand', f'seg-{s + 1:05d}')] if s + 1 < segments else []))])
+
     def test_interruptions_around_promotion_and_the_commit_line(self):
         self.skipTest('covered by test_w5_scratch_short; the followed case is the test above')
 
