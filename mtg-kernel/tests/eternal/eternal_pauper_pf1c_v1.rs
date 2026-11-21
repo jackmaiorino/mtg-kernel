@@ -854,11 +854,11 @@ fn choose_graveyard_route(
 fn snapcaster_and_printed_flashback_charge_the_selected_cost() {
     use engine::sphinx_lore_cast_v1::RouteV1;
     let mut base = plains();
-    let card = put(&mut base, P0, "Think Twice", Zone::Graveyard);
+    let card = put(&mut base, P0, "Moment's Peace", Zone::Graveyard);
     install_snapcaster(&mut base, card);
     for (route, remaining) in [(RouteV1::Snapcaster, 1), (RouteV1::PrintedFlashback, 0)] {
         let mut state = base.clone();
-        pool(&mut state, P0, &[ManaColor::U], 2);
+        pool(&mut state, P0, &[ManaColor::G], 2);
         choose_graveyard_route(&mut state, card, route);
         settled(&mut state);
         assert_eq!(
@@ -866,9 +866,8 @@ fn snapcaster_and_printed_flashback_charge_the_selected_cost() {
             remaining
         );
         assert_eq!(zone(&state, card), Zone::Exile);
-        assert_eq!(state.players[0].hand.len(), 1);
     }
-    pool(&mut base, P0, &[ManaColor::U], 1);
+    pool(&mut base, P0, &[ManaColor::G], 1);
     cast(&mut base, card, &[]);
     settled(&mut base);
     assert_eq!(
