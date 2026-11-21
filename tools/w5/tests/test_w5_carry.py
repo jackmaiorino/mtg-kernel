@@ -715,5 +715,47 @@ class CarryTests(unittest.TestCase):
         self.assertEqual({p: p.read_bytes() for p in kept}, kept)  # no state of either chain deleted or changed
 
 
+    def test_a_linked_chain_directory_is_refused_everywhere(self):
+        _, old_man = self.old(3)
+        path, plan = chains.make_plan(self.cont_inputs(self.carry(old_man, 8)))
+        cont = self.t / 'cont'
+        self.assertEqual(self.drive(plan, 'c1c', cont, 1), chains.EXIT_ROOM)
+        cdir = cont / 'chains' / 'c1c'
+        old_chain = self.node.root / 'chains' / 'c1'
+        before = {p: p.read_bytes() for p in old_chain.rglob('*') if p.is_file()}
+        cdir.rename(cdir.with_name('c1c.real'))
+        try:
+            cdir.symlink_to(old_chain, target_is_directory=True)
+        except OSError:
+            cdir.with_name('c1c.real').rename(cdir)
+            self.skipTest('no symlink permission on this host')
+        jwrite(cont / 'plan' / 'cont' / 'LAUNCHED.json', {'opened': [0]})
+        with mock.patch.object(chains, 'occupancy', side_effect=AssertionError('no fills')):
+            with self.assertRaises(chains.Stop):
+                chains.cycle(plan, path)
+        with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()), \
+                mock.patch.object(chains.subprocess, 'call', side_effect=AssertionError('no w5box')):
+            self.assertEqual(chains.main(['end', '--plan', str(path), '--chain', 'c1c', '--reason', 'x']),
+                             w5box.EXIT_REFUSED)
+            self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'c1c']), w5box.EXIT_REFUSED)
+        self.assertFalse((old_chain / 'END.json').exists())
+        self.assertEqual({p: p.read_bytes() for p in old_chain.rglob('*') if p.is_file()}, before)
+
+    def test_recipes_and_seed_roots_the_plan_refuses_are_refused_by_carry(self):
+        _, old_man = self.old(2)
+        good = old_man.read_text()
+        for change in ({'recipe': 'initial_opponent'}, {'seed_root': 'w5/chain1'}, {'seed_root': 'w5/0b'}):
+            man = json.loads(good)
+            if 'recipe' in change:
+                man['recipe'][change['recipe']] = {'kind': 'x'}
+            else:
+                man['seed_root'] = change['seed_root']
+            old_man.write_text(json.dumps(man))
+            with self.subTest(change=change), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(chains.main(['carry', '--manifest', str(old_man), '--boundary', '8', '--objects',
+                                              str(self.t / 'o'), '--out', str(self.t / 'c.json')]), w5box.EXIT_REFUSED)
+        old_man.write_text(good)
+
+
 if __name__ == '__main__':
     unittest.main()

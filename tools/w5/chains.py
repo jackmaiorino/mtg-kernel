@@ -564,8 +564,30 @@ def disjoint(a, b):
 
 def old_trees(manifest_path):
     """The carried chain's W5 root and its scratch root (None without one), read from its manifest and its pinned
-    arm file (the pin is checked): the trees no carry write and no continuation tree may touch. Refuses when they
-    cannot be established."""
+    arm file (the pin is checked): the trees no carry write and no continuation tree may touch. Refuses (Stop) when
+    they cannot be established."""
+    try:
+        return old_trees_read(manifest_path)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise Stop(f'the carried chain\'s trees cannot be established from {manifest_path} ({exc})') from exc
+
+
+def carried_chain_dir_ok(plan, root, name):
+    """A carried chain of a plan (its plan entry names `carry`): its chain directory is a real directory with no link
+    in its path, and its manifest is that chain's carried manifest, before anything reads, indexes, ends or cleans
+    it. Ordinary chains: nothing is checked."""
+    if not (plan['chains'].get(name) or {}).get('carry'):
+        return
+    cdir = chain_dir(root, name)
+    absolute = os.path.abspath(cdir)
+    require(not cdir.is_symlink() and os.path.realpath(absolute) == absolute,
+            f'{name}: {cdir} is a link or lies under one')
+    man = read(cdir / 'chain.json')
+    require(man.get('chain') == name and isinstance(man.get('carry'), dict),
+            f'{name}: {cdir / "chain.json"} is not this carried chain\'s manifest')
+
+
+def old_trees_read(manifest_path):
     man_path = Path(manifest_path)
     require(man_path.is_absolute() and man_path == man_path.resolve() and man_path.name == 'chain.json'
             and man_path.parent.parent.name == 'chains',
@@ -1730,6 +1752,8 @@ def release_scratch(plan, name, man):
         return
     native = Path(man['segments'][-1]['root'])
     if mounted(native):
+        carried_chain_dir_ok(plan, plan['root'], name)
+        require(not plan['chains'][name].get('carry') or man.get('carry'), f'{name}: not its carried manifest')
         arm = read(plan['arms'][plan['chains'][name]['arm']]['file']['path'])
         carried_segment_ok(man, arm, native.parent, native)  # a carried chain: before the unmount and the delete
         unmount(native)
@@ -1942,8 +1966,12 @@ def drive_locked(a, arm, root, cdir, man_path):
     while True:
         if (cdir / 'END.json').exists():
             return 0
-        for seg in man['segments'][-2:]:  # a carried chain: the segments settle may touch are real and its own
-            carried_segment_ok(man, arm, cdir, seg['root'])
+        try:  # a carried chain: the segments settle may touch are real and its own
+            for seg in man['segments'][-2:]:
+                carried_segment_ok(man, arm, cdir, seg['root'])
+        except Stop as exc:
+            log(root, chain=a.chain, event='stop', reason=str(exc))
+            return EXIT_STOP
         if scratch:  # before the wall, STOP and guard checks: an END or a boundary only names persisted state
             scratch_settle(arm, root, cdir, man, instance)
             if (cdir / 'END.json').exists():
@@ -1994,6 +2022,7 @@ def drive_locked(a, arm, root, cdir, man_path):
         if (native / 'completion.json').exists():
             if scratch:
                 t = time.time()
+                carried_segment_ok(man, arm, cdir, native)  # a carried chain: again, right before the copy
                 n = persist(arm, native, cdir)
                 record_commit(cdir, man, s, 'scratch', instance, persist_seconds=time.time() - t, persist_bytes=n)
                 t = time.time()
@@ -2007,6 +2036,7 @@ def drive_locked(a, arm, root, cdir, man_path):
             continue
         if scratch and killed:  # the C wall: the cut segment's records and newest checkpoint are kept
             t = time.time()
+            carried_segment_ok(man, arm, cdir, native)  # a carried chain: again, right before the copy
             n = persist(arm, native, cdir)
             record_commit(cdir, man, s, 'scratch-cut', instance, persist_seconds=time.time() - t, persist_bytes=n)
             log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped, cut=True)
@@ -2132,6 +2162,7 @@ def end_cmd(a):
     plan = load_plan(a.plan, check=False)
     require(a.chain in plan['chains'] and plan['chains'][a.chain]['arm'] in MEASURED, 'not a measured chain')
     root = Path(plan['root'])
+    carried_chain_dir_ok(plan, root, a.chain)
     cdir = chain_dir(root, a.chain)
     existing = read_end(root, a.chain)
     if existing is not None:
@@ -2976,6 +3007,8 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None, guar
     names = {n for n, c in plan['chains'].items() if c['arm'] in MEASURED}
     names |= {p['C'] for p in plan['pairs'].values()}
     recovered = recover_unsupervised(plan, root)  # before anything reads the chains: dead supervisors' instances
+    for n in sorted(names):  # carried chains: their directories are real and theirs before any read or write
+        carried_chain_dir_ok(plan, root, n)
     oom_failures = end_oom_failures(plan, root)  # close, and OOM closes become chain failures, first
     infos = {n: chain_info(root, n, caches) for n in sorted(names)}
     looks = {n: look(i, plan['r_nom_usec']) for n, i in infos.items()}
