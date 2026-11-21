@@ -1381,24 +1381,30 @@ def _run_collector(config: dict, command_file: str, run_dir: str, seconds: int):
     any error) its whole process group is killed and the leader reaped before this returns or raises."""
     argv = list(config["prefix"]) + [config["collector"], "--execute-collect-shard", command_file]
     preexec, ruleset = _collector_preexec(config, command_file, run_dir)
+    launch = _alarm_deferred().__enter__()  # no alarm between the fork and the guarded wait below
     try:
         process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.PIPE, start_new_session=(os.name == "posix"),
                                    preexec_fn=preexec)
+    except BaseException:
+        launch.__exit__()
+        raise
     finally:
         if ruleset is not None:
             os.close(ruleset)
     tail = bytearray()
     drain = threading.Thread(target=_drain_tail, args=(process.stderr, tail), daemon=True)
-    drain.start()
     exited = False
     try:
+        drain.start()
+        launch.__exit__()  # an alarm that came due during the launch fires here, where cleanup follows
         exited = _wait_exit(process, seconds)
     finally:
         with _alarm_deferred():
             _kill_group(process)
             process.wait()
-            drain.join(5)  # a descendant that left the group could hold the pipe: never wait on it
+            if drain.ident is not None:
+                drain.join(5)  # a descendant that left the group could hold the pipe: never wait on it
             if not drain.is_alive():
                 process.stderr.close()
     return (process.returncode if exited else "timeout"), bytes(tail).decode(errors="replace")
