@@ -584,6 +584,48 @@ class BackgroundPolicyTests(unittest.TestCase):
         self.assertEqual(slots.available(config, timed, claims), [])
         self.assertEqual(slots.available(config, timed, claims, background=False), [1, 2])
 
+    def test_ordinary_admission_takes_unclaimed_cores_before_background_cores(self):
+        claims = [{"cores": [7, 6], "background": True}, {"cores": [3]}]
+        room = slots.available(config8(), FREE, claims, background=False)
+        self.assertEqual(room, [7, 6, 5, 4, 2, 1, 0])                      # unchanged: background cores count free
+        self.assertEqual(slots.prefer_unclaimed(room, claims, False), [5, 4, 2, 1, 0, 7, 6])
+        self.assertEqual(slots.prefer_unclaimed(room, claims, True), room)  # a background request's order is unchanged
+        self.assertEqual(slots.prefer_unclaimed(room, [{"cores": [3]}], False), room)  # nothing to avoid: as before
+
+    def test_preferring_unclaimed_changes_only_which_cores_an_admitted_request_takes(self):
+        """For a table of states: whether a request may start (available() and its length) is the same as before;
+        the chosen cores have the same count, stay inside the room (so outside timed holds, keep_free and cores
+        the config leaves out, such as the play reservation 2 and 3), borrow background cores only when the
+        unclaimed part of the room is too small, and then take every unclaimed core of the room first."""
+        no_play = {"cores": [7, 6, 5, 4, 1, 0], "keep_free": 0, "priority": "below_normal"}   # 2 and 3 reserved
+        timed_some = {"held": True, "cores": [0, 1]}
+        bg = lambda *c: {"cores": list(c), "background": True}               # noqa: E731
+        ordinary = lambda *c: {"cores": list(c)}                              # noqa: E731
+        states = [(config8(), FREE, [bg(7, 6)]), (config8(), FREE, [bg(7, 6), ordinary(5, 4)]),
+                  (config8(1), FREE, [bg(7), bg(0)]), (config8(), timed_some, [bg(7, 6, 5)]),
+                  (no_play, FREE, [bg(7, 6)]), (no_play, timed_some, [bg(7), ordinary(6, 5)]),
+                  (config8(), FREE, [shared("s", [7], [7, 6, 5]), bg(4, 3)]), (config8(), FREE, [])]
+        for config, timed, claims in states:
+            room = slots.available(config, timed, claims, background=False)
+            yielding = {c for claim in claims if claim.get("background") for c in claim["cores"]}
+            free_part = [c for c in room if c not in yielding]
+            for wanted in range(1, 9):
+                with self.subTest(config=config["cores"], timed=timed, claims=claims, wanted=wanted):
+                    before = sorted(room[:wanted]) if len(room) >= wanted else None   # the old choice
+                    after = (sorted(slots.prefer_unclaimed(room, claims, False)[:wanted])
+                             if len(room) >= wanted else None)
+                    self.assertEqual(before is None, after is None)                   # same admit or wait
+                    if after is None:
+                        continue
+                    self.assertEqual(len(after), wanted)
+                    self.assertLessEqual(set(after), set(room))
+                    self.assertLessEqual(set(after), set(config["cores"]) - set(timed["cores"] if timed["held"] else []))
+                    if len(free_part) >= wanted:
+                        self.assertFalse(set(after) & yielding)                       # no needless suspension
+                    else:
+                        self.assertLessEqual(set(free_part), set(after))              # fits only by borrowing:
+                        self.assertTrue(set(after) & yielding)                        # it still borrows
+
     def test_background_conflicts_with_live_ordinary_claims_even_before_start(self):
         with patch.object(slots, "conflicts", return_value=False), \
                 patch.object(slots, "live_claims", return_value=[{"cores": [1], "state": "suspended"}]):
@@ -628,6 +670,40 @@ class BackgroundProcessTests(unittest.TestCase):
             release.write_text("go")
             self.assertEqual(foreground.wait(timeout=30), 0)
             self.assertTrue(wait_for(lambda: counter(count) > frozen + 5))
+        finally:
+            release.write_text("go")
+            if foreground:
+                foreground.wait(timeout=30)
+            ci.terminate()
+            ci.wait(timeout=30)
+
+    @needs_two
+    def test_ordinary_work_leaves_background_work_running_when_other_cores_are_free(self):
+        count = self.tmp_path / "background-count"
+        release = self.tmp_path / "foreground-release"
+        active = self.tmp_path / "foreground-active"
+        ticker = script(self.tmp_path, "background-tick.py", "n = 0\nwhile True:\n    n += 1\n"
+                        "    open(sys.argv[1], 'w').write(str(n))\n    time.sleep(0.02)\n")
+        hold = script(self.tmp_path, "foreground-hold.py", "from pathlib import Path\n"
+                      "Path(sys.argv[1]).write_text('up')\n"
+                      "while not Path(sys.argv[2]).exists(): time.sleep(0.02)\n")
+        ci = cli("run", "--background", "--priority", "idle", "--lane", "ci", "--work-id", "ci",
+                 "--cores", "1", "--", sys.executable, ticker, str(count))
+        foreground = None
+        try:
+            self.assertTrue(wait_for(lambda: counter(count) > 5))
+            ci_cores = next(c for c in slots.status()["claims"] if c["lane"] == "ci")["cores"]
+            # the background claim holds the first-preference core; a one-core ordinary request takes another
+            foreground = cli("run", "--lane", "build", "--work-id", "build", "--cores", "1",
+                             "--", sys.executable, hold, str(active), str(release))
+            self.assertTrue(wait_for(active.exists))
+            claims = {c["lane"]: c for c in slots.status()["claims"]}
+            self.assertFalse(set(claims["build"]["cores"]) & set(ci_cores))
+            self.assertEqual(claims["ci"]["state"], "running")
+            moving = counter(count)
+            self.assertTrue(wait_for(lambda: counter(count) > moving + 5))
+            release.write_text("go")
+            self.assertEqual(foreground.wait(timeout=30), 0)
         finally:
             release.write_text("go")
             if foreground:
@@ -818,8 +894,13 @@ class BackfillPolicyTests(unittest.TestCase):
         claims = [{"cores": [0, 1, 4]}, {"cores": [3], "background": True}]
         head = ticket("head", 3, None)
         assert admits(config, FREE, claims, [head, ticket("a", 1, core_pool=[3])], "a") is None  # G's core
-        # after C ends the head takes 0 to 2 alone, but 0, 1 and 3 beside a backfill on 2: it would wait for G
-        assert admits(config, FREE, claims, [head, ticket("b", 1, core_pool=[2])], "b") is None
+        # after C ends the head takes 0 to 2 alone, and beside a backfill on 2 it takes 0, 1 and 4 (an ordinary
+        # admission takes unclaimed cores before background ones): it never waits for G, so the backfill may start
+        assert admits(config, FREE, claims, [head, ticket("b", 1, core_pool=[2])], "b") == [2]
+        # if 4 and 5 stay held while 0 and 1 free, it would need G's core 3 beside the backfill: refused, as before
+        claims4 = [{"cores": [0, 1]}, {"cores": [4, 5]}, {"cores": [3], "background": True}]
+        config6 = {**config, "cores": [0, 1, 2, 3, 4, 5]}
+        assert admits(config6, FREE, claims4, [head, ticket("b", 1, core_pool=[2])], "b") is None
 
     def test_a_backfill_never_moves_an_ordinary_head_onto_background_cores(self):
         # review r1: an ordinary head admitted onto a background claim's cores waits for it to suspend.

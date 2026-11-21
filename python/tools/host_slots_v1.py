@@ -811,6 +811,17 @@ def available(config: dict, timed: dict, claims: list[dict], *, background: bool
     return free[:max(0, room)]
 
 
+def prefer_unclaimed(room: list[int], claims: list[dict], background: bool) -> list[int]:
+    """The order in which an admitted request takes cores from `room` (what available() returned for it): an
+    ordinary request takes the cores no background claim holds first, so a background claim is suspended only when
+    the request cannot fit without its cores. Each part keeps the preference order; a background request's order is
+    unchanged. Only which cores are chosen depends on this, never whether the request may start."""
+    if background:
+        return room
+    yielding = {core for claim in claims if claim.get("background", False) for core in held(claim)}
+    return [core for core in room if core not in yielding] + [core for core in room if core in yielding]
+
+
 def unclaimed(config: dict, timed: dict, claims: list[dict], *, core_pool: list[int] | None = None) -> list[int]:
     """Cores no claim of any class runs on now (lent cores count as used), outside timed work and keep_free room,
     in preference order. A shared claim grows only onto these, so it never takes a core another claim holds or
@@ -918,7 +929,7 @@ def _head_start(config: dict, timed: dict, claims: list[dict], head: dict) -> tu
     room = available(config, timed, claims, background=bool(head.get("background", False)), core_pool=_pool(head))
     if len(room) < head["cores_wanted"]:
         return None
-    chosen = set(room[:head["cores_wanted"]])
+    chosen = set(prefer_unclaimed(room, claims, bool(head.get("background", False)))[:head["cores_wanted"]])
     # Handoffs the head would wait for: background cores (they suspend), lent cores (their lender narrows) and,
     # marked -1, lenders making room when the head's admission would exceed the budget.
     borrowed = {core for claim in claims if claim.get("background", False) for core in claim["cores"]}
@@ -1569,7 +1580,7 @@ def run(lane: str, work_id: str, cores_wanted: int, command: list[str], *, wait:
                     room = available(config, timed, snap["claims"], background=background,
                                      core_pool=core_pool)
                     if len(room) >= wanted:
-                        cores = sorted(room[:wanted])
+                        cores = sorted(prefer_unclaimed(room, snap["claims"], background)[:wanted])
                         alone = not any(n.startswith("queue-") and n != ticket.name for n in snap["names"])
                         record = _claim_record(base, cores, priority, now_utc(), enqueued_at,
                                                time.monotonic() - queued_mono, config, timed, snap["claims"],
