@@ -41,6 +41,11 @@ stage<stage>), `node`, `root` (the node's W5 root, one volume), `cgroup_root`, `
   (`{b0, end_update, shape: "linear-v1"}`, qual.py: every episode with `priority_windows` carries the trainer's
   `priority_pass_offset = b(u)` on the same terms; C-recipe arms only, on a base whose every episode has
   `priority_windows` with an action-window seat and the plain CPU GAE update; recipe identity only when present),
+  optional `postboard_exposure` (`{share: [n, d], max_swaps, rule: "uniform-swaps-v1", seats:
+  "learner-and-current-v1", keep_ids}`, qual.py: a share n / d of the chain's episodes are post-board games, in which
+  the learner seat and a current-policy opponent seat play their registered 75 with 1 to max_swaps cards exchanged
+  between mainboard and sideboard, never taking out a card id in keep_ids; drawn per (seed root, update, slot);
+  C-recipe arms only, on a game-one base with exact 60 and 15 registrations; recipe identity only when present),
   optional
   `pregame_advantage` (`"terminal_v1"`, qual.py: the trainer's loss_selection key, the pregame decisions' advantage
   and value target from the terminal result; C-recipe arms on a London base with gamma 1.0; recipe identity only when
@@ -1349,6 +1354,7 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
     pass_offset = arm.get('pass_offset')  # absent otherwise, as keep_offset
     pregame_advantage = arm.get('pregame_advantage')  # absent otherwise, as keep_offset
     pregame_announcement_step_scale = arm.get('pregame_announcement_step_scale')  # absent otherwise, as keep_offset
+    postboard_exposure = arm.get('postboard_exposure')  # absent otherwise, as keep_offset
     try:
         cfg = xact.build_config(read(arm['base']['path']), parent, native, seed_root, offset,
                                 updates, arm['workers'], x.get('budget'), x.get('coefficient'),
@@ -1356,11 +1362,12 @@ def arm_config(arm, seed_root, offset, updates, native, source=None, ledger_sour
                                 prep_workers=arm.get('preparation_workers'), keep_offset=keep_offset,
                                 pregame_advantage=pregame_advantage,
                                 pregame_announcement_step_scale=pregame_announcement_step_scale,
-                                pass_offset=pass_offset)
+                                pass_offset=pass_offset,
+                                **({} if postboard_exposure is None else {'postboard_exposure': postboard_exposure}))
         if source is not None:
             qual.check_pass_offset_source(pass_offset, source, offset)
     except ValueError as exc:
-        if keep_offset is None and pregame_advantage is None and pass_offset is None:
+        if keep_offset is None and pregame_advantage is None and pass_offset is None and postboard_exposure is None:
             raise
         raise Stop(f'{arm["arm"]}: {exc}') from exc
     if source is not None:
@@ -1486,6 +1493,8 @@ def recipe_identity(arm):
         identity['pregame_advantage'] = arm['pregame_advantage']  # absent otherwise: existing manifests unchanged
     if arm.get('pregame_announcement_step_scale') is not None:
         identity['pregame_announcement_step_scale'] = arm['pregame_announcement_step_scale']  # absent otherwise: manifests unchanged
+    if arm.get('postboard_exposure') is not None:
+        identity['postboard_exposure'] = arm['postboard_exposure']  # absent otherwise: existing manifests unchanged
     return identity
 
 
@@ -1498,6 +1507,8 @@ def check_pair(x_arm, c_arm, seed_root, scratch):
     the seed root and the global update fix every episode id, deal seed, seat and opponent), and identical
     generated iterations at two offsets; X8 differs from C only in the search block and resource keys. Returns
     XS's other differences (reported)."""
+    require(c_arm.get('postboard_exposure') is None,
+            f'{x_arm["arm"]} and C cannot pair with postboard_exposure for {seed_root}')
     x_base, c_base = read(x_arm['base']['path']), read(c_arm['base']['path'])
     require(x_base['iterations'] == c_base['iterations'] and x_base.get('opponents') == c_base.get('opponents'),
             f'{x_arm["arm"]} and C use different opponent schedules for {seed_root}')
@@ -1687,6 +1698,17 @@ def make_plan(inputs_path):
                 qual.check_pass_offset_source(pass_offset, parent['source'], 0)
             except ValueError as exc:
                 raise Stop(f'{a}: {exc}') from exc
+        # postboard_exposure: the declared share of post-board games {share, max_swaps, rule, seats, keep_ids}
+        # (qual.validate_postboard_exposure): in that share of a chain's episodes the exposed seats play their
+        # registered 75 with cards exchanged between mainboard and sideboard. It needs a game-one base with exact 60
+        # and 15 registrations and is part of the arm's frozen recipe. Absent (or null): nothing changes.
+        postboard_exposure = spec.get('postboard_exposure')
+        if postboard_exposure is not None:
+            require(recipe == 'C', f'{a}: postboard_exposure is for the plain CPU update of a C-recipe arm')
+            try:
+                postboard_exposure = qual.validate_postboard_exposure(postboard_exposure, base_doc)
+            except ValueError as exc:
+                raise Stop(f'{a}: {exc}') from exc
         # pregame_advantage: the trainer's loss_selection.pregame_advantage ("terminal_v1": the pregame decisions'
         # advantage and value target come from the game's terminal result; qual.validate_pregame_advantage). Part of
         # the arm's frozen recipe, C-recipe arms on a London base with gamma 1.0 only. Absent (or null): nothing changes.
@@ -1755,6 +1777,8 @@ def make_plan(inputs_path):
             doc['pregame_advantage'] = pregame_advantage
         if pregame_announcement_step_scale is not None:  # absent otherwise, as record_envelope
             doc['pregame_announcement_step_scale'] = pregame_announcement_step_scale
+        if postboard_exposure is not None:  # absent otherwise, as record_envelope
+            doc['postboard_exposure'] = postboard_exposure
         if monitor:  # absent otherwise, as record_envelope
             doc['mull_monitor'] = True
         text = json.dumps(doc, indent=1, sort_keys=True) + '\n'
@@ -1978,7 +2002,9 @@ def make_plan(inputs_path):
                     (' (pregame_advantage differs)' if have['recipe'].get('pregame_advantage') != header[
                         'recipe'].get('pregame_advantage') else '') +
                     (' (pregame_announcement_step_scale differs)' if have['recipe'].get('pregame_announcement_step_scale') != header[
-                        'recipe'].get('pregame_announcement_step_scale') else ''))
+                        'recipe'].get('pregame_announcement_step_scale') else '') +
+                    (' (postboard_exposure differs)' if have['recipe'].get('postboard_exposure') != header[
+                        'recipe'].get('postboard_exposure') else ''))
             require(have.get('r_nom_usec') in (None, r_nom), f'{name}: R_nom is frozen in the manifest')
             have.update(recipe=header['recipe'], arm_file=pin(arm_paths[c['arm']]), r_nom_usec=r_nom)
             if name in guarded_names:  # once on, never off: the guards only refuse, outputs are unchanged
