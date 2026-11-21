@@ -1146,10 +1146,15 @@ def repin_effective(history):
     return None, None
 
 
+def repin_requires_confirmation(entry):
+    # Older end clients could clear pending without recording the hold on a split-proof switch.
+    return entry is not None and (entry.get('proof_a') is not None or entry.get('confirm_required'))
+
+
 def repin_unconfirmed(man):
-    """The switch in force when it owes a confirmation (`repin end --hold-first`) and has none, else None."""
+    """The effective split-proof or explicitly held switch until its first segment has been confirmed."""
     _, entry = repin_effective(man.get('trainer_history') or [])
-    return entry if entry and entry.get('confirm_required') and not entry.get('confirmed') else None
+    return entry if repin_requires_confirmation(entry) and not entry.get('confirmed') else None
 
 
 def repin_first_hold(man, cdir):
@@ -1161,6 +1166,10 @@ def repin_first_hold(man, cdir):
     if entry is None:
         return None
     s, segs = entry['segment'], man['segments']
+    count = len(segs) - s
+    if count > 1:
+        return (f'{man["chain"]}: {count} segments recorded since unconfirmed re-pin {entry["id"]}; '
+                'cannot confirm a one-segment hold')
     if len(segs) <= s:
         return None
     root = Path(segs[s]['root'])
@@ -1177,13 +1186,14 @@ def repin_confirm(a, root, cdir, man, history, pending):
     pinned in the history entry and the hold ends."""
     require(pending is None, f'{a.chain}: a re-pin is pending (repin end first)')
     at, entry = repin_effective(history)
-    require(entry is not None and entry.get('confirm_required'), f'{a.chain}: no re-pin awaits a confirmation')
+    require(repin_requires_confirmation(entry), f'{a.chain}: no re-pin awaits a confirmation')
     if entry.get('confirmed'):
         print(json.dumps({'chain': a.chain, 'confirmed': entry['id'], 'again': True}))
         return 0
     require(not live(root, a.chain), f'{a.chain} still has an open instance (its trainer has not exited)')
-    require(repin_first_hold(man, cdir) is not None,
-            f'{a.chain}: its first segment on the new trainer is not persisted and committed yet')
+    hold = repin_first_hold(man, cdir)
+    require(hold is not None, f'{a.chain}: its first segment on the new trainer is not persisted and committed yet')
+    require(len(man['segments']) == entry['segment'] + 1, hold)
     check_pin(entry['proof'], 'the re-pin proof receipt')
     seg = man['segments'][entry['segment']]
     lo, length = seg['offset'], seg['updates']
@@ -1247,7 +1257,7 @@ def repin_cmd(a):
         return repin_confirm(a, root, cdir, man, history, pending)
     if pending is None and a.step == 'end' and history and history[-1].get('reverts') is None:
         entry = history[-1]
-        require(entry.get('proof_a') is None or entry.get('confirm_required') is True,
+        require(entry.get('proof_a') is None or entry.get('confirm_required') is True or entry.get('confirmed'),
                 f'{a.chain}: the completed re-pin {entry["id"]} did not install a first-segment hold')
         print(json.dumps({'chain': a.chain, 'switched': entry['id'], 'again': True}))
         return 0

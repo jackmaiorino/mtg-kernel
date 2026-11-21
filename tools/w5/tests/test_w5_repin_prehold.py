@@ -491,6 +491,56 @@ class FirstSegmentHoldTests(_Base):
         self.assertIn('did not install a first-segment hold', err)
         self.assertEqual(manifest.read_bytes(), before_retry)
 
+    def legacy_split(self):
+        # The old end cleared pending after make_plan committed this genuine split request.
+        # It left exactly the history written by the commit when the caller omitted --hold-first.
+        path, plan = self.commit_switch(self.ref[20:24])
+        self.assertNotIn('confirm_required', self.man()['trainer_history'][-1])
+        (self.cdir() / chains.REPIN_PENDING).unlink()
+        (self.cdir() / 'STOP').unlink()
+        return path, plan
+
+    def test_legacy_split_stops_after_one_and_can_confirm(self):
+        path, plan = self.legacy_split()
+        manifest = self.cdir() / 'chain.json'
+        before = manifest.read_bytes()
+        code, err = self.repin_x(path, 'confirm')
+        self.assertEqual(code, w5box.EXIT_REFUSED, err)
+        self.assertIn('not persisted and committed yet', err)
+        self.assertEqual(manifest.read_bytes(), before)
+        self.assertEqual(self.drive(plan, 10), chains.EXIT_STOP)
+        self.assertEqual(len(self.man()['segments']), 4)
+        retention.index(manifest)
+        code, err = self.repin_x(path, 'confirm')
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.drive(plan, 6), chains.EXIT_ROOM)
+        confirmed = manifest.read_bytes()
+        for step in ['confirm', 'end']:
+            self.assertEqual(self.repin_x(path, step)[0], 0)
+        self.assertEqual(manifest.read_bytes(), confirmed)
+
+    def test_legacy_overrun_refuses_even_without_first_completion_file(self):
+        path, plan = self.legacy_split()
+        # Materialize the state the old driver produced, with two real, committed fixture segments.
+        with mock.patch.object(chains, 'repin_first_hold', return_value=None):
+            self.drive(plan, 5)
+        manifest = self.cdir() / 'chain.json'
+        man = self.man()
+        self.assertEqual(len(man['segments']), 5)
+        retention.index(manifest)
+        first_completion = Path(man['segments'][3]['root']) / 'completion.json'
+        before = manifest.read_bytes()
+        for retained in [True, False]:
+            if not retained:
+                first_completion.unlink()
+            self.assertIn('2 segments', chains.repin_first_hold(man, self.cdir()))
+            code, err = self.repin_x(path, 'confirm')
+            self.assertEqual(code, w5box.EXIT_REFUSED, err)
+            self.assertIn('2 segments', err)
+            self.assertEqual(self.drive(plan, 10), chains.EXIT_STOP)
+            self.assertEqual(manifest.read_bytes(), before)
+            self.assertFalse(list(self.cdir().glob('REPIN-CONFIRM-*.json')))
+
     def test_a_mismatch_keeps_the_hold(self):
         path, plan = self.switch_holding(['0' * 64] * 4)
         self.assertEqual(self.drive(plan, 10), chains.EXIT_STOP)
