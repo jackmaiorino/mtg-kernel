@@ -226,7 +226,7 @@ def carried_dir(chain, chain_path):
     return (Path(chain_path).parent,) if guarded(chain) else ()
 
 
-def scan(chain, known, own_dir=None):
+def scan(chain, known, own_dir=None, *, refuse_gap=None):
     """Index records of the completed updates after the first `known` ones (the records already indexed), in order,
     stopping at the first update without its receipt (a segment's iterations complete in order)."""
     known += chain_start(chain)  # a boundary from here on: a carried chain's records start at update B
@@ -240,7 +240,15 @@ def scan(chain, known, own_dir=None):
         for i in range(max(0, known - seg['offset']), seg['updates']):
             complete = Path(seg['root'], 'iterations', f'{i:06d}', 'complete.json')
             if not complete.exists():
-                return new
+                if not new or refuse_gap is None:
+                    return new
+                missing = seg['offset'] + i
+                evidence = receipt_gap_evidence(chain, missing)
+                if evidence is None:
+                    return new
+                # A live writer may have published both receipts since the first existence check.
+                if not complete.exists():
+                    refuse_gap(f'update {missing} has no receipt ({complete.as_posix()}) despite {evidence.as_posix()}')
             receipt = read(complete)
             if carried:  # a carried chain indexes only its own files (a link to another tree is refused)
                 own_files(seg['root'], complete, receipt['update']['path'], own_dir=own_dir)
@@ -354,20 +362,25 @@ def index_locked(chain_path):
     chain = load_chain(chain_path)
     cache = index_path(chain_path)
     records = []
-    if cache.exists():
-        records = [json.loads(line) for line in cache.read_text(encoding='utf-8').splitlines() if line]
-    carried_index_head_ok(chain, chain_path, cache)
+    torn = torn_tail(cache) if cache.exists() else None
+    if torn is not None:  # read the complete lines only; the torn bytes are checked and cut below
+        with open(cache, 'rb') as f:
+            text = f.read(torn.start).decode('utf-8')
+        records = [json.loads(line) for line in unrepeated(cache, text.splitlines())]
+    elif cache.exists():
+        records = [json.loads(line) for line in unrepeated(cache, cache.read_text(encoding='utf-8').splitlines())]
+    if torn is None or records:  # (no complete row yet: nothing to check before the recovery)
+        carried_index_head_ok(chain, chain_path, cache)
     if any('state' not in r for r in records):
+        if torn is not None:  # the migration rewrites every line: never after a recovery
+            refuse_tail(cache, torn, chain_start(chain) + len(records), 'the index also needs its S-container '
+                        'migration, which rewrites every line')
         # Caches written before S containers were tracked: read each record's container pin from its durable
-        # update receipt once, then rewrite the cache.
-        for rec in records:
-            if 'state' not in rec:
-                seg = chain['segments'][rec['segment']]
-                complete = Path(seg['root'], 'iterations', f"{rec['iteration']:06d}", 'complete.json')
-                rec['state'] = state_pin(read(read(complete)['update']['path']))
-        tmp = cache.with_suffix(cache.suffix + '.tmp')
-        tmp.write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
-        os.replace(tmp, cache)
+        # update receipt once, then rewrite the cache (each line as it is, a repeated line too).
+        migrate(chain_path, chain)
+        records = [json.loads(line) for line in unrepeated(cache, cache.read_text(encoding='utf-8').splitlines())]
+    if torn is not None:
+        recover_tail(chain, chain_path, cache, torn, len(records))
     new = scan(chain, len(records), *carried_dir(chain, chain_path))
     if new:
         with open(cache, 'ab') as f:
@@ -386,6 +399,137 @@ def terminate(f):
             r.seek(size - 1)
             if r.read(1) != b'\n':
                 f.write(b'\n')
+
+
+class TornTail:
+    """An index file's last line, as the readers split lines (`BREAK`), when no reader can use it: not empty and not
+    one complete JSON object (an append stopped just before its newline, which the next append adds). `start` is the
+    offset just past the line break before it (0 when there is none), `size` the file's size."""
+
+    def __init__(self, start, size, fragment):
+        self.start, self.size, self.fragment = start, size, fragment
+
+
+# What ends a line for the index readers (str.splitlines of the UTF-8 text: LF, CR, VT, FF, FS, GS, RS, U+0085,
+# U+2028, U+2029), as bytes. The rows themselves are ASCII JSON with none of these.
+BREAK = re.compile(rb'[\n\r\x0b\x0c\x1c\x1d\x1e]|\xc2\x85|\xe2\x80[\xa8\xa9]')
+
+
+def torn_tail(cache, block=1 << 16):
+    """The index file's torn tail (`TornTail`), or None. Read backward from the end in blocks (never the whole file
+    for a clean one)."""
+    with open(cache, 'rb') as f:
+        size = f.seek(0, 2)
+        pos, tail, start = size, b'', 0
+        while pos > 0:
+            step = min(block, pos)
+            pos -= step
+            f.seek(pos)
+            tail = f.read(step) + tail
+            last = None
+            for last in BREAK.finditer(tail):
+                pass
+            if last is not None:  # (a break split across blocks is found once the block before is read)
+                tail, start = tail[last.end():], pos + last.end()
+                break
+    if not tail:
+        return None
+    try:
+        if isinstance(json.loads(tail.decode('utf-8')), dict):
+            return None
+    except ValueError:
+        pass
+    return TornTail(start, size, tail)
+
+
+def log_repeat(cache):
+    print(json.dumps({'event': 'index-repeated-line', 'index': Path(cache).as_posix()}), file=sys.stderr, flush=True)
+
+
+def unrepeated(cache, lines):
+    """The non-empty lines, without a line equal to the non-empty line before it (one append written twice: a
+    record is one update, so two equal lines are one record). The file keeps the repeat; every reader skips it."""
+    prev = None
+    for line in lines:
+        if not line:
+            continue
+        if line == prev:
+            log_repeat(cache)
+            continue
+        prev = line
+        yield line
+
+
+def tail_receipt(chain, u):
+    """Where update `u`'s receipt is (for a refusal message)."""
+    for seg in chain['segments']:
+        if seg['offset'] <= u < seg['offset'] + seg['updates']:
+            return Path(seg['root'], 'iterations', f"{u - seg['offset']:06d}", 'complete.json').as_posix()
+    return f'(no segment of the manifest holds update {u})'
+
+
+def refuse_tail(cache, torn, u, why):
+    print(json.dumps({'event': 'index-tail-refused', 'index': Path(cache).as_posix(), 'update': u,
+                      'start': torn.start, 'size': torn.size, 'why': why}), file=sys.stderr, flush=True)
+    raise SystemExit(f'stop: {Path(cache).as_posix()}: the last line (bytes {torn.start} to {torn.size}) is a torn '
+                     f'append of the row of update {u}, and {why}; nothing was changed (restore the receipt, or '
+                     f'repair the index by hand)')
+
+
+def receipt_gap_evidence(chain, missing):
+    """Only a torn-tail recovery checks beyond scan's first missing update. A live prefix has no later receipts."""
+    for seg in chain['segments']:
+        offset, end = seg['offset'], seg['offset'] + seg['updates']
+        if end <= missing:
+            continue
+        if os.path.ismount(seg['root']):
+            break  # scan never indexes still-mounted scratch
+        if segment_complete(seg):
+            return Path(seg['root'], 'completion.json')
+        iterations = Path(seg['root'], 'iterations')
+        if iterations.exists():
+            for iteration in iterations.iterdir():
+                if iteration.name.isascii() and iteration.name.isdecimal():
+                    i = int(iteration.name)
+                    if missing < offset + i < end and iteration.name == f'{i:06d}':
+                        receipt = iteration / 'complete.json'
+                        if receipt.exists():
+                            return receipt
+    return None
+
+
+def recover_tail(chain, chain_path, cache, torn, known):
+    """Under the index lock, an index file whose last line was torn by an interrupted append: the complete lines
+    before it are `known` records, so the torn line was the start of update U's row (U = the chain's first update +
+    `known`; rows are appended in update order). That row is rebuilt from the update's own receipts exactly as an
+    append writes it (`scan`), and must begin with the torn bytes (trailing NULs, which a power cut can leave in
+    place of unwritten data, aside). Then the torn bytes alone are cut (truncate, fsync) and the caller appends the
+    rows as always. Anything else refuses, with nothing changed: no receipt for U, a receipt that does not read,
+    or a row that does not begin with the torn bytes."""
+    u = chain_start(chain) + known
+
+    def refuse(why):
+        refuse_tail(cache, torn, u, why)
+    text, nul, rest = torn.fragment.partition(b'\0')
+    if nul and rest.strip(b'\0'):
+        refuse('bytes other than NUL follow a NUL in it')
+    try:
+        new = scan(chain, known, *carried_dir(chain, chain_path), refuse_gap=refuse)
+    except Exception as e:  # any receipt that does not read as scan expects (SystemExit, a link refusal, passes)
+        refuse(f'the receipt of update {u} does not read ({type(e).__name__}: {e})')
+    if not new:
+        refuse(f'update {u} has no receipt to rebuild its row from ({tail_receipt(chain, u)})')
+    row = json.dumps(new[0]).encode('utf-8')
+    if not row.startswith(text):
+        refuse(f'the row rebuilt from the receipts of update {u} does not begin with the torn bytes')
+    with open(cache, 'r+b') as f:
+        if os.fstat(f.fileno()).st_size != torn.size:
+            refuse('the file changed size under the index lock (a writer outside the lock)')
+        f.truncate(torn.start)
+        f.flush()
+        os.fsync(f.fileno())
+    print(json.dumps({'event': 'index-tail-recovered', 'index': Path(cache).as_posix(), 'update': u,
+                      'cut_bytes': torn.size - torn.start}), file=sys.stderr, flush=True)
 
 
 LINE_BREAK = re.compile('[\n\r\x0b\x0c\x1c\x1d\x1e\x85  ]')  # what str.splitlines splits on
@@ -422,6 +566,19 @@ def stream_lines(f, start=0, chunk=1 << 20):
             pos += byte_length(piece)
         if final:
             return
+
+
+class Prefix:
+    """The first `end` bytes of an open file, for `stream_lines` (which seeks and reads)."""
+
+    def __init__(self, f, end):
+        self.f, self.end = f, end
+
+    def seek(self, pos):
+        return self.f.seek(pos)
+
+    def read(self, n):
+        return self.f.read(max(0, min(n, self.end - self.f.tell())))
 
 
 def parse_bytes(data, start):
@@ -614,6 +771,12 @@ class IndexRecords:
                                f'reads it whole again when restarted)')
         return rec
 
+    def forget_buffer(self):
+        """Drops what the kept handle read ahead (a seek to the end resets a BufferedReader's buffer): bytes past the
+        complete lines may have been a torn tail that another writer's recovery has since cut and rewritten."""
+        if self.handle is not None:
+            self.handle.seek(0, 2)
+
     def check(self, n):
         """Reads record `n` again (raises `IndexChanged` if its line changed)."""
         if not 0 <= n < len(self.offsets):
@@ -793,12 +956,18 @@ class IndexCache:
         self.records, self.active, self.offset, self.ident = None, None, 0, None
         self.settled, self.complete, self.swept = Boundaries(), set(), set()
 
-    def _stream(self, cache, store):
-        """Reads the cache file into `store` one line at a time; False when a record lacks its S-container pin (the
-        file needs `index`'s migration). `self.consumed` is then (bytes read, (st_dev, st_ino)) of that read itself."""
+    def _stream(self, cache, store, end=None):
+        """Reads the cache file into `store` one line at a time (its first `end` bytes, when given); False when a
+        record lacks its S-container pin (the file needs `index`'s migration). `self.consumed` is then (bytes read,
+        (st_dev, st_ino)) of that read itself. A line equal to the line before it is skipped (`unrepeated`)."""
         with open(cache, 'rb') as f:
             st = os.fstat(f.fileno())
-            for text, offset, length in stream_lines(f):
+            prev = None
+            for text, offset, length in stream_lines(f if end is None else Prefix(f, end)):
+                if text == prev:
+                    log_repeat(cache)
+                    continue
+                prev = text
                 rec = json.loads(text)
                 if 'state' not in rec:
                     return False
@@ -816,14 +985,23 @@ class IndexCache:
         """Every record as `index` reads them (the lock is held), streamed; the cursor is then the file's end."""
         chain = load_chain(self.chain_path)
         cache = index_path(self.chain_path)
-        carried_index_head_ok(chain, self.chain_path, cache)
+        torn = torn_tail(cache) if cache.exists() and not self.read_only else None
+        if torn is None:
+            carried_index_head_ok(chain, self.chain_path, cache)
         store = IndexRecords(cache)
         self.consumed = (0, None)
-        if cache.exists() and not self._stream(cache, store):
+        if cache.exists() and not self._stream(cache, store, None if torn is None else torn.start):
             if self.read_only:
                 raise SystemExit(f'stop: {cache} needs its S-container migration, which a read-only cache does not do')
+            if torn is not None:  # the migration rewrites every line: never after a recovery
+                refuse_tail(cache, torn, chain_start(chain) + len(store), 'the index also needs its S-container '
+                            'migration, which rewrites every line')
             migrate(self.chain_path, chain)  # a cache written before S containers were tracked (once)
             return self._whole()
+        if torn is not None:
+            if len(store):  # (no complete row yet: nothing to check before the recovery)
+                carried_index_head_ok(chain, self.chain_path, cache)
+            recover_tail(chain, self.chain_path, cache, torn, len(store))
         new = scan(chain, len(store), *carried_dir(chain, self.chain_path))
         if self.read_only:
             # The cursor is the end of what was read, not a later size: a row another writer appends meanwhile is
@@ -890,9 +1068,10 @@ class IndexCache:
         if data and not data.endswith(b'\n'):
             return self._whole()  # a last line without its newline: read as index() reads it
         written = len(self.records) - len(self.records.extra)
+        self.records.forget_buffer()  # before any line read past this cursor is used (another writer's recovery)
         if written:
             self.records.check(written - 1)  # the last cached line still reads as cached
-        added = parse_bytes(data, self.offset)
+        added = self._unrepeated(parse_bytes(data, self.offset), data, written)
         if any('state' not in r for r, _, _, _ in added):
             return self._whole()  # index() migrates the file first
         if self.read_only and added and self.records.extra:
@@ -932,6 +1111,24 @@ class IndexCache:
             if rec['boundary'] not in self.settled:
                 self.active.numbers.append(n)
         return chain, self.records.view()
+
+    def _unrepeated(self, added, data, written):
+        """`added` (lines read past the cursor, from `data`) without a line equal to the line before it, the last
+        cached line before the first (`unrepeated`)."""
+        prev = None
+        if written and added:
+            with self.records.reader() as f:
+                f.seek(self.records.offsets[written - 1])
+                prev = f.read(self.records.lengths[written - 1])
+        out = []
+        for item in added:
+            line = data[item[1] - self.offset:item[1] - self.offset + item[2]]
+            if line == prev:
+                log_repeat(self.records.path)
+                continue
+            prev = line
+            out.append(item)
+        return out
 
     def settle(self, boundaries):
         """Records whose full-state files were all found absent leave `active`."""

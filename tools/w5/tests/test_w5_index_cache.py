@@ -804,9 +804,9 @@ class CompactRecordsTests(unittest.TestCase):
         self.assertTrue(a.exists())
 
     def test_cutting_a_torn_last_line_back_is_safe(self):
-        """A supervisor killed inside an append leaves a torn last line, which index() and the cache both refuse.
-        Cut back to the previous newline, the next read finds that record again from its receipt and writes the
-        same line: the file ends as it would have."""
+        """A supervisor killed inside an append leaves a torn last line, which index() and the cache both recover
+        (mtg-kernel#853; test_w5_index_tail.py). Cut back to the previous newline by hand, the next read finds that
+        record again from its receipt and writes the same line: the file ends as it would have."""
         node = Node(tempfile.mkdtemp(dir=self.t))
         with mock.patch.dict(os.environ, {'FAKE_CPU_STEP': str(STEP_C), 'FAKE_CPU_STEP_X': str(STEP_X)}), \
                 mock.patch.object(chains, 'GUARD_WAIT', 0.0), mock.patch.object(chains, 'GUARD_POLL', 0.0):
@@ -821,8 +821,9 @@ class CompactRecordsTests(unittest.TestCase):
         torn = b''.join(lines[:-1]) + lines[-1][:40]
         for read in (lambda: retention.index(path), lambda: retention.IndexCache(path).refresh()):
             index_file.write_bytes(torn)
-            with self.assertRaises(ValueError):
+            with contextlib.redirect_stderr(io.StringIO()):
                 read()
+            self.assertEqual(index_file.read_bytes(), whole)
         index_file.write_bytes(torn[:torn.rfind(b'\n') + 1])  # cut_partial_tail
         records = retention.IndexCache(path).refresh()[1]
         self.assertEqual(index_file.read_bytes(), whole)
