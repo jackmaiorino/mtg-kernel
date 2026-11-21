@@ -1665,11 +1665,10 @@ def committed_prefix(by_segment, start=0):
     return prefix
 
 
-def committed_through(cdir):
-    """The chain's last boundary durable with all before it, by its commit log (its start, 0 or a carried chain's B,
-    without one)."""
-    path = Path(cdir) / 'chain.json'
-    start = carry_start(read(path)) if path.exists() else 0
+def committed_through(cdir, start=0):
+    """The chain's last boundary durable with all before it, by its commit log (`start` without one: 0, or a carried
+    chain's B, which the caller passes; the manifest is not read here, so a throughput poll never holds it open while
+    the driver replaces it)."""
     rows, _ = read_commits(cdir)
     prefix = committed_prefix(commit_index(rows, Path(cdir).name)[0], start)
     return prefix[-1]['boundary'] if prefix else start

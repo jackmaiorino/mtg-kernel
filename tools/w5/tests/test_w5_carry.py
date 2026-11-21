@@ -155,7 +155,8 @@ class CarryTests(unittest.TestCase):
         report = chains.cycle(plan, path)
         self.assertIn('c1c', report['retention'])
         self.assertEqual(retention.load_chain(man_path)['segments'][0]['offset'], 8)
-        self.assertEqual(chains.committed_through(man_path.parent), 20)  # commits counted from B
+        self.assertEqual(chains.committed_through(man_path.parent, 8), 20)  # commits counted from B
+        self.assertEqual(chains.committed_through(man_path.parent), 0)  # from 0 they never start
 
     def test_end_and_wall_count_from_the_carried_chain(self):
         _, old_man = self.old(2)
