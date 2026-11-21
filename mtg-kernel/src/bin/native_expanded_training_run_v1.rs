@@ -195,13 +195,14 @@ fn follow_mode(config: NativeExpandedTrainingRunV1, spool: &std::path::Path) -> 
     let ended = follow_v1(
         config,
         |_| spool.wait_v1(),
-        |index, config, result| {
+        |result| {
             println!(
                 "{}",
                 serde_json::to_string(result).map_err(|e| e.to_string())?
             );
-            spool.publish_done_v1(index, config, result)
+            Ok(())
         },
+        |index, config, result| spool.publish_done_v1(index, config, result),
     );
     match ended {
         Ok(_) => Ok(()),

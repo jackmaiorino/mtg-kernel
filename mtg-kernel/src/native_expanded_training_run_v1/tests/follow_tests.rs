@@ -93,16 +93,57 @@ fn followed_v1(
             before_next(&config);
             Ok(FollowNextV1::Config(Box::new(config)))
         },
-        |index, config, result| {
+        |result| {
             results.borrow_mut().push(result.clone());
-            spool.publish_done_v1(index, config, result)
+            Ok(())
         },
+        |index, config, result| spool.publish_done_v1(index, config, result),
     )?;
     Ok((ended, results.into_inner()))
 }
 
-/// Every non-timed file present in both trees has the same bytes, and the
-/// same files exist apart from staging debris and the run lock.
+/// Leaves that are telemetry wherever they appear (besides keys ending in
+/// `_seconds`).
+const TELEMETRY_KEYS: [&str; 6] = [
+    "worker_timings",
+    "collection_worker_timings",
+    "episode_seconds",
+    "opponent_cache_hits",
+    "driver_process_cpu_seconds",
+    "scheduler_timing",
+];
+
+/// A timed document without its telemetry: every key ending in `_seconds` or
+/// named in `TELEMETRY_KEYS` removed, and the digest of every pin to a timed
+/// document (whose bytes carry telemetry) removed.
+fn without_telemetry_v1(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => {
+            let pin_to_timed = map.len() == 2
+                && map.contains_key("sha256")
+                && map
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .is_some_and(|path| TIMED.iter().any(|name| path.ends_with(name)));
+            Value::Object(
+                map.iter()
+                    .filter(|(key, _)| {
+                        !(key.ends_with("_seconds")
+                            || TELEMETRY_KEYS.contains(&key.as_str())
+                            || (pin_to_timed && key.as_str() == "sha256"))
+                    })
+                    .map(|(key, value)| (key.clone(), without_telemetry_v1(value)))
+                    .collect(),
+            )
+        }
+        Value::Array(items) => Value::Array(items.iter().map(without_telemetry_v1).collect()),
+        other => other.clone(),
+    }
+}
+
+/// Every file present in both trees has the same bytes, except timed
+/// documents, which are equal without their telemetry; and (with
+/// `same_files`) the same files exist, apart from staging debris.
 fn assert_trees_match_v1(case: &str, got: &Path, want: &Path, same_files: bool) {
     let wanted = files_under_v1(want);
     let found = files_under_v1(got);
@@ -114,7 +155,16 @@ fn assert_trees_match_v1(case: &str, got: &Path, want: &Path, same_files: bool) 
         let expected = wanted
             .get(path)
             .unwrap_or_else(|| panic!("{case}: unexpected file {}", path.display()));
-        if name != "run.lock" && !TIMED.contains(&name) {
+        if TIMED.contains(&name) {
+            let parse =
+                |bytes: &[u8]| without_telemetry_v1(&serde_json::from_slice(bytes).unwrap());
+            assert_eq!(
+                parse(bytes),
+                parse(expected),
+                "{case}: {} differs outside its telemetry",
+                path.display()
+            );
+        } else if name != "run.lock" {
             assert!(bytes == expected, "{case}: {} differs", path.display());
         }
     }
@@ -168,6 +218,12 @@ fn the_continuation_check_admits_only_the_next_segment_of_the_same_run() {
         "actual_identity":{"checkpoint_sha256":later_pin.sha256}});
     let later = segment_v1(&base, &chain, 2, Some(later_pin.clone()));
     check_continuation_v1(&next, &later_result, &later).unwrap();
+    // A run with resident reads is not continued, even by an otherwise exact next segment.
+    let mut resident_first = first.clone();
+    resident_first.verified_reads = VerifiedReadsV1::Resident;
+    let mut resident_next = next.clone();
+    resident_next.verified_reads = VerifiedReadsV1::Resident;
+    assert!(check_continuation_v1(&resident_first, &result, &resident_next).is_err());
     // A pin of the run before the previous one is not a continuation.
     assert!(check_continuation_v1(&next, &later_result, &next.clone()).is_err());
     let refused = |what: &str, previous_result: &Value, candidate: NativeExpandedTrainingRunV1| {
@@ -175,7 +231,7 @@ fn the_continuation_check_admits_only_the_next_segment_of_the_same_run() {
         assert!(!error.is_empty(), "{what}");
     };
     type ChangeV1 = (&'static str, fn(&mut NativeExpandedTrainingRunV1));
-    let changes: [ChangeV1; 13] = [
+    let changes: [ChangeV1; 14] = [
         ("learning rate", |c| c.learning_rate *= 2.0),
         ("value coefficient", |c| c.value_coefficient *= 2.0),
         ("collection workers", |c| c.collection_workers = 3),
@@ -206,6 +262,15 @@ fn the_continuation_check_admits_only_the_next_segment_of_the_same_run() {
             c.max_non_natural_episode_fraction = 0.25
         }),
         ("schema", |c| c.schema.push('x')),
+        ("negative zero", |c| {
+            c.loss_selection = ExpandedLossSelectionV1::GaeAdvantageValueV1 {
+                gamma: 1.0,
+                lambda: 0.9,
+                entropy_coefficient: -0.0,
+                pregame_advantage: crate::expanded_deck_training_v1::PregameAdvantageV1::default(),
+                pregame_announcement_step_scale: None,
+            }
+        }),
     ];
     for (what, change) in changes {
         let mut candidate = next.clone();
@@ -270,14 +335,22 @@ fn the_spool_reads_stop_first_then_one_whole_next_config() {
     );
     fs::remove_file(spool_dir.join(STOP_NAME)).unwrap();
     fs::remove_file(spool_dir.join(NEXT_NAME)).unwrap();
+    // A next.json that is not a config is refused (status 3 in the binary) and removed.
     fs::create_dir(spool_dir.join(NEXT_NAME)).unwrap();
-    assert!(
-        spool.wait_v1().is_err(),
-        "a next.json that is not a file is an error"
-    );
-    fs::remove_dir(spool_dir.join(NEXT_NAME)).unwrap();
+    assert!(matches!(
+        spool.wait_v1().unwrap(),
+        FollowNextV1::Unusable(_)
+    ));
+    assert!(!spool_dir.join(NEXT_NAME).exists());
     fs::write(spool_dir.join(NEXT_NAME), b"{\"schema\":").unwrap();
-    assert!(spool.wait_v1().is_err(), "an unparsable config is an error");
+    assert!(matches!(
+        spool.wait_v1().unwrap(),
+        FollowNextV1::Unusable(_)
+    ));
+    assert!(!spool_dir.join(NEXT_NAME).exists());
+    // A spool that is not empty belongs to another process.
+    fs::write(spool_dir.join("done-000000.json"), b"{}").unwrap();
+    assert!(SpoolV1::open_v1(&spool_dir).is_err());
     fs::remove_dir_all(&chain).unwrap();
 }
 
@@ -295,16 +368,25 @@ fn a_followed_chain_publishes_the_trees_and_states_of_fresh_processes() {
     let fresh_first = fresh_run_v1(&first).unwrap();
     let second = segment_v1(&base, &chain, 1, Some(checkpoint_pin_v1(&fresh_first)));
     let fresh_second = fresh_run_v1(&second).unwrap();
+    // Read through the receipts' pins, so before the tree moves.
+    let fresh_states = [
+        receipt_states_v1(&fresh_first),
+        receipt_states_v1(&fresh_second),
+    ];
     fs::rename(&chain, &fresh_chain).unwrap();
 
     let spool = chain.join("spool");
     let (ended, results) = followed_v1(&base, &chain, 0, 2, &spool, &mut |_| {}).unwrap();
     assert_eq!(ended, FollowEndV1::Stopped);
     assert_eq!(results.len(), 2);
-    for (followed, fresh) in results.iter().zip([&fresh_first, &fresh_second]) {
+    for ((followed, fresh), states) in results
+        .iter()
+        .zip([&fresh_first, &fresh_second])
+        .zip(&fresh_states)
+    {
         assert_eq!(followed["actual_identity"], fresh["actual_identity"]);
         assert_eq!(followed["source"], fresh["source"]);
-        assert_eq!(receipt_states_v1(followed), receipt_states_v1(fresh));
+        assert_eq!(&receipt_states_v1(followed), states);
     }
     for (index, result) in results.iter().enumerate() {
         let done = read_json(&spool.join(done_name_v1(index)), SMALL_CAP).unwrap();
@@ -335,6 +417,7 @@ fn a_followed_chain_publishes_the_trees_and_states_of_fresh_processes() {
                 Some(checkpoint_pin_v1(&fresh_first)),
             ))))
         },
+        |_| Ok(()),
         |index, config, result| handle.publish_done_v1(index, config, result),
     )
     .unwrap_err();
@@ -360,6 +443,15 @@ fn a_crash_in_a_followed_segment_resumes_in_a_new_process_with_the_same_states()
     let reference_first = fresh_run_v1(&first).unwrap();
     let second = segment_v1(&base, &chain, 1, Some(checkpoint_pin_v1(&reference_first)));
     let reference_second = fresh_run_v1(&second).unwrap();
+    // The rerun update publishes in a new attempt, whose paths its checkpoint
+    // names, so states are compared (as the plain-run counterpart does).
+    let states = |result: &Value| -> Vec<(Value, Value)> {
+        receipt_states_v1(result)
+            .into_iter()
+            .map(|(_, _, after)| (after["state_sha256"].clone(), after["adam_step"].clone()))
+            .collect()
+    };
+    let reference_states = states(&reference_second);
     fs::remove_dir_all(&chain).unwrap();
     let spool = chain.join("spool");
     let error = followed_v1(&base, &chain, 0, 2, &spool, &mut |_| {
@@ -375,14 +467,13 @@ fn a_crash_in_a_followed_segment_resumes_in_a_new_process_with_the_same_states()
     assert!(spool.join(done_name_v1(0)).exists());
     assert!(!spool.join(done_name_v1(1)).exists());
     let resumed = fresh_run_v1(&second).unwrap();
-    assert_eq!(
-        resumed["actual_identity"],
-        reference_second["actual_identity"]
-    );
-    assert_eq!(
-        receipt_states_v1(&resumed),
-        receipt_states_v1(&reference_second)
-    );
+    for field in ["state_sha256", "adam_step"] {
+        assert_eq!(
+            resumed["actual_identity"][field],
+            reference_second["actual_identity"][field]
+        );
+    }
+    assert_eq!(states(&resumed), reference_states);
     fs::remove_dir_all(&chain).unwrap();
 }
 
@@ -416,9 +507,9 @@ fn a_crash_at_any_publication_of_a_followed_chain_resumes_to_the_uninterrupted_r
     assert_eq!(ended, FollowEndV1::Stopped);
     assert_eq!(reference.len(), 2);
     fs::rename(&chain, &reference_chain).unwrap();
-    // Per segment: two iterations of ten publications, its plan and
+    // Per segment: two iterations of nine publications, its plan and
     // completion; and one done record.
-    assert!(publications >= 2 * 23, "{publications} publications");
+    assert!(publications >= 2 * 20 + 2, "{publications} publications");
     for index in 0..publications {
         for point in [CrashPointV1::BeforeFinal, CrashPointV1::AfterFinal] {
             let case = format!("publication {index} {point:?}");
