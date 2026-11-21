@@ -250,7 +250,47 @@ class FollowDrive(unittest.TestCase):
             node.drive(plan, 'c1')
         self.assertEqual(kill.call_count, 1)
         self.assertLess(time.time() - started, chains.FOLLOW_STOP_GRACE / 3)
-        self.assertEqual(list((node.root / 'chains' / 'c1' / chains.FOLLOW_SPOOLS).iterdir()), [])
+        # An exception abandons the process: nothing is written or deleted in the tree (the next start clears it).
+        spools = list((node.root / 'chains' / 'c1' / chains.FOLLOW_SPOOLS).iterdir())
+        self.assertEqual(len(spools), 1)
+        self.assertFalse((spools[0] / 'STOP').exists())
+
+    def test_a_refused_carried_tree_kills_the_trainer_and_writes_nothing_in_the_tree(self):
+        node = self.node('carried')
+        plan = follow_plan(node)
+        node.guard(ceilings={'c1': 10})
+        calls = [0]
+
+        def held(man, root, chain):
+            calls[0] += 1
+            return calls[0] < 2  # the second check (after the second segment's run) finds the tree suspect
+
+        with mock.patch.object(chains, 'carried_tree_held', side_effect=held),                 mock.patch.object(chains, 'kill_group', wraps=chains.kill_group) as kill:
+            self.assertEqual(node.drive(plan, 'c1'), chains.EXIT_STOP)
+        self.assertEqual(kill.call_count, 1)  # a kill, not STOP
+        spools = list((node.root / 'chains' / 'c1' / chains.FOLLOW_SPOOLS).iterdir())
+        self.assertEqual(len(spools), 1)  # left as it was: not removed
+        self.assertFalse((spools[0] / 'STOP').exists())  # and no STOP written into it
+        self.assertEqual([r['segment'] for r in self.commits(node)], [0])  # no commit for the refused segment
+
+    def test_stop_is_never_written_through_a_link(self):
+        node = self.node('link')
+        plan = follow_plan(node)
+        node.guard(ceilings={'c1': 1})
+        victim = node.t / 'victim.bin'  # absent: a dangling link, which a plain create would follow and create
+        start = chains.Follower.start
+
+        def planting(follower, config_path):
+            start(follower, config_path)
+            try:
+                os.symlink(victim, follower.spool / 'STOP')
+            except (OSError, NotImplementedError):
+                self.skipTest('no symlinks here')
+
+        with mock.patch.object(chains.Follower, 'start', autospec=True, side_effect=planting),                 mock.patch.object(chains, 'kill_group', wraps=chains.kill_group) as kill:
+            self.assertEqual(node.drive(plan, 'c1'), chains.EXIT_ROOM)
+        self.assertFalse(victim.exists())  # nothing was written through the link
+        self.assertEqual(kill.call_count, 1)  # no safe STOP: the waiting process is killed instead
 
     def test_stop_between_segments_ends_a_waiting_process_with_stop(self):
         node = self.node('stop')

@@ -1164,8 +1164,10 @@ def run_trainer(arm, config_path, deadline=None, logs=None):
 # checkpoint pin, as next_source gives it) and runs it through the unchanged run entry point, so every record is a
 # fresh process's. The flag is not a config or recipe key: configs, run.json, recipe_identity and every receipt are
 # unchanged, and `follow` stays out of the recipe identity, like scratch_root.
-# - Ending: whenever the driver leaves its loop (END, STOP, the guard, a failure) it writes `<spool>/STOP` for a
-#   waiting process and kills it only after FOLLOW_STOP_GRACE; the C wall still kills a segment in flight.
+# - Ending: whenever the driver leaves its loop (END, STOP, the guard, a failure) it creates `<spool>/STOP` for a
+#   waiting process (exclusively, never through a link) and kills it only after FOLLOW_STOP_GRACE; the C wall still
+#   kills a segment in flight. A carried chain whose tree check fails, or an exception, ends the process by a kill
+#   and writes or deletes nothing in the tree (`Follower.abandon`).
 # - Fallback: a handed segment whose process exits with a positive status and no completion.json (a refused config,
 #   status FOLLOW_REFUSED, or a crash) goes back through the loop's top (settle, admission, the re-derived config,
 #   quarantine) and runs in a new process, which runs it as a fresh process does; a failure there is the usual
@@ -1289,23 +1291,49 @@ class Follower:
         self.proc = None
         self.active = False
 
+    def spool_real(self):
+        """The spool and the folder holding it are plain directories (no link to follow)."""
+        return (self.spool is not None and not is_link(self.spool) and not is_link(self.spool.parent) and
+                self.spool.is_dir())
+
+    def stop_file(self):
+        """Creates the spool's STOP file exclusively and without following a link; False if it cannot."""
+        if not self.spool_real():
+            return False
+        try:
+            fd = os.open(self.spool / 'STOP', os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0))
+        except OSError:
+            return False
+        os.close(fd)
+        return True
+
     def close(self):
-        """STOP for a waiting process (killed after FOLLOW_STOP_GRACE), a kill for any other live one; then the
-        spool is removed."""
+        """STOP for a waiting process (killed after FOLLOW_STOP_GRACE, or at once when STOP cannot be created
+        safely), a kill for any other live one; then the spool is removed if it is still a plain directory."""
         if self.proc is not None:
-            if self.waiting():
-                (self.spool / 'STOP').write_text('')
+            if self.waiting() and self.stop_file():
                 try:
                     self.proc.wait(timeout=FOLLOW_STOP_GRACE)
                 except subprocess.TimeoutExpired:
                     kill_group(self.proc)
             elif self.alive():
-                kill_group(self.proc)  # a run in flight (an exception in the driver): no grace
+                kill_group(self.proc)  # a run in flight (an exception in the driver), or no safe STOP: no grace
             self.proc.wait()
             self.release()
-        if self.spool is not None:
+        if self.spool_real():
             shutil.rmtree(self.spool, ignore_errors=True)
-            self.spool = None
+        self.spool = None
+        self.runs = 0
+
+    def abandon(self):
+        """Ends the process without writing or deleting anything in the chain's tree (a carried chain whose tree
+        check failed, or an exception): a kill of a live process; the spool is left as it is."""
+        if self.proc is not None:
+            if self.alive():
+                kill_group(self.proc)
+            self.proc.wait()
+            self.release()
+        self.spool = None
         self.runs = 0
 
 
@@ -2556,12 +2584,24 @@ def drive(a):
     follower = Follower(arm, cdir, cdir) if arm.get('follow') else None
     try:
         return drive_locked(a, arm, root, cdir, man_path, follower)
+    except BaseException:
+        if follower is not None:
+            follower.abandon()  # an exception (a refused carried tree among them): no write through the tree
+        raise
     finally:
         try:
             if follower is not None:
                 follower.close()  # STOP for a waiting trainer whenever the driver leaves its loop
         finally:
             unlock(held)
+
+
+def abandoned(follower):
+    """EXIT_STOP for a carried chain whose tree check failed: a followed trainer is killed and nothing is written or
+    deleted in the tree (no STOP file, no spool removal)."""
+    if follower is not None:
+        follower.abandon()
+    return EXIT_STOP
 
 
 def drive_locked(a, arm, root, cdir, man_path, follower=None):
@@ -2590,7 +2630,7 @@ def drive_locked(a, arm, root, cdir, man_path, follower=None):
                 carried_segment_ok(man, arm, cdir, seg['root'])
         except Stop as exc:  # the tree itself is suspect: stop without writing to any of its files
             print(f'stop: {exc}', file=sys.stderr, flush=True)
-            return EXIT_STOP
+            return abandoned(follower)
         if scratch:  # before the wall, STOP and guard checks: an END or a boundary only names persisted state
             scratch_settle(arm, root, cdir, man, instance)
             if (cdir / 'END.json').exists():
@@ -2608,7 +2648,7 @@ def drive_locked(a, arm, root, cdir, man_path, follower=None):
                 carried_trees_unlinked(root, a.chain)
             except Stop as exc:  # the tree itself is suspect: stop without writing to any of its files
                 print(f'stop: {exc}', file=sys.stderr, flush=True)
-                return EXIT_STOP
+                return abandoned(follower)
         if hold is not None:
             log(root, chain=a.chain, event='stop', reason=hold)
             return EXIT_STOP
@@ -2656,14 +2696,14 @@ def drive_locked(a, arm, root, cdir, man_path, follower=None):
             # first one's); driver_process_cpu_seconds differences only within one attempt.
             followed = dict(attempts[-1], trainer_attempts=list(attempts))
         if not carried_tree_held(man, root, a.chain):  # a carried chain: its tree again before any write
-            return EXIT_STOP
+            return abandoned(follower)
         if (native / 'completion.json').exists():
             if scratch:
                 t = time.time()
                 carried_segment_ok(man, arm, cdir, native)  # a carried chain: again, right before the copy
                 n = persist(arm, native, cdir)
                 if not carried_tree_held(man, root, a.chain):  # and after the copy, before its commit line
-                    return EXIT_STOP
+                    return abandoned(follower)
                 record_commit(cdir, man, s, 'scratch', instance, persist_seconds=time.time() - t, persist_bytes=n,
                               **followed)
                 t = time.time()
@@ -2689,7 +2729,7 @@ def drive_locked(a, arm, root, cdir, man_path, follower=None):
             carried_segment_ok(man, arm, cdir, native)  # a carried chain: again, right before the copy
             n = persist(arm, native, cdir)
             if not carried_tree_held(man, root, a.chain):
-                return EXIT_STOP
+                return abandoned(follower)
             record_commit(cdir, man, s, 'scratch-cut', instance, persist_seconds=time.time() - t, persist_bytes=n,
                           **followed)
             log(root, chain=a.chain, event='scratch-persist', segment=native.name, bytes=n, reaped=reaped, cut=True)
