@@ -1126,7 +1126,10 @@ def check_prehold_receipt(req, cdoc, name, man, man_path):
     require(all(index.get(r['boundary']) == r['index'] for r in rows)
             and isinstance(a.get('first_before'), str) and index.get(lo) == a['first_before'],
             f'{name}: pre-hold proof rows differ from the index (or its first before-state from the row at {lo})')
-    require(a.get('tools_chains_sha256') == cdoc.get('tools_chains_sha256'), f'{name}: the two proofs ran different tools')
+    a_tools, c_tools = a.get('tools_chains_sha256'), cdoc.get('tools_chains_sha256')
+    require(all(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest)
+                for digest in (a_tools, c_tools)), f'{name}: both proofs need a valid tools digest')
+    require(a_tools == c_tools, f'{name}: the two proofs ran different tools')
 
 
 def repin_effective(history):
@@ -1243,7 +1246,10 @@ def repin_cmd(a):
     if a.step == 'confirm':
         return repin_confirm(a, root, cdir, man, history, pending)
     if pending is None and a.step == 'end' and history and history[-1].get('reverts') is None:
-        print(json.dumps({'chain': a.chain, 'switched': history[-1]['id'], 'again': True}))
+        entry = history[-1]
+        require(entry.get('proof_a') is None or entry.get('confirm_required') is True,
+                f'{a.chain}: the completed re-pin {entry["id"]} did not install a first-segment hold')
+        print(json.dumps({'chain': a.chain, 'switched': entry['id'], 'again': True}))
         return 0
     require(pending is not None, f'{a.chain}: no re-pin is pending')
     committed = any(e['id'] == pending['id'] for e in history)
@@ -1279,8 +1285,9 @@ def repin_cmd(a):
             == plan['trainer']['sha256'], f'{a.chain}: the plan, arm file and manifest do not all name the new trainer')
     require(arm_spec['w5box_plan'] and read(arm_spec['w5box_plan']['path']).get('throughput') is not None,
             f'{a.chain}: the arm\'s launch plan names no throughput record (qualify on the new trainer first)')
-    if getattr(a, 'hold_first', False) and not history[-1].get('confirm_required'):
-        # the first segment on the new trainer is confirmed before a second one starts (the driver enforces it)
+    hold_required = getattr(a, 'hold_first', False) or pending.get('proof_a') is not None
+    if hold_required and history[-1].get('confirm_required') is not True:
+        # A split proof always needs confirmation before a second segment. Record the hold before clearing pending.
         man['trainer_history'] = history[:-1] + [dict(history[-1], confirm_required=True)]
         write(cdir / 'chain.json', man)
         durable_entry(cdir / 'chain.json')
