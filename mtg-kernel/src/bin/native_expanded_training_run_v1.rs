@@ -13,12 +13,19 @@ fn main() {
     // SAFETY: first statement of main; no other thread exists yet.
     unsafe { mtg_kernel::retain_freed_memory_v1() };
     mtg_kernel::opt_out_of_power_throttling_v1();
+    mtg_kernel::set_default_digest_memo_mib_v1(16);
     if let Err(error) = run() {
         eprintln!("native expanded training: {error}");
         std::process::exit(1);
     }
 }
 fn run() -> Result<(), String> {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--settle-vector-tanh")) {
+        // The chain tools call this on the host before a stage enters its
+        // metered cgroup, so the one-time proof is not charged to a segment.
+        mtg_kernel::settle_vector_tanh_v1();
+        return Ok(());
+    }
     if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("--validate-config")) {
         // Only the new read-only parser uses this stack. Preserve the legacy
         // entry point, parsing semantics and training execution below.

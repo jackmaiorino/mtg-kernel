@@ -67,7 +67,8 @@ impl RecordEnvelopeV1 {
 
     /// The bytes to publish for a record whose unsealed bytes are `bytes`.
     /// `Zstd1` refuses input that already looks sealed (a record is sealed
-    /// once) and checks that the frame opens to exactly `bytes`.
+    /// once) and checks, in every build and before the frame is returned for
+    /// publication, that the frame opens to exactly `bytes`.
     pub(crate) fn seal_v1(self, bytes: &[u8]) -> Result<Cow<'_, [u8]>, String> {
         match self {
             Self::None => Ok(Cow::Borrowed(bytes)),
@@ -83,7 +84,20 @@ impl RecordEnvelopeV1 {
                 compressor
                     .set_parameter(zstd::stream::raw::CParameter::ContentSizeFlag(true))
                     .map_err(|e| e.to_string())?;
+                // The compressor allocates for the worst case (the bound for
+                // the unsealed length) and returns the frame in that
+                // allocation. The frame is kept for a long time (the
+                // verified-bytes cache and the parse-ahead store share it), so
+                // it is copied into an allocation of its own size and the
+                // large one is freed. (Shrinking in place is not enough: the
+                // allocator may keep a block that is still at least half
+                // used.)
                 let sealed = compressor.compress(bytes).map_err(|e| e.to_string())?;
+                let sealed = if sealed.capacity() > sealed.len() {
+                    sealed.as_slice().to_vec()
+                } else {
+                    sealed
+                };
                 if open_v1(&sealed, bytes.len() as u64)?.as_ref() != bytes {
                     return Err("record envelope round trip differs".into());
                 }
@@ -147,6 +161,22 @@ const FRAME_HEADER_MAX_BYTES_V1: usize = 18;
 /// batch-bound error, so both checks read the same.
 pub(crate) const BATCH_BOUND_ERROR_V1: &str =
     "trajectory batch exceeds 512 MiB CPU ingestion bound";
+
+/// The batch-bound error for a bound of `bound` bytes: for the default bound
+/// exactly [`BATCH_BOUND_ERROR_V1`], for a configured whole number of MiB the
+/// same text with that number.
+pub(crate) fn batch_bound_error_v1(bound: u64) -> String {
+    if bound == super::MAX_BATCH_BYTES {
+        BATCH_BOUND_ERROR_V1.into()
+    } else if bound.is_multiple_of(1 << 20) {
+        format!(
+            "trajectory batch exceeds {} MiB CPU ingestion bound",
+            bound >> 20
+        )
+    } else {
+        format!("trajectory batch exceeds {bound}-byte CPU ingestion bound")
+    }
+}
 
 /// What [`admit_batch_v1`] saw of one file: its declared content size when
 /// it was a sealed regular file with a readable frame header, else nothing.
@@ -220,7 +250,7 @@ pub(crate) fn admit_batch_v1<'a>(
         admitted.push(seen);
     }
     if sealed && total > bound {
-        return Err(BATCH_BOUND_ERROR_V1.into());
+        return Err(batch_bound_error_v1(bound));
     }
     Ok(admitted)
 }
@@ -279,6 +309,18 @@ mod tests {
             .into_owned();
         assert!(is_sealed_v1(&sealed));
         assert!(sealed.len() < bytes.len() / 4);
+        // The compressor's worst-case allocation (more than the record's
+        // length) is not kept: the frame's buffer has little capacity
+        // beyond its bytes. (A `Vec` reports the same capacity after an
+        // in-place shrink that the allocator did not honor, so this cannot
+        // tell the copy from `shrink_to_fit`; a trainer process's peak
+        // memory is the measurement that does.)
+        assert!(
+            sealed.capacity() <= sealed.len() + sealed.len() / 8 + 64,
+            "capacity {} for {} bytes",
+            sealed.capacity(),
+            sealed.len()
+        );
         assert_eq!(
             RecordEnvelopeV1::Zstd1.seal_v1(&bytes).unwrap().as_ref(),
             sealed.as_slice()
@@ -367,6 +409,14 @@ mod tests {
         // their own checks.
         admit_batch_v1([plain.as_path(); 3], 2000).unwrap();
         assert!(admit_batch_v1([plain.as_path(), big.as_path()], (300 << 20) + 999).is_err());
+        // A raised bound (`max_trajectory_batch_mebibytes`) admits the pair
+        // and names itself when exceeded.
+        admit_batch_v1([big.as_path(), big.as_path()], 600 << 20).unwrap();
+        assert_eq!(
+            admit_batch_v1([big.as_path(), big.as_path(), big.as_path()], 600 << 20).unwrap_err(),
+            "trajectory batch exceeds 600 MiB CPU ingestion bound"
+        );
+        assert_eq!(batch_bound_error_v1(bound), BATCH_BOUND_ERROR_V1);
         std::fs::remove_dir_all(&directory).unwrap();
     }
 

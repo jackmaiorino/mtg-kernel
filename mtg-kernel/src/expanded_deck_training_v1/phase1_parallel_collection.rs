@@ -193,6 +193,7 @@ pub(super) fn collect_parallel_v1(
         "output directory already exists",
     )?;
     let (policy, learner, state_hash) = if source.s_learner.is_some() {
+        super::refuse_priority_pass_offset_v1(&episodes, "an S learner collection")?;
         super::s_learner_v1::collection_learner_v1(&source, training_math, collection_sampler)?
     } else {
         let (mut policy, mut state, transfer) = initialize_with_transfer_context(&source)?;
@@ -301,8 +302,10 @@ pub(super) fn collect_parallel_v1(
             // the serialized bytes (`record_envelope_v1`), and the sealed
             // bytes are the published and offered ones.
             let name = format!("episode-{index:04}.json");
-            let bytes = record_envelope.seal_owned_v1(serialize_json_v1(&name, &trajectory)?)?;
-            let pin = publish_json_bytes_v1(&output_directory, &name, &bytes)?;
+            let bytes = std::sync::Arc::new(
+                record_envelope.seal_owned_v1(serialize_json_v1(&name, &trajectory)?)?,
+            );
+            let pin = publish_json_shared_v1(&output_directory, &name, &bytes)?;
             trajectory_parse_ahead_v1::offer_serialized_v1(&pin.sha256, bytes, trajectory)?;
             let ex1_pin = ex1_record
                 .map(|record| {
@@ -553,6 +556,9 @@ mod tests {
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
+                london_keep_offset: None,
+                priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         let result = execute_v1(ExpandedTrainingCommandV1::CollectParallel {
@@ -708,6 +714,9 @@ mod tests {
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
+                london_keep_offset: None,
+                priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
 
@@ -826,6 +835,9 @@ mod tests {
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
+                london_keep_offset: None,
+                priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         let context = || {
@@ -915,6 +927,9 @@ mod tests {
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
+                london_keep_offset: None,
+                priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         // The separate opponent seat gets its own parameters, so the service
@@ -1038,6 +1053,9 @@ mod tests {
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
+                london_keep_offset: None,
+                priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         let run = |label: &str, workers: usize| {
@@ -1161,6 +1179,9 @@ mod tests {
                 reset: None,
                 opening: None,
                 mulligan_modes: None,
+                london_keep_offset: None,
+                priority_windows: None,
+                priority_pass_offset: None,
             })
             .collect();
         let run = |label: &str, sampler: CollectionSamplerV1, workers: usize| {

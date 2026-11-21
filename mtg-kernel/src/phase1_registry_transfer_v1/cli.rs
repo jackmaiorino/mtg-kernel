@@ -123,6 +123,9 @@ fn inference_only_episode() -> Result<ExpandedEpisodeV1, String> {
         reset: None,
         opening: None,
         mulligan_modes: None,
+        london_keep_offset: None,
+        priority_windows: None,
+        priority_pass_offset: None,
     })
 }
 

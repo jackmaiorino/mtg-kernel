@@ -714,6 +714,47 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         ),
         NativePolicyTrainErrorV1,
     > {
+        // The London keep offset of this step's batch, or None (every
+        // existing step): taken before anything can return, so a step that
+        // ends in an error leaves no offset behind. Only the plain GAE
+        // objective takes it.
+        let london_keep_offset = self.london_keep_offset_mut_dims_v1().take();
+        // The priority pass offset of this step's batch and its per-substep
+        // Pass rows, or None (every existing step), taken the same way.
+        let priority_pass_offset = self.priority_pass_offset_mut_dims_v1().take();
+        // The pregame announcement step scale of this step, or None (every
+        // existing step), taken the same way; the last step's record never
+        // outlives the next step (`pregame_announcement_step_v1`).
+        let announcement_scale = self.pregame_announcement_step_scale_mut_dims_v1().take();
+        *self.pregame_announcement_step_record_mut_dims_v1() = None;
+        if announcement_scale.is_some() {
+            // Only the plain GAE objective on a backward that routes the
+            // second gradient buffer, under the arithmetic the gates cover.
+            if line_b.is_some() || exploration.is_some() || imitation {
+                return Err(NativePolicyTrainErrorV1::PregameAnnouncementStep {
+                    code: "pregame-announcement-step-requires-plain-gae",
+                });
+            }
+            if !matches!(backward_execution, BackwardExecutionV1::Sequential) {
+                return Err(NativePolicyTrainErrorV1::PregameAnnouncementStep {
+                    code: "pregame-announcement-step-requires-sequential-backward",
+                });
+            }
+            #[cfg(feature = "gpu-exact-v1")]
+            if crate::gpu_exact_v1::learner_installed_v1() {
+                return Err(NativePolicyTrainErrorV1::PregameAnnouncementStep {
+                    code: "pregame-announcement-step-requires-cpu-backward",
+                });
+            }
+            if !is_net8_dims_v1::<D>()
+                || !self.training_math.is_platform_libm()
+                || self.no_state_digest_columns.is_some()
+            {
+                return Err(NativePolicyTrainErrorV1::PregameAnnouncementStep {
+                    code: "pregame-announcement-step-requires-net8-platform-math",
+                });
+            }
+        }
         // The wide refusal list (design section 2.1), before any forward work.
         if !is_net8_dims_v1::<D>() {
             if let Some(source) = line_b {
@@ -812,9 +853,41 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             math,
             mxcsr,
         );
+        if london_keep_offset.is_some() && (line_b.is_some() || exploration.is_some() || imitation)
+        {
+            return Err(NativePolicyTrainErrorV1::LondonKeepOffset {
+                code: "london-keep-offset-requires-plain-gae",
+            });
+        }
+        if let Some(marks) = &priority_pass_offset {
+            if line_b.is_some() || exploration.is_some() || imitation {
+                return Err(NativePolicyTrainErrorV1::PriorityPassOffset {
+                    code: "priority-pass-offset-requires-plain-gae",
+                });
+            }
+            let substeps: usize = groups.iter().map(|group| group.substeps.len()).sum();
+            if marks.rows.len() != substeps
+                || crate::expanded_deck_training_v1::priority_pass_offset_v1::validate_pass_offset_v1(
+                    marks.offset,
+                )
+                .is_err()
+            {
+                return Err(NativePolicyTrainErrorV1::PriorityPassOffset {
+                    code: "priority-pass-offset-marks-differ-from-the-batch",
+                });
+            }
+        }
+        // Each substep's Pass row under the priority pass offset, in batch
+        // order (`priority_pass_offset_v1`).
+        let mut pass_rows = priority_pass_offset
+            .as_ref()
+            .map(|marks| marks.rows.iter().copied());
         let mut selected_outputs = Vec::new();
         let mut physical_terms = Vec::with_capacity(groups.len());
         let mut group_tapes = Vec::with_capacity(groups.len());
+        // Announcement rows, marked only under the pregame announcement step
+        // scale (empty otherwise, and never read).
+        let mut announcement_marks: Vec<bool> = Vec::new();
         let mut policy_sum = 0.0f32;
         let mut value_sum = 0.0f32;
         // W5's policy-gradient mask (`w5-xact-v1`), only through an external
@@ -874,8 +947,49 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                         action_count: tape.logits_v1().len(),
                     });
                 }
+                // The London keep offset (`london_keep_offset_v1`): the
+                // mulligan row's logit less the offset, exactly as collection
+                // sampled it. The offset is a constant, so the gradient with
+                // respect to the raw logits keeps its softmax form. None
+                // reads the raw logits, as before.
+                let offset_logits = match london_keep_offset {
+                    Some(offset) => {
+                        crate::expanded_deck_training_v1::london_keep_offset_v1::offset_logits_v1(
+                            tape.logits_v1(),
+                            encoded.state,
+                            encoded.action_features,
+                            &offset,
+                        )
+                        .map_err(|_| {
+                            NativePolicyTrainErrorV1::LondonKeepOffset {
+                                code: "london-keep-offset-malformed-decision",
+                            }
+                        })?
+                    }
+                    None => None,
+                };
+                // The priority pass offset (`priority_pass_offset_v1`): the
+                // marked Pass row's logit plus the offset, after the keep
+                // offset, exactly as collection sampled it. Unmarked rows read
+                // the logits above, as before.
+                let offset_logits = match (
+                    pass_rows.as_mut().and_then(|rows| rows.next()).flatten(),
+                    &priority_pass_offset,
+                ) {
+                    (Some(pass_row), Some(marks)) => Some(
+                        crate::expanded_deck_training_v1::priority_pass_offset_v1::pass_offset_logits_v1(
+                            offset_logits.as_deref().unwrap_or(tape.logits_v1()),
+                            pass_row,
+                            marks.offset,
+                        )
+                        .map_err(|_| NativePolicyTrainErrorV1::PriorityPassOffset {
+                            code: "priority-pass-offset-malformed-decision",
+                        })?,
+                    ),
+                    _ => offset_logits,
+                };
                 let (selected_log_probability, log_probabilities) = selected_log_softmax_math_v1(
-                    tape.logits_v1(),
+                    offset_logits.as_deref().unwrap_or(tape.logits_v1()),
                     substep.selected_action_index,
                     math,
                 )?;
@@ -904,6 +1018,26 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 });
             }
             let joint_log_probability = joint_log_probability.expect("nonempty group checked");
+            if announcement_scale.is_some() {
+                // An announcement row: a pregame decision with a mulligan row
+                // (`mulligan_rows_v1`; a put-back decision has none), read
+                // from the group's first substep as the keep offset reads it.
+                let NativePolicyForwardInputV1::Encoded(first) = &group.substeps[0].forward else {
+                    unreachable!("canonical input checked before forward");
+                };
+                let rows =
+                    crate::expanded_deck_training_v1::london_keep_offset_v1::mulligan_rows_v1(
+                        first.state,
+                        first.action_features,
+                        tapes[0].tape.logits_v1().len(),
+                    )
+                    .map_err(|_| {
+                        NativePolicyTrainErrorV1::PregameAnnouncementStep {
+                            code: "pregame-announcement-step-malformed-decision",
+                        }
+                    })?;
+                announcement_marks.push(!rows.is_empty());
+            }
             let value = tapes[0].tape.value_v1();
             let advantage = advantages[group_index];
             let value_target = value_targets[group_index];
@@ -996,6 +1130,47 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
 
         phase_recorder.finish_v1(forward_timer);
         let backward_timer = phase_recorder.start_v1(NativeTrainingPhaseV1::BackwardGauge);
+        // The pregame announcement step scale (`pregame_announcement_step_v1`):
+        // with at least one announcement row, the announcement rows' policy
+        // term is differentiated into its own buffer here, and the ordinary
+        // backward below differentiates the rest. A batch without one, or a
+        // step without the scale, runs the ordinary backward on everything.
+        let announcement_step = match announcement_scale {
+            Some(scale) if announcement_marks.iter().any(|mark| *mark) => {
+                let (mut announcement_gradients, announcement_gauge) =
+                    pregame_announcement_step_v1::announcement_backward_dims_v1::<D>(
+                        &parameters,
+                        &group_tapes,
+                        &announcement_marks,
+                        group_count,
+                        value_coefficient,
+                        forward_workers,
+                        math,
+                        mxcsr,
+                    )?;
+                validate_finite_nested("gae_announcement_gradient", &announcement_gradients)?;
+                // The same gauge check and projection as the ordinary buffer.
+                let announcement_gauge_record = announcement_gauge.finish(
+                    announcement_gradients[SCORER_SECOND_BIAS][0],
+                    parameters[SCORER_SECOND_BIAS].values[0].to_bits(),
+                )?;
+                #[cfg(test)]
+                record_train_step_v1(|capture| {
+                    capture.announcement_projection.push(ProjectionCaptureV1 {
+                        gradients: announcement_gradients.clone(),
+                        residual_bits: announcement_gauge_record.raw_gradient_residual.to_bits(),
+                    });
+                });
+                let _ = announcement_gauge_record;
+                announcement_gradients[SCORER_SECOND_BIAS][0] = 0.0;
+                Some((scale, announcement_gradients))
+            }
+            _ => None,
+        };
+        let backward_part = match &announcement_step {
+            Some(_) => pregame_announcement_step_v1::BackwardPartV1::Rest(&announcement_marks),
+            None => pregame_announcement_step_v1::BackwardPartV1::All,
+        };
         // Without the exploration regularizer the sequential backward has an
         // exact parallel form; it runs on the update's forward workers.
         // An installed exact GPU learner gives the same gradients and gauge.
@@ -1023,6 +1198,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 exact_parallel_backward_v1::exact_parallel_backward_dims_v1::<D>(
                     &parameters,
                     &group_tapes,
+                    backward_part,
                     group_count,
                     value_coefficient,
                     forward_workers,
@@ -1039,19 +1215,25 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 backward
             }
             (None, BackwardExecutionV1::Sequential) => {
-                let mut gradients = parameters
-                    .iter()
-                    .map(|parameter| vec![0.0; parameter.values.len()])
-                    .collect::<Vec<_>>();
+                // Hidden-width weights accumulate transposed, with the exact
+                // parallel backward's kernels and the reference's bits.
+                let mut gradients =
+                    accumulate_transposed_v1::sequential_gradients_dims_v1::<D>(&parameters);
+                let mut sink =
+                    accumulate_transposed_v1::AccumulateTransposedV1::new_v1(&mut gradients);
                 let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::for_math_v1(math);
                 let mut reverse_workspace = ReverseWorkspaceV1::default();
                 // Same reverse group/substep/action order as
                 // `train_step_with_input_config_v1`'s Sequential arm.
-                for group in group_tapes.into_iter().rev() {
-                    let d_value = (value_coefficient / group_count) * (2.0 * group.value_error);
+                for (group_index, group) in group_tapes.into_iter().enumerate().rev() {
+                    let d_value = backward_part.d_value_v1(&group, value_coefficient, group_count);
                     for (substep_index, selected) in group.tapes.iter().enumerate().rev() {
-                        let d_joint_log_probability =
-                            group.d_joint_log_probability_v1(substep_index, group_count);
+                        let d_joint_log_probability = backward_part.d_joint_log_probability_v1(
+                            group_index,
+                            &group,
+                            substep_index,
+                            group_count,
+                        );
                         resize_zeroed_v1(
                             &mut reverse_workspace.grad_output,
                             selected.log_probabilities.len(),
@@ -1110,9 +1292,9 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                             selected.selected_action_index,
                             d_joint_log_probability,
                         )?;
-                        reverse_decision_dims_v1::<D>(
+                        reverse_decision_into_dims_v1::<D>(
                             &parameters,
-                            &mut gradients,
+                            &mut sink,
                             &selected.tape,
                             &reverse_workspace.d_logits,
                             if substep_index == 0 { d_value } else { 0.0 },
@@ -1120,7 +1302,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                         )?;
                     }
                 }
-                (gradients, gauge_accumulator)
+                (gradients.into_gradients_v1(), gauge_accumulator)
             }
             (None, BackwardExecutionV1::FixedPartitions { worker_limit }) => {
                 let coefficients: Vec<(f32, f32)> = group_tapes
@@ -1185,15 +1367,32 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             .adam_step
             .checked_add(1)
             .ok_or(NativePolicyTrainErrorV1::AdamStepOverflow)?;
-        let (mut next_parameters, mut next_first_moments, mut next_second_moments) = adam_update(
-            &parameters,
-            &gradients,
-            &self.first_moments,
-            &self.second_moments,
-            next_step,
-            learning_rate,
-            math,
-        )?;
+        let (mut next_parameters, mut next_first_moments, mut next_second_moments) =
+            match &announcement_step {
+                None => adam_update(
+                    &parameters,
+                    &gradients,
+                    &self.first_moments,
+                    &self.second_moments,
+                    next_step,
+                    learning_rate,
+                    math,
+                )?,
+                // Scaled after the normalisation: `gradients` is the rest.
+                Some((scale, announcement_gradients)) => {
+                    pregame_announcement_step_v1::adam_update_announcement_v1(
+                        &parameters,
+                        &gradients,
+                        announcement_gradients,
+                        *scale,
+                        &self.first_moments,
+                        &self.second_moments,
+                        next_step,
+                        learning_rate,
+                        math,
+                    )?
+                }
+            };
         next_parameters[SCORER_SECOND_BIAS].values[0] =
             f32::from_bits(self.scorer_bias_anchor_bits);
         next_first_moments[SCORER_SECOND_BIAS][0] = 0.0;
@@ -1253,10 +1452,28 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
             "objective":"gae_uniform_kl_recovery/v1", "diagnostics":diagnostics.map(|d|d.finish(&parameters,&gradients,&next_parameters))
         }));
         let gradient_snapshot = named_state_snapshot(&parameters, &gradients);
-        self.model = candidate_model;
-        self.adam_step = next_step;
-        self.first_moments = next_first_moments;
-        self.second_moments = next_second_moments;
+        // The scaled step's record (the result's gradients are then the rest
+        // buffer). A step with the scale and no announcement row records it
+        // as such.
+        *self.pregame_announcement_step_record_mut_dims_v1() = announcement_scale.map(|scale| {
+            pregame_announcement_step_v1::PregameAnnouncementStepRecordV1 {
+                scale,
+                routed_groups: match &announcement_step {
+                    Some(_) => announcement_marks.iter().filter(|mark| **mark).count(),
+                    None => 0,
+                },
+                announcement_gradient_l2: announcement_step.as_ref().map_or(0.0, |(_, a)| {
+                    pregame_announcement_step_v1::gradient_l2_v1(a)
+                }),
+                rest_gradient_l2: pregame_announcement_step_v1::gradient_l2_v1(&gradients),
+            }
+        });
+        self.commit_step_dims_v1(
+            candidate_model,
+            next_step,
+            next_first_moments,
+            next_second_moments,
+        );
         phase_recorder.finish_v1(finalization_timer);
         Ok((
             NativePolicyTrainStepResultV1 {

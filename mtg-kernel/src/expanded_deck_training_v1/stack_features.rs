@@ -188,6 +188,10 @@ fn collect(
     mode: StackInputModeV1,
 ) -> Result<Trajectory, String> {
     let configs = episode.configurations()?;
+    ensure(
+        episode.priority_pass_offset.is_none(),
+        "priority_pass_offset is admitted only by the expanded collector",
+    )?;
     let (mut opponent, identity) = load_expanded_inference_v1(
         episode
             .opponent
@@ -198,8 +202,8 @@ fn collect(
         opponent.feature_identity_v1().generation == FreshLineageGenerationV1::V4,
         "stack collection requires V4 opponent",
     )?;
-    let mut session=FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_v1(
-        1,episode.seed,episode.max_physical_decisions,episode.max_policy_steps,episode.selected.each_ref().map(|d|d.label.clone()),configs.each_ref().map(|c|c.mainboard().to_vec()),PlayerId(episode.starting_player)).map_err(err)?;
+    let mut session=FastActorSessionV1::reset_with_explicit_decks_and_limits_flat_action_v3_environment_v2_with_starting_player_and_windows_v1(
+        1,episode.seed,episode.max_physical_decisions,episode.max_policy_steps,episode.selected.each_ref().map(|d|d.label.clone()),configs.each_ref().map(|c|c.mainboard().to_vec()),PlayerId(episode.starting_player),episode.priority_windows_v1()?).map_err(err)?;
     let seeds = paired_policy_seeds_v1(episode.seed);
     policy.reset_for_game_v1(seeds).map_err(err)?;
     opponent.reset_sampling_v1(seeds);
@@ -257,6 +261,7 @@ fn collect(
                     tensor,
                     sampler_identity: decision_sampler_identity_v1(scores.logits.len())
                         .map(str::to_owned),
+                    pass_offset_action: None,
                 });
                 session.step(d.episode_id, d.step, selected).map_err(err)?;
             }

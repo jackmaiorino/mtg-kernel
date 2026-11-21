@@ -166,6 +166,72 @@ pub(crate) fn normalize_advantages_v1(
     ))
 }
 
+/// [`normalize_advantages_v1`] with the mean and std taken from another series:
+/// every value of `raw` is normalized by the `reference` series' mean and
+/// `std + epsilon`, computed with exactly the arithmetic of
+/// [`normalize_advantages_v1`] on `reference`; the returned statistics
+/// describe the normalized `raw`. With `raw == reference` it is that function.
+/// Used by the terminal pregame advantage (`PregameAdvantageV1::TerminalV1`),
+/// whose in-game rows must normalize exactly as in the default mode.
+pub(crate) fn normalize_advantages_against_v1(
+    raw: &[f32],
+    reference: &[f32],
+    epsilon: f32,
+) -> Result<(Vec<f32>, AdvantageStatisticsV1), String> {
+    ensure(
+        !raw.is_empty() && raw.len() == reference.len(),
+        "advantage normalization requires one reference value per group",
+    )?;
+    ensure(
+        epsilon.is_finite() && epsilon > 0.0,
+        "advantage normalization epsilon must be finite and positive",
+    )?;
+    for value in raw.iter().chain(reference) {
+        ensure(value.is_finite(), "raw advantage must be finite")?;
+    }
+    let count = exact_group_count_f32_v1(raw.len())?;
+    let mean = reference
+        .iter()
+        .copied()
+        .fold(0.0f32, |sum, value| sum + value)
+        / count;
+    let variance = reference.iter().copied().fold(0.0f32, |sum, value| {
+        let deviation = value - mean;
+        sum + deviation * deviation
+    }) / count;
+    let std = variance.sqrt();
+    let denominator = std + epsilon;
+    let normalized: Vec<f32> = raw
+        .iter()
+        .map(|value| (value - mean) / denominator)
+        .collect();
+    for value in &normalized {
+        ensure(value.is_finite(), "normalized advantage must be finite")?;
+    }
+    let normalized_mean = normalized
+        .iter()
+        .copied()
+        .fold(0.0f32, |sum, value| sum + value)
+        / count;
+    let normalized_variance = normalized.iter().copied().fold(0.0f32, |sum, value| {
+        let deviation = value - normalized_mean;
+        sum + deviation * deviation
+    }) / count;
+    let normalized_std = normalized_variance.sqrt();
+    let min = normalized.iter().copied().fold(f32::INFINITY, f32::min);
+    let max = normalized.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    Ok((
+        normalized,
+        AdvantageStatisticsV1 {
+            mean: normalized_mean,
+            std: normalized_std,
+            min,
+            max,
+            clip_fraction: 0.0,
+        },
+    ))
+}
+
 /// Same exactness proof `native_policy_train_step_v1::exact_group_count_f32`
 /// already applies to the update's group-count divisor, reused here for the
 /// advantage normalization's own group-count divisor: a group count that
