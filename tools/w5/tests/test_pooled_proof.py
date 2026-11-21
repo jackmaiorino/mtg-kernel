@@ -103,6 +103,11 @@ class PooledProofTests(unittest.TestCase):
         write_run(self.root / "pool", "/r", ["s0"], [["a"]], complete=False)
         self.assertFalse(pp.compare(self.root / "ref", self.root / "pool")["pass"])
 
+    def test_receipts_under_an_ancestor_named_iterations_relocate_to_the_run(self):
+        write_ref(self.root / "ref", "/srv/iterations/run", ["s0", "s1"], [["a"], ["b"]])
+        write_run(self.root / "pool", "/srv/iterations/run", ["s0", "s1"], [["a"], ["b"]])
+        self.assertTrue(pp.compare(self.root / "ref", self.root / "pool", same_root=True)["pass"])
+
     def test_a_crash_resumed_iteration_is_read_through_its_completion_receipt(self):
         write_ref(self.root / "ref", "/srv/run", ["s0", "s1"], [["a"], ["b"]])
         write_run(self.root / "pool", "/srv/run", ["s0", "s1"], [["a"], ["b"]], resumed=(1,))

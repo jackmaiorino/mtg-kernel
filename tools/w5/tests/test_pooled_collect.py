@@ -28,9 +28,12 @@ class FakeTransport:
     """One simulated host. `fail` makes every shard run fail; `salt` makes this host's bytes differ
     (a divergent architecture)."""
 
-    def __init__(self, host, files: dict, fail=False, salt=""):
-        self.host, self.files, self.fail, self.salt = host, files, fail, salt
+    def __init__(self, host, files: dict, fail=False, salt="", storage="0" * 32):
+        self.host, self.files, self.fail, self.salt, self.storage = host, files, fail, salt, storage
         self.pushed, self.runs = [], []
+
+    def storage_id(self):
+        return self.storage
 
     def pin_status(self, pins):
         return {p: ("absent" if p[0] not in self.files else "ok" if self.files[p[0]] == p[1] else "differs")
@@ -210,6 +213,53 @@ class PooledCollectTests(unittest.TestCase):
         pc.Dispatcher(config, other).collect(nxt / "collect-command.json", fake_merge)
         self.assertIn(str(self.checkpoint), other["a"].files, "never installed there, never pruned there")
 
+    def test_replaced_storage_behind_the_same_connection_inherits_no_ownership(self):
+        config = self.config([("a", 1.0, "x86")])
+        host = config["hosts"][0]
+        host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", "machine-x"], True
+        config["state_path"] = str(self.root / "pushed.json")
+        pc.Dispatcher(config, self.transports(config)).collect(self.command_path, fake_merge)
+        # Same ssh target and wrap, but the container behind it was recreated (a new storage marker),
+        # and the new storage happens to hold the old checkpoint.
+        replaced = {h.name: FakeTransport(h, {h.collector: h.collector_sha256}, storage="1" * 32)
+                    for h in config["hosts"]}
+        replaced["a"].files[str(self.checkpoint)] = pc.sha256_file(self.checkpoint)
+        new = self.root / "learner" / "checkpoint-2.json"
+        new.write_bytes(b"next checkpoint")
+        self.command["source"]["checkpoint"] = {"path": str(new), "sha256": pc.sha256_file(new)}
+        nxt = self.root / "run" / "iterations" / "000017" / "attempt-000000"
+        nxt.mkdir(parents=True)
+        (nxt / "collect-command.json").write_text(json.dumps(self.command))
+        pc.Dispatcher(config, replaced).collect(nxt / "collect-command.json", fake_merge)
+        self.assertIn(str(self.checkpoint), replaced["a"].files, "never installed in this storage, never pruned")
+
+    def test_a_whole_command_one_process_refuses_launches_nothing(self):
+        config = self.config([("a", 1.0, "x86"), ("b", 1.0, "x86")])
+        transports = self.transports(config)
+        for change in ({"episodes": self.episodes[:-1] + [dict(self.episodes[0])]}, {"workers": 1},
+                       {"workers": 1025}, {"episodes": []}):
+            command = dict(self.command, **change)
+            self.command_path.write_text(json.dumps(command))
+            with self.assertRaises(ValueError):
+                pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
+        self.assertEqual([t.runs for t in transports.values()], [[], []])
+        self.assertFalse((self.command_path.parent / "pooled-shards").exists())
+
+    def test_the_storage_marker_is_created_once_and_then_read(self):
+        host = pc.Host(name="m", kind="local", collector="/c", collector_sha256="c" * 64, workers=2, weight=1.0,
+                       scratch=str(self.root / "scratch-marker"), arch="x86")
+        first = pc.Transport(host).storage_id()
+        self.assertRegex(first, r"^[0-9a-f]{32}$")
+        self.assertEqual(pc.Transport(host).storage_id(), first)
+        (self.root / "scratch-marker" / ".pooled-storage-id").unlink()
+        self.assertNotEqual(pc.Transport(host).storage_id(), first, "new storage, new marker")
+
+    def test_an_ancestor_named_iterations_does_not_confuse_the_index(self):
+        path = Path("/srv/iterations/run/iterations/000007/attempt-000000/collect-command.json")
+        self.assertEqual(pc.iteration_of(path), 7)
+        with self.assertRaises(ValueError):
+            pc.iteration_of(Path("/srv/iterations/run/collect-command.json"))
+
     def test_a_pin_installed_by_another_process_first_is_never_pruned(self):
         config = self.config([("a", 1.0, "x86")])
         host = config["hosts"][0]
@@ -229,7 +279,7 @@ class PooledCollectTests(unittest.TestCase):
         racing.pin_status = status_then_race
         pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
         state = json.loads((self.root / "pushed.json").read_text())
-        self.assertNotIn(str(self.checkpoint), state[pc.Dispatcher.storage_key(host)],
+        self.assertNotIn(str(self.checkpoint), state[pc.Dispatcher.storage_key(host) + "@" + "0" * 32],
                          "not ours: never recorded, never pruned")
 
     def test_concurrent_dispatchers_sharing_retention_state_keep_every_record(self):
@@ -356,7 +406,7 @@ class PooledCollectTests(unittest.TestCase):
             self.assertEqual(inputs, [old])
             self.assertIn(str(new), transport.files)
         state = json.loads((self.root / "pushed.json").read_text())
-        key = pc.Dispatcher.storage_key(config["hosts"][0])
+        key = pc.Dispatcher.storage_key(config["hosts"][0]) + "@" + "0" * 32
         self.assertEqual(sorted(state[key]), sorted([str(new), str(imp), str(leaf)]))
         for transport in transports.values():
             self.assertIn(str(leaf), transport.files)

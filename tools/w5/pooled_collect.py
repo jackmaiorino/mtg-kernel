@@ -221,13 +221,32 @@ class state_lock:
         return False
 
 
+def preflight(whole: dict) -> None:
+    """The ordinary collector's whole-command checks, before any staging or launch (the merge
+    checks them again): a whole collect_parallel command, 1 to 1024 episodes with distinct ids,
+    2 to 1024 requested workers, no EX1."""
+    if whole.get("mode") != "collect_parallel" or whole.get("shard") is not None:
+        raise ValueError("expected a whole collect_parallel command")
+    episodes, workers = whole.get("episodes"), whole.get("workers")
+    if not isinstance(episodes, list) or not 1 <= len(episodes) <= 1024:
+        raise ValueError("invalid collection size")
+    ids = [e.get("id") for e in episodes if isinstance(e, dict)]
+    if len(ids) != len(episodes) or len(set(ids)) != len(ids):
+        raise ValueError("duplicate episode id")
+    if not isinstance(workers, int) or isinstance(workers, bool) or not 2 <= workers <= 1024:
+        raise ValueError("collection workers must be in 2..=1024")
+    if whole.get("ex1") is not None:
+        raise ValueError("EX1 collection is not available pooled")
+
+
 def iteration_of(command_path: Path) -> int:
-    """.../iterations/000123/attempt-000000/collect-command.json -> 123."""
+    """.../iterations/000123/attempt-000000/collect-command.json -> 123, read from the trailing
+    structure (an ancestor directory may also be called `iterations`)."""
     parts = Path(command_path).parts
-    for i, part in enumerate(parts[:-1]):
-        if part == "iterations" and i + 1 < len(parts):
-            return int(parts[i + 1])
-    raise ValueError(f"no iteration index in {command_path}")
+    if len(parts) >= 4 and parts[-4] == "iterations" and parts[-3].isdigit() \
+            and parts[-2].startswith("attempt-") and parts[-1] == "collect-command.json":
+        return int(parts[-3])
+    raise ValueError(f"not an iteration's collect command: {command_path}")
 
 
 def audit_slots(iteration: int, episodes: int, count: int, every: int) -> list[int]:
@@ -392,6 +411,29 @@ class Transport:
         else:
             subprocess.run(self._ssh([f"rm -f -- {shlex.quote(remote)}"]), capture_output=True, timeout=120)
 
+    def storage_id(self) -> str:
+        """The collector storage's generation marker, `<scratch>/.pooled-storage-id`, created once
+        with a random value. Replaced storage (a recreated container, a reimaged disk) gets a new one,
+        so it inherits no ownership records."""
+        script = ("import os,sys,uuid\n"
+                  "d=sys.argv[1]; p=os.path.join(d,'.pooled-storage-id')\n"
+                  "os.makedirs(d,exist_ok=True)\n"
+                  "try:\n"
+                  "  fd=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o644); os.write(fd,uuid.uuid4().hex.encode()); os.close(fd)\n"
+                  "except FileExistsError: pass\n"
+                  "print(open(p).read().strip())\n")
+        if self.host.kind == "local":
+            result = subprocess.run([sys.executable, "-c", script, self.host.scratch], capture_output=True,
+                                    text=True, timeout=60)
+        else:
+            command = " ".join(shlex.quote(arg) for arg in ("python3", "-c", script, self.host.scratch))
+            result = subprocess.run(self._ssh([command]), capture_output=True, text=True, timeout=120,
+                                    stdin=subprocess.DEVNULL)
+        marker = result.stdout.strip()
+        if result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{32}", marker):
+            raise RuntimeError(f"{self.host.name}: storage marker unreadable")
+        return marker
+
     def remove_dir(self, remote: str) -> None:
         if self.host.kind == "local":
             shutil.rmtree(remote, ignore_errors=True)
@@ -521,8 +563,7 @@ class Dispatcher:
     def collect(self, command_path: Path, run_merge) -> dict:
         command_path = Path(command_path)
         whole = json.loads(command_path.read_text())
-        if whole.get("mode") != "collect_parallel" or whole.get("shard") is not None:
-            raise ValueError("expected a whole collect_parallel command")
+        preflight(whole)
         attempt = command_path.parent
         iteration = iteration_of(command_path)
         # Private to this invocation, so runs (or retries) sharing a scratch root never collide.
@@ -591,11 +632,22 @@ class Dispatcher:
                             getattr(host, "agent_wrap", ""), host.scratch])
         return f"{host.name}#{hashlib.sha256(reach.encode()).hexdigest()[:16]}"
 
+    def storage_key_now(self, host: Host) -> str | None:
+        """storage_key plus the collector storage's generation marker; None when the marker cannot be
+        read, in which case nothing is pruned on that host this time."""
+        try:
+            return f"{self.storage_key(host)}@{self.transports[host.name].storage_id()}"
+        except Exception as error:  # noqa: BLE001
+            self.note(event="storage-marker-unreadable", host=host.name, error=str(error)[-200:])
+            return None
+
     def _prune_locked(self, state_path: Path, current: set) -> None:
         state = json.loads(state_path.read_text()) if state_path.exists() else {}
         keep_paths = {p for p, _ in current}
         for host in self.hosts:
-            key = self.storage_key(host)
+            key = self.storage_key_now(host) if host.prune_pushed and host.kind == "ssh" else self.storage_key(host)
+            if key is None:
+                continue
             previous = state.get(key, {})
             if not isinstance(previous, dict):
                 previous = {}  # an older state format holds no hashes: forget, never delete

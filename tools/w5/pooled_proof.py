@@ -49,7 +49,7 @@ def relocated(root: Path, recorded: str) -> Path:
     marker = "/iterations/"
     if marker not in text:
         raise ValueError(f"{recorded}: not inside an iterations directory")
-    return Path(root) / "iterations" / text.split(marker, 1)[1]
+    return Path(root) / "iterations" / text.rsplit(marker, 1)[1]  # the run's own, the last occurrence
 
 
 def pinned_json(root: Path, pin: dict) -> dict:
