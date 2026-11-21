@@ -113,6 +113,11 @@ def typed_deck(deck) -> bool:
         for zone in ("mainboard", "sideboard"))
 
 
+def same_json(a, b) -> bool:
+    """Equality of two JSON values as JSON: Python's own equality takes true for 1 and 1 for 1.0, at any depth."""
+    return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
+
+
 def training_side(configs: list[dict], card_names: list[str], postboard_flag: bool = False) -> dict:
     """Mulligan profile, rules, starts, limits and decks of every training episode. With `postboard_flag` (the
     caller passed `--postboard-exception`) a post-board game's decks are its registered ones and the side gains
@@ -147,7 +152,7 @@ def training_side(configs: list[dict], card_names: list[str], postboard_flag: bo
                 for d in ep["registered"] + ep["selected"]))
             for registered, selected in zip(ep["registered"], ep["selected"]):
                 if postboard_flag:  # under the flag a deck is compared whole, the sideboard included
-                    registered_differs += registered != selected
+                    registered_differs += not same_json(registered, selected)
                 else:
                     registered_differs += (registered["label"], registered["mainboard"]) != (
                         selected["label"], selected["mainboard"])
@@ -158,7 +163,7 @@ def training_side(configs: list[dict], card_names: list[str], postboard_flag: bo
             exposed = postboard_flag and ep.get("postboard") is True
             if exposed:
                 # A post-board game: each seat's selected 60 and 15 must hold exactly its registered 75.
-                postboard_seats += sum(registered != selected
+                postboard_seats += sum(not same_json(registered, selected)
                                        for registered, selected in zip(ep["registered"], ep["selected"]))
                 postboard_conserving += all(
                     registered["label"] == selected["label"]
@@ -169,7 +174,7 @@ def training_side(configs: list[dict], card_names: list[str], postboard_flag: bo
             elif postboard_flag:
                 # A game one whose selected decks are not its registration, in any field (a changed sideboard alone
                 # is invisible to the counter above).
-                stray += ep["registered"] != ep["selected"]
+                stray += not same_json(ep["registered"], ep["selected"])
             # Under the flag, board decks are compared with the registered 60 of a post-board game.
             for deck in (ep["registered"] if exposed else ep["selected"]):
                 named = deck_key(deck["mainboard"], card_names)

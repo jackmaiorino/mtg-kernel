@@ -529,10 +529,16 @@ class ParityTests(unittest.TestCase):
         self.assertFalse(rp.passes(result))
 
     def test_under_the_flag_a_game_one_set_with_a_changed_sideboard_fails(self):
+        def typed(deck):  # equal in Python (True == 1), different as JSON
+            deck['note'] = {'values': [1]}
+
         for change in (lambda deck: deck['sideboard'].__setitem__(0, deck['sideboard'][-1]),
                        lambda deck: deck.pop('sideboard'),
-                       lambda deck: deck.update(note='extra')):
+                       lambda deck: deck.update(note='extra'),
+                       typed):
             cfg = self.config()  # no post-board game at all
+            if change is typed:
+                entries(cfg)[0]['episode']['registered'][0]['note'] = {'values': [True]}
             change(entries(cfg)[0]['episode']['selected'][0])
             _, plain = self.compare(cfg)
             self.assertTrue(rp.passes(plain))  # without the flag the set is read as before
