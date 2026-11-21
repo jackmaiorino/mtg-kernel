@@ -65,7 +65,13 @@ class IndexTailTests(unittest.TestCase):
         return list(retention.index(self.path)[1])
 
     def read_cache(self):
-        return list(retention.IndexCache(self.path).refresh()[1])
+        _, records = retention.IndexCache(self.path).refresh()
+        handle = records.store.handle
+        try:
+            return list(records)
+        finally:
+            if handle is not None:
+                handle.close()
 
     def recovers(self, data, read, expect=None):
         """`data` as the index file, read once: every row is there, and the file is the normally written one."""
