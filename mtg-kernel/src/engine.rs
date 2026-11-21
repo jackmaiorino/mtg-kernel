@@ -11012,7 +11012,12 @@ fn pending_cast_quote_v1(
     x: u16,
     state: &GameState,
 ) -> Option<spell_costs_v1::SpellManaPaymentV1> {
-    let method = if pending.sphinx_lore_v1.is_some() && method == CastMethodV4::Normal {
+    // Target and kicker previews use the base form. An announced escape still
+    // owes its escape payment, including the selected graveyard cards.
+    let method = if method == CastMethodV4::Normal
+        && (pending.sphinx_lore_v1.is_some()
+            || pending.source_contract.cast_method == CastMethodV4::Escape)
+    {
         pending.source_contract.cast_method
     } else {
         method
@@ -11468,8 +11473,34 @@ fn is_castable_with_cost_grant(
     if def.adventure.is_some() && supported_adventure(def).is_none() {
         return false;
     }
+    let kicked_ok = || {
+        def.kicked_target_spec.is_some_and(|spec| {
+            target_prefix_can_complete_for_controller_and_source(
+                spec,
+                &[],
+                player,
+                targeting_source_for_object(state, id),
+                state,
+            ) && spell_costs_v1::selected_spell_quote_v1(
+                def,
+                id,
+                state.objects.get(id).zone,
+                cast_method,
+                true,
+                0,
+                0,
+                &[],
+                &[],
+                player,
+                state,
+                &[],
+            )
+            .is_some()
+        })
+    };
     if cast_method != CastMethodV4::Normal
         && viable_printed_spell_modes(def, id, player, state).is_empty()
+        && !(cast_method == CastMethodV4::Escape && kicked_ok())
     {
         return false;
     }
@@ -11563,7 +11594,6 @@ fn is_castable_with_cost_grant(
             (def.escape.is_some() || crate::eternal_lurrus_v1::granted_escape_cost(def).is_some())
                 && spell_costs_v1::additional_cost_for_method_v1(def, CastMethodV4::Escape, 0)
                     .is_none()
-                && def.kicker_cost.is_none()
                 && def.generic_cost_reduction.is_none()
                 && spell_costs_v1::selected_spell_quote_with_grant_v1(
                     def,
@@ -11638,31 +11668,6 @@ fn is_castable_with_cost_grant(
                     &[],
                 )
                 .is_some()
-            };
-            let kicked_ok = || {
-                def.kicked_target_spec.is_some_and(|spec| {
-                    target_prefix_can_complete_for_controller_and_source(
-                        spec,
-                        &[],
-                        player,
-                        targeting_source_for_object(state, id),
-                        state,
-                    ) && spell_costs_v1::selected_spell_quote_v1(
-                        def,
-                        id,
-                        state.objects.get(id).zone,
-                        CastMethodV4::Normal,
-                        true,
-                        0,
-                        0,
-                        &[],
-                        &[],
-                        player,
-                        state,
-                        &[],
-                    )
-                    .is_some()
-                })
             };
             // Omniscience and Aluren may waive the mana cost of a hand cast;
             // Aluren's flash timing needs that waiver.
@@ -16304,7 +16309,6 @@ pub(crate) fn validate_pending_cast(
                     }))
                 || spell_costs_v1::additional_cost_for_method_v1(def, CastMethodV4::Escape, 0)
                     .is_some()
-                || def.kicker_cost.is_some()
                 || def.generic_cost_reduction.is_some()
                 || pending.cast_mode != Some(CastMode::Normal)
             {
