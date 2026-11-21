@@ -1,0 +1,40 @@
+name: Follow crash probe (not for merge)
+
+on:
+  push:
+    branches:
+      - 'claude/follow-crashprobe-*'
+
+permissions:
+  contents: read
+
+jobs:
+  crash:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - name: Add swap space
+        run: |
+          sudo fallocate -l 12G /mnt/build.swap && sudo chmod 600 /mnt/build.swap
+          sudo mkswap /mnt/build.swap && sudo swapon /mnt/build.swap && free -m
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: rustup show && cargo --version
+      - name: Follow, crash and publication tests, ignored ones included
+        run: |
+          cargo test --release --locked -p mtg-kernel --lib -j 2 -- --include-ignored --test-threads 2 \
+            follow_tests \n            a_crash_at_any_publication_resumes_to_the_uninterrupted_result \
+            a_crash_after_the_checkpoint_resumes_in_a_new_attempt_with_the_same_states \
+            durable_publication_v1 \
+            checkpoint_container_v1 \
+            loaded_source_cache_v1 \
+            resident_reads_run_keeps_every_state_and_byte \
+            record_envelope_run_keeps_every_state_and_seals_every_record \
+            portable_math_run_trains_one_state_on_every_system_and_worker_count \
+            ordinary_trainer_two_iteration \
+            checkpoint_restore \
+            inference_restore \
+            2>&1 | tee test.log
+          grep -E "^test result|FAILED|panicked" test.log | tail -20
