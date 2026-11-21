@@ -37,7 +37,8 @@ fn printed_cost(
 }
 
 pub(super) fn supports_escape(def: &card_def::CardDef) -> bool {
-    printed_cost(def, CastMethodV4::Escape, 0, 0).is_some()
+    has_chosen_creature_additional_cost(def)
+        || printed_cost(def, CastMethodV4::Escape, 0, 0).is_some()
 }
 
 impl Costs {
@@ -69,6 +70,11 @@ impl Costs {
     ) -> Option<Self> {
         def.additional_cost?;
         let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
+        if pending.cast_mode == Some(CastMode::Alternative)
+            && crate::eternal_legacy_e8a_v1::graveyard_life_choice(def, pending.origin_zone, method)
+        {
+            return None;
+        }
         Self::new(
             def,
             method,
