@@ -3,11 +3,13 @@ b(u) and its binary32 rounding, the stamping of episodes with priority_windows b
 and recipe identities unchanged without a pass_offset, and the plan's refusal to change the schedule of a started
 chain. It mirrors test_w5_keep_offset.py."""
 import copy
+import io
 import json
 import struct
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -17,13 +19,22 @@ sys.path.insert(0, str(HERE))
 import chains  # noqa: E402
 import qual  # noqa: E402
 import xact  # noqa: E402
-from test_w5_chains import Node, dose, jwrite  # noqa: E402
+from v7_dose import V4, V7  # noqa: E402
+from test_w5_chains import Node, dose, jwrite, s_dose  # noqa: E402
 from test_w5_keep_offset import KEEP, legacy_build_config, legacy_recipe_identity, opening_base  # noqa: E402
 
 PASS = {'b0': 6.0, 'end_update': 8, 'shape': 'linear-v1'}
 ACTION = 'action-windows-v1'
 END_STEP = 'action-windows-end-step-v1'
 HARNESS = 'harness-v2'
+V3 = {
+    'expected_feature_contract_digest': '9319fbd41e6b42ec90d565c13f3b4f75a3898dafe3816387453c08419ba9cc68',
+    'expected_feature_encoding_digest': 'c4662291ca9a75525b51b51f3b5d512671340c05b69fd33fb0827c0c8af70a2b',
+}
+V8 = {
+    'expected_feature_contract_digest': '2d50ceca2610a25f13d267be25477f5caccf480de2e491e5492eafa84a4bf7b5',
+    'expected_feature_encoding_digest': '88d0e0e8e0f19e619edd8477583e065f7019dcaca0f5b18c81ab6b4a27ab9a4c',
+}
 
 
 def f32(x):
@@ -112,6 +123,45 @@ class BuildConfigTests(unittest.TestCase):
     def build(self, base, offset=0, updates=4, pass_offset=None, **kwargs):
         return qual.build_config(base, self.dose, self.out, 'r1', 'ns', offset, updates, 2, pass_offset=pass_offset,
                                  **kwargs)
+
+    def test_qualification_rejects_an_active_offset_on_an_s_source(self):
+        self.dose = json.loads(s_dose(self.t, 's-parent').read_text())
+        with self.assertRaisesRegex(ValueError, 'S learner'):
+            self.build(windows_base(), 0, 1, PASS)
+        self.assertEqual(stamps(self.build(windows_base(), PASS['end_update'], 1, PASS)), [['absent'] * 2])
+
+    def test_qualification_rejects_only_an_active_offset_for_flat_v3(self):
+        self.dose['source']['feature_transfer'] = V3
+        for schedule, update in ((None, 0), (PASS, PASS['end_update'])):
+            cfg = self.build(windows_base(), update, 1, schedule)
+            self.assertEqual(stamps(cfg), [['absent'] * 2])
+            self.assertEqual(cfg['initial_source'], self.dose['source'])
+        with self.assertRaisesRegex(ValueError, 'FlatV3.*V4-generation'):
+            self.build(windows_base(), 0, 1, PASS)
+
+    def test_qualification_keeps_v4_generation_and_undeclared_sources(self):
+        for transfer in (V4, V7, V8, None):
+            with self.subTest(transfer=transfer):
+                if transfer is None:
+                    self.dose['source'].pop('feature_transfer')
+                else:
+                    self.dose['source']['feature_transfer'] = transfer
+                base = windows_base()
+                named = base['opponents'][0]
+                named['source'] = copy.deepcopy(self.dose['source'])
+                base['iterations'][0]['episodes'][1]['opponent']['id'] = named['id']
+                cfg = self.build(base, 0, 1, PASS)
+                self.assertEqual(stamps(cfg), [[6.0] * 2])
+                self.assertEqual(cfg['initial_source'], self.dose['source'])
+                self.assertEqual(cfg['opponents'], base['opponents'])
+                self.assertEqual([row['opponent'] for row in cfg['iterations'][0]['episodes']],
+                                 [{'kind': 'current'}, {'kind': 'fixed', 'id': named['id']}])
+
+        # A wide source declares the V4 shell on native builds that support it.
+        initial = self.dose['source']['checkpoint']
+        self.dose['source'].update(feature_transfer=V4, checkpoint=None,
+                                   w_learner={'schema': 'w128-learner/v1', 'initial': initial})
+        self.assertEqual(stamps(self.build(windows_base(), 0, 1, PASS)), [[6.0] * 2])
 
     def test_without_pass_offset_every_config_is_unchanged(self):
         for base in (windows_base(), windows_base(iterations=3), opening_base(openings=(None, None))):
@@ -234,6 +284,51 @@ class ChainTests(unittest.TestCase):
             chains.arm_config(arm, 'w5/q1', -1, 2, self.node.t / 'o')
         _, plan_int = self.plan(self.inputs({'b0': 6, 'end_update': 8, 'shape': 'linear-v1'}, label='int'))
         self.assertEqual(plan_int['arms']['C']['file']['sha256'], plan['arms']['C']['file']['sha256'])
+
+    def test_s_learner_cannot_collect_an_active_pass_offset(self):
+        parent = s_dose(self.node.t, 's-parent')
+        s_source = json.loads(parent.read_text())['source']
+        doc = self.inputs(PASS, label='s-parent')
+        doc['arms']['C']['parent'] = doc['arms']['F']['parent'] = str(parent)
+        with self.assertRaisesRegex(chains.Stop, 'S learner'):
+            self.plan(doc)
+        del doc['arms']['C']['pass_offset']
+        _, plan = self.plan(doc)
+        cfg = chains.arm_config(self.arm(plan), 'w5/q1', 0, 1, self.node.t / 's-plain')
+        self.assertEqual(cfg['initial_source'], s_source)
+
+        _, plan = self.plan(self.inputs(PASS, label='plain-parent'))
+        arm = self.arm(plan)
+        with self.assertRaisesRegex(chains.Stop, 'S learner'):
+            chains.arm_config(arm, 'w5/q1', 0, 1, self.node.t / 's-active', source=s_source)
+        cfg = chains.arm_config(arm, 'w5/q1', PASS['end_update'], 1, self.node.t / 's-after', source=s_source)
+        self.assertEqual(stamps(cfg), [['absent'] * 2])
+        self.assertEqual(cfg['initial_source'], s_source)
+
+    def test_plan_cli_refuses_a_flat_v3_parent_and_segment_checks_the_effective_source(self):
+        parent = json.loads(self.node.b512.read_text())
+        parent['source']['feature_transfer'] = V3
+        jwrite(self.node.b512, parent)
+        doc = self.inputs(PASS, label='v3-parent')
+        path = jwrite(self.node.t / 'v3-plan.json', doc)
+        stderr = io.StringIO()
+        with redirect_stderr(stderr):
+            self.assertEqual(chains.main(['plan', '--inputs', str(path)]), chains.w5box.EXIT_REFUSED)
+        self.assertRegex(stderr.getvalue(), 'FlatV3.*V4-generation')
+
+        del doc['arms']['C']['pass_offset']
+        jwrite(path, doc)
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(chains.main(['plan', '--inputs', str(path)]), 0)
+
+        jwrite(self.node.b512, dict(parent, source=dict(parent['source'], feature_transfer=V4)))
+        _, plan = self.plan(self.inputs(PASS, label='v4-parent'))
+        arm = self.arm(plan)
+        with self.assertRaisesRegex(chains.Stop, 'FlatV3.*V4-generation'):
+            chains.arm_config(arm, 'w5/q1', 0, 1, self.node.t / 'v3-active', source=parent['source'])
+        cfg = chains.arm_config(arm, 'w5/q1', PASS['end_update'], 1, self.node.t / 'v3-expired',
+                                source=parent['source'])
+        self.assertEqual(stamps(cfg), [['absent'] * 2])
 
     def test_a_plan_refuses_a_bad_schedule_or_base(self):
         for bad in (dict(PASS, b0=0), dict(PASS, b0=10 ** 400), dict(PASS, b0=[6.0] * 7), dict(PASS, end_update=0),
