@@ -106,7 +106,10 @@ fn whole_command_v1(command: &ExpandedTrainingCommandV1) -> Result<WholeCommandV
             output_directory,
             ..
         } => {
-            ensure(shard.is_none(), "a pooled collection starts from a whole command")?;
+            ensure(
+                shard.is_none(),
+                "a pooled collection starts from a whole command",
+            )?;
             ensure(ex1.is_none(), "EX1 collection is not available pooled")?;
             ensure(
                 !episodes.is_empty() && episodes.len() <= 1024,
@@ -143,7 +146,10 @@ pub fn shard_commands_v1(
         ensure(spec.episodes >= 1, "a shard needs an episode")?;
         // CollectParallel takes at least two requested workers; a shard of one
         // episode starts one.
-        ensure(spec.workers >= 2, "a shard needs at least two requested workers")?;
+        ensure(
+            spec.workers >= 2,
+            "a shard needs at least two requested workers",
+        )?;
         let mut shard_command = command.clone();
         if let ExpandedTrainingCommandV1::CollectParallel {
             episodes,
@@ -191,7 +197,10 @@ fn read_shard_file_v1(directory: &Path, pin: &PinnedFileV1, name: &str) -> Resul
         bytes.len() as u64 <= MAX_FILE_BYTES,
         "shard file exceeds file size limit",
     )?;
-    ensure(sha(&bytes) == pin.sha256, "shard file SHA differs from its pin")?;
+    ensure(
+        sha(&bytes) == pin.sha256,
+        "shard file SHA differs from its pin",
+    )?;
     Ok(bytes)
 }
 
@@ -202,7 +211,10 @@ pub fn merge_shards_v1(
     shard_directories: &[PathBuf],
 ) -> Result<Value, String> {
     let whole = whole_command_v1(command)?;
-    ensure(!shard_directories.is_empty(), "a pooled collection needs a shard")?;
+    ensure(
+        !shard_directories.is_empty(),
+        "a pooled collection needs a shard",
+    )?;
     ensure(
         !whole.output_directory.exists(),
         "output directory already exists",
@@ -220,15 +232,16 @@ pub fn merge_shards_v1(
     let mut elapsed_seconds = 0f64;
     for directory in shard_directories {
         let (receipt_bytes, document) = read_json_file_v1(&directory.join("collection.json"))?;
-        ensure(document["complete"] == true, "shard collection is incomplete")?;
+        ensure(
+            document["complete"] == true,
+            "shard collection is incomplete",
+        )?;
         ensure(
             document["source"] == serde_json::to_value(whole.source).map_err(err)?,
             "shard source differs from the collection's",
         )?;
-        let shard: CollectionShardV1 =
-            serde_json::from_value(document["shard"].clone()).map_err(|_| {
-                "shard receipt does not name its schedule position".to_string()
-            })?;
+        let shard: CollectionShardV1 = serde_json::from_value(document["shard"].clone())
+            .map_err(|_| "shard receipt does not name its schedule position".to_string())?;
         ensure(
             shard.first_slot == first_slot && shard.schedule_episodes == schedule,
             "shards are not contiguous in schedule order",
@@ -298,7 +311,9 @@ pub fn merge_shards_v1(
         }
         let started = document["collection_workers_started"].as_u64().unwrap_or(0);
         workers_started += started;
-        let shard_elapsed = document["collection_elapsed_seconds"].as_f64().unwrap_or(0.0);
+        let shard_elapsed = document["collection_elapsed_seconds"]
+            .as_f64()
+            .unwrap_or(0.0);
         initialization_seconds = initialization_seconds.max(
             document["collection_initialization_seconds"]
                 .as_f64()
@@ -386,7 +401,8 @@ mod tests {
     use super::*;
 
     fn deck_v1(id: &str) -> ExpandedDeckListV1 {
-        let registration = crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
+        let registration =
+            crate::sideboard::checked_in_pauper_registered_deck_by_id_v1(id).unwrap();
         let cards = registration.registered_configuration();
         ExpandedDeckListV1 {
             label: id.into(),
@@ -396,9 +412,13 @@ mod tests {
     }
 
     /// A synthetic fresh source and `count` real Affinity-Terror episodes.
-    fn fixture_v1(label: &str, count: u64) -> (PathBuf, ExpandedModelSourceV1, Vec<ExpandedEpisodeV1>) {
+    fn fixture_v1(
+        label: &str,
+        count: u64,
+    ) -> (PathBuf, ExpandedModelSourceV1, Vec<ExpandedEpisodeV1>) {
         let feature_identity = crate::sideboard_play_policy_v1::FRESH_FEATURE_IDENTITY_V3;
-        let root = std::env::temp_dir().join(format!("pooled-collection-{label}-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("pooled-collection-{label}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let source_struct =
             fresh_initialization_source::write_synthetic_fresh_source_with_parameters_v1(
@@ -473,7 +493,8 @@ mod tests {
     }
 
     fn ledger_of_v1(receipt: &Value) -> Value {
-        let pin: PinnedFileV1 = serde_json::from_value(receipt["non_natural_ledger"].clone()).unwrap();
+        let pin: PinnedFileV1 =
+            serde_json::from_value(receipt["non_natural_ledger"].clone()).unwrap();
         read_pinned(&pin).unwrap()
     }
 
@@ -527,7 +548,11 @@ mod tests {
                 assert_eq!(a.path.file_name(), b.path.file_name());
                 assert_eq!(fs::read(&a.path).unwrap(), fs::read(&b.path).unwrap());
             }
-            assert_eq!(ledger_of_v1(&single), ledger_of_v1(&merged), "{tag}: ledger differs");
+            assert_eq!(
+                ledger_of_v1(&single),
+                ledger_of_v1(&merged),
+                "{tag}: ledger differs"
+            );
             assert_eq!(ledger_of_v1(&merged)["entries"][0]["slot"], 3);
             for key in [
                 "schema",
@@ -542,9 +567,10 @@ mod tests {
             }
             assert_eq!(merged["collection_backend"], POOLED_COLLECTION_BACKEND_V1);
             assert_eq!(merged["pooled_shards"].as_array().unwrap().len(), 3);
-            let on_disk: Value =
-                serde_json::from_slice(&fs::read(root.join(format!("{tag}-merged/collection.json"))).unwrap())
-                    .unwrap();
+            let on_disk: Value = serde_json::from_slice(
+                &fs::read(root.join(format!("{tag}-merged/collection.json"))).unwrap(),
+            )
+            .unwrap();
             assert_eq!(on_disk, merged);
         }
         fs::remove_dir_all(root).unwrap();
@@ -582,14 +608,20 @@ mod tests {
             }
             clear_force_non_natural_seeds_for_test_v1([forced]);
             let directories: Vec<_> = specs.iter().map(|s| s.output_directory.clone()).collect();
-            (merge_shards_v1(&whole, &directories), root.join(format!("{tag}-merged")))
+            (
+                merge_shards_v1(&whole, &directories),
+                root.join(format!("{tag}-merged")),
+            )
         };
         let (admitted, _) = run(0.5, "admitted");
         let admitted = admitted.unwrap();
         assert_eq!(ledger_of_v1(&admitted)["entries"][0]["slot"], 2);
         let (capped, directory) = run(0.1, "capped");
         let error = capped.unwrap_err();
-        assert!(error.contains("non-natural episode fraction"), "got: {error}");
+        assert!(
+            error.contains("non-natural episode fraction"),
+            "got: {error}"
+        );
         assert!(directory.join("non-natural.json").exists());
         assert!(!directory.join("collection.json").exists());
         fs::remove_dir_all(root).unwrap();
@@ -600,8 +632,13 @@ mod tests {
     #[test]
     fn the_merge_refuses_shards_that_do_not_form_the_schedule() {
         let (root, source, episodes) = fixture_v1("refuse", 3);
-        let whole =
-            whole_command_for_test_v1(&source, &episodes, 0.0, RecordEnvelopeV1::default(), root.join("merged"));
+        let whole = whole_command_for_test_v1(
+            &source,
+            &episodes,
+            0.0,
+            RecordEnvelopeV1::default(),
+            root.join("merged"),
+        );
         let specs: Vec<_> = [1usize, 2]
             .iter()
             .enumerate()
@@ -631,7 +668,10 @@ mod tests {
         let error = merge_shards_v1(&whole, &[first.clone(), second.clone()]).unwrap_err();
         assert!(error.contains("SHA differs"), "got: {error}");
         fs::write(&path, &original).unwrap();
-        assert!(!root.join("merged").exists(), "a refused merge publishes nothing");
+        assert!(
+            !root.join("merged").exists(),
+            "a refused merge publishes nothing"
+        );
         merge_shards_v1(&whole, &[first, second]).unwrap();
         // Shard plans that do not cover the schedule are refused up front.
         let bad = vec![ShardSpecV1 {
@@ -648,17 +688,33 @@ mod tests {
     #[test]
     fn shard_commands_round_trip_and_whole_commands_keep_their_bytes() {
         let (root, source, episodes) = fixture_v1("wire", 3);
-        let whole =
-            whole_command_for_test_v1(&source, &episodes, 0.0, RecordEnvelopeV1::default(), root.join("merged"));
+        let whole = whole_command_for_test_v1(
+            &source,
+            &episodes,
+            0.0,
+            RecordEnvelopeV1::default(),
+            root.join("merged"),
+        );
         let wire = serde_json::to_value(&whole).unwrap();
         assert!(wire.get("shard").is_none());
         let specs = vec![
-            ShardSpecV1 { episodes: 2, workers: 4, output_directory: root.join("a") },
-            ShardSpecV1 { episodes: 1, workers: 2, output_directory: root.join("b") },
+            ShardSpecV1 {
+                episodes: 2,
+                workers: 4,
+                output_directory: root.join("a"),
+            },
+            ShardSpecV1 {
+                episodes: 1,
+                workers: 2,
+                output_directory: root.join("b"),
+            },
         ];
         let shards = shard_commands_v1(&whole, &specs).unwrap();
         let wire = serde_json::to_value(&shards[1]).unwrap();
-        assert_eq!(wire["shard"], json!({"first_slot": 2, "schedule_episodes": 3}));
+        assert_eq!(
+            wire["shard"],
+            json!({"first_slot": 2, "schedule_episodes": 3})
+        );
         assert_eq!(wire["episodes"].as_array().unwrap().len(), 1);
         let back: ExpandedTrainingCommandV1 = serde_json::from_value(wire.clone()).unwrap();
         assert_eq!(serde_json::to_value(back).unwrap(), wire);

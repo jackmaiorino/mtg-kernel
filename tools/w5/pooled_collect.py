@@ -44,7 +44,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 SCHEMA = "mtg-kernel-pooled-collect-hosts/v1"
 
@@ -66,6 +66,10 @@ class Host:
     prune_pushed: bool = False
 
 
+def _absolute(path: str) -> bool:
+    return PurePosixPath(path).is_absolute() or PureWindowsPath(path).is_absolute()
+
+
 def load_hosts(path: Path) -> dict:
     document = json.loads(Path(path).read_text())
     if document.get("schema") != SCHEMA:
@@ -80,7 +84,7 @@ def load_hosts(path: Path) -> dict:
             raise ValueError(f"{host.name}: an ssh host needs its ssh command")
         if host.workers < 2 or host.weight <= 0:
             raise ValueError(f"{host.name}: workers >= 2 and weight > 0 required")
-        if not PurePosixPath(host.collector).is_absolute() or not PurePosixPath(host.scratch).is_absolute():
+        if not (_absolute(host.collector) and _absolute(host.scratch)):
             raise ValueError(f"{host.name}: collector and scratch must be absolute")
         if host.name in names:
             raise ValueError(f"duplicate host {host.name}")
