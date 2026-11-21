@@ -1078,9 +1078,10 @@ def guard_admit(root, cdir, chain):
     if not g.get('ok'):
         return False, f'the byte guard refuses ({g.get("used_bytes")} used)', GUARD_POLL
     count = admitted(cdir)
-    if count >= g.get('ceilings', {}).get(chain, 0):
+    ceilings = g.get('ceilings', {})
+    if count >= ceilings.get(chain, 0):
         return False, f'admission {count} is past this verdict\'s ceiling (is supervise running?)', \
-            GUARD_CEILING_POLL if FAST_GUARD_WAITS else GUARD_POLL
+            GUARD_CEILING_POLL if FAST_GUARD_WAITS and chain in ceilings else GUARD_POLL
     write(Path(cdir) / 'ADMITTED.json', {'count': count + 1})
     return True, 'ok', None
 
