@@ -3848,7 +3848,10 @@ def cycle(plan, plan_path, now=None, caches=None, fills=True, counter=None, guar
         fresh_chain, fresh = chain_index(info['path'], caches)
         info = dict(info, chain=fresh_chain, records=fresh)
         looks[n] = look(info, plan['r_nom_usec'])
-        keep = protected_paths(info, {looks[n]['boundary']} if looks.get(n) else set())
+        owed = repin_unconfirmed(fresh_chain)  # the first segment on a new trainer awaits its confirmation: the
+        # state it started from stays (the re-pin back proves gate (a) on that segment, from that state)
+        keep = protected_paths(info, ({looks[n]['boundary']} if looks.get(n) else set())
+                               | ({owed['boundary']} if owed else set()))
         doc['checkpoints'] = [i for i in doc['checkpoints'] if i['path'] not in keep]
         c = plan['chains'][n]
         if replay_sample.sampled(plan['stage'], c['arm']):  # selected updates not yet staged keep their files

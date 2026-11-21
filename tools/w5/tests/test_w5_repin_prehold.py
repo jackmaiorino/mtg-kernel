@@ -498,6 +498,22 @@ class FirstSegmentHoldTests(_Base):
         self.assertEqual(self.drive(plan, 10), chains.EXIT_STOP)
         self.assertEqual(len(self.man()['segments']), 4)  # still exactly one unconfirmed segment
 
+    def test_retention_keeps_the_state_the_unconfirmed_segment_started_from(self):
+        """Round 2 (code): while the confirmation is owed, supervise retention keeps the state at the switch boundary
+        (the re-pin back proves gate (a) on the first new segment from it); once confirmed it is pruned as usual."""
+        path, plan = self.switch_holding(self.ref[20:24])
+        self.assertEqual(self.drive(plan, 10), chains.EXIT_STOP)
+        _, records = retention.index(self.cdir() / 'chain.json')
+        at_e = [p['path'] for r in records if r['boundary'] == 20 for p in retention.record_parts(r)]
+        self.assertTrue(at_e and all(Path(p).exists() for p in at_e))
+        with contextlib.redirect_stdout(io.StringIO()):
+            chains.cycle(plan, path)
+        self.assertTrue(all(Path(p).exists() for p in at_e), 'kept while the confirmation is owed')
+        self.assertEqual(self.repin_x(path, 'confirm')[0], 0)
+        with contextlib.redirect_stdout(io.StringIO()):
+            chains.cycle(plan, path)
+        self.assertFalse(any(Path(p).exists() for p in at_e), 'pruned as usual once confirmed (20 is no stride)')
+
     def test_run_refuses_while_held(self):
         path, plan = self.switch_holding(self.ref[20:24])
         self.assertEqual(self.drive(plan, 10), chains.EXIT_STOP)
