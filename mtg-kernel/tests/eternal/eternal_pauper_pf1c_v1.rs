@@ -693,21 +693,22 @@ fn compound_retrace_fling_discards_before_sacrificing() {
 }
 
 #[test]
-fn compound_escape_arbiter_uses_its_printed_sacrifice() {
+fn compound_escape_crop_rotation_taps_then_sacrifices_its_land() {
     let mut state = plains();
     put(&mut state, P0, "Underworld Breach", Zone::Battlefield);
-    let source = put(&mut state, P0, "Arbiter of Woe", Zone::Graveyard);
-    let creature = put(&mut state, P0, "Kor Skyfisher", Zone::Battlefield);
-    let cards = ["Island", "Forest"].map(|name| put(&mut state, P0, name, Zone::Graveyard));
-    pool(&mut state, P0, &[ManaColor::B, ManaColor::B], 4);
+    let source = put(&mut state, P0, "Crop Rotation", Zone::Graveyard);
+    let forest = put(&mut state, P0, "Forest", Zone::Battlefield);
+    let tower = put(&mut state, P0, "Urza's Tower", Zone::Library);
+    let cards = ["Swamp", "Island"].map(|name| put(&mut state, P0, name, Zone::Graveyard));
     cast(&mut state, source, &[]);
-    payment_pick(&mut state, CostKind::SacrificeCreatures, creature);
-    for card in [cards[0], cards[1], creature] {
+    payment_pick(&mut state, CostKind::SacrificeLands, forest);
+    for card in [cards[0], cards[1], forest] {
         payment_pick(&mut state, CostKind::ExileFromGraveyard, card);
     }
-    settle_first(&mut state);
-    assert_eq!(zone(&state, source), Zone::Battlefield);
-    assert_eq!(zone(&state, creature), Zone::Exile);
+    settle_choosing(&mut state, tower);
+    assert_eq!(zone(&state, source), Zone::Graveyard);
+    assert_eq!(zone(&state, forest), Zone::Exile);
+    assert_eq!(zone(&state, tower), Zone::Battlefield);
 }
 
 #[test]
