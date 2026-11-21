@@ -429,7 +429,7 @@ fn check_trajectories_against_schedule_v1(
     let check = |slot: usize| -> Result<(), String> {
         let bytes = &trajectories[slot];
         ensure(
-            record_envelope_v1::is_sealed_v1(bytes) == !envelope.is_none(),
+            record_envelope_v1::is_sealed_v1(bytes) != envelope.is_none(),
             &format!("shard trajectory {slot} is not in the requested record envelope"),
         )?;
         let record = record_envelope_v1::open_v1(bytes, MAX_FILE_BYTES)?;
