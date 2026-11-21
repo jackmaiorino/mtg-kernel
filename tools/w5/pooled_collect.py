@@ -31,6 +31,8 @@ Paths are one namespace across hosts: a trajectory records the absolute paths
 of its sources, so every collector must see the recipe's inputs at the paths
 the learner uses (a common root such as /srv/work/pooled-20261120 on every
 Linux host, WSL guest and the Mac's Linux VM).
+Collector scratch is private to one dispatch. Published input pins can be
+shared by other dispatches or forks and are retained.
 """
 from __future__ import annotations
 
@@ -43,6 +45,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
@@ -61,8 +64,8 @@ class Host:
     arch: str  # architecture class, for audits: e.g. "x86-znver5", "x86-portable", "arm64"
     ssh: list = field(default_factory=list)  # e.g. ["ssh", "-o", "BatchMode=yes", "mtg@10.0.0.37"]
     prefix: list = field(default_factory=list)  # e.g. ["nice", "-n", "19", "taskset", "-c", "1,17"]
-    # Delete inputs this dispatcher pushed for an earlier iteration (old checkpoints) once a
-    # later collection succeeds. Only for ssh hosts that are not the learner's own machine.
+    # Retained for existing hosts files. Canonical pins can be shared with other runs;
+    # the dispatcher has no authority to expire them.
     prune_pushed: bool = False
 
 
@@ -184,17 +187,31 @@ class Transport:
 
     def push(self, local: Path, remote: str) -> None:
         """Copies one file to the same absolute path on the host (staged, then renamed)."""
+        stage = f"{remote}.{uuid.uuid4().hex}.stage"
         if self.host.kind == "local":
-            if str(Path(local)) != str(Path(remote)):
-                Path(remote).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(local, remote + ".stage")
-                os.replace(remote + ".stage", remote)
-            return
+            if Path(local) == Path(remote):
+                return
+            Path(remote).parent.mkdir(parents=True, exist_ok=True)
+            try:
+                shutil.copyfile(local, stage)
+                for attempt in range(100):
+                    try:
+                        os.replace(stage, remote)
+                        return
+                    except PermissionError:
+                        if os.name != "nt" or attempt == 99:
+                            raise
+                        # Windows can briefly lock the destination during another replace.
+                        time.sleep(0.01)
+            finally:
+                Path(stage).unlink(missing_ok=True)
         parent = str(PurePosixPath(remote).parent)
-        stage = remote + ".stage"
+        quoted_stage = shlex.quote(stage)
+        cleanup = shlex.quote(f"rm -f -- {quoted_stage}")
         with open(local, "rb") as handle:
-            result = subprocess.run(self.host.ssh + [f"mkdir -p {shlex.quote(parent)} && cat > {shlex.quote(stage)}"
-                                                     f" && mv {shlex.quote(stage)} {shlex.quote(remote)}"],
+            result = subprocess.run(self.host.ssh + [f"mkdir -p {shlex.quote(parent)} && "
+                                                     f"(trap {cleanup} EXIT; cat > {quoted_stage}"
+                                                     f" && mv {quoted_stage} {shlex.quote(remote)})"],
                                     stdin=handle, capture_output=True, timeout=600)
         if result.returncode != 0:
             raise RuntimeError(f"{self.host.name}: push of {remote} failed")
@@ -226,8 +243,11 @@ class Transport:
             raise RuntimeError(f"{self.host.name}: fetch of {remote} failed")
 
     def remove_file(self, remote: str) -> None:
-        if self.host.kind == "ssh":
-            subprocess.run(self.host.ssh + [f"rm -f -- {shlex.quote(remote)}"], capture_output=True, timeout=120)
+        if self.host.kind == "local":
+            Path(remote).unlink(missing_ok=True)
+        else:
+            subprocess.run(self.host.ssh + [f"rm -f -- {shlex.quote(remote)}"], capture_output=True,
+                           timeout=120, check=True)
 
     def remove_dir(self, remote: str) -> None:
         if self.host.kind == "local":
@@ -258,8 +278,8 @@ class Dispatcher:
         self.transports = transports or {h.name: Transport(h) for h in self.hosts}
         self.timeout = timeout
         self.log: list[dict] = []
-        self.pushed: dict[str, set] = {}
         self._lock = threading.Lock()
+        self._pin_locks = {host.name: threading.Lock() for host in self.hosts}
 
     def note(self, **event):
         event["t"] = round(time.time(), 3)
@@ -270,15 +290,15 @@ class Dispatcher:
         """Makes every pin of `command` present on `host`; returns bytes pushed."""
         transport = self.transports[host.name]
         pushed = 0
-        for path, digest in transport.missing_pins(pins_of(command)):
-            local = Path(path)
-            if not local.is_file() or sha256_file(local) != digest:
-                raise RuntimeError(f"learner lacks pinned input {path}")
-            transport.push(local, path)
-            pushed += local.stat().st_size
-            if host.kind == "ssh":
-                with self._lock:
-                    self.pushed.setdefault(host.name, set()).add(path)
+        # Failover can assign two shards to the same host. Check and install
+        # their common pins together, without serializing their games.
+        with self._pin_locks[host.name]:
+            for path, digest in transport.missing_pins(pins_of(command)):
+                local = Path(path)
+                if not local.is_file() or sha256_file(local) != digest:
+                    raise RuntimeError(f"learner lacks pinned input {path}")
+                transport.push(local, path)
+                pushed += local.stat().st_size
         return pushed
 
     def run_shard(self, host: Host, command: dict, tag: str, staging: Path) -> Path:
@@ -288,18 +308,23 @@ class Dispatcher:
         if transport.missing_pins({(host.collector, host.collector_sha256)}):
             raise RuntimeError(f"{host.name}: collector binary missing or not its pin")
         out = command["output_directory"]
-        transport.remove_dir(out)
         pushed = self.distribute(host, command)
         command_path = str(PurePosixPath(host.scratch) / f"{tag}.json")
-        transport.put_text(command_path, json.dumps(command))
-        started = time.time()
-        result = transport.run(host.prefix + [host.collector, "--execute-collect-shard", command_path], self.timeout)
-        if result.returncode != 0:
-            raise RuntimeError(f"{host.name}: shard {tag} exit {result.returncode}: {result.stderr[-400:]}")
-        played = time.time() - started
-        local = staging / tag
-        transport.fetch_dir(out, local)
-        transport.remove_dir(out)
+        try:
+            transport.put_text(command_path, json.dumps(command))
+            started = time.time()
+            result = transport.run(host.prefix + [host.collector, "--execute-collect-shard", command_path], self.timeout)
+            if result.returncode != 0:
+                raise RuntimeError(f"{host.name}: shard {tag} exit {result.returncode}: {result.stderr[-400:]}")
+            played = time.time() - started
+            local = staging / tag
+            transport.fetch_dir(out, local)
+            transport.remove_dir(out)
+        finally:
+            try:
+                transport.remove_file(command_path)
+            except (OSError, subprocess.SubprocessError) as error:
+                self.note(event="scratch-cleanup-failed", host=host.name, tag=tag, error=str(error)[-400:])
         self.note(event="shard", host=host.name, tag=tag, first=command["shard"]["first_slot"],
                   episodes=len(command["episodes"]), seconds=round(played, 3), pushed_bytes=pushed,
                   fetched_bytes=sum(p.stat().st_size for p in local.iterdir()))
@@ -333,13 +358,12 @@ class Dispatcher:
             raise ValueError("expected a whole collect_parallel command")
         attempt = command_path.parent
         iteration = iteration_of(command_path)
-        staging = attempt / "pooled-shards"
-        if staging.exists():
-            shutil.rmtree(staging)
-        staging.mkdir()
+        tag_root = f"pooled-{iteration:06d}-{uuid.uuid4().hex}"
+        staging_root = attempt / "pooled-shards"
+        staging = staging_root / tag_root
+        staging.mkdir(parents=True)
         total = len(whole["episodes"])
         sizes = plan_sizes(total, [h.weight for h in self.hosts])
-        tag_root = f"pooled-{attempt.parent.name}-{attempt.name}"
         jobs, first = [], 0
         for index, size in enumerate(sizes):
             if size:
@@ -371,36 +395,15 @@ class Dispatcher:
         merged = run_merge(command_path, directories)
         for directory in directories:  # the merge copied every trajectory into collect/
             shutil.rmtree(directory)
+        staging.rmdir()
+        if any(host.prune_pushed for host in self.hosts if host.kind == "ssh"):
+            self.note(event="pinned-inputs-retained", reason="absolute pins may be used by other collections")
         receipt = {"schema": "mtg-kernel-pooled-collect-dispatch/v1", "iteration": iteration,
                    "episodes": total, "shards": [[i, f, s, results[i][1].name] for i, f, s in jobs],
                    "collection_seconds": round(collected, 3), "failed_hosts": sorted(failed),
                    "events": self.log, "merged": merged}
-        (staging / "dispatch.json").write_text(json.dumps(receipt, indent=1))
-        self.prune(pins_of(whole))
+        (staging_root / "dispatch.json").write_text(json.dumps(receipt, indent=1))
         return receipt
-
-    def prune(self, current: set) -> None:
-        """Remote retention: files pushed for earlier iterations (old checkpoints) are deleted
-        once a later collection has merged; current pins and never-pushed files are kept."""
-        state_path = self.config.get("state_path")
-        if not state_path:
-            return
-        state_path = Path(state_path)
-        state = json.loads(state_path.read_text()) if state_path.exists() else {}
-        keep_paths = {p for p, _ in current}
-        for host in self.hosts:
-            previous = set(state.get(host.name, []))
-            now = self.pushed.get(host.name, set())
-            if host.prune_pushed and host.kind == "ssh":
-                for path in sorted(previous - now - keep_paths):
-                    self.transports[host.name].remove_file(path)
-                    self.note(event="pruned", host=host.name, path=path)
-                state[host.name] = sorted(now | (previous & keep_paths))
-            else:
-                state[host.name] = sorted(previous | now)
-        stage = state_path.with_suffix(".stage")
-        stage.write_text(json.dumps(state, indent=1))
-        os.replace(stage, state_path)
 
     def audit(self, whole, iteration, jobs, results, staging, tag_root, failed):
         audit = self.config.get("audit", {})

@@ -7,8 +7,11 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
@@ -150,6 +153,83 @@ class PooledCollectTests(unittest.TestCase):
         self.assertEqual(receipt["failed_hosts"], ["b"])
         self.assertTrue(any(s[3] != "b" for s in receipt["shards"]))
         self.assertNotIn("b", [s[3] for s in receipt["shards"]])
+        for transport in transports.values():
+            if transport.runs:
+                self.assertEqual(transport.pushed, [str(self.checkpoint)])
+
+    def test_overlapping_runs_with_equal_iteration_and_attempt_keep_distinct_scratch(self):
+        config = self.config([("a", 1.0, "x86")])
+        host = config["hosts"][0]
+        loaded = threading.Barrier(2, timeout=10)
+
+        class OverlappingTransport(FakeTransport):
+            def put_text(self, remote, text):
+                super().put_text(remote, text)
+                # Force both commands to be written before either host reads one.
+                loaded.wait()
+
+        transport = OverlappingTransport(host, {host.collector: host.collector_sha256})
+        other = self.root / "other" / "iterations" / "000016" / "attempt-000000" / self.command_path.name
+        other.parent.mkdir(parents=True)
+        other_episodes = [dict(episode, seed=episode["seed"] + 99) for episode in self.episodes]
+        other.write_text(json.dumps(dict(self.command, episodes=other_episodes)))
+        # Keep another in-progress attempt's scratch beside the local staging root.
+        sentinel = self.command_path.parent / "pooled-shards" / "other-scratch" / "state"
+        sentinel.parent.mkdir(parents=True)
+        sentinel.write_text("keep")
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            tasks = [pool.submit(pc.Dispatcher(config, {host.name: transport}).collect, path, fake_merge)
+                     for path in (self.command_path, other)]
+            first, second = [task.result(timeout=15) for task in tasks]
+
+        self.assertEqual(first["merged"]["slots"], self.expected())
+        self.assertEqual(second["merged"]["slots"], [episode_bytes(e).decode() for e in other_episodes])
+        self.assertEqual(len(set(transport.removed)), 2)
+        self.assertTrue(all(path.endswith(".json") for path in transport.removed))
+        self.assertEqual(set(transport.files), {host.collector, str(self.checkpoint)})
+        self.assertEqual(sentinel.read_text(), "keep")
+
+    def test_concurrent_pin_uploads_have_separate_temporary_files(self):
+        config = self.config([("a", 1.0, "x86")])
+        transport = pc.Transport(config["hosts"][0])
+        remote = self.root / "collector" / "pin.json"
+        copied = threading.Barrier(2, timeout=10)
+        real_copy = shutil.copyfile
+        stages = []
+
+        def copy_and_wait(src, dest):
+            stages.append(dest)
+            real_copy(src, dest)
+            copied.wait()
+
+        with mock.patch.object(pc.shutil, "copyfile", side_effect=copy_and_wait), \
+                ThreadPoolExecutor(max_workers=2) as pool:
+            tasks = [pool.submit(transport.push, self.checkpoint, str(remote)) for _ in range(2)]
+            for task in tasks:
+                task.result(timeout=15)
+
+        self.assertEqual(remote.read_bytes(), self.checkpoint.read_bytes())
+        self.assertEqual(list(remote.parent.iterdir()), [remote])
+        self.assertEqual(len(set(stages)), 2)
+
+    def test_failed_pin_upload_cleans_its_temporary_file_and_preserves_the_destination(self):
+        config = self.config([("a", 1.0, "x86")])
+        transport = pc.Transport(config["hosts"][0])
+        remote = self.root / "collector" / "pin.json"
+        remote.parent.mkdir()
+        remote.write_bytes(b"existing pin")
+
+        def interrupted(src, dest):
+            Path(dest).write_bytes(b"partial upload")
+            raise OSError("copy interrupted")
+
+        with mock.patch.object(pc.shutil, "copyfile", side_effect=interrupted):
+            with self.assertRaisesRegex(OSError, "copy interrupted"):
+                transport.push(self.checkpoint, str(remote))
+
+        self.assertEqual(list(remote.parent.iterdir()), [remote])
+        self.assertEqual(remote.read_bytes(), b"existing pin")
 
     def test_every_host_failing_fails_the_collection(self):
         config = self.config([("a", 1.0, "x86"), ("b", 1.0, "x86")])
@@ -177,28 +257,43 @@ class PooledCollectTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "cross-host divergence"):
             pc.Dispatcher(config, self.transports(config, salt={"m": "-arm"})).collect(self.command_path, fake_merge)
 
-    def test_old_pushed_checkpoints_are_pruned_on_ssh_hosts_only(self):
+    def test_fork_can_keep_using_an_absolute_pin_after_original_run_advances(self):
         config = self.config([("a", 1.0, "x86"), ("b", 1.0, "arm64")])
         for host in config["hosts"]:
             host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", host.name], True
-        config["state_path"] = str(self.root / "pushed.json")
+        state_path = self.root / "pushed.json"
+        config["state_path"] = str(state_path)
         transports = self.transports(config)
-        dispatcher = pc.Dispatcher(config, transports)
-        dispatcher.collect(self.command_path, fake_merge)
-        old = str(self.checkpoint)
-        # The next iteration collects from a new checkpoint.
-        new = self.root / "learner" / "checkpoint-2.json"
+        # Even a pin inside the first run can be another run's active input.
+        prior = self.root / "run" / "iterations" / "000015" / "attempt-000000" / "update" / "checkpoint.json"
+        prior.parent.mkdir(parents=True)
+        prior.write_bytes(self.checkpoint.read_bytes())
+        old = str(prior)
+        self.command["source"]["checkpoint"] = {"path": old, "sha256": pc.sha256_file(prior)}
+        self.command_path.write_text(json.dumps(self.command))
+        fork = self.root / "fork" / "iterations" / "000016" / "attempt-000000" / self.command_path.name
+        fork.parent.mkdir(parents=True)
+        fork.write_bytes(self.command_path.read_bytes())
+        pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
+        pc.Dispatcher(config, transports).collect(fork, fake_merge)
+        old_inventory = json.dumps({name: [old] for name in transports})
+        state_path.write_text(old_inventory)
+
+        new = prior.parent / "checkpoint-2.json"
         new.write_bytes(b"next checkpoint")
         self.command["source"]["checkpoint"] = {"path": str(new), "sha256": pc.sha256_file(new)}
         nxt = self.root / "run" / "iterations" / "000017" / "attempt-000000"
         nxt.mkdir(parents=True)
         (nxt / "collect-command.json").write_text(json.dumps(self.command))
-        pc.Dispatcher(config, transports).collect(nxt / "collect-command.json", fake_merge)
+        receipt = pc.Dispatcher(config, transports).collect(nxt / "collect-command.json", fake_merge)
+        pc.Dispatcher(config, transports).collect(fork, fake_merge)
         for transport in transports.values():
-            self.assertEqual(transport.removed, [old])
-            self.assertIn(str(new), transport.files)
-        state = json.loads((self.root / "pushed.json").read_text())
-        self.assertEqual(state["a"], [str(new)])
+            self.assertNotIn(old, transport.removed)
+            self.assertEqual(transport.pushed.count(old), 1)
+            self.assertEqual(transport.files[old], pc.sha256_file(prior))
+            self.assertEqual(transport.files[str(new)], pc.sha256_file(new))
+        self.assertTrue(any(row["event"] == "pinned-inputs-retained" for row in receipt["events"]))
+        self.assertEqual(state_path.read_text(), old_inventory)
 
     def test_hosts_file_is_checked(self):
         path = self.root / "hosts.json"
