@@ -60,9 +60,13 @@ jobs:
     # other work, and the Python shards wait on this job.
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       contents: read
       pull-requests: read
     outputs:
+      # The pull request Windows groups that run on MTG_CI_PR_WINDOWS_RUNNER
+      # (see rust-test-groups), as a JSON list.
+      pr_windows_groups: ${{ steps.budget.outputs.groups }}
       python_relevant: ${{ steps.classify.outputs.python_relevant }}
       rust_relevant: ${{ steps.classify.outputs.rust_relevant }}
       # full: every group on both systems. pr: the pull request set (Windows
@@ -114,6 +118,21 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
           fetch-depth: 2
+
+      # MTG_CI_PR_WINDOWS_GROUPS names the groups to route, in order of
+      # preference. With MTG_CI_PR_WINDOWS_SLOTS set, only as many route as the
+      # pool has free: that many minus the jobs already queued or running on
+      # MTG_CI_PR_WINDOWS_RUNNER, so routed groups never wait in GitHub's queue
+      # behind other runs. Unset, every named group routes. An error routes none.
+      - name: Choose the self-hosted pull request groups
+        id: budget
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_GROUPS: ${{ vars.MTG_CI_PR_WINDOWS_GROUPS }}
+          PR_RUNNER: ${{ vars.MTG_CI_PR_WINDOWS_RUNNER }}
+          PR_SLOTS: ${{ vars.MTG_CI_PR_WINDOWS_SLOTS }}
+        run: python3 tools/ci/self_hosted_budget.py
 
       - name: Classify changed paths
         id: classify
@@ -349,13 +368,16 @@ jobs:
     # pause for any host reservation. Windows groups default to GitHub's
     # hosted runners: on the local pool they queued for over an hour behind
     # research claims. The repository variable routes them elsewhere, for
-    # example '["self-hosted", "mtg-ci-windows"]' for the local pool. Pull
-    # requests from forks never run on the self-hosted runners.
+    # example '["self-hosted", "mtg-ci-windows"]' for the local pool. Only
+    # events from this repository by its owner run on self-hosted runners:
+    # never a pull request from a fork or another account's push.
     # On pull requests, the groups named in MTG_CI_PR_WINDOWS_GROUPS (a JSON
     # list, for example '["workspace-targets", "workspace-lib"]') run on
-    # MTG_CI_PR_WINDOWS_RUNNER instead: a few desktop runners can carry the
-    # slowest pull request groups, not every Windows job (2026-11-12: at 6
-    # CPUs and BelowNormal, workspace-targets took 54 min there, 113 hosted).
+    # MTG_CI_PR_WINDOWS_RUNNER instead, up to the free slots of
+    # MTG_CI_PR_WINDOWS_SLOTS (detect-changes chooses them): a few desktop
+    # runners can carry the slowest pull request groups, not every Windows
+    # job (2026-11-12: at 6 CPUs and BelowNormal, workspace-targets took 54
+    # min there, 113 hosted).
     # The Linux groups named in MTG_CI_LINUX_GROUPS (a JSON list, for example
     # '["eternal-integration"]') run on MTG_CI_LINUX_RUNNER (JSON runs-on
     # labels, for example '["self-hosted", "mtg-ci-linux", "heavy"]') for
@@ -368,7 +390,7 @@ jobs:
     # each part by its own name: '["native-store"]' in
     # MTG_CI_PR_WINDOWS_GROUPS routes that group's first part and leaves
     # native-store-1 on MTG_CI_WINDOWS_RUNNER.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON(vars.MTG_CI_PR_WINDOWS_GROUPS || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor == github.repository_owner && fromJSON(inputs.windows_runner || (github.event_name == 'pull_request' && contains(fromJSON(needs.detect-changes.outputs.pr_windows_groups || '[]'), matrix.group) && vars.MTG_CI_PR_WINDOWS_RUNNER) || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor == github.repository_owner && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
     steps:
       # Hosted Linux runners have 16 GB of memory. With 12 GB of swap the
       # heavy feature builds finished at two and four Cargo jobs (probe of
@@ -697,6 +719,19 @@ jobs:
             sideboard_play_policy_v1::search_leaf_v4:: \
             action_block_gradient_diagnostic_v1::
 
+      # A desktop runner's job-started hook ends a job whose background CPU
+      # claim stayed suspended past its limit (research claims took the
+      # CPUs) and leaves a marker beside its state. Printing it with the
+      # admission timeout marker lets hosted-fallback rerun the group.
+      - name: Report a self-hosted CPU preemption
+        if: failure() && runner.environment == 'self-hosted' && runner.os == 'Windows'
+        run: |
+          # The step's own text must not contain hosted-fallback's marker.
+          marker_name=MTG_CI_ADMISSION
+          for marker in "$(cygpath -u "${RUNNER_TEMP:?}")"/ci-job-slots/*.preempted.json; do
+            if [ -f "$marker" ]; then echo "${marker_name}_TIMEOUT: CPU claim preempted: $(cat "$marker")"; fi
+          done
+
       - name: Save compiled test output
         if: success() && runner.environment == 'github-hosted' && matrix.group == env.MTG_CI_BUILD_GROUP
         uses: ./.github/actions/cargo-build-cache
@@ -935,7 +970,7 @@ jobs:
     # target directory instead of downloading the shared build; a routed
     # Limited-only shard still downloads the default library case list. Pull
     # requests from forks never run on self-hosted runners.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor == github.repository_owner && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os == 'ubuntu-24.04' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor == github.repository_owner && contains(fromJSON(vars.MTG_CI_LINUX_GROUPS || '[]'), matrix.group) && fromJSON(vars.MTG_CI_LINUX_RUNNER || '"ubuntu-24.04"') || matrix.os }}
     steps:
       # The Limited-only shards diff the default-feature library's case list
       # against the Limited build. The limited-build job now writes that list
@@ -1306,6 +1341,16 @@ jobs:
           test -n "$list" || { echo "Missing the default library case list" >&2; exit 1; }
           python python/tools/run_rust_lib_filters.py --features limited-fdn-fixtures --shard-index "$shard" --shard-count 3 --isolated-cases --skip-ignored --limited-only-workflow .github/workflows/ci.yml --default-library-list "$list"
 
+      # As in rust-test-groups.
+      - name: Report a self-hosted CPU preemption
+        if: failure() && runner.environment == 'self-hosted' && runner.os == 'Windows'
+        run: |
+          # The step's own text must not contain hosted-fallback's marker.
+          marker_name=MTG_CI_ADMISSION
+          for marker in "$(cygpath -u "${RUNNER_TEMP:?}")"/ci-job-slots/*.preempted.json; do
+            if [ -f "$marker" ]; then echo "${marker_name}_TIMEOUT: CPU claim preempted: $(cat "$marker")"; fi
+          done
+
       - name: Report the hosted Linux runner's memory use
         if: always() && steps.memory_guard.outcome == 'success'
         uses: ./.github/actions/memory-guard
@@ -1451,7 +1496,7 @@ jobs:
           - {os: ubuntu-24.04, shard: 2}
     # Fork pull requests stay hosted; trusted Windows jobs follow the same
     # routing variable as the Rust groups, hosted by default.
-    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
+    runs-on: ${{ matrix.os == 'windows-2025' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.actor == github.repository_owner && fromJSON(inputs.windows_runner || vars.MTG_CI_WINDOWS_RUNNER || '"windows-2025"') || matrix.os }}
     env:
       MTG_KERNEL_RL_ENV_BIN: ${{ github.workspace }}/target/release/kernel_rl_env${{ matrix.os == 'windows-2025' && '.exe' || '' }}
       MTG_KERNEL_AGENT_BRIDGE_V1_BIN: ${{ github.workspace }}/target/release/agent_bridge_v1${{ matrix.os == 'windows-2025' && '.exe' || '' }}
@@ -1594,6 +1639,16 @@ jobs:
 
       - name: Run Python test shard against the real Rust environment
         run: uv run --no-sync python python/tools/run_python_test_shard.py --shard-index ${{ matrix.shard }} --shard-count ${{ matrix.os == 'windows-2025' && 3 || 2 }}
+
+      # As in rust-test-groups.
+      - name: Report a self-hosted CPU preemption
+        if: failure() && runner.environment == 'self-hosted' && runner.os == 'Windows'
+        run: |
+          # The step's own text must not contain hosted-fallback's marker.
+          marker_name=MTG_CI_ADMISSION
+          for marker in "$(cygpath -u "${RUNNER_TEMP:?}")"/ci-job-slots/*.preempted.json; do
+            if [ -f "$marker" ]; then echo "${marker_name}_TIMEOUT: CPU claim preempted: $(cat "$marker")"; fi
+          done
 
   # A self-hosted runner's job-started hook waits for host_slots CPU admission
   # at most MTG_CI_ADMISSION_TIMEOUT seconds and then fails the job before any
