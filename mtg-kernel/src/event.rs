@@ -3020,26 +3020,24 @@ fn refuse_unowned_donated_damage(state: &mut GameState, event: &ProposedEvent) -
     true
 }
 
-/// Hallow's simultaneous cohort previews the same effective replacement path
-/// on a disposable state; it does not duplicate modifiers or shield matching.
-pub(crate) fn preview_hallow_damage_batch(
-    state: &mut GameState,
-    events: &[ProposedEvent],
-) -> Result<(), String> {
-    let nishoba = crate::eternal_premodern_p2c_v1::statics::begin_damage_batch(state, events);
-    for (ordinal, event) in events
-        .iter()
-        .enumerate()
-        .filter(|(_, event)| matches!(event, ProposedEvent::Damage(_)))
-    {
-        crate::linked_aura_operation_v1::begin_hallow_preview_packet(state, ordinal)?;
-        let _ = apply_replacements_inner(state, event.clone());
-        if state.engine.halted.is_some() {
-            return Err("Hallow damage preview rejected the original replacement path".into());
-        }
+/// A covered damage packet still passes the same source/custody and roster
+/// checks before Hallow's cohort can remove it from ordinary replacements.
+pub(crate) fn preflight_hallow_damage_v1(state: &mut GameState, event: &ProposedEvent) -> bool {
+    if let Err(source) = validate_exile_if_dies_replacements(state) {
+        state.engine.halted = Some((
+            crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+            source,
+        ));
+        return false;
     }
-    crate::eternal_premodern_p2c_v1::statics::end_damage_batch(state, nishoba);
-    Ok(())
+    if !preflight_historical_damage_v1(state, event) {
+        return false;
+    }
+    if let Err(source) = crate::progenitus_v1::plan(state, event, None) {
+        halt_zone_pt_v1(state, source);
+        return false;
+    }
+    true
 }
 
 fn apply_replacements_inner(
@@ -7085,7 +7083,9 @@ fn batch_with_aura_token_hosts_v1(
         return;
     }
     #[cfg(feature = "eternal-fixtures")]
-    match crate::linked_aura_operation_v1::prepare_hallow_batch(state, &events) {
+    let mut events = events;
+    #[cfg(feature = "eternal-fixtures")]
+    match crate::linked_aura_operation_v1::prepare_hallow_batch(state, &mut events) {
         Ok(true) => return,
         Ok(false) => {}
         Err(_) => {

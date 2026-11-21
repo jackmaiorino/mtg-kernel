@@ -132,3 +132,46 @@ fn nomads_redirect_after_dominate_reveals_an_active_player_choice() {
         assert_eq!(state.objects.get(id).damage, 0);
     }
 }
+
+#[test]
+fn confirmed_packet_keeps_its_prevention_when_a_later_redirect_consumes_a_shared_charge() {
+    let mut state = turn_of(P0);
+    let first = put(&mut state, P1, "Nomads en-Kor", Zone::Battlefield);
+    let second = put(&mut state, P1, "Nomads en-Kor", Zone::Battlefield);
+    let third = put(&mut state, P1, "Grizzly Bears", Zone::Battlefield);
+    give_priority(&mut state, P1);
+    super::activate(&mut state, first, 0, &[Target::Object(second)]);
+    settled(&mut state);
+    give_priority(&mut state, P1);
+    super::activate(&mut state, second, 0, &[Target::Object(third)]);
+    settled(&mut state);
+    give_priority(&mut state, P0);
+    let dominate = put(&mut state, P0, "Dominate", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 3);
+    cast(&mut state, dominate, &[Target::Object(second)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(second).controller, P0);
+    let pyro = put(&mut state, P0, "Pyroclasm", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast(&mut state, pyro, &[]);
+    protect(&mut state, pyro);
+
+    // P0 prevents B's original packet without consuming B->C. P1 then
+    // redirects A->B and P0 spends B->C on that newly revealed point.
+    // The already selected prevention for B's original packet stays applied.
+    for (chooser, option) in [(P0, 0), (P1, 1), (P0, 1)] {
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseEffectOption {
+            player, source, option_count: 2
+        }) if player == chooser && source == pyro)
+        );
+        state = restored(&state);
+        act(&mut state, Action::ChooseEffectOption(option));
+    }
+    settled(&mut state);
+    assert_eq!((life(&state, P0), life(&state, P1)), (26, 20));
+    for object in [first, second, third] {
+        assert_eq!(state.objects.get(object).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(object).damage, 0);
+    }
+}

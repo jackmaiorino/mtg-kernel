@@ -323,6 +323,12 @@ fn opposing_hallows_follow_a_sacrificed_source_but_exclude_its_blinked_incarnati
             };
             assert!(legal_targets.contains(&Target::Player(other)));
             act(&mut state, Action::ChooseTarget(Target::Player(other)));
+            // Finalizing the announcement commits the sacrifice cost before
+            // priority is returned and before the ability can resolve.
+            assert!(matches!(
+                engine::advance_until_decision(&mut state),
+                Decision::CastSpellOrPass { .. }
+            ));
             assert_eq!(state.objects.get(fanatic).zone, Zone::Graveyard);
             let mut count = 0;
             settle(&mut state, |state, decision| {
