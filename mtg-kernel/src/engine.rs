@@ -10400,8 +10400,9 @@ fn torch_first_target_payable_v1(
 
 /// Kaervek's Torch (Pauper field wave Pf1c): whether spell form `mode` of
 /// `def`, cast from `zone` by `cast_method` (a normal cast may still choose
-/// its alternative cost), has a legal first target that isn't an unpayable
-/// Torch. A form without targets always qualifies.
+/// its alternative cost, or a hand cast without paying its mana cost under
+/// Omniscience, which still pays the {2}), has a legal first target that
+/// isn't an unpayable Torch. A form without targets always qualifies.
 #[cfg(feature = "eternal-fixtures")]
 fn torch_mode_payable_v1(
     def: &card_def::CardDef,
@@ -10437,25 +10438,42 @@ fn torch_mode_payable_v1(
     } else {
         std::slice::from_ref(&cast_method)
     };
-    first.iter().any(|&target| {
-        methods.iter().any(|&method| {
-            spell_costs_v1::selected_spell_quote_v1(
-                def,
-                id,
-                zone,
-                method,
-                false,
-                mode,
-                0,
-                &[target],
-                &[],
-                player,
-                state,
-                &[],
-            )
-            .is_some()
-        })
-    })
+    let quote = |quote_state: &GameState, method: CastMethodV4, target: Target| {
+        spell_costs_v1::selected_spell_quote_v1(
+            def,
+            id,
+            zone,
+            method,
+            false,
+            mode,
+            0,
+            &[target],
+            &[],
+            player,
+            quote_state,
+            &[],
+        )
+        .is_some()
+    };
+    if first
+        .iter()
+        .any(|&target| methods.iter().any(|&method| quote(state, method, target)))
+    {
+        return true;
+    }
+    // A hand cast without paying its mana cost (Omniscience) still pays the
+    // tax, quoted as `hand_free_cast_quote_ok` quotes the free cast.
+    if cast_method != CastMethodV4::Normal
+        || zone != Zone::Hand
+        || !crate::eternal_cards_v1::e3::hand_free_permission_any_form(state, id, player)
+    {
+        return false;
+    }
+    let mut projected = state.clone();
+    crate::eternal_cards_v1::e3::set_free_quote(&mut projected, Some(id));
+    first
+        .iter()
+        .any(|&target| quote(&projected, CastMethodV4::Normal, target))
 }
 
 /// Returns the supported Omen definition for the current cast pipeline.
