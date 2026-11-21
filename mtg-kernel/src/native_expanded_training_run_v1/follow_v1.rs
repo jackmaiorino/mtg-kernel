@@ -245,15 +245,15 @@ impl SpoolV1 {
             return Ok(Some(FollowNextV1::Orphaned));
         }
         let path = self.directory.join(NEXT_NAME);
-        let meta = match fs::symlink_metadata(&path) {
-            Ok(meta) => meta,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(err(error)),
-        };
         // Every failure to take the request is a refusal (the process ends
         // with status 3 and the driver uses a fresh process); a refused
         // request is left where it is (a directory is never deleted).
         let refuse = |why: String| Ok(Some(FollowNextV1::Unusable(why)));
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return refuse(format!("next config cannot be inspected: {error}")),
+        };
         if !meta.is_file() || meta.len() > SMALL_CAP {
             return refuse("next config is not a regular file of at most 16 MiB".into());
         }
