@@ -718,12 +718,12 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         // existing step): taken before anything can return, so a step that
         // ends in an error leaves no offset behind. Only the plain GAE
         // objective takes it.
-        let london_keep_offset = self.london_keep_offset.take();
+        let london_keep_offset = self.london_keep_offset_mut_dims_v1().take();
         // The pregame announcement step scale of this step, or None (every
         // existing step), taken the same way; the last step's record never
         // outlives the next step (`pregame_announcement_step_v1`).
-        let announcement_scale = self.pregame_announcement_step_scale.take();
-        self.pregame_announcement_step_record = None;
+        let announcement_scale = self.pregame_announcement_step_scale_mut_dims_v1().take();
+        *self.pregame_announcement_step_record_mut_dims_v1() = None;
         if announcement_scale.is_some() {
             // Only the plain GAE objective on a backward that routes the
             // second gradient buffer, under the arithmetic the gates cover.
@@ -1409,7 +1409,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         // The scaled step's record (the result's gradients are then the rest
         // buffer). A step with the scale and no announcement row records it
         // as such.
-        self.pregame_announcement_step_record = announcement_scale.map(|scale| {
+        *self.pregame_announcement_step_record_mut_dims_v1() = announcement_scale.map(|scale| {
             pregame_announcement_step_v1::PregameAnnouncementStepRecordV1 {
                 scale,
                 routed_groups: match &announcement_step {
@@ -1422,10 +1422,12 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 rest_gradient_l2: pregame_announcement_step_v1::gradient_l2_v1(&gradients),
             }
         });
-        self.model = candidate_model;
-        self.adam_step = next_step;
-        self.first_moments = next_first_moments;
-        self.second_moments = next_second_moments;
+        self.commit_step_dims_v1(
+            candidate_model,
+            next_step,
+            next_first_moments,
+            next_second_moments,
+        );
         phase_recorder.finish_v1(finalization_timer);
         Ok((
             NativePolicyTrainStepResultV1 {

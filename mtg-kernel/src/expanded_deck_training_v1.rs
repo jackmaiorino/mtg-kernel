@@ -36,10 +36,11 @@ use crate::native_flat_tensorizer_v4::{FEATURE_CONTRACT_DIGEST_V4, FEATURE_ENCOD
 use crate::native_policy_train_step_v1::{HeadOnlyMaskV1, HEAD_ONLY_MASK_VERSION_V1};
 use crate::native_policy_train_step_v1::{
     NativePolicyForwardInputV1, NativePolicyPhysicalDecisionV1, NativePolicySubstepV1,
-    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1,
+    NativePolicyValueTrainSnapshotV1, NativePolicyValueTrainStateV1, TrainTensorsV1,
 };
 use crate::native_policy_value_net_v1::{
-    NativeNamedParameterV1, NativePolicyValueModelConfigV1, NativePolicyValueNetV1,
+    NativeNamedParameterV1, NativeNamedTensorRefV1, NativePolicyValueModelConfigV1,
+    NativePolicyValueNetV1,
 };
 use crate::native_training_phase_diagnostic_v1::{
     NativeTrainingPhaseProfileV1, NativeTrainingPhaseRecorderV1,
@@ -135,6 +136,7 @@ pub mod v8_inclusion_conversion_v1;
 pub(crate) mod verified_bytes_cache_v1;
 pub mod weights_snapshot_v1;
 pub use checkpoint_container_v1::CheckpointRecordFormatV1;
+use checkpoint_container_v1::{BorrowedParameterBitsV1, ParameterBitsRefV1};
 pub use line_b_teacher_packet_v1::{LineBGameSeedsV1, LineBTeacherOptionsV1};
 pub use record_envelope_v1::RecordEnvelopeV1;
 pub(crate) use trajectory_parse_ahead_v1::{
@@ -775,7 +777,8 @@ pub(crate) fn load_ordinary_bo3_parent_v1(
     model
         .replace_parameter_snapshot_v1(&policy.training_parameters_v3())
         .map_err(err)?;
-    let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+    let record = read_checkpoint_record_v1(pin)?;
+    let saved = parse_ordinary_checkpoint_borrowed_v1(&record, policy.identity_v1())?;
     ensure(
         saved.training_math.is_platform_libm(),
         "BO3 transition does not support portable training math",
@@ -1645,12 +1648,38 @@ struct SearchPlayedRowV1 {
     policy_selected: u32,
 }
 
+/// One checkpoint tensor's name, shape and values' `f32` bit patterns, owned:
+/// what a checkpoint decodes to. A published checkpoint borrows its tensors
+/// from the snapshot instead (`checkpoint_container_v1::ParameterBitsRefV1`),
+/// with the same serialization.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ParameterBitsV1 {
+pub(crate) struct ParameterBitsV1 {
     name: String,
     shape: Vec<usize>,
     values: Vec<u32>,
+}
+
+/// Views a `u32` bit slice as the `f32`s whose bits it holds, in place:
+/// element for element what `floats` copies out.
+pub(crate) fn slice_u32_as_f32_v1(values: &[u32]) -> &[f32] {
+    const _: () = assert!(
+        std::mem::size_of::<u32>() == std::mem::size_of::<f32>()
+            && std::mem::align_of::<u32>() == std::mem::align_of::<f32>()
+    );
+    // SAFETY: `u32` and `f32` have the same size and alignment (asserted
+    // above) and every bit pattern is a valid `f32`, so the values' memory
+    // reads as as many `f32`s, each `f32::from_bits` of its `u32`. The borrow
+    // is shared and ends with `values`'s.
+    unsafe { std::slice::from_raw_parts(values.as_ptr().cast::<f32>(), values.len()) }
+}
+
+/// A decoded checkpoint tensor whose `u32` bit patterns and `f32` values can
+/// be read in place, whether owned ([`ParameterBitsV1`]) or borrowed from a
+/// container section ([`BorrowedParameterBitsV1`]).
+pub(crate) trait CheckpointTensorV1: checkpoint_container_v1::TensorBitsV1 {
+    fn values_u32_v1(&self) -> &[u32];
+    fn values_f32_v1(&self) -> &[f32];
 }
 
 impl ParameterBitsV1 {
@@ -1661,10 +1690,81 @@ impl ParameterBitsV1 {
             values: bits(&p.values),
         }
     }
+
+    /// The values as the `f32`s whose bits they hold, read in place: element
+    /// for element what `floats` copies out.
+    fn values_f32_v1(&self) -> &[f32] {
+        slice_u32_as_f32_v1(&self.values)
+    }
 }
 
-fn restore_parameters(
-    saved: &[ParameterBitsV1],
+impl CheckpointTensorV1 for ParameterBitsV1 {
+    fn values_u32_v1(&self) -> &[u32] {
+        &self.values
+    }
+
+    fn values_f32_v1(&self) -> &[f32] {
+        ParameterBitsV1::values_f32_v1(self)
+    }
+}
+
+impl CheckpointTensorV1 for BorrowedParameterBitsV1<'_> {
+    fn values_u32_v1(&self) -> &[u32] {
+        &self.values
+    }
+
+    fn values_f32_v1(&self) -> &[f32] {
+        slice_u32_as_f32_v1(&self.values)
+    }
+}
+
+/// The checkpoint's three sections as a train state's tensors, borrowed:
+/// each section must hold `model`'s tensors, in order, under their names and
+/// shapes, refused as [`restore_parameters`] refuses them and in its order,
+/// and each tensor reads its values from the checkpoint in place under the
+/// model's name. Nothing else is checked here.
+fn checkpoint_tensors_v1<'a, T: CheckpointTensorV1>(
+    saved: &'a ExpandedCheckpointV1<T>,
+    model: &NativePolicyValueNetV1,
+) -> Result<TrainTensorsV1<'a>, String> {
+    let mut template = Vec::new();
+    model.visit_parameters_v1(|name, shape, values| {
+        template.push((name, shape.to_vec(), values.len()));
+    });
+    let section = |tensors: &'a [T]| {
+        ensure(
+            tensors.len() == template.len(),
+            "checkpoint parameter count differs",
+        )?;
+        tensors
+            .iter()
+            .zip(&template)
+            .map(|(s, &(name, ref shape, length))| {
+                ensure(
+                    s.name_v1() == name
+                        && s.shape_v1() == shape.as_slice()
+                        && s.values_u32_v1().len() == length,
+                    "checkpoint parameter layout differs",
+                )?;
+                Ok(NativeNamedTensorRefV1 {
+                    name,
+                    shape: shape.clone(),
+                    values: s.values_f32_v1(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()
+    };
+    Ok(TrainTensorsV1 {
+        adam_step: saved.adam_step,
+        scorer_bias_anchor_bits: saved.scorer_bias_anchor_bits,
+        parameters: section(&saved.parameters)?,
+        first_moments: section(&saved.first_moments)?,
+        second_moments: section(&saved.second_moments)?,
+    })
+}
+
+fn restore_parameters<T: CheckpointTensorV1>(
+    saved: &[T],
     template: &[NativeNamedParameterV1],
 ) -> Result<Vec<NativeNamedParameterV1>, String> {
     ensure(
@@ -1676,21 +1776,27 @@ fn restore_parameters(
         .zip(template)
         .map(|(s, t)| {
             ensure(
-                s.name == t.name && s.shape == t.shape && s.values.len() == t.values.len(),
+                s.name_v1() == t.name
+                    && s.shape_v1() == t.shape.as_slice()
+                    && s.values_u32_v1().len() == t.values.len(),
                 "checkpoint parameter layout differs",
             )?;
             Ok(NativeNamedParameterV1 {
                 name: t.name,
                 shape: t.shape.clone(),
-                values: floats(&s.values),
+                values: floats(s.values_u32_v1()),
             })
         })
         .collect()
 }
 
+/// A checkpoint record. `T` is how it holds its tensors
+/// (`checkpoint_container_v1::TensorBitsV1`): owned bits for every checkpoint
+/// read back, and borrowed snapshot tensors for the one an update publishes.
+/// Both serialize, and encode, to the same bytes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct ExpandedCheckpointV1 {
+pub(crate) struct ExpandedCheckpointV1<T = ParameterBitsV1> {
     schema: String,
     feature_contract_digest: String,
     feature_encoding_digest: String,
@@ -1710,9 +1816,9 @@ pub(crate) struct ExpandedCheckpointV1 {
     ex1: Option<Value>,
     adam_step: u64,
     scorer_bias_anchor_bits: u32,
-    parameters: Vec<ParameterBitsV1>,
-    first_moments: Vec<ParameterBitsV1>,
-    second_moments: Vec<ParameterBitsV1>,
+    parameters: Vec<T>,
+    first_moments: Vec<T>,
+    second_moments: Vec<T>,
     trajectories: Vec<PinnedFileV1>,
     loss_identity: String,
     /// `Some` exactly when `loss_identity == "gae_advantage_value/v1"`,
@@ -1885,7 +1991,8 @@ fn initialize_from_source_bytes_v1(
         )?;
         let mut policy = policy.into_flat_v8_v1()?;
         let model = policy.training_model_v3();
-        let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+        let record = read_checkpoint_record_v1(pin)?;
+        let saved = parse_ordinary_checkpoint_borrowed_v1(&record, policy.identity_v1())?;
         if let Some(inputs) = inputs {
             inputs.validate_v1(
                 &saved.trajectories,
@@ -1947,7 +2054,8 @@ fn initialize_from_source_bytes_v1(
         )?;
         let mut policy = policy.into_flat_v7_transfer_v1()?;
         let model = policy.training_model_v3();
-        let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+        let record = read_checkpoint_record_v1(pin)?;
+        let saved = parse_ordinary_checkpoint_borrowed_v1(&record, policy.identity_v1())?;
         if let Some(inputs) = inputs {
             inputs.validate_v1(
                 &saved.trajectories,
@@ -1993,8 +2101,13 @@ fn initialize_from_source_bytes_v1(
     // clone retains every bit and derived transpose without rebuilding a
     // deterministic template and converting/installing all parameters again.
     let model = policy.training_model_v3();
-    let (state, saved) = if let Some(pin) = &source.checkpoint {
-        let saved = read_ordinary_checkpoint_v1(pin, policy.identity_v1())?;
+    let checkpoint_record = source
+        .checkpoint
+        .as_ref()
+        .map(read_checkpoint_record_v1)
+        .transpose()?;
+    let (state, saved) = if let Some(record) = checkpoint_record.as_deref() {
+        let saved = parse_ordinary_checkpoint_borrowed_v1(record, policy.identity_v1())?;
         if let Some(inputs) = inputs {
             inputs.validate_v1(
                 &saved.trajectories,
@@ -2104,6 +2217,26 @@ fn load_ordinary_policy_v1(
     }
     let import: FrozenPlayPolicyImportV1 = serde_json::from_slice(bytes).map_err(err)?;
     FrozenPlayPolicyV1::load_feature_transfer_v3(&import, &source.feature_transfer)
+}
+
+fn parse_ordinary_checkpoint_borrowed_v1<'a>(
+    record: &'a [u8],
+    origin: &PlayPolicyOriginV1,
+) -> Result<ExpandedCheckpointV1<BorrowedParameterBitsV1<'a>>, String> {
+    let saved = checkpoint_container_v1::parse_record_borrowed_v1(record)?;
+    if !origin.is_fresh_v1() {
+        ensure(
+            saved.registry_transfer.is_none() && !saved.source_import.is_fresh_v1(),
+            "ordinary checkpoint does not admit registry-transfer metadata",
+        )?;
+    }
+    ensure(
+        saved.registry_transfer.is_none()
+            && saved.schema == ordinary_checkpoint_schema_v1(origin)
+            && saved.source_import.is_fresh_v1() == origin.is_fresh_v1(),
+        "ordinary checkpoint schema/origin differs",
+    )?;
+    Ok(saved)
 }
 
 fn read_ordinary_checkpoint_v1(
@@ -2231,8 +2364,8 @@ pub fn inspect_fresh_initialization_v1(
     )
 }
 
-fn restore_checkpoint_state_v1(
-    saved: &ExpandedCheckpointV1,
+fn restore_checkpoint_state_v1<T: CheckpointTensorV1>(
+    saved: &ExpandedCheckpointV1<T>,
     policy: &mut FrozenPlayPolicyV1,
     model: NativePolicyValueNetV1,
 ) -> Result<NativePolicyValueTrainStateV1, String> {
@@ -2244,7 +2377,7 @@ fn restore_checkpoint_state_v1(
     restore_checkpoint_fields_v1(saved, policy, model)
 }
 
-fn validate_exploration_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Result<(), String> {
+fn validate_exploration_checkpoint_v1<T>(saved: &ExpandedCheckpointV1<T>) -> Result<(), String> {
     let is_recovery = saved.loss_identity == "gae_uniform_kl_recovery/v1";
     ensure(
         is_recovery == saved.exploration.is_some(),
@@ -2277,11 +2410,38 @@ fn validate_exploration_checkpoint_v1(saved: &ExpandedCheckpointV1) -> Result<()
     Ok(())
 }
 
-fn restore_checkpoint_fields_v1(
-    saved: &ExpandedCheckpointV1,
+fn restore_checkpoint_fields_v1<T: CheckpointTensorV1>(
+    saved: &ExpandedCheckpointV1<T>,
     policy: &mut FrozenPlayPolicyV1,
     model: NativePolicyValueNetV1,
 ) -> Result<NativePolicyValueTrainStateV1, String> {
+    check_checkpoint_fields_v1(saved, policy)?;
+    // The checkpoint's tensors, borrowed in place of a restored snapshot:
+    // the snapshot's refusals, then its validation and digest of the same
+    // stream, before the state is built from them (milestone 3 of #596).
+    let tensors = checkpoint_tensors_v1(saved, &model)?;
+    let state_sha256 = tensors.state_sha256_v1().map_err(err)?;
+    ensure(
+        hex(&state_sha256) == saved.state_sha256,
+        "checkpoint state hash differs",
+    )?;
+    // Validate the model's gauge anchor and full optimizer state before the
+    // live policy or copied sideboard embeddings are replaced.
+    let mut state = NativePolicyValueTrainStateV1::from_tensors_v1(model, &tensors).map_err(err)?;
+    policy.replace_training_parameters_v3(&state.model_v1().parameter_snapshot_v1())?;
+    // Inference and probes run a checkpoint under the math it trained with.
+    state.set_training_math_v1(saved.training_math);
+    state.record_verified_state_sha256_v1(state_sha256);
+    policy.set_training_math_v1(saved.training_math);
+    Ok(state)
+}
+
+/// What the restore checks before it reads the checkpoint's tensors: its
+/// input contract, provenance, loss and the scalars that loss requires.
+fn check_checkpoint_fields_v1<T: CheckpointTensorV1>(
+    saved: &ExpandedCheckpointV1<T>,
+    policy: &FrozenPlayPolicyV1,
+) -> Result<(), String> {
     // An ordinary source refuses a converted checkpoint, and a converted
     // source an unconverted one or another conversion's.
     no_state_digest_v1::resolve_contract_v1(
@@ -2321,28 +2481,7 @@ fn restore_checkpoint_fields_v1(
                 && saved.gae_lambda_bits.is_some()
                 && saved.entropy_coefficient_bits.is_some()),
         "checkpoint gae scalar presence does not match its loss_identity",
-    )?;
-    let template = model.parameter_snapshot_v1();
-    let snapshot = NativePolicyValueTrainSnapshotV1 {
-        adam_step: saved.adam_step,
-        scorer_bias_anchor_bits: saved.scorer_bias_anchor_bits,
-        parameters: restore_parameters(&saved.parameters, &template)?,
-        first_moments: restore_parameters(&saved.first_moments, &template)?,
-        second_moments: restore_parameters(&saved.second_moments, &template)?,
-    };
-    ensure(
-        hex(&snapshot.state_sha256_v1().map_err(err)?) == saved.state_sha256,
-        "checkpoint state hash differs",
-    )?;
-    // Validate the model's gauge anchor and full optimizer state before the
-    // live policy or copied sideboard embeddings are replaced.
-    let mut state =
-        NativePolicyValueTrainStateV1::from_snapshot_v1(model, &snapshot).map_err(err)?;
-    policy.replace_training_parameters_v3(&snapshot.parameters)?;
-    // Inference and probes run a checkpoint under the math it trained with.
-    state.set_training_math_v1(saved.training_math);
-    policy.set_training_math_v1(saved.training_math);
-    Ok(state)
+    )
 }
 
 /// Binds a training command's math to its learner. A checkpoint must have
@@ -4900,7 +5039,8 @@ fn execute_update_inner_v1(
                 .checkpoint
                 .as_ref()
                 .ok_or("recovery continuation requires checkpoint")?;
-            let saved = read_checkpoint_v1(pin)?;
+            let record = read_checkpoint_record_v1(pin)?;
+            let saved = checkpoint_container_v1::parse_record_borrowed_v1(&record)?;
             ensure(
                 saved.exploration == Some(loss_selection),
                 "recovery continuation selection differs",
@@ -5869,8 +6009,10 @@ fn execute_update_inner_v1(
         "the pregame announcement step scale did not reach the plain GAE step",
     )?;
     let checkpoint_started = std::time::Instant::now();
-    let snapshot = state.snapshot_v1().map_err(err)?;
-    let after = hex(&snapshot.state_sha256_v1().map_err(err)?);
+    // The checkpoint records the live state's tensors where the state holds
+    // them, after the snapshot's validation, under the state's own digest.
+    let tensors = state.tensors_v1().map_err(err)?;
+    let after = hex(&state.state_sha256_v1().map_err(err)?);
     fs::create_dir(&output_directory).map_err(err)?;
     let e_packet_pin = e_teacher
         .as_ref()
@@ -5934,22 +6076,25 @@ fn execute_update_inner_v1(
             }
             saved
         }),
-        adam_step: snapshot.adam_step,
-        scorer_bias_anchor_bits: snapshot.scorer_bias_anchor_bits,
-        parameters: snapshot
+        adam_step: tensors.adam_step,
+        scorer_bias_anchor_bits: tensors.scorer_bias_anchor_bits,
+        // Borrowed from the state: both formats write each value's bits
+        // straight from it, the bytes an owned copy (`ParameterBitsV1`) would
+        // write.
+        parameters: tensors
             .parameters
             .iter()
-            .map(ParameterBitsV1::from_native)
+            .map(ParameterBitsRefV1::from)
             .collect(),
-        first_moments: snapshot
+        first_moments: tensors
             .first_moments
             .iter()
-            .map(ParameterBitsV1::from_native)
+            .map(ParameterBitsRefV1::from)
             .collect(),
-        second_moments: snapshot
+        second_moments: tensors
             .second_moments
             .iter()
-            .map(ParameterBitsV1::from_native)
+            .map(ParameterBitsRefV1::from)
             .collect(),
         trajectories: trajectories.clone(),
         loss_identity: loss_selection.loss_identity_v1().into(),
@@ -5987,7 +6132,7 @@ fn execute_update_inner_v1(
         value_coefficient_bits: value_coefficient.to_bits(),
         registry_transfer: transfer
             .as_ref()
-            .map(|context| context.after_update(snapshot.adam_step))
+            .map(|context| context.after_update(tensors.adam_step))
             .transpose()?,
         archive_distillation: None,
         training_math,
@@ -6005,6 +6150,14 @@ fn execute_update_inner_v1(
         }
         CheckpointRecordFormatV1::V2 => checkpoint_container_v1::encode_v1(&checkpoint)?,
     };
+    // A container's metadata view is its JSON document (`metadata_view_v1`,
+    // sealed or not): kept for the next update's metadata probe of this pin.
+    let metadata_document = match record_format {
+        CheckpointRecordFormatV1::V2 => {
+            Some(checkpoint_container_v1::document_v1(&record)?.to_vec())
+        }
+        CheckpointRecordFormatV1::V1 | CheckpointRecordFormatV1::Auto => None,
+    };
     let checkpoint_pin = publish_json_shared_v1(
         &output_directory,
         "checkpoint.json",
@@ -6021,18 +6174,15 @@ fn execute_update_inner_v1(
             && restored.training_math_v1() == training_math,
         "published checkpoint round trip differs",
     )?;
+    if let Some(document) = metadata_document {
+        checkpoint_metadata_memo_v1::remember_v1(&checkpoint_pin.sha256, &document);
+    }
     if record_format == CheckpointRecordFormatV1::V2 {
         // Design section 3: the restored state equals the published one item
         // for item (Adam step, anchor, every tensor's name, shape and bits),
-        // beyond the state digest.
-        let back = restored.snapshot_v1().map_err(err)?;
-        let same = |got: &[NativeNamedParameterV1], saved: &[ParameterBitsV1]| {
-            got.len() == saved.len()
-                && got
-                    .iter()
-                    .zip(saved)
-                    .all(|(g, s)| ParameterBitsV1::from_native(g) == *s)
-        };
+        // beyond the state digest. Compared in place, without copies.
+        let back = restored.tensors_v1().map_err(err)?;
+        let same = checkpoint_container_v1::same_tensors_v1;
         ensure(
             back.adam_step == checkpoint.adam_step
                 && back.scorer_bias_anchor_bits == checkpoint.scorer_bias_anchor_bits
@@ -6254,6 +6404,17 @@ fn read_pinned<T: for<'de> Deserialize<'de>>(pin: &PinnedFileV1) -> Result<T, St
     serde_json::from_slice(&checkpoint_container_v1::json_document_v1(&bytes)?).map_err(err)
 }
 
+/// A pinned checkpoint's opened record bytes: shared directly from the
+/// verified-bytes cache when unsealed, or the decompressed record when sealed
+/// (`record_envelope_v1`).
+fn read_checkpoint_record_v1(pin: &PinnedFileV1) -> Result<Arc<Vec<u8>>, String> {
+    let shared = read_pinned_shared_v1(pin)?;
+    match record_envelope_v1::open_v1(&shared, MAX_FILE_BYTES)? {
+        std::borrow::Cow::Borrowed(_) => Ok(shared),
+        std::borrow::Cow::Owned(record) => Ok(Arc::new(record)),
+    }
+}
+
 /// A pinned checkpoint, from either format, decoded directly (design 4.1,
 /// the direct-decode interface).
 fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String> {
@@ -6265,8 +6426,81 @@ fn read_checkpoint_v1(pin: &PinnedFileV1) -> Result<ExpandedCheckpointV1, String
 fn read_checkpoint_metadata_v1<T: for<'de> Deserialize<'de>>(
     pin: &PinnedFileV1,
 ) -> Result<T, String> {
+    // The pinned file's check runs every time; only its view, a pure function
+    // of the checked bytes, may come from the memo.
     let bytes = read_pinned_shared_v1(pin)?;
-    serde_json::from_slice(&checkpoint_container_v1::metadata_view_v1(&bytes)?).map_err(err)
+    if let Some(document) = checkpoint_metadata_memo_v1::lookup_v1(&pin.sha256) {
+        return serde_json::from_slice(&document).map_err(err);
+    }
+    let view = checkpoint_container_v1::metadata_view_v1(&bytes)?;
+    checkpoint_metadata_memo_v1::remember_v1(&pin.sha256, &view);
+    serde_json::from_slice(&view).map_err(err)
+}
+
+/// Metadata views (`checkpoint_container_v1::metadata_view_v1`) of checkpoint
+/// files this process checked, by their pinned SHA-256: a view is a pure
+/// function of the file's bytes, so a probe of the same pin (after the same
+/// file check) parses the remembered view instead of opening the envelope and
+/// container again. Only views up to 1 MiB are kept: a container's JSON
+/// document, not a production v1 JSON checkpoint (about 20 MB, whose view is
+/// the whole file). Invocation-local, never persisted.
+mod checkpoint_metadata_memo_v1 {
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+
+    /// The newest checkpoints a run probes: its current one and the one before.
+    const ENTRIES_V1: usize = 4;
+    /// A view larger than this is a v1 JSON checkpoint's whole file.
+    const MAX_VIEW_BYTES_V1: usize = 1 << 20;
+
+    type EntriesV1 = VecDeque<(String, Arc<Vec<u8>>)>;
+
+    #[cfg(not(test))]
+    fn with_entries_v1<R>(f: impl FnOnce(&mut EntriesV1) -> R) -> R {
+        use std::sync::{Mutex, PoisonError};
+        static ENTRIES: Mutex<EntriesV1> = Mutex::new(VecDeque::new());
+        f(&mut ENTRIES.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Unit tests run in parallel threads: each keeps its own entries.
+    #[cfg(test)]
+    fn with_entries_v1<R>(f: impl FnOnce(&mut EntriesV1) -> R) -> R {
+        thread_local! {
+            static ENTRIES: std::cell::RefCell<EntriesV1> = const {
+                std::cell::RefCell::new(VecDeque::new())
+            };
+        }
+        ENTRIES.with(|entries| f(&mut entries.borrow_mut()))
+    }
+
+    pub(super) fn lookup_v1(sha256: &str) -> Option<Arc<Vec<u8>>> {
+        with_entries_v1(|entries| {
+            let index = entries.iter().position(|(key, _)| key == sha256)?;
+            let entry = entries.remove(index)?;
+            let view = Arc::clone(&entry.1);
+            entries.push_back(entry);
+            Some(view)
+        })
+    }
+
+    pub(super) fn remember_v1(sha256: &str, view: &[u8]) {
+        if view.len() > MAX_VIEW_BYTES_V1 {
+            return;
+        }
+        let view = view.to_vec();
+        with_entries_v1(|entries| {
+            entries.retain(|(key, _)| key != sha256);
+            while entries.len() >= ENTRIES_V1 {
+                entries.pop_front();
+            }
+            entries.push_back((sha256.to_owned(), Arc::new(view)));
+        });
+    }
+
+    #[cfg(test)]
+    pub(super) fn clear_for_test_v1() {
+        with_entries_v1(VecDeque::clear);
+    }
 }
 
 fn read_pinned_bytes(pin: &PinnedFileV1) -> Result<Vec<u8>, String> {
@@ -6422,16 +6656,20 @@ pub fn convert_checkpoint_v1_to_v2(
     let (_, after) = initialize_any_math_v1(&converted)?;
     let before_snapshot = before.snapshot_v1().map_err(err)?;
     let after_snapshot = after.snapshot_v1().map_err(err)?;
-    let bits = |rows: &[NativeNamedParameterV1]| -> Vec<ParameterBitsV1> {
-        rows.iter().map(ParameterBitsV1::from_native).collect()
-    };
+    let same = checkpoint_container_v1::same_tensors_v1;
     let state_sha256 = hex(&before_snapshot.state_sha256_v1().map_err(err)?);
     ensure(
         before_snapshot.adam_step == after_snapshot.adam_step
             && before_snapshot.scorer_bias_anchor_bits == after_snapshot.scorer_bias_anchor_bits
-            && bits(&before_snapshot.parameters) == bits(&after_snapshot.parameters)
-            && bits(&before_snapshot.first_moments) == bits(&after_snapshot.first_moments)
-            && bits(&before_snapshot.second_moments) == bits(&after_snapshot.second_moments)
+            && same(&before_snapshot.parameters, &after_snapshot.parameters)
+            && same(
+                &before_snapshot.first_moments,
+                &after_snapshot.first_moments,
+            )
+            && same(
+                &before_snapshot.second_moments,
+                &after_snapshot.second_moments,
+            )
             && hex(&after_snapshot.state_sha256_v1().map_err(err)?) == state_sha256
             && before.training_math_v1() == after.training_math_v1(),
         "converted checkpoint restores a different state",
@@ -6453,7 +6691,7 @@ pub fn export_checkpoint_v2_to_v1(v2: &PinnedFileV1, output: &Path) -> Result<Va
         checkpoint_container_v1::is_container_v1(&bytes),
         "the input is not a checkpoint container",
     )?;
-    let saved = checkpoint_container_v1::decode_v1(&bytes)?;
+    let saved = checkpoint_container_v1::decode_borrowed_v1(&bytes)?;
     let v1 = serde_json::to_vec(&saved).map_err(err)?;
     let written = publish_checkpoint_file_v1(output, &v1)?;
     Ok(
@@ -6876,6 +7114,243 @@ pub(crate) mod tests {
                     .collect::<Vec<_>>()
             )
             .unwrap(),
+        );
+    }
+
+    /// The restore as it was before milestone 3 of #596: the same field
+    /// checks, then the checkpoint's tensors copied into a snapshot under the
+    /// template's names, its digest checked, the state built from the
+    /// snapshot and the policy given the snapshot's parameters.
+    fn restore_with_snapshot_copy_v1(
+        saved: &ExpandedCheckpointV1,
+        policy: &mut FrozenPlayPolicyV1,
+        model: NativePolicyValueNetV1,
+    ) -> Result<NativePolicyValueTrainStateV1, String> {
+        check_checkpoint_fields_v1(saved, policy)?;
+        let snapshot = snapshot_copy_v1(saved, &model)?;
+        ensure(
+            hex(&snapshot.state_sha256_v1().map_err(err)?) == saved.state_sha256,
+            "checkpoint state hash differs",
+        )?;
+        let mut state =
+            NativePolicyValueTrainStateV1::from_snapshot_v1(model, &snapshot).map_err(err)?;
+        policy.replace_training_parameters_v3(&snapshot.parameters)?;
+        state.set_training_math_v1(saved.training_math);
+        policy.set_training_math_v1(saved.training_math);
+        Ok(state)
+    }
+
+    /// The snapshot the restore copied the checkpoint's tensors into.
+    fn snapshot_copy_v1(
+        saved: &ExpandedCheckpointV1,
+        model: &NativePolicyValueNetV1,
+    ) -> Result<NativePolicyValueTrainSnapshotV1, String> {
+        let template = model.parameter_snapshot_v1();
+        Ok(NativePolicyValueTrainSnapshotV1 {
+            adam_step: saved.adam_step,
+            scorer_bias_anchor_bits: saved.scorer_bias_anchor_bits,
+            parameters: restore_parameters(&saved.parameters, &template)?,
+            first_moments: restore_parameters(&saved.first_moments, &template)?,
+            second_moments: restore_parameters(&saved.second_moments, &template)?,
+        })
+    }
+
+    /// Restores `saved` both ways, from forks of `policy` and clones of
+    /// `model`, and asserts the same outcome: states with the same digest and
+    /// every field the same, or the same refusal, and policies with the same
+    /// parameter bits and math either way. Returns whether it was restored.
+    fn same_restore_v1(
+        policy: &FrozenPlayPolicyV1,
+        model: &NativePolicyValueNetV1,
+        saved: &ExpandedCheckpointV1,
+        what: &str,
+    ) -> bool {
+        let mut restored_policy = policy.fork_for_collection_v3().unwrap();
+        let mut reference_policy = policy.fork_for_collection_v3().unwrap();
+        let restored = restore_checkpoint_fields_v1(saved, &mut restored_policy, model.clone());
+        let reference = restore_with_snapshot_copy_v1(saved, &mut reference_policy, model.clone());
+        let policy_bits = |policy: &FrozenPlayPolicyV1| {
+            policy
+                .training_parameters_v3()
+                .iter()
+                .map(ParameterBitsV1::from_native)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            policy_bits(&restored_policy),
+            policy_bits(&reference_policy),
+            "{what}"
+        );
+        assert_eq!(
+            restored_policy.training_math_v1(),
+            reference_policy.training_math_v1(),
+            "{what}"
+        );
+        match (restored, reference) {
+            (Ok(restored), Ok(reference)) => {
+                assert_eq!(
+                    restored.state_sha256_v1().unwrap(),
+                    reference.state_sha256_v1().unwrap(),
+                    "{what}"
+                );
+                assert_eq!(format!("{restored:?}"), format!("{reference:?}"), "{what}");
+                true
+            }
+            (restored, reference) => {
+                assert_eq!(restored.err(), reference.err(), "{what}");
+                false
+            }
+        }
+    }
+
+    /// `saved` with `change` made to a copy of it.
+    fn changed_v1(
+        saved: &ExpandedCheckpointV1,
+        change: impl FnOnce(&mut ExpandedCheckpointV1),
+    ) -> ExpandedCheckpointV1 {
+        let mut changed = saved.clone();
+        change(&mut changed);
+        changed
+    }
+
+    /// A named change to one section's tensors.
+    type TensorChangeV1 = (&'static str, fn(&mut Vec<ParameterBitsV1>));
+
+    /// A named change to a checkpoint.
+    type CheckpointChangeV1 = (&'static str, fn(&mut ExpandedCheckpointV1));
+
+    /// The checkpoint's parameters (0), first moments (1) or second moments.
+    fn section_v1(saved: &mut ExpandedCheckpointV1, index: usize) -> &mut Vec<ParameterBitsV1> {
+        match index {
+            0 => &mut saved.parameters,
+            1 => &mut saved.first_moments,
+            _ => &mut saved.second_moments,
+        }
+    }
+
+    #[test]
+    fn a_restore_from_borrowed_tensors_restores_and_refuses_as_the_snapshot_copy_did() {
+        let (policy, imported_model, saved) = checkpoint_fixture_v1();
+        let default_model =
+            NativePolicyValueNetV1::runner_fixed_v1(NativePolicyValueModelConfigV1::contract_v1())
+                .unwrap();
+        for model in [&imported_model, &default_model] {
+            assert!(same_restore_v1(
+                &policy,
+                model,
+                &saved,
+                "the checkpoint itself"
+            ));
+        }
+        // With the digest the snapshot copy has, so that a change gets past
+        // the hash check.
+        let rehashed = |mut saved: ExpandedCheckpointV1| {
+            let snapshot = snapshot_copy_v1(&saved, &imported_model).unwrap();
+            saved.state_sha256 = hex(&snapshot.state_sha256_v1().unwrap());
+            saved
+        };
+        let tensor_changes: [TensorChangeV1; 11] = [
+            ("a tensor fewer", |tensors| {
+                tensors.pop();
+            }),
+            ("a tensor more", |tensors| tensors.push(tensors[0].clone())),
+            ("two tensors swapped", |tensors| tensors.swap(1, 2)),
+            ("a tensor renamed", |tensors| {
+                tensors[1].name = "wrong.weight".into()
+            }),
+            ("a tensor reshaped", |tensors| tensors[1].shape[0] += 1),
+            ("a value fewer", |tensors| {
+                tensors[1].values.pop();
+            }),
+            ("a NaN", |tensors| tensors[1].values[0] = f32::NAN.to_bits()),
+            ("an infinity", |tensors| {
+                tensors[1].values[0] = f32::INFINITY.to_bits()
+            }),
+            ("a padding-row -0.0", |tensors| {
+                tensors[0].values[0] = (-0.0f32).to_bits()
+            }),
+            ("a negative value", |tensors| {
+                tensors[1].values[0] = (-f32::EPSILON).to_bits()
+            }),
+            ("one value bit flipped", |tensors| tensors[1].values[0] ^= 1),
+        ];
+        let mut cases = Vec::new();
+        for (index, name) in ["parameters", "first moments", "second moments"]
+            .into_iter()
+            .enumerate()
+        {
+            for (what, change) in tensor_changes {
+                cases.push((
+                    format!("{name}: {what}"),
+                    changed_v1(&saved, |saved| change(section_v1(saved, index))),
+                ));
+            }
+            cases.push((
+                format!("{name}: one value changed and the digest to match"),
+                rehashed(changed_v1(&saved, |saved| {
+                    section_v1(saved, index)[1].values[0] = 0.25f32.to_bits();
+                })),
+            ));
+        }
+        let changes: [CheckpointChangeV1; 7] = [
+            ("the anchor bits changed", |saved| {
+                saved.scorer_bias_anchor_bits ^= 1
+            }),
+            ("an Adam step past i32", |saved| {
+                saved.adam_step = i32::MAX as u64 + 1
+            }),
+            ("an Adam step past i32 and a NaN", |saved| {
+                saved.adam_step = i32::MAX as u64 + 1;
+                saved.parameters[1].values[0] = f32::NAN.to_bits();
+            }),
+            ("another digest", |saved| {
+                saved.state_sha256 = "00".repeat(32)
+            }),
+            ("a parameter reshaped and a first moment fewer", |saved| {
+                saved.parameters[1].shape[0] += 1;
+                saved.first_moments.pop();
+            }),
+            (
+                "a first moment reshaped and a second moment fewer",
+                |saved| {
+                    saved.first_moments[1].shape[0] += 1;
+                    saved.second_moments.pop();
+                },
+            ),
+            ("a NaN parameter and a negative second moment", |saved| {
+                saved.parameters[1].values[0] = f32::NAN.to_bits();
+                saved.second_moments[1].values[0] = (-f32::EPSILON).to_bits();
+            }),
+        ];
+        for (what, change) in changes {
+            cases.push((what.to_owned(), changed_v1(&saved, change)));
+        }
+        // The parameters' anchor moved, with the anchor bits and the digest
+        // to match: only the template's anchor refuses it.
+        cases.push((
+            "the anchor moved off the template's".to_owned(),
+            rehashed(changed_v1(&saved, |saved| {
+                let anchor = saved
+                    .parameters
+                    .iter_mut()
+                    .find(|tensor| tensor.name == "scorer.2.bias")
+                    .unwrap();
+                anchor.values[0] = (f32::from_bits(anchor.values[0]) + 0.25).to_bits();
+                saved.scorer_bias_anchor_bits = anchor.values[0];
+            })),
+        ));
+        let accepted: Vec<&str> = cases
+            .iter()
+            .filter(|(what, changed)| same_restore_v1(&policy, &imported_model, changed, what))
+            .map(|(what, _)| what.as_str())
+            .collect();
+        assert_eq!(
+            accepted,
+            [
+                "parameters: one value changed and the digest to match",
+                "first moments: one value changed and the digest to match",
+                "second moments: one value changed and the digest to match",
+            ]
         );
     }
 
@@ -13092,6 +13567,69 @@ pub(crate) mod tests {
             );
             assert_eq!(profile.rules(), rules);
         }
+    }
+
+    #[test]
+    fn borrowed_v2_restore_seeds_verified_state_digest_and_refuses_tampered_digest() {
+        use crate::native_policy_train_step_v1::{
+            compute_owned_train_snapshot_sha256_v1, live_state_hash_compute_count_for_test_v1,
+            reset_live_state_hash_compute_count_for_test_v1,
+        };
+
+        let (policy, imported_model, saved) = checkpoint_fixture_v1();
+        let container = checkpoint_container_v1::encode_v1(&saved).unwrap();
+        let borrowed = checkpoint_container_v1::decode_borrowed_v1(&container).unwrap();
+        if cfg!(target_endian = "little") {
+            assert!(borrowed
+                .parameters
+                .iter()
+                .all(checkpoint_container_v1::BorrowedParameterBitsV1::is_borrowed_v1));
+        }
+
+        reset_live_state_hash_compute_count_for_test_v1();
+        let mut restored_policy = policy.fork_for_collection_v3().unwrap();
+        let mut restored =
+            restore_checkpoint_fields_v1(&borrowed, &mut restored_policy, imported_model.clone())
+                .unwrap();
+        let expected_digest =
+            compute_owned_train_snapshot_sha256_v1(&restored.snapshot_v1().unwrap());
+        assert_eq!(hex(&expected_digest), saved.state_sha256);
+
+        // Verified restore seeds the live state's memoized digest, so repeated
+        // readback queries and clones do not re-hash the tensors.
+        assert_eq!(restored.state_sha256_v1().unwrap(), expected_digest);
+        assert_eq!(restored.state_sha256_v1().unwrap(), expected_digest);
+        let cloned = restored.clone();
+        assert_eq!(cloned.state_sha256_v1().unwrap(), expected_digest);
+        assert_eq!(live_state_hash_compute_count_for_test_v1(), 0);
+
+        // Clearing the live cache forces a single cold hash to the same digest.
+        restored.clear_cached_state_sha256_v1();
+        assert_eq!(restored.state_sha256_v1().unwrap(), expected_digest);
+        assert_eq!(live_state_hash_compute_count_for_test_v1(), 1);
+        assert_eq!(restored.state_sha256_v1().unwrap(), expected_digest);
+        assert_eq!(live_state_hash_compute_count_for_test_v1(), 1);
+
+        // A container with a tampered document state_sha256 decodes structurally
+        // as a canonical v2 container of that modified document, and restore
+        // refuses it before any state or digest can be returned.
+        let mut tampered = saved.clone();
+        let replacement = if tampered.state_sha256.starts_with('0') {
+            '1'
+        } else {
+            '0'
+        };
+        tampered
+            .state_sha256
+            .replace_range(0..1, &replacement.to_string());
+        let tampered_container = checkpoint_container_v1::encode_v1(&tampered).unwrap();
+        let tampered_borrowed =
+            checkpoint_container_v1::decode_borrowed_v1(&tampered_container).unwrap();
+        let mut rejected_policy = policy.fork_for_collection_v3().unwrap();
+        let err =
+            restore_checkpoint_fields_v1(&tampered_borrowed, &mut rejected_policy, imported_model)
+                .expect_err("tampered state_sha256 must be refused");
+        assert_eq!(err, "checkpoint state hash differs");
     }
 
     mod pauper_opening_tests;
