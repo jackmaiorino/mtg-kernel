@@ -9,24 +9,13 @@ use crate::event::{self, DamageProposed, ProposedEvent, ReplacementEffectKind};
 use crate::ids::PlayerId;
 use crate::state::GameState;
 
-fn has_color_prevention(state: &GameState) -> bool {
-    state.engine.active_replacements.iter().any(|replacement| {
-        matches!(
-            &replacement.kind,
-            ReplacementEffectKind::PreventDamageFromColorUntilEndOfTurn { turn, active_player, .. }
-                if *turn == state.turn_key_v1() && *active_player == state.active_player
-        )
-    })
-}
-
-/// Only states with an eligible pair borrow the enclosing operation replay:
-/// a Circle plus global prevention, or an active Sphere opposite an Ojer.
+/// Only a current paid Circle or a Sphere/Ojer pair borrows operation replay.
+/// The actual packet predicate below uses source/color/turn matching; an
+/// ordinary packet with just one useful prevention keeps its existing menu.
 pub(crate) fn may_need_choice(state: &GameState) -> bool {
     cfg!(feature = "eternal-fixtures")
         && !cannot_prevent(state)
-        && ((circles::has_live_circle_shield(state)
-            && (crate::eternal_pauper_e6a_v1::has_active_global_fog(state)
-                || has_color_prevention(state)))
+        && (circles::has_live_circle_shield(state)
             || [PlayerId::P0, PlayerId::P1].into_iter().any(|player| {
                 crate::eternal_premodern_p3a_v1::statics::has_sphere_of_law(state, player)
                     && crate::standard_cards_v1::has_active_ojer(state, player.opponent())
@@ -57,10 +46,32 @@ fn cannot_prevent(state: &GameState) -> bool {
 }
 
 pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
-    damage.amount > 0
-        && circles::circle_shield_position(state, damage).is_some()
-        && !cannot_prevent(state)
-        && full_prevention(state, damage)
+    if damage.amount <= 0 || cannot_prevent(state) {
+        return false;
+    }
+    let mut matching = circles::matching_circle_shields(state, damage);
+    let Some((_, first)) = matching.next() else {
+        return false;
+    };
+    if matching.any(|(_, shield)| shield != first)
+        || full_prevention(state, damage)
+        || crate::eternal_pauper_pf1c_v1::ordinary_damage::prevention_without_cost(state, damage)
+    {
+        return true;
+    }
+    // A registered complete shield can be used instead of the Circle. Its
+    // existing application path retains any finite charge and touched-by data.
+    let event = ProposedEvent::Damage(damage.clone());
+    if state.engine.active_replacements.iter().any(|replacement|
+        !damage.touched_by.contains(&replacement.id)
+            && event::replacement_applies(replacement, &event, state)
+            && matches!(replacement.kind,
+                ReplacementEffectKind::PreventNextDamage { remaining, .. } if remaining >= damage.amount)) {
+        return true;
+    }
+    let spheres =
+        crate::eternal_premodern_p3a_v1::statics::applicable_spheres(state, damage).count();
+    spheres >= (damage.amount as u32).div_ceil(2) as usize
 }
 
 /// Re-evaluate all state-bearing replacements after each chosen effect.
@@ -114,15 +125,27 @@ pub(crate) fn residual_order_applies(state: &GameState, damage: &DamageProposed)
     if damage.is_combat
         || damage.amount <= 0
         || cannot_prevent(state)
+        // With any matching Circle, only its observable consumption predicate
+        // admits the packet. Amount changes before an inevitable identical
+        // shield consumption do not introduce a redundant numeric menu.
+        || circles::circle_shield_position(state, damage).is_some()
         || full_prevention(state, damage)
         || crate::eternal_pauper_pf1c_v1::ordinary_damage::prevention_without_cost(state, damage)
     {
         return false;
     }
-    let Some(power) = crate::standard_cards_v1::matching_ojers(state, damage)
+    let powers: Vec<_> = crate::standard_cards_v1::matching_ojers(state, damage)
         .map(|(_, power)| power)
-        .max()
-    else {
+        .collect();
+    let spheres =
+        crate::eternal_premodern_p3a_v1::statics::applicable_spheres(state, damage).count();
+    if powers.len() == 1 {
+        return single_ojer_has_distinct_outcomes(damage.amount, spheres, powers[0]);
+    }
+    // Keep every native Ojer's multiplicity. For multiple increases this gate
+    // is conservative about equivalent numeric menus, while the actual
+    // frontier still applies each exact effect once and preserves all outcomes.
+    let Some(power) = powers.into_iter().max() else {
         return false;
     };
     let mut amount = damage.amount;
@@ -136,6 +159,34 @@ pub(crate) fn residual_order_applies(state: &GameState, damage: &DamageProposed)
         amount = amount.saturating_sub(2);
     }
     false
+}
+
+/// Exact scalar bounds with one Ojer: its earliest and latest legal use
+/// bracket every possible final amount. Zero ends the event before an unused
+/// increase can revive it. All arithmetic is widened before subtraction.
+fn single_ojer_has_distinct_outcomes(amount: i32, spheres: usize, power: i32) -> bool {
+    let amount = i64::from(amount);
+    let power = i64::from(power);
+    let spheres = i64::try_from(spheres).unwrap_or(i64::MAX / 4);
+    if amount <= 0 || spheres == 0 {
+        return false;
+    }
+    let earliest = if amount < power {
+        0
+    } else {
+        (amount - power) / 2 + 1
+    };
+    let latest = spheres.min((amount - 1) / 2);
+    if earliest > latest {
+        return false;
+    }
+    let minimum = if 2 * spheres >= amount {
+        0
+    } else {
+        (power - 2 * (spheres - earliest)).max(0)
+    };
+    let maximum = (power - 2 * (spheres - latest)).max(0);
+    minimum != maximum
 }
 
 /// Local, nonserialized evidence that the frontier finished this exact damage
