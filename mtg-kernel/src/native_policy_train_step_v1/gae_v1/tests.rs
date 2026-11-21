@@ -2956,8 +2956,10 @@ fn priority_pass_offset_keeps_the_reference_bits_in_the_sequential_backward() {
             gradient_bits(&expected),
             "offset {offset}"
         );
-        // Debug prints every float in shortest round-trip form, so equal
-        // text is equal bits.
+        // Debug prints every finite float in shortest round-trip form, so
+        // for finite values equal text is equal bits; it does not show a
+        // NaN's payload, which the gradient and state comparisons cover
+        // through to_bits.
         assert_eq!(
             format!("{actual:?}"),
             format!("{expected:?}"),
@@ -2986,6 +2988,7 @@ fn priority_pass_offset_keeps_every_bit_across_forward_and_backward_workers() {
     use crate::native_policy_train_step_v1::exact_parallel_backward_v1::{
         with_exact_backward_hooks_for_test_v1 as with_hooks, ExactBackwardHooksForTestV1,
     };
+    use crate::native_policy_train_step_v1::take_effective_update_workers_for_test_v1 as take_workers;
     let base = model();
     let fixture = Fixture::capture(&base);
     let steps = many_substeps(&fixture, 200);
@@ -3011,10 +3014,13 @@ fn priority_pass_offset_keeps_every_bit_across_forward_and_backward_workers() {
         });
         let mut sequential = start.clone();
         sequential.set_priority_pass_offset_v1(marks.clone());
+        take_workers();
         let (expected, runs) = with_hooks(ExactBackwardHooksForTestV1::NONE, || {
             with_reference(|| profiled_step(&mut sequential, &batch, 1).unwrap())
         });
         assert_eq!(runs, 0);
+        // One forward worker: the tapes are made inline, not precomputed.
+        assert_eq!(take_workers().0, 1, "offset {offset}");
         for (block_substeps, workers) in [(Some(37), 2), (None, 4), (Some(64), 8)] {
             let hooks = ExactBackwardHooksForTestV1 {
                 block_substeps,
@@ -3022,10 +3028,14 @@ fn priority_pass_offset_keeps_every_bit_across_forward_and_backward_workers() {
             };
             let mut parallel = start.clone();
             parallel.set_priority_pass_offset_v1(marks.clone());
+            take_workers();
             let (actual, runs) = with_hooks(hooks, || {
                 profiled_step(&mut parallel, &batch, workers).unwrap()
             });
             assert_eq!(runs, 1, "offset {offset} {block_substeps:?} {workers}");
+            // The forward tapes were precomputed on the requested workers
+            // (399 substeps are enough for each of them).
+            assert_eq!(take_workers().0, workers, "offset {offset} {workers}");
             assert_eq!(
                 gradient_bits(&actual),
                 gradient_bits(&expected),
