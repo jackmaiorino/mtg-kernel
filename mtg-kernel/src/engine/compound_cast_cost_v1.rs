@@ -322,7 +322,7 @@ impl Costs {
                     // unchosen land while completing this prefix, so trying the
                     // last land never enumerates the remaining hand subsets.
                     Some(
-                        ctx.candidates(projected, self.route)?
+                        ctx.candidates(projected, Group::Component(self.route))?
                             .into_iter()
                             .find(|id| !first.contains(id))?,
                     )
