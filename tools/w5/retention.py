@@ -212,6 +212,12 @@ def own_files(seg_root, *paths, own_dir=None):
             raise SystemExit(f'stop: {p} resolves outside its segment {seg_root} or has a link in its path')
 
 
+def carried_dir(chain, chain_path):
+    """`scan`'s extra argument for a carried chain (its manifest's directory); none for an ordinary chain, whose
+    call stays as before."""
+    return (Path(chain_path).parent,) if chain.get('carry') else ()
+
+
 def scan(chain, known, own_dir=None):
     """Index records of the completed updates after the first `known` ones (the records already indexed), in order,
     stopping at the first update without its receipt (a segment's iterations complete in order)."""
@@ -318,7 +324,7 @@ def index_locked(chain_path):
         tmp = cache.with_suffix(cache.suffix + '.tmp')
         tmp.write_text(''.join(json.dumps(r) + '\n' for r in records), encoding='utf-8')
         os.replace(tmp, cache)
-    new = scan(chain, len(records), Path(chain_path).parent)
+    new = scan(chain, len(records), *carried_dir(chain, chain_path))
     if new:
         with open(cache, 'ab') as f:
             terminate(f)
@@ -773,7 +779,7 @@ class IndexCache:
                 raise SystemExit(f'stop: {cache} needs its S-container migration, which a read-only cache does not do')
             migrate(self.chain_path, chain)  # a cache written before S containers were tracked (once)
             return self._whole()
-        new = scan(chain, len(store), Path(self.chain_path).parent)
+        new = scan(chain, len(store), *carried_dir(chain, self.chain_path))
         if self.read_only:
             # The cursor is the end of what was read, not a later size: a row another writer appends meanwhile is
             # read at the next refresh, which then reconciles the unwritten records found past it.
@@ -846,7 +852,7 @@ class IndexCache:
             self.records.drop_unwritten()
             self.active = IndexView(self.records, array('q', (n for n in self.active.numbers if n < first)))
         chain = load_chain(self.chain_path)
-        new = scan(chain, len(self.records) + len(added), Path(self.chain_path).parent)
+        new = scan(chain, len(self.records) + len(added), *carried_dir(chain, self.chain_path))
         if new and not self.read_only:
             lines = [(json.dumps(r) + '\n').encode('utf-8') for r in new]
             with open(cache, 'ab') as f:
