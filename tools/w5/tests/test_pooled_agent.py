@@ -1,18 +1,23 @@
 """The collector agent behind a forced ssh command: confinement and the agent-mode dispatcher.
-The agent serves exactly one of seven operations per connection and refuses everything else."""
+The agent serves exactly one of seven operations per connection and refuses everything else.
+Kernel confinement (Landlock) is exercised for real where the kernel has it (LandlockEnforcementTests,
+in separate processes, since confinement is irreversible); in-process tests run with "sandbox": "none"."""
 import base64
 import hashlib
 import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
 import textwrap
 import threading
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
@@ -20,13 +25,37 @@ sys.path.insert(0, str(HERE / "tests"))
 import pooled_collect as pc  # noqa: E402
 from test_pooled_collect import episode_bytes, fake_merge  # noqa: E402
 
+LANDLOCK = pc.landlock_abi()
+
 FAKE_COLLECTOR = textwrap.dedent('''
-    import hashlib, json, os, sys, time
+    import hashlib, json, os, subprocess, sys, time
     assert sys.argv[1] == "--execute-collect-shard"
     command = json.load(open(sys.argv[2]))
-    if command["episodes"] and command["episodes"][0]["id"] == "sleep":
-        time.sleep(60)
     out = command["output_directory"]
+    first = command["episodes"][0] if command["episodes"] else {}
+    if first.get("id") == "sleep":  # a collector with a descendant, past its deadline
+        os.makedirs(out)
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+        with open(os.path.join(out, "pids"), "w") as handle:
+            handle.write("%d %d" % (os.getpid(), child.pid))
+        time.sleep(120)
+    if first.get("id") == "probe":  # records which accesses its sandbox allows
+        os.makedirs(out)
+        results = {}
+        for kind, path in first["probes"]:
+            try:
+                if kind == "read":
+                    open(path, "rb").read(1)
+                else:
+                    open(path, "wb").write(b"x")
+                results[kind + ":" + path] = "allowed"
+            except OSError as error:
+                results[kind + ":" + path] = error.errno
+        open(os.path.join(out, "probe.json"), "w").write(json.dumps(results))
+        sys.exit(0)
+    if first.get("id") == "noisy":
+        sys.stderr.write("x" * (1 << 20) + "END")
+        sys.stderr.flush()
     os.makedirs(out)
     pins = []
     for offset, episode in enumerate(command["episodes"]):
@@ -53,6 +82,31 @@ def sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def gone(pid: int, seconds: float = 10.0) -> bool:
+    """True once `pid` no longer runs (absent, or a zombie awaiting its reaper). Linux /proc."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        except (FileNotFoundError, ProcessLookupError):
+            return True
+        if state == "Z":
+            return True
+        time.sleep(0.1)
+    return False
+
+
+class SlowStdin:
+    """A connection that holds its end-of-input back for a while (a caller stalling the request)."""
+
+    def __init__(self, seconds):
+        self.seconds = seconds
+
+    def read(self, n=-1):
+        time.sleep(self.seconds)
+        return b""
+
+
 class AgentCase(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="pooled-agent-test-")).resolve()
@@ -68,7 +122,8 @@ class AgentCase(unittest.TestCase):
     def write_config(self, path, **changes):
         config = {"schema": pc.AGENT_SCHEMA, "collector": str(self.collector),
                   "collector_sha256": pc.sha256_file(self.collector), "scratch": str(self.scratch),
-                  "pin_roots": [str(self.pins)], "prefix": [sys.executable], "max_seconds": 120}
+                  "pin_roots": [str(self.pins)], "prefix": [sys.executable], "max_seconds": 120,
+                  "sandbox": "none"}  # in-process: confining the test runner itself is irreversible
         config.update(changes)
         path.write_text(json.dumps(config))
         return path
@@ -76,12 +131,19 @@ class AgentCase(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
 
-    def serve(self, op=None, payload=b"", raw=None, config=None, **args):
+    def serve(self, op=None, payload=b"", raw=None, config=None, stdin=None, **args):
         encoded = raw if raw is not None else pc.encode_request(op, **args)
         stdout, stderr = io.BytesIO(), io.StringIO()
         code = pc.agent_main(str(config or self.config_path), {"SSH_ORIGINAL_COMMAND": encoded},
-                             io.BytesIO(payload), stdout, stderr)
+                             stdin or io.BytesIO(payload), stdout, stderr)
         return code, stdout.getvalue(), stderr.getvalue()
+
+    def agent_process(self, config, op, payload=b"", **args):
+        """The agent as its own process (as sshd runs it), so its sandbox confines only it."""
+        env = dict(os.environ, SSH_ORIGINAL_COMMAND=pc.encode_request(op, **args))
+        result = subprocess.run([sys.executable, "-I", str(HERE / "pooled_collect.py"), "agent", str(config)],
+                                env=env, input=payload, capture_output=True, timeout=120)
+        return result.returncode, result.stdout, result.stderr.decode(errors="replace")
 
     def assertRefused(self, result, words):
         code, out, err = result
@@ -101,9 +163,9 @@ class AgentCase(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(out), "stored")
 
-    def run_shard(self, seconds=60, collector_sha256=None):
+    def run_shard(self, seconds=60, collector_sha256=None, **kwargs):
         return self.serve("run_shard", tag=TAG, seconds=seconds,
-                          collector_sha256=collector_sha256 or pc.sha256_file(self.collector))
+                          collector_sha256=collector_sha256 or pc.sha256_file(self.collector), **kwargs)
 
 
 class AgentRefusalTests(AgentCase):
@@ -124,7 +186,7 @@ class AgentRefusalTests(AgentCase):
                          ["agent.json", "collector.py", "pins", "scratch"], "no file outside the roots")
 
     @unittest.skipUnless(os.name == "posix", "symlinks need privileges on Windows")
-    def test_symlinks_are_never_followed(self):
+    def test_static_symlinks_are_refused_by_the_userspace_checks(self):
         os.symlink(self.root, self.pins / "link")
         data = b"bytes"
         self.assertRefused(self.serve("push", data, path=str(self.pins / "link" / "x.bin"), sha256=sha(data)),
@@ -166,7 +228,7 @@ class AgentRefusalTests(AgentCase):
         self.assertEqual((code, json.loads(out)), (0, "created"), err)
         self.assertEqual(Path(path).read_bytes(), trailing)
 
-    def test_shard_commands_are_confined(self):
+    def test_shard_commands_naming_files_outside_the_roots_are_refused(self):
         bad = self.shard_command(output_directory=str(self.root / "x"))
         self.assertRefused(self.serve("put_shard", json.dumps(bad).encode(), tag=TAG), "own scratch")
         sneaky = self.shard_command(output_directory=str(self.scratch) + "/link/../" + TAG)
@@ -190,6 +252,21 @@ class AgentRefusalTests(AgentCase):
         nested = self.shard_command(source={"play_import": {"path": str(imp), "sha256": pc.sha256_file(imp)}})
         self.assertRefused(self.serve("put_shard", json.dumps(nested).encode(), tag=TAG), "outside the pin roots")
 
+    def test_the_commands_own_pins_must_be_present_with_their_pinned_bytes(self):
+        absent = self.shard_command(source={"checkpoint": {"path": str(self.pins / "absent.json"),
+                                                            "sha256": "0" * 64}})
+        self.assertRefused(self.serve("put_shard", json.dumps(absent).encode(), tag=TAG), "pinned input absent")
+        held = self.pins / "checkpoint.json"
+        held.write_bytes(b"benign")
+        other = self.shard_command(source={"checkpoint": {"path": str(held), "sha256": sha(b"malicious")}})
+        self.assertRefused(self.serve("put_shard", json.dumps(other).encode(), tag=TAG), "differs from its sha256")
+        # The stored command is checked again just before it runs: bytes changed since are refused.
+        self.put_shard(source={"checkpoint": {"path": str(held), "sha256": sha(b"benign")}})
+        held.unlink()
+        held.write_bytes(b"malicious")
+        self.assertRefused(self.run_shard(), "differs from its sha256")
+        self.assertFalse((self.scratch / TAG).exists(), "nothing ran")
+
     def test_provenance_pins_inside_a_pinned_record_are_neither_followed_nor_refused(self):
         record = self.pins / "fresh-init.json"
         record.write_text(json.dumps({"producer": {"source_files": [
@@ -199,6 +276,17 @@ class AgentRefusalTests(AgentCase):
         command = self.shard_command(source={"checkpoint": {"path": str(record), "sha256": pc.sha256_file(record)}})
         code, out, err = self.serve("put_shard", json.dumps(command).encode(), tag=TAG)
         self.assertEqual(code, 0, err)
+
+    def test_deeply_nested_shard_commands_and_pinned_documents_are_refused(self):
+        deep = json.loads("[" * 300 + "]" * 300)
+        command = self.shard_command(unused=deep)
+        self.assertRefused(self.serve("put_shard", json.dumps(command).encode(), tag=TAG), "nests deeper")
+        record = self.pins / "deep.json"
+        record.write_text(json.dumps({"history": deep}))
+        command = self.shard_command(source={"checkpoint": {"path": str(record), "sha256": pc.sha256_file(record)}})
+        self.assertRefused(self.serve("put_shard", json.dumps(command).encode(), tag=TAG), "nests deeper")
+        with self.assertRaises(pc.PinTreeTooLarge):
+            pc.pins_of([[1, 2], [3, [4]]], max_nodes=5)
 
     def test_the_learner_and_the_agent_must_expect_the_same_collector(self):
         self.put_shard()
@@ -214,38 +302,237 @@ class AgentRefusalTests(AgentCase):
         self.assertEqual(json.loads(self.run_shard()[1])["code"], 0)
         secret = self.root / "secret.txt"
         secret.write_text("not for the learner")
-        os.link(secret, self.scratch / TAG / "leak.txt")
+        os.link(secret, self.scratch / TAG / "out" / "leak.txt")
         self.assertRefused(self.serve("fetch_shard", tag=TAG), "singly linked")
 
-    def test_unsafe_configs_are_refused(self):
+    def test_a_run_never_reuses_an_existing_output(self):
+        self.put_shard()
+        (self.scratch / TAG).mkdir()
+        self.assertRefused(self.run_shard(), "already exists")
+
+    def test_overlapping_or_containing_roots_are_refused(self):
         overlapping = self.write_config(self.root / "overlap.json", pin_roots=[str(self.root)])
         self.assertEqual(self.serve("pin_status", pins=[], config=overlapping)[0], 1)
         inside = self.write_config(self.root / "inside.json", collector=str(self.pins / "collector.py"))
         self.assertEqual(self.serve("pin_status", pins=[], config=inside)[0], 1)
 
 
+class SandboxConfigTests(AgentCase):
+    """The "sandbox" key on every platform; the kernel calls are stubbed (real ones: below)."""
+
+    def test_the_sandbox_defaults_to_landlock_and_takes_no_other_value(self):
+        config = json.loads(self.config_path.read_text())
+        del config["sandbox"]
+        self.config_path.write_text(json.dumps(config))
+        self.assertEqual(pc.load_agent_config(self.config_path)["sandbox"], "landlock")
+        other = self.write_config(self.root / "other.json", sandbox="seccomp")
+        code, _, err = self.serve("pin_status", pins=[], config=other)
+        self.assertEqual(code, 1)
+        self.assertIn("sandbox", err)
+
+    def test_landlock_configured_but_unavailable_refuses_every_request(self):
+        config = self.write_config(self.root / "landlock.json", sandbox="landlock")
+        data = b"bytes"
+        with mock.patch.object(pc, "landlock_abi", return_value=0):
+            for op, payload, args in (("pin_status", b"", {"pins": []}),
+                                      ("push", data, {"path": str(self.pins / "x.bin"), "sha256": sha(data)}),
+                                      ("put_shard", json.dumps(self.shard_command()).encode(), {"tag": TAG}),
+                                      ("remove_shard", b"", {"tag": TAG})):
+                self.assertRefused(self.serve(op, payload, config=config, **args), "has no Landlock")
+        self.assertEqual(list(self.pins.iterdir()) + list(self.scratch.iterdir()), [], "nothing served")
+
+    def test_the_explicit_opt_out_is_reported(self):
+        code, out, err = self.serve("pin_status", pins=[])
+        self.assertEqual((code, json.loads(out)["sandbox"]), (0, "none"), err)
+
+    def test_landlock_confines_the_agent_to_its_roots_before_serving(self):
+        config = self.write_config(self.root / "landlock.json", sandbox="landlock")
+        calls = []
+
+        def ruleset(rules, abi):
+            calls.append(("ruleset", rules, abi))
+            return os.open(os.devnull, os.O_RDONLY)
+
+        with mock.patch.object(pc, "landlock_abi", return_value=6), \
+                mock.patch.object(pc, "landlock_ruleset", side_effect=ruleset), \
+                mock.patch.object(pc, "landlock_restrict", side_effect=lambda fd: calls.append(("restrict",))):
+            code, out, err = self.serve("pin_status", pins=[], config=config)
+        self.assertEqual((code, json.loads(out)["sandbox"]), (0, "landlock-abi6"), err)
+        self.assertEqual([c[0] for c in calls], ["ruleset", "restrict"])
+        rules = {path: access for path, access, _ in calls[0][1]}
+        writable = {path for path, access in rules.items() if access & pc.LL_WRITE_FILE}
+        self.assertEqual(writable, {str(self.pins), str(self.scratch), "/dev/null"})
+        self.assertFalse(any(access & (pc.LL_MAKE_SYM | pc.LL_MAKE_CHAR | pc.LL_MAKE_BLOCK | pc.LL_MAKE_FIFO
+                                       | pc.LL_MAKE_SOCK) for access in rules.values()), "no special nodes")
+        self.assertEqual(rules[str(self.collector)], pc.LL_RUN)
+        self.assertNotIn(str(self.config_path), rules)
+        self.assertNotIn(str(self.root), rules)
+
+    def test_the_collector_writes_only_its_run_directory(self):
+        config = pc.load_agent_config(self.config_path)
+        run_dir, command_file = str(self.scratch / TAG), str(self.scratch / ".run" / "c.json")
+        rules = {path: access for path, access, _ in pc.collector_rules(config, command_file, run_dir)}
+        writable = {path for path, access in rules.items() if access & (pc.LL_WRITE_FILE | pc.LL_MAKE_DIR)}
+        self.assertEqual(writable, {run_dir, "/dev/null"})
+        self.assertEqual(rules[str(self.pins)], pc.LL_READ, "pin roots read-only")
+        self.assertEqual(rules[command_file], pc.LL_READ_FILE)
+        self.assertNotIn(str(self.scratch), rules, "nothing else of the scratch root")
+
+
+@unittest.skipUnless(LANDLOCK >= 1, "the kernel has no Landlock (Windows, or not enabled)")
+class LandlockEnforcementTests(AgentCase):
+    """Real kernel confinement, each in its own process."""
+
+    def setUp(self):
+        super().setUp()
+        self.secret = self.root / "outside" / "secret.txt"
+        self.secret.parent.mkdir()
+        self.secret.write_bytes(b"not for the key holder")
+        os.symlink(self.secret.parent, self.pins / "dirlink")  # a namespace race already won
+        self.held = self.pins / "held.bin"
+        self.held.write_bytes(b"pinned")
+        self.landlock = self.write_config(self.root / "landlock.json", sandbox="landlock")
+
+    def test_the_confined_agent_reaches_nothing_outside_even_where_the_userspace_checks_would_accept(self):
+        script = self.root / "probe_agent.py"
+        script.write_text(textwrap.dedent(f'''
+            import io, json, os, sys
+            sys.path.insert(0, {str(HERE)!r})
+            import pooled_collect as pc
+            # Userspace checks switched off: only the kernel stands between a request and the disk.
+            pc._canonical = lambda path: path
+            pc._strictly_under = lambda path, roots: True
+
+            def serve(op, payload=b"", **args):
+                out, err = io.BytesIO(), io.StringIO()
+                code = pc.agent_main({str(self.landlock)!r}, {{"SSH_ORIGINAL_COMMAND": pc.encode_request(op, **args)}},
+                                     io.BytesIO(payload), out, err)
+                return code, out.getvalue().decode(), err.getvalue()
+
+            report = {{}}
+            secret, linked = {str(self.secret)!r}, {str(self.pins / "dirlink" / "secret.txt")!r}
+            digest = pc.sha256_file(pc.Path(secret))
+            report["status"] = serve("pin_status", pins=[[secret, digest], [linked, digest],
+                                                         [{str(self.held)!r}, pc.sha256_file(pc.Path({str(self.held)!r}))]])
+            report["push_outside"] = serve("push", b"x", path={str(self.root / "planted" / "x.bin")!r},
+                                           sha256=pc.hashlib.sha256(b"x").hexdigest())
+            report["push_through_link"] = serve("push", b"y", path={str(self.pins / "dirlink" / "y.bin")!r},
+                                                sha256=pc.hashlib.sha256(b"y").hexdigest())
+
+            def attempt(name, action):
+                try:
+                    action()
+                    report[name] = "allowed"
+                except OSError as error:
+                    report[name] = error.errno
+            attempt("read_secret", lambda: open(secret, "rb").read())
+            attempt("read_through_link", lambda: open(linked, "rb").read())
+            attempt("write_outside", lambda: open({str(self.root / "outside" / "new.txt")!r}, "wb").write(b"x"))
+            attempt("write_through_link", lambda: open({str(self.pins / "dirlink" / "new.txt")!r}, "wb").write(b"x"))
+            attempt("read_config_dir", lambda: os.listdir({str(self.root)!r}))
+            attempt("read_passwd", lambda: open("/etc/passwd", "rb").read())
+            attempt("symlink_in_pins", lambda: os.symlink(secret, {str(self.pins / "sym")!r}))
+            attempt("write_pin_root", lambda: open({str(self.pins / "ok.bin")!r}, "wb").write(b"x"))
+            attempt("read_pin", lambda: open({str(self.held)!r}, "rb").read())
+            print(json.dumps(report))
+        '''))
+        result = subprocess.run([sys.executable, "-I", str(script)], capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        code, out, err = report["status"]
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["states"], ["differs", "differs", "ok"], "denied reads never hash")
+        self.assertTrue(json.loads(out)["sandbox"].startswith("landlock-abi"))
+        self.assertEqual(report["push_outside"][0], 1, report["push_outside"])
+        self.assertEqual(report["push_through_link"][0], 1, report["push_through_link"])
+        self.assertFalse((self.root / "planted").exists())
+        self.assertEqual(sorted(os.listdir(self.secret.parent)), ["secret.txt"], "nothing written outside")
+        for name in ("read_secret", "read_through_link", "write_outside", "write_through_link",
+                     "read_config_dir", "symlink_in_pins"):
+            self.assertEqual(report[name], 13, f"{name}: {report[name]}")  # EACCES
+        if os.path.exists("/etc/passwd"):
+            self.assertEqual(report["read_passwd"], 13)
+        self.assertEqual((report["write_pin_root"], report["read_pin"]), ("allowed", "allowed"))
+
+    def test_the_confined_collector_writes_only_its_run_directory(self):
+        other = self.scratch / ("pooled-000003-" + "b" * 32 + "-s002")
+        other.mkdir()
+        (other / "x.json").write_text("another shard")
+        probes = [["read", str(self.secret)], ["read", str(self.pins / "dirlink" / "secret.txt")],
+                  ["read", str(other / "x.json")], ["read", str(self.scratch / f"{TAG}.json")],
+                  ["write", str(self.pins / "planted.bin")], ["write", str(self.scratch / "planted.json")],
+                  ["write", str(other / "planted.json")], ["write", str(self.root / "outside" / "planted")],
+                  ["read", str(self.held)], ["write", str(self.scratch / TAG / "out" / "mine.json")]]
+        command = self.shard_command(episodes=[{"id": "probe", "seed": 1, "probes": probes}])
+        code, out, err = self.agent_process(self.landlock, "put_shard", json.dumps(command).encode(), tag=TAG)
+        self.assertEqual(code, 0, err)
+        code, out, err = self.agent_process(self.landlock, "run_shard", tag=TAG, seconds=60,
+                                            collector_sha256=pc.sha256_file(self.collector))
+        self.assertEqual((code, json.loads(out)["code"]), (0, 0), (err, out))
+        report = json.loads((self.scratch / TAG / "out" / "probe.json").read_text())
+        allowed = {key for key, value in report.items() if value == "allowed"}
+        self.assertEqual(allowed, {"read:" + str(self.held), "write:" + str(self.scratch / TAG / "out" / "mine.json")},
+                         report)
+        self.assertTrue(all(value in ("allowed", 13) for value in report.values()), report)
+        for planted in (self.pins / "planted.bin", self.scratch / "planted.json", other / "planted.json"):
+            self.assertFalse(planted.exists())
+
+    def test_the_dispatcher_collects_through_confined_agents(self):
+        AgentDispatcherTests.collect_with_failover(self, self.landlock)
+
+
 class AgentServiceTests(AgentCase):
-    def test_pins_install_once_never_replace_and_prune_only_their_bytes(self):
+    def test_pins_install_once_never_replace_and_remove_only_the_owned_file(self):
         data, other = b"checkpoint", b"other bytes"
         path = str(self.pins / "run" / "checkpoint.json")
         self.assertEqual(json.loads(self.serve("pin_status", pins=[[path, sha(data)]])[1])["states"], ["absent"])
         self.assertEqual(json.loads(self.serve("push", data, path=path, sha256=sha(data))[1]), "created")
+        witness = pc.owned_witness(path, str(self.scratch))
+        self.assertTrue(os.path.samefile(witness, path), "the same witness as the shell transport's push")
         self.assertEqual(json.loads(self.serve("push", data, path=path, sha256=sha(data))[1]), "existing")
         self.assertRefused(self.serve("push", other, path=path, sha256=sha(other)), "existing pin differs")
         self.assertRefused(self.serve("push", other, path=path, sha256=sha(data)), "payload differs")
         self.assertEqual(json.loads(self.serve("pin_status", pins=[[path, sha(other)]])[1])["states"], ["differs"])
-        self.assertEqual(json.loads(self.serve("remove_pin", path=path, sha256=sha(other))[1]), "kept")
+        self.assertEqual(json.loads(self.serve("remove_pin", path=path, sha256=sha(other))[1]), "not-owned")
+        self.assertEqual(Path(path).read_bytes(), data, "put back")
         self.assertEqual(json.loads(self.serve("remove_pin", path=path, sha256=sha(data))[1]), "removed")
         self.assertEqual(sorted(os.listdir(self.pins / "run")), [])
+        # A restored copy with the same bytes is another file: never removed.
+        self.assertEqual(json.loads(self.serve("push", data, path=path, sha256=sha(data))[1]), "created")
+        Path(path).unlink()
+        Path(path).write_bytes(data)
+        self.assertEqual(json.loads(self.serve("remove_pin", path=path, sha256=sha(data))[1]), "not-owned")
+        self.assertEqual(Path(path).read_bytes(), data)
+        self.assertEqual(os.listdir(self.scratch / ".pooled-owned"), [], "no witness or set-aside file left")
 
-    def test_the_storage_marker_identifies_this_storage(self):
+    def test_the_storage_marker_persists_and_is_regenerated_when_deleted(self):
         first = json.loads(self.serve("pin_status", pins=[])[1])["storage"]
         self.assertRegex(first, r"^[0-9a-f]{32}$")
         self.assertEqual(json.loads(self.serve("pin_status", pins=[])[1])["storage"], first)
         (self.scratch / ".pooled-storage-id").unlink()
         self.assertNotEqual(json.loads(self.serve("pin_status", pins=[])[1])["storage"], first)
 
-    def test_remove_pin_waits_for_a_push_on_the_same_path(self):
+    def test_concurrent_first_initialization_publishes_one_complete_marker(self):
+        # An interrupted earlier publication left only its private stage: never a partial marker.
+        (self.scratch / ".pooled-storage-id.0123.stage").write_bytes(b"")
+        barrier, replies = threading.Barrier(12), []
+
+        def first_contact():
+            barrier.wait()
+            replies.append(self.serve("pin_status", pins=[]))
+
+        threads = [threading.Thread(target=first_contact) for _ in range(12)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(60)
+        self.assertEqual(len(replies), 12)
+        self.assertTrue(all(code == 0 for code, _, _ in replies), [err for _, _, err in replies])
+        markers = {json.loads(out)["storage"] for _, out, _ in replies}
+        self.assertEqual(len(markers), 1, markers)
+        self.assertRegex(markers.pop(), r"^[0-9a-f]{32}$")
+
+    def test_remove_pin_waits_for_the_per_path_lock(self):
         data = b"checkpoint"
         path = str(self.pins / "run" / "checkpoint.json")
         self.serve("push", data, path=path, sha256=sha(data))
@@ -256,7 +543,7 @@ class AgentServiceTests(AgentCase):
             self.serve("remove_pin", path=path, sha256=sha(data))
             done.set()
 
-        with pc._lock(config, path):  # another connection is mid-push on this path
+        with pc._lock(config, path):  # held as a push holds it while it links and witnesses
             worker = threading.Thread(target=remove)
             worker.start()
             self.assertFalse(done.wait(1.0), "remove_pin must wait for the path's lock")
@@ -264,22 +551,50 @@ class AgentServiceTests(AgentCase):
         self.assertTrue(done.is_set())
         self.assertFalse(Path(path).exists())
 
-    def test_a_shard_is_stored_run_fetched_and_removed(self):
+    def test_a_shard_is_stored_run_fetched_with_its_bytes_and_removed(self):
         self.put_shard()
         code, out, err = self.run_shard()
         self.assertEqual((code, json.loads(out)["code"]), (0, 0), err)
         code, tar_bytes, err = self.serve("fetch_shard", tag=TAG)
         self.assertEqual(code, 0, err)
         with tarfile.open(fileobj=io.BytesIO(tar_bytes)) as archive:
-            self.assertEqual(sorted(archive.getnames()), ["collection.json", "episode-0002.json", "episode-0003.json"])
+            files = {m.name: archive.extractfile(m).read() for m in archive}
+        self.assertEqual(sorted(files), ["collection.json", "episode-0002.json", "episode-0003.json"])
+        self.assertEqual((files["episode-0002.json"], files["episode-0003.json"]), (b"e2:7", b"e3:8"))
+        pins = json.loads(files["collection.json"])["trajectories"]
+        self.assertEqual([p["sha256"] for p in pins], [sha(b"e2:7"), sha(b"e3:8")])
         self.assertEqual(json.loads(self.serve("remove_shard", tag=TAG)[1]), "removed")
         self.assertEqual([n for n in os.listdir(self.scratch) if not n.startswith(".")], [])
+        self.assertEqual(os.listdir(self.scratch / ".run"), [], "the private command copy is gone")
 
-    @unittest.skipUnless(os.name == "posix", "process-group termination is POSIX")
-    def test_a_run_past_its_seconds_is_ended(self):
+    def test_collector_stderr_is_kept_only_as_a_bounded_tail(self):
+        self.put_shard(episodes=[{"id": "noisy", "seed": 1}])
+        code, out, err = self.run_shard()
+        reply = json.loads(out)
+        self.assertEqual((code, reply["code"]), (0, 0), err)
+        self.assertLessEqual(len(reply["stderr"]), pc.AGENT_STDERR_TAIL)
+        self.assertTrue(reply["stderr"].endswith("END"))
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "process-group termination checked through /proc")
+    def test_a_run_past_its_seconds_ends_its_whole_process_group(self):
         self.put_shard(episodes=[{"id": "sleep", "seed": 1}])
-        code, out, err = self.run_shard(seconds=1)
+        code, out, err = self.run_shard(seconds=2)
         self.assertEqual((code, json.loads(out)["code"]), (0, "timeout"), err)
+        leader, descendant = map(int, (self.scratch / TAG / "out" / "pids").read_text().split())
+        self.assertTrue(gone(leader) and gone(descendant), "collector and its descendant killed")
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "process-group termination checked through /proc")
+    def test_the_request_deadline_inside_a_run_ends_its_whole_process_group(self):
+        config = self.write_config(self.root / "deadline.json", request_seconds=1, max_seconds=3)
+        self.put_shard(episodes=[{"id": "sleep", "seed": 1}])
+        # The caller holds its end of input back for 2.5 s; the 4 s request alarm then fires while the
+        # agent waits on the collector (whose own 3 s deadline lies beyond it).
+        started = time.monotonic()
+        result = self.run_shard(seconds=60, config=config, stdin=SlowStdin(2.5))
+        self.assertRefused(result, "request deadline")
+        self.assertLess(time.monotonic() - started, 5.4, "ended by the alarm, not the run deadline")
+        leader, descendant = map(int, (self.scratch / TAG / "out" / "pids").read_text().split())
+        self.assertTrue(gone(leader) and gone(descendant), "collector and its descendant killed")
 
     @unittest.skipUnless(os.name == "posix", "process-group termination is POSIX")
     def test_a_request_beyond_the_agent_cap_runs_to_the_cap(self):
@@ -293,47 +608,115 @@ class AgentServiceTests(AgentCase):
 
 
 class SafeExtractionTests(unittest.TestCase):
-    def test_archives_with_unsafe_members_are_refused(self):
-        root = Path(tempfile.mkdtemp(prefix="pooled-extract-test-"))
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="pooled-extract-test-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def refused(self, entries):
+        archive = self.root / "bad.tar"
+        with tarfile.open(archive, "w") as tar:
+            for entry in entries:
+                tar.addfile(entry, io.BytesIO(b"x") if entry.isreg() else None)
+        local = self.root / "out"
+        local.mkdir()
         try:
-            for name in ("..\\..\\victim", "C:\\victim", "../victim", "a/b", "file:stream", ".hidden"):
-                archive = root / "bad.tar"
-                with tarfile.open(archive, "w") as tar:
-                    entry = tarfile.TarInfo(name)
-                    entry.size = 1
-                    tar.addfile(entry, io.BytesIO(b"x"))
-                local = root / "out"
-                local.mkdir()
-                with self.assertRaises(RuntimeError):
-                    pc._extract_shard_archive(archive, local)
-                shutil.rmtree(local)
-            archive = root / "dup.tar"
-            with tarfile.open(archive, "w") as tar:
-                for _ in range(2):
-                    entry = tarfile.TarInfo("a.json")
-                    entry.size = 1
-                    tar.addfile(entry, io.BytesIO(b"x"))
-            local = root / "out"
-            local.mkdir()
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(RuntimeError, msg=[e.name for e in entries]):
                 pc._extract_shard_archive(archive, local)
         finally:
-            shutil.rmtree(root, ignore_errors=True)
+            shutil.rmtree(local)
+
+    @staticmethod
+    def member(name, kind=tarfile.REGTYPE, target=""):
+        entry = tarfile.TarInfo(name)
+        entry.type, entry.linkname = kind, target
+        entry.size = 1 if kind == tarfile.REGTYPE else 0
+        return entry
+
+    def test_archives_with_unsafe_names_are_refused(self):
+        for name in ("..\\..\\victim", "C:\\victim", "../victim", "a/b", "file:stream", ".hidden",
+                     "NUL", "con.txt", "COM1.json", "lpt9", "Aux.tar.gz", "prn", "COM0", "trailing.", "x.json."):
+            self.refused([self.member(name)])
+
+    def test_archives_with_special_or_duplicate_members_are_refused(self):
+        for kind, target in ((tarfile.SYMTYPE, "/etc/passwd"), (tarfile.LNKTYPE, "a.json"), (tarfile.DIRTYPE, ""),
+                             (tarfile.CHRTYPE, ""), (tarfile.FIFOTYPE, "")):
+            self.refused([self.member("a.json", kind, target)])
+        self.refused([self.member("a.json"), self.member("a.json")])
+        self.refused([self.member("a.json"), self.member("A.JSON")])
+
+    def test_portable_names(self):
+        for name in ("episode-0001.json", "collection.json", "non-natural.json", "CONSOLE.json", "nul1"):
+            self.assertTrue(pc._portable_name(name), name)
+        for name in ("NUL", "nul.json", "COM9", "lpt1.x.y", "a.", "", ".x", "a b", "a\\b"):
+            self.assertFalse(pc._portable_name(name), name)
+
+
+class AgentTransportBoundsTests(unittest.TestCase):
+    """The learner's side of each connection: deadlines independent of reads, concurrent draining,
+    bounded memory. Fake ssh programs misbehave in each way; works on a Windows learner too."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="pooled-bounds-test-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def transport(self, body):
+        script = self.root / "misbehaving_ssh.py"
+        script.write_text(textwrap.dedent(body))
+        return pc.AgentTransport(pc.Host(name="h", kind="ssh", collector="/c", collector_sha256="0" * 64,
+                                         workers=1, weight=1.0, scratch="/s", arch="x86",
+                                         ssh=[sys.executable, str(script)], transport="agent"))
+
+    def test_a_silent_connection_is_ended_at_the_deadline(self):
+        transport = self.transport("import time\ntime.sleep(60)\n")
+        started = time.monotonic()
+        with mock.patch.object(pc, "FETCH_SECONDS", 1.5), self.assertRaisesRegex(RuntimeError, "timed out"):
+            transport.fetch_dir("/s/" + TAG, self.root / "local")
+        with self.assertRaisesRegex(RuntimeError, "timed out"):
+            transport._json("pin_status", timeout=1.5, pins=[])
+        self.assertLess(time.monotonic() - started, 20)
+        self.assertFalse((self.root / "local").exists(), "a failed fetch leaves nothing")
+
+    def test_a_stream_that_stalls_midway_is_ended_at_the_deadline(self):
+        transport = self.transport("import sys, time\nsys.stdout.buffer.write(b'x' * 100000)\n"
+                                   "sys.stdout.flush()\ntime.sleep(60)\n")
+        started = time.monotonic()
+        with mock.patch.object(pc, "FETCH_SECONDS", 1.5), self.assertRaisesRegex(RuntimeError, "timed out"):
+            transport.fetch_dir("/s/" + TAG, self.root / "local")
+        self.assertLess(time.monotonic() - started, 20)
+
+    def test_stderr_flooding_neither_deadlocks_nor_grows_memory(self):
+        transport = self.transport("import sys\nfor _ in range(320):\n    sys.stderr.write('e' * 65536)\n"
+                                   "sys.stderr.write('LAST')\nsys.stderr.flush()\nprint('\"stored\"')\n")
+        self.assertEqual(transport._json("put_shard", b"{}", timeout=60, tag=TAG), "stored")
+        code, out, tail = pc._bounded_process(transport._argv("pin_status", pins=[]), "probe", 60, 1 << 20)
+        self.assertEqual((code, out.strip()), (0, b'"stored"'))
+        self.assertLessEqual(len(tail), pc.AGENT_STDERR_TAIL)
+        self.assertTrue(tail.endswith(b"LAST"))
+
+    def test_an_oversized_reply_is_refused(self):
+        transport = self.transport("import sys\nsys.stdout.buffer.write(b'1' * (3 << 20))\n")
+        with self.assertRaisesRegex(RuntimeError, "output bound"):
+            transport._json("pin_status", timeout=60, pins=[])
 
 
 class AgentDispatcherTests(AgentCase):
-    def agent_host(self, name, arch, config_path):
+    def agent_host(self, name, arch, config_path, **changes):
         fake_ssh = self.root / "fake_ssh.py"
         fake_ssh.write_text(FAKE_SSH)
         return pc.Host(name=name, kind="ssh", collector=str(self.collector),
                        collector_sha256=pc.sha256_file(self.collector), workers=2, weight=1.0,
                        scratch=str(self.scratch), arch=arch, ssh=[sys.executable, str(fake_ssh), str(config_path)],
-                       prefix=[sys.executable], transport="agent")
+                       prefix=[sys.executable], transport="agent", **changes)
 
-    def test_the_dispatcher_collects_through_the_agent_with_audits_and_failover(self):
+    def collect_with_failover(self, config_path):
         broken = self.write_config(self.root / "broken.json", collector_sha256="0" * 64)
-        hosts = [self.agent_host("broken", "arm64", broken), self.agent_host("good-a", "x86", self.config_path),
-                 self.agent_host("good-b", "arm64", self.config_path)]
+        hosts = [AgentDispatcherTests.agent_host(self, "broken", "arm64", broken),
+                 AgentDispatcherTests.agent_host(self, "good-a", "x86", config_path),
+                 AgentDispatcherTests.agent_host(self, "good-b", "arm64", config_path)]
         pinned = self.pins / "run" / "checkpoint.json"
         pinned.parent.mkdir()
         pinned.write_bytes(b"policy")
@@ -355,7 +738,10 @@ class AgentDispatcherTests(AgentCase):
         self.assertEqual([n for n in os.listdir(self.scratch) if not n.startswith(".")], [],
                          "every shard and command file removed")
 
-    def test_agent_mode_uploads_missing_pins_and_prunes_only_its_own(self):
+    def test_the_dispatcher_collects_through_the_agent_with_audits_and_failover(self):
+        self.collect_with_failover(self.config_path)
+
+    def test_agent_mode_uploads_missing_pins_and_removes_only_its_own(self):
         transport = pc.AgentTransport(self.agent_host("a", "x86", self.config_path))
         learner_copy = self.root / "learner-copy.bin"
         learner_copy.write_bytes(b"input bytes")
@@ -363,9 +749,31 @@ class AgentDispatcherTests(AgentCase):
         self.assertTrue(transport.push(learner_copy, remote, sha(b"input bytes")))
         self.assertFalse(transport.push(learner_copy, remote, sha(b"input bytes")), "existing: not ours")
         self.assertEqual(Path(remote).read_bytes(), b"input bytes")
-        self.assertFalse(transport.remove_pin(remote, sha(b"other")))
-        self.assertTrue(transport.remove_pin(remote, sha(b"input bytes")))
+        self.assertEqual(transport.remove_owned(remote, sha(b"other")), "not-owned")
+        self.assertEqual(transport.remove_owned(remote, sha(b"input bytes")), "removed")
         self.assertFalse(Path(remote).exists())
+
+    def test_dispatcher_prune_through_the_agent_removes_only_what_it_installed(self):
+        state = self.root / "learner-state" / "retention.json"
+        host = self.agent_host("a", "x86", self.config_path, prune_pushed=True)
+        dispatcher = pc.Dispatcher({"hosts": [host], "state_path": str(state)})
+        transport = dispatcher.transports["a"]
+        learner_copy = self.root / "learner-copy.bin"
+        learner_copy.write_bytes(b"old checkpoint")
+        installed, foreign = str(self.pins / "run" / "old.bin"), str(self.pins / "run" / "foreign.bin")
+        self.assertTrue(transport.push(learner_copy, installed, sha(b"old checkpoint")))
+        Path(foreign).write_bytes(b"old checkpoint")  # same bytes, never installed by this dispatcher
+        key = dispatcher.storage_key_now(host)
+        state.parent.mkdir()
+        # An earlier collection recorded both (the foreign one as if pushed: a stale or replaced record).
+        state.write_text(json.dumps({key: {installed: sha(b"old checkpoint"), foreign: sha(b"old checkpoint")}}))
+        later = pc.Dispatcher({"hosts": [host], "state_path": str(state)})
+        later.prune(set())  # a later collection that pushed neither
+        events = {e["path"]: e["event"] for e in later.log if e["event"] in ("pruned", "not-owned")}
+        self.assertEqual(events, {installed: "pruned", foreign: "not-owned"})
+        self.assertFalse(Path(installed).exists())
+        self.assertEqual(Path(foreign).read_bytes(), b"old checkpoint")
+        self.assertEqual(json.loads(state.read_text())[key], {})
 
 
 if __name__ == "__main__":

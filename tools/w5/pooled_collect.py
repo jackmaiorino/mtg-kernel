@@ -36,13 +36,16 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import inspect
 import io
 import json
 import os
 import re
 import shlex
 import shutil
+import signal
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
@@ -130,17 +133,30 @@ def plan_sizes(total: int, weights: list[float]) -> list[int]:
     return sizes
 
 
-def pins_of(value) -> set[tuple[str, str]]:
-    """Every {path, sha256} pin inside a command document."""
-    found = set()
-    if isinstance(value, dict):
-        if set(value) >= {"path", "sha256"} and isinstance(value.get("path"), str):
-            found.add((value["path"], value["sha256"]))
-        for item in value.values():
-            found |= pins_of(item)
-    elif isinstance(value, list):
-        for item in value:
-            found |= pins_of(item)
+PIN_TREE_DEPTH = 128  # far beyond any command or record, far below Python's recursion limit
+PIN_TREE_NODES = 1 << 22  # a 16 MiB shard command holds fewer values
+
+
+class PinTreeTooLarge(ValueError):
+    """A document nested deeper or holding more values than any command does."""
+
+
+def pins_of(value, max_depth: int = PIN_TREE_DEPTH, max_nodes: int = PIN_TREE_NODES) -> set[tuple[str, str]]:
+    """Every {path, sha256} pin inside a command document. Iterative with explicit bounds, so a
+    hostile document is refused (PinTreeTooLarge) instead of exhausting the stack."""
+    found, stack, nodes = set(), [(value, 0)], 0
+    while stack:
+        item, depth = stack.pop()
+        nodes += 1
+        if depth > max_depth or nodes > max_nodes:
+            raise PinTreeTooLarge(f"document nests deeper than {max_depth} or holds more than {max_nodes} values")
+        if isinstance(item, dict):
+            if set(item) >= {"path", "sha256"} and isinstance(item.get("path"), str) \
+                    and isinstance(item.get("sha256"), str):
+                found.add((item["path"], item["sha256"]))
+            stack.extend((child, depth + 1) for child in item.values())
+        elif isinstance(item, list):
+            stack.extend((child, depth + 1) for child in item)
     return found
 
 
@@ -198,43 +214,105 @@ def input_closure(command: dict) -> set[tuple[str, str]]:
     return found
 
 
-# The ownership witness: run by the push script right after it created the destination.
-WITNESS_LINK = ("    w=Path(scratch)/'.pooled-owned'/hashlib.sha256(sys.argv[1].encode()).hexdigest()\n"
-                "    w.parent.mkdir(parents=True,exist_ok=True)\n"
-                "    w.unlink(missing_ok=True)  # a stale witness: its file was removed by someone else\n"
-                "    try:\n"
-                "      os.link(dest,w); print('created')\n"
-                "    except OSError:\n"
-                "      print('created-unowned')\n")
+# Ownership witness and storage marker. Each function below runs in two places: on the collector
+# as the source of the shell transport's remote scripts (inspect.getsource, so the remote python3 needs
+# only the standard library) and in-process in the collector agent. One definition, no copies.
 
-REMOVE_OWNED = """import hashlib,os,stat,sys,uuid
-dest,scratch,expected=sys.argv[1:4]
-own=os.path.join(scratch,'.pooled-owned')
-w=os.path.join(own,hashlib.sha256(dest.encode()).hexdigest())
-def ident(p):
-  try: s=os.lstat(p)
-  except FileNotFoundError: return None
-  return (s.st_dev,s.st_ino) if stat.S_ISREG(s.st_mode) else 'other'
-def digest(p):
-  h=hashlib.sha256()
-  with open(p,'rb') as f:
-    for b in iter(lambda: f.read(1<<20),b''): h.update(b)
-  return h.hexdigest()
-mine=ident(w)
-if mine is None or mine=='other':
-  print('not-owned'); sys.exit(0)
-if ident(dest)!=mine:
-  os.unlink(w); print('not-owned'); sys.exit(0)
-aside=os.path.join(own,'aside-'+uuid.uuid4().hex)
-os.rename(dest,aside)
-if ident(aside)==mine and digest(aside)==expected:
-  os.unlink(aside); os.unlink(w); print('removed'); sys.exit(0)
-try:
-  os.link(aside,dest); os.unlink(aside)
-except FileExistsError:
-  os.rename(aside,os.path.join(own,'kept-'+uuid.uuid4().hex))
-print('not-owned')
-"""
+def owned_witness(dest, scratch):
+    """The ownership witness of the pin at `dest`: a second hard link to the very file a push
+    created, at `<scratch>/.pooled-owned/<sha256 of the path string>`."""
+    return os.path.join(scratch, ".pooled-owned", hashlib.sha256(dest.encode()).hexdigest())
+
+
+def link_witness(dest, scratch):
+    """Run right after a push created `dest`: "created" once the witness links to it, else
+    "created-unowned" (another filesystem than the scratch root, or links refused): never pruned."""
+    witness = owned_witness(dest, scratch)
+    os.makedirs(os.path.dirname(witness), exist_ok=True)
+    try:
+        os.unlink(witness)  # a stale witness: its file was removed by someone else
+    except FileNotFoundError:
+        pass
+    try:
+        os.link(dest, witness)
+    except OSError:
+        return "created-unowned"
+    return "created"
+
+
+def remove_owned_file(dest, scratch, expected):
+    """Deletes `dest` only if it is still the witnessed file (device and inode) with the expected
+    bytes: it is first renamed aside into the witness directory (atomic), checked there, and only then
+    deleted; anything else is put back. Returns "removed" or "not-owned"."""
+    own = os.path.join(scratch, ".pooled-owned")
+    witness = owned_witness(dest, scratch)
+
+    def ident(path):
+        try:
+            info = os.lstat(path)
+        except FileNotFoundError:
+            return None
+        return (info.st_dev, info.st_ino) if stat.S_ISREG(info.st_mode) else "other"
+
+    def digest(path):
+        h = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                h.update(block)
+        return h.hexdigest()
+
+    mine = ident(witness)
+    if mine is None or mine == "other":
+        return "not-owned"
+    if ident(dest) != mine:
+        os.unlink(witness)
+        return "not-owned"
+    aside = os.path.join(own, "aside-" + uuid.uuid4().hex)
+    os.rename(dest, aside)
+    if ident(aside) == mine and digest(aside) == expected:
+        os.unlink(aside)
+        os.unlink(witness)
+        return "removed"
+    try:
+        os.link(aside, dest)
+        os.unlink(aside)
+    except FileExistsError:
+        os.rename(aside, os.path.join(own, "kept-" + uuid.uuid4().hex))
+    return "not-owned"
+
+
+def storage_marker(scratch):
+    """The collector storage's generation marker, `<scratch>/.pooled-storage-id`: a random value
+    written completely into a private file, then linked into place without replacement, so a reader
+    never sees a partial marker; the loser of a first-initialization race reads the winner's."""
+    path = os.path.join(scratch, ".pooled-storage-id")
+    flags = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    if not os.path.lexists(path):
+        os.makedirs(scratch, exist_ok=True)
+        stage = "%s.%s.stage" % (path, uuid.uuid4().hex)
+        fd = os.open(stage, os.O_WRONLY | os.O_CREAT | os.O_EXCL | flags, 0o644)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(uuid.uuid4().hex.encode())
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                os.link(stage, path)
+            except FileExistsError:
+                pass
+        finally:
+            os.unlink(stage)
+    fd = os.open(path, os.O_RDONLY | flags)
+    with os.fdopen(fd, "rb") as handle:
+        return handle.read(64).decode(errors="replace").strip()
+
+
+OWNERSHIP_SOURCE = "".join(inspect.getsource(f) for f in (owned_witness, link_witness, remove_owned_file,
+                                                           storage_marker))
+# The push script's step right after it created the destination.
+WITNESS_LINK = "    print(link_witness(sys.argv[1], str(scratch)))\n"
+REMOVE_OWNED = "import hashlib,os,stat,sys,uuid\n" + OWNERSHIP_SOURCE + "print(remove_owned_file(*sys.argv[1:4]))\n"
+STORAGE_MARKER = "import hashlib,os,stat,sys,uuid\n" + OWNERSHIP_SOURCE + "print(storage_marker(sys.argv[1]))\n"
 
 
 class state_lock:
@@ -393,8 +471,9 @@ class Transport:
                     return False
             finally:
                 stage.unlink(missing_ok=True)
-        script = ("import hashlib,os,shutil,sys\n"
+        script = ("import hashlib,os,shutil,stat,sys,uuid\n"
                   "from pathlib import Path\n"
+                  + OWNERSHIP_SOURCE +
                   "dest,stage,expected,scratch=Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3],sys.argv[4]\n"
                   "def digest(path):\n"
                   "  h=hashlib.sha256()\n"
@@ -490,13 +569,7 @@ class Transport:
         """The collector storage's generation marker, `<scratch>/.pooled-storage-id`, created once
         with a random value. Replaced storage (a recreated container, a reimaged disk) gets a new one,
         so it inherits no ownership records."""
-        script = ("import os,sys,uuid\n"
-                  "d=sys.argv[1]; p=os.path.join(d,'.pooled-storage-id')\n"
-                  "os.makedirs(d,exist_ok=True)\n"
-                  "try:\n"
-                  "  fd=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o644); os.write(fd,uuid.uuid4().hex.encode()); os.close(fd)\n"
-                  "except FileExistsError: pass\n"
-                  "print(open(p).read().strip())\n")
+        script = STORAGE_MARKER  # published atomically: see storage_marker
         if self.host.kind == "local":
             result = subprocess.run([sys.executable, "-c", script, self.host.scratch], capture_output=True,
                                     text=True, timeout=60)
@@ -508,13 +581,6 @@ class Transport:
         if result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{32}", marker):
             raise RuntimeError(f"{self.host.name}: storage marker unreadable")
         return marker
-
-    def remove_pin(self, path: str, digest: str) -> bool:
-        """Deletes the file only while it still holds `digest`'s bytes."""
-        if self.pin_status({(path, digest)})[(path, digest)] != "ok":
-            return False
-        self.remove_file(path)
-        return True
 
     def remove_dir(self, remote: str) -> None:
         if self.host.kind == "local":
@@ -613,7 +679,10 @@ class Dispatcher:
             played = time.time() - started
             local = staging / tag
             transport.fetch_dir(out, local)
-            transport.remove_dir(out)
+            try:
+                transport.remove_dir(out)
+            except Exception as error:  # noqa: BLE001  the shard is fetched: cleanup never reruns it
+                self.note(event="scratch-cleanup-failed", host=host.name, tag=tag, error=str(error)[-400:])
         finally:
             try:
                 transport.remove_file(command_path)
@@ -782,11 +851,37 @@ class Dispatcher:
 
 # ---------------------------------------------------------------- collector agent (forced command)
 #
-# Threat model: the learner's dedicated key may be stolen. Its holder can send any request; the
-# agent must keep it to the seven operations inside the configured roots. Processes already running
-# as the collector account are trusted (they could edit the agent itself); still, the agent opens
-# files without following links, refuses multiply linked outputs, re-validates a shard command
-# just before running it, and requires its roots to be private to the account.
+# Threat model: the learner's dedicated key may be stolen. Its holder can send any request; the agent
+# must keep it to the seven operations and their files. Processes already running as the collector
+# account are trusted (they could edit the agent itself).
+#
+# Kernel enforcement. With "sandbox": "landlock" (the default) Linux Landlock (unprivileged, with
+# no_new_privs) confines the agent right after it loads and checks its config, and the collector child
+# further, just before it executes:
+#   agent      reads beneath the pin roots, the scratch root and the system paths an interpreter and a
+#              dynamically linked program need (SYSTEM_DIRS, the interpreter's prefixes, SYSTEM_FILES);
+#              executes only beneath those system directories and the collector and prefix programs;
+#              writes, creates, removes, links and renames only beneath the pin roots and the scratch
+#              root (and writes /dev/null); never creates a symlink, device, fifo or socket node;
+#   collector  the same reads and programs, but the pin roots read-only and nothing else of the scratch
+#              root than its private command copy (read) and its run directory `<scratch>/<tag>`
+#              (read and write, where it creates its output directory `out`);
+#   both       no TCP bind or connect (Landlock ABI 4+); no abstract unix socket or signal beyond their
+#              own domain (ABI 6+); truncation confined from ABI 3; cross-directory links and renames
+#              from ABI 2 (on ABI 1 they are always denied, so no witness links and nothing is owned).
+# So no request, symlink, race or input format makes the agent or the collector open a file outside
+# that set, whatever the userspace checks conclude. Not enforced by the kernel: metadata (stat, lstat,
+# readlink, whether a path exists) anywhere; reads of the world-readable system files above; which
+# files inside the pin roots a request reaches (concurrent allowed requests can substitute one pin for
+# another there, which the key holder could push anyway); resource use (disk, memory, processes and
+# CPU need quotas and cgroups); a collector outliving a SIGKILLed agent beyond its parent-death signal.
+# "sandbox": "none" opts out explicitly, for a platform without Landlock: then only the userspace
+# checks hold, which assume the roots' namespace is private to the account. With "landlock"
+# configured and unavailable, every request is refused.
+#
+# The userspace checks stay because they refuse precisely and early: no-follow opens, singly linked
+# outputs, exact output and tag paths, inputs within the pin roots with their pinned bytes, and
+# revalidation of a stored command just before it runs.
 
 AGENT_SCHEMA = "mtg-kernel-pooled-collect-agent/v1"
 AGENT_REQUEST_SCHEMA = "pooled-collect-agent-request/v1"
@@ -794,18 +889,161 @@ AGENT_REQUEST_BYTES = 64 * 1024  # the encoded request in SSH_ORIGINAL_COMMAND
 AGENT_SHARD_BYTES = 16 * 1024 * 1024  # a shard command, as the trainer's config bound
 AGENT_PIN_BYTES = 4 * 1024 * 1024 * 1024  # one pushed input
 AGENT_FETCH_BYTES = 16 * 1024 * 1024 * 1024  # one fetched shard archive, on the learner
+AGENT_REPLY_BYTES = 1 << 20  # one JSON reply, on the learner
+AGENT_STDERR_TAIL = 4096  # stderr kept in memory, by the agent (collector) and the learner (ssh)
 AGENT_TAG = re.compile(r"^pooled-[0-9]{6}-[0-9a-f]{32}(-s[0-9]{3}|-audit[0-9]{4})$")
 AGENT_FILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
+WINDOWS_DEVICES = {"CON", "PRN", "AUX", "NUL"} | {f"{d}{i}" for d in ("COM", "LPT") for i in range(10)}
 AGENT_OPS = ("pin_status", "push", "put_shard", "run_shard", "fetch_shard", "remove_shard", "remove_pin")
 AGENT_ARGS = {"pin_status": {"pins"}, "push": {"path", "sha256"}, "put_shard": {"tag"},
               "run_shard": {"tag", "collector_sha256", "seconds"}, "fetch_shard": {"tag"},
               "remove_shard": {"tag"}, "remove_pin": {"path", "sha256"}}
+AGENT_SANDBOXES = ("landlock", "none")
 NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
 BINARY = getattr(os, "O_BINARY", 0)
 
 
 class AgentRefusal(Exception):
     """A request the agent does not serve. Exit 2."""
+
+
+# ---- Landlock (Linux): the same syscall numbers on every architecture.
+LL_CREATE_RULESET, LL_ADD_RULE, LL_RESTRICT_SELF = 444, 445, 446
+(LL_EXECUTE, LL_WRITE_FILE, LL_READ_FILE, LL_READ_DIR, LL_REMOVE_DIR, LL_REMOVE_FILE, LL_MAKE_CHAR,
+ LL_MAKE_DIR, LL_MAKE_REG, LL_MAKE_SOCK, LL_MAKE_FIFO, LL_MAKE_BLOCK, LL_MAKE_SYM, LL_REFER, LL_TRUNCATE,
+ LL_IOCTL_DEV) = (1 << i for i in range(16))
+LL_FILE_RIGHTS = LL_EXECUTE | LL_WRITE_FILE | LL_READ_FILE | LL_TRUNCATE | LL_IOCTL_DEV  # a file rule's
+LL_READ = LL_READ_FILE | LL_READ_DIR
+LL_RUN = LL_READ | LL_EXECUTE
+LL_WRITE = LL_WRITE_FILE | LL_REMOVE_DIR | LL_REMOVE_FILE | LL_MAKE_DIR | LL_MAKE_REG | LL_REFER | LL_TRUNCATE
+SYSTEM_DIRS = ("/usr", "/lib", "/lib32", "/lib64", "/libx32", "/bin", "/sbin")
+SYSTEM_FILES = ("/etc/ld.so.cache", "/etc/ld.so.preload", "/etc/localtime", "/dev/urandom")
+_LIBC = None
+
+
+def _libc():
+    global _LIBC
+    if _LIBC is None:
+        import ctypes
+        _LIBC = ctypes.CDLL(None, use_errno=True)
+        _LIBC.syscall.restype = ctypes.c_long
+    return _LIBC
+
+
+def _syscall(number: int, *args: int) -> int:
+    import ctypes
+    result = _libc().syscall(ctypes.c_long(number), *(ctypes.c_long(a) for a in args))
+    if result < 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return result
+
+
+def landlock_abi() -> int:
+    """The kernel's Landlock ABI version; 0 where there is none (not Linux, or not enabled)."""
+    if not sys.platform.startswith("linux"):
+        return 0
+    try:
+        return _syscall(LL_CREATE_RULESET, 0, 0, 1)  # LANDLOCK_CREATE_RULESET_VERSION
+    except (OSError, AttributeError):
+        return 0
+
+
+def _landlock_handled(abi: int) -> tuple[int, int, int]:
+    """Every access this ABI can restrict (filesystem, TCP, scopes): what no rule grants is denied."""
+    fs = (1 << 13) - 1 | (LL_REFER if abi >= 2 else 0) | (LL_TRUNCATE if abi >= 3 else 0) \
+        | (LL_IOCTL_DEV if abi >= 5 else 0)
+    return fs, 3 if abi >= 4 else 0, 3 if abi >= 6 else 0
+
+
+def _landlock_add(ruleset: int, path: str, access: int, handled: int, required: bool) -> None:
+    import ctypes
+    try:
+        target = os.open(path, os.O_PATH | os.O_CLOEXEC)
+    except FileNotFoundError:
+        if required:
+            raise
+        return
+    try:
+        directory = stat.S_ISDIR(os.fstat(target).st_mode)
+        allowed = access & handled & (-1 if directory else LL_FILE_RIGHTS)
+        if allowed:
+            rule = ctypes.create_string_buffer(struct.pack("=Qi", allowed, target), 12)
+            _syscall(LL_ADD_RULE, ruleset, 1, ctypes.addressof(rule), 0)  # LANDLOCK_RULE_PATH_BENEATH
+    finally:
+        os.close(target)
+
+
+def landlock_ruleset(rules, abi: int) -> int:
+    """A ruleset descriptor granting `rules` ((path, access, required) triples) and nothing else."""
+    import ctypes
+    fs, net, scope = _landlock_handled(abi)
+    attr = (ctypes.c_uint64 * 3)(fs, net, scope)
+    ruleset = _syscall(LL_CREATE_RULESET, ctypes.addressof(attr), 8 if abi < 4 else 16 if abi < 6 else 24, 0)
+    try:
+        for path, access, required in rules:
+            _landlock_add(ruleset, path, access, fs, required)
+    except BaseException:
+        os.close(ruleset)
+        raise
+    return ruleset
+
+
+def landlock_restrict(ruleset: int) -> None:
+    """Confines the calling process (and everything it later starts) to `ruleset`, irreversibly."""
+    import ctypes
+    if _libc().prctl(ctypes.c_int(38), ctypes.c_ulong(1), ctypes.c_ulong(0), ctypes.c_ulong(0),
+                     ctypes.c_ulong(0)) != 0:  # PR_SET_NO_NEW_PRIVS
+        raise OSError(ctypes.get_errno(), "no_new_privs")
+    _syscall(LL_RESTRICT_SELF, ruleset, 0)
+
+
+def _system_rules(config: dict) -> list:
+    """Reads (and runs) that an interpreter and a dynamically linked program need: system libraries
+    and programs, the interpreter's own prefixes (never "/" itself), the loader's cache, the collector
+    and the absolute programs of its prefix."""
+    prefixes = {p for p in (sys.prefix, sys.base_prefix, sys.exec_prefix, sys.base_exec_prefix)
+                if p and os.path.dirname(p) != p}
+    rules = [(d, LL_RUN, False) for d in (*SYSTEM_DIRS, *sorted(prefixes))]
+    rules += [(f, LL_READ_FILE, False) for f in SYSTEM_FILES]
+    rules.append(("/dev/null", LL_READ_FILE | LL_WRITE_FILE | LL_TRUNCATE, False))
+    programs = [p for p in config["prefix"] if os.path.isabs(p) and os.path.isfile(p)]
+    if config["prefix"] and not os.path.isabs(config["prefix"][0]) and shutil.which(config["prefix"][0]):
+        programs.append(shutil.which(config["prefix"][0]))
+    rules += [(p, LL_RUN, False) for p in programs] + [(config["collector"], LL_RUN, True)]
+    return rules
+
+
+def agent_rules(config: dict) -> list:
+    return _system_rules(config) + [(root, LL_READ | LL_WRITE, True)
+                                    for root in [*config["pin_roots"], config["scratch"]]]
+
+
+def collector_rules(config: dict, command_file: str, run_dir: str) -> list:
+    return (_system_rules(config) + [(root, LL_READ, True) for root in config["pin_roots"]]
+            + [(command_file, LL_READ_FILE, True), (run_dir, LL_READ | LL_WRITE, True)])
+
+
+def agent_sandbox(config: dict) -> str:
+    """Applies the configured sandbox to this process; returns the effective one ("none" or
+    "landlock-abiN"). Refuses when Landlock is configured and the kernel has none."""
+    if config["sandbox"] == "none":
+        config["landlock_abi"] = 0
+        return "none"
+    abi = landlock_abi()
+    if abi < 1:
+        raise AgentRefusal("sandbox \"landlock\" is configured but this kernel has no Landlock: every "
+                           "request is refused (\"sandbox\": \"none\" opts out explicitly)")
+    hashlib.sha256(b"").hexdigest()  # OpenSSL reads its configuration now, before /etc closes
+    if os.name == "posix":
+        import fcntl  # noqa: F401  the per-path locks need it later
+    ruleset = landlock_ruleset(agent_rules(config), abi)
+    try:
+        landlock_restrict(ruleset)
+    finally:
+        os.close(ruleset)
+    config["landlock_abi"] = abi
+    return f"landlock-abi{abi}"
 
 
 def encode_request(op: str, **args) -> str:
@@ -858,6 +1096,13 @@ def _overlap(a: str, b: str) -> bool:
     return a == b or a.startswith(b + os.sep) or b.startswith(a + os.sep)
 
 
+def _portable_name(name) -> bool:
+    """A plain file name every learner platform stores as a regular file: no separators or drive
+    colons, no trailing dot or space, no Windows device stem (CON, NUL.json, com1, ...)."""
+    return isinstance(name, str) and AGENT_FILE_NAME.fullmatch(name) is not None \
+        and not name.endswith((".", " ")) and name.split(".")[0].upper() not in WINDOWS_DEVICES
+
+
 def load_agent_config(path: Path) -> dict:
     config = json.loads(Path(path).read_text())
     if config.get("schema") != AGENT_SCHEMA:
@@ -865,6 +1110,9 @@ def load_agent_config(path: Path) -> dict:
     for key in ("collector", "collector_sha256", "scratch", "pin_roots", "prefix"):
         if key not in config:
             raise ValueError(f"agent config lacks {key}")
+    config["sandbox"] = config.get("sandbox", "landlock")
+    if config["sandbox"] not in AGENT_SANDBOXES:
+        raise ValueError(f"agent config sandbox must be one of {AGENT_SANDBOXES}")
     roots = list(config["pin_roots"]) + [config["scratch"]]
     if not config["pin_roots"] or not all(_canonical(root) == root for root in roots):
         raise ValueError("agent roots must be canonical absolute paths without symlinks")
@@ -903,7 +1151,7 @@ def _tag_arg(args: dict) -> str:
 
 def _hash_nofollow(path: str) -> str | None:
     """The sha256 of a regular file opened without following a final symlink; None if absent;
-    'differs' sentinel '' for anything else (a symlink, a directory)."""
+    '' for anything else (a symlink, a directory, a file the sandbox denies)."""
     try:
         fd = os.open(path, os.O_RDONLY | NOFOLLOW | BINARY)
     except FileNotFoundError:
@@ -920,16 +1168,9 @@ def _hash_nofollow(path: str) -> str | None:
 
 
 def _storage_marker(scratch: str) -> str:
-    """This storage's generation marker (created once, random): replaced storage gets a new one, so a
+    """This storage's generation marker (see storage_marker): replaced storage gets a new one, so a
     learner's ownership records never carry over to it."""
-    path = os.path.join(scratch, ".pooled-storage-id")
-    try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW | BINARY, 0o644)
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(uuid.uuid4().hex.encode())
-    except FileExistsError:
-        pass
-    data = _read_nofollow(path, 64).decode().strip()
+    data = storage_marker(scratch)
     if not re.fullmatch(r"[0-9a-f]{32}", data):
         raise AgentRefusal("storage marker unreadable")
     return data
@@ -955,38 +1196,59 @@ def _lock(config: dict, key: str):
     return state_lock(Path(locks) / hashlib.sha256(key.encode()).hexdigest())
 
 
+def _agent_pins_of(document, what: str) -> set:
+    try:
+        return pins_of(document)
+    except PinTreeTooLarge as error:
+        raise AgentRefusal(f"{what}: {error}") from None
+
+
 def _confined_inputs(command: dict, config: dict) -> None:
     """Every file the collector will read for this shard lies inside the pin roots: the command's own
-    pins, and the play-import files named by any pinned JSON it reaches (the loader reads them), followed
-    transitively. Pins nested inside pinned records that lie outside the roots are provenance (the
-    interpreter that produced a file, another host's or a relative source path): the collector never
-    opens them, so they are neither followed nor refused, as the dispatcher's input closure skips them."""
-    required = set(pins_of(command))
+    pins, present with their pinned bytes, and the play-import files named by any pinned JSON it reaches
+    (the loader reads them), followed transitively. Pins nested inside pinned records are followed only
+    when they lie inside the roots and hold their pinned bytes, as the dispatcher's input closure does;
+    the others are provenance (the interpreter that produced a file, another host's or a relative source
+    path) that the collector never opens, so they are neither followed nor refused. Landlock, not this
+    walk, is what confines inputs it cannot inspect (large or binary files, bytes swapped later)."""
+    required = _agent_pins_of(command, "shard command")
     for pin in required:
         _pin_arg({"path": pin[0], "sha256": pin[1]}, config)
-    queue, seen = list(required), set()
+    for path, digest in sorted(required):
+        found = _hash_nofollow(path)
+        if found is None:
+            raise AgentRefusal(f"pinned input absent: {path[:200]!r}")
+        if found != digest:
+            raise AgentRefusal(f"pinned input differs from its sha256: {path[:200]!r}")
+    queue, seen = sorted(required), set()
     while queue:
-        pin = queue.pop()
-        if pin[0] in seen:
+        path, digest = queue.pop()
+        if path in seen:
             continue
-        seen.add(pin[0])
-        if _canonical(pin[0]) is None or not _strictly_under(pin[0], config["pin_roots"]):
+        seen.add(path)
+        if _canonical(path) is None or not _strictly_under(path, config["pin_roots"]):
             continue  # provenance only (required pins and import files were checked already)
         try:
-            fd = os.open(pin[0], os.O_RDONLY | NOFOLLOW | BINARY)
+            fd = os.open(path, os.O_RDONLY | NOFOLLOW | BINARY)
+        except FileNotFoundError:
+            continue  # a nested pin the learner does not hold either
         except OSError:
-            continue  # absent: the collector fails on it, inside the roots
+            raise AgentRefusal(f"pinned input is not a regular file: {path[:200]!r}") from None
         with os.fdopen(fd, "rb") as handle:
             if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-                raise AgentRefusal(f"pinned input is not a regular file: {pin[0][:200]!r}")
+                raise AgentRefusal(f"pinned input is not a regular file: {path[:200]!r}")
             data = handle.read(NESTED_PIN_BYTES + 1)
         if len(data) > NESTED_PIN_BYTES:
             continue
+        if digest and hashlib.sha256(data).hexdigest() != digest:
+            if (path, digest) in required:
+                raise AgentRefusal(f"pinned input changed while checked: {path[:200]!r}")
+            continue  # other bytes than pinned: the learner does not follow it either
         try:
             document = json.loads(data)
         except (ValueError, UnicodeDecodeError, RecursionError):
             continue
-        queue.extend(pins_of(document))
+        queue.extend(_agent_pins_of(document, f"pinned input {path[:200]!r}"))
         if isinstance(document, dict) and {"export_directory", *IMPORT_PATHS} <= set(document):
             root = str(document["export_directory"]).rstrip("/")
             names = [f"{root}/{n}" for n in IMPORT_FILES["export_directory"]] + [str(document[k]) for k in IMPORT_PATHS]
@@ -1025,7 +1287,7 @@ def _read_nofollow(path: str, cap: int) -> bytes:
     return data
 
 
-def _write_new(path: str, data_or_stream, cap: int, digest_expected: str | None = None) -> str:
+def _write_new(path: str, data_or_stream, cap: int) -> str:
     """Creates `path` (exclusive, no symlink follow) from bytes or a stream; returns its sha256."""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW | BINARY, 0o644)
     digest, size = hashlib.sha256(), 0
@@ -1041,6 +1303,105 @@ def _write_new(path: str, data_or_stream, cap: int, digest_expected: str | None 
                 digest.update(block)
                 handle.write(block)
     return digest.hexdigest()
+
+
+def _drain_tail(stream, tail: bytearray, cap: int = AGENT_STDERR_TAIL) -> None:
+    """Reads `stream` to its end, keeping only its last `cap` bytes."""
+    for block in iter(lambda: stream.read1(1 << 16), b""):
+        tail.extend(block)
+        del tail[:-cap]
+
+
+class _alarm_deferred:
+    """Holds the request alarm off while a launched collector is being killed and reaped, so the
+    cleanup itself is never interrupted; a pending alarm fires right after."""
+
+    def __enter__(self):
+        self.blocked = os.name == "posix" and hasattr(signal, "pthread_sigmask")
+        if self.blocked:
+            signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
+        return self
+
+    def __exit__(self, *exc):
+        if self.blocked:
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGALRM})
+
+
+def _wait_exit(process: subprocess.Popen, seconds: float) -> bool:
+    """Waits up to `seconds` for the collector to exit without reaping it (Linux), so its process
+    group id stays reserved until the group is killed."""
+    if os.name != "posix" or not hasattr(os, "waitid"):
+        try:
+            process.wait(timeout=seconds)
+            return True
+        except subprocess.TimeoutExpired:
+            return False
+    deadline = time.monotonic() + seconds
+    while os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is None:
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def _kill_group(process: subprocess.Popen) -> None:
+    if os.name == "posix":
+        try:
+            os.killpg(process.pid, signal.SIGKILL)  # the leader is unreaped: the group id is still its
+        except (ProcessLookupError, PermissionError):
+            pass
+    elif process.poll() is None:
+        process.kill()
+
+
+def _collector_preexec(config: dict, command_file: str, run_dir: str):
+    """The collector child's last steps before exec (Linux): die with the agent, and (with Landlock)
+    confine itself to collector_rules. The ruleset is built here in the parent; the child only
+    applies it. Returns (preexec_fn or None, ruleset fd or None)."""
+    if not sys.platform.startswith("linux"):
+        return None, None
+    import ctypes
+    libc, parent = _libc(), os.getpid()
+    abi = config.get("landlock_abi", 0)
+    ruleset = landlock_ruleset(collector_rules(config, command_file, run_dir), abi) if abi else None
+
+    def preexec():
+        libc.prctl(ctypes.c_int(1), ctypes.c_ulong(signal.SIGKILL), ctypes.c_ulong(0), ctypes.c_ulong(0),
+                   ctypes.c_ulong(0))  # PR_SET_PDEATHSIG
+        if os.getppid() != parent:
+            os._exit(125)  # the agent already died
+        if ruleset is not None:
+            landlock_restrict(ruleset)
+    return preexec, ruleset
+
+
+def _run_collector(config: dict, command_file: str, run_dir: str, seconds: int):
+    """Runs the collector on `command_file`; returns (exit code or "timeout", stderr tail). On every
+    exit path after launch (success, its own deadline, the outer request alarm raised inside the wait,
+    any error) its whole process group is killed and the leader reaped before this returns or raises."""
+    argv = list(config["prefix"]) + [config["collector"], "--execute-collect-shard", command_file]
+    preexec, ruleset = _collector_preexec(config, command_file, run_dir)
+    try:
+        process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.PIPE, start_new_session=(os.name == "posix"),
+                                   preexec_fn=preexec)
+    finally:
+        if ruleset is not None:
+            os.close(ruleset)
+    tail = bytearray()
+    drain = threading.Thread(target=_drain_tail, args=(process.stderr, tail), daemon=True)
+    drain.start()
+    exited = False
+    try:
+        exited = _wait_exit(process, seconds)
+    finally:
+        with _alarm_deferred():
+            _kill_group(process)
+            process.wait()
+            drain.join(5)  # a descendant that left the group could hold the pipe: never wait on it
+            if not drain.is_alive():
+                process.stderr.close()
+    return (process.returncode if exited else "timeout"), bytes(tail).decode(errors="replace")
 
 
 def agent_serve(config: dict, encoded, stdin, stdout) -> None:
@@ -1063,7 +1424,8 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
         for path, digest in checked:
             found = _hash_nofollow(path)
             states.append("absent" if found is None else "ok" if found == digest else "differs")
-        reply({"states": states, "storage": _storage_marker(scratch)})
+        reply({"states": states, "storage": _storage_marker(scratch),
+               "sandbox": config.get("sandbox_effective", "none")})
     elif op == "push":
         path, digest = _pin_arg(args, config)
         parent = os.path.dirname(path)
@@ -1077,11 +1439,14 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
             with _lock(config, path):
                 try:
                     os.link(stage, path)
-                    outcome = "created"
                 except FileExistsError:
                     if _hash_nofollow(path) != digest:
                         raise AgentRefusal("existing pin differs") from None
                     outcome = "existing"
+                else:
+                    # Ownership follows the installed file, as the shell transport's push: a second
+                    # hard link beside the scratch root; "created" only once that witness is linked.
+                    outcome = link_witness(path, scratch)
                 if _canonical(path) is None or _hash_nofollow(path) != digest:
                     raise AgentRefusal("pin path changed while installing")
             reply(outcome)
@@ -1106,47 +1471,44 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
         seconds = min(seconds, config["max_seconds"])
         _no_more_input(stdin)
         data = _read_nofollow(os.path.join(scratch, f"{tag}.json"), AGENT_SHARD_BYTES)
-        _valid_shard_command(data, tag, config)  # again, just before use
+        command = _valid_shard_command(data, tag, config)  # again, just before use
         if _hash_nofollow(config["collector"]) != config["collector_sha256"]:
             raise AgentRefusal("collector binary differs from its pin")
-        # Run a private copy of the validated bytes, so the file the collector reads is the one checked.
-        run_dir = os.path.join(scratch, ".run")
-        os.makedirs(run_dir, mode=0o700, exist_ok=True)
-        private = os.path.join(run_dir, f"{tag}.{uuid.uuid4().hex}.json")
-        _write_new(private, data, AGENT_SHARD_BYTES)
-        errors = tempfile.TemporaryFile()
+        # `<scratch>/<tag>` is the collector's run directory, the only place it may write. It exists
+        # before the collector is confined (a Landlock rule needs an existing directory) and the
+        # collector refuses an existing output directory, so it publishes into `<tag>/out`, which it
+        # creates. Its recorded paths are its own: the merge binds only names and hashes.
+        run_dir = os.path.join(scratch, tag)
         try:
-            process = subprocess.Popen(list(config["prefix"]) + [config["collector"], "--execute-collect-shard", private],
-                                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=errors,
-                                       start_new_session=(os.name == "posix"))
-            try:
-                code = process.wait(timeout=seconds)
-            except subprocess.TimeoutExpired:
-                if os.name == "posix":
-                    os.killpg(process.pid, 9)
-                else:
-                    process.kill()
-                process.wait()
-                code = "timeout"
-            errors.seek(max(0, errors.seek(0, 2) - 4096))
-            reply({"code": code, "stderr": errors.read().decode(errors="replace")})
+            os.mkdir(run_dir, 0o700)
+        except FileExistsError:
+            raise AgentRefusal("this tag's shard output already exists (remove_shard first)") from None
+        command["output_directory"] = os.path.join(run_dir, "out")
+        # Run a private copy of the validated command, so the file the collector reads is the one checked.
+        private_dir = os.path.join(scratch, ".run")
+        os.makedirs(private_dir, mode=0o700, exist_ok=True)
+        private = os.path.join(private_dir, f"{tag}.{uuid.uuid4().hex}.json")
+        _write_new(private, json.dumps(command).encode(), AGENT_SHARD_BYTES)
+        try:
+            code, tail = _run_collector(config, private, run_dir, seconds)
+            reply({"code": code, "stderr": tail})
         finally:
-            errors.close()
             os.unlink(private)
     elif op == "fetch_shard":
         tag = _tag_arg(args)
         _no_more_input(stdin)
-        directory = os.path.join(scratch, tag)
-        try:
-            info = os.lstat(directory)
-        except FileNotFoundError:
-            raise AgentRefusal("no shard output for this tag") from None
-        if not stat.S_ISDIR(info.st_mode):
-            raise AgentRefusal("shard output is not a directory")
+        directory = os.path.join(scratch, tag, "out")
+        for level in (os.path.dirname(directory), directory):
+            try:
+                info = os.lstat(level)
+            except FileNotFoundError:
+                raise AgentRefusal("no shard output for this tag") from None
+            if not stat.S_ISDIR(info.st_mode):
+                raise AgentRefusal("shard output is not a directory")
         with tarfile.open(fileobj=stdout, mode="w|") as archive:
             for name in sorted(os.listdir(directory)):
                 member = os.path.join(directory, name)
-                if not AGENT_FILE_NAME.fullmatch(name):
+                if not _portable_name(name):
                     raise AgentRefusal(f"unexpected name in shard output: {name[:80]!r}")
                 fd = os.open(member, os.O_RDONLY | NOFOLLOW | BINARY)
                 with os.fdopen(fd, "rb") as handle:
@@ -1170,25 +1532,23 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
             os.unlink(command_path)
         reply("removed")
     elif op == "remove_pin":
+        # Deletes only the very file an agent push installed (its ownership witness) with the
+        # expected bytes, moved aside first and put back otherwise: "removed" or "not-owned".
         path, digest = _pin_arg(args, config)
         _no_more_input(stdin)
         with _lock(config, path):
-            if _hash_nofollow(path) == digest:
-                os.unlink(path)
-                reply("removed")
-            else:
-                reply("kept")
+            reply(remove_owned_file(path, scratch, digest))
 
 
 def agent_main(config_path: str, environ, stdin, stdout, stderr) -> int:
-    """The forced command's entry point. Exit 0 served, 2 refused, 1 failed."""
+    """The forced command's entry point. Exit 0 served, 2 refused, 1 failed. The sandbox applies to
+    this whole process from the moment the config is loaded."""
     alarm = None
     try:
         config = load_agent_config(Path(config_path))
+        config["sandbox_effective"] = agent_sandbox(config)
         if os.name == "posix" and threading.current_thread() is threading.main_thread():
             # A whole-request deadline, beyond a run's own bound (signals need the main thread).
-            import signal
-
             def expire(*_):
                 raise AgentRefusal("request deadline")
             alarm = signal.signal(signal.SIGALRM, expire)
@@ -1204,24 +1564,92 @@ def agent_main(config_path: str, environ, stdin, stdout, stderr) -> int:
         return 1
     finally:
         if alarm is not None:
-            import signal
             signal.alarm(0)
             signal.signal(signal.SIGALRM, alarm)
 
 
 def _extract_shard_archive(archive_path: Path, local: Path) -> None:
-    """Writes a fetched shard archive's members into `local`: portable plain names only, regular
-    files only, no duplicates, each created exclusively. Nothing else is accepted."""
+    """Writes a fetched shard archive's members into `local`: portable plain names only (no Windows
+    device or trailing-dot alias), regular files only, no duplicates, each created exclusively and
+    checked to be a regular file once open. Nothing else is accepted."""
     seen = set()
     with tarfile.open(archive_path, mode="r:") as archive:
         for member in archive:
-            if not member.isreg() or not AGENT_FILE_NAME.fullmatch(member.name) or member.name in seen:
+            if not member.isreg() or not _portable_name(member.name) or member.name.upper() in seen:
                 raise RuntimeError(f"unexpected entry in a shard archive: {member.name[:80]!r}")
-            seen.add(member.name)
+            seen.add(member.name.upper())  # case-insensitive learner filesystems: one name, one file
             source = archive.extractfile(member)
-            fd = os.open(local / member.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | BINARY, 0o644)
+            fd = os.open(local / member.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW | BINARY, 0o644)
             with os.fdopen(fd, "wb") as handle:
+                if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                    raise RuntimeError(f"shard archive entry is not a regular file here: {member.name[:80]!r}")
                 shutil.copyfileobj(source, handle)
+
+
+def _bounded_process(argv: list, what: str, seconds: float, out_cap: int, stdin=None, payload=None,
+                     sink=None) -> tuple[int, bytes, bytes]:
+    """Runs `argv` (one ssh connection) under a monotonic deadline that does not depend on any read:
+    stdout and stderr are drained concurrently by threads (no select on pipes, so it works on a Windows
+    learner), stdout into `sink` or memory up to `out_cap`, stderr into its last AGENT_STDERR_TAIL
+    bytes; a payload is fed by its own thread. Past the deadline or the cap the process is killed and
+    reaped and RuntimeError raised. Returns (exit code, stdout, stderr tail)."""
+    source = stdin if stdin is not None else subprocess.PIPE if payload else subprocess.DEVNULL
+    process = subprocess.Popen(argv, stdin=source, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    out, tail, problems = bytearray(), bytearray(), []
+
+    def pump_out():
+        size = 0
+        try:
+            for block in iter(lambda: process.stdout.read1(1 << 16), b""):
+                size += len(block)
+                if size > out_cap:
+                    problems.append("exceeded its output bound")
+                    process.kill()
+                    return
+                if sink is not None:
+                    sink.write(block)
+                else:
+                    out.extend(block)
+        except Exception as error:  # noqa: BLE001  a full disk: stop the transfer
+            problems.append(f"output failed: {error}")
+            process.kill()
+
+    def feed():
+        try:
+            process.stdin.write(payload)
+        except OSError:
+            pass  # the far end stopped reading: its exit code tells
+        finally:
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+
+    threads = [threading.Thread(target=pump_out, daemon=True),
+               threading.Thread(target=_drain_tail, args=(process.stderr, tail), daemon=True)]
+    if payload:
+        threads.append(threading.Thread(target=feed, daemon=True))
+    for thread in threads:
+        thread.start()
+    deadline = time.monotonic() + seconds
+    try:
+        process.wait(timeout=seconds)
+    except subprocess.TimeoutExpired:
+        problems.append(f"timed out after {seconds:g} s")
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait()
+    for thread in threads[:2]:
+        thread.join(max(0.0, deadline - time.monotonic()) + 2.0)
+    if any(thread.is_alive() for thread in threads[:2]):
+        problems.append("left its streams open past the deadline")
+    else:
+        process.stdout.close()
+        process.stderr.close()
+    if problems:
+        raise RuntimeError(f"{what} {problems[0]}")
+    return process.returncode, bytes(out), bytes(tail)
 
 
 class AgentTransport:
@@ -1229,7 +1657,8 @@ class AgentTransport:
     encoded request (plus payload on stdin). With the forced command the collector's sshd puts the
     request in SSH_ORIGINAL_COMMAND and runs the agent. `agent_wrap` (proofs over an ordinary login,
     no forced command) is a format string such as
-    "SSH_ORIGINAL_COMMAND={req} /usr/bin/python3 -I /srv/.../pooled_collect.py agent /srv/.../agent.json"."""
+    "SSH_ORIGINAL_COMMAND={req} /usr/bin/python3 -I /srv/.../pooled_collect.py agent /srv/.../agent.json".
+    Every call has a deadline independent of reads and bounded output (_bounded_process)."""
 
     def __init__(self, host: Host):
         self.host = host
@@ -1239,13 +1668,13 @@ class AgentTransport:
         return self.host.ssh + [self.host.agent_wrap.format(req=request) if self.host.agent_wrap else request]
 
     def _json(self, op: str, payload=b"", timeout: float = 600, **args):
-        stdin = payload if isinstance(payload, (bytes, bytearray)) else None
-        source = None if stdin is not None else payload
-        result = subprocess.run(self._argv(op, **args), input=stdin, stdin=source, capture_output=True,
-                                timeout=timeout)
-        if result.returncode != 0:
-            raise RuntimeError(f"{self.host.name}: agent {op}: {result.stderr.decode(errors='replace').strip()[-400:]}")
-        return json.loads(result.stdout.decode())
+        stream = None if isinstance(payload, (bytes, bytearray)) else payload
+        code, out, err = _bounded_process(self._argv(op, **args), f"{self.host.name}: agent {op}", timeout,
+                                          AGENT_REPLY_BYTES, stdin=stream,
+                                          payload=payload if stream is None else None)
+        if code != 0:
+            raise RuntimeError(f"{self.host.name}: agent {op}: {err.decode(errors='replace').strip()[-400:]}")
+        return json.loads(out.decode())
 
     @staticmethod
     def _tag(path: str) -> str:
@@ -1260,6 +1689,7 @@ class AgentTransport:
         return self._json("pin_status", pins=[])["storage"]
 
     def push(self, local: Path, remote: str, digest: str) -> bool:
+        """True only when this call installed the pin and linked its ownership witness."""
         with open(local, "rb") as handle:
             return self._json("push", handle, timeout=1800, path=remote, sha256=digest) == "created"
 
@@ -1279,26 +1709,13 @@ class AgentTransport:
         local.mkdir(parents=True)
         with tempfile.TemporaryDirectory() as temporary:
             archive_path = Path(temporary) / "shard.tar"
-            with open(archive_path, "wb") as sink:
-                process = subprocess.Popen(self._argv("fetch_shard", tag=self._tag(remote)),
-                                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                deadline, size = time.time() + FETCH_SECONDS, 0
-                try:
-                    for block in iter(lambda: process.stdout.read(1 << 20), b""):
-                        size += len(block)
-                        if size > AGENT_FETCH_BYTES or time.time() > deadline:
-                            raise RuntimeError(f"{self.host.name}: fetch of {remote} exceeded its bound")
-                        sink.write(block)
-                    code = process.wait(timeout=max(1.0, deadline - time.time()))
-                except BaseException:
-                    process.kill()
-                    process.wait()
-                    shutil.rmtree(local, ignore_errors=True)
-                    raise
-            if code != 0:
-                shutil.rmtree(local, ignore_errors=True)
-                raise RuntimeError(f"{self.host.name}: agent fetch_shard: {process.stderr.read().decode(errors='replace')[-400:]}")
             try:
+                with open(archive_path, "wb") as sink:
+                    code, _, err = _bounded_process(self._argv("fetch_shard", tag=self._tag(remote)),
+                                                    f"{self.host.name}: fetch of {remote}", FETCH_SECONDS,
+                                                    AGENT_FETCH_BYTES, sink=sink)
+                if code != 0:
+                    raise RuntimeError(f"{self.host.name}: agent fetch_shard: {err.decode(errors='replace')[-400:]}")
                 _extract_shard_archive(archive_path, local)
             except BaseException:
                 shutil.rmtree(local, ignore_errors=True)
@@ -1313,8 +1730,13 @@ class AgentTransport:
         else:
             raise RuntimeError(f"{self.host.name}: agent mode removes inputs only by pin")
 
-    def remove_pin(self, path: str, digest: str) -> bool:
-        return self._json("remove_pin", path=path, sha256=digest) == "removed"
+    def remove_owned(self, remote: str, digest: str) -> str:
+        """The agent's remove_pin: deletes `remote` only if it is still the file an agent push
+        installed (its ownership witness) with the expected bytes. "removed" or "not-owned"."""
+        outcome = self._json("remove_pin", path=remote, sha256=digest)
+        if outcome not in ("removed", "not-owned"):
+            raise RuntimeError(f"{self.host.name}: owned removal of {remote}: unexpected reply")
+        return outcome
 
 
 def merge_with_binary(binary: str):

@@ -85,12 +85,6 @@ class FakeTransport:
         (out / "collection.json").write_text(json.dumps({"trajectories": pins, "shard": command["shard"]}))
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    def remove_pin(self, path, digest):
-        if self.files.get(path) != digest:
-            return False
-        self.remove_file(path)
-        return True
-
     def remove_file(self, remote):
         self.files.pop(remote, None)
         self.removed = getattr(self, "removed", []) + [remote]
@@ -323,6 +317,67 @@ class PooledCollectTests(unittest.TestCase):
         self.assertEqual(pc.Transport(host).storage_id(), first)
         (self.root / "scratch-marker" / ".pooled-storage-id").unlink()
         self.assertNotEqual(pc.Transport(host).storage_id(), first, "new storage, new marker")
+
+    def test_concurrent_first_marker_initialization_agrees_on_one_complete_marker(self):
+        scratch = self.root / "scratch-race"
+        scratch.mkdir()
+        (scratch / ".pooled-storage-id.interrupted.stage").write_bytes(b"")  # a crash left only its stage
+        barrier = threading.Barrier(16)
+
+        def first_contact(_):
+            barrier.wait()
+            return pc.storage_marker(str(scratch))
+
+        with ThreadPoolExecutor(16) as pool:
+            markers = set(pool.map(first_contact, range(16)))
+        self.assertEqual(len(markers), 1, markers)
+        self.assertRegex(markers.pop(), r"^[0-9a-f]{32}$")
+        self.assertEqual(sorted(p.name for p in scratch.iterdir()),
+                         [".pooled-storage-id", ".pooled-storage-id.interrupted.stage"], "every own stage removed")
+
+    def test_a_cleanup_failure_after_a_fetched_shard_keeps_the_shard(self):
+        config = self.config([("a", 1.0, "x86"), ("b", 1.0, "x86")])
+        transports = self.transports(config)
+
+        class FailingCleanup(FakeTransport):
+            fetched = False
+
+            def fetch_dir(self, remote, local):
+                super().fetch_dir(remote, local)
+                self.fetched = True
+
+            def remove_dir(self, remote):
+                if self.fetched:
+                    raise RuntimeError("remote cleanup failed")
+                super().remove_dir(remote)
+
+        host = config["hosts"][0]
+        transports["a"] = FailingCleanup(host, {host.collector: host.collector_sha256})
+        receipt = pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
+        self.assertEqual(receipt["merged"]["slots"], self.expected())
+        self.assertEqual(receipt["failed_hosts"], [], "a fetched shard is never rerun")
+        self.assertEqual([s[3] for s in receipt["shards"]], ["a", "b"])
+        self.assertTrue(any(e["event"] == "scratch-cleanup-failed" and e["host"] == "a" for e in receipt["events"]))
+
+    def test_a_command_file_cleanup_failure_keeps_the_shard(self):
+        config = self.config([("a", 1.0, "x86")])
+        transports = self.transports(config)
+        transports["a"].remove_file = mock.Mock(side_effect=RuntimeError("command cleanup failed"))
+        receipt = pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
+        self.assertEqual(receipt["merged"]["slots"], self.expected())
+        self.assertEqual(receipt["failed_hosts"], [])
+        self.assertTrue(transports["a"].remove_file.called)
+        self.assertTrue(any(e["event"] == "scratch-cleanup-failed" for e in receipt["events"]))
+
+    def test_pins_of_refuses_documents_beyond_its_bounds(self):
+        deep = {"path": "/p", "sha256": "0" * 64}
+        for _ in range(pc.PIN_TREE_DEPTH + 1):
+            deep = [deep]
+        with self.assertRaises(pc.PinTreeTooLarge):
+            pc.pins_of(deep)
+        self.assertEqual(pc.pins_of(deep, max_depth=pc.PIN_TREE_DEPTH + 2), {("/p", "0" * 64)})
+        with self.assertRaises(pc.PinTreeTooLarge):
+            pc.pins_of(list(range(100)), max_nodes=50)
 
     def test_an_ancestor_named_iterations_does_not_confuse_the_index(self):
         path = Path("/srv/iterations/run/iterations/000007/attempt-000000/collect-command.json")
