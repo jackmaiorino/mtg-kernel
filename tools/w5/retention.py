@@ -862,8 +862,8 @@ class IndexCache:
 
     def _refresh(self):
         cache = index_path(self.chain_path)
-        if self.records is None or (getattr(self, 'carried', False) and not len(self.records)):
-            return self._whole()  # a carried chain's first rows always pass the head check of a full read
+        if self.records is None or (getattr(self, 'carried', False) and (not len(self.records) or not self.offset)):
+            return self._whole()  # a carried chain's first file rows always pass the head check of a full read
         try:
             f = open(cache, 'rb')
         except FileNotFoundError:

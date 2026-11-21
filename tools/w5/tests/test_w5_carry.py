@@ -1160,5 +1160,31 @@ class CarryTests(unittest.TestCase):
         self.assertIn('carried plan', err.getvalue())
 
 
+    def test_delta2_read_only_cache_and_qualification_outputs(self):
+        _, old_man = self.old(3)
+        path, plan = chains.make_plan(self.cont_inputs(self.carry(old_man, 8)))
+        cont = self.t / 'cont'
+        self.assertEqual(self.drive(plan, 'c1c', cont, 1), chains.EXIT_ROOM)
+        old_root = self.node.root
+        retention.index(old_root / 'chains' / 'c1' / 'chain.json')
+        old_rows = (old_root / 'chains' / 'c1' / 'chain.index.jsonl').read_bytes()
+        cman = cont / 'chains' / 'c1c' / 'chain.json'
+        cindex = cont / 'chains' / 'c1c' / 'chain.index.jsonl'
+        cindex.write_bytes(b'')
+        ro = retention.IndexCache(cman, read_only=True)
+        first = ro.refresh()[1]
+        self.assertTrue(len(first) > 0)  # unwritten continuation rows held in memory, the file still empty
+        with open(cindex, 'ab') as f:
+            f.write(old_rows)
+        with self.assertRaisesRegex(SystemExit, 'carried boundary'):
+            ro.refresh()
+        cindex.unlink()
+        # a qualification record destination through a linked parent is refused before the lock
+        (self.t / 'out-link').symlink_to(old_root / 'chains' / 'c1', target_is_directory=True)
+        with self.assertRaises(SystemExit):
+            chains.throughput_run(str(path), 'C', 'q', 64, str(self.t / 'out-link' / 'rec.json'), [1])
+        self.assertFalse((old_root / 'chains' / 'c1' / 'rec.json').exists())
+
+
 if __name__ == '__main__':
     unittest.main()

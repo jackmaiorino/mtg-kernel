@@ -3802,6 +3802,9 @@ def throughput_run(plan_path, arm, label, updates, out, counts=None, max_wall=w5
     root = Path(target['root'])
     require(not (root / 'STOP').exists(), 'a node STOP file is present')
     carried_plan_ok(target)  # carried chains: their trees before the lock and the phase plans
+    if any(c.get('carry') for c in target['chains'].values()):  # and the record's destinations
+        for dest in (Path(out), Path(f'{out}.failed.json')):
+            retention.carried_output_unlinked(dest)
     held = lock(root / 'SUPERVISE.lock')
     require(held is not None, 'another supervise holds this node')
     phases, plans, started, failure, failed_durable = [], [], time.time(), None, None
@@ -4002,6 +4005,9 @@ def mix_run(plan_path, slots, label, updates, out, counts=None, max_wall=w5box.U
     root = Path(target['root'])
     require(not (root / 'STOP').exists(), 'a node STOP file is present')
     carried_plan_ok(target)  # carried chains: their trees before the lock and the phase plans
+    if any(c.get('carry') for c in target['chains'].values()):  # and the record's destinations
+        for dest in (Path(out), Path(f'{out}.failed.json')):
+            retention.carried_output_unlinked(dest)
     held = lock(root / 'SUPERVISE.lock')
     require(held is not None, 'another supervise holds this node')
     phases, plans, bindings, started, failure, failed_durable = [], [], {}, time.time(), None, None
