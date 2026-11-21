@@ -115,6 +115,56 @@ pub struct HallowShieldV1 {
     pub active: PlayerId,
 }
 
+/// Private exact effective damage packet. Choosing a beneficiary applies one
+/// of the equivalent full-prevention shields, without targeting that player.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HallowChoiceV1 {
+    pub damage: DamageProposed,
+    pub source: ObjectLinkV4,
+    pub source_zone: Zone,
+    pub chooser: PlayerId,
+    pub beneficiaries: Vec<PlayerId>,
+}
+
+/// Only games with opposing shields borrow the operation replay. The ordinary
+/// single-controller path keeps its exact state, journal and hash behavior.
+pub(crate) fn has_overlapping_hallows(state: &GameState) -> bool {
+    if !cfg!(feature = "eternal-fixtures") {
+        return false;
+    }
+    let Some(pf1c) = read_state(state) else {
+        return false;
+    };
+    let turn = state.turn_key_v1();
+    pf1c.hallow_shields.iter().enumerate().any(|(at, first)| {
+        first.turn == turn
+            && first.active == state.active_player
+            && pf1c.hallow_shields[at + 1..].iter().any(|second| {
+                second.turn == first.turn
+                    && second.active == first.active
+                    && second.spell == first.spell
+                    && second.controller != first.controller
+            })
+    })
+}
+
+fn hallow_beneficiaries(state: &GameState, source: ObjectLinkV4, zone: Zone) -> Vec<PlayerId> {
+    let Some(pf1c) = read_state(state) else {
+        return Vec::new();
+    };
+    [PlayerId::P0, PlayerId::P1]
+        .into_iter()
+        .filter(|player| {
+            pf1c.hallow_shields.iter().any(|shield| {
+                shield.controller == *player
+                    && shield.turn == state.turn_key_v1()
+                    && shield.active == state.active_player
+                    && shield_covers(shield, source, zone)
+            })
+        })
+        .collect()
+}
+
 fn pf1c_state(state: &mut GameState) -> &mut Pf1cStateV1 {
     &mut state.eternal_v1.get_or_insert_with(Default::default).pf1c
 }
@@ -427,17 +477,38 @@ pub(crate) fn hallow_prevents(state: &mut GameState, damage: &DamageProposed) ->
     let Some((source, zone)) = damage_source_incarnation(state, damage) else {
         return false;
     };
-    let turn = state.turn_key_v1();
-    let active = state.active_player;
-    let Some(controller) = pf1c
-        .hallow_shields
-        .iter()
-        .find(|shield| {
-            shield.turn == turn && shield.active == active && shield_covers(shield, source, zone)
-        })
-        .map(|shield| shield.controller)
-    else {
-        return false;
+    let beneficiaries = hallow_beneficiaries(state, source, zone);
+    let controller = match beneficiaries.as_slice() {
+        [] => return false,
+        [controller] => *controller,
+        _ => {
+            let chooser = match damage.target {
+                Target::Object(object) => state.objects.get(object).controller,
+                Target::Player(player) => player,
+                Target::StackItem(_) => return false,
+            };
+            let choice = HallowChoiceV1 {
+                damage: damage.clone(),
+                source,
+                source_zone: zone,
+                chooser,
+                beneficiaries,
+            };
+            match crate::linked_aura_operation_v1::choose_hallow(state, choice) {
+                Ok(Some(controller)) => controller,
+                // Unanswered work runs only in the enclosing replay's disposable
+                // tail. Its earlier checkpoint contains neither this gain nor
+                // any later packet/operation effects.
+                Ok(None) => return true,
+                Err(_) => {
+                    state.engine.halted = Some((
+                        crate::engine::UnsupportedMechanic::InvalidEffectContinuation,
+                        damage.source,
+                    ));
+                    return true;
+                }
+            }
+        }
     };
     pf1c_state(state)
         .hallow_life_owed
