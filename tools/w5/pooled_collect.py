@@ -834,8 +834,12 @@ class Dispatcher:
 # collector descendant that calls setsid escapes the group kill (a request-scoped cgroup would end it).
 #
 # Agent-enforced resource bounds (userspace, best effort): a disk floor, min_free_bytes (default 20 GiB,
-# 0 disables), checked on the scratch root and the pin roots before push, put_shard and run_shard
-# accept work and rechecked during a push every FLOOR_CHECK_BYTES; and at most max_concurrent_runs
+# 0 disables), checked before push (scratch and the deepest existing directory of the target, so a
+# nested mount is measured), put_shard and run_shard (scratch and the pin roots) accept work, and
+# during a push on the stage file's own filesystem (first block, every FLOOR_CHECK_BYTES, at the end).
+# Inherent to unsynchronized checks: parallel connections admitted together can overshoot by about
+# their payloads, and a running collector's output is not watched (only admitted above the floor);
+# a filesystem quota or a size-limited volume is the hard bound. And at most max_concurrent_runs
 # collectors (default 2), each holding a non-blocking slot lock under `<scratch>/.locks` that the
 # kernel releases when its agent dies. A busy or full collector refuses (exit 2); the dispatcher then
 # treats that host as failed for the collection and moves the shard on.
@@ -1175,10 +1179,20 @@ def _read_payload(stdin, cap: int) -> bytes:
 
 
 def _lock(config: dict, key: str):
-    """Serializes push and remove_pin on one path, across connections."""
+    """Serializes push and remove_pin on one path, across connections. Striped: 256 fixed lock files
+    (paths sharing a stripe only wait for each other), so requests never accumulate lock files."""
     locks = os.path.join(config["scratch"], ".locks")
     os.makedirs(locks, mode=0o700, exist_ok=True)
-    return state_lock(Path(locks) / hashlib.sha256(key.encode()).hexdigest())
+    return state_lock(Path(locks) / f"path-{hashlib.sha256(key.encode()).hexdigest()[:2]}")
+
+
+def _existing_ancestor(path: str) -> str:
+    """The deepest existing directory on the way to `path`: the filesystem a push lands on, even
+    when a directory below a pin root is another mount."""
+    probe = os.path.dirname(path)
+    while not os.path.isdir(probe):
+        probe = os.path.dirname(probe)
+    return probe
 
 
 def _free_bytes(path: str) -> int:
@@ -1334,13 +1348,16 @@ def _read_nofollow(path: str, cap: int) -> bytes:
 
 def _write_new(path: str, data_or_stream, cap: int, floor=None) -> str:
     """Creates `path` (exclusive, no symlink follow) from bytes or a stream; returns its sha256.
-    With `floor` (the config), a stream rechecks the disk floor on `path`'s filesystem after every
-    FLOOR_CHECK_BYTES and refuses once free space falls under it (best effort: the check follows the
-    bytes written, so the floor can be undershot by up to one interval plus concurrent writes)."""
+    With `floor` (the config), a stream checks the disk floor on `path`'s own filesystem after its
+    first block, after every further FLOOR_CHECK_BYTES and once complete, and refuses once free space
+    is under it (best effort: a check follows the bytes written, so one interval, and concurrent
+    writers between checks, can undershoot the floor)."""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW | BINARY, 0o644)
-    digest, size, checked = hashlib.sha256(), 0, 0
+    digest, size, checked = hashlib.sha256(), 0, -FLOOR_CHECK_BYTES
     with os.fdopen(fd, "wb") as handle:
         if isinstance(data_or_stream, (bytes, bytearray)):
+            if len(data_or_stream) > cap:
+                raise AgentRefusal("payload exceeds its bound")
             handle.write(data_or_stream)
             digest.update(data_or_stream)
         else:
@@ -1354,6 +1371,9 @@ def _write_new(path: str, data_or_stream, cap: int, floor=None) -> str:
                     checked = size
                     handle.flush()
                     _require_floor(floor, [path])
+            if floor is not None:
+                handle.flush()
+                _require_floor(floor, [path])
     return digest.hexdigest()
 
 
@@ -1486,7 +1506,7 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
                "sandbox": config.get("sandbox_effective", "none")})
     elif op == "push":
         path, digest = _pin_arg(args, config)
-        _require_floor(config, [scratch, next(r for r in config["pin_roots"] if path.startswith(r + os.sep))])
+        _require_floor(config, [scratch, _existing_ancestor(path)])
         parent = os.path.dirname(path)
         os.makedirs(parent, mode=0o755, exist_ok=True)
         if _canonical(path) is None:

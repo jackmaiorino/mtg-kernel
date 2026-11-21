@@ -732,6 +732,13 @@ def fake_statvfs(free):
     return statvfs
 
 
+def fake_statvfs_by_path(free_for):
+    """A statvfs stand-in whose free bytes depend on the path measured (one filesystem per rule)."""
+    def statvfs(path):
+        return types.SimpleNamespace(f_bavail=free_for(str(path)), f_frsize=1)
+    return statvfs
+
+
 class ResourceBoundTests(AgentCase):
     """The disk floor (min_free_bytes) and the run slots (max_concurrent_runs)."""
 
@@ -765,6 +772,36 @@ class ResourceBoundTests(AgentCase):
             self.assertRefused(self.serve("push", data, path=str(path), sha256=sha(data), config=config),
                                "disk floor")
         self.assertEqual(os.listdir(path.parent), [], "the stage is removed and no pin installed")
+
+    def test_the_floor_measures_the_filesystem_the_bytes_land_on(self):
+        config, data = self.floor_config(), b"checkpoint"
+        mounted = self.pins / "mounted"  # another, full filesystem below the pin root
+        mounted.mkdir()
+        full = fake_statvfs_by_path(lambda path: 999 if path.startswith(str(mounted)) else 10 ** 6)
+        with mock.patch.object(pc.os, "statvfs", full, create=True):
+            self.assertRefused(self.serve("push", data, path=str(mounted / "deep" / "c.bin"), sha256=sha(data),
+                                          config=config), "disk floor")
+            code, out, err = self.serve("push", data, path=str(self.pins / "other" / "c.bin"), sha256=sha(data),
+                                        config=config)
+            self.assertEqual((code, json.loads(out)), (0, "created"), err)
+        self.assertFalse((mounted / "deep").exists(), "refused before any directory was made there")
+        # A small payload is checked on the stage file's own filesystem once complete.
+        stage_full = fake_statvfs_by_path(lambda path: 999 if path.endswith(".stage") else 10 ** 6)
+        with mock.patch.object(pc.os, "statvfs", stage_full, create=True):
+            self.assertRefused(self.serve("push", data, path=str(self.pins / "other" / "d.bin"), sha256=sha(data),
+                                          config=config), "disk floor")
+        self.assertEqual(sorted(os.listdir(self.pins / "other")), ["c.bin"])
+        # put_shard and run_shard measure the pin roots as well as scratch.
+        roots_full = fake_statvfs_by_path(lambda path: 999 if path == str(self.pins) else 10 ** 6)
+        with mock.patch.object(pc.os, "statvfs", roots_full, create=True):
+            self.assertRefused(self.serve("put_shard", json.dumps(self.shard_command()).encode(), tag=TAG,
+                                          config=config), "disk floor")
+
+    def test_removal_requests_never_accumulate_lock_files(self):
+        for i in range(300):
+            code, out, err = self.serve("remove_pin", path=str(self.pins / f"absent-{i}.bin"), sha256="0" * 64)
+            self.assertEqual((code, json.loads(out)), (0, "not-owned"), err)
+        self.assertLessEqual(len(os.listdir(self.scratch / ".locks")), 256, "a fixed set of striped locks")
 
     def test_the_floor_defaults_to_20_gib_and_zero_disables_it(self):
         document = json.loads(self.config_path.read_text())
