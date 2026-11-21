@@ -11,15 +11,23 @@ pub(super) struct Costs {
     route: CostComponent,
 }
 
-fn printed_cost(def: &card_def::CardDef, method: CastMethodV4, mode: u8) -> Option<CostComponent> {
+fn printed_cost(
+    def: &card_def::CardDef,
+    method: CastMethodV4,
+    mode: u8,
+    x: u16,
+) -> Option<CostComponent> {
     let group = spell_costs_v1::additional_cost_for_method_v1(def, method, mode)?;
     match group {
-        [cost @ CostComponent::DiscardCards(_)]
-            if !crate::eternal_premodern_p1b_v1::statics::announces_discard_x(def)
-                && crate::eternal_cube_c1b_v1::additional_discard_count(def, Some(mode))
-                    .is_none() =>
-        {
-            Some(*cost)
+        [CostComponent::DiscardCards(printed)] => {
+            let dynamic =
+                crate::eternal_premodern_p1b_v1::statics::additional_discard_count(def, Some(x))
+                    .or_else(|| {
+                        crate::eternal_cube_c1b_v1::additional_discard_count(def, Some(mode))
+                    });
+            Some(CostComponent::DiscardCards(
+                dynamic.map_or(*printed, |amount| amount.unwrap_or(0)),
+            ))
         }
         [cost @ (CostComponent::SacrificeControlled { .. }
         | CostComponent::SacrificeOtherControlledCreatures(_)
@@ -29,7 +37,7 @@ fn printed_cost(def: &card_def::CardDef, method: CastMethodV4, mode: u8) -> Opti
 }
 
 pub(super) fn supports_escape(def: &card_def::CardDef) -> bool {
-    printed_cost(def, CastMethodV4::Escape, 0).is_some()
+    printed_cost(def, CastMethodV4::Escape, 0, 0).is_some()
 }
 
 impl Costs {
@@ -38,6 +46,7 @@ impl Costs {
         method: CastMethodV4,
         retrace: bool,
         mode: u8,
+        x: u16,
     ) -> Option<Self> {
         let route = match method {
             CastMethodV4::Escape => spell_costs_v1::escape_cost_v1(def)?
@@ -48,7 +57,7 @@ impl Costs {
             _ => return None,
         };
         Some(Self {
-            printed: printed_cost(def, method, mode)?,
+            printed: printed_cost(def, method, mode, x)?,
             route,
         })
     }
@@ -65,11 +74,28 @@ impl Costs {
             method,
             crate::eternal_vintage_e7b_v1::pending_retrace(state, pending),
             pending.mode_chosen?,
+            pending.selected_x_v59().unwrap_or(0),
         )
     }
 
     pub(super) fn printed_discard(self) -> bool {
         matches!(self.printed, CostComponent::DiscardCards(_))
+    }
+
+    /// Only the escape group's cards can require a positive first X.
+    /// Any payable set of discards can supply that many with at most one
+    /// discarded card per exile. The payment quote checks replacements.
+    pub(super) fn escape_discard_x_limit(
+        def: &card_def::CardDef,
+        method: CastMethodV4,
+    ) -> Option<u8> {
+        if method != CastMethodV4::Escape
+            || crate::eternal_premodern_p1b_v1::statics::additional_discard_count(def, None)
+                .is_none()
+        {
+            return None;
+        }
+        Some(count(Self::new(def, method, false, 0, 0)?.route))
     }
 
     fn groups(self, route_first: bool) -> [CostComponent; 2] {
@@ -143,7 +169,9 @@ impl Costs {
             })
             .collect();
         for route_first in [false, true] {
-            if order.is_some_and(|wanted| wanted != route_first) {
+            if order.is_some_and(|wanted| wanted != route_first)
+                || (route_first && count(self.printed) == 0)
+            {
                 continue;
             }
             let groups = self.groups(route_first);

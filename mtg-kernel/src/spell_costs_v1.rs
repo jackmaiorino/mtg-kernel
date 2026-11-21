@@ -1403,7 +1403,7 @@ fn selected_spell_quote_branch_grant_v1(
     }
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
     if let Some(costs) =
-        super::compound_cast_cost_v1::Costs::new(definition, method, selected.retrace, mode)
+        super::compound_cast_cost_v1::Costs::new(definition, method, selected.retrace, mode, x)
     {
         let order = state
             .engine
@@ -1885,6 +1885,7 @@ pub(super) fn prepare_final_spell_payment_v1(
         method,
         selected.retrace,
         pending.mode_chosen.unwrap_or(0),
+        pending.selected_x_v59().unwrap_or(0),
     );
     let choices = if compound.is_some() {
         SpellComponentChoicesV1 {
