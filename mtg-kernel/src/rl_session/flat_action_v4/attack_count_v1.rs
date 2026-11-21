@@ -131,7 +131,8 @@ mod tests {
     };
     use crate::ids::{ObjectId, PlayerId};
     use crate::policy_observation_v6::tests::{put, ready_state_for};
-    use crate::rl_session::{FastActorResponseV1, FastActorSessionV1};
+    use crate::rl::PlayerSeatV1;
+    use crate::rl_session::{FastActorDecisionKindV1, FastActorResponseV1, FastActorSessionV1};
     use crate::state::Zone;
     use crate::state::{GameState, ObjectLinkV4, Step};
     use std::collections::BTreeMap;
@@ -155,6 +156,22 @@ mod tests {
         let recorded = u32::from(cfg!(feature = "standard-magezero-fixtures"));
         assert_eq!(state.creatures_attacked_this_turn_v1(), recorded);
         (state, creature)
+    }
+
+    fn after_attack_for_scoring(
+        attacker: PlayerId,
+        setup: impl FnOnce(&mut GameState),
+    ) -> (GameState, ObjectId) {
+        after_attack(attacker, |state| {
+            // The policy skips lone passes and empty block declarations.
+            put(
+                state,
+                attacker.opponent(),
+                "Voldaren Epicure",
+                Zone::Battlefield,
+            );
+            setup(state);
+        })
     }
 
     /// What the shared flat entry returns to every consumer.
@@ -184,11 +201,20 @@ mod tests {
 
     /// The V4 scorer on the session's own current decision.
     fn score_v4(state: GameState) -> Result<(), FlatDecisionErrorV2> {
+        let turn = state.turn_key_v1();
+        let defender = PlayerSeatV1::from(state.active_player.opponent());
         let session = FastActorSessionV1::from_v3_fixture_state(state);
-        let expected = match session.current_response() {
-            FastActorResponseV1::Decision(expected) => expected,
-            other => panic!("fixture is not a live decision: {other:?}"),
+        let response = session.current_response();
+        let FastActorResponseV1::Decision(expected) = response else {
+            panic!("expected a live blocking decision, got {response:?}");
         };
+        assert_eq!(session.state.turn_key_v1(), turn);
+        assert_eq!(expected.acting_player, defender);
+        assert_eq!(
+            expected.decision_kind,
+            FastActorDecisionKindV1::BlockerInclusion
+        );
+        assert_eq!(expected.legal_action_count, 2);
         let (mut objects, mut relations, mut object_subtypes) =
             (Vec::new(), Vec::new(), Vec::new());
         let (mut ability_uses, mut goads, mut completed_dungeons) =
@@ -221,7 +247,7 @@ mod tests {
     #[test]
     fn eternal_actor_attack_count_is_omitted_without_a_shown_reader() {
         for attacker in [PlayerId::P0, PlayerId::P1] {
-            let (state, creature) = after_attack(attacker, |_| {});
+            let (state, creature) = after_attack_for_scoring(attacker, |_| {});
             assert_eq!(score_v4(state.clone()), Ok(()));
             let mut recorded = state.clone();
             recorded.creatures_attacked_turn_v1 = Some((
@@ -280,7 +306,7 @@ mod tests {
         for reader in ["Search Party Captain", "Broadside Bombardiers"] {
             for attacker in [PlayerId::P0, PlayerId::P1] {
                 for controller in [PlayerId::P0, PlayerId::P1] {
-                    let (state, _) = after_attack(attacker, |state| {
+                    let (state, _) = after_attack_for_scoring(attacker, |state| {
                         put(state, controller, reader, Zone::Battlefield);
                     });
                     assert_eq!(
