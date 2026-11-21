@@ -1023,7 +1023,7 @@ def make_plan(inputs_path):
             have = read(path)
             for k in ('chain', 'arm', 'arm_name', 'seed_root', 'pair', 'stage', 'frozen', 'x_cap_seconds',
                       'c_wall_seconds', 'snapshot_dir', 'carry'):
-                require(have.get(k) == header[k], f'{name}: the manifest has another {k}')
+                require(have.get(k) == header.get(k), f'{name}: the manifest has another {k}')
             require(not have['segments'] or have['recipe'] == header['recipe'],
                     f'{name}: the recipe changed after the chain started' +
                     (' (keep_offset differs)' if have['recipe'].get('keep_offset') != header['recipe'].get(

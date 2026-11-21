@@ -121,6 +121,11 @@ class CarryTests(unittest.TestCase):
         self.assertEqual(plan['chains']['c1c']['carry'], chains.pin(carry_path))
         old_recipe = json.loads(old_man.read_text())['recipe']
         self.assertEqual({k for k in man['recipe'] if man['recipe'][k] != old_recipe[k]}, {'trainer_sha256'})
+        # Planning again is idempotent; another carry for the same manifest is refused.
+        chains.make_plan(self.cont_inputs(carry_path))
+        other = self.carry(old_man, 4, name='carry-4.json')
+        with self.assertRaisesRegex(chains.Stop, 'another carry'):
+            chains.make_plan(self.cont_inputs(other))
         # Before its first update the chain stands at B.
         self.assertEqual(chains.latest(man), (8, None))
         cont_root = self.t / 'cont'
