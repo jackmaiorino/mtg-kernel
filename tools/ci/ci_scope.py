@@ -62,6 +62,7 @@ TRAINER_FILTERS = [
     "native_policy_value_net_v1::", "training_math_v1::", "native_flat_tensorizer_v", "inference_cache_v1::",
     "native_train_state_payload_v1::", "native_trainer_schedule_v", "native_trainer_v1::", "native_training_",
     "native_checkpoint_", "native_baseline_checkpoint_chain_v4::", "fast_sampler::", "unclamped_softmax_sampler_v1::",
+    "s_transformer_v1::",
     "native_opponent_sampler_v1::", "sideboard_play_policy_v1::", "rl_session::",
 ]
 # Rows of the trainer-tests job (tools/ci/run_trainer_row.py). The default row runs every selected library test;
