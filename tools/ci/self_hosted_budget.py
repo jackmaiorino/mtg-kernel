@@ -31,8 +31,8 @@ import sys
 import time
 import urllib.request
 
-# Earlier states first and in_progress again last, so a run that starts while the list is read is
-# still seen in one of the passes (run ids are deduplicated).
+# Read earlier states before in_progress to catch queued runs as they start.
+# Refresh in_progress once for runs that became visible since its first snapshot.
 ACTIVE_RUN_STATUSES = ("requested", "pending", "waiting", "queued", "in_progress", "in_progress")
 DEADLINE_SECONDS = 60.0
 MAX_REQUESTS = 60

@@ -57,6 +57,23 @@ class BudgetTests(unittest.TestCase):
         self.assertEqual(order[-1], "in_progress")
         self.assertLess(order.index("queued"), len(order) - 1)
 
+    def test_the_second_running_snapshot_adds_late_runs_without_recounting_jobs(self):
+        snapshots = iter(((5,), (5, 6)))
+        job_reads = []
+
+        def fake_get(path, _budget):
+            if "/runs?status=in_progress&" in path:
+                return {"workflow_runs": [{"id": run_id} for run_id in next(snapshots)]}
+            if "/runs?status=" in path:
+                return {"workflow_runs": []}
+            run_id = int(path.split("/runs/")[1].split("/")[0])
+            job_reads.append(run_id)
+            return {"jobs": [job("in_progress", POOL, run_id=run_id)]}
+
+        with patch.object(budget, "_get", side_effect=fake_get):
+            self.assertEqual(budget.held_by_pool(budget.active_jobs("owner/project"), POOL), 2)
+        self.assertEqual(job_reads, [5, 6])
+
     def test_the_lookup_has_a_time_and_request_limit(self):
         tight = budget.Budget(seconds=60, requests=2)
         self.assertLessEqual(tight.spend(), 15.0)

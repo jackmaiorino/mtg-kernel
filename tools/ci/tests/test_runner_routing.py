@@ -176,8 +176,10 @@ class RoutingTests(unittest.TestCase):
         block = job_block("detect-changes", "rust-quality")
         step = block[block.index("      - name: Choose the self-hosted pull request groups"):]
         step = step[:step.index("\n      - name: ", 1)]
-        self.assertIn("if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == "
-                      "github.repository && github.actor == github.repository_owner\n", step)
+        condition, = re.findall(r"^        if: (.+)$", step, re.MULTILINE)
+        self.assertTrue(evaluate(condition, **event(), **{"steps.scope.outputs.scope": "pr"}))
+        self.assertFalse(evaluate(condition, **event(), **{"steps.scope.outputs.scope": "draft"}))
+        self.assertFalse(evaluate(condition, **event(actor="other"), **{"steps.scope.outputs.scope": "pr"}))
         for line in ("PR_GROUPS: ${{ vars.MTG_CI_PR_WINDOWS_GROUPS }}", "PR_RUNNER: ${{ vars.MTG_CI_PR_WINDOWS_RUNNER }}",
                      "PR_SLOTS: ${{ vars.MTG_CI_PR_WINDOWS_SLOTS }}", "run: python3 tools/ci/self_hosted_budget.py"):
             self.assertIn(line, step)

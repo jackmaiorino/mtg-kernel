@@ -149,7 +149,7 @@ jobs:
         id: budget
         timeout-minutes: 2
         continue-on-error: true
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner
+        if: steps.scope.outputs.scope == 'pr' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == github.repository_owner
         env:
           GH_TOKEN: ${{ github.token }}
           PR_GROUPS: ${{ vars.MTG_CI_PR_WINDOWS_GROUPS }}
