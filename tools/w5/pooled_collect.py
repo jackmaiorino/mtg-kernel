@@ -64,6 +64,8 @@ class Host:
     # Delete inputs this dispatcher pushed for an earlier iteration (old checkpoints) once a
     # later collection succeeds. Only for ssh hosts that are not the learner's own machine.
     prune_pushed: bool = False
+    # Format string around each remote shell command, e.g. "docker exec -i bladder-node sh -c {cmd}".
+    remote_wrap: str = ""
 
 
 def _absolute(path: str) -> bool:
@@ -179,11 +181,19 @@ class Transport:
     def __init__(self, host: Host):
         self.host = host
 
+    def _ssh(self, remote: list[str]) -> list[str]:
+        """The ssh argv for one remote shell command. `remote_wrap` (for example
+        "docker exec -i NAME sh -c {cmd}") runs it inside a container or VM on that host."""
+        (command,) = remote
+        if self.host.remote_wrap:
+            command = self.host.remote_wrap.format(cmd=shlex.quote(command))
+        return self.host.ssh + [command]
+
     def run(self, argv: list[str], timeout: float) -> subprocess.CompletedProcess:
         if self.host.kind == "local":
             return subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
         remote = " ".join(shlex.quote(a) for a in argv)
-        return subprocess.run(self.host.ssh + [remote], capture_output=True, text=True,
+        return subprocess.run(self._ssh([remote]), capture_output=True, text=True,
                               timeout=timeout, stdin=subprocess.DEVNULL)
 
     def missing_pins(self, pins: set[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -197,7 +207,7 @@ class Transport:
                   "  out.append(ok)\n"
                   "print(json.dumps(out))\n")
         ordered = sorted(pins)
-        result = subprocess.run(self.host.ssh + ["python3 -c " + shlex.quote(script)],
+        result = subprocess.run(self._ssh(["python3 -c " + shlex.quote(script)]),
                                 input=json.dumps(ordered), capture_output=True, text=True, timeout=300)
         if result.returncode != 0:
             raise RuntimeError(f"{self.host.name}: pin check failed: {result.stderr.strip()}")
@@ -214,8 +224,8 @@ class Transport:
         parent = str(PurePosixPath(remote).parent)
         stage = remote + ".stage"
         with open(local, "rb") as handle:
-            result = subprocess.run(self.host.ssh + [f"mkdir -p {shlex.quote(parent)} && cat > {shlex.quote(stage)}"
-                                                     f" && mv {shlex.quote(stage)} {shlex.quote(remote)}"],
+            result = subprocess.run(self._ssh([f"mkdir -p {shlex.quote(parent)} && cat > {shlex.quote(stage)}"
+                                                     f" && mv {shlex.quote(stage)} {shlex.quote(remote)}"]),
                                     stdin=handle, capture_output=True, timeout=600)
         if result.returncode != 0:
             raise RuntimeError(f"{self.host.name}: push of {remote} failed")
@@ -226,7 +236,7 @@ class Transport:
             Path(remote).write_text(text)
             return
         parent = str(PurePosixPath(remote).parent)
-        result = subprocess.run(self.host.ssh + [f"mkdir -p {shlex.quote(parent)} && cat > {shlex.quote(remote)}"],
+        result = subprocess.run(self._ssh([f"mkdir -p {shlex.quote(parent)} && cat > {shlex.quote(remote)}"]),
                                 input=text, capture_output=True, text=True, timeout=120)
         if result.returncode != 0:
             raise RuntimeError(f"{self.host.name}: write of {remote} failed")
@@ -239,7 +249,7 @@ class Transport:
             shutil.copytree(remote, local)
             return
         local.mkdir(parents=True)
-        tar = subprocess.Popen(self.host.ssh + [f"tar -C {shlex.quote(remote)} -cf - ."],
+        tar = subprocess.Popen(self._ssh([f"tar -C {shlex.quote(remote)} -cf - ."]),
                                stdout=subprocess.PIPE, stdin=subprocess.DEVNULL)
         unpack = subprocess.run(["tar", "-C", str(local), "-xf", "-"], stdin=tar.stdout, capture_output=True)
         tar.stdout.close()
@@ -248,13 +258,13 @@ class Transport:
 
     def remove_file(self, remote: str) -> None:
         if self.host.kind == "ssh":
-            subprocess.run(self.host.ssh + [f"rm -f -- {shlex.quote(remote)}"], capture_output=True, timeout=120)
+            subprocess.run(self._ssh([f"rm -f -- {shlex.quote(remote)}"]), capture_output=True, timeout=120)
 
     def remove_dir(self, remote: str) -> None:
         if self.host.kind == "local":
             shutil.rmtree(remote, ignore_errors=True)
         else:
-            subprocess.run(self.host.ssh + [f"rm -rf -- {shlex.quote(remote)}"], capture_output=True, timeout=300)
+            subprocess.run(self._ssh([f"rm -rf -- {shlex.quote(remote)}"]), capture_output=True, timeout=300)
 
 
 def shard_command_for(whole: dict, first: int, count: int, workers: int, output: str) -> dict:

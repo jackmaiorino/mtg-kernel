@@ -213,6 +213,16 @@ class PooledCollectTests(unittest.TestCase):
         state = json.loads((self.root / "pushed.json").read_text())
         self.assertEqual(state["a"], [str(new)])
 
+    def test_remote_commands_can_run_inside_a_container(self):
+        host = pc.Host(name="m", kind="ssh", collector="/c", collector_sha256="c" * 64, workers=2, weight=1.0,
+                       scratch="/s", arch="arm64", ssh=["ssh", "mac"],
+                       remote_wrap="docker exec -i node sh -c {cmd}")
+        argv = pc.Transport(host)._ssh(["tar -C '/a b' -cf - ."])
+        self.assertEqual(argv[:2], ["ssh", "mac"])
+        self.assertEqual(argv[2], "docker exec -i node sh -c " + pc.shlex.quote("tar -C '/a b' -cf - ."))
+        host.remote_wrap = ""
+        self.assertEqual(pc.Transport(host)._ssh(["ls"]), ["ssh", "mac", "ls"])
+
     def test_hosts_file_is_checked(self):
         path = self.root / "hosts.json"
         entry = {"name": "a", "kind": "ssh", "collector": "/bin/c", "collector_sha256": "c" * 64, "workers": 4,
