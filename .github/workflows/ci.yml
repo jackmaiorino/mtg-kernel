@@ -1690,8 +1690,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # One entry per tools/ci/ci_scope.py TRAINER_SHARDS shard (a test keeps them equal).
-        shard: [0, 1]
+        # One entry per tools/ci/ci_scope.py TRAINER_SHARDS shard (a test keeps them equal); shard 2 builds with
+        # the CUDA features (TRAINER_SHARD_FEATURES).
+        shard: [0, 1, 2]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults:
@@ -1750,7 +1751,15 @@ jobs:
       - name: Run the trainer library tests
         run: |
           read -r -a filters <<< "$(python tools/ci/ci_scope.py trainer-filters --shard ${{ matrix.shard }})"
-          python python/tools/run_rust_lib_filters.py --features "" "${filters[@]}"
+          features="$(python tools/ci/ci_scope.py trainer-features --shard ${{ matrix.shard }})"
+          python python/tools/run_rust_lib_filters.py --features "$features" "${filters[@]}"
+
+      # Every filter must select at least one compiled test in this build (no silent zero-test filter).
+      - name: Check every filter selects a compiled test
+        run: |
+          read -r -a filters <<< "$(python tools/ci/ci_scope.py trainer-filters --shard ${{ matrix.shard }})"
+          features="$(python tools/ci/ci_scope.py trainer-features --shard ${{ matrix.shard }})"
+          python tools/ci/check_filters_select.py --features "$features" "${filters[@]}"
 
   # The tools scope: the top-level tools, G(i) and lease-guard unit suites
   # (the same commands as the python-tests job's tools steps, kept equal by

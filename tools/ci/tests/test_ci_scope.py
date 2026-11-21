@@ -53,7 +53,7 @@ class TableTests(unittest.TestCase):
         names = {p.stem for p in src.glob("*.rs")} | {p.name for p in src.iterdir() if p.is_dir()}
         for prefix in ci_scope.TRAINER_FILTERS:
             with self.subTest(filter=prefix):
-                stem = prefix.rstrip(":")
+                stem = prefix.split("::")[0]
                 self.assertTrue(any(n == stem or n.startswith(stem) for n in names), prefix)
 
     def test_the_tools_commands_are_the_python_tests_job_commands(self):
@@ -177,7 +177,20 @@ class ShardTests(unittest.TestCase):
         job = text[text.index("\n  trainer-tests:\n"):]
         job = job[:job.index("\n    steps:\n")]
         self.assertIn(f"shard: {list(range(len(ci_scope.TRAINER_SHARDS)))}", job)
-        self.assertIn("trainer-filters --shard ${{ matrix.shard }}", text)
+        self.assertEqual(len(ci_scope.TRAINER_SHARD_FEATURES), len(ci_scope.TRAINER_SHARDS))
+        self.assertIn("check_filters_select.py", WORKFLOW.read_text(encoding="utf-8"))
+
+    def test_cuda_only_modules_run_in_the_cuda_shard(self):
+        # Modules lib.rs compiles only with the CUDA features must sit in a shard built with them.
+        lib = (ROOT / "mtg-kernel" / "src" / "lib.rs").read_text(encoding="utf-8")
+        for shard, features in zip(ci_scope.TRAINER_SHARDS, ci_scope.TRAINER_SHARD_FEATURES):
+            for f in shard:
+                module = f.split("::")[0]
+                gate = re.search(r'#\[cfg\(feature = "([a-z0-9-]+)"\)\]\s*(?:pub )?mod ' + re.escape(module) + r';', lib)
+                if gate:
+                    with self.subTest(filter=f):
+                        self.assertIn(gate.group(1), features.split(","))
+        self.assertIn("trainer-filters --shard ${{ matrix.shard }}", WORKFLOW.read_text(encoding="utf-8"))
 
 
 class ReferenceGuardTests(unittest.TestCase):

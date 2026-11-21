@@ -102,8 +102,13 @@ TRAINER_FILTERS = [
     # The rest of the update path the train step, training math and the trainer reference: the retention anchor
     # (KL gradient), the training baseline, the CUDA training bridge, the exact GPU learner, the trajectory records
     # the update consumes and the learner's model snapshot.
-    "native_policy_anchor_v1::", "native_policy_baseline_state_v4::", "experimental_burn_net8_packed_v1::",
-    "gpu_exact_v1::", "native_full_episode_trajectory_v", "private_physical_trajectory_", "common_model_snapshot_v1::",
+    "native_policy_anchor_v1::", "native_policy_baseline_state_v4::", "native_full_episode_trajectory_v",
+    "private_physical_trajectory_", "common_model_snapshot_v1::",
+    # Compiled only with the CUDA features (third shard, built with them, as the full set's host-safe CUDA step):
+    # the CUDA training bridge, the exact GPU learner and the trainer's CUDA-gated tests.
+    "experimental_burn_net8_packed_v1::", "gpu_exact_v1::", "expanded_deck_training_v1::public_features::",
+    "expanded_deck_training_v1::stack_features::",
+    "expanded_deck_training_v1::tests::ordinary_trainer_v4_update_rejects_fixed_partition_backward_on_cuda",
 ]
 # The trainer tests run as two jobs, each building the library and running its filters. Balanced from the
 # filter times of hosted run 44906865422 (seconds): expanded_deck_training_v1 408, native_trainer_v1 306,
@@ -120,8 +125,13 @@ TRAINER_SHARDS = [
 ]
 # Filters added after the timing run go to the first shard (its measured share was the larger only by 26 s).
 TRAINER_SHARDS[0] += ["native_policy_anchor_v1::", "native_policy_baseline_state_v4::",
-                      "experimental_burn_net8_packed_v1::", "gpu_exact_v1::", "native_full_episode_trajectory_v",
-                      "private_physical_trajectory_", "common_model_snapshot_v1::"]
+                      "native_full_episode_trajectory_v", "private_physical_trajectory_", "common_model_snapshot_v1::"]
+TRAINER_SHARDS.append(["experimental_burn_net8_packed_v1::", "gpu_exact_v1::",
+                       "expanded_deck_training_v1::public_features::", "expanded_deck_training_v1::stack_features::",
+                       "expanded_deck_training_v1::tests::ordinary_trainer_v4_update_rejects_fixed_partition_backward_on_cuda"])
+# Cargo features each shard builds with ("" is the default build). The CUDA shard uses the full set's host-safe
+# CUDA test configuration (no device on hosted runners; tests that need one are #[ignore]d).
+TRAINER_SHARD_FEATURES = ["", "", "experimental-burn-net8-packed-cuda-v1,gpu-exact-v1"]
 # Modules the train step, training math, the trainer and the trainer-scoped run module reference that the filters
 # leave out, each with its reason. The trainer-tests job fails on any referenced module that is neither filtered
 # nor listed here, so a new backend is examined before it can skip its tests.
@@ -351,12 +361,16 @@ def main(argv: list[str]) -> int:
         # With --shard N, one shard's filters (the trainer-tests matrix); otherwise all of them.
         print(" ".join(TRAINER_SHARDS[int(argv[3])] if argv[2:3] == ["--shard"] else TRAINER_FILTERS))
         return 0
+    if command == "trainer-features":
+        print(TRAINER_SHARD_FEATURES[int(argv[3])])
+        return 0
     if command == "commands":
         scope = argv[2]
         lines = {"tools": TOOLS_COMMANDS,
                  "trainer": ["cargo fmt --all -- --check",
                              "cargo clippy --release --locked --workspace --all-targets -- -D warnings",
-                             'python python/tools/run_rust_lib_filters.py --features "" ' + " ".join(TRAINER_FILTERS)]}.get(scope)
+                             *[f'python python/tools/run_rust_lib_filters.py --features "{features}" ' + " ".join(shard)
+                               for shard, features in zip(TRAINER_SHARDS, TRAINER_SHARD_FEATURES)]]}.get(scope)
         if lines is None:
             print(f"no local command list for scope {scope}", file=sys.stderr)
             return 2
