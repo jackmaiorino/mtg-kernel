@@ -347,7 +347,11 @@ pub(super) fn answer(state: &mut GameState, p: &PendingCast, index: u16) -> Resu
         .ok_or("Sphinx pending absent")?;
     live.source_contract = source;
     live.is_flashback = is_flashback;
-    live.cast_mode = if source.cast_method == CastMethodV4::Normal
+    live.cast_mode = if crate::eternal_legacy_e8a_v1::graveyard_life_choice(
+        &card_def::CARD_DEFS[source.card_def as usize],
+        live.origin_zone,
+        source.cast_method,
+    ) || source.cast_method == CastMethodV4::Normal
         && card_def::CARD_DEFS[source.card_def as usize]
             .alt_cost
             .is_some()

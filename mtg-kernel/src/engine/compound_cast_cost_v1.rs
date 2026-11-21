@@ -60,6 +60,11 @@ impl Costs {
     ) -> Option<Self> {
         def.additional_cost?;
         let method = finalized_cast_method(pending, pending.source_contract.cast_method, def);
+        if pending.cast_mode == Some(CastMode::Alternative)
+            && crate::eternal_legacy_e8a_v1::graveyard_life_choice(def, pending.origin_zone, method)
+        {
+            return None;
+        }
         Self::new(
             def,
             method,

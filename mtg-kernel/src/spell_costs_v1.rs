@@ -186,6 +186,30 @@ pub(super) struct SelectedSpellManaCostsV1 {
 }
 
 impl SelectedSpellManaCostsV1 {
+    fn choose_life_instead_of_discard(&mut self, def: &card_def::CardDef) -> Option<()> {
+        let life = crate::eternal_legacy_e8a_v1::bitter_triumph_life_cost(def)?;
+        let group = self
+            .component_groups
+            .iter_mut()
+            .find(|g| matches!(**g, [CostComponent::DiscardCards(1)]) || **g == life)?;
+        *group = life;
+        Some(())
+    }
+
+    pub(super) fn compound_costs(
+        &self,
+        def: &card_def::CardDef,
+        method: CastMethodV4,
+        mode: u8,
+    ) -> Option<super::compound_cast_cost_v1::Costs> {
+        if crate::eternal_legacy_e8a_v1::bitter_triumph_life_cost(def)
+            .is_some_and(|life| self.component_groups.contains(&life))
+        {
+            return None;
+        }
+        super::compound_cast_cost_v1::Costs::new(def, method, self.retrace, mode)
+    }
+
     /// Assign the pending cast's one interactive object family to the original
     /// definition-owned group. Escape picks are ordered by the live graveyard,
     /// matching the existing public-equivalence and paid-provenance contract.
@@ -207,7 +231,9 @@ impl SelectedSpellManaCostsV1 {
         // A card with a choice between additional costs (#715) has one of two
         // groups here; the selected group below is the chosen mode's, and it
         // must be one of the card's two costs.
-        let additional_cost = additional_cost_for_method_v1(definition, method, 0);
+        let additional_cost = crate::eternal_legacy_e8a_v1::bitter_triumph_life_cost(definition)
+            .filter(|life| self.component_groups.contains(life))
+            .or_else(|| additional_cost_for_method_v1(definition, method, 0));
         let retrace = self.retrace.then_some(RETRACE_COST);
         let additional_slot = self
             .component_groups
@@ -995,6 +1021,17 @@ fn selected_spell_mana_costs_for_source_grant_v1(
         player,
         state,
     )?;
+    if state.engine.pending_cast.as_ref().is_some_and(|pending| {
+        pending.spell == source
+            && pending.cast_mode == Some(super::CastMode::Alternative)
+            && crate::eternal_legacy_e8a_v1::graveyard_life_choice(
+                definition,
+                pending.origin_zone,
+                method,
+            )
+    }) {
+        selected.choose_life_instead_of_discard(definition)?;
+    }
     // Cost determination follows moving the spell to the stack (601.2f).
     // Preserve other reducers, but remove this source's graveyard contribution.
     // Limited to the eternal build so the rated Pauper build keeps its quotes.
@@ -1220,14 +1257,23 @@ pub(super) fn selected_spell_quote_with_grant_wide_x_v59(
     reserved_graveyard: &[ObjectId],
     grant: Option<u64>,
 ) -> Option<SpellManaPaymentV1> {
-    if super::mandatory_cast_cost_v1::mana_branch(definition).is_some() {
-        let choice = state
+    let bitter =
+        crate::eternal_legacy_e8a_v1::graveyard_life_choice(definition, origin_zone, method);
+    if bitter || super::mandatory_cast_cost_v1::mana_branch(definition).is_some() {
+        let pending = state
             .engine
             .pending_cast
             .as_ref()
-            .filter(|pending| pending.spell == source)
-            .and_then(|pending| pending.mandatory_additional_cost)
-            .and_then(|choice| choice.pay_mana);
+            .filter(|p| p.spell == source);
+        let choice = if bitter {
+            pending
+                .and_then(|p| p.cast_mode)
+                .map(|m| m == super::CastMode::Alternative)
+        } else {
+            pending
+                .and_then(|p| p.mandatory_additional_cost)
+                .and_then(|c| c.pay_mana)
+        };
         return [false, true]
             .into_iter()
             .filter(|branch| choice.is_none_or(|selected| selected == *branch))
@@ -1382,7 +1428,11 @@ fn selected_spell_quote_branch_grant_v1(
         state,
         grant,
     )?;
-    if let Some(pay_mana) = forced_branch {
+    if crate::eternal_legacy_e8a_v1::graveyard_life_choice(definition, origin_zone, method) {
+        if forced_branch == Some(true) {
+            selected.choose_life_instead_of_discard(definition)?;
+        }
+    } else if let Some(pay_mana) = forced_branch {
         let mana = super::mandatory_cast_cost_v1::mana_branch(definition)?;
         // Retrace's group follows the mandatory additional cost.
         let retrace = if selected.retrace {
@@ -1402,9 +1452,7 @@ fn selected_spell_quote_branch_grant_v1(
         selected.component_groups.extend(retrace);
     }
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
-    if let Some(costs) =
-        super::compound_cast_cost_v1::Costs::new(definition, method, selected.retrace, mode)
-    {
+    if let Some(costs) = selected.compound_costs(definition, method, mode) {
         let order = state
             .engine
             .pending_cast
@@ -1880,12 +1928,7 @@ pub(super) fn prepare_final_spell_payment_v1(
         state,
     )?;
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
-    let compound = super::compound_cast_cost_v1::Costs::new(
-        definition,
-        method,
-        selected.retrace,
-        pending.mode_chosen.unwrap_or(0),
-    );
+    let compound = selected.compound_costs(definition, method, pending.mode_chosen.unwrap_or(0));
     let choices = if compound.is_some() {
         SpellComponentChoicesV1 {
             ordered_objects: Vec::new(),
