@@ -226,7 +226,7 @@ def carried_dir(chain, chain_path):
     return (Path(chain_path).parent,) if guarded(chain) else ()
 
 
-def scan(chain, known, own_dir=None):
+def scan(chain, known, own_dir=None, *, refuse_gap=None):
     """Index records of the completed updates after the first `known` ones (the records already indexed), in order,
     stopping at the first update without its receipt (a segment's iterations complete in order)."""
     known += chain_start(chain)  # a boundary from here on: a carried chain's records start at update B
@@ -240,7 +240,15 @@ def scan(chain, known, own_dir=None):
         for i in range(max(0, known - seg['offset']), seg['updates']):
             complete = Path(seg['root'], 'iterations', f'{i:06d}', 'complete.json')
             if not complete.exists():
-                return new
+                if not new or refuse_gap is None:
+                    return new
+                missing = seg['offset'] + i
+                evidence = receipt_gap_evidence(chain, missing)
+                if evidence is None:
+                    return new
+                # A live writer may have published both receipts since the first existence check.
+                if not complete.exists():
+                    refuse_gap(f'update {missing} has no receipt ({complete.as_posix()}) despite {evidence.as_posix()}')
             receipt = read(complete)
             if carried:  # a carried chain indexes only its own files (a link to another tree is refused)
                 own_files(seg['root'], complete, receipt['update']['path'], own_dir=own_dir)
@@ -468,6 +476,28 @@ def refuse_tail(cache, torn, u, why):
                      f'repair the index by hand)')
 
 
+def receipt_gap_evidence(chain, missing):
+    """Only a torn-tail recovery checks beyond scan's first missing update. A live prefix has no later receipts."""
+    for seg in chain['segments']:
+        offset, end = seg['offset'], seg['offset'] + seg['updates']
+        if end <= missing:
+            continue
+        if os.path.ismount(seg['root']):
+            break  # scan never indexes still-mounted scratch
+        if segment_complete(seg):
+            return Path(seg['root'], 'completion.json')
+        iterations = Path(seg['root'], 'iterations')
+        if iterations.exists():
+            for iteration in iterations.iterdir():
+                if iteration.name.isascii() and iteration.name.isdecimal():
+                    i = int(iteration.name)
+                    if missing < offset + i < end and iteration.name == f'{i:06d}':
+                        receipt = iteration / 'complete.json'
+                        if receipt.exists():
+                            return receipt
+    return None
+
+
 def recover_tail(chain, chain_path, cache, torn, known):
     """Under the index lock, an index file whose last line was torn by an interrupted append: the complete lines
     before it are `known` records, so the torn line was the start of update U's row (U = the chain's first update +
@@ -484,7 +514,7 @@ def recover_tail(chain, chain_path, cache, torn, known):
     if nul and rest.strip(b'\0'):
         refuse('bytes other than NUL follow a NUL in it')
     try:
-        new = scan(chain, known, *carried_dir(chain, chain_path))
+        new = scan(chain, known, *carried_dir(chain, chain_path), refuse_gap=refuse)
     except Exception as e:  # any receipt that does not read as scan expects (SystemExit, a link refusal, passes)
         refuse(f'the receipt of update {u} does not read ({type(e).__name__}: {e})')
     if not new:

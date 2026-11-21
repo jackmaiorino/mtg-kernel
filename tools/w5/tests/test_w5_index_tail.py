@@ -177,6 +177,60 @@ class IndexTailTests(unittest.TestCase):
         self.addCleanup(hidden.rename, complete)
         self.refuses(torn, f'update 11 has no receipt to rebuild its row from ({complete.as_posix()})')
 
+    def hide(self, path):
+        hidden = path.with_name(path.name + '.hidden')
+        path.rename(hidden)
+        self.addCleanup(hidden.rename, path)
+
+    def test_later_missing_receipt_in_a_completed_carried_segment_refuses(self):
+        chain = retention.load_chain(self.path)
+        chain['carry'] = {'boundary': 64}
+        for seg in chain['segments']:
+            seg['offset'] += 64
+        self.path = Path(self.path).with_name('carried.json')
+        self.path.write_text(json.dumps(chain))
+        self.index_file = retention.index_path(self.path)
+        self.read_index()
+        rows = self.index_file.read_bytes().splitlines(keepends=True)
+        self.hide(Path(chain['segments'][-1]['root'], 'iterations', '000003', 'complete.json'))
+        self.refuses(b''.join(rows[:6]) + rows[6][:30], 'update 75 has no receipt')
+
+    def test_receipt_after_a_hole_without_segment_completion_refuses(self):
+        root = Path(retention.load_chain(self.path)['segments'][-1]['root'])
+        self.hide(root / 'completion.json')
+        self.hide(self.receipt(10))
+        self.refuses(b''.join(self.rows[:8]) + self.rows[8][:30], self.receipt(11).as_posix())
+
+    def test_live_and_mounted_prefixes_recover_up_to_persisted_receipts(self):
+        root = Path(retention.load_chain(self.path)['segments'][-1]['root'])
+        self.hide(root / 'completion.json')
+        self.hide(self.receipt(11))
+        torn = b''.join(self.rows[:6]) + self.rows[6][:30]
+        for mounted, count in [(False, 11), (True, 8)]:
+            with mock.patch.object(os.path, 'ismount', side_effect=lambda p: mounted and Path(p) == root):
+                for read in (self.read_index, self.read_cache):
+                    self.put(torn)
+                    self.assertEqual(read(), self.records[:count])
+                    self.assertEqual(self.index_file.read_bytes(), b''.join(self.rows[:count]))
+
+    def test_recovery_reads_a_receipt_published_while_checking_a_gap(self):
+        receipt = self.receipt(10)
+        hidden = receipt.with_name('complete.hidden')
+        evidence = retention.receipt_gap_evidence
+
+        def publish(chain, missing):
+            hidden.rename(receipt)
+            return evidence(chain, missing)
+
+        with mock.patch.object(retention, 'receipt_gap_evidence', side_effect=publish):
+            for read in (self.read_index, self.read_cache):
+                receipt.rename(hidden)
+                try:
+                    self.recovers(b''.join(self.rows[:8]) + self.rows[8][:30], read)
+                finally:
+                    if hidden.exists():
+                        hidden.rename(receipt)
+
     def test_an_unreadable_receipt_refuses(self):
         torn = b''.join(self.rows[:-1]) + self.rows[-1][:30]
         update = Path(json.loads(self.receipt(11).read_text())['update']['path'])
