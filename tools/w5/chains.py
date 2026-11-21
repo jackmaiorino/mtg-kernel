@@ -549,12 +549,29 @@ def durable_dirs(path):
             fsync_path(d.parent)
 
 
-def check_carry_roots(doc, name, root):
-    """The new root and the carried chain's root are disjoint: neither is the other or inside it."""
-    old_root = Path(doc['from']['manifest']['path']).parent.parent.parent.resolve()
-    new_root = Path(root).resolve()
-    require(new_root != old_root and old_root not in new_root.parents and new_root not in old_root.parents,
-            f'{name}: a carried chain runs in a new root, apart from {old_root}')
+def disjoint(a, b):
+    a, b = Path(a).resolve(), Path(b).resolve()
+    return a != b and a not in b.parents and b not in a.parents
+
+
+def check_carry_roots(doc, name, root, scratch_root=None):
+    """The new root and its scratch root are disjoint from the carried chain's root and from its scratch root:
+    neither is the other or inside it, so no write, scratch reset or persist of the continuation can reach a file
+    of the old chain."""
+    man_path = Path(doc['from']['manifest']['path'])
+    old_root = man_path.parent.parent.parent
+    old_scratch = None
+    try:
+        old_arm = read(read(man_path)['arm_file']['path'])
+        old_scratch = old_arm.get('scratch_root')
+    except (OSError, KeyError, ValueError):
+        pass
+    mine = [Path(root)] + ([Path(scratch_root)] if scratch_root else [])
+    theirs = [old_root] + ([Path(old_scratch)] if old_scratch else [])
+    for m in mine:
+        for t in theirs:
+            require(disjoint(m, t), f'{name}: {m} is not apart from the carried chain\'s {t} (a new root and scratch '
+                                    'root, neither inside the other)')
 
 
 def check_carry(doc, name, seed_root, arm, new=True):
@@ -576,7 +593,7 @@ def check_carry(doc, name, seed_root, arm, new=True):
     old_root = old_cdir.parent.parent
     require(Path(doc['from']['manifest']['path']).is_absolute(), f'{name}: the carried manifest path is not absolute')
     require(name != doc['from']['chain'], f'{name}: a carried chain takes a new name')
-    check_carry_roots(doc, name, Path(arm['root']))
+    check_carry_roots(doc, name, Path(arm['root']), arm.get('scratch_root'))
     ck = Path(doc['source']['checkpoint']['path'])
     keep_out = [old_root.resolve(), Path(arm['root']).resolve()] + \
         ([Path(arm['scratch_root']).resolve()] if arm.get('scratch_root') else [])
@@ -866,9 +883,11 @@ def make_plan(inputs_path):
     tools = tools_shas()
     common = {k: pin(inputs[k]) for k in ('python', 'trainer', 'container_tool', 'base', 'layout')}
     frozen_pin = pin(frozen) if frozen else None
+    carry_bytes = {}  # one read of each carry record: every check, the pin and the manifest use these bytes
     for name, c in sorted(chains_in.items()):  # before any write: a carried plan never writes in the old root
         if c.get('carry') is not None:
-            check_carry_roots(json.loads(Path(c['carry']).read_bytes()), name, root)
+            carry_bytes[name] = Path(c['carry']).read_bytes()
+            check_carry_roots(json.loads(carry_bytes[name]), name, root, inputs.get('scratch_root'))
     arms, arm_paths = {}, {}
     for a in sorted(used):
         spec = arms_in[a]
@@ -1057,7 +1076,7 @@ def make_plan(inputs_path):
         if c.get('carry') is not None:  # absent otherwise: existing plans and manifests keep their bytes
             require(stage == '0' and independent and c.get('pair') is None,
                     f'{name}: a carried chain runs in an independent Stage 0 plan, without a pair')
-            data = Path(c['carry']).read_bytes()  # one read: the pin, the checks and the manifest use these bytes
+            data = carry_bytes[name]  # the bytes the root checks read before any write
             carry_docs[name] = json.loads(data)
             require(r_nom is None, f'{name}: a carried chain keeps no look state (no r_nom_usec)')
             check_carry(carry_docs[name], name, seed_root, arms[a],

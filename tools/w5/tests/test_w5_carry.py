@@ -391,21 +391,6 @@ class CarryTests(unittest.TestCase):
         with self.assertRaisesRegex(chains.Stop, 'new root'):
             chains.make_plan(jwrite(self.t / 'in.json', doc))
         self.assertEqual(sorted(p.as_posix() for p in self.node.root.rglob('*')), before)
-        # a carried checkpoint inside the new root or the scratch root is refused
-        rec = json.loads(carry_path.read_text())
-        for where in (self.t / 'cont2' / 'chains' / 'c1c' / 'seg-00000', self.t / 'shm'):
-            moved = dict(rec, source=dict(rec['source'], checkpoint=dict(rec['source']['checkpoint'])))
-            target = where / Path(rec['source']['checkpoint']['path']).name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(Path(rec['source']['checkpoint']['path']).read_bytes())
-            moved['source']['checkpoint']['path'] = target.as_posix()
-            bad = jwrite(self.t / f'carry-{where.name}.json', moved)
-            doc = json.loads(Path(self.cont_inputs(bad, label='w' + where.name[:3], root='cont2')).read_text())
-            doc['scratch_root'] = (self.t / 'shm').as_posix()
-            doc['arms']['C']['scratch'] = True
-            doc['arms']['C']['segment_updates'] = 32
-            with self.subTest(where=where.name), self.assertRaises(chains.Stop):
-                chains.make_plan(jwrite(self.t / f'w{where.name}.json', doc))
         # a boundary past the old chain's END is refused
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(chains.main(['end', '--plan', str(self.node.root / 'plan' / 'old' / 'CHAINS-PLAN.json'),
@@ -446,6 +431,47 @@ class CarryTests(unittest.TestCase):
             self.skipTest('no symlink permission on this host')
         self.carry(old_man, 8)
         self.assertEqual(old_ck.read_bytes(), before)
+
+
+    def test_cleanup_trees_and_scratch_roots_stay_apart(self):
+        """A valid scratch-compatible carry (32-update segments) where only the location under test changes."""
+        _, old_man = self.old(2, length=32)
+        carry_path = self.carry(old_man, 32)
+        rec = json.loads(carry_path.read_text())
+
+        def inputs(label, root, carry, scratch):
+            doc = json.loads(Path(self.cont_inputs(carry, label=label, root=root, segment_updates=32)).read_text())
+            doc['scratch_root'] = Path(scratch).as_posix()
+            doc['arms']['C']['scratch'] = True
+            return jwrite(self.t / f'{label}.json', doc)
+        chains.make_plan(inputs('okplan', 'okroot', carry_path, self.t / 'shm'))  # the valid baseline plans
+        for label, where in (('wseg', self.t / 'cont2' / 'chains' / 'c1c' / 'seg-00000'), ('wshm', self.t / 'shm2')):
+            moved = json.loads(json.dumps(rec))
+            target = where / Path(rec['source']['checkpoint']['path']).name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(Path(rec['source']['checkpoint']['path']).read_bytes())
+            moved['source']['checkpoint']['path'] = target.as_posix()
+            bad = jwrite(self.t / f'carry-{label}.json', moved)
+            with self.subTest(where=label), self.assertRaisesRegex(chains.Stop, 'outside the old root, the new root'):
+                chains.make_plan(inputs(label, 'cont2', bad, self.t / 'shm2'))
+        # a scratch root inside the old root is refused before anything is written there
+        before = sorted(p.as_posix() for p in self.node.root.rglob('*'))
+        with self.assertRaisesRegex(chains.Stop, 'not apart'):
+            chains.make_plan(inputs('scr', 'cont3', carry_path, self.node.root / 'chains'))
+        self.assertEqual(sorted(p.as_posix() for p in self.node.root.rglob('*')), before)
+
+    def test_run_refuses_while_the_old_chain_is_not_held(self):
+        _, old_man = self.old(3)
+        path, plan = chains.make_plan(self.cont_inputs(self.carry(old_man, 8)))
+        jwrite(self.t / 'cont' / 'plan' / 'cont' / 'LAUNCHED.json', {'opened': [0]})
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(chains.main(['end', '--plan', str(self.node.root / 'plan' / 'old' / 'CHAINS-PLAN.json'),
+                                          '--chain', 'c1', '--boundary', '4', '--reason', 'x']), 0)
+        err = io.StringIO()
+        with mock.patch.object(chains.subprocess, 'call', side_effect=AssertionError('no w5box')), \
+                contextlib.redirect_stderr(err):
+            self.assertEqual(chains.main(['run', '--plan', str(path), '--chain', 'c1c']), w5box.EXIT_REFUSED)
+        self.assertIn('before the carried boundary', err.getvalue())
 
 
 if __name__ == '__main__':
