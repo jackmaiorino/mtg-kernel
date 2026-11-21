@@ -8,6 +8,7 @@ use crate::eternal_sideboard_s1d_v1::statics as circles;
 use crate::event::{self, DamageProposed, ProposedEvent, ReplacementEffectKind};
 use crate::ids::PlayerId;
 use crate::state::GameState;
+pub(crate) mod nomads_v1;
 
 fn has_color_prevention(state: &GameState) -> bool {
     state.engine.active_replacements.iter().any(|replacement| {
@@ -22,6 +23,9 @@ fn has_color_prevention(state: &GameState) -> bool {
 /// Only states with an eligible pair borrow the enclosing operation replay:
 /// a Circle plus global prevention, or an active Sphere opposite an Ojer.
 pub(crate) fn may_need_choice(state: &GameState) -> bool {
+    if nomads_v1::has_active_redirects(state) {
+        return true;
+    }
     cfg!(feature = "eternal-fixtures")
         && !cannot_prevent(state)
         && ((circles::has_live_circle_shield(state)
@@ -47,7 +51,7 @@ fn full_prevention(state: &GameState, damage: &DamageProposed) -> bool {
     })
 }
 
-fn cannot_prevent(state: &GameState) -> bool {
+pub(crate) fn cannot_prevent(state: &GameState) -> bool {
     state.engine.until_end_of_turn.iter().any(|effect| {
         matches!(
             effect,
@@ -104,6 +108,7 @@ pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<Ordinary
             options.push(effect);
         }
     }
+    nomads_v1::normalize(state, packet, &mut options);
     options
 }
 
