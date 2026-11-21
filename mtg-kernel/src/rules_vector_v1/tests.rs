@@ -1190,6 +1190,7 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
     ("effect.rs", "Lembas", "authenticates the trigger's captured battlefield source for ShuffleTriggerSourceIntoOwnersLibrary, which represents the graveyard move and the owner's shuffle"),
     ("effect.rs", "Extravagant Replication", "closed native nonland token-copy source guard; frozen V1 extractor refuses"),
     ("effect.rs", "Self-Reflection", "closed native creature-copy spell source guard; typed copy root selects its successor"),
+    ("effect.rs", "Sneaky Snacker", "returns the original graveyard incarnation tapped in one zone change while preserving the published trigger program"),
     ("event.rs", "Niv-Mizzet, Visionary", "native exact committed noncombat damage and trigger publication receipt; frozen V1 root remains opaque"),
     ("event.rs", "Nine-Lives Familiar", "native exact departure counter LKI and future return occurrence; frozen V1 root remains opaque"),
     ("event.rs", "Alesha, Who Laughs at Fate", "native source power capture before departure; frozen V1 root remains opaque"),

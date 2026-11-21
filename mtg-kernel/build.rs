@@ -4941,7 +4941,7 @@ fn enters_battlefield_tapped(card: &CardJson) -> bool {
     card.mechanics
         .iter()
         .any(|mechanic| mechanic == "enters_tapped")
-        && card.name != "Gingerbread Cabin"
+        && !matches!(card.name.as_str(), "Gingerbread Cabin" | "Sneaky Snacker")
 }
 
 fn enters_battlefield_tapped_unless_for(name: &str) -> &'static str {
