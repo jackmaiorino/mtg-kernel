@@ -888,7 +888,7 @@ const RETRACE_COST: &[CostComponent] = &[CostComponent::DiscardLandCardsV1(1)];
 /// (`eternal_legacy_e8a_v1::alternative_skips_additional_cost`). A card
 /// with a choice between two additional costs (Bone Shards, Demand Answers)
 /// pays the one its mode names (`eternal_cost_choice_v1`).
-fn additional_cost_for_method_v1(
+pub(super) fn additional_cost_for_method_v1(
     definition: &card_def::CardDef,
     method: CastMethodV4,
     mode: u8,
@@ -1403,7 +1403,7 @@ fn selected_spell_quote_branch_grant_v1(
     }
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
     if let Some(costs) =
-        super::compound_cast_cost_v1::Costs::new(definition, method, selected.retrace)
+        super::compound_cast_cost_v1::Costs::new(definition, method, selected.retrace, mode)
     {
         let order = state
             .engine
@@ -1725,6 +1725,13 @@ impl SpellManaPaymentV1 {
 }
 
 impl PreparedSpellPaymentV1 {
+    pub(super) fn compound_printed_discards(&self) -> &[ObjectId] {
+        self.compound
+            .as_ref()
+            .map(|p| p.printed_discards())
+            .unwrap_or_default()
+    }
+
     pub(super) fn planned_mana_count_v1(&self, state: &GameState, player: PlayerId) -> Option<u32> {
         super::checked_spell_mana_plan_v59(state, player, &self.mana.mana)
     }
@@ -1873,7 +1880,12 @@ pub(super) fn prepare_final_spell_payment_v1(
         state,
     )?;
     let modifiers = super::spell_cost_generic_modifiers_v1(state, selected.types, player);
-    let compound = super::compound_cast_cost_v1::Costs::new(definition, method, selected.retrace);
+    let compound = super::compound_cast_cost_v1::Costs::new(
+        definition,
+        method,
+        selected.retrace,
+        pending.mode_chosen.unwrap_or(0),
+    );
     let choices = if compound.is_some() {
         SpellComponentChoicesV1 {
             ordered_objects: Vec::new(),
@@ -1912,6 +1924,11 @@ pub(super) fn prepare_final_spell_payment_v1(
             Some(count) => usize::from(count.unwrap_or(0)),
             None => discard_count,
         };
+    let discard_count = if compound.is_some_and(|cost| cost.printed_discard()) {
+        0
+    } else {
+        discard_count
+    };
     if discarded.len() != discard_count
         || discarded.iter().enumerate().any(|(index, object)| {
             discarded[..index].contains(object)
