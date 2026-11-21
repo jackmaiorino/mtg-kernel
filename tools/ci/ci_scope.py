@@ -64,27 +64,26 @@ TRAINER_FILTERS = [
     "native_checkpoint_", "native_baseline_checkpoint_chain_v4::", "fast_sampler::", "unclamped_softmax_sampler_v1::",
     "native_opponent_sampler_v1::", "sideboard_play_policy_v1::", "rl_session::",
 ]
-# The qualifying modules compile some of their tests only under other features. Each extra feature set runs, in
-# full, the filters of the qualifying modules that have tests gated on its features (FEATURE_FILTERS); the
-# default set runs every filter. tools/ci/tests/test_ci_scope.py scans the qualifying files and fails if a
-# feature gate there is not covered (Cargo feature implications included).
+# Some tests in the modules the filters select compile only under other features. Each extra feature set runs the
+# filters whose modules have tests gated on a feature that set owns (FEATURE_FILTERS): the set naming the feature,
+# or else the first set that enables it through Cargo implications. The default set runs every filter.
+# tools/ci/tests/test_ci_scope.py scans every module the filters select and fails if a gate is not covered.
 FEATURE_SETS = ["", "experimental-burn-net8-packed-cuda-v1,gpu-exact-fault-injection-v1", "limited-fdn-fixtures",
                 "standard-magezero-fixtures", "eternal-fixtures",
-                "viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1"]
+                "viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1,native-training-store-v2-production"]
 FEATURE_FILTERS = {
     "experimental-burn-net8-packed-cuda-v1,gpu-exact-fault-injection-v1": [
-        "expanded_deck_training_v1::", "native_policy_train_step_v1::", "native_policy_value_net_v1::",
-        "native_flat_tensorizer_v", "sideboard_play_policy_v1::", "rl_session::", "native_expanded_training_run_v1::"],
-    "limited-fdn-fixtures": ["expanded_deck_training_v1::", "native_flat_tensorizer_v", "rl_session::",
-                             "sideboard_play_policy_v1::", "native_policy_value_net_v1::"],
-    "standard-magezero-fixtures": ["expanded_deck_training_v1::", "native_flat_tensorizer_v", "rl_session::",
-                                   "sideboard_play_policy_v1::", "native_policy_value_net_v1::"],
+        "expanded_deck_training_v1::", "native_policy_train_step_v1::", "native_expanded_training_run_v1::",
+        "native_policy_value_net_v1::", "native_trainer_v1::", "native_training_", "native_checkpoint_",
+        "sideboard_play_policy_v1::", "rl_session::"],
+    "limited-fdn-fixtures": ["native_policy_value_net_v1::", "native_flat_tensorizer_v", "native_training_",
+                             "sideboard_play_policy_v1::", "rl_session::"],
+    "standard-magezero-fixtures": ["native_flat_tensorizer_v", "native_training_", "rl_session::"],
     "eternal-fixtures": ["rl_session::"],
-    "viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1": [
-        "expanded_deck_training_v1::", "native_flat_tensorizer_v", "rl_session::", "sideboard_play_policy_v1::",
-        "native_policy_value_net_v1::", "native_policy_train_step_v1::"],
+    "viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1,native-training-store-v2-production": [
+        "expanded_deck_training_v1::", "native_flat_tensorizer_v", "inference_cache_v1::", "native_trainer_v1::",
+        "native_training_", "native_checkpoint_", "sideboard_play_policy_v1::", "rl_session::"],
 }
-
 
 def filters_for(features: str) -> list[str]:
     return TRAINER_FILTERS if not features else FEATURE_FILTERS[features]

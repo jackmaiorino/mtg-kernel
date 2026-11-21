@@ -58,11 +58,10 @@ class TableTests(unittest.TestCase):
         self.assertEqual(ci_scope.scope_of("docs/reports/x/pipeline.py"), None)
         self.assertEqual(ci_scope.scope_of_files(["docs/reports/x/pipeline.py", "mtg-kernel/src/rl_session.rs"]), "pr")
 
-    def test_every_feature_gate_in_a_qualifying_file_is_covered(self):
+    def test_every_feature_gate_in_a_module_the_filters_select_is_covered(self):
         cargo = (ROOT / "mtg-kernel" / "Cargo.toml").read_text(encoding="utf-8")
-        implies = {}
-        for name, deps in re.findall(r'^([a-z0-9-]+) = \[([^\]]*)\]', cargo, re.MULTILINE):
-            implies[name] = re.findall(r'"([a-z0-9-]+)"', deps)
+        implies = {name: re.findall(r'"([a-z0-9-]+)"', deps)
+                   for name, deps in re.findall(r'^([a-z0-9-]+) = \[([^\]]*)\]', cargo, re.MULTILINE)}
 
         def closure(features):
             out, todo = set(), [f for f in features.split(",") if f]
@@ -72,23 +71,27 @@ class TableTests(unittest.TestCase):
                     out.add(f)
                     todo += implies.get(f, [])
             return out
+
+        def owner(feature):
+            extra = ci_scope.FEATURE_SETS[1:]
+            return (next((fs for fs in extra if feature in fs.split(",")), None)
+                    or next((fs for fs in extra if feature in closure(fs)), None))
         src = ROOT / "mtg-kernel" / "src"
-        files = set()
-        for pattern in ci_scope.TRAINER_MODULES + ci_scope.SHARED_QUALIFYING:
-            for match in ROOT.glob(pattern):
-                files |= set(match.rglob("*.rs")) if match.is_dir() else {match}
-        files = sorted(p for p in files if p.suffix == ".rs")
-        self.assertGreater(len(files), 50)
-        for path in files:
-            rel = path.relative_to(src).as_posix()
-            module = rel.split("/")[0].removesuffix(".rs")
-            module_filters = [f for f in ci_scope.TRAINER_FILTERS if module.startswith(f.rstrip(":"))]
-            if not module_filters or module == "bin":
-                continue
-            for feature in set(re.findall(r'feature\s*=\s*"([a-z0-9-]+)"', path.read_text(encoding="utf-8", errors="replace"))):
-                with self.subTest(file=rel, feature=feature):
-                    self.assertTrue(any(feature in closure(fs) and set(module_filters) & set(ci_scope.filters_for(fs))
-                                        for fs in ci_scope.FEATURE_SETS), f"{rel}: {feature}")
+        scanned = 0
+        for prefix in ci_scope.TRAINER_FILTERS:
+            stem = prefix.rstrip(":")
+            for entry in src.iterdir():
+                if not (entry.stem if entry.is_file() else entry.name).startswith(stem):
+                    continue
+                for path in ([entry] if entry.suffix == ".rs" else sorted(entry.rglob("*.rs")) if entry.is_dir() else []):
+                    scanned += 1
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                    for feature in sorted(set(re.findall(r'feature\s*=\s*"([a-z0-9-]+)"', text))):
+                        with self.subTest(file=path.relative_to(src).as_posix(), feature=feature):
+                            fs = owner(feature)
+                            self.assertIsNotNone(fs, feature)
+                            self.assertIn(prefix, ci_scope.filters_for(fs))
+        self.assertGreater(scanned, 100)
 
     def test_the_record_names_the_mandatory_rows(self):
         record = ci_scope.trainer_record()

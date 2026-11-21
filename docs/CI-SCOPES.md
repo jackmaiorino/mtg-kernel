@@ -22,11 +22,11 @@ Everything else: whole pull request set (docs files: no checks).
 
 Library test filters (default features): `expanded_deck_training_v1::`, `native_policy_train_step_v1::`, `native_expanded_training_run_v1::`, `native_policy_value_net_v1::`, `training_math_v1::`, `native_flat_tensorizer_v`, `inference_cache_v1::`, `native_train_state_payload_v1::`, `native_trainer_schedule_v`, `native_trainer_v1::`, `native_training_`, `native_checkpoint_`, `native_baseline_checkpoint_chain_v4::`, `fast_sampler::`, `unclamped_softmax_sampler_v1::`, `native_opponent_sampler_v1::`, `sideboard_play_policy_v1::`, `rl_session::`.
 
-Under `experimental-burn-net8-packed-cuda-v1,gpu-exact-fault-injection-v1`: `expanded_deck_training_v1::`, `native_policy_train_step_v1::`, `native_policy_value_net_v1::`, `native_flat_tensorizer_v`, `sideboard_play_policy_v1::`, `rl_session::`, `native_expanded_training_run_v1::`.
-Under `limited-fdn-fixtures`: `expanded_deck_training_v1::`, `native_flat_tensorizer_v`, `rl_session::`, `sideboard_play_policy_v1::`, `native_policy_value_net_v1::`.
-Under `standard-magezero-fixtures`: `expanded_deck_training_v1::`, `native_flat_tensorizer_v`, `rl_session::`, `sideboard_play_policy_v1::`, `native_policy_value_net_v1::`.
+Under `experimental-burn-net8-packed-cuda-v1,gpu-exact-fault-injection-v1`: `expanded_deck_training_v1::`, `native_policy_train_step_v1::`, `native_expanded_training_run_v1::`, `native_policy_value_net_v1::`, `native_trainer_v1::`, `native_training_`, `native_checkpoint_`, `sideboard_play_policy_v1::`, `rl_session::`.
+Under `limited-fdn-fixtures`: `native_policy_value_net_v1::`, `native_flat_tensorizer_v`, `native_training_`, `sideboard_play_policy_v1::`, `rl_session::`.
+Under `standard-magezero-fixtures`: `native_flat_tensorizer_v`, `native_training_`, `rl_session::`.
 Under `eternal-fixtures`: `rl_session::`.
-Under `viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1`: `expanded_deck_training_v1::`, `native_flat_tensorizer_v`, `rl_session::`, `sideboard_play_policy_v1::`, `native_policy_value_net_v1::`, `native_policy_train_step_v1::`.
+Under `viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1,native-training-store-v2-production`: `expanded_deck_training_v1::`, `native_flat_tensorizer_v`, `inference_cache_v1::`, `native_trainer_v1::`, `native_training_`, `native_checkpoint_`, `sideboard_play_policy_v1::`, `rl_session::`.
 
 release-trainer scope: CI runs formatting, Clippy and the library tests of the trainer and qualifying shared modules only. Mandatory bit-identity rows, run on a node, not in CI: the production 10-game recipe; the production 60-game recipe; the pilot recipe with mulligans; the pilot recipe with mulligans and priority windows (keep lean present), on the znver5 build and on the portable build, and on native arm64 when Mac arms use that build. A change that adds a recipe field also needs those rows with the field absent and the feature's own differential tests with it present. A trainer pull request without those rows linked is not mergeable under the merge rule, whatever CI says.
 

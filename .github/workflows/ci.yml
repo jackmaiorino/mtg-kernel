@@ -1177,7 +1177,7 @@ jobs:
       fail-fast: false
       matrix:
         # tools/ci/ci_scope.py FEATURE_SETS (a test keeps them equal).
-        features: ['', 'experimental-burn-net8-packed-cuda-v1,gpu-exact-fault-injection-v1', 'limited-fdn-fixtures', 'standard-magezero-fixtures', 'eternal-fixtures', 'viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1']
+        features: ['', 'experimental-burn-net8-packed-cuda-v1,gpu-exact-fault-injection-v1', 'limited-fdn-fixtures', 'standard-magezero-fixtures', 'eternal-fixtures', 'viewer-recording-v1,flat-action-diagnostic,tensorize-cost-profile-v1,s4a-profile-v1,native-training-store-v2-production']
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults:
