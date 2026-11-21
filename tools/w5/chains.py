@@ -639,6 +639,8 @@ def check_pair(x_arm, c_arm, seed_root, scratch):
     the seed root and the global update fix every episode id, deal seed, seat and opponent), and identical
     generated iterations at two offsets; X8 differs from C only in the search block and resource keys. Returns
     XS's other differences (reported)."""
+    require(c_arm.get('postboard_exposure') is None,
+            f'{x_arm["arm"]} and C cannot pair with postboard_exposure for {seed_root}')
     x_base, c_base = read(x_arm['base']['path']), read(c_arm['base']['path'])
     require(x_base['iterations'] == c_base['iterations'] and x_base.get('opponents') == c_base.get('opponents'),
             f'{x_arm["arm"]} and C use different opponent schedules for {seed_root}')

@@ -414,6 +414,41 @@ class ChainTests(unittest.TestCase):
         with self.assertRaisesRegex(chains.Stop, 'C-recipe'):
             self.plan(self.inputs(EXPOSURE, label='pair', specs=specs, arms=('C', 'X8')))
 
+    def sparse_pair_inputs(self):
+        self.node = Node(self.tmp.name, boxes=2)
+        base = deck_base(opening=False, overlap=False)
+        iteration = base['iterations'][0]
+        iteration['episodes'] = [copy.deepcopy(entry) for entry in iteration['episodes'] * 5]
+        jwrite(self.node.base, base)
+        specs = {'c1': {'arm': 'C', 'slot': 0, 'pair': 1, 'seed_root': 'w5/chain1'},
+                 'x8-1': {'arm': 'X8', 'slot': 1, 'pair': 1, 'seed_root': 'w5/chain1'}}
+        return chains.read(self.node.inputs('1a', specs, r_nom_usec=10**9))
+
+    def test_stage1a_refuses_sparse_postboard_exposure_in_a_pair(self):
+        doc = self.sparse_pair_inputs()
+        # The previous guard sampled 40 episodes that all matched. The
+        # first differing selection occurs later at update 23, slot 4.
+        doc['arms']['C']['postboard_exposure'] = dict(EXPOSURE, share=[1, 1024])
+        with self.assertRaisesRegex(chains.Stop, 'X8 and C cannot pair with postboard_exposure'):
+            self.plan(doc)
+
+    def test_stage1b_refuses_sparse_postboard_exposure_on_an_ended_partner(self):
+        _, plan = self.plan(self.sparse_pair_inputs())
+        manifest_path = Path(plan['chains']['c1']['manifest'])
+        manifest = chains.read(manifest_path)
+        arm = self.arm(plan)
+        arm['postboard_exposure'] = dict(EXPOSURE, share=[1, 1024])
+        # Represent a persisted arm from before Stage 1a refused exposure.
+        arm_path = jwrite(self.node.t / 'previous-c-arm.json', arm)
+        manifest['arm_file'] = chains.pin(arm_path)
+        manifest['recipe'] = chains.recipe_identity(arm)
+        chains.write(manifest_path, manifest)
+        chains.write_once(manifest_path.parent / 'END.json', {'reason': 'c-wall'})
+        specs = {'xs-1': {'arm': 'XS', 'slot': 0, 'pair': 1, 'seed_root': 'w5/chain1', 'partner': 'c1'},
+                 'f1': {'arm': 'F', 'slot': 1, 'seed_root': 'w5/filler1'}}
+        with self.assertRaisesRegex(chains.Stop, 'XS and C cannot pair with postboard_exposure'):
+            self.node.plan('1b', specs)
+
     def test_a_started_chain_refuses_another_exposure(self):
         _, plan = self.plan(self.inputs(EXPOSURE, label='first'))
         path = Path(plan['chains']['k1']['manifest'])
