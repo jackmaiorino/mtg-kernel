@@ -91,3 +91,44 @@ fn impractical_joke_prohibits_hallow_and_nishoba_still_loses_its_counter() {
         (Zone::Battlefield, 3, 6)
     );
 }
+
+#[test]
+fn nomads_redirect_after_dominate_reveals_an_active_player_choice() {
+    let mut state = turn_of(P0);
+    let nomads = put(&mut state, P1, "Nomads en-Kor", Zone::Battlefield);
+    let acolyte = put(&mut state, P1, "Crimson Acolyte", Zone::Battlefield);
+    give_priority(&mut state, P1);
+    super::activate(&mut state, nomads, 0, &[Target::Object(acolyte)]);
+    settled(&mut state);
+
+    give_priority(&mut state, P0);
+    let dominate = put(&mut state, P0, "Dominate", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 3);
+    cast(&mut state, dominate, &[Target::Object(acolyte)]);
+    settled(&mut state);
+    assert_eq!(state.objects.get(acolyte).controller, P0);
+
+    let pyro = put(&mut state, P0, "Pyroclasm", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::R], 1);
+    cast(&mut state, pyro, &[]);
+    protect(&mut state, pyro);
+
+    // First P0 takes Acolyte's red protection for its own two damage. P1
+    // redirects one damage from Nomads. The redirected point is a new P0
+    // choice; Hallow gains one for that point and one for the remainder.
+    for (chooser, option) in [(P0, 1), (P1, 1), (P0, 0)] {
+        assert!(
+            matches!(settle(&mut state), Some(Decision::ChooseEffectOption {
+            player, source, option_count: 2
+        }) if player == chooser && source == pyro)
+        );
+        state = restored(&state);
+        act(&mut state, Action::ChooseEffectOption(option));
+    }
+    settled(&mut state);
+    assert_eq!((life(&state, P0), life(&state, P1)), (22, 20));
+    for id in [nomads, acolyte] {
+        assert_eq!(state.objects.get(id).zone, Zone::Battlefield);
+        assert_eq!(state.objects.get(id).damage, 0);
+    }
+}

@@ -518,7 +518,11 @@ fn redirect_may_hit_nishoba(state: &GameState, damage: &DamageProposed) -> bool 
             .is_some()
         && records.redirects.iter().any(|record| {
             e9a::link_live_in(state, record.to, Zone::Battlefield)
-                && e9a::active_named(state, record.to.object, crate::eternal_premodern_p2c_v1::PHANTOM_NISHOBA)
+                && e9a::active_named(
+                    state,
+                    record.to.object,
+                    crate::eternal_premodern_p2c_v1::PHANTOM_NISHOBA,
+                )
         })
 }
 
