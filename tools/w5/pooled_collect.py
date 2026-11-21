@@ -919,6 +919,22 @@ def _hash_nofollow(path: str) -> str | None:
         return digest.hexdigest()
 
 
+def _storage_marker(scratch: str) -> str:
+    """This storage's generation marker (created once, random): replaced storage gets a new one, so a
+    learner's ownership records never carry over to it."""
+    path = os.path.join(scratch, ".pooled-storage-id")
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW | BINARY, 0o644)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(uuid.uuid4().hex.encode())
+    except FileExistsError:
+        pass
+    data = _read_nofollow(path, 64).decode().strip()
+    if not re.fullmatch(r"[0-9a-f]{32}", data):
+        raise AgentRefusal("storage marker unreadable")
+    return data
+
+
 def _no_more_input(stdin) -> None:
     """One request per connection: an operation without a payload takes no input at all."""
     if stdin.read(1):
@@ -1039,7 +1055,7 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
         for path, digest in checked:
             found = _hash_nofollow(path)
             states.append("absent" if found is None else "ok" if found == digest else "differs")
-        reply(states)
+        reply({"states": states, "storage": _storage_marker(scratch)})
     elif op == "push":
         path, digest = _pin_arg(args, config)
         parent = os.path.dirname(path)
@@ -1227,7 +1243,10 @@ class AgentTransport:
 
     def pin_status(self, pins: set[tuple[str, str]]) -> dict:
         ordered = sorted(pins)
-        return dict(zip(ordered, self._json("pin_status", pins=[list(p) for p in ordered])))
+        return dict(zip(ordered, self._json("pin_status", pins=[list(p) for p in ordered])["states"]))
+
+    def storage_id(self) -> str:
+        return self._json("pin_status", pins=[])["storage"]
 
     def push(self, local: Path, remote: str, digest: str) -> bool:
         with open(local, "rb") as handle:

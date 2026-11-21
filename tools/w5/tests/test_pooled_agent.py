@@ -209,15 +209,22 @@ class AgentServiceTests(AgentCase):
     def test_pins_install_once_never_replace_and_prune_only_their_bytes(self):
         data, other = b"checkpoint", b"other bytes"
         path = str(self.pins / "run" / "checkpoint.json")
-        self.assertEqual(json.loads(self.serve("pin_status", pins=[[path, sha(data)]])[1]), ["absent"])
+        self.assertEqual(json.loads(self.serve("pin_status", pins=[[path, sha(data)]])[1])["states"], ["absent"])
         self.assertEqual(json.loads(self.serve("push", data, path=path, sha256=sha(data))[1]), "created")
         self.assertEqual(json.loads(self.serve("push", data, path=path, sha256=sha(data))[1]), "existing")
         self.assertRefused(self.serve("push", other, path=path, sha256=sha(other)), "existing pin differs")
         self.assertRefused(self.serve("push", other, path=path, sha256=sha(data)), "payload differs")
-        self.assertEqual(json.loads(self.serve("pin_status", pins=[[path, sha(other)]])[1]), ["differs"])
+        self.assertEqual(json.loads(self.serve("pin_status", pins=[[path, sha(other)]])[1])["states"], ["differs"])
         self.assertEqual(json.loads(self.serve("remove_pin", path=path, sha256=sha(other))[1]), "kept")
         self.assertEqual(json.loads(self.serve("remove_pin", path=path, sha256=sha(data))[1]), "removed")
         self.assertEqual(sorted(os.listdir(self.pins / "run")), [])
+
+    def test_the_storage_marker_identifies_this_storage(self):
+        first = json.loads(self.serve("pin_status", pins=[])[1])["storage"]
+        self.assertRegex(first, r"^[0-9a-f]{32}$")
+        self.assertEqual(json.loads(self.serve("pin_status", pins=[])[1])["storage"], first)
+        (self.scratch / ".pooled-storage-id").unlink()
+        self.assertNotEqual(json.loads(self.serve("pin_status", pins=[])[1])["storage"], first)
 
     def test_remove_pin_waits_for_a_push_on_the_same_path(self):
         data = b"checkpoint"
