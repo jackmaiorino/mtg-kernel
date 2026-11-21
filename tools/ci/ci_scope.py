@@ -24,18 +24,14 @@ import sys
 # engine (or agents, search, ladder) and the trainer: a change there is mixed and runs the whole pull request
 # set, never a trainer-only check.
 TOOLS_DIRS = ["checkpoint_codec_bench", "native_fixture_bench", "sd1", "search_experiment", "stage4a", "t1_diagnosis"]
-# Submodules of expanded_deck_training_v1 that code outside the trainer reads (2026-11-21 scan).
-TRAINER_SHARED_SUBMODULES = ["b_width_prescreen_v1", "checkpoint_container_v1", "no_state_digest_v1", "own_registration",
-                             "public_features", "registry_transfer_source", "s_update_fixture_v1", "stack_features",
-                             "tests", "w_learner_v1"]
 TRAINER_ROOTS = ["expanded_deck_training_v1", "native_expanded_training_run_v1", "native_policy_train_step_v1"]
 PATH_RULES: list[tuple[tuple[str, ...], str]] = [
     (("data/*",), "pr"),
     (("docs/*", "*.md"), "docs"),
     ((".github/workflows/ci.yml", ".github/actions/*", "tools/ci/*"), "pr"),
-    (("tools/w5/*", "tools/ex1/target_ref.py", "tools/spy_reset/panel.py", "tools/spy_reset/pilot.py",
-      "python/tools/nine_deck_public_panel_v1.py", "python/tools/s_transformer_reference_v1.py",
-      ".github/workflows/w5-tools.yml"), "w5-tools"),
+    # w5-tools.yml also watches a few files python/tests reads (tools/spy_reset, ex1, two python/tools
+    # modules); those run the Python set, and w5-tools.yml still runs on them by its own paths.
+    (("tools/w5/*", ".github/workflows/w5-tools.yml"), "w5-tools"),
     ((".github/workflows/*",), "workflow"),
     # Tool directories whose tests all live beside them (no python/tests or python/tools module reads them);
     # every other tools/** directory has tests in python/tests and runs the Python set.
@@ -49,12 +45,11 @@ PATH_RULES: list[tuple[tuple[str, ...], str]] = [
       "mtg-kernel/src/native_flat_tensorizer_*", "mtg-kernel/src/native_policy_value_net_v1*",
       "mtg-kernel/src/fast_sampler.rs", "mtg-kernel/src/unclamped_softmax_sampler_v1.rs",
       "mtg-kernel/src/sideboard_play_policy_v1*", "mtg-kernel/src/rl_session.rs", "mtg-kernel/src/rl_session/*",
-      "mtg-kernel/src/expanded_deck_training_v1.rs",
-      "mtg-kernel/src/native_policy_train_step_v1.rs", "mtg-kernel/src/native_policy_train_step_v1/*",
-      *(f"mtg-kernel/src/expanded_deck_training_v1/{name}{tail}" for name in TRAINER_SHARED_SUBMODULES
-        for tail in (".rs", "/*"))), "shared"),
-    (("mtg-kernel/src/expanded_deck_training_v1/*",
-      "mtg-kernel/src/native_expanded_training_run_v1.rs", "mtg-kernel/src/native_expanded_training_run_v1/*",
+      # The whole of expanded_deck_training_v1: its root's inference loaders (human matches, agents, the
+      # Spellbench scorer) reach into its submodules through grouped imports and re-exports.
+      "mtg-kernel/src/expanded_deck_training_v1.rs", "mtg-kernel/src/expanded_deck_training_v1/*",
+      "mtg-kernel/src/native_policy_train_step_v1.rs", "mtg-kernel/src/native_policy_train_step_v1/*"), "shared"),
+    (("mtg-kernel/src/native_expanded_training_run_v1.rs", "mtg-kernel/src/native_expanded_training_run_v1/*",
       "mtg-kernel/src/bin/native_expanded_training_run_v1.rs"), "trainer"),
     (("mtg-kernel/src/bin/kernel_limited_*",), "rules-limited"),
     # Python files that change which Rust tests run stay with the whole set.
@@ -158,7 +153,9 @@ def choose(event: str, group_set: str, input_scope: str, labels: list[str], file
 
 def trainer_record() -> str:
     rows = "; ".join(BIT_IDENTITY_ROWS)
-    return (f"Trainer scope: CI runs formatting, Clippy and the trainer library tests only. The bit-identity rows "
+    return (f"Trainer scope: CI runs formatting, Clippy and the trainer library tests only (a local run covers "
+            f"formatting, workspace Clippy and the library tests; the feature Clippy runs stay in the hosted "
+            f"rust-quality job). The bit-identity rows "
             f"go with every trainer change and run on a node, not in CI: {rows}, {BIT_IDENTITY_BUILDS}. "
             f"{TRAINER_RULE}")
 
@@ -196,7 +193,9 @@ def main(argv: list[str]) -> int:
     if command == "commands":
         scope = argv[2]
         lines = {"tools": TOOLS_COMMANDS,
-                 "trainer": ['python python/tools/run_rust_lib_filters.py --features "" ' + " ".join(TRAINER_FILTERS)]}.get(scope)
+                 "trainer": ["cargo fmt --all -- --check",
+                             "cargo clippy --release --locked --workspace --all-targets -- -D warnings",
+                             'python python/tools/run_rust_lib_filters.py --features "" ' + " ".join(TRAINER_FILTERS)]}.get(scope)
         if lines is None:
             print(f"no local command list for scope {scope}", file=sys.stderr)
             return 2

@@ -77,11 +77,13 @@ class ScopeTests(unittest.TestCase):
 
     def test_single_scope_changes(self):
         self.assertEqual(self.scope("tools/w5/chains.py", "tools/w5/tests/test_w5_chains.py", "docs/W5.md"), "w5-tools")
+        for read_by_python_tests in ("tools/spy_reset/panel.py", "tools/spy_reset/pilot.py",
+                                     "python/tools/nine_deck_public_panel_v1.py", "tools/ex1/target_ref.py"):
+            self.assertEqual(self.scope(read_by_python_tests), "python")
         self.assertEqual(self.scope("tools/stage4a/report.py"), "tools")
         self.assertEqual(self.scope("tools/reach/plan.py"), "python")          # its tests are in python/tests
         self.assertEqual(self.scope("python/tests/test_x.py", "python/tools/foo.py"), "python")
-        self.assertEqual(self.scope("mtg-kernel/src/expanded_deck_training_v1/ordered_update_preparation.rs",
-                                    "mtg-kernel/src/native_expanded_training_run_v1.rs",
+        self.assertEqual(self.scope("mtg-kernel/src/native_expanded_training_run_v1.rs",
                                     "mtg-kernel/src/bin/native_expanded_training_run_v1.rs"), "trainer")
         self.assertEqual(self.scope("mtg-kernel/src/bin/kernel_limited_match_v1.rs"), "rules-limited")
         self.assertEqual(self.scope("python/tools/check_limited_common_client_v1.py"), "python")
@@ -98,7 +100,9 @@ class ScopeTests(unittest.TestCase):
                        "mtg-kernel/src/expanded_deck_training_v1.rs",
                        "mtg-kernel/src/native_policy_train_step_v1/weighted_v3.rs",
                        "mtg-kernel/src/expanded_deck_training_v1/checkpoint_container_v1/update_tests.rs",
-                       "mtg-kernel/src/expanded_deck_training_v1/stack_features.rs"):
+                       "mtg-kernel/src/expanded_deck_training_v1/stack_features.rs",
+                       "mtg-kernel/src/expanded_deck_training_v1/s_learner_v1.rs",
+                       "mtg-kernel/src/expanded_deck_training_v1/weights_snapshot_v1.rs"):
             with self.subTest(file=shared):
                 self.assertEqual(ci_scope.scope_of(shared), "shared")
                 self.assertEqual(self.scope("mtg-kernel/src/native_expanded_training_run_v1.rs", shared), "pr")
