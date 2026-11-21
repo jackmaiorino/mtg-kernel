@@ -3026,10 +3026,12 @@ pub(crate) fn preview_hallow_damage_batch(
     state: &mut GameState,
     events: &[ProposedEvent],
 ) -> Result<(), String> {
-    for event in events
+    for (ordinal, event) in events
         .iter()
-        .filter(|event| matches!(event, ProposedEvent::Damage(_)))
+        .enumerate()
+        .filter(|(_, event)| matches!(event, ProposedEvent::Damage(_)))
     {
+        crate::linked_aura_operation_v1::begin_hallow_preview_packet(state, ordinal)?;
         let _ = apply_replacements_inner(state, event.clone());
         if state.engine.halted.is_some() {
             return Err("Hallow damage preview rejected the original replacement path".into());

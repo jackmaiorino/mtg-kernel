@@ -122,6 +122,10 @@ pub struct HallowShieldV1 {
 /// of the equivalent full-prevention shields, without targeting that player.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HallowChoiceV1 {
+    /// Original batch, event and replacement-step ordinals. Private
+    /// identity survives a newly revealed choice changing the APNAP frontier.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cohort: Option<(u32, u32, u32)>,
     pub damage: DamageProposed,
     pub source: ObjectLinkV4,
     pub source_zone: Zone,
@@ -529,6 +533,7 @@ pub(crate) fn hallow_prevents(state: &mut GameState, damage: &DamageProposed) ->
         let circle = circles::circle_shield_position(state, damage)
             .map(|at| state.eternal_v1.as_ref().unwrap().s1d.cop_shields[at]);
         let choice = HallowChoiceV1 {
+            cohort: None,
             damage: damage.clone(),
             source,
             source_zone: zone,
