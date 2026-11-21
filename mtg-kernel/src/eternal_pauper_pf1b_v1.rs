@@ -467,7 +467,9 @@ fn finish_insight(
     let to_hand = live
         .iter()
         .filter(|binding| chosen.contains(binding))
-        .map(|binding| ProposedEvent::zone_change(binding.object, Zone::Hand))
+        .map(|binding| {
+            ProposedEvent::zone_change_preserving_known_identity(binding.object, Zone::Hand)
+        })
         .collect::<Vec<_>>();
     if !to_hand.is_empty() {
         event::propose_and_commit_batch(state, to_hand);

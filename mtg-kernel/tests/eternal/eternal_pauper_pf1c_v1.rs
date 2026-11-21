@@ -1232,6 +1232,132 @@ fn deprive_with_a_second_land_returns_a_land_the_payment_leaves() {
     assert_eq!(life(&state, P0), 20);
 }
 
+fn woodlot_with_last_counter(state: &mut GameState) -> ObjectId {
+    let woodlot = put(state, P0, "Hickory Woodlot", Zone::Hand);
+    play_land(state, woodlot);
+    // Fixture untaps and the pool reset stand for intervening turns. The
+    // real mana ability removes the first of the two depletion counters.
+    state.objects.get_mut(woodlot).tapped = false;
+    next(state);
+    act(
+        state,
+        Action::ActivateManaAbilityChoice(woodlot, ManaColor::G),
+    );
+    state.objects.get_mut(woodlot).tapped = false;
+    state.players[0].mana_pool = [0; 6];
+    assert_eq!(
+        mtg_kernel::eternal_pauper_e8b_v1::depletion_counters(state, woodlot),
+        1
+    );
+    woodlot
+}
+
+#[test]
+fn deprive_refuses_a_last_counter_woodlot_under_sphere_of_resistance() {
+    let mut state = plains();
+    let woodlot = woodlot_with_last_counter(&mut state);
+    put(&mut state, P0, "Sphere of Resistance", Zone::Battlefield);
+    // The opponent also pays Sphere's tax on the Bolt.
+    pool(&mut state, P1, &[], 1);
+    let bolt = opponent_bolts(&mut state, Target::Player(P0));
+    let deprive = put(&mut state, P0, "Deprive", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 0);
+    assert!(
+        !castable(&mut state, deprive),
+        "the {{1}}{{U}}{{U}} payment loses its return land"
+    );
+    assert_eq!(zone(&state, woodlot), Zone::Battlefield);
+    assert_eq!(zone(&state, bolt), Zone::Stack);
+    assert_eq!(
+        mana(&state, P0, ManaColor::U),
+        2,
+        "the quote did not pay mana"
+    );
+    assert_eq!(
+        mtg_kernel::eternal_pauper_e8b_v1::depletion_counters(&state, woodlot),
+        1
+    );
+}
+
+#[test]
+fn deprive_keeps_healthy_return_choices_when_woodlot_pays_spheres_tax() {
+    let mut state = plains();
+    let woodlot = woodlot_with_last_counter(&mut state);
+    let mountain = put(&mut state, P0, "Mountain", Zone::Battlefield);
+    let forest = put(&mut state, P0, "Forest", Zone::Battlefield);
+    // These can be returned, but cannot replace the Woodlot's mana.
+    state.objects.get_mut(mountain).tapped = true;
+    state.objects.get_mut(forest).tapped = true;
+    put(&mut state, P0, "Sphere of Resistance", Zone::Battlefield);
+    pool(&mut state, P1, &[], 1);
+    let bolt = opponent_bolts(&mut state, Target::Player(P0));
+    let deprive = put(&mut state, P0, "Deprive", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 0);
+    cast(&mut state, deprive, &[Target::Object(bolt)]);
+    match next(&mut state) {
+        Decision::ChooseCostTargets {
+            cost_kind,
+            candidates,
+            ..
+        } => {
+            assert_eq!(cost_kind, CostKind::ReturnPermanentsToHand);
+            assert_eq!(sorted(candidates), sorted(vec![mountain, forest]));
+            act(&mut state, Action::ChooseCostTarget(mountain));
+        }
+        other => panic!("expected the surviving return lands, got {other:?}"),
+    }
+    settled(&mut state);
+    assert_eq!(
+        zone(&state, woodlot),
+        Zone::Graveyard,
+        "paid the generic tax"
+    );
+    assert_eq!(zone(&state, mountain), Zone::Hand);
+    assert_eq!(zone(&state, forest), Zone::Battlefield);
+    assert_eq!(zone(&state, bolt), Zone::Graveyard);
+    assert_eq!(zone(&state, deprive), Zone::Graveyard);
+    assert_eq!(
+        mana(&state, P0, ManaColor::G),
+        1,
+        "the unused Woodlot mana remains"
+    );
+    assert_eq!(life(&state, P0), 20);
+}
+
+#[test]
+fn deprive_can_save_a_last_counter_woodlot_using_another_mana_source() {
+    let mut state = plains();
+    let woodlot = woodlot_with_last_counter(&mut state);
+    let island = put(&mut state, P0, "Island", Zone::Battlefield);
+    put(&mut state, P0, "Sphere of Resistance", Zone::Battlefield);
+    pool(&mut state, P1, &[], 1);
+    let bolt = opponent_bolts(&mut state, Target::Player(P0));
+    let deprive = put(&mut state, P0, "Deprive", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U, ManaColor::U], 0);
+    cast(&mut state, deprive, &[Target::Object(bolt)]);
+    match next(&mut state) {
+        Decision::ChooseCostTargets { candidates, .. } => {
+            assert_eq!(sorted(candidates), sorted(vec![woodlot, island]));
+            act(&mut state, Action::ChooseCostTarget(woodlot));
+        }
+        other => panic!("expected both return lands, got {other:?}"),
+    }
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(
+        zone(&state, woodlot),
+        Zone::Hand,
+        "saved by the other mana source"
+    );
+    assert!(
+        state.objects.get(island).tapped,
+        "the Island paid Sphere's tax"
+    );
+    settled(&mut state);
+    assert_eq!(zone(&state, bolt), Zone::Graveyard);
+    assert_eq!(zone(&state, deprive), Zone::Graveyard);
+    assert_eq!(life(&state, P0), 20);
+}
+
 /// Fling reads the creature's power as it last existed, after its mana
 /// abilities ran: Gemstone Mine's last counter puts it into a graveyard
 /// before Terravore is sacrificed, so Terravore was 2/2.

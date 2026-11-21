@@ -1119,6 +1119,17 @@ fn kruphixs_insight_takes_up_to_three_enchantments_and_mills_the_rest() {
     );
     assert!(hand_contains(&state, P0, rancor) && hand_contains(&state, P0, link));
     assert_eq!(hand_len(&state, P0), 2);
+    // The chosen enchantments were revealed, so the opponent still knows
+    // them in hand.
+    for enchantment in [rancor, link] {
+        assert!(
+            state
+                .known_hand_cards(P1, P0)
+                .iter()
+                .any(|entry| entry.object == enchantment),
+            "a revealed enchantment taken into hand stays known"
+        );
+    }
     // The rest of the six revealed cards are in the graveyard: the Bolt,
     // the unchosen enchantment and the two Plains, then the spell itself.
     for card in [bolt, growth, library[3], library[5]] {
