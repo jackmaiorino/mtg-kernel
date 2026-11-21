@@ -17,6 +17,7 @@ FEATURES is a comma-separated list ("" for default features).
 """
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from functools import lru_cache
@@ -41,6 +42,19 @@ TOKEN = re.compile(r"""
 """, re.VERBOSE | re.DOTALL)
 
 
+RAW = "\x00raw:"  # prefix of a raw string token, followed by its exact contents
+PUSH, POP = "\x00push", "\x00pop"  # bounds of an included file's tokens
+
+
+def string_value(tok: str) -> str:
+    """The value of a string literal token (raw or ordinary, escapes decoded)."""
+    if tok.startswith(RAW):
+        return tok[len(RAW):]
+    if tok.startswith('"'):
+        return ast.literal_eval(tok)
+    raise Unknown(f"not a string literal: {tok!r}")
+
+
 def tokens(text: str) -> list[str]:
     out, i = [], 0
     while i < len(text):
@@ -48,7 +62,7 @@ def tokens(text: str) -> list[str]:
         kind = m.lastgroup if m.lastgroup != "hashes" else "raw"
         if m.group("raw") is not None:
             end = text.index('"' + m.group("hashes"), m.end())
-            out.append('""')
+            out.append(RAW + text[m.end():end])
             i = end + 1 + len(m.group("hashes"))
             continue
         if kind == "block":
@@ -71,12 +85,25 @@ def tokens(text: str) -> list[str]:
 
 def expanded_tokens(file: Path) -> list[str]:
     """Tokens of a file with each `include!("path")` replaced by the included file's tokens (path relative to
-    the including file), as the compiler splices them in place."""
+    the including file) between PUSH and POP markers, so the scanner applies the attributes on the invocation
+    to every included item, as the compiler does."""
     toks, out, i = tokens(file.read_text(encoding="utf-8")), [], 0
     while i < len(toks):
-        if (toks[i] == "include" and toks[i + 1:i + 3] == ["!", "("] and toks[i + 3].startswith('"')
-                and toks[i + 4] == ")"):
-            out += expanded_tokens(file.parent / toks[i + 3].strip('"'))
+        if toks[i] == "include" and toks[i + 1:i + 3] == ["!", "("]:
+            if toks[i + 3:i + 8] == ["concat", "!", "(", "env", "!"] and '"OUT_DIR"' in toks[i + 8:i + 11]:
+                # Build-script output: not in the source tree. Generated tests would show up as an inventory
+                # difference in run_trainer_row.py, never as a silent gap.
+                depth, j = 0, i + 2
+                while True:
+                    depth += {"(": 1, ")": -1}.get(toks[j], 0)
+                    j += 1
+                    if depth == 0:
+                        break
+                i = j + (1 if j < len(toks) and toks[j] == ";" else 0)
+                continue
+            if toks[i + 4] != ")":
+                raise Unknown(f"unsupported include! form in {file}")
+            out += [PUSH, *expanded_tokens(file.parent / string_value(toks[i + 3])), POP]
             i += 5
             if i < len(toks) and toks[i] == ";":
                 i += 1
@@ -181,6 +208,18 @@ def scan_file(module_path: str, file: Path, outer_cfgs: list, tests: list, inlin
                 pending.append("TEST")
             elif attr and attr[0] == "path":
                 pending.append(("PATH", attr[2].strip('"')))
+            continue
+        if t == PUSH:
+            # An included file: its items inherit the cfgs on the include! invocation.
+            stack.append((stack[-1][0], stack[-1][1] + [p for p in pending if isinstance(p, tuple)
+                                                        and p[0] != "PATH"], None, stack[-1][3]))
+            pending = []
+            i += 1
+            continue
+        if t == POP:
+            stack.pop()
+            pending = []
+            i += 1
             continue
         if t == "{":
             depth += 1

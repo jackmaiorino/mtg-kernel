@@ -139,6 +139,15 @@ class CfgPredictorTests(unittest.TestCase):
                                                          "m::gated::spliced::from_include", "m::tests::after", "m::tests::both", "m::tests::plain"])
         self.assertIn("m::tests::win::only_windows", self.predicted(files, "", "windows"))
 
+    def test_an_attributed_include_gates_every_included_test(self):
+        files = {
+            "m.rs": 'mod t {\n    #[cfg(feature = "a")]\n    include!(r#"extra.rs"#);\n    include!("plain\\x2ers");\n}\n',
+            "m/../extra.rs": "#[test]\nfn one() {}\n#[test]\nfn two() {}\n",
+            "plain.rs": "#[test]\nfn three() {}\n",
+        }
+        self.assertEqual(self.predicted(files, ""), ["m::t::three"])
+        self.assertEqual(self.predicted(files, "a"), ["m::t::one", "m::t::three", "m::t::two"])
+
     def test_an_exemption_needs_a_predicate_no_linux_build_satisfies(self):
         import rust_test_cfg
         tree = lambda text: rust_test_cfg.parse_cfg(rust_test_cfg.tokens(text))[0]
