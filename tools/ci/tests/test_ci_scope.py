@@ -40,6 +40,33 @@ class TableTests(unittest.TestCase):
         self.assertIn("      - 'release/**'\n", text)
         self.assertIn("types: [opened, synchronize, reopened, ready_for_review]", text)
 
+    def test_changed_path_inventories_preserve_both_ends_of_a_rename(self):
+        import subprocess
+        import tempfile
+        commands = re.findall(r"git diff [^\n)]*HEAD\^1 HEAD", WORKFLOW.read_text(encoding="utf-8"))
+        self.assertEqual(len(commands), 2)
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+
+            def git(*args):
+                return subprocess.check_output(["git", "-c", "diff.renames=true", *args],
+                                               cwd=repo, text=True).strip()
+
+            def commit():
+                git("-c", "user.name=CI fixture", "-c", "user.email=ci@example.invalid",
+                    "commit", "--quiet", "-m", "fixture")
+
+            git("init", "--quiet")
+            (repo / "before.txt").write_text("unchanged contents\n", encoding="utf-8")
+            git("add", "before.txt")
+            commit()
+            git("mv", "before.txt", "after.txt")
+            commit()
+            self.assertEqual(git("diff", "--name-only", "HEAD^1", "HEAD"), "after.txt")
+            for command in commands:
+                with self.subTest(command=command):
+                    self.assertEqual(set(git(*command.split()[1:]).splitlines()), {"before.txt", "after.txt"})
+
     def test_the_filters_cover_every_qualifying_shared_module_in_full(self):
         for module in ("native_policy_value_net_v1::", "native_flat_tensorizer_v", "fast_sampler::",
                        "unclamped_softmax_sampler_v1::", "native_opponent_sampler_v1::", "sideboard_play_policy_v1::",

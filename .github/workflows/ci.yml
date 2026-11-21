@@ -88,7 +88,8 @@ jobs:
           fi
           # The PR checkout is the synthetic merge commit; HEAD^1 is the
           # base branch tip, so this diff is exactly the PR's file set.
-          files=$(git diff --name-only HEAD^1 HEAD)
+          # Classify both paths of a rename, including the removed input.
+          files=$(git diff --no-renames --name-only HEAD^1 HEAD)
           echo "changed files:"; echo "$files"
           python_relevant=false
           rust_relevant=false
@@ -148,7 +149,7 @@ jobs:
               exit 0
             fi
             SCOPE=pr
-            CHANGED_FILES=$(git diff --name-only HEAD^1 HEAD)
+            CHANGED_FILES=$(git diff --no-renames --name-only HEAD^1 HEAD)
             # Any lookup failure counts as a merge commit (every job runs), and
             # so does a pull request longer than the 250 commits GitHub lists.
             MERGE_COMMITS=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/commits" \
