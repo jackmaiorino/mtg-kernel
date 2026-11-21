@@ -11853,7 +11853,8 @@ fn castable_spells(player: PlayerId, state: &GameState) -> Vec<ObjectId> {
                 && is_castable_now(player, id, CastMethodV4::Normal, state)
             || (has_sphinx_lore_grant
                 || cfg!(feature = "eternal-fixtures")
-                    && (crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some()
+                    && (sphinx_lore_cast_v1::has_printed_graveyard_method(def)
+                        || crate::eternal_pauper_pf1c_v1::beam_me_up_cost(def).is_some()
                         || crate::eternal_lurrus_v1::flashback_granted(
                             state,
                             id,

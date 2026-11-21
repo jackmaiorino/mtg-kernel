@@ -878,6 +878,94 @@ fn snapcaster_and_printed_flashback_charge_the_selected_cost() {
 }
 
 #[test]
+fn breach_and_printed_flashback_accept_each_payable_method_without_snapcaster() {
+    use engine::sphinx_lore_cast_v1::RouteV1;
+    let mut base = plains();
+    put(&mut base, P0, "Underworld Breach", Zone::Battlefield);
+    let card = put(&mut base, P0, "Moment's Peace", Zone::Graveyard);
+    let fodder =
+        ["Island", "Forest", "Mountain"].map(|name| put(&mut base, P0, name, Zone::Graveyard));
+    for (route, generic) in [
+        (RouteV1::PrintedFlashback, 2),
+        (RouteV1::Breach, 2),
+        (RouteV1::Breach, 1),
+    ] {
+        let mut state = base.clone();
+        pool(&mut state, P0, &[ManaColor::G], generic);
+        if generic == 2 {
+            choose_graveyard_route(&mut state, card, route);
+        } else {
+            cast(&mut state, card, &[]);
+        }
+        settle_first(&mut state);
+        let escaped = route == RouteV1::Breach;
+        assert_eq!(
+            state.players[0].mana_pool[ManaColor::C.pool_index()],
+            if escaped { generic - 1 } else { 0 }
+        );
+        assert_eq!(
+            zone(&state, card),
+            if escaped {
+                Zone::Graveyard
+            } else {
+                Zone::Exile
+            }
+        );
+        assert!(fodder.iter().all(|&f| zone(&state, f)
+            == if escaped {
+                Zone::Exile
+            } else {
+                Zone::Graveyard
+            }));
+    }
+}
+
+#[test]
+fn printed_flashback_keeps_the_ordinary_and_retrace_permissions_independent() {
+    use engine::sphinx_lore_cast_v1::RouteV1;
+    for route in [RouteV1::Normal, RouteV1::Retrace] {
+        let mut state = plains();
+        let card = put(&mut state, P0, "Moment's Peace", Zone::Graveyard);
+        let land = put(&mut state, P0, "Forest", Zone::Hand);
+        if route == RouteV1::Normal {
+            let will = put(&mut state, P0, "Yawgmoth's Will", Zone::Hand);
+            pool(&mut state, P0, &[ManaColor::B], 2);
+            cast(&mut state, will, &[]);
+            settled(&mut state);
+        } else {
+            let wrenn = put(&mut state, P0, "Wrenn and Six", Zone::Hand);
+            pool(&mut state, P0, &[ManaColor::R, ManaColor::G], 0);
+            cast(&mut state, wrenn, &[]);
+            settled(&mut state);
+            mtg_kernel::planeswalker_v1::change_loyalty(&mut state, wrenn, 4);
+            activate(&mut state, wrenn, 2, &[]);
+            settled(&mut state);
+        }
+        pool(&mut state, P0, &[ManaColor::G], 2);
+        choose_graveyard_route(&mut state, card, route);
+        settle_first(&mut state);
+        let retraced = route == RouteV1::Retrace;
+        assert_eq!(
+            zone(&state, land),
+            if retraced {
+                Zone::Graveyard
+            } else {
+                Zone::Hand
+            }
+        );
+        assert_eq!(
+            zone(&state, card),
+            if retraced {
+                Zone::Graveyard
+            } else {
+                Zone::Exile
+            }
+        );
+        assert_eq!(state.players[0].mana_pool[ManaColor::C.pool_index()], 1);
+    }
+}
+
+#[test]
 fn snapcaster_can_use_mana_cost_instead_of_printed_escape() {
     use engine::sphinx_lore_cast_v1::RouteV1;
     let mut base = plains();

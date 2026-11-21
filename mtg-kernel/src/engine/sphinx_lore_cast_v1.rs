@@ -128,7 +128,8 @@ pub(crate) fn options_record(state: &GameState, index: u64) -> Result<&OptionsV1
                     .iter()
                     .any(|r| matches!(r, RouteV1::Granted { .. } | RouteV1::Snapcaster))
                     || cfg!(feature = "eternal-fixtures")
-                        && (crate::eternal_pauper_pf1c_v1::beam_me_up_cost(d).is_some()
+                        && (has_competing_grant(d, &options.routes)
+                            || crate::eternal_pauper_pf1c_v1::beam_me_up_cost(d).is_some()
                             || crate::eternal_lurrus_v1::flashback_granted(
                                 state,
                                 options.spell,
@@ -265,6 +266,19 @@ fn route_quote(state: &GameState, id: ObjectId, player: PlayerId, route: RouteV1
     };
     is_castable_with_cost_grant(player, id, method(route), state, grant)
 }
+pub(super) fn has_printed_graveyard_method(d: &card_def::CardDef) -> bool {
+    cfg!(feature = "eternal-fixtures")
+        && (d.flashback.is_some() || d.escape.is_some())
+        && (d.has_type(CardType::Instant) || d.has_type(CardType::Sorcery))
+}
+
+fn has_competing_grant(d: &card_def::CardDef, routes: &[RouteV1]) -> bool {
+    has_printed_graveyard_method(d)
+        && routes
+            .iter()
+            .any(|r| matches!(r, RouteV1::Breach | RouteV1::Normal | RouteV1::Retrace))
+}
+
 pub(super) fn routes(state: &GameState, id: ObjectId, player: PlayerId) -> Vec<RouteV1> {
     let o = state.objects.get(id);
     if o.zone != Zone::Graveyard || o.owner != player {
@@ -275,7 +289,8 @@ pub(super) fn routes(state: &GameState, id: ObjectId, player: PlayerId) -> Vec<R
     let snapcaster = cfg!(feature = "eternal-fixtures")
         && crate::eternal_lurrus_v1::flashback_granted(state, id, o.zone_change_count);
     let beam = crate::eternal_pauper_pf1c_v1::beam_me_up_cost(d).is_some();
-    if grants.is_empty() && !snapcaster && !beam {
+    let printed = has_printed_graveyard_method(d);
+    if grants.is_empty() && !snapcaster && !beam && !printed {
         return vec![];
     }
     let mut routes = vec![];
@@ -322,7 +337,7 @@ pub(super) fn routes(state: &GameState, id: ObjectId, player: PlayerId) -> Vec<R
     routes.retain(|r| route_quote(state, id, player, *r));
     // An unaffordable new alternative must not replace an independently legal
     // printed/granted predecessor route or manufacture an empty choice stage.
-    if !snapcaster && !beam && grants_are_absent(&routes) {
+    if !snapcaster && !beam && grants_are_absent(&routes) && !has_competing_grant(d, &routes) {
         return vec![];
     }
     if routes.len() > usize::from(u16::MAX) {
