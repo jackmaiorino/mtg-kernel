@@ -174,6 +174,20 @@ class GuardsTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             retention.index(self.cdir() / 'chain.json')
 
+    def test_a_guarded_ordinary_chain_refuses_a_hard_linked_log(self):
+        path, plan = chains.make_plan(self.inputs(guards=True))
+        self.assertEqual(self.drive(plan, 1), chains.EXIT_ROOM)
+        other = self.t / 'other-file.jsonl'
+        other.write_text('keep\n')
+        log = self.node.root / 'LOG.jsonl'
+        log.unlink(missing_ok=True)
+        try:
+            os.link(other, log)
+        except OSError:
+            self.skipTest('no hard links on this host')
+        self.assertEqual(self.drive(plan, 3), w5box.EXIT_REFUSED)
+        self.assertEqual(other.read_text(), 'keep\n')
+
     def test_a_first_guarded_plan_refuses_a_linked_root(self):
         real = self.t / 'real-root'
         real.mkdir()

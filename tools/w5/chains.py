@@ -238,6 +238,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import statistics
 import subprocess
 import sys
@@ -593,6 +594,15 @@ def old_trees(manifest_path):
         raise Stop(f'the carried chain\'s trees cannot be established from {manifest_path} ({exc})') from exc
 
 
+def linked_file(path):
+    """A regular file with more than one hard link (False when absent)."""
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    return stat.S_ISREG(st.st_mode) and st.st_nlink > 1
+
+
 def carried_trees_unlinked(root, name):
     """A carried chain's W5 root has a canonical path and no link anywhere in it: plan, state (instance logs and
     locks), retention logs, segment configs, records and logs alike. Segment directories (`chains/<any>/seg-*`)
@@ -607,6 +617,14 @@ def carried_trees_unlinked(root, name):
         for entry in dirnames + filenames:
             require(not os.path.islink(os.path.join(dirpath, entry)),
                     f'{name}: {os.path.join(dirpath, entry)} is a link in a carried chain\'s tree')
+        for entry in filenames:  # no hard link either: an append (LOG.jsonl, an index) would modify the other file
+            if entry.endswith('.tmp'):
+                continue  # write_once's temporary, linked to its destination for an instant
+            path = os.path.join(dirpath, entry)
+            if not linked_file(path):
+                continue
+            time.sleep(0.05)  # write_once publishes by a hard link and removes its temporary at once: look again
+            require(not linked_file(path), f'{name}: {path} has more than one hard link in a carried chain\'s tree')
         if os.path.dirname(os.path.abspath(dirpath)) == chains_abs:
             dirnames[:] = [d for d in dirnames if not retention.SEGMENT_DIR.fullmatch(d)]
 
