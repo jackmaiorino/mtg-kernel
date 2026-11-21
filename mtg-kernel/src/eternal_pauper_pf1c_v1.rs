@@ -695,7 +695,7 @@ fn prevent_packets(
 /// Whether this batch needs Hallow's scoped replacement phase. Its caller
 /// owns the Nishoba cohort across this phase and all remaining ordinary events.
 pub(crate) fn batch_has_covered_damage(state: &GameState, events: &[ProposedEvent]) -> bool {
-    may_need_hallow_choice(state)
+    (may_need_hallow_choice(state) || crate::eternal_prevention_order_v1::may_need_choice(state))
         && !state.engine.until_end_of_turn.iter().any(|effect| {
             matches!(
                 effect,

@@ -1,7 +1,9 @@
 //! Scoped replacement choices without Hallow: Circle/global prevention and
-//! Sphere of Law/Ojer Axonil. Fully replaced residuals return to ordinary commit
+//! Sphere of Law/Ojer Axonil, and protection/Phantom Nishoba. Fully replaced residuals return to ordinary commit
 //! through local receipts; public proposals and state schemas remain unchanged.
 #![cfg_attr(not(feature = "eternal-fixtures"), allow(dead_code))]
+
+mod permanent_v1;
 
 use crate::eternal_pauper_pf1c_v1::ordinary_damage::{OrdinaryV1, Packet};
 use crate::eternal_sideboard_s1d_v1::statics as circles;
@@ -19,14 +21,14 @@ fn has_color_prevention(state: &GameState) -> bool {
     })
 }
 
-/// Only states with an eligible pair borrow the enclosing operation replay:
-/// a Circle plus global prevention, or an active Sphere opposite an Ojer.
+/// Only states with potentially competing effects borrow the enclosing operation replay.
 pub(crate) fn may_need_choice(state: &GameState) -> bool {
     cfg!(feature = "eternal-fixtures")
         && !cannot_prevent(state)
-        && ((circles::has_live_circle_shield(state)
-            && (crate::eternal_pauper_e6a_v1::has_active_global_fog(state)
-                || has_color_prevention(state)))
+        && (permanent_v1::may_need_choice(state)
+            || (circles::has_live_circle_shield(state)
+                && (crate::eternal_pauper_e6a_v1::has_active_global_fog(state)
+                    || has_color_prevention(state)))
             || [PlayerId::P0, PlayerId::P1].into_iter().any(|player| {
                 crate::eternal_premodern_p3a_v1::statics::has_sphere_of_law(state, player)
                     && crate::standard_cards_v1::has_active_ojer(state, player.opponent())
@@ -58,9 +60,10 @@ fn cannot_prevent(state: &GameState) -> bool {
 
 pub(crate) fn eligible(state: &GameState, damage: &DamageProposed) -> bool {
     damage.amount > 0
-        && circles::circle_shield_position(state, damage).is_some()
         && !cannot_prevent(state)
-        && full_prevention(state, damage)
+        && (permanent_v1::eligible(state, damage)
+            || (circles::circle_shield_position(state, damage).is_some()
+                && full_prevention(state, damage)))
 }
 
 /// Re-evaluate all state-bearing replacements after each chosen effect.
@@ -104,6 +107,7 @@ pub(crate) fn packet_options(state: &GameState, packet: &Packet) -> Vec<Ordinary
             options.push(effect);
         }
     }
+    permanent_v1::coalesce_spent_nishoba(state, &mut options);
     options
 }
 
