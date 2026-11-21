@@ -3060,7 +3060,7 @@ def drive_locked(a, arm, root, cdir, man_path, follower=None):
             log(root, chain=a.chain, event='end', reason='c-wall', boundary=boundary)
             return 0
         if code == 0 and reached_stop(man, a.ledger_source):
-            record_commit(cdir, man, s, 'native-stop', instance)
+            record_commit(cdir, man, s, 'native-stop', instance, **followed)
             return end_at_stop(a, arm, root, cdir, man)
         write(cdir / 'FAILURE.json', {'segment': s, 'exit': code, 'boundary': boundary, 'unix': time.time()})
         log(root, chain=a.chain, event='segment-failed', segment=s, exit=code, boundary=boundary)

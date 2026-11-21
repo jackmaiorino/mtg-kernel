@@ -202,6 +202,28 @@ class FollowDrive(unittest.TestCase):
         failure = json.loads((node.root / 'chains' / 'c1' / 'FAILURE.json').read_text())
         self.assertEqual((failure['segment'], failure['exit'], failure['boundary']), (1, 1, 5))
 
+    def test_a_ledger_stop_records_the_handed_segments_attempt(self):
+        node = self.node('ledger-stop')
+        plan = follow_plan(node, segment_updates=4)
+        stop_at = 6 * STEP_C
+        node.ledger_source('c1', stop=stop_at)
+
+        self.assertEqual(self.drive(node, plan, 3), 0)
+
+        commits = self.commits(node)
+        self.assertEqual([(r['segment'], r['boundary'], r['how']) for r in commits],
+                         [(0, 4, 'native'), (1, 6, 'native-stop')])
+        first, partial = commits
+        self.assertEqual(first['trainer_run'], 0)
+        self.assertTrue(partial['cut'])
+        self.assertEqual(partial.get('trainer_attempts'), [{
+            'trainer_pid': first['trainer_pid'], 'trainer_run': 1, 'trainer_from_iteration': 0,
+        }])
+        self.assertEqual((partial['trainer_pid'], partial['trainer_run'], partial['trainer_from_iteration']),
+                         (first['trainer_pid'], 1, 0))
+        end = chains.read(node.root / 'chains' / 'c1' / 'END.json')
+        self.assertEqual((end['reason'], end['last_valid_boundary'], end['ledger_usec']), ('x-stop-at', 6, stop_at))
+
     def test_the_c_wall_kills_a_followed_segment_in_flight(self):
         node = self.node('wall')
         plan = follow_plan(node, c_wall=600.0)
