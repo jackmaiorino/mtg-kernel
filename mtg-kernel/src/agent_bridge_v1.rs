@@ -37,6 +37,7 @@ use crate::agent_bridge_infoset_v1::{
 use crate::card_def::{CARD_DEFS, KERNEL_CARDDB_HASH};
 use crate::engine::{CastMode, CostKind, OptionalCostChoice};
 use crate::mana::ManaColor;
+use crate::priority_action_windows_v1::SeatPriorityWindowsV1;
 use crate::rl::{
     parse_strict_json_value, ActionSemanticV1, CardStableRefV1, ObservationV5,
     PendingEffectChoiceSemanticV4, PendingEffectSemanticV4, PlayerSeatV1, TargetRefV1,
@@ -205,6 +206,15 @@ enum SpellbenchRequestV1 {
         /// Absent or false keeps every byte; any other server refuses true.
         #[serde(default)]
         auto_graveyard_order: bool,
+        /// Human play only: each seat's training priority-window rule
+        /// (`priority_action_windows_v1`, the episode field of the same name
+        /// in training): `["harness-v2", "action-windows-v1"]` puts the bot
+        /// in p1 on the windows it trained with. A seat in
+        /// `engine_window_seats` must be `"harness-v2"` here. Absent keeps
+        /// every byte; any other server refuses a rule other than
+        /// `"harness-v2"`.
+        #[serde(default)]
+        priority_windows: Option<[SeatPriorityWindowsV1; 2]>,
     },
     Step {
         #[serde(rename = "protocol")]
@@ -278,6 +288,7 @@ struct SpellbenchResetFieldsV1<'a> {
     max_steps: u64,
     engine_window_seats: &'a [String],
     auto_graveyard_order: bool,
+    priority_windows: Option<[SeatPriorityWindowsV1; 2]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -589,6 +600,7 @@ impl SpellbenchBridgeServerV1 {
                 max_steps,
                 engine_window_seats,
                 auto_graveyard_order,
+                priority_windows,
                 ..
             } => self.handle_reset(
                 request_id,
@@ -601,6 +613,7 @@ impl SpellbenchBridgeServerV1 {
                     max_steps: *max_steps,
                     engine_window_seats,
                     auto_graveyard_order: *auto_graveyard_order,
+                    priority_windows: *priority_windows,
                 },
             ),
             SpellbenchRequestV1::Step {
@@ -1004,6 +1017,7 @@ impl SpellbenchBridgeServerV1 {
             max_steps,
             engine_window_seats,
             auto_graveyard_order,
+            priority_windows,
         } = reset;
         if auto_graveyard_order && !self.london_human {
             return error_response_value_v1(
@@ -1032,6 +1046,26 @@ impl SpellbenchBridgeServerV1 {
                     Some(request_id),
                     "malformed_request",
                     "engine_window_seats needs the human-play London server and distinct seats",
+                );
+            }
+        }
+        // Per-seat training window rules: on the human-play server, a bot
+        // seat plays on the rule it trained with. A seat has either engine
+        // windows or a rule, never both.
+        let action_windows = priority_windows.unwrap_or([SeatPriorityWindowsV1::HarnessV2; 2]);
+        if action_windows.iter().any(|rule| !rule.is_harness_v2()) {
+            if !self.london_human {
+                return error_response_value_v1(
+                    Some(request_id),
+                    "malformed_request",
+                    "priority_windows needs the human-play London server",
+                );
+            }
+            if (0..2).any(|seat| window_seats[seat] && !action_windows[seat].is_harness_v2()) {
+                return error_response_value_v1(
+                    Some(request_id),
+                    "malformed_request",
+                    "a seat has either engine windows or a priority_windows rule",
                 );
             }
         }
@@ -1104,6 +1138,7 @@ impl SpellbenchBridgeServerV1 {
                 max_steps,
                 deck_ids.clone(),
                 window_seats,
+                action_windows,
             ))
         } else if self.options.x_kernel_flat_v4 {
             Some(FlatV4LockstepV1::reset(
@@ -1117,7 +1152,7 @@ impl SpellbenchBridgeServerV1 {
             None
         };
         let session = if self.london_human {
-            RlEpisodeSessionV1::reset_pauper_london_human_windows_v1(
+            RlEpisodeSessionV1::reset_pauper_london_human_seat_windows_v1(
                 episode_id,
                 game_seed,
                 max_decisions,
@@ -1125,6 +1160,7 @@ impl SpellbenchBridgeServerV1 {
                 deck_ids,
                 [crate::rl_session::pauper_london_v1::PauperMulliganModeV1::Learned; 2],
                 window_seats,
+                action_windows,
             )
         } else {
             RlEpisodeSessionV1::reset_with_decks_and_limits(
@@ -2221,9 +2257,10 @@ fn private_v2_support(game: &SpellbenchBridgeGameV1) -> Value {
     let RlSessionResponseV1::Decision(decision) = game.session.current_response() else {
         return support;
     };
-    // Human play with per-seat engine windows: this priority window exists
-    // only for its flagged seat (the trained surface would have passed it).
-    // Absent at every other decision, so those keep their bytes.
+    // Human play with per-seat engine windows or a training window rule:
+    // this priority window exists only for its seat's windows (the HarnessV2
+    // surface would have passed it). Absent at every other decision, so those
+    // keep their bytes.
     if let Some(reason) = game.session.engine_window_v1() {
         support["engine_window"] = json!(reason);
     }

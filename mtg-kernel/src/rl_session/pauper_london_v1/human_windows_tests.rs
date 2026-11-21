@@ -56,9 +56,16 @@ fn pair(
         seats,
     )
     .unwrap();
-    let lockstep =
-        FlatV4LockstepV1::reset_london_human(episode, seed, LIMITS.0, LIMITS.1, decks, seats)
-            .unwrap();
+    let lockstep = FlatV4LockstepV1::reset_london_human(
+        episode,
+        seed,
+        LIMITS.0,
+        LIMITS.1,
+        decks,
+        seats,
+        [SeatPriorityWindowsV1::HarnessV2; 2],
+    )
+    .unwrap();
     (raw, lockstep)
 }
 

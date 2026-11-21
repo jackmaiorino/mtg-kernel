@@ -133,6 +133,13 @@ impl FlatV4LockstepV1 {
         self.fast.game_state_mut_for_test()
     }
 
+    /// Test only: a lockstep copy around a session built elsewhere (the
+    /// training-equality proof hands both sessions one deal).
+    #[cfg(test)]
+    pub(crate) fn from_fast_session_for_test(episode_id: u64, fast: FastActorSessionV1) -> Self {
+        Self { episode_id, fast }
+    }
+
     /// The planned line's clone: no session cap ends it (as the raw session's
     /// `lift_caps_for_private_line_v1`).
     pub(crate) fn lift_caps_for_private_line_v1(&mut self) {
@@ -158,9 +165,9 @@ impl FlatV4LockstepV1 {
     }
 
     /// The human-play London twin of `reset`: both seats learned, London
-    /// before any advance, the same legacy deal and the same per-seat
-    /// engine windows as the raw session's
-    /// `RlEpisodeSessionV1::reset_pauper_london_human_windows_v1`.
+    /// before any advance, the same legacy deal, the same per-seat engine
+    /// windows and the same per-seat training window rules as the raw
+    /// session's `RlEpisodeSessionV1::reset_pauper_london_human_seat_windows_v1`.
     pub(crate) fn reset_london_human(
         episode_id: u64,
         env_seed: u64,
@@ -168,8 +175,9 @@ impl FlatV4LockstepV1 {
         max_policy_steps: u64,
         deck_ids: SessionDeckIdsV1,
         engine_window_seats: [bool; 2],
+        action_windows: [crate::priority_action_windows_v1::SeatPriorityWindowsV1; 2],
     ) -> Result<Self, FlatV4LockstepErrorV1> {
-        let fast = FastActorSessionV1::reset_pauper_london_human_windows_v1(
+        let fast = FastActorSessionV1::reset_pauper_london_human_seat_windows_v1(
             episode_id,
             env_seed,
             max_physical_decisions,
@@ -177,6 +185,7 @@ impl FlatV4LockstepV1 {
             deck_ids,
             [crate::rl_session::pauper_london_v1::PauperMulliganModeV1::Learned; 2],
             engine_window_seats,
+            action_windows,
         )
         .map_err(|error| FlatV4LockstepErrorV1::Reset(error.message))?;
         Ok(Self { episode_id, fast })
