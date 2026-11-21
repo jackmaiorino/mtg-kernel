@@ -210,12 +210,12 @@ process-cache traffic. That is not measured here, and outputs do not depend on i
 
 ## Retained artifacts
 
-The outputs behind this receipt (`ab4`, `counters4`, `evict4`, `over4`, `par-evict4`,
-`par-zero4`, the state files and the `m4` binary) and the pipeline log are not in the repo.
-They are kept with the Milestone 3 outputs under `D:/antigravity-20261112/bench-599` and
-`D:/antigravity-20261112/logs/jobs` on the maintainer desktop. That is a live-work SSD, not
-the artifact drive: the tree still has to move there with a manifest, and both receipts then
-need the new location. The SHA-256 in the two JSON receipts identify each file until then.
+The sealed tree is `E:/artifacts/mtg-kernel-599-bench-20261120/`. Its
+`bench-599/` directory contains the addendum runs, state files and binaries.
+The pipeline log is `logs/jobs/s599m4-pipe1.log` under that same root.
+The 50 direct receipt hashes and both physical copies were verified.
+The [Milestone 3 receipt](t5_m3_native_fixture_desktop_dj1c40r_20261116.md#retained-artifacts)
+records the complete file index, recovery archive and SHA-256s.
 
 ## Checks and setup
 

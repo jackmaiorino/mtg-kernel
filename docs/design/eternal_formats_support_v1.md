@@ -631,7 +631,9 @@ New, each built once in the first wave that needs it:
   show a bound Undercity room like a bound Forgotten Realms room, as its
   venture source's trigger with the engine's legal targets. Infoset exports
   still refuse bound Undercity rooms.
-  Serra's Emissary's existing type choices still omit Dungeon.
+  Serra's Emissary appends Dungeon after its seven historical type choices.
+  Native room abilities check that protection at target selection and
+  resolution, including when the room outlasts its dungeon.
   Temple of Dumathoin and Mad Wizard's Lair bind each draw attempt to the
   native venture entry and published room ability. The Lair reveals and
   offers only cards actually drawn, and an immediate Jace win ends the
@@ -665,9 +667,11 @@ New, each built once in the first wave that needs it:
   capture; no copied Arcane Denial fixture exists yet. Ordinary
   pending and published triggers retain their public meaning through
   authenticated original source contracts; suspended
-  owned replacement choices require an observation successor. Native1330 exposed
-  start/resume guards and an unavailable copy fixture producer; both source fixes
-  are committed, with native requalification pending.
+  owned replacement choices require an observation successor. After the
+  start/resume and copy-fixture repairs, all nine Portent integration tests
+  passed at `e32ed55cf`, including a paid spell retargeted by Misdirection,
+  restore after a replacement choice, and a native copy's ordinary delayed
+  draw. [Hosted Eternal integration][s1-draw-native].
   The physical Standstill successor binds the exact finalized cast identity
   and SpellCast occurrence, original battlefield source, native trigger
   publication, and successful sacrifice marker plus source departure. The
@@ -682,8 +686,10 @@ New, each built once in the first wave that needs it:
   a copied bound receipt. Ordinary pending and published triggers retain existing
   observations; suspended owned replacement choices require an observation
   successor. Source review verified the ordinary V5/Human compatibility repair
-  and authenticated historical source projection. Native qualification of this
-  successor remains pending.
+  and authenticated historical source projection. All seven Standstill
+  integration tests passed at `e32ed55cf`, including a sacrifice replaced by
+  exile, stale stacked triggers, and a Vialed Metamorph copying an animated
+  Standstill. [Hosted Eternal integration][s1-draw-native].
   Generated draws from the remaining Premodern leaves, Arcane Denial and
   Accumulated Knowledge still need their Jace/Hullbreacher origins.
   Quantum Riddler adjusts the whole count once for uninterrupted fixed and
@@ -696,8 +702,11 @@ New, each built once in the first wave that needs it:
   the native return batch before validating the adjustment. A terminal Jace
   win stops the remaining attempts and skips Jewel's transfer. Earlier saved
   continuations keep their prior format. Both-seat paid fixtures cover
-  Dredge, Hullbreacher, Jace, restore and tampering. Native qualification is
-  pending. Wizards' Edge of Eternities release notes specify that Riddler
+  Dredge, Hullbreacher, Jace, restore and tampering. At `e32ed55cf`, the
+  paid two-seat cases passed for Jewel's Riddler-adjusted entry draw, a Jace
+  win before Jewel's combat transfer, and Outcome's adjusted draw count
+  through dredge and a Jace win. [Hosted Eternal integration][s1-draw-native].
+  Wizards' Edge of Eternities release notes specify that Riddler
   adjusts the whole instruction before individual draw replacements
   (https://magic.wizards.com/en/news/feature/edge-of-eternities-release-notes).
   Nested or dynamic suspended draws, copies, and turn-based draws with
@@ -757,7 +766,9 @@ New, each built once in the first wave that needs it:
   historical damage to the chosen source incarnation. A native Stack-to-Battlefield
   entry records the exact permanent that a chosen physical cast becomes, bound
   to its published cast identity and first committed departure; later blinks do
-  not retarget its shield. Virtual permanent spell copies still need this binding.
+  not retarget its shield. A virtual permanent spell starts on the stack with
+  its own object identity. Its shield follows that copy through its first
+  stack-to-battlefield move to the token it becomes.
   Wave P3g records departed sources' last-known color and marks the card Full (see P3g).
   The choice menu includes blue permanents, stack spells, face-up command
   objects and supported public references from stack items and waiting effects.
@@ -3614,3 +3625,5 @@ tracked in #365.
   share a simultaneous batch with other state-based deaths, the owner's order for simultaneous
   graveyard placement does not cover the Saga, and the sweep does not record the sacrifice
   event. The review's proposed repair is one simultaneous state-based batch.
+
+[s1-draw-native]: https://github.com/jackmaiorino/mtg-kernel/actions/runs/44686851543/job/136123153784

@@ -2804,13 +2804,86 @@ fn circle_of_protection_blue_rechecks_paid_historical_damage_and_incarnation() {
     }
 }
 
-#[test]
-fn circle_of_protection_blue_follows_only_the_chosen_permanent_spell() {
+fn choose_circle_source(state: &mut GameState, chosen: ObjectId) {
     use mtg_kernel::effect::{EffectOp, PendingEffectChoice};
     use mtg_kernel::eternal_cards_v1::EternalOpV1;
     use mtg_kernel::eternal_sideboard_s1d_v1::S1dOpV1;
     use mtg_kernel::standard_cards_v1::StandardOpV1;
 
+    assert!(matches!(
+        settle(state),
+        Some(Decision::ChooseEffectOption { .. })
+    ));
+    let Some(PendingEffectChoice::ChooseOption { options, .. }) = state
+        .engine
+        .pending_effect
+        .as_ref()
+        .and_then(|pending| pending.choice.as_ref())
+    else {
+        panic!("Circle choice missing");
+    };
+    let index = options.iter().position(|op| matches!(op,
+        EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(S1dOpV1::CopShieldV1 { source })))
+            if source.object == chosen)).expect("offered Circle source");
+    act(
+        state,
+        Action::ChooseEffectOption(u16::try_from(index).unwrap()),
+    );
+}
+
+#[test]
+fn circle_of_protection_blue_follows_only_the_chosen_copy_of_a_permanent_spell() {
+    for protected in [P0, P1] {
+        let caster = protected.opponent();
+        let mut state = plains();
+        state.active_player = caster;
+        state.priority_player = caster;
+        let circle = put(
+            &mut state,
+            protected,
+            "Circle of Protection: Blue",
+            Zone::Battlefield,
+        );
+        let painter = put(&mut state, caster, "Painter's Servant", Zone::Hand);
+        pool(&mut state, caster, &[], 2);
+        cast(&mut state, painter, &[]);
+        settle_option(&mut state, 1); // Blue. The Sage will be the second spell this turn.
+
+        let sage = put(&mut state, caster, "Sage of the Skies", Zone::Hand);
+        pool(&mut state, caster, &[ManaColor::W], 2);
+        cast(&mut state, sage, &[]);
+        pass_until(&mut state, |state| {
+            state.priority_player == protected
+                && state.stack.last().is_some_and(|item| item.is_copy)
+        });
+        let copy = state.stack.last().unwrap().source;
+        assert_ne!(copy, sage);
+        pool(&mut state, protected, &[], 1);
+        activate(&mut state, circle, 0, &[]);
+        choose_circle_source(&mut state, copy);
+        assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+        let saved = serde_json::to_vec(&state).unwrap();
+        let mut restored: GameState = serde_json::from_slice(&saved).unwrap();
+        for branch in [&mut state, &mut restored] {
+            settled(branch);
+            assert_eq!(zone(branch, copy), Zone::Battlefield);
+            assert!(branch.objects.get(copy).v4.is_token);
+            // The parent deals its own damage. The copy spends the shield exactly once.
+            let before = life(branch, protected);
+            for (source, lost) in [(sage, 1), (copy, 1), (copy, 2)] {
+                mtg_kernel::event::propose_and_commit(
+                    branch,
+                    mtg_kernel::event::ProposedEvent::damage(source, Target::Player(protected), 1),
+                );
+                assert_eq!(life(branch, protected), before - lost);
+            }
+        }
+        assert_eq!(state.state_hash(), restored.state_hash());
+    }
+}
+
+#[test]
+fn circle_of_protection_blue_follows_only_the_chosen_permanent_spell() {
     for actor in [P0, P1] {
         for blink in [false, true] {
             let opponent = actor.opponent();
@@ -2838,25 +2911,7 @@ fn circle_of_protection_blue_follows_only_the_chosen_permanent_spell() {
             }
             pool(&mut state, actor, &[], 1);
             activate(&mut state, circle, 0, &[]);
-            assert!(matches!(
-                settle(&mut state),
-                Some(Decision::ChooseEffectOption { .. })
-            ));
-            let Some(PendingEffectChoice::ChooseOption { options, .. }) = state
-                .engine
-                .pending_effect
-                .as_ref()
-                .and_then(|pending| pending.choice.as_ref())
-            else {
-                panic!("Circle choice missing");
-            };
-            let option = options.iter().position(|op| matches!(op,
-                EffectOp::StandardV1(StandardOpV1::EternalV1(EternalOpV1::S1dV1(S1dOpV1::CopShieldV1 { source })))
-                    if source.object == fanatic)).unwrap();
-            act(
-                &mut state,
-                Action::ChooseEffectOption(u16::try_from(option).unwrap()),
-            );
+            choose_circle_source(&mut state, fanatic);
             assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
             assert_eq!(zone(&state, fanatic), Zone::Stack);
             let shield = state.eternal_v1.as_ref().unwrap().s1d.cop_shields[0];

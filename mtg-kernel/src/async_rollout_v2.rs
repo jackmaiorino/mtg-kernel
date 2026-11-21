@@ -1014,7 +1014,9 @@ fn worker_entry(shared: Arc<SharedRolloutV2>, config: AsyncRolloutConfigV2, work
     #[cfg(test)]
     let _active_worker = TestActiveWorkerGuardV2::enter(Arc::clone(&shared.test_instrumentation));
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        worker_loop(&shared, &config, worker_id)
+        crate::engine::with_legacy_rollout_spell_copy_v1(|| {
+            worker_loop(&shared, &config, worker_id)
+        })
     }));
     if shared.counters.cancel.load(Ordering::Relaxed) {
         return;
@@ -1208,6 +1210,7 @@ impl Drop for WorkerJoinGuardV2 {
 
 /// Run a finite seeded-uniform schedule through the multi-session batching
 /// scheduler.  The successful elapsed time covers the full public API.
+/// Uses the same historical policy menu as seeded-uniform rollout V1.
 pub fn run_seeded_uniform_async_rollout_v2(
     config: AsyncRolloutConfigV2,
 ) -> Result<AsyncRolloutResultV2, AsyncRolloutErrorV2> {

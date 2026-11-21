@@ -2264,6 +2264,12 @@ pub enum CommittedEvent {
     EtaliPrimalStormReceiptV1 {
         journal: Box<crate::etali_primal_storm_receipts_v1::JournalV1>,
     },
+    /// Resolution payment for an exact spell incarnation, retained only in
+    /// engine history. It does not create a trigger or cast a spell.
+    SpellCopyCostPaidV1 {
+        parent: StackItemId,
+        player: PlayerId,
+    },
     /// Physical card immediately before its linked exile incarnation ended independently.
     LinkedExileDepartureV1 {
         exiled: crate::state::ObjectLinkV4,

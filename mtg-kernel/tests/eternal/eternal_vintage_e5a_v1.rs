@@ -1471,7 +1471,7 @@ fn serras_emissary_gives_its_controller_and_creatures_protection_from_the_chosen
     cast(&mut state, emissary, &[]);
     settle_with(&mut state, |_, decision| match decision {
         Decision::ChooseEffectOption { option_count, .. } => {
-            assert_eq!(option_count, 7);
+            assert_eq!(option_count, 8);
             // Instant.
             Action::ChooseEffectOption(3)
         }

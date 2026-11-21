@@ -330,5 +330,6 @@
 {"HarvesterCommitReceiptV1":{"journal":{"TargetAnnounced":{"id":4,"target":153,"generation":3,"controller":0}}}},
 {"FiendArtisanConsumerReceiptV1":{"journal":{"SacrificeFace":{"input":44,"observed":{"object":241,"generation":2,"owner":"p0","controller":"p0","zone":"Battlefield","identity":{"Known":{"card_id":67}}}}}}},
 {"EtaliPrimalStormReceiptV1":{"journal":{"Attacked":{"source":{"source":6,"card_def":481,"owner":0,"controller":0,"zone":"Battlefield","zone_change_count":2}}}}},
+{"SpellCopyCostPaidV1":{"parent":1,"player":1}},
 {"LinkedExileDepartureV1":{"exiled":{"object":41,"zone_change_count":1},"owner":0,"card_def":78,"move_history_index":2}}
 ]

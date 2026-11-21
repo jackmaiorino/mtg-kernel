@@ -3031,6 +3031,64 @@ fn phyrexian_metamorph_enters_as_an_artifact_copy_and_leaves_as_itself() {
     assert_eq!(state.objects.get(metamorph).zone, Zone::Graveyard);
 }
 
+#[test]
+fn metamorph_copying_lembas_shuffles_its_owners_library_after_the_copy_ends() {
+    let mut state = islands();
+    let lembas = put(&mut state, P1, "Lembas", Zone::Battlefield);
+    let metamorph = put(&mut state, P0, "Phyrexian Metamorph", Zone::Hand);
+    pool(&mut state, P0, &[ManaColor::U], 3);
+    cast(&mut state, metamorph, &[]);
+    assert!(
+        matches!(settle(&mut state), Some(Decision::ChooseEffectTargets {
+        legal_targets, ..
+    }) if legal_targets.contains(&Target::Object(lembas)))
+    );
+    act(
+        &mut state,
+        Action::ChooseEffectTarget(Target::Object(lembas)),
+    );
+    settle_declining_selections(&mut state);
+    assert_eq!(engine::effective_name(&state, metamorph), "Lembas");
+
+    pool(&mut state, P0, &[], 2);
+    act(&mut state, Action::ActivateAbility(metamorph, 0));
+    assert!(matches!(next(&mut state), Decision::CastSpellOrPass { .. }));
+    assert_eq!(state.objects.get(metamorph).zone, Zone::Graveyard);
+    assert_eq!(
+        CARD_DEFS[state.objects.get(metamorph).card_def as usize].name,
+        "Phyrexian Metamorph"
+    );
+    let trigger = state.stack.last().unwrap();
+    assert_eq!(trigger.source, metamorph);
+    assert!(matches!(
+        trigger.inline_effect,
+        Some(mtg_kernel::effect::EffectOp::ShuffleTriggerSourceIntoOwnersLibrary)
+    ));
+    assert_eq!(
+        trigger.v4.ability_source_contract.unwrap().card_def,
+        state.objects.get(lembas).card_def
+    );
+
+    for exiled in [false, true] {
+        let mut branch = state.clone();
+        if exiled {
+            event_move(&mut branch, metamorph, Zone::Exile);
+        }
+        let initial_size = branch.players[P0.index()].library.len();
+        branch.reveal_library_top(P1, P0, 1);
+        assert_eq!(branch.known_library_cards(P1, P0).len(), 1);
+        settled(&mut branch);
+        assert!(branch.known_library_cards(P1, P0).is_empty());
+        let library = &branch.players[P0.index()].library;
+        assert_eq!(library.len(), initial_size + usize::from(!exiled));
+        assert_eq!(library.contains(&metamorph), !exiled);
+        assert_eq!(
+            branch.objects.get(metamorph).zone,
+            if exiled { Zone::Exile } else { Zone::Library }
+        );
+    }
+}
+
 #[derive(Clone, Copy)]
 enum FiendCopy {
     Metamorph,
