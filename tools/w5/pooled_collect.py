@@ -956,15 +956,22 @@ def _lock(config: dict, key: str):
 
 
 def _confined_inputs(command: dict, config: dict) -> None:
-    """Every file the collector will read for this shard (the command's pins, and pins and play-import
-    files named inside small pinned JSON files) lies inside the pin roots."""
-    queue, seen = list(pins_of(command)), set()
+    """Every file the collector will read for this shard lies inside the pin roots: the command's own
+    pins, and the play-import files named by any pinned JSON it reaches (the loader reads them), followed
+    transitively. Pins nested inside pinned records that lie outside the roots are provenance (the
+    interpreter that produced a file, another host's or a relative source path): the collector never
+    opens them, so they are neither followed nor refused, as the dispatcher's input closure skips them."""
+    required = set(pins_of(command))
+    for pin in required:
+        _pin_arg({"path": pin[0], "sha256": pin[1]}, config)
+    queue, seen = list(required), set()
     while queue:
         pin = queue.pop()
-        if pin in seen:
+        if pin[0] in seen:
             continue
-        seen.add(pin)
-        _pin_arg({"path": pin[0], "sha256": pin[1]}, config)
+        seen.add(pin[0])
+        if _canonical(pin[0]) is None or not _strictly_under(pin[0], config["pin_roots"]):
+            continue  # provenance only (required pins and import files were checked already)
         try:
             fd = os.open(pin[0], os.O_RDONLY | NOFOLLOW | BINARY)
         except OSError:
@@ -986,6 +993,7 @@ def _confined_inputs(command: dict, config: dict) -> None:
             for name in names:
                 if _canonical(name) is None or not _strictly_under(name, config["pin_roots"]):
                     raise AgentRefusal(f"a play import names a file outside the pin roots: {name[:200]!r}")
+                queue.append((name, ""))
 
 
 def _valid_shard_command(data: bytes, tag: str, config: dict) -> dict:
@@ -1091,8 +1099,11 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
         expected, seconds = args["collector_sha256"], args["seconds"]
         if expected != config["collector_sha256"]:
             raise AgentRefusal("the learner expects another collector than this agent runs")
-        if not isinstance(seconds, int) or not 1 <= seconds <= config["max_seconds"]:
-            raise AgentRefusal(f"seconds must be an integer in 1..{config['max_seconds']}")
+        if not isinstance(seconds, int) or isinstance(seconds, bool) or seconds < 1:
+            raise AgentRefusal("seconds must be a positive integer")
+        # The remote deadline is the learner's or this agent's cap, whichever is sooner; the learner
+        # waits longer than its own request, so the collector is always stopped before it gives up.
+        seconds = min(seconds, config["max_seconds"])
         _no_more_input(stdin)
         data = _read_nofollow(os.path.join(scratch, f"{tag}.json"), AGENT_SHARD_BYTES)
         _valid_shard_command(data, tag, config)  # again, just before use

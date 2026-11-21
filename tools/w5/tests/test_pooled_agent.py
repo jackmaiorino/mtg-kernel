@@ -181,11 +181,30 @@ class AgentRefusalTests(AgentCase):
                                    "source_registry_path": str(self.pins / "g")}))
         nested = self.shard_command(source={"play_import": {"path": str(imp), "sha256": pc.sha256_file(imp)}})
         self.assertRefused(self.serve("put_shard", json.dumps(nested).encode(), tag=TAG), "outside the pin roots")
+        # Transitively: an import inside the roots whose run file is itself an import naming an outside file.
+        inner = self.pins / "inner.json"
+        inner.write_text(json.dumps({"export_directory": str(self.root), "source_run_path": str(self.pins / "r"),
+                                     "source_registry_path": str(self.pins / "g")}))
+        imp.write_text(json.dumps({"export_directory": str(self.pins / "e"), "source_run_path": str(inner),
+                                   "source_registry_path": str(self.pins / "g")}))
+        nested = self.shard_command(source={"play_import": {"path": str(imp), "sha256": pc.sha256_file(imp)}})
+        self.assertRefused(self.serve("put_shard", json.dumps(nested).encode(), tag=TAG), "outside the pin roots")
+
+    def test_provenance_pins_inside_a_pinned_record_are_neither_followed_nor_refused(self):
+        record = self.pins / "fresh-init.json"
+        record.write_text(json.dumps({"producer": {"source_files": [
+            {"path": "python/x.py", "sha256": "1" * 64},
+            {"path": "C:/Python/python.exe", "sha256": "2" * 64},
+            {"path": str(self.root / "agent.json"), "sha256": "3" * 64}]}}))
+        command = self.shard_command(source={"checkpoint": {"path": str(record), "sha256": pc.sha256_file(record)}})
+        code, out, err = self.serve("put_shard", json.dumps(command).encode(), tag=TAG)
+        self.assertEqual(code, 0, err)
 
     def test_the_learner_and_the_agent_must_expect_the_same_collector(self):
         self.put_shard()
         self.assertRefused(self.run_shard(collector_sha256="0" * 64), "another collector")
-        self.assertRefused(self.run_shard(seconds=10 ** 6), "seconds")
+        self.assertRefused(self.run_shard(seconds=0), "seconds")
+        self.assertRefused(self.run_shard(seconds=True), "seconds")
         configured = json.loads(self.config_path.read_text())["collector_sha256"]
         self.collector.write_text(FAKE_COLLECTOR + "\n# changed\n")
         self.assertRefused(self.run_shard(collector_sha256=configured), "collector binary differs")
@@ -261,6 +280,16 @@ class AgentServiceTests(AgentCase):
         self.put_shard(episodes=[{"id": "sleep", "seed": 1}])
         code, out, err = self.run_shard(seconds=1)
         self.assertEqual((code, json.loads(out)["code"]), (0, "timeout"), err)
+
+    @unittest.skipUnless(os.name == "posix", "process-group termination is POSIX")
+    def test_a_request_beyond_the_agent_cap_runs_to_the_cap(self):
+        config = json.loads(self.config_path.read_text())
+        self.config_path.write_text(json.dumps(dict(config, max_seconds=1)))
+        self.put_shard(episodes=[{"id": "sleep", "seed": 1}])
+        started = time.time()
+        code, out, err = self.run_shard(seconds=10 ** 6)
+        self.assertEqual((code, json.loads(out)["code"]), (0, "timeout"), err)
+        self.assertLess(time.time() - started, 30)
 
 
 class SafeExtractionTests(unittest.TestCase):
