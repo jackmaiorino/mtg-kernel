@@ -37,11 +37,14 @@ class FakeTransport:
                 for p in pins}
 
     def push(self, local, remote, digest):
-        if remote in self.files and self.files[remote] != digest:
-            raise RuntimeError(f"existing pin differs: {remote}")
+        if remote in self.files:
+            if self.files[remote] != digest:
+                raise RuntimeError(f"existing pin differs: {remote}")
+            return False  # another process installed the same bytes first: not ours
         assert pc.sha256_file(Path(local)) == digest
         self.files[remote] = digest
         self.pushed.append(remote)
+        return True
 
     def put_text(self, remote, text):
         self.files[remote] = text
@@ -187,6 +190,73 @@ class PooledCollectTests(unittest.TestCase):
         transports = self.transports(config, fail={"a", "b"})
         with self.assertRaises(RuntimeError):
             pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
+
+    def test_a_pin_installed_by_another_process_first_is_never_pruned(self):
+        config = self.config([("a", 1.0, "x86")])
+        host = config["hosts"][0]
+        host.kind, host.ssh, host.prune_pushed = "ssh", ["ssh", "a"], True
+        config["state_path"] = str(self.root / "pushed.json")
+        transports = self.transports(config)
+        racing = transports["a"]
+        real_status = racing.pin_status
+        checkpoint = (str(self.checkpoint), pc.sha256_file(self.checkpoint))
+
+        def status_then_race(pins):
+            states = real_status(pins)
+            if checkpoint in pins and states.get(checkpoint) == "absent":
+                racing.files[checkpoint[0]] = checkpoint[1]  # another dispatcher wins the race
+            return states
+
+        racing.pin_status = status_then_race
+        pc.Dispatcher(config, transports).collect(self.command_path, fake_merge)
+        state = json.loads((self.root / "pushed.json").read_text())
+        self.assertNotIn(str(self.checkpoint), state["a"], "not ours: never recorded, never pruned")
+
+    def test_concurrent_dispatchers_sharing_retention_state_keep_every_record(self):
+        state_path = self.root / "shared-pushed.json"
+        errors = []
+
+        def one(name):
+            config = self.config([(name, 1.0, "x86")])
+            config["state_path"] = str(state_path)
+            dispatcher = pc.Dispatcher(config, self.transports(config))
+            dispatcher.pushed = {name: {f"/pins/{name}-{i}": "a" * 64 for i in range(3)}}
+            try:
+                for _ in range(20):
+                    dispatcher.prune(set())
+            except Exception as error:  # noqa: BLE001
+                errors.append(error)
+
+        threads = [threading.Thread(target=one, args=(f"h{i}",)) for i in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(errors, [])
+        state = json.loads(state_path.read_text())
+        self.assertEqual(sorted(state), ["h0", "h1", "h2", "h3"])
+        self.assertTrue(all(len(state[h]) == 3 for h in state))
+        self.assertEqual([p.name for p in self.root.glob("shared-pushed.json*.stage")], [])
+
+    def test_an_ordinary_play_import_distributes_the_files_its_loader_reads(self):
+        export = self.root / "learner" / "export"
+        export.mkdir()
+        for name in ("metadata.json", "parameters.f32le"):
+            (export / name).write_bytes(name.encode())
+        run_file = self.root / "learner" / "run.json"
+        run_file.write_text("{}")
+        registry = self.root / "learner" / "registry.json"
+        registry.write_text("[]")
+        imp = self.root / "learner" / "ordinary-import.json"
+        imp.write_text(json.dumps({"export_directory": str(export), "expected_metadata_sha256": "x",
+                                   "expected_model_parameter_sha256": "y", "source_run_path": str(run_file),
+                                   "source_registry_path": str(registry), "expected_source_registry_sha256": "z",
+                                   "source_registry_git_commit": "c", "expected_destination_card_db_hash": "d"}))
+        self.command["source"]["play_import"] = {"path": str(imp), "sha256": pc.sha256_file(imp)}
+        paths = {p for p, _ in pc.input_closure(self.command)}
+        root = str(export).rstrip("/\\")
+        for expected in (f"{root}/metadata.json", f"{root}/parameters.f32le", str(run_file), str(registry)):
+            self.assertIn(expected, paths)
 
     def test_a_foreign_file_at_a_pinned_path_is_never_replaced(self):
         config = self.config([("a", 1.0, "x86"), ("b", 1.0, "x86")])

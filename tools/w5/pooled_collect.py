@@ -134,6 +134,29 @@ def pins_of(value) -> set[tuple[str, str]]:
 NESTED_PIN_BYTES = 1 << 20
 
 
+IMPORT_FILES = {  # FrozenPlayPolicyImportV1 (sideboard_play_policy_v1::load_v1): files it reads
+    "export_directory": ("metadata.json", "parameters.f32le"),
+}
+IMPORT_PATHS = ("source_run_path", "source_registry_path")
+
+
+def import_pins(document) -> set[tuple[str, str]]:
+    """The files an ordinary play import (`export_directory`, `source_run_path`,
+    `source_registry_path`) makes the loader read, pinned by the learner's own bytes.
+    The loader then checks them against the import's expected hashes on the collector."""
+    if not isinstance(document, dict) or not {"export_directory", *IMPORT_PATHS} <= set(document):
+        return set()
+    root = str(document["export_directory"]).rstrip("/\\")
+    names = [f"{root}/{name}" for name in IMPORT_FILES["export_directory"]]  # as the loader joins them
+    names += [str(document[key]) for key in IMPORT_PATHS]
+    found = set()
+    for name in names:
+        if not Path(name).is_file():
+            raise RuntimeError(f"learner lacks an import file: {name}")
+        found.add((name, sha256_file(Path(name))))
+    return found
+
+
 def input_closure(command: dict) -> set[tuple[str, str]]:
     """The command's pins plus the pins inside small pinned JSON files (a play import names its
     initialization and parameter files). Checkpoints are larger and name only history, never read.
@@ -152,10 +175,50 @@ def input_closure(command: dict) -> set[tuple[str, str]]:
         found.add(pin)
         try:
             if path.is_file() and path.stat().st_size <= NESTED_PIN_BYTES:
-                queue.extend(pins_of(json.loads(path.read_bytes())))
+                document = json.loads(path.read_bytes())
+                queue.extend(pins_of(document))
+                for pin_ in import_pins(document):
+                    top.add(pin_)  # required: the loader reads it
+                    queue.append(pin_)
         except (ValueError, UnicodeDecodeError):
             pass  # not JSON: a leaf
     return found
+
+
+class state_lock:
+    """An exclusive lock beside the retention state file, held across its whole
+    read, prune and publish, so concurrent dispatchers sharing it never lose records."""
+
+    def __init__(self, state_path: Path):
+        self.path = Path(f"{state_path}.lock")
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = open(self.path, "a+b")
+        if os.name == "nt":
+            import msvcrt
+            while True:
+                try:
+                    self.handle.seek(0)
+                    msvcrt.locking(self.handle.fileno(), msvcrt.LK_LOCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.05)
+        else:
+            import fcntl
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        if os.name == "nt":
+            import msvcrt
+            self.handle.seek(0)
+            msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+        self.handle.close()
+        return False
 
 
 def iteration_of(command_path: Path) -> int:
@@ -231,17 +294,18 @@ class Transport:
             raise RuntimeError(f"{self.host.name}: pin check failed: {result.stderr.strip()}")
         return dict(zip(ordered, json.loads(result.stdout)))
 
-    def push(self, local: Path, remote: str, digest: str) -> None:
+    def push(self, local: Path, remote: str, digest: str) -> bool:
         """Installs an immutable pin: a private staged copy, verified, then hard-linked into place.
         An established file is never replaced; a racing copy is accepted only with the same digest.
-        The collector's filesystem needs hard links."""
+        Returns True only when this call created the destination (only then does the dispatcher
+        own it). The collector's filesystem needs hard links."""
         stage_name = f"{remote}.{uuid.uuid4().hex}.stage"
         if self.host.kind == "local":
             destination, stage = Path(remote), Path(stage_name)
             if Path(local) == destination:
                 if sha256_file(destination) != digest:
                     raise RuntimeError(f"{self.host.name}: existing pin differs: {remote}")
-                return
+                return False
             destination.parent.mkdir(parents=True, exist_ok=True)
             try:
                 shutil.copyfile(local, stage)
@@ -249,12 +313,13 @@ class Transport:
                     raise RuntimeError(f"{self.host.name}: staged pin differs: {remote}")
                 try:
                     os.link(stage, destination)
+                    return True
                 except FileExistsError:
                     if not destination.is_file() or sha256_file(destination) != digest:
                         raise RuntimeError(f"{self.host.name}: existing pin differs: {remote}") from None
+                    return False
             finally:
                 stage.unlink(missing_ok=True)
-            return
         script = ("import hashlib,os,shutil,sys\n"
                   "from pathlib import Path\n"
                   "dest,stage,expected=Path(sys.argv[1]),Path(sys.argv[2]),sys.argv[3]\n"
@@ -268,10 +333,12 @@ class Transport:
                   "try:\n"
                   "  with f: shutil.copyfileobj(sys.stdin.buffer,f)\n"
                   "  if digest(stage)!=expected: sys.exit('staged pin differs: '+str(dest))\n"
-                  "  try: os.link(stage,dest)\n"
+                  "  try:\n"
+                  "    os.link(stage,dest); print('created')\n"
                   "  except FileExistsError:\n"
                   "    if not dest.is_file() or digest(dest)!=expected:\n"
                   "      sys.exit('existing pin differs: '+str(dest))\n"
+                  "    print('existing')\n"
                   "finally: stage.unlink(missing_ok=True)\n")
         command = " ".join(shlex.quote(arg) for arg in ("python3", "-c", script, remote, stage_name, digest))
         with open(local, "rb") as handle:
@@ -279,6 +346,7 @@ class Transport:
         if result.returncode != 0:
             reason = result.stderr.decode(errors="replace").strip().splitlines()[-1:]
             raise RuntimeError(f"{self.host.name}: push of {remote} failed: {' '.join(reason)}")
+        return result.stdout.decode(errors="replace").strip().endswith("created")
 
     def put_text(self, remote: str, text: str) -> None:
         if self.host.kind == "local":
@@ -381,9 +449,9 @@ class Dispatcher:
                 local = Path(pin[0])
                 if not local.is_file() or sha256_file(local) != pin[1]:
                     raise RuntimeError(f"learner lacks pinned input {pin[0]}")
-                transport.push(local, pin[0], pin[1])
+                created = transport.push(local, pin[0], pin[1])
                 pushed += local.stat().st_size
-                if host.kind == "ssh":
+                if created and host.kind == "ssh":
                     with self._lock:
                         self.pushed.setdefault(host.name, {})[pin[0]] = pin[1]
         return pushed
@@ -511,6 +579,10 @@ class Dispatcher:
         if not state_path:
             return
         state_path = Path(state_path)
+        with state_lock(state_path):
+            self._prune_locked(state_path, current)
+
+    def _prune_locked(self, state_path: Path, current: set) -> None:
         state = json.loads(state_path.read_text()) if state_path.exists() else {}
         keep_paths = {p for p, _ in current}
         for host in self.hosts:
@@ -528,7 +600,7 @@ class Dispatcher:
                         self.note(event="pruned", host=host.name, path=path)
                     del merged[path]
             state[host.name] = dict(sorted(merged.items()))
-        stage = state_path.with_suffix(".stage")
+        stage = state_path.with_name(f"{state_path.name}.{uuid.uuid4().hex}.stage")
         stage.write_text(json.dumps(state, indent=1))
         os.replace(stage, state_path)
 

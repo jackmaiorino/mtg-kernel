@@ -1,4 +1,5 @@
 """Pooled-lineage proof comparison tests on synthetic run trees."""
+import hashlib
 import json
 import shutil
 import sys
@@ -11,21 +12,34 @@ sys.path.insert(0, str(HERE))
 import pooled_proof as pp  # noqa: E402
 
 
+def _pin(path: Path) -> dict:
+    return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+
 def write_run(root: Path, recorded_root: str, states, trajectories, backend="pooled-collection-shards-v1",
-              planned=None, complete=True):
+              planned=None, complete=True, resumed=()):
+    """A synthetic run tree. Receipts record paths under `recorded_root` (the run may have been moved
+    since); iterations in `resumed` publish their update in attempt-000001 beside the collection
+    of attempt-000000, as a crash-resumed iteration does."""
     root.mkdir(parents=True, exist_ok=True)
     (root / "completion.json").write_text(json.dumps({
         "complete": complete, "planned_iterations": planned or len(states), "completed_iterations": len(states)}))
     for index, (state, hashes) in enumerate(zip(states, trajectories)):
-        attempt = root / "iterations" / f"{index:06d}" / "attempt-000000"
-        (attempt / "update").mkdir(parents=True)
-        (attempt / "collect").mkdir()
-        (attempt / "update" / "update.json").write_text(json.dumps({
+        iteration = root / "iterations" / f"{index:06d}"
+        collect = iteration / "attempt-000000" / "collect"
+        update_dir = iteration / ("attempt-000001" if index in resumed else "attempt-000000") / "update"
+        collect.mkdir(parents=True)
+        update_dir.mkdir(parents=True)
+        (update_dir / "update.json").write_text(json.dumps({
             "after_state_sha256": state,
             "checkpoint": {"path": f"{recorded_root}/iterations/{index:06d}/attempt-000000/update/checkpoint.json"},
             "trajectories": [{"path": "x", "sha256": h} for h in hashes]}))
-        (attempt / "collect" / "collection.json").write_text(json.dumps({"collection_backend": backend}))
-        (attempt.parent / "complete.json").write_text("{}")
+        (collect / "collection.json").write_text(json.dumps({"collection_backend": backend}))
+        def recorded(path):
+            return {"path": recorded_root + "/" + path.relative_to(root).as_posix(),
+                    "sha256": _pin(path)["sha256"]}
+        (iteration / "complete.json").write_text(json.dumps({
+            "update": recorded(update_dir / "update.json"), "collection": recorded(collect / "collection.json")}))
 
 
 class PooledProofTests(unittest.TestCase):
@@ -73,6 +87,19 @@ class PooledProofTests(unittest.TestCase):
         write_run(self.root / "ref", "/r", ["s0"], [["a"]])
         write_run(self.root / "pool", "/r", ["s0"], [["a"]], complete=False)
         self.assertFalse(pp.compare(self.root / "ref", self.root / "pool")["pass"])
+
+    def test_a_crash_resumed_iteration_is_read_through_its_completion_receipt(self):
+        write_run(self.root / "ref", "/srv/run", ["s0", "s1"], [["a"], ["b"]])
+        write_run(self.root / "pool", "/srv/run", ["s0", "s1"], [["a"], ["b"]], resumed=(1,))
+        self.assertTrue(pp.compare(self.root / "ref", self.root / "pool", same_root=True)["pass"])
+
+    def test_a_receipt_whose_pinned_file_changed_is_refused(self):
+        write_run(self.root / "ref", "/srv/run", ["s0"], [["a"]])
+        write_run(self.root / "pool", "/srv/run", ["s0"], [["a"]])
+        update = self.root / "pool" / "iterations" / "000000" / "attempt-000000" / "update" / "update.json"
+        update.write_text(update.read_text().replace("s0", "s9"))
+        with self.assertRaises(ValueError):
+            pp.compare(self.root / "ref", self.root / "pool")
 
     def test_a_pooled_tree_collected_locally_fails(self):
         write_run(self.root / "ref", "/r", ["s0"], [["a"]])

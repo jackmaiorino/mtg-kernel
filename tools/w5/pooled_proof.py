@@ -21,6 +21,7 @@ changes recorded paths without changing the root. Exit 0 on pass, 1 on a differe
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -40,21 +41,39 @@ def completion(root: Path) -> dict:
             "completed_iterations": document.get("completed_iterations")}
 
 
+def relocated(root: Path, recorded: str) -> Path:
+    """A path a receipt recorded, under this run's actual root (a reference run is moved aside
+    after it finishes): the part from `iterations/` on, joined to `root`."""
+    text = recorded.replace("\\", "/")
+    marker = "/iterations/"
+    if marker not in text:
+        raise ValueError(f"{recorded}: not inside an iterations directory")
+    return Path(root) / "iterations" / text.split(marker, 1)[1]
+
+
+def pinned_json(root: Path, pin: dict) -> dict:
+    path = relocated(root, pin["path"])
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != pin["sha256"]:
+        raise ValueError(f"{path}: differs from the iteration receipt's pin")
+    return json.loads(data)
+
+
 def iterations(root: Path) -> dict:
-    """Iteration index -> receipts of its completed attempt (the one with update.json)."""
+    """Iteration index -> the receipts its `complete.json` pins. The collection and the update
+    can sit in different attempts (a resumed iteration reuses a published collection), so
+    both are followed through the completion receipt, never guessed from the attempt layout."""
     out = {}
     base = Path(root) / "iterations"
     if not base.is_dir():
         raise ValueError(f"{root}: no iterations directory")
     for iteration in sorted(p for p in base.iterdir() if p.is_dir()):
-        attempts = sorted(iteration.glob("attempt-*/update/update.json"))
-        if not attempts:
-            continue
-        if not (iteration / "complete.json").is_file():
+        complete = iteration / "complete.json"
+        if not complete.is_file():
             continue  # not a completed iteration
-        update = json.loads(attempts[-1].read_text())
-        collection_path = attempts[-1].parent.parent / "collect" / "collection.json"
-        collection = json.loads(collection_path.read_text()) if collection_path.exists() else {}
+        receipt = json.loads(complete.read_text())
+        update = pinned_json(root, receipt["update"])
+        collection = pinned_json(root, receipt["collection"])
         out[iteration.name] = {
             "after_state_sha256": update["after_state_sha256"],
             "checkpoint_path": update.get("checkpoint", {}).get("path"),

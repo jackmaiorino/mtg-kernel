@@ -91,6 +91,8 @@ struct WholeCommandV1<'a> {
     episodes: &'a [ExpandedEpisodeV1],
     workers: usize,
     max_non_natural_episode_fraction: f32,
+    collection_sampler: CollectionSamplerV1,
+    training_math: TrainingMathV1,
     record_envelope: RecordEnvelopeV1,
     output_directory: &'a Path,
 }
@@ -102,6 +104,8 @@ fn whole_command_v1(command: &ExpandedTrainingCommandV1) -> Result<WholeCommandV
             episodes,
             workers,
             max_non_natural_episode_fraction,
+            collection_sampler,
+            training_math,
             ex1,
             record_envelope,
             shard,
@@ -123,6 +127,8 @@ fn whole_command_v1(command: &ExpandedTrainingCommandV1) -> Result<WholeCommandV
                 episodes,
                 workers: *workers,
                 max_non_natural_episode_fraction: *max_non_natural_episode_fraction,
+                collection_sampler: *collection_sampler,
+                training_math: *training_math,
                 record_envelope: *record_envelope,
                 output_directory,
             })
@@ -243,6 +249,16 @@ pub fn merge_shards_v1(
             document["source"] == serde_json::to_value(whole.source).map_err(err)?,
             "shard source differs from the collection's",
         )?;
+        ensure(
+            document.get("collection_sampler").and_then(Value::as_str)
+                == whole.collection_sampler.identity_v1(),
+            "shard collection sampler differs from the collection's",
+        )?;
+        ensure(
+            document.get("training_math").and_then(Value::as_str)
+                == whole.training_math.identity_v1(),
+            "shard training math differs from the collection's",
+        )?;
         let shard: CollectionShardV1 = serde_json::from_value(document["shard"].clone())
             .map_err(|_| "shard receipt does not name its schedule position".to_string())?;
         ensure(
@@ -362,12 +378,7 @@ pub fn merge_shards_v1(
         Some(pin) => ledgered_retry_seed_overrides_v1(pin, whole.episodes)?,
         None => vec![None; schedule],
     };
-    check_trajectories_against_schedule_v1(
-        &trajectory_bytes,
-        whole.episodes,
-        &seed_overrides,
-        whole.record_envelope,
-    )?;
+    check_trajectories_against_schedule_v1(&trajectory_bytes, &whole, &seed_overrides)?;
     let mut outputs = Vec::with_capacity(schedule);
     for (slot, bytes) in trajectory_bytes.into_iter().enumerate() {
         let name = format!("episode-{slot:04}.json");
@@ -418,10 +429,10 @@ pub fn merge_shards_v1(
 /// schedule order is reported.
 fn check_trajectories_against_schedule_v1(
     trajectories: &[Vec<u8>],
-    episodes: &[ExpandedEpisodeV1],
+    whole: &WholeCommandV1<'_>,
     seed_overrides: &[Option<u64>],
-    envelope: RecordEnvelopeV1,
 ) -> Result<(), String> {
+    let (episodes, envelope) = (whole.episodes, whole.record_envelope);
     ensure(
         trajectories.len() == episodes.len() && seed_overrides.len() == episodes.len(),
         "collection episode count differs",
@@ -441,6 +452,13 @@ fn check_trajectories_against_schedule_v1(
         ensure(
             document["episode"] == serde_json::to_value(&expected).map_err(err)?,
             &format!("shard trajectory {slot} does not carry its scheduled episode"),
+        )?;
+        ensure(
+            document.get("learner_sampler").and_then(Value::as_str)
+                == whole.collection_sampler.identity_v1()
+                && document.get("training_math").and_then(Value::as_str)
+                    == whole.training_math.identity_v1(),
+            &format!("shard trajectory {slot} differs in sampler or training math"),
         )
     };
     let workers = std::thread::available_parallelism()
@@ -827,8 +845,25 @@ mod tests {
             RecordEnvelopeV1::Zstd1,
             root.join("merged-3"),
         );
-        let error = merge_shards_v1(&sealed, &[first, second]).unwrap_err();
+        let error = merge_shards_v1(&sealed, &[first.clone(), second.clone()]).unwrap_err();
         assert!(error.contains("record envelope"), "got: {error}");
+        // Consistent legacy-sampler shards do not merge into a command that
+        // asks for another sampler.
+        let mut unclamped = whole_command_for_test_v1(
+            &source,
+            &episodes,
+            0.0,
+            RecordEnvelopeV1::default(),
+            root.join("merged-4"),
+        );
+        if let ExpandedTrainingCommandV1::CollectParallel {
+            collection_sampler, ..
+        } = &mut unclamped
+        {
+            *collection_sampler = CollectionSamplerV1::UnclampedSoftmaxF64IcdfU53V1;
+        }
+        let error = merge_shards_v1(&unclamped, &[first, second]).unwrap_err();
+        assert!(error.contains("collection sampler"), "got: {error}");
         // Shard plans that do not cover the schedule are refused up front.
         let bad = vec![ShardSpecV1 {
             episodes: 2,
