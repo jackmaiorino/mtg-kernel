@@ -15019,7 +15019,15 @@ fn apply_discard(state: &mut GameState, chosen: Vec<ObjectId>, pending_discard: 
     };
     let kaito_discard = if effect::kaito_cunning_v75::discard_selected(state) {
         match effect::kaito_cunning_v75::record_discard_input(state, &pending_discard, &chosen) {
-            Ok(input) => Some(input),
+            Ok(input) => {
+                // Match Kaito's draw while the chosen card is still in hand.
+                // The outstanding discard keeps this inside the resolution.
+                collect_and_queue_triggers(state);
+                if state.engine.halted.is_some() {
+                    return;
+                }
+                Some(input)
+            }
             Err(_) => {
                 state.engine.halted =
                     Some((UnsupportedMechanic::InvalidEffectContinuation, ObjectId(0)));
@@ -15548,6 +15556,7 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
         }
     }
 
+    let resuming_kaito = kaito_owner.is_some();
     let progress = if let Some(owner) = edict_owner {
         effect::blasphemous_edict_v1::resume(state, owner)
     } else if let Some(owner) = top_batch_owner {
@@ -15623,7 +15632,15 @@ fn resume_owned_pending_effect(state: &mut GameState) -> Option<Decision> {
             }
             keep_ability_on_stack_until_discarded(state, &item);
             resolution_cast_v1::finish_parent(state, item.v4.stack_item_id);
-            collect_and_queue_triggers(state);
+            if resuming_kaito && !state.engine.pending_triggers.is_empty() {
+                // The draw and discard share one placement checkpoint, including
+                // direct discard triggers such as Madness.
+                let waiting = std::mem::take(&mut state.engine.pending_triggers);
+                let triggers = trigger::collect_and_process_with_waiting(state, waiting);
+                state.engine.pending_triggers.extend(triggers);
+            } else {
+                collect_and_queue_triggers(state);
+            }
             reset_priority(state);
         }
         Ok(effect::ResumableProgress::Suspended) => {
