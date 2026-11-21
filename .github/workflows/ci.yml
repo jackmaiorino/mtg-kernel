@@ -1655,9 +1655,14 @@ jobs:
   # workspace-lib also compiles (its cache is restored, never saved here).
   # The bit-identity rows that go with a trainer change run on a node.
   trainer-tests:
-    name: Trainer library tests (ubuntu-24.04)
+    name: Trainer library tests (ubuntu-24.04, shard ${{ matrix.shard }})
     needs: detect-changes
     if: needs.detect-changes.outputs.checks == 'trainer' && needs.detect-changes.outputs.scope != 'draft'
+    strategy:
+      fail-fast: false
+      matrix:
+        # One entry per tools/ci/ci_scope.py TRAINER_SHARDS shard (a test keeps them equal).
+        shard: [0, 1]
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     defaults:
@@ -1710,7 +1715,7 @@ jobs:
 
       - name: Run the trainer library tests
         run: |
-          read -r -a filters <<< "$(python tools/ci/ci_scope.py trainer-filters)"
+          read -r -a filters <<< "$(python tools/ci/ci_scope.py trainer-filters --shard ${{ matrix.shard }})"
           python python/tools/run_rust_lib_filters.py --features "" "${filters[@]}"
 
   # The tools scope: the top-level tools, G(i) and lease-guard unit suites

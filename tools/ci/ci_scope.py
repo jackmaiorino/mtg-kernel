@@ -10,7 +10,7 @@ Usage:
                               LABELS (JSON list), CHANGED_FILES (newline list); writes checks=<name> to GITHUB_OUTPUT
                               and a summary (with the bit-identity rows for trainer) to GITHUB_STEP_SUMMARY.
   ci_scope.py commands SCOPE  print the shell commands a scope's local run executes, one per line.
-  ci_scope.py trainer-filters print the library test filters of the trainer scope, space separated.
+  ci_scope.py trainer-filters [--shard N]  print the trainer scope's library test filters (or shard N's).
   ci_scope.py markdown        print docs/CI-SCOPES.md.
 """
 from __future__ import annotations
@@ -93,6 +93,16 @@ TRAINER_FILTERS = [
     "native_train_state_payload_v1::", "native_trainer_schedule_v", "native_trainer_v1::", "native_training_",
     "native_checkpoint_", "native_baseline_checkpoint_chain_v4::", "fast_sampler::", "unclamped_softmax_sampler_v1::",
 ]
+# The trainer tests run as two jobs, each building the library and running its filters. Balanced from the
+# filter times of hosted run 44906865422 (seconds): expanded_deck_training_v1 408, native_trainer_v1 306,
+# native_training_ 187, native_policy_train_step_v1 74, native_expanded_training_run_v1 49,
+# native_checkpoint_ 11, the rest under 2 each; about 531 s and 505 s.
+TRAINER_SHARDS = [
+    ["expanded_deck_training_v1::", "native_policy_train_step_v1::", "native_expanded_training_run_v1::"],
+    ["native_policy_value_net_v1::", "training_math_v1::", "native_flat_tensorizer_v", "inference_cache_v1::",
+     "native_train_state_payload_v1::", "native_trainer_schedule_v", "native_trainer_v1::", "native_training_",
+     "native_checkpoint_", "native_baseline_checkpoint_chain_v4::", "fast_sampler::", "unclamped_softmax_sampler_v1::"],
+]
 # Trainer changes also need these rows, which run on a node, never in CI.
 BIT_IDENTITY_ROWS = [
     "the 10-game main-chain recipe", "the 60-game recipe", "the pilot recipe with mulligans",
@@ -166,9 +176,11 @@ def markdown() -> str:
            "`tools/ci/tests/test_ci_scope.py` fails if this file and the table differ.", "",
            "A ready pull request whose files all map to one scope runs only that scope's checks. Files of more than "
            "one scope, a shared file, or a file no rule names run the whole pull request set. Docs files never "
-           "decide. Main pushes, tags and dispatches without `scope` run the full matrix, which also monitors every "
-           "merge. `ci:full` on a pull request forces the whole pull request set; `ci:<scope>` forces one scope; "
-           "`gh workflow run ci.yml --ref REF -f scope=SCOPE` runs one scope on any ref.", "",
+           "decide. Main pushes, tags and dispatches without `scope` run the full matrix as a monitor: pushes to a "
+           "line share one concurrency group (one running, one waiting, a newer merge replaces the waiting one), and "
+           "a red monitor's report names every merge it covers. `ci:full` on a pull request forces the whole pull "
+           "request set; labels never narrow a run. `gh workflow run ci.yml --ref REF -f scope=SCOPE` runs one "
+           "scope on any ref.", "",
            "## Path rules (first match decides)", "", "| paths | scope |", "|---|---|"]
     for patterns, scope in PATH_RULES:
         out.append(f"| {', '.join('`' + p + '`' for p in patterns)} | {scope} |")
@@ -178,6 +190,8 @@ def markdown() -> str:
     for name, spec in SCOPES.items():
         out.append(f"| {name} | {', '.join(spec['jobs']) or 'none'} | {spec['summary']} |")
     out += ["", "## Trainer scope", "", "Library test filters: " + ", ".join(f"`{f}`" for f in TRAINER_FILTERS) + ".",
+            "", "They run as " + str(len(TRAINER_SHARDS)) + " jobs: " + "; ".join(
+                f"shard {i}: " + ", ".join(f"`{f}`" for f in shard) for i, shard in enumerate(TRAINER_SHARDS)) + ".",
             "", trainer_record(), "", "## Rules and cards", "", RULES_NOTE, ""]
     return "\n".join(out)
 
@@ -188,7 +202,8 @@ def main(argv: list[str]) -> int:
         sys.stdout.write(markdown())
         return 0
     if command == "trainer-filters":
-        print(" ".join(TRAINER_FILTERS))
+        # With --shard N, one shard's filters (the trainer-tests matrix); otherwise all of them.
+        print(" ".join(TRAINER_SHARDS[int(argv[3])] if argv[2:3] == ["--shard"] else TRAINER_FILTERS))
         return 0
     if command == "commands":
         scope = argv[2]
