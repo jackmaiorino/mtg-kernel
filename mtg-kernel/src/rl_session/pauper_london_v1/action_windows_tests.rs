@@ -312,7 +312,7 @@ fn the_pass_offset_window_is_exactly_an_added_window_of_an_action_seat() {
                     }
                     let n = candidates(&s).len() as u64;
                     let pick = match mark {
-                        Some(pass) if rng.next_u64() % 2 == 0 => pass,
+                        Some(pass) if rng.next_u64().is_multiple_of(2) => pass,
                         _ => (rng.next_u64() % n) as u32,
                     };
                     s.step(d.episode_id, d.step, pick).unwrap();
