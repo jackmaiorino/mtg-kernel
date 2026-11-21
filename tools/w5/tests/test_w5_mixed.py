@@ -195,6 +195,17 @@ class CompareTests(MixedBase):
         self.assertTrue(passed)
         self.assertEqual(report['order'], 'ABBA')
         self.assertTrue(report['schedule_valid'])
+        for syntax, options in (
+                ('grouped', ['--baseline', str(b), str(b2), '--candidate', str(c), str(c2)]),
+                ('repeated', ['--baseline', str(b), '--baseline', str(b2),
+                              '--candidate', str(c), '--candidate', str(c2)])):
+            with self.subTest(syntax=syntax), contextlib.redirect_stdout(io.StringIO()):
+                out = self.node.t / f'compare-{syntax}.json'
+                self.assertEqual(chains.main(['throughput-compare', *options, '--out', str(out)]), 0)
+                parsed = json.loads(out.read_text())
+                self.assertEqual(parsed['order'], report['order'])
+                self.assertEqual(parsed['parity'], report['parity'])
+                self.assertEqual(parsed['metrics'], report['metrics'])
         rate = report['metrics']['durable_updates_per_hour']
         self.assertEqual(rate['verdict'], chains.spread_verdict(rate['baseline'], rate['candidate']))
         cpu = report['metrics']['cpu_seconds_per_update']
