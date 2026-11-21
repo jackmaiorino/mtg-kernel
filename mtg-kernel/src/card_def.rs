@@ -2200,12 +2200,14 @@ pub enum PermanentFilter {
     /// A controlled artifact that is not a token (Thopter Foundry's
     /// "Sacrifice a nontoken artifact"). Appended for Vintage Cube wave C3c.
     NontokenArtifactV1,
+    /// A controlled land with the effective Mountain subtype.
+    MountainV1,
 }
 
 /// One component of a composite cost. Composable (a real cost is `&'static
 /// [CostComponent]`) rather than card-shaped, matching the `EffectOp`
-/// philosophy in `effect.rs`: "sacrifice 2 Mountains" is
-/// `SacrificeLands(2)`, not a `FireblastCost` variant.
+/// philosophy in `effect.rs`. A filtered sacrifice carries its count and
+/// permanent filter independently of the card naming the cost.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CostComponent {
     /// Tap the source permanent (activated abilities only -- casting a
@@ -4932,7 +4934,11 @@ mod tests {
         assert_eq!(
             def.alt_cost,
             Some(AltCostDef {
-                components: [CostComponent::SacrificeLands(2)].as_slice(),
+                components: [CostComponent::SacrificeControlled {
+                    count: 2,
+                    filter: PermanentFilter::MountainV1
+                }]
+                .as_slice(),
                 condition: AltCostCondition::Always,
             })
         );
@@ -4958,7 +4964,13 @@ mod tests {
         assert!(matches!(looting_cost, [CostComponent::Mana(_)]));
         let lava_dart = &CARD_DEFS[card_id_by_name("Lava Dart").unwrap() as usize];
         let lava_dart_cost = lava_dart.flashback.as_ref().unwrap().cost;
-        assert!(matches!(lava_dart_cost, [CostComponent::SacrificeLands(1)]));
+        assert!(matches!(
+            lava_dart_cost,
+            [CostComponent::SacrificeControlled {
+                count: 1,
+                filter: PermanentFilter::MountainV1
+            }]
+        ));
     }
 
     #[test]

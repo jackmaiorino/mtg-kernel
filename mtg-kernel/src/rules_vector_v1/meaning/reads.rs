@@ -746,7 +746,7 @@ pub(crate) fn permanent_filter(filter: PermanentFilter) -> (ObjF, Option<RelF>) 
         PermanentFilter::Land => (ObjF::Typed(CardTypeF::Land), None),
         PermanentFilter::Token => (ObjF::Token, None),
         PermanentFilter::AnotherWithSubtype(_) => (ObjF::Permanent, None),
-        PermanentFilter::DesertV1 => {
+        PermanentFilter::DesertV1 | PermanentFilter::MountainV1 => {
             // Vocabulary gap: ObjF has no subtype class.
             (ObjF::Typed(CardTypeF::Land), None)
         }

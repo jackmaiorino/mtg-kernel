@@ -70,6 +70,7 @@ fn put(state: &mut GameState, player: PlayerId, name: &str, zone: Zone) -> Objec
     match zone {
         Zone::Hand => seat.hand.push(id),
         Zone::Battlefield => seat.battlefield.push(id),
+        Zone::Graveyard => seat.graveyard.push(id),
         _ => panic!("helper zone"),
     }
     id
@@ -524,6 +525,33 @@ fn a_dual_land_under_spreading_seas_pays_only_blue_both_seats() {
         cast(&mut state, brainstorm, &[]);
         settled_choosing_first(&mut state);
         assert!(state.objects.get(volcanic).tapped);
+    }
+}
+
+#[test]
+fn mountain_sacrifices_use_the_current_land_subtype_both_seats() {
+    for actor in [P0, P1] {
+        for (spell_name, zone) in [("Fireblast", Zone::Hand), ("Lava Dart", Zone::Graveyard)] {
+            for moon in [false, true] {
+                let (mut state, _) = urza_lands(actor, moon);
+                let spell = put(&mut state, actor, spell_name, zone);
+                assert_eq!(
+                    castable(&mut state, spell),
+                    moon,
+                    "{spell_name}: Blood Moon {moon}"
+                );
+            }
+
+            let (mut state, _) = volcanic_under_spreading_seas(actor);
+            if spell_name == "Fireblast" {
+                put(&mut state, actor, "Mountain", Zone::Battlefield);
+            }
+            let spell = put(&mut state, actor, spell_name, zone);
+            assert!(
+                !castable(&mut state, spell),
+                "{spell_name}: the enchanted Volcanic Island lost Mountain"
+            );
+        }
     }
 }
 
