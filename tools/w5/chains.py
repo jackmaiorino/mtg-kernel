@@ -736,6 +736,10 @@ def carried_segment_ok(man, arm, cdir, native):
     for d, parent in targets:
         require(not d.is_symlink() and d.resolve().parent == parent.resolve(),
                 f'{cdir.name}: {d} is a link or resolves outside {parent}')
+        for p in (d, parent):  # no link in any component of the path either (a linked ancestor moves both)
+            absolute = os.path.abspath(p)
+            require(os.path.realpath(absolute) == absolute and '..' not in Path(p).parts,
+                    f'{cdir.name}: {p} has a link or ".." in its path')
         if d.is_dir():  # nothing below it may be a link either (quarantine, settle and persist walk it)
             for dirpath, dirnames, filenames in os.walk(d, followlinks=False):
                 for entry in dirnames + filenames:
@@ -1256,9 +1260,18 @@ def make_plan(inputs_path):
     carry_bytes = {}  # one read of each carry record: every check, the pin and the manifest use these bytes
     repin_bytes = {name: Path(c['repin']).read_bytes() for name, c in chains_in.items()
                    if c.get('repin') is not None}  # one read of each re-pin request (absent otherwise)
-    for name, c in chains_in.items():  # before any write: an existing guarded chain's tree is real and unlinked
-        if c.get('guards') and (Path(root) / 'chains' / name / 'chain.json').exists():
+    guarded_names = set()  # the input's `guards`, or an existing manifest that names them (once on, never off)
+    for name, c in chains_in.items():
+        man_path = Path(root) / 'chains' / name / 'chain.json'
+        if c.get('guards') or (man_path.is_file() and not man_path.is_symlink() and read(man_path).get('guards')):
+            guarded_names.add(name)
+    for name in sorted(guarded_names):  # before any write: the root, existing or not, is canonical and unlinked
+        if Path(root).exists() or Path(root).is_symlink():
             carried_trees_unlinked(root, name)
+        else:
+            absolute = os.path.abspath(root)
+            require(os.path.realpath(absolute) == absolute and '..' not in Path(root).parts,
+                    f'{name}: {root} must be a canonical path with no link in it')
     for name in repin_bytes:  # before any write: the chain is held, its tree real and unlinked
         require(Path(root).exists() and (Path(root) / 'chains' / name / 'chain.json').exists(),
                 f'{name}: a re-pin needs the chain\'s existing manifest in this root')
@@ -1480,9 +1493,11 @@ def make_plan(inputs_path):
             check_carry(carry_docs[name], name, seed_root, arms[a],
                         new=not Path(chains[name]['manifest']).exists())
             chains[name]['carry'] = {'path': Path(c['carry']).as_posix(), 'sha256': w5box.sha256_bytes(data)}
-        if c.get('guards') is not None:  # absent otherwise: existing plans and manifests keep their bytes
-            require(c['guards'] is True and a != 'F' and stage == '0' and independent and c.get('pair') is None,
-                    f'{name}: `guards: true` is for a chain of an independent Stage 0 plan without a pair')
+        if c.get('guards') is not None:
+            require(c['guards'] is True, f'{name}: `guards` is true or absent')
+        if name in guarded_names:  # absent otherwise: existing plans and manifests keep their bytes
+            require(a != 'F' and stage == '0' and independent and c.get('pair') is None,
+                    f'{name}: guards are for a chain of an independent Stage 0 plan without a pair')
             chains[name]['guards'] = True
         if c.get('repin') is not None:  # absent otherwise: existing plans and manifests keep their bytes
             require(a != 'F', f'{name}: a filler is not re-pinned')
@@ -1497,7 +1512,7 @@ def make_plan(inputs_path):
                     f'{name}: the re-pin {req.get("id")} is not pending with these request bytes (`repin begin` first)')
             hold = repin_held(root, name)
             require(hold is None, hold)
-            require(req.get('guards') is not True or c.get('guards') is True,
+            require(req.get('guards') is not True or name in guarded_names,
                     f'{name}: the request switches the guards on: the plan names `guards: true` for the chain')
             if committed:  # the same request again (the plan citing the new throughput record): nothing more
                 require(have['recipe']['trainer_sha256'] == req['to_sha256'] == common['trainer']['sha256'],
@@ -1599,7 +1614,7 @@ def make_plan(inputs_path):
                   'snapshot_dir': (root / 'chains' / name / 'snapshots').as_posix()}
         if c.get('carry'):
             header['carry'] = carry_docs[name]
-        if c.get('guards'):
+        if name in guarded_names:
             header['guards'] = True
         path = Path(c['manifest'])
         if path.exists():
@@ -1630,7 +1645,7 @@ def make_plan(inputs_path):
                         'recipe'].get('pregame_announcement_step_scale') else ''))
             require(have.get('r_nom_usec') in (None, r_nom), f'{name}: R_nom is frozen in the manifest')
             have.update(recipe=header['recipe'], arm_file=pin(arm_paths[c['arm']]), r_nom_usec=r_nom)
-            if c.get('guards'):  # once on, never off: the guards only refuse, outputs are unchanged
+            if name in guarded_names:  # once on, never off: the guards only refuse, outputs are unchanged
                 have['guards'] = True
             write(path, have)
             if repin is not None:  # the commit's manifest entry made durable

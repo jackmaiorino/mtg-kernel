@@ -143,9 +143,10 @@ class GuardsTests(unittest.TestCase):
         self.assertEqual([r['after_state_sha256'] for r in records], ref)
         self.assertEqual([chains.trainer_of_segment(man, r['segment']) for r in records],
                          [sha(FAKE)] * 8 + [sha(new)] * 12)
-        # once on, never off: a plan without the input keeps the manifest's guards
-        chains.make_plan(self.inputs(trainer=new))
+        # once on, never off: a plan without the input keeps the manifest's guards, and its plan entry names them
+        path, plan = chains.make_plan(self.inputs(trainer=new))
         self.assertIs(self.man()['guards'], True)
+        self.assertTrue(plan['chains']['c1']['guards'])
 
     def test_a_guarded_ordinary_chain_refuses_links(self):
         path, plan = chains.make_plan(self.inputs(guards=True))
@@ -172,6 +173,19 @@ class GuardsTests(unittest.TestCase):
         index.symlink_to(other)
         with self.assertRaises(SystemExit):
             retention.index(self.cdir() / 'chain.json')
+
+    def test_a_first_guarded_plan_refuses_a_linked_root(self):
+        real = self.t / 'real-root'
+        real.mkdir()
+        try:
+            (self.t / 'linked-root').symlink_to(real, target_is_directory=True)
+        except OSError:
+            self.skipTest('no symlink permission on this host')
+        doc = json.loads(Path(self.inputs(guards=True)).read_text())
+        doc['root'] = (self.t / 'linked-root' / 'oc').as_posix()
+        with self.assertRaisesRegex(chains.Stop, 'link'):
+            chains.make_plan(jwrite(self.t / 'linked.json', doc))
+        self.assertEqual(list(real.iterdir()), [])
 
     def test_without_guards_an_ordinary_chain_is_unchanged(self):
         path, plan = chains.make_plan(self.inputs())
