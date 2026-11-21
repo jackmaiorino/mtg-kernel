@@ -764,14 +764,21 @@ class ResourceBoundTests(AgentCase):
         self.assertFalse((self.scratch / TAG).exists(), "nothing ran")
 
     def test_a_push_stops_once_free_space_falls_under_the_floor(self):
-        config, data = self.floor_config(), os.urandom(3 << 20)
-        calls = iter([10 ** 6, 10 ** 6] + [999] * 100)  # the two checks before staging pass, then space runs out
+        # Two admission checks (scratch, target), then the stage file's checks: after the first block,
+        # every interval, and at the end. Space runs out at each of those transitions in turn.
+        config, data, mib = self.floor_config(), os.urandom(3 << 20), 1 << 20
         path = self.pins / "run" / "c.bin"
-        with mock.patch.object(pc, "FLOOR_CHECK_BYTES", 1 << 20), \
-                mock.patch.object(pc.os, "statvfs", fake_statvfs(lambda: next(calls)), create=True):
-            self.assertRefused(self.serve("push", data, path=str(path), sha256=sha(data), config=config),
-                               "disk floor")
-        self.assertEqual(os.listdir(path.parent), [], "the stage is removed and no pin installed")
+        for passing, interval, consumed in ((2, mib, mib),            # after the first block
+                                            (3, mib, 2 * mib),        # at the next interval
+                                            (3, 64 * mib, 3 * mib)):  # at the end (interval never reached)
+            calls = iter([10 ** 6] * passing + [999] * 100)
+            stdin = io.BytesIO(data)
+            with mock.patch.object(pc, "FLOOR_CHECK_BYTES", interval), \
+                    mock.patch.object(pc.os, "statvfs", fake_statvfs(lambda: next(calls)), create=True):
+                self.assertRefused(self.serve("push", path=str(path), sha256=sha(data), config=config,
+                                              stdin=stdin), "disk floor")
+            self.assertEqual(stdin.tell(), consumed, (passing, interval))
+            self.assertEqual(os.listdir(path.parent), [], "the stage is removed and no pin installed")
 
     def test_the_floor_measures_the_filesystem_the_bytes_land_on(self):
         config, data = self.floor_config(), b"checkpoint"
@@ -796,6 +803,21 @@ class ResourceBoundTests(AgentCase):
         with mock.patch.object(pc.os, "statvfs", roots_full, create=True):
             self.assertRefused(self.serve("put_shard", json.dumps(self.shard_command()).encode(), tag=TAG,
                                           config=config), "disk floor")
+        self.put_shard()
+        with mock.patch.object(pc.os, "statvfs", roots_full, create=True):
+            self.assertRefused(self.run_shard(config=config), "disk floor")
+        # The private command copy's own directory is measured too.
+        run_copy_full = fake_statvfs_by_path(lambda path: 999 if path.endswith(".run") else 10 ** 6)
+        with mock.patch.object(pc.os, "statvfs", run_copy_full, create=True):
+            self.assertRefused(self.run_shard(config=config), "disk floor")
+        self.assertEqual(os.listdir(self.scratch / ".run"), [], "no private copy left behind")
+
+    def test_a_command_too_large_once_serialized_leaves_no_file(self):
+        command = self.shard_command(pad="é" * (3 << 20))  # about 6 MiB as UTF-8, 18 MiB once escaped
+        code, out, err = self.serve("put_shard", json.dumps(command, ensure_ascii=False).encode(), tag=TAG)
+        self.assertEqual(code, 0, err)
+        self.assertRefused(self.run_shard(), "once serialized")
+        self.assertEqual(os.listdir(self.scratch / ".run"), [])
 
     def test_removal_requests_never_accumulate_lock_files(self):
         for i in range(300):

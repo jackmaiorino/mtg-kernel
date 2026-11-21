@@ -1351,13 +1351,22 @@ def _write_new(path: str, data_or_stream, cap: int, floor=None) -> str:
     With `floor` (the config), a stream checks the disk floor on `path`'s own filesystem after its
     first block, after every further FLOOR_CHECK_BYTES and once complete, and refuses once free space
     is under it (best effort: a check follows the bytes written, so one interval, and concurrent
-    writers between checks, can undershoot the floor)."""
+    writers between checks, can undershoot the floor). A refused or failed write removes the file."""
+    if isinstance(data_or_stream, (bytes, bytearray)) and len(data_or_stream) > cap:
+        raise AgentRefusal("payload exceeds its bound")  # before anything is created
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | NOFOLLOW | BINARY, 0o644)
+    try:
+        return _write_open(fd, data_or_stream, cap, floor, path)
+    except BaseException:
+        os.unlink(path)
+        raise
+
+
+def _write_open(fd: int, data_or_stream, cap: int, floor, path: str) -> str:
+    """_write_new's body, on the descriptor it created."""
     digest, size, checked = hashlib.sha256(), 0, -FLOOR_CHECK_BYTES
     with os.fdopen(fd, "wb") as handle:
         if isinstance(data_or_stream, (bytes, bytearray)):
-            if len(data_or_stream) > cap:
-                raise AgentRefusal("payload exceeds its bound")
             handle.write(data_or_stream)
             digest.update(data_or_stream)
         else:
@@ -1586,7 +1595,11 @@ def agent_serve(config: dict, encoded, stdin, stdout) -> None:
             private_dir = os.path.join(scratch, ".run")
             os.makedirs(private_dir, mode=0o700, exist_ok=True)
             private = os.path.join(private_dir, f"{tag}.{uuid.uuid4().hex}.json")
-            _write_new(private, json.dumps(command).encode(), AGENT_SHARD_BYTES)
+            body = json.dumps(command).encode()
+            if len(body) > AGENT_SHARD_BYTES:
+                raise AgentRefusal("shard command exceeds its bound once serialized")
+            _require_floor(config, [private_dir])
+            _write_new(private, body, AGENT_SHARD_BYTES)
             try:
                 code, tail = _run_collector(config, private, run_dir, seconds)
                 reply({"code": code, "stderr": tail})
