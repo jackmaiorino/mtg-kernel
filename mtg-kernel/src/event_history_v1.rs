@@ -375,11 +375,12 @@ pub enum EventKindV1 {
     FiendArtisanConsumerReceiptV1,
     EtaliPrimalStormReceiptV1,
     SpellCopyCostPaidV1,
+    LinkedExileDepartureV1,
 }
 
 /// Number of `CommittedEvent` variants (and of `EventKindV1` values).
-pub const EVENT_KIND_COUNT_V1: usize = 332;
-const _: () = assert!(EventKindV1::SpellCopyCostPaidV1 as usize + 1 == EVENT_KIND_COUNT_V1);
+pub const EVENT_KIND_COUNT_V1: usize = 333;
+const _: () = assert!(EventKindV1::LinkedExileDepartureV1 as usize + 1 == EVENT_KIND_COUNT_V1);
 
 impl CommittedEvent {
     /// This event's kind (its variant).
@@ -817,6 +818,7 @@ impl CommittedEvent {
             }
             Self::EtaliPrimalStormReceiptV1 { .. } => EventKindV1::EtaliPrimalStormReceiptV1,
             Self::SpellCopyCostPaidV1 { .. } => EventKindV1::SpellCopyCostPaidV1,
+            Self::LinkedExileDepartureV1 { .. } => EventKindV1::LinkedExileDepartureV1,
         }
     }
 }

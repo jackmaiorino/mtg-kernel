@@ -1236,6 +1236,11 @@ const OTHER_KEYED_NAMES: &[(&str, &str, &str)] = &[
         "Banishing Light",
         "linked exile/return atoms are read via ExileTargetLinkedToSource and ReturnObjectsExiledBySource; exact definition-owned duration/custody requires its precise successor",
     ),
+    (
+        "effect.rs",
+        "Journey to Nowhere",
+        "validation only (allows distinct linked exile records from multiple enter triggers of one source incarnation)",
+    ),
     ("engine.rs", "Self-Reflection", "spell copy-source selection; represented by its typed copy root and selected successor"),
     (
         "fdn_raid_v1.rs",

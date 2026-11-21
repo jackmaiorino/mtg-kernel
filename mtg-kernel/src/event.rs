@@ -2270,6 +2270,13 @@ pub enum CommittedEvent {
         parent: StackItemId,
         player: PlayerId,
     },
+    /// Physical card immediately before its linked exile incarnation ended independently.
+    LinkedExileDepartureV1 {
+        exiled: crate::state::ObjectLinkV4,
+        owner: PlayerId,
+        card_def: u16,
+        move_history_index: u64,
+    },
 }
 
 pub use crate::fixed_source_damage_v3::OutcomeV3 as FixedDamageOutcomeV3;
@@ -4818,6 +4825,7 @@ fn commit_with_entry_batch_and_source_color(
     let progenitus_input = progenitus_plan
         .as_ref()
         .map(|plan| plan.record_input(state));
+    let linked_exile_departure = crate::linked_exile_v4::capture_departure(state, &event);
     // Exile does not have the battlefield/stack reveal-on-exit rule. A
     // concealed exiled card can enter a hidden zone without naming itself.
     let concealed_exile_departure = match &event {
@@ -5051,6 +5059,9 @@ fn commit_with_entry_batch_and_source_color(
             .record_visibility_v2(entry_history_index, *object, mask);
     }
     state.engine.event_history.push(committed);
+    if let Some(departure) = linked_exile_departure {
+        departure.record(state, entry_history_index);
+    }
     if let Some(departure) = curie_departure {
         crate::eternal_legacy_e7a_v1::curie::record_departure(
             state,
