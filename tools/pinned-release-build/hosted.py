@@ -65,8 +65,6 @@ IMAGES = {
                 "mirror.gcr.io/library/python@sha256:df540bfd30bd380e89a349611ce42aa67bcb542d58c047706616eb6ba2f86a1b"),
 }
 ARCH = platform.machine() if platform.machine() in IMAGES else "x86_64"
-if ARCH == "aarch64" and TARGET_CPU != "default":
-    raise SystemExit("an aarch64 build takes no PINNED_TARGET_CPU variant")
 PLATFORM, IMAGE = IMAGES[ARCH]
 GIB = 2**30
 FREE_FLOOR = 60 * GIB + GIB // 2
@@ -398,6 +396,7 @@ def main(argv=None):
         require(0 < args.wall_seconds <= MAX_WALL, f"wall limit must be 1 to {MAX_WALL} seconds")
         require(sys.platform.startswith("linux") and platform.machine() in IMAGES and os.geteuid() == 0,
                 "run the hosted guard as root on Linux x86-64 or aarch64")
+        require(ARCH == "x86_64" or TARGET_CPU == "default", "an aarch64 build takes no PINNED_TARGET_CPU variant")
         os.umask(0o022)
         create_root(args.work_root)
     except (OSError, ValueError) as exc:
