@@ -39,7 +39,7 @@ pub mod statics;
 pub(crate) mod targets;
 
 use crate::card_def::{
-    card_id_by_name, CardDef, CardType, Keywords, Subtype, TargetSpec, CARD_DEFS,
+    card_id_by_name, CardDef, CardType, CostComponent, Keywords, Subtype, TargetSpec, CARD_DEFS,
 };
 use crate::effect::{
     EffectContinuation, EffectFrame, EffectObjectBinding, EffectOp, ExecCtx, LibraryLookCount,
@@ -2580,6 +2580,29 @@ pub(crate) fn begin_turn(state: &mut GameState, player: PlayerId) {
 /// game".
 pub(crate) fn first_spell_this_game(state: &GameState, player: PlayerId) -> bool {
     !read_state(state).is_some_and(|e8a| e8a.spells_cast[player.index()])
+}
+
+/// A graveyard permission determines the base cost. Bitter Triumph may
+/// still pay the life component printed on its existing alternative branch.
+pub(crate) fn graveyard_life_choice(def: &CardDef, zone: Zone, method: CastMethodV4) -> bool {
+    zone == Zone::Graveyard
+        && matches!(
+            method,
+            CastMethodV4::Normal | CastMethodV4::Flashback | CastMethodV4::Escape
+        )
+        && bitter_triumph_life_cost(def).is_some()
+}
+
+pub(crate) fn bitter_triumph_life_cost(def: &CardDef) -> Option<&'static [CostComponent]> {
+    if def.name != "Bitter Triumph" {
+        return None;
+    }
+    match def.alt_cost?.components {
+        [CostComponent::Mana(_), life @ ..] if matches!(life, [CostComponent::PayLife(3)]) => {
+            Some(life)
+        }
+        _ => None,
+    }
 }
 
 /// Bitter Triumph's "pay 3 life" branch is its alternative cost, which
