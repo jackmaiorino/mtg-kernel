@@ -55,6 +55,7 @@ fn episode(opening: bool) -> ExpandedEpisodeV1 {
         mulligan_modes: opening.then_some([Learned, Learned]),
         london_keep_offset: None,
         priority_windows: None,
+        priority_pass_offset: None,
     }
 }
 

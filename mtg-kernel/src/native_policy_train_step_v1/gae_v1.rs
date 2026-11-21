@@ -719,6 +719,9 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         // ends in an error leaves no offset behind. Only the plain GAE
         // objective takes it.
         let london_keep_offset = self.london_keep_offset_mut_dims_v1().take();
+        // The priority pass offset of this step's batch and its per-substep
+        // Pass rows, or None (every existing step), taken the same way.
+        let priority_pass_offset = self.priority_pass_offset_mut_dims_v1().take();
         // The pregame announcement step scale of this step, or None (every
         // existing step), taken the same way; the last step's record never
         // outlives the next step (`pregame_announcement_step_v1`).
@@ -856,6 +859,29 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 code: "london-keep-offset-requires-plain-gae",
             });
         }
+        if let Some(marks) = &priority_pass_offset {
+            if line_b.is_some() || exploration.is_some() || imitation {
+                return Err(NativePolicyTrainErrorV1::PriorityPassOffset {
+                    code: "priority-pass-offset-requires-plain-gae",
+                });
+            }
+            let substeps: usize = groups.iter().map(|group| group.substeps.len()).sum();
+            if marks.rows.len() != substeps
+                || crate::expanded_deck_training_v1::priority_pass_offset_v1::validate_pass_offset_v1(
+                    marks.offset,
+                )
+                .is_err()
+            {
+                return Err(NativePolicyTrainErrorV1::PriorityPassOffset {
+                    code: "priority-pass-offset-marks-differ-from-the-batch",
+                });
+            }
+        }
+        // Each substep's Pass row under the priority pass offset, in batch
+        // order (`priority_pass_offset_v1`).
+        let mut pass_rows = priority_pass_offset
+            .as_ref()
+            .map(|marks| marks.rows.iter().copied());
         let mut selected_outputs = Vec::new();
         let mut physical_terms = Vec::with_capacity(groups.len());
         let mut group_tapes = Vec::with_capacity(groups.len());
@@ -941,6 +967,26 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                         })?
                     }
                     None => None,
+                };
+                // The priority pass offset (`priority_pass_offset_v1`): the
+                // marked Pass row's logit plus the offset, after the keep
+                // offset, exactly as collection sampled it. Unmarked rows read
+                // the logits above, as before.
+                let offset_logits = match (
+                    pass_rows.as_mut().and_then(|rows| rows.next()).flatten(),
+                    &priority_pass_offset,
+                ) {
+                    (Some(pass_row), Some(marks)) => Some(
+                        crate::expanded_deck_training_v1::priority_pass_offset_v1::pass_offset_logits_v1(
+                            offset_logits.as_deref().unwrap_or(tape.logits_v1()),
+                            pass_row,
+                            marks.offset,
+                        )
+                        .map_err(|_| NativePolicyTrainErrorV1::PriorityPassOffset {
+                            code: "priority-pass-offset-malformed-decision",
+                        })?,
+                    ),
+                    _ => offset_logits,
                 };
                 let (selected_log_probability, log_probabilities) = selected_log_softmax_math_v1(
                     offset_logits.as_deref().unwrap_or(tape.logits_v1()),
@@ -1169,10 +1215,12 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                 backward
             }
             (None, BackwardExecutionV1::Sequential) => {
-                let mut gradients = parameters
-                    .iter()
-                    .map(|parameter| vec![0.0; parameter.values.len()])
-                    .collect::<Vec<_>>();
+                // Hidden-width weights accumulate transposed, with the exact
+                // parallel backward's kernels and the reference's bits.
+                let mut gradients =
+                    accumulate_transposed_v1::sequential_gradients_dims_v1::<D>(&parameters);
+                let mut sink =
+                    accumulate_transposed_v1::AccumulateTransposedV1::new_v1(&mut gradients);
                 let mut gauge_accumulator = ScorerBiasGaugeAccumulatorV1::for_math_v1(math);
                 let mut reverse_workspace = ReverseWorkspaceV1::default();
                 // Same reverse group/substep/action order as
@@ -1244,9 +1292,9 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                             selected.selected_action_index,
                             d_joint_log_probability,
                         )?;
-                        reverse_decision_dims_v1::<D>(
+                        reverse_decision_into_dims_v1::<D>(
                             &parameters,
-                            &mut gradients,
+                            &mut sink,
                             &selected.tape,
                             &reverse_workspace.d_logits,
                             if substep_index == 0 { d_value } else { 0.0 },
@@ -1254,7 +1302,7 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
                         )?;
                     }
                 }
-                (gradients, gauge_accumulator)
+                (gradients.into_gradients_v1(), gauge_accumulator)
             }
             (None, BackwardExecutionV1::FixedPartitions { worker_limit }) => {
                 let coefficients: Vec<(f32, f32)> = group_tapes

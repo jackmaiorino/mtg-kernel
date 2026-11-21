@@ -2495,6 +2495,7 @@ mod tests {
                         mulligan_modes: None,
                         london_keep_offset: None,
                         priority_windows: None,
+                        priority_pass_offset: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Fixed {
                         id: "archive".into(),
@@ -3788,6 +3789,7 @@ mod tests {
                         mulligan_modes: None,
                         london_keep_offset: None,
                         priority_windows: None,
+                        priority_pass_offset: None,
                     },
                     opponent: ExpandedOpponentAssignmentV1::Current,
                 }],

@@ -67,7 +67,8 @@ impl RecordEnvelopeV1 {
 
     /// The bytes to publish for a record whose unsealed bytes are `bytes`.
     /// `Zstd1` refuses input that already looks sealed (a record is sealed
-    /// once) and checks that the frame opens to exactly `bytes`.
+    /// once) and checks, in every build and before the frame is returned for
+    /// publication, that the frame opens to exactly `bytes`.
     pub(crate) fn seal_v1(self, bytes: &[u8]) -> Result<Cow<'_, [u8]>, String> {
         match self {
             Self::None => Ok(Cow::Borrowed(bytes)),

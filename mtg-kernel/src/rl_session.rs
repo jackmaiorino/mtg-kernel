@@ -8034,6 +8034,48 @@ impl FastActorSessionV1 {
         &self.state
     }
 
+    /// The Pass candidate index of the pending decision when it is a new
+    /// priority window (`expanded_deck_training_v1::priority_pass_offset_v1`):
+    /// a priority window the surface hands to a seat on an action-window
+    /// rule (`action-windows-v1` or `action-windows-end-step-v1`) where
+    /// HarnessV2 would have passed for it. None for every other decision,
+    /// including the windows HarnessV2 itself offers, a HarnessV2 seat's
+    /// decisions, combat scans and London decisions. Reads only the surface's
+    /// own record and the acting seat's menu.
+    pub(crate) fn priority_pass_window_v1(&self) -> Result<Option<u32>, String> {
+        let Some(current) = self.current.as_ref() else {
+            return Ok(None);
+        };
+        if self.pauper_london_pending_v1()
+            || current.decision_kind != FastActorDecisionKindV1::Surface
+            || !matches!(
+                current.origin_decision,
+                PolicyDecisionV5::Surface(SurfaceDecision::Decision(
+                    Decision::CastSpellOrPass { .. }
+                ))
+            )
+            || self.surface.engine_window_v1().is_none()
+            || self.surface.harness_surface().action_window_seats_v1()[current.actor.index()]
+                .is_harness_v2()
+        {
+            return Ok(None);
+        }
+        if current.substep_index != 0 || current.substep_count != 1 {
+            return Err("a new priority window is not a single-substep decision".into());
+        }
+        let mut passes = current
+            .candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, candidate)| matches!(candidate.semantic, ActionSemanticV1::Pass { .. }));
+        match (passes.next(), passes.next()) {
+            (Some((index, _)), None) => u32::try_from(index)
+                .map(Some)
+                .map_err(|_| "Pass row index overflow".to_string()),
+            _ => Err("a new priority window must offer exactly one Pass".into()),
+        }
+    }
+
     pub(crate) fn enable_spellbench_neutral_choices(&mut self) {
         assert_eq!(
             self.policy_step_count, 0,

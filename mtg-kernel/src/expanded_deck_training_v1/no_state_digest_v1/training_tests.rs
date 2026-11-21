@@ -1499,6 +1499,7 @@ fn episode(id: &str, seed: u64, opponent: Option<ExpandedModelSourceV1>) -> Expa
         mulligan_modes: None,
         london_keep_offset: None,
         priority_windows: None,
+        priority_pass_offset: None,
     }
 }
 
