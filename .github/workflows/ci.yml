@@ -39,7 +39,9 @@ permissions:
 
 concurrency:
   # A draft's light run has a group of its own, so it can never cancel or
-  # replace the full run that marking the pull request ready starts.
+  # replace the full run that marking the pull request ready starts. The
+  # cost: a full run still in progress when its pull request goes back to
+  # draft and gets a new push is not cancelled by that push.
   group: ci-${{ github.workflow }}-${{ github.ref }}${{ github.event_name == 'pull_request' && github.event.pull_request.draft && !contains(github.event.pull_request.labels.*.name, 'ci:full') && '-draft' || '' }}
   # A newer push to a pull request replaces its running CI. Runs on main,
   # tags and manual dispatches finish, because they carry the Windows
