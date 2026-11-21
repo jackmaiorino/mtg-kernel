@@ -718,12 +718,12 @@ impl<D: NetDimsV1> NativePolicyValueTrainStateDimsV1<D> {
         // existing step): taken before anything can return, so a step that
         // ends in an error leaves no offset behind. Only the plain GAE
         // objective takes it.
-        let london_keep_offset = self.london_keep_offset.take();
+        let london_keep_offset = self.london_keep_offset_mut_dims_v1().take();
         // The pregame announcement step scale of this step, or None (every
         // existing step), taken the same way; the last step's record never
         // outlives the next step (`pregame_announcement_step_v1`).
-        let announcement_scale = self.pregame_announcement_step_scale.take();
-        self.pregame_announcement_step_record = None;
+        let announcement_scale = self.pregame_announcement_step_scale_mut_dims_v1().take();
+        *self.pregame_announcement_step_record_mut_dims_v1() = None;
         if announcement_scale.is_some() {
             // Only the plain GAE objective on a backward that routes the
             // second gradient buffer, under the arithmetic the gates cover.
