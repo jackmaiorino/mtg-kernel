@@ -73,6 +73,7 @@ pub(crate) mod resolution_cast_v1;
 pub(crate) use resolution_cast_v1::{can_cast_exiled_without_mana, can_play_exiled_land};
 
 // Shared selected-cost collection is prepared separately from route wiring.
+mod compound_cast_cost_v1;
 #[path = "counter_distribution_v1.rs"]
 mod counter_distribution_v1;
 #[path = "spell_costs_v1.rs"]
@@ -1067,6 +1068,9 @@ pub struct PendingCast {
     /// Only the eternal catalog sets it.
     #[serde(default, skip_serializing_if = "bool_is_false")]
     pub escape_exile_finished_v1: bool,
+    /// Payment order for a graveyard cast with a mandatory permanent cost.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graveyard_cost_first_v1: Option<bool>,
     /// Whether this hand cast is made without paying its mana cost under a
     /// free-cast permission (Omniscience, Aluren). `None` when no such
     /// permission applied as the cast began. Only the eternal catalog sets
@@ -1152,6 +1156,10 @@ impl std::hash::Hash for PendingCast {
             std::hash::Hash::hash(&0x636f6e766f6b6531_u64, state);
             std::hash::Hash::hash(&self.convoke_chosen, state);
             std::hash::Hash::hash(&self.convoke_finished, state);
+        }
+        if let Some(first) = self.graveyard_cost_first_v1 {
+            "graveyard-cost-first/v1".hash(state);
+            first.hash(state);
         }
         if self.escape_exile_finished_v1 {
             std::hash::Hash::hash(&"escape-exile-finished/v1", state);
@@ -10941,7 +10949,10 @@ fn pending_cast_quote_v1(
     x: u16,
     state: &GameState,
 ) -> Option<spell_costs_v1::SpellManaPaymentV1> {
-    let method = if pending.sphinx_lore_v1.is_some() && method == CastMethodV4::Normal {
+    let method = if method == CastMethodV4::Normal
+        && (pending.sphinx_lore_v1.is_some()
+            || pending.source_contract.cast_method == CastMethodV4::Escape)
+    {
         pending.source_contract.cast_method
     } else {
         method
@@ -11473,7 +11484,7 @@ fn is_castable_now(
         }
         CastMethodV4::Escape => {
             (def.escape.is_some() || crate::eternal_lurrus_v1::granted_escape_cost(def).is_some())
-                && def.additional_cost.is_none()
+                && (def.additional_cost.is_none() || compound_cast_cost_v1::supports_escape(def))
                 && def.kicker_cost.is_none()
                 && def.generic_cost_reduction.is_none()
                 && spell_costs_v1::selected_spell_quote_v1(
@@ -14751,6 +14762,12 @@ fn remaining_cast_payment_is_payable(
     ) else {
         return false;
     };
+    if let Some(costs) = compound_cast_cost_v1::Costs::new(def, method, selected.retrace) {
+        return pending.graveyard_cost_first_v1.is_some_and(|first| {
+            pending.sacrifice_chosen.len() == costs.count()
+                && costs.can_finish(state, pending, first, &pending.sacrifice_chosen)
+        });
+    }
     let Some(choices) = selected.component_choices_v1(
         def,
         method,
@@ -15904,6 +15921,130 @@ fn drain_pending_optional_cost_sacrifice_or_decide(state: &mut GameState) -> Opt
     None
 }
 
+fn validate_single_cast_object_prefix(
+    state: &GameState,
+    pending: &PendingCast,
+    def: &card_def::CardDef,
+) -> Result<u8, String> {
+    let sacrifice_needed = sacrifice_lands_needed(pending, def);
+    let graveyard_exile_needed = graveyard_exile_cards_needed(pending, def, state);
+    let controlled_sacrifice = controlled_permanent_sacrifice_needed(pending, def);
+    let tap_permanent_filter = cast_tap_permanent_filter_needed(pending, def);
+    let single_object_cost = cast_single_object_cost_needed(pending, def, state);
+    let active_object_cost_families = u8::from(sacrifice_needed != 0)
+        + u8::from(graveyard_exile_needed != 0)
+        + u8::from(controlled_sacrifice.is_some())
+        + u8::from(tap_permanent_filter.is_some())
+        + u8::from(single_object_cost.is_some());
+    if active_object_cost_families > 1 {
+        return Err("pending cast has multiple interactive object-cost families".to_string());
+    }
+    let interactive_object_cost_needed = sacrifice_needed
+        .max(graveyard_exile_needed)
+        .max(controlled_sacrifice.map_or(0, |(count, _)| count))
+        .max(u8::from(tap_permanent_filter.is_some()))
+        .max(single_object_cost.map_or(0, |cost| cost.count()));
+    if pending.sacrifice_chosen.len() > usize::from(interactive_object_cost_needed) {
+        return Err("pending cast chose too many interactive cost objects".to_string());
+    }
+    if sacrifice_needed != 0 {
+        let mut chosen = pending.sacrifice_chosen.clone();
+        chosen.sort_unstable();
+        chosen.dedup();
+        if chosen.len() != pending.sacrifice_chosen.len()
+            || pending.sacrifice_chosen.iter().any(|&land| {
+                land == pending.spell
+                    || !state.players[pending.controller.index()]
+                        .battlefield
+                        .contains(&land)
+                    || state
+                        .objects
+                        .try_get(land)
+                        .is_none_or(|object| !card_def::CARD_DEFS[object.card_def as usize].is_land)
+            })
+        {
+            return Err("pending cast sacrifice prefix is not unique controlled lands".to_string());
+        }
+    } else if graveyard_exile_needed != 0 {
+        if checked_graveyard_exile_candidates(
+            pending.controller,
+            pending.spell,
+            state,
+            &pending.sacrifice_chosen,
+        )
+        .is_none()
+        {
+            return Err(
+                "pending cast graveyard-exile prefix or graveyard index is malformed".to_string(),
+            );
+        }
+    } else if let Some((_, filter)) = controlled_sacrifice {
+        let candidates =
+            sacrificeable_controlled_permanents(pending.controller, filter, state, &[]);
+        let mut chosen = pending.sacrifice_chosen.clone();
+        chosen.sort_unstable();
+        chosen.dedup();
+        if chosen.len() != pending.sacrifice_chosen.len()
+            || pending
+                .sacrifice_chosen
+                .iter()
+                .any(|object| !candidates.contains(object))
+        {
+            return Err(
+                "pending cast sacrifice prefix is not unique matching controlled permanents"
+                    .to_string(),
+            );
+        }
+    } else if let Some(filter) = tap_permanent_filter {
+        let candidates = tap_permanent_cost_candidates(pending.controller, state, filter, &[]);
+        if pending.sacrifice_chosen.len() > 1
+            || pending
+                .sacrifice_chosen
+                .iter()
+                .any(|object| !candidates.contains(object))
+        {
+            return Err(
+                "pending cast tap-cost prefix is not an untapped matching controlled permanent"
+                    .to_string(),
+            );
+        }
+    } else if let Some(cost) = single_object_cost {
+        let mut unchosen = pending.clone();
+        unchosen.sacrifice_chosen.clear();
+        let candidates = cast_single_object_cost_candidates(&unchosen, cost, state);
+        // Foil's picks depend on the earlier pick (an Island card first).
+        let ordered_pick_illegal = |index: usize, object: &ObjectId| {
+            cost == CastSingleObjectCostV1::DiscardIslandAndAnother
+                && !island_discard_cost_candidates(
+                    pending.controller,
+                    pending.spell,
+                    state,
+                    &pending.sacrifice_chosen[..index],
+                )
+                .contains(object)
+        };
+        if pending.sacrifice_chosen.len() > usize::from(cost.count())
+            || pending
+                .sacrifice_chosen
+                .iter()
+                .enumerate()
+                .any(|(index, object)| {
+                    (cost != CastSingleObjectCostV1::DiscardIslandAndAnother
+                        && !candidates.contains(object))
+                        || ordered_pick_illegal(index, object)
+                        || pending.sacrifice_chosen[..index].contains(object)
+                })
+        {
+            return Err(
+                "pending cast alternative-cost object is not a legal candidate".to_string(),
+            );
+        }
+    } else if !pending.sacrifice_chosen.is_empty() {
+        return Err("pending cast without an object cost carries chosen objects".to_string());
+    }
+    Ok(interactive_object_cost_needed)
+}
+
 /// Stages `PendingCast` through its targets -> cast-mode -> additional-
 /// cost-discard -> finalize pipeline, one stage per call (each stage that
 /// makes progress `continue`s the outer loop instead of looping here, so
@@ -16179,7 +16320,7 @@ pub(crate) fn validate_pending_cast(
                 || source.owner != pending.controller
                 || !has_escape_v1(state, pending.spell, origin_generation, def)
                 || def.flashback.is_some()
-                || def.additional_cost.is_some()
+                || (def.additional_cost.is_some() && !compound_cast_cost_v1::supports_escape(def))
                 || def.kicker_cost.is_some()
                 || def.generic_cost_reduction.is_some()
                 || pending.cast_mode != Some(CastMode::Normal)
@@ -16497,122 +16638,26 @@ pub(crate) fn validate_pending_cast(
         return Err("pending cast advanced X before choosing its spell form".to_string());
     }
 
-    let sacrifice_needed = sacrifice_lands_needed(pending, def);
-    let graveyard_exile_needed = graveyard_exile_cards_needed(pending, def, state);
-    let controlled_sacrifice = controlled_permanent_sacrifice_needed(pending, def);
-    let tap_permanent_filter = cast_tap_permanent_filter_needed(pending, def);
-    let single_object_cost = cast_single_object_cost_needed(pending, def, state);
-    let active_object_cost_families = u8::from(sacrifice_needed != 0)
-        + u8::from(graveyard_exile_needed != 0)
-        + u8::from(controlled_sacrifice.is_some())
-        + u8::from(tap_permanent_filter.is_some())
-        + u8::from(single_object_cost.is_some());
-    if active_object_cost_families > 1 {
-        return Err("pending cast has multiple interactive object-cost families".to_string());
-    }
-    let interactive_object_cost_needed = sacrifice_needed
-        .max(graveyard_exile_needed)
-        .max(controlled_sacrifice.map_or(0, |(count, _)| count))
-        .max(u8::from(tap_permanent_filter.is_some()))
-        .max(single_object_cost.map_or(0, |cost| cost.count()));
-    if pending.sacrifice_chosen.len() > usize::from(interactive_object_cost_needed) {
-        return Err("pending cast chose too many interactive cost objects".to_string());
-    }
-    if sacrifice_needed != 0 {
-        let mut chosen = pending.sacrifice_chosen.clone();
-        chosen.sort_unstable();
-        chosen.dedup();
-        if chosen.len() != pending.sacrifice_chosen.len()
-            || pending.sacrifice_chosen.iter().any(|&land| {
-                land == pending.spell
-                    || !state.players[pending.controller.index()]
-                        .battlefield
-                        .contains(&land)
-                    || state
-                        .objects
-                        .try_get(land)
-                        .is_none_or(|object| !card_def::CARD_DEFS[object.card_def as usize].is_land)
-            })
-        {
-            return Err("pending cast sacrifice prefix is not unique controlled lands".to_string());
+    let compound = compound_cast_cost_v1::Costs::pending(state, pending, def);
+    let interactive_object_cost_needed = if let Some(costs) = compound {
+        if let Some(first) = pending.graveyard_cost_first_v1 {
+            if pending.cast_mode.is_none()
+                || pending.kicked.is_none()
+                || active_spec.is_none_or(|spec| !pending_cast_targeting_is_complete(pending, spec))
+                || !costs.can_finish(state, pending, first, &pending.sacrifice_chosen)
+            {
+                return Err("invalid compound object payment prefix or stage".into());
+            }
+        } else if !pending.sacrifice_chosen.is_empty() {
+            return Err("compound object choices require a payment order".into());
         }
-    } else if graveyard_exile_needed != 0 {
-        if checked_graveyard_exile_candidates(
-            pending.controller,
-            pending.spell,
-            state,
-            &pending.sacrifice_chosen,
-        )
-        .is_none()
-        {
-            return Err(
-                "pending cast graveyard-exile prefix or graveyard index is malformed".to_string(),
-            );
+        u8::try_from(costs.count()).map_err(|_| "compound object count exceeds u8")?
+    } else {
+        if pending.graveyard_cost_first_v1.is_some() {
+            return Err("ordinary cast carries a compound payment order".into());
         }
-    } else if let Some((_, filter)) = controlled_sacrifice {
-        let candidates =
-            sacrificeable_controlled_permanents(pending.controller, filter, state, &[]);
-        let mut chosen = pending.sacrifice_chosen.clone();
-        chosen.sort_unstable();
-        chosen.dedup();
-        if chosen.len() != pending.sacrifice_chosen.len()
-            || pending
-                .sacrifice_chosen
-                .iter()
-                .any(|object| !candidates.contains(object))
-        {
-            return Err(
-                "pending cast sacrifice prefix is not unique matching controlled permanents"
-                    .to_string(),
-            );
-        }
-    } else if let Some(filter) = tap_permanent_filter {
-        let candidates = tap_permanent_cost_candidates(pending.controller, state, filter, &[]);
-        if pending.sacrifice_chosen.len() > 1
-            || pending
-                .sacrifice_chosen
-                .iter()
-                .any(|object| !candidates.contains(object))
-        {
-            return Err(
-                "pending cast tap-cost prefix is not an untapped matching controlled permanent"
-                    .to_string(),
-            );
-        }
-    } else if let Some(cost) = single_object_cost {
-        let mut unchosen = pending.clone();
-        unchosen.sacrifice_chosen.clear();
-        let candidates = cast_single_object_cost_candidates(&unchosen, cost, state);
-        // Foil's picks depend on the earlier pick (an Island card first).
-        let ordered_pick_illegal = |index: usize, object: &ObjectId| {
-            cost == CastSingleObjectCostV1::DiscardIslandAndAnother
-                && !island_discard_cost_candidates(
-                    pending.controller,
-                    pending.spell,
-                    state,
-                    &pending.sacrifice_chosen[..index],
-                )
-                .contains(object)
-        };
-        if pending.sacrifice_chosen.len() > usize::from(cost.count())
-            || pending
-                .sacrifice_chosen
-                .iter()
-                .enumerate()
-                .any(|(index, object)| {
-                    (cost != CastSingleObjectCostV1::DiscardIslandAndAnother
-                        && !candidates.contains(object))
-                        || ordered_pick_illegal(index, object)
-                        || pending.sacrifice_chosen[..index].contains(object)
-                })
-        {
-            return Err(
-                "pending cast alternative-cost object is not a legal candidate".to_string(),
-            );
-        }
-    } else if !pending.sacrifice_chosen.is_empty() {
-        return Err("pending cast without an object cost carries chosen objects".to_string());
-    }
+        validate_single_cast_object_prefix(state, pending, def)?
+    };
     if !pending.sacrifice_chosen.is_empty()
         && (pending.cast_mode.is_none()
             || active_spec.is_none_or(|spec| !pending_cast_targeting_is_complete(pending, spec))
@@ -17193,6 +17238,39 @@ fn drain_pending_cast_or_decide(state: &mut GameState) -> Option<Decision> {
         return drain_pending_cast_or_decide(state);
     }
 
+    if let Some(costs) = compound_cast_cost_v1::Costs::pending(state, &pending, def) {
+        if let Some(first) = pending.graveyard_cost_first_v1 {
+            if pending.sacrifice_chosen.len() < costs.count() {
+                return Some(costs.next(state, &pending, first));
+            }
+        } else {
+            let orders = [false, true].map(|first| costs.can_finish(state, &pending, first, &[]));
+            match orders {
+                [true, true] => {
+                    return Some(Decision::ChooseEffectOption {
+                        player: pending.controller,
+                        source: pending.spell,
+                        option_count: 2,
+                    })
+                }
+                [false, false] => {
+                    let method = finalized_cast_method(&pending, staged_method, def);
+                    let pending = state.engine.pending_cast.take().unwrap();
+                    abort_cast(state, pending, method);
+                    return None;
+                }
+                _ => {
+                    state
+                        .engine
+                        .pending_cast
+                        .as_mut()
+                        .unwrap()
+                        .graveyard_cost_first_v1 = Some(orders[1]);
+                    return drain_pending_cast_or_decide(state);
+                }
+            }
+        }
+    }
     let sacrifice_needed = sacrifice_lands_needed(&pending, def);
     if (pending.sacrifice_chosen.len() as u8) < sacrifice_needed {
         let candidates = sacrificeable_lands(pending.controller, state, &pending.sacrifice_chosen);
@@ -26448,6 +26526,7 @@ enum PendingCastActionStage {
     AwaitEngineAdvance,
     ChooseConvoke,
     ChooseMandatoryAdditionalCost,
+    ChooseCompoundCostOrder,
     /// Nethergoyf's escape: more graveyard cards after its card types are
     /// covered, or finish.
     ChooseEscapeExileV1,
@@ -26561,6 +26640,14 @@ fn pending_cast_action_stage(
     {
         return Ok(PendingCastActionStage::ChooseMandatoryAdditionalCost);
     }
+    if let Some(costs) = compound_cast_cost_v1::Costs::pending(state, pending, def) {
+        if pending.graveyard_cost_first_v1.is_none() {
+            return Ok(PendingCastActionStage::ChooseCompoundCostOrder);
+        }
+        if pending.sacrifice_chosen.len() < costs.count() {
+            return Ok(PendingCastActionStage::ChooseCostTarget);
+        }
+    }
     if pending.sacrifice_chosen.len() < usize::from(sacrifice_lands_needed(pending, def)) {
         return Ok(PendingCastActionStage::ChooseCostTarget);
     }
@@ -26660,6 +26747,7 @@ fn action_matches_pending_cast_stage(action: &Action, stage: PendingCastActionSt
         ) | (
             PendingCastActionStage::ChooseAdditionalCostZone
                 | PendingCastActionStage::ChooseMandatoryAdditionalCost
+                | PendingCastActionStage::ChooseCompoundCostOrder
                 | PendingCastActionStage::ChooseGreatwurmCost
                 | PendingCastActionStage::ChooseSphinxLoreRoute
                 | PendingCastActionStage::ChooseOmniscienceRoute,
@@ -27750,6 +27838,19 @@ fn apply_choose_cost_target(state: &mut GameState, id: ObjectId) -> Result<(), S
     if let Some(pending) = state.engine.pending_cast.clone() {
         validate_pending_cast(state, &pending)?;
         let def = &card_def::CARD_DEFS[state.objects.get(pending.spell).card_def as usize];
+        if let Some(costs) = compound_cast_cost_v1::Costs::pending(state, &pending, def) {
+            if let Some(first) = pending.graveyard_cost_first_v1 {
+                if pending.sacrifice_chosen.len() < costs.count() {
+                    let mut picks = pending.sacrifice_chosen.clone();
+                    picks.push(id);
+                    if !costs.can_finish(state, &pending, first, &picks) {
+                        return Err("invalid compound payment object".into());
+                    }
+                    state.engine.pending_cast.as_mut().unwrap().sacrifice_chosen = picks;
+                    return Ok(());
+                }
+            }
+        }
         let needed = sacrifice_lands_needed(&pending, def);
         if (pending.sacrifice_chosen.len() as u8) < needed {
             let active_target_spec = selected_spell_target_spec(
@@ -29985,6 +30086,24 @@ fn apply_pending_cast_effect_option(
             set_hand_free_cast(state, choice);
             Ok(())
         }
+        PendingCastActionStage::ChooseCompoundCostOrder => {
+            let costs = compound_cast_cost_v1::Costs::pending(state, &pending, def)
+                .ok_or("missing compound cost")?;
+            if option_index > 1
+                || ![false, true]
+                    .into_iter()
+                    .all(|first| costs.can_finish(state, &pending, first, &[]))
+            {
+                return Err("compound cost order is not offered".into());
+            }
+            state
+                .engine
+                .pending_cast
+                .as_mut()
+                .unwrap()
+                .graveyard_cost_first_v1 = Some(option_index == 1);
+            Ok(())
+        }
         PendingCastActionStage::ChooseMandatoryAdditionalCost => {
             mandatory_cast_cost_v1::answer(state, &pending, option_index)
         }
@@ -30563,6 +30682,7 @@ fn materialize_begin_cast_with_quote_v1(
         convoke_chosen: Vec::new(),
         convoke_finished: false,
         escape_exile_finished_v1: false,
+        graveyard_cost_first_v1: None,
         hand_free_cast_v1,
         thornscape_white_kicker_v1: None,
         mandatory_additional_cost: mandatory_cast_cost_v1::seed(def),
@@ -30893,7 +31013,7 @@ fn finalize_owned_cast(
         &mana_taps,
     );
     let storm_targets = payment.storm_targets.take();
-    let mana_spent = payment.commit(state, pending.controller, pending.spell);
+    let (mana_spent, mut paid_cost_refs) = payment.commit(state, pending.controller, pending.spell);
     if let Some((creatures, quoted)) = edict_input {
         crate::edict_receipts_v1::record_mana_committed(
             state,
@@ -30970,10 +31090,11 @@ fn finalize_owned_cast(
     // Capture after sacrifice/discard zone changes have committed. These refs
     // describe the payment-time incarnation and visibility forever; later
     // reanimation, bounce, shuffle, or exile cannot rewrite stack provenance.
-    let mut paid_cost_refs: Vec<PaidCostRefV4> = paid_cost_objects
-        .into_iter()
-        .map(|object| PaidCostRefV4::capture(state, object))
-        .collect();
+    paid_cost_refs.extend(
+        paid_cost_objects
+            .into_iter()
+            .map(|object| PaidCostRefV4::capture(state, object)),
+    );
     if let Some(binding) = pending.chosen_creature_cost {
         let power =
             chosen_power_lki.expect("complete preparation captured payment-time chosen power");
